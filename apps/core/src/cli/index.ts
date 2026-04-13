@@ -6,8 +6,10 @@ import {
   formatDoctorReport,
   hasRegisteredTelegramGroup,
   hasRuntimeConfig,
-  runDoctor,
+  runDoctorWithNetwork,
 } from './doctor.js';
+import { runConfigCommand } from './config.js';
+import { runGroupCommand } from './group.js';
 import {
   clearOnboardingState,
   createInitialState,
@@ -39,6 +41,15 @@ function usage(): string {
     '  myclaw doctor',
     '  myclaw status',
     '  myclaw start',
+    '  myclaw config list',
+    '  myclaw config get <KEY>',
+    '  myclaw config set <KEY> <VALUE>',
+    '  myclaw config unset <KEY>',
+    '  myclaw group list',
+    '  myclaw group info <jid|folder>',
+    '  myclaw group add <jid|chat-id>',
+    '  myclaw group remove <jid|folder>',
+    '  myclaw group trigger <jid|folder> <word>',
     '  myclaw telegram connect',
     '  myclaw service install',
     '  myclaw service start',
@@ -80,7 +91,7 @@ async function runDoctorCommand(
   importMetaUrl: string,
   runtimeHome: string,
 ): Promise<number> {
-  const report = runDoctor(importMetaUrl, runtimeHome);
+  const report = await runDoctorWithNetwork(importMetaUrl, runtimeHome);
   p.note(formatDoctorReport(report), 'Doctor');
   return report.ok ? 0 : 1;
 }
@@ -250,7 +261,8 @@ async function main(): Promise<number> {
   }
 
   const runtimeHome = resolveRuntimeHome(parsed.runtimeHomeArg);
-  const [command, subcommand] = parsed.command;
+  const [command, ...rest] = parsed.command;
+  const subcommand = rest[0];
 
   if (!command) {
     return runSmartEntrypoint(runtimeHome);
@@ -270,6 +282,14 @@ async function main(): Promise<number> {
 
   if (command === 'start') {
     return runStartCommand(runtimeHome);
+  }
+
+  if (command === 'group') {
+    return runGroupCommand(runtimeHome, rest);
+  }
+
+  if (command === 'config') {
+    return runConfigCommand(runtimeHome, rest);
   }
 
   if (command === 'telegram' && subcommand === 'connect') {

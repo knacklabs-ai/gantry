@@ -6,6 +6,7 @@ import {
   addJobEvent,
   completeJobRun,
   createJobRun,
+  deleteRegisteredGroup,
   deleteJob,
   deleteSession,
   getAllChats,
@@ -1680,6 +1681,23 @@ describe('registered group edge cases', () => {
         added_at: '2024-01-01T00:00:00.000Z',
       }),
     ).toThrow(/Invalid group folder/);
+  });
+
+  it('deleteRegisteredGroup removes a registered group row', () => {
+    setRegisteredGroup('delete-me@g.us', {
+      name: 'Delete Me',
+      folder: 'delete_me',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      requiresTrigger: true,
+      isMain: false,
+    });
+
+    expect(getRegisteredGroup('delete-me@g.us')).toBeDefined();
+
+    deleteRegisteredGroup('delete-me@g.us');
+
+    expect(getRegisteredGroup('delete-me@g.us')).toBeUndefined();
   });
 
   it('requiresTrigger defaults to 1 when undefined', () => {

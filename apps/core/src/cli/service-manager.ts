@@ -1,21 +1,18 @@
 import fs from 'fs';
 import os from 'os';
+import { spawn } from 'child_process';
 import path from 'path';
 
 import { getRuntimeEntryPath } from './package-paths.js';
-import {
-  commandExists,
-  detectPlatform,
-  hasSystemdUser,
-  tryExec,
-} from './platform.js';
+import { detectPlatform, hasSystemdUser, tryExec } from './platform.js';
+import { buildServicePath } from '../platform/service-path.js';
 import {
   ensureRuntimeLayout,
   runtimeErrorLogPath,
   runtimeLogPath,
 } from './runtime-home.js';
 
-export type ServiceKind = 'launchd' | 'systemd-user' | 'nohup';
+export type ServiceKind = 'launchd' | 'systemd-user' | 'nohup' | 'background';
 
 export interface ServiceOutcome {
   ok: boolean;
@@ -23,27 +20,172 @@ export interface ServiceOutcome {
   message: string;
 }
 
+const SERVICE_LABEL = 'com.myclaw';
+const FALLBACK_SERVICE_META = 'service-meta.json';
+const PID_FILE = 'myclaw.pid';
+
 function resolveServiceKind(): ServiceKind {
   const platform = detectPlatform();
   if (platform === 'macos') return 'launchd';
   if (platform === 'linux' && hasSystemdUser()) return 'systemd-user';
-  return 'nohup';
+  if (platform === 'linux') return 'nohup';
+  return 'background';
+}
+
+interface FallbackServiceMetadata {
+  runtimeEntry: string;
+}
+
+function serviceMetaPath(runtimeHome: string): string {
+  return path.join(runtimeHome, FALLBACK_SERVICE_META);
+}
+
+function writeFallbackServiceMetadata(
+  runtimeHome: string,
+  runtimeEntry: string,
+): void {
+  const metadata: FallbackServiceMetadata = { runtimeEntry };
+  fs.writeFileSync(
+    serviceMetaPath(runtimeHome),
+    JSON.stringify(metadata, null, 2),
+    'utf-8',
+  );
+}
+
+function readFallbackServiceMetadata(
+  runtimeHome: string,
+): FallbackServiceMetadata | null {
+  try {
+    const raw = fs.readFileSync(serviceMetaPath(runtimeHome), 'utf-8');
+    const parsed = JSON.parse(raw) as { runtimeEntry?: unknown };
+    if (typeof parsed.runtimeEntry !== 'string') return null;
+    const runtimeEntry = path.resolve(parsed.runtimeEntry);
+    if (!fs.existsSync(runtimeEntry)) return null;
+    return { runtimeEntry };
+  } catch {
+    return null;
+  }
+}
+
+function fallbackPidPath(runtimeHome: string): string {
+  return path.join(runtimeHome, PID_FILE);
+}
+
+function readFallbackPid(runtimeHome: string): number | null {
+  try {
+    const raw = fs.readFileSync(fallbackPidPath(runtimeHome), 'utf-8').trim();
+    const pid = Number(raw);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
+function clearFallbackPid(runtimeHome: string): void {
+  try {
+    fs.unlinkSync(fallbackPidPath(runtimeHome));
+  } catch {
+    // Ignore pid cleanup errors.
+  }
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (
+      err &&
+      typeof err === 'object' &&
+      'code' in err &&
+      (err as NodeJS.ErrnoException).code === 'EPERM'
+    ) {
+      return true;
+    }
+    return false;
+  }
+}
+
+function stopFallbackPid(pid: number): void {
+  if (process.platform === 'win32') {
+    const result = tryExec('taskkill', ['/PID', String(pid), '/T', '/F']);
+    const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
+    const notFound =
+      output.includes('not found') ||
+      output.includes('no running instance') ||
+      output.includes('cannot find');
+    if (!result.ok && !notFound) {
+      throw new Error(result.stderr || result.stdout || 'taskkill failed');
+    }
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (err) {
+    if (
+      err &&
+      typeof err === 'object' &&
+      'code' in err &&
+      (err as NodeJS.ErrnoException).code === 'ESRCH'
+    ) {
+      return;
+    }
+    throw err;
+  }
+}
+
+function readProcessCommand(pid: number): string | null {
+  if (process.platform === 'win32') {
+    const query = `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`;
+    const result = tryExec('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      query,
+    ]);
+    if (!result.ok) return null;
+    const output = result.stdout.trim();
+    return output || null;
+  }
+
+  const result = tryExec('ps', ['-ww', '-p', String(pid), '-o', 'command=']);
+  if (!result.ok) return null;
+  const output = result.stdout.trim();
+  return output || null;
+}
+
+function isManagedFallbackProcess(
+  pid: number,
+  runtimeEntry: string,
+): boolean | null {
+  const command = readProcessCommand(pid);
+  if (!command) return null;
+  const normalizedCommand = command.replace(/\\/g, '/');
+  const normalizedRuntimeEntry = path.resolve(runtimeEntry).replace(/\\/g, '/');
+  return normalizedCommand.includes(normalizedRuntimeEntry);
 }
 
 function plistPath(): string {
-  return path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.myclaw.plist');
+  return path.join(
+    os.homedir(),
+    'Library',
+    'LaunchAgents',
+    `${SERVICE_LABEL}.plist`,
+  );
 }
 
 function writeLaunchdPlist(runtimeHome: string, runtimeEntry: string): void {
   const target = plistPath();
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const uid = process.getuid?.() || 0;
+  const servicePath = buildServicePath(os.homedir());
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.myclaw</string>
+  <string>${SERVICE_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${process.execPath}</string>
@@ -62,7 +204,7 @@ function writeLaunchdPlist(runtimeHome: string, runtimeEntry: string): void {
     <key>HOME</key>
     <string>${os.homedir()}</string>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:${os.homedir()}/.local/bin</string>
+    <string>${servicePath}</string>
   </dict>
   <key>StandardOutPath</key>
   <string>${runtimeLogPath(runtimeHome)}</string>
@@ -90,6 +232,7 @@ function writeSystemdUnit(runtimeHome: string, runtimeEntry: string): string {
   const unitDir = path.join(os.homedir(), '.config', 'systemd', 'user');
   const unitPath = path.join(unitDir, 'myclaw.service');
   fs.mkdirSync(unitDir, { recursive: true });
+  const servicePath = buildServicePath(os.homedir());
   const unit = `[Unit]
 Description=MyClaw Personal Assistant
 After=network-online.target
@@ -98,7 +241,7 @@ After=network-online.target
 Type=simple
 Environment=AGENT_ROOT=${runtimeHome}
 Environment=HOME=${os.homedir()}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${os.homedir()}/.local/bin
+Environment=PATH=${servicePath}
 ExecStart=${process.execPath} ${runtimeEntry}
 WorkingDirectory=${runtimeHome}
 Restart=always
@@ -115,7 +258,7 @@ WantedBy=default.target
 
 function writeNohupScript(runtimeHome: string, runtimeEntry: string): string {
   const scriptPath = path.join(runtimeHome, 'start-myclaw.sh');
-  const pidPath = path.join(runtimeHome, 'myclaw.pid');
+  const pidPath = fallbackPidPath(runtimeHome);
   const script = `#!/bin/sh
 set -eu
 cd ${JSON.stringify(runtimeHome)}
@@ -144,6 +287,8 @@ export function installService(
   const kind = resolveServiceKind();
 
   try {
+    writeFallbackServiceMetadata(runtimeHome, runtimeEntry);
+
     if (kind === 'launchd') {
       writeLaunchdPlist(runtimeHome, runtimeEntry);
       return {
@@ -174,11 +319,19 @@ export function installService(
       };
     }
 
-    const scriptPath = writeNohupScript(runtimeHome, runtimeEntry);
+    if (kind === 'nohup') {
+      const scriptPath = writeNohupScript(runtimeHome, runtimeEntry);
+      return {
+        ok: true,
+        kind,
+        message: `Installed fallback service script at ${scriptPath}.`,
+      };
+    }
+
     return {
       ok: true,
       kind,
-      message: `Installed fallback service script at ${scriptPath}.`,
+      message: 'Installed background service metadata.',
     };
   } catch (err) {
     return {
@@ -197,7 +350,7 @@ export function startService(runtimeHome: string): ServiceOutcome {
       const result = tryExec('launchctl', [
         'kickstart',
         '-k',
-        `gui/${uid}/com.myclaw`,
+        `gui/${uid}/${SERVICE_LABEL}`,
       ]);
       if (!result.ok) {
         throw new Error(
@@ -217,22 +370,115 @@ export function startService(runtimeHome: string): ServiceOutcome {
       return { ok: true, kind, message: 'systemd user service started.' };
     }
 
-    const scriptPath = path.join(runtimeHome, 'start-myclaw.sh');
-    if (!fs.existsSync(scriptPath)) {
+    if (kind === 'nohup') {
+      const scriptPath = path.join(runtimeHome, 'start-myclaw.sh');
+      if (!fs.existsSync(scriptPath)) {
+        return {
+          ok: false,
+          kind,
+          message:
+            'Fallback service script is missing. Run `myclaw service install` first.',
+        };
+      }
+      const result = tryExec('sh', [scriptPath]);
+      if (!result.ok) {
+        throw new Error(
+          result.stderr ||
+            result.stdout ||
+            'failed to run fallback start script',
+        );
+      }
+      return { ok: true, kind, message: 'Fallback service started.' };
+    }
+
+    const metadata = readFallbackServiceMetadata(runtimeHome);
+    if (!metadata) {
       return {
         ok: false,
         kind,
         message:
-          'Fallback service script is missing. Run `myclaw service install` first.',
+          'Background service metadata is missing or invalid. Run `myclaw service install` first.',
       };
     }
-    const result = tryExec('sh', [scriptPath]);
-    if (!result.ok) {
-      throw new Error(
-        result.stderr || result.stdout || 'failed to run fallback start script',
-      );
+
+    const currentPid = readFallbackPid(runtimeHome);
+    if (currentPid && isProcessRunning(currentPid)) {
+      const owned = isManagedFallbackProcess(currentPid, metadata.runtimeEntry);
+      if (owned === false) {
+        return {
+          ok: false,
+          kind,
+          message: `Refusing to use PID file because pid ${currentPid} is not a MyClaw process. Fix ${fallbackPidPath(runtimeHome)} manually.`,
+        };
+      }
+      if (owned === null) {
+        return {
+          ok: false,
+          kind,
+          message: `Could not verify ownership for running pid ${currentPid}. Resolve manually before restarting service.`,
+        };
+      }
+      return {
+        ok: true,
+        kind,
+        message: `Background service is already running (pid ${currentPid}).`,
+      };
     }
-    return { ok: true, kind, message: 'Fallback service started.' };
+    clearFallbackPid(runtimeHome);
+
+    let stdoutFd: number | null = null;
+    let stderrFd: number | null = null;
+    try {
+      stdoutFd = fs.openSync(runtimeLogPath(runtimeHome), 'a');
+      stderrFd = fs.openSync(runtimeErrorLogPath(runtimeHome), 'a');
+      const child = spawn(process.execPath, [metadata.runtimeEntry], {
+        cwd: runtimeHome,
+        detached: true,
+        stdio: ['ignore', stdoutFd, stderrFd],
+        windowsHide: true,
+        env: {
+          ...process.env,
+          AGENT_ROOT: runtimeHome,
+          HOME: os.homedir(),
+          PATH: buildServicePath(os.homedir()),
+        },
+      });
+      if (!child.pid) {
+        throw new Error('failed to spawn background process');
+      }
+      try {
+        fs.writeFileSync(
+          fallbackPidPath(runtimeHome),
+          `${child.pid}\n`,
+          'utf-8',
+        );
+      } catch (err) {
+        try {
+          stopFallbackPid(child.pid);
+        } catch {
+          // Best effort cleanup; preserve original write error.
+        }
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`failed to persist service pid: ${reason}`);
+      }
+      child.unref();
+    } finally {
+      if (stdoutFd !== null) {
+        try {
+          fs.closeSync(stdoutFd);
+        } catch {
+          // Ignore fd cleanup errors.
+        }
+      }
+      if (stderrFd !== null) {
+        try {
+          fs.closeSync(stderrFd);
+        } catch {
+          // Ignore fd cleanup errors.
+        }
+      }
+    }
+    return { ok: true, kind, message: 'Background service started.' };
   } catch (err) {
     return {
       ok: false,
@@ -247,7 +493,10 @@ export function stopService(runtimeHome: string): ServiceOutcome {
   try {
     if (kind === 'launchd') {
       const uid = process.getuid?.() || 0;
-      const result = tryExec('launchctl', ['bootout', `gui/${uid}/com.myclaw`]);
+      const result = tryExec('launchctl', [
+        'bootout',
+        `gui/${uid}/${SERVICE_LABEL}`,
+      ]);
       if (!result.ok && !result.stderr.includes('Could not find service')) {
         throw new Error(
           result.stderr || result.stdout || 'launchctl bootout failed',
@@ -266,28 +515,53 @@ export function stopService(runtimeHome: string): ServiceOutcome {
       return { ok: true, kind, message: 'systemd user service stopped.' };
     }
 
-    const pidPath = path.join(runtimeHome, 'myclaw.pid');
-    if (!fs.existsSync(pidPath)) {
+    const pid = readFallbackPid(runtimeHome);
+    if (!pid) {
       return {
         ok: true,
         kind,
         message: 'Fallback service is already stopped.',
       };
     }
-    const pidRaw = fs.readFileSync(pidPath, 'utf-8').trim();
-    const pid = Number(pidRaw);
-    if (Number.isInteger(pid) && pid > 0) {
-      try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // Process already gone.
-      }
+
+    if (!isProcessRunning(pid)) {
+      clearFallbackPid(runtimeHome);
+      return {
+        ok: true,
+        kind,
+        message:
+          'Fallback service was already stopped (stale PID file removed).',
+      };
     }
-    try {
-      fs.unlinkSync(pidPath);
-    } catch {
-      // Ignore pid cleanup errors.
+
+    const metadata = readFallbackServiceMetadata(runtimeHome);
+    if (!metadata) {
+      return {
+        ok: false,
+        kind,
+        message:
+          'Cannot verify fallback process ownership because service metadata is missing. Refusing to kill PID from file.',
+      };
     }
+
+    const owned = isManagedFallbackProcess(pid, metadata.runtimeEntry);
+    if (owned === false) {
+      return {
+        ok: false,
+        kind,
+        message: `Refusing to stop pid ${pid} because it is not a MyClaw process.`,
+      };
+    }
+    if (owned === null) {
+      return {
+        ok: false,
+        kind,
+        message: `Could not verify ownership for pid ${pid}; refusing to stop an unverified process.`,
+      };
+    }
+
+    stopFallbackPid(pid);
+    clearFallbackPid(runtimeHome);
     return { ok: true, kind, message: 'Fallback service stopped.' };
   } catch (err) {
     return {
@@ -298,13 +572,16 @@ export function stopService(runtimeHome: string): ServiceOutcome {
   }
 }
 
-export function getServiceStatus(): { kind: ServiceKind; status: string } {
+export function getServiceStatus(runtimeHome: string): {
+  kind: ServiceKind;
+  status: string;
+} {
   const kind = resolveServiceKind();
 
   if (kind === 'launchd') {
     const listing = tryExec('launchctl', ['list']);
     if (!listing.ok) return { kind, status: 'unknown' };
-    if (listing.stdout.includes('com.myclaw'))
+    if (listing.stdout.includes(SERVICE_LABEL))
       return { kind, status: 'loaded' };
     return { kind, status: 'not_loaded' };
   }
@@ -315,9 +592,10 @@ export function getServiceStatus(): { kind: ServiceKind; status: string } {
     return { kind, status: 'inactive' };
   }
 
-  if (!commandExists('sh')) {
-    return { kind, status: 'unknown' };
-  }
-
-  return { kind, status: 'manual' };
+  const pid = readFallbackPid(runtimeHome);
+  if (!pid) return { kind, status: 'not_running' };
+  return {
+    kind,
+    status: isProcessRunning(pid) ? `running(pid:${pid})` : 'stale_pid',
+  };
 }

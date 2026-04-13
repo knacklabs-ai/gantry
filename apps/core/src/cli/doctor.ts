@@ -8,6 +8,7 @@ import {
   getRuntimeEntryPath,
 } from './package-paths.js';
 import {
+  commandExists,
   detectPlatform,
   getNodeMajorVersion,
   getNodeVersion,
@@ -17,6 +18,7 @@ import {
   isDockerRunning,
 } from './platform.js';
 import { envFilePath, ensureRuntimeWritable } from './runtime-home.js';
+import { validateTelegramBotToken } from './telegram.js';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
 
@@ -35,6 +37,11 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
+export interface DoctorNetworkOptions {
+  validateTelegramToken?: boolean;
+  telegramTimeoutMs?: number;
+}
+
 function statusLabel(status: DoctorStatus): string {
   if (status === 'pass') return 'PASS';
   if (status === 'warn') return 'WARN';
@@ -43,6 +50,52 @@ function statusLabel(status: DoctorStatus): string {
 
 function add(checks: DoctorCheck[], check: DoctorCheck): void {
   checks.push(check);
+}
+
+function addToReport(report: DoctorReport, check: DoctorCheck): DoctorReport {
+  const checks = [...report.checks, check];
+  const blockingFailures = checks.filter(
+    (entry) => entry.status === 'fail',
+  ).length;
+  const warnings = checks.filter((entry) => entry.status === 'warn').length;
+  return {
+    checks,
+    blockingFailures,
+    warnings,
+    ok: blockingFailures === 0,
+  };
+}
+
+function inspectTelegramGroupCount(runtimeHome: string): {
+  count: number;
+  error?: string;
+} {
+  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  if (!fs.existsSync(dbPath)) {
+    return { count: 0 };
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) as count FROM registered_groups WHERE jid LIKE 'tg:%'`,
+      )
+      .get() as { count: number };
+    return { count: row.count };
+  } catch (err) {
+    return {
+      count: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close errors and preserve primary failure.
+    }
+  }
 }
 
 export function runDoctor(
@@ -180,6 +233,34 @@ export function runDoctor(
     });
   }
 
+  const telegramGroups = inspectTelegramGroupCount(runtimeHome);
+  if (telegramGroups.error) {
+    add(checks, {
+      id: 'telegram-groups',
+      title: 'Telegram Group Registry',
+      status: 'fail',
+      message:
+        'Could not read registered Telegram groups; runtime database may be corrupted.',
+      nextAction: `Repair or replace ${path.join(runtimeHome, 'store', 'messages.db')}. Details: ${telegramGroups.error}`,
+    });
+  } else if (telegramGroups.count > 0) {
+    add(checks, {
+      id: 'telegram-groups',
+      title: 'Telegram Group Registry',
+      status: 'pass',
+      message: `${telegramGroups.count} Telegram group(s) registered.`,
+    });
+  } else {
+    add(checks, {
+      id: 'telegram-groups',
+      title: 'Telegram Group Registry',
+      status: 'warn',
+      message: 'No Telegram groups are registered.',
+      nextAction:
+        'Run `myclaw telegram connect` (or `myclaw group add <chat-id>`) to connect a chat.',
+    });
+  }
+
   const platform = detectPlatform();
   if (platform === 'linux') {
     add(checks, {
@@ -193,6 +274,27 @@ export function runDoctor(
         ? undefined
         : 'Use `myclaw service install` to create the fallback start script.',
     });
+  } else if (platform === 'windows') {
+    add(checks, {
+      id: 'service-manager',
+      title: 'Service Manager',
+      status: 'pass',
+      message: 'Background service mode is available on Windows.',
+      nextAction: 'Use `myclaw service install` then `myclaw service start`.',
+    });
+  } else if (platform === 'macos') {
+    const hasLaunchctl = commandExists('launchctl');
+    add(checks, {
+      id: 'service-manager',
+      title: 'Service Manager',
+      status: hasLaunchctl ? 'pass' : 'warn',
+      message: hasLaunchctl
+        ? 'launchd is available.'
+        : 'launchctl is unavailable in this shell session.',
+      nextAction: hasLaunchctl
+        ? 'Use `myclaw service install` then `myclaw service start`.'
+        : 'Run from a normal macOS user session and retry.',
+    });
   }
 
   const blockingFailures = checks.filter(
@@ -205,6 +307,48 @@ export function runDoctor(
     warnings,
     checks,
   };
+}
+
+export async function runDoctorWithNetwork(
+  importMetaUrl: string,
+  runtimeHome: string,
+  options: DoctorNetworkOptions = {},
+): Promise<DoctorReport> {
+  let report = runDoctor(importMetaUrl, runtimeHome);
+  const validateTelegramToken = options.validateTelegramToken !== false;
+  if (!validateTelegramToken) {
+    return report;
+  }
+
+  const env = readEnvFile(envFilePath(runtimeHome));
+  const token = env.TELEGRAM_BOT_TOKEN?.trim() || '';
+  if (!token) {
+    return report;
+  }
+
+  const validation = await validateTelegramBotToken(
+    token,
+    options.telegramTimeoutMs,
+  );
+  if (validation.ok) {
+    report = addToReport(report, {
+      id: 'telegram-token-api',
+      title: 'Telegram Token API Validation',
+      status: 'pass',
+      message: validation.message,
+    });
+    return report;
+  }
+
+  report = addToReport(report, {
+    id: 'telegram-token-api',
+    title: 'Telegram Token API Validation',
+    status: 'warn',
+    message: validation.message,
+    nextAction:
+      validation.nextAction || 'Refresh TELEGRAM_BOT_TOKEN and rerun doctor.',
+  });
+  return report;
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
@@ -236,18 +380,6 @@ export function hasRuntimeConfig(runtimeHome: string): boolean {
 }
 
 export function hasRegisteredTelegramGroup(runtimeHome: string): boolean {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
-  if (!fs.existsSync(dbPath)) return false;
-  try {
-    const db = new Database(dbPath, { readonly: true });
-    const row = db
-      .prepare(
-        `SELECT COUNT(*) as count FROM registered_groups WHERE jid LIKE 'tg:%'`,
-      )
-      .get() as { count: number };
-    db.close();
-    return row.count > 0;
-  } catch {
-    return false;
-  }
+  const inspection = inspectTelegramGroupCount(runtimeHome);
+  return !inspection.error && inspection.count > 0;
 }

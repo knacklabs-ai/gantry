@@ -8,6 +8,10 @@ import path from 'path';
  * without actually loading services.
  */
 
+function servicePath(homeDir: string): string {
+  return `${homeDir}/.local/bin:${homeDir}/.npm-global/bin:${homeDir}/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin`;
+}
+
 // Helper: generate a plist string the same way service.ts does
 function generatePlist(
   nodePath: string,
@@ -34,7 +38,7 @@ function generatePlist(
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
+        <string>${servicePath(homeDir)}</string>
         <key>HOME</key>
         <string>${homeDir}</string>
     </dict>
@@ -64,7 +68,7 @@ Restart=always
 RestartSec=5
 KillMode=process
 Environment=HOME=${homeDir}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
+Environment=PATH=${servicePath(homeDir)}
 StandardOutput=append:${projectRoot}/logs/myclaw.log
 StandardError=append:${projectRoot}/logs/myclaw.error.log
 

@@ -88,6 +88,30 @@ npm run build
 npm run dev:container
 ```
 
+## Built-in Skills
+
+Skills are slash commands the agent responds to inside chat. Run `/commands` to see the full list.
+
+| Skill | Purpose |
+|-------|---------|
+| `/commands` | List all available slash commands with descriptions |
+| `/setup` | First-time installation, authentication, service configuration |
+| `/customize` | Adding channels, integrations, changing behavior |
+| `/debug` | Container issues, logs, troubleshooting |
+| `/update-myclaw` | Bring upstream MyClaw updates into a customized install |
+| `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials |
+
+Feature skills (installed via branch merge):
+
+| Skill | Purpose |
+|-------|---------|
+| `/add-telegram` | Add Telegram channel support |
+| `/add-slack` | Add Slack channel support |
+| `/add-discord` | Add Discord channel support |
+| `/add-gmail` | Add Gmail channel support |
+
+Optional skill packs like [gstack](https://github.com/garrytan/gstack) can be installed for additional capabilities (code review, QA, design review, security audits, and more). Run `/commands` after installing to see what's available.
+
 ## Session Commands
 
 Use these as standalone chat messages:

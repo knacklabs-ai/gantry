@@ -10,6 +10,7 @@ import os from 'os';
 import path from 'path';
 
 import { logger } from '../src/core/logger.js';
+import { buildServicePath } from '../src/platform/service-path.js';
 import {
   getPlatform,
   getNodePath,
@@ -80,6 +81,7 @@ function setupLaunchd(
     'com.myclaw.plist',
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+  const servicePath = buildServicePath(homeDir);
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -101,7 +103,7 @@ function setupLaunchd(
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
+        <string>${servicePath}</string>
         <key>HOME</key>
         <string>${homeDir}</string>
     </dict>
@@ -206,6 +208,7 @@ function setupSystemd(
   nodePath: string,
   homeDir: string,
 ): void {
+  const servicePath = buildServicePath(homeDir);
   const runningAsRoot = isRoot();
 
   // Root uses system-level service, non-root uses user-level
@@ -245,7 +248,7 @@ Restart=always
 RestartSec=5
 KillMode=process
 Environment=HOME=${homeDir}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
+Environment=PATH=${servicePath}
 StandardOutput=append:${projectRoot}/logs/myclaw.log
 StandardError=append:${projectRoot}/logs/myclaw.error.log
 

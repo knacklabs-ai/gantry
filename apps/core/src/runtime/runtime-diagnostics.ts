@@ -75,7 +75,8 @@ function buildHostArtifacts(
     return { attempted, succeeded: false };
   }
   try {
-    execSync('npm --prefix packages/agent-runner run build', {
+    execSync('npm run build', {
+      cwd: repoRunnerRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 300_000,
     });
@@ -83,7 +84,7 @@ function buildHostArtifacts(
   } catch (err) {
     errors.push(`Host runner build failed: ${summarizeExecError(err)}`);
     fixes.push(
-      'Run `npm --prefix packages/agent-runner run build` and resolve build errors.',
+      `Run \`npm run build\` in \`${repoRunnerRoot}\` and resolve build errors.`,
     );
     return { attempted, succeeded: false };
   }
@@ -143,7 +144,9 @@ export async function collectRuntimeDiagnostics(
     errors.push(
       `Host runtime requires runner artifacts under \`${runtimeRunnerRoot}/dist\`.`,
     );
-    fixes.push('Run `npm --prefix packages/agent-runner run build`.');
+    fixes.push(
+      `Run \`npm run build\` in \`${repoRunnerRoot}\` and restart MyClaw.`,
+    );
   }
 
   const credentialPathStatus = readCredentialPathStatus();

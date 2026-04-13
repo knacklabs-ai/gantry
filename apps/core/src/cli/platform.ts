@@ -1,18 +1,20 @@
 import { execFileSync } from 'child_process';
 import os from 'os';
 
-export type HostPlatform = 'macos' | 'linux' | 'unknown';
+export type HostPlatform = 'macos' | 'linux' | 'windows' | 'unknown';
 
 export function detectPlatform(): HostPlatform {
   const platform = os.platform();
   if (platform === 'darwin') return 'macos';
   if (platform === 'linux') return 'linux';
+  if (platform === 'win32') return 'windows';
   return 'unknown';
 }
 
 export function commandExists(command: string): boolean {
   try {
-    execFileSync('sh', ['-lc', `command -v ${command}`], { stdio: 'ignore' });
+    const detector = detectPlatform() === 'windows' ? 'where' : 'which';
+    execFileSync(detector, [command], { stdio: 'ignore' });
     return true;
   } catch {
     return false;

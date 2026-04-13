@@ -35,6 +35,7 @@ Four types of skills exist in MyClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 
 | Skill | When to Use |
 |-------|-------------|
+| `/commands` | List all available slash commands with descriptions |
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
@@ -71,6 +72,12 @@ systemctl --user restart myclaw
 ## Troubleshooting
 
 **Channel skill missing after upgrade:** Channels ship as skills, not built-in core modules. Install the relevant skill and then rebuild with `npm run build`.
+
+## gstack
+
+Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
+
+Available gstack skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/retro`, `/investigate`, `/document-release`, `/codex`, `/cso`, `/autoplan`, `/plan-devex-review`, `/devex-review`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`, `/learn`.
 
 ## Container Build Cache
 

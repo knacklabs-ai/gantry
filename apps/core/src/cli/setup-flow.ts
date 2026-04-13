@@ -4,7 +4,7 @@ import {
   formatDoctorReport,
   hasRegisteredTelegramGroup,
   hasRuntimeConfig,
-  runDoctor,
+  runDoctorWithNetwork,
 } from './doctor.js';
 import { readEnvFile } from './env-file.js';
 import { persistOnboardingConfig } from './onboarding-config.js';
@@ -26,6 +26,7 @@ import {
   normalizeTelegramChatJid,
   registerTelegramMainGroup,
   validateTelegramBotToken,
+  verifyTelegramChatAccess,
 } from './telegram.js';
 import {
   getServiceStatus,
@@ -210,7 +211,7 @@ async function runDoctorStep(
   importMetaUrl: string,
   runtimeHome: string,
 ): Promise<FlowAction> {
-  const report = runDoctor(importMetaUrl, runtimeHome);
+  const report = await runDoctorWithNetwork(importMetaUrl, runtimeHome);
   p.note(formatDoctorReport(report), 'Machine Doctor');
 
   if (!report.ok) {
@@ -414,6 +415,46 @@ async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
       continue;
     }
     draft.telegramChatJid = normalizedJid;
+
+    const chatCheckSpinner = p.spinner();
+    chatCheckSpinner.start('Verifying Telegram chat access...');
+    const chatAccess = await verifyTelegramChatAccess({
+      token,
+      chatJid: draft.telegramChatJid,
+      botId: validation.botId,
+      sendTestMessage: true,
+    });
+    if (!chatAccess.ok) {
+      chatCheckSpinner.stop('Chat access check failed');
+      p.note(
+        `${chatAccess.message}\nNext action: ${chatAccess.nextAction || 'Fix chat permissions and retry.'}`,
+        'Chat Access Error',
+      );
+      const retryChoice = await p.select({
+        message: 'What do you want to do?',
+        options: [
+          { value: 'retry', label: 'Try again (Recommended)' },
+          { value: 'back', label: 'Back' },
+          { value: 'resume', label: 'Resume Later' },
+          { value: 'cancel', label: 'Cancel Setup' },
+        ],
+      });
+      if (p.isCancel(retryChoice)) return { type: 'resume' };
+      if (retryChoice === 'retry') {
+        continue;
+      }
+      if (retryChoice === 'back') return { type: 'back' };
+      if (retryChoice === 'resume') return { type: 'resume' };
+      return { type: 'cancel' };
+    }
+    chatCheckSpinner.stop(chatAccess.message);
+    if (
+      !draft.telegramDisplayName ||
+      draft.telegramDisplayName === 'Telegram Main'
+    ) {
+      draft.telegramDisplayName =
+        chatAccess.chatTitle || draft.telegramDisplayName;
+    }
 
     const groupName = await p.text({
       message: 'Choose a name for this Telegram chat in MyClaw',
@@ -726,7 +767,7 @@ async function runVerifyStep(
   importMetaUrl: string,
   draft: SetupDraft,
 ): Promise<FlowAction> {
-  const report = runDoctor(importMetaUrl, draft.runtimeHome);
+  const report = await runDoctorWithNetwork(importMetaUrl, draft.runtimeHome);
   const runtimeConfigured = hasRuntimeConfig(draft.runtimeHome);
   const hasTelegramGroup = hasRegisteredTelegramGroup(draft.runtimeHome);
 
@@ -768,7 +809,7 @@ async function runVerifyStep(
 }
 
 async function runReadyStep(draft: SetupDraft): Promise<FlowAction> {
-  const service = getServiceStatus();
+  const service = getServiceStatus(draft.runtimeHome);
   p.note(
     [
       `Runtime home: ${draft.runtimeHome}`,

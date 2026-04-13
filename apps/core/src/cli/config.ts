@@ -1,0 +1,148 @@
+import * as p from '@clack/prompts';
+
+import { readEnvFile, upsertEnvFile } from './env-file.js';
+import { envFilePath, ensureRuntimeLayout } from './runtime-home.js';
+
+function usage(): string {
+  return [
+    'Config commands:',
+    '  myclaw config list',
+    '  myclaw config get <KEY> [--raw]',
+    '  myclaw config set <KEY> <VALUE>',
+    '  myclaw config unset <KEY>',
+  ].join('\n');
+}
+
+function isValidEnvKey(key: string): boolean {
+  return /^[A-Z][A-Z0-9_]*$/.test(key);
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /(TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|PRIVATE_KEY)/i.test(key);
+}
+
+function maskValue(value: string): string {
+  if (!value) return '(empty)';
+  if (value.length <= 6) return '*'.repeat(value.length);
+  return `${value.slice(0, 3)}***${value.slice(-3)}`;
+}
+
+function formatValue(key: string, value: string, raw: boolean): string {
+  if (raw || !isSensitiveKey(key)) {
+    return value;
+  }
+  return maskValue(value);
+}
+
+function runList(runtimeHome: string): number {
+  ensureRuntimeLayout(runtimeHome);
+  const env = readEnvFile(envFilePath(runtimeHome));
+  const keys = Object.keys(env).sort((a, b) => a.localeCompare(b));
+
+  if (keys.length === 0) {
+    p.log.warn(`No config keys found in ${envFilePath(runtimeHome)}.`);
+    return 0;
+  }
+
+  const lines = ['Config values:', ''];
+  for (const key of keys) {
+    lines.push(`${key}=${formatValue(key, env[key], false)}`);
+  }
+  console.log(lines.join('\n'));
+  return 0;
+}
+
+function runGet(runtimeHome: string, args: string[]): number {
+  const [key, ...rest] = args;
+  if (!key) {
+    p.log.error('Usage: myclaw config get <KEY> [--raw]');
+    return 1;
+  }
+  if (!isValidEnvKey(key)) {
+    p.log.error(`Invalid key \"${key}\". Use uppercase env-style keys.`);
+    return 1;
+  }
+
+  const raw = rest.includes('--raw');
+  const env = readEnvFile(envFilePath(runtimeHome));
+  const value = env[key];
+  if (value === undefined) {
+    p.log.error(`Key not found: ${key}`);
+    return 1;
+  }
+
+  console.log(formatValue(key, value, raw));
+  return 0;
+}
+
+function runSet(runtimeHome: string, args: string[]): number {
+  const [key, ...valueParts] = args;
+  if (!key || valueParts.length === 0) {
+    p.log.error('Usage: myclaw config set <KEY> <VALUE>');
+    return 1;
+  }
+  if (!isValidEnvKey(key)) {
+    p.log.error(`Invalid key \"${key}\". Use uppercase env-style keys.`);
+    return 1;
+  }
+
+  const value = valueParts.join(' ').trim();
+  if (!value) {
+    p.log.error(
+      'Value cannot be empty. Use `myclaw config unset <KEY>` to remove a key.',
+    );
+    return 1;
+  }
+
+  ensureRuntimeLayout(runtimeHome);
+  upsertEnvFile(envFilePath(runtimeHome), {
+    [key]: value,
+  });
+  p.log.success(`Updated ${key}.`);
+  return 0;
+}
+
+function runUnset(runtimeHome: string, args: string[]): number {
+  const [key] = args;
+  if (!key) {
+    p.log.error('Usage: myclaw config unset <KEY>');
+    return 1;
+  }
+  if (!isValidEnvKey(key)) {
+    p.log.error(`Invalid key \"${key}\". Use uppercase env-style keys.`);
+    return 1;
+  }
+
+  ensureRuntimeLayout(runtimeHome);
+  upsertEnvFile(envFilePath(runtimeHome), {
+    [key]: null,
+  });
+  p.log.success(`Removed ${key}.`);
+  return 0;
+}
+
+export function runConfigCommand(runtimeHome: string, args: string[]): number {
+  const [subcommand, ...rest] = args;
+
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    console.log(usage());
+    return subcommand ? 0 : 1;
+  }
+
+  if (subcommand === 'list') {
+    return runList(runtimeHome);
+  }
+  if (subcommand === 'get') {
+    return runGet(runtimeHome, rest);
+  }
+  if (subcommand === 'set') {
+    return runSet(runtimeHome, rest);
+  }
+  if (subcommand === 'unset') {
+    return runUnset(runtimeHome, rest);
+  }
+
+  p.log.error(`Unknown config command: ${subcommand}`);
+  console.log(usage());
+  return 1;
+}

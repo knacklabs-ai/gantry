@@ -86,18 +86,16 @@ describe('runtime-diagnostics', () => {
 
     expect(diagnostics.ok).toBe(true);
     expect(diagnostics.details.hostBuildAttempted).toBe(true);
-    expect(mockExecSync).toHaveBeenCalledWith(
-      'npm --prefix packages/agent-runner run build',
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 300000,
-      },
-    );
+    expect(mockExecSync).toHaveBeenCalledWith('npm run build', {
+      cwd: '/repo/packages/agent-runner',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 300000,
+    });
   });
 
   it('fails startup preflight when host auto-build fails', async () => {
     mockExecSync.mockImplementation((cmd: string) => {
-      if (cmd.includes('npm --prefix packages/agent-runner run build')) {
+      if (cmd === 'npm run build') {
         throw new Error('build failed');
       }
       return '';

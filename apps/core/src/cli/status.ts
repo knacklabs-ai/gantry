@@ -55,7 +55,7 @@ export function collectRuntimeStatus(
   runtimeHome: string,
 ): RuntimeStatusSummary {
   const env = readEnvFile(envFilePath(runtimeHome));
-  const service = getServiceStatus();
+  const service = getServiceStatus(runtimeHome);
   const doctor = runDoctor(importMetaUrl, runtimeHome);
   const memoryProvider = (env.MEMORY_PROVIDER || 'sqlite').trim();
   const embedProvider = (env.MEMORY_EMBED_PROVIDER || 'disabled').trim();

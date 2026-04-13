@@ -10,9 +10,11 @@ const RUNTIME_HOME_POINTER_PATH = path.join(
 );
 
 function expandHomePath(input: string): string {
-  if (!input.startsWith('~')) return input;
-  const suffix = input.slice(1);
-  return path.join(os.homedir(), suffix);
+  if (input === '~') return os.homedir();
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
 }
 
 export function resolveRuntimeHome(raw?: string): string {
