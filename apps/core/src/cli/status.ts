@@ -16,6 +16,9 @@ export interface RuntimeStatusSummary {
   };
   telegramTokenConfigured: boolean;
   telegramGroups: number;
+  slackBotTokenConfigured: boolean;
+  slackAppTokenConfigured: boolean;
+  slackGroups: number;
   memoryEnabled: boolean;
   embeddingsEnabled: boolean;
   dreamingEnabled: boolean;
@@ -33,20 +36,35 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
-function countTelegramGroups(runtimeHome: string): number {
+function countRegisteredGroupsByPrefix(runtimeHome: string): {
+  telegram: number;
+  slack: number;
+} {
   const dbPath = path.join(runtimeHome, 'store', 'messages.db');
-  if (!fs.existsSync(dbPath)) return 0;
+  if (!fs.existsSync(dbPath)) return { telegram: 0, slack: 0 };
+
+  let db: Database.Database | null = null;
   try {
-    const db = new Database(dbPath, { readonly: true });
+    db = new Database(dbPath, { readonly: true });
     const row = db
       .prepare(
-        `SELECT COUNT(*) as count FROM registered_groups WHERE jid LIKE 'tg:%'`,
+        `SELECT
+           SUM(CASE WHEN jid LIKE 'tg:%' THEN 1 ELSE 0 END) AS telegram_count,
+           SUM(CASE WHEN jid LIKE 'sl:%' THEN 1 ELSE 0 END) AS slack_count
+         FROM registered_groups`,
       )
-      .get() as { count: number };
-    db.close();
-    return row.count;
+      .get() as {
+      telegram_count?: number | null;
+      slack_count?: number | null;
+    };
+    return {
+      telegram: row.telegram_count ?? 0,
+      slack: row.slack_count ?? 0,
+    };
   } catch {
-    return 0;
+    return { telegram: 0, slack: 0 };
+  } finally {
+    db?.close();
   }
 }
 
@@ -59,13 +77,17 @@ export function collectRuntimeStatus(
   const doctor = runDoctor(importMetaUrl, runtimeHome);
   const memoryProvider = (env.MEMORY_PROVIDER || 'sqlite').trim();
   const embedProvider = (env.MEMORY_EMBED_PROVIDER || 'disabled').trim();
+  const groupCounts = countRegisteredGroupsByPrefix(runtimeHome);
 
   return {
     runtimeHome,
     doctor,
     service,
     telegramTokenConfigured: Boolean(env.TELEGRAM_BOT_TOKEN?.trim()),
-    telegramGroups: countTelegramGroups(runtimeHome),
+    telegramGroups: groupCounts.telegram,
+    slackBotTokenConfigured: Boolean(env.SLACK_BOT_TOKEN?.trim()),
+    slackAppTokenConfigured: Boolean(env.SLACK_APP_TOKEN?.trim()),
+    slackGroups: groupCounts.slack,
     memoryEnabled: memoryProvider !== 'noop' && memoryProvider !== 'none',
     embeddingsEnabled: embedProvider === 'openai',
     dreamingEnabled: parseBool(env.MEMORY_DREAMING_ENABLED, false),
@@ -89,14 +111,28 @@ export function formatRuntimeStatus(summary: RuntimeStatusSummary): string {
     `Telegram token: ${summary.telegramTokenConfigured ? 'configured' : 'missing'}`,
   );
   lines.push(`Telegram groups: ${summary.telegramGroups}`);
+  lines.push(
+    `Slack bot token: ${summary.slackBotTokenConfigured ? 'configured' : 'missing'}`,
+  );
+  lines.push(
+    `Slack app token: ${summary.slackAppTokenConfigured ? 'configured' : 'missing'}`,
+  );
+  lines.push(`Slack groups: ${summary.slackGroups}`);
   lines.push(`Memory: ${statusWord(summary.memoryEnabled)}`);
   lines.push(`Embeddings: ${statusWord(summary.embeddingsEnabled)}`);
   lines.push(`Dreaming: ${statusWord(summary.dreamingEnabled)}`);
   lines.push(`Service (${summary.service.kind}): ${summary.service.status}`);
 
   const nextActions: string[] = [];
-  if (!summary.telegramTokenConfigured || summary.telegramGroups === 0) {
-    nextActions.push('Run `myclaw telegram connect` to finish Telegram setup.');
+  if (
+    (!summary.telegramTokenConfigured || summary.telegramGroups === 0) &&
+    (!summary.slackBotTokenConfigured ||
+      !summary.slackAppTokenConfigured ||
+      summary.slackGroups === 0)
+  ) {
+    nextActions.push(
+      'Run `myclaw telegram connect` or `myclaw slack connect` to finish channel setup.',
+    );
   }
   if (!summary.doctor.ok) {
     nextActions.push('Run `myclaw doctor` and fix blocking items.');

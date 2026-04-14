@@ -61,6 +61,9 @@ const envConfig = readEnvFile([
   'MEMORY_MAX_PROCEDURES_PER_GROUP',
   'PERMISSION_APPROVAL_TIMEOUT_MS',
   'TELEGRAM_PERMISSION_APPROVER_IDS',
+  'SLACK_BOT_TOKEN',
+  'SLACK_APP_TOKEN',
+  'SLACK_PERMISSION_APPROVER_IDS',
   'MINI_APP_ENABLED',
   'MINI_APP_HOST',
   'MINI_APP_PORT',
@@ -566,6 +569,10 @@ function parseIdAllowlist(raw: string | undefined): Set<string> {
 export const TELEGRAM_PERMISSION_APPROVER_IDS = parseIdAllowlist(
   process.env.TELEGRAM_PERMISSION_APPROVER_IDS ||
     envConfig.TELEGRAM_PERMISSION_APPROVER_IDS,
+);
+export const SLACK_PERMISSION_APPROVER_IDS = parseIdAllowlist(
+  process.env.SLACK_PERMISSION_APPROVER_IDS ||
+    envConfig.SLACK_PERMISSION_APPROVER_IDS,
 );
 export const MEMORY_CONSOLIDATION_MAX_CLUSTERS = Math.max(
   1,

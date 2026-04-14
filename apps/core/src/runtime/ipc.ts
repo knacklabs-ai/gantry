@@ -8,6 +8,7 @@ import {
   DATA_DIR,
   IPC_POLL_INTERVAL,
   MINI_APP_API_URL,
+  MINI_APP_ENABLED,
   MINI_APP_FRONTEND_URL,
   TIMEZONE,
 } from '../core/config.js';
@@ -698,10 +699,11 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
 }
 
 function buildPlanUrl(planId: string): string | undefined {
-  const frontend = MINI_APP_FRONTEND_URL;
+  if (!MINI_APP_ENABLED) return undefined;
+  const frontend = MINI_APP_FRONTEND_URL.trim();
   if (!frontend) return undefined;
   const base = `${frontend.replace(/\/+$/, '')}/plans/${planId}`;
-  const api = MINI_APP_API_URL;
+  const api = MINI_APP_API_URL.trim();
   if (!api) return base;
   return `${base}?api=${encodeURIComponent(api)}`;
 }

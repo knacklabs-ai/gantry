@@ -1188,17 +1188,40 @@ describe('createGroupProcessor', () => {
       await processGroupMessages('group1@g.us');
 
       expect(streamingChannel.sendStreamingChunk).toHaveBeenCalledTimes(2);
+      const firstCallGeneration = (
+        streamingChannel.sendStreamingChunk as ReturnType<typeof vi.fn>
+      ).mock.calls[0]?.[2]?.generation;
       expect(streamingChannel.sendStreamingChunk).toHaveBeenNthCalledWith(
         1,
         'group1@g.us',
         'stream text',
+        expect.objectContaining({ generation: expect.any(Number) }),
       );
       expect(streamingChannel.sendStreamingChunk).toHaveBeenNthCalledWith(
         2,
         'group1@g.us',
         '',
-        { done: true },
+        expect.objectContaining({
+          done: true,
+          generation: firstCallGeneration,
+        }),
       );
+    });
+
+    it('resets channel streaming state before running a new cycle', async () => {
+      const resetStreaming = vi.fn();
+      const streamingChannel = makeChannel({
+        resetStreaming,
+        sendStreamingChunk: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath();
+      deps.channels = [streamingChannel];
+      mockFindChannel.mockReturnValue(streamingChannel);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(resetStreaming).toHaveBeenCalledWith('group1@g.us');
     });
 
     it('handles non-string result by JSON.stringifying', async () => {
@@ -1247,6 +1270,98 @@ describe('createGroupProcessor', () => {
       expect(channel.sendMessage).toHaveBeenCalledWith(
         'group1@g.us',
         'Start  middle  end',
+      );
+    });
+
+    it('does not reuse older thread context when latest message is unthreaded', async () => {
+      const messages = [
+        makeMessage({
+          id: 'msg-older',
+          timestamp: '1700000001',
+          thread_id: 'old-thread',
+        }),
+        makeMessage({
+          id: 'msg-latest',
+          timestamp: '1700000002',
+          thread_id: '',
+        }),
+      ];
+      const { deps, channel } = setupHappyPath({ messages });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        'group1@g.us',
+        'Agent reply text',
+      );
+      expect(
+        (channel.sendMessage as ReturnType<typeof vi.fn>).mock.calls.some(
+          (call: unknown[]) =>
+            typeof call[2] === 'object' &&
+            call[2] !== null &&
+            'threadId' in (call[2] as Record<string, unknown>),
+        ),
+      ).toBe(false);
+    });
+
+    it('routes output to the latest message thread when latest message is threaded', async () => {
+      const messages = [
+        makeMessage({
+          id: 'msg-older',
+          timestamp: '1700000001',
+          thread_id: 'old-thread',
+        }),
+        makeMessage({
+          id: 'msg-latest',
+          timestamp: '1700000002',
+          thread_id: 'latest-thread',
+        }),
+      ];
+      const { deps, channel } = setupHappyPath({ messages });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        'group1@g.us',
+        'Agent reply text',
+        { threadId: 'latest-thread' },
+      );
+    });
+
+    it('refreshes thread context when a newer message arrives during processing', async () => {
+      const initialMessages = [
+        makeMessage({
+          id: 'msg-initial',
+          timestamp: '1700000001',
+          thread_id: 'initial-thread',
+        }),
+      ];
+      const followUpMessage = makeMessage({
+        id: 'msg-followup',
+        timestamp: '1700000002',
+        thread_id: 'live-thread',
+      });
+
+      const { deps, channel } = setupHappyPath({ messages: initialMessages });
+      let providedFollowUp = false;
+      mockGetMessagesSince.mockImplementation((_jid: string, since: string) => {
+        if (since === '0') return initialMessages;
+        if (since === '1700000001' && !providedFollowUp) {
+          providedFollowUp = true;
+          return [followUpMessage];
+        }
+        return [];
+      });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        'group1@g.us',
+        'Agent reply text',
+        { threadId: 'live-thread' },
       );
     });
   });

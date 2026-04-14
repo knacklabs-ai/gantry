@@ -1,8 +1,10 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import Database from 'better-sqlite3';
 
 import {
   _initTestDatabase,
   _closeDatabase,
+  _createSchemaForTest,
   addJobEvent,
   completeJobRun,
   createJobRun,
@@ -240,6 +242,73 @@ describe('reply context', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].reply_to_message_id).toBe('99');
     expect(messages[0].reply_to_sender_name).toBe('Dave');
+  });
+});
+
+describe('thread context', () => {
+  it('stores and retrieves thread_id', () => {
+    storeChatMetadata('sl:C0123456789', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'slack-1',
+      chat_jid: 'sl:C0123456789',
+      sender: 'U123',
+      sender_name: 'Alice',
+      content: 'reply in thread',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      thread_id: '1710000000.000100',
+    });
+
+    const messages = getMessagesSince(
+      'sl:C0123456789',
+      '2024-01-01T00:00:00.000Z',
+      'Andy',
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0].thread_id).toBe('1710000000.000100');
+  });
+
+  it('migrates legacy messages table and creates thread index after adding thread_id', () => {
+    const legacyDb = new Database(':memory:');
+    try {
+      legacyDb.exec(`
+        CREATE TABLE chats (
+          jid TEXT PRIMARY KEY,
+          name TEXT,
+          last_message_time TEXT,
+          channel TEXT,
+          is_group INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+          id TEXT,
+          chat_jid TEXT,
+          sender TEXT,
+          sender_name TEXT,
+          content TEXT,
+          timestamp TEXT,
+          is_from_me INTEGER,
+          is_bot_message INTEGER DEFAULT 0,
+          PRIMARY KEY (id, chat_jid),
+          FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+        );
+      `);
+
+      expect(() => _createSchemaForTest(legacyDb)).not.toThrow();
+
+      const columns = legacyDb
+        .prepare(`PRAGMA table_info(messages)`)
+        .all() as Array<{ name?: string }>;
+      expect(columns.some((col) => col.name === 'thread_id')).toBe(true);
+
+      const indexRow = legacyDb
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_chat_thread'`,
+        )
+        .get() as { name?: string } | undefined;
+      expect(indexRow?.name).toBe('idx_messages_chat_thread');
+    } finally {
+      legacyDb.close();
+    }
   });
 });
 

@@ -3,8 +3,9 @@
 import * as p from '@clack/prompts';
 
 import {
+  hasProcessableGroupForConfiguredChannel,
   formatDoctorReport,
-  hasRegisteredTelegramGroup,
+  hasRegisteredAnyGroup,
   hasRuntimeConfig,
   runDoctorWithNetwork,
 } from './doctor.js';
@@ -22,6 +23,7 @@ import {
   startService,
   stopService,
 } from './service-manager.js';
+import { runSlackConnectCommand } from './slack.js';
 import { runSetupFlow } from './setup-flow.js';
 import { collectRuntimeStatus, formatRuntimeStatus } from './status.js';
 import { runTunnelCommand } from './tunnel.js';
@@ -52,6 +54,7 @@ function usage(): string {
     '  myclaw group remove <jid|folder>',
     '  myclaw group trigger <jid|folder> <word>',
     '  myclaw telegram connect',
+    '  myclaw slack connect',
     '  myclaw tunnel quick',
     '  myclaw service install',
     '  myclaw service start',
@@ -114,9 +117,15 @@ async function runStartCommand(runtimeHome: string): Promise<number> {
     );
     return 1;
   }
-  if (!hasRegisteredTelegramGroup(runtimeHome)) {
+  if (!hasRegisteredAnyGroup(runtimeHome)) {
     p.log.error(
-      'No Telegram group is connected. Next action: run `myclaw telegram connect`.',
+      'No channel group is connected. Next action: run `myclaw telegram connect` or `myclaw slack connect`.',
+    );
+    return 1;
+  }
+  if (!hasProcessableGroupForConfiguredChannel(runtimeHome)) {
+    p.log.error(
+      'Configured channels do not match connected groups. Next action: connect a group for a configured channel (run `myclaw telegram connect` or `myclaw slack connect`).',
     );
     return 1;
   }
@@ -242,9 +251,16 @@ async function runSetupCommand(
 async function runSmartEntrypoint(runtimeHome: string): Promise<number> {
   const state = readOnboardingState(runtimeHome);
   const hasConfig = hasRuntimeConfig(runtimeHome);
-  const hasGroup = hasRegisteredTelegramGroup(runtimeHome);
+  const hasGroup = hasRegisteredAnyGroup(runtimeHome);
+  const hasProcessableGroup =
+    hasProcessableGroupForConfiguredChannel(runtimeHome);
 
-  if (!hasConfig || !hasGroup || state?.status === 'in_progress') {
+  if (
+    !hasConfig ||
+    !hasGroup ||
+    !hasProcessableGroup ||
+    state?.status === 'in_progress'
+  ) {
     return runSetupCommand(runtimeHome);
   }
 
@@ -253,6 +269,10 @@ async function runSmartEntrypoint(runtimeHome: string): Promise<number> {
 
 async function runTelegramConnectCommand(runtimeHome: string): Promise<number> {
   return runSetupCommand(runtimeHome, 'telegram');
+}
+
+async function runSlackConnect(runtimeHome: string): Promise<number> {
+  return runSlackConnectCommand(runtimeHome);
 }
 
 async function main(): Promise<number> {
@@ -296,6 +316,10 @@ async function main(): Promise<number> {
 
   if (command === 'telegram' && subcommand === 'connect') {
     return runTelegramConnectCommand(runtimeHome);
+  }
+
+  if (command === 'slack' && subcommand === 'connect') {
+    return runSlackConnect(runtimeHome);
   }
 
   if (command === 'tunnel') {

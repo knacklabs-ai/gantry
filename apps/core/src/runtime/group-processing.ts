@@ -46,6 +46,12 @@ import {
 const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
 const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
 const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
+let streamingGenerationCounter = 0;
+
+function nextStreamingGeneration(): number {
+  streamingGenerationCounter += 1;
+  return streamingGenerationCounter;
+}
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -250,6 +256,66 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
 
     if (missedMessages.length === 0) return true;
 
+    const latestMessage = missedMessages[missedMessages.length - 1];
+    let latestSeenTimestamp = latestMessage.timestamp;
+    let activeThreadId =
+      typeof latestMessage?.thread_id === 'string' &&
+      latestMessage.thread_id.trim()
+        ? latestMessage.thread_id.trim()
+        : undefined;
+    const refreshActiveThreadId = () => {
+      try {
+        const newerMessages = getMessagesSince(
+          chatJid,
+          latestSeenTimestamp,
+          ASSISTANT_NAME,
+          1,
+        );
+        if (newerMessages.length === 0) return;
+        const newestMessage = newerMessages[newerMessages.length - 1];
+        latestSeenTimestamp = newestMessage.timestamp;
+        activeThreadId =
+          typeof newestMessage.thread_id === 'string' &&
+          newestMessage.thread_id.trim()
+            ? newestMessage.thread_id.trim()
+            : undefined;
+      } catch (err) {
+        logger.debug(
+          { err, group: group.name },
+          'Failed to refresh latest thread context during run',
+        );
+      }
+    };
+    const resolveThreadId = (threadId?: string): string | undefined => {
+      if (threadId) return threadId;
+      refreshActiveThreadId();
+      return activeThreadId;
+    };
+    const streamGeneration = nextStreamingGeneration();
+    const buildMessageOptions = (
+      threadId?: string,
+    ): { threadId: string } | undefined => {
+      const resolved = resolveThreadId(threadId);
+      return resolved ? { threadId: resolved } : undefined;
+    };
+    const buildStreamingOptions = (args: {
+      threadId?: string;
+      done?: boolean;
+    }): { threadId?: string; done?: boolean; generation: number } => {
+      const resolvedThread = resolveThreadId(args.threadId);
+      const base = { generation: streamGeneration } as const;
+      if (resolvedThread && args.done !== undefined) {
+        return { ...base, threadId: resolvedThread, done: args.done };
+      }
+      if (resolvedThread) {
+        return { ...base, threadId: resolvedThread };
+      }
+      if (args.done !== undefined) {
+        return { ...base, done: args.done };
+      }
+      return { ...base };
+    };
+
     const cmdResult = await handleSessionCommand({
       missedMessages,
       isMainGroup,
@@ -257,7 +323,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       triggerPattern: getTriggerPattern(group.trigger),
       timezone: TIMEZONE,
       deps: {
-        sendMessage: (text) => channel.sendMessage(chatJid, text),
+        sendMessage: (text, options) =>
+          (() => {
+            const messageOptions = buildMessageOptions(options?.threadId);
+            if (messageOptions) {
+              return channel.sendMessage(chatJid, text, messageOptions);
+            }
+            return channel.sendMessage(chatJid, text);
+          })(),
         setTyping: (typing) =>
           channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
         runAgent: (prompt, onOutput, options) =>
@@ -344,6 +417,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       { group: group.name, messageCount: missedMessages.length },
       'Processing messages',
     );
+    try {
+      channel.resetStreaming?.(chatJid);
+    } catch (err) {
+      logger.debug(
+        { err, group: group.name },
+        'Failed to reset channel streaming state before processing',
+      );
+    }
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     const resetIdleTimer = () => {
@@ -366,7 +447,16 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     let progressTimer: ReturnType<typeof setInterval> | null = null;
     if (channel.sendProgressUpdate) {
       try {
-        await channel.sendProgressUpdate(chatJid, 'Working on it...');
+        const progressOptions = buildMessageOptions();
+        if (progressOptions) {
+          await channel.sendProgressUpdate(
+            chatJid,
+            'Working on it...',
+            progressOptions,
+          );
+        } else {
+          await channel.sendProgressUpdate(chatJid, 'Working on it...');
+        }
       } catch (err) {
         logger.debug(
           { err, group: group.name },
@@ -390,34 +480,66 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       const elapsedMs = now - startedAt;
       if (now - lastElapsedProgressAt >= ELAPSED_PROGRESS_INTERVAL_MS) {
         lastElapsedProgressAt = now;
-        void channel
-          .sendProgressUpdate(
-            chatJid,
-            `Still working (${formatElapsed(elapsedMs)})...`,
-          )
-          .catch((err) =>
-            logger.debug(
-              { err, group: group.name },
-              'Failed to send elapsed progress update',
-            ),
-          );
+        const progressOptions = buildMessageOptions();
+        if (progressOptions) {
+          void channel
+            .sendProgressUpdate(
+              chatJid,
+              `Still working (${formatElapsed(elapsedMs)})...`,
+              progressOptions,
+            )
+            .catch((err) =>
+              logger.debug(
+                { err, group: group.name },
+                'Failed to send elapsed progress update',
+              ),
+            );
+        } else {
+          void channel
+            .sendProgressUpdate(
+              chatJid,
+              `Still working (${formatElapsed(elapsedMs)})...`,
+            )
+            .catch((err) =>
+              logger.debug(
+                { err, group: group.name },
+                'Failed to send elapsed progress update',
+              ),
+            );
+        }
       }
       if (
         now - lastAgentProgressAt >= NO_OUTPUT_WARNING_INTERVAL_MS &&
         now - lastNoOutputWarningAt >= NO_OUTPUT_WARNING_INTERVAL_MS
       ) {
         lastNoOutputWarningAt = now;
-        void channel
-          .sendProgressUpdate(
-            chatJid,
-            `No new output yet, still running (${formatElapsed(elapsedMs)})...`,
-          )
-          .catch((err) =>
-            logger.debug(
-              { err, group: group.name },
-              'Failed to send no-output warning',
-            ),
-          );
+        const progressOptions = buildMessageOptions();
+        if (progressOptions) {
+          void channel
+            .sendProgressUpdate(
+              chatJid,
+              `No new output yet, still running (${formatElapsed(elapsedMs)})...`,
+              progressOptions,
+            )
+            .catch((err) =>
+              logger.debug(
+                { err, group: group.name },
+                'Failed to send no-output warning',
+              ),
+            );
+        } else {
+          void channel
+            .sendProgressUpdate(
+              chatJid,
+              `No new output yet, still running (${formatElapsed(elapsedMs)})...`,
+            )
+            .catch((err) =>
+              logger.debug(
+                { err, group: group.name },
+                'Failed to send no-output warning',
+              ),
+            );
+        }
       }
     }, 5_000);
     let hadError = false;
@@ -432,7 +554,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       if (!supportsStreamingChunks || streamFinalized) return;
       streamFinalized = true;
       try {
-        await channel.sendStreamingChunk!(chatJid, '', { done: true });
+        await channel.sendStreamingChunk!(
+          chatJid,
+          '',
+          buildStreamingOptions({ done: true }),
+        );
       } catch (err) {
         logger.warn(
           { err, group: group.name, reason },
@@ -471,9 +597,18 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             );
             if (text) {
               if (supportsStreamingChunks) {
-                await channel.sendStreamingChunk!(chatJid, text);
+                await channel.sendStreamingChunk!(
+                  chatJid,
+                  text,
+                  buildStreamingOptions({}),
+                );
               } else {
-                await channel.sendMessage(chatJid, text);
+                const messageOptions = buildMessageOptions();
+                if (messageOptions) {
+                  await channel.sendMessage(chatJid, text, messageOptions);
+                } else {
+                  await channel.sendMessage(chatJid, text);
+                }
               }
               outputSentToUser = true;
               collectedOutput += `${text}\n`;
@@ -511,9 +646,16 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             ? `Failed after ${elapsed}.`
             : `Done in ${elapsed}.`;
         try {
-          await channel.sendProgressUpdate(chatJid, finalStatus, {
-            done: true,
-          });
+          const finalProgressOptions = buildStreamingOptions({ done: true });
+          if (finalProgressOptions) {
+            await channel.sendProgressUpdate(
+              chatJid,
+              finalStatus,
+              finalProgressOptions,
+            );
+          } else {
+            await channel.sendProgressUpdate(chatJid, finalStatus);
+          }
         } catch (err) {
           logger.debug(
             { err, group: group.name },

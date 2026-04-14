@@ -1,4 +1,5 @@
 import type {
+  MessageSendOptions,
   NewMessage,
   ThinkingEffort,
   ThinkingOverride,
@@ -139,7 +140,7 @@ export interface AgentResult {
 
 /** Dependencies injected by the orchestrator. */
 export interface SessionCommandDeps {
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, options?: MessageSendOptions) => Promise<void>;
   setTyping: (typing: boolean) => Promise<void>;
   runAgent: (
     prompt: string,

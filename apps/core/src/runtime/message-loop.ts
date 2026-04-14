@@ -121,6 +121,12 @@ export async function startMessagePollingLoop(
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          const latestMessage = messagesToSend[messagesToSend.length - 1];
+          const activeThreadId =
+            typeof latestMessage?.thread_id === 'string' &&
+            latestMessage.thread_id.trim()
+              ? latestMessage.thread_id.trim()
+              : undefined;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (deps.queue.sendMessage(chatJid, formatted)) {
@@ -138,17 +144,24 @@ export async function startMessagePollingLoop(
               ?.catch((err: unknown) =>
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
-            channel
-              .sendProgressUpdate?.(
-                chatJid,
-                'Still working on it, got your follow-up.',
-              )
-              ?.catch((err: unknown) =>
+            if (channel.sendProgressUpdate) {
+              const progressPromise = activeThreadId
+                ? channel.sendProgressUpdate(
+                    chatJid,
+                    'Still working on it, got your follow-up.',
+                    { threadId: activeThreadId },
+                  )
+                : channel.sendProgressUpdate(
+                    chatJid,
+                    'Still working on it, got your follow-up.',
+                  );
+              progressPromise.catch((err: unknown) =>
                 logger.warn(
                   { chatJid, err },
                   'Failed to send follow-up progress update',
                 ),
               );
+            }
           } else {
             deps.queue.enqueueMessageCheck(chatJid);
           }

@@ -154,6 +154,7 @@ export interface PermissionApprovalDecision {
 export interface StreamingChunkOptions {
   threadId?: string;
   done?: boolean;
+  generation?: number;
 }
 
 export interface ProgressUpdateOptions {
@@ -168,10 +169,18 @@ export interface PlanReviewPrompt {
   url?: string;
 }
 
+export interface MessageSendOptions {
+  threadId?: string;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: MessageSendOptions,
+  ): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
@@ -183,6 +192,8 @@ export interface Channel {
     text: string,
     options?: StreamingChunkOptions,
   ): Promise<void>;
+  // Optional: clear per-jid streaming state before a new processing cycle.
+  resetStreaming?(jid: string): void;
   // Optional: liveness/progress status sink (e.g. "still working...").
   sendProgressUpdate?(
     jid: string,

@@ -111,6 +111,41 @@ function parseRegisteredGroupAgentConfig(
   }
 }
 
+function isSafeIdentifier(identifier: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier);
+}
+
+function hasColumn(
+  database: Database.Database,
+  tableName: string,
+  columnName: string,
+): boolean {
+  if (!isSafeIdentifier(tableName) || !isSafeIdentifier(columnName)) {
+    throw new Error(
+      `Unsafe schema identifier (table=${tableName}, column=${columnName})`,
+    );
+  }
+  const rows = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function addColumnIfMissing(
+  database: Database.Database,
+  tableName: string,
+  columnName: string,
+  columnDefinition: string,
+): boolean {
+  if (hasColumn(database, tableName, columnName)) {
+    return false;
+  }
+  database.exec(
+    `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`,
+  );
+  return true;
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -127,6 +162,7 @@ function createSchema(database: Database.Database): void {
       sender_name TEXT,
       content TEXT,
       timestamp TEXT,
+      thread_id TEXT,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
       PRIMARY KEY (id, chat_jid),
@@ -215,69 +251,75 @@ function createSchema(database: Database.Database): void {
     DROP TABLE IF EXISTS scheduled_tasks;
   `);
 
-  // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
+    // Add is_bot_message column if needed, then backfill legacy prefix rows.
+    addColumnIfMissing(
+      database,
+      'messages',
+      'is_bot_message',
+      'INTEGER DEFAULT 0',
     );
-    // Backfill: mark existing bot messages that used the content prefix pattern
     database
-      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
+      .prepare(
+        `UPDATE messages
+         SET is_bot_message = 1
+         WHERE is_bot_message = 0 AND content LIKE ?`,
+      )
       .run(`${ASSISTANT_NAME}:%`);
-  } catch {
-    /* column already exists */
-  }
 
-  // Add is_main column if it doesn't exist (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
+    // Add is_main and mark existing main group rows.
+    addColumnIfMissing(
+      database,
+      'registered_groups',
+      'is_main',
+      'INTEGER DEFAULT 0',
     );
-    // Backfill: existing rows with folder = 'main' are the main group
     database.exec(
       `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
     );
-  } catch {
-    /* column already exists */
-  }
 
-  // Add channel and is_group columns if they don't exist (migration for existing DBs)
-  try {
-    database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
-    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    // Backfill from JID patterns
+    // Add channel/is_group metadata columns and backfill chat types when missing.
+    addColumnIfMissing(database, 'chats', 'channel', 'TEXT');
+    addColumnIfMissing(database, 'chats', 'is_group', 'INTEGER DEFAULT 0');
     database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
+      `UPDATE chats SET channel = 'whatsapp', is_group = 1
+       WHERE channel IS NULL AND jid LIKE '%@g.us'`,
     );
     database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
+      `UPDATE chats SET channel = 'whatsapp', is_group = 0
+       WHERE channel IS NULL AND jid LIKE '%@s.whatsapp.net'`,
     );
     database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
+      `UPDATE chats SET channel = 'discord', is_group = 1
+       WHERE channel IS NULL AND jid LIKE 'dc:%'`,
     );
     database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 0 WHERE jid LIKE 'tg:%'`,
+      `UPDATE chats SET channel = 'telegram', is_group = 0
+       WHERE channel IS NULL AND jid LIKE 'tg:%'`,
     );
-  } catch {
-    /* columns already exist */
-  }
 
-  // Add reply context columns if they don't exist (migration for existing DBs)
-  try {
-    database.exec(`ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT`);
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN reply_to_message_content TEXT`,
+    // Add reply context columns.
+    addColumnIfMissing(database, 'messages', 'reply_to_message_id', 'TEXT');
+    addColumnIfMissing(
+      database,
+      'messages',
+      'reply_to_message_content',
+      'TEXT',
     );
-    database.exec(`ALTER TABLE messages ADD COLUMN reply_to_sender_name TEXT`);
-  } catch {
-    /* columns already exist */
-  }
+    addColumnIfMissing(database, 'messages', 'reply_to_sender_name', 'TEXT');
 
-  // Add per-job model override column if it doesn't exist.
-  try {
-    database.exec(`ALTER TABLE jobs ADD COLUMN model TEXT DEFAULT NULL`);
-  } catch {
-    /* column already exists */
+    // Add thread_id column.
+    addColumnIfMissing(database, 'messages', 'thread_id', 'TEXT');
+    // Must run after thread_id migration for upgrade safety.
+    database.exec(
+      `CREATE INDEX IF NOT EXISTS idx_messages_chat_thread ON messages(chat_jid, thread_id)`,
+    );
+
+    // Add per-job model override column.
+    addColumnIfMissing(database, 'jobs', 'model', 'TEXT DEFAULT NULL');
+  } catch (err) {
+    logger.error({ err }, 'Database schema migration failed');
+    throw err;
   }
 }
 
@@ -296,6 +338,11 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+}
+
+/** @internal - for tests only. Applies schema/migrations to a provided DB. */
+export function _createSchemaForTest(database: Database.Database): void {
+  createSchema(database);
 }
 
 /** @internal - for tests only. */
@@ -372,7 +419,7 @@ export function getAllChats(): ChatInfo[] {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, thread_id, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -380,6 +427,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.sender_name,
     msg.content,
     msg.timestamp,
+    msg.thread_id ?? null,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
     msg.reply_to_message_id ?? null,
@@ -403,6 +451,7 @@ export function getNewMessages(
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+             thread_id,
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
@@ -437,6 +486,7 @@ export function getMessagesSince(
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+             thread_id,
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?

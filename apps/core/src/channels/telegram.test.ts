@@ -11,6 +11,7 @@ vi.mock('../core/env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 // Mock config
 vi.mock('../core/config.js', () => ({
   ASSISTANT_NAME: 'Andy',
+  MINI_APP_ENABLED: true,
   MINI_APP_API_URL: '',
   MINI_APP_FRONTEND_URL: 'https://app.myclaw.dev',
   MINI_APP_SHORT_NAME: 'plans',
@@ -1447,6 +1448,57 @@ describe('TelegramChannel', () => {
         {},
       );
       expect(currentBot().api.editMessageText).toHaveBeenCalled();
+    });
+
+    it('ignores stale streaming generations for the same chat', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendStreamingChunk('tg:-1001234567890', 'fresh', {
+        generation: 2,
+      });
+
+      currentBot().api.sendMessage.mockClear();
+      currentBot().api.editMessageText.mockClear();
+
+      await channel.sendStreamingChunk('tg:-1001234567890', 'stale', {
+        generation: 1,
+      });
+
+      expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+      expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+    });
+
+    it('seals previous generation on resetStreaming to reject late stale chunks', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendStreamingChunk('tg:-1001234567890', 'old', {
+        generation: 1,
+      });
+
+      channel.resetStreaming('tg:-1001234567890');
+      currentBot().api.sendMessage.mockClear();
+      currentBot().api.editMessageText.mockClear();
+
+      await channel.sendStreamingChunk('tg:-1001234567890', 'stale', {
+        generation: 1,
+      });
+
+      expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+      expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+
+      await channel.sendStreamingChunk('tg:-1001234567890', 'fresh', {
+        generation: 2,
+      });
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '-1001234567890',
+        'fresh',
+        {},
+      );
     });
   });
 

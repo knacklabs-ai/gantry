@@ -1,10 +1,15 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import Database from 'better-sqlite3';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { runDoctor, runDoctorWithNetwork } from './doctor.js';
+import {
+  hasProcessableGroupForConfiguredChannel,
+  runDoctor,
+  runDoctorWithNetwork,
+} from './doctor.js';
 import { upsertEnvFile } from './env-file.js';
 import { envFilePath } from './runtime-home.js';
 
@@ -15,6 +20,22 @@ function createRuntimeHome(): string {
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
   fs.mkdirSync(path.join(home, 'data'), { recursive: true });
   return home;
+}
+
+function seedRegisteredGroups(runtimeHome: string, jids: string[]): void {
+  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const db = new Database(dbPath);
+  try {
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS registered_groups (jid TEXT PRIMARY KEY);`,
+    );
+    const insert = db.prepare(
+      `INSERT OR REPLACE INTO registered_groups (jid) VALUES (?)`,
+    );
+    for (const jid of jids) insert.run(jid);
+  } finally {
+    db.close();
+  }
 }
 
 afterEach(() => {
@@ -83,5 +104,38 @@ describe('doctor checks', () => {
 
     expect(check?.status).toBe('pass');
     expect(check?.message).toContain('launchd');
+  });
+});
+
+describe('hasProcessableGroupForConfiguredChannel', () => {
+  it('returns true when Telegram is configured and Telegram groups exist', () => {
+    const runtimeHome = createRuntimeHome();
+    upsertEnvFile(envFilePath(runtimeHome), {
+      TELEGRAM_BOT_TOKEN: 'token',
+    });
+    seedRegisteredGroups(runtimeHome, ['tg:123']);
+
+    expect(hasProcessableGroupForConfiguredChannel(runtimeHome)).toBe(true);
+  });
+
+  it('returns true when Slack is configured and Slack groups exist', () => {
+    const runtimeHome = createRuntimeHome();
+    upsertEnvFile(envFilePath(runtimeHome), {
+      SLACK_BOT_TOKEN: 'xoxb-test',
+      SLACK_APP_TOKEN: 'xapp-test',
+    });
+    seedRegisteredGroups(runtimeHome, ['sl:C123456']);
+
+    expect(hasProcessableGroupForConfiguredChannel(runtimeHome)).toBe(true);
+  });
+
+  it('returns false when configured channels and registered groups do not match', () => {
+    const runtimeHome = createRuntimeHome();
+    upsertEnvFile(envFilePath(runtimeHome), {
+      TELEGRAM_BOT_TOKEN: 'token',
+    });
+    seedRegisteredGroups(runtimeHome, ['sl:C123456']);
+
+    expect(hasProcessableGroupForConfiguredChannel(runtimeHome)).toBe(false);
   });
 });

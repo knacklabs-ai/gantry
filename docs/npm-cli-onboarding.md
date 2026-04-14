@@ -35,6 +35,8 @@ The first run is Telegram-first and guided one step at a time:
 
 If setup is interrupted, rerun `myclaw` to resume.
 
+Slack can be connected after first-run setup (or as an additional channel) with `myclaw slack connect`.
+
 ## Runtime Home
 
 MyClaw stores mutable state under `AGENT_ROOT`.
@@ -71,6 +73,20 @@ Reconnect Telegram later:
 
 ```bash
 myclaw telegram connect
+```
+
+## Slack Setup
+
+Required values:
+
+- Slack Bot User OAuth token (`SLACK_BOT_TOKEN`, starts with `xoxb-`)
+- Slack App-level token (`SLACK_APP_TOKEN`, starts with `xapp-`, `connections:write`)
+- Slack chat/channel ID (for example `C0123456789`, stored as `sl:C0123456789`)
+
+Connect or reconnect Slack:
+
+```bash
+myclaw slack connect
 ```
 
 ## Memory Settings (Beginner Language)
@@ -122,6 +138,15 @@ Next action:
 1. verify token in BotFather
 2. paste full token again
 3. rerun `myclaw telegram connect`
+
+### Slack tokens fail validation
+
+Next action:
+
+1. verify `SLACK_BOT_TOKEN` starts with `xoxb-` and app is installed to workspace
+2. verify `SLACK_APP_TOKEN` starts with `xapp-`, Socket Mode is enabled, and token has `connections:write`
+3. invite the app/bot to the target channel
+4. rerun `myclaw slack connect`
 
 ### Runtime home is not writable
 

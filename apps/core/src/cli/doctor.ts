@@ -98,6 +98,68 @@ function inspectTelegramGroupCount(runtimeHome: string): {
   }
 }
 
+function inspectSlackGroupCount(runtimeHome: string): {
+  count: number;
+  error?: string;
+} {
+  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  if (!fs.existsSync(dbPath)) {
+    return { count: 0 };
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) as count FROM registered_groups WHERE jid LIKE 'sl:%'`,
+      )
+      .get() as { count: number };
+    return { count: row.count };
+  } catch (err) {
+    return {
+      count: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close errors and preserve primary failure.
+    }
+  }
+}
+
+function inspectRegisteredGroupCount(runtimeHome: string): {
+  count: number;
+  error?: string;
+} {
+  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  if (!fs.existsSync(dbPath)) {
+    return { count: 0 };
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const row = db
+      .prepare(`SELECT COUNT(*) as count FROM registered_groups`)
+      .get() as { count: number };
+    return { count: row.count };
+  } catch (err) {
+    return {
+      count: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close errors and preserve primary failure.
+    }
+  }
+}
+
 export function runDoctor(
   importMetaUrl: string,
   runtimeHome: string,
@@ -211,6 +273,27 @@ export function runDoctor(
       : 'Run `myclaw telegram connect` to configure your bot token.',
   });
 
+  const hasSlackBotToken = Boolean(env.SLACK_BOT_TOKEN?.trim());
+  const hasSlackAppToken = Boolean(env.SLACK_APP_TOKEN?.trim());
+  const slackConfigured = hasSlackBotToken && hasSlackAppToken;
+  add(checks, {
+    id: 'slack-tokens',
+    title: 'Slack Tokens',
+    status: slackConfigured
+      ? 'pass'
+      : hasSlackBotToken || hasSlackAppToken
+        ? 'warn'
+        : 'warn',
+    message: slackConfigured
+      ? 'Slack bot/app tokens are configured.'
+      : hasSlackBotToken || hasSlackAppToken
+        ? 'Slack token setup is incomplete (both bot and app tokens are required).'
+        : `Slack tokens are missing in ${envPath}.`,
+    nextAction: slackConfigured
+      ? undefined
+      : 'Run `myclaw slack connect` to configure Slack Socket Mode credentials.',
+  });
+
   const embedProvider = env.MEMORY_EMBED_PROVIDER || 'disabled';
   const hasOpenAIKey = Boolean(env.OPENAI_API_KEY?.trim());
   if (embedProvider === 'openai' && !hasOpenAIKey) {
@@ -258,6 +341,34 @@ export function runDoctor(
       message: 'No Telegram groups are registered.',
       nextAction:
         'Run `myclaw telegram connect` (or `myclaw group add <chat-id>`) to connect a chat.',
+    });
+  }
+
+  const slackGroups = inspectSlackGroupCount(runtimeHome);
+  if (slackGroups.error) {
+    add(checks, {
+      id: 'slack-groups',
+      title: 'Slack Group Registry',
+      status: 'fail',
+      message:
+        'Could not read registered Slack groups; runtime database may be corrupted.',
+      nextAction: `Repair or replace ${path.join(runtimeHome, 'store', 'messages.db')}. Details: ${slackGroups.error}`,
+    });
+  } else if (slackGroups.count > 0) {
+    add(checks, {
+      id: 'slack-groups',
+      title: 'Slack Group Registry',
+      status: 'pass',
+      message: `${slackGroups.count} Slack group(s) registered.`,
+    });
+  } else {
+    add(checks, {
+      id: 'slack-groups',
+      title: 'Slack Group Registry',
+      status: 'warn',
+      message: 'No Slack groups are registered.',
+      nextAction:
+        'Run `myclaw slack connect` (or `myclaw group add sl:<channel-id>`) to connect Slack.',
     });
   }
 
@@ -376,10 +487,43 @@ export function hasRuntimeConfig(runtimeHome: string): boolean {
   const envPath = envFilePath(runtimeHome);
   if (!fs.existsSync(envPath)) return false;
   const env = readEnvFile(envPath);
-  return Boolean(env.TELEGRAM_BOT_TOKEN?.trim());
+  const hasTelegram = Boolean(env.TELEGRAM_BOT_TOKEN?.trim());
+  const hasSlack = Boolean(
+    env.SLACK_BOT_TOKEN?.trim() && env.SLACK_APP_TOKEN?.trim(),
+  );
+  return hasTelegram || hasSlack;
 }
 
 export function hasRegisteredTelegramGroup(runtimeHome: string): boolean {
   const inspection = inspectTelegramGroupCount(runtimeHome);
   return !inspection.error && inspection.count > 0;
+}
+
+export function hasRegisteredAnyGroup(runtimeHome: string): boolean {
+  const inspection = inspectRegisteredGroupCount(runtimeHome);
+  return !inspection.error && inspection.count > 0;
+}
+
+export function hasProcessableGroupForConfiguredChannel(
+  runtimeHome: string,
+): boolean {
+  const envPath = envFilePath(runtimeHome);
+  if (!fs.existsSync(envPath)) return false;
+  const env = readEnvFile(envPath);
+  const telegramConfigured = Boolean(env.TELEGRAM_BOT_TOKEN?.trim());
+  const slackConfigured = Boolean(
+    env.SLACK_BOT_TOKEN?.trim() && env.SLACK_APP_TOKEN?.trim(),
+  );
+
+  if (telegramConfigured) {
+    const telegramGroups = inspectTelegramGroupCount(runtimeHome);
+    if (!telegramGroups.error && telegramGroups.count > 0) return true;
+  }
+
+  if (slackConfigured) {
+    const slackGroups = inspectSlackGroupCount(runtimeHome);
+    if (!slackGroups.error && slackGroups.count > 0) return true;
+  }
+
+  return false;
 }

@@ -16,7 +16,7 @@ The project is intentionally small. The goal is not to be a framework with every
 npx myclaw
 ```
 
-The first run is a guided CLI flow (doctor + setup) that gets you to a Telegram-ready state without repo steps.
+The first run is a guided CLI flow (doctor + setup) that gets you to a working first channel without repo steps.
 
 ### CLI Commands
 
@@ -27,6 +27,7 @@ myclaw doctor
 myclaw status
 myclaw start
 myclaw telegram connect
+myclaw slack connect
 myclaw service install
 myclaw service start
 myclaw service stop
@@ -35,10 +36,25 @@ myclaw service stop
 Defaults in v1:
 
 - runtime home: `~/myclaw`
-- first channel: Telegram only
+- setup flow: Telegram-first (Slack can be added with `myclaw slack connect`)
 - memory: on
 - embeddings: off (unless OpenAI key is provided and enabled)
 - dreaming: off
+
+### Channel Setup
+
+MyClaw supports multiple channels. You can connect Telegram and/or Slack:
+
+```bash
+myclaw telegram connect
+myclaw slack connect
+```
+
+Notes:
+
+- Telegram uses `TELEGRAM_BOT_TOKEN` and a chat ID like `tg:-1001234567890`.
+- Slack uses Socket Mode with `SLACK_BOT_TOKEN` (`xoxb-...`) and `SLACK_APP_TOKEN` (`xapp-...`), then registers chats like `sl:C0123456789`.
+- Telegram Mini App features are optional and Telegram-specific. Slack UX uses native Slack surfaces (threads, streaming updates, actions).
 
 ## Philosophy
 

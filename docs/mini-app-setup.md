@@ -2,6 +2,8 @@
 
 End-to-end setup for the Telegram Mini App (plan review UI). Takes ~15 minutes.
 
+This feature is optional and Telegram-specific. Slack channel usage does not require Mini App setup.
+
 ---
 
 ## Prerequisites

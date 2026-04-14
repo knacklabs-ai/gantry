@@ -8,6 +8,7 @@ import { StreamFlavor, stream, streamApi } from '@grammyjs/stream';
 
 import {
   ASSISTANT_NAME,
+  MINI_APP_ENABLED,
   MINI_APP_API_URL,
   MINI_APP_FRONTEND_URL,
   MINI_APP_SHORT_NAME,
@@ -21,6 +22,7 @@ import { logger } from '../core/logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  MessageSendOptions,
   OnChatMetadata,
   OnInboundMessage,
   PermissionApprovalDecision,
@@ -40,12 +42,15 @@ const TELEGRAM_PERMISSION_CALLBACK_PATTERN =
   /^perm:(approve|deny):([a-zA-Z0-9][a-zA-Z0-9._-]{0,127})$/;
 const MINI_APP_FRONTEND_URL_VALUE = MINI_APP_FRONTEND_URL.trim();
 const MINI_APP_API_URL_VALUE = MINI_APP_API_URL.trim();
+const TELEGRAM_MINI_APP_ENABLED =
+  MINI_APP_ENABLED && MINI_APP_FRONTEND_URL_VALUE.length > 0;
 
 type TelegramContext = StreamFlavor<Context>;
 type TelegramStreamApi = ReturnType<typeof streamApi>;
 type ActiveDraftStreamState = {
   chatId: number;
   threadId?: number;
+  generation?: number;
   rawBuffer: string;
   pushChunk: (chunk: string) => void;
   closeStream: () => void;
@@ -54,6 +59,7 @@ type ActiveDraftStreamState = {
 type ActiveGroupStreamState = {
   chatId: string;
   threadId?: number;
+  generation?: number;
   rawBuffer: string;
   messageId?: number;
   lastFlushAt: number;
@@ -270,6 +276,8 @@ export class TelegramChannel implements Channel {
   >();
   private activeDraftStreams = new Map<string, ActiveDraftStreamState>();
   private activeGroupStreams = new Map<string, ActiveGroupStreamState>();
+  private streamGenerationByJid = new Map<string, number>();
+  private sealedStreamGenerationByJid = new Map<string, number>();
   private activeProgressMessages = new Map<string, ActiveProgressState>();
   private nextDraftIdOffset = 1;
 
@@ -400,6 +408,74 @@ export class TelegramChannel implements Channel {
     return `${jid}:${threadId || ''}`;
   }
 
+  private clearStreamingStateForJid(jid: string): void {
+    for (const [key, state] of this.activeDraftStreams.entries()) {
+      if (!key.startsWith(`${jid}:`)) continue;
+      state.closeStream();
+      this.activeDraftStreams.delete(key);
+    }
+    for (const key of this.activeGroupStreams.keys()) {
+      if (!key.startsWith(`${jid}:`)) continue;
+      this.activeGroupStreams.delete(key);
+    }
+  }
+
+  private shouldAcceptStreamingChunk(
+    jid: string,
+    generation?: number,
+  ): boolean {
+    if (generation === undefined) return true;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed !== undefined && generation <= sealed) {
+      return false;
+    }
+
+    const latest = this.streamGenerationByJid.get(jid);
+    if (latest === undefined) {
+      this.streamGenerationByJid.set(jid, generation);
+      return true;
+    }
+    if (generation < latest) {
+      return false;
+    }
+    if (generation > latest) {
+      this.clearStreamingStateForJid(jid);
+      this.streamGenerationByJid.set(jid, generation);
+    }
+    return true;
+  }
+
+  private isCurrentStreamingGeneration(
+    jid: string,
+    generation?: number,
+  ): boolean {
+    if (generation === undefined) return true;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed !== undefined && generation <= sealed) {
+      return false;
+    }
+    const latest = this.streamGenerationByJid.get(jid);
+    if (latest === undefined) return true;
+    return generation === latest;
+  }
+
+  private markStreamingGenerationDone(jid: string, generation?: number): void {
+    if (generation === undefined) return;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed === undefined || generation > sealed) {
+      this.sealedStreamGenerationByJid.set(jid, generation);
+    }
+  }
+
+  private sealStreamingGenerationOnReset(jid: string): void {
+    const latest = this.streamGenerationByJid.get(jid);
+    if (latest === undefined) return;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed === undefined || latest > sealed) {
+      this.sealedStreamGenerationByJid.set(jid, latest);
+    }
+  }
+
   private isLikelyPrivateChatId(numericId: string): boolean {
     return !numericId.startsWith('-');
   }
@@ -460,6 +536,7 @@ export class TelegramChannel implements Channel {
       state = {
         chatId: numericId,
         threadId: Number.isFinite(parsedThreadId) ? parsedThreadId : undefined,
+        generation: options.generation,
         rawBuffer: '',
         lastFlushAt: 0,
       };
@@ -473,7 +550,10 @@ export class TelegramChannel implements Channel {
     );
     const hasContent = renderedBuffer.trim().length > 0;
     if (!hasContent) {
-      if (options.done) this.activeGroupStreams.delete(key);
+      if (options.done) {
+        this.activeGroupStreams.delete(key);
+        this.markStreamingGenerationDone(jid, options.generation);
+      }
       return;
     }
 
@@ -546,9 +626,15 @@ export class TelegramChannel implements Channel {
           const overflowText = renderedBuffer
             .slice(TELEGRAM_DRAFT_MAX_LENGTH)
             .trim();
-          if (overflowText) {
-            await this.sendMessage(jid, overflowText, options.threadId);
+          if (
+            overflowText &&
+            this.isCurrentStreamingGeneration(jid, options.generation)
+          ) {
+            await this.sendMessage(jid, overflowText, {
+              threadId: options.threadId,
+            });
           }
+          this.markStreamingGenerationDone(jid, options.generation);
         }
         return;
       }
@@ -557,8 +643,13 @@ export class TelegramChannel implements Channel {
         'Telegram group stream update failed',
       );
       if (options.done) {
-        await this.sendMessage(jid, renderedBuffer, options.threadId);
+        if (this.isCurrentStreamingGeneration(jid, options.generation)) {
+          await this.sendMessage(jid, renderedBuffer, {
+            threadId: options.threadId,
+          });
+        }
         this.activeGroupStreams.delete(key);
+        this.markStreamingGenerationDone(jid, options.generation);
       }
       return;
     }
@@ -568,9 +659,15 @@ export class TelegramChannel implements Channel {
       const overflowText = renderedBuffer
         .slice(TELEGRAM_DRAFT_MAX_LENGTH)
         .trim();
-      if (overflowText) {
-        await this.sendMessage(jid, overflowText, options.threadId);
+      if (
+        overflowText &&
+        this.isCurrentStreamingGeneration(jid, options.generation)
+      ) {
+        await this.sendMessage(jid, overflowText, {
+          threadId: options.threadId,
+        });
       }
+      this.markStreamingGenerationDone(jid, options.generation);
     }
   }
 
@@ -668,7 +765,7 @@ export class TelegramChannel implements Channel {
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
           );
-          if (MINI_APP_FRONTEND_URL_VALUE) {
+          if (TELEGRAM_MINI_APP_ENABLED) {
             const frontendBase = MINI_APP_FRONTEND_URL_VALUE.replace(
               /\/+$/,
               '',
@@ -1088,7 +1185,7 @@ export class TelegramChannel implements Channel {
   async sendMessage(
     jid: string,
     text: string,
-    threadId?: string,
+    options: MessageSendOptions = {},
   ): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
@@ -1097,26 +1194,26 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-      const options = threadId
-        ? { message_thread_id: parseInt(threadId, 10) }
+      const sendOptions = options.threadId
+        ? { message_thread_id: parseInt(options.threadId, 10) }
         : {};
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
       if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text, options);
+        await sendTelegramMessage(this.bot.api, numericId, text, sendOptions);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
           await sendTelegramMessage(
             this.bot.api,
             numericId,
             text.slice(i, i + MAX_LENGTH),
-            options,
+            sendOptions,
           );
         }
       }
       logger.info(
-        { jid, length: text.length, threadId },
+        { jid, length: text.length, threadId: options.threadId },
         'Telegram message sent',
       );
     } catch (err) {
@@ -1133,6 +1230,7 @@ export class TelegramChannel implements Channel {
     options: StreamingChunkOptions = {},
   ): Promise<void> {
     if (!this.bot || !this.draftStreamApi) return;
+    if (!this.shouldAcceptStreamingChunk(jid, options.generation)) return;
 
     const numericId = jid.replace(/^tg:/, '');
     const parsedChatId = Number.parseInt(numericId, 10);
@@ -1151,6 +1249,7 @@ export class TelegramChannel implements Channel {
     const key = this.buildDraftStreamKey(jid, options.threadId);
     let state = this.activeDraftStreams.get(key);
     if (!state && !text && options.done) {
+      this.markStreamingGenerationDone(jid, options.generation);
       return;
     }
     if (!state) {
@@ -1169,11 +1268,13 @@ export class TelegramChannel implements Channel {
       const streamState: ActiveDraftStreamState = {
         chatId: parsedChatId,
         threadId: draftThreadId,
+        generation: options.generation,
         rawBuffer: '',
         pushChunk: queue.push,
         closeStream: queue.close,
         streamPromise: Promise.resolve(),
       };
+      const createdState = streamState;
       streamState.streamPromise = this.draftStreamApi
         .streamMessage(
           parsedChatId,
@@ -1189,12 +1290,20 @@ export class TelegramChannel implements Channel {
             'Telegram stream send failed; falling back to final message send',
           );
           const fallbackText = streamState.rawBuffer.trim();
-          if (fallbackText) {
-            await this.sendMessage(jid, fallbackText, options.threadId);
+          if (
+            fallbackText &&
+            this.isCurrentStreamingGeneration(jid, streamState.generation)
+          ) {
+            await this.sendMessage(jid, fallbackText, {
+              threadId: options.threadId,
+            });
           }
         })
         .finally(() => {
-          this.activeDraftStreams.delete(key);
+          const current = this.activeDraftStreams.get(key);
+          if (current === createdState) {
+            this.activeDraftStreams.delete(key);
+          }
         });
       this.activeDraftStreams.set(key, streamState);
       state = streamState;
@@ -1219,6 +1328,7 @@ export class TelegramChannel implements Channel {
     if (options.done) {
       state.closeStream();
       await state.streamPromise;
+      this.markStreamingGenerationDone(jid, options.generation);
     }
   }
 
@@ -1378,7 +1488,7 @@ export class TelegramChannel implements Channel {
     if (!chatId) return;
     const frontendUrl =
       prompt.url ||
-      (MINI_APP_FRONTEND_URL_VALUE
+      (TELEGRAM_MINI_APP_ENABLED
         ? `${MINI_APP_FRONTEND_URL_VALUE.replace(/\/+$/, '')}/plans/${prompt.planId}${MINI_APP_API_URL_VALUE ? `?api=${encodeURIComponent(MINI_APP_API_URL_VALUE)}` : ''}`
         : undefined);
     const frontendRequiresApiOverride = (() => {
@@ -1393,7 +1503,7 @@ export class TelegramChannel implements Channel {
     // Build t.me deep link for Mini App (works in both private and group chats).
     // web_app inline buttons only work in private chats; url buttons with
     // t.me/{bot}/{app}?startapp= open the Mini App everywhere.
-    const shortName = MINI_APP_SHORT_NAME;
+    const shortName = TELEGRAM_MINI_APP_ENABLED ? MINI_APP_SHORT_NAME : '';
     const deepLink =
       this.botUsername && shortName
         ? `https://t.me/${this.botUsername}/${shortName}?startapp=${prompt.planId}`
@@ -1468,6 +1578,11 @@ export class TelegramChannel implements Channel {
     return jid.startsWith('tg:');
   }
 
+  resetStreaming(jid: string): void {
+    this.sealStreamingGenerationOnReset(jid);
+    this.clearStreamingStateForJid(jid);
+  }
+
   async disconnect(): Promise<void> {
     this.isStopping = true;
     this.clearPollingRetryTimer();
@@ -1476,6 +1591,8 @@ export class TelegramChannel implements Channel {
     }
     this.activeDraftStreams.clear();
     this.activeGroupStreams.clear();
+    this.streamGenerationByJid.clear();
+    this.sealedStreamGenerationByJid.clear();
     this.activeProgressMessages.clear();
     for (const [
       requestId,

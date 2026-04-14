@@ -86,7 +86,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 
 ## Architecture: Channel System
 
-The core ships with no channels built in. Each channel (WhatsApp, Telegram, Slack, Discord, Gmail) is installed as a [Claude Code skill](https://code.claude.com/docs/en/skills) that adds the channel code to your checkout. Channels self-register at startup; installed channels with missing credentials emit a WARN log and are skipped.
+The runtime supports multi-channel operation via a channel registry. Telegram and Slack are available in this codebase, and additional channels (for example WhatsApp, Discord, Gmail) can be added through skills. Channels self-register at startup; channels with missing credentials emit a WARN log and are skipped.
 
 ### System Diagram
 
@@ -164,12 +164,28 @@ Every channel implements this interface (defined in `apps/core/src/core/types.ts
 interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: { threadId?: string },
+  ): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  sendStreamingChunk?(
+    jid: string,
+    text: string,
+    options?: { threadId?: string; done?: boolean },
+  ): Promise<void>;
+  sendProgressUpdate?(
+    jid: string,
+    text: string,
+    options?: { threadId?: string; done?: boolean },
+  ): Promise<void>;
   syncGroups?(force: boolean): Promise<void>;
+  requestPermissionApproval?(jid: string, request: unknown): Promise<unknown>;
+  sendPlanReviewPrompt?(jid: string, prompt: unknown): Promise<void>;
 }
 ```
 
@@ -197,6 +213,7 @@ Channels self-register using a barrel-import pattern:
    ```typescript
    import './whatsapp.js';
    import './telegram.js';
+   import './slack.js';
    // ... each skill adds its import here
    ```
 
