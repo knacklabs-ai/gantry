@@ -8,7 +8,9 @@ dist/
 store/
 data/
 logs/
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 
 # Groups - only track base structure and specific CLAUDE.md files
 apps/core/groups/*
@@ -33,6 +35,7 @@ cov-tmp/
 tmp-coverage/
 .factory/
 *.tgz
+.wrangler/
 
 # OS
 .DS_Store

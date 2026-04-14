@@ -40,8 +40,65 @@ const AGENT_RUNNER_REQUIRED_FILES = [
     'package.json',
   ),
 ];
+const BUNDLED_SKILL_VERSION_FILENAME = '.version';
 
 let lastRunnerSyncSignature: string | null = null;
+
+function readPackageVersion(root: string): string | null {
+  try {
+    const pkgPath = path.join(root, 'package.json');
+    const parsed = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as {
+      version?: unknown;
+    };
+    return typeof parsed.version === 'string' && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseSemver(value: string): [number, number, number] | null {
+  const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [
+    Number.parseInt(match[1], 10),
+    Number.parseInt(match[2], 10),
+    Number.parseInt(match[3], 10),
+  ];
+}
+
+function isNewerVersion(candidate: string, current: string): boolean {
+  const candidateSemver = parseSemver(candidate);
+  const currentSemver = parseSemver(current);
+
+  if (!candidateSemver || !currentSemver) {
+    return candidate !== current;
+  }
+
+  for (let i = 0; i < 3; i += 1) {
+    if (candidateSemver[i] > currentSemver[i]) return true;
+    if (candidateSemver[i] < currentSemver[i]) return false;
+  }
+  return false;
+}
+
+function readInstalledSkillVersion(skillDir: string): string | null {
+  const versionPath = path.join(skillDir, BUNDLED_SKILL_VERSION_FILENAME);
+  try {
+    const raw = fs.readFileSync(versionPath, 'utf-8').trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeInstalledSkillVersion(skillDir: string, version: string): void {
+  fs.writeFileSync(
+    path.join(skillDir, BUNDLED_SKILL_VERSION_FILENAME),
+    `${version}\n`,
+  );
+}
 
 export function resolveRepoRootFromSourceDir(sourceDir: string): string {
   let currentDir = path.resolve(sourceDir);
@@ -171,9 +228,12 @@ export function ensureSharedSessionSettings(): void {
  * Ensure AGENT_ROOT/.claude/skills/ exists as a real directory.
  * Skills are managed directly under this directory (single source of truth).
  * Legacy symlinks are migrated to real directories automatically.
+ * Bundled skills from the package are copied if not already present.
+ * Existing skills are updated only when their bundled version is older.
  */
 export function syncGroupSkills(): void {
   const skillsDst = path.join(AGENT_ROOT, '.claude', 'skills');
+  const bundledVersion = readPackageVersion(REPO_ROOT);
 
   // Migrate legacy symlink to a real directory
   try {
@@ -186,6 +246,65 @@ export function syncGroupSkills(): void {
   }
 
   fs.mkdirSync(skillsDst, { recursive: true });
+
+  // Copy bundled skills from the package into the runtime skills directory.
+  // Existing skills are only overwritten when a newer package version exists.
+  const bundledSkillsDir = path.join(REPO_ROOT, '.claude', 'skills');
+  try {
+    if (!fs.existsSync(bundledSkillsDir)) return;
+    const entries = fs.readdirSync(bundledSkillsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const src = path.join(bundledSkillsDir, entry.name);
+      const dst = path.join(skillsDst, entry.name);
+      if (!fs.existsSync(dst)) {
+        copyDirRecursive(src, dst);
+        if (bundledVersion) {
+          writeInstalledSkillVersion(dst, bundledVersion);
+        }
+        logger.info({ skill: entry.name }, 'Installed bundled skill');
+        continue;
+      }
+
+      if (!bundledVersion) continue;
+
+      const installedVersion = readInstalledSkillVersion(dst);
+      if (!installedVersion) {
+        // Legacy install without a managed version marker: preserve current
+        // files and stamp the version so future upgrades are trackable.
+        writeInstalledSkillVersion(dst, bundledVersion);
+        logger.info(
+          { skill: entry.name, version: bundledVersion },
+          'Stamped bundled skill version for legacy install',
+        );
+        continue;
+      }
+
+      if (!isNewerVersion(bundledVersion, installedVersion)) continue;
+      fs.rmSync(dst, { recursive: true, force: true });
+      copyDirRecursive(src, dst);
+      writeInstalledSkillVersion(dst, bundledVersion);
+      logger.info(
+        { skill: entry.name, from: installedVersion, to: bundledVersion },
+        'Updated bundled skill to newer package version',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to sync bundled skills');
+  }
+}
+
+function copyDirRecursive(src: string, dst: string): void {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dst, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, dstPath);
+    } else {
+      fs.copyFileSync(srcPath, dstPath);
+    }
+  }
 }
 
 export function getRepoAgentRunnerRoot(): string {

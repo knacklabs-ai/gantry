@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const MAX_INIT_DATA_AGE_SECONDS = 60 * 60; // 1 hour
+const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60; // 24 hours
 const MAX_FUTURE_SKEW_SECONDS = 5 * 60; // tolerate clock skew
 
 export interface TelegramInitDataValidation {

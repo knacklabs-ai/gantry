@@ -32,6 +32,31 @@ export function getTelegramWebApp(): TelegramWebApp | undefined {
   return candidate;
 }
 
+function getInitDataFromLaunchParams(): string | undefined {
+  const sources = [window.location.search, window.location.hash];
+  for (const source of sources) {
+    if (!source) continue;
+    const normalized = source.startsWith('?') || source.startsWith('#')
+      ? source.slice(1)
+      : source;
+    if (!normalized) continue;
+    const params = new URLSearchParams(normalized);
+    const tgData = params.get('tgWebAppData');
+    if (typeof tgData === 'string' && tgData.trim()) return tgData.trim();
+    const initData = params.get('initData');
+    if (typeof initData === 'string' && initData.trim()) return initData.trim();
+  }
+  return undefined;
+}
+
+export function getTelegramInitData(): string | undefined {
+  const webApp = getTelegramWebApp();
+  if (typeof webApp?.initData === 'string' && webApp.initData.trim()) {
+    return webApp.initData.trim();
+  }
+  return getInitDataFromLaunchParams();
+}
+
 export function impact(style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' = 'light'): void {
   getTelegramWebApp()?.HapticFeedback?.impactOccurred?.(style);
 }

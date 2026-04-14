@@ -67,6 +67,7 @@ const envConfig = readEnvFile([
   'MINI_APP_API_URL',
   'MINI_APP_FRONTEND_URL',
   'MINI_APP_CORS_ORIGIN',
+  'MINI_APP_SHORT_NAME',
 ]);
 
 export const ASSISTANT_NAME =
@@ -159,6 +160,12 @@ export const MINI_APP_FRONTEND_URL = (
   process.env.MINI_APP_FRONTEND_URL ||
   envConfig.MINI_APP_FRONTEND_URL ||
   'https://app.myclaw.dev'
+).trim();
+
+export const MINI_APP_SHORT_NAME = (
+  process.env.MINI_APP_SHORT_NAME ||
+  envConfig.MINI_APP_SHORT_NAME ||
+  ''
 ).trim();
 
 export const MINI_APP_CORS_ORIGIN = (

@@ -246,6 +246,110 @@ describe('syncGroupSkills', () => {
       '# My Skill',
     );
   });
+
+  it('installs bundled skills with a version marker', async () => {
+    const configRoot = makeTmpRoot(roots);
+    const cwdRoot = makeTmpRoot(roots);
+    originalCwd = process.cwd();
+    process.chdir(cwdRoot);
+
+    vi.doMock('../core/config.js', () => ({
+      AGENT_ROOT: configRoot,
+      DATA_DIR: configRoot,
+    }));
+
+    const packageVersion = JSON.parse(
+      fs.readFileSync(path.join(originalCwd, 'package.json'), 'utf-8'),
+    ).version as string;
+
+    const { syncGroupSkills } = await import('./agent-spawn-layout.js');
+    syncGroupSkills();
+
+    const versionPath = path.join(
+      configRoot,
+      '.claude',
+      'skills',
+      'setup-mini-app',
+      '.version',
+    );
+    expect(fs.existsSync(versionPath)).toBe(true);
+    expect(fs.readFileSync(versionPath, 'utf-8').trim()).toBe(packageVersion);
+  });
+
+  it('updates a versioned bundled skill when package version is newer', async () => {
+    const configRoot = makeTmpRoot(roots);
+    const cwdRoot = makeTmpRoot(roots);
+    originalCwd = process.cwd();
+    process.chdir(cwdRoot);
+
+    const skillDir = path.join(
+      configRoot,
+      '.claude',
+      'skills',
+      'setup-mini-app',
+    );
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stale');
+    fs.writeFileSync(path.join(skillDir, '.version'), '0.0.1\n');
+
+    vi.doMock('../core/config.js', () => ({
+      AGENT_ROOT: configRoot,
+      DATA_DIR: configRoot,
+    }));
+
+    const packageVersion = JSON.parse(
+      fs.readFileSync(path.join(originalCwd, 'package.json'), 'utf-8'),
+    ).version as string;
+    const bundledSkill = fs.readFileSync(
+      path.join(originalCwd, '.claude', 'skills', 'setup-mini-app', 'SKILL.md'),
+      'utf-8',
+    );
+
+    const { syncGroupSkills } = await import('./agent-spawn-layout.js');
+    syncGroupSkills();
+
+    expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf-8')).toBe(
+      bundledSkill,
+    );
+    expect(
+      fs.readFileSync(path.join(skillDir, '.version'), 'utf-8').trim(),
+    ).toBe(packageVersion);
+  });
+
+  it('stamps unversioned bundled skills without overwriting existing content', async () => {
+    const configRoot = makeTmpRoot(roots);
+    const cwdRoot = makeTmpRoot(roots);
+    originalCwd = process.cwd();
+    process.chdir(cwdRoot);
+
+    const skillDir = path.join(
+      configRoot,
+      '.claude',
+      'skills',
+      'setup-mini-app',
+    );
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# My Custom Skill');
+
+    vi.doMock('../core/config.js', () => ({
+      AGENT_ROOT: configRoot,
+      DATA_DIR: configRoot,
+    }));
+
+    const packageVersion = JSON.parse(
+      fs.readFileSync(path.join(originalCwd, 'package.json'), 'utf-8'),
+    ).version as string;
+
+    const { syncGroupSkills } = await import('./agent-spawn-layout.js');
+    syncGroupSkills();
+
+    expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf-8')).toBe(
+      '# My Custom Skill',
+    );
+    expect(
+      fs.readFileSync(path.join(skillDir, '.version'), 'utf-8').trim(),
+    ).toBe(packageVersion);
+  });
 });
 
 // ---------- ensureGroupIpcLayout ----------

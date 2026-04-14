@@ -24,6 +24,7 @@ import {
 } from './service-manager.js';
 import { runSetupFlow } from './setup-flow.js';
 import { collectRuntimeStatus, formatRuntimeStatus } from './status.js';
+import { runTunnelCommand } from './tunnel.js';
 
 interface ParsedArgs {
   command: string[];
@@ -51,6 +52,7 @@ function usage(): string {
     '  myclaw group remove <jid|folder>',
     '  myclaw group trigger <jid|folder> <word>',
     '  myclaw telegram connect',
+    '  myclaw tunnel quick',
     '  myclaw service install',
     '  myclaw service start',
     '  myclaw service stop',
@@ -294,6 +296,10 @@ async function main(): Promise<number> {
 
   if (command === 'telegram' && subcommand === 'connect') {
     return runTelegramConnectCommand(runtimeHome);
+  }
+
+  if (command === 'tunnel') {
+    return runTunnelCommand(runtimeHome, rest);
   }
 
   if (command === 'service' && subcommand) {
