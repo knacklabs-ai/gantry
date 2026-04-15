@@ -63,6 +63,8 @@ import {
   PermissionApprovalRequest,
   RegisteredGroup,
   ThinkingOverride,
+  UserQuestionRequest,
+  UserQuestionResponse,
 } from './core/types.js';
 import { logger } from './core/logger.js';
 import {
@@ -248,6 +250,28 @@ async function requestChannelPermissionApproval(
     approved: false,
     reason: 'No main channel supports interactive permission approvals',
   };
+}
+
+async function requestChannelUserAnswer(
+  request: UserQuestionRequest,
+): Promise<UserQuestionResponse> {
+  const mainEntries = Object.entries(registeredGroups).filter(
+    ([, group]) => group.isMain === true,
+  );
+  for (const [mainJid] of mainEntries) {
+    const channel = findChannel(channels, mainJid);
+    if (!channel?.requestUserAnswer) continue;
+    try {
+      return await channel.requestUserAnswer(mainJid, request);
+    } catch (err) {
+      logger.error(
+        { err, mainJid, requestId: request.requestId },
+        'Channel user question flow failed',
+      );
+      return { requestId: request.requestId, answers: {} };
+    }
+  }
+  return { requestId: request.requestId, answers: {} };
 }
 
 export async function startMyClawRuntime(): Promise<void> {
@@ -454,6 +478,7 @@ export async function startMyClawRuntime(): Promise<void> {
       writeGroupsSnapshot(gf, im, ag, rj),
     onSchedulerChanged: syncSchedulerState,
     requestPermissionApproval: requestChannelPermissionApproval,
+    requestUserAnswer: requestChannelUserAnswer,
     sendPlanReviewPrompt: async (jid, prompt) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);

@@ -146,12 +146,38 @@ export interface PermissionApprovalRequest {
   description?: string;
   decisionReason?: string;
   blockedPath?: string;
+  toolInput?: Record<string, unknown>;
 }
 
 export interface PermissionApprovalDecision {
   approved: boolean;
   decidedBy?: string;
   reason?: string;
+}
+
+export interface UserQuestionOption {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+export interface UserQuestionItem {
+  question: string;
+  header: string;
+  options: UserQuestionOption[];
+  multiSelect: boolean;
+}
+
+export interface UserQuestionRequest {
+  requestId: string;
+  sourceGroup: string;
+  questions: UserQuestionItem[];
+}
+
+export interface UserQuestionResponse {
+  requestId: string;
+  answers: Record<string, string | string[]>;
+  answeredBy?: string;
 }
 
 export interface StreamingChunkOptions {
@@ -210,6 +236,11 @@ export interface Channel {
     jid: string,
     request: PermissionApprovalRequest,
   ): Promise<PermissionApprovalDecision>;
+  // Optional: structured question flow for AskUserQuestion.
+  requestUserAnswer?(
+    jid: string,
+    request: UserQuestionRequest,
+  ): Promise<UserQuestionResponse>;
   // Optional: send a rich plan review prompt when channel supports UI actions.
   sendPlanReviewPrompt?(jid: string, prompt: PlanReviewPrompt): Promise<void>;
 }

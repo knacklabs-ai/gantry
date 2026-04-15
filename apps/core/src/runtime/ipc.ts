@@ -36,6 +36,8 @@ import {
   PermissionApprovalRequest,
   PlanReviewPrompt,
   RegisteredGroup,
+  UserQuestionRequest,
+  UserQuestionResponse,
 } from '../core/types.js';
 import { validateIpcAuthToken } from './ipc-auth.js';
 import {
@@ -76,6 +78,9 @@ export interface IpcDeps {
   requestPermissionApproval?: (
     request: PermissionApprovalRequest,
   ) => Promise<PermissionApprovalDecision>;
+  requestUserAnswer?: (
+    request: UserQuestionRequest,
+  ) => Promise<UserQuestionResponse>;
 }
 
 let ipcWatcherRunning = false;
@@ -85,6 +90,8 @@ const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const PERMISSION_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const BROWSER_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const PLAN_TASK_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const USER_QUESTION_IPC_REQUEST_ID_PATTERN =
+  /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const PLAN_SECTION_STATUS_VALUES = new Set([
   'pending',
   'approved',
@@ -148,6 +155,49 @@ function toOptionalNumber(
   if (opts.min !== undefined && value < opts.min) return undefined;
   if (opts.max !== undefined && value > opts.max) return undefined;
   return value;
+}
+
+const TOOL_INPUT_MAX_DEPTH = 2;
+const TOOL_INPUT_MAX_STRING_LENGTH = 500;
+const SECRET_KEY_PATTERN = /(secret|token|password|credential|api[_-]?key|key)/i;
+
+function sanitizeToolInputValue(value: unknown, depth: number): unknown {
+  if (depth > TOOL_INPUT_MAX_DEPTH) return '[TRUNCATED_DEPTH]';
+  if (typeof value === 'string') {
+    if (value.length <= TOOL_INPUT_MAX_STRING_LENGTH) return value;
+    return `${value.slice(0, TOOL_INPUT_MAX_STRING_LENGTH)}...[truncated]`;
+  }
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 20)
+      .map((entry) => sanitizeToolInputValue(entry, depth + 1));
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (SECRET_KEY_PATTERN.test(key)) {
+        out[key] = '[REDACTED]';
+        continue;
+      }
+      out[key] = sanitizeToolInputValue(entry, depth + 1);
+    }
+    return out;
+  }
+  return String(value);
+}
+
+function sanitizeToolInput(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  return sanitizeToolInputValue(value, 0) as Record<string, unknown>;
 }
 
 function canProcessIpcFile(sourceGroup: string, kind: string): boolean {
@@ -489,6 +539,7 @@ function parsePermissionIpcRequest(
   const description = toTrimmedString(raw.description, { maxLen: 4000 });
   const decisionReason = toTrimmedString(raw.decisionReason, { maxLen: 2000 });
   const blockedPath = toTrimmedString(raw.blockedPath, { maxLen: 2048 });
+  const toolInput = sanitizeToolInput(raw.toolInput);
 
   return {
     requestId,
@@ -499,6 +550,7 @@ function parsePermissionIpcRequest(
     ...(description ? { description } : {}),
     ...(decisionReason ? { decisionReason } : {}),
     ...(blockedPath ? { blockedPath } : {}),
+    ...(toolInput ? { toolInput } : {}),
   };
 }
 
@@ -523,6 +575,124 @@ function writePermissionIpcResponse(
         approved: decision.approved,
         ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}),
         ...(decision.reason ? { reason: decision.reason } : {}),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, responsePath);
+}
+
+function parseUserQuestionIpcRequest(
+  raw: unknown,
+  sourceGroup: string,
+): UserQuestionRequest {
+  if (!isPlainObject(raw)) throw new Error('Invalid user question IPC payload');
+  const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
+  if (!validateIpcAuthToken(sourceGroup, authToken)) {
+    throw new Error('Invalid user question IPC auth token');
+  }
+
+  const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
+  if (!requestId || !USER_QUESTION_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('Invalid user question IPC requestId');
+  }
+
+  if (!Array.isArray(raw.questions)) {
+    throw new Error('User question IPC questions are required');
+  }
+  if (raw.questions.length < 1 || raw.questions.length > 4) {
+    throw new Error('User question IPC must include 1-4 questions');
+  }
+
+  const questions: UserQuestionRequest['questions'] = raw.questions.map(
+    (item, index) => {
+      if (!isPlainObject(item)) {
+        throw new Error(`Invalid question payload at index ${index}`);
+      }
+      const question = toTrimmedString(item.question, { maxLen: 500 });
+      const header = toTrimmedString(item.header, { maxLen: 64 });
+      if (!question || !header) {
+        throw new Error(`Missing question/header at index ${index}`);
+      }
+      if (!Array.isArray(item.options)) {
+        throw new Error(`Missing options at index ${index}`);
+      }
+      if (item.options.length < 2 || item.options.length > 4) {
+        throw new Error(`Question at index ${index} must have 2-4 options`);
+      }
+      const options = item.options.map((option, optionIndex) => {
+        if (!isPlainObject(option)) {
+          throw new Error(
+            `Invalid option payload at index ${index}:${optionIndex}`,
+          );
+        }
+        const label = toTrimmedString(option.label, { maxLen: 120 });
+        const description = toTrimmedString(option.description, {
+          maxLen: 500,
+          allowEmpty: true,
+        });
+        const preview = toTrimmedString(option.preview, {
+          maxLen: 1200,
+          allowEmpty: true,
+        });
+        if (!label) {
+          throw new Error(`Option label missing at index ${index}:${optionIndex}`);
+        }
+        return {
+          label,
+          description: description || '',
+          ...(preview ? { preview } : {}),
+        };
+      });
+      return {
+        question,
+        header,
+        options,
+        multiSelect: Boolean(item.multiSelect),
+      };
+    },
+  );
+
+  return {
+    requestId,
+    sourceGroup,
+    questions,
+  };
+}
+
+function writeUserQuestionIpcResponse(
+  ipcBaseDir: string,
+  sourceGroup: string,
+  response: UserQuestionResponse,
+): void {
+  const responseDir = path.join(ipcBaseDir, sourceGroup, 'user-answers');
+  fs.mkdirSync(responseDir, { recursive: true });
+  const responsePath = path.join(responseDir, `${response.requestId}.json`);
+  const tmpPath = `${responsePath}.tmp`;
+  const safeAnswers: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(response.answers || {})) {
+    const safeKey = toTrimmedString(key, { maxLen: 500 });
+    if (!safeKey) continue;
+    if (typeof value === 'string') {
+      safeAnswers[safeKey] = value.slice(0, 500);
+      continue;
+    }
+    if (Array.isArray(value)) {
+      const filtered = value
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.slice(0, 200))
+        .slice(0, 20);
+      safeAnswers[safeKey] = filtered;
+    }
+  }
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        requestId: response.requestId,
+        answers: safeAnswers,
+        ...(response.answeredBy ? { answeredBy: response.answeredBy } : {}),
       },
       null,
       2,
@@ -839,6 +1009,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
         sourceGroup,
         'permission-requests',
       );
+      const userQuestionRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'user-questions',
+      );
 
       // Process messages from this group's IPC directory
       try {
@@ -1118,6 +1293,75 @@ export function startIpcWatcher(deps: IpcDeps): void {
         logger.error(
           { err, sourceGroup },
           'Error reading permission IPC requests directory',
+        );
+      }
+
+      // Process AskUserQuestion request/response IPC for this group
+      try {
+        if (isTrustedDirectory(userQuestionRequestsDir)) {
+          const questionFiles = fs
+            .readdirSync(userQuestionRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of questionFiles) {
+            const filePath = path.join(userQuestionRequestsDir, file);
+            let claimedPath = filePath;
+            let requestId: string | undefined;
+            try {
+              if (!canProcessIpcFile(sourceGroup, 'user-question')) {
+                throw new Error('User question IPC rate limit exceeded');
+              }
+              claimedPath = claimIpcFile(filePath);
+              const rawRequest = JSON.parse(
+                fs.readFileSync(claimedPath, 'utf-8'),
+              );
+              const request = parseUserQuestionIpcRequest(
+                rawRequest,
+                sourceGroup,
+              );
+              requestId = request.requestId;
+              const response = deps.requestUserAnswer
+                ? await deps.requestUserAnswer(request)
+                : {
+                    requestId,
+                    answers: {},
+                  };
+              writeUserQuestionIpcResponse(ipcBaseDir, sourceGroup, {
+                requestId,
+                answers: response.answers || {},
+                answeredBy: response.answeredBy,
+              });
+              fs.unlinkSync(claimedPath);
+            } catch (err) {
+              if (requestId) {
+                try {
+                  writeUserQuestionIpcResponse(ipcBaseDir, sourceGroup, {
+                    requestId,
+                    answers: {},
+                  });
+                } catch (writeErr) {
+                  logger.warn(
+                    { sourceGroup, requestId, err: writeErr },
+                    'Failed to write user question IPC fallback response',
+                  );
+                }
+              }
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing user question IPC request',
+              );
+              archiveIpcErrorFile(ipcBaseDir, sourceGroup, file, claimedPath);
+            }
+          }
+        } else if (fs.existsSync(userQuestionRequestsDir)) {
+          logger.warn(
+            { sourceGroup, userQuestionRequestsDir },
+            'Ignoring untrusted user question IPC requests directory',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading user question IPC requests directory',
         );
       }
     }

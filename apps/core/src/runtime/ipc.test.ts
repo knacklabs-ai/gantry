@@ -2730,6 +2730,155 @@ describe('startIpcWatcher', () => {
     ).toBe(true);
   });
 
+  it('sanitizes permission toolInput before invoking approval callback', async () => {
+    const permissionRequest = {
+      requestId: 'perm-003',
+      toolName: 'Bash',
+      toolInput: {
+        command: 'x'.repeat(900),
+        apiToken: 'top-secret',
+        nested: {
+          second: {
+            third: 'should-truncate-depth',
+          },
+        },
+      },
+    };
+
+    mockReaddirSync.mockImplementation((dir: string) => {
+      if (dir === '/tmp/test-ipc/ipc') return ['whatsapp_main'];
+      if (dir.endsWith('/permission-requests')) return ['perm3.json'];
+      return [];
+    });
+    mockStatSync.mockReturnValue({ isDirectory: () => true });
+    mockExistsSync.mockImplementation((p: string) =>
+      p.endsWith('/permission-requests') ? true : false,
+    );
+    mockReadFileSync.mockReturnValue(JSON.stringify(permissionRequest));
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+    }));
+
+    const mod = await loadIpcModule();
+    const watcherDeps: import('./ipc.js').IpcDeps = {
+      sendMessage: vi.fn(),
+      requestPermissionApproval,
+      registeredGroups: () => ({
+        'main@g.us': {
+          name: 'Main',
+          folder: 'whatsapp_main',
+          trigger: 'always',
+          added_at: '2024-01-01',
+          isMain: true,
+        },
+      }),
+      registerGroup: vi.fn(),
+      syncGroups: vi.fn(),
+      getAvailableGroups: vi.fn(() => []),
+      writeGroupsSnapshot: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+    };
+
+    mod.startIpcWatcher(watcherDeps);
+
+    await vi.waitFor(() => {
+      expect(capturedSetTimeoutCallback).not.toBeNull();
+    });
+
+    const requestArg = requestPermissionApproval.mock.calls[0]?.[0] as {
+      toolInput?: Record<string, unknown>;
+    };
+    expect(requestArg.toolInput).toBeDefined();
+    expect(requestArg.toolInput?.apiToken).toBe('[REDACTED]');
+    expect(typeof requestArg.toolInput?.command).toBe('string');
+    expect(String(requestArg.toolInput?.command).length).toBeLessThanOrEqual(
+      520,
+    );
+    expect(requestArg.toolInput?.nested).toEqual({
+      second: {
+        third: '[TRUNCATED_DEPTH]',
+      },
+    });
+  });
+
+  it('processes user question IPC request and writes answer response', async () => {
+    const userQuestionRequest = {
+      requestId: 'userq-001',
+      questions: [
+        {
+          question: 'Which env should we deploy to?',
+          header: 'Deploy',
+          options: [
+            { label: 'Staging', description: 'Safe test first' },
+            { label: 'Production', description: 'Go live now' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+
+    mockReaddirSync.mockImplementation((dir: string) => {
+      if (dir === '/tmp/test-ipc/ipc') return ['whatsapp_main'];
+      if (dir.endsWith('/user-questions')) return ['uq1.json'];
+      return [];
+    });
+    mockStatSync.mockReturnValue({ isDirectory: () => true });
+    mockExistsSync.mockImplementation((p: string) =>
+      p.endsWith('/user-questions') ? true : false,
+    );
+    mockReadFileSync.mockReturnValue(JSON.stringify(userQuestionRequest));
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'userq-001',
+      answers: {
+        'Which env should we deploy to?': 'Staging',
+      },
+      answeredBy: 'Ravi',
+    }));
+
+    const mod = await loadIpcModule();
+    const watcherDeps: import('./ipc.js').IpcDeps = {
+      sendMessage: vi.fn(),
+      requestUserAnswer,
+      registeredGroups: () => ({
+        'main@g.us': {
+          name: 'Main',
+          folder: 'whatsapp_main',
+          trigger: 'always',
+          added_at: '2024-01-01',
+          isMain: true,
+        },
+      }),
+      registerGroup: vi.fn(),
+      syncGroups: vi.fn(),
+      getAvailableGroups: vi.fn(() => []),
+      writeGroupsSnapshot: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+    };
+
+    mod.startIpcWatcher(watcherDeps);
+
+    await vi.waitFor(() => {
+      expect(capturedSetTimeoutCallback).not.toBeNull();
+    });
+
+    expect(requestUserAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'userq-001',
+        sourceGroup: 'whatsapp_main',
+      }),
+    );
+    expect(
+      mockWriteFileSync.mock.calls.some(
+        (call: unknown[]) =>
+          typeof call[0] === 'string' &&
+          String(call[0]).includes('/user-answers/userq-001.json.tmp') &&
+          typeof call[1] === 'string' &&
+          String(call[1]).includes('"Staging"'),
+      ),
+    ).toBe(true);
+    expect(mockUnlinkSync).toHaveBeenCalled();
+  });
+
   it('ignores symlinked IPC subdirectories', async () => {
     mockReaddirSync.mockImplementation((dir: string) => {
       if (dir === '/tmp/test-ipc/ipc') return ['whatsapp_main'];

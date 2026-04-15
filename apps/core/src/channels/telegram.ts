@@ -31,6 +31,8 @@ import {
   ProgressUpdateOptions,
   RegisteredGroup,
   StreamingChunkOptions,
+  UserQuestionRequest,
+  UserQuestionResponse,
 } from '../core/types.js';
 import { parseTextStyles } from '../text-styles.js';
 
@@ -40,6 +42,8 @@ const TELEGRAM_STREAM_CHUNK_MAX_LENGTH = 3500;
 const TELEGRAM_GROUP_EDIT_INTERVAL_MS = 900;
 const TELEGRAM_PERMISSION_CALLBACK_PATTERN =
   /^perm:(approve|deny):([a-zA-Z0-9][a-zA-Z0-9._-]{0,127})$/;
+const TELEGRAM_USER_QUESTION_CALLBACK_PATTERN =
+  /^userq:(select|done):([a-zA-Z0-9][a-zA-Z0-9._-]{0,127}):(\d+)(?::(\d+))?$/;
 const MINI_APP_FRONTEND_URL_VALUE = MINI_APP_FRONTEND_URL.trim();
 const MINI_APP_API_URL_VALUE = MINI_APP_API_URL.trim();
 const TELEGRAM_MINI_APP_ENABLED =
@@ -69,6 +73,20 @@ type ActiveProgressState = {
   threadId?: number;
   messageId?: number;
   lastText: string;
+};
+type PendingUserQuestionState = {
+  requestId: string;
+  questionIndex: number;
+  questionHeader: string;
+  questionText: string;
+  promptText: string;
+  optionLabels: string[];
+  multiSelect: boolean;
+  selectedOptionIndexes: Set<number>;
+  chatId: string;
+  messageId: number;
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (selection: { selected: string | string[]; answeredBy?: string }) => void;
 };
 
 export interface TelegramChannelOpts {
@@ -144,6 +162,11 @@ function splitTelegramDraftChunks(text: string): string[] {
     chunks.push(text.slice(i, i + TELEGRAM_STREAM_CHUNK_MAX_LENGTH));
   }
   return chunks;
+}
+
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen)}...`;
 }
 
 function stripInternalTagsPreserveWhitespace(text: string): string {
@@ -274,6 +297,7 @@ export class TelegramChannel implements Channel {
       resolve: (decision: PermissionApprovalDecision) => void;
     }
   >();
+  private pendingUserQuestions = new Map<string, PendingUserQuestionState>();
   private activeDraftStreams = new Map<string, ActiveDraftStreamState>();
   private activeGroupStreams = new Map<string, ActiveGroupStreamState>();
   private streamGenerationByJid = new Map<string, number>();
@@ -695,8 +719,101 @@ export class TelegramChannel implements Channel {
     if (request.blockedPath) lines.push(`Path: ${request.blockedPath}`);
     if (request.decisionReason) lines.push(`Reason: ${request.decisionReason}`);
     if (request.description) lines.push(`Details: ${request.description}`);
+    lines.push(...this.formatPermissionToolInputLines(request));
     lines.push(`Reply timeout: ${timeoutMinutes} minute(s)`);
     return lines.join('\n');
+  }
+
+  private formatPermissionToolInputLines(
+    request: PermissionApprovalRequest,
+  ): string[] {
+    if (!request.toolInput || typeof request.toolInput !== 'object') return [];
+    const input = request.toolInput;
+    if (
+      request.toolName === 'Bash' &&
+      typeof input.command === 'string' &&
+      input.command.trim()
+    ) {
+      return [`Command: \`${truncateText(input.command.trim(), 300)}\``];
+    }
+    if (request.toolName === 'Edit' || request.toolName === 'Write') {
+      const lines: string[] = [];
+      if (typeof input.file_path === 'string' && input.file_path.trim()) {
+        lines.push(`File: ${truncateText(input.file_path.trim(), 250)}`);
+      }
+      if (typeof input.old_string === 'string' && input.old_string.trim()) {
+        lines.push(`Replacing: ${truncateText(input.old_string.trim(), 150)}`);
+      }
+      if (typeof input.new_string === 'string' && input.new_string.trim()) {
+        lines.push(`With: ${truncateText(input.new_string.trim(), 150)}`);
+      }
+      if (lines.length > 0) return lines;
+    }
+    try {
+      return [`Input: ${truncateText(JSON.stringify(input), 300)}`];
+    } catch {
+      return ['Input: [unserializable]'];
+    }
+  }
+
+  private pendingUserQuestionKey(requestId: string, questionIndex: number): string {
+    return `${requestId}:${questionIndex}`;
+  }
+
+  private formatUserQuestionPromptText(
+    question: UserQuestionRequest['questions'][number],
+    timeoutMs: number,
+  ): string {
+    const timeoutMinutes = Math.max(1, Math.round(timeoutMs / 60000));
+    const lines = [`❓ ${question.header}`, question.question, ''];
+    question.options.forEach((option) => {
+      const description = option.description
+        ? ` — ${truncateText(option.description, 180)}`
+        : '';
+      lines.push(`• ${option.label}${description}`);
+      if (option.preview) {
+        lines.push(`  Preview: ${truncateText(option.preview, 180)}`);
+      }
+    });
+    lines.push('');
+    if (question.multiSelect) {
+      lines.push('Select one or more options, then tap Done.');
+    } else {
+      lines.push('Select one option.');
+    }
+    lines.push(`Reply timeout: ${timeoutMinutes} minute(s)`);
+    return lines.join('\n');
+  }
+
+  private buildUserQuestionKeyboard(
+    requestId: string,
+    questionIndex: number,
+    question: UserQuestionRequest['questions'][number],
+    selectedOptionIndexes: Set<number>,
+  ): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
+    const inline_keyboard: Array<
+      Array<{ text: string; callback_data: string }>
+    > = question.options.map((option, optionIndex) => {
+      const isSelected = selectedOptionIndexes.has(optionIndex);
+      const label = question.multiSelect
+        ? `${isSelected ? '✅ ' : ''}${option.label}`
+        : option.label;
+      return [
+        {
+          text: truncateText(label, 28),
+          callback_data: `userq:select:${requestId}:${questionIndex}:${optionIndex}`,
+        },
+      ];
+    });
+    if (question.multiSelect) {
+      inline_keyboard.push([
+        {
+          text: 'Done',
+          callback_data: `userq:done:${requestId}:${questionIndex}`,
+        },
+      ]);
+    }
+    return { inline_keyboard };
   }
 
   private async isTelegramApproverAuthorized(
@@ -750,6 +867,84 @@ export class TelegramChannel implements Channel {
       logger.debug(
         { requestId, err: this.sanitizeErrorMessage(err) },
         'Failed to update Telegram permission prompt message',
+      );
+    }
+  }
+
+  private async refreshUserQuestionPrompt(
+    pending: PendingUserQuestionState,
+  ): Promise<void> {
+    if (!this.bot) return;
+    try {
+      await this.bot.api.editMessageText(
+        pending.chatId,
+        pending.messageId,
+        pending.promptText,
+        {
+          reply_markup: this.buildUserQuestionKeyboard(
+            pending.requestId,
+            pending.questionIndex,
+            {
+              question: pending.questionText,
+              header: pending.questionHeader,
+              options: pending.optionLabels.map((label) => ({
+                label,
+                description: '',
+              })),
+              multiSelect: pending.multiSelect,
+            },
+            pending.selectedOptionIndexes,
+          ),
+        },
+      );
+    } catch (err) {
+      logger.debug(
+        {
+          requestId: pending.requestId,
+          questionIndex: pending.questionIndex,
+          err: this.sanitizeErrorMessage(err),
+        },
+        'Failed to refresh Telegram user question keyboard',
+      );
+    }
+  }
+
+  private async finalizeUserQuestionPrompt(
+    pending: PendingUserQuestionState,
+    selection: string | string[],
+    answeredBy?: string,
+    reason?: string,
+  ): Promise<void> {
+    this.pendingUserQuestions.delete(
+      this.pendingUserQuestionKey(pending.requestId, pending.questionIndex),
+    );
+    clearTimeout(pending.timer);
+    pending.resolve({ selected: selection, answeredBy });
+
+    if (!this.bot) return;
+    const selectionText = Array.isArray(selection)
+      ? selection.join(', ')
+      : selection;
+    const status = reason || 'answered';
+    const actor = answeredBy ? ` by ${answeredBy}` : '';
+    const text = `❓ ${pending.questionHeader}\n${pending.questionText}\n\nAnswer: ${selectionText || '[none]'}\nStatus: ${status}${actor}`;
+    try {
+      await this.bot.api.editMessageText(
+        pending.chatId,
+        pending.messageId,
+        text,
+        {
+          reply_markup: { inline_keyboard: [] },
+        },
+      );
+    } catch (err) {
+      logger.debug(
+        {
+          requestId: pending.requestId,
+          questionIndex: pending.questionIndex,
+          err: this.sanitizeErrorMessage(err),
+        },
+        'Failed to finalize Telegram user question prompt',
       );
     }
   }
@@ -910,10 +1105,104 @@ export class TelegramChannel implements Channel {
         typeof ctx.callbackQuery?.data === 'string'
           ? ctx.callbackQuery.data
           : '';
-      const match = TELEGRAM_PERMISSION_CALLBACK_PATTERN.exec(data);
-      if (!match) return;
-      const action = match[1] as 'approve' | 'deny';
-      const requestId = match[2];
+      const userQuestionMatch =
+        TELEGRAM_USER_QUESTION_CALLBACK_PATTERN.exec(data);
+      if (userQuestionMatch) {
+        const action = userQuestionMatch[1] as 'select' | 'done';
+        const requestId = userQuestionMatch[2];
+        const questionIndex = Number.parseInt(userQuestionMatch[3], 10);
+        const optionIndex = userQuestionMatch[4]
+          ? Number.parseInt(userQuestionMatch[4], 10)
+          : undefined;
+        const key = this.pendingUserQuestionKey(requestId, questionIndex);
+        const pending = this.pendingUserQuestions.get(key);
+        if (!pending) {
+          await ctx.answerCallbackQuery({
+            text: 'Question is no longer active.',
+            show_alert: true,
+          });
+          return;
+        }
+        const callbackChatId = ctx.chat?.id?.toString() || '';
+        if (!callbackChatId || callbackChatId !== pending.chatId) {
+          await ctx.answerCallbackQuery({
+            text: 'This question belongs to a different chat.',
+            show_alert: true,
+          });
+          return;
+        }
+        const answeredBy =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          ctx.from?.id?.toString() ||
+          'unknown';
+        if (action === 'done') {
+          if (!pending.multiSelect) {
+            await ctx.answerCallbackQuery({
+              text: 'This question expects a single selection.',
+              show_alert: true,
+            });
+            return;
+          }
+          const selectedLabels = [...pending.selectedOptionIndexes]
+            .sort((a, b) => a - b)
+            .map((index) => pending.optionLabels[index])
+            .filter(Boolean);
+          await this.finalizeUserQuestionPrompt(
+            pending,
+            selectedLabels,
+            answeredBy,
+            'answered via Telegram',
+          );
+          await ctx.answerCallbackQuery({
+            text: 'Saved.',
+          });
+          return;
+        }
+
+        if (
+          optionIndex === undefined ||
+          !Number.isInteger(optionIndex) ||
+          optionIndex < 0 ||
+          optionIndex >= pending.optionLabels.length
+        ) {
+          await ctx.answerCallbackQuery({
+            text: 'Invalid option.',
+            show_alert: true,
+          });
+          return;
+        }
+
+        if (pending.multiSelect) {
+          if (pending.selectedOptionIndexes.has(optionIndex)) {
+            pending.selectedOptionIndexes.delete(optionIndex);
+          } else {
+            pending.selectedOptionIndexes.add(optionIndex);
+          }
+          await this.refreshUserQuestionPrompt(pending);
+          await ctx.answerCallbackQuery({
+            text: 'Selection updated.',
+          });
+          return;
+        }
+
+        const selected = pending.optionLabels[optionIndex];
+        await this.finalizeUserQuestionPrompt(
+          pending,
+          selected,
+          answeredBy,
+          'answered via Telegram',
+        );
+        await ctx.answerCallbackQuery({
+          text: 'Saved.',
+        });
+        return;
+      }
+
+      const permissionMatch = TELEGRAM_PERMISSION_CALLBACK_PATTERN.exec(data);
+      if (!permissionMatch) return;
+      const action = permissionMatch[1] as 'approve' | 'deny';
+      const requestId = permissionMatch[2];
       const pending = this.pendingPermissionPrompts.get(requestId);
       if (!pending) {
         await ctx.answerCallbackQuery({
@@ -1479,6 +1768,108 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  async requestUserAnswer(
+    jid: string,
+    request: UserQuestionRequest,
+  ): Promise<UserQuestionResponse> {
+    if (!this.bot) {
+      return { requestId: request.requestId, answers: {} };
+    }
+    const chatId = jid.replace(/^tg:/, '');
+    if (!chatId) {
+      return { requestId: request.requestId, answers: {} };
+    }
+
+    const timeoutMs = PERMISSION_APPROVAL_TIMEOUT_MS;
+    const answers: Record<string, string | string[]> = {};
+    let answeredBy: string | undefined;
+
+    for (let i = 0; i < request.questions.length; i += 1) {
+      const question = request.questions[i];
+      const pendingKey = this.pendingUserQuestionKey(request.requestId, i);
+      if (this.pendingUserQuestions.has(pendingKey)) {
+        logger.warn(
+          { requestId: request.requestId, questionIndex: i },
+          'Duplicate pending user question request detected',
+        );
+        continue;
+      }
+
+      const promptText = this.formatUserQuestionPromptText(question, timeoutMs);
+      try {
+        const sent = await this.bot.api.sendMessage(chatId, promptText, {
+          reply_markup: this.buildUserQuestionKeyboard(
+            request.requestId,
+            i,
+            question,
+            new Set<number>(),
+          ),
+        });
+
+        const selection = await new Promise<{
+          selected: string | string[];
+          answeredBy?: string;
+        }>((resolve) => {
+          const timer = setTimeout(() => {
+            const timedOut = this.pendingUserQuestions.get(pendingKey);
+            if (!timedOut) return;
+            void this.finalizeUserQuestionPrompt(
+              timedOut,
+              timedOut.multiSelect ? [] : '',
+              'system',
+              'timed out',
+            );
+          }, timeoutMs);
+
+          this.pendingUserQuestions.set(pendingKey, {
+            requestId: request.requestId,
+            questionIndex: i,
+            questionHeader: question.header,
+            questionText: question.question,
+            promptText,
+            optionLabels: question.options.map((option) => option.label),
+            multiSelect: question.multiSelect,
+            selectedOptionIndexes: new Set<number>(),
+            chatId,
+            messageId: sent.message_id,
+            timer,
+            resolve,
+          });
+        });
+
+        const isEmptySelection = Array.isArray(selection.selected)
+          ? selection.selected.length === 0
+          : selection.selected.trim().length === 0;
+        if (isEmptySelection) {
+          // Timeout or explicit empty submission: keep existing answers untouched.
+          continue;
+        }
+
+        if (selection.answeredBy) answeredBy = selection.answeredBy;
+        if (Array.isArray(selection.selected)) {
+          answers[question.question] = selection.selected;
+        } else {
+          answers[question.question] = selection.selected;
+        }
+      } catch (err) {
+        logger.warn(
+          {
+            requestId: request.requestId,
+            questionIndex: i,
+            err: this.sanitizeErrorMessage(err),
+          },
+          'Failed to run Telegram user question prompt',
+        );
+      }
+    }
+
+    return {
+      requestId: request.requestId,
+      answers,
+      ...(answeredBy ? { answeredBy } : {}),
+    };
+  }
+
   async sendPlanReviewPrompt(
     jid: string,
     prompt: PlanReviewPrompt,
@@ -1605,6 +1996,14 @@ export class TelegramChannel implements Channel {
         reason: 'Telegram channel disconnected',
       });
       this.pendingPermissionPrompts.delete(requestId);
+    }
+    for (const [key, pending] of this.pendingUserQuestions.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({
+        selected: pending.multiSelect ? [] : '',
+        answeredBy: 'system',
+      });
+      this.pendingUserQuestions.delete(key);
     }
     if (this.bot) {
       this.bot.stop();

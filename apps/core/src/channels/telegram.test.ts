@@ -1763,6 +1763,42 @@ describe('TelegramChannel', () => {
   });
 
   describe('permission approvals', () => {
+    it('renders Bash command summary when permission request includes toolInput', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: 'perm-command',
+          sourceGroup: 'whatsapp_main',
+          toolName: 'Bash',
+          toolInput: {
+            command: 'rm -rf /tmp/old-cache && npm install',
+          },
+        },
+      );
+      await flushPromises();
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        expect.stringContaining(
+          'Command: `rm -rf /tmp/old-cache && npm install`',
+        ),
+        expect.any(Object),
+      );
+
+      const callbackCtx = {
+        callbackQuery: { data: 'perm:approve:perm-command' },
+        chat: { id: 100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(callbackCtx);
+      await decisionPromise;
+    });
+
     it('sends approval prompt and resolves when an admin approves', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
@@ -1886,6 +1922,113 @@ describe('TelegramChannel', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('user question prompts', () => {
+    it('resolves single-select question from callback selection', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const responsePromise = channel.requestUserAnswer('tg:100200300', {
+        requestId: 'userq-1',
+        sourceGroup: 'whatsapp_main',
+        questions: [
+          {
+            question: 'Which environment should we deploy to?',
+            header: 'Deploy',
+            options: [
+              { label: 'Staging', description: 'Safer first' },
+              { label: 'Production', description: 'Go live now' },
+            ],
+            multiSelect: false,
+          },
+        ],
+      });
+      await flushPromises();
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        expect.stringContaining('Which environment should we deploy to?'),
+        expect.objectContaining({
+          reply_markup: expect.objectContaining({
+            inline_keyboard: expect.any(Array),
+          }),
+        }),
+      );
+
+      const callbackCtx = {
+        callbackQuery: { data: 'userq:select:userq-1:0:1' },
+        chat: { id: 100200300 },
+        from: { id: 222, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(callbackCtx);
+
+      const response = await responsePromise;
+      expect(response).toEqual({
+        requestId: 'userq-1',
+        answers: {
+          'Which environment should we deploy to?': 'Production',
+        },
+        answeredBy: 'Ravi',
+      });
+      expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Saved.',
+      });
+    });
+
+    it('resolves multi-select question when Done is pressed', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const responsePromise = channel.requestUserAnswer('tg:100200300', {
+        requestId: 'userq-2',
+        sourceGroup: 'whatsapp_main',
+        questions: [
+          {
+            question: 'Which checks should we run?',
+            header: 'Checks',
+            options: [
+              { label: 'Build', description: 'Compile project' },
+              { label: 'Unit tests', description: 'Fast tests' },
+              { label: 'Integration', description: 'End-to-end tests' },
+            ],
+            multiSelect: true,
+          },
+        ],
+      });
+      await flushPromises();
+
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'userq:select:userq-2:0:0' },
+        chat: { id: 100200300 },
+        from: { id: 333, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'userq:select:userq-2:0:2' },
+        chat: { id: 100200300 },
+        from: { id: 333, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'userq:done:userq-2:0' },
+        chat: { id: 100200300 },
+        from: { id: 333, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const response = await responsePromise;
+      expect(response).toEqual({
+        requestId: 'userq-2',
+        answers: {
+          'Which checks should we run?': ['Build', 'Integration'],
+        },
+        answeredBy: 'Ravi',
+      });
     });
   });
 

@@ -85,6 +85,8 @@ const IPC_PERMISSION_RESPONSES_DIR = path.join(
   IPC_BASE_DIR,
   'permission-responses',
 );
+const IPC_USER_QUESTION_REQUESTS_DIR = path.join(IPC_BASE_DIR, 'user-questions');
+const IPC_USER_QUESTION_RESPONSES_DIR = path.join(IPC_BASE_DIR, 'user-answers');
 const IPC_AUTH_TOKEN = process.env.MYCLAW_IPC_AUTH_TOKEN || '';
 const PERMISSION_REQUEST_TIMEOUT_MS = Math.max(
   10_000,
@@ -100,6 +102,95 @@ interface PermissionDecision {
   approved: boolean;
   decidedBy?: string;
   reason?: string;
+}
+
+interface UserQuestionOptionPayload {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+interface UserQuestionItemPayload {
+  question: string;
+  header: string;
+  options: UserQuestionOptionPayload[];
+  multiSelect: boolean;
+}
+
+interface UserQuestionRequestPayload {
+  requestId: string;
+  sourceGroup: string;
+  questions: UserQuestionItemPayload[];
+}
+
+interface UserQuestionResponsePayload {
+  answers: Record<string, string | string[]>;
+  answeredBy?: string;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen)}...`;
+}
+
+function toShortString(
+  value: unknown,
+  maxLen: number,
+  allowEmpty = false,
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!allowEmpty && trimmed.length === 0) return undefined;
+  return truncateText(trimmed, maxLen);
+}
+
+function normalizeAskUserQuestionInput(
+  input: unknown,
+): UserQuestionItemPayload[] | null {
+  if (!isPlainObject(input)) return null;
+  if (!Array.isArray(input.questions)) return null;
+  if (input.questions.length < 1 || input.questions.length > 4) return null;
+
+  const parsedQuestions: UserQuestionItemPayload[] = [];
+  for (const rawQuestion of input.questions) {
+    if (!isPlainObject(rawQuestion)) return null;
+    const question = toShortString(rawQuestion.question, 500);
+    const header = toShortString(rawQuestion.header, 64);
+    const multiSelect = Boolean(rawQuestion.multiSelect);
+    if (!question || !header) return null;
+    if (!Array.isArray(rawQuestion.options)) return null;
+    if (
+      rawQuestion.options.length < 2 ||
+      rawQuestion.options.length > 4
+    ) {
+      return null;
+    }
+    const options: UserQuestionOptionPayload[] = [];
+    for (const rawOption of rawQuestion.options) {
+      if (!isPlainObject(rawOption)) return null;
+      const label = toShortString(rawOption.label, 120);
+      const description = toShortString(rawOption.description, 500, true) || '';
+      const preview = toShortString(rawOption.preview, 800, true);
+      if (!label) return null;
+      options.push({
+        label,
+        description,
+        ...(preview ? { preview } : {}),
+      });
+    }
+    parsedQuestions.push({
+      question,
+      header,
+      options,
+      multiSelect,
+    });
+  }
+
+  return parsedQuestions;
 }
 
 function buildSystemPrompt(append?: string):
@@ -516,6 +607,7 @@ async function requestPermissionApproval(options: {
   description?: string;
   decisionReason?: string;
   blockedPath?: string;
+  toolInput?: unknown;
 }): Promise<PermissionDecision> {
   try {
     fs.mkdirSync(IPC_PERMISSION_REQUESTS_DIR, { recursive: true });
@@ -537,6 +629,9 @@ async function requestPermissionApproval(options: {
         ? { decisionReason: options.decisionReason }
         : {}),
       ...(options.blockedPath ? { blockedPath: options.blockedPath } : {}),
+      ...(isPlainObject(options.toolInput)
+        ? { toolInput: options.toolInput }
+        : {}),
       ...(IPC_AUTH_TOKEN ? { authToken: IPC_AUTH_TOKEN } : {}),
       timestamp: new Date().toISOString(),
     };
@@ -595,6 +690,92 @@ async function requestPermissionApproval(options: {
           ? `Permission request failed: ${err.message}`
           : 'Permission request failed',
     };
+  }
+}
+
+async function requestUserQuestionAnswer(options: {
+  groupFolder: string;
+  questions: UserQuestionItemPayload[];
+}): Promise<UserQuestionResponsePayload | null> {
+  try {
+    fs.mkdirSync(IPC_USER_QUESTION_REQUESTS_DIR, { recursive: true });
+    fs.mkdirSync(IPC_USER_QUESTION_RESPONSES_DIR, { recursive: true });
+    const requestId = `userq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestPath = path.join(
+      IPC_USER_QUESTION_REQUESTS_DIR,
+      `${requestId}.json`,
+    );
+    const requestTmpPath = `${requestPath}.tmp`;
+    const envelope: UserQuestionRequestPayload & {
+      authToken?: string;
+      timestamp: string;
+    } = {
+      requestId,
+      sourceGroup: options.groupFolder,
+      questions: options.questions,
+      ...(IPC_AUTH_TOKEN ? { authToken: IPC_AUTH_TOKEN } : {}),
+      timestamp: new Date().toISOString(),
+    };
+    fs.writeFileSync(requestTmpPath, JSON.stringify(envelope, null, 2));
+    fs.renameSync(requestTmpPath, requestPath);
+
+    const responsePath = path.join(
+      IPC_USER_QUESTION_RESPONSES_DIR,
+      `${requestId}.json`,
+    );
+    const deadline = Date.now() + PERMISSION_REQUEST_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (fs.existsSync(responsePath)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+          fs.unlinkSync(responsePath);
+          if (!isPlainObject(raw)) return null;
+          if (
+            typeof raw.requestId !== 'string' ||
+            raw.requestId !== requestId ||
+            !isPlainObject(raw.answers)
+          ) {
+            return null;
+          }
+          const answers: Record<string, string | string[]> = {};
+          for (const [key, value] of Object.entries(raw.answers)) {
+            if (typeof value === 'string') {
+              answers[key] = truncateText(value, 500);
+              continue;
+            }
+            if (
+              Array.isArray(value) &&
+              value.every((entry) => typeof entry === 'string')
+            ) {
+              answers[key] = value
+                .slice(0, 20)
+                .map((entry) => truncateText(entry, 200));
+            }
+          }
+          const answeredBy =
+            typeof raw.answeredBy === 'string' && raw.answeredBy.trim()
+              ? truncateText(raw.answeredBy.trim(), 120)
+              : undefined;
+          return {
+            answers,
+            ...(answeredBy ? { answeredBy } : {}),
+          };
+        } catch (err) {
+          log(
+            `Failed to read user question answer: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    log('Timed out waiting for user question answer');
+    return null;
+  } catch (err) {
+    log(
+      `Failed to create user question request: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
   }
 }
 
@@ -666,6 +847,7 @@ async function runQuery(
   if (extraDirs.length > 0) {
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
+  const pendingAskUserQuestionInputs: UserQuestionItemPayload[][] = [];
 
   for await (const message of query({
     prompt: stream,
@@ -697,11 +879,33 @@ async function runQuery(
         'ToolSearch',
         'Skill',
         'NotebookEdit',
+        'Config',
+        'EnterWorktree',
+        'ExitWorktree',
+        'AskUserQuestion',
         'mcp__myclaw__*',
       ],
       env: sdkEnv,
       permissionMode: 'default',
       canUseTool: async (toolName, input, permissionOpts) => {
+        if (
+          toolName === 'Config' ||
+          toolName === 'EnterWorktree' ||
+          toolName === 'ExitWorktree'
+        ) {
+          return { behavior: 'allow' as const, updatedInput: input };
+        }
+
+        if (toolName === 'AskUserQuestion') {
+          const normalized = normalizeAskUserQuestionInput(input);
+          if (normalized) {
+            pendingAskUserQuestionInputs.push(normalized);
+          } else {
+            log('AskUserQuestion input did not match expected schema');
+          }
+          return { behavior: 'allow' as const, updatedInput: input };
+        }
+
         if (permissionOpts.signal.aborted) {
           return {
             behavior: 'deny' as const,
@@ -716,6 +920,7 @@ async function runQuery(
           description: permissionOpts.description,
           decisionReason: permissionOpts.decisionReason,
           blockedPath: permissionOpts.blockedPath,
+          toolInput: input,
         });
         if (decision.approved) {
           log(
@@ -729,6 +934,41 @@ async function runQuery(
           behavior: 'deny' as const,
           message: `Permission denied: ${reason}`,
           interrupt: false,
+        };
+      },
+      onElicitation: async (request, options) => {
+        if (options.signal.aborted) {
+          return { action: 'cancel' as const };
+        }
+
+        if (request.mode && request.mode !== 'form') {
+          log(
+            `Declining unsupported elicitation mode: ${request.mode} (${request.serverName})`,
+          );
+          return { action: 'decline' as const };
+        }
+
+        const questions = pendingAskUserQuestionInputs.shift();
+        if (!questions || questions.length === 0) {
+          log(
+            `Declining elicitation without queued AskUserQuestion payload (${request.serverName})`,
+          );
+          return { action: 'decline' as const };
+        }
+
+        const response = await requestUserQuestionAnswer({
+          groupFolder: containerInput.groupFolder,
+          questions,
+        });
+
+        if (!response || Object.keys(response.answers).length === 0) {
+          log('No user answers received for AskUserQuestion elicitation');
+          return { action: 'decline' as const };
+        }
+
+        return {
+          action: 'accept' as const,
+          content: response.answers,
         };
       },
       settingSources: ['user'],
