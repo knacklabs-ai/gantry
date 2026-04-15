@@ -3,8 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 describe('logger', () => {
   let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
   let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
+  let originalLogLevel: string | undefined;
 
   beforeEach(() => {
+    originalLogLevel = process.env.LOG_LEVEL;
+    process.env.LOG_LEVEL = 'info';
+    vi.resetModules();
     stdoutWriteSpy = vi
       .spyOn(process.stdout, 'write')
       .mockImplementation(() => true);
@@ -16,6 +20,11 @@ describe('logger', () => {
   afterEach(() => {
     stdoutWriteSpy.mockRestore();
     stderrWriteSpy.mockRestore();
+    if (originalLogLevel === undefined) {
+      delete process.env.LOG_LEVEL;
+    } else {
+      process.env.LOG_LEVEL = originalLogLevel;
+    }
   });
 
   it('logger.fatal writes to stderr', async () => {
