@@ -25,10 +25,6 @@ const AGENT_RUNNER_RUNTIME_DIR = path.join(
   '.runtime',
   'agent-runner',
 );
-const AGENT_RUNNER_SOURCE_NODE_MODULES_DIR = path.join(
-  AGENT_RUNNER_SOURCE_DIR,
-  'node_modules',
-);
 const REPO_NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
 const AGENT_RUNNER_SDK_PACKAGE_PATH = path.join(
   '@anthropic-ai',
@@ -122,39 +118,8 @@ export function resolveRepoRootFromSourceDir(sourceDir: string): string {
 }
 
 function resolveAgentRunnerDependencyRoot(): string | null {
-  return resolveAgentRunnerDependencyRootForPaths(
-    AGENT_RUNNER_SOURCE_NODE_MODULES_DIR,
-    REPO_NODE_MODULES_DIR,
-  );
-}
-
-function hasSdkPackage(nodeModulesDir: string): boolean {
-  return fs.existsSync(
-    path.join(nodeModulesDir, AGENT_RUNNER_SDK_PACKAGE_PATH),
-  );
-}
-
-export function resolveAgentRunnerDependencyRootForPaths(
-  sourceNodeModulesDir: string,
-  repoNodeModulesDir: string,
-): string | null {
-  const sourceExists = fs.existsSync(sourceNodeModulesDir);
-  const repoExists = fs.existsSync(repoNodeModulesDir);
-
-  // Prefer the source-local node_modules only when it actually contains
-  // the SDK dependency. In hoisted workspace installs the directory may
-  // exist but the package lives at the repo root.
-  if (sourceExists && hasSdkPackage(sourceNodeModulesDir)) {
-    return sourceNodeModulesDir;
-  }
-  if (repoExists && hasSdkPackage(repoNodeModulesDir)) {
-    return repoNodeModulesDir;
-  }
-  if (sourceExists) {
-    return sourceNodeModulesDir;
-  }
-  if (repoExists) {
-    return repoNodeModulesDir;
+  if (fs.existsSync(REPO_NODE_MODULES_DIR)) {
+    return REPO_NODE_MODULES_DIR;
   }
   return null;
 }
