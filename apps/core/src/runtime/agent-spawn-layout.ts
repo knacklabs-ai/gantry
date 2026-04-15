@@ -118,8 +118,15 @@ export function resolveRepoRootFromSourceDir(sourceDir: string): string {
 }
 
 function resolveAgentRunnerDependencyRoot(): string | null {
-  if (fs.existsSync(REPO_NODE_MODULES_DIR)) {
-    return REPO_NODE_MODULES_DIR;
+  const candidateRoots = [
+    REPO_NODE_MODULES_DIR,
+    path.join(AGENT_RUNNER_SOURCE_DIR, 'node_modules'),
+  ];
+  for (const candidate of candidateRoots) {
+    if (!fs.existsSync(candidate)) continue;
+    if (fs.existsSync(path.join(candidate, AGENT_RUNNER_SDK_PACKAGE_PATH))) {
+      return candidate;
+    }
   }
   return null;
 }
