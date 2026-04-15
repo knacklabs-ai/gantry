@@ -118,6 +118,28 @@ function channelFromGroupJid(jid: string): RuntimeChannel | null {
   return null;
 }
 
+function pruneAgentSenderPolicyOverride(
+  runtimeHome: string,
+  jid: string,
+  folder: string,
+): { pruned: boolean; error?: string } {
+  const channel = channelFromGroupJid(jid);
+  if (!channel) return { pruned: false };
+  try {
+    const settings = loadRuntimeSettings(runtimeHome);
+    const policy = settings.channels[channel].senderAllowlist;
+    if (!policy.agents[folder]) return { pruned: false };
+    delete policy.agents[folder];
+    saveRuntimeSettings(runtimeHome, settings);
+    return { pruned: true };
+  } catch (err) {
+    return {
+      pruned: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 function normalizeGroupAddSelector(raw: string): string | null {
   const input = raw.trim();
   if (!input) return null;
@@ -1044,6 +1066,21 @@ async function runRemove(runtimeHome: string, args: string[]): Promise<number> {
       const message = err instanceof Error ? err.message : String(err);
       p.log.error(`Could not remove agent from database: ${message}`);
       return 1;
+    }
+
+    const policyPrune = pruneAgentSenderPolicyOverride(
+      runtimeHome,
+      found.jid,
+      found.group.folder,
+    );
+    if (policyPrune.error) {
+      p.log.warn(
+        `Agent removed, but sender policy cleanup failed for folder ${found.group.folder}: ${policyPrune.error}`,
+      );
+    } else if (policyPrune.pruned) {
+      p.log.info(
+        `Removed sender policy override for folder ${found.group.folder}.`,
+      );
     }
 
     if (parsed.deleteFolder) {

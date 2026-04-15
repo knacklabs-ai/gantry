@@ -201,4 +201,42 @@ describe('group CLI commands', () => {
       mode: 'drop',
     });
   });
+
+  it('prunes per-agent sender policy override when agent is removed', async () => {
+    const { runAgentCommand } = await import('./group.js');
+    const jid = `sl:remove-policy-${Date.now().toString(36)}`;
+
+    expect(
+      await runAgentCommand(runtimeHome, [
+        'add',
+        jid,
+        '--name',
+        'Remove Policy',
+        '--folder',
+        'slack_remove_policy',
+      ]),
+    ).toBe(0);
+
+    expect(
+      await runAgentCommand(runtimeHome, [
+        'policy',
+        jid,
+        '--allow',
+        'U777',
+        '--mode',
+        'trigger',
+      ]),
+    ).toBe(0);
+
+    expect(await runAgentCommand(runtimeHome, ['remove', jid, '--yes'])).toBe(
+      0,
+    );
+
+    const settings = parseRuntimeSettingsText(
+      fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8'),
+    );
+    expect(
+      settings.channels.slack.senderAllowlist.agents.slack_remove_policy,
+    ).toBeUndefined();
+  });
 });
