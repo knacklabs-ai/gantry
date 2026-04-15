@@ -46,7 +46,6 @@ function seedRegisteredGroups(runtimeHome: string): void {
 describe('runtime-settings', () => {
   it('parses channel sender allowlist entries from yaml', () => {
     const settings = parseRuntimeSettingsText(`
-version: 3
 channels:
   telegram:
     enabled: true
@@ -85,21 +84,32 @@ features:
     });
   });
 
-  it('rejects legacy v2 schema', () => {
-    expect(() =>
-      parseRuntimeSettingsText(`
-version: 2
+  it('does not enforce a schema version field', () => {
+    const settings = parseRuntimeSettingsText(`
 channels:
   telegram:
-    enabled: true
-  slack:
     enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: true
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
 features:
   memory: true
   embeddings: false
   dreaming: false
-`),
-    ).toThrow('version must be set to 3');
+`);
+    expect(settings.channels.telegram.enabled).toBe(false);
+    expect(settings.channels.slack.enabled).toBe(true);
   });
 
   it('derives defaults from env values', () => {
@@ -145,7 +155,6 @@ features:
     fs.writeFileSync(
       settingsFilePath(runtimeHome),
       `
-version: 3
 channels:
   telegram:
     enabled: true

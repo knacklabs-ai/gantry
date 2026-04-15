@@ -29,7 +29,6 @@ export interface RuntimeChannelSettings {
 }
 
 export interface RuntimeSettings {
-  version: 3;
   channels: {
     telegram: RuntimeChannelSettings;
     slack: RuntimeChannelSettings;
@@ -300,9 +299,6 @@ function parseRuntimeSettings(raw: string): RuntimeSettings {
   }
 
   const root = parsed as Record<string, unknown>;
-  if (root.version !== 3) {
-    throw new Error('version must be set to 3');
-  }
 
   const channels = root.channels;
   if (
@@ -344,7 +340,6 @@ function parseRuntimeSettings(raw: string): RuntimeSettings {
   }
 
   return {
-    version: 3,
     channels: { telegram, slack },
     features: {
       memory,
@@ -433,7 +428,6 @@ function renderSenderAllowlistYaml(
 
 function renderRuntimeSettingsYaml(settings: RuntimeSettings): string {
   const lines = [
-    'version: 3',
     'channels:',
     '  telegram:',
     `    enabled: ${settings.channels.telegram.enabled ? 'true' : 'false'}`,
@@ -503,7 +497,6 @@ export function deriveRuntimeSettingsFromEnv(
   const dreamingEnabled = parseBoolean(env.MEMORY_DREAMING_ENABLED, false);
 
   return {
-    version: 3,
     channels: {
       telegram: createDefaultChannelSettings(
         Boolean(env.TELEGRAM_BOT_TOKEN?.trim()),
