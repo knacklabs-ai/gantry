@@ -25,20 +25,16 @@ const AGENT_RUNNER_RUNTIME_DIR = path.join(
   '.runtime',
   'agent-runner',
 );
-const AGENT_RUNNER_SOURCE_NODE_MODULES_DIR = path.join(
-  AGENT_RUNNER_SOURCE_DIR,
-  'node_modules',
-);
 const REPO_NODE_MODULES_DIR = path.join(REPO_ROOT, 'node_modules');
+const AGENT_RUNNER_SDK_PACKAGE_PATH = path.join(
+  '@anthropic-ai',
+  'claude-agent-sdk',
+  'package.json',
+);
 const AGENT_RUNNER_REQUIRED_FILES = [
   path.join('dist', 'index.js'),
   path.join('dist', 'ipc-mcp-stdio.js'),
-  path.join(
-    'node_modules',
-    '@anthropic-ai',
-    'claude-agent-sdk',
-    'package.json',
-  ),
+  path.join('node_modules', AGENT_RUNNER_SDK_PACKAGE_PATH),
 ];
 const BUNDLED_SKILL_VERSION_FILENAME = '.version';
 
@@ -122,11 +118,15 @@ export function resolveRepoRootFromSourceDir(sourceDir: string): string {
 }
 
 function resolveAgentRunnerDependencyRoot(): string | null {
-  if (fs.existsSync(AGENT_RUNNER_SOURCE_NODE_MODULES_DIR)) {
-    return AGENT_RUNNER_SOURCE_NODE_MODULES_DIR;
-  }
-  if (fs.existsSync(REPO_NODE_MODULES_DIR)) {
-    return REPO_NODE_MODULES_DIR;
+  const candidateRoots = [
+    REPO_NODE_MODULES_DIR,
+    path.join(AGENT_RUNNER_SOURCE_DIR, 'node_modules'),
+  ];
+  for (const candidate of candidateRoots) {
+    if (!fs.existsSync(candidate)) continue;
+    if (fs.existsSync(path.join(candidate, AGENT_RUNNER_SDK_PACKAGE_PATH))) {
+      return candidate;
+    }
   }
   return null;
 }
