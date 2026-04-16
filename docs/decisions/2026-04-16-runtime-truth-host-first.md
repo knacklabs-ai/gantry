@@ -4,9 +4,7 @@
 
 MyClaw currently has one working runtime implementation in production code: host execution.
 
-Several active docs and scripts still described a container-first dual-mode model (`AGENT_RUNTIME=container|host`) and referenced missing files such as:
-- `apps/core/src/runtime/container-runner.ts`
-- `apps/core/src/runtime/container-runtime.ts`
+Several active docs and scripts still described a container-first dual-mode model (`AGENT_RUNTIME=container|host`) and referenced now-removed runtime files such as `container-runner.ts` and `container-runtime.ts`.
 
 This created a half-real supported mode: users were told container runtime was first-class even though host runtime is the only complete and maintained execution path in this repository.
 
@@ -43,6 +41,8 @@ Decision details:
 
 - Rollback path: if a real container runtime implementation ships later, create a follow-up ADR to define supported dual-mode behavior and required validation/doctor surfaces.
 - Migration for existing users: remove use of `AGENT_RUNTIME`, `npm run dev:container`, and `npm run start:container`; use `npm run dev` / `npm start`.
+- Runtime-truth search gate must include docs, runtime surfaces, and skills:
+  - `rg -n "AGENT_RUNTIME|start:container|dev:container|container-runner|container-runtime|SETUP_CONTAINER|container mode|container-first|Container-first" README.md AGENTS.md CLAUDE.md CONTRIBUTING.md docs .claude apps/core package.json`
 - Follow-up cleanup backlog (separate tasks):
   - rename `container_config` to `agent_config` with schema migration
   - rename `containerName` to runtime-process naming

@@ -180,7 +180,7 @@ For guided changes, run `/customize`.
 
 Contributions should keep the core runtime small and maintainable. Bug fixes, simplifications, docs improvements, and reusable skills are good fits. Broad feature creep in the default runtime is not.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution policy and [docs/skills-as-branches.md](docs/skills-as-branches.md) for the branch-based skill model.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution policy and branch-based skill model.
 
 ## Documentation
 

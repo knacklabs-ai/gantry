@@ -17,6 +17,11 @@ commands = [
         os.environ.get("FACTORY_STRUCTURAL_CMD")
         or "npm run format:check",
     ),
+    (
+        "architecture",
+        os.environ.get("FACTORY_ARCHITECTURE_CMD")
+        or "python3 .codex/scripts/check_architecture.py",
+    ),
     ("typecheck", os.environ.get("FACTORY_TYPECHECK_CMD") or "npm run typecheck"),
     ("tests", os.environ.get("FACTORY_TEST_CMD") or "npm test"),
 ]
