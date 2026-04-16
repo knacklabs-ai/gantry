@@ -512,6 +512,23 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('cleans up idle scheduler queue groups after tasks complete', async () => {
+    const taskCount = 20;
+
+    for (let i = 0; i < taskCount; i++) {
+      const jid = `__scheduler__:main:job-${i}`;
+      queue.enqueueTask(jid, `task-${i}`, async () => {});
+    }
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    const groupsMap = (queue as any).groups as Map<string, unknown>;
+    const schedulerKeys = Array.from(groupsMap.keys()).filter((key) =>
+      key.startsWith('__scheduler__:'),
+    );
+    expect(schedulerKeys).toHaveLength(0);
+  });
+
   // --- Coverage for drainGroup line 230 ---
 
   it('drainGroup triggers after runForGroup completes', async () => {

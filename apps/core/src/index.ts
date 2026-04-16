@@ -12,6 +12,7 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  writeJobEventsSnapshot,
   writeJobRunsSnapshot,
   writeJobsSnapshot,
   writeGroupsSnapshot,
@@ -20,6 +21,7 @@ import {
   getAllJobs,
   getAllChats,
   getAllRegisteredGroups,
+  listRecentJobEvents,
   getRecentJobRuns,
   getAllSessions,
   deleteSession,
@@ -380,7 +382,8 @@ export async function startMyClawRuntime(): Promise<void> {
   const syncSchedulerState = () => {
     const jobs = getAllJobs();
     const runs = getRecentJobRuns(500);
-    writeSchedulerStateFileSafe(jobs, runs);
+    const events = listRecentJobEvents(1000);
+    writeSchedulerStateFileSafe(jobs, runs, events);
 
     const jobRows = jobs.map((job) => ({
       id: job.id,
@@ -405,18 +408,19 @@ export async function startMyClawRuntime(): Promise<void> {
       retry_backoff_ms: job.retry_backoff_ms,
       max_consecutive_failures: job.max_consecutive_failures,
       consecutive_failures: job.consecutive_failures,
+      execution_mode: job.execution_mode,
       pause_reason: job.pause_reason,
     }));
     for (const group of Object.values(registeredGroups)) {
       const isMain = group.isMain === true;
       writeJobsSnapshot(group.folder, isMain, jobRows);
       writeJobRunsSnapshot(group.folder, isMain, runs, jobRows);
+      writeJobEventsSnapshot(group.folder, isMain, events, jobRows);
     }
   };
 
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
-    getSessions: () => sessions,
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),

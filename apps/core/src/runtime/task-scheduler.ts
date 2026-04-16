@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
 import {
   ASSISTANT_NAME,
@@ -10,11 +11,14 @@ import {
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from '../core/config.js';
-import { Job, RegisteredGroup } from '../core/types.js';
+import { Job, JobExecutionMode, RegisteredGroup } from '../core/types.js';
 import { logger } from '../core/logger.js';
 import { writeMemoryContextSnapshot } from '../memory/memory-ipc.js';
 import { MemoryService } from '../memory/memory-service.js';
-import { resolveGroupFolderPath } from '../platform/group-folder.js';
+import {
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+} from '../platform/group-folder.js';
 import { GroupQueue } from './group-queue.js';
 import { AgentOutput, spawnAgent } from './agent-spawn.js';
 import {
@@ -35,7 +39,7 @@ import { StreamingChunkOptions } from '../core/types.js';
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
-  getSessions: () => Record<string, string>;
+  getSessions?: () => Record<string, string>;
   queue: GroupQueue;
   onProcess: (
     groupJid: string,
@@ -54,15 +58,118 @@ export interface SchedulerDependencies {
 }
 
 const DEFAULT_JOB_CLEANUP_AFTER_MS = 86_400_000;
+const MAX_PARALLEL_JOBS_PER_GROUP_SCOPE = 2;
 let schedulerStreamingGenerationCounter = 0;
+const schedulerSessions = new Map<string, string>();
+const activeParallelRunsByGroupScope = new Map<string, number>();
+const activeSerializedRunsByGroupScope = new Map<string, number>();
 
 function nextSchedulerStreamingGeneration(): number {
   schedulerStreamingGenerationCounter += 1;
   return schedulerStreamingGenerationCounter;
 }
 
-function schedulerQueueJid(groupScope: string): string {
+function schedulerQueueJid(groupScope: string, jobId?: string): string {
+  if (jobId) return `__scheduler__:${groupScope}:${jobId}`;
   return `__scheduler__:${groupScope}`;
+}
+
+function schedulerSessionKey(job: Job, mode: JobExecutionMode): string {
+  if (mode === 'serialized') return `serialized:${job.group_scope}`;
+  return `parallel:${job.id}`;
+}
+
+function canScheduleParallelRunForGroup(
+  groupScope: string,
+  queuedParallelThisTick: Map<string, number>,
+  queuedSerializedThisTick: Map<string, number>,
+): boolean {
+  const active = activeParallelRunsByGroupScope.get(groupScope) || 0;
+  const queued = queuedParallelThisTick.get(groupScope) || 0;
+  const activeSerialized =
+    activeSerializedRunsByGroupScope.get(groupScope) || 0;
+  const queuedSerialized = queuedSerializedThisTick.get(groupScope) || 0;
+  if (activeSerialized + queuedSerialized > 0) return false;
+  return active + queued < MAX_PARALLEL_JOBS_PER_GROUP_SCOPE;
+}
+
+function reserveParallelRunForTick(
+  groupScope: string,
+  queuedParallelThisTick: Map<string, number>,
+): void {
+  const current = queuedParallelThisTick.get(groupScope) || 0;
+  queuedParallelThisTick.set(groupScope, current + 1);
+}
+
+function acquireParallelRunSlot(groupScope: string): () => void {
+  const current = activeParallelRunsByGroupScope.get(groupScope) || 0;
+  activeParallelRunsByGroupScope.set(groupScope, current + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const active = activeParallelRunsByGroupScope.get(groupScope) || 0;
+    if (active <= 1) {
+      activeParallelRunsByGroupScope.delete(groupScope);
+      return;
+    }
+    activeParallelRunsByGroupScope.set(groupScope, active - 1);
+  };
+}
+
+function canScheduleSerializedRunForGroup(
+  groupScope: string,
+  queuedParallelThisTick: Map<string, number>,
+  queuedSerializedThisTick: Map<string, number>,
+): boolean {
+  const activeParallel = activeParallelRunsByGroupScope.get(groupScope) || 0;
+  const queuedParallel = queuedParallelThisTick.get(groupScope) || 0;
+  if (activeParallel + queuedParallel > 0) return false;
+  const activeSerialized =
+    activeSerializedRunsByGroupScope.get(groupScope) || 0;
+  const queuedSerialized = queuedSerializedThisTick.get(groupScope) || 0;
+  return activeSerialized + queuedSerialized < 1;
+}
+
+function reserveSerializedRunForTick(
+  groupScope: string,
+  queuedSerializedThisTick: Map<string, number>,
+): void {
+  const current = queuedSerializedThisTick.get(groupScope) || 0;
+  queuedSerializedThisTick.set(groupScope, current + 1);
+}
+
+function acquireSerializedRunSlot(groupScope: string): () => void {
+  const current = activeSerializedRunsByGroupScope.get(groupScope) || 0;
+  activeSerializedRunsByGroupScope.set(groupScope, current + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const active = activeSerializedRunsByGroupScope.get(groupScope) || 0;
+    if (active <= 1) {
+      activeSerializedRunsByGroupScope.delete(groupScope);
+      return;
+    }
+    activeSerializedRunsByGroupScope.set(groupScope, active - 1);
+  };
+}
+
+function pruneSchedulerSessions(jobs: Job[]): void {
+  const validKeys = new Set<string>();
+  for (const job of jobs) {
+    const mode = normalizeExecutionMode(job.execution_mode);
+    validKeys.add(schedulerSessionKey(job, mode));
+  }
+  for (const key of schedulerSessions.keys()) {
+    if (!validKeys.has(key)) {
+      schedulerSessions.delete(key);
+    }
+  }
+}
+
+function normalizeExecutionMode(mode: unknown): JobExecutionMode {
+  return mode === 'serialized' ? 'serialized' : 'parallel';
 }
 
 function normalizeCleanupAfterMs(value: number | undefined): number {
@@ -265,6 +372,7 @@ async function runJob(
   job: Job,
   deps: SchedulerDependencies,
   queueJid: string,
+  executionModeHint?: JobExecutionMode,
 ): Promise<void> {
   const currentJob = getJobById(job.id);
   if (!currentJob || currentJob.status !== 'active') {
@@ -286,6 +394,9 @@ async function runJob(
   const scheduledFor = currentJob.next_run || new Date().toISOString();
   const runId = randomUUID();
   const timeoutMs = Math.max(30_000, currentJob.timeout_ms || 300_000);
+  const executionMode = normalizeExecutionMode(
+    executionModeHint ?? currentJob.execution_mode,
+  );
   const leaseExpiresAt = new Date(
     Date.now() + timeoutMs + 30_000,
   ).toISOString();
@@ -316,6 +427,32 @@ async function runJob(
     return;
   }
 
+  const emitJobEvent = (
+    eventType: string,
+    payload: Record<string, unknown> | null,
+  ): void => {
+    try {
+      addJobEvent({
+        job_id: currentJob.id,
+        run_id: runId,
+        event_type: eventType,
+        payload: payload ? JSON.stringify(payload) : null,
+        created_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.warn(
+        { err, jobId: currentJob.id, runId, eventType },
+        'Failed to write scheduler lifecycle event',
+      );
+    }
+  };
+  emitJobEvent('job.started', {
+    queue_jid: queueJid,
+    execution_mode: executionMode,
+    scheduled_for: scheduledFor,
+    timeout_ms: timeoutMs,
+  });
+
   let result: string | null = null;
   let error: string | null = null;
   let collectedResult = '';
@@ -328,8 +465,15 @@ async function runJob(
     error = err instanceof Error ? err.message : String(err);
   }
 
-  const sessions = deps.getSessions();
-  const sessionId = sessions[execution.group.folder];
+  const schedulerSession = schedulerSessions.get(
+    schedulerSessionKey(currentJob, executionMode),
+  );
+  const sessionId = schedulerSession || undefined;
+  const memoryContextFileName = `memory_context.${runId}.json`;
+  const memoryContextFilePath = path.join(
+    resolveGroupIpcPath(execution.group.folder),
+    memoryContextFileName,
+  );
   const isMain = execution.group.isMain === true;
   let retrievedItemIds: string[] = [];
   let ranSystemJob = false;
@@ -450,6 +594,7 @@ async function runJob(
           isMain,
           currentJob.prompt,
           undefined,
+          { fileName: memoryContextFileName },
         );
         retrievedItemIds = contextSnapshot.retrievedItemIds;
       } catch (err) {
@@ -462,6 +607,20 @@ async function runJob(
 
     if (!error) {
       let deliveredAnyOutput = false;
+      let bufferedStreamingChars = 0;
+      let totalStreamingChars = 0;
+      let lastStreamingEventMs = 0;
+      const flushStreamingEvent = (force = false): void => {
+        if (bufferedStreamingChars <= 0) return;
+        const nowMs = Date.now();
+        if (!force && nowMs - lastStreamingEventMs < 1000) return;
+        emitJobEvent('job.streaming', {
+          buffered_chars: bufferedStreamingChars,
+          total_chars: totalStreamingChars,
+        });
+        bufferedStreamingChars = 0;
+        lastStreamingEventMs = nowMs;
+      };
       try {
         const output = await spawnAgent(
           execution.group,
@@ -475,6 +634,7 @@ async function runJob(
             isScheduledJob: true,
             assistantName: ASSISTANT_NAME,
             script: currentJob.script || undefined,
+            memoryContextFile: memoryContextFilePath,
           },
           (proc, containerName) =>
             deps.onProcess(
@@ -487,6 +647,10 @@ async function runJob(
             if (streamedOutput.result) {
               result = streamedOutput.result;
               collectedResult += streamedOutput.result;
+              const chunkChars = streamedOutput.result.length;
+              bufferedStreamingChars += chunkChars;
+              totalStreamingChars += chunkChars;
+              flushStreamingEvent();
               if (await deliverStreamingChunk(streamedOutput.result)) {
                 deliveredAnyOutput = true;
               }
@@ -501,12 +665,19 @@ async function runJob(
           },
           { timeoutMs },
         );
+        flushStreamingEvent(true);
 
         if (output.status === 'error') {
           error = output.error || 'Unknown error';
         } else if (output.result) {
           result = output.result;
           if (!collectedResult) collectedResult = output.result;
+        }
+        if (output.newSessionId) {
+          schedulerSessions.set(
+            schedulerSessionKey(currentJob, executionMode),
+            output.newSessionId,
+          );
         }
 
         if (!error) {
@@ -636,23 +807,31 @@ async function runJob(
   if (notified) {
     markJobRunNotified(runId);
   }
+  emitJobEvent(runStatus === 'completed' ? 'job.completed' : 'job.failed', {
+    status: runStatus,
+    next_run: nextRun,
+    retry_count: retryCount,
+    pause_reason: pauseReason,
+    notified,
+    summary,
+  });
   deps.onSchedulerChanged?.();
 
   if (!error && !ranSystemJob) {
-    try {
-      await MemoryService.getInstance().reflectAfterTurn({
+    void MemoryService.getInstance()
+      .reflectAfterTurn({
         groupFolder: execution.group.folder,
         prompt: currentJob.prompt,
         result: resultSummary || 'Completed',
         isMain,
         retrievedItemIds,
+      })
+      .catch((err) => {
+        logger.warn(
+          { err, jobId: currentJob.id },
+          'Memory reflection failed after job completion',
+        );
       });
-    } catch (err) {
-      logger.warn(
-        { err, jobId: currentJob.id },
-        'Memory reflection failed after job completion',
-      );
-    }
   }
 
   if (
@@ -662,6 +841,18 @@ async function runJob(
   ) {
     deleteJob(currentJob.id);
     deps.onSchedulerChanged?.();
+  }
+
+  try {
+    fs.unlinkSync(memoryContextFilePath);
+  } catch (err) {
+    const nodeErr = err as NodeJS.ErrnoException;
+    if (nodeErr?.code !== 'ENOENT') {
+      logger.debug(
+        { err, jobId: currentJob.id, file: memoryContextFilePath },
+        'Failed to clean scheduler memory context file',
+      );
+    }
   }
 }
 
@@ -686,19 +877,64 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
 
       const dueJobs = listDueJobs();
-      const groups = deps.registeredGroups();
       if (dueJobs.length > 0) {
         logger.info({ count: dueJobs.length }, 'Found due scheduler jobs');
       }
 
+      const queuedParallelRunsThisTick = new Map<string, number>();
+      const queuedSerializedRunsThisTick = new Map<string, number>();
       for (const job of dueJobs) {
         const current = getJobById(job.id);
         if (!current || current.status !== 'active') continue;
-        const execution = resolveExecutionContext(current, groups);
+        const executionMode = normalizeExecutionMode(current.execution_mode);
+        if (
+          executionMode === 'parallel' &&
+          !canScheduleParallelRunForGroup(
+            current.group_scope,
+            queuedParallelRunsThisTick,
+            queuedSerializedRunsThisTick,
+          )
+        ) {
+          continue;
+        }
+        if (
+          executionMode === 'serialized' &&
+          !canScheduleSerializedRunForGroup(
+            current.group_scope,
+            queuedParallelRunsThisTick,
+            queuedSerializedRunsThisTick,
+          )
+        ) {
+          continue;
+        }
         const queueJid =
-          execution?.executionJid || schedulerQueueJid(current.group_scope);
+          executionMode === 'serialized'
+            ? schedulerQueueJid(current.group_scope)
+            : schedulerQueueJid(current.group_scope, current.id);
+        if (executionMode === 'parallel') {
+          reserveParallelRunForTick(
+            current.group_scope,
+            queuedParallelRunsThisTick,
+          );
+        }
+        if (executionMode === 'serialized') {
+          reserveSerializedRunForTick(
+            current.group_scope,
+            queuedSerializedRunsThisTick,
+          );
+        }
         deps.queue.enqueueTask(queueJid, current.id, () =>
-          runJob(current, deps, queueJid),
+          (async () => {
+            const releaseSlot =
+              executionMode === 'parallel'
+                ? acquireParallelRunSlot(current.group_scope)
+                : acquireSerializedRunSlot(current.group_scope);
+            try {
+              await runJob(current, deps, queueJid, executionMode);
+            } finally {
+              releaseSlot?.();
+            }
+          })(),
         );
       }
 
@@ -706,6 +942,8 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       if (removed) {
         deps.onSchedulerChanged?.();
       }
+
+      pruneSchedulerSessions(getAllJobs());
     } catch (err) {
       logger.error({ err }, 'Error in scheduler loop');
     }
@@ -719,4 +957,8 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 /** @internal - for tests only. */
 export function _resetSchedulerLoopForTests(): void {
   schedulerRunning = false;
+  schedulerStreamingGenerationCounter = 0;
+  schedulerSessions.clear();
+  activeParallelRunsByGroupScope.clear();
+  activeSerializedRunsByGroupScope.clear();
 }

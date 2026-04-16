@@ -53,7 +53,7 @@ describe('PromptProfileService', () => {
 
     writeFile(path.join(configDir, 'settings.yaml'), 'channels: {}\n');
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     service.ensureSeedFiles();
 
     expect(fs.existsSync(path.join(agentsDir, 'shared', 'CLAUDE.md'))).toBe(
@@ -70,52 +70,28 @@ describe('PromptProfileService', () => {
     const root = makeTempRoot();
     roots.push(root);
 
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
     const sharedPath = path.join(agentsDir, 'shared', 'CLAUDE.md');
     const existingContent = '# Existing Shared Context\nDo not overwrite.';
     writeFile(sharedPath, existingContent);
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     service.ensureSeedFiles();
 
     expect(fs.readFileSync(sharedPath, 'utf-8')).toBe(existingContent);
-  });
-
-  it('imports legacy root CLAUDE.md into shared profile when shared is missing', () => {
-    const root = makeTempRoot();
-    roots.push(root);
-
-    const configDir = path.join(root, 'config');
-    const agentsDir = path.join(root, 'agents');
-    writeFile(
-      path.join(configDir, 'CLAUDE.md'),
-      '# Legacy Profile\nKeep this behavior.',
-    );
-
-    const service = new PromptProfileService({ configDir, agentsDir });
-    service.ensureSeedFiles();
-
-    expect(fs.existsSync(path.join(agentsDir, 'shared', 'CLAUDE.md'))).toBe(
-      true,
-    );
-    expect(
-      fs.readFileSync(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'utf-8'),
-    ).toContain('Keep this behavior.');
   });
 
   it('compiles deterministic order: runtime rules, soul, shared context, group context', () => {
     const root = makeTempRoot();
     roots.push(root);
 
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'team', 'SOUL.md'), '# Soul\nBe direct.');
     writeFile(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'shared context');
     writeFile(path.join(agentsDir, 'team', 'CLAUDE.md'), 'group context');
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
 
     expect(prompt.indexOf('[[RUNTIME_RULES]]')).toBeLessThan(
@@ -136,7 +112,6 @@ describe('PromptProfileService', () => {
   it('includes SOUL section with identity directive when SOUL.md exists', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(
@@ -144,7 +119,7 @@ describe('PromptProfileService', () => {
       '# Soul\n\nBe sharp and direct.',
     );
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
 
     expect(prompt).toContain('[[SOUL]]');
@@ -155,12 +130,11 @@ describe('PromptProfileService', () => {
   it('skips SOUL section when SOUL.md is missing', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'shared');
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
     expect(prompt).not.toContain('[[SOUL]]');
   });
@@ -168,11 +142,10 @@ describe('PromptProfileService', () => {
   it('skips SOUL section when SOUL.md is empty', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'team', 'SOUL.md'), ' \n \n');
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
     expect(prompt).not.toContain('[[SOUL]]');
   });
@@ -180,11 +153,10 @@ describe('PromptProfileService', () => {
   it('skips invalid group folder names for SOUL and group sections', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'shared');
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: '../../../etc' });
 
     expect(prompt).toContain('[[RUNTIME_RULES]]');
@@ -197,14 +169,13 @@ describe('PromptProfileService', () => {
   it('handles SOUL read failures gracefully', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
     const soulPath = path.join(agentsDir, 'team', 'SOUL.md');
 
     fs.mkdirSync(soulPath, { recursive: true });
     writeFile(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'shared');
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
 
     expect(prompt).not.toContain('[[SOUL]]');
@@ -214,7 +185,6 @@ describe('PromptProfileService', () => {
   it('handles group context read failures gracefully', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
     const groupContextPath = path.join(agentsDir, 'team', 'CLAUDE.md');
 
@@ -223,7 +193,7 @@ describe('PromptProfileService', () => {
     fs.unlinkSync(groupContextPath);
     fs.mkdirSync(groupContextPath, { recursive: true });
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
 
     expect(prompt).toContain('[[SHARED_CONTEXT]]');
@@ -234,7 +204,6 @@ describe('PromptProfileService', () => {
   it('enforces budget caps for sections and total output', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'team', 'SOUL.md'), 's'.repeat(8000));
@@ -242,7 +211,6 @@ describe('PromptProfileService', () => {
     writeFile(path.join(agentsDir, 'team', 'CLAUDE.md'), 't'.repeat(8000));
 
     const service = new PromptProfileService({
-      configDir,
       agentsDir,
       sectionBudgets: {
         SOUL: 400,
@@ -262,7 +230,6 @@ describe('PromptProfileService', () => {
   it('omits sections when section budgets are zero', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'team', 'SOUL.md'), 'soul');
@@ -270,7 +237,6 @@ describe('PromptProfileService', () => {
     writeFile(path.join(agentsDir, 'team', 'CLAUDE.md'), 'group');
 
     const service = new PromptProfileService({
-      configDir,
       agentsDir,
       sectionBudgets: {
         SOUL: 0,
@@ -289,7 +255,6 @@ describe('PromptProfileService', () => {
   it('handles very small totalBudget by truncating early', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(path.join(agentsDir, 'team', 'SOUL.md'), '# Soul\nBe direct');
@@ -297,7 +262,6 @@ describe('PromptProfileService', () => {
     writeFile(path.join(agentsDir, 'team', 'CLAUDE.md'), 'group context');
 
     const service = new PromptProfileService({
-      configDir,
       agentsDir,
       totalBudget: 60,
     });
@@ -310,7 +274,6 @@ describe('PromptProfileService', () => {
   it('normalizes CRLF in SOUL and context files', () => {
     const root = makeTempRoot();
     roots.push(root);
-    const configDir = path.join(root, 'config');
     const agentsDir = path.join(root, 'agents');
 
     writeFile(
@@ -319,7 +282,7 @@ describe('PromptProfileService', () => {
     );
     writeFile(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'shared\r\nrules');
 
-    const service = new PromptProfileService({ configDir, agentsDir });
+    const service = new PromptProfileService({ agentsDir });
     const prompt = service.compileSystemPrompt({ groupFolder: 'team' });
 
     expect(prompt).toContain('Voice line');

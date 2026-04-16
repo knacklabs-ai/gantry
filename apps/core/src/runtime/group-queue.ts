@@ -74,6 +74,28 @@ export class GroupQueue {
     return this.activeTaskCount < MAX_JOB_CONTAINERS;
   }
 
+  private isEphemeralSchedulerGroup(groupJid: string): boolean {
+    return groupJid.startsWith('__scheduler__:');
+  }
+
+  private cleanupEphemeralGroupIfIdle(
+    groupJid: string,
+    state: GroupState,
+  ): void {
+    if (!this.isEphemeralSchedulerGroup(groupJid)) return;
+    if (state.active) return;
+    if (state.pendingMessages || state.pendingTasks.length > 0) return;
+    if (state.runningTaskId || state.process || state.idleWaiting) return;
+
+    this.groups.delete(groupJid);
+    this.waitingMessageGroups = this.waitingMessageGroups.filter(
+      (jid) => jid !== groupJid,
+    );
+    this.waitingTaskGroups = this.waitingTaskGroups.filter(
+      (jid) => jid !== groupJid,
+    );
+  }
+
   private enqueueWaitingGroup(kind: QueueKind, groupJid: string): void {
     const queue =
       kind === 'message' ? this.waitingMessageGroups : this.waitingTaskGroups;
@@ -437,6 +459,8 @@ export class GroupQueue {
       );
       return;
     }
+
+    this.cleanupEphemeralGroupIfIdle(groupJid, state);
 
     // Nothing pending for this group; check if other groups are waiting for a slot
     this.drainWaiting();
