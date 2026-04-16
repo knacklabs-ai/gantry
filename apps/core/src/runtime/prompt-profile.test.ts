@@ -82,6 +82,28 @@ describe('PromptProfileService', () => {
     expect(fs.readFileSync(sharedPath, 'utf-8')).toBe(existingContent);
   });
 
+  it('imports legacy root CLAUDE.md into shared profile when shared is missing', () => {
+    const root = makeTempRoot();
+    roots.push(root);
+
+    const configDir = path.join(root, 'config');
+    const agentsDir = path.join(root, 'agents');
+    writeFile(
+      path.join(configDir, 'CLAUDE.md'),
+      '# Legacy Profile\nKeep this behavior.',
+    );
+
+    const service = new PromptProfileService({ configDir, agentsDir });
+    service.ensureSeedFiles();
+
+    expect(fs.existsSync(path.join(agentsDir, 'shared', 'CLAUDE.md'))).toBe(
+      true,
+    );
+    expect(
+      fs.readFileSync(path.join(agentsDir, 'shared', 'CLAUDE.md'), 'utf-8'),
+    ).toContain('Keep this behavior.');
+  });
+
   it('compiles deterministic order: runtime rules, soul, shared context, group context', () => {
     const root = makeTempRoot();
     roots.push(root);

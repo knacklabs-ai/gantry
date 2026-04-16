@@ -1084,7 +1084,7 @@ describe('scheduler loop', () => {
     expect(onSchedulerChanged).toHaveBeenCalled();
   });
 
-  it('enqueues job tasks using scheduler queue jid', async () => {
+  it('enqueues job tasks using execution jid when group is resolvable', async () => {
     upsertJob({
       id: 'enqueue-test',
       name: 'enqueue test',
@@ -1109,13 +1109,13 @@ describe('scheduler loop', () => {
     await Promise.resolve();
 
     expect(enqueueTask).toHaveBeenCalledWith(
-      '__scheduler__:main',
+      'group@g.us',
       'enqueue-test',
       expect.any(Function),
     );
   });
 
-  it('uses scheduler queue jid when no linked_sessions', async () => {
+  it('uses resolved folder owner jid when no linked_sessions', async () => {
     upsertJob({
       id: 'no-session-job',
       name: 'no session',
@@ -1135,7 +1135,7 @@ describe('scheduler loop', () => {
     await Promise.resolve();
 
     expect(enqueueTask).toHaveBeenCalledWith(
-      '__scheduler__:main',
+      'group@g.us',
       'no-session-job',
       expect.any(Function),
     );
@@ -1753,7 +1753,7 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     expect(runs.length).toBe(1);
   });
 
-  it('spawnAgent onProcess callback is invoked with scheduler queue jid', async () => {
+  it('spawnAgent onProcess callback is invoked with execution jid', async () => {
     const onProcess = vi.fn();
     vi.mocked(spawnAgent).mockImplementationOnce(
       async (_group, _input, onProc, _onOutput, _options) => {
@@ -1782,7 +1782,7 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     await Promise.resolve();
 
     expect(onProcess).toHaveBeenCalledWith(
-      '__scheduler__:main',
+      'group@g.us',
       expect.anything(),
       'test-container',
       'main',

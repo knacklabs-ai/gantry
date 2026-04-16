@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { AGENTS_DIR } from '../core/config.js';
+import { AGENT_ROOT, AGENTS_DIR } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { isValidGroupFolder } from '../platform/group-folder.js';
 
@@ -12,6 +12,7 @@ type PromptSectionName =
   | 'GROUP_CONTEXT';
 
 const SOUL_FILENAME = 'SOUL.md';
+const LEGACY_ROOT_PROFILE_FILENAME = 'CLAUDE.md';
 const SOUL_SOURCE = 'myclaw://soul';
 const SHARED_CONTEXT_SOURCE = 'myclaw://shared-context';
 const GROUP_CONTEXT_SOURCE = 'myclaw://group-context';
@@ -74,12 +75,13 @@ function renderSection(section: PromptSection): string {
 
 export class PromptProfileService {
   private readonly agentsDir: string;
+  private readonly legacyRootDir: string;
   private readonly sectionBudgets: Readonly<Record<PromptSectionName, number>>;
   private readonly totalBudget: number;
 
   constructor(options: PromptProfileServiceOptions = {}) {
-    void options.configDir;
     this.agentsDir = options.agentsDir || AGENTS_DIR;
+    this.legacyRootDir = options.configDir || AGENT_ROOT;
     this.sectionBudgets = {
       ...DEFAULT_PROMPT_SECTION_BUDGETS,
       ...(options.sectionBudgets || {}),
@@ -92,6 +94,31 @@ export class PromptProfileService {
     fs.mkdirSync(sharedDir, { recursive: true });
     const sharedPath = path.join(sharedDir, 'CLAUDE.md');
     if (fs.existsSync(sharedPath)) return;
+
+    const legacyPath = path.join(
+      this.legacyRootDir,
+      LEGACY_ROOT_PROFILE_FILENAME,
+    );
+    if (fs.existsSync(legacyPath)) {
+      try {
+        const legacyRaw = fs.readFileSync(legacyPath, 'utf-8');
+        const legacyNormalized = normalizeContent(legacyRaw);
+        if (legacyNormalized) {
+          fs.writeFileSync(sharedPath, `${legacyNormalized}\n`);
+          logger.info(
+            { source: legacyPath, destination: sharedPath },
+            'Imported legacy root CLAUDE.md into shared profile',
+          );
+          return;
+        }
+      } catch (err) {
+        logger.warn(
+          { err, filePath: legacyPath },
+          'Failed to import legacy root CLAUDE.md',
+        );
+      }
+    }
+
     fs.writeFileSync(sharedPath, DEFAULT_SHARED_TEMPLATE);
     logger.info({ filePath: sharedPath }, 'Seeded shared CLAUDE.md profile');
   }

@@ -686,6 +686,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
 
       const dueJobs = listDueJobs();
+      const groups = deps.registeredGroups();
       if (dueJobs.length > 0) {
         logger.info({ count: dueJobs.length }, 'Found due scheduler jobs');
       }
@@ -693,7 +694,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       for (const job of dueJobs) {
         const current = getJobById(job.id);
         if (!current || current.status !== 'active') continue;
-        const queueJid = schedulerQueueJid(current.group_scope);
+        const execution = resolveExecutionContext(current, groups);
+        const queueJid =
+          execution?.executionJid || schedulerQueueJid(current.group_scope);
         deps.queue.enqueueTask(queueJid, current.id, () =>
           runJob(current, deps, queueJid),
         );
