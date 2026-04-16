@@ -4,7 +4,7 @@
 
 Every change must pass five independent checks:
 1. automated tests
-2. deterministic verify
+2. deterministic verify (structural, architecture, typecheck, tests)
 3. quality review
 4. performance review
 5. security review

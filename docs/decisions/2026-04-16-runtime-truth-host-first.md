@@ -4,9 +4,7 @@
 
 MyClaw currently has one working runtime implementation in production code: host execution.
 
-Several active docs and scripts still described a container-first dual-mode model (`AGENT_RUNTIME=container|host`) and referenced missing files such as:
-- `apps/core/src/runtime/container-runner.ts`
-- `apps/core/src/runtime/container-runtime.ts`
+Several active docs and scripts still described a container-first dual-mode model (`AGENT_RUNTIME=container|host`) and referenced now-removed runtime files such as `container-runner.ts` and `container-runtime.ts`.
 
 This created a half-real supported mode: users were told container runtime was first-class even though host runtime is the only complete and maintained execution path in this repository.
 
