@@ -61,6 +61,10 @@ function nextSchedulerStreamingGeneration(): number {
   return schedulerStreamingGenerationCounter;
 }
 
+function schedulerQueueJid(groupScope: string): string {
+  return `__scheduler__:${groupScope}`;
+}
+
 function normalizeCleanupAfterMs(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return DEFAULT_JOB_CLEANUP_AFTER_MS;
@@ -257,7 +261,11 @@ async function handleSystemJob(
   throw new Error(`Unknown system job: ${job.prompt}`);
 }
 
-async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
+async function runJob(
+  job: Job,
+  deps: SchedulerDependencies,
+  queueJid: string,
+): Promise<void> {
   const currentJob = getJobById(job.id);
   if (!currentJob || currentJob.status !== 'active') {
     return;
@@ -452,15 +460,6 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
       }
     }
 
-    const JOB_CLOSE_DELAY_MS = 10_000;
-    let closeTimer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleClose = () => {
-      if (closeTimer) return;
-      closeTimer = setTimeout(() => {
-        deps.queue.closeStdin(execution.executionJid);
-      }, JOB_CLOSE_DELAY_MS);
-    };
-
     if (!error) {
       let deliveredAnyOutput = false;
       try {
@@ -479,7 +478,7 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
           },
           (proc, containerName) =>
             deps.onProcess(
-              execution.executionJid,
+              queueJid,
               proc,
               containerName,
               execution.group.folder,
@@ -491,12 +490,9 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
               if (await deliverStreamingChunk(streamedOutput.result)) {
                 deliveredAnyOutput = true;
               }
-              scheduleClose();
             }
             if (streamedOutput.status === 'success') {
               if (await finalizeStreaming()) deliveredAnyOutput = true;
-              deps.queue.notifyIdle(execution.executionJid);
-              scheduleClose();
             }
             if (streamedOutput.status === 'error') {
               error = streamedOutput.error || 'Unknown error';
@@ -525,10 +521,6 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
         error = err instanceof Error ? err.message : String(err);
       } finally {
         await finalizeStreaming();
-        if (closeTimer && error) {
-          clearTimeout(closeTimer);
-          closeTimer = null;
-        }
       }
     }
   }
@@ -701,10 +693,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       for (const job of dueJobs) {
         const current = getJobById(job.id);
         if (!current || current.status !== 'active') continue;
-        const queueJid =
-          current.linked_sessions[0] || `${current.group_scope}:job`;
+        const queueJid = schedulerQueueJid(current.group_scope);
         deps.queue.enqueueTask(queueJid, current.id, () =>
-          runJob(current, deps),
+          runJob(current, deps, queueJid),
         );
       }
 
