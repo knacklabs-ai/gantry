@@ -197,7 +197,8 @@ class VerifyContractTests(unittest.TestCase):
         phases = [line.split(":", 1)[0] for line in result.stdout.splitlines() if ":" in line]
         self.assertIn("architecture", phases)
         self.assertLess(phases.index("structural"), phases.index("architecture"))
-        self.assertLess(phases.index("architecture"), phases.index("typecheck"))
+        self.assertLess(phases.index("architecture"), phases.index("factory-python-tests"))
+        self.assertLess(phases.index("factory-python-tests"), phases.index("typecheck"))
 
 
 if __name__ == "__main__":

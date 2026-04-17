@@ -22,6 +22,11 @@ commands = [
         os.environ.get("FACTORY_ARCHITECTURE_CMD")
         or "python3 .codex/scripts/check_architecture.py",
     ),
+    (
+        "factory-python-tests",
+        os.environ.get("FACTORY_PYTHON_TEST_CMD")
+        or "python3 -m unittest discover .codex/scripts/tests",
+    ),
     ("typecheck", os.environ.get("FACTORY_TYPECHECK_CMD") or "npm run typecheck"),
     ("tests", os.environ.get("FACTORY_TEST_CMD") or "npm test"),
 ]

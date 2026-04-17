@@ -8,6 +8,7 @@ root = Path(__file__).resolve().parents[2]
 required = [
     root / '.codex' / 'config.toml',
     root / '.codex' / 'hooks.json',
+    root / '.codex' / 'rules' / 'default.rules',
     root / '.codex' / 'prompts' / 'planner.md',
     root / '.codex' / 'prompts' / 'decomposer.md',
     root / '.codex' / 'prompts' / 'tester-automated.md',

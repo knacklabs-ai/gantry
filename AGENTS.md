@@ -67,7 +67,7 @@ If running full factory mode:
 
 ## Repo Hygiene
 
-- Do not track generated artifacts from local runs or hooks, including `__pycache__`, `*.pyc`, coverage output, and `.factory/tool-history.jsonl`.
+- Do not track generated artifacts from local runs or hooks, including `__pycache__`, `*.pyc`, coverage output, and validation reports.
 - Do not commit active `.factory/` run artifacts or package tarballs; keep the repo snapshot free of local verification output.
 - Background maintenance timers must be stoppable so tests and CI can exit cleanly.
 - Keep docs concise, non-duplicative, and aligned with the current product behavior.
