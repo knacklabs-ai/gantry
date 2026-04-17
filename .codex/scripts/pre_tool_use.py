@@ -2,70 +2,74 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+import sys
 
 from factory_lib import read_hook_input
 
-payload = read_hook_input()
-command = ((payload.get("tool_input") or {}).get("command") or "").strip()
-command_lower = command.lower()
-enforce_verify = os.environ.get("FACTORY_ENFORCE_VERIFY", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-blocked = [
-    r"\brm\s+-rf\b",
-    r"\bgit\s+reset\s+--hard\b",
-    r"\bgit\s+push\s+--force\b",
-    r"\bterraform\s+destroy\b",
-    r"\bkubectl\s+delete\b",
-]
-for pattern in blocked:
-    if re.search(pattern, command):
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": f"Blocked by factory policy: {command}",
-            }
-        }))
-        raise SystemExit(0)
 
-check_bypass = [
-    "pnpm test",
-    "pnpm lint",
-    "pnpm typecheck",
-    "pnpm check:all",
-    "npm test",
-    "npm run lint",
-    "npm run typecheck",
-    "npm run format:check",
-    "npm run build",
-    "npx vitest run",
-    "npx tsc --noemit",
+DESTRUCTIVE_PATTERNS = [
+    (
+        re.compile(
+            r"(?<![\w/.-])(?:/[\w./-]+/)?rm\s+"
+            r"(?=[^;&|]*(?:-[A-Za-z]*r[A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*r|"
+            r"--recursive\b[^;&|]*--force\b|--force\b[^;&|]*--recursive\b))",
+            re.IGNORECASE,
+        ),
+        "recursive force deletion",
+    ),
+    (
+        re.compile(r"(?<![\w/.-])(?:/[\w./-]+/)?git\b[^;&|]*\breset\s+--hard\b", re.IGNORECASE),
+        "git hard reset",
+    ),
+    (
+        re.compile(
+            r"(?<![\w/.-])(?:/[\w./-]+/)?git\b[^;&|]*\bpush\b[^;&|]*(?:--force(?:-with-lease)?\b|(?:^|\s)-f(?:\s|$))",
+            re.IGNORECASE,
+        ),
+        "git force push",
+    ),
+    (
+        re.compile(r"(?<![\w/.-])(?:/[\w./-]+/)?terraform\s+(?:destroy\b|apply\b[^;&|]*\s-destroy\b)", re.IGNORECASE),
+        "terraform destroy",
+    ),
+    (
+        re.compile(r"(?<![\w/.-])(?:/[\w./-]+/)?kubectl\s+delete\b", re.IGNORECASE),
+        "kubectl delete",
+    ),
 ]
-if any(token in command_lower for token in check_bypass) and ".codex/scripts/verify.py" not in command:
-    if enforce_verify:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "Use `python3 .codex/scripts/verify.py` so verification artifacts stay deterministic.",
-            }
-        }))
-        raise SystemExit(0)
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": (
-                "Direct verification commands are allowed. "
-                "Run `python3 .codex/scripts/verify.py` before final review or PR-ready so `.factory/verify.json` stays current."
-            ),
-        }
-    }))
-    raise SystemExit(0)
 
-print(json.dumps({"systemMessage": "Factory policy check passed."}))
+
+def deny(command: str, reason: str) -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        f"Blocked destructive command policy ({reason}). "
+                        "Ask the user for an explicit operator workflow before running this command."
+                    ),
+                }
+            }
+        )
+    )
+
+
+def main() -> int:
+    payload = read_hook_input()
+    command = str(((payload.get("tool_input") or {}).get("command") or "")).strip()
+    if not command:
+        return 0
+
+    for pattern, reason in DESTRUCTIVE_PATTERNS:
+        if pattern.search(command):
+            deny(command, reason)
+            return 0
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

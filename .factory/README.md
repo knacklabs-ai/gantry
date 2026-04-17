@@ -11,7 +11,6 @@ Runtime/generated artifacts (do not commit):
 - `verify.json`
 - `tests.json`
 - `validation-report.json`
-- `tool-history.jsonl`
 - `reviews/*.json`
 
 Use the factory scripts in `.codex/scripts/` to generate and validate these artifacts.

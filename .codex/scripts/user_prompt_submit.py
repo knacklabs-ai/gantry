@@ -34,6 +34,9 @@ def emit_context(extra: str = "") -> None:
     }))
 
 
+if not run_state and not needs_build:
+    raise SystemExit(0)
+
 if needs_build and not run_state and enforce_intake:
     print(json.dumps({"decision": "block", "reason": "No factory state found. Run intake, planning, and decomposition before implementation."}))
     raise SystemExit(0)
@@ -45,10 +48,10 @@ if needs_build and not run_state:
         "- run docs-decomposer and record decomposition",
     )
     raise SystemExit(0)
-if needs_build and run_state.get("plan_status") in {"needs-plan", "awaiting-approval"}:
+if needs_build and enforce_intake and run_state.get("plan_status") in {"needs-plan", "awaiting-approval"}:
     print(json.dumps({"decision": "block", "reason": "Implementation is blocked until the plan is approved."}))
     raise SystemExit(0)
-if needs_build and run_state.get("decomposition_status") != "recorded":
+if needs_build and enforce_intake and run_state.get("decomposition_status") != "recorded":
     print(json.dumps({"decision": "block", "reason": "Implementation is blocked until decomposition is recorded."}))
     raise SystemExit(0)
 emit_context()
