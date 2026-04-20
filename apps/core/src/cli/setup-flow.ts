@@ -1,10 +1,11 @@
 import * as p from '@clack/prompts';
+import { listChannelProviders } from '../bootstrap/channel-providers.js';
 
 import { resolveHostCredentialMode } from '../core/credential-mode.js';
 import type { HostCredentialMode } from '../core/credential-mode.js';
 import {
   formatDoctorReport,
-  hasRegisteredAnyGroup,
+  hasProcessableGroupForConfiguredChannel,
   hasRuntimeConfig,
   runDoctorWithNetwork,
 } from './doctor.js';
@@ -780,15 +781,26 @@ async function runVerifyStep(
 ): Promise<FlowAction> {
   const report = await runDoctorWithNetwork(importMetaUrl, draft.runtimeHome);
   const runtimeConfigured = hasRuntimeConfig(draft.runtimeHome);
-  const hasRegisteredGroup = hasRegisteredAnyGroup(draft.runtimeHome);
+  const hasProcessableGroup = hasProcessableGroupForConfiguredChannel(
+    draft.runtimeHome,
+  );
 
   p.note(formatDoctorReport(report), 'Verification');
 
-  if (!runtimeConfigured || !hasRegisteredGroup) {
+  if (!runtimeConfigured) {
     p.log.warn(
       'Setup is not complete yet. Next action: connect a channel now.',
     );
     return { type: 'goto', step: 'telegram' };
+  }
+  if (!hasProcessableGroup) {
+    const connectCommands = listChannelProviders().map(
+      (provider) => `\`myclaw ${provider.id} connect\``,
+    );
+    p.log.warn(
+      `Setup is not complete yet. Next action: ensure one enabled channel has credentials and a registered group (${connectCommands.join(' or ')}).`,
+    );
+    return { type: 'resume' };
   }
 
   if (!report.ok) {

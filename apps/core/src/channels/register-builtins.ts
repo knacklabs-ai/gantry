@@ -24,12 +24,15 @@ async function createBuiltInChannel(
 }
 
 async function runBuiltInSetup(
+  providerLabel: string,
   setup: (runtimeHome: string) => Promise<number>,
   ctx: ChannelProviderSetupContext,
 ): Promise<void> {
   const code = await setup(ctx.runtimeHome);
   if (code !== 0) {
-    throw new Error('Channel setup did not complete successfully');
+    throw new Error(
+      `${providerLabel} connect command exited with status ${code}`,
+    );
   }
 }
 
@@ -64,7 +67,7 @@ const telegramProvider: ChannelProvider = {
   setup: {
     envKeys: ['TELEGRAM_BOT_TOKEN'],
     describe: () => 'Telegram bot via Bot API',
-    run: (ctx) => runBuiltInSetup(runTelegramSetup, ctx),
+    run: (ctx) => runBuiltInSetup('Telegram', runTelegramSetup, ctx),
   },
 };
 
@@ -80,7 +83,7 @@ const slackProvider: ChannelProvider = {
   setup: {
     envKeys: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'],
     describe: () => 'Slack Socket Mode',
-    run: (ctx) => runBuiltInSetup(runSlackSetup, ctx),
+    run: (ctx) => runBuiltInSetup('Slack', runSlackSetup, ctx),
   },
 };
 
