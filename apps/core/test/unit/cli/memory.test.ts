@@ -429,9 +429,6 @@ describe('memory CLI commands', () => {
     expect(updated.memory.llm.models.consolidation).toBe(
       'claude-haiku-4-5-20251001',
     );
-    expect(updated.memory.llm.models.sessionSummary).toBe(
-      'claude-haiku-4-5-20251001',
-    );
   });
 
   it('applies the quality model profile across all memory tasks', async () => {
@@ -446,6 +443,5 @@ describe('memory CLI commands', () => {
     expect(updated.memory.llm.models.extractor).toBe('claude-sonnet-4-6');
     expect(updated.memory.llm.models.dreaming).toBe('claude-sonnet-4-6');
     expect(updated.memory.llm.models.consolidation).toBe('claude-sonnet-4-6');
-    expect(updated.memory.llm.models.sessionSummary).toBe('claude-sonnet-4-6');
   });
 });

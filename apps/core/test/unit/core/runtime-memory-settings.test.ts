@@ -80,7 +80,6 @@ memory:
             llm: {
               models: {
                 extractor: 'claude-haiku-4-5-20251001',
-                session_summary: 'claude-haiku-4-5-20251001',
               },
             },
           },
@@ -96,6 +95,5 @@ memory:
     expect(snapshot.embeddingsEnabled).toBe(false);
     expect(snapshot.dreamingEnabled).toBe(true);
     expect(snapshot.llmExtractorModel).toBe('claude-haiku-4-5-20251001');
-    expect(snapshot.llmSessionSummaryModel).toBe('claude-haiku-4-5-20251001');
   });
 });

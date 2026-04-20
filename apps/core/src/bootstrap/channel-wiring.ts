@@ -40,8 +40,9 @@ import {
   asUserQuestionSurface,
 } from './channel-capability-ports.js';
 import {
-  BUILTIN_CHANNEL_PROVIDERS,
   ChannelProvider,
+  listChannelProviders,
+  providerForJid,
 } from './channel-providers.js';
 
 interface ChannelWiringDeps {
@@ -96,7 +97,7 @@ export function createChannelWiring(
   deps: Partial<ChannelWiringDeps> = {},
 ): ChannelWiring {
   const resolved: ChannelWiringDeps = {
-    channelProviders: BUILTIN_CHANNEL_PROVIDERS,
+    channelProviders: listChannelProviders(),
     storeMessage,
     storeChatMetadata,
     loadSenderAllowlist,
@@ -246,7 +247,10 @@ export function createChannelWiring(
       return;
     }
 
-    const formatted = formatOutboundForChannel(rawText, channel.name);
+    const formatted = formatOutboundForChannel(
+      rawText,
+      providerForJid(jid)?.id ?? channel.name,
+    );
     if (!formatted) return;
     if (options.messageOptions) {
       await channel.sendMessage(jid, formatted, options.messageOptions);
@@ -269,11 +273,11 @@ export function createChannelWiring(
       return false;
     }
 
-    const isTelegramGroup =
-      channel.name === 'telegram' && jid.startsWith('tg:-');
-    const text = isTelegramGroup
+    const provider = providerForJid(jid);
+    const isGroup = provider?.isGroupJid(jid) ?? false;
+    const text = isGroup
       ? stripInternalTagsPreserveWhitespace(rawText)
-      : formatOutboundForChannel(rawText, channel.name);
+      : formatOutboundForChannel(rawText, provider?.id ?? channel.name);
     if (!text && !options?.done) return false;
 
     const streamingSink = asStreamingSink(channel);

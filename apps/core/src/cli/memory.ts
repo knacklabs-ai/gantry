@@ -49,7 +49,7 @@ function usage(): string {
     '  myclaw memory health journal-status',
     '  myclaw memory health divergence',
     '  myclaw memory counters',
-    '  myclaw memory model set <extractor|dreaming|consolidation|sessionSummary> <model>',
+    '  myclaw memory model set <extractor|dreaming|consolidation> <model>',
     '  myclaw memory model profile <cheap|balanced|quality>',
   ].join('\n');
 }
@@ -175,11 +175,6 @@ function formatMemoryStatus(runtimeHome: string): string {
     globalModel,
     hardDefaults.consolidation,
   );
-  const sessionSummaryModel = resolveEffectiveModel(
-    settings.memory.llm.models.sessionSummary,
-    globalModel,
-    hardDefaults.sessionSummary,
-  );
   const claudeAuth = resolveClaudeAuthState({
     oauthToken: env.CLAUDE_CODE_OAUTH_TOKEN,
     apiKey: env.ANTHROPIC_API_KEY,
@@ -201,7 +196,6 @@ function formatMemoryStatus(runtimeHome: string): string {
     `Model extractor: ${extractorModel.model} (source: ${extractorModel.source})`,
     `Model dreaming: ${dreamingModel.model} (source: ${dreamingModel.source})`,
     `Model consolidation: ${consolidationModel.model} (source: ${consolidationModel.source})`,
-    `Model sessionSummary: ${sessionSummaryModel.model} (source: ${sessionSummaryModel.source})`,
   ].join('\n');
 }
 
@@ -277,13 +271,6 @@ function parseModelTask(raw: string | undefined): MemoryModelTask | null {
   if (normalized === 'extractor') return 'extractor';
   if (normalized === 'dreaming') return 'dreaming';
   if (normalized === 'consolidation') return 'consolidation';
-  if (
-    normalized === 'sessionSummary' ||
-    normalized === 'session_summary' ||
-    normalized === 'session-summary'
-  ) {
-    return 'sessionSummary';
-  }
   return null;
 }
 

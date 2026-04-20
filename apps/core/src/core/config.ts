@@ -669,7 +669,6 @@ export const LLM_ENABLED = resolveClaudeAuthState().mode !== 'none';
 const HARD_DEFAULT_MODEL_EXTRACTOR = 'claude-haiku-4-5-20251001';
 const HARD_DEFAULT_MODEL_DREAMING = 'claude-sonnet-4-6';
 const HARD_DEFAULT_MODEL_CONSOLIDATION = 'claude-sonnet-4-6';
-const HARD_DEFAULT_MODEL_SESSION_SUMMARY = 'claude-haiku-4-5-20251001';
 
 function resolveMemoryLlmModel(
   taskModel: string | undefined,
@@ -689,10 +688,6 @@ export const MODEL_DREAMING = resolveMemoryLlmModel(
 export const MODEL_CONSOLIDATION = resolveMemoryLlmModel(
   runtimeMemorySettings.llmConsolidationModel,
   HARD_DEFAULT_MODEL_CONSOLIDATION,
-);
-export const MODEL_SESSION_SUMMARY = resolveMemoryLlmModel(
-  runtimeMemorySettings.llmSessionSummaryModel,
-  HARD_DEFAULT_MODEL_SESSION_SUMMARY,
 );
 export const MEMORY_CLEANUP_PURGE_DAYS = Math.max(
   1,

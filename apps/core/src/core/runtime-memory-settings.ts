@@ -11,7 +11,6 @@ export interface RuntimeMemorySettingsSnapshot {
   llmExtractorModel?: string;
   llmDreamingModel?: string;
   llmConsolidationModel?: string;
-  llmSessionSummaryModel?: string;
 }
 
 function stripQuotes(value: string): string {
@@ -189,9 +188,6 @@ function parseJsonSettingsSnapshot(raw: string): RuntimeMemorySettingsSnapshot {
     llmExtractorModel: stringOrUndefined(llmModels?.extractor),
     llmDreamingModel: stringOrUndefined(llmModels?.dreaming),
     llmConsolidationModel: stringOrUndefined(llmModels?.consolidation),
-    llmSessionSummaryModel: stringOrUndefined(
-      llmModels?.session_summary ?? llmModels?.sessionSummary,
-    ),
   };
 }
 
@@ -245,10 +241,6 @@ export function readRuntimeMemorySettingsSnapshot(
     llmDreamingModel: stringValue(readKeyValue(llmModelsBlock, 'dreaming', 6)),
     llmConsolidationModel: stringValue(
       readKeyValue(llmModelsBlock, 'consolidation', 6),
-    ),
-    llmSessionSummaryModel: stringValue(
-      readKeyValue(llmModelsBlock, 'session_summary', 6) ||
-        readKeyValue(llmModelsBlock, 'sessionSummary', 6),
     ),
   };
 }

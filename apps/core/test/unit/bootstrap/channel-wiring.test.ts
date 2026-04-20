@@ -83,11 +83,22 @@ function makeProvider(
 ): ChannelProvider {
   return {
     id,
+    label: id,
+    jidPrefix: id === 'telegram' ? 'tg:' : 'sl:',
+    folderPrefix: `${id}_`,
+    isGroupJid: (jid: string) =>
+      id === 'telegram' ? jid.startsWith('tg:-') : jid.startsWith('sl:'),
+    formatting: id === 'telegram' ? 'telegram-html' : 'mrkdwn',
     isEnabled: (settings: RuntimeSettings) =>
       id === 'telegram'
         ? settings.channels.telegram.enabled
         : settings.channels.slack.enabled,
     create,
+    setup: {
+      envKeys: [],
+      describe: () => id,
+      run: async () => {},
+    },
   };
 }
 

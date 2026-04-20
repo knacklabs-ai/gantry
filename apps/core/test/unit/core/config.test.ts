@@ -226,7 +226,6 @@ describe('memory model defaults', () => {
     expect(cfg.MODEL_EXTRACTOR).toBe('claude-haiku-4-5-20251001');
     expect(cfg.MODEL_DREAMING).toBe('claude-sonnet-4-6');
     expect(cfg.MODEL_CONSOLIDATION).toBe('claude-sonnet-4-6');
-    expect(cfg.MODEL_SESSION_SUMMARY).toBe('claude-haiku-4-5-20251001');
   });
 
   it('enables LLM when CLAUDE_CODE_OAUTH_TOKEN is set', async () => {
@@ -271,13 +270,11 @@ describe('memory model defaults', () => {
         llmExtractorModel: 'claude-haiku-4-5-20251001',
         llmDreamingModel: 'claude-sonnet-4-6',
         llmConsolidationModel: 'claude-sonnet-4-6',
-        llmSessionSummaryModel: 'claude-haiku-4-5-20251001',
       },
     );
     expect(cfg.MODEL_EXTRACTOR).toBe('claude-haiku-4-5-20251001');
     expect(cfg.MODEL_DREAMING).toBe('claude-sonnet-4-6');
     expect(cfg.MODEL_CONSOLIDATION).toBe('claude-sonnet-4-6');
-    expect(cfg.MODEL_SESSION_SUMMARY).toBe('claude-haiku-4-5-20251001');
   });
 
   it('uses ANTHROPIC_MODEL as shared fallback for all tasks', async () => {
@@ -290,7 +287,6 @@ describe('memory model defaults', () => {
     expect(cfg.MODEL_EXTRACTOR).toBe('claude-opus-4-1-20250805');
     expect(cfg.MODEL_DREAMING).toBe('claude-opus-4-1-20250805');
     expect(cfg.MODEL_CONSOLIDATION).toBe('claude-opus-4-1-20250805');
-    expect(cfg.MODEL_SESSION_SUMMARY).toBe('claude-opus-4-1-20250805');
   });
 
   it('trims CLAUDE_CODE_OAUTH_TOKEN before enabling LLM', async () => {
@@ -323,18 +319,6 @@ describe('memory model defaults', () => {
       },
     );
     expect(cfg.MODEL_DREAMING).toBe('claude-sonnet-4-6');
-  });
-
-  it('prefers runtime session summary model over ANTHROPIC_MODEL', async () => {
-    const cfg = await loadConfigWithAllEnvAndRuntimeSnapshot(
-      {
-        ANTHROPIC_MODEL: 'claude-opus-4-1-20250805',
-      },
-      {
-        llmSessionSummaryModel: 'claude-haiku-4-5-20251001',
-      },
-    );
-    expect(cfg.MODEL_SESSION_SUMMARY).toBe('claude-haiku-4-5-20251001');
   });
 
   it('prefers runtime extractor model over ANTHROPIC_MODEL', async () => {

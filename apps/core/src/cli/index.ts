@@ -61,7 +61,7 @@ function usage(): string {
     '  myclaw memory health journal-status',
     '  myclaw memory health divergence',
     '  myclaw memory counters',
-    '  myclaw memory model set <extractor|dreaming|consolidation|sessionSummary> <model>',
+    '  myclaw memory model set <extractor|dreaming|consolidation> <model>',
     '  myclaw memory model profile <cheap|balanced|quality>',
     '  myclaw session-hook --cause=<session-start|pre-compact|session-stop>',
     '  myclaw memory-hook load',

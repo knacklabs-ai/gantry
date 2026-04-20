@@ -5,19 +5,19 @@
  * applied only to non-code segments.
  */
 
-export type ChannelType =
-  | 'signal'
-  | 'whatsapp'
-  | 'telegram'
-  | 'slack'
-  | 'discord';
+export type FormattingDialect =
+  | 'none'
+  | 'markdown-native'
+  | 'mrkdwn'
+  | 'telegram-html';
 
 /** Transform Markdown text for the target channel's native format. */
-export function parseTextStyles(text: string, channel: ChannelType): string {
+export function parseTextStyles(
+  text: string,
+  channel: FormattingDialect,
+): string {
   if (!text) return text;
-
-  // Discord and Signal are passthrough.
-  if (channel === 'discord' || channel === 'signal') return text;
+  if (channel === 'none' || channel === 'markdown-native') return text;
 
   const segments = splitProtectedRegions(text);
   return segments
@@ -248,14 +248,14 @@ function splitProtectedRegions(text: string): Segment[] {
   return segments.length > 0 ? segments : [{ content: text, protected: false }];
 }
 
-function transformSegment(text: string, channel: ChannelType): string {
+function transformSegment(text: string, channel: FormattingDialect): string {
   let t = text;
 
   t = t.replace(/(?<!\*)\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*(?!\*)/g, '_$1_');
   t = t.replace(/\*\*(?=[^\s*])([^*]+?)(?<=[^\s*])\*\*/g, '*$1*');
   t = t.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
 
-  if (channel === 'slack') {
+  if (channel === 'mrkdwn') {
     t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
   } else {
     t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');

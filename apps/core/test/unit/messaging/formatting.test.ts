@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
+import '@core/bootstrap/channel-providers.js';
 import {
   ASSISTANT_NAME,
   getTriggerPattern,
@@ -9,7 +10,6 @@ import {
   escapeXml,
   findChannel,
   formatMessages,
-  formatOutbound,
   formatOutboundForChannel,
   stripInternalTags,
 } from '@core/messaging/router.js';
@@ -272,86 +272,64 @@ describe('stripInternalTags', () => {
   });
 });
 
-describe('formatOutbound', () => {
-  it('returns text with internal tags stripped', () => {
-    expect(formatOutbound('hello world')).toBe('hello world');
-  });
-
-  it('returns empty string when all text is internal', () => {
-    expect(formatOutbound('<internal>hidden</internal>')).toBe('');
-  });
-
-  it('strips internal tags from remaining text', () => {
-    expect(
-      formatOutbound('<internal>thinking</internal>The answer is 42'),
-    ).toBe('The answer is 42');
-  });
-});
-
 describe('parseTextStyles — passthrough channels', () => {
-  it('passes text through unchanged on discord', () => {
+  it('passes text through unchanged for markdown-native', () => {
     const md = '**bold** and *italic* and [link](https://example.com)';
-    expect(parseTextStyles(md, 'discord')).toBe(md);
-  });
-
-  it('passes text through unchanged on signal', () => {
-    const md = '**bold** and *italic* and [link](https://example.com)';
-    expect(parseTextStyles(md, 'signal')).toBe(md);
+    expect(parseTextStyles(md, 'markdown-native')).toBe(md);
   });
 });
 
 describe('parseTextStyles — bold and italic', () => {
-  it('converts **bold** to *bold* on whatsapp', () => {
-    expect(parseTextStyles('**hello**', 'whatsapp')).toBe('*hello*');
+  it('converts **bold** to *bold* on telegram-html', () => {
+    expect(parseTextStyles('**hello**', 'telegram-html')).toBe('*hello*');
   });
 
-  it('converts **bold** to *bold* on telegram', () => {
-    expect(parseTextStyles('say **this** now', 'telegram')).toBe(
+  it('converts **bold** to *bold* on telegram-html with surrounding text', () => {
+    expect(parseTextStyles('say **this** now', 'telegram-html')).toBe(
       'say *this* now',
     );
   });
 
-  it('converts **bold** to *bold* on slack', () => {
-    expect(parseTextStyles('**hello**', 'slack')).toBe('*hello*');
+  it('converts **bold** to *bold* on mrkdwn', () => {
+    expect(parseTextStyles('**hello**', 'mrkdwn')).toBe('*hello*');
   });
 
-  it('converts *italic* to _italic_ on telegram', () => {
-    expect(parseTextStyles('*italic*', 'telegram')).toBe('_italic_');
+  it('converts *italic* to _italic_ on telegram-html', () => {
+    expect(parseTextStyles('*italic*', 'telegram-html')).toBe('_italic_');
   });
 
   it('preserves ordering: **bold** *italic* -> *bold* _italic_', () => {
-    expect(parseTextStyles('**bold** *italic*', 'whatsapp')).toBe(
+    expect(parseTextStyles('**bold** *italic*', 'telegram-html')).toBe(
       '*bold* _italic_',
     );
   });
 
   it('does not convert lone stars', () => {
-    expect(parseTextStyles('a * b * c', 'whatsapp')).toBe('a * b * c');
+    expect(parseTextStyles('a * b * c', 'telegram-html')).toBe('a * b * c');
   });
 });
 
 describe('parseTextStyles — headings and links', () => {
   it('converts markdown headings to bold markers', () => {
-    expect(parseTextStyles('## Hello World', 'telegram')).toBe('*Hello World*');
-    expect(parseTextStyles('### Section', 'whatsapp')).toBe('*Section*');
+    expect(parseTextStyles('## Hello World', 'telegram-html')).toBe(
+      '*Hello World*',
+    );
+    expect(parseTextStyles('### Section', 'telegram-html')).toBe('*Section*');
   });
 
   it('only converts headings at line start', () => {
     const input = 'not a ## heading in middle';
-    expect(parseTextStyles(input, 'whatsapp')).toBe(input);
+    expect(parseTextStyles(input, 'telegram-html')).toBe(input);
   });
 
-  it('converts links to plain text on whatsapp and telegram', () => {
-    expect(parseTextStyles('[Link](https://example.com)', 'whatsapp')).toBe(
-      'Link (https://example.com)',
-    );
-    expect(parseTextStyles('[Link](https://example.com)', 'telegram')).toBe(
-      'Link (https://example.com)',
-    );
+  it('converts links to plain text on telegram-html', () => {
+    expect(
+      parseTextStyles('[Link](https://example.com)', 'telegram-html'),
+    ).toBe('Link (https://example.com)');
   });
 
-  it('converts links to Slack native syntax', () => {
-    expect(parseTextStyles('[Click here](https://example.com)', 'slack')).toBe(
+  it('converts links to mrkdwn syntax', () => {
+    expect(parseTextStyles('[Click here](https://example.com)', 'mrkdwn')).toBe(
       '<https://example.com|Click here>',
     );
   });
@@ -359,28 +337,28 @@ describe('parseTextStyles — headings and links', () => {
 
 describe('parseTextStyles — code and horizontal-rule protection', () => {
   it('does not transform content inside code spans', () => {
-    expect(parseTextStyles('**bold** and `*code*`', 'telegram')).toBe(
+    expect(parseTextStyles('**bold** and `*code*`', 'telegram-html')).toBe(
       '*bold* and `*code*`',
     );
   });
 
   it('does not transform markers inside fenced code blocks', () => {
     const input = '```\n**not bold**\n```';
-    expect(parseTextStyles(input, 'whatsapp')).toBe(input);
+    expect(parseTextStyles(input, 'telegram-html')).toBe(input);
   });
 
   it('transforms text outside fenced blocks but keeps block content raw', () => {
     const input = '**bold**\n```\n**raw**\n```\n*italic*';
-    expect(parseTextStyles(input, 'telegram')).toBe(
+    expect(parseTextStyles(input, 'telegram-html')).toBe(
       '*bold*\n```\n**raw**\n```\n_italic_',
     );
   });
 
   it('strips markdown horizontal rules', () => {
-    expect(parseTextStyles('above\n---\nbelow', 'telegram')).toBe(
+    expect(parseTextStyles('above\n---\nbelow', 'telegram-html')).toBe(
       'above\n\nbelow',
     );
-    expect(parseTextStyles('above\n***\nbelow', 'whatsapp')).toBe(
+    expect(parseTextStyles('above\n***\nbelow', 'telegram-html')).toBe(
       'above\n\nbelow',
     );
   });

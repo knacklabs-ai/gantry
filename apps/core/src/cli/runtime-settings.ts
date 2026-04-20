@@ -3,6 +3,10 @@ import path from 'path';
 import Database from 'better-sqlite3';
 
 import { isValidGroupFolder } from '../platform/group-folder.js';
+import {
+  getChannelProvider,
+  listChannelProviders,
+} from '../bootstrap/channel-providers.js';
 import { readEnvFile } from './env-file.js';
 import {
   envFilePath,
@@ -21,7 +25,7 @@ export interface SenderAllowlistConfig {
   logDenied: boolean;
 }
 
-export type RuntimeChannel = 'telegram' | 'slack';
+export type RuntimeChannel = string;
 
 export interface RuntimeChannelSettings {
   enabled: boolean;
@@ -30,17 +34,12 @@ export interface RuntimeChannelSettings {
 
 export type EmbeddingProviderName = 'disabled' | 'none' | 'openai';
 export type MemoryModelProfile = 'cheap' | 'balanced' | 'quality';
-export type MemoryModelTask =
-  | 'extractor'
-  | 'dreaming'
-  | 'consolidation'
-  | 'sessionSummary';
+export type MemoryModelTask = 'extractor' | 'dreaming' | 'consolidation';
 
 export interface RuntimeMemoryLlmModels {
   extractor: string;
   dreaming: string;
   consolidation: string;
-  sessionSummary: string;
 }
 
 export interface RuntimeMemorySettings {
@@ -60,10 +59,7 @@ export interface RuntimeMemorySettings {
 }
 
 export interface RuntimeSettings {
-  channels: {
-    telegram: RuntimeChannelSettings;
-    slack: RuntimeChannelSettings;
-  };
+  channels: Record<string, RuntimeChannelSettings>;
   memory: RuntimeMemorySettings;
 }
 
@@ -102,19 +98,16 @@ const MEMORY_MODEL_PROFILES: Record<
     extractor: DEFAULT_MODEL_HAIKU,
     dreaming: DEFAULT_MODEL_HAIKU,
     consolidation: DEFAULT_MODEL_HAIKU,
-    sessionSummary: DEFAULT_MODEL_HAIKU,
   },
   balanced: {
     extractor: DEFAULT_MODEL_HAIKU,
     dreaming: DEFAULT_MODEL_SONNET,
     consolidation: DEFAULT_MODEL_SONNET,
-    sessionSummary: DEFAULT_MODEL_HAIKU,
   },
   quality: {
     extractor: DEFAULT_MODEL_SONNET,
     dreaming: DEFAULT_MODEL_SONNET,
     consolidation: DEFAULT_MODEL_SONNET,
-    sessionSummary: DEFAULT_MODEL_SONNET,
   },
 };
 
@@ -126,7 +119,6 @@ export function getMemoryModelProfileDefaults(
     extractor: selected.extractor,
     dreaming: selected.dreaming,
     consolidation: selected.consolidation,
-    sessionSummary: selected.sessionSummary,
   };
 }
 
@@ -435,11 +427,6 @@ function parseMemoryLlmModels(
       `${pathPrefix}.consolidation`,
       defaults.consolidation,
     ),
-    sessionSummary: parseStringValue(
-      map.session_summary ?? map.sessionSummary,
-      `${pathPrefix}.session_summary`,
-      defaults.sessionSummary,
-    ),
   };
 }
 
@@ -515,9 +502,7 @@ function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
 }
 
 function parseRuntimeSettings(raw: string): RuntimeSettings {
-  const parsed = raw.trimStart().startsWith('{')
-    ? (JSON.parse(raw) as unknown)
-    : (parseSimpleYamlObject(raw) as unknown);
+  const parsed = parseSimpleYamlObject(raw) as unknown;
 
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('root must be a mapping');
@@ -535,11 +520,18 @@ function parseRuntimeSettings(raw: string): RuntimeSettings {
   }
   const channelsMap = channels as Record<string, unknown>;
 
-  const telegram = parseChannelSettings(
-    channelsMap.telegram,
-    'channels.telegram',
-  );
-  const slack = parseChannelSettings(channelsMap.slack, 'channels.slack');
+  const channelSettings: Record<string, RuntimeChannelSettings> = {};
+  for (const [channelId, channelRaw] of Object.entries(channelsMap)) {
+    channelSettings[channelId] = parseChannelSettings(
+      channelRaw,
+      `channels.${channelId}`,
+    );
+  }
+  for (const provider of listChannelProviders()) {
+    if (!channelSettings[provider.id]) {
+      channelSettings[provider.id] = createDefaultChannelSettings(false);
+    }
+  }
 
   if (root.features !== undefined) {
     throw new Error(
@@ -549,7 +541,7 @@ function parseRuntimeSettings(raw: string): RuntimeSettings {
   const memory = parseMemorySettings(root.memory);
 
   return {
-    channels: { telegram, slack },
+    channels: channelSettings,
     memory,
   };
 }
@@ -562,7 +554,7 @@ interface RegisteredGroupSummary {
 
 function getRegisteredGroupSummary(
   runtimeHome: string,
-  prefix: 'tg:%' | 'sl:%',
+  prefix: string,
 ): RegisteredGroupSummary {
   const dbPath = path.join(runtimeHome, 'store', 'messages.db');
   if (!fs.existsSync(dbPath)) {
@@ -655,36 +647,27 @@ function renderMemorySettingsYaml(
     `      extractor: ${quoteYamlString(memory.llm.models.extractor)}`,
     `      dreaming: ${quoteYamlString(memory.llm.models.dreaming)}`,
     `      consolidation: ${quoteYamlString(memory.llm.models.consolidation)}`,
-    `      session_summary: ${quoteYamlString(memory.llm.models.sessionSummary)}`,
     '',
   );
 }
 
 function renderRuntimeSettingsYaml(settings: RuntimeSettings): string {
-  const lines = [
-    'channels:',
-    '  telegram:',
-    `    enabled: ${settings.channels.telegram.enabled ? 'true' : 'false'}`,
-    '    sender_allowlist:',
-  ];
+  const lines = ['channels:'];
+  const providerIds = listChannelProviders().map((provider) => provider.id);
+  const extraIds = Object.keys(settings.channels)
+    .filter((id) => !providerIds.includes(id))
+    .sort((a, b) => a.localeCompare(b));
 
-  renderSenderAllowlistYaml(
-    lines,
-    '      ',
-    settings.channels.telegram.senderAllowlist,
-  );
-
-  lines.push(
-    '  slack:',
-    `    enabled: ${settings.channels.slack.enabled ? 'true' : 'false'}`,
-    '    sender_allowlist:',
-  );
-
-  renderSenderAllowlistYaml(
-    lines,
-    '      ',
-    settings.channels.slack.senderAllowlist,
-  );
+  for (const channelId of [...providerIds, ...extraIds]) {
+    const channelSettings =
+      settings.channels[channelId] || createDefaultChannelSettings(false);
+    lines.push(
+      `  ${quoteYamlKey(channelId)}:`,
+      `    enabled: ${channelSettings.enabled ? 'true' : 'false'}`,
+      '    sender_allowlist:',
+    );
+    renderSenderAllowlistYaml(lines, '      ', channelSettings.senderAllowlist);
+  }
 
   lines.push('');
   renderMemorySettingsYaml(lines, settings.memory);
@@ -733,10 +716,12 @@ function createDefaultRuntimeSettings(): RuntimeSettings {
     },
   };
   return {
-    channels: {
-      telegram: createDefaultChannelSettings(false),
-      slack: createDefaultChannelSettings(false),
-    },
+    channels: Object.fromEntries(
+      listChannelProviders().map((provider) => [
+        provider.id,
+        createDefaultChannelSettings(false),
+      ]),
+    ),
     memory,
   };
 }
@@ -761,10 +746,6 @@ export function loadRuntimeSettingsFromPath(filePath: string): RuntimeSettings {
   return parseRuntimeSettings(raw);
 }
 
-function shouldCanonicalizeSettings(raw: string): boolean {
-  return raw.trimStart().startsWith('{');
-}
-
 function ensureRuntimeSettingsLoaded(runtimeHome: string): {
   settings: RuntimeSettings;
   filePath: string;
@@ -779,9 +760,6 @@ function ensureRuntimeSettingsLoaded(runtimeHome: string): {
 
   const raw = fs.readFileSync(filePath, 'utf-8');
   const settings = parseRuntimeSettings(raw);
-  if (shouldCanonicalizeSettings(raw)) {
-    saveRuntimeSettings(runtimeHome, settings);
-  }
   return { settings, filePath };
 }
 
@@ -801,64 +779,57 @@ export function validateRuntimeSettings(
     const details: string[] = [];
 
     const env = readEnvFile(envFilePath(runtimeHome));
-    const telegramEnabled = settings.channels.telegram.enabled;
-    const slackEnabled = settings.channels.slack.enabled;
-    if (!telegramEnabled && !slackEnabled) {
+    const enabledChannelIds = Object.entries(settings.channels)
+      .filter(([, channel]) => channel.enabled)
+      .map(([channelId]) => channelId);
+
+    if (enabledChannelIds.length === 0) {
       details.push(
-        'Enable at least one channel in settings.yaml (channels.telegram.enabled or channels.slack.enabled).',
+        'Enable at least one channel in settings.yaml (channels.<provider>.enabled: true).',
       );
     }
 
-    if (telegramEnabled && !env.TELEGRAM_BOT_TOKEN?.trim()) {
-      details.push('TELEGRAM_BOT_TOKEN is required when Telegram is enabled.');
-    }
-
-    if (slackEnabled) {
-      if (!env.SLACK_BOT_TOKEN?.trim()) {
-        details.push('SLACK_BOT_TOKEN is required when Slack is enabled.');
+    for (const channelId of enabledChannelIds) {
+      const provider = getChannelProvider(channelId);
+      if (!provider) {
+        details.push(
+          `channels.${channelId}.enabled is true but no provider is registered for '${channelId}'.`,
+        );
+        continue;
       }
-      if (!env.SLACK_APP_TOKEN?.trim()) {
-        details.push('SLACK_APP_TOKEN is required when Slack is enabled.');
-      }
-    }
 
-    const telegram = getRegisteredGroupSummary(runtimeHome, 'tg:%');
-    if (telegram.error) {
-      details.push(
-        `Could not validate Telegram registered groups: ${telegram.error}`,
-      );
-    } else if (telegramEnabled && telegram.count === 0) {
-      details.push(
-        'Telegram channel is enabled but no Telegram chats are registered.',
-      );
-    } else {
-      for (const folder of Object.keys(
-        settings.channels.telegram.senderAllowlist.agents,
-      )) {
-        if (!telegram.folders.has(folder)) {
+      for (const envKey of provider.setup.envKeys) {
+        if (!env[envKey]?.trim()) {
           details.push(
-            `channels.telegram.sender_allowlist.agents.${folder} is not a registered Telegram agent folder.`,
+            `${envKey} is required when channel '${provider.id}' is enabled.`,
           );
         }
       }
-    }
 
-    const slack = getRegisteredGroupSummary(runtimeHome, 'sl:%');
-    if (slack.error) {
-      details.push(
-        `Could not validate Slack registered groups: ${slack.error}`,
+      const summary = getRegisteredGroupSummary(
+        runtimeHome,
+        `${provider.jidPrefix}%`,
       );
-    } else if (slackEnabled && slack.count === 0) {
-      details.push(
-        'Slack channel is enabled but no Slack chats are registered.',
-      );
-    } else {
+      if (summary.error) {
+        details.push(
+          `Could not validate registered groups for '${provider.id}': ${summary.error}`,
+        );
+        continue;
+      }
+
+      if (summary.count === 0) {
+        details.push(
+          `Channel '${provider.id}' is enabled but no chats are registered for prefix '${provider.jidPrefix}'.`,
+        );
+      }
+
+      const channelSettings = settings.channels[provider.id];
       for (const folder of Object.keys(
-        settings.channels.slack.senderAllowlist.agents,
+        channelSettings.senderAllowlist.agents,
       )) {
-        if (!slack.folders.has(folder)) {
+        if (!summary.folders.has(folder)) {
           details.push(
-            `channels.slack.sender_allowlist.agents.${folder} is not a registered Slack agent folder.`,
+            `channels.${provider.id}.sender_allowlist.agents.${folder} is not a registered ${provider.label} agent folder.`,
           );
         }
       }

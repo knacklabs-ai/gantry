@@ -26,6 +26,7 @@ import {
   UserQuestionResponse,
 } from '../core/types.js';
 import { parseTextStyles } from '../text-styles.js';
+import { ChannelProvider } from './provider-registry.js';
 
 const TELEGRAM_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const TELEGRAM_DRAFT_MAX_LENGTH = 4096;
@@ -180,7 +181,7 @@ function stripInternalTagsPreserveWhitespace(text: string): string {
 function formatTelegramStreamingText(rawText: string, done?: boolean): string {
   const text = stripInternalTagsPreserveWhitespace(rawText);
   if (!text) return '';
-  return done ? parseTextStyles(text, 'telegram') : text;
+  return done ? parseTextStyles(text, 'telegram-html') : text;
 }
 
 /**
@@ -1973,3 +1974,19 @@ export function createTelegramChannel(
   }
   return new TelegramChannel(token, opts);
 }
+
+export const telegramProvider: ChannelProvider = {
+  id: 'telegram',
+  label: 'Telegram',
+  jidPrefix: 'tg:',
+  folderPrefix: 'telegram_',
+  isGroupJid: (jid: string) => jid.startsWith('tg:-'),
+  formatting: 'telegram-html',
+  isEnabled: (settings) => settings.channels.telegram?.enabled ?? false,
+  create: (opts) => createTelegramChannel(opts),
+  setup: {
+    envKeys: ['TELEGRAM_BOT_TOKEN'],
+    describe: () => 'Telegram bot via Bot API',
+    run: async () => {},
+  },
+};

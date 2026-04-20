@@ -182,9 +182,6 @@ memory:
     );
     expect(settings.memory.llm.models.dreaming).toBe('claude-sonnet-4-6');
     expect(settings.memory.llm.models.consolidation).toBe('claude-sonnet-4-6');
-    expect(settings.memory.llm.models.sessionSummary).toBe(
-      'claude-haiku-4-5-20251001',
-    );
     expect(fs.existsSync(settingsFilePath(runtimeHome))).toBe(true);
     const rendered = fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8');
     expect(rendered).toContain('memory:');
