@@ -29,7 +29,7 @@ describe('ensureSharedSessionSettings', () => {
     }
   });
 
-  it('updates existing settings file to enforce deterministic env keys', async () => {
+  it('updates existing settings file to enforce deterministic memory settings', async () => {
     const root = makeTmpRoot(roots);
 
     const claudeDir = path.join(root, '.claude');
@@ -42,7 +42,7 @@ describe('ensureSharedSessionSettings', () => {
         {
           env: {
             CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            CUSTOM_FLAG: 'keep-me',
+            CUSTOM_FLAG: 'remove-me',
           },
           custom: true,
         },
@@ -63,14 +63,23 @@ describe('ensureSharedSessionSettings', () => {
 
     const updated = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
       env: Record<string, string>;
-      custom: boolean;
+      autoMemoryEnabled: boolean;
+      hooks: Record<string, unknown[]>;
     };
 
     expect(updated.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBe('0');
     expect(updated.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
-    expect(updated.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('0');
-    expect(updated.env.CUSTOM_FLAG).toBe('keep-me');
-    expect(updated.custom).toBe(true);
+    expect(updated.env.CUSTOM_FLAG).toBeUndefined();
+    expect(updated.autoMemoryEnabled).toBe(false);
+    expect(Array.isArray(updated.hooks.SessionStart)).toBe(true);
+    expect(Array.isArray(updated.hooks.PreCompact)).toBe(true);
+    expect(Array.isArray(updated.hooks.SessionEnd)).toBe(true);
+    expect(updated.hooks.Stop).toBeUndefined();
+    expect(Object.keys(updated).sort()).toEqual([
+      'autoMemoryEnabled',
+      'env',
+      'hooks',
+    ]);
   });
 
   it('creates settings from scratch when no file exists', async () => {
@@ -90,10 +99,17 @@ describe('ensureSharedSessionSettings', () => {
 
     const written = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
       env: Record<string, string>;
+      autoMemoryEnabled: boolean;
+      hooks: Record<string, unknown[]>;
     };
     expect(written.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     expect(written.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBe('0');
-    expect(written.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('0');
+    expect(written.autoMemoryEnabled).toBe(false);
+    expect(Object.keys(written.hooks).sort()).toEqual([
+      'PreCompact',
+      'SessionEnd',
+      'SessionStart',
+    ]);
   });
 
   it('recovers from malformed JSON in existing settings file', async () => {
@@ -115,13 +131,17 @@ describe('ensureSharedSessionSettings', () => {
 
     const written = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
       env: Record<string, string>;
+      hooks: Record<string, unknown>;
     };
     // Should fall back to empty and still write defaults
     expect(written.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     expect(written.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBe('0');
-    expect(written.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('0');
-    // Should have no extra keys beyond env
-    expect(Object.keys(written)).toEqual(['env']);
+    expect(Object.keys(written).sort()).toEqual([
+      'autoMemoryEnabled',
+      'env',
+      'hooks',
+    ]);
+    expect(written.hooks).toHaveProperty('SessionStart');
   });
 
   it('treats non-object existing settings as empty', async () => {
@@ -146,7 +166,74 @@ describe('ensureSharedSessionSettings', () => {
       env: Record<string, string>;
     };
     expect(written.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
-    expect(Object.keys(written)).toEqual(['env']);
+    expect(Object.keys(written).sort()).toEqual([
+      'autoMemoryEnabled',
+      'env',
+      'hooks',
+    ]);
+  });
+
+  it('replaces stale archive hooks with current memory hooks', async () => {
+    const root = makeTmpRoot(roots);
+
+    const claudeDir = path.join(root, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    const settingsPath = path.join(claudeDir, 'settings.json');
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            SessionStart: [
+              {
+                matcher: '*',
+                hooks: [
+                  {
+                    type: 'command',
+                    command:
+                      'node /tmp/myclaw/dist/cli/index.js old-hook start',
+                  },
+                ],
+              },
+            ],
+            Stop: [
+              {
+                matcher: '*',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: 'node /tmp/myclaw/dist/cli/index.js old-hook stop',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    vi.doMock('@core/core/config.js', () => ({
+      AGENT_ROOT: root,
+      DATA_DIR: root,
+    }));
+
+    const { ensureSharedSessionSettings } =
+      await import('@core/runtime/agent-spawn-layout.js');
+    ensureSharedSessionSettings();
+
+    const writtenText = fs.readFileSync(settingsPath, 'utf-8');
+    const written = JSON.parse(writtenText) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    };
+
+    expect(writtenText).not.toContain('old-hook');
+    expect(writtenText).toContain('npx --yes');
+    expect(writtenText).toContain('memory-hook load');
+    expect(writtenText).toContain('memory-hook extract --trigger=precompact');
+    expect(writtenText).toContain('memory-hook extract --trigger=session-end');
+    expect(written.hooks.Stop).toBeUndefined();
   });
 });
 
@@ -266,17 +353,10 @@ describe('syncGroupSkills', () => {
     );
   });
 
-  it('removes managed skills that are no longer bundled', async () => {
+  it('installs bundled skills exactly from the package', async () => {
     const configRoot = makeTmpRoot(roots);
     const cwdRoot = makeTmpRoot(roots);
     originalCwd = process.cwd();
-
-    const removedSkill = ['setup', 'mini', 'app'].join('-');
-    const skillDir = path.join(configRoot, '.claude', 'skills', removedSkill);
-    fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, '.version'), '1.2.51\n');
-    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# Removed Skill');
-
     process.chdir(cwdRoot);
 
     vi.doMock('@core/core/config.js', () => ({
@@ -288,40 +368,18 @@ describe('syncGroupSkills', () => {
       await import('@core/runtime/agent-spawn-layout.js');
     syncGroupSkills();
 
-    expect(fs.existsSync(skillDir)).toBe(false);
-  });
-
-  it('installs bundled skills with a version marker', async () => {
-    const configRoot = makeTmpRoot(roots);
-    const cwdRoot = makeTmpRoot(roots);
-    originalCwd = process.cwd();
-    process.chdir(cwdRoot);
-
-    vi.doMock('@core/core/config.js', () => ({
-      AGENT_ROOT: configRoot,
-      DATA_DIR: configRoot,
-    }));
-
-    const packageVersion = JSON.parse(
-      fs.readFileSync(path.join(originalCwd, 'package.json'), 'utf-8'),
-    ).version as string;
-
-    const { syncGroupSkills } =
-      await import('@core/runtime/agent-spawn-layout.js');
-    syncGroupSkills();
-
-    const versionPath = path.join(
-      configRoot,
-      '.claude',
-      'skills',
-      'commands',
-      '.version',
+    const installedSkill = fs.readFileSync(
+      path.join(configRoot, '.claude', 'skills', 'commands', 'SKILL.md'),
+      'utf-8',
     );
-    expect(fs.existsSync(versionPath)).toBe(true);
-    expect(fs.readFileSync(versionPath, 'utf-8').trim()).toBe(packageVersion);
+    const bundledSkill = fs.readFileSync(
+      path.join(originalCwd, '.claude', 'skills', 'commands', 'SKILL.md'),
+      'utf-8',
+    );
+    expect(installedSkill).toBe(bundledSkill);
   });
 
-  it('updates a versioned bundled skill when package version is newer', async () => {
+  it('overwrites stale bundled skill content on every sync', async () => {
     const configRoot = makeTmpRoot(roots);
     const cwdRoot = makeTmpRoot(roots);
     originalCwd = process.cwd();
@@ -330,16 +388,13 @@ describe('syncGroupSkills', () => {
     const skillDir = path.join(configRoot, '.claude', 'skills', 'commands');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# stale');
-    fs.writeFileSync(path.join(skillDir, '.version'), '0.0.1\n');
+    fs.writeFileSync(path.join(skillDir, 'LOCAL.txt'), 'remove me');
 
     vi.doMock('@core/core/config.js', () => ({
       AGENT_ROOT: configRoot,
       DATA_DIR: configRoot,
     }));
 
-    const packageVersion = JSON.parse(
-      fs.readFileSync(path.join(originalCwd, 'package.json'), 'utf-8'),
-    ).version as string;
     const bundledSkill = fs.readFileSync(
       path.join(originalCwd, '.claude', 'skills', 'commands', 'SKILL.md'),
       'utf-8',
@@ -352,18 +407,16 @@ describe('syncGroupSkills', () => {
     expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf-8')).toBe(
       bundledSkill,
     );
-    expect(
-      fs.readFileSync(path.join(skillDir, '.version'), 'utf-8').trim(),
-    ).toBe(packageVersion);
+    expect(fs.existsSync(path.join(skillDir, 'LOCAL.txt'))).toBe(false);
   });
 
-  it('stamps unversioned bundled skills without overwriting existing content', async () => {
+  it('preserves user-installed skills outside bundled skill names', async () => {
     const configRoot = makeTmpRoot(roots);
     const cwdRoot = makeTmpRoot(roots);
     originalCwd = process.cwd();
     process.chdir(cwdRoot);
 
-    const skillDir = path.join(configRoot, '.claude', 'skills', 'commands');
+    const skillDir = path.join(configRoot, '.claude', 'skills', 'custom-skill');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# My Custom Skill');
 
@@ -372,10 +425,6 @@ describe('syncGroupSkills', () => {
       DATA_DIR: configRoot,
     }));
 
-    const packageVersion = JSON.parse(
-      fs.readFileSync(path.join(originalCwd, 'package.json'), 'utf-8'),
-    ).version as string;
-
     const { syncGroupSkills } =
       await import('@core/runtime/agent-spawn-layout.js');
     syncGroupSkills();
@@ -383,9 +432,6 @@ describe('syncGroupSkills', () => {
     expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf-8')).toBe(
       '# My Custom Skill',
     );
-    expect(
-      fs.readFileSync(path.join(skillDir, '.version'), 'utf-8').trim(),
-    ).toBe(packageVersion);
   });
 });
 
@@ -478,7 +524,7 @@ describe('ensureGroupIpcLayout', () => {
   });
 });
 
-describe('resolveRepoRootFromSourceDir', () => {
+describe('resolvePackageRootFromSourceDir', () => {
   const roots: string[] = [];
   let originalCwd: string;
 
@@ -507,10 +553,10 @@ describe('resolveRepoRootFromSourceDir', () => {
     fs.mkdirSync(sourceDir, { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"myclaw"}');
 
-    const { resolveRepoRootFromSourceDir } =
-      await import('@core/runtime/agent-spawn-layout.js');
+    const { resolvePackageRootFromSourceDir } =
+      await import('@core/platform/claude-runtime-files.js');
 
-    expect(resolveRepoRootFromSourceDir(sourceDir)).toBe(repoRoot);
+    expect(resolvePackageRootFromSourceDir(sourceDir)).toBe(repoRoot);
   });
 
   it('finds the repo root from the compiled dist runtime path', async () => {
@@ -523,9 +569,9 @@ describe('resolveRepoRootFromSourceDir', () => {
     fs.mkdirSync(distRuntimeDir, { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"myclaw"}');
 
-    const { resolveRepoRootFromSourceDir } =
-      await import('@core/runtime/agent-spawn-layout.js');
+    const { resolvePackageRootFromSourceDir } =
+      await import('@core/platform/claude-runtime-files.js');
 
-    expect(resolveRepoRootFromSourceDir(distRuntimeDir)).toBe(repoRoot);
+    expect(resolvePackageRootFromSourceDir(distRuntimeDir)).toBe(repoRoot);
   });
 });

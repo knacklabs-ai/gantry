@@ -5,8 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "myclaw": "dist/cli/index.js",
-    "myclaw-session-hook": "dist/bin/session-hook.js"
+    "myclaw": "dist/cli/index.js"
   },
   "files": [
     "dist/",
@@ -14,7 +13,7 @@
     "packages/contracts/package.json",
     "packages/agent-runner/dist/",
     "packages/agent-runner/package.json",
-    ".claude/skills/"
+    ".claude/skills/*/SKILL.md"
   ],
   "workspaces": [
     "packages/contracts",

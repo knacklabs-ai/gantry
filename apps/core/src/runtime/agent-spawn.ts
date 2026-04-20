@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_ROOT,
   DATA_DIR,
   PERMISSION_APPROVAL_TIMEOUT_MS,
   TIMEZONE,
@@ -147,6 +148,7 @@ export async function spawnAgent(
     MYCLAW_IPC_INPUT_DIR: path.join(hostRuntime.groupIpcDir, 'input'),
     MYCLAW_IPC_AUTH_TOKEN: computeIpcAuthToken(group.folder),
     MYCLAW_PERMISSION_TIMEOUT_MS: String(PERMISSION_APPROVAL_TIMEOUT_MS),
+    CLAUDE_CONFIG_DIR: path.join(AGENT_ROOT, '.claude'),
     ...(input.memoryContextFile
       ? { MYCLAW_IPC_MEMORY_CONTEXT_FILE: input.memoryContextFile }
       : {}),

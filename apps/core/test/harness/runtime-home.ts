@@ -27,7 +27,7 @@ export async function createTempRuntimeHome(
   delete process.env.OPENAI_API_KEY;
 
   const runtimeSettings = await import('@core/cli/runtime-settings.js');
-  const sessionHooks = await import('@core/cli/session-hooks.js');
+  const runtimeLayout = await import('@core/runtime/agent-spawn-layout.js');
   const settings = runtimeSettings.createDefaultRuntimeSettings();
   settings.memory.enabled = true;
   settings.memory.root = 'memory';
@@ -40,10 +40,7 @@ export async function createTempRuntimeHome(
   fs.mkdirSync(path.join(runtimeHome, 'store'), { recursive: true });
   fs.mkdirSync(path.join(runtimeHome, 'data'), { recursive: true });
   fs.mkdirSync(path.join(runtimeHome, 'agents'), { recursive: true });
-  const hookPlan = sessionHooks.buildSessionHookInstallPlan(
-    path.join(runtimeHome, '.claude', 'settings.json'),
-  );
-  sessionHooks.applySessionHookInstallPlan(hookPlan);
+  runtimeLayout.ensureSharedSessionSettings(runtimeHome);
 
   return {
     runtimeHome,
