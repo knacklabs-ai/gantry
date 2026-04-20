@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { validateRuntimePreflight } from '@core/cli/runtime-preflight.js';
 import { upsertEnvFile } from '@core/cli/env-file.js';
@@ -12,6 +12,10 @@ import {
   loadRuntimeSettings,
   saveRuntimeSettings,
 } from '@core/cli/runtime-settings.js';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function createRuntimeHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-preflight-test-'));

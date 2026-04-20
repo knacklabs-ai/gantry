@@ -24,7 +24,6 @@ function makeRuntimeSettings(enabled: {
       enabled: true,
       provider: 'sqlite',
       sqlitePath: 'store/memory.db',
-      qmdRoot: 'agent-memory',
       embeddings: {
         enabled: false,
         provider: 'disabled',

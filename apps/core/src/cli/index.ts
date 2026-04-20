@@ -33,6 +33,8 @@ import { runSetupFlow } from './setup-flow.js';
 import { collectRuntimeStatus, formatRuntimeStatus } from './status.js';
 import { ensureRuntimeSettings } from './runtime-settings.js';
 import { runMemoryCommand } from './memory.js';
+import { runMemoryHookCommand } from './memory-hook.js';
+import { runMemoryReplayCommand } from './memory-replay.js';
 
 interface ParsedArgs {
   command: string[];
@@ -50,12 +52,21 @@ function usage(): string {
     '  myclaw doctor',
     '  myclaw status',
     '  myclaw memory status',
-    '  myclaw memory provider <sqlite|qmd|noop|none>',
+    '  myclaw memory search <query> [--source=<source>] [--limit=<n>]',
+    '  myclaw memory list [--source=<source>] [--kind=<kind>] [--limit=<n>]',
+    '  myclaw memory show <id>',
+    '  myclaw memory reindex [--full]',
     '  myclaw memory embeddings <off|openai>',
     '  myclaw memory dreaming <on|off>',
+    '  myclaw memory health journal-status',
+    '  myclaw memory health divergence',
+    '  myclaw memory counters',
     '  myclaw memory model set <extractor|dreaming|consolidation|sessionSummary> <model>',
     '  myclaw memory model profile <cheap|balanced|quality>',
     '  myclaw session-hook --cause=<session-start|pre-compact|session-stop>',
+    '  myclaw memory-hook load',
+    '  myclaw memory-hook extract --trigger=<precompact|session-end>',
+    '  myclaw memory-replay --from=<journal-dir> --to=<target.db> [--since=YYYY-MM-DD] [--dry-run] [--overwrite] [--compare-with=<live.db>]',
     '  myclaw start',
     '  myclaw restart',
     '  myclaw config list',
@@ -395,6 +406,14 @@ async function main(): Promise<number> {
   if (command === 'session-hook') {
     await runSessionHook({ argv: rest });
     return 0;
+  }
+
+  if (command === 'memory-hook') {
+    return runMemoryHookCommand(rest);
+  }
+
+  if (command === 'memory-replay') {
+    return runMemoryReplayCommand(rest);
   }
 
   // Allow `myclaw doctor` to run even when settings.yaml is malformed so it can

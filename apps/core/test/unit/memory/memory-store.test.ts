@@ -147,150 +147,6 @@ describe('MemoryStore', () => {
     expect(procedures).toHaveLength(0);
   });
 
-  it('auto-resets newer schema version and restores explicit saves', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-memory-'));
-    tempRoots.push(root);
-    const dbPath = path.join(root, 'memory.db');
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE memory_items (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        user_id TEXT,
-        kind TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        why TEXT,
-        load_bearing INTEGER NOT NULL DEFAULT 0,
-        source_turn_id TEXT,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        is_pinned INTEGER NOT NULL DEFAULT 0,
-        is_deleted INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE memory_procedures (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        tags_json TEXT NOT NULL,
-        origin TEXT NOT NULL DEFAULT 'explicit',
-        trigger TEXT,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        is_deleted INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE memory_chunks (
-        id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        chunk_hash TEXT NOT NULL UNIQUE,
-        text TEXT NOT NULL,
-        token_count INTEGER NOT NULL
-      );
-    `);
-    db.prepare(
-      `INSERT INTO memory_items
-       (id, scope, group_folder, user_id, kind, key, value, source, confidence, is_pinned, is_deleted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'mem-pinned',
-      'group',
-      'team',
-      null,
-      'fact',
-      'owner',
-      'ravi',
-      'test',
-      0.9,
-      1,
-      0,
-    );
-    db.prepare(
-      `INSERT INTO memory_items
-       (id, scope, group_folder, user_id, kind, key, value, source, confidence, is_pinned, is_deleted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'mem-ephemeral',
-      'group',
-      'team',
-      null,
-      'fact',
-      'scratch',
-      'temporary',
-      'test',
-      0.4,
-      0,
-      0,
-    );
-    db.prepare(
-      `INSERT INTO memory_procedures
-       (id, scope, group_folder, title, body, tags_json, source, confidence, is_deleted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'proc-1',
-      'group',
-      'team',
-      'Deploy checklist',
-      'Run tests then deploy.',
-      '["ops"]',
-      'test',
-      0.8,
-      0,
-    );
-    db.prepare(
-      `INSERT INTO memory_chunks
-       (id, source_type, source_id, source_path, scope, group_folder, kind, chunk_hash, text, token_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'chunk-1',
-      'conversation',
-      'source-1',
-      '/tmp/source-1',
-      'group',
-      'team',
-      'conversation',
-      'chunk-hash-1',
-      'ephemeral chunk',
-      2,
-    );
-    db.pragma('user_version = 999');
-    db.close();
-
-    const store = new MemoryStore(dbPath, { backupRootDir: root });
-    const restoredItems = store.listTopItems('group', 'team', 10);
-    const restoredProcedures = store.listTopProcedures('team', 10);
-
-    expect(restoredItems.some((item) => item.key === 'owner')).toBe(true);
-    expect(restoredItems.some((item) => item.key === 'scratch')).toBe(false);
-    expect(
-      restoredProcedures.some(
-        (procedure) => procedure.title === 'Deploy checklist',
-      ),
-    ).toBe(true);
-
-    const resetEvent = store.getLatestEvent('memory_schema_reset');
-    expect(resetEvent).not.toBeNull();
-    const payload = JSON.parse(resetEvent?.payload_json || '{}') as Record<
-      string,
-      unknown
-    >;
-    expect(payload.fromVersion).toBe(999);
-    expect(payload.restoredPinnedItems).toBe(1);
-    expect(payload.restoredProcedures).toBe(1);
-    expect(payload.droppedEphemeralChunks).toBe(1);
-    expect(fs.existsSync(path.join(root, '.cache', 'pre-v4-backup.json'))).toBe(
-      true,
-    );
-    store.close();
-  });
-
   it('returns created_at from lexical and vector search results', () => {
     const store = makeStore();
     const embedding = new Array<number>(MEMORY_VECTOR_DIMENSIONS).fill(0);
@@ -1020,331 +876,6 @@ describe('MemoryStore', () => {
     db.exec('DROP TABLE IF EXISTS embedding_cache');
     db.close();
     expect(() => store.runHealthChecks()).toThrow(/missing SQLite object/);
-    store.close();
-  });
-
-  it('schema migration from v1 to current version', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-memory-'));
-    tempRoots.push(root);
-    const dbPath = path.join(root, 'memory.db');
-    // Create a v1 database manually with minimal schema
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS memory_items (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        user_id TEXT,
-        kind TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_used_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS memory_procedures (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        tags_json TEXT NOT NULL,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_used_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS memory_chunks (
-        id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        chunk_hash TEXT NOT NULL UNIQUE,
-        text TEXT NOT NULL,
-        token_count INTEGER NOT NULL,
-        embedding_json TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts USING fts5(
-        id UNINDEXED,
-        text,
-        tokenize = 'unicode61'
-      );
-      CREATE TABLE IF NOT EXISTS memory_chunk_vector_map (
-        chunk_id TEXT PRIMARY KEY,
-        vec_rowid INTEGER NOT NULL UNIQUE
-      );
-      CREATE TABLE IF NOT EXISTS memory_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_type TEXT NOT NULL,
-        entity_type TEXT NOT NULL,
-        entity_id TEXT,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-    `);
-    db.pragma('user_version = 1');
-    db.close();
-
-    // Opening with MemoryStore should migrate from v1 -> current
-    const store = new MemoryStore(dbPath);
-    // Verify the migration added v2 columns
-    const item = store.saveItem({
-      scope: 'group',
-      group_folder: 'team',
-      user_id: null,
-      kind: 'fact',
-      key: 'migrated',
-      value: 'migrated data',
-      source: 'test',
-      confidence: 0.7,
-    });
-    expect(item.is_pinned).toBe(false);
-    expect(item.retrieval_count).toBe(0);
-    // Verify v3 columns
-    expect(item.total_score).toBe(0);
-    expect(item.max_score).toBe(0);
-    expect(item.query_hashes_json).toBe('[]');
-    expect(item.recall_days_json).toBe('[]');
-    store.close();
-  });
-
-  it('schema migration from v2 to current version', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-memory-'));
-    tempRoots.push(root);
-    const dbPath = path.join(root, 'memory.db');
-    // Create a v2 database: has is_pinned, embedding_json, retrieval_count, last_retrieved_at
-    // but not total_score, max_score, query_hashes_json, recall_days_json, embedding_cache
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS memory_items (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        user_id TEXT,
-        kind TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        is_pinned INTEGER NOT NULL DEFAULT 0,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_used_at TEXT,
-        last_retrieved_at TEXT,
-        retrieval_count INTEGER NOT NULL DEFAULT 0,
-        embedding_json TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS memory_procedures (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        tags_json TEXT NOT NULL,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_used_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS memory_chunks (
-        id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        chunk_hash TEXT NOT NULL UNIQUE,
-        text TEXT NOT NULL,
-        token_count INTEGER NOT NULL,
-        importance_weight REAL NOT NULL DEFAULT 1.0,
-        embedding_json TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts USING fts5(
-        id UNINDEXED,
-        text,
-        tokenize = 'unicode61'
-      );
-      CREATE TABLE IF NOT EXISTS memory_chunk_vector_map (
-        chunk_id TEXT PRIMARY KEY,
-        vec_rowid INTEGER NOT NULL UNIQUE
-      );
-      CREATE TABLE IF NOT EXISTS memory_item_vector_map (
-        item_id TEXT PRIMARY KEY,
-        vec_rowid INTEGER NOT NULL UNIQUE
-      );
-      CREATE TABLE IF NOT EXISTS memory_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_type TEXT NOT NULL,
-        entity_type TEXT NOT NULL,
-        entity_id TEXT,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-    `);
-    db.pragma('user_version = 2');
-    db.close();
-
-    // Opening should migrate from v2 -> v3
-    const store = new MemoryStore(dbPath);
-    const item = store.saveItem({
-      scope: 'group',
-      group_folder: 'team',
-      user_id: null,
-      kind: 'fact',
-      key: 'v2-migrated',
-      value: 'data',
-      source: 'test',
-      confidence: 0.6,
-    });
-    expect(item.total_score).toBe(0);
-    expect(item.query_hashes_json).toBe('[]');
-    // Embedding cache should exist now
-    store.putCachedEmbedding('hash-v2', 'model', [0.1, 0.2]);
-    expect(store.getCachedEmbedding('hash-v2', 'model')).toEqual([0.1, 0.2]);
-    store.close();
-  });
-
-  it('preserves existing rows during additive migration from v3 to v4', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-memory-'));
-    tempRoots.push(root);
-    const dbPath = path.join(root, 'memory.db');
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE memory_items (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        user_id TEXT,
-        kind TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        why TEXT,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        is_pinned INTEGER NOT NULL DEFAULT 0,
-        used_count INTEGER NOT NULL DEFAULT 0,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_used_at TEXT,
-        last_retrieved_at TEXT,
-        retrieval_count INTEGER NOT NULL DEFAULT 0,
-        total_score REAL NOT NULL DEFAULT 0,
-        max_score REAL NOT NULL DEFAULT 0,
-        query_hashes_json TEXT NOT NULL DEFAULT '[]',
-        recall_days_json TEXT NOT NULL DEFAULT '[]',
-        embedding_json TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0,
-        deleted_at TEXT
-      );
-      CREATE TABLE memory_procedures (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        tags_json TEXT NOT NULL,
-        source TEXT NOT NULL,
-        confidence REAL NOT NULL DEFAULT 0.5,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_used_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0,
-        deleted_at TEXT
-      );
-      CREATE TABLE memory_chunks (
-        id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        chunk_hash TEXT NOT NULL UNIQUE,
-        text TEXT NOT NULL,
-        token_count INTEGER NOT NULL,
-        embedding_json TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
-    db.prepare(
-      `INSERT INTO memory_items
-       (id, scope, group_folder, user_id, kind, key, value, why, source, confidence, is_pinned, created_at, updated_at, is_deleted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'item-v3',
-      'group',
-      'team',
-      null,
-      'fact',
-      'project',
-      'myclaw',
-      'explicit save',
-      'test',
-      0.9,
-      1,
-      '2026-01-01T00:00:00.000Z',
-      '2026-01-01T00:00:00.000Z',
-      0,
-    );
-    db.prepare(
-      `INSERT INTO memory_procedures
-       (id, scope, group_folder, title, body, tags_json, source, confidence, created_at, updated_at, is_deleted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'proc-v3',
-      'group',
-      'team',
-      'Run tests',
-      'Always run tests before merge.',
-      '["quality"]',
-      'test',
-      0.8,
-      '2026-01-01T00:00:00.000Z',
-      '2026-01-01T00:00:00.000Z',
-      0,
-    );
-    db.pragma('user_version = 3');
-    db.close();
-
-    const store = new MemoryStore(dbPath, { backupRootDir: root });
-    const migratedItem = store.findItemByKey({
-      scope: 'group',
-      groupFolder: 'team',
-      key: 'project',
-    });
-    const migratedProcedure = store
-      .listTopProcedures('team', 10)
-      .find((procedure) => procedure.title === 'Run tests');
-
-    expect(migratedItem).not.toBeNull();
-    expect(migratedItem?.value).toBe('myclaw');
-    expect(migratedItem?.is_pinned).toBe(true);
-    expect(migratedItem?.last_reviewed_at ?? null).toBeNull();
-    expect(migratedProcedure).toBeDefined();
-    expect(migratedProcedure?.origin).toBe('explicit');
     store.close();
   });
 
@@ -2314,6 +1845,52 @@ describe('MemoryStore', () => {
     expect(remaining.length).toBeLessThanOrEqual(limit);
   });
 
+  it('applyRetentionPolicies does not delete load-bearing overflow items', () => {
+    const store = makeStore();
+    const limit = MEMORY_ITEM_MAX_PER_GROUP;
+
+    for (let i = 0; i < limit; i++) {
+      store.saveItem({
+        scope: 'group',
+        group_folder: 'team',
+        user_id: null,
+        kind: 'fact',
+        key: `baseline-${i}`,
+        value: `baseline-${i}`,
+        source: 'test',
+        confidence: 0.4,
+      });
+    }
+
+    const loadBearing = store.saveItem({
+      scope: 'group',
+      group_folder: 'team',
+      user_id: null,
+      kind: 'constraint',
+      key: 'constraint:never-drop',
+      value: 'Never drop this durable operational constraint.',
+      source: 'test',
+      confidence: 0.1,
+      load_bearing: true,
+    });
+    store.saveItem({
+      scope: 'group',
+      group_folder: 'team',
+      user_id: null,
+      kind: 'fact',
+      key: 'overflow-candidate',
+      value: 'Likely retention overflow candidate.',
+      source: 'test',
+      confidence: 0.01,
+      load_bearing: false,
+    });
+
+    store.applyRetentionPolicies('team');
+    const remaining = store.listActiveItems('team', limit + 10);
+    expect(remaining.length).toBeLessThanOrEqual(limit);
+    expect(store.getItemById(loadBearing.id)).not.toBeNull();
+  });
+
   it('applyRetentionPolicies trims old events', () => {
     const store = makeStore();
     // recordEvent is tested indirectly; just make sure retention doesn't crash
@@ -3037,7 +2614,7 @@ describe('MemoryStore', () => {
     expect(() => store.applyRetentionPolicies('_global')).not.toThrow();
   });
 
-  it('opening an existing v3 database does not re-migrate', () => {
+  it('reopening an existing database preserves saved items', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-memory-'));
     tempRoots.push(root);
     const dbPath = path.join(root, 'memory.db');

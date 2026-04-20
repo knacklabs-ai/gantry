@@ -23,9 +23,11 @@ async function loadServiceManagerWithMocks(
     platform?: 'unknown' | 'linux' | 'macos';
     hasSystemdUser?: boolean;
     homeDir?: string;
+    runtimeHome?: string;
   } = {},
 ) {
   vi.resetModules();
+  vi.stubEnv('AGENT_ROOT', options.runtimeHome ?? createRuntimeHome());
   const platform = options.platform ?? 'unknown';
   const systemdUser = options.hasSystemdUser ?? false;
   vi.doMock('@core/cli/platform.js', () => ({
@@ -63,6 +65,7 @@ function writeFallbackMetadata(runtimeHome: string): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -79,6 +82,7 @@ describe('service manager background start', () => {
       platform: 'linux',
       hasSystemdUser: true,
       homeDir,
+      runtimeHome,
     });
     const outcome = mod.installService(import.meta.url, runtimeHome);
 
@@ -109,6 +113,7 @@ describe('service manager background start', () => {
       platform: 'linux',
       hasSystemdUser: true,
       homeDir,
+      runtimeHome,
     });
 
     const outcome = mod.startService(runtimeHome);
@@ -126,7 +131,9 @@ describe('service manager background start', () => {
     const runtimeHome = createRuntimeHome();
     expect(fs.existsSync(settingsFilePath(runtimeHome))).toBe(false);
 
-    const mod = await loadServiceManagerWithMocks(vi.fn());
+    const mod = await loadServiceManagerWithMocks(vi.fn(), undefined, {
+      runtimeHome,
+    });
     const outcome = mod.installService(import.meta.url, runtimeHome);
 
     expect(outcome.ok).toBe(true);
@@ -142,7 +149,11 @@ describe('service manager background start', () => {
       pid: 4321,
       unref: unrefSpy,
     });
-    const { startService } = await loadServiceManagerWithMocks(spawnMock);
+    const { startService } = await loadServiceManagerWithMocks(
+      spawnMock,
+      undefined,
+      { runtimeHome },
+    );
 
     const originalWriteFileSync = fs.writeFileSync.bind(fs);
     vi.spyOn(fs, 'writeFileSync').mockImplementation((file, data, options) => {
@@ -170,7 +181,11 @@ describe('service manager background start', () => {
       pid: 5555,
       unref: unrefSpy,
     });
-    const { startService } = await loadServiceManagerWithMocks(spawnMock);
+    const { startService } = await loadServiceManagerWithMocks(
+      spawnMock,
+      undefined,
+      { runtimeHome },
+    );
 
     const writeSpy = vi.spyOn(fs, 'writeFileSync');
     const outcome = startService(runtimeHome);
@@ -209,6 +224,7 @@ describe('service manager background start', () => {
     const { stopService } = await loadServiceManagerWithMocks(
       vi.fn(),
       tryExecMock,
+      { runtimeHome },
     );
 
     const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);

@@ -2,7 +2,10 @@ import os from 'os';
 import path from 'path';
 
 import { readEnvFile } from './env.js';
-import { readRuntimeMemorySettingsSnapshot } from './runtime-memory-settings.js';
+import {
+  readRuntimeMemorySettingsSnapshot,
+  type RuntimeMemorySettingsSnapshot,
+} from './runtime-memory-settings.js';
 import { isValidTimezone } from './timezone.js';
 
 // Read config values from .env (falls back to process.env).
@@ -16,6 +19,8 @@ const envConfig = readEnvFile([
   'CLAUDE_CODE_OAUTH_TOKEN',
   'OPENAI_API_KEY',
   'OPENAI_DAILY_EMBED_LIMIT',
+  'MEMORY_ROOT',
+  'MEMORY_KNOWLEDGE_EMBED_BUDGET_PER_DAY',
   'MEMORY_CHUNK_SIZE',
   'MEMORY_CHUNK_OVERLAP',
   'MEMORY_RETRIEVAL_LIMIT',
@@ -27,6 +32,7 @@ const envConfig = readEnvFile([
   'MEMORY_SOURCE_TYPE_BOOSTS',
   'MEMORY_EXTRACTOR_MAX_FACTS',
   'MEMORY_EXTRACTOR_MIN_CONFIDENCE',
+  'MEMORY_EXTRACTOR_MAX_TURNS',
   'MEMORY_REFLECTION_MIN_CONFIDENCE',
   'MEMORY_REFLECTION_MAX_FACTS_PER_TURN',
   'MEMORY_SCOPE_POLICY',
@@ -61,6 +67,8 @@ const envConfig = readEnvFile([
   'MEMORY_CLEANUP_PURGE_DAYS',
   'MEMORY_JOURNAL_GZIP_DAYS',
   'MEMORY_JOURNAL_DELETE_DAYS',
+  'MEMORY_MAINTENANCE_MAX_PENDING',
+  'MYCLAW_MEMORY_JOURNAL_DISABLED',
   'MEMORY_BRIEF_INCLUDE_LAST_SESSION',
   'MEMORY_BRIEF_DIRTY_REFRESH',
   'PERMISSION_APPROVAL_TIMEOUT_MS',
@@ -89,20 +97,33 @@ export const SCHEDULER_JOBS_JSON_PATH = path.join(
 export const STORE_DIR = path.resolve(RUNTIME_ROOT, 'store');
 export const AGENTS_DIR = path.resolve(RUNTIME_ROOT, 'agents');
 export const DATA_DIR = path.resolve(RUNTIME_ROOT, 'data');
-const runtimeMemorySettings = readRuntimeMemorySettingsSnapshot(AGENT_ROOT);
-const MEMORY_SQLITE_PATH_RAW =
-  runtimeMemorySettings.sqlitePath || 'store/memory.db';
-export const MEMORY_SQLITE_PATH = path.isAbsolute(MEMORY_SQLITE_PATH_RAW)
-  ? path.resolve(MEMORY_SQLITE_PATH_RAW)
-  : path.resolve(RUNTIME_ROOT, MEMORY_SQLITE_PATH_RAW);
-export const MEMORY_PROVIDER =
-  runtimeMemorySettings.enabled === false
-    ? 'noop'
-    : runtimeMemorySettings.provider || 'sqlite';
-const AGENT_MEMORY_ROOT_RAW = runtimeMemorySettings.qmdRoot || 'agent-memory';
-export const AGENT_MEMORY_ROOT = path.isAbsolute(AGENT_MEMORY_ROOT_RAW)
-  ? path.resolve(AGENT_MEMORY_ROOT_RAW)
-  : path.resolve(RUNTIME_ROOT, AGENT_MEMORY_ROOT_RAW);
+let runtimeMemorySettings: RuntimeMemorySettingsSnapshot = {};
+let runtimeMemorySettingsError: Error | null = null;
+try {
+  runtimeMemorySettings = readRuntimeMemorySettingsSnapshot(AGENT_ROOT);
+} catch (err) {
+  runtimeMemorySettingsError =
+    err instanceof Error ? err : new Error(String(err));
+}
+if (runtimeMemorySettingsError) {
+  throw new Error(
+    `Invalid runtime memory settings: ${runtimeMemorySettingsError.message}`,
+  );
+}
+const MEMORY_ROOT_RAW =
+  process.env.MEMORY_ROOT?.trim() ||
+  envConfig.MEMORY_ROOT?.trim() ||
+  runtimeMemorySettings.root ||
+  'memory';
+export const MEMORY_ROOT = path.isAbsolute(MEMORY_ROOT_RAW)
+  ? path.resolve(MEMORY_ROOT_RAW)
+  : path.resolve(RUNTIME_ROOT, MEMORY_ROOT_RAW);
+export const MEMORY_SQLITE_PATH = path.resolve(
+  MEMORY_ROOT,
+  '.cache',
+  'memory.db',
+);
+export const RUNTIME_MEMORY_ENABLED = runtimeMemorySettings.enabled ?? true;
 const MEMORY_GLOBAL_KNOWLEDGE_DIR_RAW =
   process.env.MEMORY_GLOBAL_KNOWLEDGE_DIR ||
   envConfig.MEMORY_GLOBAL_KNOWLEDGE_DIR ||
@@ -259,6 +280,15 @@ export const MEMORY_EXTRACTOR_MIN_CONFIDENCE = Math.max(
     ) || 0.6,
   ),
 );
+export const MEMORY_EXTRACTOR_MAX_TURNS = Math.max(
+  10,
+  parseInt(
+    process.env.MEMORY_EXTRACTOR_MAX_TURNS ||
+      envConfig.MEMORY_EXTRACTOR_MAX_TURNS ||
+      '60',
+    10,
+  ) || 60,
+);
 export const MEMORY_REFLECTION_MIN_CONFIDENCE = Math.max(
   0,
   Math.min(
@@ -319,7 +349,16 @@ export const MEMORY_SEMANTIC_DEDUP_THRESHOLD = Math.max(
 );
 export const MEMORY_GLOBAL_KNOWLEDGE_DIR = resolveOptionalPath(
   MEMORY_GLOBAL_KNOWLEDGE_DIR_RAW ||
-    (AGENT_MEMORY_ROOT ? path.join(AGENT_MEMORY_ROOT, 'knowledge') : ''),
+    (MEMORY_ROOT ? path.join(MEMORY_ROOT, 'knowledge') : ''),
+);
+export const MEMORY_KNOWLEDGE_EMBED_BUDGET_PER_DAY = Math.max(
+  0,
+  parseInt(
+    process.env.MEMORY_KNOWLEDGE_EMBED_BUDGET_PER_DAY ||
+      envConfig.MEMORY_KNOWLEDGE_EMBED_BUDGET_PER_DAY ||
+      '200',
+    10,
+  ) || 200,
 );
 export const MEMORY_MAX_GLOBAL_CHUNKS = Math.max(
   100,
@@ -681,6 +720,20 @@ export const MEMORY_JOURNAL_DELETE_DAYS = Math.max(
       '90',
     10,
   ) || 90,
+);
+export const MEMORY_JOURNAL_DISABLED = parseBooleanEnv(
+  process.env.MYCLAW_MEMORY_JOURNAL_DISABLED ||
+    envConfig.MYCLAW_MEMORY_JOURNAL_DISABLED,
+  false,
+);
+export const MEMORY_MAINTENANCE_MAX_PENDING = Math.max(
+  100,
+  parseInt(
+    process.env.MEMORY_MAINTENANCE_MAX_PENDING ||
+      envConfig.MEMORY_MAINTENANCE_MAX_PENDING ||
+      '5000',
+    10,
+  ) || 5000,
 );
 export const MEMORY_BRIEF_INCLUDE_LAST_SESSION = parseBooleanEnv(
   process.env.MEMORY_BRIEF_INCLUDE_LAST_SESSION ||

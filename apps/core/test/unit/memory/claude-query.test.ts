@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const queryMock = vi.hoisted(() => vi.fn());
@@ -7,13 +10,23 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 describe('runClaudeQuery', () => {
+  let runtimeRoot = '';
+
   beforeEach(() => {
+    runtimeRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'myclaw-claude-query-'),
+    );
+    vi.stubEnv('AGENT_ROOT', runtimeRoot);
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     queryMock.mockReset();
   });
 
   afterEach(() => {
+    if (runtimeRoot) {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+      runtimeRoot = '';
+    }
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });

@@ -1460,4 +1460,39 @@ describe('consolidateMemoryItems', () => {
 
     expect(result.mergedItems).toBe(1);
   });
+
+  it('skips consolidation LLM egress when cluster includes sensitive-looking material', async () => {
+    const store = makeStore();
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'oauth-token-123');
+    addItem(store, {
+      key: 'fact:safe',
+      value: 'Use npm test before deploy.',
+    });
+    addItem(store, {
+      key: 'fact:risky',
+      value: 'credential blob q8N7_w9QfLh2Zr3Xy6Tt5Uv4sPd1Km0Qe9Jw2Nb7Hx3Y',
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [{ type: 'text', text: '[]' }],
+        }),
+        { status: 200 },
+      ),
+    );
+    const embeddings = stubEmbeddings(() => vector(3));
+
+    const result = await consolidateMemoryItems({
+      groupFolder: 'team',
+      store,
+      embeddings,
+      minItems: 2,
+      clusterThreshold: 0.8,
+      maxClusters: 3,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.mergedItems).toBe(1);
+    fetchSpy.mockRestore();
+  });
 });

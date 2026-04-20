@@ -273,10 +273,10 @@ describe('thread context', () => {
     expect(messages[0].thread_id).toBe('1710000000.000100');
   });
 
-  it('migrates legacy messages table and creates thread index after adding thread_id', () => {
-    const legacyDb = new Database(':memory:');
+  it('fails on incompatible messages table missing required thread columns', () => {
+    const incompatibleDb = new Database(':memory:');
     try {
-      legacyDb.exec(`
+      incompatibleDb.exec(`
         CREATE TABLE chats (
           jid TEXT PRIMARY KEY,
           name TEXT,
@@ -298,21 +298,204 @@ describe('thread context', () => {
         );
       `);
 
-      expect(() => _createSchemaForTest(legacyDb)).not.toThrow();
-
-      const columns = legacyDb
-        .prepare(`PRAGMA table_info(messages)`)
-        .all() as Array<{ name?: string }>;
-      expect(columns.some((col) => col.name === 'thread_id')).toBe(true);
-
-      const indexRow = legacyDb
-        .prepare(
-          `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_chat_thread'`,
-        )
-        .get() as { name?: string } | undefined;
-      expect(indexRow?.name).toBe('idx_messages_chat_thread');
+      expect(() => _createSchemaForTest(incompatibleDb)).toThrow(/thread_id/i);
     } finally {
-      legacyDb.close();
+      incompatibleDb.close();
+    }
+  });
+
+  it.each([
+    'reply_to_message_id',
+    'reply_to_message_content',
+    'reply_to_sender_name',
+  ])(
+    'fails when messages table is missing required column %s',
+    (missingColumn) => {
+      const incompatibleDb = new Database(':memory:');
+      try {
+        const optionalColumns = [
+          'thread_id TEXT,',
+          'reply_to_message_id TEXT,',
+          'reply_to_message_content TEXT,',
+          'reply_to_sender_name TEXT,',
+        ].filter((column) => !column.startsWith(`${missingColumn} `));
+        incompatibleDb.exec(`
+          CREATE TABLE chats (
+            jid TEXT PRIMARY KEY,
+            name TEXT,
+            last_message_time TEXT,
+            channel TEXT,
+            is_group INTEGER DEFAULT 0
+          );
+          CREATE TABLE messages (
+            id TEXT,
+            chat_jid TEXT,
+            sender TEXT,
+            sender_name TEXT,
+            content TEXT,
+            timestamp TEXT,
+            ${optionalColumns.join('\n')}
+            is_from_me INTEGER,
+            is_bot_message INTEGER DEFAULT 0,
+            PRIMARY KEY (id, chat_jid),
+            FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+          );
+        `);
+
+        expect(() => _createSchemaForTest(incompatibleDb)).toThrow(
+          new RegExp(missingColumn, 'i'),
+        );
+      } finally {
+        incompatibleDb.close();
+      }
+    },
+  );
+
+  it('fails when registered_groups table is missing is_main', () => {
+    const incompatibleDb = new Database(':memory:');
+    try {
+      incompatibleDb.exec(`
+        CREATE TABLE chats (
+          jid TEXT PRIMARY KEY,
+          name TEXT,
+          last_message_time TEXT,
+          channel TEXT,
+          is_group INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+          id TEXT,
+          chat_jid TEXT,
+          sender TEXT,
+          sender_name TEXT,
+          content TEXT,
+          timestamp TEXT,
+          thread_id TEXT,
+          reply_to_message_id TEXT,
+          reply_to_message_content TEXT,
+          reply_to_sender_name TEXT,
+          is_from_me INTEGER,
+          is_bot_message INTEGER DEFAULT 0,
+          PRIMARY KEY (id, chat_jid),
+          FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+        );
+        CREATE TABLE jobs (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          model TEXT DEFAULT NULL,
+          script TEXT,
+          schedule_type TEXT NOT NULL,
+          schedule_value TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          linked_sessions TEXT NOT NULL,
+          thread_id TEXT,
+          group_scope TEXT NOT NULL,
+          created_by TEXT NOT NULL DEFAULT 'agent',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          next_run TEXT,
+          last_run TEXT,
+          silent INTEGER NOT NULL DEFAULT 0,
+          cleanup_after_ms INTEGER NOT NULL DEFAULT 86400000,
+          timeout_ms INTEGER NOT NULL DEFAULT 300000,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_backoff_ms INTEGER NOT NULL DEFAULT 5000,
+          max_consecutive_failures INTEGER NOT NULL DEFAULT 5,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          execution_mode TEXT NOT NULL DEFAULT 'parallel',
+          lease_run_id TEXT,
+          lease_expires_at TEXT,
+          pause_reason TEXT
+        );
+        CREATE TABLE registered_groups (
+          jid TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          folder TEXT NOT NULL UNIQUE,
+          trigger_pattern TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          container_config TEXT,
+          requires_trigger INTEGER DEFAULT 1
+        );
+      `);
+
+      expect(() => _createSchemaForTest(incompatibleDb)).toThrow(/is_main/i);
+    } finally {
+      incompatibleDb.close();
+    }
+  });
+
+  it('fails when jobs table is missing execution_mode', () => {
+    const incompatibleDb = new Database(':memory:');
+    try {
+      incompatibleDb.exec(`
+        CREATE TABLE chats (
+          jid TEXT PRIMARY KEY,
+          name TEXT,
+          last_message_time TEXT,
+          channel TEXT,
+          is_group INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+          id TEXT,
+          chat_jid TEXT,
+          sender TEXT,
+          sender_name TEXT,
+          content TEXT,
+          timestamp TEXT,
+          thread_id TEXT,
+          reply_to_message_id TEXT,
+          reply_to_message_content TEXT,
+          reply_to_sender_name TEXT,
+          is_from_me INTEGER,
+          is_bot_message INTEGER DEFAULT 0,
+          PRIMARY KEY (id, chat_jid),
+          FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+        );
+        CREATE TABLE jobs (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          model TEXT DEFAULT NULL,
+          script TEXT,
+          schedule_type TEXT NOT NULL,
+          schedule_value TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          linked_sessions TEXT NOT NULL,
+          thread_id TEXT,
+          group_scope TEXT NOT NULL,
+          created_by TEXT NOT NULL DEFAULT 'agent',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          next_run TEXT,
+          last_run TEXT,
+          silent INTEGER NOT NULL DEFAULT 0,
+          cleanup_after_ms INTEGER NOT NULL DEFAULT 86400000,
+          timeout_ms INTEGER NOT NULL DEFAULT 300000,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_backoff_ms INTEGER NOT NULL DEFAULT 5000,
+          max_consecutive_failures INTEGER NOT NULL DEFAULT 5,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          lease_run_id TEXT,
+          lease_expires_at TEXT,
+          pause_reason TEXT
+        );
+        CREATE TABLE registered_groups (
+          jid TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          folder TEXT NOT NULL UNIQUE,
+          trigger_pattern TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          container_config TEXT,
+          requires_trigger INTEGER DEFAULT 1,
+          is_main INTEGER DEFAULT 0
+        );
+      `);
+
+      expect(() => _createSchemaForTest(incompatibleDb)).toThrow(
+        /execution_mode/i,
+      );
+    } finally {
+      incompatibleDb.close();
     }
   });
 });
@@ -1896,11 +2079,11 @@ describe('getLastBotMessageTimestamp edge cases', () => {
     storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
     // Simulate pre-migration message: is_bot_message defaults to 0 but content has prefix
     store({
-      id: 'legacy-bot',
+      id: 'prior-bot',
       chat_jid: 'group@g.us',
       sender: 'bot',
       sender_name: 'Bot',
-      content: 'Andy: legacy bot reply',
+      content: 'Andy: prior bot reply',
       timestamp: '2024-01-01T00:00:10.000Z',
     });
 
@@ -2394,342 +2577,5 @@ describe('registered group invalid folder detection', () => {
     expect(Object.keys(groups)).toHaveLength(1);
     expect(groups['good@g.us']).toBeDefined();
     expect(groups['bad@g.us']).toBeUndefined();
-  });
-});
-
-// --- migrateJsonState via initDatabase ---
-
-describe('migrateJsonState via initDatabase', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.resetModules();
-    // Re-init the in-memory DB for subsequent tests
-    _initTestDatabase();
-  });
-
-  it('migrates router_state.json, sessions.json, and registered_groups.json', async () => {
-    vi.resetModules();
-
-    const mockFiles: Record<string, string> = {
-      '/tmp/test-data/router_state.json': JSON.stringify({
-        last_timestamp: '2024-01-01T00:00:00.000Z',
-        last_agent_timestamp: { 'group@g.us': '2024-01-01T00:01:00.000Z' },
-      }),
-      '/tmp/test-data/sessions.json': JSON.stringify({
-        whatsapp_main: 'session-123',
-        whatsapp_dev: 'session-456',
-      }),
-      '/tmp/test-data/registered_groups.json': JSON.stringify({
-        'group@g.us': {
-          name: 'Migrated Group',
-          folder: 'whatsapp_migrated-group',
-          trigger: '@bot',
-          added_at: '2024-01-01T00:00:00.000Z',
-        },
-      }),
-    };
-    const renamedFiles: string[] = [];
-
-    vi.doMock('fs', async () => {
-      const realFs = await vi.importActual<typeof import('fs')>('fs');
-      return {
-        ...realFs,
-        default: {
-          ...realFs,
-          existsSync: (p: string) => {
-            if (p in mockFiles) return true;
-            return realFs.existsSync(p);
-          },
-          readFileSync: (p: string, enc?: string) => {
-            if (p in mockFiles) return mockFiles[p];
-            return realFs.readFileSync(p, enc as BufferEncoding);
-          },
-          renameSync: (from: string, to: string) => {
-            if (from in mockFiles) {
-              renamedFiles.push(from);
-              return;
-            }
-            return realFs.renameSync(from, to);
-          },
-          mkdirSync: realFs.mkdirSync,
-        },
-      };
-    });
-
-    vi.doMock('@core/core/config.js', async () => {
-      const real = await vi.importActual<typeof import('@core/core/config.js')>(
-        '@core/core/config.js',
-      );
-      return {
-        ...real,
-        DATA_DIR: '/tmp/test-data',
-        STORE_DIR: '/tmp/test-store-migrate',
-      };
-    });
-
-    const db = await import('@core/storage/db.js');
-    db.initDatabase();
-
-    // Verify migrations occurred
-    expect(db.getRouterState('last_timestamp')).toBe(
-      '2024-01-01T00:00:00.000Z',
-    );
-    expect(db.getRouterState('last_agent_timestamp')).toBe(
-      JSON.stringify({ 'group@g.us': '2024-01-01T00:01:00.000Z' }),
-    );
-    expect(db.getSession('whatsapp_main')).toBe('session-123');
-    expect(db.getSession('whatsapp_dev')).toBe('session-456');
-
-    const group = db.getRegisteredGroup('group@g.us');
-    expect(group).toBeDefined();
-    expect(group?.name).toBe('Migrated Group');
-
-    // Verify files were renamed
-    expect(renamedFiles).toContain('/tmp/test-data/router_state.json');
-    expect(renamedFiles).toContain('/tmp/test-data/sessions.json');
-    expect(renamedFiles).toContain('/tmp/test-data/registered_groups.json');
-
-    db._closeDatabase();
-
-    // Clean up the real DB file created
-    const realFs = await vi.importActual<typeof import('fs')>('fs');
-    try {
-      realFs.unlinkSync('/tmp/test-store-migrate/messages.db');
-      realFs.rmdirSync('/tmp/test-store-migrate');
-    } catch {
-      // ignore cleanup errors
-    }
-  });
-
-  it('handles migration when JSON files do not exist', async () => {
-    vi.resetModules();
-
-    vi.doMock('fs', async () => {
-      const realFs = await vi.importActual<typeof import('fs')>('fs');
-      return {
-        ...realFs,
-        default: {
-          ...realFs,
-          existsSync: (p: string) => {
-            // Return false for all migration files
-            if (p.includes('router_state.json')) return false;
-            if (p.includes('sessions.json')) return false;
-            if (p.includes('registered_groups.json')) return false;
-            return realFs.existsSync(p);
-          },
-          mkdirSync: realFs.mkdirSync,
-        },
-      };
-    });
-
-    vi.doMock('@core/core/config.js', async () => {
-      const real = await vi.importActual<typeof import('@core/core/config.js')>(
-        '@core/core/config.js',
-      );
-      return {
-        ...real,
-        DATA_DIR: '/tmp/test-data-empty',
-        STORE_DIR: '/tmp/test-store-no-migrate',
-      };
-    });
-
-    const db = await import('@core/storage/db.js');
-    db.initDatabase();
-
-    // No migration data should exist
-    expect(db.getRouterState('last_timestamp')).toBeUndefined();
-
-    db._closeDatabase();
-
-    // Clean up
-    const realFs = await vi.importActual<typeof import('fs')>('fs');
-    try {
-      realFs.unlinkSync('/tmp/test-store-no-migrate/messages.db');
-      realFs.rmdirSync('/tmp/test-store-no-migrate');
-    } catch {
-      // ignore
-    }
-  });
-
-  it('handles malformed JSON files during migration', async () => {
-    vi.resetModules();
-
-    vi.doMock('fs', async () => {
-      const realFs = await vi.importActual<typeof import('fs')>('fs');
-      return {
-        ...realFs,
-        default: {
-          ...realFs,
-          existsSync: (p: string) => {
-            if (p.includes('router_state.json')) return true;
-            if (p.includes('sessions.json')) return true;
-            if (p.includes('registered_groups.json')) return true;
-            return realFs.existsSync(p);
-          },
-          readFileSync: (p: string, enc?: string) => {
-            // Return invalid JSON for all migration files
-            if (p.includes('router_state.json')) return '{ invalid json';
-            if (p.includes('sessions.json')) return '{ invalid json';
-            if (p.includes('registered_groups.json')) return '{ invalid json';
-            return realFs.readFileSync(p, enc as BufferEncoding);
-          },
-          mkdirSync: realFs.mkdirSync,
-        },
-      };
-    });
-
-    vi.doMock('@core/core/config.js', async () => {
-      const real = await vi.importActual<typeof import('@core/core/config.js')>(
-        '@core/core/config.js',
-      );
-      return {
-        ...real,
-        DATA_DIR: '/tmp/test-data-malformed',
-        STORE_DIR: '/tmp/test-store-malformed',
-      };
-    });
-
-    const db = await import('@core/storage/db.js');
-    // Should not throw even with malformed JSON
-    db.initDatabase();
-
-    // No migration data should exist since JSON was invalid
-    expect(db.getRouterState('last_timestamp')).toBeUndefined();
-
-    db._closeDatabase();
-
-    // Clean up
-    const realFs = await vi.importActual<typeof import('fs')>('fs');
-    try {
-      realFs.unlinkSync('/tmp/test-store-malformed/messages.db');
-      realFs.rmdirSync('/tmp/test-store-malformed');
-    } catch {
-      // ignore
-    }
-  });
-
-  it('handles migration of registered_groups with invalid folder', async () => {
-    vi.resetModules();
-
-    vi.doMock('fs', async () => {
-      const realFs = await vi.importActual<typeof import('fs')>('fs');
-      return {
-        ...realFs,
-        default: {
-          ...realFs,
-          existsSync: (p: string) => {
-            if (p.includes('registered_groups.json')) return true;
-            return realFs.existsSync(p);
-          },
-          readFileSync: (p: string, enc?: string) => {
-            if (p.includes('registered_groups.json')) {
-              return JSON.stringify({
-                'bad@g.us': {
-                  name: 'Bad Group',
-                  folder: '../escape-attempt',
-                  trigger: '@bot',
-                  added_at: '2024-01-01T00:00:00.000Z',
-                },
-              });
-            }
-            return realFs.readFileSync(p, enc as BufferEncoding);
-          },
-          renameSync: (from: string, to: string) => {
-            if (from.includes('registered_groups.json')) return;
-            return realFs.renameSync(from, to);
-          },
-          mkdirSync: realFs.mkdirSync,
-        },
-      };
-    });
-
-    vi.doMock('@core/core/config.js', async () => {
-      const real = await vi.importActual<typeof import('@core/core/config.js')>(
-        '@core/core/config.js',
-      );
-      return {
-        ...real,
-        DATA_DIR: '/tmp/test-data-bad-groups',
-        STORE_DIR: '/tmp/test-store-bad-groups',
-      };
-    });
-
-    const db = await import('@core/storage/db.js');
-    // Should not throw — invalid folder triggers the catch+warn path
-    db.initDatabase();
-
-    // The invalid group should not be in the DB
-    expect(db.getRegisteredGroup('bad@g.us')).toBeUndefined();
-
-    db._closeDatabase();
-
-    // Clean up
-    const realFs = await vi.importActual<typeof import('fs')>('fs');
-    try {
-      realFs.unlinkSync('/tmp/test-store-bad-groups/messages.db');
-      realFs.rmdirSync('/tmp/test-store-bad-groups');
-    } catch {
-      // ignore
-    }
-  });
-
-  it('migrates router_state with only last_timestamp (no last_agent_timestamp)', async () => {
-    vi.resetModules();
-
-    vi.doMock('fs', async () => {
-      const realFs = await vi.importActual<typeof import('fs')>('fs');
-      return {
-        ...realFs,
-        default: {
-          ...realFs,
-          existsSync: (p: string) => {
-            if (p.includes('router_state.json')) return true;
-            return realFs.existsSync(p);
-          },
-          readFileSync: (p: string, enc?: string) => {
-            if (p.includes('router_state.json')) {
-              return JSON.stringify({
-                last_timestamp: '2024-06-01T00:00:00.000Z',
-              });
-            }
-            return realFs.readFileSync(p, enc as BufferEncoding);
-          },
-          renameSync: (from: string, to: string) => {
-            if (from.includes('router_state.json')) return;
-            return realFs.renameSync(from, to);
-          },
-          mkdirSync: realFs.mkdirSync,
-        },
-      };
-    });
-
-    vi.doMock('@core/core/config.js', async () => {
-      const real = await vi.importActual<typeof import('@core/core/config.js')>(
-        '@core/core/config.js',
-      );
-      return {
-        ...real,
-        DATA_DIR: '/tmp/test-data-partial-router',
-        STORE_DIR: '/tmp/test-store-partial-router',
-      };
-    });
-
-    const db = await import('@core/storage/db.js');
-    db.initDatabase();
-
-    expect(db.getRouterState('last_timestamp')).toBe(
-      '2024-06-01T00:00:00.000Z',
-    );
-    expect(db.getRouterState('last_agent_timestamp')).toBeUndefined();
-
-    db._closeDatabase();
-
-    const realFs = await vi.importActual<typeof import('fs')>('fs');
-    try {
-      realFs.unlinkSync('/tmp/test-store-partial-router/messages.db');
-      realFs.rmdirSync('/tmp/test-store-partial-router');
-    } catch {
-      // ignore
-    }
   });
 });

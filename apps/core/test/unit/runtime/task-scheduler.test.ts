@@ -13,17 +13,15 @@ import {
   updateJob,
   upsertJob,
 } from '@core/storage/db.js';
-import { RUNTIME_MEMORY_DREAMING_ENABLED } from '@core/core/config.js';
 import {
+  _setMemoryMaintenanceQueueForTests,
   _resetSchedulerLoopForTests,
   computeNextJobRun,
   startSchedulerLoop,
 } from '@core/runtime/task-scheduler.js';
 import { spawnAgent } from '@core/runtime/agent-spawn.js';
-import { writeMemoryContextSnapshot } from '@core/memory/memory-ipc.js';
 import { resolveGroupFolderPath } from '@core/platform/group-folder.js';
 
-const reflectAfterTurnMock = vi.fn(async () => {});
 const runDreamingSweepMock = vi.fn(async () => ({
   groupFolder: 'main',
   totalItems: 0,
@@ -35,8 +33,8 @@ const runDreamingSweepMock = vi.fn(async () => ({
   topPromoted: [],
   durationMs: 1,
 }));
-const runMemoryCleanupOnceMock = vi.hoisted(() =>
-  vi.fn(() => ({
+const runMemoryCleanupInSubprocessMock = vi.hoisted(() =>
+  vi.fn(async () => ({
     sweptMirrors: 0,
     mirrorErrors: 0,
     purgedItems: 0,
@@ -54,10 +52,6 @@ vi.mock('@core/runtime/agent-spawn.js', () => ({
   })),
 }));
 
-vi.mock('@core/memory/memory-ipc.js', () => ({
-  writeMemoryContextSnapshot: vi.fn(async () => ({ retrievedItemIds: [] })),
-}));
-
 vi.mock('@core/platform/group-folder.js', () => ({
   resolveGroupFolderPath: vi.fn(() => '/tmp/test-group-folder'),
   resolveGroupIpcPath: vi.fn(() => '/tmp/test-group-ipc'),
@@ -66,14 +60,13 @@ vi.mock('@core/platform/group-folder.js', () => ({
 vi.mock('@core/memory/memory-service.js', () => ({
   MemoryService: {
     getInstance: () => ({
-      reflectAfterTurn: reflectAfterTurnMock,
       runDreamingSweep: runDreamingSweepMock,
     }),
   },
 }));
 
 vi.mock('@core/memory/cleanup-job.js', () => ({
-  runMemoryCleanupOnce: runMemoryCleanupOnceMock,
+  runMemoryCleanupInSubprocess: runMemoryCleanupInSubprocessMock,
 }));
 
 describe('computeNextJobRun edge cases', () => {
@@ -345,7 +338,6 @@ describe('job scheduler', () => {
 
     expect(runDreamingSweepMock).toHaveBeenCalledTimes(1);
     expect(spawnAgent).not.toHaveBeenCalled();
-    expect(reflectAfterTurnMock).not.toHaveBeenCalled();
   });
 
   it('runs __system cleanup jobs without container execution', async () => {
@@ -390,7 +382,7 @@ describe('job scheduler', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(runMemoryCleanupOnceMock).toHaveBeenCalledTimes(1);
+    expect(runMemoryCleanupInSubprocessMock).toHaveBeenCalledTimes(1);
     expect(spawnAgent).not.toHaveBeenCalled();
   });
 
@@ -458,10 +450,6 @@ describe('job scheduler', () => {
     const cleanupJobs = getAllJobs().filter(
       (job) => job.prompt === '__system:memory_cleanup',
     );
-    if (!RUNTIME_MEMORY_DREAMING_ENABLED) {
-      expect(RUNTIME_MEMORY_DREAMING_ENABLED).toBe(false);
-      return;
-    }
     expect(cleanupJobs).toHaveLength(1);
     expect(getJobById('system:cleanup:proj')).toBeUndefined();
   });
@@ -1514,7 +1502,7 @@ describe('scheduler loop', () => {
     expect(sendMessage).toHaveBeenCalledWith('other@g.us', expect.any(String));
   });
 
-  it('calls reflectAfterTurn after successful non-system job', async () => {
+  it('completes successful non-system jobs without per-turn reflection', async () => {
     vi.mocked(spawnAgent).mockResolvedValueOnce({
       status: 'success',
       result: 'reflection result',
@@ -1540,17 +1528,11 @@ describe('scheduler loop', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(reflectAfterTurnMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        groupFolder: 'main',
-        prompt: 'something to reflect on',
-        result: 'reflection result',
-        isMain: true,
-      }),
-    );
+    const job = getJobById('reflect-job');
+    expect(job?.status).toBe('completed');
   });
 
-  it('does not call reflectAfterTurn on failed job', async () => {
+  it('handles failed jobs without per-turn reflection', async () => {
     vi.mocked(spawnAgent).mockResolvedValueOnce({
       status: 'error',
       error: 'failure',
@@ -1578,7 +1560,8 @@ describe('scheduler loop', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(reflectAfterTurnMock).not.toHaveBeenCalled();
+    const job = getJobById('no-reflect');
+    expect(job?.status).toBe('dead_lettered');
   });
 
   it('scheduler loop re-runs on setTimeout interval', async () => {
@@ -2148,41 +2131,7 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     expect(runs[0].error_summary).toContain('Invalid group folder path');
   });
 
-  it('handles writeMemoryContextSnapshot failure gracefully', async () => {
-    vi.mocked(writeMemoryContextSnapshot).mockRejectedValueOnce(
-      new Error('Snapshot write failed'),
-    );
-    vi.mocked(spawnAgent).mockResolvedValueOnce({
-      status: 'success',
-      result: 'completed despite snapshot error',
-      newSessionId: 'sess-1',
-    });
-
-    upsertJob({
-      id: 'snap-fail',
-      name: 'snapshot fail',
-      prompt: 'test prompt',
-      schedule_type: 'once',
-      schedule_value: new Date(Date.now() - 60_000).toISOString(),
-      linked_sessions: ['group@g.us'],
-      group_scope: 'main',
-      created_by: 'agent',
-      next_run: new Date(Date.now() - 60_000).toISOString(),
-      status: 'active',
-    });
-
-    startSchedulerLoop(makeDeps());
-    await vi.advanceTimersByTimeAsync(20);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // Job should still complete despite snapshot failure
-    const job = getJobById('snap-fail');
-    expect(job?.status).toBe('completed');
-  });
-
-  it('handles reflectAfterTurn throwing gracefully', async () => {
-    reflectAfterTurnMock.mockRejectedValueOnce(new Error('Reflection failed'));
+  it('completes jobs without per-turn reflection hooks', async () => {
     vi.mocked(spawnAgent).mockResolvedValueOnce({
       status: 'success',
       result: 'ok result',
@@ -2208,10 +2157,8 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // Job should still be completed despite reflection failure
     const job = getJobById('reflect-fail');
     expect(job?.status).toBe('completed');
-    expect(reflectAfterTurnMock).toHaveBeenCalled();
   });
 
   it('handles unknown system job prompt', async () => {
@@ -2239,6 +2186,156 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     expect(runs.length).toBe(1);
     expect(runs[0].status).toBe('dead_lettered');
     expect(runs[0].error_summary).toContain('Unknown system job');
+  });
+
+  it('treats deduped memory maintenance queue results as success', async () => {
+    const enqueueAndWait = vi.fn(async () => ({
+      queued: false,
+      deduped: true,
+      reason: 'deduped',
+    }));
+    _setMemoryMaintenanceQueueForTests({
+      enqueueAndWait,
+      getPendingCount: vi.fn(() => 2),
+    });
+
+    upsertJob({
+      id: 'sys-deduped',
+      name: 'system deduped',
+      prompt: '__system:memory_dream',
+      schedule_type: 'once',
+      schedule_value: new Date(Date.now() - 60_000).toISOString(),
+      linked_sessions: ['group@g.us'],
+      group_scope: 'main',
+      created_by: 'agent',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+    });
+
+    startSchedulerLoop(makeDeps());
+    await vi.advanceTimersByTimeAsync(20);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const runs = listJobRuns('sys-deduped', 10);
+    expect(runs.length).toBe(1);
+    expect(runs[0].status).toBe('completed');
+    expect(enqueueAndWait).toHaveBeenCalledWith(
+      'main',
+      expect.any(Function),
+      'dream:main',
+    );
+  });
+
+  it('uses a distinct maintenance dedupe key for cleanup jobs', async () => {
+    const enqueueAndWait = vi.fn(async () => ({
+      queued: false,
+      deduped: true,
+      reason: 'deduped',
+    }));
+    _setMemoryMaintenanceQueueForTests({
+      enqueueAndWait,
+      getPendingCount: vi.fn(() => 1),
+    });
+
+    upsertJob({
+      id: 'sys-cleanup-deduped',
+      name: 'system cleanup deduped',
+      prompt: '__system:memory_cleanup',
+      schedule_type: 'once',
+      schedule_value: new Date(Date.now() - 60_000).toISOString(),
+      linked_sessions: ['group@g.us'],
+      group_scope: 'main',
+      created_by: 'agent',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+    });
+
+    startSchedulerLoop(makeDeps());
+    await vi.advanceTimersByTimeAsync(20);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const runs = listJobRuns('sys-cleanup-deduped', 10);
+    expect(runs.length).toBe(1);
+    expect(runs[0].status).toBe('completed');
+    expect(enqueueAndWait).toHaveBeenCalledWith(
+      'main',
+      expect.any(Function),
+      'cleanup:main',
+    );
+  });
+
+  it('dead-letters system memory jobs when maintenance queue is full', async () => {
+    _setMemoryMaintenanceQueueForTests({
+      enqueueAndWait: vi.fn(async () => ({
+        queued: false,
+        deduped: false,
+        reason: 'full',
+      })),
+      getPendingCount: vi.fn(() => 5000),
+    });
+
+    upsertJob({
+      id: 'sys-full',
+      name: 'system full',
+      prompt: '__system:memory_dream',
+      schedule_type: 'once',
+      schedule_value: new Date(Date.now() - 60_000).toISOString(),
+      linked_sessions: ['group@g.us'],
+      group_scope: 'main',
+      created_by: 'agent',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      max_retries: 0,
+      max_consecutive_failures: 1,
+    });
+
+    startSchedulerLoop(makeDeps());
+    await vi.advanceTimersByTimeAsync(20);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const runs = listJobRuns('sys-full', 10);
+    expect(runs.length).toBe(1);
+    expect(runs[0].status).toBe('dead_lettered');
+    expect(runs[0].error_summary).toContain('memory maintenance queue full');
+  });
+
+  it('dead-letters system cleanup jobs when maintenance queue input is invalid', async () => {
+    _setMemoryMaintenanceQueueForTests({
+      enqueueAndWait: vi.fn(async () => ({
+        queued: false,
+        deduped: false,
+        reason: 'invalid',
+      })),
+      getPendingCount: vi.fn(() => 0),
+    });
+
+    upsertJob({
+      id: 'sys-invalid',
+      name: 'system invalid',
+      prompt: '__system:memory_cleanup',
+      schedule_type: 'once',
+      schedule_value: new Date(Date.now() - 60_000).toISOString(),
+      linked_sessions: ['group@g.us'],
+      group_scope: 'main',
+      created_by: 'agent',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      max_retries: 0,
+      max_consecutive_failures: 1,
+    });
+
+    startSchedulerLoop(makeDeps());
+    await vi.advanceTimersByTimeAsync(20);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const runs = listJobRuns('sys-invalid', 10);
+    expect(runs.length).toBe(1);
+    expect(runs[0].status).toBe('dead_lettered');
+    expect(runs[0].error_summary).toContain('invalid memory maintenance group');
   });
 
   it('handles runJob when getJobById returns null (job deleted mid-run)', async () => {

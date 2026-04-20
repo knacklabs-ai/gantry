@@ -381,6 +381,55 @@ describe('handleSessionCommand', () => {
     );
   });
 
+  it('reports deduped /dream requests without marking completion', async () => {
+    const deps = makeDeps({
+      runMemoryDreaming: vi.fn().mockResolvedValue({
+        queued: false,
+        deduped: true,
+        reason: 'deduped',
+        pending: 1,
+      }),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/dream')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Dreaming already in progress.'),
+    );
+    expect(deps.sendMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('Dreaming completed.'),
+    );
+  });
+
+  it('fails /dream when queue rejects non-deduped requests', async () => {
+    const deps = makeDeps({
+      runMemoryDreaming: vi.fn().mockResolvedValue({
+        queued: false,
+        deduped: false,
+        reason: 'full',
+        pending: 5000,
+      }),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/dream')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('/dream failed: full'),
+    );
+  });
+
   it('handles /memory-status by formatting status output', async () => {
     const deps = makeDeps({
       getMemoryStatus: vi.fn().mockResolvedValue({

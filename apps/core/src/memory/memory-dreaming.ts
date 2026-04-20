@@ -1,9 +1,9 @@
 import { MODEL_DREAMING, MEMORY_DREAMING_DRY_RUN } from '../core/config.js';
 import { runClaudeQuery } from './claude-query.js';
-import { firstUngroundedToken } from './grounding-check.js';
 import { MEMORY_DREAM_REVIEW_PROMPT } from './prompts/dream.js';
 import type { ConsolidationResult } from './memory-consolidation.js';
-import type { MemoryProvider } from './memory-provider.js';
+import type { MemoryStore } from './memory-store.js';
+import { sanitizeOutboundLlmText } from './sensitive-material.js';
 import type { MemoryItem } from './memory-types.js';
 
 export interface GroupStats {
@@ -40,7 +40,7 @@ export interface DreamingResult {
 interface RunDreamingSweepArgs {
   groupFolder: string;
   store: Pick<
-    MemoryProvider,
+    MemoryStore,
     | 'listActiveItems'
     | 'adjustConfidence'
     | 'getItemById'
@@ -73,7 +73,8 @@ export async function runDreamingSweep(
   args: RunDreamingSweepArgs,
 ): Promise<DreamingResult> {
   const startedAt = Date.now();
-  const items = args.store.listActiveItems(args.groupFolder);
+  // Cap sweep at 5000 items to bound per-sweep maintenance and LLM cost.
+  const items = args.store.listActiveItems(args.groupFolder, 5000);
 
   if (!args.enabled) {
     return {
@@ -389,29 +390,120 @@ function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+const TOKEN_PATTERN =
+  /\b(?:[a-zA-Z_][a-zA-Z0-9_./:-]{2,}|[0-9]{2,}|[a-z]+-[a-z0-9-]{2,})\b/g;
+
+const STOP_TOKENS = new Set([
+  'the',
+  'and',
+  'with',
+  'from',
+  'that',
+  'this',
+  'have',
+  'will',
+  'were',
+  'been',
+  'into',
+  'about',
+  'after',
+  'before',
+  'where',
+  'which',
+  'their',
+  'there',
+  'should',
+  'could',
+  'would',
+  'because',
+  'while',
+  'when',
+  'what',
+  'your',
+  'they',
+  'them',
+  'than',
+  'then',
+  'over',
+  'under',
+  'more',
+  'most',
+  'less',
+  'very',
+  'true',
+  'false',
+  'none',
+]);
+
+function normalizeToken(token: string): string {
+  return token.trim().toLowerCase();
+}
+
+function requiresStrictGrounding(token: string): boolean {
+  return /[0-9_./:]/.test(token) || token.includes('-');
+}
+
+function extractGroundingTokens(text: string): string[] {
+  const tokens = text.match(TOKEN_PATTERN) || [];
+  return tokens
+    .map(normalizeToken)
+    .filter((token) => token.length >= 3 && !STOP_TOKENS.has(token));
+}
+
+function firstUngroundedToken(
+  candidateText: string,
+  sourceTexts: string[],
+): string | null {
+  const sourceTokenSet = new Set<string>();
+  for (const text of sourceTexts) {
+    for (const token of extractGroundingTokens(text)) {
+      sourceTokenSet.add(token);
+    }
+  }
+  for (const token of extractGroundingTokens(candidateText)) {
+    if (!requiresStrictGrounding(token)) {
+      continue;
+    }
+    if (!sourceTokenSet.has(token)) {
+      return token;
+    }
+  }
+  return null;
+}
+
 async function reviewDreamCandidates(
   items: MemoryItem[],
 ): Promise<DreamReviewDecision[]> {
   if (items.length === 0) return [];
 
-  const payload = items.map((item) => ({
-    id: item.id,
-    kind: item.kind,
-    value: item.value,
-    why: item.why || '',
-    confidence: item.confidence,
-    retrieval_count: item.retrieval_count,
-    last_used_at: item.last_used_at,
-    age_days: Math.max(
-      0,
-      (Date.now() - Date.parse(item.updated_at || item.created_at)) /
-        86_400_000,
-    ),
-    pre_rank_signal: {
-      total_score: item.total_score,
-      max_score: item.max_score,
-    },
-  }));
+  const payload = items.flatMap((item) => {
+    const sanitizedValue = sanitizeOutboundLlmText(item.value);
+    const sanitizedWhy = sanitizeOutboundLlmText(item.why || '');
+    if (sanitizedValue.blocked || sanitizedWhy.blocked) {
+      return [];
+    }
+    return [
+      {
+        id: item.id,
+        kind: item.kind,
+        value: sanitizedValue.text,
+        why: sanitizedWhy.text,
+        confidence: item.confidence,
+        retrieval_count: item.retrieval_count,
+        last_used_at: item.last_used_at,
+        age_days: Math.max(
+          0,
+          (Date.now() - Date.parse(item.updated_at || item.created_at)) /
+            86_400_000,
+        ),
+        pre_rank_signal: {
+          total_score: item.total_score,
+          max_score: item.max_score,
+        },
+      },
+    ];
+  });
+  if (payload.length === 0) return [];
 
   try {
     const text = await runClaudeQuery({

@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  isSafeSessionId,
   mapHookCauseToArchiveCause,
   mapHookEventToCause,
   normalizeHookCause,
@@ -44,6 +45,13 @@ describe('session hook wrapper', () => {
     expect(mapHookCauseToArchiveCause('session-stop')).toBe(
       'abandoned-session',
     );
+  });
+
+  it('validates session ids used by hooks', () => {
+    expect(isSafeSessionId('sess-001')).toBe(true);
+    expect(isSafeSessionId('session_2026.04.19')).toBe(true);
+    expect(isSafeSessionId('../escape')).toBe(false);
+    expect(isSafeSessionId('bad/slash')).toBe(false);
   });
 
   it('resolves runtime home and group folder from CLAUDE_PROJECT_DIR', () => {
@@ -158,5 +166,22 @@ describe('session hook wrapper', () => {
         },
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('ignores invalid group folder and session id values', async () => {
+    const loadArchiveModule = vi.fn(async () => ({
+      archiveSessionTranscript: vi.fn(),
+    }));
+
+    await runSessionHook({
+      argv: ['--cause=session-start'],
+      env: makeEnv({
+        CLAUDE_SESSION_ID: '../bad',
+        MYCLAW_GROUP_FOLDER: '../group',
+      }),
+      loadArchiveModule,
+    });
+
+    expect(loadArchiveModule).not.toHaveBeenCalled();
   });
 });

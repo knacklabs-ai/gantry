@@ -6,7 +6,9 @@ export type MemoryKind =
   | 'decision'
   | 'fact'
   | 'correction'
-  | 'constraint';
+  | 'constraint'
+  | 'project_fact'
+  | 'reference';
 
 export interface MemoryItem {
   id: string;
@@ -20,6 +22,12 @@ export interface MemoryItem {
   load_bearing?: boolean;
   source_turn_id?: string | null;
   source: string;
+  source_folder?: string;
+  file_path?: string;
+  content_hash?: string;
+  indexed_at?: string | null;
+  embedding_pending?: boolean;
+  blocked_reason?: string | null;
   confidence: number;
   is_pinned: boolean;
   used_count?: number;
@@ -97,6 +105,7 @@ export interface SimilarMemoryItemMatch {
 export interface MemoryWriteContext {
   isMain: boolean;
   groupFolder: string;
+  actor?: string;
 }
 
 export interface SaveMemoryInput {

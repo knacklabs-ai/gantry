@@ -20,8 +20,8 @@ import {
   StreamingChunkOptions,
   ThinkingOverride,
 } from '../core/types.js';
-import { writeMemoryContextSnapshot } from '../memory/memory-ipc.js';
 import { MemoryService } from '../memory/memory-service.js';
+import { getMemoryMaintenanceQueue } from '../memory/maintenance-queue.js';
 import {
   formatMessages,
   formatOutboundForChannel,
@@ -55,6 +55,7 @@ const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
 const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
 const NO_VISIBLE_OUTPUT_FALLBACK_MESSAGE =
   'I finished that run but did not generate a user-visible reply. Please send your message again.';
+const memoryMaintenanceQueue = getMemoryMaintenanceQueue();
 let streamingGenerationCounter = 0;
 
 function nextStreamingGeneration(): number {
@@ -133,8 +134,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     chatJid: string,
     onOutput?: (output: AgentOutput) => Promise<void>,
     options?: { timeoutMs?: number },
-    userId?: string,
-    onMemoryContext?: (retrievedItemIds: string[]) => void,
   ): Promise<'success' | 'error'> {
     const isMain = group.isMain === true;
     const sessionId = deps.getSession(group.folder);
@@ -174,26 +173,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       jobs,
     );
 
-    let memoryContextFilePath: string | undefined;
-
-    try {
-      const contextSnapshot = await writeMemoryContextSnapshot(
-        group.folder,
-        isMain,
-        prompt,
-        userId,
-        { isFirstPromptOfSession: !sessionId },
-      );
-      memoryContextFilePath = contextSnapshot.filePath;
-      onMemoryContext?.(contextSnapshot.retrievedItemIds);
-    } catch (err) {
-      logger.warn(
-        { err, group: group.name },
-        'Memory context snapshot failed; continuing without memory context',
-      );
-      onMemoryContext?.([]);
-    }
-
     writeGroupsSnapshot(
       group.folder,
       isMain,
@@ -223,7 +202,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           isMain,
           assistantName: ASSISTANT_NAME,
           thinking: group.agentConfig?.thinking,
-          memoryContextFile: memoryContextFilePath,
         },
         (proc, containerName) =>
           deps.queue.registerProcess(
@@ -426,24 +404,34 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             cause,
           });
         },
-        onSessionArchived: async (cause = 'new-session') => {
-          await MemoryService.getInstance().reflectAfterTurn({
-            groupFolder: group.folder,
-            prompt: cause === 'manual-compact' ? '/compact' : '/new',
-            result:
-              cause === 'manual-compact'
-                ? 'session compacted'
-                : 'session archived',
-            isMain: isMainGroup,
-          });
-        },
         clearCurrentSession: () => {
           deps.clearSession(group.folder);
           deleteSession(group.folder);
         },
         stopCurrentRun: () => deps.queue.stopGroup?.(chatJid) ?? false,
-        runMemoryDreaming: async () =>
-          MemoryService.getInstance().runDreamingSweep(group.folder),
+        runMemoryDreaming: async () => {
+          const result = await memoryMaintenanceQueue.enqueueAndWait(
+            group.folder,
+            async () => {
+              await MemoryService.getInstance().runDreamingSweep(group.folder);
+            },
+            `dream:${group.folder}`,
+          );
+          if (!result.queued) {
+            if (result.reason === 'full') {
+              throw new Error('memory maintenance queue full');
+            }
+            if (result.reason === 'invalid') {
+              throw new Error('invalid memory maintenance group');
+            }
+          }
+          return {
+            queued: result.queued,
+            pending: memoryMaintenanceQueue.getPendingCount(),
+            deduped: result.deduped,
+            reason: result.reason,
+          };
+        },
         getMemoryStatus: async () =>
           MemoryService.getInstance().getStatus(group.folder),
         saveProcedure: async ({ title, body }) =>
@@ -457,7 +445,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
               confidence: 0.8,
               tags: ['explicit'],
             },
-            { isMain: isMainGroup, groupFolder: group.folder },
+            {
+              isMain: isMainGroup,
+              groupFolder: group.folder,
+              actor: 'agent',
+            },
           ),
         isSenderControlAllowlisted: (msg) => {
           const allowlistCfg = loadSenderAllowlist();
@@ -627,11 +619,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         );
       }
     };
-    let retrievedItemIdsForTurn: string[] = [];
-    const memoryUserId = [...missedMessages]
-      .reverse()
-      .find((msg) => !msg.is_from_me && !msg.is_bot_message)?.sender;
-
     let output: 'success' | 'error' = 'error';
     try {
       output = await runAgent(
@@ -684,10 +671,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           }
         },
         undefined,
-        memoryUserId,
-        (retrievedItemIds) => {
-          retrievedItemIdsForTurn = retrievedItemIds;
-        },
       );
     } finally {
       await finalizeStreamingOutput('turn-complete');
@@ -766,22 +749,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           );
         }
       }
-    }
-
-    try {
-      await MemoryService.getInstance().reflectAfterTurn({
-        groupFolder: group.folder,
-        prompt,
-        result: collectedOutput,
-        isMain: isMainGroup,
-        userId: memoryUserId,
-        retrievedItemIds: retrievedItemIdsForTurn,
-      });
-    } catch (err) {
-      logger.warn(
-        { err, group: group.name },
-        'Memory reflection failed after successful turn',
-      );
     }
 
     return true;

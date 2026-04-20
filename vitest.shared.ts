@@ -10,6 +10,7 @@ export function makeVitestConfig(options: VitestConfigOptions) {
   const { include, withCoverage = false } = options;
   const testConfig: {
     include: string[];
+    setupFiles?: string[];
     coverage?: {
       provider: 'v8';
       reporter: string[];
@@ -19,6 +20,7 @@ export function makeVitestConfig(options: VitestConfigOptions) {
     };
   } = {
     include,
+    setupFiles: ['apps/core/test/setup/runtime-env.ts'],
   };
 
   if (withCoverage) {

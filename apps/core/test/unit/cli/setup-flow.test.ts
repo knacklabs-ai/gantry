@@ -116,7 +116,6 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
         enabled: true,
         provider: 'sqlite',
         sqlitePath: 'store/memory.db',
-        qmdRoot: 'agent-memory',
         embeddings: {
           enabled: false,
           provider: 'disabled',

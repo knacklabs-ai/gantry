@@ -278,6 +278,7 @@ export async function processMemoryRequest(
         const saved = await memory.saveMemory(input, {
           isMain,
           groupFolder: sourceGroup,
+          actor: 'mcp-tool',
         });
         return {
           ok: true,
@@ -291,6 +292,7 @@ export async function processMemoryRequest(
         const patched = memory.patchMemory(input, {
           isMain,
           groupFolder: sourceGroup,
+          actor: 'mcp-tool',
         });
         return {
           ok: true,
@@ -324,6 +326,7 @@ export async function processMemoryRequest(
         const saved = memory.saveProcedure(input, {
           isMain,
           groupFolder: sourceGroup,
+          actor: 'mcp-tool',
         });
         return {
           ok: true,
@@ -337,6 +340,7 @@ export async function processMemoryRequest(
         const patched = memory.patchProcedure(input, {
           isMain,
           groupFolder: sourceGroup,
+          actor: 'mcp-tool',
         });
         return {
           ok: true,
@@ -374,45 +378,4 @@ export function writeMemoryResponse(
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(response, null, 2));
   fs.renameSync(tmpPath, filePath);
-}
-
-export async function writeMemoryContextSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  prompt: string,
-  userId?: string,
-  options?: { fileName?: string; isFirstPromptOfSession?: boolean },
-): Promise<{ retrievedItemIds: string[]; filePath: string }> {
-  const memory = MemoryService.getInstance();
-  await memory.ingestGroupSources(groupFolder);
-  await memory.ingestGlobalKnowledge();
-  const context =
-    options?.isFirstPromptOfSession === undefined
-      ? await memory.buildMemoryContext(prompt, groupFolder, isMain, userId)
-      : await memory.buildMemoryContext(prompt, groupFolder, isMain, userId, {
-          isFirstPromptOfSession: options.isFirstPromptOfSession,
-        });
-
-  const ipcDir = resolveGroupIpcPath(groupFolder);
-  const filePath = path.join(
-    ipcDir,
-    options?.fileName?.trim() || 'memory_context.json',
-  );
-  fs.writeFileSync(
-    filePath,
-    JSON.stringify(
-      {
-        block: context.block,
-        generatedAt: new Date().toISOString(),
-        facts: context.facts,
-        procedures: context.procedures,
-        snippets: context.snippets,
-        recentWork: context.recentWork,
-        retrievedItemIds: context.retrievedItemIds,
-      },
-      null,
-      2,
-    ),
-  );
-  return { retrievedItemIds: context.retrievedItemIds, filePath };
 }

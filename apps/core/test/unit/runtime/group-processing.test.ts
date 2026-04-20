@@ -15,6 +15,7 @@ import type { GroupProcessingDeps } from '@core/runtime/group-processing.js';
 vi.mock('@core/core/config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   IDLE_TIMEOUT: 1_800_000,
+  MEMORY_MAINTENANCE_MAX_PENDING: 5_000,
   MAX_MESSAGES_PER_PROMPT: 50,
   TIMEZONE: 'UTC',
   getDefaultModelConfig: () => ({ model: undefined }),
@@ -31,17 +32,15 @@ vi.mock('@core/core/logger.js', () => ({
   },
 }));
 
-const mockWriteMemoryContextSnapshot = vi.fn();
-vi.mock('@core/memory/memory-ipc.js', () => ({
-  writeMemoryContextSnapshot: (...args: unknown[]) =>
-    mockWriteMemoryContextSnapshot(...args),
-}));
-
-const mockReflectAfterTurn = vi.fn();
+const mockRunDreamingSweep = vi.fn();
+const mockGetMemoryStatus = vi.fn();
+const mockSaveProcedure = vi.fn();
 vi.mock('@core/memory/memory-service.js', () => ({
   MemoryService: {
     getInstance: () => ({
-      reflectAfterTurn: (...args: unknown[]) => mockReflectAfterTurn(...args),
+      runDreamingSweep: (...args: unknown[]) => mockRunDreamingSweep(...args),
+      getStatus: (...args: unknown[]) => mockGetMemoryStatus(...args),
+      saveProcedure: (...args: unknown[]) => mockSaveProcedure(...args),
     }),
   },
 }));
@@ -223,8 +222,18 @@ function setupHappyPath(
   mockGetAllJobs.mockReturnValue([]);
   mockGetRecentJobRuns.mockReturnValue([]);
   mockListRecentJobEvents.mockReturnValue([]);
-  mockWriteMemoryContextSnapshot.mockResolvedValue({ retrievedItemIds: [] });
-  mockReflectAfterTurn.mockResolvedValue(undefined);
+  mockRunDreamingSweep.mockResolvedValue({
+    promotedCount: 0,
+    decayedCount: 0,
+    retiredCount: 0,
+  });
+  mockGetMemoryStatus.mockResolvedValue({
+    items_by_kind: {},
+    items_by_scope: {},
+    top10_most_used: [],
+    top10_stalest: [],
+  });
+  mockSaveProcedure.mockReturnValue({ id: 'proc-1' });
   mockLoadSenderAllowlist.mockReturnValue({});
   mockIsTriggerAllowed.mockReturnValue(true);
 
@@ -475,20 +484,6 @@ describe('createGroupProcessor', () => {
       expect(deps.saveState).toHaveBeenCalled();
     });
 
-    it('calls memory reflectAfterTurn on success', async () => {
-      const { deps } = setupHappyPath();
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      await processGroupMessages('group1@g.us');
-
-      expect(mockReflectAfterTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          groupFolder: 'test-group',
-          prompt: 'formatted prompt',
-        }),
-      );
-    });
-
     it('returns true on successful agent run', async () => {
       const { deps } = setupHappyPath();
 
@@ -578,41 +573,6 @@ describe('createGroupProcessor', () => {
       expect(mockWriteJobRunsSnapshot).toHaveBeenCalled();
       expect(mockWriteGroupsSnapshot).toHaveBeenCalled();
     });
-
-    it('collects memoryUserId from last non-bot non-self message', async () => {
-      const messages = [
-        makeMessage({
-          sender: 'bot@s.whatsapp.net',
-          is_bot_message: true,
-          timestamp: '1700000001',
-        }),
-        makeMessage({
-          sender: 'user2@s.whatsapp.net',
-          is_from_me: false,
-          is_bot_message: false,
-          timestamp: '1700000002',
-          id: 'msg-2',
-        }),
-        makeMessage({
-          sender: 'self@s.whatsapp.net',
-          is_from_me: true,
-          timestamp: '1700000003',
-          id: 'msg-3',
-        }),
-      ];
-      const { deps } = setupHappyPath({ messages });
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      await processGroupMessages('group1@g.us');
-
-      // reflectAfterTurn should receive the userId from the last non-self, non-bot message
-      // Iterating in reverse: msg-3 is is_from_me (skip), msg-2 qualifies
-      expect(mockReflectAfterTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: 'user2@s.whatsapp.net',
-        }),
-      );
-    });
   });
 
   // =======================================================================
@@ -656,32 +616,6 @@ describe('createGroupProcessor', () => {
         .calls;
       const lastSetCursor = setCursorCalls[setCursorCalls.length - 1];
       expect(lastSetCursor).toEqual(['group1@g.us', 'prev-cursor']);
-    });
-
-    it('does not call memory reflection on error', async () => {
-      const { deps } = setupHappyPath();
-
-      const errorOutput: AgentOutput = {
-        status: 'error',
-        result: null,
-        error: 'boom',
-      };
-      mockSpawnAgent.mockImplementation(
-        async (
-          _group: RegisteredGroup,
-          _input: unknown,
-          _onProc: unknown,
-          onOutput?: (output: AgentOutput) => Promise<void>,
-        ) => {
-          if (onOutput) await onOutput(errorOutput);
-          return errorOutput;
-        },
-      );
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      await processGroupMessages('group1@g.us');
-
-      expect(mockReflectAfterTurn).not.toHaveBeenCalled();
     });
   });
 
@@ -926,42 +860,6 @@ describe('createGroupProcessor', () => {
 
       // No session to clear — staleSessionId is empty string which is falsy
       expect(deps.clearSession).not.toHaveBeenCalled();
-    });
-  });
-
-  // =======================================================================
-  // Memory context snapshot failure (graceful)
-  // =======================================================================
-
-  describe('memory context snapshot failure', () => {
-    it('continues processing when writeMemoryContextSnapshot fails', async () => {
-      const { deps } = setupHappyPath();
-      mockWriteMemoryContextSnapshot.mockRejectedValue(
-        new Error('memory snapshot boom'),
-      );
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      const result = await processGroupMessages('group1@g.us');
-
-      // Should still succeed — memory failure is non-fatal
-      expect(result).toBe(true);
-      expect(mockSpawnAgent).toHaveBeenCalled();
-    });
-  });
-
-  // =======================================================================
-  // Memory reflection failure (graceful)
-  // =======================================================================
-
-  describe('memory reflection failure after successful turn', () => {
-    it('returns true even when reflectAfterTurn throws', async () => {
-      const { deps } = setupHappyPath();
-      mockReflectAfterTurn.mockRejectedValue(new Error('reflection boom'));
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      const result = await processGroupMessages('group1@g.us');
-
-      expect(result).toBe(true);
     });
   });
 
@@ -1473,42 +1371,6 @@ describe('createGroupProcessor', () => {
   });
 
   // =======================================================================
-  // retrievedItemIds flow
-  // =======================================================================
-
-  describe('retrievedItemIds pass-through', () => {
-    it('passes retrieved item IDs from memory snapshot to reflectAfterTurn', async () => {
-      const { deps } = setupHappyPath();
-      mockWriteMemoryContextSnapshot.mockResolvedValue({
-        retrievedItemIds: ['item-a', 'item-b'],
-      });
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      await processGroupMessages('group1@g.us');
-
-      expect(mockReflectAfterTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          retrievedItemIds: ['item-a', 'item-b'],
-        }),
-      );
-    });
-
-    it('passes empty retrievedItemIds when memory snapshot fails', async () => {
-      const { deps } = setupHappyPath();
-      mockWriteMemoryContextSnapshot.mockRejectedValue(new Error('fail'));
-
-      const { processGroupMessages } = createGroupProcessor(deps);
-      await processGroupMessages('group1@g.us');
-
-      expect(mockReflectAfterTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          retrievedItemIds: [],
-        }),
-      );
-    });
-  });
-
-  // =======================================================================
   // Agent input construction
   // =======================================================================
 
@@ -1727,43 +1589,6 @@ describe('createGroupProcessor', () => {
       expect(mockArchiveSessionTranscript).not.toHaveBeenCalled();
     });
 
-    it('onSessionArchived calls memory reflectAfterTurn with /new', async () => {
-      const { capturedDeps } = await captureSessionDeps();
-      const onSessionArchived =
-        capturedDeps.onSessionArchived as () => Promise<void>;
-      mockReflectAfterTurn.mockResolvedValue(undefined);
-
-      await onSessionArchived();
-
-      expect(mockReflectAfterTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          groupFolder: 'grp-folder',
-          prompt: '/new',
-          result: 'session archived',
-          isMain: true,
-        }),
-      );
-    });
-
-    it('onSessionArchived maps manual-compact to /compact reflection payload', async () => {
-      const { capturedDeps } = await captureSessionDeps();
-      const onSessionArchived = capturedDeps.onSessionArchived as (
-        cause?: 'new-session' | 'manual-compact',
-      ) => Promise<void>;
-      mockReflectAfterTurn.mockResolvedValue(undefined);
-
-      await onSessionArchived('manual-compact');
-
-      expect(mockReflectAfterTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          groupFolder: 'grp-folder',
-          prompt: '/compact',
-          result: 'session compacted',
-          isMain: true,
-        }),
-      );
-    });
-
     it('clearCurrentSession clears session and deletes from DB', async () => {
       const { capturedDeps, deps } = await captureSessionDeps();
       const clearCurrentSession =
@@ -1876,9 +1701,6 @@ describe('createGroupProcessor', () => {
       mockGetMessagesSince.mockReturnValue(messages);
       mockGetAllJobs.mockReturnValue([]);
       mockGetRecentJobRuns.mockReturnValue([]);
-      mockWriteMemoryContextSnapshot.mockResolvedValue({
-        retrievedItemIds: [],
-      });
       mockLoadSenderAllowlist.mockReturnValue({});
 
       let capturedRunAgent: (
@@ -1939,9 +1761,6 @@ describe('createGroupProcessor', () => {
       mockFormatMessages.mockReturnValue('formatted prompt');
       mockGetAllJobs.mockReturnValue([]);
       mockGetRecentJobRuns.mockReturnValue([]);
-      mockWriteMemoryContextSnapshot.mockResolvedValue({
-        retrievedItemIds: [],
-      });
       mockLoadSenderAllowlist.mockReturnValue({});
 
       // Agent returns error WITH a newSessionId
@@ -1995,9 +1814,6 @@ describe('createGroupProcessor', () => {
       mockFormatMessages.mockReturnValue('formatted prompt');
       mockGetAllJobs.mockReturnValue([]);
       mockGetRecentJobRuns.mockReturnValue([]);
-      mockWriteMemoryContextSnapshot.mockResolvedValue({
-        retrievedItemIds: [],
-      });
       mockLoadSenderAllowlist.mockReturnValue({});
 
       mockSpawnAgent.mockImplementation(

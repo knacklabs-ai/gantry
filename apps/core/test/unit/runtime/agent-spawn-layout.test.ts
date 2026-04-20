@@ -187,7 +187,7 @@ describe('syncGroupSkills', () => {
     expect(commandsSkill).not.toMatch(/`\/add-telegram`/);
   });
 
-  it('migrates a legacy symlink to a real directory', async () => {
+  it('migrates an existing symlink to a real directory', async () => {
     const configRoot = makeTmpRoot(roots);
     const cwdRoot = makeTmpRoot(roots);
     originalCwd = process.cwd();

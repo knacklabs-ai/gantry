@@ -3,11 +3,12 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-export type SessionHookCause = 'session-start' | 'pre-compact' | 'session-stop';
-
 interface SessionHookSpec {
-  event: 'SessionStart' | 'PreCompact' | 'Stop';
-  cause: SessionHookCause;
+  event: 'SessionStart' | 'PreCompact' | 'SessionEnd';
+  command: 'load' | 'extract-precompact' | 'extract-session-end';
+  matcher?: string;
+  timeout: number;
+  async?: boolean;
 }
 
 interface HookMatcherEntry {
@@ -29,10 +30,33 @@ export interface SessionHookInstallPlan {
   added: SessionHookChange[];
 }
 
+export interface SessionHookValidationResult {
+  ok: boolean;
+  settingsPath: string;
+  missing: SessionHookChange[];
+  error?: string;
+}
+
 const SESSION_HOOK_SPECS: SessionHookSpec[] = [
-  { event: 'SessionStart', cause: 'session-start' },
-  { event: 'PreCompact', cause: 'pre-compact' },
-  { event: 'Stop', cause: 'session-stop' },
+  {
+    event: 'SessionStart',
+    command: 'load',
+    matcher: 'startup|resume|compact',
+    timeout: 10,
+  },
+  {
+    event: 'PreCompact',
+    command: 'extract-precompact',
+    timeout: 120,
+    async: true,
+  },
+  {
+    event: 'SessionEnd',
+    command: 'extract-session-end',
+    matcher: 'clear|resume|logout|other',
+    timeout: 120,
+    async: true,
+  },
 ];
 
 function resolveSessionHookCliPath(): string {
@@ -47,10 +71,16 @@ function resolveSessionHookCliPath(): string {
 }
 
 function buildHookCommand(
-  cause: SessionHookCause,
+  command: SessionHookSpec['command'],
   cliPath = resolveSessionHookCliPath(),
 ): string {
-  return `node ${JSON.stringify(cliPath)} session-hook --cause=${cause}`;
+  if (command === 'load') {
+    return `node ${JSON.stringify(cliPath)} memory-hook load`;
+  }
+  if (command === 'extract-precompact') {
+    return `node ${JSON.stringify(cliPath)} memory-hook extract --trigger=precompact`;
+  }
+  return `node ${JSON.stringify(cliPath)} memory-hook extract --trigger=session-end`;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -79,13 +109,27 @@ function normalizeEventEntries(value: unknown): HookMatcherEntry[] {
   return normalized;
 }
 
-function hasCommand(
+function hasHookSpec(
   entries: HookMatcherEntry[],
+  spec: SessionHookSpec,
   expectedCommand: string,
 ): boolean {
+  const targetMatcher = spec.matcher || '*';
   for (const entry of entries) {
+    if (entry.matcher !== targetMatcher) continue;
     for (const hook of entry.hooks) {
-      if (hook.type === 'command' && hook.command === expectedCommand) {
+      const timeoutMatches =
+        typeof hook.timeout === 'number' && hook.timeout === spec.timeout;
+      const asyncMatches =
+        spec.async === undefined
+          ? hook.async === undefined
+          : hook.async === spec.async;
+      if (
+        hook.type === 'command' &&
+        hook.command === expectedCommand &&
+        timeoutMatches &&
+        asyncMatches
+      ) {
         return true;
       }
     }
@@ -93,11 +137,12 @@ function hasCommand(
   return false;
 }
 
-function findDefaultMatcherEntry(
+function findMatcherEntry(
   entries: HookMatcherEntry[],
+  matcher: string,
 ): HookMatcherEntry | null {
   for (const entry of entries) {
-    if (entry.matcher === '*') return entry;
+    if (entry.matcher === matcher) return entry;
   }
   return null;
 }
@@ -129,23 +174,31 @@ export function buildSessionHookInstallPlan(
   const added: SessionHookChange[] = [];
 
   for (const spec of SESSION_HOOK_SPECS) {
-    const expectedCommand = buildHookCommand(spec.cause, cliPath);
+    const expectedCommand = buildHookCommand(spec.command, cliPath);
     const entries = normalizeEventEntries(hooksRoot[spec.event]);
-    if (hasCommand(entries, expectedCommand)) {
+    if (hasHookSpec(entries, spec, expectedCommand)) {
       hooksRoot[spec.event] = entries;
       continue;
     }
 
-    const defaultEntry =
-      findDefaultMatcherEntry(entries) ||
-      ({ matcher: '*', hooks: [] } as HookMatcherEntry);
-    if (!entries.includes(defaultEntry)) {
-      entries.push(defaultEntry);
+    const targetMatcher = spec.matcher || '*';
+    const targetEntry =
+      findMatcherEntry(entries, targetMatcher) ||
+      ({ matcher: targetMatcher, hooks: [] } as HookMatcherEntry);
+    if (!entries.includes(targetEntry)) {
+      entries.push(targetEntry);
     }
-    defaultEntry.hooks.push({
+
+    const hookDefinition: Record<string, unknown> = {
       type: 'command',
       command: expectedCommand,
-    });
+      timeout: spec.timeout,
+    };
+    if (spec.async !== undefined) {
+      hookDefinition.async = spec.async;
+    }
+
+    targetEntry.hooks.push(hookDefinition);
     hooksRoot[spec.event] = entries;
     added.push({
       event: spec.event,
@@ -185,4 +238,26 @@ export function applySessionHookInstallPlan(
   if (!plan.changed) return;
   fs.mkdirSync(path.dirname(plan.settingsPath), { recursive: true });
   fs.writeFileSync(plan.settingsPath, plan.afterText, 'utf-8');
+}
+
+export function validateSessionHooksInstalled(
+  settingsPath = defaultClaudeSettingsPath(),
+  cliPath = resolveSessionHookCliPath(),
+): SessionHookValidationResult {
+  try {
+    const plan = buildSessionHookInstallPlan(settingsPath, cliPath);
+    return {
+      ok: !plan.changed,
+      settingsPath: plan.settingsPath,
+      missing: plan.added,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      settingsPath,
+      missing: [],
+      error: message,
+    };
+  }
 }

@@ -263,14 +263,81 @@ describe('getHostRuntimeCredentialEnv', () => {
     const result = await mod.getHostRuntimeCredentialEnv();
 
     expect(result.onecliApplied).toBe(true);
-    expect(result.onecliCaPath).toBe('/etc/ssl/onecli/ca.pem');
-    expect(mockMkdirSync).toHaveBeenCalledWith('/etc/ssl/onecli', {
-      recursive: true,
-    });
+    expect(result.onecliCaPath).toBe(
+      '/tmp/myclaw-test/data/onecli/certs/default.pem',
+    );
+    expect(result.env.NODE_EXTRA_CA_CERTS).toBe(
+      '/tmp/myclaw-test/data/onecli/certs/default.pem',
+    );
+    expect(mockMkdirSync).toHaveBeenCalledWith(
+      '/tmp/myclaw-test/data/onecli/certs',
+      {
+        recursive: true,
+        mode: 0o700,
+      },
+    );
     expect(mockWriteFileSync).toHaveBeenCalledWith(
-      '/etc/ssl/onecli/ca.pem',
+      '/tmp/myclaw-test/data/onecli/certs/default.pem',
       '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----',
       { mode: 0o600 },
+    );
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedPath: '/etc/ssl/onecli/ca.pem',
+        targetPath: '/tmp/myclaw-test/data/onecli/certs/default.pem',
+      }),
+      'Remapped OneCLI CA certificate path outside runtime data directory',
+    );
+  });
+
+  it('keeps requested CA path when it is under runtime data dir', async () => {
+    mockGetContainerConfig.mockResolvedValue({
+      env: { ANTHROPIC_AUTH_TOKEN: 'token' },
+      caCertificate: 'cert-data',
+      caCertificateContainerPath:
+        '/tmp/myclaw-test/data/onecli/certs/custom.pem',
+    });
+
+    const mod = await loadModule({
+      ONECLI_URL: 'http://localhost:10254',
+    });
+
+    const result = await mod.getHostRuntimeCredentialEnv('agent-x');
+
+    expect(result.onecliApplied).toBe(true);
+    expect(result.onecliCaPath).toBe(
+      '/tmp/myclaw-test/data/onecli/certs/custom.pem',
+    );
+    expect(result.env.NODE_EXTRA_CA_CERTS).toBe(
+      '/tmp/myclaw-test/data/onecli/certs/custom.pem',
+    );
+    expect(mockMkdirSync).toHaveBeenCalledWith(
+      '/tmp/myclaw-test/data/onecli/certs',
+      {
+        recursive: true,
+        mode: 0o700,
+      },
+    );
+  });
+
+  it('remaps OneCLI env values pointing at the requested CA path', async () => {
+    mockGetContainerConfig.mockResolvedValue({
+      env: {
+        ANTHROPIC_AUTH_TOKEN: 'token',
+        SSL_CERT_FILE: '/etc/ssl/onecli/ca.pem',
+      },
+      caCertificate: 'cert-data',
+      caCertificateContainerPath: '/etc/ssl/onecli/ca.pem',
+    });
+
+    const mod = await loadModule({
+      ONECLI_URL: 'http://localhost:10254',
+    });
+
+    const result = await mod.getHostRuntimeCredentialEnv();
+
+    expect(result.env.SSL_CERT_FILE).toBe(
+      '/tmp/myclaw-test/data/onecli/certs/default.pem',
     );
   });
 
@@ -280,10 +347,8 @@ describe('getHostRuntimeCredentialEnv', () => {
       caCertificate: 'cert-data',
       caCertificateContainerPath: '/readonly/ca.pem',
     });
-    mockMkdirSync.mockImplementation((dirPath: string) => {
-      if (dirPath === '/readonly') {
-        throw new Error('EACCES: permission denied');
-      }
+    mockMkdirSync.mockImplementationOnce(() => {
+      throw new Error('EACCES: permission denied');
     });
 
     const mod = await loadModule({
@@ -295,7 +360,9 @@ describe('getHostRuntimeCredentialEnv', () => {
     expect(result.onecliApplied).toBe(true);
     expect(result.onecliCaPath).toBeUndefined();
     expect(mockLoggerWarn).toHaveBeenCalledWith(
-      expect.objectContaining({ certificatePath: '/readonly/ca.pem' }),
+      expect.objectContaining({
+        certificatePath: '/tmp/myclaw-test/data/onecli/certs/default.pem',
+      }),
       'Failed to write OneCLI CA certificate',
     );
   });

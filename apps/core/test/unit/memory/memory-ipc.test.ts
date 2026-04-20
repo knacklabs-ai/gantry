@@ -7,19 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const ORIGINAL_ENV = { ...process.env };
 const tempRoots: string[] = [];
 
-function writeMemoryProviderSettings(
-  runtimeHome: string,
-  provider: string,
-): void {
+function writeMemorySettings(runtimeHome: string): void {
   const settingsPath = path.join(runtimeHome, 'settings.yaml');
   fs.writeFileSync(
     settingsPath,
     [
       'memory:',
       '  enabled: true',
-      `  provider: ${provider}`,
-      '  sqlite_path: store/memory.db',
-      '  qmd_root: agent-memory',
+      '  root: memory',
       '  embeddings:',
       '    enabled: false',
       '    provider: disabled',
@@ -39,6 +34,14 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.resetModules();
+  try {
+    const { MemoryService } = await import('@core/memory/memory-service.js');
+    MemoryService.closeInstance();
+  } catch {
+    // Best-effort teardown.
+  }
+
   while (tempRoots.length > 0) {
     const root = tempRoots.pop();
     if (!root) continue;
@@ -53,98 +56,15 @@ afterEach(async () => {
   for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
     process.env[key] = value;
   }
-
-  vi.resetModules();
-  const { MemoryService } = await import('@core/memory/memory-service.js');
-  MemoryService.closeInstance();
 });
 
 describe('memory IPC provider integration', () => {
-  it('routes memory IPC requests through the configured provider', async () => {
-    writeMemoryProviderSettings(process.env.AGENT_ROOT!, 'ipc-test-provider');
+  it('routes memory IPC requests through memory service', async () => {
+    writeMemorySettings(process.env.AGENT_ROOT!);
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.MEMORY_SEMANTIC_DEDUP_ENABLED = 'false';
 
     vi.resetModules();
-    const { registerMemoryProvider } =
-      await import('@core/memory/memory-provider.js');
-    let saveCalls = 0;
-    let eventCalls = 0;
-
-    registerMemoryProvider('ipc-test-provider', () => ({
-      providerName: 'ipc-test-provider',
-      close: () => undefined,
-      saveItem: (input) => {
-        saveCalls += 1;
-        const now = new Date().toISOString();
-        return {
-          id: 'mem-1',
-          scope: input.scope,
-          group_folder: input.group_folder,
-          user_id: input.user_id,
-          kind: input.kind,
-          key: input.key,
-          value: input.value,
-          source: input.source,
-          confidence: input.confidence,
-          is_pinned: Boolean(input.is_pinned),
-          version: 1,
-          last_used_at: null,
-          last_retrieved_at: null,
-          retrieval_count: 0,
-          total_score: 0,
-          max_score: 0,
-          query_hashes_json: '[]',
-          recall_days_json: '[]',
-          embedding_json: null,
-          created_at: now,
-          updated_at: now,
-        };
-      },
-      getItemById: () => null,
-      findItemByKey: () => null,
-      patchItem: () => {
-        throw new Error('not implemented');
-      },
-      pinItem: () => undefined,
-      saveItemEmbedding: () => undefined,
-      getCachedEmbedding: () => null,
-      putCachedEmbedding: () => undefined,
-      findSimilarItems: () => [],
-      listActiveItems: () => [],
-      softDeleteItem: () => undefined,
-      incrementRetrievalCount: () => undefined,
-      recordRetrievalSignal: () => undefined,
-      bumpConfidence: () => undefined,
-      adjustConfidence: () => undefined,
-      decayUnusedConfidence: () => 0,
-      countReflectionsSinceLastUsageDecay: () => 0,
-      recordUsageDecayRun: () => undefined,
-      listTopItems: () => [],
-      chunkExists: () => false,
-      touchItem: () => undefined,
-      saveProcedure: () => {
-        throw new Error('not implemented');
-      },
-      getProcedureById: () => null,
-      patchProcedure: () => {
-        throw new Error('not implemented');
-      },
-      listTopProcedures: () => [],
-      saveChunks: () => 0,
-      searchItemsByText: () => [],
-      lexicalSearch: () => [],
-      vectorSearch: () => [],
-      searchProceduresByText: () => [],
-      listSourceChunks: () => [],
-      applyRetentionPolicies: () => undefined,
-      recordEvent: () => {
-        eventCalls += 1;
-      },
-    }));
-
-    const { MemoryService } = await import('@core/memory/memory-service.js');
-    MemoryService.closeInstance();
     const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
 
     const response = await processMemoryRequest(
@@ -161,9 +81,7 @@ describe('memory IPC provider integration', () => {
     );
 
     expect(response.ok).toBe(true);
-    expect(response.provider).toBe('ipc-test-provider');
-    expect(saveCalls).toBe(1);
-    expect(eventCalls).toBe(1);
+    expect(response.provider).toBe('sqlite');
   });
 
   it('returns IPC error responses when memory service init fails', async () => {
@@ -292,62 +210,11 @@ describe('memory IPC provider integration', () => {
   it('memory_search succeeds when embeddings are disabled by default', async () => {
     // Embeddings are disabled by default, so search should stay available even
     // when OPENAI_API_KEY is empty.
-    writeMemoryProviderSettings(process.env.AGENT_ROOT!, 'ipc-search-provider');
+    writeMemorySettings(process.env.AGENT_ROOT!);
     process.env.OPENAI_API_KEY = '';
     process.env.MEMORY_SEMANTIC_DEDUP_ENABLED = 'false';
 
     vi.resetModules();
-    const { registerMemoryProvider } =
-      await import('@core/memory/memory-provider.js');
-
-    registerMemoryProvider('ipc-search-provider', () => ({
-      providerName: 'ipc-search-provider',
-      close: () => undefined,
-      saveItem: () => {
-        throw new Error('not implemented');
-      },
-      getItemById: () => null,
-      findItemByKey: () => null,
-      patchItem: () => {
-        throw new Error('not implemented');
-      },
-      pinItem: () => undefined,
-      saveItemEmbedding: () => undefined,
-      getCachedEmbedding: () => null,
-      putCachedEmbedding: () => undefined,
-      findSimilarItems: () => [],
-      listActiveItems: () => [],
-      softDeleteItem: () => undefined,
-      incrementRetrievalCount: () => undefined,
-      recordRetrievalSignal: () => undefined,
-      bumpConfidence: () => undefined,
-      adjustConfidence: () => undefined,
-      decayUnusedConfidence: () => 0,
-      countReflectionsSinceLastUsageDecay: () => 0,
-      recordUsageDecayRun: () => undefined,
-      listTopItems: () => [],
-      chunkExists: () => false,
-      touchItem: () => undefined,
-      saveProcedure: () => {
-        throw new Error('not implemented');
-      },
-      getProcedureById: () => null,
-      patchProcedure: () => {
-        throw new Error('not implemented');
-      },
-      listTopProcedures: () => [],
-      saveChunks: () => 0,
-      searchItemsByText: () => [],
-      lexicalSearch: () => [],
-      vectorSearch: () => [],
-      searchProceduresByText: () => [],
-      listSourceChunks: () => [],
-      applyRetentionPolicies: () => undefined,
-      recordEvent: () => undefined,
-    }));
-
-    const { MemoryService } = await import('@core/memory/memory-service.js');
-    MemoryService.closeInstance();
     const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
 
     const response = await processMemoryRequest(
@@ -362,66 +229,15 @@ describe('memory IPC provider integration', () => {
 
     expect(response.ok).toBe(true);
     expect(response.requestId).toBe('req-search');
-    expect(response.provider).toBe('ipc-search-provider');
+    expect(response.provider).toBe('sqlite');
   });
 
   it('returns error for empty search query', async () => {
-    writeMemoryProviderSettings(process.env.AGENT_ROOT!, 'ipc-search-empty');
+    writeMemorySettings(process.env.AGENT_ROOT!);
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.MEMORY_SEMANTIC_DEDUP_ENABLED = 'false';
 
     vi.resetModules();
-    const { registerMemoryProvider } =
-      await import('@core/memory/memory-provider.js');
-
-    registerMemoryProvider('ipc-search-empty', () => ({
-      providerName: 'ipc-search-empty',
-      close: () => undefined,
-      saveItem: () => {
-        throw new Error('not implemented');
-      },
-      getItemById: () => null,
-      findItemByKey: () => null,
-      patchItem: () => {
-        throw new Error('not implemented');
-      },
-      pinItem: () => undefined,
-      saveItemEmbedding: () => undefined,
-      getCachedEmbedding: () => null,
-      putCachedEmbedding: () => undefined,
-      findSimilarItems: () => [],
-      listActiveItems: () => [],
-      softDeleteItem: () => undefined,
-      incrementRetrievalCount: () => undefined,
-      recordRetrievalSignal: () => undefined,
-      bumpConfidence: () => undefined,
-      adjustConfidence: () => undefined,
-      decayUnusedConfidence: () => 0,
-      countReflectionsSinceLastUsageDecay: () => 0,
-      recordUsageDecayRun: () => undefined,
-      listTopItems: () => [],
-      chunkExists: () => false,
-      touchItem: () => undefined,
-      saveProcedure: () => {
-        throw new Error('not implemented');
-      },
-      getProcedureById: () => null,
-      patchProcedure: () => {
-        throw new Error('not implemented');
-      },
-      listTopProcedures: () => [],
-      saveChunks: () => 0,
-      searchItemsByText: () => [],
-      lexicalSearch: () => [],
-      vectorSearch: () => [],
-      searchProceduresByText: () => [],
-      listSourceChunks: () => [],
-      applyRetentionPolicies: () => undefined,
-      recordEvent: () => undefined,
-    }));
-
-    const { MemoryService } = await import('@core/memory/memory-service.js');
-    MemoryService.closeInstance();
     const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
 
     const response = await processMemoryRequest(
@@ -439,62 +255,11 @@ describe('memory IPC provider integration', () => {
   });
 
   it('returns error for unsupported memory action', async () => {
-    writeMemoryProviderSettings(process.env.AGENT_ROOT!, 'ipc-unsupported');
+    writeMemorySettings(process.env.AGENT_ROOT!);
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.MEMORY_SEMANTIC_DEDUP_ENABLED = 'false';
 
     vi.resetModules();
-    const { registerMemoryProvider } =
-      await import('@core/memory/memory-provider.js');
-
-    registerMemoryProvider('ipc-unsupported', () => ({
-      providerName: 'ipc-unsupported',
-      close: () => undefined,
-      saveItem: () => {
-        throw new Error('not implemented');
-      },
-      getItemById: () => null,
-      findItemByKey: () => null,
-      patchItem: () => {
-        throw new Error('not implemented');
-      },
-      pinItem: () => undefined,
-      saveItemEmbedding: () => undefined,
-      getCachedEmbedding: () => null,
-      putCachedEmbedding: () => undefined,
-      findSimilarItems: () => [],
-      listActiveItems: () => [],
-      softDeleteItem: () => undefined,
-      incrementRetrievalCount: () => undefined,
-      recordRetrievalSignal: () => undefined,
-      bumpConfidence: () => undefined,
-      adjustConfidence: () => undefined,
-      decayUnusedConfidence: () => 0,
-      countReflectionsSinceLastUsageDecay: () => 0,
-      recordUsageDecayRun: () => undefined,
-      listTopItems: () => [],
-      chunkExists: () => false,
-      touchItem: () => undefined,
-      saveProcedure: () => {
-        throw new Error('not implemented');
-      },
-      getProcedureById: () => null,
-      patchProcedure: () => {
-        throw new Error('not implemented');
-      },
-      listTopProcedures: () => [],
-      saveChunks: () => 0,
-      searchItemsByText: () => [],
-      lexicalSearch: () => [],
-      vectorSearch: () => [],
-      searchProceduresByText: () => [],
-      listSourceChunks: () => [],
-      applyRetentionPolicies: () => undefined,
-      recordEvent: () => undefined,
-    }));
-
-    const { MemoryService } = await import('@core/memory/memory-service.js');
-    MemoryService.closeInstance();
     const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
 
     const response = await processMemoryRequest(
@@ -531,7 +296,6 @@ describe('processMemoryRequest additional branches', () => {
         patchProcedure: vi.fn().mockReturnValue({ id: 'proc-patched' }),
         ingestGroupSources: vi.fn(),
         ingestGlobalKnowledge: vi.fn(),
-        buildMemoryContext: vi.fn(),
         ...overrides,
       }),
       closeInstance: () => undefined,
@@ -567,7 +331,7 @@ describe('processMemoryRequest additional branches', () => {
     });
     expect(patchMemory).toHaveBeenCalledWith(
       { id: 'mem-1', expected_version: 1, value: 'updated' },
-      { isMain: false, groupFolder: 'team' },
+      { isMain: false, groupFolder: 'team', actor: 'mcp-tool' },
     );
   });
 
@@ -704,7 +468,7 @@ describe('processMemoryRequest additional branches', () => {
     });
     expect(saveProcedure).toHaveBeenCalledWith(
       { title: 'Deploy', body: 'steps...', tags: ['devops'] },
-      { isMain: true, groupFolder: 'team' },
+      { isMain: true, groupFolder: 'team', actor: 'mcp-tool' },
     );
   });
 
@@ -736,7 +500,7 @@ describe('processMemoryRequest additional branches', () => {
     });
     expect(patchProcedure).toHaveBeenCalledWith(
       { id: 'proc-1', expected_version: 1, body: 'updated steps' },
-      { isMain: false, groupFolder: 'team' },
+      { isMain: false, groupFolder: 'team', actor: 'mcp-tool' },
     );
   });
 
@@ -807,7 +571,7 @@ describe('processMemoryRequest validation branches', () => {
     expect(response.ok).toBe(true);
     expect(saveMemory).toHaveBeenCalledWith(
       expect.not.objectContaining({ kind: 'recent_work' }),
-      { isMain: false, groupFolder: 'team' },
+      { isMain: false, groupFolder: 'team', actor: 'mcp-tool' },
     );
   });
 
@@ -1022,138 +786,6 @@ describe('writeMemoryResponse', () => {
         error: 'bad',
       }),
     ).toThrow('Invalid memory IPC requestId');
-
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/*  writeMemoryContextSnapshot                                         */
-/* ------------------------------------------------------------------ */
-describe('writeMemoryContextSnapshot', () => {
-  it('ingests sources, builds context, and writes snapshot to disk', async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-ctx-'));
-    // Ensure the ipc dir exists for writeFileSync
-    fs.mkdirSync(tmpDir, { recursive: true });
-
-    const mockContext = {
-      block: '## Memory\nSome facts',
-      facts: [{ id: 'fact-1', key: 'style', value: 'concise' }],
-      procedures: [{ id: 'proc-1', title: 'Deploy' }],
-      snippets: [{ id: 'snip-1', text: 'snippet text' }],
-      recentWork: ['worked on deployment'],
-      retrievedItemIds: ['fact-1'],
-    };
-
-    const ingestGroupSources = vi.fn().mockResolvedValue(undefined);
-    const ingestGlobalKnowledge = vi.fn().mockResolvedValue(undefined);
-    const buildMemoryContext = vi.fn().mockResolvedValue(mockContext);
-
-    vi.resetModules();
-    vi.doMock('@core/memory/memory-service.js', () => ({
-      MemoryService: {
-        getInstance: () => ({
-          getProviderName: () => 'mock-provider',
-          ingestGroupSources,
-          ingestGlobalKnowledge,
-          buildMemoryContext,
-        }),
-        closeInstance: () => undefined,
-      },
-    }));
-    vi.doMock('@core/platform/group-folder.js', () => ({
-      resolveGroupIpcPath: () => tmpDir,
-    }));
-
-    const { writeMemoryContextSnapshot } =
-      await import('@core/memory/memory-ipc.js');
-
-    const result = await writeMemoryContextSnapshot(
-      'team',
-      true,
-      'tell me about deploys',
-      'user-123',
-    );
-
-    expect(result).toEqual({
-      retrievedItemIds: ['fact-1'],
-      filePath: path.join(tmpDir, 'memory_context.json'),
-    });
-
-    // Verify the service calls
-    expect(ingestGroupSources).toHaveBeenCalledWith('team');
-    expect(ingestGlobalKnowledge).toHaveBeenCalled();
-    expect(buildMemoryContext).toHaveBeenCalledWith(
-      'tell me about deploys',
-      'team',
-      true,
-      'user-123',
-    );
-
-    // Verify the file was written
-    const filePath = path.join(tmpDir, 'memory_context.json');
-    expect(fs.existsSync(filePath)).toBe(true);
-
-    const snapshot = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    expect(snapshot.block).toBe('## Memory\nSome facts');
-    expect(snapshot.facts).toEqual(mockContext.facts);
-    expect(snapshot.procedures).toEqual(mockContext.procedures);
-    expect(snapshot.snippets).toEqual(mockContext.snippets);
-    expect(snapshot.recentWork).toEqual(mockContext.recentWork);
-    expect(snapshot.retrievedItemIds).toEqual(['fact-1']);
-    expect(snapshot.generatedAt).toBeDefined();
-    // generatedAt should be a valid ISO date string
-    expect(() => new Date(snapshot.generatedAt)).not.toThrow();
-    expect(new Date(snapshot.generatedAt).toISOString()).toBe(
-      snapshot.generatedAt,
-    );
-
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('calls buildMemoryContext without userId when not provided', async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-ctx2-'));
-
-    const buildMemoryContext = vi.fn().mockResolvedValue({
-      block: '',
-      facts: [],
-      procedures: [],
-      snippets: [],
-      recentWork: [],
-      retrievedItemIds: [],
-    });
-
-    vi.resetModules();
-    vi.doMock('@core/memory/memory-service.js', () => ({
-      MemoryService: {
-        getInstance: () => ({
-          getProviderName: () => 'mock-provider',
-          ingestGroupSources: vi.fn().mockResolvedValue(undefined),
-          ingestGlobalKnowledge: vi.fn().mockResolvedValue(undefined),
-          buildMemoryContext,
-        }),
-        closeInstance: () => undefined,
-      },
-    }));
-    vi.doMock('@core/platform/group-folder.js', () => ({
-      resolveGroupIpcPath: () => tmpDir,
-    }));
-
-    const { writeMemoryContextSnapshot } =
-      await import('@core/memory/memory-ipc.js');
-
-    const result = await writeMemoryContextSnapshot('team', false, 'hello');
-
-    expect(result).toEqual({
-      retrievedItemIds: [],
-      filePath: path.join(tmpDir, 'memory_context.json'),
-    });
-    expect(buildMemoryContext).toHaveBeenCalledWith(
-      'hello',
-      'team',
-      false,
-      undefined,
-    );
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });

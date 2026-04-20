@@ -3,7 +3,8 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import type { SessionArchiveCause } from '../memory/agent-memory-root.js';
+import type { SessionArchiveCause } from '../memory/memory-root.js';
+import { isValidGroupFolder } from '../platform/group-folder.js';
 
 type HookCause = 'session-start' | 'pre-compact' | 'session-stop';
 
@@ -70,6 +71,13 @@ export function mapHookCauseToArchiveCause(
   return 'abandoned-session';
 }
 
+export function isSafeSessionId(value?: string): boolean {
+  if (!value) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(value)) return false;
+  if (value.includes('..')) return false;
+  return true;
+}
+
 export function resolveRuntimeFromProjectDir(projectDir?: string): {
   runtimeHome?: string;
   groupFolder?: string;
@@ -103,10 +111,16 @@ export async function runSessionHook(
   const env = options.env ?? process.env;
   const explicitCause = parseCauseArg(argv);
   const cause = explicitCause || mapHookEventToCause(env.CLAUDE_HOOK_EVENT);
-  const sessionId = env.CLAUDE_SESSION_ID?.trim();
+  const rawSessionId = env.CLAUDE_SESSION_ID?.trim();
   const fromProject = resolveRuntimeFromProjectDir(env.CLAUDE_PROJECT_DIR);
-  const groupFolder =
+  const rawGroupFolder =
     env.MYCLAW_GROUP_FOLDER?.trim() || fromProject.groupFolder;
+  const groupFolder =
+    rawGroupFolder && isValidGroupFolder(rawGroupFolder)
+      ? rawGroupFolder
+      : undefined;
+  const sessionId =
+    rawSessionId && isSafeSessionId(rawSessionId) ? rawSessionId : undefined;
 
   if (!env.AGENT_ROOT && fromProject.runtimeHome) {
     env.AGENT_ROOT = fromProject.runtimeHome;

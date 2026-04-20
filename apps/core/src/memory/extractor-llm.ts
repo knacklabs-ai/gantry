@@ -5,16 +5,21 @@ import {
 } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import type {
+  ArcExtractionInput,
   ExtractedMemoryFact,
   ExtractableMemoryKind,
-  MemoryExtractionInput,
   MemoryExtractionProvider,
 } from './memory-extractor.js';
 import {
   MEMORY_EXTRACTION_FEW_SHOTS,
   MEMORY_EXTRACTION_SYSTEM_PROMPT,
 } from './prompts/extract.js';
-import { hasClaudeAuthConfigured, runClaudeQuery } from './claude-query.js';
+import {
+  type ClaudeUsage,
+  hasClaudeAuthConfigured,
+  runClaudeQuery,
+} from './claude-query.js';
+import { sanitizeOutboundLlmText } from './sensitive-material.js';
 
 interface LlmFact {
   kind?: unknown;
@@ -27,6 +32,8 @@ interface LlmFact {
   supersedes?: unknown;
 }
 
+type ArcTurn = ArcExtractionInput['turns'][number];
+
 const ALLOWED_KINDS = new Set<ExtractableMemoryKind>([
   'preference',
   'decision',
@@ -37,6 +44,73 @@ const ALLOWED_KINDS = new Set<ExtractableMemoryKind>([
 
 const ALLOWED_SCOPES = new Set(['user', 'group', 'global']);
 const MAX_MEMORY_VALUE_CHARS = 220;
+const MIN_GROUNDED_WHY_CHARS = 8;
+const EXTRACT_RETRY_DELAY_MS = 2000;
+
+function normalizeGroundingText(value: string): string {
+  return value.toLowerCase().normalize('NFKC').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeGroundingLoose(value: string): string {
+  return normalizeGroundingText(value)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripQuotedBoundaries(value: string): string {
+  return value.replace(/^["'`]+|["'`]+$/g, '').trim();
+}
+
+function buildGroundingCorpus(turns: ArcTurn[]): {
+  userStrict: string;
+  userLoose: string;
+  allStrict: string;
+  allLoose: string;
+} {
+  const userText = turns
+    .filter((turn) => turn.role === 'user')
+    .map((turn) => turn.text)
+    .join('\n');
+  const allText = turns.map((turn) => turn.text).join('\n');
+  return {
+    userStrict: normalizeGroundingText(userText),
+    userLoose: normalizeGroundingLoose(userText),
+    allStrict: normalizeGroundingText(allText),
+    allLoose: normalizeGroundingLoose(allText),
+  };
+}
+
+function isGroundedWhy(
+  why: string,
+  corpus: ReturnType<typeof buildGroundingCorpus>,
+): boolean {
+  const strictNeedle = normalizeGroundingText(stripQuotedBoundaries(why));
+  if (strictNeedle.length < MIN_GROUNDED_WHY_CHARS) return false;
+  if (corpus.userStrict.includes(strictNeedle)) return true;
+  if (corpus.allStrict.includes(strictNeedle)) return true;
+
+  const looseNeedle = normalizeGroundingLoose(strictNeedle);
+  if (looseNeedle.length < MIN_GROUNDED_WHY_CHARS) return false;
+  return (
+    corpus.userLoose.includes(looseNeedle) ||
+    corpus.allLoose.includes(looseNeedle)
+  );
+}
+
+const MEMORY_PROMPT_INJECTION_PATTERNS: RegExp[] = [
+  /\bignore\s+(?:all\s+)?(?:previous|prior)\s+(?:instructions?|rules?)\b/i,
+  /\b(?:override|bypass)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|instructions?)\b/i,
+  /\b(?:reveal|expose|leak|dump|print)\s+(?:the\s+)?(?:system|developer|hidden)\s+(?:prompt|instructions?)\b/i,
+  /\b(?:system|developer)\s+(?:prompt|message|instructions?)\b/i,
+  /\b(?:jailbreak|prompt\s+injection)\b/i,
+  /\brespond\s+only\s+with\b/i,
+  /\bdo\s+not\s+follow\s+(?:the\s+)?(?:rules?|instructions?)\b/i,
+];
+
+function looksLikePromptInjection(text: string): boolean {
+  return MEMORY_PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 function trimString(value: unknown, maxLen: number): string | null {
   if (typeof value !== 'string') return null;
@@ -66,30 +140,28 @@ function parseSupersedes(value: unknown): string[] | undefined {
   return ids.length > 0 ? [...new Set(ids)] : undefined;
 }
 
-function normalizeForMatch(input: string): string {
-  return input.toLowerCase().normalize('NFKC').replace(/\s+/g, ' ').trim();
-}
-
 function parseFacts(
   raw: unknown,
   options: {
     minConfidence: number;
     maxFacts: number;
-    sourceText: string;
     retrievedKeys: Set<string>;
     userId?: string;
+    turns: ArcTurn[];
   },
 ): ExtractedMemoryFact[] {
   if (!Array.isArray(raw)) return [];
-  const normalizedSource = normalizeForMatch(options.sourceText);
+  const groundingCorpus = buildGroundingCorpus(options.turns);
   const out: ExtractedMemoryFact[] = [];
   for (const row of raw as LlmFact[]) {
     const kind = trimString(row.kind, 32);
     const scope = trimString(row.scope, 32);
     if (!kind || !ALLOWED_KINDS.has(kind as ExtractableMemoryKind)) continue;
     if (!scope || !ALLOWED_SCOPES.has(scope)) continue;
+    const resolvedScope = scope === 'user' && !options.userId ? 'group' : scope;
     const value = trimString(row.value, MAX_MEMORY_VALUE_CHARS);
     if (!value) continue;
+    if (looksLikePromptInjection(value)) continue;
     if (
       /\b(today|tomorrow|right now|for now|temporary|temp|quick fix|debugging this run|in this turn|next step|later today)\b/i.test(
         value,
@@ -100,27 +172,24 @@ function parseFacts(
     const confidence = normalizeConfidence(row.confidence);
     if (confidence === null || confidence < options.minConfidence) continue;
     const key = trimString(row.key, 128) || makeFallbackKey(kind, value);
-    const why = trimString(row.why, 280) || undefined;
-    if (why) {
-      const grounded = normalizeForMatch(why);
-      if (!grounded || !normalizedSource.includes(grounded)) {
-        continue;
-      }
-    }
+    const why = trimString(row.why, 280);
+    if (!why) continue;
+    if (looksLikePromptInjection(why)) continue;
+    if (!isGroundedWhy(why, groundingCorpus)) continue;
     const supersedes = parseSupersedes(row.supersedes);
     if (options.retrievedKeys.has(key.toLowerCase()) && !supersedes?.length) {
       continue;
     }
     const parsed: ExtractedMemoryFact = {
-      scope: scope as ExtractedMemoryFact['scope'],
+      scope: resolvedScope as ExtractedMemoryFact['scope'],
       kind: kind as ExtractableMemoryKind,
       key,
       value,
       confidence,
-      ...(scope === 'user' && options.userId
+      ...(resolvedScope === 'user' && options.userId
         ? { user_id: options.userId }
         : {}),
-      ...(why ? { why } : {}),
+      why,
       ...(typeof row.load_bearing === 'boolean'
         ? { load_bearing: row.load_bearing }
         : {}),
@@ -176,73 +245,214 @@ function makeFallbackKey(kind: string, value: string): string {
   return `${kind}:${slug || 'memory'}`;
 }
 
-function buildPrompt(input: MemoryExtractionInput): string {
+function buildPromptParts(input: ArcExtractionInput): {
+  systemPrompt: string;
+  staticUserBlock: string;
+  dynamicUserBlock: string;
+  plainPrompt: string;
+} {
   const examples = MEMORY_EXTRACTION_FEW_SHOTS.map((shot, index) => {
     return [
       `Example ${index + 1} input:`,
-      shot.input,
+      JSON.stringify(shot.input, null, 2),
       `Example ${index + 1} output:`,
       JSON.stringify(shot.output, null, 2),
     ].join('\n');
   }).join('\n\n');
 
   const payload = {
-    last_3_turns: [
-      { role: 'user', text: input.prompt },
-      { role: 'assistant', text: input.result },
-    ],
+    session_arc: input.turns,
+    trigger: input.trigger,
     retrieved_items: (input.retrievedItems || []).slice(0, 10),
   };
 
-  return [
-    MEMORY_EXTRACTION_SYSTEM_PROMPT,
-    '',
+  const staticUserBlock = [
+    'Reference examples (high precision, strict filtering):',
     examples,
-    '',
-    'Now extract from this input JSON and return strict JSON array only:',
+  ].join('\n\n');
+  const dynamicUserBlock = [
+    'Now extract from this session arc and return strict JSON array only:',
     JSON.stringify(payload, null, 2),
   ].join('\n');
+  return {
+    systemPrompt: MEMORY_EXTRACTION_SYSTEM_PROMPT,
+    staticUserBlock,
+    dynamicUserBlock,
+    plainPrompt: [
+      MEMORY_EXTRACTION_SYSTEM_PROMPT,
+      '',
+      staticUserBlock,
+      '',
+      dynamicUserBlock,
+    ].join('\n'),
+  };
+}
+
+function extractStatusCode(err: unknown): number | null {
+  if (!err || typeof err !== 'object') return null;
+  const candidate = err as {
+    status?: unknown;
+    response?: { status?: unknown };
+  };
+  const direct = Number(candidate.status);
+  if (Number.isFinite(direct)) return direct;
+  const nested = Number(candidate.response?.status);
+  if (Number.isFinite(nested)) return nested;
+  return null;
+}
+
+function isTransientExtractorError(err: unknown): boolean {
+  const status = extractStatusCode(err);
+  if (status === 429 || status === 503) return true;
+  if (err instanceof Error) {
+    return /\b(429|503|rate limit|temporar|timeout|econnreset|etimedout|service unavailable)\b/i.test(
+      err.message,
+    );
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export class LlmMemoryExtractionProvider implements MemoryExtractionProvider {
   readonly providerName = 'llm-haiku';
 
   async extractFacts(
-    input: MemoryExtractionInput,
+    input: ArcExtractionInput,
   ): Promise<ExtractedMemoryFact[]> {
-    const combined = `${input.prompt}\n${input.result}`.trim();
-    if (!combined) {
+    const turns = Array.isArray(input.turns) ? input.turns : [];
+    if (!turns.length) {
       return [];
     }
     if (!hasClaudeAuthConfigured()) {
       return [];
     }
 
-    try {
-      const text = await runClaudeQuery({
-        model: MODEL_EXTRACTOR,
-        prompt: buildPrompt(input),
-      });
-      if (!text) return [];
-      const parsed = parseFirstJson(text);
-      return parseFacts(parsed, {
-        minConfidence: MEMORY_EXTRACTOR_MIN_CONFIDENCE,
-        maxFacts: MEMORY_EXTRACTOR_MAX_FACTS,
-        sourceText: combined,
-        userId: input.userId,
-        retrievedKeys: new Set(
-          (input.retrievedItems || [])
-            .map((item) => item.key.toLowerCase().trim())
-            .filter(Boolean),
-        ),
-      });
-    } catch (err) {
+    const sanitizedTurns = turns.map((turn) => {
+      const sanitized = sanitizeOutboundLlmText(turn.text);
+      return {
+        role: turn.role,
+        text: sanitized.text,
+        blocked: sanitized.blocked,
+        reason: sanitized.reason,
+      };
+    });
+    const blockedTurn = sanitizedTurns.find((turn) => turn.blocked);
+    if (blockedTurn) {
       logger.warn(
-        { err, model: MODEL_EXTRACTOR },
-        'LLM extraction failed; skipping this turn',
+        {
+          model: MODEL_EXTRACTOR,
+          trigger: input.trigger,
+          reason: blockedTurn.reason || 'potential_sensitive_material',
+        },
+        'LLM extraction blocked due to potential sensitive transcript material',
       );
       return [];
     }
+
+    const sanitizedRetrievedItems = (input.retrievedItems || [])
+      .slice(0, 10)
+      .flatMap((item) => {
+        const key = sanitizeOutboundLlmText(item.key);
+        const value = sanitizeOutboundLlmText(item.value);
+        if (key.blocked || value.blocked) {
+          logger.warn(
+            {
+              model: MODEL_EXTRACTOR,
+              trigger: input.trigger,
+              memory_id: item.id,
+              key_reason: key.reason || null,
+              value_reason: value.reason || null,
+            },
+            'Dropped retrieved memory item from outbound extraction prompt due to potential sensitive material',
+          );
+          return [];
+        }
+        return [
+          {
+            id: item.id,
+            key: key.text,
+            value: value.text,
+          },
+        ];
+      });
+
+    const promptParts = buildPromptParts({
+      ...input,
+      turns: sanitizedTurns.map((turn) => ({
+        role: turn.role,
+        text: turn.text,
+      })),
+      retrievedItems: sanitizedRetrievedItems,
+    });
+    let usage: ClaudeUsage | undefined;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const text = await runClaudeQuery({
+          model: MODEL_EXTRACTOR,
+          prompt: promptParts.plainPrompt,
+          systemPrompt: promptParts.systemPrompt,
+          userBlocks: [
+            { text: promptParts.staticUserBlock, cacheStatic: true },
+            { text: promptParts.dynamicUserBlock },
+          ],
+          onUsage: (nextUsage) => {
+            usage = nextUsage;
+            input.onUsage?.({
+              model: MODEL_EXTRACTOR,
+              ...nextUsage,
+            });
+          },
+        });
+        if (usage) {
+          logger.info(
+            {
+              model: MODEL_EXTRACTOR,
+              input_tokens: usage.input_tokens,
+              output_tokens: usage.output_tokens,
+              cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+              cache_creation_input_tokens:
+                usage.cache_creation_input_tokens || 0,
+            },
+            'LLM extraction token usage',
+          );
+        }
+        if (!text) return [];
+        const parsed = parseFirstJson(text);
+        return parseFacts(parsed, {
+          minConfidence: MEMORY_EXTRACTOR_MIN_CONFIDENCE,
+          maxFacts: MEMORY_EXTRACTOR_MAX_FACTS,
+          userId: input.userId,
+          turns,
+          retrievedKeys: new Set(
+            (input.retrievedItems || [])
+              .map((item) => item.key.toLowerCase().trim())
+              .filter(Boolean),
+          ),
+        });
+      } catch (err) {
+        const transient = isTransientExtractorError(err);
+        if (attempt === 0 && transient) {
+          logger.warn(
+            { err, model: MODEL_EXTRACTOR, retryInMs: EXTRACT_RETRY_DELAY_MS },
+            'Transient extractor failure; retrying once',
+          );
+          await sleep(EXTRACT_RETRY_DELAY_MS);
+          continue;
+        }
+        logger.warn(
+          { err, model: MODEL_EXTRACTOR },
+          'LLM extraction failed; skipping this boundary extraction',
+        );
+        return [];
+      }
+    }
+    return [];
   }
 }
 

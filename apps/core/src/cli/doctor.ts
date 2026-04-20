@@ -18,7 +18,6 @@ import { envFilePath, ensureRuntimeWritable } from './runtime-home.js';
 import { ensureRuntimeSettings, RuntimeSettings } from './runtime-settings.js';
 import { validateTelegramBotToken } from './telegram.js';
 import { inspectMemoryHealth } from './memory-health.js';
-import { resolveClaudeAuthState } from '../core/config.js';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
 
@@ -40,6 +39,28 @@ export interface DoctorReport {
 export interface DoctorNetworkOptions {
   validateTelegramToken?: boolean;
   telegramTimeoutMs?: number;
+}
+
+type ClaudeAuthMode = 'oauth' | 'api_key' | 'none';
+
+function resolveClaudeAuthState(input: {
+  oauthToken?: string;
+  apiKey?: string;
+}): {
+  hasOauthToken: boolean;
+  hasApiKey: boolean;
+  mode: ClaudeAuthMode;
+} {
+  const oauthToken = input.oauthToken?.trim() || '';
+  const apiKey = input.apiKey?.trim() || '';
+  const hasOauthToken = Boolean(oauthToken);
+  const hasApiKey = Boolean(apiKey);
+  const mode: ClaudeAuthMode = hasOauthToken
+    ? 'oauth'
+    : hasApiKey
+      ? 'api_key'
+      : 'none';
+  return { hasOauthToken, hasApiKey, mode };
 }
 
 function statusLabel(status: DoctorStatus): string {
@@ -424,17 +445,17 @@ export function runDoctor(
   const memoryHealth = inspectMemoryHealth(runtimeHome, settings, env);
   add(checks, {
     id: 'memory-provider',
-    title: 'Memory Provider',
-    status: memoryHealth.memoryProviderCheck.status,
-    message: `${memoryHealth.memoryProvider} (source: ${memoryHealth.memoryProviderSource}): ${memoryHealth.memoryProviderCheck.message}`,
-    nextAction: memoryHealth.memoryProviderCheck.nextAction,
+    title: 'Memory Storage',
+    status: memoryHealth.memoryCheck.status,
+    message: `root=${memoryHealth.memoryRoot} (source: ${memoryHealth.memoryRootSource}): ${memoryHealth.memoryCheck.message}`,
+    nextAction: memoryHealth.memoryCheck.nextAction,
   });
   add(checks, {
     id: 'embeddings-provider',
     title: 'Memory Embeddings',
-    status: memoryHealth.embeddingProviderCheck.status,
-    message: `${memoryHealth.embeddingProvider} (source: ${memoryHealth.embeddingProviderSource}): ${memoryHealth.embeddingProviderCheck.message}`,
-    nextAction: memoryHealth.embeddingProviderCheck.nextAction,
+    status: memoryHealth.embeddingCheck.status,
+    message: `${memoryHealth.embeddingProvider} (source: ${memoryHealth.embeddingProviderSource}): ${memoryHealth.embeddingCheck.message}`,
+    nextAction: memoryHealth.embeddingCheck.nextAction,
   });
   add(checks, {
     id: 'claude-auth',

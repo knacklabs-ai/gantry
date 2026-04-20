@@ -4,15 +4,15 @@ import {
   MEMORY_RETENTION_PIN_THRESHOLD,
 } from '../core/config.js';
 import { EmbeddingProvider } from './memory-embeddings.js';
-import { firstUngroundedToken } from './grounding-check.js';
-import { MemoryProvider } from './memory-provider.js';
+import { MemoryStore } from './memory-store.js';
 import { MemoryItem } from './memory-types.js';
 import { buildConsolidationPrompt } from './prompts/consolidate.js';
 import { runClaudeQuery } from './claude-query.js';
+import { sanitizeOutboundLlmText } from './sensitive-material.js';
 
 interface ConsolidationOptions {
   groupFolder: string;
-  store: MemoryProvider;
+  store: MemoryStore;
   embeddings: EmbeddingProvider;
   minItems: number;
   clusterThreshold: number;
@@ -186,7 +186,7 @@ export async function consolidateMemoryItems(
 
 async function ensureEmbeddings(
   items: MemoryItem[],
-  store: MemoryProvider,
+  store: MemoryStore,
   embeddings: EmbeddingProvider,
 ): Promise<EmbeddedItem[]> {
   const out: EmbeddedItem[] = [];
@@ -317,7 +317,22 @@ async function mergeCluster(
 async function tryMergeWithClaude(
   items: MemoryItem[],
 ): Promise<Omit<ConsolidatedFact, 'mode'> | null> {
-  const prompt = buildConsolidationPrompt(items);
+  const sanitizedItems = items.flatMap((item) => {
+    const sanitizedKey = sanitizeOutboundLlmText(item.key);
+    const sanitizedValue = sanitizeOutboundLlmText(item.value);
+    if (sanitizedKey.blocked || sanitizedValue.blocked) {
+      return [];
+    }
+    return [
+      {
+        ...item,
+        key: sanitizedKey.text,
+        value: sanitizedValue.text,
+      },
+    ];
+  });
+  if (sanitizedItems.length < 2) return null;
+  const prompt = buildConsolidationPrompt(sanitizedItems);
 
   try {
     const text = await runClaudeQuery({
@@ -339,7 +354,7 @@ async function tryMergeWithClaude(
     const value = typeof parsed.value === 'string' ? parsed.value.trim() : '';
     const why = typeof parsed.why === 'string' ? parsed.why.trim() : '';
     const confidence = Number(parsed.confidence);
-    const allowedIds = new Set(items.map((item) => item.id));
+    const allowedIds = new Set(sanitizedItems.map((item) => item.id));
     const retiredIds = Array.isArray(parsed.retired_ids)
       ? parsed.retired_ids
           .filter(
@@ -351,7 +366,7 @@ async function tryMergeWithClaude(
       : [];
 
     if (!key || !value) return null;
-    const groundingInputs = items.flatMap((item) => [
+    const groundingInputs = sanitizedItems.flatMap((item) => [
       item.key,
       item.value,
       item.why || '',
@@ -365,7 +380,9 @@ async function tryMergeWithClaude(
       ...(why ? { why } : {}),
       confidence: Number.isFinite(confidence) ? clamp01(confidence) : 0.8,
       retiredIds:
-        retiredIds.length > 0 ? retiredIds : items.map((item) => item.id),
+        retiredIds.length > 0
+          ? retiredIds
+          : sanitizedItems.map((item) => item.id),
     };
   } catch {
     return null;
@@ -416,6 +433,87 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+const TOKEN_PATTERN =
+  /\b(?:[a-zA-Z_][a-zA-Z0-9_./:-]{2,}|[0-9]{2,}|[a-z]+-[a-z0-9-]{2,})\b/g;
+
+const STOP_TOKENS = new Set([
+  'the',
+  'and',
+  'with',
+  'from',
+  'that',
+  'this',
+  'have',
+  'will',
+  'were',
+  'been',
+  'into',
+  'about',
+  'after',
+  'before',
+  'where',
+  'which',
+  'their',
+  'there',
+  'should',
+  'could',
+  'would',
+  'because',
+  'while',
+  'when',
+  'what',
+  'your',
+  'they',
+  'them',
+  'than',
+  'then',
+  'over',
+  'under',
+  'more',
+  'most',
+  'less',
+  'very',
+  'true',
+  'false',
+  'none',
+]);
+
+function normalizeToken(token: string): string {
+  return token.trim().toLowerCase();
+}
+
+function requiresStrictGrounding(token: string): boolean {
+  return /[0-9_./:]/.test(token) || token.includes('-');
+}
+
+function extractGroundingTokens(text: string): string[] {
+  const tokens = text.match(TOKEN_PATTERN) || [];
+  return tokens
+    .map(normalizeToken)
+    .filter((token) => token.length >= 3 && !STOP_TOKENS.has(token));
+}
+
+function firstUngroundedToken(
+  candidateText: string,
+  sourceTexts: string[],
+): string | null {
+  const sourceTokenSet = new Set<string>();
+  for (const text of sourceTexts) {
+    for (const token of extractGroundingTokens(text)) {
+      sourceTokenSet.add(token);
+    }
+  }
+  for (const token of extractGroundingTokens(candidateText)) {
+    if (!requiresStrictGrounding(token)) {
+      continue;
+    }
+    if (!sourceTokenSet.has(token)) {
+      return token;
+    }
+  }
+  return null;
 }
 
 function tokenize(input: string): string[] {

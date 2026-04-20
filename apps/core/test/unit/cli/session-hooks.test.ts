@@ -16,8 +16,16 @@ function makeTempDir(): string {
 
 const TEST_CLI_INDEX = '/tmp/myclaw/dist/cli/index.js';
 
-function hookCommand(cause: string): string {
-  return `node ${JSON.stringify(TEST_CLI_INDEX)} session-hook --cause=${cause}`;
+function hookCommand(
+  command: 'load' | 'extract-precompact' | 'extract-session-end',
+): string {
+  if (command === 'load') {
+    return `node ${JSON.stringify(TEST_CLI_INDEX)} memory-hook load`;
+  }
+  if (command === 'extract-precompact') {
+    return `node ${JSON.stringify(TEST_CLI_INDEX)} memory-hook extract --trigger=precompact`;
+  }
+  return `node ${JSON.stringify(TEST_CLI_INDEX)} memory-hook extract --trigger=session-end`;
 }
 
 describe('session hook settings merge', () => {
@@ -38,7 +46,7 @@ describe('session hook settings merge', () => {
     const hooks = parsed.hooks as Record<string, unknown[]>;
     expect(Array.isArray(hooks.SessionStart)).toBe(true);
     expect(Array.isArray(hooks.PreCompact)).toBe(true);
-    expect(Array.isArray(hooks.Stop)).toBe(true);
+    expect(Array.isArray(hooks.SessionEnd)).toBe(true);
   });
 
   it('merges hooks without overwriting unrelated fields', () => {
@@ -56,7 +64,7 @@ describe('session hook settings merge', () => {
                 hooks: [
                   {
                     type: 'command',
-                    command: hookCommand('session-start'),
+                    command: hookCommand('load'),
                   },
                 ],
               },
@@ -71,7 +79,7 @@ describe('session hook settings merge', () => {
 
     const plan = buildSessionHookInstallPlan(settingsPath, TEST_CLI_INDEX);
     expect(plan.changed).toBe(true);
-    expect(plan.added).toHaveLength(2);
+    expect(plan.added).toHaveLength(3);
 
     applySessionHookInstallPlan(plan);
 
@@ -81,6 +89,42 @@ describe('session hook settings merge', () => {
     >;
     const env = parsed.env as Record<string, unknown>;
     expect(env.FOO).toBe('bar');
+  });
+
+  it('reinstalls hook when command exists with wrong matcher/timeout/async', () => {
+    const dir = makeTempDir();
+    const settingsPath = path.join(dir, 'settings.json');
+    fs.writeFileSync(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          hooks: {
+            PreCompact: [
+              {
+                matcher: '*',
+                hooks: [
+                  {
+                    type: 'command',
+                    command: hookCommand('extract-precompact'),
+                    timeout: 30,
+                    async: false,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      'utf-8',
+    );
+
+    const plan = buildSessionHookInstallPlan(settingsPath, TEST_CLI_INDEX);
+    expect(plan.changed).toBe(true);
+    expect(plan.added.some((change) => change.event === 'PreCompact')).toBe(
+      true,
+    );
   });
 
   it('is idempotent when hooks already exist', () => {
@@ -140,18 +184,17 @@ describe('session hook settings merge', () => {
     const workspaceMatcher = sessionStart.find(
       (entry) => entry.matcher === 'workspace/*',
     );
-    const defaultMatcher = sessionStart.find((entry) => entry.matcher === '*');
+    const eventMatcher = sessionStart.find(
+      (entry) => entry.matcher === 'startup|resume|compact',
+    );
 
     expect(workspaceMatcher).toBeDefined();
-    expect(defaultMatcher).toBeDefined();
-    const defaultHooks = defaultMatcher?.hooks as Array<
-      Record<string, unknown>
-    >;
+    expect(eventMatcher).toBeDefined();
+    const defaultHooks = eventMatcher?.hooks as Array<Record<string, unknown>>;
     expect(
       defaultHooks.some(
         (hook) =>
-          hook.type === 'command' &&
-          hook.command === hookCommand('session-start'),
+          hook.type === 'command' && hook.command === hookCommand('load'),
       ),
     ).toBe(true);
   });
@@ -164,9 +207,13 @@ describe('session hook settings merge', () => {
     const diff = formatSessionHookInstallDiff(plan);
 
     expect(diff).toContain(`Planned changes for ${settingsPath}:`);
-    expect(diff).toContain(`+ SessionStart: ${hookCommand('session-start')}`);
-    expect(diff).toContain(`+ PreCompact: ${hookCommand('pre-compact')}`);
-    expect(diff).toContain(`+ Stop: ${hookCommand('session-stop')}`);
+    expect(diff).toContain(`+ SessionStart: ${hookCommand('load')}`);
+    expect(diff).toContain(
+      `+ PreCompact: ${hookCommand('extract-precompact')}`,
+    );
+    expect(diff).toContain(
+      `+ SessionEnd: ${hookCommand('extract-session-end')}`,
+    );
   });
 
   it('throws on invalid JSON settings', () => {

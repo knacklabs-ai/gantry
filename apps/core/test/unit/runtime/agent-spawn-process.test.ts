@@ -435,7 +435,7 @@ describe('executeRunnerProcess', () => {
 
       // Emit valid output so it can parse
       const output = JSON.stringify({ status: 'success', result: 'ok' });
-      // stdout is already truncated at 512, so legacy parse will fail
+      // stdout is already truncated at 512, so buffered parse will fail
       // — we still expect a resolution
       fakeProc.emit('close', 0);
       await vi.advanceTimersByTimeAsync(10);
@@ -474,17 +474,17 @@ describe('executeRunnerProcess', () => {
   });
 
   /* ============================================================== */
-  /*  Legacy output parsing (no onOutput)                            */
+  /*  Buffered output parsing (no onOutput)                          */
   /* ============================================================== */
 
-  describe('legacy output parsing (no onOutput)', () => {
+  describe('buffered output parsing (no onOutput)', () => {
     it('parses JSON from the last line of stdout', async () => {
       const spec = makeSpec({ onOutput: undefined });
       const resultP = executeRunnerProcess(spec);
 
       const output = JSON.stringify({
         status: 'success',
-        result: 'legacy result',
+        result: 'buffered result',
       });
       fakeProc.stdout.push(`some debug line\nanother line\n${output}\n`);
 
@@ -493,7 +493,7 @@ describe('executeRunnerProcess', () => {
 
       const result = await resultP;
       expect(result.status).toBe('success');
-      expect(result.result).toBe('legacy result');
+      expect(result.result).toBe('buffered result');
     });
 
     it('parses JSON from marker-delimited output', async () => {
@@ -731,7 +731,8 @@ describe('executeRunnerProcess', () => {
 
         expect(mockWriteFileSync).toHaveBeenCalled();
         const [, logContent] = mockWriteFileSync.mock.calls[0];
-        expect(logContent).toContain('=== Input ===');
+        expect(logContent).toContain('=== Input Summary ===');
+        expect(logContent).toContain('Chat JID: test@g.us');
         expect(logContent).toContain('=== Spawn Command ===');
         expect(logContent).toContain('/usr/bin/node runner.js');
         expect(logContent).toContain('=== Runtime Details ===');

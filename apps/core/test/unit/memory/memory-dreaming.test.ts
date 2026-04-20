@@ -130,6 +130,49 @@ describe('memory dreaming sweep', () => {
     }
   });
 
+  it('skips dream review LLM call when candidate content looks sensitive', async () => {
+    configureClaudeQueryMock();
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'oauth-dream-token');
+    const store = makeStore();
+    const item = store.saveItem({
+      scope: 'group',
+      group_folder: 'team',
+      user_id: null,
+      kind: 'fact',
+      key: 'sensitive_candidate',
+      value: 'credential dump q8N7_w9QfLh2Zr3Xy6Tt5Uv4sPd1Km0Qe9Jw2Nb7Hx3Y',
+      source: 'test',
+      confidence: 0.8,
+    });
+    store.recordRetrievalSignal(item.id, 0.9, 'q-sensitive-1');
+    store.recordRetrievalSignal(item.id, 0.87, 'q-sensitive-2');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [{ type: 'text', text: '[]' }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await runDreamingSweep({
+      groupFolder: 'team',
+      store,
+      enabled: true,
+      consolidateGroupMemory: async () => defaultConsolidationResult(),
+      retentionPinThreshold: 0.95,
+      promotionThreshold: 0.4,
+      decayThreshold: 0.1,
+      minRecalls: 1,
+      minUniqueQueries: 1,
+      confidenceBoost: 0.05,
+      confidenceDecay: 0.03,
+      dryRun: true,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('promotes high-signal items and decays low-signal items', async () => {
     const store = makeStore();
 

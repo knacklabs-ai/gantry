@@ -42,7 +42,7 @@ describe('persistOnboardingConfig', () => {
     const settings = loadRuntimeSettings(runtimeHome);
     expect(settings.channels.telegram.enabled).toBe(true);
     expect(settings.memory.enabled).toBe(true);
-    expect(settings.memory.provider).toBe('sqlite');
+    expect(settings.memory.root).toBe('memory');
     expect(settings.memory.embeddings.enabled).toBe(false);
     expect(settings.memory.embeddings.provider).toBe('disabled');
     expect(settings.memory.dreaming.enabled).toBe(false);
@@ -73,7 +73,7 @@ describe('persistOnboardingConfig', () => {
 
     const settings = loadRuntimeSettings(runtimeHome);
     expect(settings.memory.enabled).toBe(true);
-    expect(settings.memory.provider).toBe('sqlite');
+    expect(settings.memory.root).toBe('memory');
     expect(settings.memory.embeddings.enabled).toBe(true);
     expect(settings.memory.embeddings.provider).toBe('openai');
     expect(settings.memory.dreaming.enabled).toBe(true);

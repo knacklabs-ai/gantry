@@ -13,13 +13,13 @@ import {
 } from '../core/config.js';
 import { Job, JobExecutionMode, RegisteredGroup } from '../core/types.js';
 import { logger } from '../core/logger.js';
-import { writeMemoryContextSnapshot } from '../memory/memory-ipc.js';
-import { runMemoryCleanupOnce } from '../memory/cleanup-job.js';
-import { MemoryService } from '../memory/memory-service.js';
+import { runMemoryCleanupInSubprocess } from '../memory/cleanup-job.js';
 import {
-  resolveGroupFolderPath,
-  resolveGroupIpcPath,
-} from '../platform/group-folder.js';
+  getMemoryMaintenanceQueue,
+  type MemoryMaintenanceQueueEnqueueResult,
+} from '../memory/maintenance-queue.js';
+import { MemoryService } from '../memory/memory-service.js';
+import { resolveGroupFolderPath } from '../platform/group-folder.js';
 import { GroupQueue } from './group-queue.js';
 import { AgentOutput, spawnAgent } from './agent-spawn.js';
 import {
@@ -66,6 +66,16 @@ let schedulerStreamingGenerationCounter = 0;
 const schedulerSessions = new Map<string, string>();
 const activeParallelRunsByGroupScope = new Map<string, number>();
 const activeSerializedRunsByGroupScope = new Map<string, number>();
+type MemoryMaintenanceQueueLike = {
+  enqueueAndWait: (
+    groupFolder: string,
+    task: () => Promise<void>,
+    dedupeKey?: string,
+  ) => Promise<MemoryMaintenanceQueueEnqueueResult>;
+  getPendingCount: () => number;
+};
+let memoryMaintenanceQueue: MemoryMaintenanceQueueLike =
+  getMemoryMaintenanceQueue();
 
 function nextSchedulerStreamingGeneration(): number {
   schedulerStreamingGenerationCounter += 1;
@@ -330,7 +340,6 @@ async function notifyLinkedSessions(
 }
 
 function registerSystemJobs(deps: SchedulerDependencies): void {
-  if (!RUNTIME_MEMORY_DREAMING_ENABLED) return;
   const groups = deps.registeredGroups();
   const byFolder = new Map<string, string[]>();
   const mainFolders = new Set<string>();
@@ -345,39 +354,41 @@ function registerSystemJobs(deps: SchedulerDependencies): void {
   }
 
   const nowIso = new Date().toISOString();
-  for (const [groupFolder, linkedSessions] of byFolder.entries()) {
-    const jobId = `system:dreaming:${groupFolder}`;
-    const existing = getJobById(jobId);
-    if (existing?.status === 'dead_lettered') {
-      continue;
-    }
-    const computedNextRun = computeNextJobRun(
-      {
+  if (RUNTIME_MEMORY_DREAMING_ENABLED) {
+    for (const [groupFolder, linkedSessions] of byFolder.entries()) {
+      const jobId = `system:dreaming:${groupFolder}`;
+      const existing = getJobById(jobId);
+      if (existing?.status === 'dead_lettered') {
+        continue;
+      }
+      const computedNextRun = computeNextJobRun(
+        {
+          schedule_type: 'cron',
+          schedule_value: MEMORY_DREAMING_CRON,
+        },
+        nowIso,
+      );
+      const nextRun = existing?.next_run || computedNextRun;
+      const desiredStatus = existing?.status === 'paused' ? 'paused' : 'active';
+
+      upsertJob({
+        id: jobId,
+        name: `Memory Dreaming (${groupFolder})`,
+        prompt: MEMORY_DREAM_SYSTEM_PROMPT,
         schedule_type: 'cron',
         schedule_value: MEMORY_DREAMING_CRON,
-      },
-      nowIso,
-    );
-    const nextRun = existing?.next_run || computedNextRun;
-    const desiredStatus = existing?.status === 'paused' ? 'paused' : 'active';
-
-    upsertJob({
-      id: jobId,
-      name: `Memory Dreaming (${groupFolder})`,
-      prompt: MEMORY_DREAM_SYSTEM_PROMPT,
-      schedule_type: 'cron',
-      schedule_value: MEMORY_DREAMING_CRON,
-      linked_sessions: linkedSessions,
-      group_scope: groupFolder,
-      created_by: 'agent',
-      status: desiredStatus,
-      next_run: nextRun,
-      silent: false,
-      timeout_ms: 300_000,
-      max_retries: 1,
-      retry_backoff_ms: 30_000,
-      max_consecutive_failures: 3,
-    });
+        linked_sessions: linkedSessions,
+        group_scope: groupFolder,
+        created_by: 'agent',
+        status: desiredStatus,
+        next_run: nextRun,
+        silent: false,
+        timeout_ms: 300_000,
+        max_retries: 1,
+        retry_backoff_ms: 30_000,
+        max_consecutive_failures: 3,
+      });
+    }
   }
 
   const cleanupOwnerEntry =
@@ -424,10 +435,48 @@ async function handleSystemJob(
   groupFolder: string,
 ): Promise<unknown> {
   if (job.prompt === MEMORY_DREAM_SYSTEM_PROMPT) {
-    return MemoryService.getInstance().runDreamingSweep(groupFolder);
+    const queueResult = await memoryMaintenanceQueue.enqueueAndWait(
+      groupFolder,
+      async () => {
+        await MemoryService.getInstance().runDreamingSweep(groupFolder);
+      },
+      `dream:${groupFolder}`,
+    );
+    if (!queueResult.queued) {
+      if (queueResult.reason === 'full') {
+        throw new Error('memory maintenance queue full');
+      }
+      if (queueResult.reason === 'invalid') {
+        throw new Error('invalid memory maintenance group');
+      }
+    }
+    return {
+      queued: queueResult.queued,
+      pending: memoryMaintenanceQueue.getPendingCount(),
+      deduped: queueResult.deduped,
+    };
   }
   if (job.prompt === MEMORY_CLEANUP_SYSTEM_PROMPT) {
-    return runMemoryCleanupOnce();
+    const queueResult = await memoryMaintenanceQueue.enqueueAndWait(
+      groupFolder,
+      async () => {
+        await runMemoryCleanupInSubprocess(300_000);
+      },
+      `cleanup:${groupFolder}`,
+    );
+    if (!queueResult.queued) {
+      if (queueResult.reason === 'full') {
+        throw new Error('memory maintenance queue full');
+      }
+      if (queueResult.reason === 'invalid') {
+        throw new Error('invalid memory maintenance group');
+      }
+    }
+    return {
+      queued: queueResult.queued,
+      pending: memoryMaintenanceQueue.getPendingCount(),
+      deduped: queueResult.deduped,
+    };
   }
   throw new Error(`Unknown system job: ${job.prompt}`);
 }
@@ -547,13 +596,7 @@ async function runJob(
     schedulerSessionKey(currentJob, executionMode),
   );
   const sessionId = schedulerSession || undefined;
-  const memoryContextFileName = `memory_context.${runId}.json`;
-  let memoryContextFilePath = path.join(
-    resolveGroupIpcPath(execution.group.folder),
-    memoryContextFileName,
-  );
   const isMain = execution.group.isMain === true;
-  let retrievedItemIds: string[] = [];
   let ranSystemJob = false;
   const linkedSessions = Array.from(new Set(currentJob.linked_sessions));
   const shouldDeliverToChat = !currentJob.silent && linkedSessions.length > 0;
@@ -675,28 +718,6 @@ async function runJob(
     }
   } else {
     if (!error) {
-      try {
-        const contextSnapshot = await writeMemoryContextSnapshot(
-          execution.group.folder,
-          isMain,
-          currentJob.prompt,
-          undefined,
-          {
-            fileName: memoryContextFileName,
-            isFirstPromptOfSession: !schedulerSession,
-          },
-        );
-        retrievedItemIds = contextSnapshot.retrievedItemIds;
-        memoryContextFilePath = contextSnapshot.filePath;
-      } catch (err) {
-        logger.warn(
-          { err, jobId: currentJob.id },
-          'Memory context snapshot failed for job',
-        );
-      }
-    }
-
-    if (!error) {
       let deliveredAnyOutput = false;
       let bufferedStreamingChars = 0;
       let totalStreamingChars = 0;
@@ -725,7 +746,6 @@ async function runJob(
             isScheduledJob: true,
             assistantName: ASSISTANT_NAME,
             script: currentJob.script || undefined,
-            memoryContextFile: memoryContextFilePath,
           },
           (proc, containerName) =>
             deps.onProcess(
@@ -922,23 +942,6 @@ async function runJob(
   });
   deps.onSchedulerChanged?.();
 
-  if (!jobDeletedDuringRun && !error && !ranSystemJob) {
-    void MemoryService.getInstance()
-      .reflectAfterTurn({
-        groupFolder: execution.group.folder,
-        prompt: currentJob.prompt,
-        result: resultSummary || 'Completed',
-        isMain,
-        retrievedItemIds,
-      })
-      .catch((err) => {
-        logger.warn(
-          { err, jobId: currentJob.id },
-          'Memory reflection failed after job completion',
-        );
-      });
-  }
-
   if (
     !jobDeletedDuringRun &&
     currentJob.schedule_type === 'once' &&
@@ -947,18 +950,6 @@ async function runJob(
   ) {
     deleteJob(currentJob.id);
     deps.onSchedulerChanged?.();
-  }
-
-  try {
-    fs.unlinkSync(memoryContextFilePath);
-  } catch (err) {
-    const nodeErr = err as NodeJS.ErrnoException;
-    if (nodeErr?.code !== 'ENOENT') {
-      logger.debug(
-        { err, jobId: currentJob.id, file: memoryContextFilePath },
-        'Failed to clean scheduler memory context file',
-      );
-    }
   }
 }
 
@@ -1072,4 +1063,12 @@ export function _resetSchedulerLoopForTests(): void {
   schedulerSessions.clear();
   activeParallelRunsByGroupScope.clear();
   activeSerializedRunsByGroupScope.clear();
+  memoryMaintenanceQueue = getMemoryMaintenanceQueue();
+}
+
+/** @internal - for tests only. */
+export function _setMemoryMaintenanceQueueForTests(
+  queue: MemoryMaintenanceQueueLike | null,
+): void {
+  memoryMaintenanceQueue = queue ?? getMemoryMaintenanceQueue();
 }

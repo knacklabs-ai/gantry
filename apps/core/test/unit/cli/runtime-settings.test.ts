@@ -68,9 +68,7 @@ channels:
       log_denied: true
 memory:
   enabled: true
-  provider: sqlite
-  sqlite_path: store/memory.db
-  qmd_root: agent-memory
+  root: memory
   embeddings:
     enabled: false
     provider: disabled
@@ -122,9 +120,7 @@ channels:
       log_denied: true
 memory:
   enabled: true
-  provider: sqlite
-  sqlite_path: store/memory.db
-  qmd_root: agent-memory
+  root: memory
   embeddings:
     enabled: false
     provider: disabled
@@ -136,6 +132,41 @@ memory:
     expect(settings.channels.slack.enabled).toBe(true);
   });
 
+  it('parses memory scalars with inline comments consistently', () => {
+    const settings = parseRuntimeSettingsText(`
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+memory:
+  enabled: true # on
+  root: "memory" # canonical root
+  embeddings:
+    enabled: false # keep local
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false # off
+`);
+    expect(settings.memory.enabled).toBe(true);
+    expect(settings.memory.root).toBe('memory');
+    expect(settings.memory.embeddings.enabled).toBe(false);
+    expect(settings.memory.dreaming.enabled).toBe(false);
+  });
+
   it('creates fixed defaults when settings.yaml is missing', () => {
     const runtimeHome = createRuntimeHome();
     const settings = ensureRuntimeSettings(runtimeHome);
@@ -143,7 +174,7 @@ memory:
     expect(settings.channels.slack.enabled).toBe(false);
     expect(settings.channels.telegram.senderAllowlist.default.allow).toBe('*');
     expect(settings.memory.enabled).toBe(true);
-    expect(settings.memory.provider).toBe('sqlite');
+    expect(settings.memory.root).toBe('memory');
     expect(settings.memory.embeddings.enabled).toBe(false);
     expect(settings.memory.dreaming.enabled).toBe(false);
     expect(settings.memory.llm.models.extractor).toBe(
@@ -239,9 +270,7 @@ channels:
       log_denied: true
 memory:
   enabled: true
-  provider: sqlite
-  sqlite_path: store/memory.db
-  qmd_root: agent-memory
+  root: memory
   embeddings:
     enabled: false
     provider: disabled

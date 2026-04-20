@@ -44,7 +44,7 @@ async function loadArchiveModule() {
   vi.doMock('@core/core/config.js', () => ({
     DATA_DIR: dataDir,
     AGENTS_DIR: agentsDir,
-    AGENT_MEMORY_ROOT: memoryRoot,
+    MEMORY_ROOT: memoryRoot,
   }));
   return import('@core/session/session-transcript-archive.js');
 }
@@ -53,7 +53,7 @@ beforeEach(() => {
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-session-archive-'));
   dataDir = path.join(tempRoot, 'data');
   agentsDir = path.join(tempRoot, 'agents');
-  memoryRoot = path.join(tempRoot, 'agent-memory');
+  memoryRoot = path.join(tempRoot, 'memory');
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(agentsDir, { recursive: true });
   fs.mkdirSync(memoryRoot, { recursive: true });
@@ -68,7 +68,7 @@ afterEach(() => {
 });
 
 describe('archiveSessionTranscript', () => {
-  it('archives a valid transcript into AGENT_MEMORY_ROOT sessions', async () => {
+  it('archives a valid transcript into MEMORY_ROOT sessions', async () => {
     writeTranscript({
       groupFolder: 'team1',
       sessionId: 'sess-1',
@@ -89,7 +89,7 @@ describe('archiveSessionTranscript', () => {
     });
 
     expect(filePath).toBeTruthy();
-    expect(filePath).toContain(path.join('agent-memory', 'sessions'));
+    expect(filePath).toContain(path.join('memory', 'sessions'));
     expect(fs.existsSync(filePath!)).toBe(true);
 
     const markdown = fs.readFileSync(filePath!, 'utf-8');
@@ -184,6 +184,22 @@ describe('archiveSessionTranscript', () => {
           .filter((entry) => String(entry).endsWith('.md'))
       : [];
     expect(sessionFiles).toHaveLength(0);
+  });
+
+  it('returns null for invalid group or session identifiers', async () => {
+    const { archiveSessionTranscript } = await loadArchiveModule();
+    expect(
+      archiveSessionTranscript({
+        groupFolder: '../escape',
+        sessionId: 'sess-1',
+      }),
+    ).toBeNull();
+    expect(
+      archiveSessionTranscript({
+        groupFolder: 'team-ok',
+        sessionId: '../bad',
+      }),
+    ).toBeNull();
   });
 
   // ── extractAssistantText / extractUserText edge cases ────────────────────
@@ -731,10 +747,10 @@ describe('archiveSessionTranscript', () => {
     vi.doMock('@core/core/config.js', () => ({
       DATA_DIR: dataDir,
       AGENTS_DIR: agentsDir,
-      AGENT_MEMORY_ROOT: memoryRoot,
+      MEMORY_ROOT: memoryRoot,
     }));
-    vi.doMock('@core/memory/agent-memory-root.js', () => ({
-      AgentMemoryRootService: {
+    vi.doMock('@core/memory/memory-root.js', () => ({
+      MemoryRootService: {
         getInstance: () => {
           throw new Error('Service unavailable');
         },
@@ -761,7 +777,7 @@ describe('archiveSessionTranscript', () => {
 
     expect(result).toBeNull();
 
-    vi.doUnmock('@core/memory/agent-memory-root.js');
+    vi.doUnmock('@core/memory/memory-root.js');
   });
 
   it('catches and returns null when writeSessionSummary throws', async () => {
@@ -769,10 +785,10 @@ describe('archiveSessionTranscript', () => {
     vi.doMock('@core/core/config.js', () => ({
       DATA_DIR: dataDir,
       AGENTS_DIR: agentsDir,
-      AGENT_MEMORY_ROOT: memoryRoot,
+      MEMORY_ROOT: memoryRoot,
     }));
-    vi.doMock('@core/memory/agent-memory-root.js', () => ({
-      AgentMemoryRootService: {
+    vi.doMock('@core/memory/memory-root.js', () => ({
+      MemoryRootService: {
         getInstance: () => ({
           writeSessionSummary: () => {
             throw new Error('Disk full');
@@ -801,7 +817,7 @@ describe('archiveSessionTranscript', () => {
 
     expect(result).toBeNull();
 
-    vi.doUnmock('@core/memory/agent-memory-root.js');
+    vi.doUnmock('@core/memory/memory-root.js');
   });
 
   // ── sanitizeFilename edge cases ──────────────────────────────────────────

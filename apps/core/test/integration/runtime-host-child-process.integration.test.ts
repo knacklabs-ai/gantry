@@ -30,9 +30,14 @@ function writeHostRunner(runnerRoot: string, recordPath: string): void {
   const distDir = path.join(runnerRoot, 'dist');
   fs.mkdirSync(distDir, { recursive: true });
   fs.writeFileSync(
+    path.join(runnerRoot, 'package.json'),
+    JSON.stringify({ type: 'module' }),
+    'utf-8',
+  );
+  fs.writeFileSync(
     path.join(distDir, 'index.js'),
     `
-const fs = require('fs');
+import fs from 'node:fs';
 
 let stdin = '';
 process.stdin.on('data', (chunk) => {
@@ -79,7 +84,7 @@ describe('host child-process runtime smoke', () => {
     writeHostRunner(runnerRoot, recordPath);
 
     vi.doMock('@core/core/config.js', () => ({
-      AGENT_MEMORY_ROOT: path.join(root, 'memory'),
+      MEMORY_ROOT: path.join(root, 'memory'),
       AGENT_MAX_OUTPUT_SIZE: 1024 * 1024,
       AGENT_TIMEOUT: 5_000,
       DATA_DIR: dataDir,

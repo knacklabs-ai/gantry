@@ -8,6 +8,7 @@ const runClaudeQueryMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@core/memory/claude-query.js', () => ({
   runClaudeQuery: runClaudeQueryMock,
+  hasClaudeAuthConfigured: () => true,
 }));
 
 const tempRoots: string[] = [];
@@ -57,6 +58,7 @@ describe('memory model routing integration', () => {
               kind: 'fact',
               key: 'fact:style',
               value: 'Use concise responses',
+              why: 'Preference: use concise responses.',
               confidence: 0.91,
             },
           ]);
@@ -93,8 +95,14 @@ describe('memory model routing integration', () => {
     };
     const extractor = createLlmMemoryExtractionProvider(extractorFallback);
     const extracted = await extractor.extractFacts({
-      prompt: 'Preference: use concise responses.',
-      result: 'Acknowledged. I will keep replies concise.',
+      turns: [
+        { role: 'user', text: 'Preference: use concise responses.' },
+        {
+          role: 'assistant',
+          text: 'Acknowledged. I will keep replies concise.',
+        },
+      ],
+      trigger: 'session-end',
       retrievedItems: [],
     });
     expect(extracted.length).toBe(1);

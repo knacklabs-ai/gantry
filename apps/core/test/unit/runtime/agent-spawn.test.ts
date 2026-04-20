@@ -8,7 +8,7 @@ const OUTPUT_END_MARKER = '---MYCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('@core/core/config.js', () => ({
-  AGENT_MEMORY_ROOT: '/tmp/myclaw-agent-memory',
+  MEMORY_ROOT: '/tmp/myclaw-memory',
   AGENT_MAX_OUTPUT_SIZE: 10485760,
   AGENT_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/myclaw-test-data',
@@ -302,7 +302,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6');
   });
 
-  it('forwards AGENT_MEMORY_ROOT via env when configured', async () => {
+  it('forwards MEMORY_ROOT via env when configured', async () => {
     const resultPromise = spawnAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
@@ -315,7 +315,7 @@ describe('agent-spawn timeout behavior', () => {
       string,
       string
     >;
-    expect(env.AGENT_MEMORY_ROOT).toBe('/tmp/myclaw-agent-memory');
+    expect(env.MEMORY_ROOT).toBe('/tmp/myclaw-memory');
   });
 
   it('passes compiled system prompt through runner stdin for normal message runs', async () => {

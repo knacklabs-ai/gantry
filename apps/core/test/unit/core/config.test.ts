@@ -162,7 +162,41 @@ async function loadConfigWithAllEnvAndRuntimeSnapshot(
   return import('@core/core/config.js');
 }
 
+async function loadConfigWithRuntimeSnapshotError(
+  env: Record<string, string | undefined>,
+  message = 'broken settings',
+) {
+  vi.resetModules();
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  vi.doMock('@core/core/env.js', () => ({
+    readEnvFile: () => ({}),
+  }));
+  vi.doMock('@core/core/runtime-memory-settings.js', () => ({
+    readRuntimeMemorySettingsSnapshot: () => {
+      throw new Error(message);
+    },
+  }));
+  return import('@core/core/config.js');
+}
+
 describe('memory model defaults', () => {
+  it('throws when runtime settings snapshot cannot be parsed', async () => {
+    await expect(
+      loadConfigWithRuntimeSnapshotError(
+        {},
+        'memory.enabled must be true or false',
+      ),
+    ).rejects.toThrow(
+      'Invalid runtime memory settings: memory.enabled must be true or false',
+    );
+  });
+
   it('falls back to ANTHROPIC_MODEL when runtime model is unset', async () => {
     const cfg = await loadConfigWithAllEnv({
       ANTHROPIC_MODEL: 'claude-opus-4-1-20250805',
@@ -460,9 +494,7 @@ describe('config env overrides for branch coverage', () => {
   it('exercises process.env branch for all config variables', async () => {
     const cfg = await loadConfigWithAllEnv({
       ASSISTANT_NAME: 'TestBot',
-      MEMORY_SQLITE_PATH: '/tmp/test-memory.db',
-      MEMORY_PROVIDER: 'test-provider',
-      AGENT_MEMORY_ROOT: '/tmp/agent-memory',
+      MEMORY_ROOT: '/tmp/agent-memory',
       OPENAI_API_KEY: 'test-api-key',
       OPENAI_DAILY_EMBED_LIMIT: '100',
       MEMORY_EMBED_MODEL: 'test-embed-model',
@@ -515,8 +547,8 @@ describe('config env overrides for branch coverage', () => {
     });
 
     expect(cfg.ASSISTANT_NAME).toBe('TestBot');
-    expect(cfg.MEMORY_PROVIDER).toBe('sqlite');
-    expect(cfg.AGENT_MEMORY_ROOT).toMatch(/agent-memory$/);
+    expect(cfg.MEMORY_ROOT).toMatch(/agent-memory$/);
+    expect(cfg.MEMORY_SQLITE_PATH).toBe('/tmp/agent-memory/.cache/memory.db');
     expect(cfg.OPENAI_API_KEY).toBe('test-api-key');
     expect(cfg.OPENAI_DAILY_EMBED_LIMIT).toBe(100);
     expect(cfg.MEMORY_EMBED_MODEL).toBe('text-embedding-3-large');
@@ -575,9 +607,7 @@ describe('config env overrides for branch coverage', () => {
     // Delete all the env vars we might have set
     const envKeys = [
       'ASSISTANT_NAME',
-      'MEMORY_SQLITE_PATH',
-      'MEMORY_PROVIDER',
-      'AGENT_MEMORY_ROOT',
+      'MEMORY_ROOT',
       'OPENAI_API_KEY',
       'OPENAI_DAILY_EMBED_LIMIT',
       'MEMORY_EMBED_MODEL',
@@ -635,8 +665,7 @@ describe('config env overrides for branch coverage', () => {
     vi.doMock('@core/core/env.js', () => ({
       readEnvFile: () => ({
         ASSISTANT_NAME: 'EnvBot',
-        MEMORY_PROVIDER: 'env-provider',
-        AGENT_MEMORY_ROOT: '/tmp/env-memory',
+        MEMORY_ROOT: '/tmp/env-memory',
         OPENAI_API_KEY: 'env-api-key',
         OPENAI_DAILY_EMBED_LIMIT: '200',
         MEMORY_EMBED_MODEL: 'env-embed-model',
@@ -681,7 +710,6 @@ describe('config env overrides for branch coverage', () => {
         MEMORY_MAX_PROCEDURES_PER_GROUP: '750',
         ONECLI_URL: 'http://env-onecli',
         ANTHROPIC_MODEL: 'env-opus',
-        MEMORY_SQLITE_PATH: '/tmp/env-memory.db',
       }),
     }));
     vi.doMock('@core/core/runtime-memory-settings.js', () => ({
@@ -690,7 +718,8 @@ describe('config env overrides for branch coverage', () => {
     const cfg = await import('@core/core/config.js');
 
     expect(cfg.ASSISTANT_NAME).toBe('EnvBot');
-    expect(cfg.MEMORY_PROVIDER).toBe('sqlite');
+    expect(cfg.MEMORY_ROOT).toBe('/tmp/env-memory');
+    expect(cfg.MEMORY_SQLITE_PATH).toBe('/tmp/env-memory/.cache/memory.db');
     expect(cfg.OPENAI_API_KEY).toBe('env-api-key');
     expect(cfg.OPENAI_DAILY_EMBED_LIMIT).toBe(200);
     expect(cfg.MEMORY_EMBED_MODEL).toBe('text-embedding-3-large');
@@ -823,13 +852,13 @@ describe('resolveOptionalPath branches', () => {
     expect(cfg.MEMORY_GLOBAL_KNOWLEDGE_DIR).not.toBe('relative/path');
   });
 
-  it('resolves AGENT_MEMORY_ROOT/knowledge fallback from runtime settings', async () => {
+  it('resolves MEMORY_ROOT/knowledge fallback from runtime settings', async () => {
     const cfg = await loadConfigWithAllEnvAndRuntimeSnapshot(
       {
         MEMORY_GLOBAL_KNOWLEDGE_DIR: undefined,
       },
       {
-        qmdRoot: '/tmp/agent-root',
+        root: '/tmp/agent-root',
       },
     );
     expect(cfg.MEMORY_GLOBAL_KNOWLEDGE_DIR).toBe('/tmp/agent-root/knowledge');
@@ -837,14 +866,12 @@ describe('resolveOptionalPath branches', () => {
 });
 
 describe('AGENT_ROOT runtime root', () => {
-  it('uses AGENT_ROOT for runtime directories and relative sqlite path', async () => {
+  it('uses AGENT_ROOT for runtime directories and default sqlite path', async () => {
     const cfg = await loadConfigWithAllEnvAndRuntimeSnapshot(
       {
         AGENT_ROOT: '/tmp/myclaw-home',
       },
-      {
-        sqlitePath: 'store/custom-memory.db',
-      },
+      {},
     );
 
     expect(cfg.AGENT_ROOT).toBe('/tmp/myclaw-home');
@@ -852,20 +879,22 @@ describe('AGENT_ROOT runtime root', () => {
     expect(cfg.AGENTS_DIR).toBe('/tmp/myclaw-home/agents');
     expect(cfg.DATA_DIR).toBe('/tmp/myclaw-home/data');
     expect(cfg.MEMORY_SQLITE_PATH).toBe(
-      '/tmp/myclaw-home/store/custom-memory.db',
+      '/tmp/myclaw-home/memory/.cache/memory.db',
     );
   });
 
-  it('preserves absolute sqlite path when AGENT_ROOT is set', async () => {
+  it('honors runtime snapshot root override when AGENT_ROOT is set', async () => {
     const cfg = await loadConfigWithAllEnvAndRuntimeSnapshot(
       {
         AGENT_ROOT: '/tmp/myclaw-home',
       },
       {
-        sqlitePath: '/var/lib/myclaw/memory.db',
+        root: '/var/lib/myclaw/memory',
       },
     );
-    expect(cfg.MEMORY_SQLITE_PATH).toBe('/var/lib/myclaw/memory.db');
+    expect(cfg.MEMORY_SQLITE_PATH).toBe(
+      '/var/lib/myclaw/memory/.cache/memory.db',
+    );
   });
 });
 

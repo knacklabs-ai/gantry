@@ -1,8 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { AGENT_MEMORY_ROOT } from '../core/config.js';
-import { MemoryItem, MemoryProcedure } from './memory-types.js';
+import { MEMORY_ROOT } from '../core/config.js';
 
 export type SessionArchiveCause =
   | 'new-session'
@@ -11,15 +10,17 @@ export type SessionArchiveCause =
   | 'stale-session'
   | 'abandoned-session';
 
-export interface AgentMemoryLayout {
+export interface MemoryLayout {
   root: string;
-  profileDir: string;
-  journalDir: string;
-  sessionsDir: string;
+  itemsDir: string;
   proceduresDir: string;
+  sessionsDir: string;
   knowledgeDir: string;
-  rawDir: string;
+  dreamsDir: string;
+  dailyDir: string;
+  journalDir: string;
   cacheDir: string;
+  rawDir: string;
 }
 
 export interface LatestSessionRecap {
@@ -31,7 +32,7 @@ export interface LatestSessionRecap {
 function ensureWithinBase(baseDir: string, resolvedPath: string): void {
   const relative = path.relative(baseDir, resolvedPath);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error(`Path escapes AGENT_MEMORY_ROOT: ${resolvedPath}`);
+    throw new Error(`Path escapes memory root: ${resolvedPath}`);
   }
 }
 
@@ -39,7 +40,8 @@ function sanitizeSegment(input: string, fallback: string): string {
   const normalized = input
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
   return normalized || fallback;
 }
@@ -61,43 +63,34 @@ function writeFileAtomic(filePath: string, content: string): void {
     dir,
     `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
   );
-  fs.writeFileSync(tmpPath, content);
+  fs.writeFileSync(tmpPath, content, { mode: 0o600 });
   fs.renameSync(tmpPath, filePath);
 }
 
-function resolveConfiguredRoot(rootOverride?: string): string {
-  const configuredRoot =
-    rootOverride !== undefined ? rootOverride.trim() : AGENT_MEMORY_ROOT.trim();
-  if (!configuredRoot) {
-    throw new Error('AGENT_MEMORY_ROOT is required for durable memory.');
-  }
-  return path.resolve(configuredRoot);
-}
+let singleton: MemoryRootService | null = null;
 
-let singleton: AgentMemoryRootService | null = null;
-
-export class AgentMemoryRootService {
-  private readonly layout: AgentMemoryLayout;
+export class MemoryRootService {
+  private readonly layout: MemoryLayout;
 
   constructor(rootOverride?: string) {
-    const root = resolveConfiguredRoot(rootOverride);
+    const resolvedRoot = path.resolve(rootOverride?.trim() || MEMORY_ROOT);
     this.layout = {
-      root,
-      profileDir: path.join(root, 'profile'),
-      journalDir: path.join(root, 'journal'),
-      sessionsDir: path.join(root, 'sessions'),
-      proceduresDir: path.join(root, 'procedures'),
-      knowledgeDir: path.join(root, 'knowledge'),
-      rawDir: path.join(root, '.raw'),
-      cacheDir: path.join(root, '.cache'),
+      root: resolvedRoot,
+      itemsDir: path.join(resolvedRoot, 'items'),
+      proceduresDir: path.join(resolvedRoot, 'procedures'),
+      sessionsDir: path.join(resolvedRoot, 'sessions'),
+      knowledgeDir: path.join(resolvedRoot, 'knowledge'),
+      dreamsDir: path.join(resolvedRoot, 'dreams'),
+      dailyDir: path.join(resolvedRoot, 'daily'),
+      journalDir: path.join(resolvedRoot, '.journal'),
+      cacheDir: path.join(resolvedRoot, '.cache'),
+      rawDir: path.join(resolvedRoot, '.raw'),
     };
     this.ensureLayout();
   }
 
-  static getInstance(): AgentMemoryRootService {
-    if (!singleton) {
-      singleton = new AgentMemoryRootService();
-    }
+  static getInstance(): MemoryRootService {
+    if (!singleton) singleton = new MemoryRootService();
     return singleton;
   }
 
@@ -106,10 +99,10 @@ export class AgentMemoryRootService {
   }
 
   static setRootForTests(root: string): void {
-    singleton = new AgentMemoryRootService(root);
+    singleton = new MemoryRootService(root);
   }
 
-  getLayout(): AgentMemoryLayout {
+  getLayout(): MemoryLayout {
     return { ...this.layout };
   }
 
@@ -119,9 +112,13 @@ export class AgentMemoryRootService {
 
   resolveJournalPath(date = new Date()): string {
     const { year, month } = formatDateParts(date);
-    const dayStamp = date.toISOString().slice(0, 10);
     return this.resolveWithinRoot(
-      path.join(this.layout.journalDir, year, month, `${dayStamp}.md`),
+      path.join(
+        this.layout.journalDir,
+        year,
+        month,
+        `events-${year}-${month}.jsonl`,
+      ),
     );
   }
 
@@ -134,99 +131,15 @@ export class AgentMemoryRootService {
     const journalPath = this.resolveJournalPath(now);
     fs.mkdirSync(path.dirname(journalPath), { recursive: true });
     const entryLines = [
-      `## ${now.toISOString()} - ${input.title}`,
-      '',
-      ...input.lines.map((line) => `- ${line}`),
+      JSON.stringify({
+        ts: now.toISOString(),
+        title: input.title,
+        lines: input.lines,
+      }),
       '',
     ];
     fs.appendFileSync(journalPath, entryLines.join('\n'));
     return journalPath;
-  }
-
-  writeMemoryItem(item: MemoryItem): string {
-    const filePath = this.resolveWithinRoot(
-      path.join(
-        this.layout.profileDir,
-        `${sanitizeSegment(item.id, 'memory')}.md`,
-      ),
-    );
-    const lines = [
-      '# Memory Item',
-      '',
-      `id: ${item.id}`,
-      `scope: ${item.scope}`,
-      `group_folder: ${item.group_folder}`,
-      `user_id: ${item.user_id || ''}`,
-      `kind: ${item.kind}`,
-      `key: ${item.key}`,
-      `source: ${item.source}`,
-      `confidence: ${item.confidence}`,
-      `version: ${item.version}`,
-      `created_at: ${item.created_at}`,
-      `updated_at: ${item.updated_at}`,
-      '',
-      '## Value',
-      '',
-      item.value.trim(),
-      '',
-    ];
-    writeFileAtomic(filePath, lines.join('\n'));
-    return filePath;
-  }
-
-  deleteMemoryItem(id: string): void {
-    const filePath = this.resolveWithinRoot(
-      path.join(this.layout.profileDir, `${sanitizeSegment(id, 'memory')}.md`),
-    );
-    try {
-      fs.rmSync(filePath, { force: true });
-    } catch {
-      // Best effort cleanup.
-    }
-  }
-
-  writeProcedure(procedure: MemoryProcedure): string {
-    const filePath = this.resolveWithinRoot(
-      path.join(
-        this.layout.proceduresDir,
-        `${sanitizeSegment(procedure.id, 'procedure')}.md`,
-      ),
-    );
-    const lines = [
-      '# Procedure',
-      '',
-      `id: ${procedure.id}`,
-      `scope: ${procedure.scope}`,
-      `group_folder: ${procedure.group_folder}`,
-      `title: ${procedure.title}`,
-      `tags: ${procedure.tags.join(', ')}`,
-      `source: ${procedure.source}`,
-      `confidence: ${procedure.confidence}`,
-      `version: ${procedure.version}`,
-      `created_at: ${procedure.created_at}`,
-      `updated_at: ${procedure.updated_at}`,
-      '',
-      '## Body',
-      '',
-      procedure.body.trim(),
-      '',
-    ];
-    writeFileAtomic(filePath, lines.join('\n'));
-    return filePath;
-  }
-
-  deleteProcedure(id: string): void {
-    const filePath = this.resolveWithinRoot(
-      path.join(
-        this.layout.proceduresDir,
-        `${sanitizeSegment(id, 'procedure')}.md`,
-      ),
-    );
-    try {
-      fs.rmSync(filePath, { force: true });
-    } catch {
-      // Best effort cleanup.
-    }
   }
 
   writeSessionSummary(input: {
@@ -239,10 +152,9 @@ export class AgentMemoryRootService {
     slug?: string;
   }): string {
     const now = input.timestamp ?? new Date();
-    const { year, month } = formatDateParts(now);
-    const dayStamp = now.toISOString().slice(0, 10);
+    const { year, month, day } = formatDateParts(now);
     const dayDir = this.resolveWithinRoot(
-      path.join(this.layout.sessionsDir, year, month, dayStamp),
+      path.join(this.layout.sessionsDir, year, month, day),
     );
     fs.mkdirSync(dayDir, { recursive: true });
 
@@ -281,13 +193,15 @@ export class AgentMemoryRootService {
   private ensureLayout(): void {
     fs.mkdirSync(this.layout.root, { recursive: true });
     const dirs = [
-      this.layout.profileDir,
-      this.layout.journalDir,
-      this.layout.sessionsDir,
+      this.layout.itemsDir,
       this.layout.proceduresDir,
+      this.layout.sessionsDir,
       this.layout.knowledgeDir,
-      this.layout.rawDir,
+      this.layout.dreamsDir,
+      this.layout.dailyDir,
+      this.layout.journalDir,
       this.layout.cacheDir,
+      this.layout.rawDir,
     ];
     for (const dir of dirs) {
       const resolved = this.resolveWithinRoot(dir);

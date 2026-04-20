@@ -29,6 +29,22 @@ export interface MemoryStatusSnapshot {
   disk_kb?: Record<string, number>;
 }
 
+interface DreamQueueResult {
+  queued: boolean;
+  deduped: boolean;
+  pending?: number;
+  reason?: 'queued' | 'deduped' | 'full' | 'invalid';
+}
+
+function isDreamQueueResult(value: unknown): value is DreamQueueResult {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.queued === 'boolean' &&
+    typeof candidate.deduped === 'boolean'
+  );
+}
+
 function parseThinkingCommand(text: string): SessionCommand | null {
   if (text === '/thinking') return { kind: 'thinking_show', raw: '/thinking' };
 
@@ -411,6 +427,19 @@ export async function handleSessionCommand(opts: {
     }
     try {
       const result = await deps.runMemoryDreaming();
+      if (isDreamQueueResult(result)) {
+        if (!result.queued && result.reason === 'deduped') {
+          await deps.sendMessage(
+            `Dreaming already in progress.\n${JSON.stringify(result).slice(0, 1500)}`,
+          );
+          return { handled: true, success: true };
+        }
+        if (!result.queued) {
+          const reason = result.reason || 'rejected';
+          await deps.sendMessage(`/dream failed: ${sanitizeErrorText(reason)}`);
+          return { handled: true, success: true };
+        }
+      }
       const summary =
         result && typeof result === 'object'
           ? JSON.stringify(result)

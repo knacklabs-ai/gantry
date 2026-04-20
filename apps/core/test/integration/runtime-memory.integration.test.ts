@@ -207,11 +207,10 @@ describe('runtime memory integration', () => {
     expect(texts.some((text) => text?.includes('black coffee'))).toBe(false);
   });
 
-  it('writes QMD memory mirrors under configured qmd_root and not legacy agent memory folders', async () => {
+  it('writes memory markdown under configured memory.root and not agent-scoped memory folders', async () => {
     const harness = await createHermeticRuntimeHarness({
       configureSettings: (settings) => {
-        settings.memory.provider = 'qmd';
-        settings.memory.qmdRoot = 'agent-memory';
+        settings.memory.root = 'memory';
       },
     });
     activeHarnesses.push(harness);
@@ -219,35 +218,35 @@ describe('runtime memory integration', () => {
     harness.startIpcWatcher();
 
     harness.writeMemoryRequest('team', {
-      requestId: 'mem-qmd-save',
+      requestId: 'mem-root-save',
       action: 'memory_save',
       payload: {
         scope: 'group',
         kind: 'decision',
-        key: 'decision:qmd-root',
-        value: 'QMD mirrors must stay under configured qmd_root.',
+        key: 'decision:memory-root',
+        value: 'Memory writes must land under configured memory.root.',
       },
     });
 
     await harness.waitFor(() =>
       Boolean(
-        harness.readIpcJson('team', 'memory-responses', 'mem-qmd-save.json'),
+        harness.readIpcJson('team', 'memory-responses', 'mem-root-save.json'),
       ),
     );
 
-    const qmdRoot = path.join(harness.runtimeHome, 'agent-memory');
-    const legacyRoot = path.join(
+    const memoryRoot = path.join(harness.runtimeHome, 'memory');
+    const agentScopedMemoryRoot = path.join(
       harness.runtimeHome,
       'agents',
       'team',
       'memory',
     );
-    const qmdFiles = fs
-      .readdirSync(qmdRoot, { recursive: true })
+    const memoryFiles = fs
+      .readdirSync(memoryRoot, { recursive: true })
       .map(String)
       .filter((file) => file.endsWith('.md'));
 
-    expect(qmdFiles.length).toBeGreaterThan(0);
-    expect(fs.existsSync(legacyRoot)).toBe(false);
+    expect(memoryFiles.length).toBeGreaterThan(0);
+    expect(fs.existsSync(agentScopedMemoryRoot)).toBe(false);
   });
 });

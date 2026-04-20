@@ -78,7 +78,6 @@ function setFeatureFlags(
   const settings = loadRuntimeSettings(runtimeHome);
   if (flags.memory !== undefined) {
     settings.memory.enabled = flags.memory;
-    settings.memory.provider = flags.memory ? 'sqlite' : 'noop';
   }
   if (flags.embeddings !== undefined) {
     settings.memory.embeddings.enabled = flags.embeddings;
@@ -104,6 +103,22 @@ describe('doctor checks', () => {
     runDoctor(import.meta.url, runtimeHome);
 
     expect(fs.existsSync(settingsFilePath(runtimeHome))).toBe(true);
+  });
+
+  it('runs and reports when settings.yaml is malformed', () => {
+    const runtimeHome = createRuntimeHome();
+    fs.writeFileSync(
+      settingsFilePath(runtimeHome),
+      'memory:\n  root\n',
+      'utf-8',
+    );
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const check = report.checks.find((item) => item.id === 'runtime-settings');
+
+    expect(report.checks.length).toBeGreaterThan(0);
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain('invalid');
   });
 
   it('fails when no channels are enabled in settings.yaml', () => {
@@ -256,7 +271,7 @@ describe('doctor checks', () => {
     );
 
     expect(providerCheck?.status).toBe('pass');
-    expect(providerCheck?.message).toContain('sqlite');
+    expect(providerCheck?.message).toContain('Memory storage is healthy');
     expect(embeddingsCheck?.status).toBe('pass');
     expect(embeddingsCheck?.message).toContain('optional');
   });
@@ -284,7 +299,6 @@ describe('doctor checks', () => {
     upsertEnvFile(envFilePath(runtimeHome), {
       AGENT_RUNTIME: 'container',
       SETUP_CONTAINER: '1',
-      MEMORY_PROVIDER: 'qmd',
       MEMORY_EMBED_PROVIDER: 'openai',
     });
 
@@ -298,7 +312,7 @@ describe('doctor checks', () => {
 
     expect(unsupportedCheck).toBeUndefined();
     expect(providerCheck?.status).toBe('pass');
-    expect(providerCheck?.message).toContain('sqlite');
+    expect(providerCheck?.message).toContain('Memory storage is healthy');
   });
 });
 
