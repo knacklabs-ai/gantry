@@ -24,6 +24,10 @@ import {
   type ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import {
+  processAutomaticMemory,
+  type ConversationMetadata,
+} from './auto-memory.js';
 
 interface ContainerInput {
   prompt: string;
@@ -1184,6 +1188,36 @@ async function main(): Promise<void> {
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
 
       log('Query ended, waiting for next IPC message...');
+
+      // Automatic memory processing: capture important learnings from conversation
+      try {
+        const conversationMetadata: ConversationMetadata = {
+          userMessage: prompt || '',
+          sessionId: sessionId || '',
+          timestamp: new Date().toISOString(),
+          hasErrors: false, // Could be enhanced to detect actual errors
+        };
+
+        const groupIpcDir = resolveGroupIpcDir(containerInput.groupFolder);
+
+        const memoryResult = processAutomaticMemory(
+          conversationMetadata,
+          sessionId || '',
+          groupIpcDir,
+        );
+
+        if (memoryResult.saved > 0) {
+          log(
+            `✓ Auto-saved ${memoryResult.saved} memories (priority: ${memoryResult.processed} items analyzed)`,
+          );
+        } else if (memoryResult.skipped) {
+          log(`○ Memory skipped: ${memoryResult.skipped}`);
+        }
+      } catch (memoryError) {
+        log(
+          `Automatic memory processing failed: ${memoryError instanceof Error ? memoryError.message : String(memoryError)}`,
+        );
+      }
 
       // Wait for the next message or _close sentinel
       const nextMessage = await waitForIpcMessage();
