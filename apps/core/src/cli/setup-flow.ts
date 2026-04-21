@@ -24,7 +24,6 @@ import {
   envFilePath,
   ensureRuntimeWritable,
   resolveRuntimeHome,
-  savePreferredRuntimeHome,
 } from './runtime-home.js';
 import {
   createDefaultRuntimeSettings,
@@ -870,7 +869,6 @@ export async function runSetupFlow(
         runtimeHome = result.changedHome;
         draft.runtimeHome = runtimeHome;
         state.data.runtimeHome = runtimeHome;
-        savePreferredRuntimeHome(runtimeHome);
         if (previous !== runtimeHome) {
           clearOnboardingState(previous);
         }

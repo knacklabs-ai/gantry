@@ -47,7 +47,7 @@ Defaults in v1:
 - dreaming: off
 - sender allowlist: `channels.<provider>.sender_allowlist` in `settings.yaml`
 
-Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default and does not load or migrate state from `~/.myclaw`.
+Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default unless `--runtime-home` or `MYCLAW_HOME` is set.
 
 Canonical memory settings live in `~/myclaw/settings.yaml`:
 

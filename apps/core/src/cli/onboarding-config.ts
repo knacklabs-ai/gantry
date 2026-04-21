@@ -2,11 +2,7 @@ import { upsertEnvFile } from './env-file.js';
 import type { HostCredentialMode } from '../core/credential-mode.js';
 import '../channels/register-builtins.js';
 import { getChannelProvider } from '../channels/provider-registry.js';
-import {
-  envFilePath,
-  ensureRuntimeLayout,
-  savePreferredRuntimeHome,
-} from './runtime-home.js';
+import { envFilePath, ensureRuntimeLayout } from './runtime-home.js';
 import {
   loadRuntimeSettings,
   saveRuntimeSettings,
@@ -25,7 +21,6 @@ export interface OnboardingConfigInput {
 
 export function persistOnboardingConfig(input: OnboardingConfigInput): void {
   ensureRuntimeLayout(input.runtimeHome);
-  savePreferredRuntimeHome(input.runtimeHome);
 
   const onecliUrl = input.onecliUrl?.trim() || '';
 

@@ -90,7 +90,6 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
     envFilePath: (runtimeHome: string) => `${runtimeHome}/.env`,
     ensureRuntimeWritable: vi.fn(),
     resolveRuntimeHome: (runtimeHome: string) => runtimeHome,
-    savePreferredRuntimeHome: vi.fn(),
   }));
   vi.doMock('@core/cli/runtime-settings.js', () => ({
     loadRuntimeSettings: vi.fn(() => ({

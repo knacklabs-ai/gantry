@@ -9,6 +9,7 @@ import {
 
 describe('resolveRuntimeHome', () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 

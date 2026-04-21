@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-RUNTIME_HOME="${MYCLAW_HOME:-${MYCLAW_RUNTIME_HOME:-$HOME/.myclaw}}"
+RUNTIME_HOME="${MYCLAW_HOME:-$HOME/myclaw}"
 
 STORE_DB="$RUNTIME_HOME/store/messages.db"
 SESSIONS_DIR="$RUNTIME_HOME/data/sessions"
