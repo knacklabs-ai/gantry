@@ -4,14 +4,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const ORIGINAL_ENV = { ...process.env };
 
 function mockConfigEnvModule(values: Record<string, string> = {}) {
+  const readValue = (key: string) => {
+    const processValue = process.env[key]?.trim();
+    if (processValue) return processValue;
+    const envValue = values[key]?.trim();
+    return envValue || '';
+  };
   return {
     envConfig: values,
-    envValue: (key: string) => {
-      const processValue = process.env[key]?.trim();
-      if (processValue) return processValue;
-      const envValue = values[key]?.trim();
-      return envValue || '';
-    },
+    envValue: readValue,
+    envValueDynamic: readValue,
   };
 }
 
@@ -25,14 +27,24 @@ async function loadConfigWithEnv(env: { ANTHROPIC_MODEL?: string }) {
   vi.doMock('@core/core/config-env.js', () => mockConfigEnvModule());
   vi.doMock('@core/cli/runtime-settings.js', () => ({
     readRuntimeMemorySettingsSnapshot: () => ({}),
+    readRuntimeStorageSettingsSnapshot: () => ({}),
   }));
   return import('@core/core/config.js');
 }
 
 afterEach(() => {
   delete process.env.ANTHROPIC_MODEL;
+  for (const key of Object.keys(process.env)) {
+    if (!(key in ORIGINAL_ENV)) {
+      delete process.env[key];
+    }
+  }
   for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
-    process.env[key] = value;
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
   }
   vi.resetModules();
   vi.doUnmock('@core/core/config-env.js');
@@ -146,6 +158,7 @@ async function loadConfigWithAllEnv(env: Record<string, string | undefined>) {
   vi.doMock('@core/core/config-env.js', () => mockConfigEnvModule());
   vi.doMock('@core/cli/runtime-settings.js', () => ({
     readRuntimeMemorySettingsSnapshot: () => ({}),
+    readRuntimeStorageSettingsSnapshot: () => ({}),
   }));
   return import('@core/core/config.js');
 }
@@ -165,6 +178,7 @@ async function loadConfigWithAllEnvAndRuntimeSnapshot(
   vi.doMock('@core/core/config-env.js', () => mockConfigEnvModule());
   vi.doMock('@core/cli/runtime-settings.js', () => ({
     readRuntimeMemorySettingsSnapshot: () => snapshot,
+    readRuntimeStorageSettingsSnapshot: () => ({}),
   }));
   return import('@core/core/config.js');
 }
@@ -186,9 +200,137 @@ async function loadConfigWithRuntimeSnapshotError(
     readRuntimeMemorySettingsSnapshot: () => {
       throw new Error(message);
     },
+    readRuntimeStorageSettingsSnapshot: () => ({}),
   }));
   return import('@core/core/config.js');
 }
+
+async function loadConfigWithStorageSnapshot(
+  env: Record<string, string | undefined>,
+  snapshot: Record<string, unknown>,
+  configEnvValues: Record<string, string> = {},
+) {
+  vi.resetModules();
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  vi.doMock('@core/core/config-env.js', () =>
+    mockConfigEnvModule(configEnvValues),
+  );
+  vi.doMock('@core/cli/runtime-settings.js', () => ({
+    readRuntimeMemorySettingsSnapshot: () => ({}),
+    readRuntimeStorageSettingsSnapshot: () => snapshot,
+  }));
+  return import('@core/core/config.js');
+}
+
+async function loadConfigWithStorageSnapshotError(
+  env: Record<string, string | undefined>,
+  message = 'broken storage settings',
+) {
+  vi.resetModules();
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  vi.doMock('@core/core/config-env.js', () => mockConfigEnvModule());
+  vi.doMock('@core/cli/runtime-settings.js', () => ({
+    readRuntimeMemorySettingsSnapshot: () => ({}),
+    readRuntimeStorageSettingsSnapshot: () => {
+      throw new Error(message);
+    },
+  }));
+  return import('@core/core/config.js');
+}
+
+describe('storage runtime settings', () => {
+  it('throws when runtime storage settings snapshot cannot be parsed', async () => {
+    await expect(
+      loadConfigWithStorageSnapshotError(
+        {},
+        'storage.provider must be sqlite or postgres',
+      ),
+    ).rejects.toThrow(
+      'Invalid runtime storage settings: storage.provider must be sqlite or postgres',
+    );
+  });
+
+  it('resolves storage constants from runtime snapshot and process env', async () => {
+    const cfg = await loadConfigWithStorageSnapshot(
+      {
+        MYCLAW_HOME: '/tmp/myclaw-home',
+        CUSTOM_DB_URL: 'postgres://user:pass@localhost/myclaw',
+      },
+      {
+        provider: 'postgres',
+        sqlitePath: 'store/custom.db',
+        postgresUrlEnv: 'CUSTOM_DB_URL',
+      },
+    );
+
+    expect(cfg.STORAGE_PROVIDER).toBe('postgres');
+    expect(cfg.STORAGE_SQLITE_PATH).toBe('/tmp/myclaw-home/store/custom.db');
+    expect(cfg.STORAGE_POSTGRES_URL_ENV).toBe('CUSTOM_DB_URL');
+    expect(cfg.STORAGE_POSTGRES_URL).toBe(
+      'postgres://user:pass@localhost/myclaw',
+    );
+    expect(cfg.MEMORY_SQLITE_PATH).toBe(
+      '/tmp/myclaw-home/memory/.cache/memory.db',
+    );
+  });
+
+  it('resolves postgres url from runtime env config fallback', async () => {
+    const cfg = await loadConfigWithStorageSnapshot(
+      {
+        MYCLAW_HOME: '/tmp/myclaw-home',
+        CUSTOM_DB_URL: undefined,
+      },
+      {
+        provider: 'postgres',
+        sqlitePath: 'store/custom.db',
+        postgresUrlEnv: 'CUSTOM_DB_URL',
+      },
+      {
+        CUSTOM_DB_URL: 'postgres://env-file/myclaw',
+      },
+    );
+
+    expect(cfg.STORAGE_POSTGRES_URL).toBe('postgres://env-file/myclaw');
+  });
+
+  it('allows absolute sqlite paths when they remain under runtime home', async () => {
+    const cfg = await loadConfigWithStorageSnapshot(
+      {
+        MYCLAW_HOME: '/tmp/myclaw-home',
+      },
+      {
+        sqlitePath: '/tmp/myclaw-home/store/custom.db',
+      },
+    );
+
+    expect(cfg.STORAGE_SQLITE_PATH).toBe('/tmp/myclaw-home/store/custom.db');
+  });
+
+  it('rejects sqlite paths that resolve outside runtime home', async () => {
+    await expect(
+      loadConfigWithStorageSnapshot(
+        {
+          MYCLAW_HOME: '/tmp/myclaw-home',
+        },
+        {
+          sqlitePath: '/var/lib/myclaw/custom.db',
+        },
+      ),
+    ).rejects.toThrow(/storage\.sqlite\.path must resolve under runtime home/i);
+  });
+});
 
 describe('memory model defaults', () => {
   it('throws when runtime settings snapshot cannot be parsed', async () => {
@@ -699,6 +841,7 @@ describe('config env overrides for branch coverage', () => {
     );
     vi.doMock('@core/cli/runtime-settings.js', () => ({
       readRuntimeMemorySettingsSnapshot: () => ({}),
+      readRuntimeStorageSettingsSnapshot: () => ({}),
     }));
     const cfg = await import('@core/core/config.js');
 
@@ -891,6 +1034,7 @@ describe('HOME fallback', () => {
     vi.doMock('@core/core/config-env.js', () => mockConfigEnvModule());
     vi.doMock('@core/cli/runtime-settings.js', () => ({
       readRuntimeMemorySettingsSnapshot: () => ({}),
+      readRuntimeStorageSettingsSnapshot: () => ({}),
     }));
     try {
       const cfg = await import('@core/core/config.js');
@@ -917,6 +1061,7 @@ describe('resolveConfigTimezone fallback to UTC', () => {
     );
     vi.doMock('@core/cli/runtime-settings.js', () => ({
       readRuntimeMemorySettingsSnapshot: () => ({}),
+      readRuntimeStorageSettingsSnapshot: () => ({}),
     }));
     // Mock isValidTimezone to return false for everything except 'UTC'
     vi.doMock('@core/core/timezone.js', () => ({

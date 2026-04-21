@@ -137,6 +137,11 @@ channels:
       agents: {}
       log_denied: true
 
+storage:
+  provider: sqlite
+  sqlite:
+    path: store/myclaw.db
+
 memory:
   enabled: true
   root: memory
@@ -158,7 +163,8 @@ Rules:
 - At least one channel should be enabled for normal operation.
 - Enabled channels require matching credentials in `.env`.
 - `memory.root` is resolved relative to runtime home unless absolute.
-- `memory.embeddings.provider` is `disabled`, `none`, or `openai`.
+- `storage.provider` must be `sqlite` in host runtime.
+- `memory.embeddings.provider` is `disabled` or `openai`.
 - `memory.embeddings.enabled: true` with `provider: openai` requires `OPENAI_API_KEY`.
 - Sender policy `allow` is `"*"` or a string array.
 - Sender policy `mode` is `trigger` or `drop`.

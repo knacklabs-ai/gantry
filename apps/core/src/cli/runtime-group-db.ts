@@ -4,6 +4,10 @@ import Database from 'better-sqlite3';
 
 import { RegisteredGroup } from '../core/types.js';
 import { isValidGroupFolder } from '../platform/group-folder.js';
+import {
+  ensureRuntimeSettings,
+  resolveRuntimeStorageSqlitePath,
+} from './runtime-settings.js';
 
 export interface RuntimeGroupDb {
   getAllRegisteredGroups(): Record<string, RegisteredGroup>;
@@ -14,7 +18,8 @@ export interface RuntimeGroupDb {
 }
 
 function openDatabase(runtimeHome: string): Database.Database {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const settings = ensureRuntimeSettings(runtimeHome);
+  const dbPath = resolveRuntimeStorageSqlitePath(runtimeHome, settings);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
 

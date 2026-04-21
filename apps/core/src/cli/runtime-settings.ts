@@ -16,8 +16,14 @@ import {
 } from './runtime-home.js';
 import {
   parseRuntimeMemorySnapshotFromRoot,
+  parseRuntimeStorageSnapshotFromRoot,
   type RuntimeMemorySettingsSnapshot,
+  type RuntimeStorageSettingsSnapshot,
 } from './runtime-memory-settings-snapshot.js';
+import {
+  parseSimpleYamlObject,
+  quoteYamlString,
+} from './runtime-settings-yaml.js';
 
 export interface ChatAllowlistEntry {
   allow: '*' | string[];
@@ -37,7 +43,8 @@ export interface RuntimeChannelSettings {
   senderAllowlist: SenderAllowlistConfig;
 }
 
-export type EmbeddingProviderName = 'disabled' | 'none' | 'openai';
+export type StorageProviderName = 'sqlite' | 'postgres';
+export type EmbeddingProviderName = 'disabled' | 'openai';
 export type MemoryModelProfile = 'cheap' | 'balanced' | 'quality';
 export type MemoryModelTask = 'extractor' | 'dreaming' | 'consolidation';
 
@@ -63,10 +70,21 @@ export interface RuntimeMemorySettings {
   };
 }
 
-export type { RuntimeMemorySettingsSnapshot };
+export interface RuntimeStorageSettings {
+  provider: StorageProviderName;
+  sqlite: {
+    path: string;
+  };
+  postgres: {
+    urlEnv: string;
+  };
+}
+
+export type { RuntimeMemorySettingsSnapshot, RuntimeStorageSettingsSnapshot };
 
 export interface RuntimeSettings {
   channels: Record<string, RuntimeChannelSettings>;
+  storage: RuntimeStorageSettings;
   memory: RuntimeMemorySettings;
 }
 
@@ -89,9 +107,15 @@ const DEFAULT_SENDER_ALLOWLIST: SenderAllowlistConfig = {
 
 const VALID_EMBEDDING_PROVIDERS = new Set<EmbeddingProviderName>([
   'disabled',
-  'none',
   'openai',
 ]);
+const VALID_STORAGE_PROVIDERS = new Set<StorageProviderName>([
+  'sqlite',
+  'postgres',
+]);
+const DEFAULT_STORAGE_PROVIDER: StorageProviderName = 'sqlite';
+const DEFAULT_STORAGE_SQLITE_PATH = path.join('store', 'myclaw.db');
+const DEFAULT_STORAGE_POSTGRES_URL_ENV = 'MYCLAW_DATABASE_URL';
 const DEFAULT_MEMORY_STORAGE_DIR = 'memory';
 const DEFAULT_EMBED_MODEL = 'text-embedding-3-large';
 const DEFAULT_MODEL_HAIKU = 'claude-haiku-4-5-20251001';
@@ -127,150 +151,6 @@ export function getMemoryModelProfileDefaults(
     dreaming: selected.dreaming,
     consolidation: selected.consolidation,
   };
-}
-
-function unquote(value: string): string {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-function parseStringArray(raw: string): string[] {
-  const trimmed = raw.trim();
-  if (trimmed === '[]') return [];
-
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (
-      Array.isArray(parsed) &&
-      parsed.every((item) => typeof item === 'string' && item.trim())
-    ) {
-      return parsed.map((item) => item.trim());
-    }
-  } catch {
-    // Fallback parser below.
-  }
-
-  const body = trimmed.slice(1, -1).trim();
-  if (!body) return [];
-  return body
-    .split(',')
-    .map((item) => unquote(item))
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
-function stripInlineComment(raw: string): string {
-  let inSingle = false;
-  let inDouble = false;
-  for (let i = 0; i < raw.length; i += 1) {
-    const ch = raw[i];
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-      continue;
-    }
-    if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-      continue;
-    }
-    if (ch === '#' && !inSingle && !inDouble) {
-      return raw.slice(0, i).trimEnd();
-    }
-  }
-  return raw.trimEnd();
-}
-
-function parseScalar(raw: string): unknown {
-  const value = stripInlineComment(raw).trim();
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  if (value === '{}') return {};
-  if (/^-?[0-9]+$/.test(value)) return Number.parseInt(value, 10);
-  if (value.startsWith('[') && value.endsWith(']')) {
-    return parseStringArray(value);
-  }
-  return unquote(value);
-}
-
-function splitKeyValue(
-  trimmedLine: string,
-  lineNo: number,
-): { key: string; rest: string } {
-  let inSingle = false;
-  let inDouble = false;
-
-  for (let i = 0; i < trimmedLine.length; i += 1) {
-    const ch = trimmedLine[i];
-    if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-      continue;
-    }
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-      continue;
-    }
-    if (ch === ':' && !inSingle && !inDouble) {
-      const keyRaw = trimmedLine.slice(0, i).trim();
-      const rest = trimmedLine.slice(i + 1).trim();
-      if (!keyRaw) {
-        throw new Error(`missing key before ':' (line ${lineNo + 1})`);
-      }
-      return { key: unquote(keyRaw), rest };
-    }
-  }
-
-  throw new Error(`expected "key: value" mapping (line ${lineNo + 1})`);
-}
-
-function parseSimpleYamlObject(raw: string): Record<string, unknown> {
-  const root: Record<string, unknown> = {};
-  const stack: Array<{ indent: number; value: Record<string, unknown> }> = [
-    { indent: -1, value: root },
-  ];
-
-  const lines = raw.split(/\r?\n/);
-  for (let lineNo = 0; lineNo < lines.length; lineNo += 1) {
-    const line = lines[lineNo];
-    if (!line.trim()) continue;
-    if (line.trimStart().startsWith('#')) continue;
-    if (line.includes('\t')) {
-      throw new Error(`tabs are not supported (line ${lineNo + 1})`);
-    }
-
-    const indent = line.match(/^ */)?.[0].length || 0;
-    if (indent % 2 !== 0) {
-      throw new Error(
-        `indentation must be 2-space aligned (line ${lineNo + 1})`,
-      );
-    }
-
-    const trimmed = line.trim();
-    const { key, rest } = splitKeyValue(trimmed, lineNo);
-
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
-      stack.pop();
-    }
-    const parent = stack[stack.length - 1]?.value;
-    if (!parent) {
-      throw new Error(`invalid indentation nesting (line ${lineNo + 1})`);
-    }
-
-    if (!rest) {
-      const child: Record<string, unknown> = {};
-      parent[key] = child;
-      stack.push({ indent, value: child });
-      continue;
-    }
-
-    parent[key] = parseScalar(rest);
-  }
-
-  return root;
 }
 
 function isValidAllowlistEntry(entry: unknown): entry is ChatAllowlistEntry {
@@ -401,9 +281,81 @@ function parseEmbeddingProvider(
     typeof raw !== 'string' ||
     !VALID_EMBEDDING_PROVIDERS.has(raw as EmbeddingProviderName)
   ) {
-    throw new Error(`${pathPrefix} must be disabled, none, or openai`);
+    throw new Error(`${pathPrefix} must be disabled or openai`);
   }
   return raw as EmbeddingProviderName;
+}
+
+function parseStorageProvider(
+  raw: unknown,
+  pathPrefix: string,
+  fallback: StorageProviderName,
+): StorageProviderName {
+  if (raw === undefined) return fallback;
+  if (
+    typeof raw !== 'string' ||
+    !VALID_STORAGE_PROVIDERS.has(raw as StorageProviderName)
+  ) {
+    throw new Error(`${pathPrefix} must be sqlite or postgres`);
+  }
+  return raw as StorageProviderName;
+}
+
+function parseStorageSettings(raw: unknown): RuntimeStorageSettings {
+  if (raw === undefined) {
+    return {
+      provider: DEFAULT_STORAGE_PROVIDER,
+      sqlite: { path: DEFAULT_STORAGE_SQLITE_PATH },
+      postgres: { urlEnv: DEFAULT_STORAGE_POSTGRES_URL_ENV },
+    };
+  }
+
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('storage must be a mapping');
+  }
+  const map = raw as Record<string, unknown>;
+  const sqliteRaw = map.sqlite;
+  if (
+    sqliteRaw !== undefined &&
+    (typeof sqliteRaw !== 'object' ||
+      sqliteRaw === null ||
+      Array.isArray(sqliteRaw))
+  ) {
+    throw new Error('storage.sqlite must be a mapping');
+  }
+  const sqlite = (sqliteRaw || {}) as Record<string, unknown>;
+  const postgresRaw = map.postgres;
+  if (
+    postgresRaw !== undefined &&
+    (typeof postgresRaw !== 'object' ||
+      postgresRaw === null ||
+      Array.isArray(postgresRaw))
+  ) {
+    throw new Error('storage.postgres must be a mapping');
+  }
+  const postgres = (postgresRaw || {}) as Record<string, unknown>;
+
+  return {
+    provider: parseStorageProvider(
+      map.provider,
+      'storage.provider',
+      DEFAULT_STORAGE_PROVIDER,
+    ),
+    sqlite: {
+      path: parseStringValue(
+        sqlite.path,
+        'storage.sqlite.path',
+        DEFAULT_STORAGE_SQLITE_PATH,
+      ),
+    },
+    postgres: {
+      urlEnv: parseStringValue(
+        postgres.url_env,
+        'storage.postgres.url_env',
+        DEFAULT_STORAGE_POSTGRES_URL_ENV,
+      ),
+    },
+  };
 }
 
 function parseMemoryLlmModels(
@@ -443,6 +395,13 @@ function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
   }
 
   const map = raw as Record<string, unknown>;
+  for (const deprecated of ['provider', 'sqlite_path', 'qmd_root']) {
+    if (Object.prototype.hasOwnProperty.call(map, deprecated)) {
+      throw new Error(
+        `memory.${deprecated} is not supported. Use memory.enabled/storage.* settings.`,
+      );
+    }
+  }
   const embeddingsRaw = map.embeddings;
   if (
     typeof embeddingsRaw !== 'object' ||
@@ -545,10 +504,12 @@ export function parseRuntimeSettings(raw: string): RuntimeSettings {
       'features block is not supported. Configure memory settings under memory.*',
     );
   }
+  const storage = parseStorageSettings(root.storage);
   const memory = parseMemorySettings(root.memory);
 
   return {
     channels: channelSettings,
+    storage,
     memory,
   };
 }
@@ -557,13 +518,39 @@ interface RegisteredGroupSummary {
   count: number;
   folders: Set<string>;
   error?: string;
+  unavailable?: boolean;
+}
+
+function isPathWithinRoot(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return (
+    relative === '' ||
+    (!relative.startsWith('..') && !path.isAbsolute(relative))
+  );
+}
+
+export function resolveRuntimeStorageSqlitePath(
+  runtimeHome: string,
+  settings: RuntimeSettings,
+): string {
+  const rawPath = settings.storage.sqlite.path.trim();
+  const resolved = path.isAbsolute(rawPath)
+    ? path.resolve(rawPath)
+    : path.resolve(runtimeHome, rawPath);
+  if (!isPathWithinRoot(runtimeHome, resolved)) {
+    throw new Error(
+      `storage.sqlite.path must resolve under runtime home (${runtimeHome})`,
+    );
+  }
+  return resolved;
 }
 
 function getRegisteredGroupSummary(
   runtimeHome: string,
+  settings: RuntimeSettings,
   prefix: string,
 ): RegisteredGroupSummary {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const dbPath = resolveRuntimeStorageSqlitePath(runtimeHome, settings);
   if (!fs.existsSync(dbPath)) {
     return { count: 0, folders: new Set() };
   }
@@ -601,11 +588,6 @@ function getRegisteredGroupSummary(
 function quoteYamlKey(key: string): string {
   if (/^[A-Za-z0-9_-]+$/.test(key)) return key;
   return JSON.stringify(key);
-}
-
-function quoteYamlString(value: string): string {
-  if (/^[A-Za-z0-9_./-]+$/.test(value)) return value;
-  return JSON.stringify(value);
 }
 
 function renderAllowValue(allow: '*' | string[]): string {
@@ -658,6 +640,19 @@ function renderMemorySettingsYaml(
   );
 }
 
+function renderStorageSettingsYaml(
+  lines: string[],
+  storage: RuntimeStorageSettings,
+): void {
+  lines.push(
+    'storage:',
+    `  provider: ${storage.provider}`,
+    '  sqlite:',
+    `    path: ${quoteYamlString(storage.sqlite.path)}`,
+    '',
+  );
+}
+
 function renderRuntimeSettingsYaml(settings: RuntimeSettings): string {
   const lines = ['channels:'];
   const providerIds = listChannelProviders().map((provider) => provider.id);
@@ -677,6 +672,7 @@ function renderRuntimeSettingsYaml(settings: RuntimeSettings): string {
   }
 
   lines.push('');
+  renderStorageSettingsYaml(lines, settings.storage);
   renderMemorySettingsYaml(lines, settings.memory);
 
   return lines.join('\n');
@@ -707,6 +703,15 @@ function createDefaultChannelSettings(
 }
 
 export function createDefaultRuntimeSettings(): RuntimeSettings {
+  const storage: RuntimeStorageSettings = {
+    provider: DEFAULT_STORAGE_PROVIDER,
+    sqlite: {
+      path: DEFAULT_STORAGE_SQLITE_PATH,
+    },
+    postgres: {
+      urlEnv: DEFAULT_STORAGE_POSTGRES_URL_ENV,
+    },
+  };
   const memory: RuntimeMemorySettings = {
     enabled: true,
     root: DEFAULT_MEMORY_STORAGE_DIR,
@@ -729,6 +734,7 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
         createDefaultChannelSettings(false),
       ]),
     ),
+    storage,
     memory,
   };
 }
@@ -786,12 +792,34 @@ export function readRuntimeMemorySettingsSnapshot(
   return parseRuntimeMemorySnapshotFromRoot(parsed as Record<string, unknown>);
 }
 
+export function readRuntimeStorageSettingsSnapshot(
+  runtimeHome: string,
+): RuntimeStorageSettingsSnapshot {
+  const filePath = settingsFilePath(runtimeHome);
+  if (!fs.existsSync(filePath)) return {};
+
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const parsed = raw.trimStart().startsWith('{')
+    ? (JSON.parse(raw) as unknown)
+    : (parseSimpleYamlObject(raw) as unknown);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('root must be a mapping');
+  }
+  return parseRuntimeStorageSnapshotFromRoot(parsed as Record<string, unknown>);
+}
+
 export function validateRuntimeSettings(
   runtimeHome: string,
 ): RuntimeSettingsValidationResult {
   try {
     const { settings } = ensureRuntimeSettingsLoaded(runtimeHome);
     const details: string[] = [];
+
+    try {
+      resolveRuntimeStorageSqlitePath(runtimeHome, settings);
+    } catch (err) {
+      details.push(err instanceof Error ? err.message : String(err));
+    }
 
     const env = readEnvFile(envFilePath(runtimeHome));
     const enabledChannelIds = Object.entries(settings.channels)
@@ -817,8 +845,12 @@ export function validateRuntimeSettings(
 
       const summary = getRegisteredGroupSummary(
         runtimeHome,
+        settings,
         `${provider.jidPrefix}%`,
       );
+      if (summary.unavailable) {
+        continue;
+      }
       if (summary.error) {
         details.push(
           `Could not validate registered groups for '${provider.id}': ${summary.error}`,
@@ -842,6 +874,12 @@ export function validateRuntimeSettings(
           );
         }
       }
+    }
+
+    if (settings.storage.provider === 'postgres') {
+      details.push(
+        'storage.provider=postgres is not available in host runtime. Use storage.provider=sqlite.',
+      );
     }
 
     if (

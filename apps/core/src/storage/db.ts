@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { STORE_DIR } from '../core/config.js';
+import { STORAGE_SQLITE_PATH } from '../core/config.js';
 import { nowIso as currentIso } from '../core/datetime.js';
 import {
   decodeGlobalMessageCursor,
@@ -193,7 +193,7 @@ function assertTableColumns(
   throw new Error(
     `[MyClaw] incompatible SQLite schema in ${tableName}; missing columns: ${missing.join(
       ', ',
-    )}. Recreate store/messages.db with the current schema.`,
+    )}. Recreate storage.sqlite.path with the current schema.`,
   );
 }
 
@@ -206,23 +206,6 @@ function assertSchemaCompatibility(database: Database.Database): void {
     'registered_groups',
     REQUIRED_SCHEMA_COLUMNS.registered_groups,
   );
-}
-
-function hasTableColumn(
-  database: Database.Database,
-  tableName: string,
-  columnName: string,
-): boolean {
-  const rows = database
-    .prepare(`PRAGMA table_info(${tableName})`)
-    .all() as Array<{ name?: string }>;
-  return rows.some((row) => String(row.name || '') === columnName);
-}
-
-function applySchemaMigrations(database: Database.Database): void {
-  if (!hasTableColumn(database, 'jobs', 'session_id')) {
-    database.exec('ALTER TABLE jobs ADD COLUMN session_id TEXT');
-  }
 }
 
 function createSchema(database: Database.Database): void {
@@ -336,12 +319,11 @@ function createSchema(database: Database.Database): void {
 }
 
 export function initDatabase(): void {
-  const dbPath = path.join(STORE_DIR, 'messages.db');
+  const dbPath = STORAGE_SQLITE_PATH;
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
   createSchema(db);
-  applySchemaMigrations(db);
   assertSchemaCompatibility(db);
 }
 
@@ -349,14 +331,12 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
-  applySchemaMigrations(db);
   assertSchemaCompatibility(db);
 }
 
 /** @internal - for tests only. Applies schema/migrations to a provided DB. */
 export function _createSchemaForTest(database: Database.Database): void {
   createSchema(database);
-  applySchemaMigrations(database);
   assertSchemaCompatibility(database);
 }
 

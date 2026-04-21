@@ -2,10 +2,12 @@ import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 function mockConfigEnvModule(values: Record<string, string> = {}) {
+  const readValue = (key: string) =>
+    process.env[key]?.trim() || values[key]?.trim() || '';
   return {
     envConfig: values,
-    envValue: (key: string) =>
-      process.env[key]?.trim() || values[key]?.trim() || '',
+    envValue: readValue,
+    envValueDynamic: readValue,
   };
 }
 
@@ -28,6 +30,7 @@ describe('ipc auth secret source', () => {
     );
     vi.doMock('@core/cli/runtime-settings.js', () => ({
       readRuntimeMemorySettingsSnapshot: () => ({}),
+      readRuntimeStorageSettingsSnapshot: () => ({}),
     }));
     vi.doMock('@core/core/logger.js', () => ({
       logger: { warn: vi.fn() },
@@ -52,6 +55,7 @@ describe('ipc auth secret source', () => {
     );
     vi.doMock('@core/cli/runtime-settings.js', () => ({
       readRuntimeMemorySettingsSnapshot: () => ({}),
+      readRuntimeStorageSettingsSnapshot: () => ({}),
     }));
     vi.doMock('@core/core/logger.js', () => ({
       logger: { warn: vi.fn() },

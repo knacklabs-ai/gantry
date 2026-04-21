@@ -47,8 +47,7 @@ These run on the host machine:
 - `myclaw setup` -- Guided setup wizard
 - `myclaw doctor` -- Runtime diagnostics and dependency checks
 - `myclaw status` -- Show runtime health and configuration
-- `myclaw memory status` -- Show memory/provider/embeddings/dreaming state
-- `myclaw memory provider <sqlite|qmd|noop|none>` -- Set memory provider
+- `myclaw memory status` -- Show memory/storage/embeddings/dreaming state
 - `myclaw memory embeddings <off|openai>` -- Set embeddings mode
 - `myclaw memory dreaming <on|off>` -- Set dreaming mode
 - `myclaw start` -- Start MyClaw in the foreground

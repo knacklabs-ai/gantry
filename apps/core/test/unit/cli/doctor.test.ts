@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  hasRegisteredAnyGroup,
   hasProcessableGroupForConfiguredChannel,
   runDoctor,
   runDoctorWithNetwork,
@@ -27,7 +28,7 @@ function createRuntimeHome(): string {
 }
 
 function seedRegisteredGroups(runtimeHome: string, jids: string[]): void {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const dbPath = path.join(runtimeHome, 'store', 'myclaw.db');
   const db = new Database(dbPath);
   try {
     db.exec(
@@ -46,7 +47,7 @@ function seedRegisteredGroupFolders(
   runtimeHome: string,
   rows: Array<{ jid: string; folder: string }>,
 ): void {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const dbPath = path.join(runtimeHome, 'store', 'myclaw.db');
   const db = new Database(dbPath);
   try {
     db.exec(
@@ -88,6 +89,15 @@ function setFeatureFlags(
   if (flags.dreaming !== undefined) {
     settings.memory.dreaming.enabled = flags.dreaming;
   }
+  saveRuntimeSettings(runtimeHome, settings);
+}
+
+function setStorageProvider(
+  runtimeHome: string,
+  provider: 'sqlite' | 'postgres',
+): void {
+  const settings = loadRuntimeSettings(runtimeHome);
+  settings.storage.provider = provider;
   saveRuntimeSettings(runtimeHome, settings);
 }
 
@@ -198,7 +208,7 @@ describe('doctor checks', () => {
     const runtimeHome = createRuntimeHome();
     setChannelEnabled(runtimeHome, 'telegram', true);
     fs.writeFileSync(
-      path.join(runtimeHome, 'store', 'messages.db'),
+      path.join(runtimeHome, 'store', 'myclaw.db'),
       'not-a-sqlite-db',
       'utf-8',
     );
@@ -208,6 +218,24 @@ describe('doctor checks', () => {
 
     expect(check?.status).toBe('fail');
     expect(check?.message).toContain('runtime database may be corrupted');
+  });
+
+  it('inspects group and ipc layout from configured sqlite path in postgres mode', () => {
+    const runtimeHome = createRuntimeHome();
+    setChannelEnabled(runtimeHome, 'telegram', true);
+    setStorageProvider(runtimeHome, 'postgres');
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const ipcLayout = report.checks.find((item) => item.id === 'ipc-layout');
+    const telegramGroups = report.checks.find(
+      (item) => item.id === 'telegram-groups',
+    );
+
+    expect(ipcLayout?.status).toBe('pass');
+    expect(telegramGroups?.status).toBe('warn');
+    expect(telegramGroups?.message).toContain(
+      'No Telegram groups are registered',
+    );
   });
 
   it('re-validates Telegram token via API in network doctor', async () => {
@@ -349,5 +377,18 @@ describe('hasProcessableGroupForConfiguredChannel', () => {
     seedRegisteredGroups(runtimeHome, ['sl:C123456']);
 
     expect(hasProcessableGroupForConfiguredChannel(runtimeHome)).toBe(false);
+  });
+
+  it('returns true when non-sqlite provider still has registered groups in sqlite runtime store', () => {
+    const runtimeHome = createRuntimeHome();
+    setChannelEnabled(runtimeHome, 'telegram', true);
+    setStorageProvider(runtimeHome, 'postgres');
+    upsertEnvFile(envFilePath(runtimeHome), {
+      TELEGRAM_BOT_TOKEN: 'token',
+    });
+    seedRegisteredGroups(runtimeHome, ['tg:123']);
+
+    expect(hasRegisteredAnyGroup(runtimeHome)).toBe(true);
+    expect(hasProcessableGroupForConfiguredChannel(runtimeHome)).toBe(true);
   });
 });

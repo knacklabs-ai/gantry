@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 import Database from 'better-sqlite3';
 import '../channels/register-builtins.js';
 import { listChannelProviders } from '../channels/provider-registry.js';
@@ -8,7 +7,10 @@ import { readEnvFile } from './env-file.js';
 import { DoctorReport, runDoctor } from './doctor.js';
 import { getServiceStatus } from './service-manager.js';
 import { envFilePath } from './runtime-home.js';
-import { ensureRuntimeSettings } from './runtime-settings.js';
+import {
+  ensureRuntimeSettings,
+  resolveRuntimeStorageSqlitePath,
+} from './runtime-settings.js';
 import { inspectMemoryHealth } from './memory-health.js';
 
 export interface RuntimeStatusSummary {
@@ -33,6 +35,7 @@ export interface RuntimeStatusSummary {
   memoryRootSource: string;
   memorySqlitePath: string;
   memorySqlitePathSource: string;
+  storageProvider: string;
   embeddingsEnabled: boolean;
   embeddingProvider: string;
   embeddingProviderSource: string;
@@ -45,9 +48,15 @@ export interface RuntimeStatusSummary {
 
 function countRegisteredGroupsByPrefix(
   runtimeHome: string,
+  settings: ReturnType<typeof ensureRuntimeSettings>,
   jidPrefix: string,
 ): number {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  let dbPath: string;
+  try {
+    dbPath = resolveRuntimeStorageSqlitePath(runtimeHome, settings);
+  } catch {
+    return 0;
+  }
   if (!fs.existsSync(dbPath)) return 0;
 
   let db: Database.Database | null = null;
@@ -97,7 +106,11 @@ export function collectRuntimeStatus(
       enabled: settings.channels[provider.id]?.enabled ?? false,
       configuredEnvKeys,
       missingEnvKeys,
-      groups: countRegisteredGroupsByPrefix(runtimeHome, provider.jidPrefix),
+      groups: countRegisteredGroupsByPrefix(
+        runtimeHome,
+        settings,
+        provider.jidPrefix,
+      ),
     };
   });
 
@@ -113,6 +126,7 @@ export function collectRuntimeStatus(
     memoryRootSource: memoryHealth.memoryRootSource,
     memorySqlitePath: memoryHealth.sqlitePath,
     memorySqlitePathSource: memoryHealth.sqlitePathSource,
+    storageProvider: memoryHealth.storageProvider,
     embeddingsEnabled: memoryHealth.embeddingsEnabled,
     embeddingProvider: memoryHealth.embeddingProvider,
     embeddingProviderSource: memoryHealth.embeddingProviderSource,
@@ -159,8 +173,9 @@ export function formatRuntimeStatus(summary: RuntimeStatusSummary): string {
   lines.push(
     `Memory storage: ${summary.memoryHealth} (root: ${summary.memoryRoot}, source: ${summary.memoryRootSource})`,
   );
+  lines.push(`Storage provider: ${summary.storageProvider}`);
   lines.push(
-    `SQLite memory DB: ${summary.memorySqlitePath} (source: ${summary.memorySqlitePathSource})`,
+    `Memory DB path: ${summary.memorySqlitePath} (source: ${summary.memorySqlitePathSource})`,
   );
   lines.push(`Embeddings: ${statusWord(summary.embeddingsEnabled)}`);
   lines.push(

@@ -12,10 +12,12 @@ vi.mock('@core/memory/claude-query.js', () => ({
 }));
 
 function mockConfigEnvModule(values: Record<string, string> = {}) {
+  const readValue = (key: string) =>
+    process.env[key]?.trim() || values[key]?.trim() || '';
   return {
     envConfig: values,
-    envValue: (key: string) =>
-      process.env[key]?.trim() || values[key]?.trim() || '',
+    envValue: readValue,
+    envValueDynamic: readValue,
   };
 }
 
@@ -53,6 +55,7 @@ describe('memory model routing integration', () => {
         llmDreamingModel: 'model-dreaming-custom',
         llmConsolidationModel: 'model-consolidation-custom',
       }),
+      readRuntimeStorageSettingsSnapshot: () => ({}),
     }));
 
     runClaudeQueryMock.mockImplementation(

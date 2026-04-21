@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 
 import * as prompts from '@clack/prompts';
+import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { upsertEnvFile } from '@core/cli/env-file.js';
@@ -43,6 +44,10 @@ function createRuntimeHome(): string {
   fs.mkdirSync(path.join(home, 'data'), { recursive: true });
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
   return home;
+}
+
+function memoryDbPath(runtimeHome: string): string {
+  return path.join(runtimeHome, 'memory', '.cache', 'memory.db');
 }
 
 describe('memory CLI commands', () => {
@@ -293,7 +298,7 @@ describe('memory CLI commands', () => {
   });
 
   it('removes deleted item markdown by frontmatter id before full reindex', async () => {
-    const sqlitePath = path.join(runtimeHome, 'memory', '.cache', 'memory.db');
+    const sqlitePath = memoryDbPath(runtimeHome);
     fs.mkdirSync(path.dirname(sqlitePath), { recursive: true });
     const store = new MemoryStore(sqlitePath);
     try {
@@ -342,6 +347,39 @@ describe('memory CLI commands', () => {
     const code = await runMemoryCommand(runtimeHome, ['reindex', '--full']);
     expect(code).toBe(0);
     expect(fs.existsSync(staleMirror)).toBe(false);
+  });
+
+  it('full reindex drops only memory tables and keeps runtime tables', async () => {
+    const sqlitePath = memoryDbPath(runtimeHome);
+    fs.mkdirSync(path.dirname(sqlitePath), { recursive: true });
+    const db = new Database(sqlitePath);
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chats (
+          jid TEXT PRIMARY KEY,
+          name TEXT
+        );
+      `);
+      db.prepare(`INSERT OR REPLACE INTO chats (jid, name) VALUES (?, ?)`).run(
+        'tg:runtime',
+        'Runtime Group',
+      );
+    } finally {
+      db.close();
+    }
+
+    const code = await runMemoryCommand(runtimeHome, ['reindex', '--full']);
+    expect(code).toBe(0);
+
+    const verify = new Database(sqlitePath, { readonly: true });
+    try {
+      const chatCount = verify
+        .prepare(`SELECT COUNT(*) AS count FROM chats`)
+        .get() as { count: number };
+      expect(chatCount.count).toBe(1);
+    } finally {
+      verify.close();
+    }
   });
 
   it('runs reindex without touching MemoryService singleton', async () => {
