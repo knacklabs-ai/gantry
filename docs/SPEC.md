@@ -73,14 +73,14 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 
 ### Technology Stack
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Channel System | Provider registry (`apps/core/src/channels/provider-registry.ts`) | Channels are looked up by provider id and JID prefix |
-| Message Storage | SQLite (better-sqlite3) | Store messages for polling |
-| Runtime Execution | Host process execution | Agent execution with runtime-home scoped paths |
-| Agent | @anthropic-ai/claude-agent-sdk (0.2.97) | Run Claude with tools and MCP servers |
-| Browser Automation | agent-browser + Chromium | Web interaction and screenshots |
-| Runtime | Node.js 20+ | Host process for routing and scheduling |
+| Component          | Technology                                                        | Purpose                                              |
+| ------------------ | ----------------------------------------------------------------- | ---------------------------------------------------- |
+| Channel System     | Provider registry (`apps/core/src/channels/provider-registry.ts`) | Channels are looked up by provider id and JID prefix |
+| Message Storage    | SQLite (better-sqlite3)                                           | Store messages for polling                           |
+| Runtime Execution  | Host process execution                                            | Agent execution with runtime-home scoped paths       |
+| Agent              | @anthropic-ai/claude-agent-sdk (0.2.97)                           | Run Claude with tools and MCP servers                |
+| Browser Automation | agent-browser + Chromium                                          | Web interaction and screenshots                      |
+| Runtime            | Node.js 20+                                                       | Host process for routing and scheduling              |
 
 ---
 
@@ -194,13 +194,13 @@ Providers are registered via `apps/core/src/channels/register-builtins.ts`:
 
 ### Key Files
 
-| File | Purpose |
-|------|---------|
-| `apps/core/src/channels/provider-registry.ts` | Channel provider registry |
-| `apps/core/src/channels/register-builtins.ts` | Built-in provider registration |
-| `apps/core/src/core/types.ts` | `Channel` interface, `ChannelOpts`, message types |
-| `apps/core/src/index.ts` | Orchestrator — instantiates channels, runs message loop |
-| `apps/core/src/messaging/router.ts` | Finds the owning channel for a JID, formats messages |
+| File                                          | Purpose                                                 |
+| --------------------------------------------- | ------------------------------------------------------- |
+| `apps/core/src/channels/provider-registry.ts` | Channel provider registry                               |
+| `apps/core/src/channels/register-builtins.ts` | Built-in provider registration                          |
+| `apps/core/src/core/types.ts`                 | `Channel` interface, `ChannelOpts`, message types       |
+| `apps/core/src/index.ts`                      | Orchestrator — instantiates channels, runs message loop |
+| `apps/core/src/messaging/router.ts`           | Finds the owning channel for a JID, formats messages    |
 
 ### Adding a New Channel
 
@@ -268,8 +268,11 @@ myclaw/
 │       └── logs/                  # Task execution logs
 │
 ├── store/                         # Local data (gitignored)
-│   ├── memory.db                  # Default SQLite memory database
 │   └── messages.db                # SQLite database (messages, chats, jobs, job_runs, job_events, registered_groups, sessions, router_state)
+│
+├── memory/                        # Durable memory root (gitignored)
+│   ├── .cache/memory.db           # Default SQLite memory database
+│   └── .journal/                  # Memory journal events
 │
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
@@ -299,13 +302,16 @@ export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Paths are absolute (required for runtime path enforcement)
-const AGENT_ROOT = path.resolve(process.env.AGENT_ROOT || '~/myclaw');
-export const STORE_DIR = path.resolve(AGENT_ROOT, 'store');
-export const AGENTS_DIR = path.resolve(AGENT_ROOT, 'agents');
-export const DATA_DIR = path.resolve(AGENT_ROOT, 'data');
+const MYCLAW_HOME = path.resolve(process.env.MYCLAW_HOME || '~/myclaw');
+export const STORE_DIR = path.resolve(MYCLAW_HOME, 'store');
+export const AGENTS_DIR = path.resolve(MYCLAW_HOME, 'agents');
+export const DATA_DIR = path.resolve(MYCLAW_HOME, 'data');
 
 // Runtime configuration
-export const AGENT_TIMEOUT = parseInt(process.env.AGENT_TIMEOUT || '1800000', 10); // 30min default
+export const AGENT_TIMEOUT = parseInt(
+  process.env.AGENT_TIMEOUT || '1800000',
+  10,
+); // 30min default
 export const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min — keep runtime worker alive after last result
@@ -320,16 +326,16 @@ export const TRIGGER_PATTERN = new RegExp(`^@${ASSISTANT_NAME}\\b`, 'i');
 Groups can have additional directories exposed to the agent workspace through the registered group agent config. Example registration:
 
 ```typescript
-setRegisteredGroup("1234567890@g.us", {
-  name: "Dev Team",
-  folder: "whatsapp_dev-team",
-  trigger: "@Andy",
+setRegisteredGroup('1234567890@g.us', {
+  name: 'Dev Team',
+  folder: 'whatsapp_dev-team',
+  trigger: '@Andy',
   added_at: new Date().toISOString(),
   agentConfig: {
-    model: "opus",
+    model: 'opus',
     additionalMounts: [
       {
-        hostPath: "~/projects/webapp",
+        hostPath: '~/projects/webapp',
         readonly: false,
       },
     ],
@@ -354,12 +360,15 @@ Use `/model` in a group session to switch the live model (`/model`, `/model <ali
 Configure authentication in a `.env` file in the project root. Two options:
 
 **Option 1: Claude Subscription (OAuth token)**
+
 ```bash
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 ```
+
 The token can be extracted from `~/.claude/.credentials.json` if you're logged in to Claude Code.
 
 **Option 2: Pay-per-use API Key**
+
 ```bash
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
@@ -375,13 +384,16 @@ ASSISTANT_NAME=Bot npm start
 ```
 
 Or edit the default in `apps/core/src/core/config.ts`. This changes:
+
 - The trigger pattern (messages must start with `@YourName`)
 - The response prefix (`YourName:` added automatically)
 
 ### Placeholder Values in launchd
 
 Files with `{{PLACEHOLDER}}` values need to be configured:
-- `{{PROJECT_ROOT}}` - Absolute path to your myclaw installation
+
+- `{{RUNTIME_ENTRY}}` - Absolute path to the compiled MyClaw runtime entry
+- `{{RUNTIME_HOME}}` - Runtime home, normally `~/myclaw`
 - `{{NODE_PATH}}` - Path to node binary (detected via `which node`)
 - `{{HOME}}` - User's home directory
 
@@ -395,11 +407,11 @@ MyClaw separates static prompt profile files from structured memory and runtime 
 
 Prompt profile files are static guidance, not memory dumps:
 
-| Layer | Location | Purpose |
-|-------|----------|---------|
-| **Shared context** | `agents/shared/CLAUDE.md` | Stable operating rules, memory rules, communication conventions |
-| **Soul** | `agents/{group}/SOUL.md` | Agent personality, voice, and boundaries |
-| **Group context** | `agents/{group}/CLAUDE.md` | Stable group-specific guidance |
+| Layer              | Location                   | Purpose                                                         |
+| ------------------ | -------------------------- | --------------------------------------------------------------- |
+| **Shared context** | `agents/shared/CLAUDE.md`  | Stable operating rules, memory rules, communication conventions |
+| **Soul**           | `agents/{group}/SOUL.md`   | Agent personality, voice, and boundaries                        |
+| **Group context**  | `agents/{group}/CLAUDE.md` | Stable group-specific guidance                                  |
 
 Dynamic facts, current task state, open loops, and raw transcripts must not be written into these files. Durable facts go through structured memory. Current task state belongs to continuity context.
 
@@ -423,37 +435,37 @@ The structured memory store provides scoped recall for durable statements and le
 
 #### Storage Backend
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
+| Component                          | Technology                                   | Purpose                                                            |
+| ---------------------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
 | **Memory statements & procedures** | SQLite (`memory_items`, `memory_procedures`) | Human-readable memory entries with scoping, confidence, versioning |
-| **Chunks** | SQLite (`memory_chunks`) | Chunked text from ingested source files |
-| **Lexical search** | FTS5 (`memory_chunks_fts`) | BM25 keyword search with unicode61 tokenization |
-| **Vector search** | sqlite-vec (`memory_chunks_vec`) | Optional semantic similarity search on embeddings |
-| **Audit log** | SQLite (`memory_events`) | All memory operations logged for debugging |
+| **Chunks**                         | SQLite (`memory_chunks`)                     | Chunked text from ingested source files                            |
+| **Lexical search**                 | FTS5 (`memory_chunks_fts`)                   | BM25 keyword search with unicode61 tokenization                    |
+| **Vector search**                  | sqlite-vec (`memory_chunks_vec`)             | Optional semantic similarity search on embeddings                  |
+| **Audit log**                      | SQLite (`memory_events`)                     | All memory operations logged for debugging                         |
 
-Default database path: `store/memory.db`
+Default database path: `~/myclaw/memory/.cache/memory.db`
 
 #### MCP Tools (Exposed to Agents)
 
 Agents interact with memory via MCP tools over IPC:
 
-| Tool | Purpose |
-|------|---------|
-| `memory_save` | Save a durable fact, decision, preference, correction, constraint, or context item |
-| `memory_search` | Search scoped memory statements and source snippets |
-| `memory_patch` | Update an existing item (optimistic concurrency via version) |
-| `procedure_save` | Save a reusable multi-step procedure |
-| `procedure_patch` | Update an existing procedure |
+| Tool              | Purpose                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| `memory_save`     | Save a durable fact, decision, preference, correction, constraint, or context item |
+| `memory_search`   | Search scoped memory statements and source snippets                                |
+| `memory_patch`    | Update an existing item (optimistic concurrency via version)                       |
+| `procedure_save`  | Save a reusable multi-step procedure                                               |
+| `procedure_patch` | Update an existing procedure                                                       |
 
 #### Memory Scoping
 
 Three-tier scope model with strict isolation:
 
-| Scope | Write Access | Read Access | Use Case |
-|-------|-------------|-------------|----------|
-| `global` | Main only | All groups | Cross-group preferences, shared facts |
-| `group` | That group | That group | Group-specific knowledge |
-| `user` | That group | That group | Per-user facts within a group |
+| Scope    | Write Access | Read Access | Use Case                              |
+| -------- | ------------ | ----------- | ------------------------------------- |
+| `global` | Main only    | All groups  | Cross-group preferences, shared facts |
+| `group`  | That group   | That group  | Group-specific knowledge              |
+| `user`   | That group   | That group  | Per-user facts within a group         |
 
 Default scope is controlled by `MEMORY_SCOPE_POLICY` (default: `group`).
 
@@ -469,9 +481,9 @@ Search combines lexical recall with optional semantic recall using Reciprocal Ra
 
 On each message or scheduled task, MyClaw auto-ingests group source files into the chunk store:
 
-| Source | Path | Source Type |
-|--------|------|-------------|
-| CLAUDE.md | `agents/{name}/CLAUDE.md` | `claude_md` |
+| Source                    | Path                              | Source Type |
+| ------------------------- | --------------------------------- | ----------- |
+| CLAUDE.md                 | `agents/{name}/CLAUDE.md`         | `claude_md` |
 | Group knowledge directory | `agents/{name}/knowledge/**/*.md` | `local_doc` |
 
 **Chunking**: Sliding window (default 1400 chars, 240 overlap). Chunks < 30 chars are filtered. Deduplication via SHA256 hash of `scope:group:source_type:source_id:text`.
@@ -483,6 +495,7 @@ On each message or scheduled task, MyClaw auto-ingests group source files into t
 #### Reflection (Auto-Capture)
 
 After each successful agent turn, the system extracts durable memory statements from the conversation:
+
 - Uses a provider interface; the default extractor is rule-based and can be replaced without changing storage or recall.
 - Detects preferences, decisions, facts, corrections, and constraints.
 - Stores real human-readable statements with reflection-derived confidence scores.
@@ -490,95 +503,48 @@ After each successful agent turn, the system extracts durable memory statements 
 - Rejects prompt-injection style text before it becomes future context
 - Controlled by `MEMORY_REFLECTION_MIN_CONFIDENCE` (default 0.7) and `MEMORY_REFLECTION_MAX_FACTS_PER_TURN` (default 6)
 
-### Memory Providers
+### Memory Storage
 
-MyClaw supports two memory provider backends, set via `settings.yaml memory.provider`:
+MyClaw supports one active memory backend today: SQLite under `settings.yaml memory.root`.
 
-#### `sqlite` (Default)
-
-Standard SQLite backend. All data lives in `settings.yaml memory.sqlite_path` (default: `store/memory.db`).
-
-- Simple, single-file storage
-- No external dependencies beyond sqlite-vec
-- Good for most deployments
-
-#### `qmd` (Durable Markdown Mirror)
-
-QMD wraps the SQLite provider and mirrors every write to a filesystem tree at `settings.yaml memory.qmd_root`. The SQLite database still handles all reads and search. The markdown mirror provides:
-
-- **Human-readable audit trail** — every memory item and procedure is a markdown file
-- **Git-friendly durability** — the memory root can be committed to version control
-- **Journal logging** — all operations (saves, patches, lifecycle events) appended to daily journal files
-- **Session archiving** — compacted/stale sessions archived as dated markdown files
-
-**Default config**: `memory.qmd_root` defaults to `agent-memory` (resolved under runtime home).
+- Default root: `memory`
+- Default database: `~/myclaw/memory/.cache/memory.db`
+- Journal files: `~/myclaw/memory/.journal`
+- Vector search: optional sqlite-vec tables when embeddings are enabled
 
 **Filesystem layout**:
 
 ```
-{AGENT_MEMORY_ROOT}/
-├── profile/          # Memory items as markdown (one file per item)
-│   ├── mem-1712345678-a1b2.md
-│   └── mem-1712345679-c3d4.md
-├── procedures/       # Learned procedures as markdown
-│   └── proc-1712345680-e5f6.md
-├── journal/          # Daily audit log of all memory operations
+{MEMORY_ROOT}/
+├── .journal/         # Daily audit log of memory operations
 │   └── 2026/
 │       └── 04/
 │           └── 2026-04-11.md
-├── sessions/         # Archived session transcripts
-│   └── 2026/
-│       └── 04/
-│           └── 2026-04-11/
-│               └── 143022-stale-session-auth-fix.md
-├── knowledge/        # Reserved for future use
-├── .raw/             # Raw data storage
 └── .cache/
     └── memory.db     # SQLite database (search index)
 ```
 
-**How QMD writes work**:
-
-1. Agent calls `memory_save` → SQLite insert (same as `sqlite` provider)
-2. QMD wrapper also writes `profile/{sanitized-id}.md` with full metadata + value
-3. QMD appends a journal entry: timestamp, action, scope, key, file path
-4. All filesystem writes are atomic (write to `.tmp`, then rename)
-
-**How QMD reads work**: Identical to `sqlite` provider. All search hits the SQLite database, not the filesystem. The markdown files are for durability and human review only.
-
-**When to use QMD**:
-- You want a git-committable audit trail of what the agent remembers
-- You need to inspect memory contents without querying SQLite
-- You want session transcripts preserved as readable files
-- You're debugging memory behavior and need a journal
-
-**When `sqlite` is sufficient**:
-- Standard deployments where SQLite durability is enough
-- You don't need human-readable memory files
-- You want minimal disk I/O overhead
-
 ### Memory Configuration Reference
 
-| Setting | Default | Description |
-|----------|---------|-------------|
-| `memory.provider` | `sqlite` | Backend: `sqlite`, `qmd`, `noop`, or `none` |
-| `memory.sqlite_path` | `store/memory.db` | Path to SQLite database |
-| `memory.qmd_root` | `agent-memory` | Filesystem root for QMD mirror when provider is `qmd` |
-| `memory.embeddings.enabled` | `false` | Optional embedding toggle |
-| `memory.embeddings.provider` | `disabled` | Embedding provider (`disabled`, `none`, or `openai`) |
-| `memory.embeddings.model` | `text-embedding-3-large` | Embedding model |
-| `MEMORY_VECTOR_DIMENSIONS` | `3072` | Vector dimensions (must match model output) |
-| `MEMORY_EMBED_BATCH_SIZE` | `16` | Texts per embedding API call |
-| `MEMORY_CHUNK_SIZE` | `1400` | Characters per chunk |
-| `MEMORY_CHUNK_OVERLAP` | `240` | Overlap between chunks |
-| `MEMORY_RETRIEVAL_LIMIT` | `8` | Default results per search |
-| `MEMORY_SCOPE_POLICY` | `group` | Default scope for new items |
-| `MEMORY_REFLECTION_MIN_CONFIDENCE` | `0.7` | Min confidence for auto-captured facts |
-| `MEMORY_REFLECTION_MAX_FACTS_PER_TURN` | `6` | Max facts extracted per turn |
-| `MEMORY_MAX_CHUNKS_PER_GROUP` | `6000` | Chunk cap per group |
-| `MEMORY_CHUNK_RETENTION_DAYS` | `120` | Days before chunks are pruned |
-| `MEMORY_MAX_EVENTS` | `20000` | Max audit log entries |
-| `MEMORY_MAX_PROCEDURES_PER_GROUP` | `500` | Procedure cap per group |
+| Setting                                | Default                  | Description                                                   |
+| -------------------------------------- | ------------------------ | ------------------------------------------------------------- |
+| `memory.enabled`                       | `true`                   | Enables durable memory                                        |
+| `memory.root`                          | `memory`                 | Memory root path, resolved under runtime home unless absolute |
+| `memory.embeddings.enabled`            | `false`                  | Optional embedding toggle                                     |
+| `memory.embeddings.provider`           | `disabled`               | Embedding provider (`disabled`, `none`, or `openai`)          |
+| `memory.embeddings.model`              | `text-embedding-3-large` | Embedding model                                               |
+| `MEMORY_VECTOR_DIMENSIONS`             | `3072`                   | Vector dimensions (must match model output)                   |
+| `MEMORY_EMBED_BATCH_SIZE`              | `16`                     | Texts per embedding API call                                  |
+| `MEMORY_CHUNK_SIZE`                    | `1400`                   | Characters per chunk                                          |
+| `MEMORY_CHUNK_OVERLAP`                 | `240`                    | Overlap between chunks                                        |
+| `MEMORY_RETRIEVAL_LIMIT`               | `8`                      | Default results per search                                    |
+| `MEMORY_SCOPE_POLICY`                  | `group`                  | Default scope for new items                                   |
+| `MEMORY_REFLECTION_MIN_CONFIDENCE`     | `0.7`                    | Min confidence for auto-captured facts                        |
+| `MEMORY_REFLECTION_MAX_FACTS_PER_TURN` | `6`                      | Max facts extracted per turn                                  |
+| `MEMORY_MAX_CHUNKS_PER_GROUP`          | `6000`                   | Chunk cap per group                                           |
+| `MEMORY_CHUNK_RETENTION_DAYS`          | `120`                    | Days before chunks are pruned                                 |
+| `MEMORY_MAX_EVENTS`                    | `20000`                  | Max audit log entries                                         |
+| `MEMORY_MAX_PROCEDURES_PER_GROUP`      | `500`                    | Procedure cap per group                                       |
 
 ---
 
@@ -644,6 +610,7 @@ Sessions enable conversation continuity - Claude remembers what you talked about
 ### Trigger Word Matching
 
 Messages must start with the trigger pattern (default: `@Andy`):
+
 - `@Andy what's the weather?` → ✅ Triggers Claude
 - `@andy help me` → ✅ Triggers (case insensitive)
 - `Hey @Andy` → ❌ Ignored (trigger not at start)
@@ -667,18 +634,18 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 ### Commands Available in Any Group
 
-| Command | Example | Effect |
-|---------|---------|--------|
+| Command                | Example                     | Effect         |
+| ---------------------- | --------------------------- | -------------- |
 | `@Assistant [message]` | `@Andy what's the weather?` | Talk to Claude |
 
 ### Commands Available in Main Channel Only
 
-| Command | Example | Effect |
-|---------|---------|--------|
-| `@Assistant add group "Name"` | `@Andy add group "Family Chat"` | Register a new group |
-| `@Assistant remove group "Name"` | `@Andy remove group "Work Team"` | Unregister a group |
-| `@Assistant list groups` | `@Andy list groups` | Show registered groups |
-| `@Assistant remember [fact]` | `@Andy remember I prefer dark mode` | Add to global memory |
+| Command                          | Example                             | Effect                 |
+| -------------------------------- | ----------------------------------- | ---------------------- |
+| `@Assistant add group "Name"`    | `@Andy add group "Family Chat"`     | Register a new group   |
+| `@Assistant remove group "Name"` | `@Andy remove group "Work Team"`    | Unregister a group     |
+| `@Assistant list groups`         | `@Andy list groups`                 | Show registered groups |
+| `@Assistant remember [fact]`     | `@Andy remember I prefer dark mode` | Add to global memory   |
 
 ---
 
@@ -695,11 +662,11 @@ MyClaw has a built-in scheduler that runs jobs as full agents in their group's c
 
 ### Schedule Types
 
-| Type | Value Format | Example |
-|------|--------------|---------|
-| `cron` | Cron expression | `0 9 * * 1` (Mondays at 9am) |
-| `interval` | Milliseconds | `3600000` (every hour) |
-| `once` | ISO timestamp | `2024-12-25T09:00:00Z` |
+| Type       | Value Format    | Example                      |
+| ---------- | --------------- | ---------------------------- |
+| `cron`     | Cron expression | `0 9 * * 1` (Mondays at 9am) |
+| `interval` | Milliseconds    | `3600000` (every hour)       |
+| `once`     | ISO timestamp   | `2024-12-25T09:00:00Z`       |
 
 ### Creating a Job
 
@@ -736,12 +703,14 @@ Claude: [calls mcp__myclaw__scheduler_upsert_job]
 ### Managing Jobs
 
 From any group:
+
 - `@Andy list my scheduled jobs` - View jobs for this group
 - `@Andy pause job [id]` - Pause a job
 - `@Andy resume job [id]` - Resume a paused job
 - `@Andy delete job [id]` - Delete a job
 
 From main channel:
+
 - `@Andy list all jobs` - View jobs from all groups
 - `@Andy schedule job for "Family Chat": [prompt]` - Schedule for another group
 
@@ -777,6 +746,7 @@ MyClaw runs as a single macOS launchd service.
 ### Startup Sequence
 
 When MyClaw starts, it:
+
 1. Runs runtime preflight for host execution and emits actionable fix steps on failure
 2. Auto-builds runner artifacts from `apps/core/src/runner` and fails startup if build fails
 3. Initializes the SQLite database (migrates from JSON files if they exist)
@@ -792,6 +762,7 @@ When MyClaw starts, it:
 ### Service: com.myclaw
 
 **ops/launchd/com.myclaw.plist:**
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
@@ -802,27 +773,27 @@ When MyClaw starts, it:
     <key>ProgramArguments</key>
     <array>
         <string>{{NODE_PATH}}</string>
-        <string>{{PROJECT_ROOT}}/dist/index.js</string>
+        <string>{{RUNTIME_ENTRY}}</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>{{PROJECT_ROOT}}</string>
+    <string>{{RUNTIME_HOME}}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>MYCLAW_HOME</key>
+        <string>{{RUNTIME_HOME}}</string>
         <key>PATH</key>
         <string>{{HOME}}/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>{{HOME}}</string>
-        <key>ASSISTANT_NAME</key>
-        <string>Andy</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/myclaw.log</string>
+    <string>{{RUNTIME_HOME}}/logs/myclaw.log</string>
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/myclaw.error.log</string>
+    <string>{{RUNTIME_HOME}}/logs/myclaw.error.log</string>
 </dict>
 </plist>
 ```
@@ -831,19 +802,19 @@ When MyClaw starts, it:
 
 ```bash
 # Install service
-cp ops/launchd/com.myclaw.plist ~/Library/LaunchAgents/
+myclaw service install
 
 # Start service
-launchctl load ~/Library/LaunchAgents/com.myclaw.plist
+myclaw service start
 
 # Stop service
-launchctl unload ~/Library/LaunchAgents/com.myclaw.plist
+myclaw service stop
 
 # Check status
-launchctl list | grep myclaw
+myclaw status
 
 # View logs
-tail -f logs/myclaw.log
+tail -f ~/myclaw/logs/myclaw.log
 ```
 
 ---
@@ -860,6 +831,7 @@ Security boundaries are enforced through per-group directory scope, runtime-home
 WhatsApp messages could contain malicious instructions attempting to manipulate Claude's behavior.
 
 **Mitigations:**
+
 - Only registered groups are processed
 - Trigger word required (reduces accidental processing)
 - Agents can only access their group's mounted directories
@@ -867,6 +839,7 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 - Claude's built-in safety training
 
 **Recommendations:**
+
 - Only register trusted groups
 - Review additional directory mounts carefully
 - Review scheduled jobs periodically
@@ -874,14 +847,15 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 
 ### Credential Storage
 
-| Credential | Storage Location | Notes |
-|------------|------------------|-------|
-| Claude CLI Auth | data/sessions/{group}/.claude/ | Per-group isolation, mounted to /home/node/.claude/ |
-| WhatsApp Session | store/auth/ | Auto-created, persists ~20 days |
+| Credential       | Storage Location               | Notes                                               |
+| ---------------- | ------------------------------ | --------------------------------------------------- |
+| Claude CLI Auth  | data/sessions/{group}/.claude/ | Per-group isolation, mounted to /home/node/.claude/ |
+| WhatsApp Session | store/auth/                    | Auto-created, persists ~20 days                     |
 
 ### File Permissions
 
 The runtime agents and store directories contain personal context and should be protected:
+
 ```bash
 chmod 700 ~/myclaw/agents ~/myclaw/store
 ```
@@ -892,15 +866,14 @@ chmod 700 ~/myclaw/agents ~/myclaw/store
 
 ### Common Issues
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| No response to messages | Service not running | Check `launchctl list | grep myclaw` |
-| Startup fails at runtime preflight | Host runtime prerequisites failed | Run `npm run build` and re-check runtime diagnostics |
-| "Claude Code process exited with code 1" | Session mount path wrong | Ensure mount is to `/home/node/.claude/` not `/root/.claude/` |
-| Session not continuing | Session ID not saved | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"` |
-| Session not continuing | Session path mismatch | Ensure per-group session paths exist under `data/sessions/{group}/.claude/` |
-| "QR code expired" | WhatsApp session expired | Delete store/auth/ and restart |
-| "No groups registered" | Haven't added groups | Use `@Andy add group "Name"` in main |
+| Issue                                    | Cause                             | Solution                                                                    |
+| ---------------------------------------- | --------------------------------- | --------------------------------------------------------------------------- |
+| No response to messages                  | Service not running               | Run `myclaw status` and check the service line                              |
+| Startup fails at runtime preflight       | Host runtime prerequisites failed | Run `npm run build` and re-check runtime diagnostics                        |
+| "Claude Code process exited with code 1" | Session mount path wrong          | Ensure mount is to `/home/node/.claude/` not `/root/.claude/`               |
+| Session not continuing                   | Session ID not saved              | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"`          |
+| Session not continuing                   | Session path mismatch             | Ensure per-group session paths exist under `data/sessions/{group}/.claude/` |
+| "No groups registered"                   | Haven't added groups              | Register a channel group with the current channel setup flow                |
 
 ### Log Location
 
@@ -910,6 +883,7 @@ chmod 700 ~/myclaw/agents ~/myclaw/store
 ### Debug Mode
 
 Run manually for verbose output:
+
 ```bash
 npm run dev
 npm start

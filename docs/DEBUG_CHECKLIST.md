@@ -8,7 +8,7 @@ MyClaw runs as a local host process.
 
 ```bash
 # 1. Is the service running?
-launchctl list | grep myclaw
+myclaw status
 
 # 2. Recent runtime errors
 grep -E 'ERROR|WARN' logs/myclaw.log | tail -20
@@ -87,17 +87,20 @@ If auth state is missing or expired, rerun guided setup with `myclaw setup`.
 
 ```bash
 # Restart
-launchctl kickstart -k gui/$(id -u)/com.myclaw
+myclaw service restart
 
 # View live logs
 tail -f logs/myclaw.log
 
 # Stop service
-launchctl bootout gui/$(id -u)/com.myclaw
+myclaw service stop
 
-# Start service
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.myclaw.plist
+# Install or reinstall service
+myclaw service install
+
+# Start an already-installed service without rewriting it
+myclaw service start
 
 # Rebuild after code changes
-npm run build && launchctl kickstart -k gui/$(id -u)/com.myclaw
+npm run build && myclaw service restart
 ```

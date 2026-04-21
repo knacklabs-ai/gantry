@@ -11,9 +11,7 @@ MyClaw must present one runtime truth across runtime code, CLI, diagnostics, set
 3. `.env` is for secrets and channel credentials only.
 4. Memory runtime behavior is controlled only by `settings.yaml`:
    - `memory.enabled`
-   - `memory.provider` (`sqlite`, `qmd`, `noop`, `none`)
-   - `memory.sqlite_path`
-   - `memory.qmd_root`
+   - `memory.root`
    - `memory.embeddings.enabled`
    - `memory.embeddings.provider` (`disabled`, `none`, `openai`)
    - `memory.embeddings.model`
@@ -30,7 +28,6 @@ MyClaw must present one runtime truth across runtime code, CLI, diagnostics, set
 
 ## Notes
 
-- `sqlite` is SQLite-only.
-- `qmd` is SQLite plus markdown mirror.
+- SQLite under `memory.root` is the only supported memory store.
 - Embeddings are optional and disabled by default.
 - Dreaming is optional and disabled by default.

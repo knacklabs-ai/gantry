@@ -51,7 +51,7 @@ describe('ensureSharedSessionSettings', () => {
       ),
     );
 
-    // Mock AGENT_ROOT to point to our temp root
+    // Mock runtime paths to point to our temp root.
     vi.doMock('@core/core/config.js', () => ({
       MYCLAW_HOME: root,
       DATA_DIR: root,

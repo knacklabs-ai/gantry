@@ -74,7 +74,7 @@ Save durable, reusable statements:
 - "User prefers direct engineering answers without filler."
 - "Decision: embeddings are optional and provider-based."
 - "Correction: do not store raw logs as memory."
-- "Fact: default SQLite memory path is `~/myclaw/store/memory.db`."
+- "Fact: default SQLite memory path is `~/myclaw/memory/.cache/memory.db`."
 - "Procedure: before changing memory, run focused memory tests."
 
 Do not save:
@@ -109,30 +109,15 @@ Static prompt files are not memory dumps.
 
 Dynamic facts, task state, and open loops belong in structured memory and continuity context, not in static prompt files.
 
-## Provider Model
+## Storage Model
 
-MyClaw supports provider-based memory storage.
+MyClaw stores live memory in SQLite under `settings.yaml memory.root`.
 
-### `sqlite`
+- Default root: `memory`
+- Default database: `~/myclaw/memory/.cache/memory.db`
+- Default journal: `~/myclaw/memory/.journal`
 
-Default provider.
-
-- Stores memory in SQLite only.
-- Uses `settings.yaml memory.sqlite_path` (default: `store/memory.db`).
-- No markdown mirror.
-- Best for simple installs.
-
-### `qmd`
-
-SQLite plus markdown mirror.
-
-- Stores live search data in SQLite.
-- Mirrors memory items and procedures to markdown files.
-- Appends journal entries.
-- Archives sessions as markdown when supported.
-- Best when users want inspectable memory files.
-
-SQLite remains the source of truth for search in both modes. Markdown is an audit and recovery layer, not the live query engine.
+SQLite is the source of truth for memory search and continuity context.
 
 ## Embeddings Are Optional
 

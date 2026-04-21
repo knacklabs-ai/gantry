@@ -128,6 +128,12 @@ function statusWord(value: boolean): string {
   return value ? 'on' : 'off';
 }
 
+function isServiceRunning(status: string): boolean {
+  return (
+    status === 'active' || status === 'running' || status.startsWith('running(')
+  );
+}
+
 export function formatRuntimeStatus(summary: RuntimeStatusSummary): string {
   const lines: string[] = [];
   lines.push('MyClaw Status');
@@ -186,7 +192,9 @@ export function formatRuntimeStatus(summary: RuntimeStatusSummary): string {
   if (!summary.doctor.ok) {
     nextActions.push('Run `myclaw doctor` and fix blocking items.');
   }
-  if (nextActions.length === 0) {
+  if (nextActions.length === 0 && isServiceRunning(summary.service.status)) {
+    nextActions.push('MyClaw is running.');
+  } else if (nextActions.length === 0) {
     nextActions.push('Run `myclaw start` to start the runtime.');
   }
 

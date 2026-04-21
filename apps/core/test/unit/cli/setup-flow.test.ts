@@ -90,7 +90,6 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
     envFilePath: (runtimeHome: string) => `${runtimeHome}/.env`,
     ensureRuntimeWritable: vi.fn(),
     resolveRuntimeHome: (runtimeHome: string) => runtimeHome,
-    savePreferredRuntimeHome: vi.fn(),
   }));
   vi.doMock('@core/cli/runtime-settings.js', () => ({
     loadRuntimeSettings: vi.fn(() => ({
@@ -114,8 +113,7 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
       },
       memory: {
         enabled: true,
-        provider: 'sqlite',
-        sqlitePath: 'store/memory.db',
+        root: 'memory',
         embeddings: {
           enabled: false,
           provider: 'disabled',
@@ -129,7 +127,6 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
             extractor: 'claude-haiku-4-5-20251001',
             dreaming: 'claude-sonnet-4-6',
             consolidation: 'claude-sonnet-4-6',
-            sessionSummary: 'claude-haiku-4-5-20251001',
           },
         },
       },

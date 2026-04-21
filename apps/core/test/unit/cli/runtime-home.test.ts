@@ -2,10 +2,14 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveRuntimeHome } from '@core/cli/runtime-home.js';
+import {
+  DEFAULT_RUNTIME_HOME,
+  resolveRuntimeHome,
+} from '@core/cli/runtime-home.js';
 
 describe('resolveRuntimeHome', () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -26,5 +30,9 @@ describe('resolveRuntimeHome', () => {
     expect(resolveRuntimeHome('~other-user/myclaw')).toBe(
       path.resolve('~other-user/myclaw'),
     );
+  });
+
+  it('uses ~/myclaw as the canonical default runtime home', () => {
+    expect(path.basename(DEFAULT_RUNTIME_HOME)).toBe('myclaw');
   });
 });
