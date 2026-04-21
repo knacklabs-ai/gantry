@@ -16,7 +16,29 @@ The project is intentionally small. The goal is not to be a framework with every
 npx myclaw
 ```
 
-The first run is a guided CLI flow (doctor + setup) that gets you to a working first channel without repo steps.
+The first run is a guided CLI flow that collects setup choices first, then runs final doctor verification before marking the runtime ready.
+
+### NPM Install First-Run Flow
+
+If you install from npm and want the fastest path to a working bot:
+
+```bash
+npx myclaw
+# or
+npm i -g myclaw && myclaw
+```
+
+Then follow this order:
+
+1. Run `myclaw` with no args.
+2. Confirm runtime home and storage (`sqlite`; Postgres is not exposed until runtime persistence is fully provider-backed).
+3. Choose your first provider: `Telegram` or `Slack`.
+4. Follow the in-CLI provider guide, paste credentials, and pick a discovered chat/channel (or enter an ID manually).
+5. Set Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`), then credential mode (`env-only` by default).
+6. Choose main model (`Sonnet` recommended, `Opus` optional).
+7. Confirm memory settings (memory on, embeddings off, dreaming on by default).
+8. Let setup run final doctor verification.
+9. Finish setup. The default is to exit cleanly; choose `Start MyClaw now` only if you want the runtime to begin listening immediately.
 
 ### CLI Commands
 
@@ -40,12 +62,12 @@ Defaults in v1:
 
 - runtime home: `~/myclaw`
 - runtime settings file: `~/myclaw/settings.yaml` (validated before `start`/`restart`)
-- setup flow: Telegram-first (Slack can be added with `myclaw slack connect`)
-- storage provider: `sqlite` (default)
+- setup flow: guided multi-channel first run (choose Telegram or Slack)
+- storage provider: `sqlite` (host runtime database)
 - storage SQLite path: `store/myclaw.db`
 - memory: on
 - embeddings: off (unless OpenAI key is provided and enabled)
-- dreaming: off
+- dreaming: on (guided setup default)
 - sender allowlist: `channels.<provider>.sender_allowlist` in `settings.yaml`
 
 Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default unless `--runtime-home` or `MYCLAW_HOME` is set.
@@ -66,7 +88,7 @@ memory:
     provider: disabled
     model: text-embedding-3-large
   dreaming:
-    enabled: false
+    enabled: true
 ```
 
 ### Channel Setup
@@ -80,8 +102,13 @@ myclaw slack connect
 
 Notes:
 
-- Telegram uses `TELEGRAM_BOT_TOKEN` and a chat ID like `tg:-1001234567890`.
-- Slack uses Socket Mode with `SLACK_BOT_TOKEN` (`xoxb-...`) and `SLACK_APP_TOKEN` (`xapp-...`), then registers chats like `sl:C0123456789`.
+- Telegram uses `TELEGRAM_BOT_TOKEN`; create it in Telegram by chatting with `@BotFather` and sending `/newbot`.
+- For Telegram groups, add the bot to the group and send a message before discovery; if MyClaw must see every group message, make the bot an admin or disable Group Privacy in BotFather with `/setprivacy`.
+- `myclaw telegram connect` auto-discovers recent chats and can register one without manual chat ID copy/paste.
+- Manual Telegram chat IDs like `tg:-1001234567890` are still supported as fallback.
+- Slack uses Socket Mode with `SLACK_BOT_TOKEN` (`xoxb-...`) and `SLACK_APP_TOKEN` (`xapp-...`); create a Slack app, add a bot user/scopes, enable Socket Mode, generate the app-level token, install/reinstall the app, then invite it to the target channel or DM it once.
+- `myclaw slack connect` auto-discovers accessible conversations and can register one directly.
+- Manual Slack IDs like `sl:C0123456789` are still supported as fallback.
 - Slack UX uses native Slack surfaces (threads, streaming updates, actions).
 
 ## Philosophy
@@ -150,7 +177,8 @@ git clone https://github.com/qwibitai/myclaw.git
 cd myclaw
 npm install
 npm run build
-npm run dev
+# local testing entrypoint (equivalent CLI flow)
+node index.js
 ```
 
 ## Testing

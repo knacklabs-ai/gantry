@@ -11,6 +11,7 @@ import {
   validateSlackBotToken,
   verifySlackChatAccess,
 } from '@core/cli/slack.js';
+import { listSlackRecentChats } from '@core/cli/slack-chat-discovery.js';
 
 const runtimeHomes: string[] = [];
 
@@ -117,6 +118,45 @@ describe('cli slack helpers', () => {
     expect(result.chatTitle).toBe('ops-room');
     expect(result.sentTestMessage).toBe(true);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('discovers recent Slack conversations for setup selection', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          channels: [
+            {
+              id: 'C0123456789',
+              name: 'ops-room',
+              is_private: false,
+              latest: { ts: '1710000001.000100' },
+            },
+            {
+              id: 'G0123456789',
+              name: 'leadership',
+              is_private: true,
+              latest: { ts: '1710000000.000100' },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await listSlackRecentChats({
+      botToken: 'xoxb-valid-token',
+      limit: 20,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.chats).toHaveLength(2);
+    expect(result.chats[0]?.chatJid).toBe('sl:C0123456789');
+    expect(result.chats[0]?.chatTitle).toBe('ops-room');
   });
 
   it('seeds CLAUDE.md and SOUL.md when registering the main group', async () => {

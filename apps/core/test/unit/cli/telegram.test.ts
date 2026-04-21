@@ -10,6 +10,7 @@ import {
   registerTelegramMainGroup,
   verifyTelegramChatAccess,
 } from '@core/cli/telegram.js';
+import { listTelegramRecentChats } from '@core/cli/telegram-chat-discovery.js';
 
 const runtimeHomes: string[] = [];
 
@@ -143,6 +144,41 @@ describe('cli telegram helpers', () => {
     expect(result.ok).toBe(true);
     expect(result.sentTestMessage).toBe(false);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('discovers recent Telegram chats from bot updates', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: [
+            {
+              update_id: 101,
+              message: {
+                chat: { id: -100123, type: 'supergroup', title: 'Kai Squad' },
+              },
+            },
+            {
+              update_id: 102,
+              message: {
+                chat: { id: 99887766, type: 'private', first_name: 'Ravi' },
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await listTelegramRecentChats({ token: 'token', limit: 20 });
+    expect(result.ok).toBe(true);
+    expect(result.chats).toHaveLength(2);
+    expect(result.chats[0]?.chatJid).toBe('tg:99887766');
+    expect(result.chats[1]?.chatJid).toBe('tg:-100123');
   });
 
   it('seeds CLAUDE.md and SOUL.md when registering the main group', async () => {

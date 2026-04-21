@@ -8,6 +8,30 @@ interface SetupFlowTestOptions {
   passwordQueue?: unknown[];
   env?: Record<string, string>;
   onecliReject?: boolean;
+  doctorReports?: Array<{
+    ok: boolean;
+    blockingFailures: number;
+    warnings: number;
+    checks: Array<{
+      id: string;
+      title: string;
+      status: 'pass' | 'warn' | 'fail';
+      message: string;
+      nextAction?: string;
+    }>;
+  }>;
+  doctorReport?: {
+    ok: boolean;
+    blockingFailures: number;
+    warnings: number;
+    checks: Array<{
+      id: string;
+      title: string;
+      status: 'pass' | 'warn' | 'fail';
+      message: string;
+      nextAction?: string;
+    }>;
+  };
 }
 
 async function loadSetupFlowModule(options: SetupFlowTestOptions) {
@@ -16,10 +40,31 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
   const selectQueue = [...options.selectQueue];
   const textQueue = [...(options.textQueue || [])];
   const passwordQueue = [...(options.passwordQueue || [])];
+  const doctorReports = [...(options.doctorReports || [])];
+  const promptCalls: Array<{
+    kind: 'select' | 'text' | 'password';
+    message: string;
+    options?: unknown[];
+  }> = [];
 
-  const select = vi.fn(async () => selectQueue.shift() ?? 'resume');
-  const text = vi.fn(async () => textQueue.shift() ?? '');
-  const password = vi.fn(async () => passwordQueue.shift() ?? CANCEL);
+  const select = vi.fn(
+    async (input: { message: string; options?: Array<{ value: unknown }> }) => {
+      promptCalls.push({
+        kind: 'select',
+        message: input.message,
+        options: input.options?.map((option) => option.value),
+      });
+      return selectQueue.shift() ?? 'resume';
+    },
+  );
+  const text = vi.fn(async (input: { message: string }) => {
+    promptCalls.push({ kind: 'text', message: input.message });
+    return textQueue.shift() ?? '';
+  });
+  const password = vi.fn(async (input: { message: string }) => {
+    promptCalls.push({ kind: 'password', message: input.message });
+    return passwordQueue.shift() ?? CANCEL;
+  });
   const note = vi.fn();
   const intro = vi.fn();
   const outro = vi.fn();
@@ -29,6 +74,16 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
   const writeOnboardingState = vi.fn();
   const clearOnboardingState = vi.fn();
   const getContainerConfig = vi.fn();
+  const runDoctorWithNetwork = vi.fn(
+    async () =>
+      doctorReports.shift() ||
+      options.doctorReport || {
+        ok: true,
+        blockingFailures: 0,
+        warnings: 0,
+        checks: [],
+      },
+  );
 
   if (options.onecliReject) {
     getContainerConfig.mockRejectedValue(new Error('ECONNREFUSED'));
@@ -64,9 +119,9 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
 
   vi.doMock('@core/cli/doctor.js', () => ({
     formatDoctorReport: () => 'doctor report',
-    hasRegisteredTelegramGroup: () => true,
+    hasProcessableGroupForConfiguredChannel: () => true,
     hasRuntimeConfig: () => true,
-    runDoctorWithNetwork: vi.fn(async () => ({ ok: true, checks: [] })),
+    runDoctorWithNetwork,
   }));
   vi.doMock('@core/cli/env-file.js', () => ({
     readEnvFile: vi.fn(() => options.env || {}),
@@ -93,6 +148,15 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
   }));
   vi.doMock('@core/cli/runtime-settings.js', () => ({
     loadRuntimeSettings: vi.fn(() => ({
+      storage: {
+        provider: 'sqlite',
+        sqlite: {
+          path: 'store/myclaw.db',
+        },
+        postgres: {
+          urlEnv: 'MYCLAW_DATABASE_URL',
+        },
+      },
       channels: {
         telegram: {
           enabled: false,
@@ -131,10 +195,30 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
         },
       },
     })),
+    readRuntimeStorageSettingsSnapshot: vi.fn((runtimeHome: string) => ({
+      provider: 'sqlite',
+      sqlitePath: `${runtimeHome}/store/myclaw.db`,
+      postgresUrl: null,
+      postgresUrlEnv: 'MYCLAW_DATABASE_URL',
+    })),
+    readRuntimeMemorySettingsSnapshot: vi.fn(() => ({
+      enabled: true,
+      root: 'memory',
+      embeddings: {
+        enabled: false,
+        provider: 'disabled',
+        model: 'text-embedding-3-large',
+      },
+      dreaming: { enabled: true },
+    })),
   }));
   vi.doMock('@core/cli/telegram.js', () => ({
     normalizeTelegramChatJid: vi.fn((value: string) =>
-      value.trim() ? `tg:${value}` : '',
+      value.trim().startsWith('tg:')
+        ? value.trim()
+        : value.trim()
+          ? `tg:${value}`
+          : '',
     ),
     registerTelegramMainGroup: vi.fn(async () => ({
       groupName: 'Telegram Main',
@@ -152,6 +236,60 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
       chatTitle: 'Chat',
     })),
   }));
+  vi.doMock('@core/cli/telegram-chat-discovery.js', () => ({
+    listTelegramRecentChats: vi.fn(async () => ({
+      ok: true,
+      message: 'ok',
+      chats: [
+        {
+          chatJid: 'tg:-1001234567890',
+          chatTitle: 'Telegram Main',
+          chatType: 'group',
+          sourceUpdateId: 1,
+        },
+      ],
+    })),
+  }));
+  vi.doMock('@core/cli/slack-chat-discovery.js', () => ({
+    listSlackRecentChats: vi.fn(async () => ({
+      ok: true,
+      message: 'ok',
+      chats: [
+        {
+          chatJid: 'sl:C0123456789',
+          chatTitle: 'general',
+          chatType: 'public_channel',
+          sourceTs: 1,
+        },
+      ],
+    })),
+  }));
+  vi.doMock('@core/cli/slack.js', () => ({
+    normalizeSlackChatJid: vi.fn((value: string) =>
+      value.trim().startsWith('sl:')
+        ? value.trim()
+        : value.trim()
+          ? `sl:${value.trim()}`
+          : '',
+    ),
+    registerSlackMainGroup: vi.fn(async () => ({
+      groupName: 'Slack Main',
+      folder: 'slack-main',
+    })),
+    validateSlackAppToken: vi.fn(async () => ({
+      ok: true,
+      message: 'ok',
+    })),
+    validateSlackBotToken: vi.fn(async () => ({
+      ok: true,
+      message: 'ok',
+    })),
+    verifySlackChatAccess: vi.fn(async () => ({
+      ok: true,
+      message: 'ok',
+      chatTitle: 'general',
+    })),
+  }));
   vi.doMock('@core/cli/service-manager.js', () => ({
     getServiceStatus: vi.fn(() => ({ kind: 'none', status: 'not installed' })),
     installService: vi.fn(() => ({ ok: true, message: 'installed' })),
@@ -167,6 +305,8 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
     select,
     text,
     password,
+    promptCalls,
+    runDoctorWithNetwork,
   };
 }
 
@@ -178,8 +318,9 @@ afterEach(() => {
 describe('runSetupFlow credential step', () => {
   it('enforces strict OneCLI validation for onecli-only mode', async () => {
     const mod = await loadSetupFlowModule({
-      selectQueue: ['onecli-only', 'resume'],
+      selectQueue: ['api_key', 'onecli-only', 'resume'],
       textQueue: ['http://localhost:10254'],
+      passwordQueue: ['sk-ant-test'],
       onecliReject: true,
     });
 
@@ -196,9 +337,9 @@ describe('runSetupFlow credential step', () => {
 
   it('allows hybrid mode to continue when OneCLI validation fails', async () => {
     const mod = await loadSetupFlowModule({
-      selectQueue: ['hybrid', 'continue'],
+      selectQueue: ['api_key', 'hybrid', 'continue'],
       textQueue: ['http://localhost:10254'],
-      passwordQueue: [CANCEL],
+      passwordQueue: ['sk-ant-test'],
       onecliReject: true,
     });
 
@@ -215,8 +356,8 @@ describe('runSetupFlow credential step', () => {
 
   it('skips OneCLI validation for env-only mode', async () => {
     const mod = await loadSetupFlowModule({
-      selectQueue: ['env-only'],
-      passwordQueue: [CANCEL],
+      selectQueue: ['api_key', 'env-only'],
+      passwordQueue: ['sk-ant-test'],
     });
 
     const result = await mod.runSetupFlow({
@@ -228,5 +369,95 @@ describe('runSetupFlow credential step', () => {
     expect(result.status).toBe('resumed');
     expect(mod.getContainerConfig).not.toHaveBeenCalled();
     expect(mod.text).not.toHaveBeenCalled();
+  });
+
+  it('keeps storage setup on sqlite without requesting a database URL', async () => {
+    const mod = await loadSetupFlowModule({
+      selectQueue: ['sqlite'],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+      initialStep: 'storage',
+    });
+
+    expect(result.status).toBe('resumed');
+    expect(mod.password).not.toHaveBeenCalled();
+  });
+
+  it('asks fresh-user setup questions in the expected order', async () => {
+    const mod = await loadSetupFlowModule({
+      selectQueue: [
+        'next',
+        'next',
+        'sqlite',
+        'next',
+        'telegram',
+        'tg:-1001234567890',
+        'next',
+        'oauth',
+        'env-only',
+        'claude-sonnet-4-6',
+        'on',
+        'off',
+        'on',
+        'next',
+        'next',
+        'skip',
+        'next',
+        'next',
+      ],
+      textQueue: ['/tmp/myclaw-test', 'Telegram Main'],
+      passwordQueue: ['telegram-token', 'claude-oauth-token'],
+      doctorReports: [
+        {
+          ok: true,
+          blockingFailures: 0,
+          warnings: 0,
+          checks: [],
+        },
+      ],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+    });
+
+    expect(result.status).toBe('completed');
+    expect(mod.runDoctorWithNetwork).toHaveBeenCalledTimes(1);
+    expect(mod.promptCalls.map((call) => call.message)).toEqual([
+      'Start guided setup now?',
+      'Where should MyClaw store runtime data?',
+      'Use this runtime home?',
+      'Choose storage backend',
+      'Continue to provider selection?',
+      'Choose your first channel provider',
+      'Paste your Telegram bot token from BotFather (/back, /resume, /cancel)',
+      'Choose the Telegram chat for MyClaw',
+      'Choose a name for this Telegram chat in MyClaw (/back, /resume, /cancel)',
+      'Use these Telegram settings?',
+      'How should MyClaw authenticate with Claude?',
+      'Paste CLAUDE_CODE_OAUTH_TOKEN (/back, /resume, /cancel)',
+      'Credential source mode',
+      'Choose main model',
+      'Memory setting',
+      'Embeddings setting',
+      'Dreaming setting',
+      'Continue to group creation?',
+      'Continue to optional service setup?',
+      'Background service (optional)',
+      'Verification passed. Continue to ready screen?',
+      'Setup complete. What should MyClaw do now?',
+    ]);
+    expect(
+      mod.promptCalls
+        .find(
+          (call) =>
+            call.message === 'Setup complete. What should MyClaw do now?',
+        )
+        ?.options?.slice(0, 2),
+    ).toEqual(['next', 'start_now']);
   });
 });
