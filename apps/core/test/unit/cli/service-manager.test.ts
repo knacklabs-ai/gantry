@@ -28,6 +28,8 @@ async function loadServiceManagerWithMocks(
 ) {
   vi.resetModules();
   vi.stubEnv('MYCLAW_HOME', options.runtimeHome ?? createRuntimeHome());
+  const actualHomeDir = os.homedir();
+  vi.spyOn(os, 'homedir').mockReturnValue(options.homeDir ?? actualHomeDir);
   const platform = options.platform ?? 'unknown';
   const systemdUser = options.hasSystemdUser ?? false;
   vi.doMock('@core/cli/platform.js', () => ({
@@ -35,13 +37,6 @@ async function loadServiceManagerWithMocks(
     hasSystemdUser: () => systemdUser,
     tryExec: tryExecMock,
   }));
-  vi.doMock('os', async () => {
-    const actual = await vi.importActual<typeof import('os')>('os');
-    return {
-      ...actual,
-      homedir: () => options.homeDir ?? actual.homedir(),
-    };
-  });
   vi.doMock('child_process', async () => {
     const actual =
       await vi.importActual<typeof import('child_process')>('child_process');
@@ -125,6 +120,55 @@ describe('service manager background start', () => {
       'start',
       'myclaw',
     ]);
+  });
+
+  it('installs launchd service with MYCLAW_HOME in the plist', async () => {
+    const runtimeHome = createRuntimeHome();
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-home-'));
+    const tryExecMock = vi
+      .fn()
+      .mockReturnValue({ ok: true, stdout: '', stderr: '' });
+    const mod = await loadServiceManagerWithMocks(vi.fn(), tryExecMock, {
+      platform: 'macos',
+      homeDir,
+      runtimeHome,
+    });
+
+    const outcome = mod.installService(import.meta.url, runtimeHome);
+
+    expect(outcome.ok).toBe(true);
+    const plistPath = path.join(
+      homeDir,
+      'Library',
+      'LaunchAgents',
+      'com.myclaw.plist',
+    );
+    const plist = fs.readFileSync(plistPath, 'utf-8');
+    expect(plist).toContain('<key>MYCLAW_HOME</key>');
+    expect(plist).toContain(`<string>${runtimeHome}</string>`);
+    expect(plist).not.toContain('<key>AGENT_ROOT</key>');
+  });
+
+  it('reports launchd running state with pid', async () => {
+    const runtimeHome = createRuntimeHome();
+    const tryExecMock = vi.fn((command: string, args: string[]) => {
+      if (command === 'launchctl' && args[0] === 'print') {
+        return {
+          ok: true,
+          stdout: '\tstate = running\n\tpid = 1234\n',
+          stderr: '',
+        };
+      }
+      return { ok: true, stdout: '', stderr: '' };
+    });
+    const mod = await loadServiceManagerWithMocks(vi.fn(), tryExecMock, {
+      platform: 'macos',
+      runtimeHome,
+    });
+
+    const status = mod.getServiceStatus(runtimeHome);
+
+    expect(status).toEqual({ kind: 'launchd', status: 'running(pid:1234)' });
   });
 
   it('creates settings.yaml on service install when missing', async () => {

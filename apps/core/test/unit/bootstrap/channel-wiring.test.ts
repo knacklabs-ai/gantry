@@ -22,8 +22,7 @@ function makeRuntimeSettings(enabled: {
     },
     memory: {
       enabled: true,
-      provider: 'sqlite',
-      sqlitePath: 'store/memory.db',
+      root: 'memory',
       embeddings: {
         enabled: false,
         provider: 'disabled',
@@ -37,7 +36,6 @@ function makeRuntimeSettings(enabled: {
           extractor: 'claude-haiku-4-5-20251001',
           dreaming: 'claude-sonnet-4-6',
           consolidation: 'claude-sonnet-4-6',
-          sessionSummary: 'claude-haiku-4-5-20251001',
         },
       },
     },

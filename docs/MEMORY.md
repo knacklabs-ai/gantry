@@ -17,9 +17,7 @@ Memory behavior is configured only in `~/myclaw/settings.yaml`:
 ```yaml
 memory:
   enabled: true
-  provider: sqlite
-  sqlite_path: store/memory.db
-  qmd_root: agent-memory
+  root: memory
   embeddings:
     enabled: false
     provider: disabled
@@ -28,24 +26,12 @@ memory:
     enabled: false
 ```
 
-## Providers
+## Storage
 
-### `sqlite`
-
-- SQLite-only storage.
-- Uses `memory.sqlite_path`.
-- No markdown mirror.
-
-### `qmd`
-
-- SQLite + markdown mirror.
-- Uses `memory.qmd_root`.
-- SQLite remains the search source of truth.
-
-### `noop` / `none`
-
-- Non-persistent mode.
-- Useful for temporary testing only.
+- SQLite is the only supported memory store.
+- `memory.root` resolves under the runtime home unless it is absolute.
+- The default database path is `~/myclaw/memory/.cache/memory.db`.
+- The journal path is `~/myclaw/memory/.journal`.
 
 ## Embeddings
 
@@ -58,14 +44,13 @@ memory:
 
 - Optional background memory refinement.
 - Disabled by default.
-- Should be used only with persistent memory providers.
+- Should be used only with persistent memory enabled.
 
 ## User Controls
 
 - `myclaw status`
 - `myclaw doctor`
 - `myclaw memory status`
-- `myclaw memory provider <sqlite|qmd|noop|none>`
 - `myclaw memory embeddings <off|openai>`
 - `myclaw memory dreaming <on|off>`
 

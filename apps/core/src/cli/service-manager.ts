@@ -7,6 +7,13 @@ import { getRuntimeEntryPath } from './package-paths.js';
 import { detectPlatform, hasSystemdUser, tryExec } from './platform.js';
 import { buildServicePath } from '../platform/service-path.js';
 import {
+  getLaunchdServiceStatus,
+  launchdPlistPath,
+  startLaunchdService,
+  stopLaunchdService,
+  writeLaunchdPlist,
+} from './launchd-service.js';
+import {
   ensureRuntimeLayout,
   runtimeErrorLogPath,
   runtimeLogPath,
@@ -21,7 +28,6 @@ export interface ServiceOutcome {
   message: string;
 }
 
-const SERVICE_LABEL = 'com.myclaw';
 const FALLBACK_SERVICE_META = 'service-meta.json';
 const PID_FILE = 'myclaw.pid';
 
@@ -45,12 +51,12 @@ function writeFallbackServiceMetadata(
   runtimeHome: string,
   runtimeEntry: string,
 ): void {
-  const metadata: FallbackServiceMetadata = { runtimeEntry };
-  fs.writeFileSync(
-    serviceMetaPath(runtimeHome),
-    JSON.stringify(metadata, null, 2),
-    'utf-8',
+  const metadata = JSON.stringify(
+    { runtimeEntry } satisfies FallbackServiceMetadata,
+    null,
+    2,
   );
+  fs.writeFileSync(serviceMetaPath(runtimeHome), metadata, 'utf-8');
 }
 
 function readFallbackServiceMetadata(
@@ -86,9 +92,7 @@ function readFallbackPid(runtimeHome: string): number | null {
 function clearFallbackPid(runtimeHome: string): void {
   try {
     fs.unlinkSync(fallbackPidPath(runtimeHome));
-  } catch {
-    // Ignore pid cleanup errors.
-  }
+  } catch {}
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -167,68 +171,6 @@ function isManagedFallbackProcess(
   return normalizedCommand.includes(normalizedRuntimeEntry);
 }
 
-function plistPath(): string {
-  return path.join(
-    os.homedir(),
-    'Library',
-    'LaunchAgents',
-    `${SERVICE_LABEL}.plist`,
-  );
-}
-
-function writeLaunchdPlist(runtimeHome: string, runtimeEntry: string): void {
-  const target = plistPath();
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  const uid = process.getuid?.() || 0;
-  const servicePath = buildServicePath(os.homedir());
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${SERVICE_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${process.execPath}</string>
-    <string>${runtimeEntry}</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${runtimeHome}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>MYCLAW_HOME</key>
-    <string>${runtimeHome}</string>
-    <key>HOME</key>
-    <string>${os.homedir()}</string>
-    <key>PATH</key>
-    <string>${servicePath}</string>
-  </dict>
-  <key>StandardOutPath</key>
-  <string>${runtimeLogPath(runtimeHome)}</string>
-  <key>StandardErrorPath</key>
-  <string>${runtimeErrorLogPath(runtimeHome)}</string>
-  <key>LimitLoadToSessionType</key>
-  <array>
-    <string>Aqua</string>
-  </array>
-</dict>
-</plist>
-`;
-  fs.writeFileSync(target, plist, 'utf-8');
-
-  tryExec('launchctl', ['bootout', `gui/${uid}`, target]);
-  const loaded = tryExec('launchctl', ['bootstrap', `gui/${uid}`, target]);
-  if (!loaded.ok && !loaded.stderr.includes('already bootstrapped')) {
-    throw new Error(
-      loaded.stderr || loaded.stdout || 'launchctl bootstrap failed',
-    );
-  }
-}
-
 function writeSystemdUnit(runtimeHome: string, runtimeEntry: string): string {
   const unitDir = path.join(os.homedir(), '.config', 'systemd', 'user');
   const unitPath = path.join(unitDir, 'myclaw.service');
@@ -296,7 +238,7 @@ export function installService(
       return {
         ok: true,
         kind,
-        message: `Installed launchd service at ${plistPath()}.`,
+        message: `Installed launchd service at ${launchdPlistPath()}.`,
       };
     }
 
@@ -348,17 +290,7 @@ export function startService(runtimeHome: string): ServiceOutcome {
   const kind = resolveServiceKind();
   try {
     if (kind === 'launchd') {
-      const uid = process.getuid?.() || 0;
-      const result = tryExec('launchctl', [
-        'kickstart',
-        '-k',
-        `gui/${uid}/${SERVICE_LABEL}`,
-      ]);
-      if (!result.ok) {
-        throw new Error(
-          result.stderr || result.stdout || 'launchctl kickstart failed',
-        );
-      }
+      startLaunchdService();
       return { ok: true, kind, message: 'launchd service started.' };
     }
 
@@ -494,16 +426,7 @@ export function stopService(runtimeHome: string): ServiceOutcome {
   const kind = resolveServiceKind();
   try {
     if (kind === 'launchd') {
-      const uid = process.getuid?.() || 0;
-      const result = tryExec('launchctl', [
-        'bootout',
-        `gui/${uid}/${SERVICE_LABEL}`,
-      ]);
-      if (!result.ok && !result.stderr.includes('Could not find service')) {
-        throw new Error(
-          result.stderr || result.stdout || 'launchctl bootout failed',
-        );
-      }
+      stopLaunchdService();
       return { ok: true, kind, message: 'launchd service stopped.' };
     }
 
@@ -581,11 +504,7 @@ export function getServiceStatus(runtimeHome: string): {
   const kind = resolveServiceKind();
 
   if (kind === 'launchd') {
-    const listing = tryExec('launchctl', ['list']);
-    if (!listing.ok) return { kind, status: 'unknown' };
-    if (listing.stdout.includes(SERVICE_LABEL))
-      return { kind, status: 'loaded' };
-    return { kind, status: 'not_loaded' };
+    return { kind, status: getLaunchdServiceStatus() };
   }
 
   if (kind === 'systemd-user') {

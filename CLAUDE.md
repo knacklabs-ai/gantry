@@ -8,17 +8,17 @@ Single Node.js process with skill-based channel provider system. Built-in provid
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `apps/core/src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `apps/core/src/channels/provider-registry.ts` | Channel provider registry |
-| `apps/core/src/runtime/ipc.ts` | IPC watcher and task processing |
-| `apps/core/src/messaging/router.ts` | Message formatting and outbound routing |
-| `apps/core/src/core/config.ts` | Trigger pattern, paths, intervals |
-| `apps/core/src/runtime/task-scheduler.ts` | Runs scheduled tasks |
-| `apps/core/src/storage/db.ts` | SQLite operations |
-| `~/myclaw/agents/{name}/CLAUDE.md` | Runtime per-agent memory files |
-| `$AGENT_ROOT/.claude/skills/` | Custom skills (single source of truth, managed externally) |
+| File                                          | Purpose                                                    |
+| --------------------------------------------- | ---------------------------------------------------------- |
+| `apps/core/src/index.ts`                      | Orchestrator: state, message loop, agent invocation        |
+| `apps/core/src/channels/provider-registry.ts` | Channel provider registry                                  |
+| `apps/core/src/runtime/ipc.ts`                | IPC watcher and task processing                            |
+| `apps/core/src/messaging/router.ts`           | Message formatting and outbound routing                    |
+| `apps/core/src/core/config.ts`                | Trigger pattern, paths, intervals                          |
+| `apps/core/src/runtime/task-scheduler.ts`     | Runs scheduled tasks                                       |
+| `apps/core/src/storage/db.ts`                 | SQLite operations                                          |
+| `~/myclaw/agents/{name}/CLAUDE.md`            | Runtime per-agent prompt guidance                          |
+| `~/myclaw/.claude/skills/`                    | Custom skills (single source of truth, managed externally) |
 
 ## Secrets / Credentials / Proxy (OneCLI)
 
@@ -31,16 +31,16 @@ Four types of skills exist in MyClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 - **Feature skills** — merge a `skill/*` branch to add capabilities (e.g. `/add-telegram`, `/add-slack`)
 - **Utility skills** — ship code files alongside SKILL.md (e.g. `/claw`)
 - **Operational skills** — instruction-only workflows, always on `main` (e.g. `/setup`, `/debug`)
-- **Custom skills** — managed under `$AGENT_ROOT/.claude/skills/` (single source of truth, defaults to `~/myclaw/.claude/skills/`)
+- **Custom skills** — managed under `~/myclaw/.claude/skills/` as the single source of truth
 
-| Skill | When to Use |
-|-------|-------------|
-| `/commands` | List all available slash commands with descriptions |
-| `/setup` | First-time installation, authentication, service configuration |
-| `/customize` | Adding channels, integrations, changing behavior |
-| `/debug` | Runtime issues, logs, troubleshooting |
-| `/update-myclaw` | Bring upstream MyClaw updates into a customized install |
-| `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials to it |
+| Skill            | When to Use                                                     |
+| ---------------- | --------------------------------------------------------------- |
+| `/commands`      | List all available slash commands with descriptions             |
+| `/setup`         | First-time installation, authentication, service configuration  |
+| `/customize`     | Adding channels, integrations, changing behavior                |
+| `/debug`         | Runtime issues, logs, troubleshooting                           |
+| `/update-myclaw` | Bring upstream MyClaw updates into a customized install         |
+| `/init-onecli`   | Install OneCLI Agent Vault and migrate `.env` credentials to it |
 
 ## Contributing
 
@@ -53,20 +53,16 @@ Run commands directly—don't tell the user to run them.
 ```bash
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
-npm run build        # Compile the app and agent runner
 ```
 
 Service management:
-```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.myclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.myclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.myclaw  # restart
 
-# Linux (systemd)
-systemctl --user start myclaw
-systemctl --user stop myclaw
-systemctl --user restart myclaw
+```bash
+myclaw service install
+myclaw service start
+myclaw service stop
+myclaw service restart
+myclaw status
 ```
 
 ## Troubleshooting

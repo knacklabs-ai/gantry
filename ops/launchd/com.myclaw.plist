@@ -7,26 +7,26 @@
     <key>ProgramArguments</key>
     <array>
         <string>{{NODE_PATH}}</string>
-        <string>{{PROJECT_ROOT}}/dist/index.js</string>
+        <string>{{RUNTIME_ENTRY}}</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>{{PROJECT_ROOT}}</string>
+    <string>{{RUNTIME_HOME}}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>MYCLAW_HOME</key>
+        <string>{{RUNTIME_HOME}}</string>
         <key>PATH</key>
         <string>{{HOME}}/.local/bin:{{HOME}}/.npm-global/bin:{{HOME}}/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>{{HOME}}</string>
-        <key>ASSISTANT_NAME</key>
-        <string>Andy</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/myclaw.log</string>
+    <string>{{RUNTIME_HOME}}/logs/myclaw.log</string>
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/myclaw.error.log</string>
+    <string>{{RUNTIME_HOME}}/logs/myclaw.error.log</string>
 </dict>
 </plist>

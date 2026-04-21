@@ -5,7 +5,7 @@ import path from 'path';
 import { getMyclawHome } from '../core/myclaw-home.js';
 import { ensureRuntimeLayoutDirectories } from '../platform/runtime-layout.js';
 
-export const DEFAULT_RUNTIME_HOME = path.join(os.homedir(), '.myclaw');
+export const DEFAULT_RUNTIME_HOME = path.join(os.homedir(), 'myclaw');
 const GLOBAL_CONFIG_DIR = path.join(os.homedir(), '.config', 'myclaw');
 const RUNTIME_HOME_POINTER_PATH = path.join(
   GLOBAL_CONFIG_DIR,

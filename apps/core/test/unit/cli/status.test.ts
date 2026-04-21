@@ -4,7 +4,11 @@ import path from 'path';
 
 import { describe, expect, it } from 'vitest';
 
-import { collectRuntimeStatus } from '@core/cli/status.js';
+import {
+  collectRuntimeStatus,
+  formatRuntimeStatus,
+  type RuntimeStatusSummary,
+} from '@core/cli/status.js';
 import { settingsFilePath } from '@core/cli/runtime-home.js';
 
 function createRuntimeHome(): string {
@@ -14,6 +18,46 @@ function createRuntimeHome(): string {
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
   fs.mkdirSync(path.join(home, 'data'), { recursive: true });
   return home;
+}
+
+function createReadySummary(
+  service: RuntimeStatusSummary['service'],
+): RuntimeStatusSummary {
+  return {
+    runtimeHome: '/tmp/myclaw',
+    runtimeMode: 'host',
+    doctor: {
+      ok: true,
+      warnings: 0,
+      blockingFailures: 0,
+      checks: [],
+    },
+    service,
+    channels: [
+      {
+        id: 'telegram',
+        label: 'Telegram',
+        enabled: true,
+        configuredEnvKeys: ['TELEGRAM_BOT_TOKEN'],
+        missingEnvKeys: [],
+        groups: 1,
+      },
+    ],
+    memoryEnabled: true,
+    memoryHealth: 'pass',
+    memoryRoot: '/tmp/myclaw/memory',
+    memoryRootSource: 'settings.yaml',
+    memorySqlitePath: '/tmp/myclaw/memory/.cache/memory.db',
+    memorySqlitePathSource: 'derived',
+    embeddingsEnabled: false,
+    embeddingProvider: 'disabled',
+    embeddingProviderSource: 'settings.yaml',
+    embeddingProviderHealth: 'pass',
+    embeddingModel: 'text-embedding-3-large',
+    embeddingModelSource: 'settings.yaml',
+    dreamingEnabled: false,
+    dreamingSource: 'settings.yaml',
+  };
 }
 
 describe('runtime status', () => {
@@ -30,5 +74,31 @@ describe('runtime status', () => {
     expect(
       status.channels.find((channel) => channel.id === 'slack')?.enabled,
     ).toBe(false);
+  });
+
+  it('does not tell users to start an already running service', () => {
+    const summary = createReadySummary({
+      kind: 'launchd',
+      status: 'running(pid:1234)',
+    });
+
+    const text = formatRuntimeStatus(summary);
+
+    expect(text).toContain('Service (launchd): running(pid:1234)');
+    expect(text).toContain('- MyClaw is running.');
+    expect(text).not.toContain('Run `myclaw start`');
+  });
+
+  it('does not tell systemd users to start an active service', () => {
+    const summary = createReadySummary({
+      kind: 'systemd-user',
+      status: 'active',
+    });
+
+    const text = formatRuntimeStatus(summary);
+
+    expect(text).toContain('Service (systemd-user): active');
+    expect(text).toContain('- MyClaw is running.');
+    expect(text).not.toContain('Run `myclaw start`');
   });
 });

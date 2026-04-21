@@ -1,7 +1,7 @@
 import os from 'os';
 import path from 'path';
 
-const DEFAULT_MYCLAW_HOME = path.join(os.homedir(), '.myclaw');
+const DEFAULT_MYCLAW_HOME = path.join(os.homedir(), 'myclaw');
 
 function expandHomePath(input: string): string {
   if (input === '~') return os.homedir();

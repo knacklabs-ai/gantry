@@ -39,7 +39,7 @@ Slack can be connected after first-run setup (or as an additional channel) with 
 
 ## Runtime Home
 
-MyClaw stores mutable state under `AGENT_ROOT`.
+MyClaw stores mutable state under `MYCLAW_HOME`.
 
 Default path:
 
@@ -96,15 +96,13 @@ myclaw slack connect
 
 - Memory: remember durable facts, preferences, decisions, corrections, constraints, and procedures.
 - Continuity: use remembered context so the agent can resume current work instead of starting cold.
-- SQLite provider: default local database storage.
-- QMD provider: optional SQLite-backed markdown mirror for users who want human-readable memory files.
+- SQLite storage: default local database storage under `memory.root`.
 - Embeddings: optional OpenAI-powered ranking improvement for memory search.
 - Dreaming: background memory cleanup and improvement.
 
 Default choices:
 
 - memory: on
-- provider: sqlite
 - embeddings: off
 - dreaming: off
 
@@ -113,9 +111,7 @@ Canonical memory block written by setup:
 ```yaml
 memory:
   enabled: true
-  provider: sqlite
-  sqlite_path: store/memory.db
-  qmd_root: agent-memory
+  root: memory
   embeddings:
     enabled: false
     provider: disabled

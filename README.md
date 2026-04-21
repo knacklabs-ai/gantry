@@ -26,7 +26,6 @@ myclaw setup
 myclaw doctor
 myclaw status
 myclaw memory status
-myclaw memory provider <sqlite|qmd|noop|none>
 myclaw memory embeddings <off|openai>
 myclaw memory dreaming <on|off>
 myclaw start
@@ -43,19 +42,19 @@ Defaults in v1:
 - runtime settings file: `~/myclaw/settings.yaml` (validated before `start`/`restart`)
 - setup flow: Telegram-first (Slack can be added with `myclaw slack connect`)
 - memory: on
-- memory provider: `sqlite` by default; `qmd` adds a markdown audit mirror
+- memory storage: SQLite under the configured `memory.root`
 - embeddings: off (unless OpenAI key is provided and enabled)
 - dreaming: off
 - sender allowlist: `channels.<provider>.sender_allowlist` in `settings.yaml`
+
+Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default and does not load or migrate state from `~/.myclaw`.
 
 Canonical memory settings live in `~/myclaw/settings.yaml`:
 
 ```yaml
 memory:
   enabled: true
-  provider: sqlite
-  sqlite_path: store/memory.db
-  qmd_root: agent-memory
+  root: memory
   embeddings:
     enabled: false
     provider: disabled
@@ -117,10 +116,7 @@ Continuity is the runtime context that helps the agent pick up where it left off
 
 Embeddings are off by default. Memory search and context injection still work without embeddings; embeddings only improve ranking when enabled.
 
-Provider model:
-
-- `sqlite`: simple local SQLite database, no markdown mirror
-- `qmd`: SQLite plus human-readable markdown mirror under `~/myclaw/agent-memory`
+Memory storage is SQLite-first. By default, the live database is `~/myclaw/memory/.cache/memory.db` and journal files are under `~/myclaw/memory/.journal`.
 
 ## Runtime
 
@@ -169,9 +165,9 @@ npm run test:e2e
 
 Skills are agent instructions bundled into the npm package and synced into `~/myclaw/.claude/skills/`.
 
-| Skill | Purpose |
-| ----- | ------- |
-| `/commands` | List available chat commands and installed skill packs |
+| Skill          | Purpose                                                               |
+| -------------- | --------------------------------------------------------------------- |
+| `/commands`    | List available chat commands and installed skill packs                |
 | `myclaw-admin` | Internal administration reference used by agents when managing MyClaw |
 
 Session commands are handled by the host runtime, not bundled skills:
@@ -214,8 +210,8 @@ Key paths:
 - `~/myclaw/agents/shared/CLAUDE.md` - static shared prompt guidance
 - `~/myclaw/agents/*/SOUL.md` - per-agent personality prompt
 - `~/myclaw/agents/*/CLAUDE.md` - static group-specific prompt guidance
-- `~/myclaw/store/memory.db` - default SQLite memory database
-- `~/myclaw/agent-memory/` - QMD markdown mirror when `settings.yaml memory.provider=qmd`
+- `~/myclaw/memory/.cache/memory.db` - default SQLite memory database
+- `~/myclaw/memory/.journal/` - memory journal files
 
 ## Factory Mode
 

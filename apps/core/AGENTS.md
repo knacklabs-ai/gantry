@@ -8,7 +8,7 @@
 
 - Keep runtime imports aligned with the split domains under `apps/core/src/` rather than rebuilding root wrapper modules.
 - Service changes must keep `ops/bootstrap.sh`, `ops/launchd/com.myclaw.plist`, and runtime diagnostics consistent.
-- CLI onboarding code in `apps/core/src/cli/` must remain runtime-home based (`AGENT_ROOT`) and must not assume repo cwd.
+- CLI onboarding code in `apps/core/src/cli/` must remain runtime-home based (`MYCLAW_HOME`) and must not assume repo cwd.
 - Keep prompt rendering separate from side-effect modules so onboarding behavior stays testable.
 - `myclaw` CLI commands should return actionable plain-English recovery guidance instead of raw startup failures.
 - When path-sensitive code changes, update the matching tests in `apps/core/src/**/*.test.ts` in the same change.
