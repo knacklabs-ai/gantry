@@ -49,6 +49,7 @@ import {
 } from './agent-spawn.js';
 import { archiveSessionTranscript } from '../session/session-transcript-archive.js';
 import { handleSessionCommand } from '../session/session-commands.js';
+import { createInjectedMemoryContextFile } from './memory-context.js';
 
 const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
 const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
@@ -133,7 +134,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     prompt: string,
     chatJid: string,
     onOutput?: (output: AgentOutput) => Promise<void>,
-    options?: { timeoutMs?: number },
+    options?: {
+      timeoutMs?: number;
+      memoryContext?: {
+        source: 'message' | 'command';
+        userId?: string;
+        threadId?: string;
+      };
+    },
   ): Promise<'success' | 'error'> {
     const isMain = group.isMain === true;
     const sessionId = deps.getSession(group.folder);
@@ -191,6 +199,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         }
       : undefined;
 
+    const context = await createInjectedMemoryContextFile({
+      groupFolder: group.folder,
+      chatJid,
+      source: options?.memoryContext?.source || 'message',
+      userId: options?.memoryContext?.userId,
+      threadId: options?.memoryContext?.threadId,
+    });
     try {
       const output = await runAgentImpl(
         group,
@@ -202,6 +217,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           isMain,
           assistantName: ASSISTANT_NAME,
           thinking: group.agentConfig?.thinking,
+          memoryContextFile: context?.filePath,
         },
         (proc, containerName) =>
           deps.queue.registerProcess(
@@ -211,7 +227,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             group.folder,
           ),
         wrappedOnOutput,
-        options,
+        options?.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
       );
 
       if (output.status === 'error') {
@@ -259,6 +275,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     } catch (err) {
       logger.error({ group: group.name, err }, 'Agent error');
       return 'error';
+    } finally {
+      context?.cleanup();
     }
   }
 
@@ -359,6 +377,19 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       }
       await deps.channelRuntime.sendProgressUpdate(chatJid, text);
     };
+    const resolveMemoryUserId = (): string | undefined => {
+      for (let index = missedMessages.length - 1; index >= 0; index -= 1) {
+        const message = missedMessages[index];
+        if (!message) continue;
+        const sender = message.sender?.trim();
+        if (!sender) continue;
+        if (message.is_from_me) continue;
+        return sender;
+      }
+      const fallbackSender = latestMessage?.sender?.trim();
+      return fallbackSender || undefined;
+    };
+    const memoryUserId = resolveMemoryUserId();
 
     const cmdResult = await handleSessionCommand({
       missedMessages,
@@ -371,7 +402,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           sendMessageToChannel(text, buildMessageOptions(options?.threadId)),
         setTyping: (typing) => deps.channelRuntime.setTyping(chatJid, typing),
         runAgent: (prompt, onOutput, options) =>
-          runAgent(group, prompt, chatJid, onOutput, options),
+          runAgent(group, prompt, chatJid, onOutput, {
+            ...options,
+            memoryContext: {
+              source: 'command',
+              userId: memoryUserId,
+              threadId: activeThreadId,
+            },
+          }),
         closeStdin: () => deps.queue.closeStdin(chatJid),
         advanceCursor: (message) => {
           deps.setCursor(
@@ -664,7 +702,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             await finalizeStreamingOutput('error-marker');
           }
         },
-        undefined,
+        {
+          memoryContext: {
+            source: 'message',
+            userId: memoryUserId,
+            threadId: activeThreadId,
+          },
+        },
       );
     } finally {
       await finalizeStreamingOutput('turn-complete');

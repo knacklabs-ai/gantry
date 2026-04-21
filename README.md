@@ -119,8 +119,18 @@ Continuity is the runtime context that helps the agent pick up where it left off
 - prior decisions
 - recent work context
 - open loops once commitment tracking is enabled
+- dream lifecycle status (enabled/schedule/last run outcome)
 
 Embeddings are off by default. Memory search and context injection still work without embeddings; embeddings only improve ranking when enabled.
+
+Host runtime now injects a fresh memory/continuity block for every agent run (message and scheduler), so baseline recall does not depend on the agent deciding to call memory tools first.
+
+Scope defaults:
+
+- `user` for personal preferences and per-user corrections
+- `group` for active channel/chat memory (default)
+- `global` only for explicitly cross-chat knowledge
+- when `thread_id` exists, treat it as a topic boundary and include topic markers in memory keys
 
 Runtime state storage defaults to `~/myclaw/store/myclaw.db`.
 Memory data uses `~/myclaw/memory/.cache/memory.db` by default (derived from `memory.root`).
@@ -220,6 +230,8 @@ Key paths:
 - `~/myclaw/agents/*/CLAUDE.md` - static group-specific prompt guidance
 - `~/myclaw/store/myclaw.db` - default app storage database
 - `~/myclaw/memory/.cache/memory.db` - default memory database
+- `~/myclaw/memory/sessions/` - archived session summaries used for continuity recap
+- `~/myclaw/memory/dreams/` - dream/refinement artifacts
 - `~/myclaw/memory/.journal/` - memory journal files
 
 ## Factory Mode

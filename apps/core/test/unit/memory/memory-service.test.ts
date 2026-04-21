@@ -4,6 +4,7 @@ import path from 'path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { MemoryRootService } from '@core/memory/memory-root.js';
 import { MemoryService } from '@core/memory/memory-service.js';
 import type { MemoryItem, MemoryProcedure } from '@core/memory/memory-types.js';
 
@@ -396,6 +397,50 @@ describe('MemoryService boundary extraction', () => {
     });
 
     expect(brief).toContain('Ravi prefers terse replies.');
+  });
+
+  it('buildBrief includes dream lifecycle details from latest dream event', async () => {
+    const fixture = makeServiceFixture();
+    fixture.store.getLatestEvent.mockReturnValueOnce({
+      event_type: 'dream_completed',
+      entity_type: 'memory_dreaming',
+      entity_id: 'team',
+      payload_json: JSON.stringify({
+        promotedCount: 3,
+        decayedCount: 1,
+        retiredCount: 0,
+      }),
+      created_at: '2026-04-21T00:00:00.000Z',
+    });
+
+    const brief = await fixture.service.buildBrief({
+      groupFolder: 'team',
+      maxItems: 10,
+    });
+
+    expect(brief).toContain('### Dream Lifecycle');
+    expect(brief).toContain('last_run: 2026-04-21T00:00:00.000Z');
+    expect(brief).toContain('promoted=3, decayed=1, retired=0');
+  });
+
+  it('buildBrief includes latest session recap when available', async () => {
+    const fixture = makeServiceFixture();
+    vi.spyOn(MemoryRootService, 'getInstance').mockReturnValue({
+      getLatestSessionRecap: () => ({
+        filePath: '/tmp/session.md',
+        summary: 'Implemented memory injection for every run.',
+        openLoops: 'Validate production gates.',
+      }),
+    } as unknown as MemoryRootService);
+
+    const brief = await fixture.service.buildBrief({
+      groupFolder: 'team',
+      maxItems: 10,
+    });
+
+    expect(brief).toContain('### Session Recap');
+    expect(brief).toContain('Implemented memory injection for every run.');
+    expect(brief).toContain('Validate production gates.');
   });
 
   it('extractFromTranscript saves extracted facts and applies supersedes within scope', async () => {
