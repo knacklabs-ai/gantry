@@ -141,4 +141,3 @@ export function createEmbeddingProvider(
 
 registerEmbeddingProvider('openai', () => new OpenAIEmbeddingClient());
 registerEmbeddingProvider('disabled', () => new DisabledEmbeddingClient());
-registerEmbeddingProvider('none', () => new DisabledEmbeddingClient());

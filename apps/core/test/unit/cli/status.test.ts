@@ -10,6 +10,10 @@ import {
   type RuntimeStatusSummary,
 } from '@core/cli/status.js';
 import { settingsFilePath } from '@core/cli/runtime-home.js';
+import {
+  loadRuntimeSettings,
+  saveRuntimeSettings,
+} from '@core/cli/runtime-settings.js';
 
 function createRuntimeHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-status-test-'));
@@ -49,6 +53,7 @@ function createReadySummary(
     memoryRootSource: 'settings.yaml',
     memorySqlitePath: '/tmp/myclaw/memory/.cache/memory.db',
     memorySqlitePathSource: 'derived',
+    storageProvider: 'sqlite',
     embeddingsEnabled: false,
     embeddingProvider: 'disabled',
     embeddingProviderSource: 'settings.yaml',
@@ -86,6 +91,10 @@ describe('runtime status', () => {
 
     expect(text).toContain('Service (launchd): running(pid:1234)');
     expect(text).toContain('- MyClaw is running.');
+    expect(text).toContain('Storage provider: sqlite');
+    expect(text).toContain(
+      'Memory DB path: /tmp/myclaw/memory/.cache/memory.db',
+    );
     expect(text).not.toContain('Run `myclaw start`');
   });
 
@@ -100,5 +109,21 @@ describe('runtime status', () => {
     expect(text).toContain('Service (systemd-user): active');
     expect(text).toContain('- MyClaw is running.');
     expect(text).not.toContain('Run `myclaw start`');
+  });
+
+  it('reports postgres storage provider and skips sqlite group counting', () => {
+    const runtimeHome = createRuntimeHome();
+    const settings = loadRuntimeSettings(runtimeHome);
+    settings.storage.provider = 'postgres';
+    settings.channels.telegram.enabled = true;
+    saveRuntimeSettings(runtimeHome, settings);
+
+    const status = collectRuntimeStatus(import.meta.url, runtimeHome);
+    const telegram = status.channels.find(
+      (channel) => channel.id === 'telegram',
+    );
+
+    expect(status.storageProvider).toBe('postgres');
+    expect(telegram?.groups).toBe(0);
   });
 });

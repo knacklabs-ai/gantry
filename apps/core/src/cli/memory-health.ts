@@ -18,6 +18,7 @@ export interface HealthCheckResult {
 }
 
 export interface MemoryHealthInspection {
+  storageProvider: 'sqlite' | 'postgres';
   memoryEnabled: boolean;
   embeddingsEnabled: boolean;
   dreamingEnabled: boolean;
@@ -159,6 +160,8 @@ export function inspectMemoryHealth(
 ): MemoryHealthInspection {
   const warnings: HealthCheckResult[] = [];
   const settingsMemory = settings?.memory;
+  const storageProvider =
+    settings?.storage.provider === 'postgres' ? 'postgres' : 'sqlite';
 
   const memoryEnabled = settingsMemory?.enabled ?? true;
   const embeddingsEnabled = settingsMemory?.embeddings.enabled ?? false;
@@ -176,7 +179,8 @@ export function inspectMemoryHealth(
     settingsMemory?.root,
     'memory',
   );
-  const sqlitePath = path.join(memoryRoot, '.cache', 'memory.db');
+  const sqlitePath = path.resolve(memoryRoot, '.cache', 'memory.db');
+  const sqlitePathSource: ConfigSource = 'derived';
 
   const memoryCheck = inspectMemoryStorage(
     memoryEnabled,
@@ -192,6 +196,7 @@ export function inspectMemoryHealth(
   });
 
   return {
+    storageProvider,
     memoryEnabled,
     embeddingsEnabled,
     dreamingEnabled,
@@ -201,7 +206,7 @@ export function inspectMemoryHealth(
     embeddingModel,
     memorySource: settingsMemory ? 'settings.yaml' : 'default',
     memoryRootSource: settingsMemory?.root ? 'settings.yaml' : 'default',
-    sqlitePathSource: 'derived',
+    sqlitePathSource,
     embeddingProviderSource: settingsMemory ? 'settings.yaml' : 'default',
     embeddingModelSource: settingsMemory?.embeddings.model
       ? 'settings.yaml'

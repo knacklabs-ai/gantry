@@ -13,21 +13,23 @@ MyClaw must present one runtime truth across runtime code, CLI, diagnostics, set
    - `memory.enabled`
    - `memory.root`
    - `memory.embeddings.enabled`
-   - `memory.embeddings.provider` (`disabled`, `none`, `openai`)
+   - `memory.embeddings.provider` (`disabled`, `openai`)
    - `memory.embeddings.model`
    - `memory.dreaming.enabled`
-5. `settings.yaml` runtime behavior schema is `channels.*` plus `memory.*` only.
+5. `settings.yaml` runtime behavior schema is `channels.*`, `storage.*`, and `memory.*`.
 6. Continuity currently means injected remembered context plus memory tooling; commitment/inbox/digest controls are separate future work.
 
 ## Consequences
 
 - CLI mutation commands update `settings.yaml`.
-- `myclaw status` and `myclaw doctor` report memory/provider/embeddings/dreaming state from `settings.yaml`.
+- `myclaw status` and `myclaw doctor` report memory/storage/embeddings/dreaming state from `settings.yaml`.
 - Unsupported runtime and memory env keys are surfaced as warnings in doctor/config surfaces.
 - Direct YAML edits remain first-class with strict validation and actionable path-level errors.
 
 ## Notes
 
-- SQLite under `memory.root` is the only supported memory store.
+- Host runtime storage provider is `sqlite` via `storage.provider`.
+- Default runtime SQLite database path is `store/myclaw.db`.
+- Default memory SQLite database path is `memory/.cache/memory.db`.
 - Embeddings are optional and disabled by default.
 - Dreaming is optional and disabled by default.

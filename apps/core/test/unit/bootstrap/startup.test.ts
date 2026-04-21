@@ -37,7 +37,11 @@ describe('runStartup', () => {
       }),
     });
 
-    const runtimeSettings = { channels: {}, memory: {} } as any;
+    const runtimeSettings = {
+      channels: {},
+      storage: { provider: 'sqlite' },
+      memory: {},
+    } as any;
     const result = await runStartup(app, {
       ensureRuntimeLayoutDirectories: vi.fn(() => {
         order.push('layout');
@@ -66,9 +70,9 @@ describe('runStartup', () => {
     expect(order).toEqual([
       'layout',
       'prompt-bootstrap',
+      'load-settings',
       'init-db',
       'log-db-init',
-      'load-settings',
       'load-state',
       'ensure-onecli',
       'restore-remote-control',
@@ -90,7 +94,14 @@ describe('runStartup', () => {
       initDatabase: vi.fn(() => {
         order.push('init-db');
       }),
-      loadRuntimeSettings: vi.fn(() => ({ channels: {}, memory: {} }) as any),
+      loadRuntimeSettings: vi.fn(
+        () =>
+          ({
+            channels: {},
+            storage: { provider: 'sqlite' },
+            memory: {},
+          }) as any,
+      ),
       restoreRemoteControl: vi.fn(() => {
         order.push('restore-remote-control');
       }),
@@ -102,5 +113,27 @@ describe('runStartup', () => {
 
     expect(order).toEqual(['layout', 'init-db', 'restore-remote-control']);
     expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('fails fast when storage.provider is postgres', async () => {
+    await expect(
+      runStartup(makeApp(), {
+        ensureRuntimeLayoutDirectories: vi.fn(),
+        ensurePromptProfileBootstrapped: vi.fn(),
+        initDatabase: vi.fn(),
+        loadRuntimeSettings: vi.fn(
+          () =>
+            ({
+              channels: {},
+              storage: { provider: 'postgres' },
+              memory: {},
+            }) as any,
+        ),
+        restoreRemoteControl: vi.fn(),
+        logger: { info: vi.fn(), warn: vi.fn() },
+      }),
+    ).rejects.toThrow(
+      /storage\.provider=postgres is not available in host runtime/i,
+    );
   });
 });

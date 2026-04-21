@@ -23,7 +23,7 @@ function createRuntimeHome(): string {
 }
 
 function seedRegisteredGroups(runtimeHome: string): void {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const dbPath = path.join(runtimeHome, 'store', 'myclaw.db');
   const db = new Database(dbPath);
   try {
     db.exec(`
@@ -330,6 +330,244 @@ memory:
     expect(result.ok).toBe(false);
     expect(result.failure?.details.join('\n')).toContain(
       "no provider is registered for 'custom-provider'",
+    );
+  });
+
+  it('parses explicit storage settings', () => {
+    const settings = parseRuntimeSettings(`
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+storage:
+  provider: postgres
+  sqlite:
+    path: store/custom.db
+  postgres:
+    url_env: CUSTOM_DB_URL
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`);
+
+    expect(settings.storage.provider).toBe('postgres');
+    expect(settings.storage.sqlite.path).toBe('store/custom.db');
+    expect(settings.storage.postgres.urlEnv).toBe('CUSTOM_DB_URL');
+  });
+
+  it('defaults storage settings when block is omitted', () => {
+    const settings = parseRuntimeSettings(`
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`);
+
+    expect(settings.storage.provider).toBe('sqlite');
+    expect(settings.storage.sqlite.path).toBe('store/myclaw.db');
+    expect(settings.storage.postgres.urlEnv).toBe('MYCLAW_DATABASE_URL');
+  });
+
+  it('rejects deprecated memory provider settings', () => {
+    expect(() =>
+      parseRuntimeSettings(`
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+memory:
+  enabled: true
+  provider: qmd
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`),
+    ).toThrow(/memory\.provider is not supported/i);
+  });
+
+  it('rejects memory.embeddings.provider=none', () => {
+    expect(() =>
+      parseRuntimeSettings(`
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: true
+    provider: none
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`),
+    ).toThrow(/memory\.embeddings\.provider must be disabled or openai/i);
+  });
+
+  it('fails validation when storage.provider is postgres', () => {
+    const runtimeHome = createRuntimeHome();
+    fs.writeFileSync(
+      settingsFilePath(runtimeHome),
+      `
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+storage:
+  provider: postgres
+  postgres:
+    url_env: CUSTOM_DB_URL
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`.trimStart(),
+      'utf-8',
+    );
+
+    const result = validateRuntimeSettings(runtimeHome);
+    expect(result.ok).toBe(false);
+    expect(result.failure?.details.join('\n')).toContain(
+      'storage.provider=postgres is not available in host runtime. Use storage.provider=sqlite.',
+    );
+  });
+
+  it('still fails validation when postgres storage env key exists in runtime env', () => {
+    const runtimeHome = createRuntimeHome();
+    fs.writeFileSync(
+      settingsFilePath(runtimeHome),
+      `
+channels:
+  telegram:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+  slack:
+    enabled: false
+    sender_allowlist:
+      default:
+        allow: "*"
+        mode: trigger
+      agents: {}
+      log_denied: true
+storage:
+  provider: postgres
+  postgres:
+    url_env: CUSTOM_DB_URL
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`.trimStart(),
+      'utf-8',
+    );
+    upsertEnvFile(envFilePath(runtimeHome), {
+      CUSTOM_DB_URL: 'postgres://local/myclaw',
+    });
+
+    const result = validateRuntimeSettings(runtimeHome);
+    expect(result.ok).toBe(false);
+    expect(result.failure?.details.join('\n')).toContain(
+      'storage.provider=postgres is not available in host runtime. Use storage.provider=sqlite.',
     );
   });
 });

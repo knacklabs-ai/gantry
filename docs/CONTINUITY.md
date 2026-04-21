@@ -74,7 +74,7 @@ Save durable, reusable statements:
 - "User prefers direct engineering answers without filler."
 - "Decision: embeddings are optional and provider-based."
 - "Correction: do not store raw logs as memory."
-- "Fact: default SQLite memory path is `~/myclaw/memory/.cache/memory.db`."
+- "Fact: default memory DB path is `~/myclaw/memory/.cache/memory.db`."
 - "Procedure: before changing memory, run focused memory tests."
 
 Do not save:
@@ -111,13 +111,11 @@ Dynamic facts, task state, and open loops belong in structured memory and contin
 
 ## Storage Model
 
-MyClaw stores live memory in SQLite under `settings.yaml memory.root`.
+MyClaw stores live memory in the memory SQLite database derived from `memory.root`.
 
-- Default root: `memory`
-- Default database: `~/myclaw/memory/.cache/memory.db`
+- Default memory database: `~/myclaw/memory/.cache/memory.db`
+- Default memory artifact root: `~/myclaw/memory`
 - Default journal: `~/myclaw/memory/.journal`
-
-SQLite is the source of truth for memory search and continuity context.
 
 ## Embeddings Are Optional
 

@@ -88,8 +88,7 @@ export const CONFIG_ENV_KEYS = [
 ] as const;
 
 function loadRuntimeEnvConfig(keys: readonly string[]): Record<string, string> {
-  const envFilePath = path.join(getMyclawHome(), '.env');
-  const raw = readEnvFile(envFilePath);
+  const raw = readEnvFile(path.join(getMyclawHome(), '.env'));
   const out: Record<string, string> = {};
   for (const key of keys) {
     const value = raw[key]?.trim();
@@ -101,7 +100,12 @@ function loadRuntimeEnvConfig(keys: readonly string[]): Record<string, string> {
 }
 
 export const envConfig = loadRuntimeEnvConfig(CONFIG_ENV_KEYS);
+const runtimeEnvConfig = readEnvFile(path.join(getMyclawHome(), '.env'));
 
 export function envValue(key: (typeof CONFIG_ENV_KEYS)[number]): string {
   return process.env[key]?.trim() || envConfig[key]?.trim() || '';
+}
+
+export function envValueDynamic(key: string): string {
+  return process.env[key]?.trim() || runtimeEnvConfig[key]?.trim() || '';
 }

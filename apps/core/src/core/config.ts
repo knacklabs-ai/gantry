@@ -2,9 +2,11 @@ import path from 'path';
 
 import {
   readRuntimeMemorySettingsSnapshot,
+  readRuntimeStorageSettingsSnapshot,
   type RuntimeMemorySettingsSnapshot,
+  type RuntimeStorageSettingsSnapshot,
 } from '../cli/runtime-settings.js';
-import { envConfig, envValue } from './config-env.js';
+import { envConfig, envValue, envValueDynamic } from './config-env.js';
 import { getMyclawHome } from './myclaw-home.js';
 import { isValidTimezone } from './timezone.js';
 
@@ -25,6 +27,46 @@ export const SCHEDULER_JOBS_JSON_PATH = path.join(
 export const STORE_DIR = path.resolve(RUNTIME_ROOT, 'store');
 export const AGENTS_DIR = path.resolve(RUNTIME_ROOT, 'agents');
 export const DATA_DIR = path.resolve(RUNTIME_ROOT, 'data');
+
+let runtimeStorageSettings: RuntimeStorageSettingsSnapshot = {};
+let runtimeStorageSettingsError: Error | null = null;
+try {
+  runtimeStorageSettings = readRuntimeStorageSettingsSnapshot(MYCLAW_HOME);
+} catch (err) {
+  runtimeStorageSettingsError =
+    err instanceof Error ? err : new Error(String(err));
+}
+if (runtimeStorageSettingsError) {
+  throw new Error(
+    `Invalid runtime storage settings: ${runtimeStorageSettingsError.message}`,
+  );
+}
+export const STORAGE_PROVIDER = runtimeStorageSettings.provider || 'sqlite';
+const sqlitePathSetting =
+  runtimeStorageSettings.sqlitePath || path.join('store', 'myclaw.db');
+function assertPathWithinRuntimeRoot(targetPath: string): string {
+  const relative = path.relative(RUNTIME_ROOT, targetPath);
+  if (
+    relative === '' ||
+    (!relative.startsWith('..') && !path.isAbsolute(relative))
+  ) {
+    return targetPath;
+  }
+  throw new Error(
+    `Invalid runtime storage settings: storage.sqlite.path must resolve under runtime home (${RUNTIME_ROOT})`,
+  );
+}
+const resolvedStorageSqlitePath = path.isAbsolute(sqlitePathSetting)
+  ? path.resolve(sqlitePathSetting)
+  : path.resolve(RUNTIME_ROOT, sqlitePathSetting);
+export const STORAGE_SQLITE_PATH = assertPathWithinRuntimeRoot(
+  resolvedStorageSqlitePath,
+);
+export const STORAGE_POSTGRES_URL_ENV =
+  runtimeStorageSettings.postgresUrlEnv || 'MYCLAW_DATABASE_URL';
+export const STORAGE_POSTGRES_URL =
+  envValueDynamic(STORAGE_POSTGRES_URL_ENV).trim() || null;
+
 let runtimeMemorySettings: RuntimeMemorySettingsSnapshot = {};
 let runtimeMemorySettingsError: Error | null = null;
 try {

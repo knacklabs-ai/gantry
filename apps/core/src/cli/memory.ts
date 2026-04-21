@@ -24,6 +24,7 @@ import {
   inspectMemoryHealth,
   inspectMemoryJournalStatus,
 } from './memory-health.js';
+import { resetMemoryTablesForFullReindex } from './memory-reindex-reset.js';
 import { envFilePath } from './runtime-home.js';
 import {
   applyMemoryModelProfile,
@@ -100,14 +101,23 @@ function removeDeletedItemMirrorsBeforeFullReindex(
   if (!fs.existsSync(sqlitePath)) return;
   const db = new Database(sqlitePath, { readonly: true, fileMustExist: true });
   try {
-    const rows = db
-      .prepare(
-        `SELECT id, file_path
-         FROM memory_items
-         WHERE is_deleted = 1
-           AND (file_path IS NOT NULL OR id IS NOT NULL)`,
-      )
-      .all() as Array<{ id?: string; file_path?: string }>;
+    let rows: Array<{ id?: string; file_path?: string }> = [];
+    try {
+      rows = db
+        .prepare(
+          `SELECT id, file_path
+           FROM memory_items
+           WHERE is_deleted = 1
+             AND (file_path IS NOT NULL OR id IS NOT NULL)`,
+        )
+        .all() as Array<{ id?: string; file_path?: string }>;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/no such table:\s*memory_items/i.test(message)) {
+        return;
+      }
+      throw err;
+    }
     const deletedIds = new Set<string>();
     for (const row of rows) {
       const id = typeof row.id === 'string' ? row.id.trim() : '';
@@ -185,7 +195,8 @@ function formatMemoryStatus(runtimeHome: string): string {
     `Memory: ${health.memoryEnabled ? 'on' : 'off'} (source: ${health.memorySource})`,
     `Storage: ${health.memoryCheck.status}`,
     `Memory root: ${health.memoryRoot} (source: ${health.memoryRootSource})`,
-    `SQLite DB: ${health.sqlitePath} (source: ${health.sqlitePathSource})`,
+    `Storage provider: ${health.storageProvider} (source: settings.yaml)`,
+    `Memory DB path: ${health.sqlitePath} (source: ${health.sqlitePathSource})`,
     `Embeddings: ${health.embeddingsEnabled ? 'on' : 'off'}`,
     `Embedding provider: ${health.embeddingProvider} (${health.embeddingCheck.status}, source: ${health.embeddingProviderSource})`,
     `Embedding model: ${health.embeddingModel} (source: ${health.embeddingModelSource})`,
@@ -311,6 +322,8 @@ function resolveMemoryRoot(
 
 function resolvePathWithRealParent(targetPath: string): string | null {
   const resolved = path.resolve(targetPath);
+  const direct = safeRealpathSync(resolved);
+  if (direct) return direct;
   let existingParent = path.dirname(resolved);
   while (!fs.existsSync(existingParent)) {
     const parent = path.dirname(existingParent);
@@ -729,10 +742,10 @@ export async function runMemoryCommand(
         return 1;
       }
       try {
-        fs.rmSync(safeDbPath, { force: true });
+        resetMemoryTablesForFullReindex(safeDbPath);
       } catch (err) {
         p.log.error(
-          `Failed to remove memory DB for full reindex: ${(err as Error).message}`,
+          `Failed to reset memory tables for full reindex: ${(err as Error).message}`,
         );
         return 1;
       }

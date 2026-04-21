@@ -53,10 +53,15 @@ export async function runStartup(
     );
   }
 
+  const runtimeSettings = resolved.loadRuntimeSettings(MYCLAW_HOME);
+  if (runtimeSettings.storage.provider === 'postgres') {
+    throw new Error(
+      'storage.provider=postgres is not available in host runtime. Use storage.provider=sqlite.',
+    );
+  }
+
   resolved.initDatabase();
   resolved.logger.info('Database initialized');
-
-  const runtimeSettings = resolved.loadRuntimeSettings(MYCLAW_HOME);
   app.loadState();
   app.ensureOneCLIAgentsForRegisteredGroups();
 

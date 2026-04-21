@@ -34,6 +34,10 @@ function disableMemoryStack(runtimeHome: string): void {
   saveRuntimeSettings(runtimeHome, settings);
 }
 
+function memoryDbPath(runtimeHome: string): string {
+  return path.join(runtimeHome, 'memory', '.cache', 'memory.db');
+}
+
 const runtimeHomesToCleanup: string[] = [];
 
 afterEach(() => {
@@ -91,7 +95,7 @@ describe('memory status snapshot collection', () => {
     runtimeHomesToCleanup.push(runtimeHome);
     disableMemoryStack(runtimeHome);
 
-    const sqlitePath = path.join(runtimeHome, 'memory', '.cache', 'memory.db');
+    const sqlitePath = memoryDbPath(runtimeHome);
     fs.rmSync(sqlitePath, { force: true });
     fs.rmSync(path.join(runtimeHome, 'memory', '.journal'), {
       recursive: true,
@@ -112,7 +116,7 @@ describe('memory status snapshot collection', () => {
     runtimeHomesToCleanup.push(runtimeHome);
     disableMemoryStack(runtimeHome);
 
-    const sqlitePath = path.join(runtimeHome, 'memory', '.cache', 'memory.db');
+    const sqlitePath = memoryDbPath(runtimeHome);
     fs.mkdirSync(sqlitePath, { recursive: true });
 
     const snapshot = collectMemoryStatus(runtimeHome);
@@ -127,7 +131,7 @@ describe('memory status snapshot collection', () => {
     runtimeHomesToCleanup.push(runtimeHome);
     disableMemoryStack(runtimeHome);
 
-    const sqlitePath = path.join(runtimeHome, 'memory', '.cache', 'memory.db');
+    const sqlitePath = memoryDbPath(runtimeHome);
     fs.mkdirSync(path.dirname(sqlitePath), { recursive: true });
     const db = new Database(sqlitePath);
     try {

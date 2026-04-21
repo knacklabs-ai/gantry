@@ -32,7 +32,7 @@ export function getAgentDir(
 }
 
 export function getStoreDbPath(runtimeHome = getMyclawHome()): string {
-  return path.resolve(runtimeHome, 'store', 'messages.db');
+  return path.resolve(runtimeHome, 'store', 'myclaw.db');
 }
 
 export function getClaudeProjectDirName(cwd: string): string {

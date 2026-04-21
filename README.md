@@ -41,17 +41,23 @@ Defaults in v1:
 - runtime home: `~/myclaw`
 - runtime settings file: `~/myclaw/settings.yaml` (validated before `start`/`restart`)
 - setup flow: Telegram-first (Slack can be added with `myclaw slack connect`)
+- storage provider: `sqlite` (default)
+- storage SQLite path: `store/myclaw.db`
 - memory: on
-- memory storage: SQLite under the configured `memory.root`
 - embeddings: off (unless OpenAI key is provided and enabled)
 - dreaming: off
 - sender allowlist: `channels.<provider>.sender_allowlist` in `settings.yaml`
 
 Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default unless `--runtime-home` or `MYCLAW_HOME` is set.
 
-Canonical memory settings live in `~/myclaw/settings.yaml`:
+Canonical runtime settings live in `~/myclaw/settings.yaml`:
 
 ```yaml
+storage:
+  provider: sqlite
+  sqlite:
+    path: store/myclaw.db
+
 memory:
   enabled: true
   root: memory
@@ -116,7 +122,9 @@ Continuity is the runtime context that helps the agent pick up where it left off
 
 Embeddings are off by default. Memory search and context injection still work without embeddings; embeddings only improve ranking when enabled.
 
-Memory storage is SQLite-first. By default, the live database is `~/myclaw/memory/.cache/memory.db` and journal files are under `~/myclaw/memory/.journal`.
+Runtime state storage defaults to `~/myclaw/store/myclaw.db`.
+Memory data uses `~/myclaw/memory/.cache/memory.db` by default (derived from `memory.root`).
+Memory artifacts (journal, sessions, optional mirrors) remain under `memory.root`.
 
 ## Runtime
 
@@ -206,11 +214,12 @@ Key paths:
 - `apps/core/src/runtime/group-queue.ts` - per-group queueing and retries
 - `apps/core/src/runtime/agent-spawn.ts` - host agent execution path
 - `apps/core/src/session/session-commands.ts` - host-managed slash commands
-- `apps/core/src/storage/db.ts` - SQLite persistence
+- `apps/core/src/storage/db.ts` - runtime persistence
 - `~/myclaw/agents/shared/CLAUDE.md` - static shared prompt guidance
 - `~/myclaw/agents/*/SOUL.md` - per-agent personality prompt
 - `~/myclaw/agents/*/CLAUDE.md` - static group-specific prompt guidance
-- `~/myclaw/memory/.cache/memory.db` - default SQLite memory database
+- `~/myclaw/store/myclaw.db` - default app storage database
+- `~/myclaw/memory/.cache/memory.db` - default memory database
 - `~/myclaw/memory/.journal/` - memory journal files
 
 ## Factory Mode

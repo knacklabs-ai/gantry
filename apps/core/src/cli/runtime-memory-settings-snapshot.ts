@@ -10,6 +10,12 @@ export interface RuntimeMemorySettingsSnapshot {
   llmConsolidationModel?: string;
 }
 
+export interface RuntimeStorageSettingsSnapshot {
+  provider?: 'sqlite' | 'postgres';
+  sqlitePath?: string;
+  postgresUrlEnv?: string;
+}
+
 function parseOptionalBoolean(
   value: unknown,
   pathPrefix: string,
@@ -59,6 +65,14 @@ export function parseRuntimeMemorySnapshotFromRoot(
     throw new Error('memory.embeddings must be a mapping');
   }
   const embeddings = (embeddingsRaw || {}) as Record<string, unknown>;
+  const embeddingProvider = parseOptionalString(embeddings.provider);
+  if (
+    embeddingProvider !== undefined &&
+    embeddingProvider !== 'disabled' &&
+    embeddingProvider !== 'openai'
+  ) {
+    throw new Error('memory.embeddings.provider must be disabled or openai');
+  }
 
   const dreamingRaw = memory.dreaming;
   if (
@@ -97,7 +111,7 @@ export function parseRuntimeMemorySnapshotFromRoot(
       embeddings.enabled,
       'memory.embeddings.enabled',
     ),
-    embeddingProvider: parseOptionalString(embeddings.provider),
+    embeddingProvider,
     embeddingModel: parseOptionalString(embeddings.model),
     dreamingEnabled: parseOptionalBoolean(
       dreaming.enabled,
@@ -106,5 +120,56 @@ export function parseRuntimeMemorySnapshotFromRoot(
     llmExtractorModel: parseOptionalString(llmModels.extractor),
     llmDreamingModel: parseOptionalString(llmModels.dreaming),
     llmConsolidationModel: parseOptionalString(llmModels.consolidation),
+  };
+}
+
+export function parseRuntimeStorageSnapshotFromRoot(
+  root: Record<string, unknown>,
+): RuntimeStorageSettingsSnapshot {
+  const storageRaw = root.storage;
+  if (storageRaw === undefined) return {};
+  if (
+    typeof storageRaw !== 'object' ||
+    storageRaw === null ||
+    Array.isArray(storageRaw)
+  ) {
+    throw new Error('storage must be a mapping');
+  }
+
+  const storage = storageRaw as Record<string, unknown>;
+  const sqliteRaw = storage.sqlite;
+  if (
+    sqliteRaw !== undefined &&
+    (typeof sqliteRaw !== 'object' ||
+      sqliteRaw === null ||
+      Array.isArray(sqliteRaw))
+  ) {
+    throw new Error('storage.sqlite must be a mapping');
+  }
+  const sqlite = (sqliteRaw || {}) as Record<string, unknown>;
+  const postgresRaw = storage.postgres;
+  if (
+    postgresRaw !== undefined &&
+    (typeof postgresRaw !== 'object' ||
+      postgresRaw === null ||
+      Array.isArray(postgresRaw))
+  ) {
+    throw new Error('storage.postgres must be a mapping');
+  }
+  const postgres = (postgresRaw || {}) as Record<string, unknown>;
+
+  const providerRaw = parseOptionalString(storage.provider);
+  let provider: RuntimeStorageSettingsSnapshot['provider'];
+  if (providerRaw !== undefined) {
+    if (providerRaw !== 'sqlite' && providerRaw !== 'postgres') {
+      throw new Error('storage.provider must be sqlite or postgres');
+    }
+    provider = providerRaw;
+  }
+
+  return {
+    provider,
+    sqlitePath: parseOptionalString(sqlite.path),
+    postgresUrlEnv: parseOptionalString(postgres.url_env),
   };
 }

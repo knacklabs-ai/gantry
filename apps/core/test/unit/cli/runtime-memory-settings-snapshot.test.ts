@@ -4,7 +4,10 @@ import path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { readRuntimeMemorySettingsSnapshot } from '@core/cli/runtime-settings.js';
+import {
+  readRuntimeMemorySettingsSnapshot,
+  readRuntimeStorageSettingsSnapshot,
+} from '@core/cli/runtime-settings.js';
 
 const tempDirs: string[] = [];
 
@@ -59,6 +62,21 @@ memory:
 
     expect(() => readRuntimeMemorySettingsSnapshot(runtimeHome)).toThrow(
       /memory\.enabled must be true or false/i,
+    );
+  });
+
+  it('throws when memory.embeddings.provider is not supported', () => {
+    const runtimeHome = writeSettings(`
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: true
+    provider: none
+`);
+
+    expect(() => readRuntimeMemorySettingsSnapshot(runtimeHome)).toThrow(
+      /memory\.embeddings\.provider must be disabled or openai/i,
     );
   });
 
@@ -141,6 +159,63 @@ memory:
     expect(snapshot.llmExtractorModel).toBe('claude-haiku-4-5-20251001');
     expect((snapshot as Record<string, unknown>).llmSessionSummaryModel).toBe(
       undefined,
+    );
+  });
+});
+
+describe('readRuntimeStorageSettingsSnapshot', () => {
+  it('returns defaults when storage block is absent', () => {
+    const runtimeHome = writeSettings(`
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`);
+    const snapshot = readRuntimeStorageSettingsSnapshot(runtimeHome);
+    expect(snapshot.provider).toBeUndefined();
+    expect(snapshot.sqlitePath).toBeUndefined();
+    expect(snapshot.postgresUrlEnv).toBeUndefined();
+  });
+
+  it('parses storage block fields', () => {
+    const runtimeHome = writeSettings(`
+storage:
+  provider: postgres
+  sqlite:
+    path: store/custom.db
+  postgres:
+    url_env: CUSTOM_DB_URL
+memory:
+  enabled: true
+  root: memory
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+  dreaming:
+    enabled: false
+`);
+    const snapshot = readRuntimeStorageSettingsSnapshot(runtimeHome);
+    expect(snapshot.provider).toBe('postgres');
+    expect(snapshot.sqlitePath).toBe('store/custom.db');
+    expect(snapshot.postgresUrlEnv).toBe('CUSTOM_DB_URL');
+  });
+
+  it('throws when storage.provider is not sqlite or postgres', () => {
+    const runtimeHome = writeSettings(`
+storage:
+  provider: mysql
+memory:
+  enabled: true
+  root: memory
+`);
+    expect(() => readRuntimeStorageSettingsSnapshot(runtimeHome)).toThrow(
+      /storage\.provider must be sqlite or postgres/i,
     );
   });
 });

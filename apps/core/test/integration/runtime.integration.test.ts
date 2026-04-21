@@ -42,7 +42,7 @@ describe('runtime integration', () => {
     expect(harness.channel.outbound[0]?.chatJid).toBe('tg:main');
     expect(harness.channel.outbound[0]?.text).toContain('integration reply');
 
-    const dbPath = path.join(harness.runtimeHome, 'store', 'messages.db');
+    const dbPath = path.join(harness.runtimeHome, 'store', 'myclaw.db');
     expect(fs.existsSync(dbPath)).toBe(true);
   });
 

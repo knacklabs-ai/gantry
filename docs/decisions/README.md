@@ -14,3 +14,4 @@ Decision docs here take precedence when they conflict with general architecture 
 Current decisions:
 
 - [2026-04-17 — Settings And Runtime Truth](./2026-04-17-settings-runtime-truth.md)
+- [2026-04-21 — App-Wide Storage Backend Cutover](./2026-04-21-storage-backend-cutover.md)

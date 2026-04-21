@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import Database from 'better-sqlite3';
 import '../channels/register-builtins.js';
 import {
   getChannelProvider,
@@ -23,6 +22,12 @@ import { envFilePath, ensureRuntimeWritable } from './runtime-home.js';
 import { ensureRuntimeSettings, RuntimeSettings } from './runtime-settings.js';
 import { validateTelegramBotToken } from './telegram.js';
 import { inspectMemoryHealth } from './memory-health.js';
+import {
+  inspectProviderGroupCount,
+  inspectRegisteredGroupCount,
+  inspectRegisteredGroupFolders,
+  inspectTelegramGroupCount,
+} from './doctor-db-inspection.js';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
 
@@ -90,121 +95,6 @@ function addToReport(report: DoctorReport, check: DoctorCheck): DoctorReport {
     warnings,
     ok: blockingFailures === 0,
   };
-}
-
-function inspectProviderGroupCount(
-  runtimeHome: string,
-  jidPrefix: string,
-): {
-  count: number;
-  error?: string;
-} {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
-  if (!fs.existsSync(dbPath)) {
-    return { count: 0 };
-  }
-
-  let db: Database.Database | null = null;
-  try {
-    db = new Database(dbPath, { readonly: true });
-    const row = db
-      .prepare(
-        `SELECT COUNT(*) as count FROM registered_groups WHERE jid LIKE ?`,
-      )
-      .get(`${jidPrefix}%`) as { count: number };
-    return { count: row.count };
-  } catch (err) {
-    return {
-      count: 0,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // Ignore close errors and preserve primary failure.
-    }
-  }
-}
-
-function inspectTelegramGroupCount(runtimeHome: string): {
-  count: number;
-  error?: string;
-} {
-  return inspectProviderGroupCount(runtimeHome, 'tg:');
-}
-
-function inspectSlackGroupCount(runtimeHome: string): {
-  count: number;
-  error?: string;
-} {
-  return inspectProviderGroupCount(runtimeHome, 'sl:');
-}
-
-function inspectRegisteredGroupCount(runtimeHome: string): {
-  count: number;
-  error?: string;
-} {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
-  if (!fs.existsSync(dbPath)) {
-    return { count: 0 };
-  }
-
-  let db: Database.Database | null = null;
-  try {
-    db = new Database(dbPath, { readonly: true });
-    const row = db
-      .prepare(`SELECT COUNT(*) as count FROM registered_groups`)
-      .get() as { count: number };
-    return { count: row.count };
-  } catch (err) {
-    return {
-      count: 0,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // Ignore close errors and preserve primary failure.
-    }
-  }
-}
-
-function inspectRegisteredGroupFolders(runtimeHome: string): {
-  folders: string[];
-  error?: string;
-} {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
-  if (!fs.existsSync(dbPath)) {
-    return { folders: [] };
-  }
-
-  let db: Database.Database | null = null;
-  try {
-    db = new Database(dbPath, { readonly: true });
-    const rows = db
-      .prepare(
-        `SELECT folder FROM registered_groups WHERE folder IS NOT NULL AND TRIM(folder) != ''`,
-      )
-      .all() as Array<{ folder: string }>;
-    const folders = rows
-      .map((row) => String(row.folder || '').trim())
-      .filter((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value));
-    return { folders: [...new Set(folders)] };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (/no such column:\\s*folder/i.test(message)) {
-      return { folders: [] };
-    }
-    return { folders: [], error: message };
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // Ignore close errors and preserve primary failure.
-    }
-  }
 }
 
 function loadSettingsForDoctor(runtimeHome: string): {
@@ -304,14 +194,24 @@ export function runDoctor(
   try {
     fs.mkdirSync(ipcBaseDir, { recursive: true });
     const ipcFolders = inspectRegisteredGroupFolders(runtimeHome);
-    if (ipcFolders.error) {
+    if (ipcFolders.unavailable) {
+      add(checks, {
+        id: 'ipc-layout',
+        title: 'IPC Layout',
+        status: 'warn',
+        message:
+          'IPC base directory is writable, but registered group folders are unavailable for non-sqlite storage.',
+        nextAction:
+          'Registered IPC folder bootstrapping for non-sqlite storage will be enabled after repository cutover.',
+      });
+    } else if (ipcFolders.error) {
       add(checks, {
         id: 'ipc-layout',
         title: 'IPC Layout',
         status: 'warn',
         message:
           'IPC base directory is writable, but registered group folders could not be inspected.',
-        nextAction: `Check ${path.join(runtimeHome, 'store', 'messages.db')}. Details: ${ipcFolders.error}`,
+        nextAction: `Check storage.sqlite.path in settings.yaml. Details: ${ipcFolders.error}`,
       });
     } else {
       for (const folder of ipcFolders.folders) {
@@ -500,13 +400,24 @@ export function runDoctor(
       runtimeHome,
       provider.jidPrefix,
     );
+    if (groupSummary.unavailable) {
+      add(checks, {
+        id: groupCheckId,
+        title: groupCheckTitle,
+        status: 'warn',
+        message: `${provider.label} group registry inspection is unavailable for non-sqlite storage in doctor.`,
+        nextAction:
+          'Runtime group inspection for non-sqlite storage will be enabled after repository cutover.',
+      });
+      continue;
+    }
     if (groupSummary.error) {
       add(checks, {
         id: groupCheckId,
         title: groupCheckTitle,
         status: 'fail',
         message: `Could not read registered ${provider.label} groups; runtime database may be corrupted.`,
-        nextAction: `Repair or replace ${path.join(runtimeHome, 'store', 'messages.db')}. Details: ${groupSummary.error}`,
+        nextAction: `Repair or replace storage.sqlite.path in settings.yaml. Details: ${groupSummary.error}`,
       });
       continue;
     }
@@ -669,7 +580,7 @@ export function hasRegisteredTelegramGroup(runtimeHome: string): boolean {
 
 export function hasRegisteredAnyGroup(runtimeHome: string): boolean {
   const inspection = inspectRegisteredGroupCount(runtimeHome);
-  return !inspection.error && inspection.count > 0;
+  return !inspection.unavailable && !inspection.error && inspection.count > 0;
 }
 
 export function hasProcessableGroupForConfiguredChannel(
@@ -691,7 +602,7 @@ export function hasProcessableGroupForConfiguredChannel(
     );
     if (!hasRequiredCredentials) continue;
     const groups = inspectProviderGroupCount(runtimeHome, provider.jidPrefix);
-    if (!groups.error && groups.count > 0) {
+    if (!groups.unavailable && !groups.error && groups.count > 0) {
       return true;
     }
   }

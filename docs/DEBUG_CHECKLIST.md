@@ -58,14 +58,14 @@ grep -E 'Scheduling retry|retry|Max retries' logs/myclaw.log | tail -10
 grep -E 'Processing messages|Spawning host agent|Piped messages' logs/myclaw.log | tail -20
 
 # Compare router cursor vs latest messages
-sqlite3 store/messages.db "SELECT chat_jid, MAX(timestamp) as latest FROM messages GROUP BY chat_jid ORDER BY latest DESC LIMIT 5;"
+sqlite3 store/myclaw.db "SELECT chat_jid, MAX(timestamp) as latest FROM messages GROUP BY chat_jid ORDER BY latest DESC LIMIT 5;"
 ```
 
 ## Group Config Inspection
 
 ```bash
 # Review registered groups
-sqlite3 store/messages.db "SELECT name, folder, trigger_pattern FROM registered_groups;"
+sqlite3 store/myclaw.db "SELECT name, folder, trigger_pattern FROM registered_groups;"
 
 # Review runtime settings
 cat ~/myclaw/settings.yaml

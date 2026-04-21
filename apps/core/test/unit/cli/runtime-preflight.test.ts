@@ -27,7 +27,7 @@ function createRuntimeHome(): string {
 }
 
 function seedRegisteredGroups(runtimeHome: string, jids: string[]): void {
-  const dbPath = path.join(runtimeHome, 'store', 'messages.db');
+  const dbPath = path.join(runtimeHome, 'store', 'myclaw.db');
   const db = new Database(dbPath);
   try {
     db.exec(

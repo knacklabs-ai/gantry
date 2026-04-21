@@ -30,8 +30,8 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                       │
 │  ┌──────────────────┐                  ┌────────────────────┐        │
-│  │ Channels         │─────────────────▶│   SQLite Database  │        │
-│  │ (provider        │◀────────────────│   (messages.db)    │        │
+│  │ Channels         │─────────────────▶│   Storage Database │        │
+│  │ (provider        │◀────────────────│   (myclaw.db)      │        │
 │  │  registry)       │  store/send      └─────────┬──────────┘        │
 │  └──────────────────┘                            │                   │
 │                                                   │                   │
@@ -268,7 +268,7 @@ myclaw/
 │       └── logs/                  # Task execution logs
 │
 ├── store/                         # Local data (gitignored)
-│   └── messages.db                # SQLite database (messages, chats, jobs, job_runs, job_events, registered_groups, sessions, router_state)
+│   └── myclaw.db                  # Default SQLite app database (messages, chats, jobs, job_runs, job_events, registered_groups, sessions, router_state)
 │
 ├── memory/                        # Durable memory root (gitignored)
 │   ├── .cache/memory.db           # Default SQLite memory database
@@ -431,7 +431,7 @@ See [CONTINUITY.md](CONTINUITY.md) for the continuity model.
 
 ### Structured Memory Store
 
-The structured memory store provides scoped recall for durable statements and learned procedures. It stores facts, decisions, preferences, corrections, constraints, and procedures in SQLite, with optional sqlite-vec search when embeddings are enabled.
+The structured memory store provides scoped recall for durable statements and learned procedures. It stores facts, decisions, preferences, corrections, constraints, and procedures in a dedicated memory SQLite database.
 
 #### Storage Backend
 
@@ -439,11 +439,11 @@ The structured memory store provides scoped recall for durable statements and le
 | ---------------------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
 | **Memory statements & procedures** | SQLite (`memory_items`, `memory_procedures`) | Human-readable memory entries with scoping, confidence, versioning |
 | **Chunks**                         | SQLite (`memory_chunks`)                     | Chunked text from ingested source files                            |
-| **Lexical search**                 | FTS5 (`memory_chunks_fts`)                   | BM25 keyword search with unicode61 tokenization                    |
-| **Vector search**                  | sqlite-vec (`memory_chunks_vec`)             | Optional semantic similarity search on embeddings                  |
+| **Lexical search**                 | SQLite FTS5/BM25                             | Keyword search                                                     |
+| **Vector search**                  | sqlite-vec                                   | Optional semantic similarity search on embeddings                  |
 | **Audit log**                      | SQLite (`memory_events`)                     | All memory operations logged for debugging                         |
 
-Default database path: `~/myclaw/memory/.cache/memory.db`
+Default SQLite database path: `~/myclaw/memory/.cache/memory.db`
 
 #### MCP Tools (Exposed to Agents)
 
@@ -473,8 +473,8 @@ Default scope is controlled by `MEMORY_SCOPE_POLICY` (default: `group`).
 
 Search combines lexical recall with optional semantic recall using Reciprocal Rank Fusion (K=60):
 
-1. **Lexical (BM25)**: FTS5 with unicode61 tokenization, NFKC normalization. Score: `1 / (1 + bm25_rank)`
-2. **Vector (Semantic)**: Configured embedding provider when enabled. Score: `1 / (1 + distance)`
+1. **Lexical (BM25)**: SQLite FTS5 rank.
+2. **Vector (Semantic)**: `sqlite-vec` when enabled and available. Score: `1 / (1 + distance)`
 3. **Fusion**: RRF merges both ranked lists. For each result at rank i: `score += 1 / (K + i + 1)`. Top-K returned.
 
 #### Source Ingestion
@@ -505,33 +505,36 @@ After each successful agent turn, the system extracts durable memory statements 
 
 ### Memory Storage
 
-MyClaw supports one active memory backend today: SQLite under `settings.yaml memory.root`.
+MyClaw memory uses a dedicated SQLite database derived from `memory.root`.
 
-- Default root: `memory`
-- Default database: `~/myclaw/memory/.cache/memory.db`
+- Default SQLite database: `~/myclaw/memory/.cache/memory.db`
+- Memory artifact root: `~/myclaw/memory`
 - Journal files: `~/myclaw/memory/.journal`
-- Vector search: optional sqlite-vec tables when embeddings are enabled
+- Vector search: optional `sqlite-vec` support
 
 **Filesystem layout**:
 
 ```
-{MEMORY_ROOT}/
-├── .journal/         # Daily audit log of memory operations
-│   └── 2026/
-│       └── 04/
-│           └── 2026-04-11.md
-└── .cache/
-    └── memory.db     # SQLite database (search index)
+{MYCLAW_HOME}/
+├── store/
+│   └── myclaw.db     # App storage database
+└── memory/
+    ├── .cache/
+    │   └── memory.db # Memory database
+    ├── .journal/     # Daily audit log of memory operations
+    └── ...           # Optional memory artifacts
 ```
 
 ### Memory Configuration Reference
 
 | Setting                                | Default                  | Description                                                   |
 | -------------------------------------- | ------------------------ | ------------------------------------------------------------- |
+| `storage.provider`                     | `sqlite`                 | Host runtime storage backend (`sqlite` in host runtime)      |
+| `storage.sqlite.path`                  | `store/myclaw.db`        | SQLite DB path (runtime-home relative unless absolute)        |
 | `memory.enabled`                       | `true`                   | Enables durable memory                                        |
 | `memory.root`                          | `memory`                 | Memory root path, resolved under runtime home unless absolute |
 | `memory.embeddings.enabled`            | `false`                  | Optional embedding toggle                                     |
-| `memory.embeddings.provider`           | `disabled`               | Embedding provider (`disabled`, `none`, or `openai`)          |
+| `memory.embeddings.provider`           | `disabled`               | Embedding provider (`disabled` or `openai`)                   |
 | `memory.embeddings.model`              | `text-embedding-3-large` | Embedding model                                               |
 | `MEMORY_VECTOR_DIMENSIONS`             | `3072`                   | Vector dimensions (must match model output)                   |
 | `MEMORY_EMBED_BATCH_SIZE`              | `16`                     | Texts per embedding API call                                  |
@@ -572,7 +575,7 @@ Sessions enable conversation continuity - Claude remembers what you talked about
 2. Channel receives message (e.g. Baileys for WhatsApp, Bot API for Telegram)
    │
    ▼
-3. Message stored in SQLite (store/messages.db)
+3. Message stored in SQLite (store/myclaw.db by default)
    │
    ▼
 4. Message loop polls SQLite (every 2 seconds)
@@ -871,7 +874,7 @@ chmod 700 ~/myclaw/agents ~/myclaw/store
 | No response to messages                  | Service not running               | Run `myclaw status` and check the service line                              |
 | Startup fails at runtime preflight       | Host runtime prerequisites failed | Run `npm run build` and re-check runtime diagnostics                        |
 | "Claude Code process exited with code 1" | Session mount path wrong          | Ensure mount is to `/home/node/.claude/` not `/root/.claude/`               |
-| Session not continuing                   | Session ID not saved              | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"`          |
+| Session not continuing                   | Session ID not saved              | Check SQLite: `sqlite3 store/myclaw.db "SELECT * FROM sessions"`            |
 | Session not continuing                   | Session path mismatch             | Ensure per-group session paths exist under `data/sessions/{group}/.claude/` |
 | "No groups registered"                   | Haven't added groups              | Register a channel group with the current channel setup flow                |
 

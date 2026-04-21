@@ -57,7 +57,7 @@ Contains:
 - `logs/`
 - `.onboarding-state.json`
 
-`settings.yaml` is the single user-editable runtime settings file for channel and memory behavior (including sender allowlist).
+`settings.yaml` is the single user-editable runtime settings file for channel, storage, and memory behavior (including sender allowlist).
 
 Override at runtime:
 
@@ -96,7 +96,8 @@ myclaw slack connect
 
 - Memory: remember durable facts, preferences, decisions, corrections, constraints, and procedures.
 - Continuity: use remembered context so the agent can resume current work instead of starting cold.
-- SQLite storage: default local database storage under `memory.root`.
+- Storage backend: app-wide storage (`storage.provider`) defaults to SQLite.
+- SQLite path: default local database at `store/myclaw.db`.
 - Embeddings: optional OpenAI-powered ranking improvement for memory search.
 - Dreaming: background memory cleanup and improvement.
 
@@ -109,6 +110,11 @@ Default choices:
 Canonical memory block written by setup:
 
 ```yaml
+storage:
+  provider: sqlite
+  sqlite:
+    path: store/myclaw.db
+
 memory:
   enabled: true
   root: memory

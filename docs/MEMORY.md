@@ -12,9 +12,14 @@ Continuity uses remembered context to help the next run continue work without re
 
 ## Canonical Settings
 
-Memory behavior is configured only in `~/myclaw/settings.yaml`:
+Runtime storage + memory behavior are configured in `~/myclaw/settings.yaml`:
 
 ```yaml
+storage:
+  provider: sqlite
+  sqlite:
+    path: store/myclaw.db
+
 memory:
   enabled: true
   root: memory
@@ -28,10 +33,10 @@ memory:
 
 ## Storage
 
-- SQLite is the only supported memory store.
+- Runtime storage backend in host runtime is `sqlite`.
+- Memory SQLite database path is derived from `memory.root`: `~/myclaw/memory/.cache/memory.db` by default.
 - `memory.root` resolves under the runtime home unless it is absolute.
-- The default database path is `~/myclaw/memory/.cache/memory.db`.
-- The journal path is `~/myclaw/memory/.journal`.
+- Journal path is `~/myclaw/memory/.journal`.
 
 ## Embeddings
 
