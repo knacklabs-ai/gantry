@@ -12,8 +12,10 @@ export async function runDreamingForGroup(groupFolder: string) {
     `dream:${groupFolder}`,
   );
   if (!result.queued) {
-    if (result.reason === 'full') throw new Error('memory maintenance queue full');
-    if (result.reason === 'invalid') throw new Error('invalid memory maintenance group');
+    if (result.reason === 'full')
+      throw new Error('memory maintenance queue full');
+    if (result.reason === 'invalid')
+      throw new Error('invalid memory maintenance group');
   }
   return {
     queued: result.queued,

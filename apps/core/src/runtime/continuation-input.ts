@@ -11,7 +11,10 @@ export function getContinuationInputNamespace(
 ): string {
   const normalized = normalizeThreadQueueId(threadId);
   return normalized
-    ? path.join('input', `${THREAD_INPUT_PREFIX}${encodeURIComponent(normalized)}`)
+    ? path.join(
+        'input',
+        `${THREAD_INPUT_PREFIX}${encodeURIComponent(normalized)}`,
+      )
     : 'input';
 }
 
@@ -19,7 +22,12 @@ export function getContinuationInputDir(
   groupFolder: string,
   threadId?: string | null,
 ): string {
-  return path.join(DATA_DIR, 'ipc', groupFolder, getContinuationInputNamespace(threadId));
+  return path.join(
+    DATA_DIR,
+    'ipc',
+    groupFolder,
+    getContinuationInputNamespace(threadId),
+  );
 }
 
 export function writeContinuationInput(
