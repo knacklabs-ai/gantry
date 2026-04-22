@@ -203,6 +203,68 @@ describe('recoverPendingMessages', () => {
   });
 });
 
+describe('thread queue routing', () => {
+  it('enqueues separate queue keys for Slack/Telegram thread messages', async () => {
+    const threadA = {
+      id: 1,
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      content: 'thread A',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      thread_id: 'thread-a',
+      is_from_me: false,
+      message_id: 'msg-1',
+      reply_to_message_id: null,
+      reply_to_content: null,
+      sender_name: 'User',
+    };
+    const threadB = {
+      ...threadA,
+      id: 2,
+      content: 'thread B',
+      timestamp: '2024-01-01T00:00:02.000Z',
+      thread_id: 'thread-b',
+      message_id: 'msg-2',
+    };
+    mockGetNewMessages.mockReturnValueOnce({
+      messages: [threadA, threadB],
+      newTimestamp: '2024-01-01T00:00:02.000Z',
+    });
+    mockGetMessagesSince.mockImplementation(
+      (
+        _chatJid: string,
+        _cursor: string,
+        _limit: number,
+        options?: {
+          threadId?: string | null;
+        },
+      ) => {
+        if (options?.threadId === 'thread-a') return [threadA];
+        if (options?.threadId === 'thread-b') return [threadB];
+        return [];
+      },
+    );
+
+    const enqueued: string[] = [];
+    const deps = makeDeps({
+      queue: {
+        ...makeDeps().queue,
+        sendMessage: () => false,
+        enqueueMessageCheck: (queueJid: string) => enqueued.push(queueJid),
+      },
+    });
+    const { runMessagePollingTick } =
+      await import('@core/runtime/message-loop.js');
+
+    await runMessagePollingTick(deps);
+
+    expect(enqueued).toEqual([
+      'group@g.us::thread:thread-a',
+      'group@g.us::thread:thread-b',
+    ]);
+  });
+});
+
 describe('startMessagePollingLoop', () => {
   it('processes new messages and pipes them to the queue', async () => {
     const msg = {

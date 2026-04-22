@@ -492,32 +492,43 @@ export function getMessagesSince(
   chatJid: string,
   sinceCursor: string,
   limit: number = 200,
+  options: { threadId?: string | null } = {},
 ): NewMessage[] {
   const cursor = decodeGroupMessageCursor(sinceCursor);
+  const hasThreadFilter = Object.prototype.hasOwnProperty.call(
+    options,
+    'threadId',
+  );
+  const threadId = options.threadId?.trim() || null;
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
            thread_id,
            reply_to_message_id, reply_to_message_content, reply_to_sender_name
     FROM messages
-    WHERE chat_jid = ?
+    WHERE chat_jid = @chat_jid
       AND (
-        timestamp > ?
-        OR (timestamp = ? AND id > ?)
+        timestamp > @timestamp
+        OR (timestamp = @timestamp AND id > @id)
       )
       AND is_bot_message = 0
       AND content != '' AND content IS NOT NULL
+      ${
+        hasThreadFilter
+          ? threadId
+            ? 'AND thread_id = @thread_id'
+            : "AND (thread_id IS NULL OR TRIM(thread_id) = '')"
+          : ''
+      }
     ORDER BY timestamp ASC, id ASC
-    LIMIT ?
+    LIMIT @limit
   `;
-  const rows = db
-    .prepare(sql)
-    .all(
-      chatJid,
-      cursor.timestamp,
-      cursor.timestamp,
-      cursor.id,
-      limit,
-    ) as Array<NewMessage & { is_from_me?: number | boolean }>;
+  const rows = db.prepare(sql).all({
+    chat_jid: chatJid,
+    timestamp: cursor.timestamp,
+    id: cursor.id,
+    thread_id: threadId,
+    limit,
+  }) as Array<NewMessage & { is_from_me?: number | boolean }>;
   return rows.map((row) => ({
     ...row,
     is_from_me: Boolean(row.is_from_me),

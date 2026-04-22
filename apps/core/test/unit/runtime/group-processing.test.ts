@@ -1255,6 +1255,60 @@ describe('createGroupProcessor', () => {
       );
     });
 
+    it('uses thread queue keys to filter retrieval and bind runner context', async () => {
+      const messages = [
+        makeMessage({
+          id: 'msg-thread',
+          timestamp: '1700000001',
+          thread_id: 'thread-a',
+        }),
+      ];
+      const { deps } = setupHappyPath({ messages });
+      const mockProc = {} as ChildProcess;
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: RegisteredGroup,
+          _input: unknown,
+          onProc: (proc: ChildProcess, containerName: string) => void,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          onProc(mockProc, 'test-container');
+          if (onOutput) {
+            await onOutput({ status: 'success', result: 'ok' });
+          }
+          return { status: 'success', result: 'ok' } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us::thread:thread-a');
+
+      expect(mockGetMessagesSince).toHaveBeenCalledWith(
+        'group1@g.us',
+        '0',
+        50,
+        { threadId: 'thread-a' },
+      );
+      expect(deps.queue.registerProcess).toHaveBeenCalledWith(
+        'group1@g.us::thread:thread-a',
+        mockProc,
+        'test-container',
+        'test-group',
+        'group1@g.us',
+        'thread-a',
+      );
+      expect(mockSpawnAgent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          chatJid: 'group1@g.us',
+          threadId: 'thread-a',
+        }),
+        expect.any(Function),
+        expect.any(Function),
+        undefined,
+      );
+    });
+
     it('refreshes thread context when a newer message arrives during processing', async () => {
       const initialMessages = [
         makeMessage({
@@ -1316,6 +1370,7 @@ describe('createGroupProcessor', () => {
         'group1@g.us',
         'cursor-ts-123',
         50,
+        { threadId: null },
       );
     });
 
@@ -1368,6 +1423,8 @@ describe('createGroupProcessor', () => {
         mockProc,
         'test-container',
         'test-group',
+        undefined,
+        undefined,
       );
     });
   });

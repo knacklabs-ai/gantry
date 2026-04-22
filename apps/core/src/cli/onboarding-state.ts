@@ -26,6 +26,7 @@ export interface OnboardingData {
   runtimeHome: string;
   primaryProvider?: 'telegram' | 'slack';
   storageProvider?: 'sqlite' | 'postgres';
+  serviceChoice?: 'skip' | 'install' | 'install_start';
   telegramBotUsername?: string;
   telegramChatJid?: string;
   slackChatJid?: string;

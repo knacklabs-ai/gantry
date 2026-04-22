@@ -104,6 +104,7 @@ interface SetupDraft {
   dreamingEnabled: boolean;
   openAiApiKey: string;
   serviceChoice: ServiceChoice;
+  serviceStartedAfterSetup: boolean;
   startAfterSetup: boolean;
 }
 
@@ -203,6 +204,7 @@ function updateStateData(state: OnboardingState, draft: SetupDraft): void {
     runtimeHome: draft.runtimeHome,
     primaryProvider: draft.primaryProvider,
     storageProvider: draft.storageProvider,
+    serviceChoice: draft.serviceChoice,
     telegramBotUsername: draft.telegramBotUsername || undefined,
     telegramChatJid: draft.telegramChatJid || undefined,
     slackChatJid: draft.slackChatJid || undefined,
@@ -270,7 +272,8 @@ function restoreDraft(
       state?.data.embeddingsEnabled ?? settings.memory.embeddings.enabled,
     dreamingEnabled: state?.data.dreamingEnabled ?? defaultDreamingEnabled,
     openAiApiKey: env.OPENAI_API_KEY || '',
-    serviceChoice: 'skip',
+    serviceChoice: state?.data.serviceChoice || 'skip',
+    serviceStartedAfterSetup: false,
     startAfterSetup: false,
   };
 }
@@ -1440,6 +1443,7 @@ async function applyServiceStartChoice(draft: SetupDraft): Promise<void> {
       `Service start failed. Next action: run \`myclaw service start\` later.\n${startOutcome.message}`,
     );
   } else {
+    draft.serviceStartedAfterSetup = true;
     p.log.success(startOutcome.message);
   }
 }
@@ -1593,7 +1597,7 @@ export async function runSetupFlow(
     }
 
     if (action.type === 'start_now') {
-      draft.startAfterSetup = true;
+      draft.startAfterSetup = !draft.serviceStartedAfterSetup;
       index += 1;
       continue;
     }

@@ -26,6 +26,11 @@ import {
   isSessionCommandAllowed,
 } from '../session/session-commands.js';
 import type { SessionCommand } from '../session/session-commands.js';
+import {
+  makeThreadQueueKey,
+  normalizeThreadQueueId,
+  parseThreadQueueKey,
+} from './thread-queue-key.js';
 
 export interface MessageLoopDeps {
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
@@ -42,7 +47,11 @@ export interface MessageLoopDeps {
     options?: ProgressUpdateOptions,
   ) => Promise<void>;
   queue: {
-    sendMessage: (chatJid: string, text: string) => boolean;
+    sendMessage: (
+      chatJid: string,
+      text: string,
+      options?: { threadId?: string | null },
+    ) => boolean;
     enqueueMessageCheck: (chatJid: string) => void;
     closeStdin: (chatJid: string) => void;
     stopGroup?: (chatJid: string) => boolean;
@@ -74,15 +83,17 @@ export async function runMessagePollingTick(
 
       const messagesByGroup = new Map<string, NewMessage[]>();
       for (const msg of messages) {
-        const existing = messagesByGroup.get(msg.chat_jid);
+        const queueJid = makeThreadQueueKey(msg.chat_jid, msg.thread_id);
+        const existing = messagesByGroup.get(queueJid);
         if (existing) {
           existing.push(msg);
         } else {
-          messagesByGroup.set(msg.chat_jid, [msg]);
+          messagesByGroup.set(queueJid, [msg]);
         }
       }
 
-      for (const [chatJid, groupMessages] of messagesByGroup) {
+      for (const [queueJid, groupMessages] of messagesByGroup) {
+        const { chatJid, threadId } = parseThreadQueueKey(queueJid);
         const group = registeredGroups[chatJid];
         if (!group) continue;
 
@@ -127,12 +138,12 @@ export async function runMessagePollingTick(
               }
             }
             if (loopCommand?.kind === 'stop') {
-              deps.queue.stopGroup?.(chatJid);
+              deps.queue.stopGroup?.(queueJid);
             } else {
-              deps.queue.closeStdin(chatJid);
+              deps.queue.closeStdin(queueJid);
             }
           }
-          deps.queue.enqueueMessageCheck(chatJid);
+          deps.queue.enqueueMessageCheck(queueJid);
           continue;
         }
 
@@ -155,8 +166,9 @@ export async function runMessagePollingTick(
 
         let initialBatch = getMessagesSince(
           chatJid,
-          deps.getOrRecoverCursor(chatJid),
+          deps.getOrRecoverCursor(queueJid),
           MAX_MESSAGES_PER_PROMPT,
+          { threadId: threadId ?? null },
         );
         if (initialBatch.length === 0) {
           initialBatch = groupMessages;
@@ -171,13 +183,11 @@ export async function runMessagePollingTick(
           const messagesToSend = nextBatch;
           const latestMessage = messagesToSend[messagesToSend.length - 1];
           progressThreadId =
-            typeof latestMessage?.thread_id === 'string' &&
-            latestMessage.thread_id.trim()
-              ? latestMessage.thread_id.trim()
-              : progressThreadId;
+            normalizeThreadQueueId(latestMessage?.thread_id) ||
+            progressThreadId;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (!deps.queue.sendMessage(chatJid, formatted)) {
+          if (!deps.queue.sendMessage(queueJid, formatted, { threadId })) {
             shouldEnqueueMessageCheck = true;
             break;
           }
@@ -188,7 +198,7 @@ export async function runMessagePollingTick(
             'Piped messages to active agent run',
           );
           deps.setAgentCursor(
-            chatJid,
+            queueJid,
             encodeGroupMessageCursor(
               toGroupMessageCursor(messagesToSend[messagesToSend.length - 1]),
             ),
@@ -201,8 +211,9 @@ export async function runMessagePollingTick(
 
           nextBatch = getMessagesSince(
             chatJid,
-            deps.getOrRecoverCursor(chatJid),
+            deps.getOrRecoverCursor(queueJid),
             MAX_MESSAGES_PER_PROMPT,
+            { threadId: threadId ?? null },
           );
         }
 
@@ -231,7 +242,7 @@ export async function runMessagePollingTick(
         }
 
         if (!pipedAny || shouldEnqueueMessageCheck) {
-          deps.queue.enqueueMessageCheck(chatJid);
+          deps.queue.enqueueMessageCheck(queueJid);
         }
       }
     }
@@ -261,7 +272,14 @@ export function recoverPendingMessages(deps: MessageLoopDeps): void {
         { group: group.name, pendingCount: pending.length },
         'Recovery: found unprocessed messages',
       );
-      deps.queue.enqueueMessageCheck(chatJid);
+      const queuedThreads = new Set(
+        pending.map((message) =>
+          makeThreadQueueKey(chatJid, message.thread_id),
+        ),
+      );
+      for (const queueJid of queuedThreads) {
+        deps.queue.enqueueMessageCheck(queueJid);
+      }
     }
   }
 }

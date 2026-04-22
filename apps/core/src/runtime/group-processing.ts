@@ -15,6 +15,7 @@ import {
 import { logger } from '../core/logger.js';
 import {
   MessageSendOptions,
+  NewMessage,
   ProgressUpdateOptions,
   RegisteredGroup,
   StreamingChunkOptions,
@@ -50,6 +51,7 @@ import {
 import { archiveSessionTranscript } from '../session/session-transcript-archive.js';
 import { handleSessionCommand } from '../session/session-commands.js';
 import { createInjectedMemoryContextBlock } from './memory-context.js';
+import { firstThreadQueueId, parseThreadQueueKey } from './thread-queue-key.js';
 
 const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
 const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
@@ -119,6 +121,7 @@ export interface GroupProcessingDeps {
       containerName: string,
       groupFolder?: string,
       stopAliasJids?: string | string[],
+      threadId?: string | null,
     ) => void;
   };
   runAgent?: typeof spawnAgent;
@@ -133,6 +136,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     group: RegisteredGroup,
     prompt: string,
     chatJid: string,
+    queueJid: string,
     onOutput?: (output: AgentOutput) => Promise<void>,
     options?: {
       timeoutMs?: number;
@@ -222,10 +226,12 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         },
         (proc, containerName) =>
           deps.queue.registerProcess(
-            chatJid,
+            queueJid,
             proc,
             containerName,
             group.folder,
+            queueJid === chatJid ? undefined : chatJid,
+            options?.memoryContext?.threadId,
           ),
         wrappedOnOutput,
         options?.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
@@ -279,7 +285,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     }
   }
 
-  async function processGroupMessages(chatJid: string): Promise<boolean> {
+  async function processGroupMessages(queueJid: string): Promise<boolean> {
+    const { chatJid, threadId: queueThreadId } = parseThreadQueueKey(queueJid);
     const group = deps.getGroup(chatJid);
     if (!group) return true;
 
@@ -292,8 +299,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
 
     const missedMessages = getMessagesSince(
       chatJid,
-      deps.getCursor(chatJid),
+      deps.getCursor(queueJid),
       MAX_MESSAGES_PER_PROMPT,
+      { threadId: queueThreadId ?? null },
     );
 
     if (missedMessages.length === 0) return true;
@@ -302,24 +310,20 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     let latestSeenCursor = encodeGroupMessageCursor(
       toGroupMessageCursor(latestMessage),
     );
-    let activeThreadId =
-      typeof latestMessage?.thread_id === 'string' &&
-      latestMessage.thread_id.trim()
-        ? latestMessage.thread_id.trim()
-        : undefined;
+    const getActiveThreadId = (message?: NewMessage) =>
+      firstThreadQueueId(queueThreadId, message?.thread_id);
+    let activeThreadId = getActiveThreadId(latestMessage);
     const refreshActiveThreadId = () => {
       try {
-        const newerMessages = getMessagesSince(chatJid, latestSeenCursor, 1);
+        const newerMessages = getMessagesSince(chatJid, latestSeenCursor, 1, {
+          threadId: queueThreadId ?? null,
+        });
         if (newerMessages.length === 0) return;
         const newestMessage = newerMessages[newerMessages.length - 1];
         latestSeenCursor = encodeGroupMessageCursor(
           toGroupMessageCursor(newestMessage),
         );
-        activeThreadId =
-          typeof newestMessage.thread_id === 'string' &&
-          newestMessage.thread_id.trim()
-            ? newestMessage.thread_id.trim()
-            : undefined;
+        activeThreadId = getActiveThreadId(newestMessage);
       } catch (err) {
         logger.debug(
           { err, group: group.name },
@@ -401,7 +405,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           sendMessageToChannel(text, buildMessageOptions(options?.threadId)),
         setTyping: (typing) => deps.channelRuntime.setTyping(chatJid, typing),
         runAgent: (prompt, onOutput, options) =>
-          runAgent(group, prompt, chatJid, onOutput, {
+          runAgent(group, prompt, chatJid, queueJid, onOutput, {
             ...options,
             memoryContext: {
               source: 'command',
@@ -409,10 +413,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
               threadId: activeThreadId,
             },
           }),
-        closeStdin: () => deps.queue.closeStdin(chatJid),
+        closeStdin: () => deps.queue.closeStdin(queueJid),
         advanceCursor: (message) => {
           deps.setCursor(
-            chatJid,
+            queueJid,
             encodeGroupMessageCursor(toGroupMessageCursor(message)),
           );
           deps.saveState();
@@ -439,7 +443,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           deps.clearSession(group.folder);
           deleteSession(group.folder);
         },
-        stopCurrentRun: () => deps.queue.stopGroup?.(chatJid) ?? false,
+        stopCurrentRun: () => deps.queue.stopGroup?.(queueJid) ?? false,
         runMemoryDreaming: async () => {
           const result = await memoryMaintenanceQueue.enqueueAndWait(
             group.folder,
@@ -528,9 +532,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     }
 
     const prompt = formatMessages(missedMessages, TIMEZONE);
-    const previousCursor = deps.getCursor(chatJid) || '';
+    const previousCursor = deps.getCursor(queueJid) || '';
     deps.setCursor(
-      chatJid,
+      queueJid,
       encodeGroupMessageCursor(
         toGroupMessageCursor(missedMessages[missedMessages.length - 1]),
       ),
@@ -656,6 +660,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         group,
         prompt,
         chatJid,
+        queueJid,
         async (result) => {
           lastAgentProgressAt = Date.now();
           if (result.result) {
@@ -690,10 +695,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
 
           if (result.status === 'success' && !result.result) {
             await finalizeStreamingOutput('success-marker');
-            deps.queue.notifyIdle(chatJid);
+            deps.queue.notifyIdle(queueJid);
             // End the runner loop after a completed query so typing/progress
             // finalize promptly instead of waiting for idle timeout.
-            deps.queue.closeStdin(chatJid);
+            deps.queue.closeStdin(queueJid);
           }
 
           if (result.status === 'error') {
@@ -741,7 +746,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         );
         return true;
       }
-      deps.setCursor(chatJid, previousCursor);
+      deps.setCursor(queueJid, previousCursor);
       deps.saveState();
       logger.warn(
         { group: group.name },

@@ -18,6 +18,7 @@ import {
 } from '../runtime/message-loop.js';
 import { writeSchedulerStateFileSafe } from '../runtime/scheduler-state-file.js';
 import { startSchedulerLoop } from '../runtime/task-scheduler.js';
+import { makeThreadQueueKey } from '../runtime/thread-queue-key.js';
 import {
   getAllJobs,
   getRecentJobRuns,
@@ -207,16 +208,16 @@ export function startRuntimeServices(
       app.clearSessionForChatJid(chatJid);
     }
 
-    app.setAgentCursor(
-      chatJid,
-      encodeGroupMessageCursor(toGroupMessageCursor(message)),
-    );
-    app.saveState();
-
     const threadId =
       typeof message.thread_id === 'string' && message.thread_id.trim()
         ? message.thread_id.trim()
         : undefined;
+    app.setAgentCursor(
+      makeThreadQueueKey(chatJid, threadId),
+      encodeGroupMessageCursor(toGroupMessageCursor(message)),
+    );
+    app.saveState();
+
     await channelWiring.sendMessage(
       chatJid,
       command.kind === 'stop'

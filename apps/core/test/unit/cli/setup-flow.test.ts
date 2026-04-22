@@ -7,6 +7,13 @@ interface SetupFlowTestOptions {
   textQueue?: unknown[];
   passwordQueue?: unknown[];
   env?: Record<string, string>;
+  onboardingState?: {
+    version: 1;
+    status: 'in_progress' | 'completed';
+    currentStep: string;
+    updatedAt: string;
+    data: Record<string, unknown>;
+  };
   onecliReject?: boolean;
   doctorReports?: Array<{
     ok: boolean;
@@ -143,7 +150,7 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
       updatedAt: new Date().toISOString(),
       data: { runtimeHome },
     }),
-    readOnboardingState: () => null,
+    readOnboardingState: () => options.onboardingState || null,
     writeOnboardingState,
     clearOnboardingState,
   }));
@@ -609,6 +616,102 @@ describe('runSetupFlow credential step', () => {
 
     expect(result.status).toBe('completed');
     expect(mod.installService).toHaveBeenCalledTimes(1);
+    expect(mod.validateRuntimePreflight).toHaveBeenCalledWith(
+      '/tmp/myclaw-test',
+    );
+    expect(mod.startService).toHaveBeenCalledWith('/tmp/myclaw-test');
+    expect(
+      mod.promptCalls.find(
+        (call) => call.message === 'Setup complete. What should MyClaw do now?',
+      )?.options,
+    ).toEqual(['next']);
+  });
+
+  it('does not foreground-start after setup already started the background service', async () => {
+    const mod = await loadSetupFlowModule({
+      selectQueue: [
+        'next',
+        'next',
+        'sqlite',
+        'next',
+        'telegram',
+        'tg:-1001234567890',
+        'next',
+        'env-only',
+        'oauth',
+        'claude-sonnet-4-6',
+        'on',
+        'off',
+        'on',
+        'install_start',
+        'next',
+        'start_now',
+      ],
+      textQueue: ['/tmp/myclaw-test', 'Telegram Main'],
+      passwordQueue: ['telegram-token', 'claude-oauth-token'],
+      doctorReports: [
+        {
+          ok: true,
+          blockingFailures: 0,
+          warnings: 0,
+          checks: [],
+        },
+      ],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.startAfterSetup).toBe(false);
+    expect(mod.startService).toHaveBeenCalledTimes(1);
+    expect(
+      mod.promptCalls.find(
+        (call) => call.message === 'Setup complete. What should MyClaw do now?',
+      )?.options,
+    ).toEqual(['next']);
+  });
+
+  it('restores install-and-start service choice when resuming at verification', async () => {
+    const mod = await loadSetupFlowModule({
+      onboardingState: {
+        version: 1,
+        status: 'in_progress',
+        currentStep: 'verify',
+        updatedAt: new Date().toISOString(),
+        data: {
+          runtimeHome: '/tmp/myclaw-test',
+          primaryProvider: 'telegram',
+          storageProvider: 'sqlite',
+          serviceChoice: 'install_start',
+          telegramChatJid: 'tg:-1001234567890',
+          credentialMode: 'env-only',
+          selectedModel: 'claude-sonnet-4-6',
+          memoryEnabled: true,
+          embeddingsEnabled: false,
+          dreamingEnabled: true,
+        },
+      },
+      selectQueue: ['next'],
+      doctorReports: [
+        {
+          ok: true,
+          blockingFailures: 0,
+          warnings: 0,
+          checks: [],
+        },
+      ],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+      initialStep: 'verify',
+    });
+
+    expect(result.status).toBe('completed');
     expect(mod.validateRuntimePreflight).toHaveBeenCalledWith(
       '/tmp/myclaw-test',
     );

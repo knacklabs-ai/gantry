@@ -14,6 +14,7 @@ export interface SetupReadyDraft {
   memoryEnabled: boolean;
   embeddingsEnabled: boolean;
   dreamingEnabled: boolean;
+  serviceStartedAfterSetup?: boolean;
 }
 
 export type ReadyStepAction = { type: 'next' } | { type: 'start_now' };
@@ -50,23 +51,33 @@ export async function runReadyStep(
     'Ready',
   );
 
+  const options = [
+    {
+      value: 'next',
+      label: 'Finish setup and exit (Recommended)',
+      hint: draft.serviceStartedAfterSetup
+        ? 'Background service is already running.'
+        : 'Return to the terminal. Start later with `myclaw start`.',
+    },
+    ...(draft.serviceStartedAfterSetup
+      ? []
+      : [
+          {
+            value: 'start_now',
+            label: 'Start MyClaw now',
+            hint: `Begin listening on ${draft.primaryProvider} immediately.`,
+          },
+        ]),
+  ];
+
   const value = await p.select({
     message: 'Setup complete. What should MyClaw do now?',
-    options: [
-      {
-        value: 'next',
-        label: 'Finish setup and exit (Recommended)',
-        hint: 'Return to the terminal. Start later with `myclaw start`.',
-      },
-      {
-        value: 'start_now',
-        label: 'Start MyClaw now',
-        hint: `Begin listening on ${draft.primaryProvider} immediately.`,
-      },
-    ],
+    options,
   });
 
   if (p.isCancel(value)) return { type: 'next' };
-  if (value === 'start_now') return { type: 'start_now' };
+  if (value === 'start_now' && !draft.serviceStartedAfterSetup) {
+    return { type: 'start_now' };
+  }
   return { type: 'next' };
 }

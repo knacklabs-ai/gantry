@@ -10,6 +10,7 @@ import {
 } from '../runtime/group-processing.js';
 import { listAvailableGroups } from '../runtime/group-registry.js';
 import { GroupQueue } from '../runtime/group-queue.js';
+import { parseThreadQueueKey } from '../runtime/thread-queue-key.js';
 import {
   registerGroup as registerGroupEntry,
   setGroupModelOverride as setGroupModelOverrideEntry,
@@ -122,12 +123,20 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     const existing = lastAgentTimestamp[chatJid];
     if (existing) return existing;
 
-    const botCursor = getLastBotMessageCursor(chatJid);
+    const parsed = parseThreadQueueKey(chatJid);
+    const baseChatJid = parsed.chatJid;
+    const baseExisting = lastAgentTimestamp[baseChatJid];
+    if (baseExisting) {
+      lastAgentTimestamp[chatJid] = baseExisting;
+      return baseExisting;
+    }
+
+    const botCursor = getLastBotMessageCursor(baseChatJid);
     if (botCursor) {
       const encoded = encodeGroupMessageCursor(botCursor);
       logger.info(
         {
-          chatJid,
+          chatJid: baseChatJid,
           recoveredFrom: botCursor.timestamp,
           recoveredFromId: botCursor.id,
         },
