@@ -129,23 +129,67 @@ function sanitizeToolInput(
   return sanitizeToolInputValue(value, 0) as Record<string, unknown>;
 }
 
-function readTrustedThreadId(raw: Record<string, unknown>): string | undefined {
+interface IpcThreadBinding {
+  authThreadId?: string;
+  payloadThreadId?: string;
+}
+
+function readThreadIdField(value: unknown, label: string): string | undefined {
+  const parsed = toTrimmedString(value, { maxLen: 255, allowEmpty: true });
+  if (parsed === undefined) {
+    throw new Error(`${label} must be a string up to 255 characters`);
+  }
+  return parsed;
+}
+
+function readTrustedThreadBinding(
+  raw: Record<string, unknown>,
+  label: string,
+): IpcThreadBinding {
   const context = isPlainObject(raw.context) ? raw.context : undefined;
-  const value = context?.threadId ?? raw.threadId;
-  return toTrimmedString(value, { maxLen: 255 }) || undefined;
+  const hasContextThreadId =
+    !!context && Object.prototype.hasOwnProperty.call(context, 'threadId');
+  const hasPayloadThreadId = Object.prototype.hasOwnProperty.call(
+    raw,
+    'threadId',
+  );
+  const contextThreadId = hasContextThreadId
+    ? readThreadIdField(context?.threadId, `${label} context.threadId`)
+    : undefined;
+  const payloadThreadId = hasPayloadThreadId
+    ? readThreadIdField(raw.threadId, `${label} threadId`)
+    : undefined;
+
+  if (
+    hasContextThreadId &&
+    hasPayloadThreadId &&
+    contextThreadId !== payloadThreadId
+  ) {
+    throw new Error(`${label} threadId mismatch`);
+  }
+
+  const trustedThreadId = hasContextThreadId
+    ? contextThreadId
+    : payloadThreadId;
+  return {
+    authThreadId: trustedThreadId || undefined,
+    ...(trustedThreadId !== undefined
+      ? { payloadThreadId: trustedThreadId }
+      : {}),
+  };
 }
 
 function assertValidIpcAuth(
   raw: Record<string, unknown>,
   sourceGroup: string,
   label: string,
-): string | undefined {
+): IpcThreadBinding {
   const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
-  const threadId = readTrustedThreadId(raw);
-  if (!validateIpcAuthToken(sourceGroup, authToken, threadId)) {
+  const binding = readTrustedThreadBinding(raw, label);
+  if (!validateIpcAuthToken(sourceGroup, authToken, binding.authThreadId)) {
     throw new Error(`Invalid ${label} auth token`);
   }
-  return threadId;
+  return binding;
 }
 
 function canProcessIpcFile(sourceGroup: string, kind: string): boolean {
@@ -333,7 +377,11 @@ interface ParsedIpcMessage {
 
 function parseIpcMessage(raw: unknown, sourceGroup: string): ParsedIpcMessage {
   if (!isPlainObject(raw)) throw new Error('Invalid IPC message payload');
-  const threadId = assertValidIpcAuth(raw, sourceGroup, 'IPC message');
+  const { authThreadId: threadId } = assertValidIpcAuth(
+    raw,
+    sourceGroup,
+    'IPC message',
+  );
   const type = toTrimmedString(raw.type, { maxLen: 64 });
   if (type !== 'message') throw new Error('Invalid IPC message type');
   const chatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
@@ -424,7 +472,7 @@ function parseAgentConfigPayload(
 function parseTaskIpcData(raw: unknown, sourceGroup: string): TaskIpcData {
   if (!isPlainObject(raw)) throw new Error('Invalid IPC task payload');
   assertNoDisallowedTaskFields(raw);
-  assertValidIpcAuth(raw, sourceGroup, 'IPC task');
+  const threadBinding = assertValidIpcAuth(raw, sourceGroup, 'IPC task');
   const type = toTrimmedString(raw.type, { maxLen: 80 });
   if (!type) throw new Error('IPC task type is required');
   const parsed: TaskIpcData = { type };
@@ -448,10 +496,6 @@ function parseTaskIpcData(raw: unknown, sourceGroup: string): TaskIpcData {
   const deliverTo =
     deliverToArray || (deliverToSingle ? [deliverToSingle] : undefined);
   const groupScope = toTrimmedString(raw.groupScope, { maxLen: 128 });
-  const threadId = toTrimmedString(raw.threadId, {
-    maxLen: 255,
-    allowEmpty: true,
-  });
   const silent = toOptionalBoolean(raw.silent);
   const serialize = toOptionalBoolean(raw.serialize);
   const executionModeRaw = toTrimmedString(raw.executionMode, { maxLen: 32 });
@@ -506,7 +550,9 @@ function parseTaskIpcData(raw: unknown, sourceGroup: string): TaskIpcData {
   if (linkedSessions !== undefined) parsed.linkedSessions = linkedSessions;
   if (deliverTo !== undefined) parsed.deliverTo = deliverTo;
   if (groupScope) parsed.groupScope = groupScope;
-  if (threadId !== undefined) parsed.threadId = threadId || '';
+  if (threadBinding.payloadThreadId !== undefined) {
+    parsed.threadId = threadBinding.payloadThreadId;
+  }
   if (silent !== undefined) parsed.silent = silent;
   if (serialize !== undefined) parsed.serialize = serialize;
   if (executionMode !== undefined) parsed.executionMode = executionMode;
@@ -555,7 +601,11 @@ function parseMemoryIpcRequest(
   context?: { threadId?: string };
 } {
   if (!isPlainObject(raw)) throw new Error('Invalid memory IPC payload');
-  const threadId = assertValidIpcAuth(raw, sourceGroup, 'memory IPC');
+  const { authThreadId: threadId } = assertValidIpcAuth(
+    raw,
+    sourceGroup,
+    'memory IPC',
+  );
   const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
   const action = toTrimmedString(raw.action, { maxLen: 64 });
   if (!requestId || !action) {
