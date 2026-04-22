@@ -29,6 +29,8 @@ export interface OnboardingData {
   serviceChoice?: 'skip' | 'install' | 'install_start';
   telegramBotUsername?: string;
   telegramChatJid?: string;
+  telegramAdminSenderId?: string;
+  telegramAdminSenderName?: string;
   slackChatJid?: string;
   memoryEnabled?: boolean;
   embeddingsEnabled?: boolean;

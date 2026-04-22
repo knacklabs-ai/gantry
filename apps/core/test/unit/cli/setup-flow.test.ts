@@ -81,6 +81,8 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
   const persistOnboardingConfig = vi.fn();
   const writeOnboardingState = vi.fn();
   const clearOnboardingState = vi.fn();
+  const saveRuntimeSettings = vi.fn();
+  const addControlSenderForAgent = vi.fn();
   const getContainerConfig = vi.fn();
   const installService = vi.fn(() => ({ ok: true, message: 'installed' }));
   const startService = vi.fn(() => ({ ok: true, message: 'started' }));
@@ -178,6 +180,10 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
             agents: {},
             logDenied: true,
           },
+          controlAllowlist: {
+            default: [],
+            agents: {},
+          },
         },
         slack: {
           enabled: false,
@@ -185,6 +191,10 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
             default: { allow: '*', mode: 'trigger' },
             agents: {},
             logDenied: true,
+          },
+          controlAllowlist: {
+            default: [],
+            agents: {},
           },
         },
       },
@@ -208,6 +218,8 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
         },
       },
     })),
+    saveRuntimeSettings,
+    addControlSenderForAgent,
     readRuntimeStorageSettingsSnapshot: vi.fn((runtimeHome: string) => ({
       provider: 'sqlite',
       sqlitePath: `${runtimeHome}/store/myclaw.db`,
@@ -258,6 +270,8 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
           chatJid: 'tg:-1001234567890',
           chatTitle: 'Telegram Main',
           chatType: 'group',
+          adminSenderId: '5759865942',
+          adminSenderName: 'Ravi',
           sourceUpdateId: 1,
         },
       ],
@@ -328,6 +342,8 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
     installService,
     startService,
     validateRuntimePreflight,
+    saveRuntimeSettings,
+    addControlSenderForAgent,
   };
 }
 
@@ -492,6 +508,16 @@ describe('runSetupFlow credential step', () => {
         )
         ?.options?.slice(0, 2),
     ).toEqual(['next', 'start_now']);
+    expect(mod.addControlSenderForAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      'telegram',
+      'telegram-main',
+      '5759865942',
+    );
+    expect(mod.saveRuntimeSettings).toHaveBeenCalledWith(
+      '/tmp/myclaw-test',
+      expect.anything(),
+    );
   });
 
   it('does not mark setup completed when final doctor has blocking failures', async () => {

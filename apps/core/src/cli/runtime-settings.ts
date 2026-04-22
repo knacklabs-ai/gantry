@@ -27,23 +27,26 @@ import {
   parseSimpleYamlObject,
   quoteYamlString,
 } from './runtime-settings-yaml.js';
-
-export interface ChatAllowlistEntry {
-  allow: '*' | string[];
-  mode: 'trigger' | 'drop';
-}
-
-export interface SenderAllowlistConfig {
-  default: ChatAllowlistEntry;
-  agents: Record<string, ChatAllowlistEntry>;
-  logDenied: boolean;
-}
+import {
+  addControlSenderForAgent as addControlSenderToChannel,
+  createDefaultControlAllowlist,
+  parseSenderControlAllowlistConfig,
+  renderControlAllowlistYaml,
+  type SenderControlAllowlistConfig,
+} from './runtime-control-allowlist.js';
+import {
+  createDefaultSenderAllowlist,
+  parseSenderAllowlistConfig,
+  renderSenderAllowlistYaml,
+  type SenderAllowlistConfig,
+} from './runtime-sender-allowlist.js';
 
 export type RuntimeChannel = string;
 
 export interface RuntimeChannelSettings {
   enabled: boolean;
   senderAllowlist: SenderAllowlistConfig;
+  controlAllowlist: SenderControlAllowlistConfig;
 }
 
 export type StorageProviderName = 'sqlite' | 'postgres';
@@ -103,12 +106,6 @@ export interface RuntimeSettingsValidationResult {
   failure?: RuntimeSettingsValidationFailure;
 }
 
-const DEFAULT_SENDER_ALLOWLIST: SenderAllowlistConfig = {
-  default: { allow: '*', mode: 'trigger' },
-  agents: {},
-  logDenied: true,
-};
-
 const VALID_EMBEDDING_PROVIDERS = new Set<EmbeddingProviderName>([
   'disabled',
   'openai',
@@ -158,80 +155,6 @@ export function getMemoryModelProfileDefaults(
   };
 }
 
-function isValidAllowlistEntry(entry: unknown): entry is ChatAllowlistEntry {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-  const row = entry as Record<string, unknown>;
-  const allow = row.allow;
-  const mode = row.mode;
-  const validAllow =
-    allow === '*' ||
-    (Array.isArray(allow) &&
-      allow.every((item) => typeof item === 'string' && item.trim()));
-  const validMode = mode === 'trigger' || mode === 'drop';
-  return validAllow && validMode;
-}
-
-function normalizeAllowlistEntry(
-  entry: ChatAllowlistEntry,
-): ChatAllowlistEntry {
-  return {
-    allow: entry.allow === '*' ? '*' : entry.allow.map((value) => value.trim()),
-    mode: entry.mode,
-  };
-}
-
-function parseSenderAllowlistConfig(
-  raw: unknown,
-  pathPrefix: string,
-): SenderAllowlistConfig {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new Error(`${pathPrefix} must be a mapping`);
-  }
-
-  const map = raw as Record<string, unknown>;
-
-  if (!isValidAllowlistEntry(map.default)) {
-    throw new Error(`${pathPrefix}.default must include allow and mode`);
-  }
-
-  const agentsRaw = map.agents;
-  if (
-    typeof agentsRaw !== 'object' ||
-    agentsRaw === null ||
-    Array.isArray(agentsRaw)
-  ) {
-    throw new Error(`${pathPrefix}.agents must be a mapping`);
-  }
-
-  const agentsMap = agentsRaw as Record<string, unknown>;
-  const agents: Record<string, ChatAllowlistEntry> = {};
-  for (const [folder, entry] of Object.entries(agentsMap)) {
-    const trimmedFolder = folder.trim();
-    if (!trimmedFolder) {
-      throw new Error(`${pathPrefix}.agents has empty key`);
-    }
-    if (!isValidGroupFolder(trimmedFolder)) {
-      throw new Error(
-        `${pathPrefix}.agents.${trimmedFolder} must use a valid agent folder key`,
-      );
-    }
-    if (!isValidAllowlistEntry(entry)) {
-      throw new Error(`${pathPrefix}.agents.${trimmedFolder} is invalid`);
-    }
-    agents[trimmedFolder] = normalizeAllowlistEntry(entry);
-  }
-
-  if (typeof map.log_denied !== 'boolean') {
-    throw new Error(`${pathPrefix}.log_denied must be true/false`);
-  }
-
-  return {
-    default: normalizeAllowlistEntry(map.default as ChatAllowlistEntry),
-    agents,
-    logDenied: map.log_denied,
-  };
-}
-
 function parseChannelSettings(
   raw: unknown,
   pathPrefix: string,
@@ -250,6 +173,10 @@ function parseChannelSettings(
     senderAllowlist: parseSenderAllowlistConfig(
       channelMap.sender_allowlist,
       `${pathPrefix}.sender_allowlist`,
+    ),
+    controlAllowlist: parseSenderControlAllowlistConfig(
+      channelMap.control_allowlist,
+      `${pathPrefix}.control_allowlist`,
     ),
   };
 }
@@ -619,33 +546,6 @@ function quoteYamlKey(key: string): string {
   return JSON.stringify(key);
 }
 
-function renderAllowValue(allow: '*' | string[]): string {
-  if (allow === '*') return '"*"';
-  return JSON.stringify(allow);
-}
-
-function renderSenderAllowlistYaml(
-  lines: string[],
-  indent: string,
-  config: SenderAllowlistConfig,
-): void {
-  lines.push(`${indent}default:`);
-  lines.push(`${indent}  allow: ${renderAllowValue(config.default.allow)}`);
-  lines.push(`${indent}  mode: ${config.default.mode}`);
-  lines.push(`${indent}agents:`);
-
-  const entries = Object.entries(config.agents).sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  for (const [folder, entry] of entries) {
-    lines.push(`${indent}  ${quoteYamlKey(folder)}:`);
-    lines.push(`${indent}    allow: ${renderAllowValue(entry.allow)}`);
-    lines.push(`${indent}    mode: ${entry.mode}`);
-  }
-
-  lines.push(`${indent}log_denied: ${config.logDenied ? 'true' : 'false'}`);
-}
-
 function renderMemorySettingsYaml(
   lines: string[],
   memory: RuntimeMemorySettings,
@@ -700,7 +600,19 @@ function renderRuntimeSettingsYaml(settings: RuntimeSettings): string {
       `    enabled: ${channelSettings.enabled ? 'true' : 'false'}`,
       '    sender_allowlist:',
     );
-    renderSenderAllowlistYaml(lines, '      ', channelSettings.senderAllowlist);
+    renderSenderAllowlistYaml(
+      lines,
+      '      ',
+      quoteYamlKey,
+      channelSettings.senderAllowlist,
+    );
+    lines.push('    control_allowlist:');
+    renderControlAllowlistYaml(
+      lines,
+      '      ',
+      quoteYamlKey,
+      channelSettings.controlAllowlist,
+    );
   }
 
   lines.push('');
@@ -726,12 +638,30 @@ function createDefaultChannelSettings(
 ): RuntimeChannelSettings {
   return {
     enabled,
-    senderAllowlist: {
-      default: { ...DEFAULT_SENDER_ALLOWLIST.default },
-      agents: {},
-      logDenied: DEFAULT_SENDER_ALLOWLIST.logDenied,
-    },
+    senderAllowlist: createDefaultSenderAllowlist(),
+    controlAllowlist: createDefaultControlAllowlist(),
   };
+}
+
+export function addControlSenderForAgent(
+  settings: RuntimeSettings,
+  channelId: string,
+  folder: string,
+  sender: string,
+): boolean {
+  const trimmedFolder = folder.trim();
+  const trimmedSender = sender.trim();
+  if (!isValidGroupFolder(trimmedFolder)) {
+    throw new Error(`Invalid agent folder for control allowlist: ${folder}`);
+  }
+  if (!trimmedSender) {
+    return false;
+  }
+
+  const channel =
+    settings.channels[channelId] || createDefaultChannelSettings(false);
+  settings.channels[channelId] = channel;
+  return addControlSenderToChannel(channel, trimmedFolder, trimmedSender);
 }
 
 export function createDefaultRuntimeSettings(): RuntimeSettings {
@@ -894,6 +824,9 @@ export function validateRuntimeSettings(
       if (summary.count === 0) {
         details.push(
           `Channel '${provider.id}' is enabled but no chats are registered for prefix '${provider.jidPrefix}'.`,
+        );
+        details.push(
+          `Next action: run \`myclaw ${provider.id} connect\` or \`myclaw agent add ${provider.jidPrefix}<chat-id> --main --requires-trigger false\`.`,
         );
       }
 

@@ -88,6 +88,12 @@ describe('validateRuntimePreflight', () => {
     expect(result.failure?.details.join('\n')).toContain(
       "Channel 'telegram' is enabled but no chats are registered",
     );
+    expect(result.failure?.details.join('\n')).toContain(
+      'myclaw telegram connect',
+    );
+    expect(result.failure?.details.join('\n')).toContain(
+      'myclaw agent add tg:<chat-id> --main --requires-trigger false',
+    );
   });
 
   it('passes when telegram config and chat mapping are valid', () => {

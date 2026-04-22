@@ -26,8 +26,10 @@ import {
   resolveRuntimeHome,
 } from './runtime-home.js';
 import {
+  addControlSenderForAgent,
   createDefaultRuntimeSettings,
   loadRuntimeSettings,
+  saveRuntimeSettings,
 } from './runtime-settings.js';
 import {
   normalizeTelegramChatJid,
@@ -94,6 +96,8 @@ interface SetupDraft {
   telegramBotToken: string;
   telegramChatJid: string;
   telegramDisplayName: string;
+  telegramAdminSenderId: string;
+  telegramAdminSenderName: string;
   telegramBotUsername: string;
   slackBotToken: string;
   slackAppToken: string;
@@ -207,6 +211,8 @@ function updateStateData(state: OnboardingState, draft: SetupDraft): void {
     serviceChoice: draft.serviceChoice,
     telegramBotUsername: draft.telegramBotUsername || undefined,
     telegramChatJid: draft.telegramChatJid || undefined,
+    telegramAdminSenderId: draft.telegramAdminSenderId || undefined,
+    telegramAdminSenderName: draft.telegramAdminSenderName || undefined,
     slackChatJid: draft.slackChatJid || undefined,
     credentialMode: draft.credentialMode,
     onecliUrl: draft.onecliUrl || undefined,
@@ -262,6 +268,8 @@ function restoreDraft(
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || '',
     telegramChatJid: savedTelegramChatJid,
     telegramDisplayName: 'Telegram Main',
+    telegramAdminSenderId: state?.data.telegramAdminSenderId || '',
+    telegramAdminSenderName: state?.data.telegramAdminSenderName || '',
     telegramBotUsername: state?.data.telegramBotUsername || '',
     slackBotToken: env.SLACK_BOT_TOKEN || '',
     slackAppToken: env.SLACK_APP_TOKEN || '',
@@ -492,6 +500,31 @@ async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
   return { type: 'next' };
 }
 
+async function promptTelegramAdminSenderIdForManualChat(
+  draft: SetupDraft,
+): Promise<FlowAction> {
+  const adminInput = await p.text({
+    message:
+      'Telegram sender/user ID for session admin (optional, /back, /resume, /cancel)',
+    placeholder: 'Press Enter to skip; discovery can fill this later',
+    defaultValue: draft.telegramAdminSenderId,
+    validate: (value) => {
+      const trimmed = String(value ?? '').trim();
+      if (isInputFlowControl(trimmed)) return undefined;
+      if (!trimmed) return undefined;
+      return /^-?\d+$/.test(trimmed)
+        ? undefined
+        : 'Use a numeric Telegram user ID.';
+    },
+  });
+  if (p.isCancel(adminInput)) return { type: 'resume' };
+  const control = parseInputFlowControl(adminInput);
+  if (control) return control;
+  draft.telegramAdminSenderId = String(adminInput ?? '').trim();
+  draft.telegramAdminSenderName = draft.telegramAdminSenderId;
+  return { type: 'next' };
+}
+
 async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
   if (draft.primaryProvider !== 'telegram') {
     return { type: 'next' };
@@ -593,6 +626,8 @@ async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
     spinner.stop(validation.message);
     draft.telegramBotToken = token;
     draft.telegramBotUsername = validation.username || '';
+    draft.telegramAdminSenderId = '';
+    draft.telegramAdminSenderName = '';
 
     let normalizedJid = '';
     const discoverySpinner = p.spinner();
@@ -657,8 +692,16 @@ async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
         normalizedJid =
           normalizeTelegramChatJid(String(chatInput).trim() || defaultChatId) ||
           '';
+        const adminAction =
+          await promptTelegramAdminSenderIdForManualChat(draft);
+        if (adminAction.type !== 'next') return adminAction;
       } else {
         normalizedJid = normalizeTelegramChatJid(String(selected)) || '';
+        const chat = discovered.chats.find(
+          (candidate) => candidate.chatJid === normalizedJid,
+        );
+        draft.telegramAdminSenderId = chat?.adminSenderId || '';
+        draft.telegramAdminSenderName = chat?.adminSenderName || '';
       }
     } else {
       discoverySpinner.stop('No recent Telegram chat found.');
@@ -684,6 +727,8 @@ async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
       normalizedJid =
         normalizeTelegramChatJid(String(chatInput).trim() || defaultChatId) ||
         '';
+      const adminAction = await promptTelegramAdminSenderIdForManualChat(draft);
+      if (adminAction.type !== 'next') return adminAction;
     }
 
     if (!normalizedJid) {
@@ -756,6 +801,11 @@ async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
       [
         `Bot: ${draft.telegramBotUsername ? `@${draft.telegramBotUsername}` : 'Configured'}`,
         `Chat: ${draft.telegramChatJid}`,
+        `Session admin: ${
+          draft.telegramAdminSenderId
+            ? draft.telegramAdminSenderName || draft.telegramAdminSenderId
+            : 'not detected yet'
+        }`,
       ].join('\n'),
       'Telegram',
     );
@@ -1352,6 +1402,16 @@ async function runGroupStep(draft: SetupDraft): Promise<FlowAction> {
         chatJid: draft.telegramChatJid,
         displayName: draft.telegramDisplayName,
       });
+      if (draft.telegramAdminSenderId) {
+        const settings = loadRuntimeSettings(draft.runtimeHome);
+        addControlSenderForAgent(
+          settings,
+          'telegram',
+          result.folder,
+          draft.telegramAdminSenderId,
+        );
+        saveRuntimeSettings(draft.runtimeHome, settings);
+      }
       spinner.stop(`Registered ${result.groupName} (${result.folder})`);
     }
   } catch (err) {

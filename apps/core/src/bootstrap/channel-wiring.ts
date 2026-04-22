@@ -18,8 +18,9 @@ import {
   stripInternalTagsPreserveWhitespace,
 } from '../messaging/router.js';
 import {
-  isSenderExplicitlyAllowed,
+  isSenderControlAllowed,
   isSenderAllowed,
+  loadSenderControlAllowlist,
   loadSenderAllowlist,
   shouldDropMessage,
   shouldLogDenied,
@@ -51,9 +52,10 @@ interface ChannelWiringDeps {
   storeMessage: typeof storeMessage;
   storeChatMetadata: typeof storeChatMetadata;
   loadSenderAllowlist: typeof loadSenderAllowlist;
+  loadSenderControlAllowlist: typeof loadSenderControlAllowlist;
   shouldDropMessage: typeof shouldDropMessage;
   isSenderAllowed: typeof isSenderAllowed;
-  isSenderExplicitlyAllowed: typeof isSenderExplicitlyAllowed;
+  isSenderControlAllowed: typeof isSenderControlAllowed;
   shouldLogDenied: typeof shouldLogDenied;
   asRemoteControlCommand: typeof asRemoteControlCommand;
   handleRemoteControlCommand: typeof handleRemoteControlCommand;
@@ -102,9 +104,10 @@ export function createChannelWiring(
     storeMessage,
     storeChatMetadata,
     loadSenderAllowlist,
+    loadSenderControlAllowlist,
     shouldDropMessage,
     isSenderAllowed,
-    isSenderExplicitlyAllowed,
+    isSenderControlAllowed,
     shouldLogDenied,
     asRemoteControlCommand,
     handleRemoteControlCommand,
@@ -145,7 +148,7 @@ export function createChannelWiring(
 
       const remoteControlCommand = resolved.asRemoteControlCommand(trimmed);
       if (remoteControlCommand) {
-        const allowlistCfg = resolved.loadSenderAllowlist();
+        const allowlistCfg = resolved.loadSenderControlAllowlist();
         resolved
           .handleRemoteControlCommand(
             remoteControlCommand,
@@ -154,7 +157,7 @@ export function createChannelWiring(
             (jid) => app.getRegisteredGroups()[jid],
             (jid) => findBoundChannel(jid),
             (candidateMsg) =>
-              resolved.isSenderExplicitlyAllowed(
+              resolved.isSenderControlAllowed(
                 chatJid,
                 candidateMsg.sender,
                 allowlistCfg,

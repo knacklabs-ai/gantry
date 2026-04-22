@@ -27,8 +27,9 @@ import {
   formatOutboundForChannel,
 } from '../messaging/router.js';
 import {
-  isSenderExplicitlyAllowed,
+  isSenderControlAllowed,
   isTriggerAllowed,
+  loadSenderControlAllowlist,
   loadSenderAllowlist,
 } from '../platform/sender-allowlist.js';
 import {
@@ -59,7 +60,6 @@ const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
 const NO_VISIBLE_OUTPUT_FALLBACK_MESSAGE =
   'I finished that run but did not generate a user-visible reply. Please send your message again.';
 let streamingGenerationCounter = 0;
-
 function nextStreamingGeneration(): number {
   streamingGenerationCounter += 1;
   return streamingGenerationCounter;
@@ -487,8 +487,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             },
           ),
         isSenderControlAllowlisted: (msg) => {
-          const allowlistCfg = loadSenderAllowlist();
-          return isSenderExplicitlyAllowed(
+          const allowlistCfg = loadSenderControlAllowlist();
+          return isSenderControlAllowed(
             chatJid,
             msg.sender,
             allowlistCfg,

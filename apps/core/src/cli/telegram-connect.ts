@@ -5,6 +5,7 @@ import { upsertEnvFile } from './env-file.js';
 import { envFilePath, ensureRuntimeLayout } from './runtime-home.js';
 import { listTelegramRecentChats } from './telegram-chat-discovery.js';
 import {
+  addControlSenderForAgent,
   loadRuntimeSettings,
   saveRuntimeSettings,
 } from './runtime-settings.js';
@@ -17,7 +18,12 @@ import {
 } from './telegram.js';
 
 type TelegramChatChoice =
-  | { type: 'selected'; chatJid: string }
+  | {
+      type: 'selected';
+      chatJid: string;
+      adminSenderId?: string;
+      adminSenderName?: string;
+    }
   | { type: 'skip' }
   | { type: 'cancel' };
 
@@ -52,9 +58,29 @@ async function promptManualTelegramChatId(
   });
   if (p.isCancel(result)) return { type: 'cancel' };
   const normalized = normalizeTelegramChatJid(String(result || '').trim());
-  return normalized
-    ? { type: 'selected', chatJid: normalized }
-    : { type: 'skip' };
+  if (!normalized) return { type: 'skip' };
+
+  const adminSenderId = await promptManualTelegramAdminSenderId();
+  if (adminSenderId === null) return { type: 'cancel' };
+  return adminSenderId
+    ? { type: 'selected', chatJid: normalized, adminSenderId }
+    : { type: 'selected', chatJid: normalized };
+}
+
+async function promptManualTelegramAdminSenderId(): Promise<string | null> {
+  const result = await p.text({
+    message: 'Telegram sender/user ID for session admin (optional)',
+    placeholder: 'Press Enter to skip; discovery can fill this later',
+    validate: (value) => {
+      const trimmed = String(value || '').trim();
+      if (!trimmed) return undefined;
+      return /^-?\d+$/.test(trimmed)
+        ? undefined
+        : 'Use a numeric Telegram user ID.';
+    },
+  });
+  if (p.isCancel(result)) return null;
+  return String(result || '').trim();
 }
 
 async function chooseChatFromDiscovery(
@@ -102,9 +128,16 @@ async function chooseChatFromDiscovery(
   }
   if (selected === 'skip') return { type: 'skip' };
   const normalized = normalizeTelegramChatJid(String(selected || '').trim());
-  return normalized
-    ? { type: 'selected', chatJid: normalized }
-    : { type: 'skip' };
+  if (!normalized) return { type: 'skip' };
+  const chat = discovery.chats.find(
+    (candidate) => candidate.chatJid === normalized,
+  );
+  return {
+    type: 'selected',
+    chatJid: normalized,
+    adminSenderId: chat?.adminSenderId,
+    adminSenderName: chat?.adminSenderName,
+  };
 }
 
 export async function runTelegramConnectCommand(
@@ -143,6 +176,11 @@ export async function runTelegramConnectCommand(
   }
   const normalizedChatJid =
     chatChoice.type === 'selected' ? chatChoice.chatJid : '';
+  const adminSenderId =
+    chatChoice.type === 'selected' ? chatChoice.adminSenderId : undefined;
+  const adminSenderName =
+    chatChoice.type === 'selected' ? chatChoice.adminSenderName : undefined;
+  let registeredFolder = '';
 
   if (normalizedChatJid) {
     const access = await verifyTelegramChatAccess({
@@ -162,6 +200,7 @@ export async function runTelegramConnectCommand(
       chatJid: normalizedChatJid,
       displayName: access.chatTitle || 'Telegram Main',
     });
+    registeredFolder = registered.folder;
 
     p.log.success(
       `Registered Telegram main group ${registered.groupName} (${normalizedChatJid}) in folder ${registered.folder}.`,
@@ -175,6 +214,21 @@ export async function runTelegramConnectCommand(
   const provider = getChannelProvider('telegram');
   if (provider && settings.channels[provider.id]) {
     settings.channels[provider.id].enabled = true;
+    if (registeredFolder && adminSenderId) {
+      addControlSenderForAgent(
+        settings,
+        provider.id,
+        registeredFolder,
+        adminSenderId,
+      );
+      p.log.success(
+        `Enabled session/admin commands for Telegram sender ${adminSenderName || adminSenderId}.`,
+      );
+    } else if (registeredFolder) {
+      p.log.info(
+        'No Telegram sender was discovered for session/admin commands. Send a normal message to the bot and run `myclaw telegram connect` again.',
+      );
+    }
   }
   saveRuntimeSettings(runtimeHome, settings);
 

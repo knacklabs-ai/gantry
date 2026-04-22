@@ -283,12 +283,19 @@ describe('cli telegram helpers', () => {
               update_id: 101,
               message: {
                 chat: { id: -100123, type: 'supergroup', title: 'Kai Squad' },
+                from: {
+                  id: 5759865942,
+                  username: 'ravi',
+                  first_name: 'Ravi',
+                  is_bot: false,
+                },
               },
             },
             {
               update_id: 102,
               message: {
                 chat: { id: 99887766, type: 'private', first_name: 'Ravi' },
+                from: { id: 5759865942, first_name: 'Ravi', is_bot: false },
               },
             },
           ],
@@ -305,7 +312,11 @@ describe('cli telegram helpers', () => {
     expect(result.ok).toBe(true);
     expect(result.chats).toHaveLength(2);
     expect(result.chats[0]?.chatJid).toBe('tg:99887766');
+    expect(result.chats[0]?.adminSenderId).toBe('5759865942');
+    expect(result.chats[0]?.adminSenderName).toBe('Ravi');
     expect(result.chats[1]?.chatJid).toBe('tg:-100123');
+    expect(result.chats[1]?.adminSenderId).toBe('5759865942');
+    expect(result.chats[1]?.adminSenderName).toBe('ravi');
   });
 
   it('does not leak token-bearing transport details when discovery fails', async () => {
@@ -502,6 +513,79 @@ describe('cli telegram helpers', () => {
     expect(readEnvFile(envFilePath(runtimeHome)).TELEGRAM_BOT_TOKEN).toBe(
       'telegram-token',
     );
+  });
+
+  it('telegram connect enables session admin commands for the discovered sender', async () => {
+    vi.resetModules();
+    const runtimeHome = makeRuntimeHome();
+    const select = vi.fn(async () => 'tg:-100123');
+
+    vi.doMock('@clack/prompts', () => ({
+      isCancel: () => false,
+      note: vi.fn(),
+      password: vi.fn(async () => 'telegram-token'),
+      select,
+      text: vi.fn(),
+      outro: vi.fn(),
+      log: {
+        success: vi.fn(),
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+      spinner: vi.fn(() => ({
+        start: vi.fn(),
+        stop: vi.fn(),
+      })),
+    }));
+    vi.doMock('@core/cli/telegram-chat-discovery.js', () => ({
+      listTelegramRecentChats: vi.fn(async () => ({
+        ok: true,
+        message: 'Discovered 1 Telegram chat.',
+        chats: [
+          {
+            chatJid: 'tg:-100123',
+            chatTitle: 'Ops Room',
+            chatType: 'supergroup',
+            adminSenderId: '5759865942',
+            adminSenderName: 'Ravi',
+          },
+        ],
+      })),
+    }));
+    vi.doMock('@core/cli/telegram.js', () => ({
+      normalizeTelegramChatJid: vi.fn((value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        return trimmed.startsWith('tg:') ? trimmed : `tg:${trimmed}`;
+      }),
+      readTelegramFromRuntimeEnv: vi.fn(() => ({ token: '' })),
+      registerTelegramMainGroup: vi.fn(async () => ({
+        groupName: 'Ops Room',
+        folder: 'telegram_main',
+      })),
+      validateTelegramBotToken: vi.fn(async () => ({
+        ok: true,
+        message: 'ok',
+        botId: 123,
+      })),
+      verifyTelegramChatAccess: vi.fn(async () => ({
+        ok: true,
+        message: 'ok',
+        chatTitle: 'Ops Room',
+      })),
+    }));
+
+    const { runTelegramConnectCommand } =
+      await import('@core/cli/telegram-connect.js');
+    const code = await runTelegramConnectCommand(runtimeHome);
+
+    expect(code).toBe(0);
+    const settings = loadRuntimeSettings(runtimeHome);
+    expect(settings.channels.telegram.enabled).toBe(true);
+    expect(settings.channels.telegram.senderAllowlist.default.allow).toBe('*');
+    expect(
+      settings.channels.telegram.controlAllowlist.agents.telegram_main,
+    ).toEqual(['5759865942']);
   });
 
   it('seeds CLAUDE.md and SOUL.md when registering the main group', async () => {

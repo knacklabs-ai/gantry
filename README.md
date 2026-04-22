@@ -71,6 +71,7 @@ Defaults in v1:
 - embeddings: off (unless OpenAI key is provided and enabled)
 - dreaming: on in guided setup; disable with `myclaw memory dreaming off`
 - sender allowlist: `channels.<provider>.sender_allowlist` in `settings.yaml`
+- session/admin allowlist: `channels.<provider>.control_allowlist` in `settings.yaml`
 
 Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default unless `--runtime-home` or `MYCLAW_HOME` is set.
 
@@ -106,8 +107,8 @@ Notes:
 
 - Telegram uses `TELEGRAM_BOT_TOKEN`; create it in Telegram by chatting with `@BotFather` and sending `/newbot`.
 - For Telegram groups, add the bot to the group and send a message before discovery; if MyClaw must see every group message, make the bot an admin or disable Group Privacy in BotFather with `/setprivacy`.
-- `myclaw telegram connect` auto-discovers recent chats and can register one without manual chat ID copy/paste.
-- Manual Telegram chat IDs like `tg:-1001234567890` are still supported as fallback.
+- `myclaw telegram connect` auto-discovers recent chats and can register one without manual chat ID copy/paste. The human sender from the selected discovery message is added to `control_allowlist`, so `/new`, `/model`, `/dream`, and `/memory-status` work immediately.
+- Manual Telegram chat IDs like `tg:-1001234567890` are still supported as fallback, but MyClaw cannot infer the admin sender from a raw chat ID. Prefer discovery for first setup.
 - Slack uses Socket Mode with `SLACK_BOT_TOKEN` (`xoxb-...`) and `SLACK_APP_TOKEN` (`xapp-...`); create a Slack app, add a bot user/scopes, enable Socket Mode, generate the app-level token, install/reinstall the app, then invite it to the target channel or DM it once.
 - `myclaw slack connect` auto-discovers accessible conversations and can register one directly.
 - Manual Slack IDs like `sl:C0123456789` are still supported as fallback.
@@ -245,6 +246,7 @@ Use these as standalone chat messages:
 
 - `/new` resets the current group session and archives the previous transcript.
 - `/model <value>` switches the group model override only when validation succeeds.
+- Session commands require `is_from_me` or explicit `control_allowlist` membership. `sender_allowlist: "*"` allows interaction; it does not grant admin/session-command rights.
 
 ## Project Layout
 

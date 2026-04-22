@@ -5,7 +5,9 @@ const mockGetMessagesSince = vi.fn();
 const mockGetMessageThreadIds = vi.fn();
 const mockGetTriggerPattern = vi.fn();
 const mockLoadSenderAllowlist = vi.fn();
+const mockLoadSenderControlAllowlist = vi.fn();
 const mockIsSenderExplicitlyAllowed = vi.fn();
+const mockIsSenderControlAllowed = vi.fn();
 const mockIsTriggerAllowed = vi.fn();
 const mockExtractSessionCommand = vi.fn();
 const mockIsSessionCommandAllowed = vi.fn();
@@ -24,8 +26,12 @@ vi.mock('@core/core/config.js', () => ({
 }));
 vi.mock('@core/platform/sender-allowlist.js', () => ({
   loadSenderAllowlist: (...args: unknown[]) => mockLoadSenderAllowlist(...args),
+  loadSenderControlAllowlist: (...args: unknown[]) =>
+    mockLoadSenderControlAllowlist(...args),
   isSenderExplicitlyAllowed: (...args: unknown[]) =>
     mockIsSenderExplicitlyAllowed(...args),
+  isSenderControlAllowed: (...args: unknown[]) =>
+    mockIsSenderControlAllowed(...args),
   isTriggerAllowed: (...args: unknown[]) => mockIsTriggerAllowed(...args),
 }));
 vi.mock('@core/session/session-commands.js', () => ({
@@ -125,7 +131,9 @@ beforeEach(() => {
   mockGetMessageThreadIds.mockReturnValue([null]);
   mockGetTriggerPattern.mockReturnValue(/@Andy/i);
   mockLoadSenderAllowlist.mockReturnValue({});
+  mockLoadSenderControlAllowlist.mockReturnValue({});
   mockIsSenderExplicitlyAllowed.mockReturnValue(false);
+  mockIsSenderControlAllowed.mockReturnValue(false);
   mockIsTriggerAllowed.mockReturnValue(true);
   mockExtractSessionCommand.mockReturnValue(null);
   mockIsSessionCommandAllowed.mockReturnValue(false);

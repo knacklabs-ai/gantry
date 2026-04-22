@@ -13,12 +13,12 @@ import {
 import { readEnvFile } from './env-file.js';
 import { envFilePath, ensureRuntimeLayout } from './runtime-home.js';
 import {
-  ChatAllowlistEntry,
   RuntimeChannel,
   RuntimeSettings,
   loadRuntimeSettings,
   saveRuntimeSettings,
 } from './runtime-settings.js';
+import type { ChatAllowlistEntry } from './runtime-sender-allowlist.js';
 import { RuntimeGroupDb, openRuntimeGroupDb } from './runtime-group-db.js';
 import {
   normalizeTelegramChatJid,

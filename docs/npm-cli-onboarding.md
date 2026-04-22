@@ -22,7 +22,7 @@ The first run is guided and channel-agnostic:
 1. welcome
 2. runtime home confirmation (`~/myclaw` by default)
 3. storage selection (`SQLite`; Postgres is not exposed in guided setup yet)
-4. runtime prerequisite check
+4. runtime home writability check
 5. channel selection (`Telegram` or `Slack`)
 6. provider token + chat/conversation connection
 7. credential source mode selection (`env-only` default, optional OneCLI)
@@ -65,7 +65,11 @@ Contains:
 - `logs/`
 - `.onboarding-state.json`
 
-`settings.yaml` is the single user-editable runtime settings file for channel, storage, and memory behavior (including sender allowlist).
+`settings.yaml` is the single user-editable runtime settings file for channel, storage, and memory behavior.
+
+- `sender_allowlist` controls who can trigger or post messages into an agent.
+- `control_allowlist` controls who can run session/admin commands such as `/new`, `/model`, `/dream`, and `/memory-status`.
+- Wildcard sender access (`allow: "*"`) is not admin access.
 
 Override at runtime:
 
@@ -80,6 +84,8 @@ Required values:
 - Telegram bot token from BotFather (`@BotFather` -> `/newbot`)
 - Telegram chat ID (for example `-1001234567890`)
 - For group chats, add the bot to the group and send a message before discovery; use admin rights or BotFather `/setprivacy` if the bot must see every group message.
+- During discovery-based setup, the human who sent the selected Telegram message is saved to `control_allowlist` for that agent so session/admin commands work on first use.
+- If you enter a chat ID manually, MyClaw can register the chat but cannot infer the admin sender. Send a message to the bot and rerun `myclaw telegram connect` if session commands say admin access is required.
 
 Reconnect Telegram later:
 

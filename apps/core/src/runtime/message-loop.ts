@@ -21,8 +21,9 @@ import {
 } from '../storage/db.js';
 import { formatMessages } from '../messaging/router.js';
 import {
-  isSenderExplicitlyAllowed,
+  isSenderControlAllowed,
   isTriggerAllowed,
+  loadSenderControlAllowlist,
   loadSenderAllowlist,
 } from '../platform/sender-allowlist.js';
 import {
@@ -119,14 +120,14 @@ export async function runMessagePollingTick(
             loopCmdMsg.content,
             triggerPattern,
           );
-          const allowlistCfg = loadSenderAllowlist();
+          const controlAllowlistCfg = loadSenderControlAllowlist();
           if (
             isSessionCommandAllowed(
               loopCmdMsg.is_from_me === true,
-              isSenderExplicitlyAllowed(
+              isSenderControlAllowed(
                 chatJid,
                 loopCmdMsg.sender,
-                allowlistCfg,
+                controlAllowlistCfg,
                 group.folder,
               ),
             )

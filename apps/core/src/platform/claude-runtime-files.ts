@@ -31,29 +31,14 @@ export function resolvePackageRootFromSourceDir(sourceDir: string): string {
   return process.cwd();
 }
 
-function buildHookCommand(command: string): string {
-  return `npx --yes ${JSON.stringify(readPackageSpec(PACKAGE_ROOT))} ${command}`;
+function resolveCliEntryPoint(packageRoot: string): string {
+  return path.join(packageRoot, 'dist', 'cli', 'index.js');
 }
 
-function readPackageSpec(packageRoot: string): string {
-  try {
-    const raw = fs.readFileSync(
-      path.join(packageRoot, 'package.json'),
-      'utf-8',
-    );
-    const parsed = JSON.parse(raw) as {
-      name?: unknown;
-      version?: unknown;
-    };
-    const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    const version =
-      typeof parsed.version === 'string' ? parsed.version.trim() : '';
-    if (name && version) return `${name}@${version}`;
-    if (name) return name;
-  } catch {
-    // Fall through to the public package name.
-  }
-  return '@myclaw/core';
+function buildHookCommand(command: string): string {
+  return `${JSON.stringify(process.execPath)} ${JSON.stringify(
+    resolveCliEntryPoint(PACKAGE_ROOT),
+  )} ${command}`;
 }
 
 function buildMemoryHookSettings(): Record<string, unknown> {

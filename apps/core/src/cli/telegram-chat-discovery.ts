@@ -6,6 +6,8 @@ export interface TelegramRecentChat {
   chatTitle: string;
   chatType: string;
   username?: string;
+  adminSenderId?: string;
+  adminSenderName?: string;
   sourceUpdateId: number;
 }
 
@@ -53,6 +55,13 @@ function parseTelegramChatFromUpdate(update: unknown): {
     first_name?: string;
     last_name?: string;
   };
+  sender?: {
+    id?: number | string;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+    is_bot?: boolean;
+  };
 } {
   if (!update || typeof update !== 'object') {
     return { updateId: 0 };
@@ -84,7 +93,19 @@ function parseTelegramChatFromUpdate(update: unknown): {
     first_name?: string;
     last_name?: string;
   };
-  return { updateId, chat };
+  const senderRaw =
+    row.message || row.edited_message ? message.from : undefined;
+  const sender =
+    senderRaw && typeof senderRaw === 'object'
+      ? (senderRaw as {
+          id?: number | string;
+          username?: string;
+          first_name?: string;
+          last_name?: string;
+          is_bot?: boolean;
+        })
+      : undefined;
+  return { updateId, chat, sender };
 }
 
 function formatTelegramChatTitle(
@@ -105,6 +126,20 @@ function formatTelegramChatTitle(
     fullName ||
     fallback
   );
+}
+
+function formatTelegramSenderName(
+  candidate: {
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+  },
+  fallback: string,
+): string {
+  const fullName = [candidate.first_name || '', candidate.last_name || '']
+    .join(' ')
+    .trim();
+  return candidate.username?.trim() || fullName || fallback;
 }
 
 export async function listTelegramRecentChats(options: {
@@ -174,6 +209,14 @@ export async function listTelegramRecentChats(options: {
         chatTitle: formatTelegramChatTitle(parsed.chat, chatJid),
         chatType: String(parsed.chat.type || 'unknown'),
         username: parsed.chat.username || undefined,
+        adminSenderId:
+          parsed.sender?.id !== undefined && parsed.sender.is_bot !== true
+            ? String(parsed.sender.id).trim() || undefined
+            : undefined,
+        adminSenderName:
+          parsed.sender?.id !== undefined && parsed.sender.is_bot !== true
+            ? formatTelegramSenderName(parsed.sender, String(parsed.sender.id))
+            : undefined,
         sourceUpdateId: parsed.updateId,
       };
       const previous = byJid.get(chatJid);

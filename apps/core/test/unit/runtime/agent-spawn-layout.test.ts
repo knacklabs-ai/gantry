@@ -229,7 +229,11 @@ describe('ensureSharedSessionSettings', () => {
     };
 
     expect(writtenText).not.toContain('old-hook');
-    expect(writtenText).toContain('npx --yes');
+    expect(writtenText).not.toContain('npx --yes');
+    const sessionStartCommand =
+      written.hooks.SessionStart[0]?.hooks[0]?.command || '';
+    expect(sessionStartCommand).toContain(JSON.stringify(process.execPath));
+    expect(sessionStartCommand).toContain('dist/cli/index.js');
     expect(writtenText).toContain('memory-hook load');
     expect(writtenText).toContain('memory-hook extract --trigger=precompact');
     expect(writtenText).toContain('memory-hook extract --trigger=session-end');
