@@ -61,12 +61,6 @@ export async function chooseSlackChatForConnect(
     return promptManualSlackChatId(defaultChatJid);
   }
 
-  if (discovery.chats.length === 1) {
-    const only = discovery.chats[0];
-    spinner.stop(`Auto-selected ${only.chatTitle} (${only.chatJid}).`);
-    return { type: 'selected', chatJid: only.chatJid };
-  }
-
   spinner.stop(`Found ${discovery.chats.length} Slack conversations.`);
   const selected = await p.select({
     message: 'Choose the Slack conversation to register as main',

@@ -25,8 +25,8 @@ The first run is guided and channel-agnostic:
 4. runtime prerequisite check
 5. channel selection (`Telegram` or `Slack`)
 6. provider token + chat/conversation connection
-7. Claude auth selection (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`)
-8. credential source mode selection (`env-only` default, optional OneCLI)
+7. credential source mode selection (`env-only` default, optional OneCLI)
+8. Claude auth selection (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) for credential modes that need local credentials
 9. model selection (`Sonnet` recommended, optional `Opus`)
 10. memory decision
 11. embeddings decision (off by default; asks for OpenAI key only if enabled)

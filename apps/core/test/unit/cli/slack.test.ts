@@ -73,6 +73,21 @@ describe('cli slack helpers', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('does not leak token-bearing Slack bot validation transport errors', async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('request failed with authorization Bearer xoxb-secret-token'),
+      );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await validateSlackBotToken('xoxb-secret-token');
+
+    expect(result.ok).toBe(false);
+    expect(result.nextAction).not.toContain('xoxb-secret-token');
+    expect(result.nextAction).not.toContain('Bearer');
+  });
+
   it('rejects non-xapp app token prefix immediately', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
@@ -82,6 +97,21 @@ describe('cli slack helpers', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain('must start with xapp-');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not leak token-bearing Slack app validation transport errors', async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('request failed with authorization Bearer xapp-secret-token'),
+      );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await validateSlackAppToken('xapp-secret-token');
+
+    expect(result.ok).toBe(false);
+    expect(result.nextAction).not.toContain('xapp-secret-token');
+    expect(result.nextAction).not.toContain('Bearer');
   });
 
   it('verifies chat access and sends a test message', async () => {
@@ -123,6 +153,53 @@ describe('cli slack helpers', () => {
     expect(result.chatTitle).toBe('ops-room');
     expect(result.sentTestMessage).toBe(true);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not echo token-bearing HTTP error bodies from Slack chat verification', async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          'proxy echoed authorization Bearer xoxb-secret-token for conversations.info',
+          { status: 502 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await verifySlackChatAccess({
+      botToken: 'xoxb-secret-token',
+      chatJid: 'sl:C0123456789',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.nextAction).not.toContain('xoxb-secret-token');
+    expect(result.nextAction).not.toContain('Bearer');
+  });
+
+  it('sanitizes unsafe Slack API error strings before printing them', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: 'Bearer xoxb-secret-token',
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await verifySlackChatAccess({
+      botToken: 'xoxb-secret-token',
+      chatJid: 'sl:C0123456789',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).not.toContain('xoxb-secret-token');
+    expect(result.message).not.toContain('Bearer');
+    expect(result.message).toContain('unknown_error');
   });
 
   it('discovers recent Slack conversations for setup selection', async () => {
@@ -201,6 +278,52 @@ describe('cli slack helpers', () => {
     expect(result.ok).toBe(false);
     expect(result.nextAction).not.toContain('xoxb-secret-token');
     expect(result.nextAction).not.toContain('Bearer');
+  });
+
+  it('slack chat selection asks for confirmation even with one discovered chat', async () => {
+    vi.resetModules();
+    const select = vi.fn(async () => 'skip');
+    vi.doMock('@clack/prompts', () => ({
+      isCancel: () => false,
+      select,
+      text: vi.fn(),
+      log: {
+        info: vi.fn(),
+      },
+      spinner: vi.fn(() => ({
+        start: vi.fn(),
+        stop: vi.fn(),
+      })),
+    }));
+    vi.doMock('@core/cli/slack-chat-discovery.js', () => ({
+      listSlackRecentChats: vi.fn(async () => ({
+        ok: true,
+        message: 'Discovered 1 Slack conversation.',
+        chats: [
+          {
+            chatJid: 'sl:C0123456789',
+            chatTitle: 'ops-room',
+            chatType: 'channel',
+          },
+        ],
+      })),
+    }));
+
+    const { chooseSlackChatForConnect } =
+      await import('@core/cli/slack-connect-chat-picker.js');
+    const result = await chooseSlackChatForConnect('xoxb-secret-token');
+
+    expect(result).toEqual({ type: 'skip' });
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Choose the Slack conversation to register as main',
+        options: expect.arrayContaining([
+          expect.objectContaining({ value: 'sl:C0123456789' }),
+          expect.objectContaining({ value: 'manual' }),
+          expect.objectContaining({ value: 'skip' }),
+        ]),
+      }),
+    );
   });
 
   it('slack connect cancel after token validation does not persist credentials', async () => {

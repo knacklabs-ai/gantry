@@ -77,12 +77,6 @@ async function chooseChatFromDiscovery(
     return promptManualTelegramChatId();
   }
 
-  if (discovery.chats.length === 1) {
-    const only = discovery.chats[0];
-    spinner.stop(`Auto-selected ${only.chatTitle} (${only.chatJid}).`);
-    return { type: 'selected', chatJid: only.chatJid };
-  }
-
   spinner.stop(`Found ${discovery.chats.length} recent chats.`);
   const selected = await p.select({
     message: 'Choose the Telegram chat to register as main',

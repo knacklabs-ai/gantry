@@ -6,6 +6,11 @@ import '../channels/register-builtins.js';
 import { getChannelProvider } from '../channels/provider-registry.js';
 
 import { readEnvFile, upsertEnvFile } from './env-file.js';
+import {
+  safeSlackErrorCode,
+  TOKEN_BOUND_HTTP_GUIDANCE,
+  TOKEN_BOUND_NETWORK_GUIDANCE,
+} from './provider-error-guidance.js';
 import { openRuntimeGroupDb } from './runtime-group-db.js';
 import { envFilePath, ensureRuntimeLayout } from './runtime-home.js';
 import {
@@ -176,7 +181,7 @@ export async function validateSlackBotToken(
     if (!payload.ok) {
       return {
         ok: false,
-        message: `Slack rejected bot token: ${payload.error || 'unknown_error'}`,
+        message: `Slack rejected bot token: ${safeSlackErrorCode(payload.error)}`,
         nextAction:
           'Reinstall the app to workspace and copy the latest Bot User OAuth token.',
       };
@@ -189,11 +194,11 @@ export async function validateSlackBotToken(
       userId: payload.user_id,
       message: `Connected bot token for workspace ${payload.team || payload.team_id || 'unknown'}.`,
     };
-  } catch (err) {
+  } catch {
     return {
       ok: false,
       message: 'Could not reach Slack API for bot token validation.',
-      nextAction: `Check internet access and retry. Details: ${err instanceof Error ? err.message : String(err)}`,
+      nextAction: TOKEN_BOUND_NETWORK_GUIDANCE,
     };
   }
 }
@@ -245,7 +250,7 @@ export async function validateSlackAppToken(
     if (!payload.ok || !payload.url) {
       return {
         ok: false,
-        message: `Slack rejected app token: ${payload.error || 'unknown_error'}`,
+        message: `Slack rejected app token: ${safeSlackErrorCode(payload.error)}`,
         nextAction:
           'Enable Socket Mode, regenerate app token, and confirm connections:write scope.',
       };
@@ -255,11 +260,11 @@ export async function validateSlackAppToken(
       ok: true,
       message: 'Slack app token validated for Socket Mode.',
     };
-  } catch (err) {
+  } catch {
     return {
       ok: false,
       message: 'Could not reach Slack API for app token validation.',
-      nextAction: `Check internet access and retry. Details: ${err instanceof Error ? err.message : String(err)}`,
+      nextAction: TOKEN_BOUND_NETWORK_GUIDANCE,
     };
   }
 }
@@ -303,11 +308,10 @@ export async function verifySlackChatAccess(options: {
     );
 
     if (!infoResponse.ok) {
-      const body = await infoResponse.text();
       return {
         ok: false,
         message: `Slack conversations.info failed with HTTP ${infoResponse.status}.`,
-        nextAction: `Confirm channel ID and bot scopes. Response: ${body.slice(0, 160)}`,
+        nextAction: TOKEN_BOUND_HTTP_GUIDANCE,
       };
     }
 
@@ -318,7 +322,7 @@ export async function verifySlackChatAccess(options: {
     if (!infoPayload.ok || !infoPayload.channel?.id) {
       return {
         ok: false,
-        message: `Slack could not resolve this conversation: ${infoPayload.error || 'unknown_error'}`,
+        message: `Slack could not resolve this conversation: ${safeSlackErrorCode(infoPayload.error)}`,
         nextAction: 'Invite the bot to the channel/DM and retry.',
       };
     }
@@ -344,12 +348,11 @@ export async function verifySlackChatAccess(options: {
       );
 
       if (!sendResponse.ok) {
-        const body = await sendResponse.text();
         return {
           ok: false,
           chatTitle,
           message: `Slack chat.postMessage failed with HTTP ${sendResponse.status}.`,
-          nextAction: `Invite the app to this conversation and grant posting scope. Response: ${body.slice(0, 160)}`,
+          nextAction: TOKEN_BOUND_HTTP_GUIDANCE,
         };
       }
 
@@ -358,7 +361,7 @@ export async function verifySlackChatAccess(options: {
         return {
           ok: false,
           chatTitle,
-          message: `Slack rejected test message: ${sendPayload.error || 'unknown_error'}`,
+          message: `Slack rejected test message: ${safeSlackErrorCode(sendPayload.error)}`,
           nextAction: 'Ensure bot is in conversation and has chat:write scope.',
         };
       }
@@ -372,11 +375,11 @@ export async function verifySlackChatAccess(options: {
         ? `Slack chat access verified for ${chatTitle}; test message sent.`
         : `Slack chat access verified for ${chatTitle}.`,
     };
-  } catch (err) {
+  } catch {
     return {
       ok: false,
       message: 'Could not reach Slack API for chat verification.',
-      nextAction: `Check internet access and retry. Details: ${err instanceof Error ? err.message : String(err)}`,
+      nextAction: TOKEN_BOUND_NETWORK_GUIDANCE,
     };
   }
 }

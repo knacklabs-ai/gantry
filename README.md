@@ -34,7 +34,7 @@ Then follow this order:
 2. Confirm runtime home and storage (`sqlite`; Postgres is not exposed until runtime persistence is fully provider-backed).
 3. Choose your first provider: `Telegram` or `Slack`.
 4. Follow the in-CLI provider guide, paste credentials, and pick a discovered chat/channel (or enter an ID manually).
-5. Set Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`), then credential mode (`env-only` by default).
+5. Choose credential mode (`env-only` by default), then set Claude auth (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) when that mode needs local credentials.
 6. Choose main model (`Sonnet` recommended, `Opus` optional).
 7. Confirm memory settings (memory on, embeddings off, dreaming on by default).
 8. Let setup run final doctor verification.
