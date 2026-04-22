@@ -427,7 +427,6 @@ describe('MemoryService boundary extraction', () => {
       'team',
       20,
       'user-1',
-      'thread-a',
     );
     expect(fixture.store.listTopItems).toHaveBeenNthCalledWith(
       2,
@@ -471,6 +470,37 @@ describe('MemoryService boundary extraction', () => {
     expect(saved.topic_id).toBe('t-1');
     expect(fixture.store.saveItem).toHaveBeenCalledWith(
       expect.objectContaining({ topic_id: 't-1' }),
+    );
+  });
+
+  it('saveMemory keeps user-scoped memories cross-topic', async () => {
+    const fixture = makeServiceFixture();
+
+    const saved = await fixture.service.saveMemory(
+      {
+        scope: 'user',
+        user_id: 'user-1',
+        key: 'preference:style',
+        value: 'Ravi prefers terse replies.',
+      },
+      {
+        isMain: false,
+        groupFolder: 'team',
+        actor: 'mcp-tool',
+        threadId: 't-1',
+      },
+    );
+
+    expect(saved.topic_id).toBeNull();
+    expect(fixture.store.findItemByKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'user',
+        userId: 'user-1',
+        topicId: null,
+      }),
+    );
+    expect(fixture.store.saveItem).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'user', topic_id: null }),
     );
   });
 

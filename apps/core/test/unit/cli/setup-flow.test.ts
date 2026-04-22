@@ -32,6 +32,7 @@ interface SetupFlowTestOptions {
       nextAction?: string;
     }>;
   };
+  runtimePreflight?: { ok: boolean; failure?: { message: string } };
 }
 
 async function loadSetupFlowModule(options: SetupFlowTestOptions) {
@@ -74,6 +75,11 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
   const writeOnboardingState = vi.fn();
   const clearOnboardingState = vi.fn();
   const getContainerConfig = vi.fn();
+  const installService = vi.fn(() => ({ ok: true, message: 'installed' }));
+  const startService = vi.fn(() => ({ ok: true, message: 'started' }));
+  const validateRuntimePreflight = vi.fn(
+    () => options.runtimePreflight || { ok: true },
+  );
   const runDoctorWithNetwork = vi.fn(
     async () =>
       doctorReports.shift() ||
@@ -292,8 +298,13 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
   }));
   vi.doMock('@core/cli/service-manager.js', () => ({
     getServiceStatus: vi.fn(() => ({ kind: 'none', status: 'not installed' })),
-    installService: vi.fn(() => ({ ok: true, message: 'installed' })),
-    startService: vi.fn(() => ({ ok: true, message: 'started' })),
+    installService,
+    startService,
+  }));
+  vi.doMock('@core/cli/runtime-preflight.js', () => ({
+    validateRuntimePreflight,
+    formatRuntimePreflightFailure: (failure: { message: string }) =>
+      failure.message,
   }));
 
   const mod = await import('@core/cli/setup-flow.js');
@@ -307,6 +318,9 @@ async function loadSetupFlowModule(options: SetupFlowTestOptions) {
     password,
     promptCalls,
     runDoctorWithNetwork,
+    installService,
+    startService,
+    validateRuntimePreflight,
   };
 }
 
@@ -505,5 +519,147 @@ describe('runSetupFlow credential step', () => {
     expect(mod.promptCalls.map((call) => call.message)).not.toContain(
       'Setup complete. What should MyClaw do now?',
     );
+  });
+
+  it('does not start the service until final doctor verification passes', async () => {
+    const mod = await loadSetupFlowModule({
+      selectQueue: [
+        'next',
+        'next',
+        'sqlite',
+        'next',
+        'telegram',
+        'tg:-1001234567890',
+        'next',
+        'env-only',
+        'oauth',
+        'claude-sonnet-4-6',
+        'on',
+        'off',
+        'on',
+        'install_start',
+        'next',
+      ],
+      textQueue: ['/tmp/myclaw-test', 'Telegram Main'],
+      passwordQueue: ['telegram-token', 'claude-oauth-token'],
+      doctorReports: [
+        {
+          ok: false,
+          blockingFailures: 1,
+          warnings: 0,
+          checks: [
+            {
+              id: 'runtime-settings',
+              title: 'Runtime Settings',
+              status: 'fail',
+              message: 'No channels are enabled.',
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+    });
+
+    expect(result.status).toBe('resumed');
+    expect(mod.installService).toHaveBeenCalledTimes(1);
+    expect(mod.validateRuntimePreflight).not.toHaveBeenCalled();
+    expect(mod.startService).not.toHaveBeenCalled();
+  });
+
+  it('runs runtime preflight before starting the service after verification', async () => {
+    const mod = await loadSetupFlowModule({
+      selectQueue: [
+        'next',
+        'next',
+        'sqlite',
+        'next',
+        'telegram',
+        'tg:-1001234567890',
+        'next',
+        'env-only',
+        'oauth',
+        'claude-sonnet-4-6',
+        'on',
+        'off',
+        'on',
+        'install_start',
+        'next',
+        'next',
+      ],
+      textQueue: ['/tmp/myclaw-test', 'Telegram Main'],
+      passwordQueue: ['telegram-token', 'claude-oauth-token'],
+      doctorReports: [
+        {
+          ok: true,
+          blockingFailures: 0,
+          warnings: 0,
+          checks: [],
+        },
+      ],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+    });
+
+    expect(result.status).toBe('completed');
+    expect(mod.installService).toHaveBeenCalledTimes(1);
+    expect(mod.validateRuntimePreflight).toHaveBeenCalledWith(
+      '/tmp/myclaw-test',
+    );
+    expect(mod.startService).toHaveBeenCalledWith('/tmp/myclaw-test');
+  });
+
+  it('skips service start when post-verification runtime preflight fails', async () => {
+    const mod = await loadSetupFlowModule({
+      selectQueue: [
+        'next',
+        'next',
+        'sqlite',
+        'next',
+        'telegram',
+        'tg:-1001234567890',
+        'next',
+        'env-only',
+        'oauth',
+        'claude-sonnet-4-6',
+        'on',
+        'off',
+        'on',
+        'install_start',
+        'next',
+        'next',
+      ],
+      textQueue: ['/tmp/myclaw-test', 'Telegram Main'],
+      passwordQueue: ['telegram-token', 'claude-oauth-token'],
+      runtimePreflight: {
+        ok: false,
+        failure: { message: 'missing channel token' },
+      },
+      doctorReports: [
+        {
+          ok: true,
+          blockingFailures: 0,
+          warnings: 0,
+          checks: [],
+        },
+      ],
+    });
+
+    const result = await mod.runSetupFlow({
+      importMetaUrl: import.meta.url,
+      runtimeHome: '/tmp/myclaw-test',
+    });
+
+    expect(result.status).toBe('completed');
+    expect(mod.validateRuntimePreflight).toHaveBeenCalledWith(
+      '/tmp/myclaw-test',
+    );
+    expect(mod.startService).not.toHaveBeenCalled();
   });
 });

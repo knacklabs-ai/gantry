@@ -577,7 +577,6 @@ server.tool(
     schedule_value: z.string().default(''),
     linked_sessions: z.array(z.string()).optional(),
     deliver_to: z.array(z.string()).optional(),
-    thread_id: z.string().optional(),
     silent: z.boolean().optional(),
     cleanup_after_ms: z.number().optional(),
     group_scope: z.string().optional(),
@@ -632,7 +631,7 @@ server.tool(
       scheduleValue: args.schedule_value,
       linkedSessions: args.linked_sessions,
       deliverTo: args.deliver_to,
-      threadId: args.thread_id,
+      threadId,
       silent: args.silent,
       cleanupAfterMs: args.cleanup_after_ms,
       groupScope: args.group_scope,
@@ -721,7 +720,6 @@ server.tool(
     schedule_value: z.string().optional(),
     linked_sessions: z.array(z.string()).optional(),
     deliver_to: z.array(z.string()).optional(),
-    thread_id: z.string().optional(),
     silent: z.boolean().optional(),
     cleanup_after_ms: z.number().optional(),
     group_scope: z.string().optional(),
@@ -747,7 +745,7 @@ server.tool(
       scheduleValue: args.schedule_value,
       linkedSessions: args.linked_sessions,
       deliverTo: args.deliver_to,
-      threadId: args.thread_id,
+      ...(threadId ? { threadId } : {}),
       silent: args.silent,
       cleanupAfterMs: args.cleanup_after_ms,
       groupScope: args.group_scope,
@@ -1000,14 +998,6 @@ server.tool(
     scope: z.enum(['user', 'group', 'global']).optional(),
     group_folder: z.string().optional(),
     user_id: z.string().optional(),
-    topic_id: z
-      .string()
-      .optional()
-      .describe('Optional topic/thread boundary for topic-scoped memories'),
-    thread_id: z
-      .string()
-      .optional()
-      .describe('Alias for topic_id; defaults to current thread when present'),
     kind: z
       .enum([
         'preference',
@@ -1031,8 +1021,7 @@ server.tool(
     source: z.string().optional(),
   },
   async (args) => {
-    const { topic_id: _topicId, thread_id: _threadId, ...input } = args;
-    const response = await requestMemoryAction('memory_save', input);
+    const response = await requestMemoryAction('memory_save', args);
     if (!response.ok) {
       return {
         content: [

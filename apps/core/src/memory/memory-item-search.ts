@@ -42,7 +42,7 @@ function searchMemoryItemsByText(
          AND (scope = 'global'
            OR (group_folder = @group_folder
              AND (scope != 'user' OR (@user_id IS NOT NULL AND user_id = @user_id))))
-         AND COALESCE(topic_id, '') = COALESCE(@topic_id, '')
+         AND (scope = 'user' OR COALESCE(topic_id, '') = COALESCE(@topic_id, ''))
          AND (${matchClauses.join(' OR ')})
        ORDER BY updated_at DESC`,
     )

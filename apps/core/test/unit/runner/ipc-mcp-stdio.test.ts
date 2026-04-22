@@ -172,6 +172,7 @@ async function runMcpFixture(
   fixture: ReturnType<typeof createMcpFixture>,
   toolName: string,
   args: Record<string, unknown>,
+  envOverrides: Record<string, string | undefined> = {},
 ): Promise<{ exitCode: number | null; stderr: string }> {
   const child = spawn(
     process.execPath,
@@ -185,10 +186,11 @@ async function runMcpFixture(
         MYCLAW_CHAT_JID: 'tg:team',
         MYCLAW_GROUP_FOLDER: 'team',
         MYCLAW_IS_MAIN: '0',
+        ...envOverrides,
         TEST_MCP_TOOL_NAME: toolName,
         TEST_MCP_TOOL_ARGS: JSON.stringify(args),
         TEST_MCP_RESULT_PATH: fixture.resultPath,
-        TEST_MCP_ANSWER_QUESTION: '1',
+        TEST_MCP_ANSWER_QUESTION: toolName === 'ask_user_question' ? '1' : '0',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -260,5 +262,59 @@ describe('agent-runner MCP stdio tools', () => {
       '(answered by runner-mcp-test-admin)',
     );
     expect(record.responseFiles).toHaveLength(0);
+  });
+
+  it('binds scheduler upsert thread context to trusted runtime env', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'scheduler_upsert_job',
+      {
+        name: 'Daily review',
+        prompt: 'Review memory',
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        thread_id: 'attacker-thread',
+      },
+      { MYCLAW_THREAD_ID: 'trusted-thread' },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task.threadId).toBe('trusted-thread');
+  });
+
+  it('does not allow scheduler updates to set model-supplied thread context', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'scheduler_update_job',
+      {
+        job_id: 'job-1',
+        prompt: 'Updated prompt',
+        thread_id: 'attacker-thread',
+      },
+      { MYCLAW_THREAD_ID: '' },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task.threadId).toBeUndefined();
   });
 });

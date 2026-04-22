@@ -40,6 +40,10 @@ import { runCredentialsStep } from './setup-credentials.js';
 import { runReadyStep } from './setup-ready.js';
 import { installService, startService } from './service-manager.js';
 import {
+  formatRuntimePreflightFailure,
+  validateRuntimePreflight,
+} from './runtime-preflight.js';
+import {
   normalizeSlackChatJid,
   registerSlackMainGroup,
   validateSlackAppToken,
@@ -1418,16 +1422,25 @@ async function applyServiceChoice(
     return;
   }
   p.log.success(installOutcome.message);
+}
 
-  if (draft.serviceChoice === 'install_start') {
-    const startOutcome = startService(draft.runtimeHome);
-    if (!startOutcome.ok) {
-      p.log.warn(
-        `Service start failed. Next action: run \`myclaw service start\` later.\n${startOutcome.message}`,
-      );
-    } else {
-      p.log.success(startOutcome.message);
-    }
+async function applyServiceStartChoice(draft: SetupDraft): Promise<void> {
+  if (draft.serviceChoice !== 'install_start') return;
+
+  const validation = validateRuntimePreflight(draft.runtimeHome);
+  if (!validation.ok && validation.failure) {
+    p.log.warn(
+      `Service start skipped after verification. Next action: fix runtime preflight and run \`myclaw service start\` later.\n${formatRuntimePreflightFailure(validation.failure)}`,
+    );
+    return;
+  }
+  const startOutcome = startService(draft.runtimeHome);
+  if (!startOutcome.ok) {
+    p.log.warn(
+      `Service start failed. Next action: run \`myclaw service start\` later.\n${startOutcome.message}`,
+    );
+  } else {
+    p.log.success(startOutcome.message);
   }
 }
 
@@ -1551,6 +1564,9 @@ export async function runSetupFlow(
       }
     } else if (step === 'verify') {
       action = await runVerifyStep(options.importMetaUrl, draft);
+      if (action.type === 'next') {
+        await applyServiceStartChoice(draft);
+      }
     } else if (step === 'ready') {
       action = await runReadyStep(draft);
     }

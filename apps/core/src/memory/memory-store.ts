@@ -517,16 +517,12 @@ export class MemoryStore {
              AND group_folder = ?
              AND user_id = ?
              AND key = ?
-             AND COALESCE(topic_id, '') = COALESCE(?, '')
            ORDER BY updated_at DESC
            LIMIT 1`,
         )
-        .get(
-          input.groupFolder,
-          input.userId,
-          input.key,
-          input.topicId || null,
-        ) as Record<string, unknown> | undefined;
+        .get(input.groupFolder, input.userId, input.key) as
+        | Record<string, unknown>
+        | undefined;
     } else {
       row = this.db
         .prepare(
@@ -929,7 +925,7 @@ export class MemoryStore {
            AND i.scope = @scope
            AND (@scope = 'global' OR i.group_folder = @group_folder)
            AND (@scope != 'user' OR (@user_id IS NOT NULL AND i.user_id = @user_id))
-           AND COALESCE(i.topic_id, '') = COALESCE(@topic_id, '')
+           AND (@scope = 'user' OR COALESCE(i.topic_id, '') = COALESCE(@topic_id, ''))
          ORDER BY n.distance ASC
          LIMIT @limit`,
       )
@@ -1147,7 +1143,7 @@ export class MemoryStore {
          AND scope = @scope
          AND (scope = 'global' OR group_folder = @group_folder)
          AND (@scope != 'user' OR (@user_id IS NOT NULL AND user_id = @user_id))
-         AND COALESCE(topic_id, '') = COALESCE(@topic_id, '')
+         AND (@scope = 'user' OR COALESCE(topic_id, '') = COALESCE(@topic_id, ''))
          ORDER BY confidence DESC, COALESCE(last_used_at, updated_at) DESC
          LIMIT @limit`,
       )

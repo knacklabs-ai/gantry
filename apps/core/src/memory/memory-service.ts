@@ -521,7 +521,10 @@ export class MemoryService {
     const confidence = clampConfidence(input.confidence);
     const kind = input.kind || 'fact';
     const source = input.source || 'agent';
-    const topicId = normalizeMemoryTopicId(input.topic_id || ctx.threadId);
+    const topicId =
+      scope === 'user'
+        ? undefined
+        : normalizeMemoryTopicId(input.topic_id || ctx.threadId);
     const actor = this.resolveWriteActor(ctx, source);
     this.assertNoSensitiveMaterialOrThrow({
       groupFolder,
@@ -956,7 +959,6 @@ export class MemoryService {
           input.groupFolder,
           input.maxItems,
           resolvedUserId,
-          topicId,
         )
       : [];
     const scoped = dedupeItemsById([
