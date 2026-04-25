@@ -1,4 +1,5 @@
-import { ONECLI_ALLOWED_ENV_KEYS } from '../../config/index.js';
+import { ONECLI_ALLOWED_ENV_KEYS } from '../../../config/index.js';
+import { validateOnecliUrl } from './policy.js';
 
 const ONECLI_ALLOWED_ENV_KEY_SET = new Set<string>(ONECLI_ALLOWED_ENV_KEYS);
 
@@ -22,6 +23,8 @@ export const ONECLI_FORBIDDEN_SECRET_ENV_KEYS = new Set([
 
 const FORBIDDEN_SECRET_ENV_KEY_PATTERN =
   /(^|_)(API_?KEY|AUTH_?TOKEN|TOKEN|SECRET|PASSWORD|PASS|DATABASE_URL|DB_URL|WEBHOOK_SECRET|PRIVATE_?KEY|ACCESS_?KEY|PROXY|CA_CERT|CERT_FILE|EXTRA_CA_CERTS)($|_)/i;
+const FORBIDDEN_SECRET_QUERY_PARAM_PATTERN =
+  /(^|_)(api_?key|auth_?token|token|secret|password|pass|private_?key|access_?key)($|_)/i;
 
 const ONECLI_BROKER_PROXY_ENV_KEYS = new Set([
   'HTTP_PROXY',
@@ -72,6 +75,39 @@ function normalizeAllowedBrokerProxyValue(
   } catch {
     return null;
   }
+}
+
+function validateAllowedOnecliEnvValue(key: string, value: string): string {
+  if (key !== 'ANTHROPIC_BASE_URL') {
+    return value;
+  }
+  let rawParsed: URL;
+  try {
+    rawParsed = new URL(value);
+  } catch {
+    throw new Error(
+      `OneCLI returned forbidden raw credential env value for key: ${key}`,
+    );
+  }
+  if (rawParsed.hash || rawParsed.searchParams.size > 0) {
+    for (const param of rawParsed.searchParams.keys()) {
+      if (FORBIDDEN_SECRET_QUERY_PARAM_PATTERN.test(param)) {
+        throw new Error(
+          `OneCLI returned forbidden raw credential env value for key: ${key}`,
+        );
+      }
+    }
+    throw new Error(
+      `OneCLI returned forbidden raw credential env value for key: ${key}`,
+    );
+  }
+  const validation = validateOnecliUrl(value);
+  if (!validation.ok || !validation.normalizedUrl) {
+    throw new Error(
+      `OneCLI returned forbidden raw credential env value for key: ${key}`,
+    );
+  }
+  return validation.normalizedUrl;
 }
 
 export interface OnecliEnvFilterResult {
@@ -159,7 +195,7 @@ export function filterTrustedOnecliEnv(
       droppedKeys.push(key);
       continue;
     }
-    env[key] = value;
+    env[key] = validateAllowedOnecliEnvValue(key, value);
   }
   return { env, droppedKeys };
 }

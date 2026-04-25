@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateOnecliUrl } from '@core/infrastructure/onecli/policy.js';
+import { validateOnecliUrl } from '@core/adapters/credentials/onecli/policy.js';
 
 describe('validateOnecliUrl', () => {
   it('allows plaintext only for actual loopback hosts', () => {
@@ -25,6 +25,19 @@ describe('validateOnecliUrl', () => {
     expect(result).toEqual({
       ok: false,
       error: 'ONECLI_URL must not contain embedded credentials.',
+    });
+  });
+
+  it('rejects query parameters and fragments', () => {
+    expect(validateOnecliUrl('https://onecli.example.com?token=value')).toEqual(
+      {
+        ok: false,
+        error: 'ONECLI_URL must not contain query parameters or fragments.',
+      },
+    );
+    expect(validateOnecliUrl('https://onecli.example.com#token')).toEqual({
+      ok: false,
+      error: 'ONECLI_URL must not contain query parameters or fragments.',
     });
   });
 });

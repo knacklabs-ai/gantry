@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { OneCLI } from '@onecli-sh/sdk';
 import '../channels/register-builtins.js';
 import {
   getChannelProvider,
@@ -8,6 +7,7 @@ import {
 } from '../channels/provider-registry.js';
 
 import { readEnvFile } from '../config/env/file.js';
+import { resolveHostCredentialMode } from '../config/credentials/mode.js';
 import {
   assertRuntimeEntryExists,
   getRuntimeEntryPath,
@@ -35,9 +35,8 @@ import {
   inspectOnecliPersistenceReadiness,
   ONECLI_SECRET_ENCRYPTION_KEY_ENV,
   validateOnecliDatabaseUrl,
-} from '../infrastructure/onecli/persistence.js';
-import { validateOnecliUrl } from '../infrastructure/onecli/policy.js';
-import { filterTrustedOnecliEnv } from '../infrastructure/onecli/env-policy.js';
+} from '../adapters/credentials/onecli/local/persistence.js';
+import { validateOnecliUrl } from '../adapters/credentials/onecli/policy.js';
 import { openRuntimeGroupDb } from './runtime-group-db.js';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
@@ -256,6 +255,9 @@ export function runDoctor(
     }
     const onecliDatabaseUrlEnv =
       settings.credentialBroker.onecli.postgres.urlEnv;
+    const credentialMode = resolveHostCredentialMode(
+      env.MYCLAW_CREDENTIAL_MODE || process.env.MYCLAW_CREDENTIAL_MODE,
+    );
     const onecliDatabaseUrl =
       env[onecliDatabaseUrlEnv]?.trim() ||
       process.env[onecliDatabaseUrlEnv]?.trim() ||
@@ -267,7 +269,10 @@ export function runDoctor(
     let onecliPersistenceStatus: DoctorStatus = 'pass';
     let onecliPersistenceMessage = `OneCLI persistence is configured through ${onecliDatabaseUrlEnv}.`;
     let onecliPersistenceNextAction: string | undefined;
-    if (!onecliDatabaseUrl) {
+    if (credentialMode !== 'onecli') {
+      onecliPersistenceStatus = 'pass';
+      onecliPersistenceMessage = `OneCLI persistence is not required in ${credentialMode} credential mode.`;
+    } else if (!onecliDatabaseUrl) {
       onecliPersistenceStatus = 'fail';
       onecliPersistenceMessage = `${onecliDatabaseUrlEnv} is missing.`;
       onecliPersistenceNextAction =
@@ -307,6 +312,9 @@ export function runDoctor(
   }
   const onecliUrl =
     env.ONECLI_URL?.trim() || process.env.ONECLI_URL?.trim() || '';
+  const credentialMode = resolveHostCredentialMode(
+    env.MYCLAW_CREDENTIAL_MODE || process.env.MYCLAW_CREDENTIAL_MODE,
+  );
 
   for (const provider of providers) {
     const enabled = settings?.channels[provider.id]?.enabled ?? false;
@@ -383,13 +391,23 @@ export function runDoctor(
   add(checks, {
     id: 'claude-broker',
     title: 'Model Access',
-    status: onecliUrl ? 'pass' : 'warn',
+    status:
+      onecliUrl && !validateOnecliUrl(onecliUrl).ok
+        ? 'fail'
+        : onecliUrl || credentialMode !== 'onecli'
+          ? 'pass'
+          : 'warn',
     message: onecliUrl
-      ? `Model Access is configured at ${onecliUrl}.`
-      : 'Model Access is missing. Agent execution and memory LLM extraction require brokered model access.',
-    nextAction: onecliUrl
-      ? undefined
-      : 'Run `myclaw setup` and configure Model Access, then rerun `myclaw doctor`.',
+      ? validateOnecliUrl(onecliUrl).ok
+        ? `Model Access is configured at ${onecliUrl}.`
+        : validateOnecliUrl(onecliUrl).error || 'Model Access URL is invalid.'
+      : credentialMode !== 'onecli'
+        ? `Model Access is managed by ${credentialMode} credential mode.`
+        : 'Model Access is missing. Agent execution and memory LLM extraction require brokered model access.',
+    nextAction:
+      onecliUrl || credentialMode !== 'onecli'
+        ? undefined
+        : 'Run `myclaw setup` and configure Model Access, then rerun `myclaw doctor`.',
   });
 
   const platform = detectPlatform();
@@ -496,6 +514,12 @@ export async function runDoctorWithNetwork(
   const settings = loadSettingsForDoctor(runtimeHome).settings;
   if (settings) {
     const env = readEnvFile(envFilePath(runtimeHome));
+    const credentialMode = resolveHostCredentialMode(
+      env.MYCLAW_CREDENTIAL_MODE || process.env.MYCLAW_CREDENTIAL_MODE,
+    );
+    if (credentialMode !== 'onecli') {
+      return report;
+    }
     const onecliUrl =
       env.ONECLI_URL?.trim() || process.env.ONECLI_URL?.trim() || '';
     const onecliDatabaseUrlEnv =
@@ -528,43 +552,26 @@ export async function runDoctorWithNetwork(
       nextAction: onecliPersistence.nextAction,
     });
 
-    const urlValidation = validateOnecliUrl(onecliUrl);
-    if (!urlValidation.ok) {
-      report = addToReport(report, {
-        id: 'onecli-reachability',
-        title: 'OneCLI Reachability',
-        status: 'fail',
-        message: urlValidation.error || 'ONECLI_URL is invalid.',
-        nextAction: 'Set ONECLI_URL to the reachable OneCLI gateway URL.',
-      });
-    } else {
-      const client = new OneCLI({
-        url: urlValidation.normalizedUrl,
-        timeout: 3000,
-      });
-      try {
-        const config = await client.getContainerConfig();
-        filterTrustedOnecliEnv(config.env || {});
-        report = addToReport(report, {
-          id: 'onecli-reachability',
-          title: 'OneCLI Reachability',
-          status: 'pass',
-          message: `Connected to OneCLI at ${urlValidation.normalizedUrl}.`,
-        });
-      } catch (err) {
-        report = addToReport(report, {
-          id: 'onecli-reachability',
-          title: 'OneCLI Reachability',
-          status: 'fail',
-          message:
-            err instanceof Error
-              ? err.message
-              : 'Could not reach OneCLI gateway.',
-          nextAction:
-            'Start Model Access with DATABASE_URL from ONECLI_DATABASE_URL and rerun `myclaw doctor`.',
-        });
-      }
-    }
+    const { OnecliAgentCredentialBroker } =
+      await import('../adapters/credentials/onecli/broker.js');
+    const broker = new OnecliAgentCredentialBroker({
+      onecliUrl,
+      dataDir: path.join(runtimeHome, 'data'),
+    });
+    const health = await broker.healthCheck();
+    report = addToReport(report, {
+      id: 'onecli-reachability',
+      title: 'OneCLI Reachability',
+      status: health.status,
+      message: health.details?.length
+        ? `${health.message} ${health.details.join(' | ')}`
+        : health.message,
+      nextAction:
+        health.nextAction ||
+        (health.status === 'fail'
+          ? 'Start Model Access with DATABASE_URL from ONECLI_DATABASE_URL and rerun `myclaw doctor`.'
+          : undefined),
+    });
   }
   return report;
 }

@@ -93,18 +93,21 @@ async function loadDoctor(options?: {
       message: 'Postgres is ready.',
     })),
   }));
-  vi.doMock('@core/infrastructure/onecli/persistence.js', async () => {
-    const actual = await vi.importActual<any>(
-      '@core/infrastructure/onecli/persistence.js',
-    );
-    return {
-      ...actual,
-      inspectOnecliPersistenceReadiness: vi.fn(async () => ({
-        status: options?.onecliPersistence?.status || 'pass',
-        message: options?.onecliPersistence?.message || 'OneCLI ready.',
-      })),
-    };
-  });
+  vi.doMock(
+    '@core/adapters/credentials/onecli/local/persistence.js',
+    async () => {
+      const actual = await vi.importActual<any>(
+        '@core/adapters/credentials/onecli/local/persistence.js',
+      );
+      return {
+        ...actual,
+        inspectOnecliPersistenceReadiness: vi.fn(async () => ({
+          status: options?.onecliPersistence?.status || 'pass',
+          message: options?.onecliPersistence?.message || 'OneCLI ready.',
+        })),
+      };
+    },
+  );
   return import('@core/cli/doctor.js');
 }
 

@@ -18,7 +18,7 @@ import {
   ONECLI_SECRET_ENCRYPTION_KEY_ENV,
   validateSharedPostgresDatabase,
   validateOnecliSecretEncryptionKey,
-} from '../infrastructure/onecli/persistence.js';
+} from '../adapters/credentials/onecli/local/persistence.js';
 
 export interface OnboardingConfigInput {
   runtimeHome: string;

@@ -73,6 +73,7 @@ function makeRuntimeHome(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -86,18 +87,21 @@ describe('runtime preflight', () => {
         message: 'Postgres is ready.',
       })),
     }));
-    vi.doMock('@core/infrastructure/onecli/persistence.js', async () => {
-      const actual = await vi.importActual<any>(
-        '@core/infrastructure/onecli/persistence.js',
-      );
-      return {
-        ...actual,
-        inspectOnecliPersistenceReadiness: vi.fn(async () => ({
-          status: 'pass',
-          message: 'OneCLI persistence is ready.',
-        })),
-      };
-    });
+    vi.doMock(
+      '@core/adapters/credentials/onecli/local/persistence.js',
+      async () => {
+        const actual = await vi.importActual<any>(
+          '@core/adapters/credentials/onecli/local/persistence.js',
+        );
+        return {
+          ...actual,
+          inspectOnecliPersistenceReadiness: vi.fn(async () => ({
+            status: 'pass',
+            message: 'OneCLI persistence is ready.',
+          })),
+        };
+      },
+    );
 
     const { validateRuntimePreflightWithStorage } =
       await import('@core/config/preflight.js');
@@ -117,15 +121,18 @@ describe('runtime preflight', () => {
         nextAction: 'Enable pgvector.',
       })),
     }));
-    vi.doMock('@core/infrastructure/onecli/persistence.js', async () => {
-      const actual = await vi.importActual<any>(
-        '@core/infrastructure/onecli/persistence.js',
-      );
-      return {
-        ...actual,
-        inspectOnecliPersistenceReadiness,
-      };
-    });
+    vi.doMock(
+      '@core/adapters/credentials/onecli/local/persistence.js',
+      async () => {
+        const actual = await vi.importActual<any>(
+          '@core/adapters/credentials/onecli/local/persistence.js',
+        );
+        return {
+          ...actual,
+          inspectOnecliPersistenceReadiness,
+        };
+      },
+    );
 
     const { validateRuntimePreflightWithStorage } =
       await import('@core/config/preflight.js');
@@ -145,20 +152,24 @@ describe('runtime preflight', () => {
         message: 'Postgres is ready.',
       })),
     }));
-    vi.doMock('@core/infrastructure/onecli/persistence.js', async () => {
-      const actual = await vi.importActual<any>(
-        '@core/infrastructure/onecli/persistence.js',
-      );
-      return {
-        ...actual,
-        inspectOnecliPersistenceReadiness: vi.fn(async () => ({
-          status: 'fail',
-          message: 'OneCLI database role can access the MyClaw runtime schema.',
-          details: ['current_user=onecli_app'],
-          nextAction: 'Revoke MyClaw schema privileges.',
-        })),
-      };
-    });
+    vi.doMock(
+      '@core/adapters/credentials/onecli/local/persistence.js',
+      async () => {
+        const actual = await vi.importActual<any>(
+          '@core/adapters/credentials/onecli/local/persistence.js',
+        );
+        return {
+          ...actual,
+          inspectOnecliPersistenceReadiness: vi.fn(async () => ({
+            status: 'fail',
+            message:
+              'OneCLI database role can access the MyClaw runtime schema.',
+            details: ['current_user=onecli_app'],
+            nextAction: 'Revoke MyClaw schema privileges.',
+          })),
+        };
+      },
+    );
 
     const { validateRuntimePreflightWithStorage } =
       await import('@core/config/preflight.js');
@@ -169,5 +180,81 @@ describe('runtime preflight', () => {
     expect(result.failure?.details.join('\n')).toContain(
       'Revoke MyClaw schema privileges',
     );
+  });
+
+  it('allows none credential mode without OneCLI runtime secrets', async () => {
+    const runtimeHome = makeRuntimeHome();
+    fs.writeFileSync(
+      path.join(runtimeHome, '.env'),
+      [
+        'MYCLAW_CREDENTIAL_MODE=none',
+        'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+        '',
+      ].join('\n'),
+    );
+    const inspectOnecliPersistenceReadiness = vi.fn();
+    vi.doMock('@core/infrastructure/postgres/storage-readiness.js', () => ({
+      inspectRuntimeStorageReadiness: vi.fn(async () => ({
+        status: 'pass',
+        message: 'Postgres is ready.',
+      })),
+    }));
+    vi.doMock(
+      '@core/adapters/credentials/onecli/local/persistence.js',
+      async () => {
+        const actual = await vi.importActual<any>(
+          '@core/adapters/credentials/onecli/local/persistence.js',
+        );
+        return {
+          ...actual,
+          inspectOnecliPersistenceReadiness,
+        };
+      },
+    );
+
+    const { validateRuntimePreflightWithStorage } =
+      await import('@core/config/preflight.js');
+    const result = await validateRuntimePreflightWithStorage(runtimeHome);
+
+    expect(result).toEqual({ ok: true });
+    expect(inspectOnecliPersistenceReadiness).not.toHaveBeenCalled();
+  });
+
+  it('uses runtime-home credential mode before ambient process env', async () => {
+    const runtimeHome = makeRuntimeHome();
+    fs.appendFileSync(
+      path.join(runtimeHome, '.env'),
+      'MYCLAW_CREDENTIAL_MODE=onecli\n',
+    );
+    vi.stubEnv('MYCLAW_CREDENTIAL_MODE', 'none');
+    const inspectOnecliPersistenceReadiness = vi.fn(async () => ({
+      status: 'pass',
+      message: 'OneCLI persistence is ready.',
+    }));
+    vi.doMock('@core/infrastructure/postgres/storage-readiness.js', () => ({
+      inspectRuntimeStorageReadiness: vi.fn(async () => ({
+        status: 'pass',
+        message: 'Postgres is ready.',
+      })),
+    }));
+    vi.doMock(
+      '@core/adapters/credentials/onecli/local/persistence.js',
+      async () => {
+        const actual = await vi.importActual<any>(
+          '@core/adapters/credentials/onecli/local/persistence.js',
+        );
+        return {
+          ...actual,
+          inspectOnecliPersistenceReadiness,
+        };
+      },
+    );
+
+    const { validateRuntimePreflightWithStorage } =
+      await import('@core/config/preflight.js');
+    const result = await validateRuntimePreflightWithStorage(runtimeHome);
+
+    expect(result).toEqual({ ok: true });
+    expect(inspectOnecliPersistenceReadiness).toHaveBeenCalled();
   });
 });

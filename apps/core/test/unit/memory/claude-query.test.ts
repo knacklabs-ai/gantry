@@ -150,4 +150,82 @@ describe('runClaudeQuery', () => {
       ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
     });
   });
+
+  it('does not treat leftover ONECLI_URL as auth in none mode', async () => {
+    vi.stubEnv('MYCLAW_CREDENTIAL_MODE', 'none');
+    vi.stubEnv('ONECLI_URL', 'http://localhost:10254');
+
+    const { hasClaudeAuthConfigured, runClaudeQuery } =
+      await import('@core/memory/claude-query.js');
+
+    expect(hasClaudeAuthConfigured()).toBe(false);
+    await expect(
+      runClaudeQuery({
+        model: 'claude-haiku-4-5-20251001',
+        prompt: 'Extract facts',
+      }),
+    ).rejects.toThrow('Claude auth is not configured');
+    expect(getContainerConfigMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('does not treat model-only external mode as configured auth', async () => {
+    vi.stubEnv('MYCLAW_CREDENTIAL_MODE', 'external');
+    vi.stubEnv('ONECLI_URL', '');
+    vi.stubEnv('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+    vi.stubEnv('ANTHROPIC_BASE_URL', '');
+
+    const { hasClaudeAuthConfigured, runClaudeQuery } =
+      await import('@core/memory/claude-query.js');
+
+    expect(hasClaudeAuthConfigured()).toBe(false);
+    await expect(
+      runClaudeQuery({
+        model: 'claude-haiku-4-5-20251001',
+        prompt: 'Extract facts',
+      }),
+    ).rejects.toThrow('Claude auth is not configured');
+    expect(getContainerConfigMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('allows external mode when a broker endpoint is configured', async () => {
+    vi.stubEnv('MYCLAW_CREDENTIAL_MODE', 'external');
+    vi.stubEnv('ONECLI_URL', '');
+    vi.stubEnv('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://broker.local/anthropic');
+    queryMock.mockImplementation(() =>
+      (async function* () {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'text', text: '[{"kind":"fact"}]' }],
+          },
+        };
+      })(),
+    );
+
+    const { hasClaudeAuthConfigured, runClaudeQuery } =
+      await import('@core/memory/claude-query.js');
+
+    expect(hasClaudeAuthConfigured()).toBe(true);
+    await expect(
+      runClaudeQuery({
+        model: 'claude-haiku-4-5-20251001',
+        prompt: 'Extract facts',
+      }),
+    ).resolves.toBe('[{"kind":"fact"}]');
+    const call = queryMock.mock.calls[0]?.[0] as
+      | {
+          options?: {
+            env?: Record<string, string>;
+          };
+        }
+      | undefined;
+    expect(call?.options?.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+      ANTHROPIC_MODEL: 'claude-haiku-4-5-20251001',
+    });
+    expect(getContainerConfigMock).not.toHaveBeenCalled();
+  });
 });

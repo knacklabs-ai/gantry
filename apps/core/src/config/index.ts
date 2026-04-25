@@ -11,6 +11,7 @@ import { getMemoryModelConfig } from './memory.js';
 import { getMyclawHome } from '../shared/myclaw-home.js';
 import { resolveRuntimeStorageConfig } from './settings/storage.js';
 import { isValidTimezone } from '../shared/timezone.js';
+import { resolveHostCredentialMode } from './credentials/mode.js';
 
 export * from './memory.js';
 
@@ -89,6 +90,9 @@ export const HOST_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_MODEL',
   ...CLAUDE_CODE_MODEL_PIN_ENV_KEYS,
 ] as const;
+export const HOST_CREDENTIAL_REQUIRED_ENV_KEYS = [
+  'ANTHROPIC_BASE_URL',
+] as const;
 export const ONECLI_ALLOWED_ENV_KEYS = [...HOST_CREDENTIAL_ENV_KEYS] as const;
 export function getHostCredentialEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -98,6 +102,11 @@ export function getHostCredentialEnv(): Record<string, string> {
     if (value) env[key] = value;
   }
   return env;
+}
+export function hasHostCredentialBrokerEnv(): boolean {
+  return HOST_CREDENTIAL_REQUIRED_ENV_KEYS.some((key) =>
+    Boolean(envValue(key).trim()),
+  );
 }
 export function getTelegramBotToken(): string {
   return envValue('TELEGRAM_BOT_TOKEN');
@@ -117,7 +126,12 @@ export interface ClaudeAuthState {
 }
 
 export function resolveClaudeAuthState(): ClaudeAuthState {
-  const configured = Boolean(envValue('ONECLI_URL').trim());
+  const credentialMode = resolveHostCredentialMode(
+    envValue('MYCLAW_CREDENTIAL_MODE'),
+  );
+  const configured =
+    (credentialMode === 'onecli' && Boolean(envValue('ONECLI_URL').trim())) ||
+    (credentialMode === 'external' && hasHostCredentialBrokerEnv());
   return {
     hasOauthToken: false,
     hasApiKey: false,

@@ -1,5 +1,6 @@
 import * as p from '@clack/prompts';
 
+import type { HostCredentialMode } from '../config/credentials/mode.js';
 import { getServiceStatus } from '../infrastructure/service/manager.js';
 
 export interface SetupReadyDraft {
@@ -8,7 +9,7 @@ export interface SetupReadyDraft {
   telegramChatJid: string;
   slackChatJid: string;
   selectedModel: string;
-  credentialMode: 'onecli';
+  credentialMode: HostCredentialMode;
   onecliUrl: string;
   memoryEnabled: boolean;
   embeddingsEnabled: boolean;

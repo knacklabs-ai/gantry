@@ -114,6 +114,8 @@ afterEach(() => {
   delete process.env.ONECLI_DATABASE_URL;
   delete process.env.ONECLI_URL;
   delete process.env.SECRET_ENCRYPTION_KEY;
+  delete process.env.ANTHROPIC_BASE_URL;
+  delete process.env.MYCLAW_CREDENTIAL_MODE;
 });
 
 describe('group CLI commands', () => {
@@ -272,6 +274,29 @@ describe('group CLI commands', () => {
     expect(result.failure?.details.join('\n')).toContain(
       'ONECLI_URL is required',
     );
+  });
+
+  it('allows none credential mode without OneCLI URL or persistence', () => {
+    delete process.env.ONECLI_URL;
+    delete process.env.ONECLI_DATABASE_URL;
+    delete process.env.SECRET_ENCRYPTION_KEY;
+    process.env.MYCLAW_CREDENTIAL_MODE = 'none';
+
+    const result = validateRuntimeSettings(runtimeHome);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('allows external credential mode without OneCLI URL or persistence', () => {
+    delete process.env.ONECLI_URL;
+    delete process.env.ONECLI_DATABASE_URL;
+    delete process.env.SECRET_ENCRYPTION_KEY;
+    process.env.MYCLAW_CREDENTIAL_MODE = 'external';
+    process.env.ANTHROPIC_BASE_URL = 'https://llm-proxy.example.com';
+
+    const result = validateRuntimeSettings(runtimeHome);
+
+    expect(result.ok).toBe(true);
   });
 
   it('rejects runtime settings when OneCLI encryption key is weak', () => {

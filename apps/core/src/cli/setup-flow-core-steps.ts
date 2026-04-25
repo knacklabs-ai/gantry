@@ -15,7 +15,7 @@ import {
   renderOnecliDatabaseUrl,
   validateOnecliDatabaseUrl,
   validateSharedPostgresDatabase,
-} from '../infrastructure/onecli/persistence.js';
+} from '../adapters/credentials/onecli/local/persistence.js';
 import {
   type FlowAction,
   isInputFlowControl,

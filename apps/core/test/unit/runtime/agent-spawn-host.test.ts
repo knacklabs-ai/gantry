@@ -155,7 +155,7 @@ describe('getHostRuntimeCredentialEnv', () => {
     const mod = await loadModule({});
 
     await expect(mod.getHostRuntimeCredentialEnv()).rejects.toThrow(
-      'OneCLI gateway is not reachable',
+      'forbidden raw credential env key: ANTHROPIC_API_KEY',
     );
   });
 

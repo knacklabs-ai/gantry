@@ -2,8 +2,8 @@ import * as p from '@clack/prompts';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import type { HostCredentialMode } from '../config/credentials/mode.js';
-import { filterTrustedOnecliEnv } from '../infrastructure/onecli/env-policy.js';
-import { validateOnecliUrl } from '../infrastructure/onecli/policy.js';
+import { filterTrustedOnecliEnv } from '../adapters/credentials/onecli/env-policy.js';
+import { validateOnecliUrl } from '../adapters/credentials/onecli/policy.js';
 
 export interface CredentialSetupDraft {
   credentialMode: HostCredentialMode;

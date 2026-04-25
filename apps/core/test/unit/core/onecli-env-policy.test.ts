@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterTrustedOnecliEnv,
   ONECLI_FORBIDDEN_SECRET_ENV_KEYS,
-} from '@core/infrastructure/onecli/env-policy.js';
+} from '@core/adapters/credentials/onecli/env-policy.js';
 
 describe('OneCLI env policy', () => {
   it('keeps only broker-safe model env keys', () => {
@@ -105,5 +105,22 @@ describe('OneCLI env policy', () => {
         HTTPS_PROXY: 'http://proxy.example.com:8080',
       }),
     ).toThrow('forbidden raw credential env key: HTTPS_PROXY');
+  });
+
+  it('rejects secret-bearing values in allowed URL env keys', () => {
+    for (const value of [
+      'https://user:pass@broker.example.com/anthropic',
+      'https://broker.example.com/anthropic?token=raw',
+      'https://broker.example.com/anthropic#token',
+      'http://broker.example.com/anthropic',
+    ]) {
+      expect(() =>
+        filterTrustedOnecliEnv({
+          ANTHROPIC_BASE_URL: value,
+        }),
+      ).toThrow(
+        'forbidden raw credential env value for key: ANTHROPIC_BASE_URL',
+      );
+    }
   });
 });

@@ -3,6 +3,7 @@
 Use this directory for explicit decisions that override ambiguous architecture guidance.
 
 Each decision record should include:
+
 - Context
 - Decision
 - Alternatives considered
@@ -14,5 +15,6 @@ Decision docs here take precedence when they conflict with general architecture 
 Current decisions:
 
 - [0000 — Runtime Stack Decision](./0000-runtime-stack.md)
+- [0000 — Credential Broker Boundary](./0000-credential-broker-boundary.md)
 - [2026-04-17 — Settings And Runtime Truth](./2026-04-17-settings-runtime-truth.md)
 - [2026-04-21 — App-Wide Storage Backend Cutover](./2026-04-21-storage-backend-cutover.md)

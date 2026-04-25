@@ -9,7 +9,7 @@ import {
   validateSharedPostgresDatabase,
   validateOnecliDatabaseUrl,
   validateOnecliSecretEncryptionKey,
-} from '@core/infrastructure/onecli/persistence.js';
+} from '@core/adapters/credentials/onecli/local/persistence.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -247,7 +247,7 @@ describe('OneCLI persistence contract', () => {
       },
     }));
     const { inspectOnecliPersistenceReadiness: inspectReadiness } =
-      await import('@core/infrastructure/onecli/persistence.js');
+      await import('@core/adapters/credentials/onecli/local/persistence.js');
 
     await expect(
       inspectReadiness({
@@ -285,7 +285,7 @@ describe('OneCLI persistence contract', () => {
       },
     }));
     const { inspectOnecliPersistenceReadiness: inspectReadiness } =
-      await import('@core/infrastructure/onecli/persistence.js');
+      await import('@core/adapters/credentials/onecli/local/persistence.js');
 
     await expect(
       inspectReadiness({
@@ -323,7 +323,7 @@ describe('OneCLI persistence contract', () => {
       },
     }));
     const { inspectOnecliPersistenceReadiness: inspectReadiness } =
-      await import('@core/infrastructure/onecli/persistence.js');
+      await import('@core/adapters/credentials/onecli/local/persistence.js');
 
     await expect(
       inspectReadiness({

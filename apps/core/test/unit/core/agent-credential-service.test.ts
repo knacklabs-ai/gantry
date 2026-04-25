@@ -1,0 +1,145 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { AgentCredentialBroker } from '@core/domain/ports/agent-credential-broker.js';
+
+function makeBroker(
+  overrides: {
+    getInjection?: AgentCredentialBroker['getInjection'];
+  } = {},
+): AgentCredentialBroker {
+  return {
+    getInjection:
+      overrides.getInjection ||
+      (async () => ({
+        env: {
+          ANTHROPIC_BASE_URL: 'https://broker.example.com',
+        },
+        applied: true,
+        brokerProfile: 'onecli',
+      })),
+    healthCheck: async () => ({
+      status: 'pass',
+      message: 'ok',
+    }),
+    getCapabilities: () => ({
+      profile: 'onecli',
+      supportsAgentBinding: true,
+      returnsRawSecrets: false,
+    }),
+  };
+}
+
+async function loadCredentialService() {
+  vi.resetModules();
+  return import('@core/application/credentials/agent-credential-service.js');
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.resetModules();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  vi.resetModules();
+});
+
+describe('agent credential service', () => {
+  it('throws missing ONECLI_URL only when onecli mode is required', async () => {
+    const { getAgentCredentialInjection } = await loadCredentialService();
+
+    await expect(
+      getAgentCredentialInjection({
+        mode: 'onecli',
+        onecliUrl: '',
+      }),
+    ).rejects.toThrow('ONECLI_URL');
+
+    await expect(
+      getAgentCredentialInjection({
+        mode: 'none',
+        onecliUrl: '',
+      }),
+    ).resolves.toEqual({
+      env: {},
+      applied: false,
+      brokerProfile: 'none',
+    });
+
+    await expect(
+      getAgentCredentialInjection({
+        mode: 'external',
+        onecliUrl: '',
+      }),
+    ).resolves.toEqual({
+      env: {},
+      applied: false,
+      brokerProfile: 'external',
+    });
+  });
+
+  it('keeps broker requests agent-scoped and does not request runtime-owned secrets', async () => {
+    const getInjection = vi.fn(async () => ({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://broker.example.com',
+      },
+      applied: true,
+      brokerProfile: 'onecli' as const,
+    }));
+    const broker = makeBroker({ getInjection });
+    const { getAgentCredentialInjection } = await loadCredentialService();
+
+    const result = await getAgentCredentialInjection({
+      mode: 'onecli',
+      agentIdentifier: 'memory',
+      broker,
+    });
+
+    expect(result).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://broker.example.com',
+      },
+      applied: true,
+      brokerProfile: 'onecli',
+    });
+    expect(getInjection).toHaveBeenCalledWith({
+      binding: {
+        profile: 'onecli',
+        agentIdentifier: 'memory',
+      },
+    });
+  });
+
+  it('propagates forbidden raw-secret broker failures and wraps transport failures', async () => {
+    const { getAgentCredentialInjection } = await loadCredentialService();
+
+    const forbiddenBroker = makeBroker({
+      getInjection: async () => {
+        throw new Error(
+          'OneCLI returned forbidden raw credential env key: OPENAI_API_KEY',
+        );
+      },
+    });
+    await expect(
+      getAgentCredentialInjection({
+        mode: 'onecli',
+        broker: forbiddenBroker,
+      }),
+    ).rejects.toThrow('forbidden raw credential env key: OPENAI_API_KEY');
+
+    const unreachableBroker = makeBroker({
+      getInjection: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    });
+    await expect(
+      getAgentCredentialInjection({
+        mode: 'onecli',
+        broker: unreachableBroker,
+      }),
+    ).rejects.toThrow(
+      'OneCLI credential mode is enabled but the OneCLI gateway is not reachable.',
+    );
+  });
+});

@@ -1,12 +1,10 @@
-import { OneCLI } from '@onecli-sh/sdk';
-
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   MYCLAW_CREDENTIAL_MODE,
   ONECLI_URL,
 } from '../../config/index.js';
 import { resolveHostCredentialMode } from '../../config/credentials/mode.js';
-import { assertValidOnecliUrl } from '../../infrastructure/onecli/policy.js';
 import { encodeGroupMessageCursor } from '../../shared/message-cursor.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import { RegisteredGroup, ThinkingOverride } from '../../domain/types.js';
@@ -26,7 +24,12 @@ import type { OpsRepository } from '../../domain/repositories/ops-repo.js';
 import { makeSessionScopeKey } from '../../domain/repositories/ops-repo.js';
 import { getRuntimeOpsRepository } from '../../infrastructure/postgres/runtime-store.js';
 
-type OneCliLike = Pick<OneCLI, 'ensureAgent'>;
+interface OneCliLike {
+  ensureAgent(input: {
+    name: string;
+    identifier: string;
+  }): Promise<{ created?: boolean }>;
+}
 
 export interface RuntimeApp {
   queue: GroupQueue;
@@ -79,11 +82,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
 
   const queue = options.queue ?? new GroupQueue();
   const credentialMode = resolveHostCredentialMode(MYCLAW_CREDENTIAL_MODE);
-  const onecli =
-    options.onecli ??
-    (credentialMode === 'onecli' && ONECLI_URL.trim()
-      ? new OneCLI({ url: assertValidOnecliUrl(ONECLI_URL) })
-      : undefined);
+  let onecli = options.onecli;
   const ops = () => options.opsRepository ?? getRuntimeOpsRepository();
   let channelRuntime: GroupProcessingDeps['channelRuntime'] = {
     hasChannel: () => false,
@@ -98,9 +97,20 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
 
   function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
     if (group.isMain) return;
-    if (!onecli) return;
+    if (credentialMode !== 'onecli' || !ONECLI_URL.trim()) return;
     const identifier = group.folder.toLowerCase().replace(/_/g, '-');
-    onecli.ensureAgent({ name: group.name, identifier }).then(
+    const ensure = async (): Promise<{ created?: boolean }> => {
+      if (!onecli) {
+        const { OnecliAgentCredentialBroker } =
+          await import('../../adapters/credentials/onecli/broker.js');
+        onecli = new OnecliAgentCredentialBroker({
+          onecliUrl: ONECLI_URL,
+          dataDir: DATA_DIR,
+        });
+      }
+      return onecli.ensureAgent({ name: group.name, identifier });
+    };
+    ensure().then(
       (res) => {
         logger.info(
           { jid, identifier, created: res.created },

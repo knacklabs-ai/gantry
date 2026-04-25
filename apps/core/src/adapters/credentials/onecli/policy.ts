@@ -35,6 +35,13 @@ export function validateOnecliUrl(rawUrl: string): OnecliUrlValidationResult {
     };
   }
 
+  if (parsed.search || parsed.hash) {
+    return {
+      ok: false,
+      error: 'ONECLI_URL must not contain query parameters or fragments.',
+    };
+  }
+
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return {
       ok: false,
@@ -49,7 +56,6 @@ export function validateOnecliUrl(rawUrl: string): OnecliUrlValidationResult {
     };
   }
 
-  parsed.hash = '';
   return { ok: true, normalizedUrl: parsed.toString().replace(/\/$/, '') };
 }
 
