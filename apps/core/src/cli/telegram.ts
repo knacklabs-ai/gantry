@@ -417,12 +417,9 @@ export async function registerTelegramMainGroup(options: {
 
 export function readTelegramFromRuntimeEnv(runtimeHome: string): {
   token: string;
-  TELEGRAM_PERMISSION_APPROVER_IDS: string;
 } {
   const env = readEnvFile(envFilePath(runtimeHome));
   return {
     token: env.TELEGRAM_BOT_TOKEN || '',
-    TELEGRAM_PERMISSION_APPROVER_IDS:
-      env.TELEGRAM_PERMISSION_APPROVER_IDS || '',
   };
 }

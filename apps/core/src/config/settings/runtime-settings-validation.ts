@@ -4,10 +4,12 @@ import {
   validateSharedPostgresDatabase,
   validateOnecliDatabaseUrl,
   validateOnecliSecretEncryptionKey,
-} from '../../infrastructure/onecli/persistence.js';
+} from '../../adapters/credentials/onecli/local/persistence.js';
 import { validatePostgresConnectionUrl } from '../../infrastructure/postgres/url.js';
 import { isValidGroupFolder } from '../../platform/group-folder-rules.js';
 import { readEnvFile } from '../env/file.js';
+import { resolveHostCredentialMode } from '../credentials/mode.js';
+import { validateOnecliUrl } from '../../adapters/credentials/onecli/policy.js';
 import { envFilePath, settingsFilePath } from './runtime-home.js';
 import type {
   RuntimeSettings,
@@ -21,6 +23,9 @@ export function validateLoadedRuntimeSettings(
   const details: string[] = [];
 
   const env = readEnvFile(envFilePath(runtimeHome));
+  const credentialMode = resolveHostCredentialMode(
+    env.MYCLAW_CREDENTIAL_MODE || process.env.MYCLAW_CREDENTIAL_MODE,
+  );
   const postgresUrlEnv = settings.storage.postgres.urlEnv;
   const postgresUrl =
     env[postgresUrlEnv]?.trim() || process.env[postgresUrlEnv]?.trim() || '';
@@ -42,11 +47,11 @@ export function validateLoadedRuntimeSettings(
     env[onecliDatabaseUrlEnv]?.trim() ||
     process.env[onecliDatabaseUrlEnv]?.trim() ||
     '';
-  if (!onecliDatabaseUrl) {
+  if (!onecliDatabaseUrl && credentialMode === 'onecli') {
     details.push(
       `${onecliDatabaseUrlEnv} is required for OneCLI broker persistence.`,
     );
-  } else {
+  } else if (onecliDatabaseUrl && credentialMode === 'onecli') {
     try {
       validatePostgresConnectionUrl(onecliDatabaseUrl, {
         allowLocalhost: true,
@@ -63,7 +68,7 @@ export function validateLoadedRuntimeSettings(
       details.push(`${onecliDatabaseUrlEnv} is invalid: ${message}`);
     }
   }
-  if (postgresUrl && onecliDatabaseUrl) {
+  if (postgresUrl && onecliDatabaseUrl && credentialMode === 'onecli') {
     try {
       const sharedDatabase = validateSharedPostgresDatabase({
         myclawPostgresUrl: postgresUrl,
@@ -83,18 +88,25 @@ export function validateLoadedRuntimeSettings(
       // URL validity is reported by the concrete validators above.
     }
   }
-  const secretValidation = validateOnecliSecretEncryptionKey(
+  const onecliSecret =
     env[ONECLI_SECRET_ENCRYPTION_KEY_ENV]?.trim() ||
-      process.env[ONECLI_SECRET_ENCRYPTION_KEY_ENV]?.trim(),
-  );
-  if (!secretValidation.ok) {
-    details.push(secretValidation.message);
+    process.env[ONECLI_SECRET_ENCRYPTION_KEY_ENV]?.trim();
+  if (credentialMode === 'onecli') {
+    const secretValidation = validateOnecliSecretEncryptionKey(onecliSecret);
+    if (!secretValidation.ok) {
+      details.push(secretValidation.message);
+    }
   }
 
   const onecliUrl =
     env.ONECLI_URL?.trim() || process.env.ONECLI_URL?.trim() || '';
-  if (!onecliUrl) {
+  if (!onecliUrl && credentialMode === 'onecli') {
     details.push('ONECLI_URL is required for OneCLI broker access.');
+  } else if (onecliUrl && credentialMode === 'onecli') {
+    const onecliUrlValidation = validateOnecliUrl(onecliUrl);
+    if (!onecliUrlValidation.ok) {
+      details.push(onecliUrlValidation.error || 'ONECLI_URL is invalid.');
+    }
   }
 
   const enabledChannelIds = Object.entries(settings.channels)
@@ -111,7 +123,7 @@ export function validateLoadedRuntimeSettings(
     }
 
     for (const envKey of provider.setup.envKeys) {
-      if (!env[envKey]?.trim()) {
+      if (!env[envKey]?.trim() && !process.env[envKey]?.trim()) {
         details.push(
           `${envKey} is required when channel '${provider.id}' is enabled.`,
         );

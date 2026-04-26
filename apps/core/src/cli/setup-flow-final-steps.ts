@@ -29,6 +29,17 @@ import { chooseProgressAction } from './setup-flow-prompts.js';
 import type { ServiceChoice, SetupDraft } from './setup-flow-state.js';
 import { verifyFirstAgentModelAccess } from './setup-credentials.js';
 
+function parseTelegramApproverIds(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[,\s]+/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  ];
+}
+
 export async function runMemoryStep(draft: SetupDraft): Promise<FlowAction> {
   p.note(
     [
@@ -288,14 +299,19 @@ export async function runGroupStep(draft: SetupDraft): Promise<FlowAction> {
         chatJid: draft.telegramChatJid,
         displayName: draft.telegramDisplayName,
       });
-      if (draft.telegramAdminSenderId) {
+      const approverIds = parseTelegramApproverIds(
+        draft.telegramPermissionApproverIds || draft.telegramAdminSenderId,
+      );
+      if (approverIds.length > 0) {
         const settings = loadRuntimeSettings(draft.runtimeHome);
-        addControlSenderForAgent(
-          settings,
-          'telegram',
-          result.folder,
-          draft.telegramAdminSenderId,
-        );
+        for (const approverId of approverIds) {
+          addControlSenderForAgent(
+            settings,
+            'telegram',
+            result.folder,
+            approverId,
+          );
+        }
         saveRuntimeSettings(draft.runtimeHome, settings);
       }
       spinner.stop(`Registered ${result.groupName} (${result.folder})`);

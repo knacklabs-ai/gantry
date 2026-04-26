@@ -9,7 +9,7 @@ import {
   ONECLI_DATABASE_URL_ENV,
   ONECLI_DEFAULT_SCHEMA,
   ONECLI_SECRET_ENCRYPTION_KEY_ENV,
-} from '../infrastructure/onecli/persistence.js';
+} from '../adapters/credentials/onecli/local/persistence.js';
 
 const LOCAL_ONECLI_URL = 'http://localhost:10254';
 

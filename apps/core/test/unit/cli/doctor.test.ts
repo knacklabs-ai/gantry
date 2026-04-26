@@ -64,15 +64,30 @@ function makeRuntimeHome(envLines: string[] = []): string {
   return runtimeHome;
 }
 
+function enableChannel(runtimeHome: string, channelId: string): void {
+  const settingsPath = path.join(runtimeHome, 'settings.yaml');
+  const settings = fs.readFileSync(settingsPath, 'utf-8');
+  fs.writeFileSync(
+    settingsPath,
+    settings.replace(
+      `  ${channelId}:\n    enabled: false`,
+      `  ${channelId}:\n    enabled: true`,
+    ),
+  );
+}
+
 async function loadDoctor(options?: {
   onecliEnv?: Record<string, string>;
   onecliPersistence?: { status: string; message: string };
+  onOnecliConstruct?: (options: unknown) => void;
+  runtimeGroupCount?: number;
 }) {
   const getContainerConfig = vi.fn(async () => ({
     env: options?.onecliEnv || {},
   }));
   vi.doMock('@onecli-sh/sdk', () => ({
-    OneCLI: vi.fn(function () {
+    OneCLI: vi.fn(function (clientOptions: unknown) {
+      options?.onOnecliConstruct?.(clientOptions);
       return { getContainerConfig };
     }),
   }));
@@ -93,23 +108,35 @@ async function loadDoctor(options?: {
       message: 'Postgres is ready.',
     })),
   }));
-  vi.doMock('@core/infrastructure/onecli/persistence.js', async () => {
-    const actual = await vi.importActual<any>(
-      '@core/infrastructure/onecli/persistence.js',
-    );
-    return {
-      ...actual,
-      inspectOnecliPersistenceReadiness: vi.fn(async () => ({
-        status: options?.onecliPersistence?.status || 'pass',
-        message: options?.onecliPersistence?.message || 'OneCLI ready.',
-      })),
-    };
-  });
+  vi.doMock('@core/cli/runtime-group-db.js', () => ({
+    openRuntimeGroupDb: vi.fn(async () => ({
+      countRegisteredGroupsByJidPrefix: vi.fn(
+        async () => options?.runtimeGroupCount ?? 0,
+      ),
+      close: vi.fn(async () => {}),
+    })),
+  }));
+  vi.doMock(
+    '@core/adapters/credentials/onecli/local/persistence.js',
+    async () => {
+      const actual = await vi.importActual<any>(
+        '@core/adapters/credentials/onecli/local/persistence.js',
+      );
+      return {
+        ...actual,
+        inspectOnecliPersistenceReadiness: vi.fn(async () => ({
+          status: options?.onecliPersistence?.status || 'pass',
+          message: options?.onecliPersistence?.message || 'OneCLI ready.',
+        })),
+      };
+    },
+  );
   return import('@core/cli/doctor.js');
 }
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.resetModules();
   for (const runtimeHome of runtimeHomes.splice(0)) {
     fs.rmSync(runtimeHome, { recursive: true, force: true });
@@ -117,6 +144,97 @@ afterEach(() => {
 });
 
 describe('doctor', () => {
+  it('fails external model access when the broker endpoint is missing', async () => {
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=external',
+    ]);
+    const { runDoctor } = await loadDoctor();
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const check = report.checks.find((entry) => entry.id === 'claude-broker');
+
+    expect(check).toMatchObject({
+      status: 'fail',
+      message: 'External credential mode requires ANTHROPIC_BASE_URL.',
+      nextAction: expect.stringContaining('ANTHROPIC_BASE_URL'),
+    });
+  });
+
+  it('prioritizes external broker checks over stale OneCLI URL env', async () => {
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=external',
+      'ONECLI_URL=http://localhost:10254',
+    ]);
+    const { runDoctor } = await loadDoctor();
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const check = report.checks.find((entry) => entry.id === 'claude-broker');
+
+    expect(check).toMatchObject({
+      status: 'fail',
+      message: 'External credential mode requires ANTHROPIC_BASE_URL.',
+      nextAction: expect.stringContaining('ANTHROPIC_BASE_URL'),
+    });
+  });
+
+  it('fails external model access when the broker endpoint URL is unsafe', async () => {
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=external',
+      'ANTHROPIC_BASE_URL=https://user:pass@broker.example.com',
+    ]);
+    const { runDoctor } = await loadDoctor();
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const check = report.checks.find((entry) => entry.id === 'claude-broker');
+
+    expect(check).toMatchObject({
+      status: 'fail',
+      message: 'ANTHROPIC_BASE_URL must not contain embedded credentials.',
+      nextAction: expect.stringContaining('HTTPS broker URL'),
+    });
+  });
+
+  it('passes external model access when the broker endpoint is safe', async () => {
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=external',
+      'ANTHROPIC_BASE_URL=https://broker.example.com/anthropic',
+    ]);
+    const { runDoctor } = await loadDoctor();
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const check = report.checks.find((entry) => entry.id === 'claude-broker');
+
+    expect(check).toMatchObject({
+      status: 'pass',
+      message: 'Model Access is managed by external credential mode.',
+    });
+  });
+
+  it('uses runtime-home broker endpoint before ambient process env in doctor', async () => {
+    vi.stubEnv(
+      'ANTHROPIC_BASE_URL',
+      'https://user:pass@ambient-broker.example.com/anthropic',
+    );
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=external',
+      'ANTHROPIC_BASE_URL=https://broker.example.com/anthropic',
+    ]);
+    const { runDoctor } = await loadDoctor();
+
+    const report = runDoctor(import.meta.url, runtimeHome);
+    const check = report.checks.find((entry) => entry.id === 'claude-broker');
+
+    expect(check).toMatchObject({
+      status: 'pass',
+      message: 'Model Access is managed by external credential mode.',
+    });
+  });
+
   it('reports missing OneCLI database configuration with a concrete next action', async () => {
     const runtimeHome = makeRuntimeHome([
       'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
@@ -158,5 +276,43 @@ describe('doctor', () => {
       status: 'fail',
       message: expect.stringContaining('POSTGRES_PASSWORD'),
     });
+  });
+
+  it('uses a bounded timeout for OneCLI doctor reachability', async () => {
+    const constructedOptions: unknown[] = [];
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'ONECLI_DATABASE_URL=postgres://onecli_app:pass@localhost:15432/myclaw?schema=onecli',
+      'ONECLI_URL=http://localhost:10254',
+      'SECRET_ENCRYPTION_KEY=123456789abcdefghijklmnopqrstuvwxyzABCDEFGH',
+    ]);
+    const { runDoctorWithNetwork } = await loadDoctor({
+      onOnecliConstruct: (options) => constructedOptions.push(options),
+    });
+
+    await runDoctorWithNetwork(import.meta.url, runtimeHome, {
+      validateTelegramToken: false,
+    });
+
+    expect(constructedOptions).toContainEqual({
+      url: 'http://localhost:10254',
+      timeout: 3_000,
+    });
+  });
+
+  it('treats process-env channel credentials as processable group readiness', async () => {
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=none',
+    ]);
+    enableChannel(runtimeHome, 'telegram');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', '123456:test-token');
+    const { hasProcessableGroupForConfiguredChannel } = await loadDoctor({
+      runtimeGroupCount: 1,
+    });
+
+    await expect(
+      hasProcessableGroupForConfiguredChannel(runtimeHome),
+    ).resolves.toBe(true);
   });
 });

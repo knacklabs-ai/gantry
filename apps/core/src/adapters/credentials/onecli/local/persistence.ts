@@ -5,9 +5,9 @@ import { Pool } from 'pg';
 import {
   parsePostgresConnectionUrl,
   validatePostgresConnectionUrl,
-} from '../postgres/url.js';
-import { quotePostgresIdentifier } from '../postgres/storage-service.js';
-import { redactString } from '../logging/logger.js';
+} from '../../../../infrastructure/postgres/url.js';
+import { quotePostgresIdentifier } from '../../../../infrastructure/postgres/storage-service.js';
+import { redactString } from '../../../../infrastructure/logging/logger.js';
 
 export const ONECLI_DATABASE_URL_ENV = 'ONECLI_DATABASE_URL';
 export const ONECLI_SECRET_ENCRYPTION_KEY_ENV = 'SECRET_ENCRYPTION_KEY';

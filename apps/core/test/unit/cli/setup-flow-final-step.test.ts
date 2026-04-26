@@ -156,6 +156,35 @@ async function loadVerifyStep(modelAccessResult: {
   return { runVerifyStep, verifyFirstAgentModelAccess, warn, success, note };
 }
 
+async function loadGroupStep() {
+  const spinner = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    message: vi.fn(),
+  };
+  const registerTelegramMainGroup = vi.fn(async () => ({
+    folder: 'telegram_main',
+    groupName: 'Telegram Main',
+  }));
+  vi.doMock('@clack/prompts', () => ({
+    note: vi.fn(),
+    isCancel: () => false,
+    spinner: vi.fn(() => spinner),
+    log: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), success: vi.fn() },
+    select: vi.fn(),
+    text: vi.fn(),
+    password: vi.fn(),
+  }));
+  vi.doMock('@core/cli/telegram.js', () => ({
+    registerTelegramMainGroup,
+  }));
+  vi.doMock('@core/cli/slack.js', () => ({
+    registerSlackMainGroup: vi.fn(),
+  }));
+  const { runGroupStep } = await import('@core/cli/setup-flow-final-steps.js');
+  return { runGroupStep, registerTelegramMainGroup, spinner };
+}
+
 describe('setup config step', () => {
   it('persists provided MyClaw and OneCLI database URLs without provisioning Docker', async () => {
     const runtimeHome = makeRuntimeHome();
@@ -192,6 +221,25 @@ describe('setup config step', () => {
     expect(logError).toHaveBeenCalledWith(
       expect.stringContaining('MYCLAW_DATABASE_URL'),
     );
+  });
+});
+
+describe('setup group step', () => {
+  it('writes Telegram permission approvers to settings control allowlist on first setup', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const draft = makeDraft(runtimeHome);
+    draft.telegramPermissionApproverIds = '123,456';
+    const { runGroupStep } = await loadGroupStep();
+
+    const action = await runGroupStep(draft);
+
+    expect(action).toEqual({ type: 'next' });
+    const { loadRuntimeSettings } =
+      await import('@core/config/settings/runtime-settings.js');
+    const settings = loadRuntimeSettings(runtimeHome);
+    expect(
+      settings.channels.telegram.controlAllowlist.agents.telegram_main,
+    ).toEqual(['123', '456']);
   });
 });
 

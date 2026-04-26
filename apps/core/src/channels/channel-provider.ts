@@ -13,11 +13,13 @@ import {
   StreamingStateSink,
   TypingSink,
 } from '../domain/types.js';
+import type { RuntimeSettings } from '../config/settings/runtime-settings.js';
 
 export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  runtimeSettings?: () => RuntimeSettings;
 }
 
 export type MaybePromise<T> = T | Promise<T>;

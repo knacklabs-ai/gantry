@@ -76,6 +76,7 @@ describe('onboarding config persistence', () => {
       '123456789abcdefghijklmnopqrstuvwxyzABCDEFGH',
     );
     expect(env.ONECLI_URL).toBe('http://localhost:10254');
+    expect(env.TELEGRAM_PERMISSION_APPROVER_IDS).toBeUndefined();
   });
 
   it('generates a stable OneCLI encryption key when none exists', () => {

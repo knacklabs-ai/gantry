@@ -108,6 +108,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       threadId: options?.memoryContext?.threadId,
     });
     try {
+      const credentialBroker = await deps.getCredentialBroker?.();
       const output = await runAgentImpl(
         group,
         {
@@ -131,7 +132,12 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             options?.memoryContext?.threadId,
           ),
         wrappedOnOutput,
-        options?.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
+        options?.timeoutMs || credentialBroker
+          ? {
+              ...(options?.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+              ...(credentialBroker ? { credentialBroker } : {}),
+            }
+          : undefined,
       );
 
       if (output.status === 'error') {

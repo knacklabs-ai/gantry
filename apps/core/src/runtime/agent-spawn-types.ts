@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 
 import { RegisteredGroup, ThinkingOverride } from '../domain/types.js';
+import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
 
 export interface AgentInput {
   prompt: string;
@@ -27,6 +28,7 @@ export interface AgentOutput {
 
 export interface RunAgentOptions {
   timeoutMs?: number;
+  credentialBroker?: AgentCredentialBroker;
 }
 
 export interface HostRuntimeContext {

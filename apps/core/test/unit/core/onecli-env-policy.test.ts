@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterTrustedOnecliEnv,
   ONECLI_FORBIDDEN_SECRET_ENV_KEYS,
-} from '@core/infrastructure/onecli/env-policy.js';
+} from '@core/adapters/credentials/onecli/env-policy.js';
 
 describe('OneCLI env policy', () => {
   it('keeps only broker-safe model env keys', () => {
@@ -105,5 +105,71 @@ describe('OneCLI env policy', () => {
         HTTPS_PROXY: 'http://proxy.example.com:8080',
       }),
     ).toThrow('forbidden raw credential env key: HTTPS_PROXY');
+  });
+
+  it('rejects secret-bearing values in allowed URL env keys', () => {
+    for (const value of [
+      'https://user:pass@broker.example.com/anthropic',
+      'https://broker.example.com/anthropic?token=raw',
+      'https://broker.example.com/anthropic#token',
+      'http://broker.example.com/anthropic',
+    ]) {
+      expect(() =>
+        filterTrustedOnecliEnv({
+          ANTHROPIC_BASE_URL: value,
+        }),
+      ).toThrow(
+        'forbidden raw credential env value for key: ANTHROPIC_BASE_URL',
+      );
+    }
+  });
+
+  it('rejects secret-shaped values in allowed model env keys', () => {
+    const secretLikeValues = [
+      'sk-ant-raw-provider-token',
+      'm=sk-ant-AAAAAAAA',
+      '+eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature',
+      '/Bearer abcdefghijklmnopqrstuvwxyz123456',
+      'github_pat_11AAAAAAAA0abcdefghijklmnopqrstuvwxyz',
+      'ASIAABCDEFGHIJKLMNOP',
+      'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+      'Bearer abcdefghijklmnopqrstuvwxyz123456',
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature',
+      '-----BEGIN PRIVATE KEY-----',
+    ];
+    for (const key of [
+      'ANTHROPIC_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    ]) {
+      for (const value of secretLikeValues) {
+        expect(() =>
+          filterTrustedOnecliEnv({
+            ANTHROPIC_BASE_URL: 'https://broker.example.com',
+            [key]: value,
+          }),
+        ).toThrow(`forbidden raw credential env value for key: ${key}`);
+      }
+    }
+  });
+
+  it('rejects proxy values outside the OneCLI broker boundary', () => {
+    for (const value of [
+      'https://x:aoc_123@127.0.0.1:10255',
+      'http://x:aoc_123@127.0.0.1:10256',
+      'http://user:aoc_123@127.0.0.1:10255',
+      'http://x:not-aoc@127.0.0.1:10255',
+      'http://x:aoc_123@proxy.example.com:10255',
+      'http://x:aoc_123@127.0.0.1:10255/path',
+      'http://x:aoc_123@127.0.0.1:10255/?token=sk-ant-raw-provider-token',
+      'http://x:aoc_123@127.0.0.1:10255/#token',
+    ]) {
+      expect(() =>
+        filterTrustedOnecliEnv({
+          HTTPS_PROXY: value,
+        }),
+      ).toThrow('forbidden raw credential env key: HTTPS_PROXY');
+    }
   });
 });

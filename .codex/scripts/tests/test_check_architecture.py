@@ -258,6 +258,28 @@ class CheckArchitectureTests(unittest.TestCase):
             result = run_architecture_check(root)
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
+    def test_onecli_sdk_import_outside_credential_adapter_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_base_fixture(Path(tmp))
+            write_text(
+                root / "apps/core/src/runtime/onecli-break.ts",
+                'import { OneCLI } from "@onecli-sh/sdk";\nexport const value = OneCLI;\n',
+            )
+            result = run_architecture_check(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("[Framework Boundary Imports]", result.stdout)
+            self.assertIn("OneCLI SDK imports must stay behind the credential broker adapter boundary", result.stdout)
+
+    def test_onecli_sdk_import_inside_credential_adapter_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_base_fixture(Path(tmp))
+            write_text(
+                root / "apps/core/src/adapters/credentials/onecli/broker.ts",
+                'import { OneCLI } from "@onecli-sh/sdk";\nexport const value = OneCLI;\n',
+            )
+            result = run_architecture_check(root)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
     def test_forbidden_channel_registration_surface_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = make_base_fixture(Path(tmp))

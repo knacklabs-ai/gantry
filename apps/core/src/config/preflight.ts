@@ -7,8 +7,10 @@ import {
 import {
   inspectOnecliPersistenceReadiness,
   ONECLI_SECRET_ENCRYPTION_KEY_ENV,
-} from '../infrastructure/onecli/persistence.js';
+} from '../adapters/credentials/onecli/local/persistence.js';
+import { EnvRuntimeSecretProvider } from '../adapters/credentials/env-runtime-secret-provider.js';
 import { inspectRuntimeStorageReadiness } from '../infrastructure/postgres/storage-readiness.js';
+import { resolveHostCredentialMode } from './credentials/mode.js';
 
 export interface RuntimePreflightFailure {
   summary: string;
@@ -61,22 +63,58 @@ export async function validateRuntimePreflightWithStorage(
 
   const settings = ensureRuntimeSettings(runtimeHome);
   const env = readEnvFile(envFilePath(runtimeHome));
+  const runtimeSecretsSource = {
+    ...process.env,
+    ...env,
+  };
+  const runtimeSecrets = new EnvRuntimeSecretProvider(runtimeSecretsSource);
+  const credentialMode = resolveHostCredentialMode(
+    runtimeSecrets.getOptionalSecret({ env: 'MYCLAW_CREDENTIAL_MODE' }),
+  );
+  if (credentialMode === 'external') {
+    try {
+      const { getAgentCredentialInjection } =
+        await import('../application/credentials/agent-credential-service.js');
+      const injection = await getAgentCredentialInjection({
+        mode: credentialMode,
+        env: runtimeSecretsSource,
+      });
+      if (!injection.env.ANTHROPIC_BASE_URL) {
+        throw new Error(
+          'External credential mode is enabled but ANTHROPIC_BASE_URL is not configured.',
+        );
+      }
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        failure: {
+          summary:
+            err instanceof Error
+              ? err.message
+              : 'External credential broker is not configured.',
+          details: [
+            'Next action: Set ANTHROPIC_BASE_URL to a broker-safe external credential endpoint.',
+          ],
+        },
+      };
+    }
+  }
+  if (credentialMode !== 'onecli') {
+    return { ok: true };
+  }
   const onecliPostgres = settings.credentialBroker.onecli.postgres;
   const postgres = settings.storage.postgres;
   const onecliReadiness = await inspectOnecliPersistenceReadiness({
     postgresUrl:
-      env[onecliPostgres.urlEnv]?.trim() ||
-      process.env[onecliPostgres.urlEnv]?.trim() ||
-      '',
+      runtimeSecrets.getOptionalSecret({ env: onecliPostgres.urlEnv }) || '',
     schema: onecliPostgres.schema,
     secretEncryptionKey:
-      env[ONECLI_SECRET_ENCRYPTION_KEY_ENV]?.trim() ||
-      process.env[ONECLI_SECRET_ENCRYPTION_KEY_ENV]?.trim() ||
-      '',
+      runtimeSecrets.getOptionalSecret({
+        env: ONECLI_SECRET_ENCRYPTION_KEY_ENV,
+      }) || '',
     myclawPostgresUrl:
-      env[postgres.urlEnv]?.trim() ||
-      process.env[postgres.urlEnv]?.trim() ||
-      '',
+      runtimeSecrets.getOptionalSecret({ env: postgres.urlEnv }) || '',
     myclawSchema: postgres.schema,
   });
   if (onecliReadiness.status !== 'fail') {

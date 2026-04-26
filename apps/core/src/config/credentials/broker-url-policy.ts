@@ -1,6 +1,6 @@
 import { isIP } from 'net';
 
-export interface OnecliUrlValidationResult {
+export interface BrokerUrlValidationResult {
   ok: boolean;
   normalizedUrl?: string;
   error?: string;
@@ -15,49 +15,55 @@ function isLoopbackHostname(hostname: string): boolean {
   return false;
 }
 
-export function validateOnecliUrl(rawUrl: string): OnecliUrlValidationResult {
+export function validateBrokerUrl(
+  rawUrl: string,
+  label: string,
+): BrokerUrlValidationResult {
   const input = rawUrl.trim();
   if (!input) {
-    return { ok: false, error: 'ONECLI_URL is required.' };
+    return { ok: false, error: `${label} is required.` };
   }
 
   let parsed: URL;
   try {
     parsed = new URL(input);
   } catch {
-    return { ok: false, error: 'ONECLI_URL must be a valid URL.' };
+    return { ok: false, error: `${label} must be a valid URL.` };
   }
 
   if (parsed.username || parsed.password) {
     return {
       ok: false,
-      error: 'ONECLI_URL must not contain embedded credentials.',
+      error: `${label} must not contain embedded credentials.`,
+    };
+  }
+
+  if (parsed.search || parsed.hash) {
+    return {
+      ok: false,
+      error: `${label} must not contain query parameters or fragments.`,
     };
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return {
       ok: false,
-      error: 'ONECLI_URL must use http:// or https://.',
+      error: `${label} must use http:// or https://.`,
     };
   }
 
   if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)) {
     return {
       ok: false,
-      error: 'ONECLI_URL must use HTTPS unless it points to loopback.',
+      error: `${label} must use HTTPS unless it points to loopback.`,
     };
   }
 
-  parsed.hash = '';
   return { ok: true, normalizedUrl: parsed.toString().replace(/\/$/, '') };
 }
 
-export function assertValidOnecliUrl(rawUrl: string): string {
-  const result = validateOnecliUrl(rawUrl);
-  if (!result.ok || !result.normalizedUrl) {
-    throw new Error(result.error || 'Invalid ONECLI_URL.');
-  }
-  return result.normalizedUrl;
+export function validateExternalBrokerUrl(
+  rawUrl: string,
+): BrokerUrlValidationResult {
+  return validateBrokerUrl(rawUrl, 'ANTHROPIC_BASE_URL');
 }
-import net from 'net';

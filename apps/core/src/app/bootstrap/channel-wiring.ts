@@ -85,7 +85,9 @@ export function createChannelWiring(
       persistenceQueue,
     }),
     registeredGroups: () => app.getRegisteredGroups(),
+    runtimeSettings: () => currentRuntimeSettings,
   };
+  let currentRuntimeSettings: RuntimeSettings;
 
   function findBoundChannel(jid: string): ChannelAdapter | undefined {
     return findChannel(connectedChannels, jid);
@@ -94,6 +96,7 @@ export function createChannelWiring(
   async function connectEnabledChannels(
     runtimeSettings: RuntimeSettings,
   ): Promise<void> {
+    currentRuntimeSettings = runtimeSettings;
     for (const provider of resolved.channelProviders) {
       if (!provider.isEnabled(runtimeSettings)) {
         resolved.logger.info(

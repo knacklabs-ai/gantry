@@ -234,7 +234,7 @@ export function restoreDraft(
     telegramDisplayName: 'Telegram Main',
     telegramAdminSenderId: '',
     telegramAdminSenderName: '',
-    telegramPermissionApproverIds: env.TELEGRAM_PERMISSION_APPROVER_IDS || '',
+    telegramPermissionApproverIds: '',
     telegramBotUsername: '',
     slackBotToken: env.SLACK_BOT_TOKEN || '',
     slackAppToken: env.SLACK_APP_TOKEN || '',
