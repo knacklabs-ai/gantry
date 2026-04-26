@@ -6,7 +6,11 @@ import {
 } from '../config/index.js';
 import { envConfig, runtimeEnvValue } from '../config/env/index.js';
 import { resolveHostCredentialMode } from '../config/credentials/mode.js';
-import { getAgentCredentialInjection } from '../application/credentials/agent-credential-service.js';
+import {
+  createAgentCredentialBroker,
+  getAgentCredentialInjection,
+} from '../application/credentials/agent-credential-service.js';
+import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
 
 export interface ClaudeQueryOpts {
   model: string;
@@ -31,6 +35,10 @@ export interface ClaudeAuthAvailability {
   hasApiKey: boolean;
   mode: ClaudeAuthMode;
 }
+
+let memoryCredentialBrokerPromise:
+  | Promise<AgentCredentialBroker | undefined>
+  | undefined;
 
 function readOnecliUrl(): string {
   return runtimeEnvValue('ONECLI_URL').trim();
@@ -111,9 +119,14 @@ async function resolveOnecliMemoryEnv(): Promise<Record<string, string>> {
   if (!onecliUrl) {
     throw new Error('OneCLI is not configured for Claude access');
   }
+  memoryCredentialBrokerPromise ??= createAgentCredentialBroker({
+    mode: credentialMode,
+    env: envConfig,
+  });
   const injection = await getAgentCredentialInjection({
     mode: credentialMode,
     agentIdentifier: 'memory',
+    broker: await memoryCredentialBrokerPromise,
     env: envConfig,
   });
   return injection.env;

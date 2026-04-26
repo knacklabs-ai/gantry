@@ -42,6 +42,8 @@ import { openRuntimeGroupDb } from './runtime-group-db.js';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
 
+const ONECLI_DOCTOR_TIMEOUT_MS = 3_000;
+
 export interface DoctorCheck {
   id: string;
   title: string;
@@ -589,6 +591,7 @@ export async function runDoctorWithNetwork(
     const broker = new OnecliAgentCredentialBroker({
       onecliUrl,
       dataDir: path.join(runtimeHome, 'data'),
+      timeoutMs: ONECLI_DOCTOR_TIMEOUT_MS,
     });
     const health = await broker.healthCheck();
     report = addToReport(report, {
@@ -655,7 +658,7 @@ export async function hasProcessableGroupForConfiguredChannel(
   for (const provider of listConnectableChannelProviders()) {
     if (!settings.channels[provider.id]?.enabled) continue;
     const hasRequiredCredentials = provider.setup.envKeys.every((envKey) =>
-      Boolean(env[envKey]?.trim()),
+      Boolean(resolveRuntimeEnvValue(env, envKey)),
     );
     if (!hasRequiredCredentials) continue;
     let db: Awaited<ReturnType<typeof openRuntimeGroupDb>> | undefined;

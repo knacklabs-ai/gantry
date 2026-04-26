@@ -6,6 +6,8 @@ import { resolveHostCredentialMode } from '../config/credentials/mode.js';
 import { envConfig } from '../config/env/index.js';
 import { getAgentCredentialInjection } from '../application/credentials/agent-credential-service.js';
 import { RegisteredGroup } from '../domain/types.js';
+import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
+import type { CredentialBrokerProfile } from '../domain/models/credentials.js';
 import {
   resolveGroupFolderPath,
   resolveGroupIpcPath,
@@ -20,10 +22,11 @@ import { HostRuntimeContext } from './agent-spawn-types.js';
 
 export async function getHostRuntimeCredentialEnv(
   agentIdentifier?: string,
+  broker?: AgentCredentialBroker,
 ): Promise<{
   env: Record<string, string>;
   brokerApplied: boolean;
-  brokerProfile: string;
+  brokerProfile: CredentialBrokerProfile;
 }> {
   const credentialModeRaw =
     envConfig.MYCLAW_CREDENTIAL_MODE || process.env.MYCLAW_CREDENTIAL_MODE;
@@ -31,6 +34,7 @@ export async function getHostRuntimeCredentialEnv(
   const injection = await getAgentCredentialInjection({
     mode: credentialMode,
     agentIdentifier,
+    broker,
     env: envConfig,
   });
 

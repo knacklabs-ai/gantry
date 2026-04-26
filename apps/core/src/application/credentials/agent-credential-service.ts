@@ -12,6 +12,7 @@ import type {
 import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import { validateExternalBrokerUrl } from '../../config/credentials/broker-url-policy.js';
+import { isCredentialBrokerBoundaryError } from '../../domain/models/credential-errors.js';
 
 export interface AgentCredentialServiceOptions {
   mode: HostCredentialMode;
@@ -85,16 +86,11 @@ export async function getAgentCredentialInjection(input: {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     logger.warn(
       { err, agentIdentifier: input.agentIdentifier || 'default' },
       'Agent credential broker not reachable',
     );
-    if (
-      message.includes('forbidden raw credential env key') ||
-      message.includes('forbidden raw credential env value') ||
-      message.includes('ONECLI_URL')
-    ) {
+    if (isCredentialBrokerBoundaryError(err)) {
       throw err;
     }
     if (input.mode === 'onecli') {

@@ -348,6 +348,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
         ),
     },
     runAgent: options.runAgent,
+    getCredentialBroker,
   });
 
   return {

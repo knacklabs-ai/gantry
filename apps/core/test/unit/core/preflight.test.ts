@@ -74,6 +74,7 @@ function makeRuntimeHome(): string {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -240,12 +241,15 @@ describe('runtime preflight', () => {
         message: 'Postgres is ready.',
       })),
     }));
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
 
     const { validateRuntimePreflightWithStorage } =
       await import('@core/config/preflight.js');
     const result = await validateRuntimePreflightWithStorage(runtimeHome);
 
     expect(result).toEqual({ ok: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('fails external credential mode preflight when broker endpoint is missing', async () => {
@@ -297,6 +301,62 @@ describe('runtime preflight', () => {
 
     expect(result.ok).toBe(false);
     expect(result.failure?.summary).toContain('embedded credentials');
+  });
+
+  it('allows external credential mode preflight without probing broker reachability', async () => {
+    const runtimeHome = makeRuntimeHome();
+    fs.writeFileSync(
+      path.join(runtimeHome, '.env'),
+      [
+        'MYCLAW_CREDENTIAL_MODE=external',
+        'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+        'ANTHROPIC_BASE_URL=https://broker.example.com/anthropic',
+        '',
+      ].join('\n'),
+    );
+    vi.doMock('@core/infrastructure/postgres/storage-readiness.js', () => ({
+      inspectRuntimeStorageReadiness: vi.fn(async () => ({
+        status: 'pass',
+        message: 'Postgres is ready.',
+      })),
+    }));
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { validateRuntimePreflightWithStorage } =
+      await import('@core/config/preflight.js');
+    const result = await validateRuntimePreflightWithStorage(runtimeHome);
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not fail external credential mode preflight on broker HTTP method semantics', async () => {
+    const runtimeHome = makeRuntimeHome();
+    fs.writeFileSync(
+      path.join(runtimeHome, '.env'),
+      [
+        'MYCLAW_CREDENTIAL_MODE=external',
+        'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+        'ANTHROPIC_BASE_URL=https://broker.example.com/anthropic',
+        '',
+      ].join('\n'),
+    );
+    vi.doMock('@core/infrastructure/postgres/storage-readiness.js', () => ({
+      inspectRuntimeStorageReadiness: vi.fn(async () => ({
+        status: 'pass',
+        message: 'Postgres is ready.',
+      })),
+    }));
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 405 }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { validateRuntimePreflightWithStorage } =
+      await import('@core/config/preflight.js');
+    const result = await validateRuntimePreflightWithStorage(runtimeHome);
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('allows enabled channels to read credentials from process env', async () => {

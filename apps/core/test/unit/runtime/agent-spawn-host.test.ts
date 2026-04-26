@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mockGetContainerConfig = vi.fn();
 const mockMkdirSync = vi.fn();
 const mockWriteFileSync = vi.fn();
+const mockRenameSync = vi.fn();
+const mockChmodSync = vi.fn();
+const mockRmSync = vi.fn();
 const mockExistsSync = vi.fn();
 const mockLoggerWarn = vi.fn();
 const mockLoggerInfo = vi.fn();
@@ -32,6 +35,9 @@ async function loadModule(config: {
     default: {
       mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
       writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
+      renameSync: (...args: unknown[]) => mockRenameSync(...args),
+      chmodSync: (...args: unknown[]) => mockChmodSync(...args),
+      rmSync: (...args: unknown[]) => mockRmSync(...args),
       existsSync: (...args: unknown[]) => mockExistsSync(...args),
       realpathSync: (value: string) => value,
       lstatSync: () => ({
@@ -86,6 +92,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockMkdirSync.mockImplementation(() => undefined);
   mockWriteFileSync.mockImplementation(() => undefined);
+  mockRenameSync.mockImplementation(() => undefined);
+  mockChmodSync.mockImplementation(() => undefined);
+  mockRmSync.mockImplementation(() => undefined);
   mockExistsSync.mockReturnValue(false);
 });
 
@@ -186,20 +195,34 @@ describe('getHostRuntimeCredentialEnv', () => {
     expect(result.brokerApplied).toBe(true);
     expect(result.env).toEqual({
       ANTHROPIC_BASE_URL: 'https://broker.example.com',
-      NODE_EXTRA_CA_CERTS: '/tmp/myclaw-test/data/onecli/gateway-ca.pem',
+      NODE_EXTRA_CA_CERTS:
+        '/tmp/myclaw-test/data/onecli/gateway-ca-37a8eec1ce19687d.pem',
     });
     expect(mockMkdirSync).toHaveBeenCalledWith('/tmp/myclaw-test/data/onecli', {
       recursive: true,
+      mode: 0o700,
     });
+    expect(mockChmodSync).toHaveBeenCalledWith(
+      '/tmp/myclaw-test/data/onecli',
+      0o700,
+    );
     expect(mockWriteFileSync).toHaveBeenCalledWith(
-      '/tmp/myclaw-test/data/onecli/gateway-ca.pem',
+      expect.stringMatching(
+        /^\/tmp\/myclaw-test\/data\/onecli\/gateway-ca-37a8eec1ce19687d\.pem\.\d+\.[0-9a-f-]+\.tmp$/,
+      ),
       'cert-data',
       { mode: 0o600 },
+    );
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\/tmp\/myclaw-test\/data\/onecli\/gateway-ca-37a8eec1ce19687d\.pem\.\d+\.[0-9a-f-]+\.tmp$/,
+      ),
+      '/tmp/myclaw-test/data/onecli/gateway-ca-37a8eec1ce19687d.pem',
     );
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       {
         agentIdentifier: 'default',
-        caPath: '/tmp/myclaw-test/data/onecli/gateway-ca.pem',
+        caPath: '/tmp/myclaw-test/data/onecli/gateway-ca-37a8eec1ce19687d.pem',
       },
       'Applied OneCLI CA certificate for host runner',
     );

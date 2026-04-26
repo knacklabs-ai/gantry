@@ -23,6 +23,8 @@ export interface StartupResult {
   runtimeSettings: RuntimeSettings;
 }
 
+const STARTUP_CREDENTIAL_BINDING_TIMEOUT_MS = 3_000;
+
 function makeDefaultDeps(): StartupDeps {
   return {
     ensureRuntimeLayoutDirectories,
@@ -57,11 +59,49 @@ export async function runStartup(
   await resolved.initializeRuntimeStorage();
   resolved.logger.info('Database initialized');
   await app.loadState();
-  await app.ensureCredentialBindingsForRegisteredGroups();
+  await waitForCredentialBindings(app, resolved.logger);
 
   resolved.restoreRemoteControl();
 
   return {
     runtimeSettings,
   };
+}
+
+async function waitForCredentialBindings(
+  app: RuntimeApp,
+  logger: StartupDeps['logger'],
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const bindings = app.ensureCredentialBindingsForRegisteredGroups();
+  const timeoutPromise = new Promise<'timeout'>((resolve) => {
+    timeout = setTimeout(
+      () => resolve('timeout'),
+      STARTUP_CREDENTIAL_BINDING_TIMEOUT_MS,
+    );
+  });
+  try {
+    const result = await Promise.race([
+      bindings.then(() => 'done' as const),
+      timeoutPromise,
+    ]);
+    if (result === 'timeout') {
+      logger.warn(
+        {
+          timeoutMs: STARTUP_CREDENTIAL_BINDING_TIMEOUT_MS,
+        },
+        'Credential broker binding did not finish during startup; continuing channel startup',
+      );
+      bindings.catch((err) => {
+        logger.warn(
+          { err },
+          'Credential broker binding failed after startup continued',
+        );
+      });
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Credential broker binding failed during startup');
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }

@@ -9,6 +9,7 @@ import type {
 } from '../domain/types.js';
 import type { OpsRepository } from '../domain/repositories/ops-repo.js';
 import type { AvailableGroup, spawnAgent } from './agent-spawn.js';
+import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
 
 export interface GroupProcessingDeps {
   channelRuntime: {
@@ -74,6 +75,7 @@ export interface GroupProcessingDeps {
     ) => void;
   };
   runAgent?: typeof spawnAgent;
+  getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
   opsRepository?: OpsRepository;
   getOpsRepository?: () => OpsRepository;
 }

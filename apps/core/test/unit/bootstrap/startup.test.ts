@@ -184,6 +184,64 @@ describe('runStartup', () => {
     });
   });
 
+  it('continues startup when credential binding is slow', async () => {
+    vi.useFakeTimers();
+    try {
+      const order: string[] = [];
+      const warn = vi.fn();
+      const app = makeApp({
+        loadState: vi.fn(async () => {
+          order.push('load-state');
+        }),
+        ensureCredentialBindingsForRegisteredGroups: vi.fn(async () => {
+          order.push('ensure-credentials-start');
+          await new Promise<void>(() => {});
+        }),
+      });
+
+      const startup = runStartup(app, {
+        ensureRuntimeLayoutDirectories: vi.fn(),
+        ensurePromptProfileBootstrapped: vi.fn(),
+        initializeRuntimeStorage: vi.fn(async () => ({}) as any),
+        loadRuntimeSettings: vi.fn(
+          () =>
+            ({
+              channels: {},
+              storage: {
+                postgres: {
+                  urlEnv: 'MYCLAW_DATABASE_URL',
+                  schema: 'myclaw',
+                },
+              },
+              memory: {},
+            }) as any,
+        ),
+        restoreRemoteControl: vi.fn(() => {
+          order.push('restore-remote-control');
+        }),
+        logger: {
+          info: vi.fn(),
+          warn,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      await startup;
+
+      expect(order).toEqual([
+        'load-state',
+        'ensure-credentials-start',
+        'restore-remote-control',
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        { timeoutMs: 3_000 },
+        expect.stringContaining('Credential broker binding did not finish'),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('initializes Postgres storage for runtime settings', async () => {
     const initializeRuntimeStorage = vi.fn(async () => ({}) as any);
     await runStartup(makeApp(), {

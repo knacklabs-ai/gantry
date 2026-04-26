@@ -64,15 +64,30 @@ function makeRuntimeHome(envLines: string[] = []): string {
   return runtimeHome;
 }
 
+function enableChannel(runtimeHome: string, channelId: string): void {
+  const settingsPath = path.join(runtimeHome, 'settings.yaml');
+  const settings = fs.readFileSync(settingsPath, 'utf-8');
+  fs.writeFileSync(
+    settingsPath,
+    settings.replace(
+      `  ${channelId}:\n    enabled: false`,
+      `  ${channelId}:\n    enabled: true`,
+    ),
+  );
+}
+
 async function loadDoctor(options?: {
   onecliEnv?: Record<string, string>;
   onecliPersistence?: { status: string; message: string };
+  onOnecliConstruct?: (options: unknown) => void;
+  runtimeGroupCount?: number;
 }) {
   const getContainerConfig = vi.fn(async () => ({
     env: options?.onecliEnv || {},
   }));
   vi.doMock('@onecli-sh/sdk', () => ({
-    OneCLI: vi.fn(function () {
+    OneCLI: vi.fn(function (clientOptions: unknown) {
+      options?.onOnecliConstruct?.(clientOptions);
       return { getContainerConfig };
     }),
   }));
@@ -91,6 +106,14 @@ async function loadDoctor(options?: {
     inspectRuntimeStorageReadiness: vi.fn(async () => ({
       status: 'pass',
       message: 'Postgres is ready.',
+    })),
+  }));
+  vi.doMock('@core/cli/runtime-group-db.js', () => ({
+    openRuntimeGroupDb: vi.fn(async () => ({
+      countRegisteredGroupsByJidPrefix: vi.fn(
+        async () => options?.runtimeGroupCount ?? 0,
+      ),
+      close: vi.fn(async () => {}),
     })),
   }));
   vi.doMock(
@@ -113,6 +136,7 @@ async function loadDoctor(options?: {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.resetModules();
   for (const runtimeHome of runtimeHomes.splice(0)) {
     fs.rmSync(runtimeHome, { recursive: true, force: true });
@@ -252,5 +276,43 @@ describe('doctor', () => {
       status: 'fail',
       message: expect.stringContaining('POSTGRES_PASSWORD'),
     });
+  });
+
+  it('uses a bounded timeout for OneCLI doctor reachability', async () => {
+    const constructedOptions: unknown[] = [];
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'ONECLI_DATABASE_URL=postgres://onecli_app:pass@localhost:15432/myclaw?schema=onecli',
+      'ONECLI_URL=http://localhost:10254',
+      'SECRET_ENCRYPTION_KEY=123456789abcdefghijklmnopqrstuvwxyzABCDEFGH',
+    ]);
+    const { runDoctorWithNetwork } = await loadDoctor({
+      onOnecliConstruct: (options) => constructedOptions.push(options),
+    });
+
+    await runDoctorWithNetwork(import.meta.url, runtimeHome, {
+      validateTelegramToken: false,
+    });
+
+    expect(constructedOptions).toContainEqual({
+      url: 'http://localhost:10254',
+      timeout: 3_000,
+    });
+  });
+
+  it('treats process-env channel credentials as processable group readiness', async () => {
+    const runtimeHome = makeRuntimeHome([
+      'MYCLAW_DATABASE_URL=postgres://myclaw_app:pass@localhost:15432/myclaw',
+      'MYCLAW_CREDENTIAL_MODE=none',
+    ]);
+    enableChannel(runtimeHome, 'telegram');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', '123456:test-token');
+    const { hasProcessableGroupForConfiguredChannel } = await loadDoctor({
+      runtimeGroupCount: 1,
+    });
+
+    await expect(
+      hasProcessableGroupForConfiguredChannel(runtimeHome),
+    ).resolves.toBe(true);
   });
 });

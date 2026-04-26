@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentCredentialBroker } from '@core/domain/ports/agent-credential-broker.js';
+import { CredentialBrokerPolicyError } from '@core/domain/models/credential-errors.js';
 
 function makeBroker(
   overrides: {
@@ -149,7 +150,7 @@ describe('agent credential service', () => {
 
     const forbiddenBroker = makeBroker({
       getInjection: async () => {
-        throw new Error(
+        throw new CredentialBrokerPolicyError(
           'OneCLI returned forbidden raw credential env key: OPENAI_API_KEY',
         );
       },
@@ -163,7 +164,9 @@ describe('agent credential service', () => {
 
     const forbiddenValueBroker = makeBroker({
       getInjection: async () => {
-        throw new Error('OneCLI returned forbidden raw credential env value');
+        throw new CredentialBrokerPolicyError(
+          'OneCLI returned forbidden raw credential env value',
+        );
       },
     });
     await expect(
@@ -182,6 +185,24 @@ describe('agent credential service', () => {
       getAgentCredentialInjection({
         mode: 'onecli',
         broker: unreachableBroker,
+      }),
+    ).rejects.toThrow(
+      'OneCLI credential mode is enabled but the OneCLI gateway is not reachable.',
+    );
+  });
+
+  it('does not fail-open when a generic broker error mentions policy text', async () => {
+    const { getAgentCredentialInjection } = await loadCredentialService();
+    const broker = makeBroker({
+      getInjection: async () => {
+        throw new Error('forbidden raw credential env key: OPENAI_API_KEY');
+      },
+    });
+
+    await expect(
+      getAgentCredentialInjection({
+        mode: 'onecli',
+        broker,
       }),
     ).rejects.toThrow(
       'OneCLI credential mode is enabled but the OneCLI gateway is not reachable.',

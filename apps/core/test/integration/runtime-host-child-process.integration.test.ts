@@ -51,6 +51,7 @@ process.stdin.on('end', () => {
         ipcDir: process.env.MYCLAW_IPC_DIR,
         ipcInputDir: process.env.MYCLAW_IPC_INPUT_DIR,
         authTokenPresent: Boolean(process.env.MYCLAW_IPC_AUTH_TOKEN),
+        brokerBaseUrl: process.env.ANTHROPIC_BASE_URL,
       },
     }, null, 2),
   );
@@ -108,9 +109,9 @@ describe('host child-process runtime smoke', () => {
     }));
     vi.doMock('@core/runtime/agent-spawn-host.js', () => ({
       getHostRuntimeCredentialEnv: async () => ({
-        env: {},
-        brokerApplied: false,
-        brokerProfile: 'none',
+        env: { ANTHROPIC_BASE_URL: 'https://broker.example.com/anthropic' },
+        brokerApplied: true,
+        brokerProfile: 'external',
       }),
       prepareHostRuntimeContext: () => ({
         groupDir,
@@ -201,6 +202,7 @@ describe('host child-process runtime smoke', () => {
         ipcDir: groupIpcDir,
         ipcInputDir: path.join(groupIpcDir, 'input'),
         authTokenPresent: true,
+        brokerBaseUrl: 'https://broker.example.com/anthropic',
       }),
     );
     expect(childRecord.input.memoryContextBlock).toBe(

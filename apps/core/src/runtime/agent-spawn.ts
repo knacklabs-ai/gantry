@@ -114,7 +114,10 @@ export async function spawnAgent(
 
   const hostRuntime = prepareHostRuntimeContext(group);
   ensureGroupIpcLayout(hostRuntime.groupIpcDir);
-  const hostCredentials = await getHostRuntimeCredentialEnv(agentIdentifier);
+  const hostCredentials = await getHostRuntimeCredentialEnv(
+    agentIdentifier,
+    options?.credentialBroker,
+  );
   const hostRunnerPath = path.join(
     hostRuntime.runnerDistDir,
     'claude',

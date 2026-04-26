@@ -1,4 +1,8 @@
 import { ONECLI_ALLOWED_ENV_KEYS } from '../../../config/index.js';
+import {
+  CredentialBrokerConfigError,
+  CredentialBrokerPolicyError,
+} from '../../../domain/models/credential-errors.js';
 import { validateOnecliUrl } from './policy.js';
 
 const ONECLI_ALLOWED_ENV_KEY_SET = new Set<string>(ONECLI_ALLOWED_ENV_KEYS);
@@ -26,7 +30,22 @@ const FORBIDDEN_SECRET_ENV_KEY_PATTERN =
 const FORBIDDEN_SECRET_QUERY_PARAM_PATTERN =
   /(^|_)(api_?key|auth_?token|token|secret|password|pass|private_?key|access_?key)($|_)/i;
 const FORBIDDEN_SECRET_VALUE_PATTERN =
-  /(^|[^a-z0-9/+=])(sk-[a-z0-9._-]{12,}|sk-ant-[a-z0-9._-]{8,}|aoc_[a-z0-9_-]+|github_pat_[a-z0-9_]+|gh[pousr]_[a-z0-9_]+|xox[baprs]-[a-z0-9-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|[A-Za-z0-9/+=]{40}|Bearer\s+[a-z0-9._~+/=-]{12,}|eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|-----BEGIN\s+[A-Z ]*PRIVATE KEY-----)([^a-z0-9/+=]|$)/i;
+  /(^|[^a-z0-9])(sk-[a-z0-9._-]{12,}|sk-ant-[a-z0-9._-]{8,}|aoc_[a-z0-9_-]+|github_pat_[a-z0-9_]+|gh[pousr]_[a-z0-9_]+|xox[baprs]-[a-z0-9-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|[A-Za-z0-9/+=]{40}|Bearer\s+[a-z0-9._~+/=-]{12,}|eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|-----BEGIN\s+[A-Z ]*PRIVATE KEY-----)([^a-z0-9]|$)/i;
+
+export class OnecliCredentialPolicyError extends CredentialBrokerPolicyError {}
+export class OnecliCredentialBrokerConfigError extends CredentialBrokerConfigError {}
+
+function forbiddenKey(key: string): CredentialBrokerPolicyError {
+  return new CredentialBrokerPolicyError(
+    `OneCLI returned forbidden raw credential env key: ${key}`,
+  );
+}
+
+function forbiddenValue(key: string): CredentialBrokerPolicyError {
+  return new CredentialBrokerPolicyError(
+    `OneCLI returned forbidden raw credential env value for key: ${key}`,
+  );
+}
 
 const ONECLI_BROKER_PROXY_ENV_KEYS = new Set([
   'HTTP_PROXY',
@@ -61,7 +80,10 @@ function normalizeAllowedBrokerProxyValue(
       parsed.protocol !== 'http:' ||
       parsed.port !== '10255' ||
       parsed.username !== 'x' ||
-      !parsed.password.startsWith('aoc_')
+      !parsed.password.startsWith('aoc_') ||
+      (parsed.pathname !== '' && parsed.pathname !== '/') ||
+      parsed.search !== '' ||
+      parsed.hash !== ''
     ) {
       return null;
     }
@@ -81,9 +103,7 @@ function normalizeAllowedBrokerProxyValue(
 
 function validateAllowedOnecliEnvValue(key: string, value: string): string {
   if (FORBIDDEN_SECRET_VALUE_PATTERN.test(value)) {
-    throw new Error(
-      `OneCLI returned forbidden raw credential env value for key: ${key}`,
-    );
+    throw forbiddenValue(key);
   }
   if (key !== 'ANTHROPIC_BASE_URL') {
     return value;
@@ -92,27 +112,19 @@ function validateAllowedOnecliEnvValue(key: string, value: string): string {
   try {
     rawParsed = new URL(value);
   } catch {
-    throw new Error(
-      `OneCLI returned forbidden raw credential env value for key: ${key}`,
-    );
+    throw forbiddenValue(key);
   }
   if (rawParsed.hash || rawParsed.searchParams.size > 0) {
     for (const param of rawParsed.searchParams.keys()) {
       if (FORBIDDEN_SECRET_QUERY_PARAM_PATTERN.test(param)) {
-        throw new Error(
-          `OneCLI returned forbidden raw credential env value for key: ${key}`,
-        );
+        throw forbiddenValue(key);
       }
     }
-    throw new Error(
-      `OneCLI returned forbidden raw credential env value for key: ${key}`,
-    );
+    throw forbiddenValue(key);
   }
   const validation = validateOnecliUrl(value);
   if (!validation.ok || !validation.normalizedUrl) {
-    throw new Error(
-      `OneCLI returned forbidden raw credential env value for key: ${key}`,
-    );
+    throw forbiddenValue(key);
   }
   return validation.normalizedUrl;
 }
@@ -137,18 +149,14 @@ export function filterTrustedOnecliEnv(
         env[key] = value;
         continue;
       }
-      throw new Error(
-        `OneCLI returned forbidden raw credential env key: ${key}`,
-      );
+      throw forbiddenKey(key);
     }
     if (key === 'CLAUDE_CODE_OAUTH_TOKEN') {
       if (value === 'placeholder') {
         env[key] = value;
         continue;
       }
-      throw new Error(
-        `OneCLI returned forbidden raw credential env key: ${key}`,
-      );
+      throw forbiddenKey(key);
     }
     if (ONECLI_BROKER_PROXY_ENV_KEYS.has(key)) {
       if (
@@ -182,17 +190,13 @@ export function filterTrustedOnecliEnv(
           continue;
         }
       }
-      throw new Error(
-        `OneCLI returned forbidden raw credential env key: ${key}`,
-      );
+      throw forbiddenKey(key);
     }
     if (
       ONECLI_FORBIDDEN_SECRET_ENV_KEYS.has(key) ||
       FORBIDDEN_SECRET_ENV_KEY_PATTERN.test(key)
     ) {
-      throw new Error(
-        `OneCLI returned forbidden raw credential env key: ${key}`,
-      );
+      throw forbiddenKey(key);
     }
     if (
       !ONECLI_ALLOWED_ENV_KEY_SET.has(key) ||

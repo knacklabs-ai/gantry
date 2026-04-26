@@ -11,7 +11,6 @@ import {
 import { EnvRuntimeSecretProvider } from '../adapters/credentials/env-runtime-secret-provider.js';
 import { inspectRuntimeStorageReadiness } from '../infrastructure/postgres/storage-readiness.js';
 import { resolveHostCredentialMode } from './credentials/mode.js';
-import { getAgentCredentialInjection } from '../application/credentials/agent-credential-service.js';
 
 export interface RuntimePreflightFailure {
   summary: string;
@@ -74,10 +73,17 @@ export async function validateRuntimePreflightWithStorage(
   );
   if (credentialMode === 'external') {
     try {
-      await getAgentCredentialInjection({
+      const { getAgentCredentialInjection } =
+        await import('../application/credentials/agent-credential-service.js');
+      const injection = await getAgentCredentialInjection({
         mode: credentialMode,
         env: runtimeSecretsSource,
       });
+      if (!injection.env.ANTHROPIC_BASE_URL) {
+        throw new Error(
+          'External credential mode is enabled but ANTHROPIC_BASE_URL is not configured.',
+        );
+      }
       return { ok: true };
     } catch (err) {
       return {
