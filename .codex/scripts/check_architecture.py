@@ -138,9 +138,7 @@ def main() -> int:
     grouped_issues = {
         "exception_hygiene": exception_hygiene,
         "architecture_map_hygiene": architecture_map_hygiene,
-        "file_size_budget": check_file_size_budget(
-            production_files, root, exceptions, architecture_map or {}
-        ),
+        "file_size_budget": check_file_size_budget(production_files, root, architecture_map or {}),
         "layer_imports": layer_import_issues,
         "external_imports": external_import_issues,
         "provider_imports": provider_import_issues,

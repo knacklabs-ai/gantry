@@ -1,6 +1,6 @@
 # Codex Architecture Harness
 
-The Codex harness enforces the target MyClaw architecture before large source refactors land. It is intentionally stricter than the current codebase; existing debt is recorded in capped exceptions so new work cannot expand it silently.
+The Codex harness enforces the target MyClaw architecture before large source refactors land. It is intentionally stricter than the current codebase, and the default exception file is empty so violations are visible instead of hidden by generated baselines.
 
 ## Run The Check
 
@@ -51,13 +51,14 @@ Counted rules should include a cap:
 
 - `maxViolations` for import, provider, execution, and browser-path rules
 - `maxOccurrences` for old-term rules
-- `max_lines` for file line-budget rules
 
-The cap is deliberate. If a file already has five violations and a change adds a sixth, the check fails even though an exception exists.
+File line budgets are strict and do not support exceptions. If a file exceeds its configured line limit, split it or move responsibility into a better-owned module.
+
+For exception-supported rules, the cap is deliberate. If a file already has five violations and a change adds a sixth, the check fails even though an exception exists.
 
 ## Removing Exceptions
 
-Remove an exception in the same change that removes or moves the violation. The checker fails stale file-size exceptions when a file comes back under budget, and it fails stale counted exceptions when the rule no longer sees the baseline violation.
+Remove an exception in the same change that removes or moves the violation. The checker fails stale counted exceptions when the rule no longer sees the baseline violation.
 
 Do not raise a cap as routine maintenance. If a cap must increase, the PR should explain why the cleanup cannot happen in that phase.
 

@@ -213,7 +213,7 @@ class CheckArchitectureTests(unittest.TestCase):
                 result.stdout,
             )
 
-    def test_valid_and_expired_exception_behavior(self) -> None:
+    def test_file_line_budget_exception_is_not_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = make_base_fixture(Path(tmp))
             write_lines(root / "apps/core/src/domain/oversized.ts", 701)
@@ -229,68 +229,49 @@ class CheckArchitectureTests(unittest.TestCase):
                     }
                 ],
             )
-            passing = run_architecture_check(root)
-            self.assertEqual(passing.returncode, 0, msg=passing.stdout + passing.stderr)
+            result = run_architecture_check(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("[Exception Hygiene]", result.stdout)
+            self.assertIn("unsupported rule `file_line_budget`", result.stdout)
+            self.assertIn("[File Size Budget]", result.stdout)
 
+    def test_permanent_exception_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_base_fixture(Path(tmp))
+            write_text(root / "apps/core/src/runtime/index.ts", "export * from './ok.js';\n")
             write_json(
                 root / ".codex/architecture-exceptions.json",
                 [
                     {
-                        "file": "apps/core/src/domain/oversized.ts",
-                        "rule": "file_line_budget",
+                        "file": "apps/core/src/runtime/index.ts",
+                        "rule": "wrapper_only_file",
                         "reason": "Fixture baseline",
                         "removeByPhase": "permanent",
-                        "max_lines": 701,
-                    }
-                ],
-            )
-            permanent = run_architecture_check(root)
-            self.assertEqual(permanent.returncode, 1)
-            self.assertIn("[Exception Hygiene]", permanent.stdout)
-            self.assertIn("removeByPhase must be time-bounded", permanent.stdout)
-
-    def test_excepted_file_growth_beyond_max_lines_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = make_base_fixture(Path(tmp))
-            write_lines(root / "apps/core/src/domain/oversized.ts", 702)
-            write_json(
-                root / ".codex/architecture-exceptions.json",
-                [
-                    {
-                        "file": "apps/core/src/domain/oversized.ts",
-                        "rule": "file_line_budget",
-                        "reason": "Fixture baseline",
-                        "removeByPhase": "test-phase",
-                        "max_lines": 701,
                     }
                 ],
             )
             result = run_architecture_check(root)
             self.assertEqual(result.returncode, 1)
-            self.assertIn("max_lines is 701", result.stdout)
+            self.assertIn("[Exception Hygiene]", result.stdout)
+            self.assertIn("removeByPhase must be time-bounded", result.stdout)
 
-    def test_stale_target_specific_exception_mentions_target_limit(self) -> None:
+    def test_supported_exception_can_cap_non_line_rule(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = make_base_fixture(Path(tmp))
-            write_lines(
-                root / "apps/core/src/infrastructure/postgres/schema/schema.ts",
-                900,
-            )
+            write_text(root / "apps/core/src/runtime/index.ts", "export * from './ok.js';\n")
             write_json(
                 root / ".codex/architecture-exceptions.json",
                 [
                     {
-                        "file": "apps/core/src/infrastructure/postgres/schema/schema.ts",
-                        "rule": "file_line_budget",
+                        "file": "apps/core/src/runtime/index.ts",
+                        "rule": "wrapper_only_file",
                         "reason": "Fixture baseline",
                         "removeByPhase": "test-phase",
-                        "max_lines": 901,
                     }
                 ],
             )
             result = run_architecture_check(root)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("within 900 lines", result.stdout)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
     def test_forbidden_import_edge_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -499,15 +480,14 @@ class CheckArchitectureTests(unittest.TestCase):
     def test_malformed_exception_missing_remove_by_phase_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = make_base_fixture(Path(tmp))
-            write_lines(root / "apps/core/src/domain/oversized.ts", 701)
+            write_text(root / "apps/core/src/runtime/index.ts", "export * from './ok.js';\n")
             write_json(
                 root / ".codex/architecture-exceptions.json",
                 [
                     {
-                        "file": "apps/core/src/domain/oversized.ts",
-                        "rule": "file_line_budget",
+                        "file": "apps/core/src/runtime/index.ts",
+                        "rule": "wrapper_only_file",
                         "reason": "Fixture baseline",
-                        "max_lines": 701,
                     }
                 ],
             )

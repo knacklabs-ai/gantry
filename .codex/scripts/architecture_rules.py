@@ -15,7 +15,6 @@ FILE_SIZE_LIMITS_BY_TARGET = {
 FILE_SIZE_RULE = "file_line_budget"
 REQUIRED_EXCEPTION_FIELDS = ("file", "rule", "reason", "removeByPhase")
 SUPPORTED_EXCEPTION_RULES = {
-    FILE_SIZE_RULE,
     "forbidden_import_by_layer",
     "forbidden_external_import_by_layer",
     "forbidden_provider_import",
@@ -451,34 +450,16 @@ def line_budget_for(rel: str, architecture_map: dict[str, Any] | None = None) ->
 def check_file_size_budget(
     production_files: list[Path],
     root: Path,
-    exceptions: ExceptionRegistry,
     architecture_map: dict[str, Any] | None = None,
 ) -> list[str]:
     issues: list[str] = []
-    over_budget: set[str] = set()
     for file_path in production_files:
         rel = file_path.relative_to(root).as_posix()
         line_count = count_lines(file_path)
         limit = line_budget_for(rel, architecture_map)
         if line_count <= limit:
             continue
-        over_budget.add(rel)
-        exception = exceptions.get(rel, FILE_SIZE_RULE)
-        if exception is None:
-            issues.append(f"{rel} has {line_count} lines (limit {limit}) and no exception.")
-            continue
-        max_lines = exception.max_lines
-        if max_lines is None:
-            issues.append(f"{rel} file size exception must include max_lines.")
-            continue
-        if line_count > max_lines:
-            issues.append(f"{rel} has {line_count} lines but exception max_lines is {max_lines}.")
-
-    for entry in sorted(exceptions.entries, key=lambda item: item.file):
-        if entry.rule != FILE_SIZE_RULE or entry.file in over_budget:
-            continue
-        limit = line_budget_for(entry.file, architecture_map)
-        issues.append(f"{entry.file} has an exception but is now within {limit} lines; remove it.")
+        issues.append(f"{rel} has {line_count} lines (limit {limit}).")
     return sorted(issues)
 
 
