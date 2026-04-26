@@ -16,5 +16,7 @@ Current decisions:
 
 - [0000 — Runtime Stack Decision](./0000-runtime-stack.md)
 - [0000 — Credential Broker Boundary](./0000-credential-broker-boundary.md)
+- [0001 — Agent Runtime Platform](./0001-agent-runtime-platform.md)
+- [0001 — Config Secret Source Boundary](./0001-config-secret-source-boundary.md)
 - [2026-04-17 — Settings And Runtime Truth](./2026-04-17-settings-runtime-truth.md)
 - [2026-04-21 — App-Wide Storage Backend Cutover](./2026-04-21-storage-backend-cutover.md)
