@@ -1,14 +1,15 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import {
+  DATA_DIR,
   getCredentialBrokerRuntimeConfig,
+  getHostCredentialEnv,
   type ClaudeAuthMode,
 } from '../config/index.js';
-import { envConfig } from '../config/env/index.js';
-import {
-  createAgentCredentialBroker,
-  getAgentCredentialInjection,
-} from '../application/credentials/agent-credential-service.js';
+import { validateExternalBrokerUrl } from '../config/credentials/broker-url-policy.js';
+import { getAgentCredentialInjection } from '../application/credentials/agent-credential-service.js';
+import { createAgentCredentialBroker } from '../adapters/credentials/agent-credential-broker-factory.js';
+import { createExternalAgentCredentialInjection } from '../adapters/llm/external-credential-injection.js';
 import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
 import { AGENT_CREDENTIAL_ENV_KEYS } from '../config/source-classification.js';
 
@@ -105,8 +106,12 @@ async function resolveOnecliMemoryEnv(): Promise<Record<string, string>> {
     const injection = await getAgentCredentialInjection({
       mode: brokerConfig.mode,
       agentIdentifier: 'memory',
-      externalBrokerUrl: brokerConfig.externalBrokerBaseUrl,
-      env: envConfig,
+      externalInjection: createExternalAgentCredentialInjection({
+        normalizedBaseUrl: resolveExternalCredentialBaseUrl(
+          brokerConfig.externalBrokerBaseUrl,
+        ),
+        hostCredentialEnv: getHostCredentialEnv(),
+      }),
     });
     return injection.env;
   }
@@ -121,16 +126,27 @@ async function resolveOnecliMemoryEnv(): Promise<Record<string, string>> {
   memoryCredentialBrokerPromise ??= createAgentCredentialBroker({
     mode: brokerConfig.mode,
     onecliUrl: brokerConfig.onecliUrl,
-    env: envConfig,
+    dataDir: DATA_DIR,
   });
   const injection = await getAgentCredentialInjection({
     mode: brokerConfig.mode,
     agentIdentifier: 'memory',
-    onecliUrl: brokerConfig.onecliUrl,
     broker: await memoryCredentialBrokerPromise,
-    env: envConfig,
   });
   return injection.env;
+}
+
+function resolveExternalCredentialBaseUrl(rawBrokerUrl: string): string {
+  const validation = validateExternalBrokerUrl(
+    rawBrokerUrl,
+    'credential_broker.external.base_url',
+  );
+  if (!validation.ok || !validation.normalizedUrl) {
+    throw new Error(
+      validation.error || 'credential_broker.external.base_url is invalid.',
+    );
+  }
+  return validation.normalizedUrl;
 }
 
 async function runWithOnecli(opts: ClaudeQueryOpts): Promise<string> {
