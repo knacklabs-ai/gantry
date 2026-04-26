@@ -1,7 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import { and, desc, eq, or, sql } from 'drizzle-orm';
-import { cosineDistance } from 'drizzle-orm/sql/functions';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { RUNTIME_MEMORY_ENABLED } from '../config/memory-state.js';
@@ -9,13 +8,24 @@ import { getRuntimeStorage } from '../infrastructure/postgres/runtime-store.js';
 import type { PostgresStorageService } from '../infrastructure/postgres/storage-service.js';
 import * as pgSchema from '../infrastructure/postgres/schema/schema.js';
 import { classifySensitiveMemoryMaterial } from './sensitive-material.js';
-import { createEmbeddingProvider } from './memory-embeddings.js';
 import { runAppMemoryDreamPass } from './app-memory-dreaming.js';
 import {
   normalizeSubject,
-  toLegacyScope,
   visibleSubjectFilters,
 } from './app-memory-boundaries.js';
+import {
+  type CanonicalMemoryItemRow,
+  clampConfidence,
+  encodeItemSource,
+  hashText,
+  itemMatchesSubjectBoundary,
+  normalizeKind,
+  parseItemSource,
+  parseItemValue,
+  parseJsonObject,
+  subjectIdFor,
+  toAppItem,
+} from './app-memory-canonical-codec.js';
 import type {
   AppMemoryItem,
   AppMemorySearchInput,
@@ -25,7 +35,6 @@ import type {
   DreamingTriggerInput,
   MemoryBoundaryContext,
   MemoryEvidenceRecord,
-  MemoryKind,
   MemorySubjectType,
   NormalizedMemorySubject,
   PatchAppMemoryInput,
@@ -33,85 +42,12 @@ import type {
 } from './memory-types.js';
 
 type Db = NodePgDatabase<typeof pgSchema>;
-type MemoryItemRow = typeof pgSchema.memoryItemsPostgres.$inferSelect;
+type MemoryItemRow = CanonicalMemoryItemRow;
 type MemoryEvidenceRow = typeof pgSchema.memoryEvidencePostgres.$inferSelect;
 type MemoryDreamRunRow = typeof pgSchema.memoryDreamRunsPostgres.$inferSelect;
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function hashText(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function parseJsonArray(value: string | null | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === 'string')
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseJsonObject(
-  value: string | null | undefined,
-): Record<string, unknown> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function clampConfidence(value: number | undefined, fallback = 0.7): number {
-  if (value === undefined || !Number.isFinite(value)) return fallback;
-  return Math.max(0, Math.min(1, value));
-}
-
-function normalizeKind(value: string | undefined): MemoryKind {
-  const allowed = new Set<MemoryKind>([
-    'preference',
-    'decision',
-    'fact',
-    'correction',
-    'constraint',
-    'project_fact',
-    'reference',
-  ]);
-  return allowed.has(value as MemoryKind) ? (value as MemoryKind) : 'fact';
-}
-
-function toAppItem(row: MemoryItemRow): AppMemoryItem {
-  return {
-    id: row.id,
-    appId: row.appId,
-    agentId: row.agentId,
-    subjectType: row.subjectType as MemorySubjectType,
-    subjectId: row.subjectId,
-    ...(row.userIdCanonical ? { userId: row.userIdCanonical } : {}),
-    ...(row.groupIdCanonical ? { groupId: row.groupIdCanonical } : {}),
-    ...(row.channelIdCanonical ? { channelId: row.channelIdCanonical } : {}),
-    ...(row.threadIdCanonical ? { threadId: row.threadIdCanonical } : {}),
-    kind: row.kind as MemoryKind,
-    key: row.key,
-    value: row.value,
-    why: row.why,
-    confidence: row.confidence,
-    isPinned: row.isPinned,
-    version: row.version,
-    source: row.source,
-    evidenceIds: parseJsonArray(row.evidenceIdsJson),
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
 }
 
 function toEvidence(row: MemoryEvidenceRow): MemoryEvidenceRecord {
@@ -149,40 +85,25 @@ function toRun(row: MemoryDreamRunRow): DreamingRunStatus {
   };
 }
 
-function itemMatchesSubjectBoundary(
-  row: Pick<
-    MemoryItemRow,
-    'appId' | 'agentId' | 'subjectType' | 'subjectId' | 'threadIdCanonical'
-  >,
-  context: NormalizedMemorySubject,
-): boolean {
-  if (row.appId !== context.appId) return false;
-  if (row.agentId !== context.agentId) return false;
-  if (row.subjectType !== context.subjectType) return false;
-  if (row.subjectId !== context.subjectId) return false;
-  if (context.threadId) {
-    return (
-      row.threadIdCanonical === null ||
-      row.threadIdCanonical === context.threadId
-    );
-  }
-  return row.threadIdCanonical === null;
-}
-
 function sqlThreadVisibilityFilter(
-  column: typeof pgSchema.memoryItemsPostgres.threadIdCanonical,
+  i: typeof pgSchema.memoryItemsPostgres,
   threadId: string | undefined,
 ) {
   return threadId
-    ? or(eq(column, threadId), sql`${column} IS NULL`)
-    : sql`${column} IS NULL`;
+    ? or(
+        sql`${i.sourceRefJson}::jsonb->'subject'->>'threadId' = ${threadId}`,
+        sql`NOT (${i.sourceRefJson}::jsonb->'subject' ? 'threadId')`,
+      )
+    : sql`NOT (${i.sourceRefJson}::jsonb->'subject' ? 'threadId')`;
 }
 
 function sqlThreadIdentityFilter(
-  column: typeof pgSchema.memoryItemsPostgres.threadIdCanonical,
+  i: typeof pgSchema.memoryItemsPostgres,
   threadId: string | undefined,
 ) {
-  return threadId ? eq(column, threadId) : sql`${column} IS NULL`;
+  return threadId
+    ? sql`${i.sourceRefJson}::jsonb->'subject'->>'threadId' = ${threadId}`
+    : sql`NOT (${i.sourceRefJson}::jsonb->'subject' ? 'threadId')`;
 }
 
 export class AppMemoryService {
@@ -293,63 +214,61 @@ export class AppMemoryService {
       evidenceIds.push(evidence.id);
     }
     const now = nowIso();
+    await this.ensureSubject(subject);
     const existing = await this.findActiveByKey(subject, input.key);
     const nextEvidenceIds = Array.from(
       new Set([
-        ...(existing ? parseJsonArray(existing.evidenceIdsJson) : []),
+        ...(existing ? parseItemSource(existing).evidenceIds : []),
         ...evidenceIds,
       ]),
     );
+    const existingSource = existing ? parseItemSource(existing) : null;
+    const nextVersion = existingSource ? existingSource.version + 1 : 1;
     const base = {
       appId: subject.appId,
-      agentId: subject.agentId,
-      subjectType: subject.subjectType,
-      subjectId: subject.subjectId,
-      userIdCanonical: subject.userId ?? null,
-      groupIdCanonical: subject.groupId ?? null,
-      channelIdCanonical: subject.channelId ?? null,
-      threadIdCanonical: subject.threadId ?? null,
-      scope: toLegacyScope(subject.subjectType),
-      groupFolder: subject.groupId || subject.agentId,
-      userId: subject.userId ?? null,
-      topicId: subject.threadId ?? null,
+      subjectId: subjectIdFor(subject),
       kind: normalizeKind(input.kind),
       key: input.key.trim(),
-      value: input.value.trim(),
-      why: input.why?.trim() || null,
-      loadBearing: subject.subjectType === 'common',
-      evidenceIdsJson: JSON.stringify(nextEvidenceIds),
-      source: input.source || 'sdk',
-      sourceFolder: 'postgres',
-      filePath: '',
-      contentHash: hashText(
-        `${subject.appId}:${subject.agentId}:${subject.subjectType}:${subject.subjectId}:${input.key}:${input.value}`,
-      ),
+      valueJson: JSON.stringify({
+        value: input.value.trim(),
+        why: input.why?.trim() || null,
+        contentHash: hashText(
+          `${subject.appId}:${subject.agentId}:${subject.subjectType}:${subject.subjectId}:${input.key}:${input.value}`,
+        ),
+      }),
+      sourceRefJson: encodeItemSource({
+        subject,
+        source: input.source || 'sdk',
+        evidenceIds: nextEvidenceIds,
+        isPinned: existingSource?.isPinned ?? false,
+        version: nextVersion,
+        retrievalCount: existingSource?.retrievalCount,
+        totalScore: existingSource?.totalScore,
+        maxScore: existingSource?.maxScore,
+      }),
       confidence: clampConfidence(input.confidence),
+      status: 'active',
+      lastObservedAt: now,
       updatedAt: now,
     };
-    if (existing) {
-      const [updated] = await this.db
-        .update(pgSchema.memoryItemsPostgres)
-        .set({
-          ...base,
-          version: existing.version + 1,
-        })
-        .where(eq(pgSchema.memoryItemsPostgres.id, existing.id))
-        .returning();
-      return toAppItem(updated!);
-    }
-    const [created] = await this.db
+    const [row] = await this.db
       .insert(pgSchema.memoryItemsPostgres)
       .values({
         id: `mem_${randomUUID().replace(/-/g, '')}`,
         ...base,
         createdAt: now,
-        isPinned: false,
+      })
+      .onConflictDoUpdate({
+        target: [
+          pgSchema.memoryItemsPostgres.subjectId,
+          pgSchema.memoryItemsPostgres.kind,
+          pgSchema.memoryItemsPostgres.key,
+        ],
+        targetWhere: sql`${pgSchema.memoryItemsPostgres.status} = 'active'`,
+        set: base,
       })
       .returning();
-    await this.ensureSubject(subject);
-    return toAppItem(created!);
+    return toAppItem(row!);
   }
 
   async list(input: AppMemorySearchInput = {}): Promise<AppMemoryItem[]> {
@@ -378,12 +297,13 @@ export class AppMemoryService {
     this.assertEnabled();
     const current = await this.getOwnedItem(input);
     if (!current) throw new Error('memory item not found');
-    if (current.subjectType === 'common' && !input.isAdminWrite) {
+    const currentSource = parseItemSource(current);
+    if (currentSource.subject.subjectType === 'common' && !input.isAdminWrite) {
       throw new Error('common memory patches require admin/service authority');
     }
     if (
       input.expectedVersion !== undefined &&
-      input.expectedVersion !== current.version
+      input.expectedVersion !== currentSource.version
     ) {
       throw new Error('stale memory patch');
     }
@@ -395,21 +315,40 @@ export class AppMemoryService {
           `sensitive material blocked in memory patch: ${reason}`,
         );
     }
+    const currentValue = parseItemValue(current);
     const [row] = await this.db
       .update(pgSchema.memoryItemsPostgres)
       .set({
         ...(input.key !== undefined ? { key: input.key.trim() } : {}),
-        ...(input.value !== undefined ? { value: input.value.trim() } : {}),
-        ...(input.why !== undefined ? { why: input.why?.trim() || null } : {}),
+        valueJson: JSON.stringify({
+          ...parseJsonObject(current.valueJson),
+          value:
+            input.value !== undefined ? input.value.trim() : currentValue.value,
+          why:
+            input.why !== undefined
+              ? input.why?.trim() || null
+              : currentValue.why,
+        }),
         ...(input.confidence !== undefined
           ? { confidence: clampConfidence(input.confidence) }
           : {}),
-        ...(input.isPinned !== undefined ? { isPinned: input.isPinned } : {}),
-        version: current.version + 1,
+        sourceRefJson: encodeItemSource({
+          ...currentSource,
+          isPinned: input.isPinned ?? currentSource.isPinned,
+          version: currentSource.version + 1,
+        }),
         updatedAt: nowIso(),
       })
-      .where(eq(pgSchema.memoryItemsPostgres.id, current.id))
+      .where(
+        and(
+          eq(pgSchema.memoryItemsPostgres.id, current.id),
+          input.expectedVersion === undefined
+            ? undefined
+            : sql`(${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb->>'version')::int = ${input.expectedVersion}`,
+        ),
+      )
       .returning();
+    if (!row) throw new Error('stale memory patch');
     return toAppItem(row!);
   }
 
@@ -417,12 +356,15 @@ export class AppMemoryService {
     this.assertEnabled();
     const current = await this.getOwnedItem(input);
     if (!current) return { deleted: false };
-    if (current.subjectType === 'common' && !input.isAdminWrite) {
+    if (
+      parseItemSource(current).subject.subjectType === 'common' &&
+      !input.isAdminWrite
+    ) {
       throw new Error('common memory deletes require admin/service authority');
     }
     await this.db
       .update(pgSchema.memoryItemsPostgres)
-      .set({ isDeleted: true, deletedAt: nowIso(), updatedAt: nowIso() })
+      .set({ status: 'deleted', updatedAt: nowIso() })
       .where(eq(pgSchema.memoryItemsPostgres.id, current.id));
     return { deleted: true };
   }
@@ -501,29 +443,16 @@ export class AppMemoryService {
     await this.db
       .insert(pgSchema.memorySubjectsPostgres)
       .values({
-        id: `msu_${hashText(`${subject.appId}:${subject.agentId}:${subject.subjectType}:${subject.subjectId}`).slice(0, 32)}`,
+        id: subjectIdFor(subject),
         appId: subject.appId,
-        agentId: subject.agentId,
-        subjectType: subject.subjectType,
-        subjectId: subject.subjectId,
-        externalId: subject.subjectId,
-        label: subject.subjectId,
-        metadataJson: JSON.stringify({
-          userId: subject.userId,
-          groupId: subject.groupId,
-          channelId: subject.channelId,
-          threadId: subject.threadId,
-        }),
+        kind: subject.subjectType,
+        externalRefJson: JSON.stringify({ subject }),
+        displayName: subject.subjectId,
         createdAt: now,
         updatedAt: now,
       })
       .onConflictDoUpdate({
-        target: [
-          pgSchema.memorySubjectsPostgres.appId,
-          pgSchema.memorySubjectsPostgres.agentId,
-          pgSchema.memorySubjectsPostgres.subjectType,
-          pgSchema.memorySubjectsPostgres.subjectId,
-        ],
+        target: pgSchema.memorySubjectsPostgres.id,
         set: { updatedAt: now },
       });
   }
@@ -537,13 +466,12 @@ export class AppMemoryService {
       .from(pgSchema.memoryItemsPostgres)
       .where(
         and(
-          eq(pgSchema.memoryItemsPostgres.isDeleted, false),
+          eq(pgSchema.memoryItemsPostgres.status, 'active'),
           eq(pgSchema.memoryItemsPostgres.appId, subject.appId),
-          eq(pgSchema.memoryItemsPostgres.agentId, subject.agentId),
-          eq(pgSchema.memoryItemsPostgres.subjectType, subject.subjectType),
-          eq(pgSchema.memoryItemsPostgres.subjectId, subject.subjectId),
+          eq(pgSchema.memoryItemsPostgres.subjectId, subjectIdFor(subject)),
+          sql`${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb @> ${JSON.stringify({ subject: { agentId: subject.agentId, subjectType: subject.subjectType, subjectId: subject.subjectId } })}::jsonb`,
           sqlThreadIdentityFilter(
-            pgSchema.memoryItemsPostgres.threadIdCanonical,
+            pgSchema.memoryItemsPostgres,
             subject.threadId,
           ),
           eq(pgSchema.memoryItemsPostgres.key, key.trim()),
@@ -563,9 +491,8 @@ export class AppMemoryService {
       .where(
         and(
           eq(pgSchema.memoryItemsPostgres.id, input.id),
-          eq(pgSchema.memoryItemsPostgres.isDeleted, false),
+          eq(pgSchema.memoryItemsPostgres.status, 'active'),
           eq(pgSchema.memoryItemsPostgres.appId, context.appId),
-          eq(pgSchema.memoryItemsPostgres.agentId, context.agentId),
         ),
       )
       .limit(1);
@@ -588,22 +515,17 @@ export class AppMemoryService {
     const context = normalizeSubject(input);
     const query = input.query?.trim() || '';
     const i = pgSchema.memoryItemsPostgres;
-    const document = sql`to_tsvector('english', ${i.key} || ' ' || ${i.value} || ' ' || COALESCE(${i.why}, ''))`;
+    const valueText = sql<string>`${i.valueJson}::jsonb->>'value'`;
+    const whyText = sql<string>`${i.valueJson}::jsonb->>'why'`;
+    const document = sql`to_tsvector('english', ${i.key} || ' ' || COALESCE(${valueText}, '') || ' ' || COALESCE(${whyText}, ''))`;
     const searchQuery = sql`plainto_tsquery('english', ${query})`;
     const lexicalScore = query
       ? sql<number>`ts_rank_cd(${document}, ${searchQuery})`
       : sql<number>`0`;
     const visible = visibleSubjectFilters(i, input);
-    const threadFilter = sqlThreadVisibilityFilter(
-      i.threadIdCanonical,
-      context.threadId,
-    );
-    const embedding = await this.maybeEmbedQuery(query);
-    const vectorScore =
-      embedding && ranked
-        ? sql<number>`CASE WHEN ${i.embedding} IS NULL THEN 0 ELSE 1 - ${cosineDistance(i.embedding, embedding)} END`
-        : sql<number>`0`;
-    const combinedScore = sql<number>`(${lexicalScore} * 0.65) + (${vectorScore} * 0.35) + (${i.confidence} * 0.10)`;
+    const threadFilter = sqlThreadVisibilityFilter(i, context.threadId);
+    const vectorScore = sql<number>`0`;
+    const combinedScore = sql<number>`(${lexicalScore} * 0.65) + (${i.confidence} * 0.10)`;
     const rows = await this.db
       .select({
         row: i,
@@ -614,23 +536,15 @@ export class AppMemoryService {
       .from(i)
       .where(
         and(
-          eq(i.isDeleted, false),
+          eq(i.status, 'active'),
           eq(i.appId, context.appId),
-          eq(i.agentId, context.agentId),
           visible.length === 0
             ? sql`false`
             : visible.length === 1
               ? visible[0]
               : or(...visible),
           threadFilter,
-          query
-            ? embedding
-              ? or(
-                  sql`${document} @@ ${searchQuery}`,
-                  sql`${i.embedding} IS NOT NULL`,
-                )
-              : sql`${document} @@ ${searchQuery}`
-            : undefined,
+          query ? sql`${document} @@ ${searchQuery}` : undefined,
         ),
       )
       .orderBy(ranked ? desc(combinedScore) : desc(i.updatedAt))
@@ -643,16 +557,9 @@ export class AppMemoryService {
       reasons: [
         row.lexicalScore ? 'lexical' : '',
         row.vectorScore ? 'semantic' : '',
-        row.row.isPinned ? 'pinned' : '',
+        parseItemSource(row.row).isPinned ? 'pinned' : '',
       ].filter(Boolean),
     }));
-  }
-
-  private async maybeEmbedQuery(query: string): Promise<number[] | null> {
-    if (!query) return null;
-    const embeddings = createEmbeddingProvider();
-    if (!embeddings.isEnabled()) return null;
-    return embeddings.embedOne(query);
   }
 
   private async recordRecallEvents(
@@ -675,17 +582,26 @@ export class AppMemoryService {
       })),
     );
     await Promise.all(
-      results.map((result) =>
-        this.db
+      results.map(async (result) => {
+        await this.db
           .update(pgSchema.memoryItemsPostgres)
           .set({
-            lastRetrievedAt: createdAt,
-            retrievalCount: sql`${pgSchema.memoryItemsPostgres.retrievalCount} + 1`,
-            totalScore: sql`${pgSchema.memoryItemsPostgres.totalScore} + ${result.score}`,
-            maxScore: sql`GREATEST(${pgSchema.memoryItemsPostgres.maxScore}, ${result.score})`,
+            sourceRefJson: sql<string>`jsonb_set(
+              jsonb_set(
+                jsonb_set(
+                  ${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb,
+                  '{retrievalCount}',
+                  to_jsonb(COALESCE((${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb->>'retrievalCount')::int, 0) + 1)
+                ),
+                '{totalScore}',
+                to_jsonb(COALESCE((${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb->>'totalScore')::double precision, 0) + ${result.score})
+              ),
+              '{maxScore}',
+              to_jsonb(GREATEST(COALESCE((${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb->>'maxScore')::double precision, 0), ${result.score}))
+            )::text`,
           })
-          .where(eq(pgSchema.memoryItemsPostgres.id, result.item.id)),
-      ),
+          .where(eq(pgSchema.memoryItemsPostgres.id, result.item.id));
+      }),
     );
   }
 }

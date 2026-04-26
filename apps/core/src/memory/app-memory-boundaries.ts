@@ -1,4 +1,4 @@
-import { and, eq, type SQL } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 
 import * as pgSchema from '../infrastructure/postgres/schema/schema.js';
 import type {
@@ -69,6 +69,16 @@ export function toLegacyScope(
   return 'group';
 }
 
+function subjectFilterSql(
+  i: typeof pgSchema.memoryItemsPostgres,
+  subject: Pick<
+    NormalizedMemorySubject,
+    'agentId' | 'subjectType' | 'subjectId'
+  >,
+): SQL {
+  return sql`${i.sourceRefJson}::jsonb @> ${JSON.stringify({ subject })}::jsonb`;
+}
+
 export function visibleSubjectFilters(
   i: typeof pgSchema.memoryItemsPostgres,
   input: Partial<MemoryBoundaryContext> & {
@@ -82,29 +92,48 @@ export function visibleSubjectFilters(
   );
   const filters: SQL[] = [];
   if (input.includeCommon !== false && allowed.has('common')) {
-    filters.push(and(eq(i.subjectType, 'common'), eq(i.subjectId, 'common'))!);
+    filters.push(
+      subjectFilterSql(i, {
+        agentId: context.agentId,
+        subjectType: 'common',
+        subjectId: 'common',
+      }),
+    );
   }
   if (context.userId && allowed.has('user')) {
     filters.push(
-      and(eq(i.subjectType, 'user'), eq(i.subjectId, context.userId))!,
+      subjectFilterSql(i, {
+        agentId: context.agentId,
+        subjectType: 'user',
+        subjectId: context.userId,
+      }),
     );
   }
   if (context.groupId && allowed.has('group')) {
     filters.push(
-      and(eq(i.subjectType, 'group'), eq(i.subjectId, context.groupId))!,
+      subjectFilterSql(i, {
+        agentId: context.agentId,
+        subjectType: 'group',
+        subjectId: context.groupId,
+      }),
     );
   }
   if (context.channelId && allowed.has('channel')) {
     filters.push(
-      and(eq(i.subjectType, 'channel'), eq(i.subjectId, context.channelId))!,
+      subjectFilterSql(i, {
+        agentId: context.agentId,
+        subjectType: 'channel',
+        subjectId: context.channelId,
+      }),
     );
   }
   if (filters.length === 0 && allowed.has(context.subjectType)) {
     filters.push(
-      and(
-        eq(i.subjectType, context.subjectType),
-        eq(i.subjectId, context.subjectId),
-      )!,
+      subjectFilterSql(i, {
+        agentId: context.agentId,
+        subjectType: context.subjectType,
+        subjectId: context.subjectId,
+      }),
     );
   }
   return filters;

@@ -5,6 +5,42 @@ import {
   AppMemoryService,
 } from '@core/memory/app-memory-service.js';
 
+function memoryRow(input: {
+  id?: string;
+  appId: string;
+  agentId: string;
+  subjectType: string;
+  subjectId: string;
+  threadId?: string;
+  version?: number;
+}) {
+  return {
+    id: input.id ?? 'mem_test',
+    appId: input.appId,
+    subjectId: `subject:${input.subjectId}`,
+    kind: 'fact',
+    key: 'key',
+    valueJson: JSON.stringify({ value: 'value', why: null }),
+    confidence: 0.7,
+    sourceRefJson: JSON.stringify({
+      subject: {
+        agentId: input.agentId,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        ...(input.threadId ? { threadId: input.threadId } : {}),
+      },
+      source: 'test',
+      evidenceIds: [],
+      isPinned: false,
+      version: input.version ?? 1,
+    }),
+    status: 'active',
+    lastObservedAt: null,
+    createdAt: '2026-04-26T00:00:00.000Z',
+    updatedAt: '2026-04-26T00:00:00.000Z',
+  };
+}
+
 describe('app-grade memory boundaries', () => {
   it('normalizes personal defaults without relying on storage providers', () => {
     const context = _testAppMemory.normalizeSubject({});
@@ -71,24 +107,36 @@ describe('app-grade memory boundaries', () => {
       channelId: 'sl:C123',
       threadId: 'thread-1',
     });
-    const row = {
+    const row = memoryRow({
       appId: 'app-a',
       agentId: 'agent-a',
       subjectType: 'channel',
       subjectId: 'sl:C123',
-      threadIdCanonical: 'thread-1',
-    };
+      threadId: 'thread-1',
+    });
 
     expect(_testAppMemory.itemMatchesSubjectBoundary(row, context)).toBe(true);
     expect(
       _testAppMemory.itemMatchesSubjectBoundary(
-        { ...row, subjectId: 'sl:C999' },
+        memoryRow({
+          appId: 'app-a',
+          agentId: 'agent-a',
+          subjectType: 'channel',
+          subjectId: 'sl:C999',
+          threadId: 'thread-1',
+        }),
         context,
       ),
     ).toBe(false);
     expect(
       _testAppMemory.itemMatchesSubjectBoundary(
-        { ...row, agentId: 'agent-b' },
+        memoryRow({
+          appId: 'app-a',
+          agentId: 'agent-b',
+          subjectType: 'channel',
+          subjectId: 'sl:C123',
+          threadId: 'thread-1',
+        }),
         context,
       ),
     ).toBe(false);
@@ -106,17 +154,19 @@ describe('app-grade memory boundaries', () => {
       agentId: 'agent-a',
       groupId: 'group-a',
     });
-    const broadRow = {
+    const broadRow = memoryRow({
       appId: 'app-a',
       agentId: 'agent-a',
       subjectType: 'group',
       subjectId: 'group-a',
-      threadIdCanonical: null,
-    };
-    const threadedRow = {
-      ...broadRow,
-      threadIdCanonical: 'thread-1',
-    };
+    });
+    const threadedRow = memoryRow({
+      appId: 'app-a',
+      agentId: 'agent-a',
+      subjectType: 'group',
+      subjectId: 'group-a',
+      threadId: 'thread-1',
+    });
 
     expect(
       _testAppMemory.itemMatchesSubjectBoundary(broadRow, threadedContext),
@@ -127,16 +177,14 @@ describe('app-grade memory boundaries', () => {
   });
 
   it('rejects non-admin patches to common memory', async () => {
-    const commonRow = {
+    const commonRow = memoryRow({
       id: 'mem_common',
       appId: 'app-a',
       agentId: 'agent-a',
       subjectType: 'common',
       subjectId: 'common',
-      threadIdCanonical: null,
       version: 1,
-      isDeleted: false,
-    };
+    });
     const db = {
       select: vi.fn(() => ({
         from: vi.fn(() => ({

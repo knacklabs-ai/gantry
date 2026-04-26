@@ -36,6 +36,20 @@ function parseJsonArray(value: string | null | undefined): string[] {
   }
 }
 
+function parseJsonObject(
+  value: string | null | undefined,
+): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 async function recordDreamDecision(input: {
   db: Db;
   runId: string;
@@ -129,7 +143,9 @@ export async function runAppMemoryDreamPass(input: {
   const items = await input.listItems();
   if (phase === 'rem' || phase === 'all') {
     for (const item of items) {
-      const value = item.row.value.toLowerCase();
+      const payload = parseJsonObject(item.row.valueJson);
+      const value =
+        typeof payload.value === 'string' ? payload.value.toLowerCase() : '';
       if (/\b(no longer|instead|actually|correction|wrong)\b/.test(value)) {
         await recordDreamDecision({
           db,
