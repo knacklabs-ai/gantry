@@ -7,12 +7,6 @@ vi.mock('@core/config/index.js', () => ({
   ASSISTANT_NAME: 'Andy',
   PERMISSION_APPROVAL_TIMEOUT_MS: 300000,
   getTelegramBotToken: () => process.env.TELEGRAM_BOT_TOKEN || '',
-  TELEGRAM_PERMISSION_APPROVER_IDS: new Set<string>([
-    '12345',
-    '222',
-    '333',
-    '444',
-  ]),
   TRIGGER_PATTERN: /^@Andy\b/i,
 }));
 
@@ -119,6 +113,48 @@ function createTestOpts(
         folder: 'test-group',
         trigger: '@Andy',
         added_at: '2024-01-01T00:00:00.000Z',
+      },
+    })),
+    runtimeSettings: vi.fn(() => ({
+      channels: {
+        telegram: {
+          enabled: true,
+          senderAllowlist: {
+            default: { allow: '*', mode: 'trigger' },
+            agents: {},
+            logDenied: true,
+          },
+          controlAllowlist: {
+            default: [],
+            agents: {
+              whatsapp_main: ['12345', '222', '333', '444'],
+            },
+          },
+        },
+      },
+      storage: {
+        postgres: { urlEnv: 'MYCLAW_DATABASE_URL', schema: 'myclaw' },
+      },
+      credentialBroker: {
+        onecli: {
+          postgres: { urlEnv: 'ONECLI_DATABASE_URL', schema: 'onecli' },
+        },
+      },
+      memory: {
+        enabled: true,
+        embeddings: {
+          enabled: false,
+          provider: 'disabled',
+          model: 'text-embedding-3-large',
+        },
+        dreaming: { enabled: true },
+        llm: {
+          models: {
+            extractor: 'claude-haiku-4-5-20251001',
+            dreaming: 'claude-sonnet-4-6',
+            consolidation: 'claude-sonnet-4-6',
+          },
+        },
       },
     })),
     ...overrides,
@@ -1908,6 +1944,43 @@ describe('TelegramChannel', () => {
       const decision = await decisionPromise;
       expect(decision.approved).toBe(true);
       expect(decision.decidedBy).toBe('Admin');
+    });
+
+    it('requires the source group control allowlist from settings.yaml', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: 'perm-settings',
+          sourceGroup: 'unlisted_source',
+          toolName: 'Write',
+        },
+      );
+      await flushPromises();
+
+      const deniedCtx = {
+        callbackQuery: { data: 'perm:approve:perm-settings' },
+        chat: { id: 100200300 },
+        from: { id: 12345, first_name: 'EnvOnly' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(deniedCtx);
+
+      expect(deniedCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Only approved admins can make this decision.',
+        show_alert: true,
+      });
+
+      await channel.disconnect();
+      await expect(decisionPromise).resolves.toEqual(
+        expect.objectContaining({
+          approved: false,
+          reason: 'Telegram channel disconnected',
+        }),
+      );
     });
 
     it('auto-denies approval request after timeout', async () => {

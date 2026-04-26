@@ -9,7 +9,6 @@ import { StreamFlavor, stream, streamApi } from '@grammyjs/stream';
 import {
   ASSISTANT_NAME,
   PERMISSION_APPROVAL_TIMEOUT_MS,
-  TELEGRAM_PERMISSION_APPROVER_IDS,
   TRIGGER_PATTERN,
 } from '../../config/index.js';
 import { resolveGroupFolderPath } from '../../platform/group-folder.js';
@@ -74,6 +73,7 @@ export type ActiveProgressState = {
 };
 export type PendingUserQuestionState = {
   requestId: string;
+  sourceGroup: string;
   questionIndex: number;
   questionHeader: string;
   questionText: string;

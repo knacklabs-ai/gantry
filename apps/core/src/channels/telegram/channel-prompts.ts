@@ -9,7 +9,6 @@ import { StreamFlavor, stream, streamApi } from '@grammyjs/stream';
 import {
   ASSISTANT_NAME,
   PERMISSION_APPROVAL_TIMEOUT_MS,
-  TELEGRAM_PERMISSION_APPROVER_IDS,
   TRIGGER_PATTERN,
 } from '../../config/index.js';
 import { resolveGroupFolderPath } from '../../platform/group-folder.js';
@@ -193,15 +192,23 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
   protected async isTelegramApproverAuthorized(
     chatId: string,
     userId: string,
+    sourceGroup: string,
   ): Promise<boolean> {
-    if (TELEGRAM_PERMISSION_APPROVER_IDS.size === 0) {
+    const allowlist =
+      this.opts.runtimeSettings?.().channels.telegram?.controlAllowlist;
+    const allowedIds =
+      allowlist?.agents[sourceGroup] !== undefined
+        ? allowlist.agents[sourceGroup]
+        : allowlist?.default || [];
+
+    if (allowedIds.length === 0) {
       logger.warn(
-        { chatId, userId },
-        'Permission decision denied: TELEGRAM_PERMISSION_APPROVER_IDS is empty',
+        { chatId, userId, sourceGroup },
+        'Permission decision denied: Telegram control_allowlist is empty',
       );
       return false;
     }
-    return TELEGRAM_PERMISSION_APPROVER_IDS.has(userId);
+    return allowedIds.includes(userId);
   }
 
   protected async resolvePermissionPrompt(

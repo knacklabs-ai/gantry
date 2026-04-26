@@ -75,10 +75,6 @@ export function persistOnboardingConfig(input: OnboardingConfigInput): void {
 
   upsertEnvFile(envPath, {
     TELEGRAM_BOT_TOKEN: input.telegramBotToken?.trim() || null,
-    TELEGRAM_PERMISSION_APPROVER_IDS:
-      input.primaryProvider === 'telegram'
-        ? input.telegramPermissionApproverIds?.trim() || null
-        : null,
     SLACK_BOT_TOKEN: input.slackBotToken?.trim() || null,
     SLACK_APP_TOKEN: input.slackAppToken?.trim() || null,
     SLACK_PERMISSION_APPROVER_IDS:

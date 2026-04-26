@@ -9,7 +9,6 @@ import { StreamFlavor, stream, streamApi } from '@grammyjs/stream';
 import {
   ASSISTANT_NAME,
   PERMISSION_APPROVAL_TIMEOUT_MS,
-  TELEGRAM_PERMISSION_APPROVER_IDS,
   TRIGGER_PATTERN,
 } from '../../config/index.js';
 import { resolveGroupFolderPath } from '../../platform/group-folder.js';
@@ -114,6 +113,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         const authorized = await this.isTelegramApproverAuthorized(
           pending.chatId,
           userId,
+          pending.sourceGroup,
         );
         if (!authorized) {
           await ctx.answerCallbackQuery({
@@ -220,6 +220,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
       const authorized = await this.isTelegramApproverAuthorized(
         pending.chatId,
         userId,
+        pending.sourceGroup,
       );
       if (!authorized) {
         await ctx.answerCallbackQuery({

@@ -29,6 +29,17 @@ type TelegramChatChoice =
   | { type: 'skip' }
   | { type: 'cancel' };
 
+function parseTelegramApproverIds(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[,\s]+/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  ];
+}
+
 async function promptTelegramToken(
   defaultValue: string,
 ): Promise<string | null> {
@@ -206,7 +217,7 @@ export async function runTelegramConnectCommand(
   const adminSenderId =
     chatChoice.type === 'selected' ? chatChoice.adminSenderId : undefined;
   const approverInput = await promptTelegramPermissionApproverIds(
-    adminSenderId || env.TELEGRAM_PERMISSION_APPROVER_IDS || '',
+    adminSenderId || '',
   );
   if (approverInput === null) {
     p.outro('Telegram connect cancelled.');
@@ -241,21 +252,24 @@ export async function runTelegramConnectCommand(
 
   upsertEnvFile(envFilePath(runtimeHome), {
     TELEGRAM_BOT_TOKEN: tokenInput,
-    TELEGRAM_PERMISSION_APPROVER_IDS: approverInput || null,
   });
   const settings = loadRuntimeSettings(runtimeHome);
   const provider = getChannelProvider('telegram');
   if (provider && settings.channels[provider.id]) {
     settings.channels[provider.id].enabled = true;
-    if (registeredFolder && adminSenderId) {
-      addControlSenderForAgent(
-        settings,
-        provider.id,
-        registeredFolder,
-        adminSenderId,
-      );
+    if (registeredFolder && (adminSenderId || approverInput)) {
+      for (const senderId of parseTelegramApproverIds(
+        approverInput || adminSenderId || '',
+      )) {
+        addControlSenderForAgent(
+          settings,
+          provider.id,
+          registeredFolder,
+          senderId,
+        );
+      }
       p.log.success(
-        `Enabled session/admin commands for Telegram sender ${adminSenderId}.`,
+        `Enabled session/admin commands and permission approvals for Telegram sender(s) ${parseTelegramApproverIds(approverInput || adminSenderId || '').join(', ')}.`,
       );
     } else if (registeredFolder) {
       p.log.info(

@@ -53,10 +53,6 @@ function parseIdAllowlist(raw: string | undefined): Set<string> {
       .filter((entry) => entry.length > 0),
   );
 }
-export const TELEGRAM_PERMISSION_APPROVER_IDS = parseIdAllowlist(
-  process.env.TELEGRAM_PERMISSION_APPROVER_IDS ||
-    envConfig.TELEGRAM_PERMISSION_APPROVER_IDS,
-);
 export const SLACK_PERMISSION_APPROVER_IDS = parseIdAllowlist(
   process.env.SLACK_PERMISSION_APPROVER_IDS ||
     envConfig.SLACK_PERMISSION_APPROVER_IDS,

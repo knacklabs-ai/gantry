@@ -39,6 +39,7 @@ export abstract class TelegramChannelState implements ChannelAdapter {
   protected pendingPermissionPrompts = new Map<
     string,
     {
+      sourceGroup: string;
       chatId: string;
       messageId: number;
       timer: ReturnType<typeof setTimeout>;

@@ -9,7 +9,6 @@ import { StreamFlavor, stream, streamApi } from '@grammyjs/stream';
 import {
   ASSISTANT_NAME,
   PERMISSION_APPROVAL_TIMEOUT_MS,
-  TELEGRAM_PERMISSION_APPROVER_IDS,
   TRIGGER_PATTERN,
 } from '../../config/index.js';
 import { resolveGroupFolderPath } from '../../platform/group-folder.js';
@@ -347,6 +346,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
           });
         }, timeoutMs);
         this.pendingPermissionPrompts.set(request.requestId, {
+          sourceGroup: request.sourceGroup,
           chatId,
           messageId: sent.message_id,
           timer,
@@ -431,6 +431,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
 
           this.pendingUserQuestions.set(pendingKey, {
             requestId: request.requestId,
+            sourceGroup: request.sourceGroup,
             questionIndex: i,
             questionHeader: question.header,
             questionText: question.question,
