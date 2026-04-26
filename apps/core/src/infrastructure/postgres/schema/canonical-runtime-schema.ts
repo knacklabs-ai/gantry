@@ -6,7 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
-  uniqueIndex,
+  unique,
 } from 'drizzle-orm/pg-core';
 
 import {
@@ -142,7 +142,7 @@ export const canonicalMemoryItemsPostgres = pgTable(
     }).notNull(),
   },
   (table) => ({
-    subjectKeyIdx: uniqueIndex('idx_memory_items_subject_kind_key').on(
+    subjectKey: unique('memory_items_subject_id_kind_key_unique').on(
       table.subjectId,
       table.kind,
       table.key,

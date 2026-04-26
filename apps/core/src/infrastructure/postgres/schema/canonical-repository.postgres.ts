@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { Agent, AgentConfigVersion } from '../../../domain/agent/agent.js';
@@ -21,20 +21,8 @@ import type {
   AgentSession,
   ProviderSession,
 } from '../../../domain/sessions/sessions.js';
+import { decode, encode } from './canonical-json.postgres.js';
 import * as pgSchema from './schema.js';
-
-function encode(value: unknown): string {
-  return JSON.stringify(value ?? null);
-}
-
-function decode<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 export class PostgresCanonicalRepository {
   constructor(private readonly db: NodePgDatabase<typeof pgSchema>) {}
@@ -388,19 +376,36 @@ export class PostgresCanonicalRepository {
         });
       await tx
         .delete(pgSchema.messagePartsPostgres)
-        .where(eq(pgSchema.messagePartsPostgres.messageId, message.id));
+        .where(
+          and(
+            eq(pgSchema.messagePartsPostgres.messageId, message.id),
+            sql`${pgSchema.messagePartsPostgres.ordinal} >= ${message.parts.length}`,
+          ),
+        );
       await tx
         .delete(pgSchema.messageAttachmentsPostgres)
         .where(eq(pgSchema.messageAttachmentsPostgres.messageId, message.id));
       if (message.parts.length > 0) {
-        await tx.insert(pgSchema.messagePartsPostgres).values(
-          message.parts.map((part, index) => ({
-            messageId: message.id,
-            ordinal: index,
-            kind: part.kind,
-            payloadJson: encode(part),
-          })),
-        );
+        await tx
+          .insert(pgSchema.messagePartsPostgres)
+          .values(
+            message.parts.map((part, index) => ({
+              messageId: message.id,
+              ordinal: index,
+              kind: part.kind,
+              payloadJson: encode(part),
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [
+              pgSchema.messagePartsPostgres.messageId,
+              pgSchema.messagePartsPostgres.ordinal,
+            ],
+            set: {
+              kind: sql`excluded.kind`,
+              payloadJson: sql`excluded.payload_json`,
+            },
+          });
       }
       if (message.attachments.length > 0) {
         await tx.insert(pgSchema.messageAttachmentsPostgres).values(

@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS agent_config_versions (
   workspace_snapshot_id text,
   runtime_limits_json text NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (agent_id, version)
+  CONSTRAINT agent_config_versions_agent_id_version_unique UNIQUE (agent_id, version)
 );
 
 CREATE TABLE IF NOT EXISTS channel_providers (
@@ -157,7 +157,8 @@ CREATE TABLE IF NOT EXISTS message_parts (
   message_id text NOT NULL REFERENCES canonical_messages(id) ON DELETE CASCADE,
   ordinal integer NOT NULL,
   kind text NOT NULL,
-  payload_json text NOT NULL
+  payload_json text NOT NULL,
+  CONSTRAINT message_parts_message_id_ordinal_unique UNIQUE (message_id, ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS message_attachments (
@@ -292,11 +293,11 @@ CREATE TABLE IF NOT EXISTS memory_items (
   last_observed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (subject_id, kind, key)
+  CONSTRAINT memory_items_subject_id_kind_key_unique UNIQUE (subject_id, kind, key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_items_subject_updated
-  ON memory_items(subject_id, status, updated_at DESC);
+  ON memory_items(subject_id, status, updated_at);
 
 CREATE TABLE IF NOT EXISTS tool_catalog_items (
   id text PRIMARY KEY,
@@ -438,6 +439,9 @@ CREATE TABLE IF NOT EXISTS control_http_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_control_http_sessions_external_ref
   ON control_http_sessions USING gin ((external_ref_json::jsonb));
+
+CREATE INDEX IF NOT EXISTS idx_control_http_sessions_chat_jid
+  ON control_http_sessions ((external_ref_json::jsonb->>'chatJid'));
 
 CREATE TABLE IF NOT EXISTS control_http_response_routes (
   session_id text NOT NULL REFERENCES control_http_sessions(session_id) ON DELETE CASCADE,

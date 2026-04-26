@@ -30,7 +30,10 @@ export function createStorageRuntime(
   config: ResolvedStorageConfig = resolveStorageConfigFromRuntime(),
 ): StorageRuntime {
   const service = createStorageService(config);
-  const ops: OpsRepository = new PostgresCanonicalOpsRepository(service.pool);
+  const ops: OpsRepository = new PostgresCanonicalOpsRepository(
+    service.pool,
+    service.db,
+  );
   const control = new PostgresControlPlaneRepository(service.pool);
   return {
     service,

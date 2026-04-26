@@ -39,21 +39,91 @@ describe('canonical domain cutover', () => {
   });
 
   it('lets canonical job updates change running job status and leases', () => {
-    const source = fs.readFileSync(
+    const opsRepo = fs.readFileSync(
       path.resolve(
         'apps/core/src/infrastructure/postgres/schema/canonical-ops-repo.postgres.ts',
       ),
       'utf8',
     );
-    const updateJobSource = source.slice(
-      source.indexOf('async updateJob'),
-      source.indexOf('async deleteJob'),
+    const jobService = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/infrastructure/postgres/services/canonical-job-ops-service.ts',
+      ),
+      'utf8',
+    );
+    const jobRepository = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/infrastructure/postgres/repositories/canonical-job-repository.postgres.ts',
+      ),
+      'utf8',
+    );
+    const updateJobSource = jobService.slice(
+      jobService.indexOf('async updateJob'),
+      jobService.indexOf('async deleteJob'),
     );
 
-    expect(updateJobSource).toContain('UPDATE jobs SET');
-    expect(updateJobSource).toContain('status = $7');
-    expect(updateJobSource).toContain('lease_run_id = $16');
-    expect(updateJobSource).toContain('lease_expires_at = $17');
-    expect(updateJobSource).not.toContain('this.upsertJob');
+    expect(opsRepo).toContain('this.jobs.updateJob');
+    expect(updateJobSource).toContain(
+      'const next = { ...current, ...updates }',
+    );
+    expect(jobRepository).toContain('.update(pgSchema.canonicalJobsPostgres)');
+    expect(jobRepository).toContain('leaseRunId: record.leaseRunId');
+    expect(jobRepository).toContain('leaseExpiresAt: record.leaseExpiresAt');
+    expect(updateJobSource).not.toContain("existing?.status === 'running'");
+  });
+
+  it('keeps canonical runtime tables single-defined in drizzle schema', () => {
+    const schema = fs.readFileSync(
+      path.resolve('apps/core/src/infrastructure/postgres/schema/schema.ts'),
+      'utf8',
+    );
+
+    expect(schema).not.toContain("pgTable('jobs'");
+    expect(schema).not.toContain("pgTable('memory_items'");
+    expect(schema).not.toContain("pgTable('memory_subjects'");
+    expect(schema).not.toContain("pgTable('sessions'");
+    expect(schema).not.toContain("pgTable('app_sessions'");
+  });
+
+  it('guards canonical message persistence and polling query shape', () => {
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/infrastructure/postgres/schema/migrations/0008_canonical_domain_schema_cutover.sql',
+      ),
+      'utf8',
+    );
+    const opsRepo = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/infrastructure/postgres/schema/canonical-ops-repo.postgres.ts',
+      ),
+      'utf8',
+    );
+    const messageRepository = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/infrastructure/postgres/repositories/canonical-message-repository.postgres.ts',
+      ),
+      'utf8',
+    );
+    const messageService = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/infrastructure/postgres/services/canonical-message-ops-service.ts',
+      ),
+      'utf8',
+    );
+
+    expect(migration).toContain(
+      'CONSTRAINT message_parts_message_id_ordinal_unique UNIQUE (message_id, ordinal)',
+    );
+    expect(opsRepo).toContain('this.messages.getNewMessages');
+    expect(opsRepo).toContain('this.messages.getMessagesSince');
+    expect(messageRepository).toContain('.onConflictDoUpdate({');
+    expect(messageRepository).toContain(
+      'pgSchema.messagePartsPostgres.ordinal',
+    );
+    expect(messageRepository).toContain('.leftJoinLateral(');
+    expect(messageRepository).toContain('.limit(input.limit ?? 200)');
+    expect(messageService).toContain('decodeGlobalMessageCursor');
+    expect(messageRepository).not.toContain('SELECT m.*, p.payload_json');
+    expect(messageRepository).not.toContain("AND p.kind = 'text'");
   });
 });

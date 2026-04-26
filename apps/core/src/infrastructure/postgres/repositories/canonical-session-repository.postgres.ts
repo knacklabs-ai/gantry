@@ -1,0 +1,110 @@
+import { and, eq, like, or, sql } from 'drizzle-orm';
+
+import * as pgSchema from '../schema/schema.js';
+import {
+  CANONICAL_APP_ID,
+  type CanonicalDb,
+  json,
+  PostgresCanonicalGraphRepository,
+} from './canonical-graph-repository.postgres.js';
+
+export class PostgresCanonicalSessionRepository {
+  private readonly graph: PostgresCanonicalGraphRepository;
+
+  constructor(private readonly db: CanonicalDb) {
+    this.graph = new PostgresCanonicalGraphRepository(db);
+  }
+
+  async getProviderSessionId(scopeKey: string): Promise<string | undefined> {
+    const s = pgSchema.agentSessionsPostgres;
+    const ps = pgSchema.providerSessionsPostgres;
+    const rows = await this.db
+      .select({ id: ps.id })
+      .from(ps)
+      .innerJoin(s, eq(s.id, ps.agentSessionId))
+      .where(eq(s.userId, scopeKey))
+      .orderBy(sql`${ps.updatedAt} DESC`)
+      .limit(1);
+    return rows[0]?.id;
+  }
+
+  async setProviderSession(input: {
+    groupFolder: string;
+    scopeKey: string;
+    sessionId: string;
+  }): Promise<void> {
+    const agentId = await this.graph.ensureAgent(
+      input.groupFolder,
+      input.groupFolder,
+    );
+    const agentSessionId = `agent-session:${input.scopeKey}`;
+    await this.db
+      .insert(pgSchema.agentSessionsPostgres)
+      .values({
+        id: agentSessionId,
+        appId: CANONICAL_APP_ID,
+        agentId,
+        userId: input.scopeKey,
+        status: 'active',
+      })
+      .onConflictDoUpdate({
+        target: pgSchema.agentSessionsPostgres.id,
+        set: { status: 'active', updatedAt: sql`now()` },
+      });
+    await this.db
+      .insert(pgSchema.providerSessionsPostgres)
+      .values({
+        id: input.sessionId,
+        appId: CANONICAL_APP_ID,
+        agentSessionId,
+        providerRefJson: json({ kind: 'runtime_session' }),
+        status: 'active',
+      })
+      .onConflictDoUpdate({
+        target: pgSchema.providerSessionsPostgres.id,
+        set: {
+          agentSessionId,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
+
+  async deleteScope(scopeKey: string): Promise<void> {
+    await this.db
+      .delete(pgSchema.agentSessionsPostgres)
+      .where(eq(pgSchema.agentSessionsPostgres.userId, scopeKey));
+  }
+
+  async deleteGroupFolder(groupFolder: string): Promise<void> {
+    await this.db
+      .delete(pgSchema.agentSessionsPostgres)
+      .where(
+        or(
+          eq(pgSchema.agentSessionsPostgres.userId, groupFolder),
+          like(
+            pgSchema.agentSessionsPostgres.userId,
+            `${groupFolder}::thread:%`,
+          ),
+        ),
+      );
+  }
+
+  async listSessions(): Promise<
+    Array<{ scopeKey: string; sessionId: string }>
+  > {
+    const s = pgSchema.agentSessionsPostgres;
+    const ps = pgSchema.providerSessionsPostgres;
+    const rows = await this.db
+      .select({ scopeKey: s.userId, sessionId: ps.id })
+      .from(ps)
+      .innerJoin(
+        s,
+        and(eq(s.id, ps.agentSessionId), sql`${s.userId} IS NOT NULL`),
+      );
+    return rows.flatMap((row) =>
+      row.scopeKey
+        ? [{ scopeKey: row.scopeKey, sessionId: row.sessionId }]
+        : [],
+    );
+  }
+}

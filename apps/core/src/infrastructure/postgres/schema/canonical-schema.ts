@@ -9,7 +9,7 @@ import {
   primaryKey,
   text,
   timestamp,
-  uniqueIndex,
+  unique,
   vector,
 } from 'drizzle-orm/pg-core';
 
@@ -88,7 +88,7 @@ export const agentConfigVersionsPostgres = pgTable(
       .defaultNow(),
   },
   (table) => ({
-    agentVersionIdx: uniqueIndex('idx_agent_config_versions_agent_version').on(
+    agentVersion: unique('agent_config_versions_agent_id_version_unique').on(
       table.agentId,
       table.version,
     ),
@@ -268,15 +268,24 @@ export const canonicalMessagesPostgres = pgTable(
   }),
 );
 
-export const messagePartsPostgres = pgTable('message_parts', {
-  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
-  messageId: text('message_id')
-    .notNull()
-    .references(() => canonicalMessagesPostgres.id, { onDelete: 'cascade' }),
-  ordinal: integer('ordinal').notNull(),
-  kind: text('kind').notNull(),
-  payloadJson: text('payload_json').notNull(),
-});
+export const messagePartsPostgres = pgTable(
+  'message_parts',
+  {
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => canonicalMessagesPostgres.id, { onDelete: 'cascade' }),
+    ordinal: integer('ordinal').notNull(),
+    kind: text('kind').notNull(),
+    payloadJson: text('payload_json').notNull(),
+  },
+  (table) => ({
+    messageOrdinal: unique('message_parts_message_id_ordinal_unique').on(
+      table.messageId,
+      table.ordinal,
+    ),
+  }),
+);
 
 export const messageAttachmentsPostgres = pgTable('message_attachments', {
   id: text('id').primaryKey(),

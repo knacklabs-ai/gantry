@@ -187,7 +187,10 @@ export async function ensureControlGraph(
     [configId, appId, agentId, DEFAULT_LLM_PROFILE_ID, now],
   );
   await db.query(
-    `UPDATE agents SET current_config_version_id = $2, updated_at = $3 WHERE id = $1`,
+    `UPDATE agents
+     SET current_config_version_id = COALESCE(current_config_version_id, $2),
+         updated_at = $3
+     WHERE id = $1`,
     [agentId, configId, now],
   );
   await db.query(
