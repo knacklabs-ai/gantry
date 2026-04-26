@@ -4,12 +4,19 @@ Store architecture-level design inputs for planning and decomposition here.
 
 For MyClaw, canonical architecture references are:
 
+- `docs/architecture/canonical-domain-model.md`
+- `docs/architecture/target-folder-structure.md`
+- `docs/architecture/personal-and-enterprise-modes.md`
 - `docs/architecture/runtime-components.md`
 - `docs/architecture/agent-runtime.md`
 - `docs/architecture/credential-management.md`
 - `docs/MEMORY.md`
 - `docs/REQUIREMENTS.md`
 - `docs/SPEC.md`
+
+When these references conflict, decision records under `docs/decisions/` take
+precedence. The canonical product architecture starts with
+`docs/decisions/0001-agent-runtime-platform.md`.
 
 When adding architecture docs for a feature run:
 
