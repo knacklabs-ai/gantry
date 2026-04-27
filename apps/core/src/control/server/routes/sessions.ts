@@ -112,7 +112,9 @@ export async function handleSessionRoutes(
       });
     sendJson(res, 200, {
       session,
-      providerSession,
+      providerSession: providerSession
+        ? { ...providerSession, artifactRef: undefined }
+        : null,
     });
     return true;
   }
@@ -136,10 +138,7 @@ export async function handleSessionRoutes(
       sendJson(res, 200, { messages: [] });
       return true;
     }
-    const limit = Math.min(
-      200,
-      Math.max(1, Number(url.searchParams.get('limit') || 100)),
-    );
+    const limit = parseListLimit(url.searchParams.get('limit'));
     const messages = await repositories.messages.listRecentMessages({
       conversationId: session.conversationId,
       threadId: session.threadId,
@@ -164,10 +163,7 @@ export async function handleSessionRoutes(
       sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
       return true;
     }
-    const limit = Math.min(
-      200,
-      Math.max(1, Number(url.searchParams.get('limit') || 100)),
-    );
+    const limit = parseListLimit(url.searchParams.get('limit'));
     const runs = await repositories.agentRuns.listAgentRunsBySession({
       sessionId: session.id,
       limit,
@@ -412,4 +408,11 @@ export async function handleSessionRoutes(
   }
 
   return false;
+}
+
+function parseListLimit(raw: string | null): number {
+  if (raw === null || raw === '') return 100;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 100;
+  return Math.min(200, Math.max(1, Math.floor(parsed)));
 }

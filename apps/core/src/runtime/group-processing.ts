@@ -190,10 +190,14 @@ export function createGroupProcessor(
             deps,
             ops: ops(),
             sessionId: staleSessionId,
+            providerSessionId: sessionResume?.providerSessionId,
+            agentSessionId: sessionResume?.agentSessionId,
             threadId: sessionThreadId,
             error: output.error,
           });
           if (sessionResume?.mode === 'provider_native') {
+            pendingSessionId = null;
+            pendingArtifactRef = null;
             const replayResume = await ops().getSessionResume?.({
               groupFolder: group.folder,
               chatJid,
@@ -592,8 +596,6 @@ export function createGroupProcessor(
           if (result.status === 'success' && !result.result) {
             await finalizeStreamingOutput('success-marker');
             deps.queue.notifyIdle(queueJid);
-            // End the runner loop after a completed query so typing/progress
-            // finalize promptly instead of waiting for idle timeout.
             deps.queue.closeStdin(queueJid);
           }
 

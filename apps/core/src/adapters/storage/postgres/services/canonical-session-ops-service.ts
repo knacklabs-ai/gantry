@@ -110,8 +110,13 @@ export class CanonicalSessionOpsService {
     };
   }
 
-  async expireProviderSession(sessionId: string): Promise<void> {
-    await this.repository.expireProviderSession(sessionId);
+  async expireProviderSession(input: {
+    providerSessionId?: string;
+    agentSessionId?: string;
+    provider?: string;
+    externalSessionId?: string;
+  }): Promise<void> {
+    await this.repository.expireProviderSession(input);
   }
 
   async checkpointSessionSummary(agentSessionId: string): Promise<void> {

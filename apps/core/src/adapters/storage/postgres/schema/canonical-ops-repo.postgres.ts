@@ -30,6 +30,13 @@ import { CanonicalJobOpsService } from '../services/canonical-job-ops-service.js
 import { CanonicalMessageOpsService } from '../services/canonical-message-ops-service.js';
 import { CanonicalSessionOpsService } from '../services/canonical-session-ops-service.js';
 
+interface SessionRuntimeOptions {
+  recentMessageLimit?: number;
+  summaryAfterMessages?: number;
+  summaryAfterRuns?: number;
+  maxHydratedContextChars?: number;
+}
+
 export class PostgresCanonicalOpsRepository implements OpsRepository {
   private readonly graph: PostgresCanonicalGraphRepository;
   private readonly messages: CanonicalMessageOpsService;
@@ -41,6 +48,7 @@ export class PostgresCanonicalOpsRepository implements OpsRepository {
   constructor(
     private readonly pool: Pool,
     private readonly db: CanonicalDb,
+    options: { sessions?: SessionRuntimeOptions } = {},
   ) {
     this.graph = new PostgresCanonicalGraphRepository(this.db);
     this.messages = new CanonicalMessageOpsService(
@@ -52,6 +60,7 @@ export class PostgresCanonicalOpsRepository implements OpsRepository {
     this.sessions = new CanonicalSessionOpsService(
       new PostgresCanonicalSessionRepository(this.db),
       createPostgresDomainRepositories(this.db),
+      options.sessions,
     );
     this.bindings = new CanonicalBindingOpsService(
       new PostgresCanonicalBindingRepository(this.db),
@@ -241,8 +250,13 @@ export class PostgresCanonicalOpsRepository implements OpsRepository {
     return this.sessions.getSessionResume(input);
   }
 
-  async expireProviderSession(sessionId: string): Promise<void> {
-    await this.sessions.expireProviderSession(sessionId);
+  async expireProviderSession(input: {
+    providerSessionId?: string;
+    agentSessionId?: string;
+    provider?: string;
+    externalSessionId?: string;
+  }): Promise<void> {
+    await this.sessions.expireProviderSession(input);
   }
 
   async checkpointSessionSummary(agentSessionId: string): Promise<void> {

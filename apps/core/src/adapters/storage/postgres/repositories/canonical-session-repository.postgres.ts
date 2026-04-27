@@ -13,7 +13,7 @@ function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
-const CLAUDE_PROVIDER = 'claude';
+const PROVIDER = 'anthropic';
 
 export class PostgresCanonicalSessionRepository {
   private readonly graph: PostgresCanonicalGraphRepository;
@@ -29,7 +29,13 @@ export class PostgresCanonicalSessionRepository {
       .select({ id: ps.externalSessionId })
       .from(ps)
       .innerJoin(s, eq(s.id, ps.agentSessionId))
-      .where(eq(s.userId, scopeKey))
+      .where(
+        and(
+          eq(s.userId, scopeKey),
+          eq(ps.provider, PROVIDER),
+          eq(ps.status, 'active'),
+        ),
+      )
       .orderBy(sql`${ps.updatedAt} DESC`)
       .limit(1);
     return rows[0]?.id;
@@ -54,7 +60,11 @@ export class PostgresCanonicalSessionRepository {
       })
       .from(ps)
       .where(
-        and(eq(ps.agentSessionId, agentSessionId), eq(ps.status, 'active')),
+        and(
+          eq(ps.agentSessionId, agentSessionId),
+          eq(ps.provider, PROVIDER),
+          eq(ps.status, 'active'),
+        ),
       )
       .orderBy(sql`${ps.updatedAt} DESC`, sql`${ps.id} DESC`)
       .limit(1);
@@ -172,13 +182,13 @@ export class PostgresCanonicalSessionRepository {
           id: input.sessionId,
           appId: CANONICAL_APP_ID,
           agentSessionId,
-          provider: CLAUDE_PROVIDER,
+          provider: PROVIDER,
           externalSessionId: input.sessionId,
-          artifactRef: input.artifactRef ?? input.sessionId,
+          artifactRef: input.artifactRef ?? null,
           providerRefJson: json({
             kind: 'provider_session',
-            value: `${CLAUDE_PROVIDER}:${input.sessionId}`,
-            provider: CLAUDE_PROVIDER,
+            value: `${PROVIDER}:${input.sessionId}`,
+            provider: PROVIDER,
             externalSessionId: input.sessionId,
             artifactRef: input.artifactRef ?? null,
           }),
@@ -192,13 +202,13 @@ export class PostgresCanonicalSessionRepository {
           target: pgSchema.providerSessionsPostgres.id,
           set: {
             agentSessionId,
-            provider: CLAUDE_PROVIDER,
+            provider: PROVIDER,
             externalSessionId: input.sessionId,
-            artifactRef: input.artifactRef ?? input.sessionId,
+            artifactRef: input.artifactRef ?? null,
             providerRefJson: json({
               kind: 'provider_session',
-              value: `${CLAUDE_PROVIDER}:${input.sessionId}`,
-              provider: CLAUDE_PROVIDER,
+              value: `${PROVIDER}:${input.sessionId}`,
+              provider: PROVIDER,
               externalSessionId: input.sessionId,
               artifactRef: input.artifactRef ?? null,
             }),
@@ -219,13 +229,41 @@ export class PostgresCanonicalSessionRepository {
     });
   }
 
-  async expireProviderSession(sessionId: string): Promise<void> {
+  async expireProviderSession(input: {
+    providerSessionId?: string;
+    agentSessionId?: string;
+    provider?: string;
+    externalSessionId?: string;
+  }): Promise<void> {
+    if (input.providerSessionId) {
+      await this.db
+        .update(pgSchema.providerSessionsPostgres)
+        .set({ status: 'expired', updatedAt: sql`now()` })
+        .where(
+          eq(pgSchema.providerSessionsPostgres.id, input.providerSessionId),
+        );
+      return;
+    }
+    if (!input.agentSessionId || !input.externalSessionId) return;
+    const predicates = [
+      eq(
+        pgSchema.providerSessionsPostgres.agentSessionId,
+        input.agentSessionId,
+      ),
+      eq(
+        pgSchema.providerSessionsPostgres.externalSessionId,
+        input.externalSessionId,
+      ),
+    ];
+    if (input.provider) {
+      predicates.push(
+        eq(pgSchema.providerSessionsPostgres.provider, input.provider),
+      );
+    }
     await this.db
       .update(pgSchema.providerSessionsPostgres)
       .set({ status: 'expired', updatedAt: sql`now()` })
-      .where(
-        eq(pgSchema.providerSessionsPostgres.externalSessionId, sessionId),
-      );
+      .where(and(...predicates));
   }
 
   async deleteScope(scopeKey: string): Promise<void> {

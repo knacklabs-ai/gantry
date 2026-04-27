@@ -58,8 +58,8 @@ export class HydrateAgentContextService {
       sessionId: session.id,
       limit: options.runLimit ?? 10,
     });
-    const block = truncate(
-      buildContextBlock({
+    const block = buildContextBlock(
+      {
         summary: latestSummary?.summary,
         messages: recentMessages,
         memories,
@@ -75,7 +75,7 @@ export class HydrateAgentContextService {
               ]
             : [],
         ),
-      }),
+      },
       options.maxChars ?? 12_000,
     );
     return {
@@ -143,18 +143,23 @@ function messageText(message: Message): string {
   return message.parts.map(messagePartText).join('\n').trim();
 }
 
-function buildContextBlock(input: {
-  summary?: string;
-  messages: Message[];
-  memories: MemoryItem[];
-  runs: Array<{
-    id: string;
-    status: string;
-    resultSummary?: string;
-    errorSummary?: string;
-  }>;
-}): string {
-  const payload = {
+function buildContextBlock(
+  input: {
+    summary?: string;
+    messages: Message[];
+    memories: MemoryItem[];
+    runs: Array<{
+      id: string;
+      status: string;
+      resultSummary?: string;
+      errorSummary?: string;
+    }>;
+  },
+  maxChars: number,
+): string {
+  const opening = '<myclaw_session_context trust="untrusted_data_only">';
+  const closing = '</myclaw_session_context>';
+  const rawPayload = {
     schema: 'myclaw.session_context.v1',
     trust: 'untrusted_data_only',
     use: 'continuity_evidence_only',
@@ -177,14 +182,56 @@ function buildContextBlock(input: {
     })),
     recent_runs: input.runs,
   };
-  return [
-    '<myclaw_session_context trust="untrusted_data_only">',
-    JSON.stringify(payload, null, 2),
-    '</myclaw_session_context>',
-  ].join('\n');
+  const wrapperChars = opening.length + closing.length + 2;
+  const payloadBudget = Math.max(0, maxChars - wrapperChars);
+  const json = serializeBoundedPayload(rawPayload, payloadBudget);
+  return [opening, json, closing].join('\n');
 }
 
-function truncate(value: string, maxChars: number): string {
-  if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 40)).trimEnd()}\n[truncated to session context budget]`;
+function sanitizeContextPayload(
+  value: unknown,
+  maxStringChars: number,
+): unknown {
+  if (typeof value === 'string') {
+    const safe = value
+      .replaceAll('</myclaw_session_context>', '<\\/myclaw_session_context>')
+      .replaceAll('<myclaw_session_context', '<myclaw_session_context_escaped');
+    if (safe.length <= maxStringChars) return safe;
+    return `${safe.slice(0, Math.max(0, maxStringChars - 38)).trimEnd()} [field truncated]`;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeContextPayload(item, maxStringChars));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [
+        key,
+        sanitizeContextPayload(nested, maxStringChars),
+      ]),
+    );
+  }
+  return value;
+}
+
+function serializeBoundedPayload(payload: unknown, maxChars: number): string {
+  for (const maxStringChars of [4000, 2000, 1000, 500, 250, 120]) {
+    const json = JSON.stringify(
+      sanitizeContextPayload(payload, maxStringChars),
+      null,
+      2,
+    );
+    if (json.length <= maxChars) return json;
+  }
+  const fallback = JSON.stringify(
+    {
+      schema: 'myclaw.session_context.v1',
+      trust: 'untrusted_data_only',
+      truncated: true,
+      note: 'Session context payload exceeded max_hydrated_context_chars.',
+    },
+    null,
+    2,
+  );
+  if (fallback.length <= maxChars) return fallback;
+  return '{}';
 }

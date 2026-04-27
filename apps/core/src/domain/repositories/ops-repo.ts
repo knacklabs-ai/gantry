@@ -136,7 +136,12 @@ export interface OpsRepository {
       artifactRef?: string | null;
     },
   ): Promise<void>;
-  expireProviderSession?(sessionId: string): Promise<void>;
+  expireProviderSession?(input: {
+    providerSessionId?: string;
+    agentSessionId?: string;
+    provider?: string;
+    externalSessionId?: string;
+  }): Promise<void>;
   checkpointSessionSummary?(agentSessionId: string): Promise<void>;
   createSessionAgentRun?(input: {
     agentSessionId: string;

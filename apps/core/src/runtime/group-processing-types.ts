@@ -59,6 +59,10 @@ export interface GroupProcessingDeps {
     groupFolder: string,
     threadId?: string | null,
   ) => Promise<void> | void;
+  clearCachedSession?: (
+    groupFolder: string,
+    threadId?: string | null,
+  ) => Promise<void> | void;
   getCursor: (chatJid: string) => Promise<string> | string;
   setCursor: (chatJid: string, timestamp: string) => void;
   saveState: () => Promise<void> | void;

@@ -31,16 +31,9 @@ export function resolveAgentSessionKey(input: AgentSessionKeyInput): string {
 export function deterministicAgentSessionId(
   input: AgentSessionKeyInput,
 ): AgentSessionId {
-  return `agent-session:${stableDigest(resolveAgentSessionKey(input))}` as AgentSessionId;
+  return `agent-session-key:${stableEncode(resolveAgentSessionKey(input))}` as AgentSessionId;
 }
 
-function stableDigest(value: string): string {
-  let first = 0x811c9dc5;
-  let second = 0x85ebca6b;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    first = Math.imul(first ^ code, 0x01000193) >>> 0;
-    second = Math.imul(second ^ code, 0xc2b2ae35) >>> 0;
-  }
-  return `${first.toString(36)}${second.toString(36)}`;
+function stableEncode(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64url');
 }

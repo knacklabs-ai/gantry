@@ -333,6 +333,9 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
       await ops().deleteSession(groupFolder, threadId);
       delete sessions[makeSessionScopeKey(groupFolder, threadId)];
     },
+    clearCachedSession: (groupFolder, threadId) => {
+      delete sessions[makeSessionScopeKey(groupFolder, threadId)];
+    },
     getCursor: getOrRecoverCursor,
     setCursor: (chatJid, timestamp) => {
       lastAgentTimestamp[chatJid] = timestamp;

@@ -10,6 +10,8 @@ export async function expireStaleRuntimeSession(input: {
   deps: GroupProcessingDeps;
   ops: OpsRepository;
   sessionId: string;
+  providerSessionId?: string;
+  agentSessionId?: string;
   threadId: string | null;
   error?: string;
 }): Promise<void> {
@@ -19,7 +21,7 @@ export async function expireStaleRuntimeSession(input: {
       staleSessionId: input.sessionId,
       error: input.error,
     },
-    'Stale session detected — clearing for next retry',
+    'Stale provider session detected; expiring provider resume metadata',
   );
   archiveSessionTranscript({
     groupFolder: input.group.folder,
@@ -29,8 +31,12 @@ export async function expireStaleRuntimeSession(input: {
     errorSummary: input.error,
     writePlaceholderOnMissing: true,
   });
-  await input.ops.expireProviderSession?.(input.sessionId);
-  await input.deps.clearSession(input.group.folder, input.threadId);
+  await input.ops.expireProviderSession?.({
+    providerSessionId: input.providerSessionId,
+    agentSessionId: input.agentSessionId,
+    externalSessionId: input.sessionId,
+  });
+  await input.deps.clearCachedSession?.(input.group.folder, input.threadId);
 }
 
 export function isStaleRuntimeSessionError(input: {
@@ -99,6 +105,13 @@ export async function completeSuccessfulRuntimeSessionRun(input: {
       artifactRef,
     });
   }
+  if (input.runId) {
+    await input.ops.completeSessionAgentRun?.({
+      runId: input.runId,
+      status: 'completed',
+      resultSummary: input.result ?? null,
+    });
+  }
   if (input.agentSessionId) {
     void input.ops
       .checkpointSessionSummary?.(input.agentSessionId)
@@ -108,13 +121,6 @@ export async function completeSuccessfulRuntimeSessionRun(input: {
           'Failed to checkpoint session summary',
         );
       });
-  }
-  if (input.runId) {
-    await input.ops.completeSessionAgentRun?.({
-      runId: input.runId,
-      status: 'completed',
-      resultSummary: input.result ?? null,
-    });
   }
 }
 

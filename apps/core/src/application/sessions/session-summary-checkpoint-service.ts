@@ -38,10 +38,17 @@ export class SessionSummaryCheckpointService {
       after: latest?.toMessageId,
       limit: this.options.summaryAfterMessages,
     });
-    const runs = await this.runs.listAgentRunsBySession({
+    const recentRuns = await this.runs.listAgentRunsBySession({
       sessionId: session.id,
       limit: this.options.summaryAfterRuns,
     });
+    const previousRunIndex = latest?.toRunId
+      ? recentRuns.findIndex((run) => run.id === latest.toRunId)
+      : -1;
+    const runs =
+      previousRunIndex >= 0
+        ? recentRuns.slice(0, previousRunIndex)
+        : recentRuns;
     if (
       messages.length < this.options.summaryAfterMessages &&
       runs.length < this.options.summaryAfterRuns
