@@ -4,6 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  AgentChannelBindingListResponseSchema,
+  AgentChannelBindingResponseSchema,
+  ChannelInstallationListResponseSchema,
+  ChannelInstallationResponseSchema,
+  ChannelProviderListResponseSchema,
+  ConversationListResponseSchema,
+  ConversationResponseSchema,
+  ConversationThreadListResponseSchema,
+  MessageListResponseSchema,
+} from '@myclaw/contracts';
 
 vi.mock('@core/config/index.js', () => ({
   MYCLAW_HOME: '/tmp/myclaw-control-test-home',
@@ -766,6 +777,332 @@ describe('control server runtime hardening', () => {
       await handle.close();
     }
   });
+
+  it('returns contract-valid channel onboarding responses', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'channel-all-token',
+        scopes: [
+          'channels:read',
+          'channels:admin',
+          'conversations:read',
+          'messages:read',
+          'agents:admin',
+        ],
+        appId: 'app-one',
+      },
+    ]);
+    const iso = new Date(0).toISOString();
+    const installation = {
+      id: 'installation-1',
+      appId: 'app-one',
+      providerId: 'app',
+      label: 'App',
+      status: 'active',
+      config: { workspace: 'local' },
+      runtimeSecretRefs: [],
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    const disabledInstallation = {
+      ...installation,
+      status: 'disabled',
+      updatedAt: '2026-04-27T00:00:01.000Z',
+    };
+    const conversation = {
+      id: 'conversation-1',
+      appId: 'app-one',
+      channelInstallationId: 'installation-1',
+      externalRef: { kind: 'conversation', value: 'app-conv-1' },
+      kind: 'channel',
+      title: 'engineering',
+      status: 'active',
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    const thread = {
+      id: 'thread-1',
+      appId: 'app-one',
+      conversationId: 'conversation-1',
+      externalRef: { kind: 'conversation_thread', value: 'thread-1' },
+      title: 'deploy',
+      status: 'active',
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    const message = {
+      id: 'message-1',
+      appId: 'app-one',
+      conversationId: 'conversation-1',
+      threadId: 'thread-1',
+      direction: 'inbound',
+      senderDisplayName: 'Ravi',
+      trust: 'trusted',
+      createdAt: iso,
+      parts: [{ kind: 'text', text: 'hello' }],
+      attachments: [],
+    };
+    const disabledBinding = {
+      id: 'binding-1',
+      appId: 'app-one',
+      agentId: 'agent-1',
+      channelInstallationId: 'installation-1',
+      conversationId: 'conversation-1',
+      displayName: 'engineering',
+      status: 'disabled',
+      triggerMode: 'mention',
+      requiresTrigger: true,
+      isAdminBinding: false,
+      memoryScope: 'conversation',
+      memorySubject: {
+        kind: 'conversation',
+        appId: 'app-one',
+        conversationId: 'conversation-1',
+      },
+      permissionPolicyIds: ['policy-1'],
+      createdAt: iso,
+      updatedAt: iso,
+    };
+
+    domainRepositories.channelInstallations.listChannelInstallations.mockResolvedValue(
+      [installation],
+    );
+    domainRepositories.channelInstallations.getChannelInstallation.mockResolvedValue(
+      installation,
+    );
+    domainRepositories.channelInstallations.disableChannelInstallation.mockResolvedValue(
+      disabledInstallation,
+    );
+    domainRepositories.conversations.listConversations.mockResolvedValue([
+      conversation,
+    ]);
+    domainRepositories.conversations.getConversation.mockResolvedValue(
+      conversation,
+    );
+    domainRepositories.conversations.getThread.mockResolvedValue(thread);
+    domainRepositories.conversations.listThreads.mockResolvedValue([thread]);
+    domainRepositories.messages.listMessages.mockResolvedValue([message]);
+    domainRepositories.channelInstallations.listAgentChannelBindings.mockResolvedValue(
+      [disabledBinding],
+    );
+    domainRepositories.channelInstallations.getAgentChannelBinding.mockResolvedValue(
+      disabledBinding,
+    );
+    domainRepositories.channelInstallations.disableAgentChannelBinding.mockResolvedValue(
+      disabledBinding,
+    );
+
+    const handle = startControlServer({
+      app: {
+        registerGroup: vi.fn(),
+        queue: { enqueueMessageCheck: vi.fn() },
+      } as any,
+    });
+
+    async function jsonFor(
+      path: string,
+      init?: RequestInit,
+      expectedStatus = 200,
+    ) {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}${path}`,
+        'channel-all-token',
+        init,
+      );
+      expect(response.status).toBe(expectedStatus);
+      return await response.json();
+    }
+
+    try {
+      expect(
+        ChannelProviderListResponseSchema.parse(
+          await jsonFor('/v1/channel-providers'),
+        ).providers.map((provider) => provider.id),
+      ).toEqual(expect.arrayContaining(['app', 'teams', 'whatsapp']));
+
+      ChannelInstallationListResponseSchema.parse(
+        await jsonFor('/v1/channel-installations'),
+      );
+      ChannelInstallationResponseSchema.parse(
+        await jsonFor(
+          '/v1/channel-installations',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              appId: 'app-one',
+              providerId: 'app',
+              label: 'App',
+              config: { workspace: 'local' },
+            }),
+          },
+          201,
+        ),
+      );
+      ChannelInstallationResponseSchema.parse(
+        await jsonFor('/v1/channel-installations/installation-1'),
+      );
+      ChannelInstallationResponseSchema.parse(
+        await jsonFor('/v1/channel-installations/installation-1', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ label: 'App workspace' }),
+        }),
+      );
+      expect(
+        ChannelInstallationResponseSchema.parse(
+          (
+            await jsonFor('/v1/channel-installations/installation-1', {
+              method: 'DELETE',
+            })
+          ).installation,
+        ).status,
+      ).toBe('disabled');
+      ConversationListResponseSchema.parse(
+        await jsonFor('/v1/channel-installations/installation-1/discover', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ limit: 10 }),
+        }),
+      );
+
+      ConversationListResponseSchema.parse(
+        await jsonFor('/v1/conversations?channelInstallationId=installation-1'),
+      );
+      ConversationResponseSchema.parse(
+        await jsonFor('/v1/conversations/conversation-1'),
+      );
+      ConversationThreadListResponseSchema.parse(
+        await jsonFor('/v1/conversations/conversation-1/threads'),
+      );
+      MessageListResponseSchema.parse(
+        await jsonFor(
+          '/v1/conversations/conversation-1/messages?threadId=thread-1&after=message-0&limit=10',
+        ),
+      );
+      expect(domainRepositories.messages.listMessages).toHaveBeenCalledWith({
+        conversationId: 'conversation-1',
+        threadId: 'thread-1',
+        after: 'message-0',
+        limit: 10,
+      });
+
+      AgentChannelBindingListResponseSchema.parse(
+        await jsonFor('/v1/agents/agent-1/channel-bindings'),
+      );
+      expect(
+        AgentChannelBindingResponseSchema.parse(
+          await jsonFor('/v1/agents/agent-1/channel-bindings/conversation-1', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              triggerMode: 'mention',
+              memoryScope: 'conversation',
+            }),
+          }),
+        ).status,
+      ).toBe('active');
+      expect(
+        AgentChannelBindingResponseSchema.parse(
+          await jsonFor('/v1/agents/agent-1/channel-bindings/conversation-1', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ displayName: 'Engineering Bot' }),
+          }),
+        ).status,
+      ).toBe('disabled');
+      expect(
+        AgentChannelBindingResponseSchema.parse(
+          (
+            await jsonFor(
+              '/v1/agents/agent-1/channel-bindings/conversation-1',
+              {
+                method: 'DELETE',
+              },
+            )
+          ).binding,
+        ).permissionPolicyIds,
+      ).toEqual(['policy-1']);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it.each([
+    {
+      name: 'channels:admin',
+      path: '/v1/channel-installations',
+      tokenScopes: ['channels:read'],
+      init: {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          appId: 'app-one',
+          providerId: 'app',
+          label: 'App',
+        }),
+      },
+    },
+    {
+      name: 'conversations:read',
+      path: '/v1/conversations',
+      tokenScopes: ['channels:read'],
+    },
+    {
+      name: 'messages:read',
+      path: '/v1/conversations/conversation-1/messages',
+      tokenScopes: ['conversations:read'],
+    },
+    {
+      name: 'channels:read for binding list',
+      path: '/v1/agents/agent-1/channel-bindings',
+      tokenScopes: ['agents:admin'],
+    },
+    {
+      name: 'agents:admin',
+      path: '/v1/agents/agent-1/channel-bindings/conversation-1',
+      tokenScopes: ['channels:read'],
+      init: {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ triggerMode: 'mention' }),
+      },
+    },
+  ])(
+    'rejects route group without $name scope',
+    async ({ path, tokenScopes, init }) => {
+      const port = await reservePort();
+      process.env.MYCLAW_CONTROL_PORT = String(port);
+      process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+        {
+          kid: 'k',
+          token: 'insufficient-scope-token',
+          scopes: tokenScopes,
+          appId: 'app-one',
+        },
+      ]);
+      const handle = startControlServer({
+        app: {
+          registerGroup: vi.fn(),
+          queue: { enqueueMessageCheck: vi.fn() },
+        } as any,
+      });
+
+      try {
+        const response = await requestWithRetry(
+          `http://127.0.0.1:${port}${path}`,
+          'insufficient-scope-token',
+          init,
+        );
+        expect(response.status).toBe(401);
+      } finally {
+        await handle.close();
+      }
+    },
+  );
 
   it('lists conversation messages with messages:read scope', async () => {
     const port = await reservePort();

@@ -478,6 +478,7 @@ export class AgentChannelBindingControlService {
     }
     const triggerMode =
       input.patch.triggerMode ?? existing?.triggerMode ?? 'always';
+    const triggerModeWasPatched = input.patch.triggerMode !== undefined;
     const memoryScope =
       input.patch.memoryScope ?? existing?.memoryScope ?? 'conversation';
     const now = this.deps.clock.now();
@@ -499,7 +500,10 @@ export class AgentChannelBindingControlService {
         existing?.displayName ??
         conversation.title ??
         conversation.id,
-      status: input.patch.status ?? 'active',
+      status:
+        input.patch.status ??
+        (input.requireExisting ? existing?.status : undefined) ??
+        'active',
       triggerMode,
       triggerPattern:
         input.patch.triggerPattern === null
@@ -507,6 +511,9 @@ export class AgentChannelBindingControlService {
           : (input.patch.triggerPattern ?? existing?.triggerPattern),
       requiresTrigger:
         input.patch.requiresTrigger ??
+        (triggerModeWasPatched
+          ? triggerModeToRequiresTrigger(triggerMode)
+          : existing?.requiresTrigger) ??
         triggerModeToRequiresTrigger(triggerMode),
       isAdminBinding:
         input.patch.isAdminBinding ?? existing?.isAdminBinding ?? false,

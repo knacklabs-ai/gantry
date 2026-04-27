@@ -65,6 +65,7 @@ function memorySubjectToContract(subject: MemorySubject | undefined) {
 export function memorySubjectFromContract(
   appId: AppId,
   raw: { type: string; id: string } | undefined,
+  conversationId?: ConversationId,
 ): MemorySubject | undefined {
   if (!raw) return undefined;
   switch (raw.type) {
@@ -81,10 +82,16 @@ export function memorySubjectFromContract(
         conversationId: raw.id as ConversationId,
       };
     case 'thread':
+      if (!conversationId) {
+        throw new ApplicationError(
+          'INVALID_REQUEST',
+          'thread memorySubject requires a conversation context',
+        );
+      }
       return {
         kind: 'thread',
         appId,
-        conversationId: '' as ConversationId,
+        conversationId,
         threadId: raw.id as ConversationThreadId,
       };
     default:
@@ -243,6 +250,7 @@ export function bindingToResponse(binding: AgentChannelBinding) {
 
 export function bindingPatchFromParsed(
   appId: AppId,
+  conversationId: ConversationId,
   data: {
     channelInstallationId?: string;
     threadId?: string;
@@ -281,7 +289,13 @@ export function bindingPatchFromParsed(
       : {}),
     ...(data.memoryScope ? { memoryScope: data.memoryScope } : {}),
     ...(data.memorySubject
-      ? { memorySubject: memorySubjectFromContract(appId, data.memorySubject) }
+      ? {
+          memorySubject: memorySubjectFromContract(
+            appId,
+            data.memorySubject,
+            conversationId,
+          ),
+        }
       : {}),
     ...(data.workspaceSnapshotId !== undefined
       ? {

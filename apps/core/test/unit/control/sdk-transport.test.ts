@@ -94,7 +94,7 @@ describe('@myclaw/sdk transport', () => {
     ).resolves.toEqual({ sessionId: 'session-1' });
   });
 
-  it('builds channel onboarding and binding requests', async () => {
+  it('builds every channel onboarding and binding request', async () => {
     const seen: Array<{ method?: string; url?: string; body: unknown }> = [];
     const port = await listen((req, res) => {
       const chunks: Buffer[] = [];
@@ -122,18 +122,39 @@ describe('@myclaw/sdk transport', () => {
       label: 'Slack',
       runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
     });
+    await client.channels.installations.list();
+    await client.channels.installations.get('installation/1');
+    await client.channels.installations.update('installation/1', {
+      label: 'Slack workspace',
+      enabled: false,
+      runtimeSecretRefs: ['SLACK_BOT_TOKEN_V2'],
+    });
+    await client.channels.installations.delete('installation/1');
     await client.channels.installations.discover('installation/1', {
       limit: 10,
     });
+    await client.channels.conversations.list({
+      channelInstallationId: 'installation/1',
+    });
+    await client.channels.conversations.get('conversation/1');
     await client.channels.conversations.messages('conversation/1', {
       threadId: 'thread/1',
+      after: 'message/0',
       limit: 5,
     });
+    await client.agents.bindings.list('agent/1');
     await client.agents.bindings.enable('agent/1', 'conversation/1', {
       triggerMode: 'mention',
       memoryScope: 'conversation',
     });
-    await client.agents.bindings.disable('agent/1', 'conversation/1');
+    await client.agents.bindings.update('agent/1', 'conversation/1', {
+      triggerMode: 'keyword',
+      triggerPattern: 'deploy',
+      permissionPolicyIds: ['policy/1'],
+    });
+    await client.agents.bindings.disable('agent/1', 'conversation/1', {
+      threadId: 'thread/1',
+    });
 
     expect(seen).toEqual([
       { method: 'GET', url: '/v1/channel-providers', body: null },
@@ -147,6 +168,26 @@ describe('@myclaw/sdk transport', () => {
           runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
         },
       },
+      { method: 'GET', url: '/v1/channel-installations', body: null },
+      {
+        method: 'GET',
+        url: '/v1/channel-installations/installation%2F1',
+        body: null,
+      },
+      {
+        method: 'PATCH',
+        url: '/v1/channel-installations/installation%2F1',
+        body: {
+          label: 'Slack workspace',
+          enabled: false,
+          runtimeSecretRefs: ['SLACK_BOT_TOKEN_V2'],
+        },
+      },
+      {
+        method: 'DELETE',
+        url: '/v1/channel-installations/installation%2F1',
+        body: null,
+      },
       {
         method: 'POST',
         url: '/v1/channel-installations/installation%2F1/discover',
@@ -154,7 +195,22 @@ describe('@myclaw/sdk transport', () => {
       },
       {
         method: 'GET',
-        url: '/v1/conversations/conversation%2F1/messages?threadId=thread%2F1&limit=5',
+        url: '/v1/conversations?channelInstallationId=installation%2F1',
+        body: null,
+      },
+      {
+        method: 'GET',
+        url: '/v1/conversations/conversation%2F1',
+        body: null,
+      },
+      {
+        method: 'GET',
+        url: '/v1/conversations/conversation%2F1/messages?threadId=thread%2F1&after=message%2F0&limit=5',
+        body: null,
+      },
+      {
+        method: 'GET',
+        url: '/v1/agents/agent%2F1/channel-bindings',
         body: null,
       },
       {
@@ -166,8 +222,17 @@ describe('@myclaw/sdk transport', () => {
         },
       },
       {
-        method: 'DELETE',
+        method: 'PATCH',
         url: '/v1/agents/agent%2F1/channel-bindings/conversation%2F1',
+        body: {
+          triggerMode: 'keyword',
+          triggerPattern: 'deploy',
+          permissionPolicyIds: ['policy/1'],
+        },
+      },
+      {
+        method: 'DELETE',
+        url: '/v1/agents/agent%2F1/channel-bindings/conversation%2F1?threadId=thread%2F1',
         body: null,
       },
     ]);

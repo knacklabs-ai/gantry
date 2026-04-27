@@ -115,10 +115,14 @@ function services() {
   };
 }
 
-function parseBindingPatch(appId: AppId, raw: unknown) {
+function parseBindingPatch(
+  appId: AppId,
+  conversationId: ConversationId,
+  raw: unknown,
+) {
   const parsed = AgentChannelBindingRequestSchema.safeParse(raw);
   if (!parsed.success) return null;
-  return bindingPatchFromParsed(appId, parsed.data);
+  return bindingPatchFromParsed(appId, conversationId, parsed.data);
 }
 
 export async function handleChannelControlRoutes(
@@ -394,7 +398,11 @@ export async function handleChannelControlRoutes(
   if (bindingRoute?.action === 'binding' && req.method === 'PUT') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
     if (!auth) return true;
-    const patch = parseBindingPatch(auth.appId as AppId, await readJson(req));
+    const patch = parseBindingPatch(
+      auth.appId as AppId,
+      bindingRoute.conversationId as ConversationId,
+      await readJson(req),
+    );
     if (!patch) {
       sendError(res, 400, 'INVALID_REQUEST', 'Invalid channel binding request');
       return true;
@@ -416,7 +424,11 @@ export async function handleChannelControlRoutes(
   if (bindingRoute?.action === 'binding' && req.method === 'PATCH') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
     if (!auth) return true;
-    const patch = parseBindingPatch(auth.appId as AppId, await readJson(req));
+    const patch = parseBindingPatch(
+      auth.appId as AppId,
+      bindingRoute.conversationId as ConversationId,
+      await readJson(req),
+    );
     if (!patch) {
       sendError(res, 400, 'INVALID_REQUEST', 'Invalid channel binding patch');
       return true;

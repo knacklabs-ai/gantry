@@ -8,6 +8,7 @@ import type { RuntimeSecretProvider } from '../domain/ports/runtime-secret-provi
 import type { IsoTimestamp } from '../shared/time/primitives.js';
 import { listSlackRecentChats } from '../cli/slack-chat-discovery.js';
 import { listTelegramRecentChats } from '../cli/telegram-chat-discovery.js';
+import './register-builtins.js';
 import { listChannelProviders } from './provider-registry.js';
 import { ApplicationError } from '../application/common/application-error.js';
 
