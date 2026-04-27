@@ -48,6 +48,7 @@ export interface ProviderSessionArtifactContext {
   appId: string;
   agentId: string;
   agentSessionId: string;
+  provider?: string;
   providerSessionId?: string;
   latestArtifactId?: string;
 }

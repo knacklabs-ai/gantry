@@ -6,9 +6,18 @@ import { describe, expect, it } from 'vitest';
 
 import { PostgresProviderArtifactStore } from '@core/adapters/artifacts/postgres/postgres-provider-artifact-store.js';
 
-function fakeDb() {
+function fakeDb(options: { failTransaction?: boolean } = {}) {
   const rows: unknown[] = [];
   const tx = {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          for: () => ({
+            limit: async () => [{ id: 'provider-session:test' }],
+          }),
+        }),
+      }),
+    }),
     insert: () => ({
       values: async (row: unknown) => {
         rows.push(row);
@@ -23,8 +32,12 @@ function fakeDb() {
   return {
     rows,
     db: {
-      transaction: async (callback: (transaction: typeof tx) => unknown) =>
-        callback(tx),
+      transaction: async (callback: (transaction: typeof tx) => unknown) => {
+        if (options.failTransaction) {
+          throw new Error('metadata insert failed');
+        }
+        return callback(tx);
+      },
     } as never,
   };
 }
@@ -87,5 +100,33 @@ describe('PostgresProviderArtifactStore local filesystem backend', () => {
         metadata: {},
       }),
     ).rejects.toThrow(/escapes artifact root/);
+  });
+
+  it('removes local artifact bytes when metadata write fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-artifacts-'));
+    const { db } = fakeDb({ failTransaction: true });
+    const store = new PostgresProviderArtifactStore(db, {
+      artifactRoot: root,
+      defaultStorageType: 'local-filesystem',
+    });
+
+    await expect(
+      store.putArtifact({
+        id: 'provider-session-artifact:rollback' as never,
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+        agentSessionId: 'agent-session:test' as never,
+        providerSessionId: 'provider-session:test' as never,
+        provider: 'anthropic',
+        artifactKind: 'claude-jsonl',
+        content: '{"type":"user"}\n',
+      }),
+    ).rejects.toThrow('metadata insert failed');
+
+    expect(
+      fs
+        .readdirSync(root, { recursive: true })
+        .filter((entry) => String(entry).endsWith('.jsonl')),
+    ).toHaveLength(0);
   });
 });

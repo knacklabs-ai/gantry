@@ -32,6 +32,7 @@ export interface ArchiveProviderSessionTranscriptInput {
   agentId: string;
   agentSessionId: string;
   providerSessionId: string;
+  provider?: string;
   sessionId: string;
   assistantName?: string;
   cause?: SessionArchiveCause;
@@ -188,6 +189,7 @@ export async function archiveProviderSessionTranscript(
     agentId,
     agentSessionId,
     providerSessionId,
+    provider = 'anthropic',
     sessionId,
     assistantName,
     cause = 'new-session',
@@ -205,7 +207,7 @@ export async function archiveProviderSessionTranscript(
   try {
     const artifact = await providerArtifactStore.getLatestArtifact({
       providerSessionId: providerSessionId as never,
-      provider: 'anthropic',
+      provider,
       artifactKind: 'claude-jsonl',
     });
     const now = new Date();
@@ -226,7 +228,7 @@ export async function archiveProviderSessionTranscript(
         agentId: agentId as never,
         agentSessionId: agentSessionId as never,
         providerSessionId: providerSessionId as never,
-        provider: 'anthropic',
+        provider,
         artifactKind: 'transcript-export',
         content: markdown,
         contentType: 'text/markdown',
@@ -258,7 +260,7 @@ export async function archiveProviderSessionTranscript(
         agentId: agentId as never,
         agentSessionId: agentSessionId as never,
         providerSessionId: providerSessionId as never,
-        provider: 'anthropic',
+        provider,
         artifactKind: 'transcript-export',
         content: markdown,
         contentType: 'text/markdown',
@@ -283,7 +285,7 @@ export async function archiveProviderSessionTranscript(
       agentId: agentId as never,
       agentSessionId: agentSessionId as never,
       providerSessionId: providerSessionId as never,
-      provider: 'anthropic',
+      provider,
       artifactKind: 'transcript-export',
       content: markdown,
       contentType: 'text/markdown',

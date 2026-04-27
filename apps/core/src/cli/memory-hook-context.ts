@@ -32,6 +32,34 @@ function isWithin(rootDir: string, candidatePath: string): boolean {
   return !(rel.startsWith('..') || path.isAbsolute(rel));
 }
 
+function findTranscriptUnderProjectsRoot(
+  projectsRoot: string,
+  sessionId: string,
+  validateCandidate: (candidatePath: string) => string | undefined,
+): string | undefined {
+  const stack = [projectsRoot];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+      } else if (entry.isFile() && entry.name === `${sessionId}.jsonl`) {
+        const validated = validateCandidate(entryPath);
+        if (validated) return validated;
+      }
+    }
+  }
+  return undefined;
+}
+
 function resolveRuntimeAndGroupFromAgentDir(agentDirRaw?: string): {
   runtimeHome?: string;
   groupFolder?: string;
@@ -148,5 +176,9 @@ export function resolveTranscriptPath(
     if (validated) return validated;
   }
 
-  return undefined;
+  return findTranscriptUnderProjectsRoot(
+    projectsRoot,
+    sessionId,
+    validateCandidate,
+  );
 }

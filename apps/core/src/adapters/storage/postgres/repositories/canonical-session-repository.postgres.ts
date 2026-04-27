@@ -3,6 +3,7 @@ import { and, eq, ne, or, sql } from 'drizzle-orm';
 import * as pgSchema from '../schema/schema.js';
 import {
   CANONICAL_APP_ID,
+  agentIdForFolder,
   type CanonicalDb,
   json,
   PostgresCanonicalGraphRepository,
@@ -50,6 +51,7 @@ export class PostgresCanonicalSessionRepository {
     appId: string;
     agentId: string;
     agentSessionId: string;
+    provider?: string;
     providerSessionId?: string;
     externalSessionId?: string;
     latestArtifactId?: string;
@@ -59,6 +61,7 @@ export class PostgresCanonicalSessionRepository {
     const rows = await this.db
       .select({
         providerSessionId: ps.id,
+        provider: ps.provider,
         externalSessionId: ps.externalSessionId,
         latestArtifactId: ps.latestArtifactId,
       })
@@ -74,8 +77,9 @@ export class PostgresCanonicalSessionRepository {
       .limit(1);
     return {
       appId: CANONICAL_APP_ID,
-      agentId: `agent:${input.groupFolder}`,
+      agentId: agentIdForFolder(input.groupFolder),
       agentSessionId,
+      provider: rows[0]?.provider ?? PROVIDER,
       providerSessionId: rows[0]?.providerSessionId,
       externalSessionId: rows[0]?.externalSessionId,
       latestArtifactId: rows[0]?.latestArtifactId ?? undefined,

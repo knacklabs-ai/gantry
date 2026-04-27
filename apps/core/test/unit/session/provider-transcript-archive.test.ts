@@ -6,6 +6,7 @@ import { archiveProviderSessionTranscript } from '@core/session/session-transcri
 
 function createTranscriptStore(content: string): ProviderArtifactStore & {
   exports: string[];
+  providers: string[];
 } {
   const artifact = {
     id: 'artifact:jsonl' as never,
@@ -23,14 +24,17 @@ function createTranscriptStore(content: string): ProviderArtifactStore & {
     metadata: {},
   } satisfies ProviderSessionArtifact;
   const exports: string[] = [];
+  const providers: string[] = [];
   return {
     exports,
+    providers,
     putArtifact: async (input) => {
       const text =
         typeof input.content === 'string'
           ? input.content
           : Buffer.from(input.content).toString('utf-8');
       exports.push(text);
+      providers.push(input.provider);
       return {
         ...artifact,
         id: 'artifact:export' as never,
@@ -41,7 +45,10 @@ function createTranscriptStore(content: string): ProviderArtifactStore & {
       };
     },
     getArtifact: async () => content,
-    getLatestArtifact: async () => artifact,
+    getLatestArtifact: async (input) => {
+      providers.push(input.provider ?? '');
+      return artifact;
+    },
     listArtifacts: async () => [artifact],
     markDeleted: async () => {},
   };
@@ -69,6 +76,7 @@ describe('archiveProviderSessionTranscript', () => {
         agentId: 'agent:test',
         agentSessionId: 'agent-session:test',
         providerSessionId: 'provider-session:test',
+        provider: 'anthropic',
         sessionId: 'claude-session-1',
         assistantName: 'Andy',
         cause: 'new-session',
@@ -77,5 +85,6 @@ describe('archiveProviderSessionTranscript', () => {
 
     expect(store.exports[0]).toContain('**User**: hello');
     expect(store.exports[0]).toContain('**Andy**: hi there');
+    expect(store.providers).toEqual(['anthropic', 'anthropic']);
   });
 });

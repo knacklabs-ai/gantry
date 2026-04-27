@@ -25,17 +25,22 @@ function createFakeStore(seed?: {
 }): ProviderArtifactStore & {
   puts: Array<{
     artifactKind: string;
+    provider: string;
     content: string;
     metadata?: Record<string, unknown>;
   }>;
+  latestQueries: Array<{ provider?: string }>;
 } {
   const puts: Array<{
     artifactKind: string;
+    provider: string;
     content: string;
     metadata?: Record<string, unknown>;
   }> = [];
+  const latestQueries: Array<{ provider?: string }> = [];
   return {
     puts,
+    latestQueries,
     putArtifact: async (input) => {
       const content =
         typeof input.content === 'string'
@@ -43,6 +48,7 @@ function createFakeStore(seed?: {
           : Buffer.from(input.content).toString('utf-8');
       puts.push({
         artifactKind: input.artifactKind,
+        provider: input.provider,
         content,
         metadata: input.metadata,
       });
@@ -63,7 +69,10 @@ function createFakeStore(seed?: {
       };
     },
     getArtifact: async () => seed?.content ?? '',
-    getLatestArtifact: async () => seed?.artifact,
+    getLatestArtifact: async (input) => {
+      latestQueries.push({ provider: input.provider });
+      return seed?.artifact;
+    },
     listArtifacts: async () => (seed?.artifact ? [seed.artifact] : []),
     markDeleted: async () => {},
   };
@@ -132,7 +141,7 @@ describe('Claude config materializer', () => {
       settings: { model: 'sonnet' },
       skillSource: createSkillSource(tempRoot),
       providerArtifactStore: store,
-      artifactContext: context,
+      artifactContext: { ...context, provider: 'anthropic' },
     });
 
     expect(materialization.claudeConfigDir).toContain(tempRoot);
@@ -153,6 +162,7 @@ describe('Claude config materializer', () => {
         'utf-8',
       ),
     ).toContain('"type":"user"');
+    expect(store.latestQueries[0]?.provider).toBe('anthropic');
 
     materialization.cleanup();
     expect(fs.existsSync(materialization.baseTempDir)).toBe(false);
@@ -179,6 +189,7 @@ describe('Claude config materializer', () => {
       'utf-8',
     );
     expect(settingsText).toContain('"model": "opus"');
+    expect(settingsText).toContain("' memory-hook load");
     expect(settingsText).not.toContain('ANTHROPIC_API_KEY');
     expect(settingsText).not.toContain('secret');
   });
@@ -198,7 +209,9 @@ describe('Claude config materializer', () => {
         skillSource: createSkillSource(tempRoot),
       }),
     ).rejects.toThrow('raw secret');
-    expect(fs.existsSync(path.join(tempRoot, 'run'))).toBe(false);
+    expect(
+      fs.existsSync(path.join(tempRoot, 'run', 'claude', 'settings.json')),
+    ).toBe(false);
   });
 
   it('captures updated Claude JSONL and session index through the artifact store', async () => {
@@ -213,7 +226,7 @@ describe('Claude config materializer', () => {
 
     const captured = await captureClaudeArtifacts({
       providerArtifactStore: store,
-      artifactContext: context,
+      artifactContext: { ...context, provider: 'anthropic' },
       providerSessionId: 'provider-session:test',
       sessionId: 'claude-session-1',
       projectDir,
@@ -223,6 +236,10 @@ describe('Claude config materializer', () => {
     expect(store.puts.map((put) => put.artifactKind)).toEqual([
       'claude-jsonl',
       'claude-session-index',
+    ]);
+    expect(store.puts.map((put) => put.provider)).toEqual([
+      'anthropic',
+      'anthropic',
     ]);
     expect(store.puts[0]?.metadata?.externalSessionId).toBe('claude-session-1');
   });

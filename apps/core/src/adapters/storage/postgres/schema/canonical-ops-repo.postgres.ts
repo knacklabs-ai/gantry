@@ -248,6 +248,7 @@ export class PostgresCanonicalOpsRepository implements OpsRepository {
     agentId: string;
     agentSessionId: string;
     mode: 'provider_native' | 'db_replay';
+    provider?: string;
     providerSessionId?: string;
     externalSessionId?: string;
     latestArtifactId?: string;

@@ -56,6 +56,7 @@ export async function materializeClaudeRuntime(
   input: ClaudeRuntimeMaterializationInput,
 ): Promise<ClaudeRuntimeMaterialization> {
   const runId = input.runId ?? randomUUID();
+  const ownsBaseTempDir = !input.baseTempDir;
   const baseTempDir =
     input.baseTempDir ??
     fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-claude-config-'));
@@ -93,7 +94,9 @@ export async function materializeClaudeRuntime(
       projectDir,
     });
   } catch (err) {
-    fs.rmSync(baseTempDir, { recursive: true, force: true });
+    if (ownsBaseTempDir) {
+      fs.rmSync(baseTempDir, { recursive: true, force: true });
+    }
     throw err;
   }
 
@@ -144,13 +147,13 @@ async function resolveLatestClaudeArtifact(input: {
   if (input.artifactContext.providerSessionId) {
     return input.providerArtifactStore.getLatestArtifact({
       providerSessionId: input.artifactContext.providerSessionId as never,
-      provider: 'anthropic',
+      provider: input.artifactContext.provider ?? 'anthropic',
       artifactKind: 'claude-jsonl',
     });
   }
   return input.providerArtifactStore.getLatestArtifact({
     agentSessionId: input.artifactContext.agentSessionId as never,
-    provider: 'anthropic',
+    provider: input.artifactContext.provider ?? 'anthropic',
     artifactKind: 'claude-jsonl',
   });
 }
@@ -176,13 +179,14 @@ export async function captureClaudeArtifacts(input: {
     `${input.sessionId}.jsonl`,
   );
   if (!fs.existsSync(transcriptPath)) return {};
+  const provider = input.artifactContext.provider ?? 'anthropic';
 
   const artifact = await input.providerArtifactStore.putArtifact({
     appId: input.artifactContext.appId as never,
     agentId: input.artifactContext.agentId as never,
     agentSessionId: input.artifactContext.agentSessionId as never,
     providerSessionId: input.providerSessionId as never,
-    provider: 'anthropic',
+    provider,
     artifactKind: 'claude-jsonl',
     content: fs.readFileSync(transcriptPath),
     contentType: 'application/x-jsonlines',
@@ -199,7 +203,7 @@ export async function captureClaudeArtifacts(input: {
       agentId: input.artifactContext.agentId as never,
       agentSessionId: input.artifactContext.agentSessionId as never,
       providerSessionId: input.providerSessionId as never,
-      provider: 'anthropic',
+      provider,
       artifactKind: 'claude-session-index',
       content: fs.readFileSync(indexPath),
       contentType: 'application/json',

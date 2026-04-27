@@ -186,6 +186,7 @@ export function createGroupProcessor(
             ops: ops(),
             sessionId: staleSessionId,
             providerSessionId: sessionResume?.providerSessionId,
+            provider: sessionResume?.provider,
             agentSessionId: sessionResume?.agentSessionId,
             appId: sessionResume?.appId,
             agentId: sessionResume?.agentId,

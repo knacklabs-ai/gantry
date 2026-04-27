@@ -35,10 +35,12 @@ export interface ClaudeSettings {
   hooks: Record<string, unknown[]>;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function buildHookCommand(cliEntryPoint: string, command: string): string {
-  return `${JSON.stringify(process.execPath)} ${JSON.stringify(
-    path.resolve(cliEntryPoint),
-  )} ${command}`;
+  return `${shellQuote(process.execPath)} ${shellQuote(path.resolve(cliEntryPoint))} ${command}`;
 }
 
 function buildMemoryHookSettings(

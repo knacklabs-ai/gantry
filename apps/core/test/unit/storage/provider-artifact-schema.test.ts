@@ -30,7 +30,7 @@ describe('provider session artifact schema', () => {
     expect(schema).toContain("storageRef: text('storage_ref').notNull()");
     expect(schema).toContain("contentHash: text('content_hash').notNull()");
     expect(schema).toContain('contentText: text');
-    expect(migration).toContain('DROP COLUMN IF EXISTS artifact_ref');
+    expect(migration).not.toContain('DROP COLUMN IF EXISTS artifact_ref');
     expect(migration).toContain(
       'CREATE TABLE IF NOT EXISTS provider_session_artifacts',
     );

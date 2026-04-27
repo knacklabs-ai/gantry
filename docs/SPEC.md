@@ -204,7 +204,7 @@ To add a new channel, contribute a bundled or registered skill that:
 3. Returns `null` from `create` if credentials are missing
 4. Registers the provider via `register-builtins.ts` (or equivalent provider registration module)
 
-Channel-extension skills can follow this pattern when they are added to the bundled or user-installed skill set. The default npm package only ships the core command-discovery and administration skills.
+Channel-extension skills can follow this pattern when they are added to the bundled package assets or registered skill catalog. Runtime-home Claude skill folders are not the source of truth for runtime materialization.
 
 ---
 

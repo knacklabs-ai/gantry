@@ -223,6 +223,38 @@ describe('memory-hook command', () => {
     });
   });
 
+  it('falls back to scanning the temp Claude projects directory for transcript paths', async () => {
+    const runtimeHome = createRuntimeHome();
+    const claudeConfigDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'myclaw-claude-config-test-'),
+    );
+    const service = createServiceMock();
+    const sessionId = 'session-scan';
+    const transcriptPath = createTranscript(claudeConfigDir, sessionId);
+    const env: NodeJS.ProcessEnv = {
+      MYCLAW_GROUP_FOLDER: 'team',
+      MYCLAW_HOME: runtimeHome,
+      CLAUDE_CONFIG_DIR: claudeConfigDir,
+    };
+
+    const code = await runMemoryHookCommand(
+      ['extract', '--trigger=precompact'],
+      env,
+      async () => ({ session_id: sessionId }),
+      async () => service,
+    );
+
+    expect(code).toBe(0);
+    expect(service.recordEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceId: sessionId,
+        metadata: expect.objectContaining({
+          transcriptPath: fs.realpathSync(transcriptPath),
+        }),
+      }),
+    );
+  });
+
   it('logs warning and skips extract when transcript is missing', async () => {
     const service = createServiceMock();
     const runtimeHome = createRuntimeHome();

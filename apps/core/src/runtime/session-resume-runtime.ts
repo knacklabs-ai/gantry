@@ -16,6 +16,7 @@ export async function expireStaleRuntimeSession(input: {
   ops: OpsRepository;
   sessionId: string;
   providerSessionId?: string;
+  provider?: string;
   agentSessionId?: string;
   appId?: string;
   agentId?: string;
@@ -48,6 +49,7 @@ export async function expireStaleRuntimeSession(input: {
       agentId: input.agentId,
       agentSessionId: input.agentSessionId,
       providerSessionId: input.providerSessionId,
+      provider: input.provider,
       sessionId: input.sessionId,
       assistantName: ASSISTANT_NAME,
       cause: 'stale-session',
@@ -86,6 +88,7 @@ export async function archiveCurrentRuntimeSession(input: {
       agentId: resume.agentId,
       agentSessionId: resume.agentSessionId,
       providerSessionId: resume.providerSessionId,
+      provider: resume.provider,
       sessionId,
       assistantName: ASSISTANT_NAME,
       cause: input.cause ?? 'new-session',
@@ -108,6 +111,7 @@ export function buildProviderArtifactRunOptions(input: {
     agentSessionId: string;
     mode?: 'provider_native' | 'db_replay';
     providerSessionId?: string;
+    provider?: string;
     latestArtifactId?: string;
   };
 }): RunAgentOptions | undefined {
@@ -127,6 +131,7 @@ export function buildProviderArtifactRunOptions(input: {
             appId: input.sessionResume.appId,
             agentId: input.sessionResume.agentId,
             agentSessionId: input.sessionResume.agentSessionId,
+            provider: input.sessionResume.provider,
             providerSessionId: input.sessionResume.providerSessionId,
             latestArtifactId: input.sessionResume.latestArtifactId,
           },
@@ -149,7 +154,7 @@ export function isStaleRuntimeSessionError(input: {
   return Boolean(
     input.sessionId &&
     input.error &&
-    /no conversation found|ENOENT.*\.jsonl|session.*not found|provider artifact restore failed|claude runtime materialization failed/i.test(
+    /no conversation found|ENOENT.*\.jsonl|session.*not found|claude runtime materialization failed/i.test(
       input.error,
     ),
   );
@@ -179,6 +184,7 @@ export async function persistRuntimeProviderSession(input: {
     input.group.folder,
     input.sessionId,
     input.threadId,
+    { chatJid: input.chatJid },
   );
 }
 

@@ -1,9 +1,6 @@
 ALTER TABLE provider_sessions
   ADD COLUMN IF NOT EXISTS latest_artifact_id text;
 
-ALTER TABLE provider_sessions
-  DROP COLUMN IF EXISTS artifact_ref;
-
 CREATE TABLE IF NOT EXISTS provider_session_artifacts (
   id text PRIMARY KEY,
   app_id text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,

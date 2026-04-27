@@ -83,6 +83,12 @@ function writeFileAtomic(filePath: string, content: Buffer): void {
   fs.renameSync(tmpPath, filePath);
 }
 
+function removeFileIfExists(filePath: string): void {
+  if (fs.existsSync(filePath)) {
+    fs.rmSync(filePath, { force: true });
+  }
+}
+
 function shouldReturnString(artifact: ProviderSessionArtifact): boolean {
   const contentType =
     typeof artifact.metadata.contentType === 'string'
@@ -155,8 +161,11 @@ export class PostgresProviderArtifactStore implements ProviderArtifactStore {
       storageType,
     });
 
-    if (storageType === 'local-filesystem') {
-      const artifactPath = this.resolveLocalPath(storageRef);
+    const artifactPath =
+      storageType === 'local-filesystem'
+        ? this.resolveLocalPath(storageRef)
+        : undefined;
+    if (storageType === 'local-filesystem' && artifactPath) {
       writeFileAtomic(artifactPath, content);
     } else if (storageType === 'object-store') {
       throw new Error(
@@ -166,33 +175,54 @@ export class PostgresProviderArtifactStore implements ProviderArtifactStore {
 
     const contentText =
       storageType === 'postgres' ? content.toString('utf-8') : null;
-    await this.db.transaction(async (tx) => {
-      await tx.insert(pgSchema.providerSessionArtifactsPostgres).values({
-        id,
-        appId: input.appId,
-        agentId: input.agentId,
-        agentSessionId: input.agentSessionId,
-        providerSessionId: input.providerSessionId,
-        provider: input.provider,
-        artifactKind: input.artifactKind,
-        storageType,
-        storageRef,
-        contentHash,
-        sizeBytes: content.byteLength,
-        contentText,
-        metadataJson: encodeJson(metadata),
-        createdAt,
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx
+          .select({ id: pgSchema.providerSessionsPostgres.id })
+          .from(pgSchema.providerSessionsPostgres)
+          .where(
+            eq(pgSchema.providerSessionsPostgres.id, input.providerSessionId),
+          )
+          .for('update')
+          .limit(1);
+        await tx.insert(pgSchema.providerSessionArtifactsPostgres).values({
+          id,
+          appId: input.appId,
+          agentId: input.agentId,
+          agentSessionId: input.agentSessionId,
+          providerSessionId: input.providerSessionId,
+          provider: input.provider,
+          artifactKind: input.artifactKind,
+          storageType,
+          storageRef,
+          contentHash,
+          sizeBytes: content.byteLength,
+          contentText,
+          metadataJson: encodeJson(metadata),
+          createdAt,
+        });
+        await tx
+          .update(pgSchema.providerSessionsPostgres)
+          .set({
+            latestArtifactId: sql`(
+              SELECT ${pgSchema.providerSessionArtifactsPostgres.id}
+              FROM ${pgSchema.providerSessionArtifactsPostgres}
+              WHERE ${pgSchema.providerSessionArtifactsPostgres.providerSessionId} = ${input.providerSessionId}
+                AND ${pgSchema.providerSessionArtifactsPostgres.deletedAt} IS NULL
+              ORDER BY ${pgSchema.providerSessionArtifactsPostgres.createdAt} DESC,
+                       ${pgSchema.providerSessionArtifactsPostgres.id} DESC
+              LIMIT 1
+            )`,
+            updatedAt: sql`now()`,
+          })
+          .where(
+            eq(pgSchema.providerSessionsPostgres.id, input.providerSessionId),
+          );
       });
-      await tx
-        .update(pgSchema.providerSessionsPostgres)
-        .set({
-          latestArtifactId: id,
-          updatedAt: sql`now()`,
-        })
-        .where(
-          eq(pgSchema.providerSessionsPostgres.id, input.providerSessionId),
-        );
-    });
+    } catch (err) {
+      if (artifactPath) removeFileIfExists(artifactPath);
+      throw err;
+    }
 
     return {
       id,

@@ -1000,6 +1000,7 @@ describe('createGroupProcessor', () => {
         'test-group',
         'new-sess-123',
         null,
+        { chatJid: 'group1@g.us' },
       );
     });
 
@@ -1032,6 +1033,7 @@ describe('createGroupProcessor', () => {
         'test-group',
         'streamed-sess',
         null,
+        { chatJid: 'group1@g.us' },
       );
     });
   });
