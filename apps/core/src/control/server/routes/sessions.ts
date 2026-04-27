@@ -112,9 +112,7 @@ export async function handleSessionRoutes(
       });
     sendJson(res, 200, {
       session,
-      providerSession: providerSession
-        ? { ...providerSession, artifactRef: undefined }
-        : null,
+      providerSession,
     });
     return true;
   }
