@@ -7,18 +7,27 @@ export interface AgentCapabilityContext {
   ipcDir?: string;
   ipcAuthToken?: string;
   ipcResponseVerifyKey?: string;
+  externalMcpServers?: Record<string, McpServerConfig>;
+  externalMcpAllowedTools?: readonly string[];
+  externalMcpAlwaysAllowedTools?: readonly string[];
 }
+
+export type McpServerConfig =
+  | {
+      type?: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | {
+      type: 'http' | 'sse';
+      url: string;
+      headers?: Record<string, string>;
+    };
 
 export interface AgentCapabilityProfile {
   allowedTools: readonly string[];
-  mcpServers: Record<
-    string,
-    {
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-    }
-  >;
+  mcpServers: Record<string, McpServerConfig>;
   permissionMode: 'default' | 'bypassPermissions';
   alwaysAllowedTools: readonly string[];
 }
@@ -99,8 +108,22 @@ const myclawMcpProvider: AgentCapabilityProvider = {
   }),
 };
 
+const configuredMcpProvider: AgentCapabilityProvider = {
+  id: 'configured-mcp',
+  provide: (ctx) => ({
+    allowedTools: ctx.externalMcpAllowedTools ?? [],
+    alwaysAllowedTools: ctx.externalMcpAlwaysAllowedTools ?? [],
+    mcpServers: ctx.externalMcpServers ?? {},
+  }),
+};
+
 export const BUILTIN_AGENT_CAPABILITY_PROVIDERS: readonly AgentCapabilityProvider[] =
-  [sdkToolsProvider, permissionProvider, myclawMcpProvider];
+  [
+    sdkToolsProvider,
+    permissionProvider,
+    myclawMcpProvider,
+    configuredMcpProvider,
+  ];
 
 function mergeUnique(
   base: readonly string[],

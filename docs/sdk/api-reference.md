@@ -38,6 +38,59 @@ materialized into per-run `CLAUDE_CONFIG_DIR/skills`. Skill name and
 description are parsed from `SKILL.md`; upload requests only carry context such
 as the proposing agent or creator.
 
+## MCP Servers
+
+MCP servers are managed as reviewed agent capabilities. The SDK creates drafts,
+admins approve or reject them, and approved versions can be bound to agents.
+Agent-requested MCP servers remain drafts until an admin approves and binds
+them.
+
+```ts
+client.mcpServers.drafts.create({
+  name,
+  transport, // http | sse; stdio_template is control API/SDK only
+  config,
+  credentialRefs?,
+  allowedToolPatterns?,
+  autoApproveToolPatterns?,
+})
+client.mcpServers.drafts.list({ limit?, cursor? })
+client.mcpServers.drafts.approve(serverId, { approvedBy? })
+client.mcpServers.drafts.reject(serverId, { rejectedBy?, reason? })
+client.mcpServers.list({ status?, limit?, cursor? })
+client.mcpServers.test(serverId, { testedBy? })
+client.mcpServers.disable(serverId, { disabledBy?, reason? })
+
+client.agents.mcpServers.list(agentId, { limit?, cursor? })
+client.agents.mcpServers.enable(agentId, serverId, { required?, permissionPolicyIds? })
+client.agents.mcpServers.update(agentId, serverId, { required?, permissionPolicyIds? })
+client.agents.mcpServers.disable(agentId, serverId)
+```
+
+MCP definitions store credential reference names only. Broker-injected values
+are projected into a private per-run config file with `0600` permissions and
+deleted by the runner after startup and by the host on early spawn failures;
+they are not saved in Claude config, provider artifacts, or Postgres rows.
+`allowedToolPatterns` is the enforced SDK allowlist for third-party MCP tool
+names. `autoApproveToolPatterns` is session auto-allow scope and must be a
+subset of `allowedToolPatterns` when an explicit allowlist is present.
+Agent-requested MCP credential needs are labels, not raw broker ref selectors;
+the host projects them into a server-scoped `MCP_<SERVER>_<NEED>_REF` reference
+before any approved next-run materialization.
+Remote MCP URLs must use HTTPS and cannot target local, private, link-local, or
+metadata hosts. MyClaw resolves remote MCP hostnames during approval, testing,
+and each materialization pass and rejects any A/AAAA record in private,
+loopback, link-local, multicast, unspecified, documentation, or metadata ranges.
+Runtime materialization uses a short in-process validation cache for same-batch
+coalescing only; it must not be treated as durable DNS trust.
+Stdio-template MCP servers require an approved sandbox profile and are not
+available from agent-requested or CLI draft creation in this version. The
+`npx-package` template accepts exactly one safe npm package argument. MCP server
+bindings are agent-wide in this version. Chat approvals are sent only to the
+trusted originating chat/thread registered for the requesting agent. Conversation
+or thread scoping is not accepted until the runtime materialization path
+supports it end to end.
+
 ## Sessions
 
 ```ts
@@ -219,6 +272,27 @@ DELETE /v1/agents/:agentId/skills/:skillId       skills:admin
 An enabled binding only affects runtime when the skill is approved.
 Local approved skills are unpacked into the per-run Claude config; hosted
 approved skills are represented by Anthropic provider refs.
+
+## Agent MCP Server Bindings
+
+```http
+POST   /v1/mcp-servers/drafts                    mcp:admin
+GET    /v1/mcp-servers/drafts?limit=&cursor=     mcp:read
+GET    /v1/mcp-servers?status=&limit=&cursor=    mcp:read
+POST   /v1/mcp-servers/drafts/:id/approve        mcp:admin
+POST   /v1/mcp-servers/drafts/:id/reject         mcp:admin
+POST   /v1/mcp-servers/:id/test                  mcp:admin
+POST   /v1/mcp-servers/:id/disable               mcp:admin
+GET    /v1/agents/:agentId/mcp-servers?limit=&cursor= mcp:read
+PUT    /v1/agents/:agentId/mcp-servers/:id       mcp:admin + agents:admin
+PATCH  /v1/agents/:agentId/mcp-servers/:id       mcp:admin + agents:admin
+DELETE /v1/agents/:agentId/mcp-servers/:id       mcp:admin + agents:admin
+```
+
+An enabled MCP binding affects runtime only when the server definition is
+approved. The built-in `myclaw` MCP server is internal and is not managed by
+these routes. Conversation or thread scoped MCP bindings are not part of this
+API version.
 
 ## Memory
 

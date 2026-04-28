@@ -133,7 +133,12 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     }
   }
 
-  protected canDecidePermission(userId: string, sourceGroup: string): boolean {
+  protected canDecidePermission(
+    userId: string,
+    sourceGroup: string,
+    decisionPolicy?: PermissionApprovalRequest['decisionPolicy'],
+  ): boolean {
+    if (decisionPolicy && decisionPolicy !== 'same_channel') return false;
     const allowedIds = getSlackPermissionApproverIds(sourceGroup);
     if (allowedIds.size === 0) return false;
     return allowedIds.has(userId);
@@ -297,6 +302,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     this.app.action('myclaw_perm_decision', async (args: any) => {
       await args.ack();
       const body = args.body as {
+        channel?: { id?: string };
         user?: { id?: string; name?: string; username?: string };
       };
       const action = args.action as { value?: string };
@@ -321,8 +327,29 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
 
       const pending = this.pendingPermissionPrompts.get(payload.requestId);
       if (!pending) return;
+      if (
+        pending.decisionPolicy === 'same_channel' &&
+        body.channel?.id !== pending.channelId
+      ) {
+        try {
+          await this.app?.client.chat.postEphemeral({
+            channel: body.channel?.id || pending.channelId,
+            user: userId,
+            text: 'This approval request belongs to a different chat.',
+          });
+        } catch {
+          // ignore
+        }
+        return;
+      }
 
-      if (!this.canDecidePermission(userId, pending.sourceGroup)) {
+      if (
+        !this.canDecidePermission(
+          userId,
+          pending.sourceGroup,
+          pending.decisionPolicy,
+        )
+      ) {
         try {
           await this.app?.client.chat.postEphemeral({
             channel: pending.channelId,

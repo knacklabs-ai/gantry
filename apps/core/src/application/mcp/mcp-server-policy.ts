@@ -1,0 +1,249 @@
+import type {
+  McpCredentialRef,
+  McpServerTransportConfig,
+} from '../../domain/mcp/mcp-servers.js';
+import {
+  hostnameForNetwork,
+  isIpAddress,
+  isPrivateNetworkAddress,
+  type HostnameLookup,
+} from '../../domain/network/public-address-policy.js';
+import { ApplicationError } from '../common/application-error.js';
+
+const DEFAULT_REMOTE_DNS_CACHE_TTL_MS = 1_000;
+
+export const STDIO_TEMPLATE_COMMANDS: Record<
+  string,
+  { command: string; args: string[] }
+> = {
+  'node-script': { command: 'node', args: [] },
+  'npx-package': { command: 'npx', args: ['-y'] },
+};
+
+const METADATA_HOSTNAMES = new Set(['metadata.google.internal', 'metadata']);
+const BROKER_CREDENTIAL_REF_PATTERN = /^[A-Z][A-Z0-9_]*_REF$/;
+const NPM_PACKAGE_SPEC_PATTERN =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[a-z0-9._~^*+-][a-z0-9._~^*+-]*)?$/;
+
+export function validateTransportConfig(
+  config: McpServerTransportConfig,
+  options: { sandboxProfileId?: string } = {},
+): void {
+  if (config.transport === 'http' || config.transport === 'sse') {
+    if (!config.url) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        `${config.transport} MCP server requires url.`,
+      );
+    }
+    const url = new URL(config.url);
+    if (url.username || url.password) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'MCP server URL must not include credentials.',
+      );
+    }
+    if (url.protocol !== 'https:') {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'MCP server URL must use https.',
+      );
+    }
+    assertSafeRemoteMcpHostname(url.hostname);
+    return;
+  }
+  if (config.transport === 'stdio_template') {
+    if (!config.templateId || !STDIO_TEMPLATE_COMMANDS[config.templateId]) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'stdio_template MCP server requires an approved templateId.',
+      );
+    }
+    if (!options.sandboxProfileId) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'stdio_template MCP server requires sandboxProfileId.',
+      );
+    }
+    validateStdioTemplateArgs(config);
+    if (config.env && Object.keys(config.env).length > 0) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'stdio_template MCP server env must use credentialRefs.',
+      );
+    }
+    return;
+  }
+  throw new ApplicationError(
+    'INVALID_REQUEST',
+    'Unsupported MCP server transport.',
+  );
+}
+
+export async function assertRemoteMcpDestinationPublic(
+  config: McpServerTransportConfig,
+  lookupHostname?: HostnameLookup,
+  options: {
+    cache?: RemoteMcpDnsValidationCache;
+    nowMs?: number;
+    ttlMs?: number;
+  } = {},
+): Promise<void> {
+  if (config.transport !== 'http' && config.transport !== 'sse') return;
+  if (!config.url) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      `${config.transport} MCP server requires url.`,
+    );
+  }
+  const hostname = hostnameForNetwork(new URL(config.url).hostname)
+    .trim()
+    .toLowerCase();
+  if (isIpAddress(hostname)) return;
+  const cache = options.cache;
+  const nowMs = options.nowMs ?? Date.now();
+  const ttlMs = options.ttlMs ?? DEFAULT_REMOTE_DNS_CACHE_TTL_MS;
+  if (cache) {
+    const cached = cache.get(hostname);
+    if (cached && cached.expiresAtMs > nowMs) return;
+    if (cached) cache.delete(hostname);
+    const pending = cache.getPending(hostname);
+    if (pending) return pending;
+  }
+  if (!lookupHostname) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'MCP server hostname did not resolve to a public address.',
+    );
+  }
+  const validation = validateRemoteMcpHostname(hostname, lookupHostname);
+  if (cache) {
+    cache.setPending(hostname, validation);
+  }
+  await validation;
+  cache?.set(hostname, { expiresAtMs: nowMs + ttlMs });
+}
+
+async function validateRemoteMcpHostname(
+  hostname: string,
+  lookupHostname: HostnameLookup,
+): Promise<void> {
+  let records;
+  try {
+    records = await lookupHostname(hostname);
+  } catch {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'MCP server hostname did not resolve to a public address.',
+    );
+  }
+  if (records.length === 0) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'MCP server hostname did not resolve to a public address.',
+    );
+  }
+  if (
+    records.some((record) => isPrivateNetworkAddress(record.address)) ||
+    !records.some((record) => !isPrivateNetworkAddress(record.address))
+  ) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'MCP server hostname must resolve only to public routable addresses.',
+    );
+  }
+}
+
+function validateStdioTemplateArgs(config: McpServerTransportConfig): void {
+  const args = config.args ?? [];
+  if (config.templateId === 'npx-package') {
+    if (args.length !== 1 || !NPM_PACKAGE_SPEC_PATTERN.test(args[0] ?? '')) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'npx-package MCP server requires exactly one safe npm package argument.',
+      );
+    }
+    return;
+  }
+  if (args.length > 0) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'stdio_template MCP server args are only supported for npx-package in v1.',
+    );
+  }
+}
+
+export class RemoteMcpDnsValidationCache {
+  private readonly cache = new Map<string, { expiresAtMs: number }>();
+  private readonly pending = new Map<string, Promise<void>>();
+
+  get(hostname: string): { expiresAtMs: number } | undefined {
+    return this.cache.get(hostname);
+  }
+
+  set(hostname: string, entry: { expiresAtMs: number }): void {
+    this.cache.set(hostname, entry);
+  }
+
+  delete(hostname: string): void {
+    this.cache.delete(hostname);
+  }
+
+  getPending(hostname: string): Promise<void> | undefined {
+    return this.pending.get(hostname);
+  }
+
+  setPending(hostname: string, promise: Promise<void>): void {
+    this.pending.set(
+      hostname,
+      promise.finally(() => {
+        this.pending.delete(hostname);
+      }),
+    );
+  }
+}
+
+export function validateCredentialRefs(refs: McpCredentialRef[]): void {
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (!BROKER_CREDENTIAL_REF_PATTERN.test(ref.name)) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        `MCP credential ref must be a broker-scoped reference ending in _REF: ${ref.name}`,
+      );
+    }
+    const key = `${ref.target}:${ref.key}`;
+    if (seen.has(key)) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        `Duplicate MCP credential target: ${key}`,
+      );
+    }
+    seen.add(key);
+  }
+}
+
+function assertSafeRemoteMcpHostname(hostname: string): void {
+  const normalized = hostnameForNetwork(hostname)
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, '');
+  if (
+    !normalized ||
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local') ||
+    METADATA_HOSTNAMES.has(normalized)
+  ) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'MCP server URL must not target local or metadata hosts.',
+    );
+  }
+  if (isIpAddress(normalized) && isPrivateNetworkAddress(normalized)) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'MCP server URL must not target private, loopback, link-local, or metadata addresses.',
+    );
+  }
+}

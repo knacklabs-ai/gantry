@@ -315,7 +315,7 @@ describe('Slack channel', () => {
     );
   });
 
-  it('denies Slack permission decisions when no approver IDs are configured', async () => {
+  it('denies same-channel Slack permission decisions when no approver IDs are configured', async () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
@@ -328,6 +328,7 @@ describe('Slack channel', () => {
       {
         requestId: 'perm-no-approver',
         sourceGroup: 'slack_main',
+        decisionPolicy: 'same_channel',
         toolName: 'Bash',
       },
     );
@@ -337,7 +338,10 @@ describe('Slack channel', () => {
     );
     await actionHandler?.({
       ack: vi.fn().mockResolvedValue(undefined),
-      body: { user: { id: 'U_ANY', name: 'Any User' } },
+      body: {
+        channel: { id: 'C1234567890' },
+        user: { id: 'U_ANY', name: 'Any User' },
+      },
       action: {
         value: JSON.stringify({
           requestId: 'perm-no-approver',
