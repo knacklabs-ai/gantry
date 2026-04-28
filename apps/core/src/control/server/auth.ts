@@ -15,7 +15,9 @@ export type Scope =
   | 'webhooks:write'
   | 'memory:read'
   | 'memory:write'
-  | 'memory:admin';
+  | 'memory:admin'
+  | 'skills:read'
+  | 'skills:write';
 
 export type ApiKeyRecord = {
   kid: string;
@@ -40,6 +42,8 @@ const ALL_SCOPES: Scope[] = [
   'memory:read',
   'memory:write',
   'memory:admin',
+  'skills:read',
+  'skills:write',
 ];
 
 export function isValidControlId(value: string): boolean {

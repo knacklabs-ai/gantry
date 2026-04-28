@@ -28,8 +28,8 @@ Durable state stays outside Claude runtime files:
 - Postgres owns apps, agents, config versions, tools, skills, memory policy,
   permission policy, sessions, messages, and runs.
 - `ProviderArtifactStore` owns provider continuation and export bytes.
-- Package assets provide bundled compatibility skills until the skill registry
-  becomes DB/artifact backed.
+- The skill registry owns skill metadata, approval state, bindings, asset
+  hashes, and asset storage references.
 
 The runtime-home Claude directory is not an enterprise runtime source of truth.
 
@@ -47,13 +47,16 @@ settings are not MyClaw policy.
 
 ## Skills
 
-Skills are materialized into the temp `skills/` directory. For this cut, the
-temporary `SkillSource` reads bundled package assets. Prompt 12A can replace
-that source with a DB/artifact-backed `SkillRegistry` without changing Claude
-runtime execution.
+Skills are materialized into the temp `skills/` directory from `SkillRegistry`.
+The materializer resolves approved, enabled versions for the agent, reads their
+assets from artifact storage, and writes them into the per-run Claude config
+directory.
 
 Durable user-installed files under the runtime-home Claude skills directory are
 not read or copied by enterprise runtime.
+
+Repo `.claude/skills` is read only by bootstrap seeding for bundled skills. It
+is not a runtime source of truth.
 
 ## Provider Artifacts
 

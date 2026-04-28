@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
   createStorageService,
   type ResolvedStorageConfig,
@@ -19,6 +23,8 @@ import type { ProviderArtifactStore } from '../../../domain/ports/provider-artif
 import { PostgresCanonicalOpsRepository } from './schema/canonical-ops-repo.postgres.js';
 import { PostgresControlPlaneRepository } from './schema/control-plane-repo.postgres.js';
 import type { PostgresStorageService } from './storage-service.js';
+import { LocalSkillAssetStore } from '../../artifacts/skills/local-skill-asset-store.js';
+import type { SkillAssetStore } from '../../../domain/ports/skill-asset-store.js';
 
 export interface StorageRuntime {
   service: PostgresStorageService;
@@ -26,6 +32,18 @@ export interface StorageRuntime {
   control: PostgresControlPlaneRepository;
   repositories: PostgresDomainRepositoryBundle;
   providerArtifacts: ProviderArtifactStore;
+  skillAssets: SkillAssetStore;
+}
+
+function resolvePackageRootFromHere(): string {
+  let current = path.dirname(fileURLToPath(import.meta.url));
+  while (true) {
+    const packageJson = path.join(current, 'package.json');
+    if (fs.existsSync(packageJson)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return process.cwd();
+    current = parent;
+  }
 }
 
 export function resolveStorageConfigFromRuntime(): ResolvedStorageConfig {
@@ -39,7 +57,10 @@ export function resolveStorageConfigFromRuntime(): ResolvedStorageConfig {
 export function createStorageRuntime(
   config: ResolvedStorageConfig = resolveStorageConfigFromRuntime(),
 ): StorageRuntime {
-  const service = createStorageService(config);
+  const service = createStorageService(config, {
+    artifactRoot: ARTIFACTS_DIR,
+    packageRoot: resolvePackageRootFromHere(),
+  });
   const sessionSettings = getRuntimeSettingsForConfig().agent.sessions;
   const ops: OpsRepository = new PostgresCanonicalOpsRepository(
     service.pool,
@@ -52,11 +73,13 @@ export function createStorageRuntime(
     artifactRoot: ARTIFACTS_DIR,
     defaultStorageType: 'local-filesystem',
   });
+  const skillAssets = new LocalSkillAssetStore(ARTIFACTS_DIR);
   return {
     service,
     ops,
     control,
     repositories,
     providerArtifacts,
+    skillAssets,
   };
 }

@@ -12,12 +12,13 @@ canonical conversation records.
 
 Claude runtime files are temporary materializations. `settings.json`, `skills/`,
 and provider session files are generated inside a per-run `CLAUDE_CONFIG_DIR`
-from canonical config, package skill assets, and provider artifacts.
+from canonical config, skill registry assets, and provider artifacts.
 
 ## Allowed Durable Stores
 
 - Postgres for canonical runtime state and artifact metadata
 - Local filesystem artifact root for single-node provider artifact bytes
+- Local filesystem artifact root for V1 skill asset bytes
 - Object storage for future multi-node provider artifact bytes
 
 ## Disallowed Durable State
@@ -30,6 +31,10 @@ is executing.
 Runtime code must also not treat runtime-home Claude settings, local settings,
 or skills directories as enterprise source of truth. `settings.local.json` is a
 Claude-local concept, not MyClaw policy.
+
+Repo `.claude/skills` is a bundled seed input only. After bootstrap, approved
+skill versions and file hashes are registry state, and file bytes live behind
+the artifact storage reference.
 
 Existing local JSONL files are not imported automatically. Operators can remove
 old local session files after confirming no older runtime version needs them.

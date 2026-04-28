@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const maxBytes = 64 * 1024;
+    const maxBytes = 10 * 1024 * 1024;
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     const contentLength = Number(req.headers['content-length'] || 0);

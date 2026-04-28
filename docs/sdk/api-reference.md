@@ -11,6 +11,35 @@ createClient({
 })
 ```
 
+## Skills
+
+```ts
+client.skills.list({ appId? })
+client.skills.create({ appId?, name, description?, source? })
+client.skills.get(skillId, { appId? })
+client.skills.update(skillId, patch)
+
+client.skills.versions.create(skillId, {
+  appId?,
+  version?,
+  entrypoint?,
+  manifestJson?,
+  createdBy?,
+  assets: [{ path, contentType?, contentBase64 }],
+})
+client.skills.versions.list(skillId, { appId? })
+client.skills.versions.approve(skillId, versionId, { appId? })
+client.skills.versions.reject(skillId, versionId, { appId? })
+
+client.agents.skills.list(agentId, { appId? })
+client.agents.skills.enable(agentId, skillId, { appId?, skillVersionId? })
+client.agents.skills.disable(agentId, skillId, { appId? })
+```
+
+Skill version assets are sent as JSON with base64 file bytes. Imported versions
+start as draft. Only approved enabled versions materialize into per-run Claude
+skills directories.
+
 ## Sessions
 
 ```ts

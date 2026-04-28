@@ -7,6 +7,8 @@ This inventory classifies local filesystem state by durability.
 - runtime home `settings.yaml`: non-secret runtime settings.
 - `<runtime-home>/artifacts/provider-sessions/`: provider artifact bytes when
   using the `local-filesystem` artifact backend.
+- `<runtime-home>/artifacts/skills/`: V1 skill asset bytes referenced by
+  `skill_assets.storage_ref`.
 - Local credential files managed by their owning credential adapters.
 
 ## Temporary Local State
@@ -31,3 +33,6 @@ Older code may also have generated runtime-home Claude settings and skills.
 Enterprise runtime no longer reads those paths as configuration or skill truth.
 
 No automatic migration is provided for old local Claude files.
+
+Repo `.claude/skills` remains a packaged bundled-skill seed source. It is not a
+durable runtime source and is not copied directly during agent runs.

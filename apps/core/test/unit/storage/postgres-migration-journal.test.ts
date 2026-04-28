@@ -31,6 +31,30 @@ describe('Postgres migration journal', () => {
     );
   });
 
+  it('applies the skill registry migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ tag: string }>;
+    };
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0015_skill_registry_v1.sql',
+      ),
+      'utf8',
+    );
+
+    expect(journal.entries.map((entry) => entry.tag)).toContain(
+      '0015_skill_registry_v1',
+    );
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS skill_versions');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS skill_assets');
+    expect(migration).toContain(
+      'CREATE TABLE IF NOT EXISTS skill_registry_events',
+    );
+  });
+
   it('flattens memory subjects during the canonical persistence cut', () => {
     const migration = fs.readFileSync(
       path.resolve(

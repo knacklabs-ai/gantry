@@ -19,7 +19,6 @@ import {
   stringifyClaudeSettings,
 } from './claude-settings-renderer.js';
 import {
-  BundledClaudeSkillSource,
   materializeClaudeSkills,
   type SkillSource,
 } from './claude-skill-materializer.js';
@@ -82,8 +81,7 @@ export async function materializeClaudeRuntime(
       { mode: 0o600 },
     );
     await materializeClaudeSkills({
-      skillSource:
-        input.skillSource ?? new BundledClaudeSkillSource(input.packageRoot),
+      skillSource: input.skillSource ?? { listSkills: async () => [] },
       skillsDir,
       enabledSkillIds: input.enabledSkillIds,
     });

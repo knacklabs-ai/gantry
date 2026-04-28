@@ -22,6 +22,12 @@ import {
   captureClaudeArtifacts,
   materializeClaudeRuntime,
 } from '../adapters/llm/anthropic-claude-agent/claude-config-materializer.js';
+import { RegistryClaudeSkillSource } from '../adapters/llm/anthropic-claude-agent/claude-skill-materializer.js';
+import { getRuntimeStorage } from '../adapters/storage/postgres/runtime-store.js';
+import {
+  DEFAULT_AGENT_ID,
+  DEFAULT_APP_ID,
+} from '../adapters/storage/postgres/seeds.js';
 import { ensureGroupIpcLayout } from './agent-spawn-layout.js';
 import { resolvePackageRootFromSourceDir } from '../platform/package-root.js';
 import {
@@ -153,6 +159,14 @@ export async function spawnAgent(
       },
       providerArtifactStore: options?.providerArtifactStore,
       artifactContext: options?.providerArtifactContext,
+      skillSource: new RegistryClaudeSkillSource(
+        getRuntimeStorage().repositories.skills,
+        getRuntimeStorage().skillAssets,
+        {
+          appId: DEFAULT_APP_ID as never,
+          agentId: DEFAULT_AGENT_ID as never,
+        },
+      ),
     });
   } catch (err) {
     return {

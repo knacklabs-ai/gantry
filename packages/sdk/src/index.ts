@@ -7,6 +7,7 @@ import type {
   ChannelInstallationInput,
   ChannelInstallationPatch,
 } from './channel-types.js';
+import { createAgentSkillsClient, createSkillsClient } from './skills.js';
 
 export type JobKind = 'manual' | 'once' | 'recurring';
 export type ResponseMode = 'sse' | 'webhook' | 'both' | 'none';
@@ -556,7 +557,14 @@ export class MyClawClient {
         );
       },
     },
+    skills: createAgentSkillsClient({
+      request: (options) => this.transport.request(options),
+    }),
   };
+
+  readonly skills = createSkillsClient({
+    request: (options) => this.transport.request(options),
+  });
 
   readonly webhooks = {
     register: (input: {
