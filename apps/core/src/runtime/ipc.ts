@@ -43,6 +43,7 @@ import {
 } from './ipc-parsing.js';
 import { parseTaskIpcData } from './ipc-task-parsing.js';
 import { clearConsumedIpcRequestIds } from './ipc-auth-validation.js';
+import type { RegisteredGroup } from '../domain/types.js';
 
 export type { IpcDeps } from './ipc-domain-types.js';
 export { processTaskIpc } from '../jobs/ipc-handler.js';
@@ -71,6 +72,18 @@ function canProcessIpcFile(sourceGroup: string, kind: string): boolean {
   }
   state.count += 1;
   return true;
+}
+
+export function resolveRegisteredIpcFolders(
+  registeredGroups: Record<string, RegisteredGroup>,
+): string[] {
+  return Array.from(
+    new Set(
+      Object.values(registeredGroups)
+        .map((group) => group.folder)
+        .filter((folder): folder is string => isValidGroupFolder(folder)),
+    ),
+  );
 }
 
 function releaseIpcRootLock(): void {
@@ -165,13 +178,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
   const processIpcFiles = async () => {
     if (!ipcWatcherRunning) return;
     const registeredGroups = deps.registeredGroups();
-    const allowedFolders = new Set(
-      Object.values(registeredGroups)
-        .map((group) => group.folder)
-        .filter((folder): folder is string => isValidGroupFolder(folder)),
-    );
+    const groupFolders = resolveRegisteredIpcFolders(registeredGroups);
 
-    for (const folder of allowedFolders) {
+    for (const folder of groupFolders) {
       const groupDir = path.join(ipcBaseDir, folder);
       if (
         initializedLayoutFolders.has(folder) &&
@@ -203,36 +212,6 @@ export function startIpcWatcher(deps: IpcDeps): void {
           'Failed to pre-create IPC layout for registered group',
         );
       }
-    }
-
-    // Scan group IPC directories (identity determined by directory)
-    let discoveredGroupFolders: string[];
-    try {
-      discoveredGroupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
-        if (f === 'errors' || f === '.lock') return false;
-        const groupPath = path.join(ipcBaseDir, f);
-        const trusted = isTrustedDirectory(groupPath);
-        if (!trusted && fs.existsSync(groupPath)) {
-          logger.warn(
-            { sourceGroup: f },
-            'Ignoring untrusted IPC directory (not a regular directory or symlink)',
-          );
-        }
-        return trusted;
-      });
-    } catch (err) {
-      logger.error({ err }, 'Error reading IPC base directory');
-      scheduleNextPoll();
-      return;
-    }
-
-    const groupFolders: string[] = [];
-    for (const folder of discoveredGroupFolders) {
-      if (allowedFolders.size > 0 && !allowedFolders.has(folder)) {
-        logger.warn({ sourceGroup: folder }, 'Ignoring unknown IPC directory');
-        continue;
-      }
-      groupFolders.push(folder);
     }
 
     // Build folder→isMain lookup from registered groups
