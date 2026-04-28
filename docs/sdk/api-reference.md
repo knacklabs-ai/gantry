@@ -69,8 +69,8 @@ client.agents.mcpServers.disable(agentId, serverId)
 
 MCP definitions store credential reference names only. Broker-injected values
 are projected into a private per-run config file with `0600` permissions and
-deleted by the runner after startup; they are not saved in Claude config,
-provider artifacts, or Postgres rows.
+deleted by the runner after startup and by the host on early spawn failures;
+they are not saved in Claude config, provider artifacts, or Postgres rows.
 `allowedToolPatterns` is the enforced SDK allowlist for third-party MCP tool
 names. `autoApproveToolPatterns` is session auto-allow scope and must be a
 subset of `allowedToolPatterns` when an explicit allowlist is present.
@@ -84,7 +84,8 @@ loopback, link-local, multicast, unspecified, documentation, or metadata ranges.
 Runtime materialization uses a short in-process validation cache for same-batch
 coalescing only; it must not be treated as durable DNS trust.
 Stdio-template MCP servers require an approved sandbox profile and are not
-available from agent-requested or CLI draft creation in this version. MCP server
+available from agent-requested or CLI draft creation in this version. The
+`npx-package` template accepts exactly one safe npm package argument. MCP server
 bindings are agent-wide in this version. Chat approvals are sent only to the
 trusted originating chat/thread registered for the requesting agent. Conversation
 or thread scoping is not accepted until the runtime materialization path

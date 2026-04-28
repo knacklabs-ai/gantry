@@ -20,6 +20,7 @@
 - Third-party MCP materialization must fail closed for non-HTTPS/private/local URLs, remote hosts that resolve to private/link-local/loopback/multicast/metadata ranges, unsandboxed stdio templates, and non-broker credential refs.
 - Treat MCP `allowedToolPatterns` as an enforced allowlist, not metadata. Auto-approved MCP tools must remain a subset of the allowed tools, and same-channel rebinds must preserve any existing admin permission policies unless an admin explicitly replaces them.
 - Agent-requested MCP credential needs are labels only. Never let the agent select arbitrary broker env keys; map them into server-scoped refs before approval and materialization.
+- MCP runner handoff files contain resolved credentials. Write them only after spawn preconditions pass and remove them in host cleanup paths; `npx-package` stdio templates may accept only one safe npm package argument.
 - Resolved third-party MCP credentials must not be serialized into long-lived process env; use a private per-run handoff and keep SDK tool env sanitized.
 - Host runner sync code must work with npm workspace hoisting and installed package layouts; do not assume `packages/agent-runner/node_modules` exists.
 - Files under `apps/core/src/app/bootstrap/` own composition and wiring only; runtime behavior must live in `runtime/`, `jobs/`, `session/`, `platform/`, `messaging/`, `memory/`, or infrastructure modules.

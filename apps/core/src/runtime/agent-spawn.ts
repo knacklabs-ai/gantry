@@ -144,10 +144,6 @@ export async function spawnAgent(
           credentialEnv: hostCredentials.env,
         })
       : [];
-  const mcpConfigPath =
-    mcpCapabilities.length > 0
-      ? writeRunnerMcpConfigFile(hostRuntime.groupIpcDir, mcpCapabilities)
-      : undefined;
   const hostRunnerPath = path.join(
     hostRuntime.runnerDistDir,
     'claude',
@@ -208,6 +204,10 @@ export async function spawnAgent(
       error: `Claude runtime materialization failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  const mcpConfigPath =
+    mcpCapabilities.length > 0
+      ? writeRunnerMcpConfigFile(hostRuntime.groupIpcDir, mcpCapabilities)
+      : undefined;
 
   const command = process.execPath;
   const args = [hostRunnerPath];
@@ -337,6 +337,7 @@ export async function spawnAgent(
     }
     return output;
   } finally {
+    cleanupRunnerMcpConfigFile(mcpConfigPath);
     claudeRuntimeMaterialization.cleanup();
   }
 }
@@ -360,4 +361,16 @@ function writeRunnerMcpConfigFile(
     { encoding: 'utf-8', mode: 0o600 },
   );
   return configPath;
+}
+
+function cleanupRunnerMcpConfigFile(configPath: string | undefined): void {
+  if (!configPath) return;
+  try {
+    fs.rmSync(configPath, { force: true });
+  } catch (err) {
+    logger.warn(
+      { err, configPath },
+      'Failed to remove MCP runner handoff file',
+    );
+  }
 }

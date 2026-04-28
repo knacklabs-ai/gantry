@@ -516,6 +516,7 @@ describe('agent-spawn timeout behavior', () => {
 
   it('hands resolved MCP config to the runner through a private file, not raw env JSON', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
+    const rmSyncSpy = vi.spyOn(fs, 'rmSync');
     const { getHostRuntimeCredentialEnv } =
       await import('@core/runtime/agent-spawn-host.js');
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
@@ -565,7 +566,49 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.MYCLAW_MCP_ALWAYS_ALLOWED_TOOLS_JSON).toContain(
       'mcp__github__search_repositories',
     );
+    expect(rmSyncSpy).toHaveBeenCalledWith(env.MYCLAW_MCP_CONFIG_FILE, {
+      force: true,
+    });
     expect(repository.auditEvents).toEqual([]);
+  });
+
+  it('does not write MCP handoff files when runner files are missing', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(fs.writeFileSync).mockClear();
+    const { getHostRuntimeCredentialEnv } =
+      await import('@core/runtime/agent-spawn-host.js');
+    vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
+      env: { GITHUB_TOKEN_REF: 'broker-token' },
+      brokerApplied: true,
+      brokerProfile: 'test',
+    });
+    const repository = new SpawnMcpRepository([mcpRecord()]);
+
+    const result = await spawnAgent(testGroup, testInput, () => {}, undefined, {
+      mcpServerRepository: repository,
+      mcpContext: { appId: 'app-one', agentId: 'agent-one' },
+      mcpHostnameLookup: vi.fn(async () => [
+        { address: '93.184.216.34', family: 4 as const },
+      ]),
+      credentialBroker: {
+        getCredentialInjection: vi.fn(async () => ({
+          env: { GITHUB_TOKEN_REF: 'broker-token' },
+          metadata: {
+            brokerApplied: true,
+            brokerProfile: 'test',
+          },
+        })),
+      } as any,
+    });
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('missing required runner files');
+    expect(vi.mocked(fs.writeFileSync)).not.toHaveBeenCalledWith(
+      expect.stringMatching(/mcp-.*\.json$/),
+      expect.anything(),
+      expect.anything(),
+    );
+    vi.mocked(fs.existsSync).mockReturnValue(true);
   });
 
   it('points Claude SDK session files at a temporary config directory', async () => {

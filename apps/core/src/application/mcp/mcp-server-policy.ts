@@ -22,6 +22,8 @@ export const STDIO_TEMPLATE_COMMANDS: Record<
 
 const METADATA_HOSTNAMES = new Set(['metadata.google.internal', 'metadata']);
 const BROKER_CREDENTIAL_REF_PATTERN = /^[A-Z][A-Z0-9_]*_REF$/;
+const NPM_PACKAGE_SPEC_PATTERN =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[a-z0-9._~^*+-][a-z0-9._~^*+-]*)?$/;
 
 export function validateTransportConfig(
   config: McpServerTransportConfig,
@@ -63,12 +65,7 @@ export function validateTransportConfig(
         'stdio_template MCP server requires sandboxProfileId.',
       );
     }
-    if (config.args?.length) {
-      throw new ApplicationError(
-        'INVALID_REQUEST',
-        'stdio_template MCP server args are not supported in v1.',
-      );
-    }
+    validateStdioTemplateArgs(config);
     if (config.env && Object.keys(config.env).length > 0) {
       throw new ApplicationError(
         'INVALID_REQUEST',
@@ -153,6 +150,25 @@ async function validateRemoteMcpHostname(
     throw new ApplicationError(
       'INVALID_REQUEST',
       'MCP server hostname must resolve only to public routable addresses.',
+    );
+  }
+}
+
+function validateStdioTemplateArgs(config: McpServerTransportConfig): void {
+  const args = config.args ?? [];
+  if (config.templateId === 'npx-package') {
+    if (args.length !== 1 || !NPM_PACKAGE_SPEC_PATTERN.test(args[0] ?? '')) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'npx-package MCP server requires exactly one safe npm package argument.',
+      );
+    }
+    return;
+  }
+  if (args.length > 0) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'stdio_template MCP server args are only supported for npx-package in v1.',
     );
   }
 }

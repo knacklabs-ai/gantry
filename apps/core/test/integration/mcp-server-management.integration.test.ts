@@ -446,6 +446,60 @@ describe('MCP server management integration flow', () => {
     ]);
   });
 
+  it('allows only a safe package argument for the npx stdio template', async () => {
+    const { McpServerService } =
+      await import('@core/application/mcp/mcp-server-service.js');
+    const service = new McpServerService(state.mcpServers);
+
+    await expect(
+      service.createDraft({
+        appId: 'app-one' as never,
+        name: 'bad_npx',
+        transportConfig: {
+          transport: 'stdio_template',
+          templateId: 'npx-package',
+          args: ['--package=unsafe'],
+        },
+        sandboxProfileId: 'sandbox:approved',
+      }),
+    ).rejects.toThrow(/safe npm package argument/);
+
+    const draft = await service.createDraft({
+      appId: 'app-one' as never,
+      name: 'safe_npx',
+      transportConfig: {
+        transport: 'stdio_template',
+        templateId: 'npx-package',
+        args: ['@modelcontextprotocol/server-github'],
+      },
+      sandboxProfileId: 'sandbox:approved',
+    });
+    await service.approveDraft({
+      appId: 'app-one' as never,
+      serverId: draft.definition.id,
+    });
+    await service.bindToAgent({
+      appId: 'app-one' as never,
+      agentId: 'agent:one' as never,
+      serverId: draft.definition.id,
+    });
+
+    await expect(
+      service.materializeForAgent({
+        appId: 'app-one' as never,
+        agentId: 'agent:one' as never,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        name: 'safe_npx',
+        config: expect.objectContaining({
+          command: 'npx',
+          args: ['-y', '@modelcontextprotocol/server-github'],
+        }),
+      }),
+    ]);
+  });
+
   it('preserves existing binding policies when same-channel rebind omits policies', async () => {
     const { McpServerService } =
       await import('@core/application/mcp/mcp-server-service.js');

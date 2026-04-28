@@ -108,7 +108,8 @@ uses a short in-process TTL cache for same-batch coalescing only; the cache is
 not durable trust and must not extend the DNS rebinding window across runs.
 Stdio-template MCP servers require an explicit sandbox profile and are control
 API/SDK-only in v1; agent requests and CLI draft creation only advertise
-HTTP/SSE.
+HTTP/SSE. The `npx-package` template accepts exactly one safe npm package
+argument; other v1 stdio templates do not accept caller-supplied args.
 
 MCP credentials are reference names resolved through `AgentCredentialBroker`.
 Raw tokens, API keys, OAuth values, runtime secrets, and database URLs must not
@@ -116,7 +117,9 @@ be stored in MCP definitions or inherited by third-party MCP processes. Runtime
 materialization resolves only broker-scoped credential reference names, not
 arbitrary host environment keys. Resolved MCP credentials are handed to the
 runner through a private per-run config file with `0600` permissions, and the
-runner deletes that file after reading it.
+runner deletes that file after reading it. The host also removes the handoff
+file during spawn cleanup so early runner failures do not leave credential
+artifacts on disk.
 
 `allowedToolPatterns` is the enforced SDK allowlist for tools exposed by a
 third-party MCP server. `autoApproveToolPatterns` is narrower session-only
