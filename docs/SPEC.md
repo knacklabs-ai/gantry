@@ -63,7 +63,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • Bash (host-executed runtime scope)                        │    │
 │  │    • Read, Write, Edit, Glob, Grep (file operations)           │    │
 │  │    • WebSearch, WebFetch (internet access)                     │    │
-│  │    • agent-browser (browser automation)                        │    │
+│  │    • Runtime-installed browser action skills/tools             │    │
 │  │    • mcp__myclaw__* (scheduler tools via IPC)                │    │
 │  │                                                                │    │
 │  └──────────────────────────────────────────────────────────────┘    │
@@ -73,14 +73,14 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 
 ### Technology Stack
 
-| Component          | Technology                                                        | Purpose                                                        |
-| ------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------- |
-| Channel System     | Provider registry (`apps/core/src/channels/provider-registry.ts`) | Channels are looked up by provider id and JID prefix           |
-| Message Storage    | Postgres with Drizzle                                             | Store messages, jobs, events, memory, and runtime state        |
-| Runtime Execution  | Host process execution                                            | Agent execution with runtime-home scoped paths                 |
-| Agent              | @anthropic-ai/claude-agent-sdk                                    | Run Claude with tools and MCP servers                          |
-| Browser Automation | agent-browser + Chromium                                          | Web interaction and screenshots with explicit CDP port handoff |
-| Runtime            | Node.js 25+                                                       | Host process for routing and pg-boss job execution             |
+| Component          | Technology                                                        | Purpose                                                      |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------ |
+| Channel System     | Provider registry (`apps/core/src/channels/provider-registry.ts`) | Channels are looked up by provider id and JID prefix         |
+| Message Storage    | Postgres with Drizzle                                             | Store messages, jobs, events, memory, and runtime state      |
+| Runtime Execution  | Host process execution                                            | Agent execution with runtime-home scoped paths               |
+| Agent              | @anthropic-ai/claude-agent-sdk                                    | Run Claude with tools and MCP servers                        |
+| Browser Capability | MyClaw browser broker + runtime-installed action tooling          | Persistent browser lifecycle, profile state, and CDP handoff |
+| Runtime            | Node.js 25+                                                       | Host process for routing and pg-boss job execution           |
 
 ---
 
@@ -645,14 +645,14 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 ### Commands Available in Any Group
 
-| Command                | Example                     | Effect         |
-| ---------------------- | --------------------------- | -------------- |
+| Command                | Example                           | Effect         |
+| ---------------------- | --------------------------------- | -------------- |
 | `@Assistant [message]` | `@Main Agent what's the weather?` | Talk to Claude |
 
 ### Commands Available in Main Channel Only
 
-| Command                          | Example                             | Effect                 |
-| -------------------------------- | ----------------------------------- | ---------------------- |
+| Command                          | Example                                   | Effect                 |
+| -------------------------------- | ----------------------------------------- | ---------------------- |
 | `@Assistant add group "Name"`    | `@Main Agent add group "Family Chat"`     | Register a new group   |
 | `@Assistant remove group "Name"` | `@Main Agent remove group "Work Team"`    | Unregister a group     |
 | `@Assistant list groups`         | `@Main Agent list groups`                 | Show registered groups |

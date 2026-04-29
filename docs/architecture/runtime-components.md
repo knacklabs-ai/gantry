@@ -166,10 +166,11 @@ The lifecycle MCP surface is intentionally small:
 - `browser_close`
 
 Click, type, navigate, snapshot, screenshot, and DOM action workflows belong in
-dedicated browser skills/tools or provider-native browser tooling. MyClaw passes
-a healthy CDP endpoint such as `PLAYWRIGHT_MCP_CDP_ENDPOINT` when a managed
-browser session is active so those tools can attach without MyClaw owning their
-action semantics.
+runtime-installed browser skills/tools or provider-native browser tooling.
+MyClaw does not package or maintain those action helpers. It passes a healthy
+CDP endpoint such as `PLAYWRIGHT_MCP_CDP_ENDPOINT` when a managed browser
+session is active so those tools can attach without MyClaw owning their action
+semantics.
 
 Provider proxy settings may be present in the child runner because credential
 brokers can require them for model access. Local loopback browser operations

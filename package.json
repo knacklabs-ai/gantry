@@ -37,8 +37,7 @@
     "docker-compose.yml",
     "ops/postgres/init/",
     "!**/*.map",
-    ".claude/skills/*/SKILL.md",
-    ".claude/skills/agent-browser/browser_cdp.py"
+    ".claude/skills/*/SKILL.md"
   ],
   "workspaces": [
     "packages/contracts",

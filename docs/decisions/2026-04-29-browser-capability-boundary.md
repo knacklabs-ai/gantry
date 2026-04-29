@@ -31,8 +31,9 @@ The runner-side MCP tool implementation is a signed IPC client. It does not
 open direct CDP HTTP connections and does not decide browser health.
 
 Browser actions such as click, type, navigate, snapshot, screenshot, and DOM
-interaction remain owned by dedicated browser skills/tools or provider-native
-tooling. When a MyClaw-managed browser is active, the runtime projects the CDP
+interaction remain owned by runtime-installed browser skills/tools or
+provider-native tooling. MyClaw does not package or maintain those action
+helpers. When a MyClaw-managed browser is active, the runtime projects the CDP
 endpoint into the child runner environment so those tools can attach.
 
 Provider proxy environment can still be passed to provider SDK execution.
