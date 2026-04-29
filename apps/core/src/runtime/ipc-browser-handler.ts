@@ -110,7 +110,7 @@ const browserActionHandlers: Record<BrowserIpcAction, BrowserActionHandler> = {
   },
   browser_status: async (request) => {
     const profileName = getProfileNameFromPayload(request.payload);
-    return { ok: true, data: getBrowserStatus(profileName) };
+    return { ok: true, data: await getBrowserStatus(profileName) };
   },
 };
 

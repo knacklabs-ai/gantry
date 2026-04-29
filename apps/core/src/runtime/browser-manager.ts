@@ -101,23 +101,16 @@ async function getFreePort(): Promise<number> {
   });
 }
 
-async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+async function waitForCdpHttp(port: number, timeoutMs: number): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const socket = net.connect({ port, host: '127.0.0.1' });
-      socket.once('connect', () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.once('error', () => resolve(false));
-    });
-
-    if (ok) return;
+    if (await isCdpHttpHealthy(port)) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  throw new Error(`Chrome did not start on port ${port} within ${timeoutMs}ms`);
+  throw new Error(
+    `Chrome CDP did not become healthy on port ${port} within ${timeoutMs}ms`,
+  );
 }
 
 function isChromeAlive(session: BrowserSession): boolean {
@@ -142,6 +135,41 @@ async function cdpJsonRequest(
     throw new Error(`CDP HTTP ${response.status} for ${endpoint}`);
   }
   return response.json();
+}
+
+async function isCdpHttpHealthy(port: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1_000);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function isSessionHealthy(session: BrowserSession): Promise<boolean> {
+  return isChromeAlive(session) && (await isCdpHttpHealthy(session.port));
+}
+
+async function closeUnhealthySession(
+  profileName: string,
+  session: BrowserSession,
+): Promise<void> {
+  logger.warn(
+    { profileName, pid: session.pid, port: session.port },
+    'Closing unhealthy browser session',
+  );
+  await closeBrowser(profileName).catch((err) => {
+    logger.warn(
+      { err, profileName, pid: session.pid, port: session.port },
+      'Failed to close unhealthy browser session',
+    );
+  });
 }
 
 async function ensureTarget(port: number): Promise<string | undefined> {
@@ -199,7 +227,7 @@ export async function launchBrowser(
 ): Promise<BrowserSessionStatus> {
   const profileName = resolveProfileName(opts.profileName);
   const existing = sessions.get(profileName);
-  if (existing && isChromeAlive(existing)) {
+  if (existing && (await isSessionHealthy(existing))) {
     touchSession(existing);
     return {
       profileName,
@@ -211,7 +239,7 @@ export async function launchBrowser(
   }
 
   if (existing) {
-    await closeBrowser(profileName).catch(() => undefined);
+    await closeUnhealthySession(profileName, existing);
   }
 
   const profile = createProfile(profileName);
@@ -239,7 +267,7 @@ export async function launchBrowser(
       throw new Error('Failed to launch Chrome process');
     }
 
-    await waitForPort(port, 10_000);
+    await waitForCdpHttp(port, 10_000);
     const targetId = await ensureTarget(port);
 
     const session: BrowserSession = {
@@ -282,15 +310,19 @@ export async function launchBrowser(
   }
 }
 
-export function getBrowserStatus(
+export async function getBrowserStatus(
   profileName = DEFAULT_BROWSER_PROFILE_NAME,
-): BrowserSessionStatus {
+): Promise<BrowserSessionStatus> {
   const normalized = resolveProfileName(profileName);
   const session = sessions.get(normalized);
   if (!session) return { profileName: normalized, running: false };
+  if (!(await isSessionHealthy(session))) {
+    await closeUnhealthySession(normalized, session);
+    return { profileName: normalized, running: false };
+  }
   return {
     profileName: normalized,
-    running: isChromeAlive(session),
+    running: true,
     port: session.port,
     targetId: session.targetId,
     lastUsedAt: new Date(session.lastUsedAt).toISOString(),
@@ -336,14 +368,25 @@ export async function closeAllBrowsers(): Promise<void> {
   }
 }
 
-export function listActiveBrowserSessions(): BrowserSessionStatus[] {
-  return [...sessions.values()].map((session) => ({
-    profileName: session.profileName,
-    running: isChromeAlive(session),
-    port: session.port,
-    targetId: session.targetId,
-    lastUsedAt: new Date(session.lastUsedAt).toISOString(),
-  }));
+export async function listActiveBrowserSessions(): Promise<
+  BrowserSessionStatus[]
+> {
+  const statuses: BrowserSessionStatus[] = [];
+  for (const session of sessions.values()) {
+    const running = await isSessionHealthy(session);
+    if (!running) {
+      await closeUnhealthySession(session.profileName, session);
+      continue;
+    }
+    statuses.push({
+      profileName: session.profileName,
+      running: true,
+      port: session.port,
+      targetId: session.targetId,
+      lastUsedAt: new Date(session.lastUsedAt).toISOString(),
+    });
+  }
+  return statuses;
 }
 
 export async function ensureBrowserProfileExists(

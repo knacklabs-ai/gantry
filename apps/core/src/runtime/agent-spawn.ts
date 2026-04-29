@@ -257,7 +257,7 @@ export async function spawnAgent(
   if (effectiveModel) {
     env.ANTHROPIC_MODEL = effectiveModel;
   }
-  const activeBrowserSession = listActiveBrowserSessions().find(
+  const activeBrowserSession = (await listActiveBrowserSessions()).find(
     (session) =>
       session.profileName === DEFAULT_BROWSER_PROFILE_NAME &&
       session.running &&
