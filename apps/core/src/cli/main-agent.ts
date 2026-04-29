@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 
-export const MAIN_AGENT_NAME = 'Main Agent';
+import { DEFAULT_AGENT_NAME } from '../shared/default-agent.js';
+
+export const MAIN_AGENT_NAME = DEFAULT_AGENT_NAME;
 export const MAIN_AGENT_FOLDER = 'main_agent';
 
 export function normalizeMainAgentName(raw: string | undefined): string {

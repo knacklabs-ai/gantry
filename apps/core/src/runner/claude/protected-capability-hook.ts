@@ -150,8 +150,15 @@ function evaluateFileMutationInput(
   return null;
 }
 
+const FILE_MUTATION_TOOLS = new Set([
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+]);
+
 function isFileMutationTool(toolName: string): boolean {
-  return new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']).has(toolName);
+  return FILE_MUTATION_TOOLS.has(toolName);
 }
 
 function isSkillCapabilityPath(normalizedPath: string): boolean {
