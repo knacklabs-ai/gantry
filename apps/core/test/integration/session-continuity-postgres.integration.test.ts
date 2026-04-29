@@ -59,6 +59,30 @@ maybeDescribe('Postgres memory continuity', () => {
     expect(withArtifact).not.toHaveProperty('latestArtifactId');
   });
 
+  it('uses active channel binding agent identity for turn context', async () => {
+    const chatJid = 'tg:bound-skill-agent';
+
+    await runtime.ops.setRegisteredGroup(chatJid, {
+      name: 'Bound Skill Agent',
+      folder: 'bound_skill_agent',
+      trigger: '@Andy',
+      added_at: '2026-04-28T00:00:00.000Z',
+      requiresTrigger: false,
+    });
+
+    const context = await runtime.sessionOps.getAgentTurnContext({
+      groupFolder: 'runtime_workspace_folder',
+      chatJid,
+      threadId: null,
+    });
+
+    expect(context).toMatchObject({
+      appId: 'default',
+      agentId: 'agent:bound_skill_agent',
+      agentSessionId: 'agent-session:runtime_workspace_folder',
+    });
+  });
+
   it('replaces provider session per scope without clobbering a thread scope', async () => {
     const groupFolder = 'group-session-replacement';
     const chatJid = 'tg:group-session-replacement';
