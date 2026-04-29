@@ -16,6 +16,7 @@ import {
   restartServiceForRuntimeHome,
   toTrimmedString,
 } from './ipc-shared.js';
+import { parseSkillDraftAssets } from './skill-draft-ipc.js';
 
 const refreshGroupsHandler: TaskHandler = async (context) => {
   const { data, sourceGroup, isMain, deps, registeredGroups } = context;
@@ -333,8 +334,10 @@ const requestSkillDraftHandler: TaskHandler = async (context) => {
         id: draft.id,
         name: draft.name,
         description: draft.description,
+        contentHash: draft.storage?.contentHash,
       },
       fileSummaries: parsed.fileSummaries,
+      skillMarkdownPreview: parsed.skillMarkdownPreview,
       totalSizeBytes: parsed.totalSizeBytes,
       reason,
     });
@@ -357,72 +360,6 @@ export const adminTaskHandlers: Record<string, TaskHandler> = {
   request_skill_draft: requestSkillDraftHandler,
   request_mcp_server: requestMcpServerHandler,
 };
-
-type ParsedSkillDraftAssets =
-  | {
-      ok: true;
-      assets: Array<{
-        path: string;
-        contentType?: string;
-        content: Uint8Array;
-      }>;
-      fileSummaries: Array<{ path: string; sizeBytes: number }>;
-      totalSizeBytes: number;
-    }
-  | { ok: false; error: string };
-
-function parseSkillDraftAssets(files: unknown): ParsedSkillDraftAssets {
-  if (!Array.isArray(files) || files.length === 0) {
-    return { ok: false, error: 'Skill draft must include at least one file.' };
-  }
-  if (files.length > 50) {
-    return {
-      ok: false,
-      error: 'Skill draft cannot include more than 50 files.',
-    };
-  }
-
-  const assets: Array<{
-    path: string;
-    contentType?: string;
-    content: Uint8Array;
-  }> = [];
-  const fileSummaries: Array<{ path: string; sizeBytes: number }> = [];
-  let totalSizeBytes = 0;
-  for (const file of files) {
-    if (!file || typeof file !== 'object') {
-      return { ok: false, error: 'Skill draft files must be objects.' };
-    }
-    const record = file as Record<string, unknown>;
-    const filePath = toTrimmedString(record.path, { maxLen: 256 });
-    const content = typeof record.content === 'string' ? record.content : '';
-    const contentType = toTrimmedString(record.contentType, { maxLen: 128 });
-    if (!filePath) {
-      return { ok: false, error: 'Skill draft file path is required.' };
-    }
-    if (typeof record.content !== 'string') {
-      return {
-        ok: false,
-        error: `Skill draft file ${filePath} must include string content.`,
-      };
-    }
-    const bytes = Buffer.from(content, 'utf-8');
-    totalSizeBytes += bytes.byteLength;
-    if (totalSizeBytes > 1024 * 1024) {
-      return {
-        ok: false,
-        error: 'Skill draft files cannot exceed 1 MiB total.',
-      };
-    }
-    assets.push({
-      path: filePath,
-      ...(contentType ? { contentType } : {}),
-      content: bytes,
-    });
-    fileSummaries.push({ path: filePath, sizeBytes: bytes.byteLength });
-  }
-  return { ok: true, assets, fileSummaries, totalSizeBytes };
-}
 
 function credentialRefsForRequestedMcp(
   serverName: string,
@@ -586,8 +523,23 @@ function startSkillPermissionReview(input: {
   sourceGroup: string;
   targetJid: string;
   threadId?: string;
-  skill: { id: string; name: string; description?: string };
-  fileSummaries: Array<{ path: string; sizeBytes: number }>;
+  skill: {
+    id: string;
+    name: string;
+    description?: string;
+    contentHash?: string;
+  };
+  fileSummaries: Array<{
+    path: string;
+    sizeBytes: number;
+    contentHash: string;
+  }>;
+  skillMarkdownPreview: {
+    path: string;
+    content: string;
+    truncated: boolean;
+    contentHash: string;
+  };
   totalSizeBytes: number;
   reason: string;
 }): void {
@@ -618,6 +570,8 @@ async function completeSkillPermissionReview(
       skillId: input.skill.id,
       name: input.skill.name,
       description: input.skill.description,
+      packageContentHash: input.skill.contentHash,
+      skillMarkdownPreview: input.skillMarkdownPreview,
       files: input.fileSummaries,
       totalSizeBytes: input.totalSizeBytes,
       activation: 'next_agent_run',

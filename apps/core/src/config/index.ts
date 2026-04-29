@@ -103,6 +103,18 @@ export function updatePublicRuntimeSettings(patch: {
   memory?: { enabled?: boolean; dreaming?: { enabled?: boolean } };
 }) {
   const settings = getRuntimeSettingsForConfig();
+  const nextMemoryEnabled = patch.memory?.enabled ?? settings.memory.enabled;
+  const nextDreamingEnabled =
+    patch.memory?.dreaming?.enabled ?? settings.memory.dreaming.enabled;
+  if (nextDreamingEnabled && !nextMemoryEnabled) {
+    throw Object.assign(
+      new Error('memory.dreaming.enabled requires memory.enabled=true.'),
+      {
+        statusCode: 400,
+        code: 'INVALID_REQUEST',
+      },
+    );
+  }
   const changed: string[] = [];
   if (patch.agent?.name !== undefined) {
     const next = patch.agent.name.trim();

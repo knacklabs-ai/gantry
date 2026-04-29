@@ -185,20 +185,15 @@ describe('resolveClaudeAuthState', () => {
 
     const result = updatePublicRuntimeSettings({
       agent: { name: '  Kai  ', defaultModel: ' sonnet ' },
-      memory: { enabled: false, dreaming: { enabled: true } },
+      memory: { dreaming: { enabled: true } },
     });
 
     expect(result).toMatchObject({
       settings: {
         agent: { name: 'Kai', defaultModel: 'sonnet' },
-        memory: { enabled: false, dreaming: { enabled: true } },
+        memory: { enabled: true, dreaming: { enabled: true } },
       },
-      changed: [
-        'agent.name',
-        'agent.defaultModel',
-        'memory.enabled',
-        'memory.dreaming.enabled',
-      ],
+      changed: ['agent.name', 'agent.defaultModel', 'memory.dreaming.enabled'],
       restartRequired: true,
     });
 

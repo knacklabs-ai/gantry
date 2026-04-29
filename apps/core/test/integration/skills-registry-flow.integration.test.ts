@@ -394,6 +394,26 @@ describe('skill registry integration flow', () => {
         }),
       );
     });
+    expect(requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolInput: expect.objectContaining({
+          packageContentHash: expect.stringMatching(/^sha256:/),
+          skillMarkdownPreview: expect.objectContaining({
+            path: 'SKILL.md',
+            content: expect.stringContaining('name: Channel Posting'),
+            truncated: false,
+            contentHash: expect.stringMatching(/^sha256:/),
+          }),
+          files: [
+            expect.objectContaining({
+              path: 'SKILL.md',
+              sizeBytes: expect.any(Number),
+              contentHash: expect.stringMatching(/^sha256:/),
+            }),
+          ],
+        }),
+      }),
+    );
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         'chat-origin',
@@ -420,6 +440,65 @@ describe('skill registry integration flow', () => {
         status: 'active',
       }),
     ]);
+  });
+
+  it('rejects agent-created skill drafts when SKILL.md cannot be fully shown for channel approval', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'Approver',
+      reason: 'approved',
+    }));
+    const deps = {
+      registeredGroups: () => ({
+        'chat-origin': {
+          name: 'Agent One Origin',
+          folder: 'agent:one',
+          jid: 'chat-origin',
+        } as any,
+      }),
+      syncGroups: vi.fn(async () => undefined),
+      getAvailableGroups: vi.fn(async () => []),
+      writeGroupsSnapshot: vi.fn(async () => undefined),
+      sendMessage: vi.fn(async () => undefined),
+      requestPermissionApproval,
+      requestUserAnswer: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+      registerGroup: vi.fn(),
+    };
+
+    await processTaskIpc(
+      {
+        type: 'request_skill_draft',
+        taskId: 'request-skill-large-md-test',
+        targetJid: 'chat-origin',
+        chatJid: 'chat-origin',
+        authThreadId: 'thread-origin',
+        payload: {
+          reason: 'Test oversized review path.',
+          files: [
+            {
+              path: 'SKILL.md',
+              content: [
+                '---',
+                'name: Oversized Capability',
+                'description: Too large for channel review',
+                '---',
+                '# Oversized Capability',
+                'x'.repeat(4_001),
+              ].join('\n'),
+            },
+          ],
+        },
+      },
+      'agent:one',
+      false,
+      deps as any,
+    );
+
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(state.skills.size).toBe(0);
+    expect(state.bindings.size).toBe(0);
   });
 
   it('does not bind agent-created skill drafts when same-channel approval denies', async () => {

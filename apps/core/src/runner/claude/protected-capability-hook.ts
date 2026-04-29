@@ -15,7 +15,10 @@ export function evaluateProtectedCapabilityToolUse(
   toolName: string,
   input: unknown,
 ): ProtectedCapabilityDecision | null {
-  if (toolName === 'mcp__myclaw__request_mcp_server') {
+  if (
+    toolName === 'mcp__myclaw__request_mcp_server' ||
+    toolName === 'mcp__myclaw__request_skill_draft'
+  ) {
     return null;
   }
 
