@@ -44,7 +44,9 @@ export const runtimeEventsPostgres = pgTable(
     createdAt: timestamp('created_at', {
       withTimezone: true,
       mode: 'string',
-    }).notNull(),
+    })
+      .notNull()
+      .defaultNow(),
   },
   (table) => ({
     appCursorIdx: index('idx_runtime_events_app_cursor').on(

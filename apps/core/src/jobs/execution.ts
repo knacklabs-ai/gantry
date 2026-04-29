@@ -40,7 +40,6 @@ import type {
 } from './types.js';
 
 const JOB_DELETION_CHECK_INTERVAL_MS = 1_000;
-const DEFAULT_RUNTIME_APP_ID = 'default';
 let schedulerStreamingGenerationCounter = 0;
 
 export function resetSchedulerExecutionStateForTests(): void {
@@ -104,10 +103,7 @@ export async function runJob(
       ? 'serialized'
       : 'parallel';
   const leaseExpiresAt = toIso(currentTimeMs() + timeoutMs + 30_000);
-  const runtimeAppId = resolveJobRuntimeAppId(
-    currentJob,
-    DEFAULT_RUNTIME_APP_ID,
-  );
+  const runtimeAppId = resolveJobRuntimeAppId(currentJob);
 
   const claimed = await deps.opsRepository.claimDueJobRunStart({
     jobId: currentJob.id,
@@ -136,22 +132,25 @@ export async function runJob(
       (boundTrigger
         ? await resolveAppSessionForTrigger(boundTrigger.requestedBy)
         : undefined) ?? (await resolveAppSessionForJob());
-    await getRuntimeEventExchange().publish({
-      appId: (eventAppSession?.appId ?? runtimeAppId) as never,
-      eventType: RUNTIME_EVENT_TYPES.JOB_RUN_STARTED,
-      payload: {
-        jobId: currentJob.id,
-        runId,
-        scheduledFor,
-      },
-      actor: 'scheduler',
-      sessionId: eventAppSession?.sessionId as never,
-      jobId: currentJob.id as never,
-      runId: runId as never,
-      triggerId: boundTrigger?.triggerId,
-      responseMode: eventAppSession?.defaultResponseMode,
-      webhookId: eventAppSession?.defaultWebhookId,
-    });
+    const startEventAppId = eventAppSession?.appId ?? runtimeAppId;
+    if (startEventAppId) {
+      await getRuntimeEventExchange().publish({
+        appId: startEventAppId as never,
+        eventType: RUNTIME_EVENT_TYPES.JOB_RUN_STARTED,
+        payload: {
+          jobId: currentJob.id,
+          runId,
+          scheduledFor,
+        },
+        actor: 'scheduler',
+        sessionId: eventAppSession?.sessionId as never,
+        jobId: currentJob.id as never,
+        runId: runId as never,
+        triggerId: boundTrigger?.triggerId,
+        responseMode: eventAppSession?.defaultResponseMode,
+        webhookId: eventAppSession?.defaultWebhookId,
+      });
+    }
   } catch {}
   let jobDeletedDuringRun = false;
   let lastJobDeletionCheckAt = 0;
@@ -199,8 +198,10 @@ export async function runJob(
     if (await isJobDeleted(true)) return;
     try {
       const appSession = eventAppSession ?? (await resolveAppSessionForJob());
+      const eventAppId = appSession?.appId ?? runtimeAppId;
+      if (!eventAppId) return;
       await getRuntimeEventExchange().publish({
-        appId: (appSession?.appId ?? runtimeAppId) as never,
+        appId: eventAppId as never,
         eventType,
         payload,
         actor: 'scheduler',
@@ -619,27 +620,30 @@ export async function runJob(
         runStatus === 'completed' ? 'completed' : 'failed',
       );
     }
-    await getRuntimeEventExchange().publish({
-      appId: (eventAppSession?.appId ?? runtimeAppId) as never,
-      eventType:
-        runStatus === 'completed'
-          ? RUNTIME_EVENT_TYPES.JOB_RUN_COMPLETED
-          : RUNTIME_EVENT_TYPES.JOB_RUN_FAILED,
-      payload: {
-        jobId: currentJob.id,
-        runId,
-        status: runStatus,
-        summary,
-        nextRun,
-      },
-      actor: 'scheduler',
-      sessionId: eventAppSession?.sessionId as never,
-      jobId: currentJob.id as never,
-      runId: runId as never,
-      triggerId: boundTriggerId,
-      responseMode: eventAppSession?.defaultResponseMode,
-      webhookId: eventAppSession?.defaultWebhookId,
-    });
+    const completionEventAppId = eventAppSession?.appId ?? runtimeAppId;
+    if (completionEventAppId) {
+      await getRuntimeEventExchange().publish({
+        appId: completionEventAppId as never,
+        eventType:
+          runStatus === 'completed'
+            ? RUNTIME_EVENT_TYPES.JOB_RUN_COMPLETED
+            : RUNTIME_EVENT_TYPES.JOB_RUN_FAILED,
+        payload: {
+          jobId: currentJob.id,
+          runId,
+          status: runStatus,
+          summary,
+          nextRun,
+        },
+        actor: 'scheduler',
+        sessionId: eventAppSession?.sessionId as never,
+        jobId: currentJob.id as never,
+        runId: runId as never,
+        triggerId: boundTriggerId,
+        responseMode: eventAppSession?.defaultResponseMode,
+        webhookId: eventAppSession?.defaultWebhookId,
+      });
+    }
   } catch {}
   deps.onSchedulerChanged?.(currentJob.id);
 

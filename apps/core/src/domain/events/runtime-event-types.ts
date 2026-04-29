@@ -15,10 +15,10 @@ export const RUNTIME_EVENT_TYPES = {
   JOB_RUN_FAILED: 'job.run.failed',
   RUN_STARTED: 'run.started',
   RUN_CANCELED: 'run.canceled',
-  RUN_COMPLETED: 'run_completed',
-  RUN_FAILED: 'run_failed',
-  RUN_TIMEOUT: 'run_timeout',
-  RUN_DEAD_LETTERED: 'run_dead_lettered',
+  RUN_COMPLETED: 'run.completed',
+  RUN_FAILED: 'run.failed',
+  RUN_TIMEOUT: 'run.timeout',
+  RUN_DEAD_LETTERED: 'run.dead_lettered',
   WEBHOOK_TEST: 'webhook.test',
 } as const;
 

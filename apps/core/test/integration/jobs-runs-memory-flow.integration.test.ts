@@ -153,7 +153,7 @@ maybeDescribe('jobs, runs, memory, and scheduler flow', () => {
     });
     const eventTypes = events.map((event) => event.event_type);
     expect(eventTypes).toEqual(
-      expect.arrayContaining(['job.started', 'run_completed', 'job.completed']),
+      expect.arrayContaining(['job.started', 'run.completed', 'job.completed']),
     );
     expect(harness.channel.sent.map((sent) => sent.threadId)).toContain(
       job.thread_id,
@@ -204,7 +204,7 @@ maybeDescribe('jobs, runs, memory, and scheduler flow', () => {
       job_id: job.id,
     });
     expect(events.map((event) => event.event_type)).toEqual(
-      expect.arrayContaining(['job.started', 'run_failed', 'job.failed']),
+      expect.arrayContaining(['job.started', 'run.failed', 'job.failed']),
     );
   });
 
@@ -264,7 +264,7 @@ maybeDescribe('jobs, runs, memory, and scheduler flow', () => {
     expect(events.map((event) => event.event_type)).toEqual(
       expect.arrayContaining([
         'job.started',
-        'run_dead_lettered',
+        'run.dead_lettered',
         'job.failed',
       ]),
     );

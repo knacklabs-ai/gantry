@@ -43,14 +43,91 @@ CREATE INDEX idx_runtime_events_type_cursor
 CREATE INDEX idx_runtime_events_webhook_projection
   ON runtime_events(webhook_id, response_mode, event_id);
 
-DELETE FROM control_http_webhook_deliveries;
+INSERT INTO apps (id, slug, name, status, created_at, updated_at)
+VALUES ('default', 'default', 'Default Runtime App', 'active', now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO runtime_events (
+  event_id,
+  app_id,
+  session_id,
+  job_id,
+  run_id,
+  trigger_id,
+  event_type,
+  actor,
+  correlation_id,
+  payload_json,
+  created_at
+)
+OVERRIDING SYSTEM VALUE
+SELECT
+  event.event_id,
+  COALESCE(session.app_id, webhook_app.app_id, 'default') AS app_id,
+  event.session_id,
+  event.job_id,
+  event.run_id,
+  event.trigger_id,
+  event.event_type,
+  event.actor,
+  event.correlation_id,
+  event.payload,
+  event.created_at
+FROM control_http_events event
+LEFT JOIN control_http_sessions session
+  ON session.session_id = event.session_id
+LEFT JOIN (
+  SELECT DISTINCT ON (delivery.event_id)
+    delivery.event_id,
+    webhook.app_id
+  FROM control_http_webhook_deliveries delivery
+  INNER JOIN control_http_webhooks webhook
+    ON webhook.webhook_id = delivery.webhook_id
+  ORDER BY delivery.event_id, delivery.created_at
+) webhook_app
+  ON webhook_app.event_id = event.event_id;
+
+SELECT setval(
+  pg_get_serial_sequence('runtime_events', 'event_id'),
+  GREATEST(COALESCE((SELECT MAX(event_id) FROM runtime_events), 0) + 1, 1),
+  false
+);
+
+INSERT INTO runtime_events (
+  app_id,
+  agent_id,
+  session_id,
+  run_id,
+  job_id,
+  conversation_id,
+  thread_id,
+  event_type,
+  actor,
+  payload_json,
+  created_at
+)
+SELECT
+  event.app_id,
+  run.agent_id,
+  run.session_id,
+  event.run_id,
+  run.job_id,
+  run.conversation_id,
+  run.thread_id,
+  event.type,
+  'runtime',
+  event.payload_json,
+  event.created_at
+FROM agent_run_events event
+LEFT JOIN agent_runs run
+  ON run.id = event.run_id;
 
 ALTER TABLE control_http_webhook_deliveries
   DROP CONSTRAINT IF EXISTS control_http_webhook_deliveries_event_id_fkey;
 
-DROP TABLE IF EXISTS agent_run_events;
-DROP TABLE IF EXISTS control_http_events;
-
 ALTER TABLE control_http_webhook_deliveries
   ADD CONSTRAINT control_http_webhook_deliveries_event_id_fkey
   FOREIGN KEY (event_id) REFERENCES runtime_events(event_id) ON DELETE CASCADE;
+
+DROP TABLE IF EXISTS agent_run_events;
+DROP TABLE IF EXISTS control_http_events;
