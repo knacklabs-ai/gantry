@@ -89,6 +89,14 @@ export function resolveIpcFoldersFromGroups(
   );
 }
 
+export function isTrustedRegisteredIpcFolder(
+  ipcBaseDir: string,
+  folder: string,
+): boolean {
+  const groupDir = path.join(ipcBaseDir, folder);
+  return !fs.existsSync(groupDir) || isTrustedDirectory(groupDir);
+}
+
 function releaseIpcRootLock(): void {
   if (!ipcRootLockPath) return;
   try {
@@ -181,26 +189,25 @@ export function startIpcWatcher(deps: IpcDeps): void {
   const processIpcFiles = async () => {
     if (!ipcWatcherRunning) return;
     const groupRegistry = deps.registeredGroups();
-    const groupFolders = resolveIpcFoldersFromGroups(groupRegistry);
+    const groupFolders = resolveIpcFoldersFromGroups(groupRegistry).filter(
+      (folder) => {
+        if (isTrustedRegisteredIpcFolder(ipcBaseDir, folder)) return true;
+        initializedLayoutFolders.delete(folder);
+        logger.warn(
+          { sourceGroup: folder },
+          'Skipping IPC processing for untrusted registered group directory',
+        );
+        return false;
+      },
+    );
 
     for (const folder of groupFolders) {
-      const groupDir = path.join(ipcBaseDir, folder);
       if (
         initializedLayoutFolders.has(folder) &&
         hasCompleteTrustedGroupIpcLayout(ipcBaseDir, folder)
       ) {
         continue;
       }
-
-      if (fs.existsSync(groupDir) && !isTrustedDirectory(groupDir)) {
-        initializedLayoutFolders.delete(folder);
-        logger.warn(
-          { sourceGroup: folder },
-          'Skipping IPC layout pre-create for untrusted registered group directory',
-        );
-        continue;
-      }
-
       try {
         ensureGroupIpcLayout(ipcBaseDir, folder);
         if (hasCompleteTrustedGroupIpcLayout(ipcBaseDir, folder)) {

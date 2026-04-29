@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { RegisteredGroup } from '@core/domain/types.js';
-import { resolveIpcFoldersFromGroups } from '@core/runtime/ipc.js';
+import {
+  isTrustedRegisteredIpcFolder,
+  resolveIpcFoldersFromGroups,
+} from '@core/runtime/ipc.js';
 
 function group(folder: string): RegisteredGroup {
   return {
@@ -31,5 +38,36 @@ describe('resolveIpcFoldersFromGroups', () => {
         'tg:2': group('kai_tg_1'),
       }),
     ).toEqual(['kai_tg_1']);
+  });
+});
+
+describe('isTrustedRegisteredIpcFolder', () => {
+  const tempRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function tempIpcRoot(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-ipc-root-'));
+    tempRoots.push(root);
+    return root;
+  }
+
+  it('allows missing registered group roots so the runtime can create them', () => {
+    const ipcRoot = tempIpcRoot();
+
+    expect(isTrustedRegisteredIpcFolder(ipcRoot, 'new_group')).toBe(true);
+  });
+
+  it('rejects registered group roots that are symlinks before processing', () => {
+    const ipcRoot = tempIpcRoot();
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-ipc-target-'));
+    tempRoots.push(target);
+    fs.symlinkSync(target, path.join(ipcRoot, 'linked_group'), 'dir');
+
+    expect(isTrustedRegisteredIpcFolder(ipcRoot, 'linked_group')).toBe(false);
   });
 });
