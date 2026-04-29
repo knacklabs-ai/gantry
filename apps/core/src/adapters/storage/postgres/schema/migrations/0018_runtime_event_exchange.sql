@@ -6,30 +6,38 @@
 -- schema cut can run.
 
 DO $$
+DECLARE
+  checked_table text;
+  refusal_message text;
+  has_rows boolean;
 BEGIN
-  IF to_regclass('public.runtime_events') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.runtime_events LIMIT 1) THEN
-    RAISE EXCEPTION
-      '0018 refuses to replace non-empty runtime_events; export or clear rows explicitly before applying Runtime Event Exchange cutover';
-  END IF;
-
-  IF to_regclass('public.control_http_events') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.control_http_events LIMIT 1) THEN
-    RAISE EXCEPTION
-      '0018 refuses to drop non-empty control_http_events; export or clear rows explicitly before applying Runtime Event Exchange cutover';
-  END IF;
-
-  IF to_regclass('public.agent_run_events') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.agent_run_events LIMIT 1) THEN
-    RAISE EXCEPTION
-      '0018 refuses to drop non-empty agent_run_events; export or clear rows explicitly before applying Runtime Event Exchange cutover';
-  END IF;
-
-  IF to_regclass('public.control_http_webhook_deliveries') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.control_http_webhook_deliveries LIMIT 1) THEN
-    RAISE EXCEPTION
-      '0018 refuses to retarget non-empty control_http_webhook_deliveries; export or clear rows explicitly before applying Runtime Event Exchange cutover';
-  END IF;
+  FOR checked_table, refusal_message IN
+    VALUES
+      (
+        'runtime_events',
+        '0018 refuses to replace non-empty runtime_events; export or clear rows explicitly before applying Runtime Event Exchange cutover'
+      ),
+      (
+        'control_http_events',
+        '0018 refuses to drop non-empty control_http_events; export or clear rows explicitly before applying Runtime Event Exchange cutover'
+      ),
+      (
+        'agent_run_events',
+        '0018 refuses to drop non-empty agent_run_events; export or clear rows explicitly before applying Runtime Event Exchange cutover'
+      ),
+      (
+        'control_http_webhook_deliveries',
+        '0018 refuses to retarget non-empty control_http_webhook_deliveries; export or clear rows explicitly before applying Runtime Event Exchange cutover'
+      )
+  LOOP
+    IF to_regclass(checked_table) IS NOT NULL THEN
+      EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I LIMIT 1)', checked_table)
+        INTO has_rows;
+      IF has_rows THEN
+        RAISE EXCEPTION '%', refusal_message;
+      END IF;
+    END IF;
+  END LOOP;
 END $$;
 
 ALTER TABLE IF EXISTS control_http_webhook_deliveries
