@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@core/runtime/browser-capability.js', () => ({
   DEFAULT_BROWSER_PROFILE_NAME: 'default',
-  launchBrowser: vi.fn(async () => ({ ok: true, status: 'launched' })),
+  ensureBrowserReady: vi.fn(async () => ({ ok: true, status: 'launched' })),
   closeBrowser: vi.fn(async () => ({ ok: true, closed: true })),
   getBrowserStatus: vi.fn(() => ({ running: true })),
   listBrowserProfiles: vi.fn(async () => [
@@ -43,8 +43,8 @@ import {
   writeBrowserIpcResponse,
 } from '@core/runtime/ipc-browser-handler.js';
 import {
+  ensureBrowserReady,
   getBrowserStatus,
-  launchBrowser,
 } from '@core/runtime/browser-capability.js';
 import { verifyIpcResponseAuthPayload } from '@core/infrastructure/ipc/response-signing.js';
 
@@ -82,14 +82,18 @@ describe('ipc-browser-handler', () => {
         payload: {
           profile_name: 'default',
           headless: true,
-          cdp_port: 9222,
         },
       },
       { sourceGroup: 'main', isMain: true },
     );
 
     expect(response.ok).toBe(true);
-    expect(launchBrowser).toHaveBeenCalledTimes(1);
+    expect(ensureBrowserReady).toHaveBeenCalledTimes(1);
+    expect(ensureBrowserReady).toHaveBeenCalledWith({
+      profileName: 'default',
+      headless: true,
+      keepAliveMs: undefined,
+    });
   });
 
   it('returns unsupported error for unknown browser action', async () => {

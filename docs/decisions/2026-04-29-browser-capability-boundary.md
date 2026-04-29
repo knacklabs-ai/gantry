@@ -31,10 +31,17 @@ The runner-side MCP tool implementation is a signed IPC client. It does not
 open direct CDP HTTP connections and does not decide browser health.
 
 Browser actions such as click, type, navigate, snapshot, screenshot, and DOM
-interaction remain owned by runtime-installed browser skills/tools or
-provider-native tooling. MyClaw does not package or maintain those action
-helpers. When a MyClaw-managed browser is active, the runtime projects the CDP
-endpoint into the child runner environment so those tools can attach.
+interaction remain owned by the runtime-installed `agent-browser` skill or
+provider-native tooling. MyClaw does not add those action tools to its lifecycle
+MCP surface. For the local Claude runtime, MyClaw installs `agent-browser` into
+the generated per-run Claude config, registers the package-managed
+`agent_browser` action MCP server through a host-owned browser run wiring
+module, and projects the CDP endpoint into the child runner environment so that
+action capability can attach.
+
+The default local user experience is headed Chrome with the persistent `myclaw`
+profile. Headless mode is opt-in for tests, CI, doctor checks, or other
+non-interactive checks.
 
 Provider proxy environment can still be passed to provider SDK execution.
 Loopback browser traffic must bypass those proxies with explicit
@@ -45,7 +52,7 @@ Loopback browser traffic must bypass those proxies with explicit
 - Browser health bugs are diagnosed in the host browser capability, not in the
   runner MCP tool layer.
 - MyClaw does not duplicate browser automation actions already provided by
-  browser skills or provider-native tools.
+  `agent-browser` or provider-native tools.
 - Future browser action features must either integrate an existing browser
   tool/skill or add a separate browser-action adapter behind this boundary.
 - Historical migration files can retain old names, but active host execution

@@ -165,12 +165,20 @@ The lifecycle MCP surface is intentionally small:
 - `browser_status`
 - `browser_close`
 
-Click, type, navigate, snapshot, screenshot, and DOM action workflows belong in
-runtime-installed browser skills/tools or provider-native browser tooling.
-MyClaw does not package or maintain those action helpers. It passes a healthy
-CDP endpoint such as `PLAYWRIGHT_MCP_CDP_ENDPOINT` when a managed browser
-session is active so those tools can attach without MyClaw owning their action
-semantics.
+Browser sessions are enabled for the Main Agent by default and launch headed
+unless a non-interactive check explicitly asks for headless mode. Click, type,
+navigate, snapshot, screenshot, and DOM action workflows belong in the
+runtime-installed `agent-browser` skill or provider-native browser tooling.
+The runtime browser run wiring module owns the per-run projection: it installs
+that skill into the generated Claude config, registers the package-managed
+`agent_browser` action MCP server through the normal MCP handoff path, and
+passes a healthy CDP endpoint such as `PLAYWRIGHT_MCP_CDP_ENDPOINT` so action
+tooling can attach without MyClaw owning browser action semantics.
+Browser session metadata is persisted beside the profile so the next host
+process can adopt a healthy Chrome session or terminate an orphan with an
+unhealthy CDP endpoint before relaunching. Local launches are headed by default;
+CI-like environments default to headless unless a caller explicitly sets
+`headless`.
 
 Provider proxy settings may be present in the child runner because credential
 brokers can require them for model access. Local loopback browser operations

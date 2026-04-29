@@ -250,6 +250,8 @@ describe('Claude Agent SDK boundary integration', () => {
         MYCLAW_IPC_DIR: path.join(env.root, 'ipc', 'group'),
         MYCLAW_IPC_AUTH_TOKEN: 'runner-ipc-token',
         MYCLAW_IPC_RESPONSE_VERIFY_KEY: 'runner-response-verify-key',
+        NO_PROXY: '127.0.0.1,localhost,::1',
+        no_proxy: '127.0.0.1,localhost,::1',
       },
     });
     expect(call?.options.env).toEqual({

@@ -11,9 +11,9 @@ import { logger } from '../infrastructure/logging/logger.js';
 import {
   DEFAULT_BROWSER_PROFILE_NAME,
   closeBrowser,
+  ensureBrowserReady,
   getBrowserStatus,
   listBrowserProfiles,
-  launchBrowser,
 } from './browser-capability.js';
 import { IpcDomainContext } from './ipc-domain-types.js';
 
@@ -78,13 +78,9 @@ const browserActionHandlers: Record<BrowserIpcAction, BrowserActionHandler> = {
   },
   browser_launch: async (request) => {
     const profileName = getProfileNameFromPayload(request.payload);
-    const status = await launchBrowser({
+    const status = await ensureBrowserReady({
       profileName,
       headless: toOptionalBoolean(request.payload.headless),
-      cdpPort: toOptionalNumber(request.payload.cdp_port, {
-        min: 1024,
-        max: 65535,
-      }),
       keepAliveMs: toOptionalNumber(request.payload.keep_alive_ms, {
         min: 10_000,
         max: 3_600_000,

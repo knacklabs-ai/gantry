@@ -35,6 +35,9 @@ Durable state stays outside Claude runtime files:
   credential reference names, and audit events. Claude SDK `mcpServers` is a
   per-run projection, not durable truth.
 - Package or configured local skill folders provide file-based Claude skills.
+- MyClaw may add runtime-installed skills into the generated per-run config
+  when they are part of host-owned capability wiring. The local Claude browser
+  path uses this for `agent-browser`.
 - Hosted Anthropic managed skills are referenced by provider skill ids and are
   resolved through the Anthropic SDK adapter, not through local files.
 
@@ -58,6 +61,13 @@ Local Claude skills are files. The materializer copies valid skill folders or
 approved skill artifacts containing `SKILL.md` into the temp `skills/`
 directory for that run, then the Claude Agent SDK loads them from
 `CLAUDE_CONFIG_DIR`.
+
+For the Main Agent, MyClaw also materializes a pinned runtime-installed
+`agent-browser` skill into that same temp directory. It is not stored under the
+repo-bundled `.claude/skills` tree and does not require user `.claude` edits.
+The runtime browser run wiring module owns this per-run projection together
+with the `agent_browser` action MCP handoff and `PLAYWRIGHT_MCP_CDP_ENDPOINT`;
+the skill owns agent guidance for browser action workflows.
 
 Durable user-installed files under the runtime-home Claude skills directory are
 not read or copied by enterprise runtime.

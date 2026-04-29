@@ -1,14 +1,9 @@
 import fs from 'fs';
-import { ChildProcess, spawn } from 'child_process';
-import net from 'net';
+import { ChildProcess, execFileSync, spawn } from 'child_process';
 import path from 'path';
 
 import { logger } from '../infrastructure/logging/logger.js';
-import {
-  CHROME_PATH,
-  DEFAULT_BROWSER_KEEPALIVE_MS,
-  DEFAULT_CHROME_ARGS,
-} from './browser-config.js';
+import { CHROME_PATH, DEFAULT_CHROME_ARGS } from './browser-config.js';
 import {
   BrowserProfileLock,
   acquireProfileLock,
@@ -16,6 +11,19 @@ import {
   getProfile,
   updateProfileMetadata,
 } from './browser-profiles.js';
+import {
+  clearBrowserSessionRecord,
+  readBrowserSessionRecord,
+  writeBrowserSessionRecord,
+} from './browser-session-record.js';
+import {
+  resolveBrowserHeadless,
+  resolveBrowserKeepAliveMs,
+} from './browser-launch-options.js';
+import {
+  hasPersistentBrowserState,
+  inferAuthMarkers,
+} from './browser-profile-state.js';
 
 export const DEFAULT_BROWSER_PROFILE_NAME = 'myclaw';
 
@@ -23,7 +31,7 @@ interface BrowserSession {
   profileName: string;
   port: number;
   targetId?: string;
-  chromeProcess: ChildProcess;
+  chromeProcess?: ChildProcess;
   pid: number;
   lock: BrowserProfileLock;
   lastUsedAt: number;
@@ -35,7 +43,6 @@ interface BrowserSession {
 export interface LaunchBrowserOptions {
   profileName?: string;
   headless?: boolean;
-  cdpPort?: number;
   keepAliveMs?: number;
 }
 
@@ -50,6 +57,8 @@ export interface BrowserSessionStatus {
   targetId?: string;
   lastUsedAt?: string;
   headless?: boolean;
+  keepAliveMs?: number;
+  idleExpiresAt?: string;
   error?: string;
 }
 
@@ -71,6 +80,7 @@ function cleanupChromeSingletonArtifacts(userDataDir: string): void {
     'SingletonLock',
     'SingletonSocket',
     'SingletonCookie',
+    'DevToolsActivePort',
   ]) {
     try {
       fs.rmSync(`${userDataDir}/${lockFile}`, { force: true });
@@ -100,26 +110,6 @@ function resolveProfileName(profileName?: string): string {
   return normalized;
 }
 
-async function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, () => {
-      const addr = server.address();
-      if (!addr || typeof addr === 'string') {
-        server.close();
-        reject(new Error('Failed to allocate free port'));
-        return;
-      }
-      const port = addr.port;
-      server.close((err) => {
-        if (err) reject(err);
-        else resolve(port);
-      });
-    });
-  });
-}
-
 async function waitForCdpHttp(port: number, timeoutMs: number): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -132,14 +122,83 @@ async function waitForCdpHttp(port: number, timeoutMs: number): Promise<void> {
   );
 }
 
+async function waitForDevToolsActivePort(
+  userDataDir: string,
+  timeoutMs: number,
+): Promise<number> {
+  const activePortPath = path.join(userDataDir, 'DevToolsActivePort');
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const [portLine] = fs
+        .readFileSync(activePortPath, 'utf-8')
+        .split(/\r?\n/);
+      const port = Number(portLine);
+      if (Number.isInteger(port) && port > 0 && port <= 65535) {
+        return port;
+      }
+    } catch {
+      // Chrome creates DevToolsActivePort asynchronously after process launch.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(
+    `Chrome did not publish DevToolsActivePort within ${timeoutMs}ms`,
+  );
+}
+
 function isChromeAlive(session: BrowserSession): boolean {
-  if (!session.pid || session.pid <= 0) return false;
+  return isPidAlive(session.pid);
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!pid || pid <= 0) return false;
   try {
-    process.kill(session.pid, 0);
+    process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
+}
+
+function readPidCommandLine(pid: number): string | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  if (process.platform === 'linux') {
+    try {
+      const raw = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
+      const command = raw.replace(/\0/g, ' ').trim();
+      if (command) return command;
+    } catch {
+      // Fall back to ps below for non-/proc environments and tests.
+    }
+  }
+  try {
+    return execFileSync(
+      '/bin/ps',
+      ['-p', String(pid), '-ww', '-o', 'command='],
+      {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function isPidOwnedByBrowserProfile(
+  pid: number,
+  profile: { userDataDir: string },
+): boolean {
+  const commandLine = readPidCommandLine(pid);
+  if (!commandLine) return false;
+  const userDataDir = path.resolve(profile.userDataDir);
+  return (
+    commandLine.includes(`--user-data-dir=${userDataDir}`) ||
+    commandLine.includes(`--user-data-dir="${userDataDir}"`) ||
+    commandLine.includes(`--user-data-dir='${userDataDir}'`)
+  );
 }
 
 async function cdpJsonRequest(
@@ -224,11 +283,14 @@ async function ensureTarget(port: number): Promise<string | undefined> {
 }
 
 function touchSession(session: BrowserSession): void {
+  const profile =
+    getProfile(session.profileName) ?? createProfile(session.profileName);
   session.lastUsedAt = Date.now();
   updateProfileMetadata(session.profileName, {
     last_used: new Date(session.lastUsedAt).toISOString(),
     cdp_port: session.port,
   });
+  writeBrowserSessionRecord(profile, session);
 
   if (session.keepAliveTimer) clearTimeout(session.keepAliveTimer);
   session.keepAliveTimer = setTimeout(() => {
@@ -239,6 +301,85 @@ function touchSession(session: BrowserSession): void {
       );
     });
   }, session.keepAliveMs);
+}
+
+async function terminatePid(pid: number): Promise<void> {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return;
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 2_000) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch {
+      return;
+    }
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // ignore
+  }
+}
+
+async function recoverPersistedBrowserSession(input: {
+  profileName: string;
+  profile: { dir: string; userDataDir: string };
+  lock: BrowserProfileLock;
+  keepAliveMs: number;
+}): Promise<BrowserSession | null> {
+  const record = readBrowserSessionRecord(input.profile);
+  if (!record) return null;
+
+  if (!isPidAlive(record.pid)) {
+    clearBrowserSessionRecord(input.profile);
+    updateProfileMetadata(input.profileName, { cdp_port: undefined });
+    return null;
+  }
+
+  if (!isPidOwnedByBrowserProfile(record.pid, input.profile)) {
+    logger.warn(
+      { profileName: input.profileName, pid: record.pid },
+      'Ignoring persisted browser session whose PID is not owned by the profile',
+    );
+    clearBrowserSessionRecord(input.profile);
+    updateProfileMetadata(input.profileName, { cdp_port: undefined });
+    return null;
+  }
+
+  if (!(await isCdpHttpHealthy(record.port))) {
+    logger.warn(
+      { profileName: input.profileName, pid: record.pid, port: record.port },
+      'Terminating browser process with unhealthy persisted CDP session',
+    );
+    await terminatePid(record.pid);
+    clearBrowserSessionRecord(input.profile);
+    updateProfileMetadata(input.profileName, { cdp_port: undefined });
+    return null;
+  }
+
+  const session: BrowserSession = {
+    profileName: input.profileName,
+    port: record.port,
+    targetId: record.targetId,
+    pid: record.pid,
+    lock: input.lock,
+    lastUsedAt: Date.parse(record.lastUsedAt) || Date.now(),
+    keepAliveMs: input.keepAliveMs,
+    keepAliveTimer: null,
+    headless: record.headless,
+  };
+  sessions.set(input.profileName, session);
+  touchSession(session);
+  logger.info(
+    { profileName: input.profileName, pid: record.pid, port: record.port },
+    'Adopted persisted browser profile session',
+  );
+  return session;
 }
 
 function toStoppedStatus(
@@ -255,6 +396,7 @@ function toStoppedStatus(
 }
 
 function toRunningStatus(session: BrowserSession): BrowserSessionStatus {
+  const idleExpiresAt = session.lastUsedAt + session.keepAliveMs;
   return {
     profile: session.profileName,
     profileName: session.profileName,
@@ -266,59 +408,19 @@ function toRunningStatus(session: BrowserSession): BrowserSessionStatus {
     targetId: session.targetId,
     lastUsedAt: new Date(session.lastUsedAt).toISOString(),
     headless: session.headless,
+    keepAliveMs: session.keepAliveMs,
+    idleExpiresAt: new Date(idleExpiresAt).toISOString(),
   };
-}
-
-function hasPersistentBrowserState(profile: {
-  statePath: string;
-  userDataDir: string;
-}): boolean {
-  if (fs.existsSync(profile.statePath)) return true;
-  for (const relativePath of [
-    path.join('Default', 'Cookies'),
-    path.join('Default', 'Login Data'),
-    'Local State',
-  ]) {
-    try {
-      const fullPath = path.join(profile.userDataDir, relativePath);
-      const stat = fs.statSync(fullPath);
-      if (stat.isFile() && stat.size > 0) return true;
-    } catch {
-      // ignore missing or unreadable Chrome state files
-    }
-  }
-  return false;
-}
-
-function inferAuthMarkers(profile: { userDataDir: string }): string[] {
-  const markers = new Set<string>();
-  for (const relativePath of [
-    path.join('Default', 'Cookies'),
-    path.join('Default', 'Login Data'),
-  ]) {
-    try {
-      const fullPath = path.join(profile.userDataDir, relativePath);
-      const stat = fs.statSync(fullPath);
-      if (stat.isFile() && stat.size > 0) {
-        markers.add(
-          relativePath === path.join('Default', 'Cookies')
-            ? 'cookies'
-            : 'login-data',
-        );
-      }
-    } catch {
-      // ignore missing or unreadable Chrome state files
-    }
-  }
-  return [...markers].sort();
 }
 
 export async function launchBrowser(
   opts: LaunchBrowserOptions = {},
 ): Promise<BrowserSessionStatus> {
   const profileName = resolveProfileName(opts.profileName);
+  const keepAliveMs = resolveBrowserKeepAliveMs(opts.keepAliveMs);
   const existing = sessions.get(profileName);
   if (existing && (await isSessionHealthy(existing))) {
+    existing.keepAliveMs = keepAliveMs;
     touchSession(existing);
     return toRunningStatus(existing);
   }
@@ -332,13 +434,21 @@ export async function launchBrowser(
   let chromeProcess: ChildProcess | undefined;
 
   try {
+    const recovered = await recoverPersistedBrowserSession({
+      profileName,
+      profile,
+      lock,
+      keepAliveMs,
+    });
+    if (recovered) return toRunningStatus(recovered);
+
     cleanupChromeSingletonArtifacts(profile.userDataDir);
-    const port = opts.cdpPort ?? (await getFreePort());
+    const headless = resolveBrowserHeadless(opts.headless);
     const chromeFlags = [
       ...DEFAULT_CHROME_ARGS,
-      ...(opts.headless === false ? [] : ['--headless=new']),
+      ...(headless ? ['--headless=new'] : []),
       `--user-data-dir=${profile.userDataDir}`,
-      `--remote-debugging-port=${port}`,
+      '--remote-debugging-port=0',
     ];
 
     chromeProcess = spawn(findChrome(), chromeFlags, {
@@ -352,6 +462,7 @@ export async function launchBrowser(
       throw new Error('Failed to launch Chrome process');
     }
 
+    const port = await waitForDevToolsActivePort(profile.userDataDir, 10_000);
     await waitForCdpHttp(port, 10_000);
     const targetId = await ensureTarget(port);
 
@@ -363,12 +474,9 @@ export async function launchBrowser(
       pid,
       lock,
       lastUsedAt: Date.now(),
-      keepAliveMs: Math.max(
-        10_000,
-        opts.keepAliveMs || DEFAULT_BROWSER_KEEPALIVE_MS,
-      ),
+      keepAliveMs,
       keepAliveTimer: null,
-      headless: opts.headless !== false,
+      headless,
     };
 
     sessions.set(profileName, session);
@@ -380,7 +488,7 @@ export async function launchBrowser(
   } catch (err) {
     if (chromeProcess?.pid) {
       try {
-        process.kill(chromeProcess.pid);
+        process.kill(chromeProcess.pid, 'SIGTERM');
       } catch {
         // ignore
       }
@@ -390,12 +498,64 @@ export async function launchBrowser(
   }
 }
 
+export async function ensureBrowserReady(
+  opts: LaunchBrowserOptions = {},
+): Promise<BrowserSessionStatus> {
+  return launchBrowser(opts);
+}
+
+async function waitForProcessExit(
+  session: BrowserSession,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (!isChromeAlive(session)) return true;
+  const child = session.chromeProcess as
+    | (ChildProcess & {
+        once?: ChildProcess['once'];
+      })
+    | undefined;
+  if (typeof child?.once === 'function') {
+    const exited = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      const done = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      child.once('exit', done);
+      child.once('close', done);
+    });
+    if (exited) return true;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!isChromeAlive(session)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isChromeAlive(session);
+}
+
 export async function getBrowserStatus(
   profileName = DEFAULT_BROWSER_PROFILE_NAME,
 ): Promise<BrowserSessionStatus> {
   const normalized = resolveProfileName(profileName);
   const session = sessions.get(normalized);
-  if (!session) return toStoppedStatus(normalized);
+  if (!session) {
+    const profile = createProfile(normalized);
+    const lock = await acquireProfileLock(normalized);
+    try {
+      const recovered = await recoverPersistedBrowserSession({
+        profileName: normalized,
+        profile,
+        lock,
+        keepAliveMs: resolveBrowserKeepAliveMs(undefined),
+      });
+      if (recovered) return toRunningStatus(recovered);
+    } finally {
+      if (!sessions.has(normalized)) lock.release();
+    }
+    return toStoppedStatus(normalized);
+  }
   if (!(await isSessionHealthy(session))) {
     await closeUnhealthySession(normalized, session);
     return toStoppedStatus(normalized);
@@ -408,7 +568,33 @@ export async function closeBrowser(
 ): Promise<{ closed: boolean }> {
   const normalized = resolveProfileName(profileName);
   const session = sessions.get(normalized);
-  if (!session) return { closed: false };
+  if (!session) {
+    const profile = createProfile(normalized);
+    const lock = await acquireProfileLock(normalized);
+    try {
+      const record = readBrowserSessionRecord(profile);
+      if (!record) return { closed: false };
+      const shouldTerminate =
+        isPidAlive(record.pid) &&
+        isPidOwnedByBrowserProfile(record.pid, profile);
+      if (shouldTerminate) {
+        await terminatePid(record.pid);
+      } else {
+        logger.warn(
+          { profileName: normalized, pid: record.pid },
+          'Clearing persisted browser session without terminating unverified PID',
+        );
+      }
+      clearBrowserSessionRecord(profile);
+      updateProfileMetadata(normalized, {
+        last_used: new Date().toISOString(),
+        cdp_port: undefined,
+      });
+      return { closed: shouldTerminate };
+    } finally {
+      lock.release();
+    }
+  }
 
   if (session.keepAliveTimer) {
     clearTimeout(session.keepAliveTimer);
@@ -416,13 +602,24 @@ export async function closeBrowser(
   }
 
   try {
-    process.kill(session.pid);
+    process.kill(session.pid, 'SIGTERM');
   } catch {
     // ignore
   }
 
+  const exited = await waitForProcessExit(session, 2_000);
+  if (!exited) {
+    try {
+      process.kill(session.pid, 'SIGKILL');
+    } catch {
+      // ignore
+    }
+    await waitForProcessExit(session, 1_000);
+  }
+
   session.lock.release();
   sessions.delete(normalized);
+  clearBrowserSessionRecord(createProfile(normalized));
   updateProfileMetadata(normalized, {
     last_used: new Date().toISOString(),
     cdp_port: undefined,
@@ -459,7 +656,21 @@ export async function listActiveBrowserSessions(): Promise<
 
 export async function listBrowserProfiles(): Promise<BrowserProfileStatus[]> {
   const profile = createProfile(DEFAULT_BROWSER_PROFILE_NAME);
-  const status = await getBrowserStatus(profile.name);
+  const session = sessions.get(profile.name);
+  const persisted = readBrowserSessionRecord(profile);
+  const persistedRunning = Boolean(
+    persisted &&
+    isPidAlive(persisted.pid) &&
+    isPidOwnedByBrowserProfile(persisted.pid, profile),
+  );
+  const running = session ? isChromeAlive(session) : persistedRunning;
+  const cdpReady = session
+    ? running && (await isCdpHttpHealthy(session.port))
+    : Boolean(
+        persistedRunning &&
+        persisted &&
+        (await isCdpHttpHealthy(persisted.port)),
+      );
   const authMarkers = new Set([
     ...(profile.metadata.auth_markers || []),
     ...inferAuthMarkers(profile),
@@ -472,8 +683,8 @@ export async function listBrowserProfiles(): Promise<BrowserProfileStatus[]> {
       cdp_port: profile.metadata.cdp_port,
       auth_markers: [...authMarkers].sort(),
       has_state: hasPersistentBrowserState(profile),
-      running: status.running,
-      cdpReady: status.cdpReady,
+      running,
+      cdpReady,
     },
   ];
 }
