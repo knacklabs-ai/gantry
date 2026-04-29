@@ -1021,6 +1021,99 @@ describe('createGroupProcessor', () => {
       );
     });
 
+    it('advances streaming generation for each completed live SDK turn', async () => {
+      const streamingChannel = makeChannel({
+        sendStreamingChunk: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath();
+      deps.channelRuntime = streamingChannel;
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: RegisteredGroup,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({ status: 'success', result: 'first turn' });
+          await onOutput?.({ status: 'success', result: null });
+          await onOutput?.({ status: 'success', result: 'second turn' });
+          await onOutput?.({ status: 'success', result: null });
+          return { status: 'success', result: null } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      const calls = (
+        streamingChannel.sendStreamingChunk as ReturnType<typeof vi.fn>
+      ).mock.calls;
+      expect(calls).toHaveLength(4);
+      const firstGeneration = calls[0]?.[2]?.generation;
+      const secondGeneration = calls[2]?.[2]?.generation;
+      expect(firstGeneration).toEqual(expect.any(Number));
+      expect(secondGeneration).toEqual(expect.any(Number));
+      expect(secondGeneration).toBeGreaterThan(firstGeneration);
+      expect(calls[0]).toEqual([
+        'group1@g.us',
+        'first turn',
+        expect.objectContaining({ generation: firstGeneration }),
+      ]);
+      expect(calls[1]).toEqual([
+        'group1@g.us',
+        '',
+        expect.objectContaining({ done: true, generation: firstGeneration }),
+      ]);
+      expect(calls[2]).toEqual([
+        'group1@g.us',
+        'second turn',
+        expect.objectContaining({ generation: secondGeneration }),
+      ]);
+      expect(calls[3]).toEqual([
+        'group1@g.us',
+        '',
+        expect.objectContaining({ done: true, generation: secondGeneration }),
+      ]);
+      expect(deps.queue.notifyIdle).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not treat compact boundary markers as turn completion', async () => {
+      const { deps } = setupHappyPath();
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:1',
+        });
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: RegisteredGroup,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: null,
+            compactBoundary: true,
+          });
+          return { status: 'success', result: null } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(deps.collectSessionMemory).toHaveBeenCalledWith({
+        agentSessionId: 'agent-session:1',
+        trigger: 'precompact',
+      });
+      expect(deps.queue.notifyIdle).not.toHaveBeenCalled();
+    });
+
     it('persists delivered streaming output as canonical assistant context', async () => {
       const streamingChannel = makeChannel({
         sendStreamingChunk: vi.fn().mockResolvedValue(true),

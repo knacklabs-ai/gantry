@@ -137,5 +137,6 @@ arbitrary broker environment keys.
 
 Claude JSONL/session files are not runtime continuation state. MyClaw does not
 restore provider transcript artifacts before a run and does not capture SDK
-session files after a run. Session continuity comes from canonical Postgres
-messages, runs, summaries, and memory.
+session files after a run. Active chat continuity comes from the live SDK
+streaming-input session while the runner is alive; fresh runs restore only
+durable MyClaw memory.

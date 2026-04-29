@@ -88,8 +88,8 @@ enterprise credential broker, never in MyClaw `.env` or process env.
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`          | `AgentCredentialBroker`                |
 | `CLAUDE_CODE_OAUTH_TOKEN`                      | `AgentCredentialBroker`                |
 
-Legacy model env keys such as `ANTHROPIC_MODEL` and
-`ANTHROPIC_DEFAULT_*_MODEL` are non-secret settings. Do not place them in
+Model env keys such as `ANTHROPIC_MODEL` and `ANTHROPIC_DEFAULT_*_MODEL` are
+non-secret settings, but MyClaw runtime config does not accept them from
 runtime `.env`; use `agent.default_model` for the default agent model and group
 `/model` overrides for per-group model selection.
 

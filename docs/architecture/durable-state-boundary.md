@@ -42,4 +42,4 @@ hosted skill versioning. Hosted Anthropic skills are provider-managed resources
 addressed by opaque provider refs through the Anthropic SDK adapter.
 
 Existing local JSONL files are not imported automatically. Operators can remove
-old local session files after confirming no older runtime version needs them.
+unsupported local session files after confirming no runtime version needs them.

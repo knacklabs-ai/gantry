@@ -237,7 +237,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       latestMessage.thread_id,
     );
     const resolveThreadId = (threadId?: string) => threadId ?? activeThreadId;
-    const streamGeneration = (streamingGenerationCounter += 1);
+    let streamGeneration = (streamingGenerationCounter += 1);
     const buildMessageOptions = (threadId?: string) => {
       const resolved = resolveThreadId(threadId);
       return resolved ? { threadId: resolved } : undefined;
@@ -486,10 +486,12 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const supportsStreamingChunks =
       deps.channelRuntime.supportsStreaming(chatJid);
     let streamFinalized = false;
+    let streamHasContent = false;
     const finalizeStreamingOutput = async (
       reason: 'success-marker' | 'error-marker' | 'turn-complete',
     ) => {
       if (!supportsStreamingChunks || streamFinalized) return;
+      if (!streamHasContent) return;
       streamFinalized = true;
       try {
         await deps.channelRuntime.sendStreamingChunk(
@@ -527,6 +529,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
             if (text) {
               let delivered = false;
               if (supportsStreamingChunks) {
+                streamHasContent = true;
                 delivered = await deps.channelRuntime.sendStreamingChunk(
                   chatJid,
                   raw,
@@ -546,9 +549,16 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
             resetIdleTimer();
           }
 
-          if (result.status === 'success' && !result.result) {
+          const isTurnCompleteMarker =
+            result.status === 'success' &&
+            !result.result &&
+            !result.compactBoundary;
+          if (isTurnCompleteMarker) {
             await finalizeStreamingOutput('success-marker');
             deps.queue.notifyIdle(queueJid);
+            streamGeneration = streamingGenerationCounter += 1;
+            streamFinalized = false;
+            streamHasContent = false;
             resetIdleTimer();
           }
 

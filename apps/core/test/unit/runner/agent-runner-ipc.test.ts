@@ -581,7 +581,7 @@ describe('agent-runner IPC lifecycle', () => {
 
       const result = await runRunner(
         fixture,
-        baseInput({ sessionId: 'legacy-sdk-session' }),
+        baseInput({ sessionId: 'stale-sdk-session' }),
         {
           TEST_EXIT_AFTER_QUERY: '1',
         },

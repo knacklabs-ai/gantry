@@ -3,7 +3,7 @@
 This document defines the product vocabulary MyClaw code should converge on.
 It is intentionally provider-neutral and channel-neutral. Current
 implementation names such as registered group, group folder, main group, JID,
-and Claude session id are legacy implementation details unless they are
+and Claude session id are implementation details unless they are
 explicitly mapped to one of the concepts below.
 
 ## Model Summary
@@ -318,5 +318,5 @@ Future implementation phases should remove or replace:
 - CLI-owned business logic
 - control routes directly mutating persistence
 
-Do not add compatibility shims for old local state unless a later decision
+Do not add compatibility shims for unsupported local state unless a later decision
 explicitly approves them.

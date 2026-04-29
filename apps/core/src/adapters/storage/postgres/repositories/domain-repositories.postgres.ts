@@ -152,7 +152,7 @@ function externalRef<Kind extends string>(
   if (typeof parsed.kind === 'string' && typeof parsed.value === 'string') {
     return { kind: parsed.kind as Kind, value: parsed.value };
   }
-  const legacyValue =
+  const fallbackRefValue =
     typeof parsed.jid === 'string'
       ? parsed.jid
       : typeof parsed.threadId === 'string'
@@ -160,7 +160,9 @@ function externalRef<Kind extends string>(
         : typeof parsed.externalId === 'string'
           ? parsed.externalId
           : fallbackValue;
-  return legacyValue ? { kind: fallbackKind, value: legacyValue } : undefined;
+  return fallbackRefValue
+    ? { kind: fallbackKind, value: fallbackRefValue }
+    : undefined;
 }
 
 function jsonTextEquals(column: unknown, keys: string[], value: string): SQL {
