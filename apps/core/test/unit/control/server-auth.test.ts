@@ -617,6 +617,14 @@ describe('control server runtime hardening', () => {
       );
       expect(raw).toContain('name: Kai');
       expect(raw).toContain('default_model: sonnet');
+
+      const unsupportedResponse = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/settings`,
+        'admin-key',
+        { method: 'POST' },
+      );
+      expect(unsupportedResponse.status).toBe(405);
+      expect(unsupportedResponse.headers.get('allow')).toBe('GET, PATCH');
     } finally {
       await handle.close();
     }

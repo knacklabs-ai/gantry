@@ -70,6 +70,7 @@ export async function handleSettingsRoutes(
     return true;
   }
 
+  res.setHeader('Allow', 'GET, PATCH');
   sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
   return true;
 }
