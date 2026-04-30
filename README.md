@@ -58,6 +58,9 @@ myclaw channel connect telegram
 myclaw channel connect slack
 myclaw channel list
 myclaw channel doctor
+myclaw agent list
+myclaw agent add <jid|chat-id> [--name <name>] [--main]
+myclaw service install|start|stop|restart
 ```
 
 Defaults in v1:
@@ -119,6 +122,12 @@ If an older local `.env` still contains settings-owned keys such as
 `MYCLAW_CREDENTIAL_MODE`, `ONECLI_URL`, `ANTHROPIC_MODEL`, or
 `SLACK_PERMISSION_APPROVER_IDS`, move those values into `settings.yaml` and
 remove them from `.env` before starting the runtime.
+
+MyClaw intentionally does not expose a destructive database-reset command in
+the runtime CLI. If you need to start over during development, stop MyClaw,
+reset your local Postgres outside the agent-facing CLI, then run
+`myclaw channel connect telegram` or `myclaw channel connect slack` to
+re-register chats.
 
 For hosted Postgres, use Neon, Supabase, or another provider that supports `vector` and `pg_trgm`, then paste two URLs during setup: one MyClaw-role URL with `sslmode=require`, and one OneCLI-role URL for the same database with `sslmode=require` and `schema=onecli`.
 

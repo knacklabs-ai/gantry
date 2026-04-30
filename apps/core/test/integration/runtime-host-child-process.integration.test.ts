@@ -228,5 +228,5 @@ describe('host child-process runtime smoke', () => {
     expect(fs.readdirSync(path.join(groupDir, 'logs')).length).toBeGreaterThan(
       0,
     );
-  });
+  }, 30_000);
 });

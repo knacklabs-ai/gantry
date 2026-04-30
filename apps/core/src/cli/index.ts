@@ -54,6 +54,8 @@ function usage(): string {
     '  myclaw channel connect <telegram|slack>',
     '  myclaw channel list',
     '  myclaw channel doctor',
+    '  myclaw agent list|info|add|remove|trigger|policy',
+    '  myclaw service install|start|stop|restart',
     '  myclaw skill draft upload <skill.zip> [--agent <agentId>] [--created-by <id>]',
     '  myclaw mcp draft|list|approve|reject|test|disable|bind|unbind|agent',
     '',
