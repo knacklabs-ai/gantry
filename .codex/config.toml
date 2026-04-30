@@ -5,6 +5,7 @@ personality = "pragmatic"
 sandbox_mode = "danger-full-access"
 web_search = "cached"
 
+approval_policy = "never"
 [features]
 codex_hooks = true
 multi_agent = true
