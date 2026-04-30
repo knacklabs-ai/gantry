@@ -5,7 +5,6 @@ import {
   DEFAULT_LLM_PROFILE_ID,
 } from '@core/adapters/storage/postgres/seeds.js';
 import type { AgentRunId } from '@core/domain/events/events.js';
-import { makeSessionScopeKey } from '@core/domain/repositories/ops-repo.js';
 import type { ProviderSessionId } from '@core/domain/sessions/sessions.js';
 
 import {
@@ -232,11 +231,10 @@ maybeDescribe('Postgres memory continuity', () => {
       chatJid,
       latestArtifactId: 'provider-session-artifact:test:delete-with-run',
     });
-    const resume = await runtime.canonicalSessionRepository.getSessionResume({
+    const resume = await runtime.sessionOps.getAgentTurnContext({
       groupFolder,
       chatJid,
       threadId: null,
-      scopeKey: makeSessionScopeKey(groupFolder, null),
     });
 
     await runtime.repositories.agentRuns.saveAgentRun({
@@ -265,14 +263,14 @@ maybeDescribe('Postgres memory continuity', () => {
       runtime.repositories.agentRuns.getAgentRun(runId),
     ).resolves.toMatchObject({ sessionId: undefined });
 
-    const restarted = await runtime.sessionOps.getSessionResume({
+    const restarted = await runtime.sessionOps.getAgentTurnContext({
       groupFolder,
       chatJid,
       threadId: null,
     });
-    expect(restarted.mode).toBe('db_replay');
-    expect(restarted.externalSessionId).toBeUndefined();
-    expect(restarted.latestArtifactId).toBeUndefined();
+    expect(restarted.agentSessionId).toBeDefined();
+    expect(restarted).not.toHaveProperty('externalSessionId');
+    expect(restarted).not.toHaveProperty('latestArtifactId');
   });
 
   it('keeps session state isolated across independent test schemas', async () => {

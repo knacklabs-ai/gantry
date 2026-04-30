@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   MyClawClient,
+  signIngressRequest,
+  verifyIngressSignature,
   verifyWebhookSignature,
 } from '../../../../../packages/sdk/src/index.js';
 
@@ -57,6 +59,83 @@ describe('@myclaw/sdk webhook verification', () => {
   });
 });
 
+describe('@myclaw/sdk ingress signature verification', () => {
+  it('accepts a valid ingress signature', () => {
+    const timestamp = String(Date.now());
+    const signature = signIngressRequest({
+      secret: 'secret',
+      method: 'post',
+      path: '/v1/external-ingress/invoke',
+      timestamp,
+      nonce: 'nonce-1',
+      rawBody: JSON.stringify({ ok: true }),
+    });
+
+    expect(
+      verifyIngressSignature({
+        secret: 'secret',
+        method: 'POST',
+        path: '/v1/external-ingress/invoke',
+        timestamp,
+        nonce: 'nonce-1',
+        rawBody: JSON.stringify({ ok: true }),
+        signature,
+        nowMs: Date.now(),
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects stale ingress signatures by default', () => {
+    const timestamp = String(Date.now() - 10 * 60_000);
+    const signature = signIngressRequest({
+      secret: 'secret',
+      method: 'POST',
+      path: '/v1/external-ingress/invoke',
+      timestamp,
+      nonce: 'nonce-1',
+      rawBody: '{}',
+    });
+
+    expect(
+      verifyIngressSignature({
+        secret: 'secret',
+        method: 'POST',
+        path: '/v1/external-ingress/invoke',
+        timestamp,
+        nonce: 'nonce-1',
+        rawBody: '{}',
+        signature,
+        nowMs: Date.now(),
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects tampered ingress payloads', () => {
+    const timestamp = String(Date.now());
+    const signature = signIngressRequest({
+      secret: 'secret',
+      method: 'POST',
+      path: '/v1/external-ingress/invoke',
+      timestamp,
+      nonce: 'nonce-1',
+      rawBody: JSON.stringify({ ok: true }),
+    });
+
+    expect(
+      verifyIngressSignature({
+        secret: 'secret',
+        method: 'POST',
+        path: '/v1/external-ingress/invoke',
+        timestamp,
+        nonce: 'nonce-1',
+        rawBody: JSON.stringify({ ok: false }),
+        signature,
+        nowMs: Date.now(),
+      }),
+    ).toBe(false);
+  });
+});
+
 describe('@myclaw/sdk transport', () => {
   it('does not send an undefined content-type header for GET requests', async () => {
     const port = await listen((req, res) => {
@@ -92,6 +171,82 @@ describe('@myclaw/sdk transport', () => {
         conversationId: 'conv-one',
       }),
     ).resolves.toEqual({ sessionId: 'session-1' });
+  });
+
+  it('builds ingress management requests', async () => {
+    const seen: Array<{ method?: string; url?: string; body: unknown }> = [];
+    const port = await listen((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        seen.push({
+          method: req.method,
+          url: req.url,
+          body: raw ? JSON.parse(raw) : null,
+        });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, ingresses: [] }));
+      });
+    });
+    const client = new MyClawClient({
+      apiKey: 'test-key',
+      baseUrl: `http://127.0.0.1:${port}`,
+    });
+
+    await client.ingresses.create({
+      name: 'Primary ingress',
+      enabled: true,
+      metadata: { team: 'ops' },
+    });
+    await client.ingresses.list();
+    await client.ingresses.get('ingress/1');
+    await client.ingresses.update('ingress/1', {
+      name: 'Renamed ingress',
+      enabled: false,
+    });
+    await client.ingresses.rotate('ingress/1');
+    await client.ingresses.delete('ingress/1');
+
+    expect(seen).toEqual([
+      {
+        method: 'POST',
+        url: '/v1/ingresses',
+        body: {
+          name: 'Primary ingress',
+          enabled: true,
+          metadata: { team: 'ops' },
+        },
+      },
+      {
+        method: 'GET',
+        url: '/v1/ingresses',
+        body: null,
+      },
+      {
+        method: 'GET',
+        url: '/v1/ingresses/ingress%2F1',
+        body: null,
+      },
+      {
+        method: 'PATCH',
+        url: '/v1/ingresses/ingress%2F1',
+        body: {
+          name: 'Renamed ingress',
+          enabled: false,
+        },
+      },
+      {
+        method: 'POST',
+        url: '/v1/ingresses/ingress%2F1/rotate',
+        body: null,
+      },
+      {
+        method: 'DELETE',
+        url: '/v1/ingresses/ingress%2F1',
+        body: null,
+      },
+    ]);
   });
 
   it('builds every channel onboarding and binding request', async () => {

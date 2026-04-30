@@ -19,7 +19,6 @@ export async function POST(req: Request) {
   const webhookId = await resolveUserWebhookId(user.id);
 
   const session = await client.sessions.ensure({
-    appId: 'nextjs-app',
     conversationId,
     title: body.title,
     responseMode: 'both',
@@ -45,6 +44,9 @@ export async function POST(req: Request) {
   });
 }
 ```
+
+Normal sidecar calls derive `appId` from the API key. Pass `appId` only as an
+advanced assertion when the caller intentionally verifies a known app scope.
 
 ## Streaming in a route handler
 

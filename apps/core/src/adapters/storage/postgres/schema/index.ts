@@ -5,6 +5,7 @@ export * from './channels.js';
 export * from './conversations.js';
 export * from './control-http.js';
 export * from './events.js';
+export * from './external-ingress.js';
 export * from './jobs.js';
 export * from './memory.js';
 export * from './messages.js';

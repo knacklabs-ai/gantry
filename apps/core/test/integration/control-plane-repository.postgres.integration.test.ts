@@ -318,4 +318,202 @@ maybeDescribe('PostgresControlPlaneRepository', () => {
       status: 'claimed',
     });
   });
+
+  it('persists external ingress records, replay state, scoped waits, and retention cleanup', async () => {
+    const ingress = await runtime.control.createExternalIngress({
+      ingressId: 'ingress:control-repo:a',
+      appId: 'default',
+      name: 'scraper-a',
+      secret: 'secret-a',
+      metadata: {
+        targetPolicy: {
+          allowedTargetKinds: ['session_message'],
+          conversationIds: ['conversation-control'],
+        },
+      },
+    });
+    await runtime.control.createExternalIngress({
+      ingressId: 'ingress:control-repo:b',
+      appId: 'default',
+      name: 'scraper-b',
+      secret: 'secret-b',
+      metadata: {
+        targetPolicy: {
+          allowedTargetKinds: ['job_trigger'],
+          jobIds: ['job:control-repo'],
+        },
+      },
+    });
+
+    await expect(
+      runtime.control.listExternalIngresses('default'),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ingressId: ingress.ingressId,
+          metadata: expect.objectContaining({
+            targetPolicy: expect.objectContaining({
+              allowedTargetKinds: ['session_message'],
+            }),
+          }),
+        }),
+      ]),
+    );
+    await expect(
+      runtime.control.getExternalIngressById(ingress.ingressId, 'default'),
+    ).resolves.toMatchObject({
+      name: 'scraper-a',
+      enabled: true,
+      secret: 'secret-a',
+    });
+    await expect(
+      runtime.control.updateExternalIngress(ingress.ingressId, 'default', {
+        enabled: false,
+      }),
+    ).resolves.toMatchObject({ enabled: false });
+
+    await expect(
+      runtime.control.reserveExternalIngressNonce({
+        appId: 'default',
+        ingressId: ingress.ingressId,
+        nonce: 'nonce-control-repo',
+        now,
+        expiresAt: '2026-04-30T00:05:00.000Z',
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      runtime.control.reserveExternalIngressNonce({
+        appId: 'default',
+        ingressId: ingress.ingressId,
+        nonce: 'nonce-control-repo',
+        now,
+        expiresAt: '2026-04-30T00:05:00.000Z',
+      }),
+    ).resolves.toEqual({ ok: false, code: 'NONCE_REPLAY' });
+
+    const created = await runtime.control.createExternalIngressInvocation({
+      invocationId: 'invocation:control-repo:a',
+      appId: 'default',
+      ingressId: ingress.ingressId,
+      idempotencyKey: 'idem-control-repo',
+      nonce: 'nonce-control-repo',
+      requestMethod: 'POST',
+      requestPath: `/v1/ingresses/${ingress.ingressId}/invoke`,
+      requestTimestamp: now,
+      bodyHash: 'hash',
+      requestBody: '{"target":{"kind":"session_message"}}',
+      signature: 'signature',
+      status: 'pending',
+      now,
+      expiresAt: '2026-05-30T00:00:00.000Z',
+    });
+    expect(created).toEqual({
+      created: true,
+      row: { invocationId: 'invocation:control-repo:a', status: 'pending' },
+    });
+    await expect(
+      runtime.control.createExternalIngressInvocation({
+        invocationId: 'invocation:control-repo:duplicate',
+        appId: 'default',
+        ingressId: ingress.ingressId,
+        idempotencyKey: 'idem-control-repo',
+        nonce: 'nonce-control-repo-duplicate',
+        requestMethod: 'POST',
+        requestPath: `/v1/ingresses/${ingress.ingressId}/invoke`,
+        requestTimestamp: now,
+        bodyHash: 'hash',
+        requestBody: '{}',
+        signature: 'signature',
+        status: 'pending',
+        now,
+        expiresAt: '2026-05-30T00:00:00.000Z',
+      }),
+    ).resolves.toEqual({
+      created: false,
+      row: { invocationId: 'invocation:control-repo:a', status: 'pending' },
+    });
+
+    await runtime.control.updateExternalIngressInvocation({
+      invocationId: 'invocation:control-repo:a',
+      status: 'completed',
+      response: { ok: true },
+      now: '2026-04-30T00:00:01.000Z',
+    });
+    await expect(
+      runtime.control.createExternalIngressInvocation({
+        invocationId: 'invocation:control-repo:completed-duplicate',
+        appId: 'default',
+        ingressId: ingress.ingressId,
+        idempotencyKey: 'idem-control-repo',
+        nonce: 'nonce-control-repo-completed',
+        requestMethod: 'POST',
+        requestPath: `/v1/ingresses/${ingress.ingressId}/invoke`,
+        requestTimestamp: now,
+        bodyHash: 'hash',
+        requestBody: '{}',
+        signature: 'signature',
+        status: 'pending',
+        now,
+        expiresAt: '2026-05-30T00:00:00.000Z',
+      }),
+    ).resolves.toEqual({
+      created: false,
+      row: { invocationId: 'invocation:control-repo:a', status: 'completed' },
+    });
+    await expect(
+      runtime.control.getExternalIngressInvocation(
+        'invocation:control-repo:a',
+        'default',
+        ingress.ingressId,
+      ),
+    ).resolves.toMatchObject({
+      invocationId: 'invocation:control-repo:a',
+      status: 'completed',
+      response: { ok: true },
+    });
+    await expect(
+      runtime.control.getExternalIngressInvocation(
+        'invocation:control-repo:a',
+        'default',
+        'ingress:control-repo:b',
+      ),
+    ).resolves.toBeUndefined();
+
+    await runtime.control.createExternalIngressInvocation({
+      invocationId: 'invocation:control-repo:expired',
+      appId: 'default',
+      ingressId: ingress.ingressId,
+      idempotencyKey: 'idem-expired-control-repo',
+      nonce: 'nonce-expired-control-repo',
+      requestMethod: 'POST',
+      requestPath: `/v1/ingresses/${ingress.ingressId}/invoke`,
+      requestTimestamp: now,
+      bodyHash: 'hash',
+      requestBody: '{}',
+      signature: 'signature',
+      status: 'completed',
+      now,
+      expiresAt: '2026-04-29T00:00:00.000Z',
+    });
+    await runtime.control.reserveExternalIngressNonce({
+      appId: 'default',
+      ingressId: ingress.ingressId,
+      nonce: 'nonce-expired-control-repo',
+      now,
+      expiresAt: '2026-04-29T00:00:00.000Z',
+    });
+    await expect(
+      runtime.control.sweepExpiredExternalIngressState({ now }),
+    ).resolves.toMatchObject({
+      noncesDeleted: expect.any(Number),
+      invocationsDeleted: expect.any(Number),
+    });
+    await expect(
+      runtime.control.getExternalIngressInvocation(
+        'invocation:control-repo:expired',
+        'default',
+        ingress.ingressId,
+      ),
+    ).resolves.toBeUndefined();
+  });
 });

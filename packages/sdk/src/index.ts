@@ -18,6 +18,7 @@ import type {
   RequestOptions,
   SseEvent,
 } from './types.js';
+import { createIngressesClient } from './ingresses.js';
 export type {
   RuntimeSettingsResponse,
   UpdateRuntimeSettingsRequest,
@@ -262,9 +263,11 @@ export class MyClawClient {
   private readonly transport: Transport;
   private readonly request = <T>(options: RequestOptions) =>
     this.transport.request<T>(options);
+  readonly ingresses: ReturnType<typeof createIngressesClient>;
 
   constructor(options: ClientOptions) {
     this.transport = new Transport(options);
+    this.ingresses = createIngressesClient(this.transport);
   }
 
   health() {
@@ -285,7 +288,7 @@ export class MyClawClient {
 
   readonly sessions = {
     ensure: (input: {
-      appId: string;
+      appId?: string;
       conversationId: string;
       title?: string;
       responseMode?: ResponseMode;
@@ -678,4 +681,10 @@ export class MyClawClient {
 }
 export const createClient = (options: ClientOptions) =>
   new MyClawClient(options);
+export {
+  buildIngressSignaturePayload,
+  signIngressRequest,
+  signIngressSignaturePayload,
+  verifyIngressSignature,
+} from './ingress-signature.js';
 export { verifyWebhookSignature } from './webhook-signature.js';

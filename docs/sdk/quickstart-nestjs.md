@@ -25,7 +25,6 @@ export class AgentService {
 
   async ask(conversationId: string, message: string) {
     const session = await this.myclaw.client.sessions.ensure({
-      appId: 'nestjs-app',
       conversationId,
       responseMode: 'sse',
     });
@@ -59,3 +58,6 @@ export class AgentService {
   }
 }
 ```
+
+Normal sidecar calls derive `appId` from the API key. Pass `appId` only as an
+advanced assertion when the caller intentionally verifies a known app scope.

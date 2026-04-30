@@ -856,6 +856,54 @@ describe('control server runtime hardening', () => {
     }
   });
 
+  it('uses API key app scope when session ensure omits appId', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-ensure-implicit-app',
+        scopes: ['sessions:write'],
+        appId: 'app-one',
+      },
+    ]);
+    const app = {
+      registerGroup: vi.fn(),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    const handle = startControlServer({ app: app as any });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/sessions/ensure`,
+        'token-ensure-implicit-app',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: 'conv-implicit',
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(controlRepo.ensureAppSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appId: 'app-one',
+          conversationId: 'conv-implicit',
+          chatJid: 'app:app-one:conv-implicit',
+        }),
+      );
+      expect(app.registerGroup).toHaveBeenCalledWith(
+        'app:app-one:conv-implicit',
+        expect.objectContaining({
+          name: 'app-one:conv-implicit',
+        }),
+      );
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('blocks memory access for mismatched app access', async () => {
     const port = await reservePort();
     process.env.MYCLAW_CONTROL_PORT = String(port);

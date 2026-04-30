@@ -693,20 +693,6 @@
     "maxViolations": 2
   },
   {
-    "file": "apps/core/src/control/server/routes/sessions.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
-  },
-  {
-    "file": "apps/core/src/control/server/routes/sessions.ts",
-    "rule": "old_term_groupFolder",
-    "reason": "Baseline groupFolder terminology debt pending canonical conversation/workspace rename; capped so new occurrences fail.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxOccurrences": 1
-  },
-  {
     "file": "apps/core/src/domain/repositories/domain-types.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",

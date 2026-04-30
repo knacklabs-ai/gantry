@@ -118,8 +118,8 @@ supports it end to end.
 
 ```ts
 client.sessions.ensure({
-  appId,
   conversationId,
+  appId?, // optional assertion; defaults to API key app scope
   title?,
   responseMode?, // sse | webhook | both | none
   webhookId?,
@@ -152,6 +152,65 @@ GET /v1/sessions/:sessionId/runs?limit=100
 
 Responses are scoped by the API key's app access. Session history is backed by
 Postgres `AgentSession`, `Message`, `AgentRun`, and `ProviderSession` records.
+
+## External Ingress
+
+```ts
+const ingress = await client.ingresses.create({
+  name: 'scraper',
+  metadata: {
+    targetPolicy: {
+      allowedTargetKinds: ['session_message', 'job_template'],
+      conversationIds: ['scraper-task-42'],
+      templateIds: ['captcha_resolution'],
+    },
+    templates: {
+      captcha_resolution: {
+        name: 'Resolve captcha',
+        sessionId,
+        prompt: 'Resolve task {{taskId}} at {{url}}',
+        allowedVariables: ['taskId', 'url'],
+      },
+    },
+  },
+});
+
+client.ingresses.list();
+client.ingresses.get(ingress.ingressId);
+client.ingresses.update(ingress.ingressId, { enabled: false });
+client.ingresses.rotate(ingress.ingressId);
+client.ingresses.delete(ingress.ingressId);
+```
+
+Runtime calls sign the exact HTTP method, path, timestamp, nonce, body hash, and
+raw body using the ingress secret.
+
+Ingress records are scoped capabilities. A signed caller can only invoke target
+kinds and concrete sessions, conversations, jobs, or templates listed in
+`metadata.targetPolicy`; omitted policy fields deny access by default.
+
+```ts
+import { signIngressRequest } from '@myclaw/sdk';
+
+const path = `/v1/ingresses/${ingressId}/invoke`;
+const rawBody = JSON.stringify({
+  target: {
+    kind: 'session_message',
+    conversationId: 'scraper-task-42',
+    message: 'Captcha solved: 1234',
+  },
+});
+const timestamp = String(Date.now());
+const nonce = crypto.randomUUID();
+const signature = signIngressRequest({
+  secret,
+  method: 'POST',
+  path,
+  timestamp,
+  nonce,
+  rawBody,
+});
+```
 
 ## Jobs
 

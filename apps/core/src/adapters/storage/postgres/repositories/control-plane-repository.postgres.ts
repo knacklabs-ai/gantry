@@ -17,17 +17,24 @@ import {
   mapDelivery,
   mapRoute,
   mapSession,
-  mapTrigger,
   mapWebhook,
   text,
   type CanonicalControlRow,
 } from '../schema/control-plane-canonical.postgres.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
 import { ensureControlGraph } from './control-plane-graph.postgres.js';
+import { PostgresExternalIngressRepository } from './control-plane-external-ingress.postgres.js';
+import { PostgresJobTriggerRepository } from './control-plane-job-triggers.postgres.js';
 import { claimDueWebhookDeliveriesWithDrizzleLock } from './control-plane-webhook-claim.postgres.js';
 
 export class PostgresControlPlaneRepository {
-  constructor(private readonly db: CanonicalDb) {}
+  private readonly externalIngress: PostgresExternalIngressRepository;
+  private readonly jobTriggers: PostgresJobTriggerRepository;
+
+  constructor(private readonly db: CanonicalDb) {
+    this.externalIngress = new PostgresExternalIngressRepository(db);
+    this.jobTriggers = new PostgresJobTriggerRepository(db);
+  }
 
   async ensureAppSession(input: {
     appId: string;
@@ -222,6 +229,93 @@ export class PostgresControlPlaneRepository {
       )
       .limit(1);
     return rows[0] ? mapRoute(rows[0] as CanonicalControlRow) : undefined;
+  }
+
+  async createExternalIngress(input: {
+    ingressId?: string;
+    appId: string;
+    name: string;
+    secret: string;
+    enabled?: boolean;
+    metadata?: unknown;
+  }) {
+    return this.externalIngress.create(input);
+  }
+
+  async listExternalIngresses(appId: string) {
+    return this.externalIngress.list(appId);
+  }
+
+  async getExternalIngressById(ingressId: string, appId?: string) {
+    return this.externalIngress.getById(ingressId, appId);
+  }
+
+  async updateExternalIngress(
+    ingressId: string,
+    appId: string,
+    patch: {
+      name?: string;
+      secret?: string;
+      enabled?: boolean;
+      metadata?: unknown;
+    },
+  ) {
+    return this.externalIngress.update(ingressId, appId, patch);
+  }
+
+  async deleteExternalIngress(ingressId: string, appId: string): Promise<void> {
+    await this.externalIngress.delete(ingressId, appId);
+  }
+
+  async reserveExternalIngressNonce(input: {
+    appId: string;
+    ingressId: string;
+    nonce: string;
+    now: string;
+    expiresAt: string;
+  }): Promise<{ ok: true } | { ok: false; code: 'NONCE_REPLAY' }> {
+    return this.externalIngress.reserveNonce(input);
+  }
+
+  async createExternalIngressInvocation(input: {
+    invocationId: string;
+    appId: string;
+    ingressId: string;
+    idempotencyKey: string;
+    nonce: string;
+    requestMethod: string;
+    requestPath: string;
+    requestTimestamp: string;
+    bodyHash: string;
+    requestBody: string;
+    signature: string;
+    status: string;
+    now: string;
+    expiresAt: string;
+  }) {
+    return this.externalIngress.createInvocation(input);
+  }
+
+  async updateExternalIngressInvocation(input: {
+    invocationId: string;
+    status: string;
+    response?: unknown;
+    error?: string | null;
+    now: string;
+  }): Promise<void> {
+    await this.externalIngress.updateInvocation(input);
+  }
+
+  async getExternalIngressInvocation(
+    invocationId: string,
+    appId: string,
+    ingressId: string,
+  ) {
+    return this.externalIngress.getInvocation(invocationId, appId, ingressId);
+  }
+
+  async sweepExpiredExternalIngressState(input: { now: string }) {
+    return this.externalIngress.sweepExpiredState(input);
   }
 
   async registerWebhook(input: {
@@ -556,108 +650,33 @@ export class PostgresControlPlaneRepository {
     jobId: string;
     requestedBy?: string;
   }): Promise<JobTriggerRecord> {
-    const job = await this.db
-      .select({ appId: pgSchema.canonicalJobsPostgres.appId })
-      .from(pgSchema.canonicalJobsPostgres)
-      .where(eq(pgSchema.canonicalJobsPostgres.id, input.jobId))
-      .limit(1);
-    const appId = job[0]?.appId ?? 'default';
-    const now = currentIso();
-    const rows = await this.db
-      .insert(pgSchema.canonicalJobTriggersPostgres)
-      .values({
-        id: randomUUID(),
-        appId,
-        jobId: input.jobId,
-        runId: null,
-        requestedBy: input.requestedBy ?? 'sdk',
-        requestedAt: now,
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-    return mapTrigger(rows[0] as CanonicalControlRow);
+    return this.jobTriggers.create(input);
   }
 
   async bindPendingTriggerToRun(
     jobId: string,
     runId: string,
   ): Promise<JobTriggerRecord | undefined> {
-    return this.db.transaction(async (tx) => {
-      const [pending] = await tx
-        .select()
-        .from(pgSchema.canonicalJobTriggersPostgres)
-        .where(
-          and(
-            eq(pgSchema.canonicalJobTriggersPostgres.jobId, jobId),
-            eq(pgSchema.canonicalJobTriggersPostgres.status, 'pending'),
-          ),
-        )
-        .orderBy(
-          asc(pgSchema.canonicalJobTriggersPostgres.requestedAt),
-          asc(pgSchema.canonicalJobTriggersPostgres.id),
-        )
-        .limit(1)
-        .for('update', { skipLocked: true });
-      if (!pending) return undefined;
-      const rows = await tx
-        .update(pgSchema.canonicalJobTriggersPostgres)
-        .set({
-          runId,
-          status: 'claimed',
-          updatedAt: currentIso(),
-        })
-        .where(
-          and(
-            eq(pgSchema.canonicalJobTriggersPostgres.id, pending.id),
-            eq(pgSchema.canonicalJobTriggersPostgres.status, 'pending'),
-          ),
-        )
-        .returning();
-      return rows[0] ? mapTrigger(rows[0] as CanonicalControlRow) : undefined;
-    });
+    return this.jobTriggers.bindPendingToRun(jobId, runId);
   }
 
   async bindTriggerToRun(
     triggerId: string,
     runId: string,
   ): Promise<JobTriggerRecord | undefined> {
-    const rows = await this.db
-      .update(pgSchema.canonicalJobTriggersPostgres)
-      .set({
-        runId,
-        status: 'claimed',
-        updatedAt: currentIso(),
-      })
-      .where(
-        and(
-          eq(pgSchema.canonicalJobTriggersPostgres.id, triggerId),
-          eq(pgSchema.canonicalJobTriggersPostgres.status, 'pending'),
-        ),
-      )
-      .returning();
-    return rows[0] ? mapTrigger(rows[0] as CanonicalControlRow) : undefined;
+    return this.jobTriggers.bindToRun(triggerId, runId);
   }
 
   async markTriggerCompleted(
     triggerId: string,
     status: 'completed' | 'failed',
   ): Promise<void> {
-    await this.db
-      .update(pgSchema.canonicalJobTriggersPostgres)
-      .set({ status, updatedAt: currentIso() })
-      .where(eq(pgSchema.canonicalJobTriggersPostgres.id, triggerId));
+    await this.jobTriggers.markCompleted(triggerId, status);
   }
 
   async getTriggerById(
     triggerId: string,
   ): Promise<JobTriggerRecord | undefined> {
-    const rows = await this.db
-      .select()
-      .from(pgSchema.canonicalJobTriggersPostgres)
-      .where(eq(pgSchema.canonicalJobTriggersPostgres.id, triggerId))
-      .limit(1);
-    return rows[0] ? mapTrigger(rows[0] as CanonicalControlRow) : undefined;
+    return this.jobTriggers.getById(triggerId);
   }
 }

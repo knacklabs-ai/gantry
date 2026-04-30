@@ -30,7 +30,8 @@ Authentication is bearer-token based and scoped. The runtime reads keys from:
 
 Production apps should use the narrowest key needed. A typical chat backend
 uses `sessions:read` and `sessions:write`; job dashboards add `jobs:read` and
-`jobs:write`; webhook administration uses `webhooks:read` and
+`jobs:write`; external ingress administration uses `ingresses:read` and
+`ingresses:write`; outbound webhook administration uses `webhooks:read` and
 `webhooks:write`.
 
 ## Core flow
@@ -41,7 +42,11 @@ uses `sessions:read` and `sessions:write`; job dashboards add `jobs:read` and
 4. The message enters the normal group queue.
 5. The agent runs through the normal host runtime.
 6. Outbound replies/progress/streaming are emitted as durable `RuntimeEvent` records in `runtime_events`.
-7. The app consumes those events through `sessions.wait()`, `sessions.stream()`, or signed webhooks.
+7. The app consumes those events through `sessions.wait()`, `sessions.stream()`, or signed outbound webhooks.
+
+`appId` is derived from the API key for normal sidecar calls. SDK examples omit
+it. Advanced multi-app callers may pass `appId` as an assertion, but MyClaw
+rejects it when it does not match the resolved app scope.
 
 ```mermaid
 sequenceDiagram
@@ -67,11 +72,32 @@ sequenceDiagram
 - `sessions`
 - `jobs`
 - `runs`
+- `ingresses`
 - `webhooks`
 - `health`
 - `doctor`
 
-For the runtime boundary, message lifecycle, job lifecycle, and webhook delivery internals, see [Agent Internals For SDK Consumers](./agent-internals.md).
+For the runtime boundary, message lifecycle, job lifecycle, and outbound webhook delivery internals, see [Agent Internals For SDK Consumers](./agent-internals.md).
+
+## External Ingress
+
+External ingress is for signed systems that cannot hold a control API key, such
+as a scraper worker or task resolver. Ingress callers sign `method`, `path`,
+`timestamp`, `nonce`, body hash, and raw body with the ingress secret.
+
+Supported target kinds:
+
+- `session_message`: accept a normal user message into a configured or derived session.
+- `job_trigger`: trigger an existing manual, once, or recurring job.
+- `job_template`: invoke a MyClaw-owned one-time job template with variables and metadata only.
+
+Each ingress record is a scoped capability. Management callers configure
+`metadata.targetPolicy.allowedTargetKinds` and the allowed `sessionIds`,
+`conversationIds`, `jobIds`, or `templateIds`; omitted policy fields deny
+access by default.
+
+External ingress is inbound authority. `/v1/webhooks` is outbound callback
+delivery and is not used for inbound requests.
 
 ## Event model
 

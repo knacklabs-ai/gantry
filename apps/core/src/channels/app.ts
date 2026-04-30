@@ -1,3 +1,5 @@
+import { createHash, randomUUID } from 'node:crypto';
+
 import { logger } from '../infrastructure/logging/logger.js';
 import type {
   MessageSendOptions,
@@ -8,43 +10,43 @@ import {
   RUNTIME_EVENT_TYPES,
   type RuntimeEventType,
 } from '../domain/events/runtime-event-types.js';
+import { SessionInteractionModule } from '../application/sessions/session-interaction-module.js';
 import type { ChannelAdapter, ChannelOpts } from './channel-provider.js';
 import {
   getRuntimeControlRepository,
   getRuntimeEventExchange,
 } from '../adapters/storage/postgres/runtime-store.js';
+import { adaptSessionControlPort } from '../control/server/session-control-port.js';
 
 async function emitSessionEvent(
   chatJid: string,
   eventType: RuntimeEventType,
   payload: Record<string, unknown>,
 ): Promise<{ emitted: boolean; eventId?: number }> {
-  const control = getRuntimeControlRepository();
-  const session = await control.getAppSessionByChatJid(chatJid);
-  if (!session) {
+  const result = await createSessionInteractionModule().publishOutboundEvent({
+    chatJid,
+    eventType,
+    payload,
+  });
+  if (!result.emitted) {
     logger.warn(
       { chatJid, eventType },
       'App channel event dropped without session',
     );
-    return { emitted: false };
   }
-  const threadId =
-    typeof payload.threadId === 'string' ? payload.threadId : null;
-  const route = await control.getAppResponseRoute({
-    sessionId: session.sessionId,
-    threadId,
+  return result;
+}
+
+function createSessionInteractionModule(): SessionInteractionModule {
+  return new SessionInteractionModule({
+    control: adaptSessionControlPort(getRuntimeControlRepository()),
+    ops: {} as never,
+    repositories: {} as never,
+    runtimeEvents: getRuntimeEventExchange(),
+    now: () => new Date().toISOString() as never,
+    createId: randomUUID,
+    stableHash: (input) => createHash('sha256').update(input).digest('hex'),
   });
-  const event = await getRuntimeEventExchange().publish({
-    appId: session.appId as never,
-    eventType,
-    payload,
-    actor: 'agent',
-    sessionId: session.sessionId as never,
-    correlationId: route?.correlationId ?? null,
-    responseMode: route?.responseMode ?? session.defaultResponseMode,
-    webhookId: route ? route.webhookId : session.defaultWebhookId,
-  });
-  return { emitted: true, eventId: event.eventId };
 }
 
 export async function createAppChannel(

@@ -1,28 +1,49 @@
-import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { NewMessage } from '../../../domain/types.js';
-import { getRuntimeOpsRepository } from '../../../adapters/storage/postgres/runtime-store.js';
-import { getRuntimeControlRepository } from '../../../adapters/storage/postgres/runtime-store.js';
-import { getRuntimeEventExchange } from '../../../adapters/storage/postgres/runtime-store.js';
-import { getRuntimeStorage } from '../../../adapters/storage/postgres/runtime-store.js';
+import { ApplicationError } from '../../../application/common/application-error.js';
 import type { RuntimeEvent } from '../../../domain/events/events.js';
-import { RUNTIME_EVENT_TYPES } from '../../../domain/events/runtime-event-types.js';
 import { logger } from '../../../infrastructure/logging/logger.js';
-import { makeThreadQueueKey } from '../../../runtime/thread-queue-key.js';
-import {
-  canAccessApp,
-  makeAppGroup,
-  nowIso,
-  resolveOwnedWebhookId,
-} from '../app-identity.js';
-import { isValidControlId } from '../auth.js';
+import { resolveAppScopeAppId } from '../app-identity.js';
+import { isValidControlId } from '../../../application/app-scope/control-id.js';
 import {
   authorizeControlRequest,
   type ControlRouteContext,
 } from '../handler-context.js';
 import { readJson, sendError, sendJson } from '../http.js';
 import { parseSessionRoute } from '../route-parser.js';
+import {
+  acceptMessageForControl,
+  createSessionInteractionModule,
+  ensureSessionForControl,
+  type SessionEventSubscription,
+} from '../session-interaction-adapter.js';
+
+function sendApplicationError(res: ServerResponse, error: unknown): boolean {
+  if (!(error instanceof ApplicationError)) return false;
+  switch (error.code) {
+    case 'NOT_FOUND':
+      sendError(
+        res,
+        404,
+        error.message === 'Webhook not found'
+          ? 'WEBHOOK_NOT_FOUND'
+          : 'SESSION_NOT_FOUND',
+        error.message,
+      );
+      return true;
+    case 'FORBIDDEN':
+      sendError(res, 403, 'FORBIDDEN', error.message);
+      return true;
+    case 'INVALID_REQUEST':
+      sendError(res, 400, 'INVALID_REQUEST', error.message);
+      return true;
+    case 'WAIT_TIMEOUT':
+      sendError(res, 408, 'WAIT_TIMEOUT', error.message);
+      return true;
+    default:
+      throw error;
+  }
+}
 
 export async function handleSessionRoutes(
   req: IncomingMessage,
@@ -37,18 +58,15 @@ export async function handleSessionRoutes(
     ]);
     if (!auth) return true;
     const body = (await readJson(req)) as Record<string, unknown>;
-    const appId = String(body.appId || '').trim();
+    const assertedAppId =
+      typeof body.appId === 'string' ? body.appId.trim() : '';
+    const appId = resolveAppScopeAppId(auth, assertedAppId);
     const conversationId = String(body.conversationId || '').trim();
-    if (!appId || !conversationId) {
-      sendError(
-        res,
-        400,
-        'INVALID_REQUEST',
-        'appId and conversationId are required',
-      );
+    if (!conversationId) {
+      sendError(res, 400, 'INVALID_REQUEST', 'conversationId is required');
       return true;
     }
-    if (!isValidControlId(appId) || !isValidControlId(conversationId)) {
+    if (assertedAppId && !isValidControlId(assertedAppId)) {
       sendError(
         res,
         400,
@@ -57,39 +75,28 @@ export async function handleSessionRoutes(
       );
       return true;
     }
-    if (!canAccessApp(auth, appId)) {
+    if (!appId) {
       sendError(res, 403, 'FORBIDDEN', 'API key cannot access this app');
       return true;
     }
-    const chatJid = `app:${appId}:${conversationId}`;
-    const control = getRuntimeControlRepository();
-    const defaultWebhookId = await resolveOwnedWebhookId(
-      control,
-      auth.appId,
-      typeof body.webhookId === 'string' ? body.webhookId : null,
-    );
-    const group = makeAppGroup({ appId, conversationId, chatJid });
-    await ctx.app.registerGroup(chatJid, group);
-    const session = await control.ensureAppSession({
-      appId,
-      conversationId,
-      chatJid,
-      groupFolder: group.folder,
-      title: typeof body.title === 'string' ? body.title : null,
-      defaultResponseMode:
-        body.responseMode === 'webhook' ||
-        body.responseMode === 'both' ||
-        body.responseMode === 'none'
-          ? (body.responseMode as 'webhook' | 'both' | 'none')
-          : 'sse',
-      defaultWebhookId,
-    });
-    sendJson(res, 200, {
-      sessionId: session.sessionId,
-      appId: session.appId,
-      conversationId: session.conversationId,
-      chatJid: session.chatJid,
-    });
+    try {
+      const result = await ensureSessionForControl(ctx, {
+        appId,
+        assertedAppId,
+        conversationId,
+        title: typeof body.title === 'string' ? body.title : null,
+        responseMode: body.responseMode,
+        webhookId: typeof body.webhookId === 'string' ? body.webhookId : null,
+      });
+      sendJson(res, 200, {
+        sessionId: result.session.sessionId,
+        appId: result.session.appId,
+        conversationId: result.session.conversationId,
+        chatJid: result.session.chatJid,
+      });
+    } catch (error) {
+      if (!sendApplicationError(res, error)) throw error;
+    }
     return true;
   }
 
@@ -97,93 +104,49 @@ export async function handleSessionRoutes(
   if (sessionRoute?.action === 'get' && req.method === 'GET') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['sessions:read']);
     if (!auth) return true;
-    const repositories = getRuntimeStorage().repositories;
-    const session = await repositories.agentSessions.getAgentSession(
-      sessionRoute.sessionId as never,
-    );
-    if (!session) {
-      sendError(res, 404, 'SESSION_NOT_FOUND', 'Session not found');
-      return true;
-    }
-    if (!canAccessApp(auth, session.appId)) {
-      sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
-      return true;
-    }
-    const providerSession =
-      await repositories.providerSessions.getLatestProviderSession({
-        agentSessionId: session.id,
+    try {
+      const details = await createSessionInteractionModule().getSessionDetails({
+        appId: auth.appId,
+        sessionId: sessionRoute.sessionId,
       });
-    const visibleProviderSession = providerSession
-      ? {
-          id: providerSession.id,
-          appId: providerSession.appId,
-          agentSessionId: providerSession.agentSessionId,
-          provider: providerSession.provider,
-          externalSessionId: providerSession.externalSessionId,
-          providerRef: providerSession.providerRef,
-          status: providerSession.status,
-          metadata: providerSession.metadata,
-          createdAt: providerSession.createdAt,
-          updatedAt: providerSession.updatedAt,
-        }
-      : null;
-    sendJson(res, 200, {
-      session,
-      providerSession: visibleProviderSession,
-    });
+      sendJson(res, 200, details);
+    } catch (error) {
+      if (!sendApplicationError(res, error)) throw error;
+    }
     return true;
   }
 
   if (sessionRoute?.action === 'messages' && req.method === 'GET') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['sessions:read']);
     if (!auth) return true;
-    const repositories = getRuntimeStorage().repositories;
-    const session = await repositories.agentSessions.getAgentSession(
-      sessionRoute.sessionId as never,
-    );
-    if (!session) {
-      sendError(res, 404, 'SESSION_NOT_FOUND', 'Session not found');
-      return true;
-    }
-    if (!canAccessApp(auth, session.appId)) {
-      sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
-      return true;
-    }
-    if (!session.conversationId) {
-      sendJson(res, 200, { messages: [] });
-      return true;
-    }
     const limit = parseListLimit(url.searchParams.get('limit'));
-    const messages = await repositories.messages.listRecentMessages({
-      conversationId: session.conversationId,
-      threadId: session.threadId,
-      limit,
-    });
-    sendJson(res, 200, { messages });
+    try {
+      const result = await createSessionInteractionModule().listMessages({
+        appId: auth.appId,
+        sessionId: sessionRoute.sessionId,
+        limit,
+      });
+      sendJson(res, 200, result);
+    } catch (error) {
+      if (!sendApplicationError(res, error)) throw error;
+    }
     return true;
   }
 
   if (sessionRoute?.action === 'runs' && req.method === 'GET') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['sessions:read']);
     if (!auth) return true;
-    const repositories = getRuntimeStorage().repositories;
-    const session = await repositories.agentSessions.getAgentSession(
-      sessionRoute.sessionId as never,
-    );
-    if (!session) {
-      sendError(res, 404, 'SESSION_NOT_FOUND', 'Session not found');
-      return true;
-    }
-    if (!canAccessApp(auth, session.appId)) {
-      sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
-      return true;
-    }
     const limit = parseListLimit(url.searchParams.get('limit'));
-    const runs = await repositories.agentRuns.listAgentRunsBySession({
-      sessionId: session.id,
-      limit,
-    });
-    sendJson(res, 200, { runs });
+    try {
+      const result = await createSessionInteractionModule().listRuns({
+        appId: auth.appId,
+        sessionId: sessionRoute.sessionId,
+        limit,
+      });
+      sendJson(res, 200, result);
+    } catch (error) {
+      if (!sendApplicationError(res, error)) throw error;
+    }
     return true;
   }
 
@@ -192,93 +155,29 @@ export async function handleSessionRoutes(
       'sessions:write',
     ]);
     if (!auth) return true;
-    const control = getRuntimeControlRepository();
-    const session = await control.getAppSessionById(sessionRoute.sessionId);
-    if (!session) {
-      sendError(res, 404, 'SESSION_NOT_FOUND', 'Session not found');
-      return true;
-    }
-    if (!canAccessApp(auth, session.appId)) {
-      sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
-      return true;
-    }
     const body = (await readJson(req)) as Record<string, unknown>;
-    const text = String(body.message || '').trim();
-    if (!text) {
-      sendError(res, 400, 'INVALID_REQUEST', 'message is required');
-      return true;
+    try {
+      const accepted = await acceptMessageForControl(ctx, {
+        appId: auth.appId,
+        sessionId: sessionRoute.sessionId,
+        message: String(body.message || ''),
+        senderId: typeof body.senderId === 'string' ? body.senderId : 'sdk',
+        senderName:
+          typeof body.senderName === 'string' ? body.senderName : 'SDK',
+        threadId: typeof body.threadId === 'string' ? body.threadId : undefined,
+        correlationId:
+          typeof body.correlationId === 'string' ? body.correlationId : null,
+        responseMode: body.responseMode,
+        webhookId: typeof body.webhookId === 'string' ? body.webhookId : null,
+      });
+      sendJson(res, 202, {
+        accepted: true,
+        messageId: accepted.messageId,
+        acceptedEventId: accepted.acceptedEventId,
+      });
+    } catch (error) {
+      if (!sendApplicationError(res, error)) throw error;
     }
-    const now = nowIso();
-    const threadId =
-      typeof body.threadId === 'string' ? body.threadId.trim() : '';
-    const responseMode =
-      body.responseMode === 'webhook' ||
-      body.responseMode === 'both' ||
-      body.responseMode === 'none'
-        ? (body.responseMode as 'webhook' | 'both' | 'none')
-        : session.defaultResponseMode;
-    const webhookId = await resolveOwnedWebhookId(
-      control,
-      auth.appId,
-      typeof body.webhookId === 'string'
-        ? body.webhookId
-        : session.defaultWebhookId,
-    );
-    const messageId = randomUUID();
-    const message: NewMessage = {
-      id: messageId,
-      chat_jid: session.chatJid,
-      channel_provider: 'app',
-      sender: typeof body.senderId === 'string' ? body.senderId : 'sdk',
-      sender_name:
-        typeof body.senderName === 'string' ? body.senderName : 'SDK',
-      content: text,
-      timestamp: now,
-      is_from_me: false,
-      is_bot_message: false,
-      external_message_id: messageId,
-      thread_id: threadId || undefined,
-    };
-    const ops = getRuntimeOpsRepository();
-    await ops.storeChatMetadata(
-      session.chatJid,
-      now,
-      session.title ?? session.chatJid,
-      'app',
-      true,
-    );
-    await ops.storeMessage(message);
-    const correlationId =
-      typeof body.correlationId === 'string' ? body.correlationId : null;
-    await control.upsertAppResponseRoute({
-      sessionId: session.sessionId,
-      threadId: threadId || null,
-      responseMode,
-      webhookId,
-      correlationId,
-    });
-    const accepted = await getRuntimeEventExchange().publish({
-      appId: session.appId as never,
-      eventType: RUNTIME_EVENT_TYPES.SESSION_MESSAGE_INBOUND,
-      payload: {
-        messageId,
-        text,
-        threadId: threadId || null,
-      },
-      actor: 'sdk',
-      sessionId: session.sessionId as never,
-      correlationId,
-      responseMode,
-      webhookId,
-    });
-    ctx.app.queue.enqueueMessageCheck(
-      makeThreadQueueKey(session.chatJid, threadId || null),
-    );
-    sendJson(res, 202, {
-      accepted: true,
-      messageId,
-      acceptedEventId: accepted.eventId,
-    });
     return true;
   }
 
@@ -286,23 +185,19 @@ export async function handleSessionRoutes(
     const auth = authorizeControlRequest(req, res, ctx.keys, ['sessions:read']);
     if (!auth) return true;
     const afterEventId = Number(url.searchParams.get('afterEventId') || 0);
-    const control = getRuntimeControlRepository();
-    const runtimeEvents = getRuntimeEventExchange();
-    const session = await control.getAppSessionById(sessionRoute.sessionId);
-    if (!session) {
-      sendError(res, 404, 'SESSION_NOT_FOUND', 'Session not found');
-      return true;
+    const module = createSessionInteractionModule();
+    let events: RuntimeEvent[];
+    try {
+      events = await module.listEvents({
+        appId: auth.appId,
+        sessionId: sessionRoute.sessionId,
+        afterEventId,
+        limit: 100,
+      });
+    } catch (error) {
+      if (sendApplicationError(res, error)) return true;
+      throw error;
     }
-    if (!canAccessApp(auth, session.appId)) {
-      sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
-      return true;
-    }
-    const events = await runtimeEvents.list({
-      appId: session.appId as never,
-      sessionId: session.sessionId as never,
-      afterEventId: afterEventId > 0 ? (afterEventId as never) : undefined,
-      limit: 100,
-    });
     if (req.headers.accept?.includes('text/event-stream')) {
       if (ctx.state.activeStreams >= ctx.maxConcurrentStreams) {
         sendError(
@@ -313,24 +208,28 @@ export async function handleSessionRoutes(
         );
         return true;
       }
+      const initial = events.length > 0 ? events : [];
+      let lastEventId = initial[initial.length - 1]?.eventId;
+      let subscription: SessionEventSubscription;
+      try {
+        subscription = await module.subscribeEvents({
+          appId: auth.appId,
+          sessionId: sessionRoute.sessionId,
+          afterEventId: lastEventId ?? afterEventId,
+          limit: 100,
+        });
+      } catch (error) {
+        if (sendApplicationError(res, error)) return true;
+        throw error;
+      }
       ctx.state.activeStreams += 1;
       res.statusCode = 200;
       res.setHeader('content-type', 'text/event-stream');
       res.setHeader('cache-control', 'no-cache');
       res.setHeader('connection', 'keep-alive');
-      const initial = events.length > 0 ? events : [];
       for (const event of initial) {
         writeSseEvent(res, event);
       }
-      let lastEventId = initial[initial.length - 1]?.eventId;
-      const subscription = runtimeEvents.subscribe({
-        appId: session.appId as never,
-        sessionId: session.sessionId as never,
-        afterEventId:
-          lastEventId ??
-          (afterEventId > 0 ? (afterEventId as never) : undefined),
-        limit: 100,
-      });
       let closed = false;
       const pump = async () => {
         while (!closed) {
@@ -342,7 +241,7 @@ export async function handleSessionRoutes(
             }
           } catch (error) {
             logger.warn(
-              { err: error, sessionId: session.sessionId },
+              { err: error, sessionId: sessionRoute.sessionId },
               'Failed streaming runtime events',
             );
             await delay(1000);
@@ -371,17 +270,6 @@ export async function handleSessionRoutes(
   if (sessionRoute?.action === 'wait' && req.method === 'GET') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['sessions:read']);
     if (!auth) return true;
-    const control = getRuntimeControlRepository();
-    const runtimeEvents = getRuntimeEventExchange();
-    const session = await control.getAppSessionById(sessionRoute.sessionId);
-    if (!session) {
-      sendError(res, 404, 'SESSION_NOT_FOUND', 'Session not found');
-      return true;
-    }
-    if (!canAccessApp(auth, session.appId)) {
-      sendError(res, 403, 'FORBIDDEN', 'API key cannot access this session');
-      return true;
-    }
     if (ctx.state.activeWaits >= ctx.maxConcurrentWaits) {
       sendError(res, 429, 'TOO_MANY_WAITS', 'Too many active wait requests');
       return true;
@@ -393,35 +281,28 @@ export async function handleSessionRoutes(
       Math.max(1000, Number(url.searchParams.get('timeoutMs') || 60_000)),
     );
     const startedAt = Date.now();
-    const subscription = runtimeEvents.subscribe({
-      appId: session.appId as never,
-      sessionId: session.sessionId as never,
-      afterEventId: afterEventId > 0 ? (afterEventId as never) : undefined,
-      limit: 100,
-    });
     try {
-      while (Date.now() - startedAt < timeoutMs) {
-        const remaining = timeoutMs - (Date.now() - startedAt);
-        const events = await subscription.next({ timeoutMs: remaining });
-        const visible = events.find(isVisibleWaitEvent);
-        if (visible) {
-          sendJson(res, 200, {
-            eventId: visible.eventId,
-            eventType: visible.eventType,
-            payload: visible.payload,
-            createdAt: visible.createdAt,
-            afterEventId: visible.eventId,
-          });
-          return true;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+      const visible =
+        await createSessionInteractionModule().waitForVisibleEvent({
+          appId: auth.appId,
+          sessionId: sessionRoute.sessionId,
+          afterEventId,
+          timeoutMs: Math.max(0, timeoutMs - (Date.now() - startedAt)),
+        });
+      sendJson(res, 200, {
+        eventId: visible.eventId,
+        eventType: visible.eventType,
+        payload: visible.payload,
+        createdAt: visible.createdAt,
+        afterEventId: visible.eventId,
+      });
+      return true;
+    } catch (error) {
+      if (sendApplicationError(res, error)) return true;
+      throw error;
     } finally {
-      subscription.close();
       ctx.state.activeWaits = Math.max(0, ctx.state.activeWaits - 1);
     }
-    sendError(res, 408, 'WAIT_TIMEOUT', 'Timed out waiting for session event');
-    return true;
   }
 
   return false;
@@ -439,13 +320,6 @@ function sanitizeSseEventType(eventType: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isVisibleWaitEvent(event: RuntimeEvent): boolean {
-  return (
-    event.eventType === RUNTIME_EVENT_TYPES.SESSION_MESSAGE_OUTBOUND ||
-    event.eventType === RUNTIME_EVENT_TYPES.SESSION_MESSAGE_STREAMING
-  );
 }
 
 function parseListLimit(raw: string | null): number {
