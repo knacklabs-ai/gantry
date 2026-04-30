@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Job, RegisteredGroup } from '../../domain/types.js';
 import type { getRuntimeControlRepository } from '../../adapters/storage/postgres/runtime-store.js';
 import { nowIso as runtimeNowIso } from '../../infrastructure/time/datetime.js';
+import { resolveAppScopeAppId as applicationResolveAppScopeAppId } from '../../application/app-scope/resolve-app-scope.js';
 import { jobBelongsToApp as applicationJobBelongsToApp } from '../../application/jobs/job-access.js';
 import { resolveJobRuntimeAppId as applicationResolveJobRuntimeAppId } from '../../application/jobs/job-access.js';
 import type { IsoTimestamp } from '../../shared/time/primitives.js';
@@ -55,6 +56,16 @@ export function canAccessApp(
 ): boolean {
   if (!appId) return false;
   return auth.appId === appId;
+}
+
+export function resolveAppScopeAppId(
+  auth: ApiKeyRecord,
+  assertedAppId: string | null | undefined,
+): string | null {
+  return applicationResolveAppScopeAppId({
+    apiKeyAppId: auth.appId,
+    assertedAppId,
+  });
 }
 
 export function jobBelongsToApp(job: Job, appId: string): boolean {

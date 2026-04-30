@@ -84,12 +84,13 @@ sequenceDiagram
 ```
 
 1. Channel inbound path: Slack and Telegram adapters send normalized inbound messages through channel wiring. The persistence handlers enforce sender policy, store chat metadata, and insert a durable message.
-2. SDK app inbound path: `sessions.sendMessage()` in the control server maps the SDK session to an `app:` group, inserts the inbound message, publishes a `session.message.inbound` runtime event, stores response routing, and enqueues normal processing.
-3. Durable storage: Postgres is the source of truth for messages, cursors, canonical `AgentSession` records, provider diagnostics, runs, memory, jobs, webhooks, runtime events, and audit data.
-4. Polling and recovery: the message loop polls for new messages during normal operation and calls recovery on startup so pending threads are not lost after a restart.
-5. Queueing: `GroupQueue` deduplicates checks per group/thread, limits concurrent containers, retries failed processing, and routes follow-up messages into an active child run when possible.
-6. Agent execution: the group processor resolves or creates the canonical session, hydrates scoped durable memory, then starts a live streaming child runner. Follow-up messages are piped into that runner until it is stopped or idles out.
-7. Streaming and final response: the processor forwards partial output, progress, typing, and final replies through channel wiring. Slack and Telegram send network responses; the app channel records durable runtime events for `wait()`, `stream()`, webhooks, and replay.
+2. SDK app inbound path: `sessions.sendMessage()` derives `appId` from the API key, enters `SessionInteractionModule`, maps the SDK session to an `app:` group, inserts the inbound message, publishes a `session.message.inbound` runtime event, stores response routing, and returns a queue intent for normal processing.
+3. Signed external ingress path: `/v1/ingresses/:id/invoke` derives `appId` from the ingress record, verifies HMAC timestamp and nonce, enforces the ingress record's target policy, records the invocation, and dispatches to session message, job trigger, or job template targets through application modules.
+4. Durable storage: Postgres is the source of truth for messages, cursors, canonical `AgentSession` records, provider diagnostics, runs, memory, jobs, external ingress records, outbound webhooks, runtime events, and audit data.
+5. Polling and recovery: the message loop polls for new messages during normal operation and calls recovery on startup so pending threads are not lost after a restart.
+6. Queueing: `GroupQueue` deduplicates checks per group/thread, limits concurrent containers, retries failed processing, and routes follow-up messages into an active child run when possible.
+7. Agent execution: the group processor resolves or creates the canonical session, hydrates scoped durable memory, then starts a live streaming child runner. Follow-up messages are piped into that runner until it is stopped or idles out.
+8. Streaming and final response: the processor forwards partial output, progress, typing, and final replies through channel wiring. Slack and Telegram send network responses; the app channel records durable runtime events for `wait()`, `stream()`, webhooks, and replay.
 
 ## Agent Runtime Deep Dive
 

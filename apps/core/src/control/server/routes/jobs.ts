@@ -67,7 +67,7 @@ function sendApplicationError(res: ServerResponse, error: unknown): boolean {
   throw error;
 }
 
-function createJobManagementService() {
+export function createJobManagementService() {
   const control = getRuntimeControlRepository();
   return new JobManagementService({
     ops: getRuntimeOpsRepository(),

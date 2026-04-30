@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
+import { isValidControlId } from '../../application/app-scope/control-id.js';
 
 export type Scope =
   | 'sessions:read'
@@ -17,6 +18,8 @@ export type Scope =
   | 'mcp:admin'
   | 'webhooks:read'
   | 'webhooks:write'
+  | 'ingresses:read'
+  | 'ingresses:write'
   | 'memory:read'
   | 'memory:write'
   | 'memory:admin';
@@ -28,7 +31,6 @@ export type ApiKeyRecord = {
   appId: string;
 };
 
-const CONTROL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const ALL_SCOPES: Scope[] = [
   'sessions:read',
   'sessions:write',
@@ -45,14 +47,14 @@ const ALL_SCOPES: Scope[] = [
   'mcp:admin',
   'webhooks:read',
   'webhooks:write',
+  'ingresses:read',
+  'ingresses:write',
   'memory:read',
   'memory:write',
   'memory:admin',
 ];
 
-export function isValidControlId(value: string): boolean {
-  return CONTROL_ID_PATTERN.test(value);
-}
+export { isValidControlId };
 
 export function parseControlApiKeys(): ApiKeyRecord[] {
   const rawJson = process.env.MYCLAW_CONTROL_API_KEYS_JSON?.trim();

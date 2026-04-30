@@ -3,10 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { _setRuntimeStorageForTest } from '@core/adapters/storage/postgres/runtime-store.js';
 import { _resetSchedulerLoopForTests, runJob } from '@core/jobs/scheduler.js';
 import { AppMemoryService } from '@core/memory/app-memory-service.js';
-import {
-  DEFAULT_MEMORY_APP_ID,
-  memoryAgentIdForGroupFolder,
-} from '@core/memory/app-memory-boundaries.js';
+import { memoryAgentIdForGroupFolder } from '@core/memory/app-memory-boundaries.js';
 import type { JobUpsertInput } from '@core/domain/repositories/ops-repo.js';
 import type { RegisteredGroup } from '@core/domain/types.js';
 
@@ -89,17 +86,25 @@ maybeDescribe('jobs, runs, memory, and scheduler flow', () => {
     });
     expect(schedulerSyncs).toEqual([job.id]);
 
-    await AppMemoryService.getInstance().save({
-      appId: DEFAULT_MEMORY_APP_ID,
-      agentId: memoryAgentIdForGroupFolder(job.group_scope),
-      groupId: job.group_scope,
-      channelId: 'tg:scheduler',
-      threadId: job.thread_id ?? undefined,
-      subjectType: 'group',
+    const agentId = memoryAgentIdForGroupFolder(job.group_scope);
+    await runtime.repositories.memory.saveMemoryItem({
+      id: 'memory:integration:handoff' as never,
+      appId: 'default' as never,
+      agentId: agentId as never,
+      subject: {
+        kind: 'agent',
+        appId: 'default' as never,
+        agentId: agentId as never,
+      },
+      kind: 'fact',
       key: 'handoff',
       value: 'Previous run says keep user data private.',
       source: 'integration-test',
       confidence: 1,
+      isPinned: false,
+      isDeleted: false,
+      createdAt: now as never,
+      updatedAt: now as never,
     });
 
     await runJob(

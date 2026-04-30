@@ -40,7 +40,17 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeControlRepository: () => ({
     listDueWebhookDeliveries: vi.fn(async () => []),
     claimDueWebhookDeliveries: vi.fn(async () => []),
-    getAppSessionById: vi.fn(async () => null),
+    getAppSessionById: vi.fn(
+      async (sessionId: string) => state.sessions.get(sessionId) ?? null,
+    ),
+  }),
+  getRuntimeEventExchange: () => ({
+    publish: vi.fn(async () => ({ eventId: 1 })),
+    list: vi.fn(async () => []),
+    subscribe: vi.fn(async () => ({
+      next: vi.fn(async () => []),
+      close: vi.fn(),
+    })),
   }),
   getRuntimeOpsRepository: () => ({
     storeChatMetadata: vi.fn(async () => undefined),
@@ -86,8 +96,14 @@ describe('session control runs integration', () => {
 
   it('lists runs for an encoded session id through the control HTTP route', async () => {
     state.sessions.set('session:edge', {
+      sessionId: 'session:edge',
       id: 'session:edge',
       appId: 'app-one',
+      conversationId: 'conversation-edge',
+      chatJid: 'app:app-one:conversation-edge',
+      workspaceKey: 'app_scope_session_edge',
+      defaultResponseMode: 'sse',
+      defaultWebhookId: null,
     });
     state.runs.set('session:edge', [
       {
@@ -131,8 +147,14 @@ describe('session control runs integration', () => {
 
   it('checks app ownership before listing session runs', async () => {
     state.sessions.set('session:other-app', {
+      sessionId: 'session:other-app',
       id: 'session:other-app',
       appId: 'app-two',
+      conversationId: 'conversation-other',
+      chatJid: 'app:app-two:conversation-other',
+      workspaceKey: 'app_scope_session_other',
+      defaultResponseMode: 'sse',
+      defaultWebhookId: null,
     });
     state.runs.set('session:other-app', [
       {

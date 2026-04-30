@@ -1,6 +1,11 @@
-# Webhooks
+# Outbound Webhooks
 
-MyClaw webhooks are host-owned callback destinations. Agents do not choose webhook URLs.
+MyClaw outbound webhooks are host-owned callback destinations. Agents do not
+choose webhook URLs. They deliver durable runtime events to an application after
+MyClaw has accepted work.
+
+Do not use `/v1/webhooks` for inbound authority. Signed inbound systems use
+external ingress records under `/v1/ingresses`.
 
 ## Delivery behavior
 

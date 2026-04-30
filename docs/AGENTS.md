@@ -12,3 +12,4 @@
 - Remove template, fork, or upstream framing from active docs unless a historical note is explicitly required.
 - Prefer repo-relative paths and current commands such as `apps/core/...`, `packages/agent-runner/...`, and `ops/...` when describing the codebase.
 - When docs change operational commands, verify the command still exists in this repo before publishing it.
+- Treat `/v1/webhooks` as outbound callback delivery only. Signed inbound sidecar systems use external ingress records under `/v1/ingresses`; do not describe webhooks as ingress authority.

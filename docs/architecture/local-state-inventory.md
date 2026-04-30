@@ -11,6 +11,9 @@ This inventory classifies local filesystem state by durability.
   using the local artifact backend. Postgres stores the skill row, lifecycle
   state, content hash, and binding; this folder stores the referenced bytes.
 - Local credential files managed by their owning credential adapters.
+- Postgres, not runtime-home files, stores external ingress records,
+  invocations, nonces, jobs, sessions, messages, runtime events, outbound
+  webhook delivery state, memory, and canonical app scope.
 
 ## Temporary Local State
 
@@ -39,3 +42,14 @@ Runtime-home Claude settings and skills are also unsupported as MyClaw
 configuration or skill truth.
 
 No automatic migration is provided for unsupported local Claude files.
+
+## Safe Cleanup
+
+After building and restarting from the current checkout, confirm `myclaw status`
+before inspecting `~/myclaw`. Stale generated logs, obsolete scratch session/job
+snapshots, old provider transcript artifacts outside the provider artifact
+store, and unused local hook/webhook scratch files may be archived under
+`~/myclaw/cleanup-archive/<timestamp>/`.
+
+Do not move or delete secrets, `settings.yaml`, Postgres data, OneCLI data,
+`artifacts/`, or active agent folders unless a reset was explicitly requested.

@@ -18,6 +18,7 @@ import {
   ConversationThreadResponseSchema,
   CreateAgentRequestSchema,
   CreateJobRequestSchema,
+  CreateSessionRequestSchema,
   ExternalReferenceSchema,
   IsoDateTimeSchema,
   JobScheduleSchema,
@@ -123,6 +124,12 @@ describe('contracts package', () => {
   });
 
   it('validates representative canonical DTOs and rejects constrained invalid input', () => {
+    expect(
+      CreateSessionRequestSchema.parse({
+        conversationId: 'conversation-1',
+      }),
+    ).toMatchObject({ conversationId: 'conversation-1' });
+
     expect(
       AgentResponseSchema.parse({
         id: 'agent-1',

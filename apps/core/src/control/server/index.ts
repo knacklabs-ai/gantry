@@ -13,6 +13,7 @@ import {
   updatePublicRuntimeSettings,
 } from '../../config/index.js';
 import { logger } from '../../infrastructure/logging/logger.js';
+import { getRuntimeControlRepository } from '../../adapters/storage/postgres/runtime-store.js';
 import { canAccessApp, jobBelongsToApp, makeAppGroup } from './app-identity.js';
 import { isValidControlId, parseControlApiKeys } from './auth.js';
 import type {
@@ -22,6 +23,7 @@ import type {
 import { sendError } from './http.js';
 import { createRateLimiter } from './rate-limit.js';
 import { handleChannelControlRoutes } from './routes/channels.js';
+import { handleExternalIngressRoutes } from './routes/external-ingress.js';
 import { handleJobRoutes } from './routes/jobs.js';
 import { handleMemoryRoutes } from './routes/memory.js';
 import { handleMcpServerRoutes } from './routes/mcp-servers.js';
@@ -71,6 +73,7 @@ function createControlRequestHandler(ctx: ControlRouteContext) {
         return;
       if (await handleMemoryRoutes(req, res, ctx, url, pathname)) return;
       if (await handleJobRoutes(req, res, ctx, url, pathname)) return;
+      if (await handleExternalIngressRoutes(req, res, ctx, pathname)) return;
       if (await handleRunRoutes(req, res, ctx, url, pathname)) return;
       if (await handleSettingsRoutes(req, res, ctx, pathname)) return;
       if (await handleSkillRoutes(req, res, ctx, url, pathname)) return;
@@ -163,10 +166,29 @@ export function startControlServer(input: {
         webhookFlushInFlight = false;
       });
   }, 1000);
+  let ingressMaintenanceInFlight = false;
+  const ingressMaintenanceInterval = setInterval(() => {
+    if (ingressMaintenanceInFlight) return;
+    ingressMaintenanceInFlight = true;
+    void getRuntimeControlRepository()
+      .sweepExpiredExternalIngressState({
+        now: new Date().toISOString(),
+      })
+      .catch((error) => {
+        logger.warn(
+          { err: error },
+          'Failed sweeping expired external ingress state',
+        );
+      })
+      .finally(() => {
+        ingressMaintenanceInFlight = false;
+      });
+  }, 60_000);
 
   return {
     async close() {
       clearInterval(deliveryInterval);
+      clearInterval(ingressMaintenanceInterval);
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {

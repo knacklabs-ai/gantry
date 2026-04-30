@@ -134,6 +134,13 @@
       "when": 1777050600000,
       "tag": "0018_runtime_event_exchange",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777054200000,
+      "tag": "0019_external_ingress",
+      "breakpoints": true
     }
   ]
 }

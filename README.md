@@ -212,6 +212,19 @@ See [docs/MEMORY.md](docs/MEMORY.md) for the app developer memory model and drea
 MyClaw currently supports a single runtime mode: host execution.
 Use `npm run dev` for local development and `npm start` for production start.
 
+## Sidecar Integrations
+
+Backend apps can use `@myclaw/sdk` to ensure a session, send a message, and wait
+or stream durable runtime events. Normal SDK calls derive `appId` from the API
+key; request-body `appId` is only an optional assertion.
+
+External systems that should not hold a control API key use signed external
+ingress records under `/v1/ingresses`. Ingress supports session messages,
+existing job triggers, and constrained one-time job templates. Each ingress
+record has an explicit target policy, so its secret only authorizes configured
+sessions, conversations, jobs, or templates. `/v1/webhooks` remains outbound
+callback delivery for runtime events.
+
 ## Repository Development
 
 Use this only when you are working on the source code:

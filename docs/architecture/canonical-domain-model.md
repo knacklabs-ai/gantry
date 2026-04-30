@@ -68,7 +68,8 @@ Identity rules:
 | `AgentSession`        | Domain                   | Canonical continuity state for an agent in an app, conversation, thread, job, or run context. It survives provider swaps.                                                          |
 | `ProviderSession`     | Adapter                  | A provider-specific resume token or transcript pointer, such as a Claude session id. It is attached to an `AgentSession`.                                                          |
 | `AgentRun`            | Domain/application       | One execution attempt by an agent for a message, job, control request, or manual trigger.                                                                                          |
-| `RuntimeEvent`        | Application/storage      | The durable observable runtime stream for run, job, session, SSE/wait, SDK listing, and webhook delivery events. Audit records remain in their owning modules.                     |
+| `RuntimeEvent`        | Application/storage      | The durable observable runtime stream for run, job, session, SSE/wait, SDK listing, and outbound webhook delivery events. Audit records remain in their owning modules.            |
+| `ExternalIngress`     | Application/storage      | A signed inbound authority record for external systems. It derives app scope, protects nonce replay, records invocations, and dispatches only to approved session/job/template targets. |
 | `MemorySubject`       | Domain                   | A memory boundary for app, agent, user, group/team, conversation, thread, or common shared memory.                                                                                 |
 | `Job`                 | Domain/application       | Scheduled, recurring, or manual work that creates agent runs under explicit app, agent, session, and permission context.                                                           |
 | `ToolCatalogItem`     | Domain catalog           | A tool capability exposed to agents with name, input contract, risk classification, permission requirements, and adapter binding.                                                  |
@@ -171,10 +172,14 @@ session, conversation/thread context, permission context, sandbox lease,
 workspace snapshot, provider profile, status, timestamps, and result summary.
 
 `RuntimeEvent` is the observable runtime delivery stream for SDK event listing,
-SSE/wait, webhook projection, run events, job events, and app-channel
+SSE/wait, outbound webhook projection, run events, job events, and app-channel
 session/control output. Run-event responses are projections filtered from
 runtime events instead of a separately owned `AgentRunEvent` stream. Audit
 histories remain in their owned modules.
+
+`ExternalIngress` is inbound. It is not a webhook callback destination. It
+derives app scope from its record and can only invoke configured target kinds:
+session messages, existing job triggers, or constrained one-time job templates.
 
 ### Memory And Jobs
 

@@ -13,7 +13,7 @@ export const ResponseModeSchema = z.enum(['sse', 'webhook', 'both', 'none']);
 export type ResponseMode = z.infer<typeof ResponseModeSchema>;
 
 export const CreateSessionRequestSchema = z.object({
-  appId: z.string(),
+  appId: z.string().optional(),
   agentId: z.string().optional(),
   conversationId: z.string().optional(),
   threadId: z.string().optional(),
