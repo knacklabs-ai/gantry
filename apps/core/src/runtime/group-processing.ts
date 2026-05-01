@@ -6,7 +6,6 @@ import {
   MAX_MESSAGES_PER_PROMPT,
   TIMEZONE,
 } from '../config/index.js';
-import { findModelByRunnerModel } from '../shared/model-catalog.js';
 import {
   encodeGroupMessageCursor,
   toGroupMessageCursor,
@@ -58,10 +57,8 @@ import {
 } from './session-resume-runtime.js';
 import { firstThreadQueueId, parseThreadQueueKey } from './thread-queue-key.js';
 import { formatElapsed } from './time-format.js';
-import {
-  getRuntimeModelStatus,
-  updateRuntimeModelStatus,
-} from './model-status-store.js';
+import { createRuntimeModelStatusAccess } from './model-status-store.js';
+import { recordRuntimeModelUsage } from './model-status-output.js';
 const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
 const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
 const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
@@ -116,20 +113,19 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       });
       persistedProviderSessionIds.add(providerSessionId);
     };
+    let defaultRuntimeModel: string | undefined;
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
           if (output.usage) {
-            const selectedModel =
-              group.agentConfig?.model ?? getDefaultModelConfig().model;
-            updateRuntimeModelStatus({
-              scopeKey: group.folder,
+            recordRuntimeModelUsage({
+              group,
               threadId: sessionThreadId,
-              selectionSource: group.agentConfig?.model
-                ? 'session override'
-                : 'chat default',
-              modelAlias: selectedModel,
-              model: findModelByRunnerModel(selectedModel),
               usage: output.usage,
+              usageEventId: output.usageEventId,
+              getDefaultModel: () => {
+                defaultRuntimeModel ??= getDefaultModelConfig().model;
+                return defaultRuntimeModel;
+              },
             });
           }
           if (output.status !== 'error' && output.newSessionId) {
@@ -323,6 +319,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         : deps.channelRuntime.sendProgressUpdate(chatJid, text);
     const memoryUserId = resolveMemoryUserId(missedMessages);
 
+    const modelStatus = createRuntimeModelStatusAccess(
+      group.folder,
+      activeThreadId,
+    );
     const cmdResult = await handleSessionCommand({
       missedMessages,
       isMainGroup,
@@ -364,11 +364,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         getGroupModelOverride: () => group.agentConfig?.model,
         setGroupModelOverride: async (value) =>
           deps.setGroupModelOverride(chatJid, value),
-        getModelStatus: () =>
-          getRuntimeModelStatus({
-            scopeKey: group.folder,
-            threadId: activeThreadId,
-          }),
+        getModelStatus: modelStatus.getStatus,
+        updateModelStatusSelection: modelStatus.updateSelection,
         getGroupThinkingOverride: () => group.agentConfig?.thinking,
         setGroupThinkingOverride: async (value) =>
           deps.setGroupThinkingOverride(chatJid, value),

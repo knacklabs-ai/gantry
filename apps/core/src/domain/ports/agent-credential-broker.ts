@@ -12,7 +12,9 @@ export interface AgentCredentialBrokerInput {
 export interface AgentCredentialBrokerCapabilities {
   profile: CredentialBrokerProfile;
   supportsAgentBinding: boolean;
-  returnsRawSecrets: false;
+  returnsRawSecrets: boolean;
+  projectsProviderTokens?: boolean;
+  projectedSecretEnvKeys?: string[];
 }
 
 export interface AgentCredentialBroker {

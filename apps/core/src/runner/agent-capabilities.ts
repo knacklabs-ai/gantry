@@ -40,13 +40,11 @@ export interface AgentCapabilityProvider {
 }
 
 const SAFE_NATIVE_ALLOWED_TOOLS = [
-  'Agent',
   'Read',
   'Glob',
   'Grep',
   'WebSearch',
   'WebFetch',
-  'Task',
   'TaskOutput',
   'TaskStop',
   'ToolSearch',

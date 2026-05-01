@@ -23,7 +23,7 @@ export interface AgentSession {
   jobId?: JobId;
   userId?: UserId;
   status: 'active' | 'reset' | 'archived';
-  modelOverride?: string;
+  model?: string;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
   resetAt?: IsoTimestamp;

@@ -346,7 +346,7 @@ maybeDescribe('Postgres domain repositories', () => {
       threadId,
       userId,
       status: 'active',
-      modelOverride: 'opus',
+      model: 'opus',
       createdAt: now,
       updatedAt: now,
     });
@@ -359,7 +359,7 @@ maybeDescribe('Postgres domain repositories', () => {
         threadId,
         userId,
       }),
-    ).resolves.toMatchObject({ id: sessionId, modelOverride: 'opus' });
+    ).resolves.toMatchObject({ id: sessionId, model: 'opus' });
 
     await repositories.providerSessions.saveProviderSession({
       id: 'provider-session:test:older' as ProviderSessionId,
@@ -528,7 +528,7 @@ maybeDescribe('Postgres domain repositories', () => {
         threadId,
         userId: 'user:test:race' as UserId,
         status: 'active',
-        modelOverride: 'sonnet',
+        model: 'sonnet',
         createdAt: '2026-04-27T00:03:10.000Z',
         updatedAt: '2026-04-27T00:03:11.000Z',
       }),

@@ -18,6 +18,7 @@ export interface AgentInput {
   threadId?: string;
   isMain: boolean;
   isScheduledJob?: boolean;
+  jobModelUseKind?: 'oneTimeJob' | 'recurringJob';
   assistantName?: string;
   script?: string;
   compiledSystemPrompt?: string;
@@ -32,6 +33,7 @@ export interface AgentOutput {
   compactBoundary?: boolean;
   interactionBoundary?: 'user_interaction';
   usage?: NormalizedModelUsage;
+  usageEventId?: string;
   error?: string;
 }
 

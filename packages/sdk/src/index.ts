@@ -31,6 +31,7 @@ import type {
   JobRecord,
   JobTriggerWaitResult,
   ModelRecord,
+  UpdateJobInput,
 } from './job-model-types.js';
 export type {
   CreateJobInput,
@@ -41,6 +42,7 @@ export type {
   JobStatus,
   JobTriggerWaitResult,
   ModelRecord,
+  UpdateJobInput,
 } from './job-model-types.js';
 export type ResponseMode = 'sse' | 'webhook' | 'both' | 'none';
 export type MemorySubjectType = 'user' | 'group' | 'channel' | 'common';
@@ -355,7 +357,7 @@ export class MyClawClient {
         method: 'GET',
         path: `/v1/jobs/${encodeURIComponent(jobId)}`,
       }),
-    update: (jobId: string, patch: Record<string, unknown>) =>
+    update: (jobId: string, patch: UpdateJobInput) =>
       this.transport.request<JobRecord>({
         method: 'PATCH',
         path: `/v1/jobs/${encodeURIComponent(jobId)}`,

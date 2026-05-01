@@ -77,7 +77,7 @@ export class PostgresControlPlaneRepository {
           agentId: graph.agentId,
           conversationId: graph.conversationId,
           status: 'active',
-          modelOverride: null,
+          model: null,
           createdAt: now,
           updatedAt: now,
         })

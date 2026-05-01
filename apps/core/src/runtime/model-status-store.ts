@@ -14,7 +14,15 @@ export interface RuntimeModelStatusSnapshot {
 }
 
 const snapshots = new Map<string, RuntimeModelStatusSnapshot>();
+const seenUsageKeys = new Map<string, Set<string>>();
 const MAX_RUNTIME_MODEL_STATUS_SNAPSHOTS = 500;
+const MAX_USAGE_KEYS_PER_STATUS = 200;
+
+export interface RuntimeModelStatusSelectionUpdate {
+  selectionSource: string;
+  modelAlias?: string;
+  model?: ModelCatalogEntry;
+}
 
 function emptyUsage(): NormalizedModelUsage {
   return {
@@ -40,12 +48,26 @@ export function updateRuntimeModelStatus(input: {
   modelAlias?: string;
   model?: ModelCatalogEntry;
   usage?: NormalizedModelUsage;
+  usageKey?: string;
 }): void {
   const key = statusKey(input.scopeKey, input.threadId);
   const existing = snapshots.get(key);
   if (existing) snapshots.delete(key);
   const cumulative = existing?.cumulativeUsage ?? emptyUsage();
-  if (input.usage) {
+  const usageKey = input.usageKey;
+  const usageAlreadySeen =
+    usageKey !== undefined && seenUsageKeys.get(key)?.has(usageKey);
+  if (input.usage && !usageAlreadySeen) {
+    if (usageKey !== undefined) {
+      const seen = seenUsageKeys.get(key) ?? new Set<string>();
+      seen.add(usageKey);
+      while (seen.size > MAX_USAGE_KEYS_PER_STATUS) {
+        const oldest = seen.values().next().value;
+        if (!oldest) break;
+        seen.delete(oldest);
+      }
+      seenUsageKeys.set(key, seen);
+    }
     cumulative.inputTokens += input.usage.inputTokens;
     cumulative.outputTokens += input.usage.outputTokens;
     cumulative.cacheReadTokens += input.usage.cacheReadTokens;
@@ -79,6 +101,7 @@ export function updateRuntimeModelStatus(input: {
     const oldest = snapshots.keys().next().value;
     if (!oldest) break;
     snapshots.delete(oldest);
+    seenUsageKeys.delete(oldest);
   }
 }
 
@@ -87,4 +110,18 @@ export function getRuntimeModelStatus(input: {
   threadId?: string | null;
 }): RuntimeModelStatusSnapshot | undefined {
   return snapshots.get(statusKey(input.scopeKey, input.threadId));
+}
+
+export function createRuntimeModelStatusAccess(
+  scopeKey: string,
+  threadId?: string | null,
+): {
+  getStatus: () => RuntimeModelStatusSnapshot | undefined;
+  updateSelection: (input: RuntimeModelStatusSelectionUpdate) => void;
+} {
+  return {
+    getStatus: () => getRuntimeModelStatus({ scopeKey, threadId }),
+    updateSelection: (input) =>
+      updateRuntimeModelStatus({ scopeKey, threadId, ...input }),
+  };
 }

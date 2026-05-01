@@ -1,6 +1,6 @@
 import { RegisteredGroup } from '../domain/types.js';
 import { TaskIpcData } from '../jobs/ipc-handler.js';
-import { normalizeClaudeModelSelection } from '../models/claude-model-registry.js';
+import { resolveModelSelection } from '../shared/model-catalog.js';
 import { isPlainObject, toTrimmedString } from '../shared/object.js';
 import { validateIpcAuthRequest } from './ipc-auth-validation.js';
 
@@ -104,7 +104,13 @@ function parseAgentConfigPayload(
     max: 3_600_000,
   });
   const parsed: RegisteredGroup['agentConfig'] = {};
-  if (model) parsed.model = normalizeClaudeModelSelection(model) || model;
+  if (model) {
+    const resolvedModel = resolveModelSelection(model);
+    if (!resolvedModel.ok) {
+      throw new Error(`Invalid agentConfig.model: ${resolvedModel.message}`);
+    }
+    parsed.model = resolvedModel.alias;
+  }
   if (timeout !== undefined) parsed.timeout = Math.round(timeout);
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
@@ -121,8 +127,19 @@ export function parseTaskIpcData(
   const parsed: TaskIpcData = { type };
   const taskId = toTrimmedString(raw.taskId, { maxLen: 128 });
   const prompt = toTrimmedString(raw.prompt, { maxLen: 20000 });
-  const modelAlias = toTrimmedString(raw.modelAlias, { maxLen: 120 });
-  const modelProfileId = toTrimmedString(raw.modelProfileId, { maxLen: 160 });
+  const hasModelAlias = Object.prototype.hasOwnProperty.call(raw, 'modelAlias');
+  const hasModelProfileId = Object.prototype.hasOwnProperty.call(
+    raw,
+    'modelProfileId',
+  );
+  const modelAlias =
+    hasModelAlias && raw.modelAlias === null
+      ? null
+      : toTrimmedString(raw.modelAlias, { maxLen: 120 });
+  const modelProfileId =
+    hasModelProfileId && raw.modelProfileId === null
+      ? null
+      : toTrimmedString(raw.modelProfileId, { maxLen: 160 });
   const scheduleType = toScheduleType(raw.scheduleType);
   const scheduleValue = toTrimmedString(raw.scheduleValue, {
     maxLen: 1024,
@@ -185,8 +202,10 @@ export function parseTaskIpcData(
 
   if (taskId) parsed.taskId = taskId;
   if (prompt !== undefined) parsed.prompt = prompt;
-  if (modelAlias !== undefined) parsed.modelAlias = modelAlias;
-  if (modelProfileId !== undefined) parsed.modelProfileId = modelProfileId;
+  if (hasModelAlias && modelAlias !== undefined) parsed.modelAlias = modelAlias;
+  if (hasModelProfileId && modelProfileId !== undefined) {
+    parsed.modelProfileId = modelProfileId;
+  }
   if (scheduleType !== undefined) parsed.scheduleType = scheduleType;
   if (scheduleValue !== undefined) parsed.scheduleValue = scheduleValue;
   if (contextMode) parsed.contextMode = contextMode;

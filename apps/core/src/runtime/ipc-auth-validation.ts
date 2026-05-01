@@ -9,7 +9,7 @@ import { computeIpcAuthToken } from './ipc-auth.js';
 
 interface IpcThreadBinding {
   authThreadId?: string;
-  payloadThreadId?: string;
+  payloadThreadId?: string | null;
 }
 
 const consumedIpcRequestIds = new Map<string, number>();
@@ -20,6 +20,14 @@ function readThreadIdField(value: unknown, label: string): string | undefined {
     throw new Error(`${label} must be a string up to 255 characters`);
   }
   return parsed;
+}
+
+function readPayloadThreadIdField(
+  value: unknown,
+  label: string,
+): string | null | undefined {
+  if (value === null) return null;
+  return readThreadIdField(value, label);
 }
 
 function readTrustedThreadBinding(
@@ -37,12 +45,13 @@ function readTrustedThreadBinding(
     ? readThreadIdField(context?.threadId, `${label} context.threadId`)
     : undefined;
   const payloadThreadId = hasPayloadThreadId
-    ? readThreadIdField(raw.threadId, `${label} threadId`)
+    ? readPayloadThreadIdField(raw.threadId, `${label} threadId`)
     : undefined;
 
   if (
     hasContextThreadId &&
     hasPayloadThreadId &&
+    payloadThreadId !== null &&
     contextThreadId !== payloadThreadId
   ) {
     throw new Error(`${label} threadId mismatch`);
@@ -52,7 +61,10 @@ function readTrustedThreadBinding(
     ? contextThreadId
     : payloadThreadId;
   return {
-    authThreadId: trustedThreadId || undefined,
+    authThreadId:
+      typeof trustedThreadId === 'string' && trustedThreadId
+        ? trustedThreadId
+        : undefined,
     ...(hasPayloadThreadId ? { payloadThreadId } : {}),
   };
 }

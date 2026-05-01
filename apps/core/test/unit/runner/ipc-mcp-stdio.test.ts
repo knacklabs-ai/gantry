@@ -343,7 +343,7 @@ async function runMcpFixture(
   return { exitCode, stderr };
 }
 
-describe('agent-runner MCP stdio tools', () => {
+describe('agent-runner MCP stdio tools', { timeout: 10_000 }, () => {
   it('consumes ask_user_question responses, formats answers, and unlinks the response file', async () => {
     const fixture = createMcpFixture();
 
@@ -748,6 +748,59 @@ describe('agent-runner MCP stdio tools', () => {
       ),
     );
     expect(task.threadId).toBe('trusted-thread');
+  });
+
+  it('forwards explicit null thread updates for host authorization', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'scheduler_update_job',
+      {
+        job_id: 'job-1',
+        prompt: 'Updated prompt',
+        thread_id: null,
+      },
+      { MYCLAW_THREAD_ID: 'trusted-thread' },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task.context.threadId).toBe('trusted-thread');
+    expect(task.threadId).toBeNull();
+  });
+
+  it('allows scheduler updates to clear explicit model selection', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'scheduler_update_job',
+      {
+        job_id: 'job-1',
+        model_alias: null,
+      },
+      { MYCLAW_THREAD_ID: 'trusted-thread' },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task.context.threadId).toBe('trusted-thread');
+    expect(task.modelAlias).toBeNull();
   });
 
   it('rejects scheduler thread targets outside the current runtime thread', async () => {

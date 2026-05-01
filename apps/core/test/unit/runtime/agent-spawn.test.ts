@@ -64,6 +64,7 @@ vi.mock('fs', async () => {
 vi.mock('@core/runtime/agent-spawn-host.js', () => ({
   getHostRuntimeCredentialEnv: vi.fn().mockResolvedValue({
     env: {},
+    credentialProviders: {},
     brokerApplied: false,
     brokerProfile: 'none',
   }),
@@ -77,6 +78,10 @@ vi.mock('@core/runtime/agent-spawn-host.js', () => ({
 vi.mock(
   '@core/adapters/llm/anthropic-claude-agent/claude-config-materializer.js',
   () => ({
+    applyOpenRouterSdkEnv: (env: NodeJS.ProcessEnv) => {
+      env.ANTHROPIC_BASE_URL = 'https://openrouter.ai/api';
+      env.ANTHROPIC_API_KEY = '';
+    },
     materializeClaudeRuntime: mockMaterializeClaudeRuntime,
   }),
 );
@@ -291,6 +296,7 @@ describe('agent-spawn timeout behavior', () => {
     vi.mocked(getEffectiveModelConfig).mockClear();
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValue({
       env: {},
+      credentialProviders: {},
       brokerApplied: false,
       brokerProfile: 'none',
     });
@@ -460,9 +466,33 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6');
   });
 
+  it('uses one-time defaults for scheduled manual job fallback', async () => {
+    const inputWithManualJobKind = {
+      ...testInput,
+      isScheduledJob: true,
+      jobModelUseKind: 'oneTimeJob' as const,
+    };
+
+    const resultPromise = spawnAgent(
+      testGroup,
+      inputWithManualJobKind,
+      () => {},
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(getEffectiveModelConfig)).toHaveBeenCalledWith(
+      undefined,
+      'oneTimeJob',
+    );
+  });
+
   it('projects OpenRouter models through Anthropic SDK env only when broker supplies a token', async () => {
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
       env: { ANTHROPIC_AUTH_TOKEN: 'broker-token' },
+      credentialProviders: { ANTHROPIC_AUTH_TOKEN: 'openrouter' },
       brokerApplied: true,
       brokerProfile: 'external',
     });
@@ -487,6 +517,26 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.ANTHROPIC_API_KEY).toBe('');
   });
 
+  it('rejects OpenRouter models when the broker token is not OpenRouter-scoped', async () => {
+    vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
+      env: { ANTHROPIC_AUTH_TOKEN: 'anthropic-token' },
+      credentialProviders: { ANTHROPIC_AUTH_TOKEN: 'native' },
+      brokerApplied: true,
+      brokerProfile: 'external',
+    });
+
+    const result = await spawnAgent(
+      testGroup,
+      { ...testInput, model: 'kimi' },
+      () => {},
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('OpenRouter-scoped credential');
+    expect(mockMaterializeClaudeRuntime).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('rejects OpenRouter models when the credential broker cannot provide a token', async () => {
     const result = await spawnAgent(
       testGroup,
@@ -495,7 +545,30 @@ describe('agent-spawn timeout behavior', () => {
     );
 
     expect(result.status).toBe('error');
-    expect(result.error).toContain('requires an OpenRouter credential');
+    expect(result.error).toContain('requires an OpenRouter-scoped credential');
+    expect(mockMaterializeClaudeRuntime).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('rejects native Anthropic models with OpenRouter-scoped broker credentials', async () => {
+    vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        ANTHROPIC_AUTH_TOKEN: 'broker-token',
+      },
+      credentialProviders: { ANTHROPIC_AUTH_TOKEN: 'openrouter' },
+      brokerApplied: true,
+      brokerProfile: 'onecli',
+    });
+
+    const result = await spawnAgent(
+      testGroup,
+      { ...testInput, model: 'opus' },
+      () => {},
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('OpenRouter-scoped');
     expect(mockMaterializeClaudeRuntime).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -605,6 +678,7 @@ describe('agent-spawn timeout behavior', () => {
       await import('@core/runtime/agent-spawn-host.js');
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
       env: { GITHUB_TOKEN_REF: 'broker-token' },
+      credentialProviders: {},
       brokerApplied: true,
       brokerProfile: 'test',
     });
@@ -660,6 +734,7 @@ describe('agent-spawn timeout behavior', () => {
       await import('@core/runtime/agent-spawn-host.js');
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
       env: { GITHUB_TOKEN_REF: 'broker-token' },
+      credentialProviders: {},
       brokerApplied: true,
       brokerProfile: 'test',
     });

@@ -52,6 +52,21 @@ export function validateLoadedRuntimeSettings(
       details.push(`${field} is invalid: ${resolved.message}`);
     }
   }
+  for (const [field, value] of [
+    ['memory.llm.models.extractor', settings.memory.llm.models.extractor],
+    ['memory.llm.models.dreaming', settings.memory.llm.models.dreaming],
+    [
+      'memory.llm.models.consolidation',
+      settings.memory.llm.models.consolidation,
+    ],
+  ] as const) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const resolved = resolveModelSelection(trimmed);
+    if (!resolved.ok) {
+      details.push(`${field} is invalid: ${resolved.message}`);
+    }
+  }
   const postgresUrlEnv = settings.storage.postgres.urlEnv;
   const postgresUrl =
     env[postgresUrlEnv]?.trim() || process.env[postgresUrlEnv]?.trim() || '';

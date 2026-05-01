@@ -48,9 +48,9 @@ function makeRuntimeSettings(enabled: {
       },
       llm: {
         models: {
-          extractor: 'claude-haiku-4-5-20251001',
-          dreaming: 'claude-sonnet-4-6',
-          consolidation: 'claude-sonnet-4-6',
+          extractor: 'haiku',
+          dreaming: 'sonnet',
+          consolidation: 'sonnet',
         },
       },
     },

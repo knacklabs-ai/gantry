@@ -19,6 +19,10 @@ import {
   formatModelStatus,
   formatMemoryStatus,
 } from './session-command-format.js';
+import {
+  defaultModelStatusSelection,
+  type ModelStatusSelectionUpdate,
+} from './session-model-status.js';
 
 export type SessionCommand =
   | { kind: 'compact'; raw: '/compact' }
@@ -181,13 +185,11 @@ export function isSessionCommandAllowed(
   return isFromMe || isSenderControlAllowlisted;
 }
 
-/** Minimal agent result interface — matches the subset of AgentOutput used here. */
 export interface AgentResult {
   status: 'success' | 'error';
   result?: string | object | null;
 }
 
-/** Dependencies injected by the orchestrator. */
 export interface SessionCommandDeps {
   sendMessage: (text: string, options?: MessageSendOptions) => Promise<void>;
   setTyping: (typing: boolean) => Promise<void>;
@@ -204,6 +206,7 @@ export interface SessionCommandDeps {
   getGroupModelOverride: () => string | undefined;
   setGroupModelOverride: (value: string | undefined) => Promise<void> | void;
   getModelStatus?: () => RuntimeModelStatusSnapshot | undefined;
+  updateModelStatusSelection?: (input: ModelStatusSelectionUpdate) => void;
   getGroupThinkingOverride: () => ThinkingOverride | undefined;
   setGroupThinkingOverride: (
     value: ThinkingOverride | undefined,
@@ -597,6 +600,11 @@ export async function handleSessionCommand(opts: {
 
     try {
       await deps.setGroupModelOverride(resolved.alias);
+      deps.updateModelStatusSelection?.({
+        selectionSource: 'session override',
+        modelAlias: resolved.alias,
+        model: resolved.entry,
+      });
     } catch (err) {
       logger.error(
         { group: groupName, err, model: resolved.alias },
@@ -618,6 +626,9 @@ export async function handleSessionCommand(opts: {
   if (command.kind === 'model_default') {
     try {
       await deps.setGroupModelOverride(undefined);
+      deps.updateModelStatusSelection?.(
+        defaultModelStatusSelection(defaultModel),
+      );
     } catch (err) {
       logger.error(
         { group: groupName, err },

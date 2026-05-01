@@ -8,6 +8,14 @@ import {
 
 export type { NormalizedModelUsage };
 
+export function modelUseKindForJobSchedule(
+  scheduleType: Job['schedule_type'],
+): 'oneTimeJob' | 'recurringJob' {
+  return scheduleType === 'cron' || scheduleType === 'interval'
+    ? 'recurringJob'
+    : 'oneTimeJob';
+}
+
 interface DefaultModelConfig {
   model?: string;
   source: string;

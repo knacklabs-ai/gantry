@@ -28,6 +28,7 @@ export interface AgentRunnerOutput {
   compactBoundary?: boolean;
   interactionBoundary?: 'user_interaction';
   usage?: NormalizedModelUsage;
+  usageEventId?: string;
   error?: string;
 }
 

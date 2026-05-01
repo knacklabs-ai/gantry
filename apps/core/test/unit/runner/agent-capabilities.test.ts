@@ -7,13 +7,11 @@ import {
 } from '@agent-runner-src/agent-capabilities.js';
 
 const SAFE_DEFAULT_ALLOWED_TOOLS = [
-  'Agent',
   'Read',
   'Glob',
   'Grep',
   'WebSearch',
   'WebFetch',
-  'Task',
   'TaskOutput',
   'TaskStop',
   'ToolSearch',
@@ -40,6 +38,7 @@ const DANGEROUS_DEFAULT_TOOLS = [
   'Edit',
   'NotebookEdit',
   'Config',
+  'Agent',
   'mcp__myclaw__list_models',
   'mcp__myclaw__*',
 ] as const;

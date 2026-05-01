@@ -33,7 +33,6 @@
         "apps/core/src/jobs",
         "apps/core/src/memory",
         "apps/core/src/messaging",
-        "apps/core/src/models",
         "apps/core/src/platform",
         "apps/core/src/runtime",
         "apps/core/src/session"
@@ -119,8 +118,7 @@
     "apps/core/src/runner/claude",
     "apps/core/src/runner/mcp",
     "apps/core/src/memory/claude-query.ts",
-    "apps/core/src/shared/model-catalog.ts",
-    "apps/core/src/models/claude-model-registry.ts"
+    "apps/core/src/shared/model-catalog.ts"
   ],
   "providerImportSpecifiers": [
     "@anthropic-ai/sdk",

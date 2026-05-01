@@ -24,7 +24,10 @@ import {
   prepareHostRuntimeContext,
 } from './agent-spawn-host.js';
 import type { MaterializedMcpCapability } from '../application/mcp/mcp-server-service.js';
-import { materializeClaudeRuntime } from '../adapters/llm/anthropic-claude-agent/claude-config-materializer.js';
+import {
+  applyOpenRouterSdkEnv,
+  materializeClaudeRuntime,
+} from '../adapters/llm/anthropic-claude-agent/claude-config-materializer.js';
 import {
   ArtifactClaudeSkillSource,
   BundledClaudeSkillSource,
@@ -99,9 +102,7 @@ export async function spawnAgent(
   const modelConfig = getEffectiveModelConfig(
     input.isScheduledJob ? undefined : group.agentConfig?.model,
     input.isScheduledJob
-      ? input.model
-        ? 'interactive'
-        : 'recurringJob'
+      ? input.jobModelUseKind || 'recurringJob'
       : 'interactive',
   );
   const requestedModel = input.model || modelConfig.model;
@@ -152,12 +153,26 @@ export async function spawnAgent(
   );
   if (
     effectiveModelEntry?.provider === 'openrouter' &&
-    !hostCredentials.env.ANTHROPIC_AUTH_TOKEN
+    (!hostCredentials.env.ANTHROPIC_AUTH_TOKEN ||
+      hostCredentials.credentialProviders.ANTHROPIC_AUTH_TOKEN !== 'openrouter')
   ) {
     return {
       status: 'error',
       result: null,
-      error: `OpenRouter model ${effectiveModelEntry.displayName} requires an OpenRouter credential from AgentCredentialBroker as ANTHROPIC_AUTH_TOKEN. Configure Model Access/OpenRouter credentials before selecting this model.`,
+      error: `OpenRouter model ${effectiveModelEntry.displayName} requires an OpenRouter-scoped credential from AgentCredentialBroker as ANTHROPIC_AUTH_TOKEN. Configure Model Access/OpenRouter credentials before selecting this model.`,
+    };
+  }
+  if (
+    effectiveModelEntry &&
+    effectiveModelEntry.provider !== 'openrouter' &&
+    (hostCredentials.credentialProviders.ANTHROPIC_AUTH_TOKEN ===
+      'openrouter' ||
+      isOpenRouterBaseUrl(hostCredentials.env.ANTHROPIC_BASE_URL))
+  ) {
+    return {
+      status: 'error',
+      result: null,
+      error: `Model ${effectiveModelEntry.displayName} is configured for ${effectiveModelEntry.providerLabel}, but AgentCredentialBroker returned OpenRouter-scoped Anthropic SDK credentials. Switch the session/job model to kimi or configure ${effectiveModelEntry.providerLabel} credentials for this model.`,
     };
   }
   const browserWiring = createAgentBrowserRunWiring(
@@ -227,7 +242,7 @@ export async function spawnAgent(
     return {
       status: 'error',
       result: null,
-      error: `Claude runtime materialization failed: ${err instanceof Error ? err.message : String(err)}`,
+      error: `LLM runtime materialization failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
@@ -263,8 +278,7 @@ export async function spawnAgent(
     env.ANTHROPIC_MODEL = effectiveModel;
   }
   if (effectiveModelEntry?.provider === 'openrouter') {
-    env.ANTHROPIC_BASE_URL = 'https://openrouter.ai/api';
-    env[[['ANTH', 'ROPIC'].join(''), 'API', 'KEY'].join('_')] = '';
+    applyOpenRouterSdkEnv(env);
   }
   let browserRuntimeDetails: readonly string[] = [];
   let allMcpCapabilities: MaterializedMcpCapability[] = [];
@@ -357,6 +371,16 @@ export async function spawnAgent(
   } finally {
     cleanupRunnerMcpConfigFile(mcpConfigPath);
     claudeRuntimeMaterialization.cleanup();
+  }
+}
+
+function isOpenRouterBaseUrl(value?: string): boolean {
+  if (!value) return false;
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
+  } catch {
+    return false;
   }
 }
 

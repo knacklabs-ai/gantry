@@ -5,7 +5,9 @@ export type JobStatus =
   | 'paused'
   | 'running'
   | 'completed'
-  | 'dead_lettered';
+  | 'failed'
+  | 'dead_lettered'
+  | 'archived';
 
 export interface JobRecord {
   jobId: string;
@@ -21,6 +23,9 @@ export interface JobRecord {
   nextRun: string | null;
   lastRun: string | null;
   executionMode: JobExecutionMode;
+  modelAlias: string | null;
+  modelProfileId: string | null;
+  model: JobModelPreview | null;
   threadId: string | null;
   groupScope: string;
   sessionId: string | null;
@@ -56,19 +61,39 @@ export interface CreateJobInput {
   dryRun?: boolean;
 }
 
+export interface UpdateJobInput {
+  name?: string;
+  prompt?: string;
+  executionMode?: 'parallel' | 'serialized';
+  threadId?: string | null;
+  status?: 'active' | 'paused';
+  modelAlias?: string | null;
+  modelProfileId?: string | null;
+}
+
 export interface CreateJobResponse {
-  jobId: string;
+  jobId?: string;
   dryRun?: boolean;
   modelAlias?: string | null;
-  modelSource?: string;
-  model?: {
-    displayName: string;
-    provider: string;
-    contextWindowTokens: number;
-    maxOutputTokens: number;
-    cachePolicy: string;
-    modelProfileId: string;
-  } | null;
+  modelSource?: JobModelSource;
+  model?: JobModelPreview | null;
+}
+
+export type JobModelSource =
+  | 'explicit'
+  | 'system default'
+  | 'settings.yaml agent.default_model'
+  | 'settings.yaml agent.one_time_job_default_model'
+  | 'settings.yaml agent.recurring_job_default_model'
+  | 'group.agentConfig.model';
+
+export interface JobModelPreview {
+  displayName: string;
+  provider: string;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+  cachePolicy: string;
+  modelProfileId: string;
 }
 
 export interface JobTriggerWaitResult {

@@ -898,7 +898,7 @@ describe('handleSessionCommand', () => {
   });
 
   it('handles authorized /model and persists override', async () => {
-    const deps = makeDeps();
+    const deps = makeDeps({ updateModelStatusSelection: vi.fn() });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model opus')],
       isMainGroup: true,
@@ -911,6 +911,13 @@ describe('handleSessionCommand', () => {
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.setGroupModelOverride).toHaveBeenCalledWith('opus');
+    expect(deps.updateModelStatusSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectionSource: 'session override',
+        modelAlias: 'opus',
+        model: expect.objectContaining({ displayName: 'Opus 4.7' }),
+      }),
+    );
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Using Opus 4.7 for this session.',
     );
@@ -962,6 +969,7 @@ describe('handleSessionCommand', () => {
   it('handles /model default by clearing override and using env default when configured', async () => {
     const deps = makeDeps({
       getDefaultModel: vi.fn().mockReturnValue('claude-opus-4-7'),
+      updateModelStatusSelection: vi.fn(),
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model default')],
@@ -975,6 +983,13 @@ describe('handleSessionCommand', () => {
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.setGroupModelOverride).toHaveBeenCalledWith(undefined);
+    expect(deps.updateModelStatusSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectionSource: 'chat default',
+        modelAlias: 'opus',
+        model: expect.objectContaining({ displayName: 'Opus 4.7' }),
+      }),
+    );
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Model override cleared. Using default model: Opus 4.7 (Anthropic).',
     );

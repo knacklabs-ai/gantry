@@ -320,7 +320,15 @@ client.jobs.create({
 
 client.jobs.list()
 client.jobs.get(jobId)
-client.jobs.update(jobId, patch)
+client.jobs.update(jobId, {
+  name?,
+  prompt?,
+  executionMode?,
+  threadId?,
+  status?,
+  modelAlias?,    // use null to clear back to inherited defaults
+  modelProfileId?,
+})
 client.jobs.delete(jobId)
 client.jobs.pause(jobId)
 client.jobs.resume(jobId)

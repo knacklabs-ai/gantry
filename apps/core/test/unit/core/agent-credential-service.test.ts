@@ -26,6 +26,7 @@ function makeBroker(
       profile: 'onecli',
       supportsAgentBinding: true,
       returnsRawSecrets: false,
+      projectsProviderTokens: false,
     }),
   };
 }
@@ -94,23 +95,46 @@ describe('agent credential service', () => {
     });
   });
 
-  it('preserves safe host env and drops raw agent credentials for external broker env', async () => {
+  it('fails closed for external broker env without copying caller env', async () => {
     const { createExternalAgentCredentialInjection } =
       await import('@core/adapters/llm/external-credential-injection.js');
 
     expect(
       createExternalAgentCredentialInjection({
         normalizedBaseUrl: 'https://broker.example.com',
-        hostCredentialEnv: {
-          HTTPS_PROXY: 'http://proxy.example.com',
-          ANTHROPIC_API_KEY: 'raw-secret',
-          OPENAI_API_KEY: 'raw-secret',
-        },
       }),
     ).toEqual({
       env: {
         ANTHROPIC_BASE_URL: 'https://broker.example.com',
-        HTTPS_PROXY: 'http://proxy.example.com',
+      },
+      applied: true,
+      brokerProfile: 'external',
+    });
+  });
+
+  it('does not manufacture OpenRouter token provenance from external env', async () => {
+    const { createExternalAgentCredentialInjection } =
+      await import('@core/adapters/llm/external-credential-injection.js');
+
+    expect(
+      createExternalAgentCredentialInjection({
+        normalizedBaseUrl: 'https://openrouter.ai/api',
+      }),
+    ).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+      },
+      applied: true,
+      brokerProfile: 'external',
+    });
+
+    expect(
+      createExternalAgentCredentialInjection({
+        normalizedBaseUrl: 'https://broker.example.com',
+      }),
+    ).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://broker.example.com',
       },
       applied: true,
       brokerProfile: 'external',

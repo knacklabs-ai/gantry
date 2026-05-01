@@ -441,6 +441,22 @@ describe('job application use cases', () => {
         ),
       'FORBIDDEN',
     );
+    expectThrowsCode(
+      () =>
+        validateSchedulerUpdate(
+          makeJob({ group_scope: 'team', thread_id: 'thread-1' }),
+          { thread_id: null },
+          access,
+        ),
+      'FORBIDDEN',
+    );
+    expect(() =>
+      validateSchedulerUpdate(
+        makeJob({ group_scope: 'team', thread_id: 'thread-1' }),
+        { thread_id: null },
+        { ...access, isMain: true, authThreadId: undefined },
+      ),
+    ).not.toThrow();
   });
 
   it('maps IPC scheduler schedule validation to invalid_schedule', async () => {

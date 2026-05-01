@@ -35,7 +35,7 @@ export class CreateOrResumeSessionUseCase {
           threadId?: ConversationThreadId;
           userId?: UserId;
           jobId?: JobId;
-          modelOverride?: string;
+          model?: string;
           provider?: string;
           now?: string;
         },
@@ -80,7 +80,7 @@ export class CreateOrResumeSessionUseCase {
       jobId: input.jobId,
       userId: input.userId,
       status: 'active',
-      modelOverride: input.modelOverride,
+      model: input.model,
       createdAt: now,
       updatedAt: now,
     };

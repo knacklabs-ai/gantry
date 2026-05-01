@@ -85,4 +85,41 @@ describe('scheduler MCP tools', () => {
     expect(formatModelCatalog).toHaveBeenCalledTimes(1);
     expect(response.content[0].text).toBe('mocked model catalog output');
   });
+
+  it('allows scheduler_update_job to clear explicit model selection', async () => {
+    const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-tools-'));
+    tempRoots.push(ipcDir);
+    process.env.MYCLAW_IPC_DIR = ipcDir;
+    const { registerSchedulerTools } =
+      await import('../../../../src/runner/mcp/tools/scheduler.js');
+    const schemas = new Map<
+      string,
+      Record<string, { safeParse: (input: unknown) => { success: boolean } }>
+    >();
+    const server = {
+      tool: (
+        name: string,
+        _description: string,
+        schema: Record<
+          string,
+          { safeParse: (input: unknown) => { success: boolean } }
+        >,
+      ) => {
+        schemas.set(name, schema);
+      },
+    };
+
+    registerSchedulerTools(server as never);
+
+    expect(
+      schemas.get('scheduler_update_job')?.model_alias.safeParse(null).success,
+    ).toBe(true);
+    expect(
+      schemas.get('scheduler_update_job')?.model_profile_id.safeParse(null)
+        .success,
+    ).toBe(true);
+    expect(
+      schemas.get('scheduler_update_job')?.thread_id.safeParse(null).success,
+    ).toBe(true);
+  });
 });

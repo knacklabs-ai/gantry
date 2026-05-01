@@ -157,7 +157,8 @@ export function registerSchedulerTools(server: McpServer): void {
         scheduleValue: args.schedule_value,
         linkedSessions: args.linked_sessions,
         deliverTo: args.deliver_to,
-        ...(schedulerThread.threadId !== undefined
+        ...(schedulerThread.threadId !== undefined &&
+        schedulerThread.threadId !== null
           ? { threadId: schedulerThread.threadId }
           : {}),
         silent: args.silent,
@@ -266,13 +267,13 @@ export function registerSchedulerTools(server: McpServer): void {
       job_id: z.string(),
       name: z.string().optional(),
       prompt: z.string().optional(),
-      model_alias: z.string().optional(),
-      model_profile_id: z.string().optional(),
+      model_alias: z.string().nullable().optional(),
+      model_profile_id: z.string().nullable().optional(),
       schedule_type: z.enum(['cron', 'interval', 'once']).optional(),
       schedule_value: z.string().optional(),
       linked_sessions: z.array(z.string()).optional(),
       deliver_to: z.array(z.string()).optional(),
-      thread_id: z.string().optional(),
+      thread_id: z.string().nullable().optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
       group_scope: z.string().optional(),

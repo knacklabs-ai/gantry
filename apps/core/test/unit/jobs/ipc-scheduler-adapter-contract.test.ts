@@ -113,6 +113,25 @@ describe('scheduler IPC adapter contracts', () => {
     );
   });
 
+  it('clears scheduler update models with null alias', async () => {
+    await schedulerMutateTaskHandlers.scheduler_update_job(
+      makeContext({
+        type: 'scheduler_update_job',
+        jobId: 'job-1',
+        modelAlias: null,
+      }),
+    );
+
+    expect(mocks.jobService.updateJob).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      access: expect.any(Object),
+      patch: { model: null },
+    });
+    expect(mocks.responder.accept).toHaveBeenCalledWith(
+      'Scheduler job updated (job-1).',
+    );
+  });
+
   it('rejects raw provider IDs for scheduler update models', async () => {
     await schedulerMutateTaskHandlers.scheduler_update_job(
       makeContext({

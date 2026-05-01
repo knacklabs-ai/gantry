@@ -2757,6 +2757,50 @@ describe('control server runtime hardening', () => {
     }
   });
 
+  it('rejects unsupported session ensure fields before registration', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-strict-session',
+        scopes: ['sessions:write'],
+        appId: 'app-one',
+      },
+    ]);
+    const app = {
+      registerGroup: vi.fn(),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    const handle = startControlServer({ app: app as any });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/sessions/ensure`,
+        'token-strict-session',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: 'conv-1',
+            modelOverride: 'sonnet',
+          }),
+        },
+      );
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Unsupported session request field "modelOverride".',
+        },
+      });
+      expect(app.registerGroup).not.toHaveBeenCalled();
+      expect(controlRepo.ensureAppSession).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('binds webhook registration to authenticated app id', async () => {
     const port = await reservePort();
     process.env.MYCLAW_CONTROL_PORT = String(port);

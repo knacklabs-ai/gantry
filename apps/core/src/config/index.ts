@@ -2,10 +2,6 @@ import path from 'path';
 import fs from 'fs';
 
 import {
-  CLAUDE_CODE_MODEL_PIN_ENV,
-  CLAUDE_CODE_MODEL_PIN_ENV_KEYS,
-} from '../models/claude-model-registry.js';
-import {
   resolveModelAlias,
   resolveModelSelection,
 } from '../shared/model-catalog.js';
@@ -299,7 +295,9 @@ export const HOST_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_MODEL',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
-  ...CLAUDE_CODE_MODEL_PIN_ENV_KEYS,
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
 ] as const;
 export const ONECLI_ALLOWED_ENV_KEYS = [...HOST_CREDENTIAL_ENV_KEYS] as const;
 type HostCredentialSource = Partial<Record<string, string | undefined>>;
@@ -315,7 +313,6 @@ export function getHostCredentialEnv(
   source?: HostCredentialSource,
 ): Record<string, string> {
   const env: Record<string, string> = {};
-  Object.assign(env, CLAUDE_CODE_MODEL_PIN_ENV);
   for (const key of HOST_CREDENTIAL_ENV_KEYS) {
     const value = readHostCredentialValue(key, source);
     if (value) env[key] = value;

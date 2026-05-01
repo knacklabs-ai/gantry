@@ -11,7 +11,7 @@ import {
 import { mapApplicationError } from './ipc-application-error.js';
 import { runtimeJobSchedulePlanner } from './job-schedule-planner.js';
 import { invalidateSystemJobRegistrationSignature } from './system-registration-cache.js';
-import { resolveRequestedJobModel } from '../application/jobs/job-model-selection.js';
+import { resolveRequestedJobModelPatch } from '../application/jobs/job-model-selection.js';
 
 function makeJobService(context: TaskContext): JobManagementService {
   return new JobManagementService({
@@ -90,12 +90,12 @@ const schedulerUpdateJobHandler: TaskHandler = async (context) => {
     if (data.name !== undefined) patch.name = data.name;
     if (data.prompt !== undefined) patch.prompt = data.prompt;
     try {
-      const requestedModel = resolveRequestedJobModel(
+      const requestedModel = resolveRequestedJobModelPatch(
         data.modelAlias,
         data.modelProfileId,
       );
-      if (requestedModel !== undefined) {
-        patch.model = requestedModel;
+      if (requestedModel.specified) {
+        patch.model = requestedModel.model;
       }
     } catch (err) {
       if (err instanceof ApplicationError) {

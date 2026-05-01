@@ -65,6 +65,17 @@ const controlRepo = {
     defaultResponseMode: 'sse',
     defaultWebhookId: null,
   })),
+  getAppSessionById: vi.fn(async (sessionId: string) => ({
+    sessionId,
+    appId: 'app-one',
+    conversationId: 'conv-1',
+    chatJid: 'chat-1',
+    groupFolder: 'app-folder',
+    workspaceKey: 'app-folder',
+    title: null,
+    defaultResponseMode: 'sse',
+    defaultWebhookId: null,
+  })),
   getAppSessionsByChatJids: vi.fn(async (chatJids: string[]) =>
     chatJids.map((chatJid) => ({
       sessionId: 'session-1',
@@ -88,6 +99,7 @@ const runtimeEvents = {
 const opsRepo = {
   getJobById: vi.fn(),
   getJobRunById: vi.fn(),
+  upsertJob: vi.fn(async (job) => ({ job, created: true })),
   updateJob: vi.fn(async () => undefined),
 };
 
@@ -102,6 +114,7 @@ import { startControlServer } from '@core/control/server/index.js';
 beforeEach(() => {
   schedulerMocks.isSchedulerReady.mockReturnValue(true);
   schedulerMocks.enqueueJobTrigger.mockResolvedValue(undefined);
+  schedulerMocks.requestSchedulerSync.mockClear();
   controlRepo.getAppSessionByChatJid.mockImplementation(async (chatJid) => ({
     sessionId: 'session-1',
     appId: 'app-one',
@@ -138,9 +151,21 @@ beforeEach(() => {
   });
   controlRepo.getTriggerById.mockResolvedValue(undefined);
   controlRepo.markTriggerCompleted.mockResolvedValue(undefined);
+  controlRepo.getAppSessionById.mockImplementation(async (sessionId) => ({
+    sessionId,
+    appId: 'app-one',
+    conversationId: 'conv-1',
+    chatJid: 'chat-1',
+    groupFolder: 'app-folder',
+    workspaceKey: 'app-folder',
+    title: null,
+    defaultResponseMode: 'sse',
+    defaultWebhookId: null,
+  }));
   runtimeEvents.publish.mockResolvedValue({ eventId: 1 });
   opsRepo.getJobById.mockReset();
   opsRepo.getJobRunById.mockReset();
+  opsRepo.upsertJob.mockClear();
   opsRepo.updateJob.mockResolvedValue(undefined);
 });
 
@@ -234,6 +259,188 @@ describe('control job trigger', () => {
       current = { ...current, ...updates };
     });
   }
+
+  it('creates jobs with an eagerly persisted default model preview', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-jobs',
+        scopes: ['jobs:write'],
+        appId: 'app-one',
+      },
+    ]);
+    const handle = startControlServer({
+      app: { queue: { enqueueMessageCheck: vi.fn() } } as never,
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/jobs`,
+        'token-jobs',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Nightly',
+            prompt: 'Summarize',
+            sessionId: 'session-1',
+          }),
+        },
+      );
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        jobId: 'job-test',
+        dryRun: false,
+        modelAlias: 'opus',
+        modelSource: 'system default',
+        model: {
+          displayName: 'Opus 4.7',
+          modelProfileId: 'anthropic:opus-4.7',
+        },
+      });
+      expect(opsRepo.upsertJob).toHaveBeenCalledWith(
+        expect.objectContaining({ model: null }),
+      );
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('dry-runs job creation without returning a created job id', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-jobs',
+        scopes: ['jobs:write'],
+        appId: 'app-one',
+      },
+    ]);
+    const handle = startControlServer({
+      app: { queue: { enqueueMessageCheck: vi.fn() } } as never,
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/jobs`,
+        'token-jobs',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Preview',
+            prompt: 'Preview only',
+            sessionId: 'session-1',
+            modelAlias: 'haiku',
+            dryRun: true,
+          }),
+        },
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        dryRun: true,
+        modelAlias: 'haiku',
+        modelSource: 'explicit',
+      });
+      expect(body.jobId).toBeUndefined();
+      expect(opsRepo.upsertJob).not.toHaveBeenCalled();
+      expect(schedulerMocks.requestSchedulerSync).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects raw model fields on job creation', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-jobs',
+        scopes: ['jobs:write'],
+        appId: 'app-one',
+      },
+    ]);
+    const handle = startControlServer({
+      app: { queue: { enqueueMessageCheck: vi.fn() } } as never,
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/jobs`,
+        'token-jobs',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Bad',
+            prompt: 'Nope',
+            sessionId: 'session-1',
+            model: 'claude-opus-4-7',
+          }),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Unsupported job request field "model".',
+        },
+      });
+      expect(opsRepo.upsertJob).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects unsupported model selector fields on job updates', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-jobs',
+        scopes: ['jobs:write'],
+        appId: 'app-one',
+      },
+    ]);
+    mockMutableJob(makeJob());
+    const handle = startControlServer({
+      app: { queue: { enqueueMessageCheck: vi.fn() } } as never,
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/jobs/job-1`,
+        'token-jobs',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            providerModelId: 'moonshotai/kimi-k2.6',
+          }),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Unsupported job request field "providerModelId".',
+        },
+      });
+      expect(opsRepo.updateJob).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
 
   it('maps GET job application access errors to HTTP errors', async () => {
     const port = await reservePort();
@@ -364,6 +571,82 @@ describe('control job trigger', () => {
         },
       });
       expect(opsRepo.updateJob).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('clears explicit job model selection through PATCH null alias', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-jobs',
+        scopes: ['jobs:write'],
+        appId: 'app-one',
+      },
+    ]);
+    mockMutableJob(makeJob({ model: 'sonnet' }));
+    const handle = startControlServer({
+      app: { queue: { enqueueMessageCheck: vi.fn() } } as never,
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/jobs/job-1`,
+        'token-jobs',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ modelAlias: null }),
+        },
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.modelAlias).toBeNull();
+      expect(opsRepo.updateJob).toHaveBeenCalledWith('job-1', {
+        model: null,
+      });
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('clears job thread binding through PATCH null threadId', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-jobs',
+        scopes: ['jobs:write'],
+        appId: 'app-one',
+      },
+    ]);
+    mockMutableJob(makeJob({ thread_id: 'thread-1' }));
+    const handle = startControlServer({
+      app: { queue: { enqueueMessageCheck: vi.fn() } } as never,
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/jobs/job-1`,
+        'token-jobs',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ threadId: null }),
+        },
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.threadId).toBeNull();
+      expect(opsRepo.updateJob).toHaveBeenCalledWith('job-1', {
+        thread_id: null,
+      });
     } finally {
       await handle.close();
     }

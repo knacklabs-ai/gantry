@@ -79,7 +79,7 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
       scheduleValue: data.scheduleValue || '',
       linkedSessions: data.linkedSessions,
       deliverTo: data.deliverTo,
-      threadId: data.threadId,
+      threadId: data.threadId ?? undefined,
       silent: data.silent,
       cleanupAfterMs: data.cleanupAfterMs,
       timeoutMs: data.timeoutMs,

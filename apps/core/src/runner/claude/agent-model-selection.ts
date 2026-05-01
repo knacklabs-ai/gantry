@@ -17,7 +17,7 @@ function nativeAgentModelAlias(
   return undefined;
 }
 
-export function modelOverrideFromAgentInput(
+export function requestedModelFromAgentInput(
   input: unknown,
 ): string | undefined {
   if (typeof input !== 'object' || input === null) return undefined;
@@ -36,7 +36,13 @@ export function unsupportedAgentConfigurationField(
   return undefined;
 }
 
-export function validateAgentModelOverride(
+export function subagentTypeFromAgentInput(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null) return undefined;
+  const value = (input as { subagent_type?: unknown }).subagent_type;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export function validateAgentModelRequest(
   requestedModel: string | undefined,
   currentModel: ModelCatalogEntry | undefined,
 ): AgentModelValidationResult {
@@ -66,12 +72,16 @@ export function validateAgentToolInput(
   input: unknown,
   currentModel: ModelCatalogEntry | undefined,
 ): string | null {
+  const subagentType = subagentTypeFromAgentInput(input);
+  if (subagentType) {
+    return `Agent subagent_type "${subagentType}" is not enabled for this MyClaw run. Native Agent subagents inherit the parent run by default; configured subagent definitions require an explicit MyClaw capability projection before use.`;
+  }
   const unsupportedField = unsupportedAgentConfigurationField(input);
   if (unsupportedField) {
     return `Agent field "${unsupportedField}" is not supported in native Agent tool input. Define tools, MCP servers, skills, and disallowed tools in a configured subagent definition, then invoke it with subagent_type.`;
   }
   return (
-    validateAgentModelOverride(modelOverrideFromAgentInput(input), currentModel)
+    validateAgentModelRequest(requestedModelFromAgentInput(input), currentModel)
       .message ?? null
   );
 }

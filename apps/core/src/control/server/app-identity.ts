@@ -7,6 +7,7 @@ import { resolveAppScopeAppId as applicationResolveAppScopeAppId } from '../../a
 import { jobBelongsToApp as applicationJobBelongsToApp } from '../../application/jobs/job-access.js';
 import { resolveJobRuntimeAppId as applicationResolveJobRuntimeAppId } from '../../application/jobs/job-access.js';
 import type { IsoTimestamp } from '../../shared/time/primitives.js';
+import { resolveModelSelection } from '../../shared/model-catalog.js';
 import type { ApiKeyRecord } from './auth.js';
 
 export function nowIso(): IsoTimestamp {
@@ -121,6 +122,7 @@ export async function resolveOwnedWebhookId(
 
 export function mapManualJobToStored(job: Job): Record<string, unknown> {
   const isManual = job.schedule_type === 'manual';
+  const resolvedModel = resolveModelSelection(job.model);
   return {
     jobId: job.id,
     name: job.name,
@@ -144,6 +146,17 @@ export function mapManualJobToStored(job: Job): Record<string, unknown> {
     lastRun: job.last_run,
     executionMode: job.execution_mode,
     modelAlias: job.model ?? null,
+    modelProfileId: resolvedModel.ok ? resolvedModel.entry.id : null,
+    model: resolvedModel.ok
+      ? {
+          displayName: resolvedModel.entry.displayName,
+          provider: resolvedModel.entry.providerLabel,
+          contextWindowTokens: resolvedModel.entry.contextWindowTokens,
+          maxOutputTokens: resolvedModel.entry.maxOutputTokens,
+          cachePolicy: resolvedModel.entry.cacheMode,
+          modelProfileId: resolvedModel.entry.id,
+        }
+      : null,
     threadId: job.thread_id,
     groupScope: job.group_scope,
     sessionId: job.session_id,

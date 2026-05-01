@@ -4,9 +4,9 @@ import {
   RUNTIME_MEMORY_ENABLED,
 } from './memory-state.js';
 import {
-  MEMORY_MODEL_DEFAULTS,
-  normalizeClaudeModelSelection,
-} from '../models/claude-model-registry.js';
+  MEMORY_MODEL_DEFAULT_ALIASES,
+  resolveCatalogRunnerModel,
+} from '../shared/model-catalog.js';
 
 export { RUNTIME_MEMORY_ENABLED } from './memory-state.js';
 export * from './memory-advanced.js';
@@ -57,9 +57,7 @@ function resolveMemoryLlmModel(
   anthropicModel: string | undefined,
 ): string {
   return (
-    normalizeClaudeModelSelection(configuredModel) ||
-    anthropicModel ||
-    defaultModel
+    resolveCatalogRunnerModel(configuredModel) || anthropicModel || defaultModel
   );
 }
 
@@ -71,17 +69,17 @@ export function getMemoryModelConfig(anthropicModel: string | undefined): {
   return {
     extractor: resolveMemoryLlmModel(
       runtimeMemorySettings.llmExtractorModel,
-      MEMORY_MODEL_DEFAULTS.extractor,
+      MEMORY_MODEL_DEFAULT_ALIASES.extractor,
       anthropicModel,
     ),
     dreaming: resolveMemoryLlmModel(
       runtimeMemorySettings.llmDreamingModel,
-      MEMORY_MODEL_DEFAULTS.dreaming,
+      MEMORY_MODEL_DEFAULT_ALIASES.dreaming,
       anthropicModel,
     ),
     consolidation: resolveMemoryLlmModel(
       runtimeMemorySettings.llmConsolidationModel,
-      MEMORY_MODEL_DEFAULTS.consolidation,
+      MEMORY_MODEL_DEFAULT_ALIASES.consolidation,
       anthropicModel,
     ),
   };

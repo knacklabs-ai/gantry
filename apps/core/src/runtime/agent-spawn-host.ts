@@ -5,7 +5,6 @@ import {
   AGENTS_DIR,
   DATA_DIR,
   getCredentialBrokerRuntimeConfig,
-  getHostCredentialEnv,
 } from '../config/index.js';
 import { resolveExternalCredentialBaseUrl } from '../config/credentials/broker-url-policy.js';
 import { getAgentCredentialInjection } from '../application/credentials/agent-credential-service.js';
@@ -13,7 +12,10 @@ import { createAgentCredentialBroker } from '../adapters/credentials/agent-crede
 import { createExternalAgentCredentialInjection } from '../adapters/llm/external-credential-injection.js';
 import { RegisteredGroup } from '../domain/types.js';
 import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
-import type { CredentialBrokerProfile } from '../domain/models/credentials.js';
+import type {
+  AgentCredentialInjection,
+  CredentialBrokerProfile,
+} from '../domain/models/credentials.js';
 import {
   resolveGroupFolderPath,
   resolveGroupIpcPath,
@@ -29,6 +31,9 @@ export async function getHostRuntimeCredentialEnv(
   broker?: AgentCredentialBroker,
 ): Promise<{
   env: Record<string, string>;
+  credentialProviders: NonNullable<
+    AgentCredentialInjection['credentialProviders']
+  >;
   brokerApplied: boolean;
   brokerProfile: CredentialBrokerProfile;
 }> {
@@ -42,7 +47,6 @@ export async function getHostRuntimeCredentialEnv(
             normalizedBaseUrl: resolveExternalCredentialBaseUrl(
               brokerConfig.externalBrokerBaseUrl,
             ),
-            hostCredentialEnv: getHostCredentialEnv(),
           }),
         })
       : brokerConfig.mode === 'onecli'
@@ -58,6 +62,7 @@ export async function getHostRuntimeCredentialEnv(
 
   return {
     env: injection.env,
+    credentialProviders: injection.credentialProviders ?? {},
     brokerApplied: injection.applied,
     brokerProfile: injection.brokerProfile,
   };

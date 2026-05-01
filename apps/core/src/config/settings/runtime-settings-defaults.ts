@@ -2,7 +2,7 @@ import '../../channels/register-builtins.js';
 
 import { DEFAULT_AGENT_NAME } from '../../shared/default-agent.js';
 import { listChannelProviders } from '../../channels/provider-registry.js';
-import { MEMORY_MODEL_DEFAULTS } from '../../models/claude-model-registry.js';
+import { MEMORY_MODEL_DEFAULT_ALIASES } from '../../shared/model-catalog.js';
 import {
   createDefaultControlAllowlist,
   type SenderControlAllowlistConfig,
@@ -34,8 +34,8 @@ export const DEFAULT_EMBED_MODEL = 'text-embedding-3-large';
 export const DEFAULT_AGENT_SESSION_MEMORY_ITEM_LIMIT = 8;
 export const DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS = 12_000;
 
-const DEFAULT_MODEL_HAIKU = MEMORY_MODEL_DEFAULTS.extractor;
-const DEFAULT_MODEL_SONNET = MEMORY_MODEL_DEFAULTS.dreaming;
+const DEFAULT_MODEL_HAIKU = MEMORY_MODEL_DEFAULT_ALIASES.extractor;
+const DEFAULT_MODEL_SONNET = MEMORY_MODEL_DEFAULT_ALIASES.dreaming;
 
 const MEMORY_MODEL_PROFILES: Record<
   MemoryModelProfile,

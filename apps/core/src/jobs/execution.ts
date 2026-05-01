@@ -41,6 +41,7 @@ import { runtimeEventTypeForRunStatus } from './run-status-event.js';
 import {
   jobCompletedModelPayload,
   jobStartedModelPayload,
+  modelUseKindForJobSchedule,
   resolveJobModel,
   type NormalizedModelUsage,
 } from './model-resolution.js';
@@ -97,12 +98,10 @@ export async function runJob(
       : 'parallel';
   const leaseExpiresAt = toIso(currentTimeMs() + timeoutMs + 30_000);
   const runtimeAppId = resolveJobRuntimeAppId(currentJob);
+  const jobModelUseKind = modelUseKindForJobSchedule(currentJob.schedule_type);
   const resolvedModel = resolveJobModel(
     currentJob,
-    getEffectiveModelConfig(
-      undefined,
-      currentJob.schedule_type === 'once' ? 'oneTimeJob' : 'recurringJob',
-    ),
+    getEffectiveModelConfig(undefined, jobModelUseKind),
   );
 
   const claimed = await deps.opsRepository.claimDueJobRunStart({
@@ -396,6 +395,7 @@ export async function runJob(
             threadId: currentJob.thread_id || undefined,
             isMain,
             isScheduledJob: true,
+            jobModelUseKind,
             assistantName: ASSISTANT_NAME,
             script: currentJob.script || undefined,
             memoryContextBlock: turnContext?.memoryContextBlock,

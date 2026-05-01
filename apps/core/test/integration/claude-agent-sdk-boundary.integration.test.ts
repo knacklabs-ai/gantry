@@ -137,7 +137,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
     if (sdkState.mode === 'agent-input-field-denial') {
       call.permissionDecision = await options.canUseTool(
-        'Agent',
+        process.env.TEST_SUBAGENT_TOOL_NAME || 'Agent',
         { prompt: 'delegate review', disallowedTools: ['Bash'] },
         {
           signal: new AbortController().signal,
@@ -321,7 +321,6 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(call?.options.allowedTools).toEqual(
       expect.arrayContaining([
         'Read',
-        'Agent',
         'Glob',
         'Grep',
         'mcp__myclaw__send_message',
@@ -342,6 +341,7 @@ describe('Claude Agent SDK boundary integration', () => {
         'Write',
         'Edit',
         'Config',
+        'Agent',
         'mcp__myclaw__list_models',
         'mcp__myclaw__*',
         'Monitor',
@@ -569,6 +569,33 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(
       String((sdkState.calls[0]?.permissionDecision as any).message),
     ).toContain('configured subagent definition');
+  });
+
+  it('rejects legacy Task tool fields through the same native subagent guard', async () => {
+    const env = prepareRuntimeEnv();
+    env.TEST_SUBAGENT_TOOL_NAME = 'Task';
+    sdkState.mode = 'agent-input-field-denial';
+    const { runQuery } = await importRunQuery();
+
+    await runQuery(
+      'delegate carefully',
+      env.mcpServerPath,
+      runnerInput(),
+      {},
+      'sonnet',
+      undefined,
+      undefined,
+    );
+
+    expect(sdkState.calls[0]?.permissionDecision).toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        interrupt: false,
+      }),
+    );
+    expect(
+      String((sdkState.calls[0]?.permissionDecision as any).message),
+    ).toContain('disallowedTools');
   });
 
   it('preserves subagent-attributed assistant messages as runner resume anchors', async () => {

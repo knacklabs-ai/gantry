@@ -60,6 +60,14 @@ export interface NormalizedModelUsage {
   at: string;
 }
 
+export const DEFAULT_SETUP_MODEL_ALIAS = 'opus';
+
+export const MEMORY_MODEL_DEFAULT_ALIASES = {
+  extractor: 'haiku',
+  dreaming: 'sonnet',
+  consolidation: 'sonnet',
+} as const;
+
 export type ModelResolution =
   | {
       ok: true;
@@ -72,7 +80,12 @@ export type ModelResolution =
       input: string;
       message: string;
       suggestion?: string;
-      reason: 'empty' | 'unknown' | 'raw-provider-id' | 'duplicate-alias';
+      reason:
+        | 'empty'
+        | 'unknown'
+        | 'raw-provider-id'
+        | 'alias-as-profile-id'
+        | 'duplicate-alias';
     };
 
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
@@ -217,6 +230,12 @@ const ALIAS_INDEX = buildAliasIndex();
 const ID_INDEX = new Map(
   MODEL_CATALOG.map((entry) => [normalizeModelLookupKey(entry.id), entry]),
 );
+const RUNNER_MODEL_INDEX = new Map(
+  MODEL_CATALOG.flatMap((entry) => [
+    [normalizeModelLookupKey(entry.runnerModel), entry] as const,
+    [normalizeModelLookupKey(entry.providerModelId), entry] as const,
+  ]),
+);
 
 function buildAliasIndex(): Map<
   string,
@@ -284,17 +303,7 @@ export function resolveModelSelection(value?: string | null): ModelResolution {
     };
   }
 
-  const idResolved = ID_INDEX.get(key);
-  if (idResolved) {
-    return {
-      ok: true,
-      entry: idResolved,
-      alias: idResolved.recommendedAlias,
-      runnerModel: idResolved.runnerModel,
-    };
-  }
-
-  if (RAW_PROVIDER_MODEL_IDS.has(key)) {
+  if (ID_INDEX.has(key) || RAW_PROVIDER_MODEL_IDS.has(key)) {
     return {
       ok: false,
       input,
@@ -315,6 +324,56 @@ export function resolveModelSelection(value?: string | null): ModelResolution {
   };
 }
 
+export function resolveModelProfileSelection(
+  value?: string | null,
+): ModelResolution {
+  const input = value?.trim() ?? '';
+  if (!input) {
+    return {
+      ok: false,
+      input,
+      reason: 'empty',
+      message: 'Model profile ID is required.',
+    };
+  }
+
+  const key = normalizeModelLookupKey(input);
+  const resolved = ID_INDEX.get(key);
+  if (resolved) {
+    return {
+      ok: true,
+      entry: resolved,
+      alias: resolved.recommendedAlias,
+      runnerModel: resolved.runnerModel,
+    };
+  }
+
+  if (RAW_PROVIDER_MODEL_IDS.has(key)) {
+    return {
+      ok: false,
+      input,
+      reason: 'raw-provider-id',
+      message: `Provider model ID "${input}" is not accepted here. Use a modelProfileId from /models.`,
+    };
+  }
+
+  if (ALIAS_INDEX.has(key)) {
+    return {
+      ok: false,
+      input,
+      reason: 'alias-as-profile-id',
+      message: `Model alias "${input}" is not accepted as modelProfileId. Use modelAlias for aliases.`,
+    };
+  }
+
+  return {
+    ok: false,
+    input,
+    reason: 'unknown',
+    message: `Unknown model profile ID "${input}". Use /models to view supported models.`,
+  };
+}
+
 export function resolveModelAlias(value?: string | null): string | undefined {
   const resolved = resolveModelSelection(value);
   return resolved.ok ? resolved.alias : undefined;
@@ -325,20 +384,21 @@ export function resolveRunnerModel(value?: string | null): string | undefined {
   return resolved.ok ? resolved.runnerModel : undefined;
 }
 
+export function resolveCatalogRunnerModel(
+  value?: string | null,
+): string | undefined {
+  return (
+    resolveRunnerModel(value) ?? findModelByRunnerModel(value)?.runnerModel
+  );
+}
+
 export function findModelByRunnerModel(
   value?: string | null,
 ): ModelCatalogEntry | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
-  return MODEL_CATALOG.find(
-    (entry) =>
-      entry.runnerModel === trimmed ||
-      entry.providerModelId === trimmed ||
-      entry.aliases.some(
-        (alias) =>
-          normalizeModelLookupKey(alias) === normalizeModelLookupKey(trimmed),
-      ),
-  );
+  const key = normalizeModelLookupKey(trimmed);
+  return RUNNER_MODEL_INDEX.get(key) ?? ALIAS_INDEX.get(key)?.entry;
 }
 
 export function formatTokenCount(tokens: number): string {
@@ -441,6 +501,7 @@ export function normalizeModelUsage(input: {
         entry.provider === 'openrouter' ? 'openrouter-provider' : 'anthropic',
       ),
     );
+    const hasUnknownModel = entries.length !== modelNames.length;
     for (const usage of Object.values(result.modelUsage)) {
       inputTokens += numeric(usage.inputTokens);
       outputTokens += numeric(usage.outputTokens);
@@ -465,16 +526,15 @@ export function normalizeModelUsage(input: {
       totalBillableInputTokens: Math.max(0, inputTokens - cacheReadTokens),
       estimatedCostUsd:
         estimatedCostUsd > 0 ? estimatedCostUsd : result.total_cost_usd,
-      cacheProvider:
-        cacheProviderSet.size === 1
+      cacheProvider: hasUnknownModel
+        ? 'none'
+        : cacheProviderSet.size === 1
           ? [...cacheProviderSet][0]
-          : entries.length === 0
-            ? 'anthropic'
-            : 'mixed',
+          : 'mixed',
       cacheStatus: normalizeCacheStatus(
         cacheReadTokens,
         cacheWriteTokens,
-        true,
+        !hasUnknownModel,
       ),
       at: new Date().toISOString(),
     };

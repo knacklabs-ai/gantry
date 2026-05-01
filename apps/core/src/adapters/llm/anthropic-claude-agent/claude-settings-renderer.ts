@@ -3,15 +3,7 @@ import type {
   LlmProfile,
 } from '../../../domain/agent/agent.js';
 
-const CLAUDE_RUNTIME_ALLOWED_MODELS = [
-  'sonnet',
-  'opus',
-  'haiku',
-  'best',
-  'opusplan',
-  'sonnet[1m]',
-  'opus[1m]',
-] as const;
+const CLAUDE_RUNTIME_ALLOWED_MODELS = ['sonnet', 'opus', 'haiku'] as const;
 
 const DEFAULT_CLAUDE_RUNTIME_MODEL = 'opus';
 

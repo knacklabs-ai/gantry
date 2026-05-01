@@ -3,6 +3,7 @@ import {
   type EffortLevel,
   type ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import {
   composeAgentCapabilities,
@@ -36,6 +37,7 @@ import {
   normalizeModelUsage,
 } from '../../shared/model-catalog.js';
 import { validateAgentToolInput } from './agent-model-selection.js';
+import { usageEventIdForMessage } from './query-usage-event-id.js';
 
 export async function runQuery(
   prompt: string,
@@ -52,6 +54,7 @@ export async function runQuery(
   closedDuringQuery: boolean;
 }> {
   const stream = new MessageStream();
+  const queryRunId = randomUUID();
   const memoryBlock = readMemoryContextBlock(agentInput);
   stream.pushInitialPrompt(prompt, memoryBlock);
 
@@ -146,7 +149,7 @@ export async function runQuery(
         ],
       },
       canUseTool: async (toolName, input, permissionOpts) => {
-        if (toolName === 'Agent') {
+        if (toolName === 'Agent' || toolName === 'Task') {
           const modelDenial = validateAgentToolInput(input, currentModel);
           if (modelDenial) {
             log(`Permission denied by model catalog guard: ${modelDenial}`);
@@ -308,20 +311,22 @@ export async function runQuery(
         message,
         fallbackModel: configuredModel,
       });
-      if (usage) {
-        writeOutput({
-          status: 'success',
-          result: null,
-          newSessionId,
-          usage,
-        });
-      }
-
       writeOutput({
         status: 'success',
         result:
           textResult && !sawPartialTextSinceLastResult ? textResult : null,
         newSessionId,
+        ...(usage
+          ? {
+              usage,
+              usageEventId: usageEventIdForMessage(
+                message,
+                newSessionId ?? agentInput.sessionId,
+                resultCount,
+                queryRunId,
+              ),
+            }
+          : {}),
       });
       sawPartialTextSinceLastResult = false;
       steeringGate.markTurnBoundary();

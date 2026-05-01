@@ -1,24 +1,77 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_SETUP_MODEL_ALIAS,
   findModelByRunnerModel,
   formatModelCatalog,
+  MEMORY_MODEL_DEFAULT_ALIASES,
   normalizeModelUsage,
+  resolveCatalogRunnerModel,
+  resolveModelProfileSelection,
   resolveModelSelection,
 } from '@core/shared/model-catalog.js';
 
 describe('model catalog resolution', () => {
-  it('resolves aliases and catalog IDs to recommended aliases', () => {
+  it('resolves aliases to recommended aliases', () => {
     expect(resolveModelSelection(' kimi 2.6 ')).toMatchObject({
       ok: true,
       alias: 'kimi',
       runnerModel: 'moonshotai/kimi-k2.6',
     });
+  });
 
+  it('accepts catalog IDs only through profile resolution', () => {
     expect(resolveModelSelection('openrouter:kimi-k2.6')).toMatchObject({
+      ok: false,
+      reason: 'raw-provider-id',
+    });
+    expect(resolveModelProfileSelection('openrouter:kimi-k2.6')).toMatchObject({
       ok: true,
       alias: 'kimi',
       runnerModel: 'moonshotai/kimi-k2.6',
+    });
+  });
+
+  it('rejects aliases through profile resolution', () => {
+    expect(resolveModelProfileSelection('kimi')).toMatchObject({
+      ok: false,
+      reason: 'alias-as-profile-id',
+    });
+  });
+
+  it('finds catalog entries by runner or provider model IDs for runtime accounting', () => {
+    expect(resolveModelSelection('openrouter:kimi-k2.6')).toMatchObject({
+      ok: false,
+      reason: 'raw-provider-id',
+    });
+    expect(findModelByRunnerModel('moonshotai/kimi-k2.6')).toMatchObject({
+      recommendedAlias: 'kimi',
+    });
+  });
+
+  it('uses catalog aliases for setup and memory defaults', () => {
+    expect(DEFAULT_SETUP_MODEL_ALIAS).toBe('opus');
+    expect(MEMORY_MODEL_DEFAULT_ALIASES).toEqual({
+      extractor: 'haiku',
+      dreaming: 'sonnet',
+      consolidation: 'sonnet',
+    });
+  });
+
+  it('resolves catalog aliases and runner IDs without legacy Claude aliases', () => {
+    expect(resolveCatalogRunnerModel('opus')).toBe('claude-opus-4-7');
+    expect(resolveCatalogRunnerModel('opus 4.7')).toBe('claude-opus-4-7');
+    expect(resolveCatalogRunnerModel('claude-sonnet-4-6')).toBe(
+      'claude-sonnet-4-6',
+    );
+    expect(resolveCatalogRunnerModel('opusplan')).toBeUndefined();
+    expect(resolveCatalogRunnerModel('best')).toBeUndefined();
+  });
+
+  it('rejects raw provider model IDs from user-facing alias resolution', () => {
+    expect(resolveModelSelection('claude-opus-4-7')).toMatchObject({
+      ok: false,
+      reason: 'raw-provider-id',
     });
   });
 
@@ -81,6 +134,27 @@ describe('model usage normalization', () => {
       cacheStatus: 'partial',
     });
     expect(typeof usage?.at).toBe('string');
+  });
+
+  it('does not infer cache support for uncataloged modelUsage entries', () => {
+    const usage = normalizeModelUsage({
+      message: {
+        modelUsage: {
+          'future-model': {
+            inputTokens: 100,
+            outputTokens: 20,
+            cacheReadInputTokens: 40,
+            cacheCreationInputTokens: 10,
+          },
+        },
+      },
+    });
+
+    expect(usage).toMatchObject({
+      model: 'future-model',
+      cacheProvider: 'none',
+      cacheStatus: 'unsupported',
+    });
   });
 
   it('marks aggregate modelUsage from multiple models as mixed', () => {

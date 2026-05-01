@@ -129,6 +129,7 @@ describe('getHostRuntimeCredentialEnv', () => {
       env: {
         ANTHROPIC_BASE_URL: 'https://broker.example.com',
       },
+      credentialProviders: {},
       brokerApplied: true,
       brokerProfile: 'onecli',
     });
@@ -140,6 +141,31 @@ describe('getHostRuntimeCredentialEnv', () => {
       },
       'Dropped disallowed OneCLI env keys',
     );
+  });
+
+  it('returns OpenRouter credential provenance from OneCLI broker env', async () => {
+    mockGetContainerConfig.mockResolvedValue({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER: 'openrouter',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      },
+    });
+    const mod = await loadModule({});
+
+    await expect(
+      mod.getHostRuntimeCredentialEnv('agent-x'),
+    ).resolves.toMatchObject({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      },
+      credentialProviders: {
+        ANTHROPIC_AUTH_TOKEN: 'openrouter',
+      },
+      brokerApplied: true,
+      brokerProfile: 'onecli',
+    });
   });
 
   it('returns OneCLI local model proxy env', async () => {

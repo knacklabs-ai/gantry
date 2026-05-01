@@ -126,6 +126,7 @@ describe('host child-process runtime smoke', () => {
     vi.doMock('@core/runtime/agent-spawn-host.js', () => ({
       getHostRuntimeCredentialEnv: async () => ({
         env: { ANTHROPIC_BASE_URL: 'https://broker.example.com/anthropic' },
+        credentialProviders: {},
         brokerApplied: true,
         brokerProfile: 'external',
       }),
