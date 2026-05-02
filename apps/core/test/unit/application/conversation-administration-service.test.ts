@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  ChannelAdministrationService,
-  type ChannelMembershipValidator,
-} from '@core/application/channels/channel-administration-service.js';
+  ConversationAdministrationService,
+  type ConversationMembershipValidator,
+} from '@core/application/provider-conversations/conversation-administration-service.js';
 
 const iso = '2026-05-01T00:00:00.000Z';
 
@@ -13,8 +13,8 @@ function makeService(options?: {
   providerId?: string;
   conversationKind?: 'group' | 'channel' | 'direct';
 }) {
-  const installation = {
-    id: 'installation-1',
+  const providerConnection = {
+    id: 'providerConnection-1',
     appId: 'default',
     providerId: options?.providerId ?? 'telegram',
     label: 'Telegram',
@@ -25,9 +25,9 @@ function makeService(options?: {
     updatedAt: iso,
   };
   const conversation = {
-    id: 'channel-1',
+    id: 'conversation-1',
     appId: 'default',
-    channelInstallationId: 'installation-1',
+    providerConnectionId: 'providerConnection-1',
     externalRef: { kind: 'conversation', value: 'tg:-100123' },
     kind: options?.conversationKind ?? 'group',
     title: 'Team',
@@ -37,10 +37,10 @@ function makeService(options?: {
   };
   const storedApprovers: string[] = [];
   const repositories = {
-    channelInstallations: {
-      getChannelInstallation: vi.fn(async () => installation),
-      updateChannelInstallation: vi.fn(async (input: any) => ({
-        ...installation,
+    providerConnections: {
+      getProviderConnection: vi.fn(async () => providerConnection),
+      updateProviderConnection: vi.fn(async (input: any) => ({
+        ...providerConnection,
         config: input.patch.config,
       })),
     },
@@ -54,7 +54,7 @@ function makeService(options?: {
       listParticipantExternalUserIds: vi.fn(
         async () => options?.participantUserIds ?? [],
       ),
-      listChannelControlApprovers: vi.fn(async () =>
+      listConversationApprovers: vi.fn(async () =>
         storedApprovers.map((externalUserId) => ({
           id: `approver:${externalUserId}`,
           appId: 'default',
@@ -64,7 +64,7 @@ function makeService(options?: {
           updatedAt: iso,
         })),
       ),
-      replaceChannelControlApprovers: vi.fn(async (input: any) => {
+      replaceConversationApprovers: vi.fn(async (input: any) => {
         storedApprovers.splice(
           0,
           storedApprovers.length,
@@ -81,7 +81,7 @@ function makeService(options?: {
       }),
     },
   };
-  const validator: ChannelMembershipValidator | undefined =
+  const validator: ConversationMembershipValidator | undefined =
     options?.validUserIds
       ? {
           validateControlApprovers: vi.fn(async (input) => ({
@@ -95,60 +95,63 @@ function makeService(options?: {
         }
       : undefined;
   return {
-    service: new ChannelAdministrationService(repositories as never, validator),
+    service: new ConversationAdministrationService(
+      repositories as never,
+      validator,
+    ),
     repositories,
   };
 }
 
-describe('ChannelAdministrationService', () => {
-  it('replaces channel control allowlist deterministically', async () => {
+describe('ConversationAdministrationService', () => {
+  it('replaces conversation approvers deterministically', async () => {
     const { service, repositories } = makeService({
       validUserIds: ['123', '456'],
     });
 
     const result = await service.replaceControlAllowlist({
       appId: 'default' as never,
-      conversationId: 'channel-1' as never,
+      conversationId: 'conversation-1' as never,
       userIds: ['456', '123', '123'],
       updatedAt: iso,
     });
 
     expect(result).toEqual({ userIds: ['123', '456'] });
     expect(
-      repositories.conversations.replaceChannelControlApprovers,
+      repositories.conversations.replaceConversationApprovers,
     ).toHaveBeenCalledWith(
       expect.objectContaining({ externalUserIds: ['123', '456'] }),
     );
   });
 
-  it('rejects control approvers that are not channel members', async () => {
+  it('rejects control approvers that are not conversation members', async () => {
     const { service, repositories } = makeService({ validUserIds: ['123'] });
 
     await expect(
       service.replaceControlAllowlist({
         appId: 'default' as never,
-        conversationId: 'channel-1' as never,
+        conversationId: 'conversation-1' as never,
         userIds: ['123', '999'],
         updatedAt: iso,
       }),
     ).rejects.toThrow(/Control approvers must be members/);
     expect(
-      repositories.conversations.replaceChannelControlApprovers,
+      repositories.conversations.replaceConversationApprovers,
     ).not.toHaveBeenCalled();
   });
 
-  it('returns only channel-owned control approvers in admin summary', async () => {
+  it('returns only conversation-owned control approvers in admin summary', async () => {
     const { service } = makeService({ validUserIds: ['123'] });
 
     await service.replaceControlAllowlist({
       appId: 'default' as never,
-      conversationId: 'channel-1' as never,
+      conversationId: 'conversation-1' as never,
       userIds: ['123'],
       updatedAt: iso,
     });
     const summary = await service.getAdminSummary({
       appId: 'default' as never,
-      conversationId: 'channel-1' as never,
+      conversationId: 'conversation-1' as never,
     });
 
     expect(summary.controlAllowlist.userIds).toEqual(['123']);
@@ -164,16 +167,16 @@ describe('ChannelAdministrationService', () => {
     await expect(
       service.replaceControlAllowlist({
         appId: 'default' as never,
-        conversationId: 'channel-1' as never,
+        conversationId: 'conversation-1' as never,
         userIds: ['member-1', 'outsider-1'],
         updatedAt: iso,
       }),
     ).rejects.toThrow(/Control approvers must be members/);
     expect(
       repositories.conversations.listParticipantExternalUserIds,
-    ).toHaveBeenCalledWith('channel-1');
+    ).toHaveBeenCalledWith('conversation-1');
     expect(
-      repositories.conversations.replaceChannelControlApprovers,
+      repositories.conversations.replaceConversationApprovers,
     ).not.toHaveBeenCalled();
   });
 
@@ -187,13 +190,13 @@ describe('ChannelAdministrationService', () => {
     await expect(
       service.replaceControlAllowlist({
         appId: 'default' as never,
-        conversationId: 'channel-1' as never,
+        conversationId: 'conversation-1' as never,
         userIds: ['U123'],
         updatedAt: iso,
       }),
     ).rejects.toThrow(/direct/i);
     expect(
-      repositories.conversations.replaceChannelControlApprovers,
+      repositories.conversations.replaceConversationApprovers,
     ).not.toHaveBeenCalled();
   });
 });

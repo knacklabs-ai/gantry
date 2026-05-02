@@ -32,7 +32,7 @@ export interface ChannelOpts {
   runtimeSecrets?: RuntimeSecretProvider;
   isControlApproverAllowed?: (input: {
     providerId: string;
-    channelJid: string;
+    conversationJid: string;
     userId: string;
     sourceGroup: string;
     decisionPolicy?: PermissionApprovalRequest['decisionPolicy'];

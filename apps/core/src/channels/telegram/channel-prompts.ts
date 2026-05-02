@@ -205,22 +205,26 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
       );
       return false;
     }
-    const channelJid = `tg:${chatId}`;
+    const conversationJid = `tg:${chatId}`;
     if (this.opts.isControlApproverAllowed) {
       return this.opts.isControlApproverAllowed({
         providerId: 'telegram',
-        channelJid,
+        conversationJid,
         userId,
         sourceGroup,
         decisionPolicy,
       });
     }
-    const allowlist =
-      this.opts.runtimeSettings?.().channels.telegram?.controlAllowlist;
-    const allowedIds =
-      allowlist?.agents[sourceGroup] !== undefined
-        ? allowlist.agents[sourceGroup]
-        : allowlist?.default || [];
+    const settings = this.opts.runtimeSettings?.();
+    const binding = settings
+      ? Object.values(settings.bindings || {}).find(
+          (entry) => entry.agent === sourceGroup,
+        )
+      : undefined;
+    const conversation = binding
+      ? settings?.conversations[binding.conversation]
+      : undefined;
+    const allowedIds = conversation?.controlApprovers || [];
 
     if (allowedIds.length === 0) {
       logger.warn(

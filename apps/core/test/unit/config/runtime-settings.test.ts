@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createDefaultRuntimeSettings,
+  ensureConfiguredConversationBinding,
   parseRuntimeSettings,
 } from '@core/config/settings/runtime-settings.js';
 import { renderRuntimeSettingsYaml } from '@core/config/settings/runtime-settings-renderer.js';
@@ -75,17 +76,7 @@ describe('runtime settings', () => {
       model: 'sonnet',
       oneTimeJobDefaultModel: 'haiku',
       recurringJobDefaultModel: 'opus',
-      bindings: {
-        primary: {
-          jid: 'tg:100',
-          provider: 'telegram',
-          name: 'Main DM',
-          trigger: '@kai',
-          addedAt: '2026-05-02T00:00:00.000Z',
-          requiresTrigger: false,
-          isMain: true,
-        },
-      },
+      bindings: {},
       dmAccess: [
         {
           provider: 'telegram',
@@ -99,14 +90,46 @@ describe('runtime settings', () => {
         mcpServerIds: ['mcp:github'],
       },
     };
+    settings.providers.telegram.enabled = true;
+    settings.providers.telegram.defaultConnection = 'telegram_default';
+    settings.providerConnections.telegram_default = {
+      provider: 'telegram',
+      label: 'Telegram Default',
+      runtimeSecretRefs: { bot_token: 'TELEGRAM_BOT_TOKEN' },
+    };
+    settings.conversations.main_dm = {
+      providerConnection: 'telegram_default',
+      externalId: '100',
+      kind: 'dm',
+      displayName: 'Main DM',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: ['42'],
+    };
+    settings.bindings.primary = {
+      agent: 'main_agent',
+      conversation: 'main_dm',
+      trigger: '@kai',
+      addedAt: '2026-05-02T00:00:00.000Z',
+      requiresTrigger: false,
+      isMain: true,
+      memoryScope: 'conversation',
+    };
 
     const parsed = parseRuntimeSettings(renderRuntimeSettingsYaml(settings));
 
     expect(parsed.desiredState.authoritative).toBe(true);
-    expect(parsed.agents.main_agent).toEqual(settings.agents.main_agent);
+    expect(parsed.agents.main_agent.bindings.primary).toMatchObject({
+      jid: 'tg:100',
+      provider: 'telegram',
+      name: 'Main DM',
+      trigger: '@kai',
+      requiresTrigger: false,
+      isMain: true,
+    });
+    expect(parsed.bindings.primary).toEqual(settings.bindings.primary);
   });
 
-  it('rejects duplicate desired-state channel bindings', () => {
+  it('rejects duplicate desired-state conversation bindings', () => {
     const yaml = renderRuntimeSettingsYaml(
       createDefaultRuntimeSettings(),
     ).replace(
@@ -150,5 +173,38 @@ describe('runtime settings', () => {
     expect(() => parseRuntimeSettings(yaml)).toThrow(
       'agents.main_agent.model is invalid: Provider model ID "claude-opus-4-7" is not accepted here.',
     );
+  });
+
+  it('keeps generated conversation ids distinct when normalized ids collide', () => {
+    const settings = createDefaultRuntimeSettings();
+
+    const first = ensureConfiguredConversationBinding(settings, {
+      agentId: 'main_agent',
+      agentName: 'Main',
+      agentFolder: 'main_agent',
+      jid: 'tg:abc-def',
+      displayName: 'First',
+      trigger: '@main',
+      requiresTrigger: true,
+      isMain: true,
+    });
+    const second = ensureConfiguredConversationBinding(settings, {
+      agentId: 'second_agent',
+      agentName: 'Second',
+      agentFolder: 'second_agent',
+      jid: 'tg:abc:def',
+      displayName: 'Second',
+      trigger: '@second',
+      requiresTrigger: true,
+      isMain: false,
+    });
+
+    expect(first.conversationId).not.toEqual(second.conversationId);
+    expect(
+      Object.values(settings.conversations).map(
+        (conversation) => conversation.externalId,
+      ),
+    ).toEqual(['abc-def', 'abc:def']);
+    expect(Object.keys(settings.bindings)).toHaveLength(2);
   });
 });

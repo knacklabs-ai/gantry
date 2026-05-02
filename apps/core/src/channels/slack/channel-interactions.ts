@@ -65,7 +65,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     await this.opts.onMessage(jid, {
       id: event.ts,
       chat_jid: jid,
-      channel_provider: 'slack',
+      provider: 'slack',
       sender,
       sender_name: senderName,
       content,
@@ -144,7 +144,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     if (this.opts.isControlApproverAllowed && channelId) {
       return this.opts.isControlApproverAllowed({
         providerId: 'slack',
-        channelJid: `sl:${channelId}`,
+        conversationJid: `sl:${channelId}`,
         userId,
         sourceGroup,
         decisionPolicy,

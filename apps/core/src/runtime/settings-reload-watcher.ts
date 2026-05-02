@@ -12,6 +12,7 @@ import {
   type SettingsDesiredStateOps,
 } from '../config/settings/desired-state-service.js';
 import type { RuntimeSettings } from '../config/settings/runtime-settings-types.js';
+import { invalidateSenderAllowlistCache } from '../platform/sender-allowlist.js';
 
 export interface SettingsReloadWatcherOptions {
   runtimeHome: string;
@@ -88,6 +89,7 @@ export function startSettingsReloadWatcher(
         ? classifySettingsChanges(lastGoodSettings, settings)
         : { liveApplied: ['settings'], restartRequired: [] };
       lastGoodSettings = settings;
+      invalidateSenderAllowlistCache(filePath);
       await options.app.loadState();
       logger.info(
         {

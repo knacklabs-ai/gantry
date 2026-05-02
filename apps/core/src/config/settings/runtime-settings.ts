@@ -2,12 +2,14 @@ import fs from 'fs';
 import { createHash } from 'node:crypto';
 import path from 'path';
 
+import {
+  getProvider,
+  providerForJid,
+} from '../../channels/provider-registry.js';
 import { isValidGroupFolder } from '../../platform/group-folder-rules.js';
-import { addControlSenderForAgent as addControlSenderToChannel } from './control-allowlist.js';
 import { ensureRuntimeLayout, settingsFilePath } from './runtime-home.js';
 import {
   applyMemoryModelProfile,
-  createDefaultChannelSettings,
   createDefaultRuntimeSettings,
   getMemoryModelProfileDefaults,
 } from './runtime-settings-defaults.js';
@@ -27,12 +29,32 @@ import type {
   RuntimeSettingsValidationResult,
 } from './runtime-settings-types.js';
 
+const DEFAULT_PROVIDER_CONNECTION_IDS: Record<string, string> = {
+  app: 'app_default',
+  slack: 'slack_default',
+  teams: 'teams_default',
+  telegram: 'telegram_default',
+};
+
+const DEFAULT_RUNTIME_SECRET_REFS: Record<string, Record<string, string>> = {
+  slack: {
+    bot_token: 'SLACK_BOT_TOKEN',
+    app_token: 'SLACK_APP_TOKEN',
+  },
+  teams: {
+    client_id: 'TEAMS_CLIENT_ID',
+    client_secret: 'TEAMS_CLIENT_SECRET',
+    tenant_id: 'TEAMS_TENANT_ID',
+  },
+  telegram: {
+    bot_token: 'TELEGRAM_BOT_TOKEN',
+  },
+};
+
 export type {
   EmbeddingProviderName,
   MemoryModelProfile,
   MemoryModelTask,
-  RuntimeChannel,
-  RuntimeChannelSettings,
   RuntimeMemoryLlmModels,
   RuntimeMemorySettings,
   RuntimeMemorySettingsSnapshot,
@@ -51,6 +73,18 @@ export {
   readRuntimeMemorySettingsSnapshot,
   readRuntimeStorageSettingsSnapshot,
 };
+
+export interface EnsureConfiguredConversationBindingInput {
+  agentId: string;
+  agentName: string;
+  agentFolder: string;
+  jid: string;
+  displayName: string;
+  trigger: string;
+  requiresTrigger: boolean;
+  isMain: boolean;
+  approverIds?: string[];
+}
 
 export function saveRuntimeSettings(
   runtimeHome: string,
@@ -95,7 +129,7 @@ export function getRuntimeSettingsRevision(runtimeHome: string): string {
 
 export function addControlSenderForAgent(
   settings: RuntimeSettings,
-  channelId: string,
+  providerId: string,
   folder: string,
   sender: string,
 ): boolean {
@@ -108,18 +142,191 @@ export function addControlSenderForAgent(
     return false;
   }
 
-  const channel =
-    settings.channels[channelId] || createDefaultChannelSettings(false);
-  settings.channels[channelId] = channel;
-  return addControlSenderToChannel(channel, trimmedFolder, trimmedSender);
+  let changed = false;
+  for (const [conversationId, conversation] of Object.entries(
+    settings.conversations,
+  )) {
+    const connection =
+      settings.providerConnections[conversation.providerConnection];
+    if (connection?.provider !== providerId) continue;
+    const binding = Object.values(settings.bindings).find(
+      (candidate) =>
+        candidate.agent === trimmedFolder &&
+        candidate.conversation === conversationId,
+    );
+    if (!binding) continue;
+    if (!conversation.controlApprovers.includes(trimmedSender)) {
+      conversation.controlApprovers = [
+        ...conversation.controlApprovers,
+        trimmedSender,
+      ].sort();
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export function inferRecoverableMainAgentJid(
   runtimeSettings: RuntimeSettings,
 ): string | null {
-  const telegram = runtimeSettings.channels.telegram;
+  const telegram = runtimeSettings.providers?.telegram;
   if (!telegram?.enabled) return null;
   return null;
+}
+
+export function ensureConfiguredConversationBinding(
+  settings: RuntimeSettings,
+  input: EnsureConfiguredConversationBindingInput,
+): {
+  providerId: string;
+  providerConnectionId: string;
+  conversationId: string;
+  bindingId: string;
+} {
+  const provider = providerForJid(input.jid);
+  if (!provider) {
+    throw new Error(`Unsupported provider for conversation id: ${input.jid}`);
+  }
+  const providerConnectionId =
+    settings.providers[provider.id]?.defaultConnection ||
+    DEFAULT_PROVIDER_CONNECTION_IDS[provider.id] ||
+    `${provider.id}_default`;
+  settings.providers[provider.id] = {
+    enabled: true,
+    defaultConnection: providerConnectionId,
+  };
+  settings.providerConnections[providerConnectionId] ??= {
+    provider: provider.id,
+    label: `${provider.label} Default`,
+    runtimeSecretRefs: { ...(DEFAULT_RUNTIME_SECRET_REFS[provider.id] || {}) },
+  };
+
+  const agentId = input.agentId.trim();
+  const folder = input.agentFolder.trim();
+  if (!isValidGroupFolder(agentId)) {
+    throw new Error(`Invalid agent id for settings: ${agentId}`);
+  }
+  if (!isValidGroupFolder(folder)) {
+    throw new Error(`Invalid agent folder for settings: ${folder}`);
+  }
+  settings.agents[agentId] ??= {
+    name: input.agentName.trim() || settings.agent.name,
+    folder,
+    bindings: {},
+    dmAccess: [],
+    capabilities: {
+      toolIds: [],
+      skillIds: [],
+      mcpServerIds: [],
+    },
+  };
+
+  const externalId = stripProviderPrefix(input.jid, provider.id);
+  const conversationId = configuredConversationId({
+    providerConnectionId,
+    externalId,
+    conversations: settings.conversations,
+  });
+  const existingConversation = settings.conversations[conversationId];
+  const controlApprovers = [
+    ...new Set([
+      ...(existingConversation?.controlApprovers || []),
+      ...(input.approverIds || []),
+    ]),
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .sort();
+  settings.conversations[conversationId] = {
+    providerConnection: providerConnectionId,
+    externalId,
+    kind: provider.isGroupJid(input.jid) ? 'group' : 'dm',
+    displayName: input.displayName.trim() || input.jid,
+    senderPolicy: existingConversation?.senderPolicy || {
+      allow: '*',
+      mode: 'trigger',
+    },
+    controlApprovers,
+  };
+
+  const bindingId = stableSettingsId(
+    `${agentId}_${conversationId}`,
+    settings.bindings,
+    `${agentId}:${conversationId}`,
+  );
+  const existingBinding = settings.bindings[bindingId];
+  settings.bindings[bindingId] = {
+    agent: agentId,
+    conversation: conversationId,
+    trigger: input.trigger,
+    addedAt: existingBinding?.addedAt || new Date().toISOString(),
+    requiresTrigger: input.requiresTrigger,
+    isMain: input.isMain,
+    memoryScope: existingBinding?.memoryScope || 'conversation',
+    model: existingBinding?.model,
+  };
+  settings.agents[agentId].bindings[bindingId] = {
+    jid: input.jid,
+    provider: provider.id,
+    name: input.displayName,
+    trigger: input.trigger,
+    addedAt: settings.bindings[bindingId].addedAt,
+    requiresTrigger: input.requiresTrigger,
+    isMain: input.isMain,
+    model: settings.bindings[bindingId].model ?? settings.agents[agentId].model,
+  };
+
+  return {
+    providerId: provider.id,
+    providerConnectionId,
+    conversationId,
+    bindingId,
+  };
+}
+
+function stripProviderPrefix(jid: string, providerId: string): string {
+  const provider = getProvider(providerId);
+  return provider && jid.startsWith(provider.jidPrefix)
+    ? jid.slice(provider.jidPrefix.length)
+    : jid;
+}
+
+function configuredConversationId(input: {
+  providerConnectionId: string;
+  externalId: string;
+  conversations: RuntimeSettings['conversations'];
+}): string {
+  const existing = Object.entries(input.conversations).find(
+    ([, conversation]) =>
+      conversation.providerConnection === input.providerConnectionId &&
+      conversation.externalId === input.externalId,
+  );
+  if (existing) return existing[0];
+  return stableSettingsId(
+    `${input.providerConnectionId}_${input.externalId}`,
+    input.conversations,
+    `${input.providerConnectionId}:${input.externalId}`,
+  );
+}
+
+function stableSettingsId(
+  value: string,
+  existing: Record<string, unknown> = {},
+  discriminator = value,
+): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const base = normalized || 'item';
+  if (!Object.hasOwn(existing, base)) return base;
+  const hash = createHash('sha256').update(discriminator).digest('hex');
+  for (let length = 12; length <= 64; length += 8) {
+    const candidate = `${base}_${hash.slice(0, length)}`.slice(0, 96);
+    if (!Object.hasOwn(existing, candidate)) return candidate;
+  }
+  return `${base}_${Date.now()}`.slice(0, 96);
 }
 
 export function loadRuntimeSettingsFromPath(filePath: string): RuntimeSettings {

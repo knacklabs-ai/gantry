@@ -327,7 +327,7 @@ export class TeamsChannel implements ChannelAdapter {
     const normalized: NewMessage = {
       id: message.id || `teams:${message.conversationId}:${timestamp}`,
       chat_jid: jid,
-      channel_provider: 'teams',
+      provider: 'teams',
       sender,
       sender_name: senderName,
       content,
@@ -450,13 +450,13 @@ export class TeamsChannel implements ChannelAdapter {
     userId: string,
     sourceGroup: string,
     decisionPolicy: PermissionApprovalRequest['decisionPolicy'] | undefined,
-    channelJid: string,
+    conversationJid: string,
   ): Promise<boolean> {
     if (decisionPolicy && decisionPolicy !== 'same_channel') return false;
     if (!this.opts.isControlApproverAllowed) return false;
     return this.opts.isControlApproverAllowed({
       providerId: 'teams',
-      channelJid,
+      conversationJid,
       userId,
       sourceGroup,
       decisionPolicy,

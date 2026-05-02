@@ -169,6 +169,13 @@
       "when": 1777068600000,
       "tag": "0023_agent_dm_approvers",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777072200000,
+      "tag": "0024_provider_conversation_rename",
+      "breakpoints": true
     }
   ]
 }

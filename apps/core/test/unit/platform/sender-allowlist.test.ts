@@ -16,8 +16,8 @@ import {
   shouldDropMessage,
 } from '@core/platform/sender-allowlist.js';
 import {
-  getChannelProvider,
-  registerChannelProvider,
+  getProvider,
+  registerProvider,
 } from '@core/channels/provider-registry.js';
 
 let tmpDir: string;
@@ -50,67 +50,91 @@ function renderSettingsYaml(overrides: {
 }): string {
   const lines = [
     'version: 3',
-    'channels:',
+    'providers:',
     '  telegram:',
     '    enabled: true',
-    '    sender_allowlist:',
-    '      default:',
-    `        allow: ${renderAllow(overrides.telegramDefaultAllow)}`,
-    `        mode: ${overrides.telegramDefaultMode}`,
-    '      agents:',
+    '    default_connection: telegram_default',
+    '  slack:',
+    '    enabled: true',
+    '    default_connection: slack_default',
+    'provider_connections:',
+    '  telegram_default:',
+    '    provider: telegram',
+    '    label: Telegram',
+    '    runtime_secret_refs: {}',
+    '  slack_default:',
+    '    provider: slack',
+    '    label: Slack',
+    '    runtime_secret_refs: {}',
+    'conversations:',
   ];
 
   for (const [folder, entry] of Object.entries(
     overrides.telegramAgents || {},
   )) {
-    lines.push(`        ${folder}:`);
-    lines.push(`          allow: ${renderAllow(entry.allow)}`);
-    lines.push(`          mode: ${entry.mode}`);
+    lines.push(`  ${folder}_conversation:`);
+    lines.push('    provider_connection: telegram_default');
+    lines.push('    external_id: "1"');
+    lines.push('    kind: group');
+    lines.push(`    display_name: ${folder}`);
+    lines.push('    sender_policy:');
+    lines.push(`      allow: ${renderAllow(entry.allow)}`);
+    lines.push(`      mode: ${entry.mode}`);
+    lines.push(
+      `    control_approvers: ${JSON.stringify(overrides.telegramControlAgents?.[folder] || [])}`,
+    );
   }
-
-  lines.push(
-    `      log_denied: ${overrides.telegramLogDenied === false ? 'false' : 'true'}`,
-    '    control_allowlist:',
-    '      default: []',
-    '      agents:',
-  );
-
-  for (const [folder, senders] of Object.entries(
-    overrides.telegramControlAgents || {},
-  )) {
-    lines.push(`        ${folder}: ${JSON.stringify(senders)}`);
-  }
-
-  lines.push(
-    '  slack:',
-    '    enabled: true',
-    '    sender_allowlist:',
-    '      default:',
-    `        allow: ${renderAllow(overrides.slackDefaultAllow ?? '*')}`,
-    `        mode: ${overrides.slackDefaultMode ?? 'trigger'}`,
-    '      agents:',
-  );
 
   for (const [folder, entry] of Object.entries(overrides.slackAgents || {})) {
-    lines.push(`        ${folder}:`);
-    lines.push(`          allow: ${renderAllow(entry.allow)}`);
-    lines.push(`          mode: ${entry.mode}`);
+    lines.push(`  ${folder}_conversation:`);
+    lines.push('    provider_connection: slack_default');
+    lines.push('    external_id: "C1"');
+    lines.push('    kind: channel');
+    lines.push(`    display_name: ${folder}`);
+    lines.push('    sender_policy:');
+    lines.push(`      allow: ${renderAllow(entry.allow)}`);
+    lines.push(`      mode: ${entry.mode}`);
+    lines.push(
+      `    control_approvers: ${JSON.stringify(overrides.slackControlAgents?.[folder] || [])}`,
+    );
   }
 
   lines.push(
-    `      log_denied: ${overrides.slackLogDenied === false ? 'false' : 'true'}`,
-    '    control_allowlist:',
-    '      default: []',
-    '      agents:',
-  );
-
-  for (const [folder, senders] of Object.entries(
-    overrides.slackControlAgents || {},
-  )) {
-    lines.push(`        ${folder}: ${JSON.stringify(senders)}`);
-  }
-
-  lines.push(
+    'agents:',
+    ...[
+      ...Object.keys(overrides.telegramAgents || {}),
+      ...Object.keys(overrides.slackAgents || {}),
+    ].flatMap((folder) => [
+      `  ${folder}:`,
+      `    name: ${folder}`,
+      '    bindings: {}',
+      '    dm_access: {}',
+      '    capabilities:',
+      '      tool_ids: []',
+      '      skill_ids: []',
+      '      mcp_server_ids: []',
+    ]),
+    'bindings:',
+    ...Object.keys(overrides.telegramAgents || {}).flatMap((folder) => [
+      `  ${folder}_binding:`,
+      `    agent: ${folder}`,
+      `    conversation: ${folder}_conversation`,
+      '    trigger: "@agent"',
+      '    added_at: "2026-01-01T00:00:00.000Z"',
+      '    requires_trigger: true',
+      '    main: false',
+      '    memory_scope: conversation',
+    ]),
+    ...Object.keys(overrides.slackAgents || {}).flatMap((folder) => [
+      `  ${folder}_binding:`,
+      `    agent: ${folder}`,
+      `    conversation: ${folder}_conversation`,
+      '    trigger: "@agent"',
+      '    added_at: "2026-01-01T00:00:00.000Z"',
+      '    requires_trigger: true',
+      '    main: false',
+      '    memory_scope: conversation',
+    ]),
     'storage:',
     '  postgres:',
     '    url_env: MYCLAW_DATABASE_URL',
@@ -138,10 +162,89 @@ function writeSettings(
   return p;
 }
 
+function writeSameAgentMultiConversationSettings(): string {
+  const p = settingsPath();
+  fs.writeFileSync(
+    p,
+    [
+      'version: 3',
+      'providers:',
+      '  telegram:',
+      '    enabled: true',
+      '    default_connection: telegram_default',
+      'provider_connections:',
+      '  telegram_default:',
+      '    provider: telegram',
+      '    label: Telegram',
+      '    runtime_secret_refs: {}',
+      'conversations:',
+      '  first_conversation:',
+      '    provider_connection: telegram_default',
+      '    external_id: "1"',
+      '    kind: group',
+      '    display_name: First',
+      '    sender_policy:',
+      '      allow: ["alice"]',
+      '      mode: trigger',
+      '    control_approvers: ["admin-one"]',
+      '  second_conversation:',
+      '    provider_connection: telegram_default',
+      '    external_id: "2"',
+      '    kind: group',
+      '    display_name: Second',
+      '    sender_policy:',
+      '      allow: ["bob"]',
+      '      mode: trigger',
+      '    control_approvers: ["admin-two"]',
+      'agents:',
+      '  main_agent:',
+      '    name: Main Agent',
+      '    bindings: {}',
+      '    dm_access: {}',
+      '    capabilities:',
+      '      tool_ids: []',
+      '      skill_ids: []',
+      '      mcp_server_ids: []',
+      'bindings:',
+      '  first_binding:',
+      '    agent: main_agent',
+      '    conversation: first_conversation',
+      '    trigger: "@agent"',
+      '    added_at: "2026-01-01T00:00:00.000Z"',
+      '    requires_trigger: true',
+      '    main: false',
+      '    memory_scope: conversation',
+      '  second_binding:',
+      '    agent: main_agent',
+      '    conversation: second_conversation',
+      '    trigger: "@agent"',
+      '    added_at: "2026-01-01T00:00:00.000Z"',
+      '    requires_trigger: true',
+      '    main: false',
+      '    memory_scope: conversation',
+      'storage:',
+      '  postgres:',
+      '    url_env: MYCLAW_DATABASE_URL',
+      '    schema: myclaw',
+      'memory:',
+      '  enabled: true',
+      '  embeddings:',
+      '    enabled: false',
+      '    provider: disabled',
+      '    model: text-embedding-3-large',
+      '  dreaming:',
+      '    enabled: false',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  return p;
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'allowlist-test-'));
-  if (!getChannelProvider('test-provider')) {
-    registerChannelProvider({
+  if (!getProvider('test-provider')) {
+    registerProvider({
       id: 'test-provider',
       label: 'Test Provider',
       jidPrefix: 'tp:',
@@ -174,7 +277,7 @@ describe('loadSenderAllowlist', () => {
     expect(cfg['test-provider'].default.mode).toBe('trigger');
   });
 
-  it('loads channel-specific config', () => {
+  it('loads provider-specific config', () => {
     const p = writeSettings({
       telegramDefaultAllow: ['alice'],
       telegramDefaultMode: 'drop',
@@ -185,10 +288,23 @@ describe('loadSenderAllowlist', () => {
       slackAgents: { slack_ops: { allow: ['U999'], mode: 'drop' } },
     });
     const cfg = loadSenderAllowlist(p);
-    expect(cfg.telegram.default.allow).toEqual(['alice']);
-    expect(cfg.telegram.logDenied).toBe(false);
-    expect(cfg.telegram.agents.telegram_kai.mode).toBe('trigger');
-    expect(cfg.slack.agents.slack_ops.allow).toEqual(['U999']);
+    expect(cfg.telegram.default.allow).toBe('*');
+    expect(cfg.telegram.logDenied).toBe(true);
+    expect(cfg.telegram.conversations?.['tg:1']?.telegram_kai.mode).toBe(
+      'trigger',
+    );
+    expect(cfg.slack.conversations?.['sl:C1']?.slack_ops.allow).toEqual([
+      'U999',
+    ]);
+  });
+
+  it('keeps settings-derived sender policies scoped by conversation', () => {
+    const cfg = loadSenderAllowlist(writeSameAgentMultiConversationSettings());
+
+    expect(isSenderAllowed('tg:1', 'alice', cfg, 'main_agent')).toBe(true);
+    expect(isSenderAllowed('tg:1', 'bob', cfg, 'main_agent')).toBe(false);
+    expect(isSenderAllowed('tg:2', 'bob', cfg, 'main_agent')).toBe(true);
+    expect(isSenderAllowed('tg:2', 'alice', cfg, 'main_agent')).toBe(false);
   });
 
   it('returns allow-all on invalid YAML', () => {
@@ -222,12 +338,12 @@ describe('isSenderAllowed', () => {
     expect(isSenderAllowed('tg:1', 'anyone', cfg)).toBe(true);
   });
 
-  it('uses per-agent override over channel default', () => {
+  it('uses per-agent override over provider default', () => {
     expect(isSenderAllowed('tg:1', 'alice', cfg, 'telegram_kai')).toBe(true);
     expect(isSenderAllowed('tg:1', 'bob', cfg, 'telegram_kai')).toBe(false);
   });
 
-  it('applies channel default when folder override missing', () => {
+  it('applies provider default when folder override missing', () => {
     expect(isSenderAllowed('sl:C1', 'U1', cfg)).toBe(true);
     expect(isSenderAllowed('sl:C1', 'U2', cfg)).toBe(false);
   });
@@ -270,7 +386,7 @@ describe('isSenderExplicitlyAllowed', () => {
     );
   });
 
-  it('uses explicit channel default allowlist for non-* defaults', () => {
+  it('uses explicit provider default allowlist for non-* defaults', () => {
     expect(isSenderExplicitlyAllowed('sl:C1', 'U1', cfg)).toBe(true);
     expect(isSenderExplicitlyAllowed('sl:C1', 'U2', cfg)).toBe(false);
   });
@@ -305,6 +421,8 @@ describe('sender control allowlist', () => {
     const p = writeSettings({
       telegramDefaultAllow: '*',
       telegramDefaultMode: 'trigger',
+      telegramAgents: { telegram_kai: { allow: '*', mode: 'trigger' } },
+      slackAgents: { slack_ops: { allow: '*', mode: 'trigger' } },
       telegramControlAgents: { telegram_kai: ['alice'] },
       slackControlAgents: { slack_ops: ['U999'] },
     });
@@ -320,6 +438,25 @@ describe('sender control allowlist', () => {
     expect(
       isSenderControlAllowed('tg:1', 'bob', controlCfg, 'telegram_kai'),
     ).toBe(false);
+  });
+
+  it('keeps settings-derived control approvers scoped by conversation', () => {
+    const cfg = loadSenderControlAllowlist(
+      writeSameAgentMultiConversationSettings(),
+    );
+
+    expect(isSenderControlAllowed('tg:1', 'admin-one', cfg, 'main_agent')).toBe(
+      true,
+    );
+    expect(isSenderControlAllowed('tg:1', 'admin-two', cfg, 'main_agent')).toBe(
+      false,
+    );
+    expect(isSenderControlAllowed('tg:2', 'admin-two', cfg, 'main_agent')).toBe(
+      true,
+    );
+    expect(isSenderControlAllowed('tg:2', 'admin-one', cfg, 'main_agent')).toBe(
+      false,
+    );
   });
 });
 
@@ -372,7 +509,7 @@ describe('isTriggerAllowed and shouldLogDenied', () => {
     expect(isTriggerAllowed('tg:1', 'eve', cfg)).toBe(false);
   });
 
-  it('returns channel-level logDenied flag', () => {
+  it('returns provider-level logDenied flag', () => {
     expect(shouldLogDenied('tg:1', cfg)).toBe(false);
     expect(shouldLogDenied('sl:C1', cfg)).toBe(true);
   });

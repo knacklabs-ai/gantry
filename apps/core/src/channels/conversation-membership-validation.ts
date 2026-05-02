@@ -1,18 +1,19 @@
 import type {
-  ChannelMembershipValidationInput,
-  ChannelMembershipValidationResult,
-  ChannelMembershipValidator,
-} from '../application/channels/channel-administration-service.js';
+  ConversationMembershipValidationInput,
+  ConversationMembershipValidationResult,
+  ConversationMembershipValidator,
+} from '../application/provider-conversations/conversation-administration-service.js';
 import type { RuntimeSecretProvider } from '../domain/ports/runtime-secret-provider.js';
 
-const TOKEN_BOUND_HTTP_GUIDANCE = 'Verify channel credentials and retry.';
+const TOKEN_BOUND_HTTP_GUIDANCE = 'Verify provider credentials and retry.';
+const TELEGRAM_BOT_TOKEN_PATTERN = /^\d+:[A-Za-z0-9_-]+$/;
 
-export class RuntimeSecretChannelMembershipValidator implements ChannelMembershipValidator {
+export class RuntimeSecretConversationMembershipValidator implements ConversationMembershipValidator {
   constructor(private readonly secrets: RuntimeSecretProvider) {}
 
   async validateControlApprovers(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult> {
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult> {
     const providerId = String(input.providerId);
     if (providerId === 'telegram') return this.validateTelegram(input);
     if (providerId === 'slack') return this.validateSlack(input);
@@ -20,16 +21,17 @@ export class RuntimeSecretChannelMembershipValidator implements ChannelMembershi
     return {
       validUserIds: [],
       invalidUserIds: input.userIds,
-      reason: `${providerId} channel membership validation is not implemented.`,
+      reason: `${providerId} conversation membership validation is not implemented.`,
     };
   }
 
   private async validateTelegram(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult> {
-    const token = this.resolveSecret(input.installation.runtimeSecretRefs, [
-      'TELEGRAM_BOT_TOKEN',
-    ]);
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult> {
+    const token = this.resolveSecret(
+      input.providerConnection.runtimeSecretRefs,
+      ['TELEGRAM_BOT_TOKEN'],
+    );
     if (!token) {
       return {
         validUserIds: [],
@@ -37,32 +39,47 @@ export class RuntimeSecretChannelMembershipValidator implements ChannelMembershi
         reason: 'Telegram token is not configured.',
       };
     }
-    const chatId = externalConversationValue(input).replace(/^tg:/, '');
-    const validUserIds: string[] = [];
-    const invalidUserIds: string[] = [];
-    for (const userId of input.userIds) {
-      try {
-        const response = await fetchWithTimeout(
-          `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${encodeURIComponent(userId)}`,
-        );
-        if (!response.ok) {
-          invalidUserIds.push(userId);
-          continue;
-        }
-        const payload = (await response.json()) as {
-          ok?: boolean;
-          result?: { status?: string };
-        };
-        const status = payload.result?.status?.toLowerCase() || '';
-        if (payload.ok && status && status !== 'left' && status !== 'kicked') {
-          validUserIds.push(userId);
-        } else {
-          invalidUserIds.push(userId);
-        }
-      } catch {
-        invalidUserIds.push(userId);
-      }
+    if (!TELEGRAM_BOT_TOKEN_PATTERN.test(token)) {
+      return {
+        validUserIds: [],
+        invalidUserIds: input.userIds,
+        reason: 'Telegram token is invalid.',
+      };
     }
+    const chatId = externalConversationValue(input).replace(/^tg:/, '');
+    const checks = await Promise.all(
+      input.userIds.map(async (userId) => {
+        try {
+          const response = await fetchWithTimeout(
+            `https://api.telegram.org/bot${encodeURIComponent(token)}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${encodeURIComponent(userId)}`,
+          );
+          if (!response.ok) {
+            return { userId, valid: false };
+          }
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            result?: { status?: string };
+          };
+          const status = payload.result?.status?.toLowerCase() || '';
+          return {
+            userId,
+            valid:
+              Boolean(payload.ok) &&
+              Boolean(status) &&
+              status !== 'left' &&
+              status !== 'kicked',
+          };
+        } catch {
+          return { userId, valid: false };
+        }
+      }),
+    );
+    const validUserIds = checks
+      .filter((entry) => entry.valid)
+      .map((entry) => entry.userId);
+    const invalidUserIds = checks
+      .filter((entry) => !entry.valid)
+      .map((entry) => entry.userId);
     return {
       validUserIds,
       invalidUserIds,
@@ -71,11 +88,12 @@ export class RuntimeSecretChannelMembershipValidator implements ChannelMembershi
   }
 
   private async validateSlack(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult> {
-    const botToken = this.resolveSecret(input.installation.runtimeSecretRefs, [
-      'SLACK_BOT_TOKEN',
-    ]);
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult> {
+    const botToken = this.resolveSecret(
+      input.providerConnection.runtimeSecretRefs,
+      ['SLACK_BOT_TOKEN'],
+    );
     if (!botToken) {
       return {
         validUserIds: [],
@@ -128,18 +146,20 @@ export class RuntimeSecretChannelMembershipValidator implements ChannelMembershi
   }
 
   private async validateTeams(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult> {
-    const clientId = this.resolveSecret(input.installation.runtimeSecretRefs, [
-      'TEAMS_CLIENT_ID',
-    ]);
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult> {
+    const clientId = this.resolveSecret(
+      input.providerConnection.runtimeSecretRefs,
+      ['TEAMS_CLIENT_ID'],
+    );
     const clientSecret = this.resolveSecret(
-      input.installation.runtimeSecretRefs,
+      input.providerConnection.runtimeSecretRefs,
       ['TEAMS_CLIENT_SECRET'],
     );
-    const tenantId = this.resolveSecret(input.installation.runtimeSecretRefs, [
-      'TEAMS_TENANT_ID',
-    ]);
+    const tenantId = this.resolveSecret(
+      input.providerConnection.runtimeSecretRefs,
+      ['TEAMS_TENANT_ID'],
+    );
     if (!clientId || !clientSecret || !tenantId) {
       return {
         validUserIds: [],
@@ -196,7 +216,7 @@ export class RuntimeSecretChannelMembershipValidator implements ChannelMembershi
   }
 
   private async listTeamsMembers(
-    input: ChannelMembershipValidationInput,
+    input: ConversationMembershipValidationInput,
     accessToken: string,
   ): Promise<string[]> {
     const endpoint = teamsMembersEndpoint(input);
@@ -256,15 +276,18 @@ async function fetchWithTimeout(
 }
 
 function externalConversationValue(
-  input: ChannelMembershipValidationInput,
+  input: ConversationMembershipValidationInput,
 ): string {
   return input.conversation.externalRef?.value || input.conversation.id;
 }
 
-function teamsMembersEndpoint(input: ChannelMembershipValidationInput): string {
+function teamsMembersEndpoint(
+  input: ConversationMembershipValidationInput,
+): string {
   const config =
-    input.installation.config && typeof input.installation.config === 'object'
-      ? (input.installation.config as Record<string, unknown>)
+    input.providerConnection.config &&
+    typeof input.providerConnection.config === 'object'
+      ? (input.providerConnection.config as Record<string, unknown>)
       : {};
   const teamId = stringConfigValue(config, 'teamId');
   const channelId = stringConfigValue(config, 'channelId');

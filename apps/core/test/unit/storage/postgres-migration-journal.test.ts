@@ -75,7 +75,7 @@ describe('Postgres migration journal', () => {
     expect(memoryTable).toContain('conversation_id text');
     expect(memoryTable).not.toContain('agent_id text REFERENCES agents');
     expect(memoryTable).not.toContain(
-      'conversation_id text REFERENCES channel_conversations',
+      'conversation_id text REFERENCES conversations',
     );
     expect(memoryTable).not.toContain('user_id text REFERENCES users');
     expect(migration).not.toContain('CREATE TABLE memory_subjects');
@@ -104,8 +104,18 @@ describe('Postgres migration journal', () => {
     expect(migration).toContain(
       'permission_decision_id text NOT NULL REFERENCES permission_decisions(id)',
     );
-    expect(migration).toContain('channel_installation_id text,');
-    expect(migration).toContain('channel_installation_id text NOT NULL,');
+    const providerConversationRenameMigration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0024_provider_conversation_rename.sql',
+      ),
+      'utf8',
+    );
+    expect(providerConversationRenameMigration).toContain(
+      'RENAME COLUMN channel_installation_id TO provider_connection_id',
+    );
+    expect(providerConversationRenameMigration).toContain(
+      'RENAME COLUMN channel_provider TO provider',
+    );
 
     const sessionDeletePolicyMigration = fs.readFileSync(
       path.resolve(
