@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import { MYCLAW_HOME } from '../config/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import '../channels/register-builtins.js';
@@ -33,6 +35,24 @@ interface AllowlistDesiredState {
     }
   >;
   bindings: Record<string, { agent: string; conversation: string }>;
+}
+
+interface CachedRuntimeAllowlists {
+  mtimeMs: number;
+  size: number;
+  settings: AllowlistDesiredState;
+  sender?: RuntimeSenderAllowlistConfig;
+  control?: RuntimeSenderControlAllowlistConfig;
+}
+
+const allowlistCache = new Map<string, CachedRuntimeAllowlists>();
+
+export function invalidateSenderAllowlistCache(filePath?: string): void {
+  if (filePath) {
+    allowlistCache.delete(filePath);
+    return;
+  }
+  allowlistCache.clear();
 }
 
 const DEFAULT_CHANNEL_CONFIG: SenderAllowlistConfig = {
@@ -81,12 +101,10 @@ function createDefaultControlConfig(): RuntimeSenderControlAllowlistConfig {
   return cfg;
 }
 
-function deriveAllowlistsFromSettings(settings: AllowlistDesiredState): {
-  sender: RuntimeSenderAllowlistConfig;
-  control: RuntimeSenderControlAllowlistConfig;
-} {
+function deriveSenderAllowlistFromSettings(
+  settings: AllowlistDesiredState,
+): RuntimeSenderAllowlistConfig {
   const sender = createDefaultConfig();
-  const control = createDefaultControlConfig();
 
   for (const binding of Object.values(settings.bindings)) {
     const conversation = settings.conversations[binding.conversation];
@@ -96,12 +114,55 @@ function deriveAllowlistsFromSettings(settings: AllowlistDesiredState): {
     if (!connection) continue;
     const providerId = connection.provider;
     sender[providerId] ??= cloneDefaultChannelConfig();
-    control[providerId] ??= cloneDefaultControlChannelConfig();
     sender[providerId].agents[binding.agent] = conversation.senderPolicy;
+  }
+
+  return sender;
+}
+
+function deriveControlAllowlistFromSettings(
+  settings: AllowlistDesiredState,
+): RuntimeSenderControlAllowlistConfig {
+  const control = createDefaultControlConfig();
+
+  for (const binding of Object.values(settings.bindings)) {
+    const conversation = settings.conversations[binding.conversation];
+    if (!conversation) continue;
+    const connection =
+      settings.providerConnections[conversation.providerConnection];
+    if (!connection) continue;
+    const providerId = connection.provider;
+    control[providerId] ??= cloneDefaultControlChannelConfig();
     control[providerId].agents[binding.agent] = conversation.controlApprovers;
   }
 
-  return { sender, control };
+  return control;
+}
+
+function cachedSettings(filePath: string): {
+  settings: AllowlistDesiredState;
+  cache: CachedRuntimeAllowlists;
+} {
+  const stat = fs.statSync(filePath);
+  const existing = allowlistCache.get(filePath);
+  if (
+    existing &&
+    existing.mtimeMs === stat.mtimeMs &&
+    existing.size === stat.size
+  ) {
+    return {
+      settings: existing.settings,
+      cache: existing,
+    };
+  }
+  const settings = loadRuntimeSettingsFromPath(filePath);
+  const cache: CachedRuntimeAllowlists = {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    settings,
+  };
+  allowlistCache.set(filePath, cache);
+  return { settings, cache };
 }
 
 function getChannelConfig(
@@ -128,8 +189,9 @@ export function loadSenderAllowlist(
   const filePath = settingsPathOverride ?? settingsFilePath(MYCLAW_HOME);
 
   try {
-    const settings = loadRuntimeSettingsFromPath(filePath);
-    return deriveAllowlistsFromSettings(settings).sender;
+    const { settings, cache } = cachedSettings(filePath);
+    cache.sender ??= deriveSenderAllowlistFromSettings(settings);
+    return cache.sender;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ENOENT') return createDefaultConfig();
@@ -150,8 +212,9 @@ export function loadSenderControlAllowlist(
   const filePath = settingsPathOverride ?? settingsFilePath(MYCLAW_HOME);
 
   try {
-    const settings = loadRuntimeSettingsFromPath(filePath);
-    return deriveAllowlistsFromSettings(settings).control;
+    const { settings, cache } = cachedSettings(filePath);
+    cache.control ??= deriveControlAllowlistFromSettings(settings);
+    return cache.control;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ENOENT') return createDefaultControlConfig();

@@ -19,6 +19,7 @@ export interface Provider {
   id: ProviderId;
   displayName: string;
   capabilityFlags: string[];
+  allowedRuntimeSecretRefs?: string[];
   createdAt: IsoTimestamp;
 }
 

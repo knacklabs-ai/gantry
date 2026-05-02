@@ -104,8 +104,18 @@ describe('Postgres migration journal', () => {
     expect(migration).toContain(
       'permission_decision_id text NOT NULL REFERENCES permission_decisions(id)',
     );
-    expect(migration).toContain('provider_connection_id text,');
-    expect(migration).toContain('provider_connection_id text NOT NULL,');
+    const providerConversationRenameMigration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0024_provider_conversation_rename.sql',
+      ),
+      'utf8',
+    );
+    expect(providerConversationRenameMigration).toContain(
+      'RENAME COLUMN channel_installation_id TO provider_connection_id',
+    );
+    expect(providerConversationRenameMigration).toContain(
+      'RENAME COLUMN channel_provider TO provider',
+    );
 
     const sessionDeletePolicyMigration = fs.readFileSync(
       path.resolve(

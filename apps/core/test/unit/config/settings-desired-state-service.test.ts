@@ -56,6 +56,9 @@ function makeRepositories(overrides: Record<string, unknown> = {}) {
       ),
       listAgentBindings: vi.fn(async () => []),
     },
+    providerConnections: {
+      saveProviderConnection: vi.fn(async () => undefined),
+    },
     ...overrides,
   } as any;
 }
@@ -199,6 +202,74 @@ describe('SettingsDesiredStateService', () => {
         toolBindings: [],
         skillBindings: [],
         mcpBindings: [],
+      }),
+    );
+  });
+
+  it('creates desired conversations before applying approvers', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.providers.telegram.enabled = true;
+    settings.providers.telegram.defaultConnection = 'telegram_default';
+    settings.providerConnections.telegram_default = {
+      provider: 'telegram',
+      label: 'Telegram Default',
+      runtimeSecretRefs: { bot_token: 'TELEGRAM_BOT_TOKEN' },
+    };
+    settings.conversations.kai = {
+      providerConnection: 'telegram_default',
+      externalId: '-100123',
+      kind: 'group',
+      displayName: 'Kai',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: ['5759865942'],
+    };
+    const savedConversations: any[] = [];
+    const conversations = {
+      findConversationByExternalValue: vi.fn(
+        async (input: any) =>
+          savedConversations.find(
+            (conversation) =>
+              conversation.externalRef.value === input.externalConversationId,
+          ) ?? null,
+      ),
+      saveConversation: vi.fn(async (conversation: any) => {
+        savedConversations.push(conversation);
+      }),
+      replaceConversationApprovers: vi.fn(async () => []),
+    };
+    const repositories = makeRepositories({ conversations });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+      clock: { now: () => '2026-05-02T00:00:00.000Z' },
+    });
+
+    const result = await service.reconcile(settings);
+
+    expect(result.skipped).not.toContain(
+      'conversation_approvers:kai:not-found',
+    );
+    expect(
+      repositories.providerConnections.saveProviderConnection,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'telegram_default',
+        providerId: 'telegram',
+        runtimeSecretRefs: ['TELEGRAM_BOT_TOKEN'],
+      }),
+    );
+    expect(conversations.saveConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'conversation:tg:-100123',
+        providerConnectionId: 'telegram_default',
+        externalRef: { kind: 'conversation', value: '-100123' },
+        kind: 'group',
+      }),
+    );
+    expect(conversations.replaceConversationApprovers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conversation:tg:-100123',
+        externalUserIds: ['5759865942'],
       }),
     );
   });
