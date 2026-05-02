@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { RuntimeSecretChannelMembershipValidator } from '@core/channels/channel-membership-validation.js';
+import { RuntimeSecretConversationMembershipValidator } from '@core/channels/conversation-membership-validation.js';
 
 const iso = '2026-05-01T00:00:00.000Z';
 
@@ -8,7 +8,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('RuntimeSecretChannelMembershipValidator', () => {
+describe('RuntimeSecretConversationMembershipValidator', () => {
   it('validates Teams approvers through Microsoft Graph conversation members', async () => {
     const fetchMock = vi
       .fn()
@@ -33,7 +33,7 @@ describe('RuntimeSecretChannelMembershipValidator', () => {
       );
     vi.stubGlobal('fetch', fetchMock);
 
-    const validator = new RuntimeSecretChannelMembershipValidator({
+    const validator = new RuntimeSecretConversationMembershipValidator({
       getSecret(ref) {
         const value = this.getOptionalSecret(ref);
         if (!value) throw new Error(`missing ${ref.env}`);
@@ -120,7 +120,7 @@ describe('RuntimeSecretChannelMembershipValidator', () => {
       );
     vi.stubGlobal('fetch', fetchMock);
 
-    const validator = new RuntimeSecretChannelMembershipValidator({
+    const validator = new RuntimeSecretConversationMembershipValidator({
       getSecret(ref) {
         const value = this.getOptionalSecret(ref);
         if (!value) throw new Error(`missing ${ref.env}`);

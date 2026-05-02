@@ -190,22 +190,22 @@ function cachedSettings(filePath: string): {
   return { settings, cache };
 }
 
-function getChannelConfig(
+function getProviderAllowlistConfig(
   chatJid: string,
   cfg: RuntimeSenderAllowlistConfig,
 ): RuntimeSenderProviderAllowlistConfig | undefined {
-  const channelId = providerForJid(chatJid)?.id;
-  if (!channelId) return undefined;
-  return cfg[channelId];
+  const providerId = providerForJid(chatJid)?.id;
+  if (!providerId) return undefined;
+  return cfg[providerId];
 }
 
-function getControlChannelConfig(
+function getControlProviderAllowlistConfig(
   chatJid: string,
   cfg: RuntimeSenderControlAllowlistConfig,
 ): RuntimeSenderControlProviderAllowlistConfig | undefined {
-  const channelId = providerForJid(chatJid)?.id;
-  if (!channelId) return undefined;
-  return cfg[channelId];
+  const providerId = providerForJid(chatJid)?.id;
+  if (!providerId) return undefined;
+  return cfg[providerId];
 }
 
 function jidForSettingsConversation(
@@ -268,42 +268,42 @@ export function loadSenderControlAllowlist(
 function getEntry(
   chatJid: string,
   cfg: RuntimeSenderAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): ChatAllowlistEntry {
-  const channelCfg = getChannelConfig(chatJid, cfg);
-  if (!channelCfg) return DEFAULT_ENTRY;
-  if (groupFolder) {
-    const byConversation = channelCfg.conversations?.[chatJid]?.[groupFolder];
+  const providerCfg = getProviderAllowlistConfig(chatJid, cfg);
+  if (!providerCfg) return DEFAULT_ENTRY;
+  if (agentFolder) {
+    const byConversation = providerCfg.conversations?.[chatJid]?.[agentFolder];
     if (byConversation) return byConversation;
-    const byAgent = channelCfg.agents[groupFolder];
+    const byAgent = providerCfg.agents[agentFolder];
     if (byAgent) return byAgent;
   }
-  return channelCfg.default;
+  return providerCfg.default;
 }
 
 function getControlSenders(
   chatJid: string,
   cfg: RuntimeSenderControlAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): string[] {
-  const channelCfg = getControlChannelConfig(chatJid, cfg);
-  if (!channelCfg) return [];
-  if (groupFolder) {
-    const byConversation = channelCfg.conversations?.[chatJid]?.[groupFolder];
+  const providerCfg = getControlProviderAllowlistConfig(chatJid, cfg);
+  if (!providerCfg) return [];
+  if (agentFolder) {
+    const byConversation = providerCfg.conversations?.[chatJid]?.[agentFolder];
     if (byConversation) return byConversation;
-    const byAgent = channelCfg.agents[groupFolder];
+    const byAgent = providerCfg.agents[agentFolder];
     if (byAgent) return byAgent;
   }
-  return channelCfg.default;
+  return providerCfg.default;
 }
 
 export function isSenderAllowed(
   chatJid: string,
   sender: string,
   cfg: RuntimeSenderAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): boolean {
-  const entry = getEntry(chatJid, cfg, groupFolder);
+  const entry = getEntry(chatJid, cfg, agentFolder);
   if (entry.allow === '*') return true;
   return entry.allow.includes(sender);
 }
@@ -312,9 +312,9 @@ export function isSenderExplicitlyAllowed(
   chatJid: string,
   sender: string,
   cfg: RuntimeSenderAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): boolean {
-  const entry = getEntry(chatJid, cfg, groupFolder);
+  const entry = getEntry(chatJid, cfg, agentFolder);
   if (entry.allow === '*') return false;
   return entry.allow.includes(sender);
 }
@@ -323,29 +323,29 @@ export function isSenderControlAllowed(
   chatJid: string,
   sender: string,
   cfg: RuntimeSenderControlAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): boolean {
-  return getControlSenders(chatJid, cfg, groupFolder).includes(sender);
+  return getControlSenders(chatJid, cfg, agentFolder).includes(sender);
 }
 
 export function shouldDropMessage(
   chatJid: string,
   cfg: RuntimeSenderAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): boolean {
-  return getEntry(chatJid, cfg, groupFolder).mode === 'drop';
+  return getEntry(chatJid, cfg, agentFolder).mode === 'drop';
 }
 
 export function isTriggerAllowed(
   chatJid: string,
   sender: string,
   cfg: RuntimeSenderAllowlistConfig,
-  groupFolder?: string,
+  agentFolder?: string,
 ): boolean {
-  const allowed = isSenderAllowed(chatJid, sender, cfg, groupFolder);
+  const allowed = isSenderAllowed(chatJid, sender, cfg, agentFolder);
   if (!allowed && shouldLogDenied(chatJid, cfg)) {
     logger.debug(
-      { chatJid, sender, groupFolder },
+      { chatJid, sender, agentFolder },
       'sender-allowlist: trigger denied for sender',
     );
   }
@@ -356,5 +356,5 @@ export function shouldLogDenied(
   chatJid: string,
   cfg: RuntimeSenderAllowlistConfig,
 ): boolean {
-  return getChannelConfig(chatJid, cfg)?.logDenied ?? true;
+  return getProviderAllowlistConfig(chatJid, cfg)?.logDenied ?? true;
 }

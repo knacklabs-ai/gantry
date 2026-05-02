@@ -144,7 +144,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     if (this.opts.isControlApproverAllowed && channelId) {
       return this.opts.isControlApproverAllowed({
         providerId: 'slack',
-        channelJid: `sl:${channelId}`,
+        conversationJid: `sl:${channelId}`,
         userId,
         sourceGroup,
         decisionPolicy,

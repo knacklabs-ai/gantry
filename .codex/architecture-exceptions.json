@@ -1120,13 +1120,6 @@
     "maxViolations": 8
   },
   {
-    "file": "apps/core/src/platform/sender-allowlist.ts",
-    "rule": "old_term_groupFolder",
-    "reason": "Baseline groupFolder terminology debt pending canonical conversation/workspace rename; capped so new occurrences fail.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxOccurrences": 17
-  },
-  {
     "file": "apps/core/src/runner/agent-capabilities.ts",
     "rule": "old_term_groupFolder",
     "reason": "Baseline groupFolder terminology debt pending canonical conversation/workspace rename; capped so new occurrences fail.",

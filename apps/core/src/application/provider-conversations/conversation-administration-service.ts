@@ -13,26 +13,26 @@ import type {
 } from '../../domain/ports/repositories.js';
 import { ApplicationError } from '../common/application-error.js';
 
-export interface ChannelMembershipValidationInput {
+export interface ConversationMembershipValidationInput {
   providerId: ProviderId;
   providerConnection: ProviderConnection;
   conversation: Conversation;
   userIds: string[];
 }
 
-export interface ChannelMembershipValidationResult {
+export interface ConversationMembershipValidationResult {
   validUserIds: string[];
   invalidUserIds: string[];
   reason?: string;
 }
 
-export interface ChannelMembershipValidator {
+export interface ConversationMembershipValidator {
   validateControlApprovers(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult>;
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult>;
 }
 
-export interface ChannelAdminSummary {
+export interface ConversationAdminSummary {
   controlAllowlist: { userIds: string[] };
 }
 
@@ -42,15 +42,15 @@ export class ConversationAdministrationService {
       providerConnections: ProviderConnectionRepository;
       conversations: ConversationRepository;
     },
-    private readonly membershipValidator?: ChannelMembershipValidator,
+    private readonly membershipValidator?: ConversationMembershipValidator,
   ) {}
 
   async getAdminSummary(input: {
     appId: AppId;
     conversationId: ConversationId;
-  }): Promise<ChannelAdminSummary> {
+  }): Promise<ConversationAdminSummary> {
     const { providerConnection, conversation } =
-      await this.requireChannel(input);
+      await this.requireConversation(input);
     const approvers =
       await this.repositories.conversations.listConversationApprovers(
         conversation.id,
@@ -69,7 +69,7 @@ export class ConversationAdministrationService {
     updatedAt: string;
   }): Promise<{ userIds: string[] }> {
     const { conversation, providerConnection } =
-      await this.requireChannel(input);
+      await this.requireConversation(input);
     if (conversation.kind === 'direct') {
       throw new ApplicationError(
         'INVALID_REQUEST',
@@ -95,7 +95,7 @@ export class ConversationAdministrationService {
         throw new ApplicationError(
           'INVALID_CONTROL_ALLOWLIST',
           [
-            'Control approvers must be members of the channel.',
+            'Control approvers must be members of the conversation.',
             `Invalid: ${validation.invalidUserIds.join(', ')}`,
             validation.reason,
           ]
@@ -117,7 +117,7 @@ export class ConversationAdministrationService {
   async isControlApproverAllowed(input: {
     appId: AppId;
     providerId: ProviderId;
-    channelJid: string;
+    conversationJid: string;
     userId: string;
   }): Promise<boolean> {
     const userId = input.userId.trim();
@@ -146,7 +146,7 @@ export class ConversationAdministrationService {
     return validation.validUserIds.includes(userId);
   }
 
-  private async requireChannel(input: {
+  private async requireConversation(input: {
     appId: AppId;
     conversationId: ConversationId;
   }): Promise<{
@@ -157,7 +157,7 @@ export class ConversationAdministrationService {
       input.conversationId,
     );
     if (!conversation || conversation.appId !== input.appId) {
-      throw new ApplicationError('NOT_FOUND', 'Channel not found');
+      throw new ApplicationError('NOT_FOUND', 'Conversation not found');
     }
     const providerConnection =
       await this.repositories.providerConnections.getProviderConnection(
@@ -170,8 +170,8 @@ export class ConversationAdministrationService {
   }
 
   private async validateMembership(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult> {
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult> {
     const providerId = String(input.providerId);
     if (
       providerId === 'app' ||
@@ -187,8 +187,8 @@ export class ConversationAdministrationService {
   }
 
   private async validateKnownConversationParticipants(
-    input: ChannelMembershipValidationInput,
-  ): Promise<ChannelMembershipValidationResult> {
+    input: ConversationMembershipValidationInput,
+  ): Promise<ConversationMembershipValidationResult> {
     const knownMembers = new Set(
       await this.repositories.conversations.listParticipantExternalUserIds(
         input.conversation.id,
@@ -199,7 +199,7 @@ export class ConversationAdministrationService {
       invalidUserIds: input.userIds.filter((id) => !knownMembers.has(id)),
       reason:
         knownMembers.size === 0
-          ? 'No channel participant records are available.'
+          ? 'No conversation participant records are available.'
           : undefined,
     };
   }
@@ -207,16 +207,16 @@ export class ConversationAdministrationService {
   private async findConversationForJid(input: {
     appId: AppId;
     providerId: ProviderId;
-    channelJid: string;
+    conversationJid: string;
   }): Promise<Conversation | null> {
     const direct = await this.repositories.conversations.getConversation(
-      `conversation:${input.channelJid}` as ConversationId,
+      `conversation:${input.conversationJid}` as ConversationId,
     );
     if (direct?.appId === input.appId) return direct;
     const candidates = [
-      input.channelJid,
-      input.channelJid.startsWith(`${input.providerId}:`)
-        ? input.channelJid.slice(String(input.providerId).length + 1)
+      input.conversationJid,
+      input.conversationJid.startsWith(`${input.providerId}:`)
+        ? input.conversationJid.slice(String(input.providerId).length + 1)
         : undefined,
     ].filter((value): value is string => Boolean(value));
     for (const candidate of candidates) {

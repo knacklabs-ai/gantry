@@ -2502,7 +2502,7 @@ describe('TelegramChannel', () => {
       expect(isControlApproverAllowed).toHaveBeenCalledWith(
         expect.objectContaining({
           providerId: 'telegram',
-          channelJid: 'tg:100200300',
+          conversationJid: 'tg:100200300',
           userId: '777',
         }),
       );

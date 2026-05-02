@@ -10,7 +10,7 @@ import {
 } from '@myclaw/contracts';
 
 import { EnvRuntimeSecretProvider } from '../../../adapters/credentials/env-runtime-secret-provider.js';
-import { RuntimeSecretChannelMembershipValidator } from '../../../channels/channel-membership-validation.js';
+import { RuntimeSecretConversationMembershipValidator } from '../../../channels/conversation-membership-validation.js';
 import {
   BuiltInControlChannelProviderCatalog,
   RuntimeSecretConversationDiscovery,
@@ -383,7 +383,7 @@ export async function handleProviderConversationRoutes(
             getRuntimeStorage().repositories.providerConnections,
           conversations: getRuntimeStorage().repositories.conversations,
         },
-        new RuntimeSecretChannelMembershipValidator(
+        new RuntimeSecretConversationMembershipValidator(
           new EnvRuntimeSecretProvider(),
         ),
       ).replaceControlAllowlist({

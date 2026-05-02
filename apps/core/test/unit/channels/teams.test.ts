@@ -277,7 +277,7 @@ describe('TeamsChannel adapter scaffold', () => {
     expect(isControlApproverAllowed).toHaveBeenCalledWith(
       expect.objectContaining({
         providerId: 'teams',
-        channelJid: 'teams:19:abc@thread.v2',
+        conversationJid: 'teams:19:abc@thread.v2',
         userId: 'teams-user-1',
       }),
     );

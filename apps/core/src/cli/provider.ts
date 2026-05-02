@@ -3,7 +3,7 @@ import * as p from '@clack/prompts';
 import { ConversationAdministrationService } from '../application/provider-conversations/conversation-administration-service.js';
 import { ApplicationError } from '../application/common/application-error.js';
 import { EnvRuntimeSecretProvider } from '../adapters/credentials/env-runtime-secret-provider.js';
-import { RuntimeSecretChannelMembershipValidator } from '../channels/channel-membership-validation.js';
+import { RuntimeSecretConversationMembershipValidator } from '../channels/conversation-membership-validation.js';
 import {
   getProvider,
   listConnectableChannelProviders,
@@ -217,7 +217,9 @@ async function conversationAdministrationService(): Promise<ConversationAdminist
       providerConnections: repositories.providerConnections,
       conversations: repositories.conversations,
     },
-    new RuntimeSecretChannelMembershipValidator(new EnvRuntimeSecretProvider()),
+    new RuntimeSecretConversationMembershipValidator(
+      new EnvRuntimeSecretProvider(),
+    ),
   );
 }
 

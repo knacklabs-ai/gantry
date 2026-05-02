@@ -277,7 +277,7 @@ describe('loadSenderAllowlist', () => {
     expect(cfg['test-provider'].default.mode).toBe('trigger');
   });
 
-  it('loads channel-specific config', () => {
+  it('loads provider-specific config', () => {
     const p = writeSettings({
       telegramDefaultAllow: ['alice'],
       telegramDefaultMode: 'drop',
@@ -338,12 +338,12 @@ describe('isSenderAllowed', () => {
     expect(isSenderAllowed('tg:1', 'anyone', cfg)).toBe(true);
   });
 
-  it('uses per-agent override over channel default', () => {
+  it('uses per-agent override over provider default', () => {
     expect(isSenderAllowed('tg:1', 'alice', cfg, 'telegram_kai')).toBe(true);
     expect(isSenderAllowed('tg:1', 'bob', cfg, 'telegram_kai')).toBe(false);
   });
 
-  it('applies channel default when folder override missing', () => {
+  it('applies provider default when folder override missing', () => {
     expect(isSenderAllowed('sl:C1', 'U1', cfg)).toBe(true);
     expect(isSenderAllowed('sl:C1', 'U2', cfg)).toBe(false);
   });
@@ -386,7 +386,7 @@ describe('isSenderExplicitlyAllowed', () => {
     );
   });
 
-  it('uses explicit channel default allowlist for non-* defaults', () => {
+  it('uses explicit provider default allowlist for non-* defaults', () => {
     expect(isSenderExplicitlyAllowed('sl:C1', 'U1', cfg)).toBe(true);
     expect(isSenderExplicitlyAllowed('sl:C1', 'U2', cfg)).toBe(false);
   });
@@ -509,7 +509,7 @@ describe('isTriggerAllowed and shouldLogDenied', () => {
     expect(isTriggerAllowed('tg:1', 'eve', cfg)).toBe(false);
   });
 
-  it('returns channel-level logDenied flag', () => {
+  it('returns provider-level logDenied flag', () => {
     expect(shouldLogDenied('tg:1', cfg)).toBe(false);
     expect(shouldLogDenied('sl:C1', cfg)).toBe(true);
   });

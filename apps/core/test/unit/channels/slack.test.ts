@@ -564,7 +564,7 @@ describe('Slack channel', () => {
     expect(isControlApproverAllowed).toHaveBeenCalledWith(
       expect.objectContaining({
         providerId: 'slack',
-        channelJid: 'sl:C1234567890',
+        conversationJid: 'sl:C1234567890',
         userId: 'U_CHANNEL_ADMIN',
       }),
     );

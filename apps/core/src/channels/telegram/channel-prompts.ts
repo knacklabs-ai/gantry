@@ -205,11 +205,11 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
       );
       return false;
     }
-    const channelJid = `tg:${chatId}`;
+    const conversationJid = `tg:${chatId}`;
     if (this.opts.isControlApproverAllowed) {
       return this.opts.isControlApproverAllowed({
         providerId: 'telegram',
-        channelJid,
+        conversationJid,
         userId,
         sourceGroup,
         decisionPolicy,

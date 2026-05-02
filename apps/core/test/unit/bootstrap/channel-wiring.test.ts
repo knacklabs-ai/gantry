@@ -674,7 +674,7 @@ describe('createChannelWiring', () => {
     let isControlApproverAllowed:
       | ((input: {
           providerId: string;
-          channelJid: string;
+          conversationJid: string;
           userId: string;
           sourceGroup: string;
         }) => Promise<boolean>)
@@ -728,7 +728,7 @@ describe('createChannelWiring', () => {
     await expect(
       isControlApproverAllowed?.({
         providerId: 'slack',
-        channelJid: 'sl:D123',
+        conversationJid: 'sl:D123',
         userId: 'UADMIN',
         sourceGroup: 'sl:D123',
       }),
@@ -736,7 +736,7 @@ describe('createChannelWiring', () => {
     await expect(
       isControlApproverAllowed?.({
         providerId: 'slack',
-        channelJid: 'sl:D123',
+        conversationJid: 'sl:D123',
         userId: 'U1',
         sourceGroup: 'sl:D123',
       }),
@@ -750,7 +750,7 @@ describe('createChannelWiring', () => {
     let isControlApproverAllowed:
       | ((input: {
           providerId: string;
-          channelJid: string;
+          conversationJid: string;
           userId: string;
           sourceGroup: string;
         }) => Promise<boolean>)
@@ -788,7 +788,7 @@ describe('createChannelWiring', () => {
     await expect(
       isControlApproverAllowed?.({
         providerId: 'slack',
-        channelJid: 'sl:C123',
+        conversationJid: 'sl:C123',
         userId: 'UADMIN',
         sourceGroup: 'team',
       }),

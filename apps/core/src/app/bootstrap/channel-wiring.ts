@@ -40,7 +40,7 @@ import { ChannelAdapter } from '../../channels/channel-provider.js';
 import { EnvRuntimeSecretProvider } from '../../adapters/credentials/env-runtime-secret-provider.js';
 import { RuntimeApp } from './runtime-app.js';
 import { ConversationAdministrationService } from '../../application/provider-conversations/conversation-administration-service.js';
-import { RuntimeSecretChannelMembershipValidator } from '../../channels/channel-membership-validation.js';
+import { RuntimeSecretConversationMembershipValidator } from '../../channels/conversation-membership-validation.js';
 import { AgentDmAccessAdministrationService } from '../../application/agents/agent-dm-access-administration-service.js';
 import type { Agent, AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
@@ -447,7 +447,7 @@ export function createChannelWiring(
 
   async function authorizeConversationApprover(input: {
     providerId: string;
-    channelJid: string;
+    conversationJid: string;
     userId: string;
     sourceGroup: string;
     decisionPolicy?: PermissionApprovalRequest['decisionPolicy'];
@@ -464,7 +464,7 @@ export function createChannelWiring(
       }).isDmApproverAllowed({
         appId: resolved.appId,
         providerId: input.providerId,
-        channelJid: input.channelJid,
+        channelJid: input.conversationJid,
         userId: input.userId,
       });
       if (dmApprover !== null) return dmApprover;
@@ -474,20 +474,20 @@ export function createChannelWiring(
           providerConnections: repositories.providerConnections,
           conversations: repositories.conversations,
         },
-        new RuntimeSecretChannelMembershipValidator(
+        new RuntimeSecretConversationMembershipValidator(
           new EnvRuntimeSecretProvider(),
         ),
       );
       return await service.isControlApproverAllowed({
         appId: resolved.appId,
         providerId: input.providerId as never,
-        channelJid: input.channelJid,
+        conversationJid: input.conversationJid,
         userId: input.userId,
       });
     } catch (err) {
       resolved.logger.warn(
         { err, providerId: input.providerId, sourceGroup: input.sourceGroup },
-        'Channel control approver lookup failed',
+        'Conversation approver lookup failed',
       );
       return false;
     }
