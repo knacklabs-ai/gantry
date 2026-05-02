@@ -153,7 +153,7 @@
       "idx": 21,
       "version": "7",
       "when": 1777061400000,
-      "tag": "0021_conversation_approvers",
+      "tag": "0021_channel_control_approvers",
       "breakpoints": true
     },
     {
@@ -168,6 +168,13 @@
       "version": "7",
       "when": 1777068600000,
       "tag": "0023_agent_dm_approvers",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777072200000,
+      "tag": "0024_provider_conversation_rename",
       "breakpoints": true
     }
   ]

@@ -4,6 +4,7 @@ import type {
   AgentConversationBinding,
   AgentConversationBindingMemoryScope,
   AgentConversationBindingTriggerMode,
+  Provider,
   ProviderConnection,
   ProviderConnectionId,
   ProviderId,
@@ -91,6 +92,21 @@ function assertNoRawSecrets(value: unknown, path: string): void {
       );
     }
     assertNoRawSecrets(nested, `${path}.${key}`);
+  }
+}
+
+function assertAllowedRuntimeSecretRefs(
+  provider: Provider,
+  refs: string[] | undefined,
+): void {
+  if (refs === undefined) return;
+  const allowed = new Set(provider.allowedRuntimeSecretRefs ?? []);
+  const invalid = refs.filter((ref) => !allowed.has(ref));
+  if (invalid.length > 0) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      `runtimeSecretRefs contains unsupported refs for provider ${provider.id}: ${invalid.join(', ')}`,
+    );
   }
 }
 
@@ -211,6 +227,7 @@ export class ProviderConnectionControlService {
         `Provider ${input.providerId} is not implemented`,
       );
     }
+    assertAllowedRuntimeSecretRefs(provider, input.runtimeSecretRefs);
     const now = this.deps.clock.now();
     const providerConnection: ProviderConnection = {
       id: this.deps.ids.generate() as ProviderConnectionId,
@@ -238,6 +255,20 @@ export class ProviderConnectionControlService {
     assertNoRawSecrets(input.patch.config, 'config');
     assertNoRawSecrets(input.patch.externalInstallationRef, 'externalRef');
     const existing = await this.get(input);
+    const providers = await this.deps.providers.listProviders();
+    const provider = providers.find(
+      (entry) => entry.id === existing.providerId,
+    );
+    assertAllowedRuntimeSecretRefs(
+      provider ?? {
+        id: existing.providerId,
+        displayName: String(existing.providerId),
+        capabilityFlags: [],
+        allowedRuntimeSecretRefs: [],
+        createdAt: existing.createdAt,
+      },
+      input.patch.runtimeSecretRefs,
+    );
     const normalizedStatus = normalizeProviderConnectionStatus(
       input.patch.status,
     );
@@ -257,8 +288,7 @@ export class ProviderConnectionControlService {
         : {}),
       ...(input.patch.externalInstallationRef !== undefined
         ? {
-            externalInstallationRef:
-              input.patch.externalInstallationRef ?? undefined,
+            externalInstallationRef: input.patch.externalInstallationRef,
           }
         : {}),
       ...(input.patch.runtimeSecretRefs !== undefined

@@ -432,29 +432,32 @@ export class MyClawClient {
         method: 'GET',
         path: '/v1/provider-connections',
       }),
-    get: (installationId: string) =>
+    get: (providerConnectionId: string) =>
       this.transport.request<Record<string, unknown>>({
         method: 'GET',
-        path: `/v1/provider-connections/${encodeURIComponent(installationId)}`,
+        path: `/v1/provider-connections/${encodeURIComponent(providerConnectionId)}`,
       }),
-    update: (installationId: string, patch: ProviderConnectionPatch) =>
+    update: (providerConnectionId: string, patch: ProviderConnectionPatch) =>
       this.transport.request<Record<string, unknown>>({
         method: 'PATCH',
-        path: `/v1/provider-connections/${encodeURIComponent(installationId)}`,
+        path: `/v1/provider-connections/${encodeURIComponent(providerConnectionId)}`,
         body: patch,
       }),
-    delete: (installationId: string) =>
-      this.transport.request<{ deleted: boolean; installation?: unknown }>({
+    delete: (providerConnectionId: string) =>
+      this.transport.request<{
+        deleted: boolean;
+        providerConnection?: unknown;
+      }>({
         method: 'DELETE',
-        path: `/v1/provider-connections/${encodeURIComponent(installationId)}`,
+        path: `/v1/provider-connections/${encodeURIComponent(providerConnectionId)}`,
       }),
     discoverConversations: (
-      installationId: string,
+      providerConnectionId: string,
       input: ConversationDiscoveryInput = {},
     ) =>
       this.transport.request<{ conversations: unknown[] }>({
         method: 'POST',
-        path: `/v1/provider-connections/${encodeURIComponent(installationId)}/discover-conversations`,
+        path: `/v1/provider-connections/${encodeURIComponent(providerConnectionId)}/discover-conversations`,
         body: input,
       }),
   };

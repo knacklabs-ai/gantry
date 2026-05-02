@@ -5,6 +5,7 @@ import {
   SettingsDesiredStateService,
 } from '@core/config/settings/desired-state-service.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
+import { ConversationAdministrationService } from '@core/application/provider-conversations/conversation-administration-service.js';
 
 function makeRepositories(overrides: Record<string, unknown> = {}) {
   return {
@@ -55,6 +56,9 @@ function makeRepositories(overrides: Record<string, unknown> = {}) {
           : null,
       ),
       listAgentBindings: vi.fn(async () => []),
+    },
+    providerConnections: {
+      saveProviderConnection: vi.fn(async () => undefined),
     },
     ...overrides,
   } as any;
@@ -201,6 +205,143 @@ describe('SettingsDesiredStateService', () => {
         mcpBindings: [],
       }),
     );
+  });
+
+  it('creates desired conversations before applying approvers without duplicating them', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.providers.telegram.enabled = true;
+    settings.providers.telegram.defaultConnection = 'telegram_default';
+    settings.providerConnections.telegram_default = {
+      provider: 'telegram',
+      label: 'Telegram Default',
+      runtimeSecretRefs: { bot_token: 'TELEGRAM_BOT_TOKEN' },
+    };
+    settings.conversations.kai = {
+      providerConnection: 'telegram_default',
+      externalId: '-100123',
+      kind: 'group',
+      displayName: 'Kai',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: ['5759865942'],
+    };
+    const savedConversations: any[] = [];
+    const savedApprovers = new Map<string, string[]>();
+    const providerConnection = {
+      id: 'telegram_default',
+      appId: 'default',
+      providerId: 'telegram',
+      label: 'Telegram Default',
+      status: 'active',
+      config: {},
+      runtimeSecretRefs: ['TELEGRAM_BOT_TOKEN'],
+      createdAt: '2026-05-02T00:00:00.000Z',
+      updatedAt: '2026-05-02T00:00:00.000Z',
+    };
+    const conversations = {
+      getConversation: vi.fn(
+        async (id: string) =>
+          savedConversations.find((conversation) => conversation.id === id) ??
+          null,
+      ),
+      findConversationByExternalValue: vi.fn(
+        async (input: any) =>
+          savedConversations.find(
+            (conversation) =>
+              conversation.externalRef.value === input.externalConversationId,
+          ) ?? null,
+      ),
+      saveConversation: vi.fn(async (conversation: any) => {
+        savedConversations.push(conversation);
+      }),
+      listConversationApprovers: vi.fn(async (conversationId: string) =>
+        (savedApprovers.get(conversationId) ?? []).map((externalUserId) => ({
+          id: `approver:${externalUserId}`,
+          appId: 'default',
+          conversationId,
+          externalUserId,
+          createdAt: '2026-05-02T00:00:00.000Z',
+          updatedAt: '2026-05-02T00:00:00.000Z',
+        })),
+      ),
+      replaceConversationApprovers: vi.fn(async (input: any) => {
+        savedApprovers.set(input.conversationId, input.externalUserIds);
+        return input.externalUserIds.map((externalUserId: string) => ({
+          id: `approver:${externalUserId}`,
+          appId: input.appId,
+          conversationId: input.conversationId,
+          externalUserId,
+          createdAt: input.updatedAt,
+          updatedAt: input.updatedAt,
+        }));
+      }),
+      listParticipantExternalUserIds: vi.fn(async () => []),
+    };
+    const repositories = makeRepositories({
+      conversations,
+      providerConnections: {
+        getProviderConnection: vi.fn(async (id: string) =>
+          id === 'telegram_default' ? providerConnection : null,
+        ),
+        saveProviderConnection: vi.fn(async () => undefined),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+      clock: { now: () => '2026-05-02T00:00:00.000Z' },
+    });
+
+    const result = await service.reconcile(settings);
+
+    expect(result.skipped).not.toContain(
+      'conversation_approvers:kai:not-found',
+    );
+    expect(
+      repositories.providerConnections.saveProviderConnection,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'telegram_default',
+        providerId: 'telegram',
+        runtimeSecretRefs: ['TELEGRAM_BOT_TOKEN'],
+      }),
+    );
+    expect(conversations.saveConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'conversation:tg:-100123',
+        providerConnectionId: 'telegram_default',
+        externalRef: { kind: 'conversation', value: '-100123' },
+        kind: 'group',
+      }),
+    );
+    expect(conversations.replaceConversationApprovers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conversation:tg:-100123',
+        externalUserIds: ['5759865942'],
+      }),
+    );
+
+    await service.reconcile(settings);
+
+    expect(conversations.saveConversation).toHaveBeenCalledTimes(1);
+    expect(conversations.replaceConversationApprovers).toHaveBeenCalledTimes(2);
+
+    const administration = new ConversationAdministrationService(
+      repositories as never,
+      {
+        validateControlApprovers: vi.fn(async (input) => ({
+          validUserIds: input.userIds,
+          invalidUserIds: [],
+        })),
+      },
+    );
+    await expect(
+      administration.isControlApproverAllowed({
+        appId: 'default' as never,
+        providerId: 'telegram' as never,
+        channelJid: 'telegram:-100123',
+        userId: '5759865942',
+      }),
+    ).resolves.toBe(true);
   });
 
   it('exports colliding conversation bindings without overwriting one another', async () => {

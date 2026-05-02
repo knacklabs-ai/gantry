@@ -221,9 +221,12 @@ export function ensureConfiguredConversationBinding(
     },
   };
 
-  const conversationId = stableSettingsId(
-    `${provider.id}_${stripProviderPrefix(input.jid, provider.id)}`,
-  );
+  const externalId = stripProviderPrefix(input.jid, provider.id);
+  const conversationId = configuredConversationId({
+    providerConnectionId,
+    externalId,
+    conversations: settings.conversations,
+  });
   const existingConversation = settings.conversations[conversationId];
   const controlApprovers = [
     ...new Set([
@@ -236,7 +239,7 @@ export function ensureConfiguredConversationBinding(
     .sort();
   settings.conversations[conversationId] = {
     providerConnection: providerConnectionId,
-    externalId: stripProviderPrefix(input.jid, provider.id),
+    externalId,
     kind: provider.isGroupJid(input.jid) ? 'group' : 'dm',
     displayName: input.displayName.trim() || input.jid,
     senderPolicy: existingConversation?.senderPolicy || {
@@ -246,7 +249,11 @@ export function ensureConfiguredConversationBinding(
     controlApprovers,
   };
 
-  const bindingId = stableSettingsId(`${agentId}_${conversationId}`);
+  const bindingId = stableSettingsId(
+    `${agentId}_${conversationId}`,
+    settings.bindings,
+    `${agentId}:${conversationId}`,
+  );
   const existingBinding = settings.bindings[bindingId];
   settings.bindings[bindingId] = {
     agent: agentId,
@@ -284,13 +291,42 @@ function stripProviderPrefix(jid: string, providerId: string): string {
     : jid;
 }
 
-function stableSettingsId(value: string): string {
+function configuredConversationId(input: {
+  providerConnectionId: string;
+  externalId: string;
+  conversations: RuntimeSettings['conversations'];
+}): string {
+  const existing = Object.entries(input.conversations).find(
+    ([, conversation]) =>
+      conversation.providerConnection === input.providerConnectionId &&
+      conversation.externalId === input.externalId,
+  );
+  if (existing) return existing[0];
+  return stableSettingsId(
+    `${input.providerConnectionId}_${input.externalId}`,
+    input.conversations,
+    `${input.providerConnectionId}:${input.externalId}`,
+  );
+}
+
+function stableSettingsId(
+  value: string,
+  existing: Record<string, unknown> = {},
+  discriminator = value,
+): string {
   const normalized = value
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return normalized || 'conversation';
+  const base = normalized || 'item';
+  if (!Object.hasOwn(existing, base)) return base;
+  const hash = createHash('sha256').update(discriminator).digest('hex');
+  for (let length = 12; length <= 64; length += 8) {
+    const candidate = `${base}_${hash.slice(0, length)}`.slice(0, 96);
+    if (!Object.hasOwn(existing, candidate)) return candidate;
+  }
+  return `${base}_${Date.now()}`.slice(0, 96);
 }
 
 export function loadRuntimeSettingsFromPath(filePath: string): RuntimeSettings {

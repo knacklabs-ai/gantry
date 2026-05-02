@@ -28,7 +28,7 @@ export const conversationsPostgres = pgTable(
       .defaultNow(),
   },
   (table) => ({
-    providerConnectionIdx: index('idx_conversations_providerConnection').on(
+    providerConnectionIdx: index('idx_conversations_provider_connection').on(
       table.providerConnectionId,
     ),
   }),

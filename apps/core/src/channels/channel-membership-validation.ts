@@ -6,6 +6,7 @@ import type {
 import type { RuntimeSecretProvider } from '../domain/ports/runtime-secret-provider.js';
 
 const TOKEN_BOUND_HTTP_GUIDANCE = 'Verify channel credentials and retry.';
+const TELEGRAM_BOT_TOKEN_PATTERN = /^\d+:[A-Za-z0-9_-]+$/;
 
 export class RuntimeSecretChannelMembershipValidator implements ChannelMembershipValidator {
   constructor(private readonly secrets: RuntimeSecretProvider) {}
@@ -38,32 +39,47 @@ export class RuntimeSecretChannelMembershipValidator implements ChannelMembershi
         reason: 'Telegram token is not configured.',
       };
     }
-    const chatId = externalConversationValue(input).replace(/^tg:/, '');
-    const validUserIds: string[] = [];
-    const invalidUserIds: string[] = [];
-    for (const userId of input.userIds) {
-      try {
-        const response = await fetchWithTimeout(
-          `https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${encodeURIComponent(userId)}`,
-        );
-        if (!response.ok) {
-          invalidUserIds.push(userId);
-          continue;
-        }
-        const payload = (await response.json()) as {
-          ok?: boolean;
-          result?: { status?: string };
-        };
-        const status = payload.result?.status?.toLowerCase() || '';
-        if (payload.ok && status && status !== 'left' && status !== 'kicked') {
-          validUserIds.push(userId);
-        } else {
-          invalidUserIds.push(userId);
-        }
-      } catch {
-        invalidUserIds.push(userId);
-      }
+    if (!TELEGRAM_BOT_TOKEN_PATTERN.test(token)) {
+      return {
+        validUserIds: [],
+        invalidUserIds: input.userIds,
+        reason: 'Telegram token is invalid.',
+      };
     }
+    const chatId = externalConversationValue(input).replace(/^tg:/, '');
+    const checks = await Promise.all(
+      input.userIds.map(async (userId) => {
+        try {
+          const response = await fetchWithTimeout(
+            `https://api.telegram.org/bot${encodeURIComponent(token)}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${encodeURIComponent(userId)}`,
+          );
+          if (!response.ok) {
+            return { userId, valid: false };
+          }
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            result?: { status?: string };
+          };
+          const status = payload.result?.status?.toLowerCase() || '';
+          return {
+            userId,
+            valid:
+              Boolean(payload.ok) &&
+              Boolean(status) &&
+              status !== 'left' &&
+              status !== 'kicked',
+          };
+        } catch {
+          return { userId, valid: false };
+        }
+      }),
+    );
+    const validUserIds = checks
+      .filter((entry) => entry.valid)
+      .map((entry) => entry.userId);
+    const invalidUserIds = checks
+      .filter((entry) => !entry.valid)
+      .map((entry) => entry.userId);
     return {
       validUserIds,
       invalidUserIds,

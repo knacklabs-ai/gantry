@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createDefaultRuntimeSettings,
+  ensureConfiguredConversationBinding,
   parseRuntimeSettings,
 } from '@core/config/settings/runtime-settings.js';
 import { renderRuntimeSettingsYaml } from '@core/config/settings/runtime-settings-renderer.js';
@@ -172,5 +173,38 @@ describe('runtime settings', () => {
     expect(() => parseRuntimeSettings(yaml)).toThrow(
       'agents.main_agent.model is invalid: Provider model ID "claude-opus-4-7" is not accepted here.',
     );
+  });
+
+  it('keeps generated conversation ids distinct when normalized ids collide', () => {
+    const settings = createDefaultRuntimeSettings();
+
+    const first = ensureConfiguredConversationBinding(settings, {
+      agentId: 'main_agent',
+      agentName: 'Main',
+      agentFolder: 'main_agent',
+      jid: 'tg:abc-def',
+      displayName: 'First',
+      trigger: '@main',
+      requiresTrigger: true,
+      isMain: true,
+    });
+    const second = ensureConfiguredConversationBinding(settings, {
+      agentId: 'second_agent',
+      agentName: 'Second',
+      agentFolder: 'second_agent',
+      jid: 'tg:abc:def',
+      displayName: 'Second',
+      trigger: '@second',
+      requiresTrigger: true,
+      isMain: false,
+    });
+
+    expect(first.conversationId).not.toEqual(second.conversationId);
+    expect(
+      Object.values(settings.conversations).map(
+        (conversation) => conversation.externalId,
+      ),
+    ).toEqual(['abc-def', 'abc:def']);
+    expect(Object.keys(settings.bindings)).toHaveLength(2);
   });
 });

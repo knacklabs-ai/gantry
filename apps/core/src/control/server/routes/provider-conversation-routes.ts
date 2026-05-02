@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
   AgentConversationBindingRequestSchema,
+  ConversationApproverPutRequestSchema,
   CreateProviderConnectionRequestSchema,
   DiscoverProviderConnectionRequestSchema,
   UpdateProviderConnectionRequestSchema,
@@ -21,7 +22,6 @@ import {
   DiscoverProviderConversationsService,
 } from '../../../application/provider-conversations/provider-conversation-control-use-cases.js';
 import { ListProvidersUseCase } from '../../../application/provider-conversations/list-providers-use-case.js';
-import { ApplicationError } from '../../../application/common/application-error.js';
 import { ConversationControlService } from '../../../application/conversations/conversation-control-use-cases.js';
 import type { AgentId } from '../../../domain/agent/agent.js';
 import type { AppId } from '../../../domain/app/app.js';
@@ -39,7 +39,12 @@ import {
   authorizeControlRequest,
   type ControlRouteContext,
 } from '../handler-context.js';
-import { readJson, sendError, sendJson } from '../http.js';
+import {
+  readJson,
+  sendApplicationError,
+  sendError,
+  sendJson,
+} from '../http.js';
 import {
   parseAgentBindingRoute,
   parseProviderConnectionRoute,
@@ -58,32 +63,6 @@ import {
 } from './provider-conversation-mappers.js';
 
 const providers = new BuiltInControlChannelProviderCatalog();
-
-function sendApplicationError(res: ServerResponse, error: unknown): boolean {
-  if (!(error instanceof ApplicationError)) return false;
-  switch (error.code) {
-    case 'NOT_FOUND':
-      sendError(res, 404, 'NOT_FOUND', error.message);
-      return true;
-    case 'FORBIDDEN':
-      sendError(res, 403, 'FORBIDDEN', error.message);
-      return true;
-    case 'INVALID_REQUEST':
-      sendError(res, 400, 'INVALID_REQUEST', error.message);
-      return true;
-    case 'CONFLICT':
-      sendError(res, 409, 'CONFLICT', error.message);
-      return true;
-    case 'UNAVAILABLE':
-      sendError(res, 503, 'UNAVAILABLE', error.message);
-      return true;
-    case 'NOT_IMPLEMENTED':
-      sendError(res, 501, 'NOT_IMPLEMENTED', error.message);
-      return true;
-    default:
-      return false;
-  }
-}
 
 function services() {
   const repositories = getRuntimeStorage().repositories;
@@ -385,9 +364,16 @@ export async function handleProviderConversationRoutes(
       'conversations:admin',
     ]);
     if (!auth) return true;
-    const body = (await readJson(req)) as { userIds?: unknown };
-    if (!Array.isArray(body.userIds)) {
-      sendError(res, 400, 'INVALID_REQUEST', 'userIds must be an array');
+    const parsed = ConversationApproverPutRequestSchema.safeParse(
+      await readJson(req),
+    );
+    if (!parsed.success) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        'Invalid conversation approver request',
+      );
       return true;
     }
     try {
@@ -405,9 +391,7 @@ export async function handleProviderConversationRoutes(
         conversationId: decodeURIComponent(
           approversMatch[1]!,
         ) as ConversationId,
-        userIds: body.userIds.filter(
-          (id): id is string => typeof id === 'string',
-        ),
+        userIds: parsed.data.userIds,
         updatedAt: nowIso(),
       });
       sendJson(res, 200, { approvers: result });
@@ -473,7 +457,10 @@ export async function handleProviderConversationRoutes(
   }
 
   if (bindingRoute?.action === 'binding' && req.method === 'PUT') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
+    const auth = authorizeControlRequest(req, res, ctx.keys, [
+      'agents:admin',
+      'conversations:admin',
+    ]);
     if (!auth) return true;
     const patch = parseBindingPatch(
       auth.appId as AppId,
@@ -504,7 +491,10 @@ export async function handleProviderConversationRoutes(
   }
 
   if (bindingRoute?.action === 'binding' && req.method === 'PATCH') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
+    const auth = authorizeControlRequest(req, res, ctx.keys, [
+      'agents:admin',
+      'conversations:admin',
+    ]);
     if (!auth) return true;
     const patch = parseBindingPatch(
       auth.appId as AppId,
@@ -535,7 +525,10 @@ export async function handleProviderConversationRoutes(
   }
 
   if (bindingRoute?.action === 'binding' && req.method === 'DELETE') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
+    const auth = authorizeControlRequest(req, res, ctx.keys, [
+      'agents:admin',
+      'conversations:admin',
+    ]);
     if (!auth) return true;
     try {
       const binding = await services().bindings.disable({

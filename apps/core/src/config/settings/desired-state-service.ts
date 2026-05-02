@@ -7,15 +7,29 @@ import type {
   AgentRepository,
   ConversationRepository,
   McpServerRepository,
+  ProviderConnectionRepository,
   SkillCatalogRepository,
   ToolCatalogRepository,
 } from '../../domain/ports/repositories.js';
-import {
-  getProvider,
-  providerForJid,
-} from '../../channels/provider-registry.js';
+import type {
+  Conversation,
+  ConversationId,
+} from '../../domain/conversation/conversation.js';
+import type {
+  ProviderConnection,
+  ProviderConnectionId,
+  ProviderId,
+} from '../../domain/provider/provider.js';
 import type { AgentSkillBinding } from '../../domain/skills/skills.js';
 import type { AgentToolBinding } from '../../domain/tools/tools.js';
+import {
+  configuredConversationKind,
+  defaultRuntimeSecretRefs,
+  jidForConfiguredConversation,
+  providerInfoForJid,
+  providerTopology,
+  stripProviderPrefix,
+} from './desired-state-provider-conversations.js';
 import type {
   RuntimeConfiguredAgent,
   RuntimeConfiguredAgentCapabilities,
@@ -44,6 +58,7 @@ export interface SettingsDesiredStateOps {
 
 export interface SettingsDesiredStateRepositories {
   agents: AgentRepository;
+  providerConnections?: ProviderConnectionRepository;
   conversations?: ConversationRepository;
   tools: ToolCatalogRepository;
   skills: SkillCatalogRepository;
@@ -160,7 +175,7 @@ export class SettingsDesiredStateService {
       } = exported;
       const folder = group.folder;
       const existing = agents[folder];
-      const provider = providerForJid(jid);
+      const provider = providerInfoForJid(jid);
       const providerId = provider?.id ?? 'app';
       const connectionId =
         providers[providerId]?.defaultConnection ?? `${providerId}_default`;
@@ -351,21 +366,14 @@ export class SettingsDesiredStateService {
       for (const [conversationKey, conversation] of Object.entries(
         settings.conversations,
       )) {
-        const jid = jidForConfiguredConversation(
+        const storedConversation = await this.ensureDesiredConversation({
+          key: conversationKey,
           conversation,
-          settings.providerConnections,
-        );
-        const storedConversation =
-          await this.deps.repositories.conversations.findConversationByExternalValue(
-            {
-              appId: this.appId,
-              externalConversationId: stripProviderPrefix(jid),
-            },
-          );
-        if (!storedConversation) {
-          skipped.push(`conversation_approvers:${conversationKey}:not-found`);
-          continue;
-        }
+          providerConnections: settings.providerConnections,
+          now: this.clock.now(),
+          skipped,
+        });
+        if (!storedConversation) continue;
         await this.deps.repositories.conversations.replaceConversationApprovers(
           {
             appId: this.appId,
@@ -418,6 +426,68 @@ export class SettingsDesiredStateService {
     }
 
     return { applied, skipped, invalidReferences: [] };
+  }
+
+  private async ensureDesiredConversation(input: {
+    key: string;
+    conversation: RuntimeConfiguredConversation;
+    providerConnections: Record<string, RuntimeProviderConnectionSettings>;
+    now: string;
+    skipped: string[];
+  }): Promise<Conversation | null> {
+    const conversations = this.deps.repositories.conversations;
+    if (!conversations) return null;
+    const connectionSettings =
+      input.providerConnections[input.conversation.providerConnection];
+    if (!connectionSettings) {
+      input.skipped.push(
+        `conversation:${input.key}:missing-provider-connection`,
+      );
+      return null;
+    }
+    const jid = jidForConfiguredConversation(
+      input.conversation,
+      input.providerConnections,
+    );
+    const externalConversationId = stripProviderPrefix(jid);
+
+    if (this.deps.repositories.providerConnections) {
+      await this.deps.repositories.providerConnections.saveProviderConnection({
+        id: input.conversation.providerConnection as ProviderConnectionId,
+        appId: this.appId,
+        providerId: connectionSettings.provider as ProviderId,
+        label: connectionSettings.label,
+        status: 'active',
+        config: {},
+        runtimeSecretRefs: Object.values(connectionSettings.runtimeSecretRefs),
+        createdAt: input.now,
+        updatedAt: input.now,
+      } satisfies ProviderConnection);
+    }
+
+    const existing = await conversations.findConversationByExternalValue({
+      appId: this.appId,
+      externalConversationId,
+    });
+    if (existing) return existing;
+
+    const conversation: Conversation = {
+      id: `conversation:${jid}` as ConversationId,
+      appId: this.appId,
+      providerConnectionId: input.conversation
+        .providerConnection as ProviderConnectionId,
+      externalRef: {
+        kind: 'conversation',
+        value: externalConversationId,
+      },
+      kind: configuredConversationKind(input.conversation.kind),
+      title: input.conversation.displayName,
+      status: 'active',
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    await conversations.saveConversation(conversation);
+    return conversation;
   }
 
   async validateCapabilityReferences(
@@ -731,57 +801,6 @@ function stableSettingsId(
   if (!Object.hasOwn(existing, base)) return base;
   const hash = createHash('sha256').update(seed).digest('hex').slice(0, 12);
   return `${base}_${hash}`.slice(0, 96);
-}
-
-function stripProviderPrefix(jid: string): string {
-  const provider = providerForJid(jid);
-  if (provider && jid.startsWith(provider.jidPrefix)) {
-    return jid.slice(provider.jidPrefix.length);
-  }
-  const idx = jid.indexOf(':');
-  return idx > 0 ? jid.slice(idx + 1) : jid;
-}
-
-function jidForConfiguredConversation(
-  conversation: RuntimeConfiguredConversation,
-  providerConnections: Record<string, RuntimeProviderConnectionSettings>,
-): string {
-  const connection = providerConnections[conversation.providerConnection];
-  const provider = connection ? getProvider(connection.provider) : undefined;
-  if (!provider) return conversation.externalId;
-  return conversation.externalId.startsWith(provider.jidPrefix)
-    ? conversation.externalId
-    : `${provider.jidPrefix}${conversation.externalId}`;
-}
-
-function defaultRuntimeSecretRefs(providerId: string): Record<string, string> {
-  if (providerId === 'telegram') return { bot_token: 'TELEGRAM_BOT_TOKEN' };
-  if (providerId === 'slack') {
-    return {
-      bot_token: 'SLACK_BOT_TOKEN',
-      app_token: 'SLACK_APP_TOKEN',
-    };
-  }
-  if (providerId === 'teams') {
-    return {
-      client_id: 'TEAMS_CLIENT_ID',
-      client_secret: 'TEAMS_CLIENT_SECRET',
-      tenant_id: 'TEAMS_TENANT_ID',
-    };
-  }
-  return {};
-}
-
-function providerTopology(settings: RuntimeSettings): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(settings.providers).map(([providerId, provider]) => [
-      providerId,
-      {
-        enabled: provider.enabled,
-        defaultConnection: provider.defaultConnection,
-      },
-    ]),
-  );
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {

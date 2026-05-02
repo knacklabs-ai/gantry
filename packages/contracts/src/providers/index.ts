@@ -184,3 +184,10 @@ export const ConversationApproverListResponseSchema = z.object({
 export type ConversationApproverListResponse = z.infer<
   typeof ConversationApproverListResponseSchema
 >;
+
+export const ConversationApproverPutRequestSchema = z.object({
+  userIds: z.array(z.string().trim().min(1).max(128)).max(200),
+});
+export type ConversationApproverPutRequest = z.infer<
+  typeof ConversationApproverPutRequestSchema
+>;

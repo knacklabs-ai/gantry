@@ -616,13 +616,6 @@
     "maxViolations": 2
   },
   {
-    "file": "apps/core/src/config/settings/desired-state-service.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Desired-state export still maps legacy JIDs to provider/conversation records during the provider-conversation terminology cutover; capped so further boundary debt fails.",
-    "removeByPhase": "provider-conversation-cutover-cleanup",
-    "maxViolations": 1
-  },
-  {
     "file": "apps/core/src/config/settings/runtime-settings-validation.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",

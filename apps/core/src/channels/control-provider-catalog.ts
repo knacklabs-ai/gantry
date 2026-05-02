@@ -26,6 +26,7 @@ export class BuiltInControlChannelProviderCatalog implements ProviderCatalogPort
       capabilityFlags: provider.internal
         ? ['internal', 'discover']
         : ['install', 'discover'],
+      allowedRuntimeSecretRefs: provider.setup.envKeys,
       createdAt,
     })) as Provider[];
     const existingIds = new Set<string>(
@@ -34,9 +35,10 @@ export class BuiltInControlChannelProviderCatalog implements ProviderCatalogPort
     for (const id of ['teams', 'whatsapp']) {
       if (existingIds.has(id)) continue;
       builtIns.push({
-        id,
+        id: id as Provider['id'],
         displayName: id === 'teams' ? 'Teams' : 'WhatsApp',
         capabilityFlags: ['placeholder'],
+        allowedRuntimeSecretRefs: [],
         createdAt,
       } as Provider);
     }

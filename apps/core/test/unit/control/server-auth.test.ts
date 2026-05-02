@@ -883,7 +883,7 @@ describe('control server runtime hardening', () => {
       {
         kid: 'k',
         token: 'admin-key',
-        scopes: ['agents:admin'],
+        scopes: ['agents:admin', 'conversations:admin'],
         appId: 'app-one',
       },
     ]);
@@ -927,7 +927,7 @@ describe('control server runtime hardening', () => {
       {
         kid: 'k',
         token: 'admin-key',
-        scopes: ['agents:admin'],
+        scopes: ['agents:admin', 'conversations:admin'],
         appId: 'app-one',
       },
     ]);
@@ -1670,6 +1670,7 @@ describe('control server runtime hardening', () => {
           'providers:read',
           'providers:admin',
           'conversations:read',
+          'conversations:admin',
           'messages:read',
           'agents:admin',
         ],
@@ -1938,7 +1939,7 @@ describe('control server runtime hardening', () => {
       {
         kid: 'k',
         token: 'agents-admin-token',
-        scopes: ['agents:admin'],
+        scopes: ['agents:admin', 'conversations:admin'],
         appId: 'app-one',
       },
     ]);
@@ -2329,7 +2330,7 @@ describe('control server runtime hardening', () => {
       {
         kid: 'k',
         token: 'agents-admin-token',
-        scopes: ['agents:admin'],
+        scopes: ['agents:admin', 'conversations:admin'],
         appId: 'app-one',
       },
     ]);
@@ -2438,7 +2439,7 @@ describe('control server runtime hardening', () => {
       {
         kid: 'k',
         token: 'agents-admin-token',
-        scopes: ['agents:admin'],
+        scopes: ['agents:admin', 'conversations:admin'],
         appId: 'app-one',
       },
     ]);
