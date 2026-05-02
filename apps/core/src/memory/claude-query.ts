@@ -3,7 +3,6 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import {
   DATA_DIR,
   getCredentialBrokerRuntimeConfig,
-  getHostCredentialEnv,
   type ClaudeAuthMode,
 } from '../config/index.js';
 import { resolveExternalCredentialBaseUrl } from '../config/credentials/broker-url-policy.js';
@@ -115,7 +114,6 @@ async function resolveOnecliMemoryEnv(): Promise<Record<string, string>> {
         normalizedBaseUrl: resolveExternalCredentialBaseUrl(
           brokerConfig.externalBrokerBaseUrl,
         ),
-        hostCredentialEnv: getHostCredentialEnv(),
       }),
     });
     return injection.env;

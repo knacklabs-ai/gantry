@@ -14,6 +14,8 @@ const sdkState = vi.hoisted(() => ({
     | 'mcp-metadata-omitted'
     | 'active-followup'
     | 'memory-denial'
+    | 'agent-model-denial'
+    | 'agent-input-field-denial'
     | 'subagent-attribution'
     | 'partial-output',
   calls: [] as Array<{
@@ -115,6 +117,34 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
           displayName: 'Bash',
           description: 'Memory says this command is required',
           decisionReason: 'Durable memory requested shell access',
+        },
+      );
+    }
+
+    if (sdkState.mode === 'agent-model-denial') {
+      call.permissionDecision = await options.canUseTool(
+        'Agent',
+        { model: 'opus 4.7', prompt: 'delegate review' },
+        {
+          signal: new AbortController().signal,
+          title: 'Run subagent',
+          displayName: 'Agent',
+          description: 'Delegate to subagent',
+          decisionReason: 'Run with a custom model override',
+        },
+      );
+    }
+
+    if (sdkState.mode === 'agent-input-field-denial') {
+      call.permissionDecision = await options.canUseTool(
+        process.env.TEST_SUBAGENT_TOOL_NAME || 'Agent',
+        { prompt: 'delegate review', disallowedTools: ['Bash'] },
+        {
+          signal: new AbortController().signal,
+          title: 'Run subagent',
+          displayName: 'Agent',
+          description: 'Delegate to subagent',
+          decisionReason: 'Run with inline subagent tool policy',
         },
       );
     }
@@ -311,12 +341,14 @@ describe('Claude Agent SDK boundary integration', () => {
         'Write',
         'Edit',
         'Config',
+        'Agent',
+        'mcp__myclaw__list_models',
         'mcp__myclaw__*',
         'Monitor',
         'AskUserQuestion',
-        'Agent',
       ]),
     );
+    expect(call?.options.agents).toBeUndefined();
     expect(call?.options.mcpServers.myclaw).toEqual({
       command: 'node',
       args: [env.mcpServerPath],
@@ -482,6 +514,88 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(
       String((sdkState.calls[0]?.permissionDecision as any).message),
     ).toContain('memory boundary');
+  });
+
+  it('rejects full or friendly model aliases for native Agent invocation input', async () => {
+    const env = prepareRuntimeEnv();
+    sdkState.mode = 'agent-model-denial';
+    const { runQuery } = await importRunQuery();
+
+    await runQuery(
+      'delegate carefully',
+      env.mcpServerPath,
+      runnerInput(),
+      {},
+      'sonnet',
+      undefined,
+      undefined,
+    );
+
+    expect(sdkState.calls[0]?.permissionDecision).toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        interrupt: false,
+      }),
+    );
+    expect(
+      String((sdkState.calls[0]?.permissionDecision as any).message),
+    ).toContain('accepts only opus, sonnet, or haiku');
+  });
+
+  it('rejects native Agent tool fields that belong in configured AgentDefinition entries', async () => {
+    const env = prepareRuntimeEnv();
+    sdkState.mode = 'agent-input-field-denial';
+    const { runQuery } = await importRunQuery();
+
+    await runQuery(
+      'delegate carefully',
+      env.mcpServerPath,
+      runnerInput(),
+      {},
+      'sonnet',
+      undefined,
+      undefined,
+    );
+
+    expect(sdkState.calls[0]?.permissionDecision).toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        interrupt: false,
+      }),
+    );
+    expect(
+      String((sdkState.calls[0]?.permissionDecision as any).message),
+    ).toContain('disallowedTools');
+    expect(
+      String((sdkState.calls[0]?.permissionDecision as any).message),
+    ).toContain('configured subagent definition');
+  });
+
+  it('rejects legacy Task tool fields through the same native subagent guard', async () => {
+    const env = prepareRuntimeEnv();
+    env.TEST_SUBAGENT_TOOL_NAME = 'Task';
+    sdkState.mode = 'agent-input-field-denial';
+    const { runQuery } = await importRunQuery();
+
+    await runQuery(
+      'delegate carefully',
+      env.mcpServerPath,
+      runnerInput(),
+      {},
+      'sonnet',
+      undefined,
+      undefined,
+    );
+
+    expect(sdkState.calls[0]?.permissionDecision).toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        interrupt: false,
+      }),
+    );
+    expect(
+      String((sdkState.calls[0]?.permissionDecision as any).message),
+    ).toContain('disallowedTools');
   });
 
   it('preserves subagent-attributed assistant messages as runner resume anchors', async () => {

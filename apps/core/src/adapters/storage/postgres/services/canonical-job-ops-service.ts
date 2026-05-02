@@ -268,7 +268,7 @@ export class CanonicalJobOpsService {
       id: row.id,
       name: row.name,
       prompt: row.prompt,
-      model: row.modelOverride,
+      model: row.model,
       script: (target.script as string | null | undefined) ?? null,
       schedule_type: (schedule.type as Job['schedule_type']) || 'manual',
       schedule_value: schedule.value || '',
@@ -310,7 +310,7 @@ export class CanonicalJobOpsService {
       agentId,
       name: job.name,
       prompt: job.prompt,
-      modelOverride: job.model || null,
+      model: job.model || null,
       scheduleJson: json({
         type: job.schedule_type,
         value: job.schedule_value,

@@ -1,4 +1,5 @@
 import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
+import type { NormalizedModelUsage } from '../../shared/model-catalog.js';
 
 export interface AgentRunnerInput {
   prompt: string;
@@ -26,6 +27,8 @@ export interface AgentRunnerOutput {
   newSessionId?: string;
   compactBoundary?: boolean;
   interactionBoundary?: 'user_interaction';
+  usage?: NormalizedModelUsage;
+  usageEventId?: string;
   error?: string;
 }
 

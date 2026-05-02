@@ -6,10 +6,9 @@ import {
 } from '../config/settings/runtime-home.js';
 import { validatePostgresConnectionUrl } from '../adapters/storage/postgres/url.js';
 import {
-  CLAUDE_MODEL_PINS,
-  DEFAULT_SETUP_MODEL,
-  normalizeClaudeModelSelection,
-} from '../models/claude-model-registry.js';
+  DEFAULT_SETUP_MODEL_ALIAS,
+  resolveModelSelection,
+} from '../shared/model-catalog.js';
 import {
   ONECLI_DEFAULT_SCHEMA,
   renderOnecliDatabaseUrl,
@@ -393,17 +392,12 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
       {
         value: 'sonnet',
         label: 'Sonnet',
-        hint: `Balanced speed/cost/quality. Uses the Claude Code ${CLAUDE_MODEL_PINS.sonnet} family without pinning your setup.`,
+        hint: 'Balanced speed/cost/quality. Uses the Sonnet catalog alias without pinning your setup.',
       },
       {
         value: 'opus',
         label: 'Opus (Recommended)',
         hint: 'Highest quality for agentic coding. Uses the Claude Code opus alias so your install tracks your account/provider safely.',
-      },
-      {
-        value: 'opusplan',
-        label: 'Opus Plan',
-        hint: 'Uses Opus for planning and Sonnet for execution.',
       },
       {
         value: 'back',
@@ -418,13 +412,15 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
         label: 'Cancel Setup',
       },
     ],
-    initialValue: draft.selectedModel || DEFAULT_SETUP_MODEL,
+    initialValue: draft.selectedModel || DEFAULT_SETUP_MODEL_ALIAS,
   });
 
   if (p.isCancel(value)) return { type: 'resume' };
   if (value === 'back') return { type: 'back' };
   if (value === 'resume' || value === 'cancel') return { type: value };
-  draft.selectedModel =
-    normalizeClaudeModelSelection(String(value)) || String(value);
+  const resolvedModel = resolveModelSelection(String(value));
+  draft.selectedModel = resolvedModel.ok
+    ? resolvedModel.alias
+    : DEFAULT_SETUP_MODEL_ALIAS;
   return { type: 'next' };
 }

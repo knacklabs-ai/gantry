@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { CreateSessionRequestSchema } from '@myclaw/contracts';
+import type { ZodIssue } from 'zod';
 
 import type { RuntimeEvent } from '../../../domain/events/events.js';
 import { logger } from '../../../infrastructure/logging/logger.js';
@@ -30,6 +32,14 @@ function sendApplicationError(res: ServerResponse, error: unknown): boolean {
   return sendApplicationErrorResponse(res, error, { NOT_FOUND: notFoundCode });
 }
 
+function formatSessionRequestIssue(issue: ZodIssue): string {
+  if (issue.code === 'unrecognized_keys' && issue.keys.length > 0) {
+    return `Unsupported session request field "${issue.keys[0]}".`;
+  }
+  const path = issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+  return `${path}${issue.message}`;
+}
+
 export async function handleSessionRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -42,11 +52,20 @@ export async function handleSessionRoutes(
       'sessions:write',
     ]);
     if (!auth) return true;
-    const body = (await readJson(req)) as Record<string, unknown>;
-    const assertedAppId =
-      typeof body.appId === 'string' ? body.appId.trim() : '';
+    const parsed = CreateSessionRequestSchema.safeParse(await readJson(req));
+    if (!parsed.success) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        formatSessionRequestIssue(parsed.error.issues[0]),
+      );
+      return true;
+    }
+    const body = parsed.data;
+    const assertedAppId = body.appId?.trim() ?? '';
     const appId = resolveAppScopeAppId(auth, assertedAppId);
-    const conversationId = String(body.conversationId || '').trim();
+    const conversationId = (body.conversationId ?? '').trim();
     if (!conversationId) {
       sendError(res, 400, 'INVALID_REQUEST', 'conversationId is required');
       return true;
@@ -69,9 +88,9 @@ export async function handleSessionRoutes(
         appId,
         assertedAppId,
         conversationId,
-        title: typeof body.title === 'string' ? body.title : null,
+        title: body.title ?? null,
         responseMode: body.responseMode,
-        webhookId: typeof body.webhookId === 'string' ? body.webhookId : null,
+        webhookId: body.webhookId ?? null,
       });
       sendJson(res, 200, {
         sessionId: result.session.sessionId,

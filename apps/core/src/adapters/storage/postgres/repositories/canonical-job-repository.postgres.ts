@@ -23,7 +23,7 @@ export interface CanonicalJobRecord {
   agentId: string | null;
   name: string;
   prompt: string;
-  modelOverride: string | null;
+  model: string | null;
   scheduleJson: string;
   status: string;
   executionMode: string;
@@ -45,7 +45,7 @@ export interface JobRecordInput {
   agentId: string;
   name: string;
   prompt: string;
-  modelOverride: string | null;
+  model: string | null;
   scheduleJson: string;
   status: string;
   executionMode: string;
@@ -162,7 +162,7 @@ export class PostgresCanonicalJobRepository {
           agentId: record.agentId,
           name: record.name,
           prompt: record.prompt,
-          modelOverride: record.modelOverride,
+          model: record.model,
           scheduleJson: record.scheduleJson,
           status: record.status,
           executionMode: record.executionMode,

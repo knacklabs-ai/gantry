@@ -1,4 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  CreateJobRequestSchema,
+  UpdateJobRequestSchema,
+  type CreateJobRequest,
+  type UpdateJobRequest,
+} from '@myclaw/contracts';
+import type { ZodIssue } from 'zod';
 
 import { ApplicationError } from '../../../application/common/application-error.js';
 import { JobManagementService } from '../../../application/jobs/job-management-service.js';
@@ -12,6 +19,11 @@ import {
   runtimeJobSchedulePlanner,
   requestSchedulerSync,
 } from '../../../jobs/scheduler.js';
+import { resolveModelSelection } from '../../../shared/model-catalog.js';
+import {
+  resolveRequestedJobModel,
+  resolveRequestedJobModelPatch,
+} from '../../../application/jobs/job-model-selection.js';
 import {
   getRuntimeControlRepository,
   getRuntimeEventExchange,
@@ -64,7 +76,49 @@ function sendApplicationError(res: ServerResponse, error: unknown): boolean {
       sendError(res, 501, 'NOT_IMPLEMENTED', error.message);
       return true;
   }
+
   throw error;
+}
+
+function formatJobRequestIssue(issue: ZodIssue): string {
+  if (issue.code === 'unrecognized_keys' && issue.keys.length > 0) {
+    return `Unsupported job request field "${issue.keys[0]}".`;
+  }
+  if (issue.message === 'Use either modelAlias or modelProfileId, not both.') {
+    return issue.message;
+  }
+  const path = issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+  return `${path}${issue.message}`;
+}
+
+function parseCreateJobRequest(
+  res: ServerResponse,
+  body: Record<string, unknown>,
+): CreateJobRequest | undefined {
+  const parsed = CreateJobRequestSchema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  sendError(
+    res,
+    400,
+    'INVALID_REQUEST',
+    formatJobRequestIssue(parsed.error.issues[0]),
+  );
+  return undefined;
+}
+
+function parseUpdateJobRequest(
+  res: ServerResponse,
+  body: Record<string, unknown>,
+): UpdateJobRequest | undefined {
+  const parsed = UpdateJobRequestSchema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  sendError(
+    res,
+    400,
+    'INVALID_REQUEST',
+    formatJobRequestIssue(parsed.error.issues[0]),
+  );
+  return undefined;
 }
 
 export function createJobManagementService() {
@@ -126,6 +180,65 @@ function adaptAppSession(
   };
 }
 
+function modelPreviewFor(input: {
+  explicitAlias?: string;
+  kind: 'manual' | 'once' | 'recurring';
+  getDefaultModelConfig: ControlRouteContext['getDefaultModelConfig'];
+}) {
+  const modelKind = input.kind === 'recurring' ? 'recurringJob' : 'oneTimeJob';
+  const defaultConfig = input.getDefaultModelConfig(modelKind);
+  const selected = input.explicitAlias || defaultConfig.model;
+  const resolved = selected ? resolveModelSelection(selected) : undefined;
+  if (!resolved?.ok) {
+    return {
+      modelAlias: input.explicitAlias ?? null,
+      modelSource: input.explicitAlias ? 'explicit' : defaultConfig.source,
+      model: null,
+    };
+  }
+  return {
+    modelAlias: resolved.alias,
+    modelSource: input.explicitAlias ? 'explicit' : defaultConfig.source,
+    model: {
+      displayName: resolved.entry.displayName,
+      provider: resolved.entry.providerLabel,
+      contextWindowTokens: resolved.entry.contextWindowTokens,
+      maxOutputTokens: resolved.entry.maxOutputTokens,
+      cachePolicy: resolved.entry.cacheMode,
+      modelProfileId: resolved.entry.id,
+    },
+  };
+}
+
+function resolveCreateJobModel(input: {
+  modelAlias: unknown;
+  modelProfileId: unknown;
+  kind: 'manual' | 'once' | 'recurring';
+  getDefaultModelConfig: ControlRouteContext['getDefaultModelConfig'];
+}): {
+  modelAlias: string;
+  source: string;
+  explicit: boolean;
+} {
+  const requested = resolveRequestedJobModel(
+    input.modelAlias,
+    input.modelProfileId,
+  );
+  if (requested)
+    return { modelAlias: requested, source: 'explicit', explicit: true };
+  const modelKind = input.kind === 'recurring' ? 'recurringJob' : 'oneTimeJob';
+  const defaultConfig = input.getDefaultModelConfig(modelKind);
+  const resolved = resolveModelSelection(defaultConfig.model);
+  if (!resolved.ok) {
+    throw new ApplicationError('INVALID_REQUEST', resolved.message);
+  }
+  return {
+    modelAlias: resolved.alias,
+    source: defaultConfig.source,
+    explicit: false,
+  };
+}
+
 export async function handleJobRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -136,14 +249,19 @@ export async function handleJobRoutes(
   if (pathname === '/v1/jobs' && req.method === 'POST') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['jobs:write']);
     if (!auth) return true;
-    const body = (await readJson(req)) as Record<string, unknown>;
-    const kind =
-      body.kind === 'manual' ||
-      body.kind === 'once' ||
-      body.kind === 'recurring'
-        ? body.kind
-        : 'manual';
+    const body = parseCreateJobRequest(
+      res,
+      (await readJson(req)) as Record<string, unknown>,
+    );
+    if (!body) return true;
+    const kind = body.kind ?? 'manual';
     try {
+      const resolvedModel = resolveCreateJobModel({
+        modelAlias: body.modelAlias,
+        modelProfileId: body.modelProfileId,
+        kind,
+        getDefaultModelConfig: ctx.getDefaultModelConfig,
+      });
       const created = await createJobManagementService().createJob({
         appId: auth.appId,
         name: String(body.name || ''),
@@ -154,9 +272,21 @@ export async function handleJobRoutes(
         schedule: (body.schedule || {}) as { type?: unknown; value?: unknown },
         executionMode: body.executionMode,
         threadId: body.threadId,
-        model: body.model,
+        modelAlias: resolvedModel.explicit
+          ? resolvedModel.modelAlias
+          : undefined,
+        dryRun: body.dryRun,
       });
-      sendJson(res, 201, { jobId: created.jobId });
+      sendJson(res, body.dryRun === true ? 200 : 201, {
+        ...(body.dryRun === true ? {} : { jobId: created.jobId }),
+        dryRun: body.dryRun === true,
+        ...modelPreviewFor({
+          explicitAlias: resolvedModel.modelAlias,
+          kind,
+          getDefaultModelConfig: ctx.getDefaultModelConfig,
+        }),
+        modelSource: resolvedModel.source,
+      });
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
     }
@@ -211,8 +341,16 @@ export async function handleJobRoutes(
   if (jobRoute && req.method === 'PATCH' && jobRoute.action === 'get') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['jobs:write']);
     if (!auth) return true;
-    const body = (await readJson(req)) as Record<string, unknown>;
+    const body = parseUpdateJobRequest(
+      res,
+      (await readJson(req)) as Record<string, unknown>,
+    );
+    if (!body) return true;
     try {
+      const requestedModel = resolveRequestedJobModelPatch(
+        body.modelAlias,
+        body.modelProfileId,
+      );
       const { job: updated } = await createJobManagementService().updateJob({
         appId: auth.appId,
         jobId: jobRoute.jobId,
@@ -223,9 +361,10 @@ export async function handleJobRoutes(
           body.executionMode === 'parallel'
             ? { executionMode: body.executionMode }
             : {}),
-          ...(typeof body.threadId === 'string'
+          ...(typeof body.threadId === 'string' || body.threadId === null
             ? { threadId: body.threadId }
             : {}),
+          ...(requestedModel.specified ? { model: requestedModel.model } : {}),
           ...(body.status === 'active' || body.status === 'paused'
             ? { status: body.status }
             : {}),

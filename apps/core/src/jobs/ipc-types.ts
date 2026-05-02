@@ -6,7 +6,8 @@ export interface TaskIpcData {
   authThreadId?: string;
   taskId?: string;
   prompt?: string;
-  model?: string;
+  modelAlias?: string | null;
+  modelProfileId?: string | null;
   name?: string;
   scheduleType?: string;
   scheduleValue?: string;
@@ -16,7 +17,7 @@ export interface TaskIpcData {
   linkedSessions?: string[];
   deliverTo?: string[];
   groupScope?: string;
-  threadId?: string;
+  threadId?: string | null;
   createdBy?: 'agent' | 'human';
   silent?: boolean;
   timeoutMs?: number;

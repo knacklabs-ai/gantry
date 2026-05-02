@@ -142,7 +142,7 @@ describe('resolveClaudeAuthState', () => {
         .readFileSync(settingsPath, 'utf-8')
         .replace(
           'agent:\n  default_model: ""',
-          'agent:\n  default_model: claude-file-model',
+          'agent:\n  default_model: sonnet',
         ),
       'utf-8',
     );
@@ -165,7 +165,7 @@ describe('resolveClaudeAuthState', () => {
     const { getConfiguredDefaultModel, STORAGE_POSTGRES_URL } =
       await import('@core/config/index.js');
 
-    expect(getConfiguredDefaultModel()).toBe('claude-file-model');
+    expect(getConfiguredDefaultModel()).toBe('sonnet');
     expect(STORAGE_POSTGRES_URL).toBe(
       'postgres://file:pass@localhost:15432/myclaw',
     );
@@ -204,6 +204,25 @@ describe('resolveClaudeAuthState', () => {
     expect(raw).toContain('name: Kai');
     expect(raw).toContain('default_model: sonnet');
     expect(raw).toContain('enabled: false');
+  });
+
+  it('rejects raw or unknown model values in public runtime settings', async () => {
+    createRuntimeHome('onecli');
+    vi.resetModules();
+
+    const { updatePublicRuntimeSettings } =
+      await import('@core/config/index.js');
+
+    expect(() =>
+      updatePublicRuntimeSettings({
+        agent: { defaultModel: 'claude-sonnet-4-6' },
+      }),
+    ).toThrow(/Provider model ID "claude-sonnet-4-6" is not accepted/);
+    expect(() =>
+      updatePublicRuntimeSettings({
+        agent: { oneTimeJobDefaultModel: 'sonet' },
+      }),
+    ).toThrow(/Did you mean "sonnet"/);
   });
 
   it('returns no-op metadata when a typed settings patch is unchanged', async () => {

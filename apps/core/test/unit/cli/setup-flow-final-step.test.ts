@@ -25,7 +25,7 @@ function makeDraft(runtimeHome: string): any {
     primaryProvider: 'telegram',
     credentialMode: 'onecli',
     onecliUrl: 'http://localhost:10254',
-    selectedModel: 'claude-sonnet-4-6',
+    selectedModel: 'sonnet',
     telegramBotToken: 'telegram-token',
     telegramChatJid: 'tg:-100123',
     telegramDisplayName: 'Main Agent',
@@ -203,6 +203,7 @@ describe('setup config step', () => {
     expect(persistOnboardingConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeHome,
+        anthropicModel: 'sonnet',
         postgresDatabaseUrl: draft.postgresDatabaseUrl,
         onecliPostgresDatabaseUrl: draft.onecliPostgresDatabaseUrl,
       }),

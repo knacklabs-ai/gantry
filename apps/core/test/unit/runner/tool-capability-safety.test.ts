@@ -18,8 +18,18 @@ describe('tool capability safety', () => {
     expect(profile.allowedTools).toContain(
       'mcp__myclaw__request_channel_tool_enable',
     );
+    expect(profile.allowedTools).not.toContain(
+      'mcp__myclaw__request_settings_update',
+    );
     expect(profile.allowedTools).not.toEqual(
-      expect.arrayContaining(['Bash', 'Write', 'Edit', 'mcp__myclaw__*']),
+      expect.arrayContaining([
+        'Bash',
+        'Write',
+        'Edit',
+        'Agent',
+        'mcp__myclaw__list_models',
+        'mcp__myclaw__*',
+      ]),
     );
   });
 

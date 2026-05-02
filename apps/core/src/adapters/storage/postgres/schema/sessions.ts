@@ -32,7 +32,7 @@ export const agentSessionsPostgres = pgTable(
     userId: text('user_id'),
     latestProviderSessionId: text('latest_provider_session_id'),
     status: text('status').notNull().default('active'),
-    modelOverride: text('model_override'),
+    model: text('model_override'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
       .notNull()
       .defaultNow(),

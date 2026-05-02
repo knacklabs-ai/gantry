@@ -203,8 +203,10 @@ describe('setGroupModelOverride', () => {
   });
 
   it('does nothing when model is unchanged', () => {
-    groups['g1@g.us'] = makeGroup({ agentConfig: { model: 'gpt-4' } });
-    setGroupModelOverride(groups, 'g1@g.us', 'gpt-4', persist);
+    groups['g1@g.us'] = makeGroup({
+      agentConfig: { model: 'sonnet' },
+    });
+    setGroupModelOverride(groups, 'g1@g.us', 'sonnet', persist);
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -216,17 +218,21 @@ describe('setGroupModelOverride', () => {
 
   it('sets model on a group with no agentConfig', () => {
     groups['g1@g.us'] = makeGroup();
-    setGroupModelOverride(groups, 'g1@g.us', 'claude-3', persist);
+    setGroupModelOverride(groups, 'g1@g.us', 'haiku', persist);
 
-    expect(groups['g1@g.us'].agentConfig).toEqual({ model: 'claude-3' });
+    expect(groups['g1@g.us'].agentConfig).toEqual({
+      model: 'haiku',
+    });
     expect(persist).toHaveBeenCalledWith('g1@g.us', groups['g1@g.us']);
   });
 
   it('overwrites existing model', () => {
-    groups['g1@g.us'] = makeGroup({ agentConfig: { model: 'old-model' } });
-    setGroupModelOverride(groups, 'g1@g.us', 'new-model', persist);
+    groups['g1@g.us'] = makeGroup({
+      agentConfig: { model: 'haiku' },
+    });
+    setGroupModelOverride(groups, 'g1@g.us', 'opus', persist);
 
-    expect(groups['g1@g.us'].agentConfig?.model).toBe('new-model');
+    expect(groups['g1@g.us'].agentConfig?.model).toBe('opus');
     expect(persist).toHaveBeenCalled();
   });
 
@@ -252,14 +258,25 @@ describe('setGroupModelOverride', () => {
   });
 
   it('does not mutate model when async persistence rejects', async () => {
-    groups['g1@g.us'] = makeGroup({ agentConfig: { model: 'old-model' } });
+    groups['g1@g.us'] = makeGroup({ agentConfig: { model: 'haiku' } });
     persist = vi.fn<PersistGroupFn>().mockRejectedValue(new Error('db down'));
 
     await expect(
-      setGroupModelOverride(groups, 'g1@g.us', 'new-model', persist),
+      setGroupModelOverride(groups, 'g1@g.us', 'sonnet', persist),
     ).rejects.toThrow('db down');
 
-    expect(groups['g1@g.us'].agentConfig?.model).toBe('old-model');
+    expect(groups['g1@g.us'].agentConfig?.model).toBe('haiku');
+  });
+
+  it('rejects unknown models without clearing the current override', () => {
+    groups['g1@g.us'] = makeGroup({ agentConfig: { model: 'haiku' } });
+
+    expect(() =>
+      setGroupModelOverride(groups, 'g1@g.us', 'new-model', persist),
+    ).toThrow('Unknown model "new-model"');
+
+    expect(groups['g1@g.us'].agentConfig?.model).toBe('haiku');
+    expect(persist).not.toHaveBeenCalled();
   });
 });
 

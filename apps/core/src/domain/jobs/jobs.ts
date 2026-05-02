@@ -24,7 +24,7 @@ export interface Job {
   agentId: AgentId;
   name: string;
   prompt: string;
-  modelOverride?: string;
+  model?: string;
   schedule: JobSchedule;
   status: 'active' | 'paused' | 'running' | 'completed' | 'dead_lettered';
   executionMode: 'parallel' | 'serialized';

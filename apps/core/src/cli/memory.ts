@@ -20,6 +20,7 @@ import {
   saveRuntimeSettings,
   type EmbeddingProviderName,
 } from '../config/settings/runtime-settings.js';
+import { resolveModelSelection } from '../shared/model-catalog.js';
 
 function usage(): string {
   return [
@@ -154,8 +155,10 @@ function setTaskModel(
   if (!trimmed) {
     return { ok: false, message: 'Model must be a non-empty string.' };
   }
+  const resolved = resolveModelSelection(trimmed);
+  if (!resolved.ok) return { ok: false, message: resolved.message };
   const settings = loadRuntimeSettings(runtimeHome);
-  settings.memory.llm.models[task] = trimmed;
+  settings.memory.llm.models[task] = resolved.alias;
   saveRuntimeSettings(runtimeHome, settings);
   return { ok: true };
 }

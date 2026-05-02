@@ -101,6 +101,64 @@ describe('OnecliAgentCredentialBroker', () => {
     expect(getContainerConfig).toHaveBeenCalledTimes(2);
   });
 
+  it('tags OpenRouter auth tokens with broker provenance', async () => {
+    getContainerConfig.mockResolvedValue({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER: 'openrouter',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      },
+    });
+
+    const { OnecliAgentCredentialBroker } =
+      await import('@core/adapters/credentials/onecli/broker.js');
+    const broker = new OnecliAgentCredentialBroker({
+      onecliUrl: 'http://localhost:10254',
+      dataDir: os.tmpdir(),
+    });
+    expect(broker.getCapabilities()).toMatchObject({
+      returnsRawSecrets: false,
+      projectsProviderTokens: true,
+      projectedSecretEnvKeys: ['ANTHROPIC_AUTH_TOKEN'],
+    });
+
+    await expect(
+      broker.getInjection({
+        binding: { profile: 'onecli', agentIdentifier: 'agent-a' },
+      }),
+    ).resolves.toMatchObject({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      },
+      credentialProviders: {
+        ANTHROPIC_AUTH_TOKEN: 'openrouter',
+      },
+    });
+  });
+
+  it('rejects unscoped auth tokens from OneCLI', async () => {
+    getContainerConfig.mockResolvedValue({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-secret',
+      },
+    });
+
+    const { OnecliAgentCredentialBroker } =
+      await import('@core/adapters/credentials/onecli/broker.js');
+    const broker = new OnecliAgentCredentialBroker({
+      onecliUrl: 'http://localhost:10254',
+      dataDir: os.tmpdir(),
+    });
+
+    await expect(
+      broker.getInjection({
+        binding: { profile: 'onecli', agentIdentifier: 'agent-a' },
+      }),
+    ).rejects.toThrow('forbidden raw credential env key: ANTHROPIC_AUTH_TOKEN');
+  });
+
   it('coalesces concurrent container config requests by agent', async () => {
     let resolveConfig!: (config: { env: Record<string, string> }) => void;
     getContainerConfig.mockReturnValue(

@@ -72,6 +72,8 @@ export class OnecliAgentCredentialBroker implements AgentCredentialBroker {
       profile: 'onecli',
       supportsAgentBinding: true,
       returnsRawSecrets: false,
+      projectsProviderTokens: true,
+      projectedSecretEnvKeys: ['ANTHROPIC_AUTH_TOKEN'],
     };
   }
 
@@ -80,7 +82,9 @@ export class OnecliAgentCredentialBroker implements AgentCredentialBroker {
   ): Promise<AgentCredentialInjection> {
     const agentIdentifier = input.binding.agentIdentifier;
     const config = await this.getAgentRuntimeConfig(agentIdentifier);
-    const { env, droppedKeys } = filterTrustedOnecliEnv(config.env || {});
+    const { env, credentialProviders, droppedKeys } = filterTrustedOnecliEnv(
+      config.env || {},
+    );
     if (droppedKeys.length > 0) {
       logger.warn(
         {
@@ -96,6 +100,7 @@ export class OnecliAgentCredentialBroker implements AgentCredentialBroker {
 
     return {
       env,
+      ...(credentialProviders ? { credentialProviders } : {}),
       applied: true,
       brokerProfile: 'onecli',
       ...(httpProxy || httpsProxy

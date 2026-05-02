@@ -12,9 +12,9 @@ import {
   loadRuntimeSettingsFromPath,
 } from '../config/settings/runtime-settings.js';
 import {
-  DEFAULT_SETUP_MODEL,
-  normalizeClaudeModelSelection,
-} from '../models/claude-model-registry.js';
+  DEFAULT_SETUP_MODEL_ALIAS,
+  resolveModelAlias,
+} from '../shared/model-catalog.js';
 import { writeOnboardingState } from './onboarding-state.js';
 import type { OnboardingState, OnboardingStep } from './onboarding-state.js';
 import { MAIN_AGENT_NAME } from './main-agent.js';
@@ -157,7 +157,8 @@ export function updateDraftFromState(
   );
   draft.onecliUrl = state.data.onecliUrl || draft.onecliUrl;
   draft.agentName = state.data.agentName || draft.agentName;
-  draft.selectedModel = state.data.selectedModel || draft.selectedModel;
+  draft.selectedModel =
+    resolveModelAlias(state.data.selectedModel) || draft.selectedModel;
   draft.memoryEnabled = state.data.memoryEnabled ?? draft.memoryEnabled;
   draft.embeddingsEnabled =
     state.data.embeddingsEnabled ?? draft.embeddingsEnabled;
@@ -231,9 +232,9 @@ export function restoreDraft(
     onecliUrl: settings.credentialBroker.onecli.url || '',
     agentName: state?.data.agentName || settings.agent.name || MAIN_AGENT_NAME,
     selectedModel:
-      normalizeClaudeModelSelection(
+      resolveModelAlias(
         state?.data.selectedModel || settings.agent.defaultModel,
-      ) || DEFAULT_SETUP_MODEL,
+      ) || DEFAULT_SETUP_MODEL_ALIAS,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || '',
     telegramChatJid: '',
     telegramDisplayName: settings.agent.name || MAIN_AGENT_NAME,

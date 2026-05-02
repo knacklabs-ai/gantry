@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type {
+  CreateJobInput,
+  UpdateJobInput,
+} from '../../../sdk/src/job-model-types.js';
 
 import {
   AgentResponseSchema,
@@ -32,6 +36,7 @@ import {
   RuntimeLimitSchema,
   SchemaDescriptorSchema,
   StreamEventSchema,
+  UpdateJobRequestSchema,
   createCursorPageResponseSchema,
   createPageResponseSchema,
 } from '@contracts-src/index.js';
@@ -129,6 +134,10 @@ describe('contracts package', () => {
         conversationId: 'conversation-1',
       }),
     ).toMatchObject({ conversationId: 'conversation-1' });
+    expectInvalid(CreateSessionRequestSchema, {
+      conversationId: 'conversation-1',
+      unexpectedField: 'sonnet',
+    });
 
     expect(
       AgentResponseSchema.parse({
@@ -150,23 +159,66 @@ describe('contracts package', () => {
     });
     expectInvalid(CreateAgentRequestSchema, { appId: 'app-1', name: '' });
 
-    expect(
-      CreateJobRequestSchema.parse({
-        appId: 'app-1',
-        name: 'Daily summary',
-        prompt: 'Summarize open work',
-        schedule: { type: 'manual' },
-      }),
-    ).toMatchObject({ name: 'Daily summary' });
+    const sdkCreatePayload = {
+      name: 'Daily summary',
+      prompt: 'Summarize open work',
+      sessionId: 'session-1',
+      kind: 'recurring',
+      schedule: { type: 'cron', value: '0 9 * * *' },
+      modelAlias: 'sonnet',
+    } satisfies CreateJobInput;
+    expect(CreateJobRequestSchema.parse(sdkCreatePayload)).toMatchObject({
+      name: 'Daily summary',
+      sessionId: 'session-1',
+    });
     expectInvalid(CreateJobRequestSchema, {
-      appId: 'app-1',
       name: '',
+      prompt: 'Summarize open work',
+      sessionId: 'session-1',
+    });
+    expectInvalid(CreateJobRequestSchema, {
+      name: 'Daily summary',
+      prompt: '',
+      sessionId: 'session-1',
+    });
+    expectInvalid(CreateJobRequestSchema, {
+      name: 'Daily summary',
       prompt: 'Summarize open work',
     });
     expectInvalid(CreateJobRequestSchema, {
-      appId: 'app-1',
       name: 'Daily summary',
-      prompt: '',
+      prompt: 'Summarize open work',
+      sessionId: 'session-1',
+      modelAlias: 'sonnet',
+      modelProfileId: 'anthropic:sonnet-4.6',
+    });
+    expectInvalid(CreateJobRequestSchema, {
+      name: 'Daily summary',
+      prompt: 'Summarize open work',
+      sessionId: 'session-1',
+      model: 'claude-sonnet-4-6',
+    });
+    expectInvalid(CreateJobRequestSchema, {
+      name: 'Daily summary',
+      prompt: 'Summarize open work',
+      sessionId: 'session-1',
+      providerModelId: 'sonnet',
+    });
+
+    const sdkUpdatePayload = {
+      modelAlias: null,
+      status: 'paused',
+    } satisfies UpdateJobInput;
+    expect(UpdateJobRequestSchema.parse(sdkUpdatePayload)).toEqual({
+      modelAlias: null,
+      status: 'paused',
+    });
+    expectInvalid(UpdateJobRequestSchema, {
+      modelAlias: 'sonnet',
+      modelProfileId: 'anthropic:sonnet-4.6',
+    });
+    expectInvalid(UpdateJobRequestSchema, {
+      model: 'claude-sonnet-4-6',
     });
 
     expect(

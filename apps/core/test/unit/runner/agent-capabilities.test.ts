@@ -12,7 +12,6 @@ const SAFE_DEFAULT_ALLOWED_TOOLS = [
   'Grep',
   'WebSearch',
   'WebFetch',
-  'Task',
   'TaskOutput',
   'TaskStop',
   'ToolSearch',
@@ -29,6 +28,12 @@ const SAFE_DEFAULT_ALLOWED_TOOLS = [
   'mcp__myclaw__request_channel_tool_enable',
   'mcp__myclaw__mcp_list_tools',
   'mcp__myclaw__mcp_call_tool',
+] as const;
+
+const MAIN_AGENT_ALLOWED_TOOLS = [
+  ...SAFE_DEFAULT_ALLOWED_TOOLS,
+  'mcp__myclaw__settings_desired_state',
+  'mcp__myclaw__request_settings_update',
   'mcp__myclaw__service_restart',
   'mcp__myclaw__register_agent',
 ] as const;
@@ -39,6 +44,8 @@ const DANGEROUS_DEFAULT_TOOLS = [
   'Edit',
   'NotebookEdit',
   'Config',
+  'Agent',
+  'mcp__myclaw__list_models',
   'mcp__myclaw__*',
 ] as const;
 
@@ -79,6 +86,23 @@ describe('agent capability composition', () => {
         no_proxy: '127.0.0.1,localhost,::1',
       },
     });
+  });
+
+  it('exposes global settings and service tools only to the main agent', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'tg:main',
+      groupFolder: 'main_agent',
+      isMain: true,
+    });
+
+    expect(profile.allowedTools).toEqual(MAIN_AGENT_ALLOWED_TOOLS);
+    expect(profile.allowedTools).toContain(
+      'mcp__myclaw__settings_desired_state',
+    );
+    expect(profile.allowedTools).toContain(
+      'mcp__myclaw__request_settings_update',
+    );
   });
 
   it('supports provider extension without replacing built-ins', () => {
@@ -124,7 +148,7 @@ describe('agent capability composition', () => {
       command: 'node',
     });
     expect(profile.mcpServers.github).toBeUndefined();
-    expect(profile.allowedTools).toEqual([...SAFE_DEFAULT_ALLOWED_TOOLS]);
+    expect(profile.allowedTools).toEqual(MAIN_AGENT_ALLOWED_TOOLS);
     expect(profile.allowedTools).not.toContain(
       'mcp__github__search_repositories',
     );

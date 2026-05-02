@@ -95,6 +95,59 @@ describe('OneCLI env policy', () => {
     ).toThrow('forbidden raw credential env key: CLAUDE_CODE_OAUTH_TOKEN');
   });
 
+  it('allows OpenRouter-scoped auth tokens only with explicit broker provenance', () => {
+    expect(
+      filterTrustedOnecliEnv({
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER: 'openrouter',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      }),
+    ).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      },
+      credentialProviders: {
+        ANTHROPIC_AUTH_TOKEN: 'openrouter',
+      },
+      droppedKeys: [],
+    });
+
+    expect(() =>
+      filterTrustedOnecliEnv({
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-test-token',
+      }),
+    ).toThrow('forbidden raw credential env key: ANTHROPIC_AUTH_TOKEN');
+
+    expect(() =>
+      filterTrustedOnecliEnv({
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER: 'openrouter',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-secret',
+      }),
+    ).toThrow(
+      'forbidden raw credential env value for key: ANTHROPIC_AUTH_TOKEN',
+    );
+
+    expect(() =>
+      filterTrustedOnecliEnv({
+        ANTHROPIC_BASE_URL: 'https://broker.example.com',
+        MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER: 'native',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-secret',
+      }),
+    ).toThrow(
+      'forbidden raw credential env value for key: MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER',
+    );
+
+    expect(() =>
+      filterTrustedOnecliEnv({
+        ANTHROPIC_BASE_URL: 'https://broker.example.com',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-secret',
+      }),
+    ).toThrow('forbidden raw credential env key: ANTHROPIC_AUTH_TOKEN');
+  });
+
   it('allows only local model proxy env and rejects tool proxy controls', () => {
     expect(
       filterTrustedOnecliEnv({

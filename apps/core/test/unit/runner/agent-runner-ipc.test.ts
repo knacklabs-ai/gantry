@@ -78,7 +78,6 @@ function createRunnerFixture(): {
   const runnerClaudeDir = path.join(runnerDir, 'claude');
   const infrastructureTimeDir = path.join(root, 'infrastructure', 'time');
   const sharedDir = path.join(root, 'shared');
-  const modelsDir = path.join(root, 'models');
   const runnerPath = path.join(runnerClaudeDir, 'index.ts');
   const sdkDir = path.join(
     root,
@@ -95,7 +94,6 @@ function createRunnerFixture(): {
   fs.mkdirSync(runnerClaudeDir, { recursive: true });
   fs.mkdirSync(infrastructureTimeDir, { recursive: true });
   fs.mkdirSync(sharedDir, { recursive: true });
-  fs.mkdirSync(modelsDir, { recursive: true });
   for (const file of fs.readdirSync(
     path.resolve('apps/core/src/runner/claude'),
   )) {
@@ -131,8 +129,8 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'object.ts'),
   );
   fs.copyFileSync(
-    path.resolve('apps/core/src/models/claude-model-registry.ts'),
-    path.join(modelsDir, 'claude-model-registry.ts'),
+    path.resolve('apps/core/src/shared/model-catalog.ts'),
+    path.join(sharedDir, 'model-catalog.ts'),
   );
   symlinkPackage(root, 'dayjs', 'node_modules/dayjs');
   fs.writeFileSync(

@@ -13,14 +13,21 @@ import {
 } from '../config/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { RegisteredGroup } from '../domain/types.js';
-import { normalizeClaudeModelSelection } from '../models/claude-model-registry.js';
+import {
+  findModelByRunnerModel,
+  resolveModelSelection,
+  resolveRunnerModel,
+} from '../shared/model-catalog.js';
 import { resolveGroupFolderPath } from '../platform/group-folder.js';
 import {
   getHostRuntimeCredentialEnv,
   prepareHostRuntimeContext,
 } from './agent-spawn-host.js';
 import type { MaterializedMcpCapability } from '../application/mcp/mcp-server-service.js';
-import { materializeClaudeRuntime } from '../adapters/llm/anthropic-claude-agent/claude-config-materializer.js';
+import {
+  applyOpenRouterSdkEnv,
+  materializeClaudeRuntime,
+} from '../adapters/llm/anthropic-claude-agent/claude-config-materializer.js';
 import {
   ArtifactClaudeSkillSource,
   BundledClaudeSkillSource,
@@ -92,7 +99,30 @@ export async function spawnAgent(
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const processName = `myclaw-${safeName}-${Date.now()}`;
-  const modelConfig = getEffectiveModelConfig(group.agentConfig?.model);
+  const modelConfig = getEffectiveModelConfig(
+    input.isScheduledJob ? undefined : group.agentConfig?.model,
+    input.isScheduledJob
+      ? input.jobModelUseKind || 'recurringJob'
+      : 'interactive',
+    group.folder,
+  );
+  const requestedModel = input.model || modelConfig.model;
+  const resolvedModel = requestedModel
+    ? resolveModelSelection(requestedModel)
+    : undefined;
+  if (resolvedModel && !resolvedModel.ok) {
+    return {
+      status: 'error',
+      result: null,
+      error: resolvedModel.message,
+    };
+  }
+  const effectiveModel = resolvedModel?.ok
+    ? resolvedModel.runnerModel
+    : resolveRunnerModel(modelConfig.model);
+  const effectiveModelEntry =
+    (resolvedModel?.ok ? resolvedModel.entry : undefined) ??
+    findModelByRunnerModel(effectiveModel);
   const promptProfileService = getPromptProfileService();
   const agentIdentifier = input.isMain
     ? undefined
@@ -122,6 +152,30 @@ export async function spawnAgent(
     agentIdentifier,
     options?.credentialBroker,
   );
+  if (
+    effectiveModelEntry?.provider === 'openrouter' &&
+    (!hostCredentials.env.ANTHROPIC_AUTH_TOKEN ||
+      hostCredentials.credentialProviders.ANTHROPIC_AUTH_TOKEN !== 'openrouter')
+  ) {
+    return {
+      status: 'error',
+      result: null,
+      error: `OpenRouter model ${effectiveModelEntry.displayName} requires an OpenRouter-scoped credential from AgentCredentialBroker as ANTHROPIC_AUTH_TOKEN. Configure Model Access/OpenRouter credentials before selecting this model.`,
+    };
+  }
+  if (
+    effectiveModelEntry &&
+    effectiveModelEntry.provider !== 'openrouter' &&
+    (hostCredentials.credentialProviders.ANTHROPIC_AUTH_TOKEN ===
+      'openrouter' ||
+      isOpenRouterBaseUrl(hostCredentials.env.ANTHROPIC_BASE_URL))
+  ) {
+    return {
+      status: 'error',
+      result: null,
+      error: `Model ${effectiveModelEntry.displayName} is configured for ${effectiveModelEntry.providerLabel}, but AgentCredentialBroker returned OpenRouter-scoped Anthropic SDK credentials. Switch the session/job model to kimi or configure ${effectiveModelEntry.providerLabel} credentials for this model.`,
+    };
+  }
   const browserWiring = createAgentBrowserRunWiring(
     {
       isMain: input.isMain,
@@ -182,14 +236,14 @@ export async function spawnAgent(
       packageRoot,
       skillSource: new CompositeSkillSource(skillSources),
       settings: {
-        model: normalizeClaudeModelSelection(input.model || modelConfig.model),
+        model: effectiveModel,
       },
     });
   } catch (err) {
     return {
       status: 'error',
       result: null,
-      error: `Claude runtime materialization failed: ${err instanceof Error ? err.message : String(err)}`,
+      error: `LLM runtime materialization failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
@@ -220,12 +274,12 @@ export async function spawnAgent(
   };
   applyLoopbackNoProxyEnv(env);
   // Job-level model overrides group-level model.
-  const effectiveModel = normalizeClaudeModelSelection(
-    input.model || modelConfig.model,
-  );
   const effectiveModelSource = input.model ? 'job.model' : modelConfig.source;
   if (effectiveModel) {
     env.ANTHROPIC_MODEL = effectiveModel;
+  }
+  if (effectiveModelEntry?.provider === 'openrouter') {
+    applyOpenRouterSdkEnv(env);
   }
   let browserRuntimeDetails: readonly string[] = [];
   let allMcpCapabilities: MaterializedMcpCapability[] = [];
@@ -318,6 +372,16 @@ export async function spawnAgent(
   } finally {
     cleanupRunnerMcpConfigFile(mcpConfigPath);
     claudeRuntimeMaterialization.cleanup();
+  }
+}
+
+function isOpenRouterBaseUrl(value?: string): boolean {
+  if (!value) return false;
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
+  } catch {
+    return false;
   }
 }
 

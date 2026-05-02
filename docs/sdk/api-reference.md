@@ -31,26 +31,16 @@ the launchd plist; keep the plist limited to `MYCLAW_HOME`, `HOME`, and `PATH`.
 
 ## Settings
 
-The typed settings API exposes only allowlisted non-secret runtime settings. It
-does not expose raw `settings.yaml`, channel tokens, database URLs, or arbitrary
-nested patches.
+The typed settings API is diagnostic/read-only for local personal mode. It
+exposes the public non-secret desired-state view but does not accept runtime
+configuration mutations. Use CLI commands, direct `settings.yaml` edits, or
+approved MyClaw admin tools for settings changes.
 
 ```ts
-client.settings.get()
-client.settings.update({
-  agent?: {
-    name?,
-    defaultModel?,
-  },
-  memory?: {
-    enabled?,
-    dreaming?: { enabled? },
-  },
-})
+client.settings.get();
 ```
 
-`PATCH /v1/settings` persists to `settings.yaml`, returns changed field paths,
-and reports `restartRequired`; it does not restart the runtime.
+`PATCH /v1/settings` returns `409 SETTINGS_READ_ONLY`.
 
 ## Capability Requests
 
@@ -313,18 +303,32 @@ client.jobs.create({
   schedule?, // recurring
   executionMode?, // parallel | serialized
   threadId?,
-  model?,
+  modelAlias?,    // friendly catalog alias, e.g. opus, sonnet, kimi
+  modelProfileId?,
+  dryRun?,        // preview resolved model/cache/provider without scheduling
 })
 
 client.jobs.list()
 client.jobs.get(jobId)
-client.jobs.update(jobId, patch)
+client.jobs.update(jobId, {
+  name?,
+  prompt?,
+  executionMode?,
+  threadId?,
+  status?,
+  modelAlias?,    // use null to clear back to inherited defaults
+  modelProfileId?,
+})
 client.jobs.delete(jobId)
 client.jobs.pause(jobId)
 client.jobs.resume(jobId)
 client.jobs.trigger(jobId)
 client.jobs.wait(triggerId, timeoutMs?)
 ```
+
+Use `client.models.list()` to inspect supported model aliases, context windows,
+cache policy, and provider labels. API job creation rejects raw provider model
+IDs unless they are registered catalog aliases.
 
 ## Runs
 
@@ -388,8 +392,8 @@ client.channels.conversations.messages(conversationId, {
 Control API scopes:
 
 ```http
-GET    /v1/settings                                sessions:read
-PATCH  /v1/settings                                agents:admin
+GET    /v1/settings                                agents:admin
+GET    /v1/models                                  sessions:read
 
 GET    /v1/agents                                  agents:admin
 POST   /v1/agents                                  agents:admin

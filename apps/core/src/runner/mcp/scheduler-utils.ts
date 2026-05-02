@@ -1,10 +1,13 @@
 import { threadId } from './context.js';
 
 export function resolveSchedulerThreadArg(
-  requestedThreadId: string | undefined,
+  requestedThreadId: string | null | undefined,
   useAmbientDefault: boolean,
-): { threadId?: string; error?: string } {
+): { threadId?: string | null; error?: string } {
   if (requestedThreadId !== undefined) {
+    if (requestedThreadId === null) {
+      return { threadId: null };
+    }
     const requested = requestedThreadId.trim();
     if (requested && requested !== threadId) {
       return {

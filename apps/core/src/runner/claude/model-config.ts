@@ -2,11 +2,11 @@ import type {
   EffortLevel,
   ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
-import { normalizeClaudeModelSelection } from '../../models/claude-model-registry.js';
+import { resolveCatalogRunnerModel } from '../../shared/model-catalog.js';
 import type { AgentRunnerInput } from './types.js';
 
 function normalizeModelValue(value?: string): string | undefined {
-  return normalizeClaudeModelSelection(value);
+  return resolveCatalogRunnerModel(value);
 }
 
 export function resolveConfiguredModel(): {

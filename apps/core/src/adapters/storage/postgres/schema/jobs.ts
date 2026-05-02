@@ -35,7 +35,7 @@ export const canonicalJobsPostgres = pgTable(
     createdBySource: text('created_by_source').notNull(),
     name: text('name').notNull(),
     prompt: text('prompt').notNull(),
-    modelOverride: text('model_override'),
+    model: text('model_override'),
     scheduleJson: text('schedule_json').notNull(),
     status: text('status').notNull().default('active'),
     executionMode: text('execution_mode').notNull().default('parallel'),

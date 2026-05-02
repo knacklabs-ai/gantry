@@ -6,6 +6,10 @@ import { parseSenderControlAllowlistConfig } from './control-allowlist.js';
 import { parseSenderAllowlistConfig } from './sender-allowlist.js';
 import { parseSimpleYamlObject } from './yaml.js';
 import {
+  parseConfiguredAgents,
+  parseDesiredStateSettings,
+} from './runtime-settings-agents-parser.js';
+import {
   createDefaultChannelSettings,
   DEFAULT_AGENT_NAME,
   DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS,
@@ -257,6 +261,8 @@ function parseAgentSettings(raw: unknown): RuntimeAgentSettings {
     return {
       name: DEFAULT_AGENT_NAME,
       defaultModel: '',
+      oneTimeJobDefaultModel: '',
+      recurringJobDefaultModel: '',
       sessions: {
         memoryItemLimit: DEFAULT_AGENT_SESSION_MEMORY_ITEM_LIMIT,
         maxMemoryContextChars: DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS,
@@ -268,9 +274,15 @@ function parseAgentSettings(raw: unknown): RuntimeAgentSettings {
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'name' && key !== 'default_model' && key !== 'sessions') {
+    if (
+      key !== 'name' &&
+      key !== 'default_model' &&
+      key !== 'one_time_job_default_model' &&
+      key !== 'recurring_job_default_model' &&
+      key !== 'sessions'
+    ) {
       throw new Error(
-        `agent.${key} is not supported. Configure agent.name, agent.default_model, or agent.sessions.*.`,
+        `agent.${key} is not supported. Configure agent.name, agent.default_model, agent.one_time_job_default_model, agent.recurring_job_default_model, or agent.sessions.*.`,
       );
     }
   }
@@ -299,6 +311,24 @@ function parseAgentSettings(raw: unknown): RuntimeAgentSettings {
         : typeof map.default_model === 'string'
           ? map.default_model.trim()
           : parseStringValue(map.default_model, 'agent.default_model'),
+    oneTimeJobDefaultModel:
+      map.one_time_job_default_model === undefined
+        ? ''
+        : typeof map.one_time_job_default_model === 'string'
+          ? map.one_time_job_default_model.trim()
+          : parseStringValue(
+              map.one_time_job_default_model,
+              'agent.one_time_job_default_model',
+            ),
+    recurringJobDefaultModel:
+      map.recurring_job_default_model === undefined
+        ? ''
+        : typeof map.recurring_job_default_model === 'string'
+          ? map.recurring_job_default_model.trim()
+          : parseStringValue(
+              map.recurring_job_default_model,
+              'agent.recurring_job_default_model',
+            ),
     sessions: {
       memoryItemLimit: parsePositiveIntegerValue(
         sessions.memory_item_limit,
@@ -475,18 +505,21 @@ export function parseRuntimeSettings(raw: string): RuntimeSettings {
     }
     if (
       key !== 'version' &&
+      key !== 'desired_state' &&
       key !== 'channels' &&
+      key !== 'agents' &&
       key !== 'storage' &&
       key !== 'agent' &&
       key !== 'credential_broker' &&
       key !== 'memory'
     ) {
       throw new Error(
-        `${key} is not supported. Supported root keys are version, channels, storage, agent, credential_broker, and memory.`,
+        `${key} is not supported. Supported root keys are version, desired_state, channels, agents, storage, agent, credential_broker, and memory.`,
       );
     }
   }
 
+  const desiredState = parseDesiredStateSettings(root.desired_state);
   const channels = root.channels;
   if (
     typeof channels !== 'object' ||
@@ -511,6 +544,7 @@ export function parseRuntimeSettings(raw: string): RuntimeSettings {
   }
 
   const storage = parseStorageSettings(root.storage);
+  const agents = parseConfiguredAgents(root.agents);
   const agent = parseAgentSettings(root.agent);
   const credentialBroker = parseCredentialBrokerSettings(
     root.credential_broker,
@@ -518,7 +552,9 @@ export function parseRuntimeSettings(raw: string): RuntimeSettings {
   const memory = parseMemorySettings(root.memory);
 
   return {
+    desiredState,
     channels: channelSettings,
+    agents,
     storage,
     agent,
     credentialBroker,

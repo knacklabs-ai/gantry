@@ -4,7 +4,11 @@
   "lineBudgets": {
     "apps/core/src/adapters/storage/postgres/repositories/domain-repositories.postgres.ts": 2100,
     "apps/core/src/adapters/storage/postgres/schema/canonical-ops-repo.postgres.ts": 950,
-    "apps/core/src/adapters/storage/postgres/schema/schema.ts": 900
+    "apps/core/src/adapters/storage/postgres/schema/schema.ts": 900,
+    "apps/core/src/jobs/ipc-admin-handlers.ts": 870,
+    "apps/core/src/runner/mcp/tools/service.ts": 850,
+    "apps/core/src/runtime/group-processing.ts": 742,
+    "apps/core/src/runtime/ipc.ts": 757
   },
   "layers": {
     "domain": {
@@ -29,7 +33,6 @@
         "apps/core/src/jobs",
         "apps/core/src/memory",
         "apps/core/src/messaging",
-        "apps/core/src/models",
         "apps/core/src/platform",
         "apps/core/src/runtime",
         "apps/core/src/session"
@@ -115,7 +118,7 @@
     "apps/core/src/runner/claude",
     "apps/core/src/runner/mcp",
     "apps/core/src/memory/claude-query.ts",
-    "apps/core/src/models/claude-model-registry.ts"
+    "apps/core/src/shared/model-catalog.ts"
   ],
   "providerImportSpecifiers": [
     "@anthropic-ai/sdk",

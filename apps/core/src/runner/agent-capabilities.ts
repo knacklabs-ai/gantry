@@ -45,7 +45,6 @@ const SAFE_NATIVE_ALLOWED_TOOLS = [
   'Grep',
   'WebSearch',
   'WebFetch',
-  'Task',
   'TaskOutput',
   'TaskStop',
   'ToolSearch',
@@ -65,6 +64,11 @@ const MYCLAW_MCP_ALLOWED_TOOLS = [
   'mcp__myclaw__request_channel_tool_enable',
   'mcp__myclaw__mcp_list_tools',
   'mcp__myclaw__mcp_call_tool',
+] as const;
+
+const MAIN_AGENT_MCP_ALLOWED_TOOLS = [
+  'mcp__myclaw__settings_desired_state',
+  'mcp__myclaw__request_settings_update',
   'mcp__myclaw__service_restart',
   'mcp__myclaw__register_agent',
 ] as const;
@@ -79,8 +83,10 @@ const DIRECT_RUNTIME_MCP_SERVER_NAMES = new Set(['agent_browser']);
 
 const sdkToolsProvider: AgentCapabilityProvider = {
   id: 'sdk-tools',
-  provide: () => ({
-    allowedTools: DEFAULT_ALLOWED_TOOLS,
+  provide: (ctx) => ({
+    allowedTools: ctx.isMain
+      ? [...DEFAULT_ALLOWED_TOOLS, ...MAIN_AGENT_MCP_ALLOWED_TOOLS]
+      : DEFAULT_ALLOWED_TOOLS,
   }),
 };
 

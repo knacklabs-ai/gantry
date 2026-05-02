@@ -1,4 +1,5 @@
 import { ONECLI_ALLOWED_ENV_KEYS } from '../../../config/index.js';
+import type { AgentCredentialProvider } from '../../../domain/models/credentials.js';
 import {
   CredentialBrokerConfigError,
   CredentialBrokerPolicyError,
@@ -61,6 +62,15 @@ const ONECLI_DROPPED_TOOL_PROXY_ENV_KEYS = new Set([
 ]);
 
 const ONECLI_DROPPED_HOST_CA_KEYS = new Set(['NODE_EXTRA_CA_CERTS']);
+const ONECLI_CREDENTIAL_PROVIDER_KEYS: Record<
+  string,
+  { envKey: string; allowed: AgentCredentialProvider }
+> = {
+  MYCLAW_ANTHROPIC_AUTH_TOKEN_PROVIDER: {
+    envKey: 'ANTHROPIC_AUTH_TOKEN',
+    allowed: 'openrouter',
+  },
+};
 const ONECLI_CONTAINER_LOOPBACK_HOST = ['host', 'do' + 'cker', 'internal'].join(
   '.',
 );
@@ -135,6 +145,7 @@ function validateOnecliModelProxyValue(key: string, value: unknown): string {
 
 export interface OnecliEnvFilterResult {
   env: Record<string, string>;
+  credentialProviders?: Partial<Record<string, AgentCredentialProvider>>;
   droppedKeys: string[];
 }
 
@@ -142,8 +153,22 @@ export function filterTrustedOnecliEnv(
   source: Record<string, unknown> | undefined,
 ): OnecliEnvFilterResult {
   const env: Record<string, string> = {};
+  const credentialProviders: Partial<Record<string, AgentCredentialProvider>> =
+    {};
   const droppedKeys: string[] = [];
+  for (const [key, config] of Object.entries(ONECLI_CREDENTIAL_PROVIDER_KEYS)) {
+    const value = source?.[key];
+    if (value === undefined) continue;
+    if (value === config.allowed) {
+      credentialProviders[config.envKey] = config.allowed;
+      continue;
+    }
+    throw forbiddenValue(key);
+  }
   for (const [key, value] of Object.entries(source || {})) {
+    if (key in ONECLI_CREDENTIAL_PROVIDER_KEYS) {
+      continue;
+    }
     if (ONECLI_DROPPED_HOST_CA_KEYS.has(key)) {
       droppedKeys.push(key);
       continue;
@@ -170,6 +195,20 @@ export function filterTrustedOnecliEnv(
       }
       throw forbiddenKey(key);
     }
+    if (key === 'ANTHROPIC_AUTH_TOKEN') {
+      if (
+        credentialProviders[key] === 'openrouter' &&
+        typeof value === 'string' &&
+        value.length > 0
+      ) {
+        if (/^sk-ant-/i.test(value)) {
+          throw forbiddenValue(key);
+        }
+        env[key] = value;
+        continue;
+      }
+      throw forbiddenKey(key);
+    }
     if (
       ONECLI_FORBIDDEN_SECRET_ENV_KEYS.has(key) ||
       FORBIDDEN_SECRET_ENV_KEY_PATTERN.test(key)
@@ -186,5 +225,11 @@ export function filterTrustedOnecliEnv(
     }
     env[key] = validateAllowedOnecliEnvValue(key, value);
   }
-  return { env, droppedKeys };
+  return {
+    env,
+    ...(Object.keys(credentialProviders).length > 0
+      ? { credentialProviders }
+      : {}),
+    droppedKeys,
+  };
 }

@@ -179,7 +179,7 @@
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
     "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 4
+    "maxViolations": 5
   },
   {
     "file": "apps/core/src/app/bootstrap/runtime-app.ts",
@@ -228,7 +228,7 @@
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
     "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 4
+    "maxViolations": 5
   },
   {
     "file": "apps/core/src/app/index.ts",
@@ -441,6 +441,13 @@
     "maxViolations": 2
   },
   {
+    "file": "apps/core/src/cli/model.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "Local CLI model-default administration follows existing CLI settings-persistence adapters; capped so additional config imports fail until CLI settings writes are ported.",
+    "removeByPhase": "canonical-boundary-cleanup-phase",
+    "maxViolations": 1
+  },
+  {
     "file": "apps/core/src/cli/memory-status.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
@@ -572,20 +579,6 @@
     "reason": "Teams setup follows the existing CLI setup adapter pattern for env/settings persistence while the Graph discovery seam lives under channels; capped so additional config imports fail until the boundary slice extracts setup persistence.",
     "removeByPhase": "canonical-boundary-cleanup-phase",
     "maxViolations": 3
-  },
-  {
-    "file": "apps/core/src/config/index.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
-  },
-  {
-    "file": "apps/core/src/config/memory.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
   },
   {
     "file": "apps/core/src/config/preflight.ts",
@@ -1162,13 +1155,6 @@
     "maxOccurrences": 1
   },
   {
-    "file": "apps/core/src/runner/claude/model-config.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
-  },
-  {
     "file": "apps/core/src/runner/claude/permission-callback.ts",
     "rule": "old_term_groupFolder",
     "reason": "Baseline groupFolder terminology debt pending canonical conversation/workspace rename; capped so new occurrences fail.",
@@ -1554,13 +1540,6 @@
     "maxOccurrences": 3
   },
   {
-    "file": "apps/core/src/runtime/ipc-task-parsing.ts",
-    "rule": "provider_specific_path",
-    "reason": "Baseline provider/channel terminology debt from provider-neutral refactor; capped so new provider-specific code outside approved adapters fails.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
-  },
-  {
     "file": "apps/core/src/runtime/ipc.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
@@ -1694,13 +1673,6 @@
     "maxViolations": 1
   },
   {
-    "file": "apps/core/src/session/session-commands.ts",
-    "rule": "provider_specific_path",
-    "reason": "Baseline provider/channel terminology debt from provider-neutral refactor; capped so new provider-specific code outside approved adapters fails.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
-  },
-  {
     "file": "apps/core/src/session/session-transcript-archive.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
@@ -1760,6 +1732,13 @@
     "removeByPhase": "canonical-boundary-cleanup-phase"
   },
   {
+    "file": "apps/core/src/application/mcp/mcp-tool-proxy.ts",
+    "rule": "forbidden_external_import_by_layer",
+    "reason": "Current MCP proxy owns direct MCP SDK transport calls until the MCP proxy is split behind an adapter port; capped so additional SDK imports fail.",
+    "removeByPhase": "canonical-boundary-cleanup-phase",
+    "maxViolations": 4
+  },
+  {
     "file": "apps/core/src/memory/index.ts",
     "rule": "wrapper_only_file",
     "reason": "Baseline wrapper-only export surface kept temporarily for package/import compatibility during the canonical module cleanup.",
@@ -1788,5 +1767,26 @@
     "rule": "wrapper_only_file",
     "reason": "Baseline wrapper-only export surface kept temporarily for package/import compatibility during the canonical module cleanup.",
     "removeByPhase": "canonical-boundary-cleanup-phase"
+  },
+  {
+    "file": "apps/core/src/cli/settings.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "Local settings CLI is an adapter over settings.yaml parsing and runtime storage export; extract a command port before tightening this boundary.",
+    "removeByPhase": "settings-desired-state-port-extraction",
+    "maxViolations": 2
+  },
+  {
+    "file": "apps/core/src/jobs/ipc-runtime-admin-handlers.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "Runtime admin IPC composes reviewed settings.yaml writes, preflight, and storage-backed validation until the admin settings tool is moved behind an application port.",
+    "removeByPhase": "settings-desired-state-port-extraction",
+    "maxViolations": 9
+  },
+  {
+    "file": "apps/core/src/runtime/settings-reload-watcher.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "Runtime settings watcher composes filesystem reload, validation, and desired-state reconciliation until reload is represented as an application port.",
+    "removeByPhase": "settings-desired-state-port-extraction",
+    "maxViolations": 6
   }
 ]

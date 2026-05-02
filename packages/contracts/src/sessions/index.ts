@@ -12,29 +12,31 @@ export type AgentSessionStatus = z.infer<typeof AgentSessionStatusSchema>;
 export const ResponseModeSchema = z.enum(['sse', 'webhook', 'both', 'none']);
 export type ResponseMode = z.infer<typeof ResponseModeSchema>;
 
-export const CreateSessionRequestSchema = z.object({
-  appId: z.string().optional(),
-  agentId: z.string().optional(),
-  conversationId: z.string().optional(),
-  threadId: z.string().optional(),
-  jobId: z.string().optional(),
-  userId: z.string().optional(),
-  title: z.string().optional(),
-  responseMode: ResponseModeSchema.optional(),
-  webhookId: z.string().optional(),
-  modelOverride: z.string().optional(),
-  metadata: ContractMetadataSchema.optional(),
-});
+export const CreateSessionRequestSchema = z
+  .object({
+    appId: z.string().optional(),
+    agentId: z.string().optional(),
+    conversationId: z.string().optional(),
+    threadId: z.string().optional(),
+    jobId: z.string().optional(),
+    userId: z.string().optional(),
+    title: z.string().optional(),
+    responseMode: ResponseModeSchema.optional(),
+    webhookId: z.string().optional(),
+    metadata: ContractMetadataSchema.optional(),
+  })
+  .strict();
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
 
-export const ResumeSessionRequestSchema = z.object({
-  appId: z.string().optional(),
-  sessionId: z.string(),
-  responseMode: ResponseModeSchema.optional(),
-  webhookId: z.string().optional(),
-  modelOverride: z.string().optional(),
-  metadata: ContractMetadataSchema.optional(),
-});
+export const ResumeSessionRequestSchema = z
+  .object({
+    appId: z.string().optional(),
+    sessionId: z.string(),
+    responseMode: ResponseModeSchema.optional(),
+    webhookId: z.string().optional(),
+    metadata: ContractMetadataSchema.optional(),
+  })
+  .strict();
 export type ResumeSessionRequest = z.infer<typeof ResumeSessionRequestSchema>;
 
 export const ProviderSessionResponseSchema = z.object({
@@ -65,7 +67,6 @@ export const AgentSessionResponseSchema = z.object({
   userId: z.string().nullable().optional(),
   latestProviderSessionId: z.string().nullable().optional(),
   status: AgentSessionStatusSchema,
-  modelOverride: z.string().nullable().optional(),
   providerSessions: z.array(ProviderSessionResponseSchema).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,

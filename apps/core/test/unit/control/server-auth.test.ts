@@ -33,6 +33,8 @@ vi.mock('@core/config/index.js', async () => {
       agent: {
         name: settings.agent.name,
         defaultModel: settings.agent.defaultModel,
+        oneTimeJobDefaultModel: settings.agent.oneTimeJobDefaultModel,
+        recurringJobDefaultModel: settings.agent.recurringJobDefaultModel,
       },
       memory: {
         enabled: settings.memory.enabled,
@@ -42,6 +44,11 @@ vi.mock('@core/config/index.js', async () => {
   };
   return {
     MYCLAW_HOME: runtimeHome,
+    getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+    getDefaultModelConfig: vi.fn(() => ({
+      model: 'opus',
+      source: 'system default',
+    })),
     getPublicRuntimeSettings: toPublic,
     updatePublicRuntimeSettings: (patch: any) => {
       const settings = settingsModule.loadRuntimeSettings(runtimeHome);
@@ -53,6 +60,16 @@ vi.mock('@core/config/index.js', async () => {
       if (patch.agent?.defaultModel !== undefined) {
         settings.agent.defaultModel = patch.agent.defaultModel.trim();
         changed.push('agent.defaultModel');
+      }
+      if (patch.agent?.oneTimeJobDefaultModel !== undefined) {
+        settings.agent.oneTimeJobDefaultModel =
+          patch.agent.oneTimeJobDefaultModel.trim();
+        changed.push('agent.oneTimeJobDefaultModel');
+      }
+      if (patch.agent?.recurringJobDefaultModel !== undefined) {
+        settings.agent.recurringJobDefaultModel =
+          patch.agent.recurringJobDefaultModel.trim();
+        changed.push('agent.recurringJobDefaultModel');
       }
       if (patch.memory?.dreaming?.enabled !== undefined) {
         settings.memory.dreaming.enabled = patch.memory.dreaming.enabled;
@@ -571,10 +588,18 @@ afterEach(() => {
 });
 
 describe('control server auth key parsing', () => {
+  function parseControlApiKeysFromEnv() {
+    return _testControlServer.parseControlApiKeys({
+      rawJson: process.env.MYCLAW_CONTROL_API_KEYS_JSON,
+      rawSingle: process.env.MYCLAW_CONTROL_API_KEY,
+      singleAppId: process.env.MYCLAW_CONTROL_APP_ID,
+    });
+  }
+
   it('returns no keys when MYCLAW_CONTROL_API_KEYS_JSON is malformed', () => {
     process.env.MYCLAW_CONTROL_API_KEYS_JSON = '{"kid":"broken"';
 
-    expect(_testControlServer.parseControlApiKeys()).toEqual([]);
+    expect(parseControlApiKeysFromEnv()).toEqual([]);
   });
 
   it('filters out JSON keys that are not app-bound', () => {
@@ -598,7 +623,7 @@ describe('control server auth key parsing', () => {
       },
     ]);
 
-    const keys = _testControlServer.parseControlApiKeys();
+    const keys = parseControlApiKeysFromEnv();
 
     expect(keys).toHaveLength(1);
     expect(keys[0]?.kid).toBe('valid');
@@ -607,13 +632,13 @@ describe('control server auth key parsing', () => {
 
   it('requires MYCLAW_CONTROL_APP_ID for single-token auth', () => {
     process.env.MYCLAW_CONTROL_API_KEY = 'single-token';
-    expect(_testControlServer.parseControlApiKeys()).toHaveLength(0);
+    expect(parseControlApiKeysFromEnv()).toHaveLength(0);
 
     process.env.MYCLAW_CONTROL_APP_ID = 'app:unsafe';
-    expect(_testControlServer.parseControlApiKeys()).toHaveLength(0);
+    expect(parseControlApiKeysFromEnv()).toHaveLength(0);
 
     process.env.MYCLAW_CONTROL_APP_ID = 'app-two';
-    const keys = _testControlServer.parseControlApiKeys();
+    const keys = parseControlApiKeysFromEnv();
     expect(keys).toHaveLength(1);
     expect(keys[0]?.appId).toBe('app-two');
   });
@@ -737,59 +762,27 @@ describe('control server runtime hardening', () => {
         scopes: ['sessions:read', 'agents:admin'],
         appId: 'app-one',
       },
+      {
+        kid: 'read',
+        token: 'read-key',
+        scopes: ['sessions:read'],
+        appId: 'app-one',
+      },
     ]);
 
     const handle = startControlServer({
       app: {
         registerGroup: vi.fn(),
         queue: { enqueueMessageCheck: vi.fn() },
-        getRuntimeSettings: () => {
-          const settings = loadRuntimeSettings(runtimeHome);
-          return {
-            agent: {
-              name: settings.agent.name,
-              defaultModel: settings.agent.defaultModel,
-            },
-            memory: {
-              enabled: settings.memory.enabled,
-              dreaming: { enabled: settings.memory.dreaming.enabled },
-            },
-          };
-        },
-        updateRuntimeSettings: (patch: any) => {
-          const settings = loadRuntimeSettings(runtimeHome);
-          const changed: string[] = [];
-          if (patch.agent?.name) {
-            settings.agent.name = patch.agent.name;
-            changed.push('agent.name');
-          }
-          if (patch.agent?.defaultModel !== undefined) {
-            settings.agent.defaultModel = patch.agent.defaultModel;
-            changed.push('agent.defaultModel');
-          }
-          if (patch.memory?.dreaming?.enabled !== undefined) {
-            settings.memory.dreaming.enabled = patch.memory.dreaming.enabled;
-            changed.push('memory.dreaming.enabled');
-          }
-          saveRuntimeSettings(runtimeHome, settings);
-          return {
-            settings: {
-              agent: {
-                name: settings.agent.name,
-                defaultModel: settings.agent.defaultModel,
-              },
-              memory: {
-                enabled: settings.memory.enabled,
-                dreaming: { enabled: settings.memory.dreaming.enabled },
-              },
-            },
-            changed,
-            restartRequired: changed.length > 0,
-          };
-        },
       } as any,
     });
     try {
+      const readOnlyResponse = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/settings`,
+        'read-key',
+      );
+      expect(readOnlyResponse.status).toBe(401);
+
       const getResponse = await requestWithRetry(
         `http://127.0.0.1:${port}/v1/settings`,
         'admin-key',
@@ -814,26 +807,19 @@ describe('control server runtime hardening', () => {
           }),
         },
       );
-      expect(patchResponse.status).toBe(200);
+      expect(patchResponse.status).toBe(409);
       await expect(patchResponse.json()).resolves.toMatchObject({
-        settings: {
-          agent: { name: 'Kai', defaultModel: 'sonnet' },
-          memory: { enabled: true, dreaming: { enabled: true } },
+        error: {
+          code: 'SETTINGS_READ_ONLY',
         },
-        changed: [
-          'agent.name',
-          'agent.defaultModel',
-          'memory.dreaming.enabled',
-        ],
-        restartRequired: true,
       });
 
       const raw = fs.readFileSync(
         path.join(runtimeHome, 'settings.yaml'),
         'utf-8',
       );
-      expect(raw).toContain('name: Kai');
-      expect(raw).toContain('default_model: sonnet');
+      expect(raw).toContain('name: "Main Agent"');
+      expect(raw).toContain('default_model: ""');
 
       const unsupportedResponse = await requestWithRetry(
         `http://127.0.0.1:${port}/v1/settings`,
@@ -842,6 +828,47 @@ describe('control server runtime hardening', () => {
       );
       expect(unsupportedResponse.status).toBe(405);
       expect(unsupportedResponse.headers.get('allow')).toBe('GET, PATCH');
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('serves model catalog without exposing provider slugs', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'read-key',
+        scopes: ['sessions:read'],
+        appId: 'app-one',
+      },
+    ]);
+
+    const handle = startControlServer({
+      app: {
+        registerGroup: vi.fn(),
+        queue: { enqueueMessageCheck: vi.fn() },
+      } as any,
+    });
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/models`,
+        'read-key',
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.models).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            displayName: 'Kimi K2.6',
+            aliases: expect.arrayContaining(['kimi', 'kimi-k2.6']),
+            provider: 'OpenRouter',
+            modelProfileId: 'openrouter:kimi-k2.6',
+          }),
+        ]),
+      );
+      expect(JSON.stringify(body)).not.toContain('moonshotai/kimi-k2.6');
     } finally {
       await handle.close();
     }
@@ -866,7 +893,6 @@ describe('control server runtime hardening', () => {
         registerGroup: vi.fn(),
         queue: { enqueueMessageCheck: vi.fn() },
         getRuntimeSettings: vi.fn(),
-        updateRuntimeSettings: vi.fn(),
       } as any,
     });
     try {
@@ -881,7 +907,12 @@ describe('control server runtime hardening', () => {
           }),
         },
       );
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'SETTINGS_READ_ONLY',
+        },
+      });
     } finally {
       await handle.close();
     }
@@ -919,10 +950,10 @@ describe('control server runtime hardening', () => {
           }),
         },
       );
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(409);
       await expect(response.json()).resolves.toMatchObject({
         error: {
-          code: 'INVALID_REQUEST',
+          code: 'SETTINGS_READ_ONLY',
         },
       });
     } finally {
@@ -2669,6 +2700,50 @@ describe('control server runtime hardening', () => {
         },
       );
       expect(response.status).toBe(400);
+      expect(app.registerGroup).not.toHaveBeenCalled();
+      expect(controlRepo.ensureAppSession).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects unsupported session ensure fields before registration', async () => {
+    const port = await reservePort();
+    process.env.MYCLAW_CONTROL_PORT = String(port);
+    process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-strict-session',
+        scopes: ['sessions:write'],
+        appId: 'app-one',
+      },
+    ]);
+    const app = {
+      registerGroup: vi.fn(),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    const handle = startControlServer({ app: app as any });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/sessions/ensure`,
+        'token-strict-session',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: 'conv-1',
+            modelOverride: 'sonnet',
+          }),
+        },
+      );
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Unsupported session request field "modelOverride".',
+        },
+      });
       expect(app.registerGroup).not.toHaveBeenCalled();
       expect(controlRepo.ensureAppSession).not.toHaveBeenCalled();
     } finally {

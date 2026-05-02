@@ -1,4 +1,5 @@
 export type CredentialBrokerProfile = 'none' | 'onecli' | 'external';
+export type AgentCredentialProvider = 'native' | 'openrouter';
 
 export interface AgentCredentialBrokerBinding {
   profile: CredentialBrokerProfile;
@@ -15,6 +16,7 @@ export interface CredentialBrokerHealth {
 
 export interface AgentCredentialInjection {
   env: Record<string, string>;
+  credentialProviders?: Partial<Record<string, AgentCredentialProvider>>;
   proxy?: {
     http?: string;
     https?: string;

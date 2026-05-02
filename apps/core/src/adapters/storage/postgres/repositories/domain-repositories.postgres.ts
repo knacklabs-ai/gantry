@@ -1637,7 +1637,7 @@ export class PostgresJobRepository implements JobRepository {
         createdBySource: 'repository',
         name: job.name,
         prompt: job.prompt,
-        modelOverride: job.modelOverride ?? null,
+        model: job.model ?? null,
         scheduleJson: encodeJson(job.schedule),
         status: job.status,
         executionMode: job.executionMode,
@@ -1658,7 +1658,7 @@ export class PostgresJobRepository implements JobRepository {
         set: {
           name: job.name,
           prompt: job.prompt,
-          modelOverride: job.modelOverride ?? null,
+          model: job.model ?? null,
           scheduleJson: encodeJson(job.schedule),
           status: job.status,
           executionMode: job.executionMode,
@@ -1718,7 +1718,7 @@ export class PostgresJobRepository implements JobRepository {
       agentId: row.agentId ?? '',
       name: row.name,
       prompt: row.prompt,
-      modelOverride: row.modelOverride ?? undefined,
+      model: row.model ?? undefined,
       schedule: parseJson<Job['schedule']>(row.scheduleJson, {
         kind: 'manual',
       }),

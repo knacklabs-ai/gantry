@@ -57,6 +57,8 @@ import {
 } from './session-resume-runtime.js';
 import { firstThreadQueueId, parseThreadQueueKey } from './thread-queue-key.js';
 import { formatElapsed } from './time-format.js';
+import { createRuntimeModelStatusAccess } from './model-status-store.js';
+import { recordRuntimeModelUsage } from './model-status-output.js';
 const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
 const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
 const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
@@ -111,8 +113,21 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       });
       persistedProviderSessionIds.add(providerSessionId);
     };
+    let defaultRuntimeModel: string | undefined;
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
+          if (output.usage) {
+            recordRuntimeModelUsage({
+              group,
+              threadId: sessionThreadId,
+              usage: output.usage,
+              usageEventId: output.usageEventId,
+              getDefaultModel: () => {
+                defaultRuntimeModel ??= getDefaultModelConfig().model;
+                return defaultRuntimeModel;
+              },
+            });
+          }
           if (output.status !== 'error' && output.newSessionId) {
             latestProviderSessionId = output.newSessionId;
             await persistProviderSessionId(output.newSessionId);
@@ -304,6 +319,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         : deps.channelRuntime.sendProgressUpdate(chatJid, text);
     const memoryUserId = resolveMemoryUserId(missedMessages);
 
+    const modelStatus = createRuntimeModelStatusAccess(
+      group.folder,
+      activeThreadId,
+    );
     const cmdResult = await handleSessionCommand({
       missedMessages,
       isMainGroup,
@@ -337,10 +356,17 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           });
         },
         formatMessages,
-        getDefaultModel: () => getDefaultModelConfig().model,
+        getDefaultModel: () =>
+          getDefaultModelConfig('interactive', group.folder).model,
+        getJobModelDefaults: () => ({
+          oneTime: getDefaultModelConfig('oneTimeJob', group.folder).model,
+          recurring: getDefaultModelConfig('recurringJob', group.folder).model,
+        }),
         getGroupModelOverride: () => group.agentConfig?.model,
         setGroupModelOverride: async (value) =>
           deps.setGroupModelOverride(chatJid, value),
+        getModelStatus: modelStatus.getStatus,
+        updateModelStatusSelection: modelStatus.updateSelection,
         getGroupThinkingOverride: () => group.agentConfig?.thinking,
         setGroupThinkingOverride: async (value) =>
           deps.setGroupThinkingOverride(chatJid, value),

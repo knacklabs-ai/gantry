@@ -87,8 +87,9 @@ export function validateSchedulerUpdate(
     const authThreadId = normalizeOptional(access.authThreadId) ?? null;
     const currentThreadId = job.thread_id || null;
     const allowed = authThreadId
-      ? requestedThreadId === authThreadId
-      : requestedThreadId === null && currentThreadId === null;
+      ? currentThreadId === authThreadId && requestedThreadId === authThreadId
+      : access.isMain ||
+        (requestedThreadId === null && currentThreadId === null);
     if (!allowed) {
       throw new ApplicationError(
         'FORBIDDEN',
