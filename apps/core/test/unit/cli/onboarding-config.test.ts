@@ -99,6 +99,18 @@ describe('onboarding config persistence', () => {
     expect(fs.existsSync(settingsFilePath(runtimeHome))).toBe(true);
   });
 
+  it('preserves setup-selected runner model IDs as catalog aliases', () => {
+    const runtimeHome = makeRuntimeHome();
+
+    persistOnboardingConfig({
+      ...baseInput(runtimeHome),
+      anthropicModel: 'claude-sonnet-4-6',
+    });
+
+    const settings = loadRuntimeSettingsFromPath(settingsFilePath(runtimeHome));
+    expect(settings.agent.defaultModel).toBe('sonnet');
+  });
+
   it('writes Slack approvers to settings instead of .env', () => {
     const runtimeHome = makeRuntimeHome();
 

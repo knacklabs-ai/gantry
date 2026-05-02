@@ -10,7 +10,10 @@ import {
   loadRuntimeSettings,
   saveRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
-import { resolveModelAlias } from '../shared/model-catalog.js';
+import {
+  findModelByRunnerModel,
+  resolveModelAlias,
+} from '../shared/model-catalog.js';
 import { parseSenderControlAllowlistConfig } from '../config/settings/control-allowlist.js';
 import {
   generateOnecliSecretEncryptionKey,
@@ -103,7 +106,7 @@ export function persistOnboardingConfig(input: OnboardingConfigInput): void {
   }
   settings.storage.postgres.urlEnv = 'MYCLAW_DATABASE_URL';
   settings.storage.postgres.schema = input.postgresSchema?.trim() || 'myclaw';
-  settings.agent.defaultModel = resolveModelAlias(input.anthropicModel) || '';
+  settings.agent.defaultModel = normalizeOnboardingModel(input.anthropicModel);
   settings.credentialBroker.mode = input.credentialMode;
   settings.credentialBroker.onecli.url = onecliUrl;
   settings.credentialBroker.onecli.postgres.urlEnv = ONECLI_DATABASE_URL_ENV;
@@ -159,4 +162,12 @@ function parseApproverIds(raw: string | undefined): string[] {
         .filter((entry) => entry.length > 0),
     ),
   ];
+}
+
+function normalizeOnboardingModel(value: string | undefined): string {
+  return (
+    resolveModelAlias(value) ||
+    findModelByRunnerModel(value)?.recommendedAlias ||
+    ''
+  );
 }
