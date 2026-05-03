@@ -429,21 +429,32 @@ describe('agent-runner IPC lifecycle', () => {
     async () => {
       const fixture = createRunnerFixture();
 
-      const result = await runRunner(fixture, baseInput(), {
-        TEST_EXIT_AFTER_QUERY: '1',
-        ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
-        ANTHROPIC_API_KEY: 'raw-provider-key',
-        CLAUDE_CODE_OAUTH_TOKEN: 'raw-oauth-token',
-        HTTP_PROXY: 'http://127.0.0.1:10255/',
-        HTTPS_PROXY: 'http://127.0.0.1:10255/',
-        NODE_USE_ENV_PROXY: '1',
-        GIT_HTTP_PROXY_AUTHMETHOD: 'basic',
-        NO_PROXY: '',
-        no_proxy: '',
-        NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
-        MYCLAW_IPC_AUTH_TOKEN: 'runner-test-token',
-        MYCLAW_IPC_RESPONSE_VERIFY_KEY: fixture.responseVerifyKey,
-      });
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          modelCredentialEnv: {
+            ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+            HTTP_PROXY: 'http://127.0.0.1:10255/',
+            HTTPS_PROXY: 'http://127.0.0.1:10255/',
+            NODE_USE_ENV_PROXY: '1',
+            NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
+          },
+        }),
+        {
+          TEST_EXIT_AFTER_QUERY: '1',
+          ANTHROPIC_API_KEY: 'raw-provider-key',
+          CLAUDE_CODE_OAUTH_TOKEN: 'raw-oauth-token',
+          HTTP_PROXY: 'http://127.0.0.1:10255/',
+          HTTPS_PROXY: 'http://127.0.0.1:10255/',
+          NODE_USE_ENV_PROXY: '1',
+          GIT_HTTP_PROXY_AUTHMETHOD: 'basic',
+          NO_PROXY: '',
+          no_proxy: '',
+          NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
+          MYCLAW_IPC_AUTH_TOKEN: 'runner-test-token',
+          MYCLAW_IPC_RESPONSE_VERIFY_KEY: fixture.responseVerifyKey,
+        },
+      );
 
       expect(result.exitCode).toBe(0);
       const sdkEnv = readRecord(fixture.recordPath).calls[0]?.sdkEnv || {};
@@ -456,13 +467,96 @@ describe('agent-runner IPC lifecycle', () => {
       expect(sdkEnv.GIT_HTTP_PROXY_AUTHMETHOD).toBeUndefined();
       expect(sdkEnv.NODE_EXTRA_CA_CERTS).toBe('/tmp/onecli-ca.pem');
       expect(sdkEnv.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
-      expect(sdkEnv.NO_PROXY).toBe('127.0.0.1,localhost,::1');
-      expect(sdkEnv.no_proxy).toBe('127.0.0.1,localhost,::1');
+      expect(sdkEnv.NO_PROXY?.split(',')).toEqual(
+        expect.arrayContaining([
+          '127.0.0.1',
+          'localhost',
+          '::1',
+          'github.com',
+          '.github.com',
+          'api.github.com',
+          'raw.githubusercontent.com',
+          'objects.githubusercontent.com',
+          'codeload.github.com',
+        ]),
+      );
+      expect(sdkEnv.no_proxy).toBe(sdkEnv.NO_PROXY);
       expect(sdkEnv.MYCLAW_IPC_AUTH_TOKEN).toBeUndefined();
       expect(sdkEnv.MYCLAW_IPC_RESPONSE_VERIFY_KEY).toBeUndefined();
       expect(sdkEnv.MYCLAW_MCP_CONFIG_FILE).toBeUndefined();
       expect(sdkEnv.MYCLAW_MCP_SERVERS_JSON).toBeUndefined();
       expect(sdkEnv.MYCLAW_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'rejects unsupported model credential env keys before Agent SDK launch',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          modelCredentialEnv: {
+            ANTHROPIC_MODEL: 'evil-provider/model',
+            LD_PRELOAD: '/tmp/injected.dylib',
+          },
+        }),
+        { TEST_EXIT_AFTER_QUERY: '1' },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(
+        'modelCredentialEnv.ANTHROPIC_MODEL is not supported.',
+      );
+      expect(fs.existsSync(fixture.recordPath)).toBe(false);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'runs scheduled scripts without broker proxy credentials',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          isScheduledJob: true,
+          modelCredentialEnv: {
+            HTTP_PROXY: 'http://127.0.0.1:10255/',
+            HTTPS_PROXY: 'http://127.0.0.1:10255/',
+            NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
+          },
+          script: [
+            "node -e 'console.log(JSON.stringify({",
+            'wakeAgent: true,',
+            'data: {',
+            'httpProxy: process.env.HTTP_PROXY || "",',
+            'httpsProxy: process.env.HTTPS_PROXY || "",',
+            'modelCredentialHandoff: process.env.MYCLAW_MODEL_CREDENTIAL_ENV_JSON || "",',
+            'noProxy: process.env.NO_PROXY || ""',
+            '}',
+            "}))'",
+          ].join(' '),
+        }),
+        {
+          HTTP_PROXY: 'http://127.0.0.1:10255/',
+          HTTPS_PROXY: 'http://127.0.0.1:10255/',
+          NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
+          NO_PROXY: '',
+          no_proxy: '',
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const callJson = JSON.stringify(readRecord(fixture.recordPath).calls[0]);
+      expect(callJson).toContain('\\"httpProxy\\": \\"\\"');
+      expect(callJson).toContain('\\"httpsProxy\\": \\"\\"');
+      expect(callJson).toContain('\\"modelCredentialHandoff\\": \\"\\"');
+      expect(callJson).toContain('github.com');
+      expect(callJson).toContain('api.github.com');
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );

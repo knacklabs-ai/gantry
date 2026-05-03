@@ -155,11 +155,12 @@ Bash, hooks, MCP stdio servers, skills, monitors, and browser tooling do not
 inherit model credential transport. Tool/API proxy credentials require explicit
 capability projections rather than ambient process environment.
 
-MyClaw sets loopback bypass values in both host-projected browser env and the
-runner env:
+MyClaw sets agent egress bypass values in both host-projected browser env and
+the runner env for cooperative tools. These values are compatibility hints, not
+authorization controls:
 
-- `NO_PROXY=127.0.0.1,localhost,::1`
-- `no_proxy=127.0.0.1,localhost,::1`
+- `NO_PROXY=127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com`
+- `no_proxy=127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com`
 
 Runner-side lifecycle MCP tools must not perform their own direct CDP health
 checks. The host browser capability is the authority for CDP readiness.

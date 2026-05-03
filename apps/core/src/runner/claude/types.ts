@@ -22,6 +22,7 @@ export interface AgentRunnerInput {
   script?: string;
   compiledSystemPrompt?: string;
   memoryContextBlock?: string;
+  modelCredentialEnv?: Record<string, string>;
   thinking?: {
     mode: 'adaptive' | 'enabled' | 'disabled';
     effort?: EffortLevel;

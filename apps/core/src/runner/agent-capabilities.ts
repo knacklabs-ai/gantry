@@ -1,4 +1,4 @@
-import { applyLoopbackNoProxyEnv } from '../shared/no-proxy.js';
+import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
 import {
   resolveAgentPersona,
   type AgentPersona,
@@ -178,7 +178,7 @@ const myclawMcpProvider: AgentCapabilityProvider = {
         ? { MYCLAW_IPC_RESPONSE_VERIFY_KEY: ctx.ipcResponseVerifyKey }
         : {}),
     };
-    applyLoopbackNoProxyEnv(env);
+    applyAgentEgressNoProxyEnv(env);
     return {
       mcpServers: {
         myclaw: {

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { applyLoopbackNoProxyEnv } from '../../shared/no-proxy.js';
+import { applyAgentEgressNoProxyEnv } from '../../shared/no-proxy.js';
 import { log } from './logging.js';
 
 function requirePathEnv(name: string): string {
@@ -53,20 +53,45 @@ function copyPlaceholderEnv(
   }
 }
 
-const MODEL_PROXY_ENV_KEYS = [
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'NODE_USE_ENV_PROXY',
-] as const;
-
 const NON_MODEL_PROXY_ENV_KEYS = [
   'ALL_PROXY',
   'all_proxy',
   'GIT_HTTP_PROXY_AUTHMETHOD',
   'GIT_TERMINAL_PROMPT',
 ] as const;
+
+const MODEL_CREDENTIAL_ENV_KEYS = new Set([
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'NODE_USE_ENV_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+]);
+
+function readModelCredentialEnv(
+  source: Record<string, unknown> | undefined,
+): Record<string, string | undefined> {
+  if (!source) return {};
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (!MODEL_CREDENTIAL_ENV_KEYS.has(key)) {
+      throw new Error(`modelCredentialEnv.${key} is not supported.`);
+    }
+    if (typeof value === 'string') {
+      env[key] = value;
+      continue;
+    }
+    if (value !== undefined && value !== null) {
+      throw new Error(`modelCredentialEnv.${key} must be a string.`);
+    }
+  }
+  return env;
+}
 
 function stripNonModelProxyEnv(
   target: Record<string, string | undefined>,
@@ -76,7 +101,9 @@ function stripNonModelProxyEnv(
   }
 }
 
-export function buildSdkEnv(): Record<string, string | undefined> {
+export function buildSdkEnv(
+  modelCredentialEnv?: Record<string, string>,
+): Record<string, string | undefined> {
   const sdkEnv: Record<string, string | undefined> = {
     PATH: process.env.PATH,
     TMPDIR: process.env.TMPDIR,
@@ -87,31 +114,40 @@ export function buildSdkEnv(): Record<string, string | undefined> {
     LC_CTYPE: process.env.LC_CTYPE,
     TERM: process.env.TERM,
     TZ: process.env.TZ,
-    ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
     ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
-    ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: '165000',
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
   };
-  if (process.env.ANTHROPIC_API_KEY === '') {
-    sdkEnv.ANTHROPIC_API_KEY = '';
-  }
+  Object.assign(sdkEnv, readModelCredentialEnv(modelCredentialEnv));
   copyPlaceholderEnv(sdkEnv, ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']);
-  copyEnv(sdkEnv, [
-    'NO_PROXY',
-    'no_proxy',
-    'NODE_EXTRA_CA_CERTS',
-    ...MODEL_PROXY_ENV_KEYS,
-  ]);
+  copyEnv(sdkEnv, ['NO_PROXY', 'no_proxy']);
   stripNonModelProxyEnv(sdkEnv);
-  applyLoopbackNoProxyEnv(sdkEnv);
+  applyAgentEgressNoProxyEnv(sdkEnv);
   delete sdkEnv.MYCLAW_IPC_AUTH_TOKEN;
   delete sdkEnv.MYCLAW_IPC_RESPONSE_VERIFY_KEY;
   delete sdkEnv.MYCLAW_MCP_CONFIG_FILE;
   delete sdkEnv.MYCLAW_MCP_SERVERS_JSON;
   delete sdkEnv.MYCLAW_MCP_ALLOWED_TOOLS_JSON;
   return sdkEnv;
+}
+
+export function buildToolEnv(): Record<string, string | undefined> {
+  const toolEnv: Record<string, string | undefined> = {
+    PATH: process.env.PATH,
+    TMPDIR: process.env.TMPDIR,
+    TMP: process.env.TMP,
+    TEMP: process.env.TEMP,
+    LANG: process.env.LANG,
+    LC_ALL: process.env.LC_ALL,
+    LC_CTYPE: process.env.LC_CTYPE,
+    TERM: process.env.TERM,
+    TZ: process.env.TZ,
+  };
+  copyEnv(toolEnv, ['NO_PROXY', 'no_proxy']);
+  stripNonModelProxyEnv(toolEnv);
+  applyAgentEgressNoProxyEnv(toolEnv);
+  return toolEnv;
 }
 
 export function resolveMcpServerPath(importMetaUrl: string): string {

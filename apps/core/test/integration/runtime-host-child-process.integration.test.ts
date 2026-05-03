@@ -67,7 +67,7 @@ process.stdin.on('end', () => {
         ipcDir: process.env.MYCLAW_IPC_DIR,
         ipcInputDir: process.env.MYCLAW_IPC_INPUT_DIR,
         authTokenPresent: Boolean(process.env.MYCLAW_IPC_AUTH_TOKEN),
-        brokerBaseUrl: process.env.ANTHROPIC_BASE_URL,
+        brokerBaseUrlPresent: Boolean(process.env.ANTHROPIC_BASE_URL),
       },
     }, null, 2),
   );
@@ -219,9 +219,12 @@ describe('host child-process runtime smoke', () => {
         ipcDir: groupIpcDir,
         ipcInputDir: path.join(groupIpcDir, 'input'),
         authTokenPresent: true,
-        brokerBaseUrl: 'https://broker.example.com/anthropic',
+        brokerBaseUrlPresent: false,
       }),
     );
+    expect(childRecord.input.modelCredentialEnv).toEqual({
+      ANTHROPIC_BASE_URL: 'https://broker.example.com/anthropic',
+    });
     expect(childRecord.input.memoryContextBlock).toBe(
       'host smoke memory context',
     );

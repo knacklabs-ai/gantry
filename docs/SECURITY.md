@@ -93,9 +93,14 @@ tables or database roles. MyClaw owns the `myclaw` schema, OneCLI owns the
 `ONECLI_DATABASE_URL` must use a different Postgres user than
 `MYCLAW_DATABASE_URL` and must include `schema=onecli`.
 `SECRET_ENCRYPTION_KEY` must be a stable generated base64-encoded 32-byte deployment
-secret so broker state survives stateless restarts. Agent runners do not receive
-`MYCLAW_DATABASE_URL`, `ONECLI_DATABASE_URL`, raw provider keys, broker-provided
-proxy variables, or broker-provided CA certificate variables.
+secret so broker state survives stateless restarts. General agent tool, script,
+browser, and MCP environments do not receive `MYCLAW_DATABASE_URL`,
+`ONECLI_DATABASE_URL`, raw provider keys, broker-provided proxy variables, or
+broker-provided CA certificate variables. Model broker projection is limited to
+the model SDK credential lane. `NO_PROXY`/`no_proxy` values are compatibility
+hints for cooperative tools, not protection against malicious or vulnerable
+tools; that protection belongs to capability selection, permission policy,
+sandbox policy, and audit.
 
 ## Security Architecture (Host Runtime)
 

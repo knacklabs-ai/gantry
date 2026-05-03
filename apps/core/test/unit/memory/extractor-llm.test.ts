@@ -183,14 +183,14 @@ describe('LlmMemoryExtractionProvider', () => {
     const requestInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(requestInit?.headers as HeadersInit);
     expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://broker.local/mock');
-    expect(headers.get('x-myclaw-model')).toBe('claude-haiku-4-5-20251001');
+    expect(headers.get('x-myclaw-model')).toBeNull();
     expect(headers.get('authorization')).toBeNull();
     expect(headers.get('x-api-key')).toBeNull();
     expect(claudeQueryMock.mock.calls[0]?.[0]).toMatchObject({
       options: {
+        model: 'haiku',
         env: {
           ANTHROPIC_BASE_URL: 'https://broker.local/mock',
-          ANTHROPIC_MODEL: 'claude-haiku-4-5-20251001',
         },
       },
     });

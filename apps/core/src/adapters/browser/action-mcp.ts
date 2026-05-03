@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import { applyLoopbackNoProxyEnv } from '../../shared/no-proxy.js';
+import { applyAgentEgressNoProxyEnv } from '../../shared/no-proxy.js';
 
 const require = createRequire(import.meta.url);
 
@@ -29,7 +29,7 @@ export function createBrowserActionMcpServerConfig(
   const env: Record<string, string> = {
     PLAYWRIGHT_MCP_CDP_ENDPOINT: cdpEndpoint,
   };
-  applyLoopbackNoProxyEnv(env);
+  applyAgentEgressNoProxyEnv(env);
 
   return {
     command: process.execPath,

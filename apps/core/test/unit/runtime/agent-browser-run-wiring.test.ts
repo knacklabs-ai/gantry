@@ -28,8 +28,10 @@ const adapters = {
     args: ['/tmp/playwright-mcp', '--shared-browser-context'],
     env: {
       PLAYWRIGHT_MCP_CDP_ENDPOINT: cdpEndpoint,
-      NO_PROXY: '127.0.0.1,localhost,::1',
-      no_proxy: '127.0.0.1,localhost,::1',
+      NO_PROXY:
+        '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
+      no_proxy:
+        '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
     },
   }),
 };
@@ -103,8 +105,10 @@ describe('agent browser run wiring', () => {
 
     expect(mockGetBrowserStatus).toHaveBeenCalledWith('myclaw');
     expect(projection.env).toMatchObject({
-      NO_PROXY: '127.0.0.1,localhost,::1',
-      no_proxy: '127.0.0.1,localhost,::1',
+      NO_PROXY:
+        '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
+      no_proxy:
+        '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
     });
     expect(projection.mcpCapabilities).toHaveLength(1);
     expect(projection.mcpCapabilities[0]).toMatchObject({
@@ -117,8 +121,10 @@ describe('agent browser run wiring', () => {
         args: ['/tmp/playwright-mcp', '--shared-browser-context'],
         env: {
           PLAYWRIGHT_MCP_CDP_ENDPOINT: 'http://127.0.0.1:4567',
-          NO_PROXY: '127.0.0.1,localhost,::1',
-          no_proxy: '127.0.0.1,localhost,::1',
+          NO_PROXY:
+            '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
+          no_proxy:
+            '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
         },
       },
     });

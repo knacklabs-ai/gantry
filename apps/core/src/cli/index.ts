@@ -497,10 +497,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   return 1;
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+const invokedPath = process.argv[1]
+  ? fs.realpathSync.native(process.argv[1])
+  : undefined;
+
+if (invokedPath && import.meta.url === pathToFileURL(invokedPath).href) {
   main()
     .then((code) => {
       process.exit(code);

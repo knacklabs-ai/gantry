@@ -309,7 +309,7 @@ export const HOST_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_DEFAULT_SONNET_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL',
 ] as const;
-export const ONECLI_ALLOWED_ENV_KEYS = [...HOST_CREDENTIAL_ENV_KEYS] as const;
+export const ONECLI_ALLOWED_ENV_KEYS = ['ANTHROPIC_BASE_URL'] as const;
 type HostCredentialSource = Partial<Record<string, string | undefined>>;
 
 function readHostCredentialValue(

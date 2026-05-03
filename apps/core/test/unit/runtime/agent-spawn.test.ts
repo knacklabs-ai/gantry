@@ -499,6 +499,7 @@ describe('agent-spawn timeout behavior', () => {
       brokerApplied: true,
       brokerProfile: 'external',
     });
+    const writeSpy = vi.spyOn(fakeProc.stdin, 'write');
     const resultPromise = spawnAgent(
       testGroup,
       { ...testInput, model: 'kimi 2.6' },
@@ -515,9 +516,15 @@ describe('agent-spawn timeout behavior', () => {
       string
     >;
     expect(env.ANTHROPIC_MODEL).toBe('moonshotai/kimi-k2.6');
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://openrouter.ai/api');
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('broker-token');
-    expect(env.ANTHROPIC_API_KEY).toBe('');
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
+    expect(runnerInput.modelCredentialEnv).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+      ANTHROPIC_AUTH_TOKEN: 'broker-token',
+      ANTHROPIC_API_KEY: '',
+    });
   });
 
   it('rejects OpenRouter models when the broker token is not OpenRouter-scoped', async () => {
@@ -674,6 +681,56 @@ describe('agent-spawn timeout behavior', () => {
     }
   });
 
+  it('keeps broker proxy credentials out of the general runner env', async () => {
+    vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+        HTTP_PROXY: 'http://x:aoc_1234567890abcdef@127.0.0.1:10255/',
+        HTTPS_PROXY: 'http://x:aoc_1234567890abcdef@127.0.0.1:10255/',
+        NODE_USE_ENV_PROXY: '1',
+        NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
+      },
+      credentialProviders: {},
+      brokerApplied: true,
+      brokerProfile: 'onecli',
+    });
+    const writeSpy = vi.spyOn(fakeProc.stdin, 'write');
+
+    const resultPromise = spawnAgent(testGroup, testInput, () => {});
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.HTTP_PROXY).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.NODE_USE_ENV_PROXY).toBeUndefined();
+    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.MYCLAW_MODEL_CREDENTIAL_ENV_JSON).toBeUndefined();
+    const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
+    expect(runnerInput.modelCredentialEnv).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+      HTTP_PROXY: 'http://x:aoc_1234567890abcdef@127.0.0.1:10255/',
+      HTTPS_PROXY: 'http://x:aoc_1234567890abcdef@127.0.0.1:10255/',
+      NODE_USE_ENV_PROXY: '1',
+      NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
+    });
+    expect(env.NO_PROXY.split(',')).toEqual(
+      expect.arrayContaining([
+        'github.com',
+        '.github.com',
+        'api.github.com',
+        'raw.githubusercontent.com',
+        'objects.githubusercontent.com',
+        'codeload.github.com',
+      ]),
+    );
+  });
+
   it('does not expose approved third-party MCP servers through direct SDK MCP config', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const rmSyncSpy = vi.spyOn(fs, 'rmSync');
@@ -811,6 +868,10 @@ describe('agent-spawn timeout behavior', () => {
   });
 
   it('passes CDP endpoint when an existing browser session is already running', async () => {
+    const originalNoProxy = process.env.NO_PROXY;
+    const originalLowerNoProxy = process.env.no_proxy;
+    process.env.NO_PROXY = 'corp.internal';
+    process.env.no_proxy = 'lower.internal';
     mockGetBrowserStatus.mockReturnValueOnce({
       profile: 'c-test-group-browser',
       profileName: 'c-test-group-browser',
@@ -849,16 +910,40 @@ describe('agent-spawn timeout behavior', () => {
       args: expect.arrayContaining(['--shared-browser-context']),
       env: {
         PLAYWRIGHT_MCP_CDP_ENDPOINT: 'http://127.0.0.1:4567',
-        NO_PROXY: '127.0.0.1,localhost,::1',
-        no_proxy: '127.0.0.1,localhost,::1',
+        NO_PROXY:
+          '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
+        no_proxy:
+          '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
       },
     });
     expect(env.NO_PROXY.split(',')).toEqual(
-      expect.arrayContaining(['127.0.0.1', 'localhost', '::1']),
+      expect.arrayContaining([
+        'corp.internal',
+        'lower.internal',
+        '127.0.0.1',
+        'localhost',
+        '::1',
+      ]),
     );
     expect(env.no_proxy.split(',')).toEqual(
-      expect.arrayContaining(['127.0.0.1', 'localhost', '::1']),
+      expect.arrayContaining([
+        'corp.internal',
+        'lower.internal',
+        '127.0.0.1',
+        'localhost',
+        '::1',
+      ]),
     );
+    if (originalNoProxy === undefined) {
+      delete process.env.NO_PROXY;
+    } else {
+      process.env.NO_PROXY = originalNoProxy;
+    }
+    if (originalLowerNoProxy === undefined) {
+      delete process.env.no_proxy;
+    } else {
+      process.env.no_proxy = originalLowerNoProxy;
+    }
   });
 
   it('checks conversation browser status for non-main agents without auto-launching', async () => {

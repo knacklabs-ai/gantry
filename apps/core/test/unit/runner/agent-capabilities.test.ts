@@ -98,8 +98,10 @@ describe('agent capability composition', () => {
         MYCLAW_BROWSER_IPC_AUTH_TOKEN: 'browser-token',
         MYCLAW_MEMORY_IPC_AUTH_TOKEN: 'memory-token',
         MYCLAW_IPC_RESPONSE_VERIFY_KEY: 'verify-key',
-        NO_PROXY: '127.0.0.1,localhost,::1',
-        no_proxy: '127.0.0.1,localhost,::1',
+        NO_PROXY:
+          '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
+        no_proxy:
+          '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
       },
     });
   });

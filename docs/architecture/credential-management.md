@@ -139,10 +139,21 @@ OneCLI may return local provider proxy variables such as `HTTP_PROXY`,
 `HTTPS_PROXY`, and `NODE_USE_ENV_PROXY` for the model credential lane. MyClaw
 accepts only OneCLI-shaped local HTTP proxy endpoints, normalizes Docker-only
 loopback aliases such as `host.docker.internal` to `127.0.0.1` for host
-runners, and passes the result to the Claude SDK process. The Claude SDK runner sets
+runners, and passes the result only to the Claude SDK process through a private
+model-credential handoff. General runner, scheduled-script, tool, browser, and
+MCP process environments must not receive broker proxy variables or
+broker-provided CA certificate variables. The Claude SDK runner sets
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` so provider credentials remain with the
 Claude process and are stripped from Bash, hooks, and MCP stdio subprocesses.
 Git/tool-specific proxy controls remain forbidden in the broker lane.
+
+`NO_PROXY` and `no_proxy` are compatibility hints for cooperative tools, not an
+authorization boundary. They keep common developer tools such as `gh`, `git`,
+`curl`, Go, Python, and Node from routing trusted developer-platform traffic
+through model credential transport when those tools honor proxy environment
+variables. A malicious or vulnerable tool can ignore those variables, so
+protection still comes from capability selection, permission policy, sandbox
+policy, and audit.
 
 The runtime calls the application credential service and receives a generic
 `AgentCredentialInjection`; it does not instantiate OneCLI.
@@ -158,7 +169,7 @@ flowchart LR
   Runtime["Runtime agent run"] --> Policy["PermissionPolicyService"]
   Policy --> Broker["AgentCredentialBroker"]
   Broker --> Injection["AgentCredentialInjection"]
-  Injection --> Runner["Agent runner env/proxy/cert refs"]
+  Injection --> Runner["Private model SDK credential handoff"]
   Runtime --> Secrets["RuntimeSecretProvider"]
   Secrets --> RuntimeOnly["Runtime services only"]
 ```

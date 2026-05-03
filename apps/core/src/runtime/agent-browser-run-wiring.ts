@@ -3,7 +3,7 @@ import {
   DEFAULT_BROWSER_PROFILE_NAME,
   getKnownBrowserStatus,
 } from './browser-capability.js';
-import { applyLoopbackNoProxyEnv } from '../shared/no-proxy.js';
+import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
 
 export type RuntimeMcpCapabilityProjection = MaterializedMcpCapability;
 
@@ -58,7 +58,7 @@ export function createAgentBrowserRunWiring<SkillSourceT>(
         };
       }
       const env: Record<string, string> = {};
-      applyLoopbackNoProxyEnv(env);
+      applyAgentEgressNoProxyEnv(env);
       const cdpEndpoint = `http://127.0.0.1:${session.port}`;
 
       return {

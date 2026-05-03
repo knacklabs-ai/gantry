@@ -10,7 +10,6 @@ describe('OneCLI env policy', () => {
     expect(
       filterTrustedOnecliEnv({
         ANTHROPIC_BASE_URL: 'https://broker.example.com',
-        ANTHROPIC_MODEL: 'claude-haiku-4-5',
         ANTHROPIC_API_KEY: 'placeholder',
         CLAUDE_CODE_OAUTH_TOKEN: 'placeholder',
         HTTPS_PROXY: 'http://127.0.0.1:10255',
@@ -19,7 +18,6 @@ describe('OneCLI env policy', () => {
     ).toEqual({
       env: {
         ANTHROPIC_BASE_URL: 'https://broker.example.com',
-        ANTHROPIC_MODEL: 'claude-haiku-4-5',
         ANTHROPIC_API_KEY: 'placeholder',
         CLAUDE_CODE_OAUTH_TOKEN: 'placeholder',
         HTTPS_PROXY: 'http://127.0.0.1:10255/',
@@ -34,7 +32,8 @@ describe('OneCLI env policy', () => {
       filterTrustedOnecliEnv({
         ANTHROPIC_BASE_URL: 'https://broker.example.com',
         EMPTY_ALLOWED_KEY: '',
-        ANTHROPIC_MODEL: '',
+        ANTHROPIC_MODEL: 'claude-haiku-4-5',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-7',
         CUSTOM_FLAG: 'value',
         NODE_EXTRA_CA_CERTS: '/tmp/onecli-gateway-ca.pem',
         NUMBER_VALUE: 1,
@@ -46,6 +45,7 @@ describe('OneCLI env policy', () => {
       droppedKeys: [
         'EMPTY_ALLOWED_KEY',
         'ANTHROPIC_MODEL',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'CUSTOM_FLAG',
         'NODE_EXTRA_CA_CERTS',
         'NUMBER_VALUE',
@@ -187,36 +187,6 @@ describe('OneCLI env policy', () => {
       ).toThrow(
         'forbidden raw credential env value for key: ANTHROPIC_BASE_URL',
       );
-    }
-  });
-
-  it('rejects secret-shaped values in allowed model env keys', () => {
-    const secretLikeValues = [
-      'sk-ant-raw-provider-token',
-      'm=sk-ant-AAAAAAAA',
-      '+eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature',
-      '/Bearer abcdefghijklmnopqrstuvwxyz123456',
-      'github_pat_11AAAAAAAA0abcdefghijklmnopqrstuvwxyz',
-      'ASIAABCDEFGHIJKLMNOP',
-      'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-      'Bearer abcdefghijklmnopqrstuvwxyz123456',
-      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature',
-      '-----BEGIN PRIVATE KEY-----',
-    ];
-    for (const key of [
-      'ANTHROPIC_MODEL',
-      'ANTHROPIC_DEFAULT_OPUS_MODEL',
-      'ANTHROPIC_DEFAULT_SONNET_MODEL',
-      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-    ]) {
-      for (const value of secretLikeValues) {
-        expect(() =>
-          filterTrustedOnecliEnv({
-            ANTHROPIC_BASE_URL: 'https://broker.example.com',
-            [key]: value,
-          }),
-        ).toThrow(`forbidden raw credential env value for key: ${key}`);
-      }
     }
   });
 

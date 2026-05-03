@@ -26,7 +26,11 @@ import {
 } from './model-config.js';
 import { writeOutput } from './output.js';
 import { runQuery } from './query-loop.js';
-import { buildSdkEnv, resolveMcpServerPath } from './runtime-env.js';
+import {
+  buildSdkEnv,
+  buildToolEnv,
+  resolveMcpServerPath,
+} from './runtime-env.js';
 import { runScript } from './script-runner.js';
 import {
   parseSessionSlashCommand,
@@ -50,7 +54,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const sdkEnv = buildSdkEnv();
+  const sdkEnv = buildSdkEnv(agentInput.modelCredentialEnv);
+  const toolEnv = buildToolEnv();
   const mcpServerPath = resolveMcpServerPath(import.meta.url);
   const configuredModel = resolveConfiguredModel();
   const configuredThinking = resolveThinkingOptions(agentInput.thinking);
@@ -91,7 +96,7 @@ async function main(): Promise<void> {
   }
 
   if (agentInput.script && agentInput.isScheduledJob) {
-    const scriptPrompt = await runScheduledScript(agentInput, sdkEnv);
+    const scriptPrompt = await runScheduledScript(agentInput, toolEnv);
     if (!scriptPrompt) return;
     prompt = scriptPrompt;
   }

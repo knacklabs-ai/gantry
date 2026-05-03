@@ -26,6 +26,7 @@
 - Agent-requested MCP credential needs are labels only. Never let the agent select arbitrary broker env keys; map them into server-scoped refs before approval and materialization.
 - MCP runner handoff files contain resolved credentials. Write them only after spawn preconditions pass and remove them in host cleanup paths; `npx-package` stdio templates may accept only one safe npm package argument.
 - Resolved third-party MCP credentials must not be serialized into long-lived process env; use a private per-run handoff and keep SDK tool env sanitized.
+- Broker model proxy and CA values belong only in the model SDK credential lane. Keep general runner, script, browser, and MCP env tool-agnostic; `NO_PROXY` is compatibility only, not a safety boundary.
 - Host runner sync code must work with npm workspace hoisting and installed package layouts; do not assume `packages/agent-runner/node_modules` exists.
 - Files under `apps/core/src/app/bootstrap/` own composition and wiring only; runtime behavior must live in `runtime/`, `jobs/`, `session/`, `platform/`, `messaging/`, `memory/`, or infrastructure modules.
 - Channel provider catalog flags must match executable behavior: do not advertise `install` or `discover` unless the CLI/control path can actually perform setup or discovery, and document any remaining runtime adapter seam explicitly.

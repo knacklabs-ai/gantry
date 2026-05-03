@@ -380,13 +380,16 @@ OneCLI owns its schema and migrations; MyClaw only provisions and verifies the
 schema boundary. `MYCLAW_DATABASE_URL` and `ONECLI_DATABASE_URL` must use
 different Postgres users.
 
-The runner receives only broker-safe model endpoint settings from the selected
-broker. Raw provider tokens and runtime-owned database URLs are not forwarded to
-tools, the child runner, or the Agent SDK environment. Runner-wide proxy
-environment variables are not accepted from OneCLI because they affect Bash,
-hooks, MCP stdio servers, skills, monitors, and other tools. Provider access is
-projected through explicit model endpoint settings such as `ANTHROPIC_BASE_URL`
-and adapter-materialized CA certificate references.
+The model SDK credential lane receives only broker-safe model endpoint settings
+from the selected broker. Raw provider tokens and runtime-owned database URLs
+are not forwarded to tools, the general child runner environment, or MCP
+servers. Runner-wide proxy environment variables are not accepted from OneCLI
+because they affect Bash, hooks, MCP stdio servers, skills, monitors, and other
+tools. Provider access is projected to the Agent SDK through explicit model
+endpoint settings such as `ANTHROPIC_BASE_URL` and adapter-materialized CA
+certificate references. `NO_PROXY`/`no_proxy` defaults are cooperative-tool
+compatibility hints only; vulnerable-tool protection remains capability,
+permission, sandbox, and audit policy.
 If `.env` or process env contains raw agent credentials such as
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN`,
 doctor/preflight reports a wrong-lane configuration error.

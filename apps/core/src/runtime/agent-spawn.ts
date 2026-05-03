@@ -47,7 +47,10 @@ import {
 import { getContinuationInputDir } from './continuation-input.js';
 import { getPromptProfileService } from './prompt-profile.js';
 import { executeRunnerProcess } from './agent-spawn-process.js';
-import { applyLoopbackNoProxyEnv } from '../shared/no-proxy.js';
+import {
+  applyAgentEgressNoProxyEnv,
+  mergeAgentEgressNoProxy,
+} from '../shared/no-proxy.js';
 import { createAgentBrowserRunWiring } from './agent-browser-run-wiring.js';
 import { resolveConversationBrowserProfile } from '../shared/browser-profile-scope.js';
 import {
@@ -55,6 +58,10 @@ import {
   AgentOutput,
   RunAgentOptions,
 } from './agent-spawn-types.js';
+
+type RunnerAgentInput = AgentInput & {
+  modelCredentialEnv?: Record<string, string>;
+};
 
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
 export type {
@@ -153,8 +160,9 @@ export async function spawnAgent(
     conversationId: input.chatJid,
   });
 
-  const runnerInput: AgentInput = {
+  const runnerInput: RunnerAgentInput = {
     ...input,
+    modelCredentialEnv: undefined,
     browserProfileName,
     compiledSystemPrompt,
   };
@@ -265,9 +273,11 @@ export async function spawnAgent(
   const args = [hostRunnerPath];
   const ipcInputDir = getContinuationInputDir(group.folder, input.threadId);
   const ipcAuth = createIpcAuthEnvelope(group.folder, input.threadId);
+  const modelCredentialEnv: NodeJS.ProcessEnv = {
+    ...hostCredentials.env,
+  };
   const env: NodeJS.ProcessEnv = {
     ...pickSafeHostEnv(process.env),
-    ...hostCredentials.env,
     TZ: TIMEZONE,
     MYCLAW_WORKSPACE_GROUP_DIR: hostRuntime.groupDir,
     MYCLAW_WORKSPACE_GLOBAL_DIR: hostRuntime.globalDir || '',
@@ -298,20 +308,36 @@ export async function spawnAgent(
     MYCLAW_PERMISSION_TIMEOUT_MS: String(PERMISSION_APPROVAL_TIMEOUT_MS),
     CLAUDE_CONFIG_DIR: claudeRuntimeMaterialization.claudeConfigDir,
   };
-  applyLoopbackNoProxyEnv(env);
+  applyAgentEgressNoProxyEnv(env);
   // Job-level model overrides group-level model.
   const effectiveModelSource = input.model ? 'job.model' : modelConfig.source;
   if (effectiveModel) {
     env.ANTHROPIC_MODEL = effectiveModel;
   }
   if (effectiveModelEntry?.provider === 'openrouter') {
-    applyOpenRouterSdkEnv(env);
+    applyOpenRouterSdkEnv(modelCredentialEnv);
+  }
+  const serializedModelCredentialEnv = Object.fromEntries(
+    Object.entries(modelCredentialEnv).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    ),
+  );
+  if (Object.keys(serializedModelCredentialEnv).length > 0) {
+    runnerInput.modelCredentialEnv = serializedModelCredentialEnv;
   }
   let browserRuntimeDetails: readonly string[] = [];
   let allMcpCapabilities: MaterializedMcpCapability[] = [];
   try {
     const browserProjection = await browserWiring.activate();
+    const existingNoProxy = [env.NO_PROXY, env.no_proxy] as const;
     Object.assign(env, browserProjection.env);
+    const mergedNoProxy = mergeAgentEgressNoProxy(
+      ...existingNoProxy,
+      env.NO_PROXY,
+      env.no_proxy,
+    );
+    env.NO_PROXY = mergedNoProxy;
+    env.no_proxy = mergedNoProxy;
     browserRuntimeDetails = browserProjection.runtimeDetails;
     allMcpCapabilities = [
       ...allMcpCapabilities,
