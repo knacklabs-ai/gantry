@@ -2125,6 +2125,47 @@ describe('TelegramChannel', () => {
       );
     });
 
+    it('uses short callback data for long permission request ids', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const longRequestId =
+        'capability-request_tool_enable-727f98ef-4874-4f63-b102-50792c952753';
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: longRequestId,
+          sourceGroup: 'whatsapp_main',
+          toolName: 'Bash',
+          decisionOptions: ['approve_once', 'approve_permanent', 'reject'],
+        },
+      );
+      await flushPromises();
+
+      const sendOptions = currentBot().api.sendMessage.mock.calls.at(-1)?.[2];
+      const keyboard = sendOptions.reply_markup.inline_keyboard[0];
+      const approvePermanentData = keyboard[1].callback_data as string;
+      expect(
+        Buffer.byteLength(approvePermanentData, 'utf8'),
+      ).toBeLessThanOrEqual(64);
+      expect(approvePermanentData).not.toContain(longRequestId);
+
+      const callbackCtx = {
+        callbackQuery: { data: approvePermanentData },
+        chat: { id: 100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(callbackCtx);
+      await expect(decisionPromise).resolves.toEqual(
+        expect.objectContaining({
+          approved: true,
+          mode: 'approve_permanent',
+        }),
+      );
+    });
+
     it('rejects non-admin callbacks and keeps the request pending', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);

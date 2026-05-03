@@ -228,6 +228,7 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
     const pending = this.pendingPermissionPrompts.get(requestId);
     if (!pending || !this.bot) return;
     this.pendingPermissionPrompts.delete(requestId);
+    this.pendingPermissionPromptKeys.delete(pending.callbackKey);
     clearTimeout(pending.timer);
     pending.resolve(decision);
 

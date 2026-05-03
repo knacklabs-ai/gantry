@@ -48,6 +48,17 @@ import {
   telegramThreadOptionsFromString,
 } from './channel-shared.js';
 
+const TELEGRAM_PERMISSION_CALLBACK_KEY_LENGTH = 24;
+
+function createTelegramPermissionCallbackKey(): string {
+  const random = Math.random().toString(36).slice(2);
+  const timestamp = Date.now().toString(36);
+  return `${timestamp}${random}`.slice(
+    0,
+    TELEGRAM_PERMISSION_CALLBACK_KEY_LENGTH,
+  );
+}
+
 export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
   async sendMessage(
     jid: string,
@@ -340,6 +351,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
 
     const timeoutMs = TELEGRAM_USER_QUESTION_TIMEOUT_MS;
     const promptText = this.formatPermissionPromptText(request, timeoutMs);
+    const callbackKey = createTelegramPermissionCallbackKey();
     try {
       const sent = await this.bot.api.sendMessage(chatId, promptText, {
         ...telegramThreadOptionsFromString(request.threadId),
@@ -350,7 +362,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
                 option === 'reject'
                   ? 'Reject'
                   : permissionApproveLabel(request, option),
-              callback_data: `perm:${option}:${request.requestId}`,
+              callback_data: `perm:${option}:${callbackKey}`,
             })),
           ],
         },
@@ -363,8 +375,10 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
             reason: 'timed out',
           });
         }, timeoutMs);
+        this.pendingPermissionPromptKeys.set(callbackKey, request.requestId);
         this.pendingPermissionPrompts.set(request.requestId, {
           sourceGroup: request.sourceGroup,
+          callbackKey,
           decisionPolicy: request.decisionPolicy,
           request,
           chatId,
@@ -544,6 +558,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
         reason: 'Telegram channel disconnected',
       });
       this.pendingPermissionPrompts.delete(requestId);
+      this.pendingPermissionPromptKeys.delete(pending.callbackKey);
     }
     for (const [key, pending] of this.pendingUserQuestions.entries()) {
       clearTimeout(pending.timer);

@@ -199,7 +199,9 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         | 'reject'
         | 'approve'
         | 'deny';
-      const requestId = permissionMatch[2];
+      const callbackKey = permissionMatch[2];
+      const requestId =
+        this.pendingPermissionPromptKeys.get(callbackKey) ?? callbackKey;
       const pending = this.pendingPermissionPrompts.get(requestId);
       if (!pending) {
         await ctx.answerCallbackQuery({

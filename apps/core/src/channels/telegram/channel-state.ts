@@ -48,6 +48,7 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     string,
     {
       sourceGroup: string;
+      callbackKey: string;
       decisionPolicy?: PermissionApprovalRequest['decisionPolicy'];
       request: PermissionApprovalRequest;
       chatId: string;
@@ -56,6 +57,7 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       resolve: (decision: PermissionApprovalDecision) => void;
     }
   >();
+  protected pendingPermissionPromptKeys = new Map<string, string>();
   protected pendingUserQuestions = new Map<string, PendingUserQuestionState>();
   protected activeDraftStreams = new Map<string, ActiveDraftStreamState>();
   protected activeGroupStreams = new Map<string, ActiveGroupStreamState>();
