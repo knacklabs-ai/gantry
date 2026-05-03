@@ -224,9 +224,19 @@ async function conversationAdministrationService(): Promise<ConversationAdminist
 }
 
 async function runtimeRepositories() {
-  const { getRuntimeStorage } =
+  const { getRuntimeStorage, initializeRuntimeStorage } =
     await import('../adapters/storage/postgres/runtime-store.js');
-  return getRuntimeStorage().repositories;
+  try {
+    return getRuntimeStorage().repositories;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'Runtime storage has not been initialized'
+    ) {
+      return (await initializeRuntimeStorage()).repositories;
+    }
+    throw error;
+  }
 }
 
 function parseCsv(value: string): string[] {

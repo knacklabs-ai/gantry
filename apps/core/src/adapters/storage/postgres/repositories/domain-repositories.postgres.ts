@@ -904,6 +904,7 @@ export class PostgresConversationRepository implements ConversationRepository {
       .onConflictDoUpdate({
         target: pgSchema.conversationsPostgres.id,
         set: {
+          providerConnectionId: conversation.providerConnectionId,
           externalRefJson: encodeJsonOrNull(conversation.externalRef),
           kind: conversation.kind,
           title: conversation.title ?? null,

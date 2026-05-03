@@ -490,10 +490,8 @@ export class SettingsDesiredStateService {
       appId: this.appId,
       externalConversationId,
     });
-    if (existing) return existing;
-
     const conversation: Conversation = {
-      id: `conversation:${jid}` as ConversationId,
+      id: existing?.id ?? (`conversation:${jid}` as ConversationId),
       appId: this.appId,
       providerConnectionId: input.conversation
         .providerConnection as ProviderConnectionId,
@@ -507,7 +505,7 @@ export class SettingsDesiredStateService {
       ),
       title: input.conversation.displayName,
       status: 'active',
-      createdAt: input.now,
+      createdAt: existing?.createdAt ?? input.now,
       updatedAt: input.now,
     };
     await conversations.saveConversation(conversation);

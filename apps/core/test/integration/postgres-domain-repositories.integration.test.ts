@@ -163,6 +163,44 @@ maybeDescribe('Postgres domain repositories', () => {
     });
   });
 
+  it('updates a conversation provider connection on upsert', async () => {
+    const repairedProviderConnectionId =
+      'channel-providerConnection:test:slack:repaired' as ProviderConnectionId;
+    await repositories.providerConnections.saveProviderConnection({
+      id: repairedProviderConnectionId,
+      appId,
+      providerId,
+      externalInstallationRef: {
+        kind: 'provider_connection',
+        value: 'T-REPAIRED',
+      },
+      label: 'Repaired Slack',
+      status: 'active',
+      config: {},
+      runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await repositories.conversations.saveConversation({
+      id: conversationId,
+      appId,
+      providerConnectionId: repairedProviderConnectionId,
+      externalRef: { kind: 'conversation', value: 'C123' },
+      kind: 'channel',
+      title: 'engineering',
+      status: 'active',
+      createdAt: now,
+      updatedAt: '2026-04-27T00:00:10.000Z',
+    });
+
+    await expect(
+      repositories.conversations.getConversation(conversationId),
+    ).resolves.toMatchObject({
+      providerConnectionId: repairedProviderConnectionId,
+    });
+  });
+
   it('disables omitted agent capability bindings during replacement', async () => {
     const updatedAt = '2026-05-02T00:00:00.000Z';
 

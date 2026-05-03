@@ -226,7 +226,19 @@ describe('SettingsDesiredStateService', () => {
       senderPolicy: { allow: '*', mode: 'trigger' },
       controlApprovers: ['5759865942'],
     };
-    const savedConversations: any[] = [];
+    const savedConversations: any[] = [
+      {
+        id: 'conversation:tg:-100123',
+        appId: 'default',
+        providerConnectionId: 'channel-installation:default:telegram',
+        externalRef: { kind: 'conversation', value: '-100123' },
+        kind: 'group',
+        title: 'Old Kai',
+        status: 'active',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        updatedAt: '2026-05-01T00:00:00.000Z',
+      },
+    ];
     const savedApprovers = new Map<string, string[]>();
     const providerConnection = {
       id: 'telegram_default',
@@ -253,7 +265,14 @@ describe('SettingsDesiredStateService', () => {
           ) ?? null,
       ),
       saveConversation: vi.fn(async (conversation: any) => {
-        savedConversations.push(conversation);
+        const index = savedConversations.findIndex(
+          (saved) => saved.id === conversation.id,
+        );
+        if (index >= 0) {
+          savedConversations[index] = conversation;
+        } else {
+          savedConversations.push(conversation);
+        }
       }),
       listConversationApprovers: vi.fn(async (conversationId: string) =>
         (savedApprovers.get(conversationId) ?? []).map((externalUserId) => ({
@@ -315,6 +334,15 @@ describe('SettingsDesiredStateService', () => {
         kind: 'group',
       }),
     );
+    expect(savedConversations).toHaveLength(1);
+    expect(savedConversations[0]).toEqual(
+      expect.objectContaining({
+        id: 'conversation:tg:-100123',
+        providerConnectionId: 'telegram_default',
+        title: 'Kai',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      }),
+    );
     expect(conversations.replaceConversationApprovers).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conversation:tg:-100123',
@@ -324,7 +352,8 @@ describe('SettingsDesiredStateService', () => {
 
     await service.reconcile(settings);
 
-    expect(conversations.saveConversation).toHaveBeenCalledTimes(1);
+    expect(conversations.saveConversation).toHaveBeenCalledTimes(2);
+    expect(savedConversations).toHaveLength(1);
     expect(conversations.replaceConversationApprovers).toHaveBeenCalledTimes(2);
 
     const administration = new ConversationAdministrationService(
