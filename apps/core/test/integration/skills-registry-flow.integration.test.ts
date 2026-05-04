@@ -167,10 +167,24 @@ describe('skill registry integration flow', () => {
   });
 
   function createCapabilityReviewDeps(options?: {
-    decision?: { approved: boolean; decidedBy?: string; reason?: string };
+    decision?: {
+      approved: boolean;
+      mode?: string;
+      decidedBy?: string;
+      reason?: string;
+      updatedPermissions?: unknown[];
+    };
     groups?: Record<string, any>;
   }) {
     const sendMessage = vi.fn(async () => undefined);
+    const toolRepository = {
+      getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
+      saveTool: vi.fn(async () => undefined),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+      listAgentToolBindings: vi.fn(async () => []),
+    };
     const requestPermissionApproval = vi.fn(
       async () =>
         options?.decision ?? {
@@ -196,8 +210,9 @@ describe('skill registry integration flow', () => {
       requestUserAnswer: vi.fn(),
       onSchedulerChanged: vi.fn(),
       registerGroup: vi.fn(),
+      getToolRepository: () => toolRepository,
     };
-    return { deps, sendMessage, requestPermissionApproval };
+    return { deps, sendMessage, requestPermissionApproval, toolRepository };
   }
 
   it('uploads, deduplicates, approves, binds, resolves, and disables a local skill through control SDK and services', async () => {
@@ -597,6 +612,81 @@ describe('skill registry integration flow', () => {
             },
           ],
         }),
+      );
+    });
+  });
+
+  it('persists request_permission persistent approvals as configured allowed tool rules', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const { deps, sendMessage, toolRepository } = createCapabilityReviewDeps({
+      decision: {
+        approved: true,
+        mode: 'allow_persistent_rule',
+        decidedBy: 'Approver',
+        reason: 'persistent rule allowed',
+        updatedPermissions: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            destination: 'session',
+            rules: [
+              {
+                toolName: 'mcp__internal__deploy_preview',
+                ruleContent: 'environment:staging',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await processTaskIpc(
+      {
+        type: 'request_permission',
+        taskId: 'request-permission-persistent-approval-test',
+        targetJid: 'chat-origin',
+        chatJid: 'chat-origin',
+        authThreadId: 'thread-origin',
+        payload: {
+          permissionKind: 'tool',
+          toolName: 'mcp__internal__deploy_preview',
+          rule: 'environment:staging',
+          temporaryOnly: false,
+          reason: 'Deploy previews repeatedly during this session.',
+        },
+      },
+      'agent:one',
+      false,
+      deps as any,
+    );
+
+    await vi.waitFor(() => {
+      expect(toolRepository.saveTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'tool:mcp__internal__deploy_preview(environment:staging)',
+          appId: 'default',
+          name: 'tool:mcp__internal__deploy_preview(environment:staging)',
+          displayName: 'mcp__internal__deploy_preview(environment:staging)',
+          adapterRef: 'permission/request_permission',
+          status: 'active',
+        }),
+      );
+    });
+    expect(toolRepository.saveAgentToolBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'default',
+        agentId: 'agent:one',
+        toolId: 'tool:mcp__internal__deploy_preview(environment:staging)',
+        status: 'active',
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith(
+        'chat-origin',
+        expect.stringContaining(
+          'Persistent permission rule enabled for future runs',
+        ),
+        { threadId: 'thread-origin' },
       );
     });
   });
