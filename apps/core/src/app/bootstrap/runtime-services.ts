@@ -149,6 +149,7 @@ export async function startRuntimeServices(
     onSchedulerChanged,
     opsRepository: resolved.opsRepository,
     collectSessionMemory: resolved.collectSessionMemory,
+    getToolRepository: () => getRuntimeStorage().repositories.tools,
   });
 
   resolved.startIpcWatcher({
@@ -174,10 +175,10 @@ export async function startRuntimeServices(
       ),
     onSchedulerChanged,
     opsRepository: resolved.opsRepository,
+    getToolRepository: () => getRuntimeStorage().repositories.tools,
     requestPermissionApproval: channelWiring.requestPermissionApproval,
     requestUserAnswer: channelWiring.requestUserAnswer,
     mcpHostnameLookup: resolved.mcpHostnameLookup,
-    getToolRepository: () => getRuntimeStorage().repositories.tools,
   });
 
   syncGroupSnapshots();
