@@ -16,6 +16,7 @@
 - Run `npm run test:integration:postgres` for DB-backed feature work. A plain `npm run test:integration` is allowed to skip those suites when the local Postgres test URL is absent.
 - Claude Agent SDK boundary tests must stay hermetic: mock the SDK provider, assert generated options at the adapter boundary, and never require real Anthropic auth.
 - Control HTTP route changes must have route-level coverage for encoded ids, app ownership checks, and pre-mutation authorization.
+- Agent admin changes must keep provider-specific DM admins separate from conversation approvers; the same agent can span Slack, Teams, Telegram, or Web, but approval authority stays on provider/conversation ids.
 - External ingress `session_message` dispatch must register the session group before enqueueing message checks; ingress and control adapters should share the same session interaction intent.
 - External ingress target policy must mirror dispatch precedence: when `sessionId` is present, authorize only against `sessionIds`; use `conversationIds` only when no `sessionId` was supplied.
 - SSE route writes that wait for backpressure must also unblock on response close/error and release subscriptions/active counters.
