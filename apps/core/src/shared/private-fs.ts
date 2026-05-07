@@ -13,11 +13,7 @@ export function ensurePrivateDirSync(dirPath: string): void {
   fs.chmodSync(dirPath, PRIVATE_DIR_MODE);
 }
 
-export function writePrivateFileSync(
-  filePath: string,
-  data: string,
-  options: { flag?: string } = {},
-): void {
+export function assertPrivateFileTargetSync(filePath: string): void {
   try {
     if (fs.lstatSync(filePath).isSymbolicLink()) {
       throw new Error(
@@ -33,6 +29,14 @@ export function writePrivateFileSync(
       throw err;
     }
   }
+}
+
+export function writePrivateFileSync(
+  filePath: string,
+  data: string | NodeJS.ArrayBufferView,
+  options: { flag?: string } = {},
+): void {
+  assertPrivateFileTargetSync(filePath);
   fs.writeFileSync(filePath, data, {
     mode: PRIVATE_FILE_MODE,
     ...(options.flag ? { flag: options.flag } : {}),

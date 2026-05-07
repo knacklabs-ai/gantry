@@ -6,7 +6,9 @@ import { App } from '@slack/bolt';
 import { logger } from '../../infrastructure/logging/logger.js';
 import {
   PRIVATE_FILE_MODE,
+  assertPrivateFileTargetSync,
   ensurePrivateDirSync,
+  writePrivateFileSync,
 } from '../../shared/private-fs.js';
 import {
   PermissionApprovalDecision,
@@ -565,10 +567,11 @@ export abstract class SlackChannelState {
         );
         return false;
       }
-      fs.writeFileSync(destPath, buffer, { mode: PRIVATE_FILE_MODE });
+      writePrivateFileSync(destPath, buffer);
       return true;
     }
 
+    assertPrivateFileTargetSync(destPath);
     const fd = fs.openSync(destPath, 'w', PRIVATE_FILE_MODE);
     let totalBytes = 0;
     let shouldCleanup = false;
@@ -601,6 +604,8 @@ export abstract class SlackChannelState {
         } catch {
           // ignore cleanup failures
         }
+      } else {
+        fs.chmodSync(destPath, PRIVATE_FILE_MODE);
       }
     }
   }
