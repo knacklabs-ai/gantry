@@ -17,7 +17,6 @@ import {
 import { createManagedJob } from './job-management-create.js';
 import { requireJobExtraToolApproval } from './job-extra-tool-approval.js';
 import {
-  appIdFromConversationJid,
   buildJobUpdates,
   encodeTriggerRequester,
   normalizeExecutionMode,

@@ -40,7 +40,7 @@ import {
 } from '../../shared/model-catalog.js';
 import { validateAgentToolInput } from './agent-model-selection.js';
 import { usageEventIdForMessage } from './query-usage-event-id.js';
-import { anyToolRuleMatches } from '../../shared/tool-rule-matcher.js';
+import { evaluateAutonomousToolUse } from '../../shared/tool-rule-matcher.js';
 
 export async function runQuery(
   prompt: string,
@@ -212,12 +212,24 @@ export async function runQuery(
         }
 
         if (agentInput.isScheduledJob) {
-          if (anyToolRuleMatches(agentInput.allowedTools ?? [], toolName)) {
-            log(`Autonomous job allowed tool ${toolName}`);
+          const toolPolicy = evaluateAutonomousToolUse({
+            rules: agentInput.allowedTools ?? [],
+            toolName,
+            toolInput: input,
+          });
+          if (toolPolicy.allowed) {
+            log(
+              `Autonomous job allowed tool ${toolName} by ${toolPolicy.matchedRule}`,
+            );
             return { behavior: 'allow' as const, updatedInput: input };
           }
-          const message = `tool not on autonomous job allowlist: ${toolName}`;
-          log(`Autonomous job denied tool ${toolName}`);
+          const baseMessage = `tool not on autonomous job allowlist: ${toolName}`;
+          const message =
+            toolPolicy.reason &&
+            !toolPolicy.reason.startsWith('No autonomous tool rule matched')
+              ? `${baseMessage}: ${toolPolicy.reason}`
+              : baseMessage;
+          log(`Autonomous job denied tool ${toolName}: ${toolPolicy.reason}`);
           return {
             behavior: 'deny' as const,
             message,

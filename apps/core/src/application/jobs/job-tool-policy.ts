@@ -4,6 +4,7 @@ import { ApplicationError } from '../common/application-error.js';
 import {
   anyToolRuleMatches,
   normalizeToolRules,
+  toolRuleCoversRule,
   validateAutonomousToolRules,
 } from '../../shared/tool-rule-matcher.js';
 import {
@@ -59,7 +60,10 @@ export function jobToolRulesBeyondInherited(input: {
   inheritedTools: readonly string[];
 }): string[] {
   return input.requestedRules.filter(
-    (rule) => !anyToolRuleMatches(input.inheritedTools, rule),
+    (rule) =>
+      !input.inheritedTools.some((inheritedRule) =>
+        toolRuleCoversRule(inheritedRule, rule),
+      ),
   );
 }
 

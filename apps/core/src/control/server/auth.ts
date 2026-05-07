@@ -128,8 +128,10 @@ export function parseControlApiKeysStrict(input: {
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawJson);
-    } catch {
-      throw new Error('MYCLAW_CONTROL_API_KEYS_JSON must be valid JSON.');
+    } catch (err) {
+      throw new Error('MYCLAW_CONTROL_API_KEYS_JSON must be valid JSON.', {
+        cause: err,
+      });
     }
     if (!Array.isArray(parsed)) {
       throw new Error('MYCLAW_CONTROL_API_KEYS_JSON must be a JSON array.');

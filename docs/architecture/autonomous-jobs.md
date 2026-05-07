@@ -15,16 +15,24 @@ Job-scoped extra tool rules are persisted in `jobs.target_json` under:
 ```json
 {
   "capabilityPolicy": {
-    "allowedTools": ["mcp__agent_browser__*"]
+    "allowedTools": [
+      "Bash(dedup-append-lead.py *)",
+      "Read(/Users/me/project/notes.md)",
+      "mcp__agent_browser__*"
+    ]
   }
 }
 ```
 
 Missing `capabilityPolicy.allowedTools` means an empty extra-tool list.
 
-Allowed job tool rules support exact tool names and `mcp__server__*`. Empty
-rules, global `*`, and other wildcard forms are invalid. Non-main jobs cannot
-add main/admin-only MyClaw tools as job extras.
+Allowed job tool rules support exact tool names, registered scoped SDK tool
+rules such as `Tool(scope-pattern)`, and `mcp__server__*`. Scoped rules are
+evaluated by `apps/core/src/shared/tool-rule-matcher.ts`; new tools must be
+registered there with allow/deny tests before they can be used in scheduled job
+policy. Empty rules, global `*`, unregistered scoped tools, and other wildcard
+forms are invalid. Non-main jobs cannot add main/admin-only MyClaw tools as job
+extras.
 
 ## Execution
 

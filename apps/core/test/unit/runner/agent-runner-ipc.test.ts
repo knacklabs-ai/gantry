@@ -298,7 +298,7 @@ export async function* query({ prompt, options }) {
   if (process.env.TEST_TOOL_USE_ONLY) {
     call.permissionDecision = await options.canUseTool(
       process.env.TEST_TOOL_USE_ONLY,
-      { cmd: 'npm test' },
+      { cmd: process.env.TEST_TOOL_USE_CMD || 'npm test' },
       {
         signal: new AbortController().signal,
         title: 'Run command',
@@ -1097,6 +1097,72 @@ describe('agent-runner IPC lifecycle', () => {
       );
       expect(String(call?.permissionDecision?.message)).toContain(
         'memory boundary',
+      );
+      expect(
+        fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
+      ).toBe(false);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'scheduled jobs allow scoped Bash rules without writing permission IPC',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          isScheduledJob: true,
+          allowedTools: ['Bash(npm test *)'],
+        }),
+        {
+          TEST_TOOL_USE_ONLY: 'Bash',
+          TEST_TOOL_USE_CMD: 'npm test --runInBand',
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.permissionDecision).toEqual(
+        expect.objectContaining({
+          behavior: 'allow',
+        }),
+      );
+      expect(
+        fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
+      ).toBe(false);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'scheduled jobs deny nonmatching scoped Bash rules without writing permission IPC',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          isScheduledJob: true,
+          allowedTools: ['Bash(dedup-append-lead.py *)'],
+        }),
+        {
+          TEST_TOOL_USE_ONLY: 'Bash',
+          TEST_EXIT_AFTER_QUERY: '1',
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.permissionDecision).toEqual(
+        expect.objectContaining({
+          behavior: 'deny',
+          interrupt: true,
+        }),
+      );
+      expect(String(call?.permissionDecision?.message)).toContain(
+        'tool not on autonomous job allowlist: Bash',
       );
       expect(
         fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
