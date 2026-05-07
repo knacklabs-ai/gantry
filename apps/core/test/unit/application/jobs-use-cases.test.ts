@@ -1516,6 +1516,14 @@ describe('job application use cases', () => {
     const control = {
       createJobTrigger: vi.fn(async () => ({ triggerId: 'trigger-1' })),
       markTriggerCompleted: vi.fn(),
+      getAppSessionById: vi.fn(async () => ({
+        sessionId: 'session-1',
+        appId: 'app-one',
+        conversationJid: 'app:app-one:conv-1',
+        workspaceKey: 'app-one-workspace',
+        defaultResponseMode: 'sse',
+        defaultWebhookId: null,
+      })),
     };
     const runtimeEvents = { publish: vi.fn() };
     const triggerQueue = {
@@ -1528,6 +1536,7 @@ describe('job application use cases', () => {
           id: 'job-1',
           group_scope: 'team',
           linked_sessions: ['tg:team'],
+          session_id: 'session-1',
           schedule_type: 'cron',
           schedule_value: '0 9 * * *',
         }),
@@ -1572,6 +1581,8 @@ describe('job application use cases', () => {
     });
     expect(runtimeEvents.publish).toHaveBeenCalledWith(
       expect.objectContaining({
+        appId: 'app-one',
+        sessionId: 'session-1',
         jobId: 'job-1',
         runId: 'run-1',
         triggerId: 'trigger-1',
@@ -1581,6 +1592,59 @@ describe('job application use cases', () => {
         }),
       }),
     );
+  });
+
+  it('queues scheduler_run_now without runtime event projection for channel-only jobs', async () => {
+    const control = {
+      createJobTrigger: vi.fn(async () => ({ triggerId: 'trigger-1' })),
+      markTriggerCompleted: vi.fn(),
+      getAppSessionById: vi.fn(),
+    };
+    const runtimeEvents = { publish: vi.fn() };
+    const triggerQueue = {
+      isReady: vi.fn(() => true),
+      enqueue: vi.fn(async () => undefined),
+    };
+    const service = new JobManagementService({
+      ops: makeOps(
+        makeJob({
+          id: 'job-1',
+          group_scope: 'team',
+          linked_sessions: ['tg:team'],
+          session_id: null,
+        }),
+      ) as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+      control: control as never,
+      runtimeEvents,
+      triggerQueue,
+    });
+
+    await expect(
+      service.runJobNowFromMcp({
+        jobId: 'job-1',
+        runId: 'run-1',
+        access: {
+          sourceAgentFolder: 'team',
+          originConversationJid: 'tg:team',
+          isMain: false,
+          conversationBindings: {
+            'tg:team': { folder: 'team' },
+          },
+          sourceAgentFolderJids: ['tg:team'],
+        },
+      }),
+    ).resolves.toEqual({
+      runId: 'run-1',
+      queued: true,
+      triggerId: 'trigger-1',
+    });
+
+    expect(triggerQueue.enqueue).toHaveBeenCalledWith('job-1', 'trigger-1', {
+      runId: 'run-1',
+    });
+    expect(runtimeEvents.publish).not.toHaveBeenCalled();
   });
 
   it('rejects scheduler_run_now for inactive jobs before enqueueing', async () => {

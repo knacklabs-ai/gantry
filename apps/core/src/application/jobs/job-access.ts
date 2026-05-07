@@ -31,6 +31,10 @@ export function resolveJobRuntimeAppId(job: Job, fallback = 'default'): string {
   return rest.slice(0, delimiterIndex) || fallback;
 }
 
+export function resolveOptionalJobRuntimeAppId(job: Job): string | undefined {
+  return resolveJobRuntimeAppId(job, '') || undefined;
+}
+
 export function assertJobBelongsToApp(job: Job, appId: string): void {
   if (!jobBelongsToApp(job, appId)) {
     throw new ApplicationError('FORBIDDEN', 'API key cannot access this job');
