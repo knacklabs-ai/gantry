@@ -110,6 +110,41 @@ describe('OnecliAgentCredentialBroker', () => {
     expect(getContainerConfig).toHaveBeenCalledWith('agent-a');
   });
 
+  it('maps canonical agent ids to OneCLI-safe profile identifiers', async () => {
+    getContainerConfig.mockResolvedValue({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+      },
+    });
+
+    const { OnecliAgentCredentialBroker } =
+      await import('@core/adapters/credentials/onecli/broker.js');
+    const broker = new OnecliAgentCredentialBroker({
+      onecliUrl: 'http://localhost:10254',
+      dataDir: os.tmpdir(),
+    });
+
+    await broker.ensureAgent({
+      name: 'Main Agent',
+      identifier: 'agent:main_agent',
+    });
+    await broker.getInjection({
+      binding: {
+        profile: 'onecli',
+        purpose: 'tool_capability',
+        agentIdentifier: 'agent:main_agent',
+      },
+    });
+
+    expect(ensureAgent).toHaveBeenCalledWith({
+      name: 'Main Agent',
+      identifier: expect.stringMatching(/^agent-main-agent-[a-f0-9]{10}$/),
+    });
+    expect(getContainerConfig).toHaveBeenCalledWith(
+      expect.stringMatching(/^agent-main-agent-[a-f0-9]{10}$/),
+    );
+  });
+
   it('does not cache credential-bearing container config by default', async () => {
     getContainerConfig.mockResolvedValue({
       env: {

@@ -350,4 +350,24 @@ describe('agent credential service', () => {
       identifier: 'myclaw-model-access',
     });
   });
+
+  it('ensures agent-scoped credential profiles for tool capabilities', async () => {
+    const ensureAgent = vi.fn(async () => ({ created: false }));
+    const broker = makeBroker({ ensureAgent });
+    const { ensureAgentCredentialBinding } = await loadCredentialService();
+
+    await expect(
+      ensureAgentCredentialBinding({
+        mode: 'onecli',
+        broker,
+        name: 'Main Agent',
+        identifier: 'agent:main_agent',
+      }),
+    ).resolves.toEqual({ created: false });
+
+    expect(ensureAgent).toHaveBeenCalledWith({
+      name: 'Main Agent',
+      identifier: 'agent:main_agent',
+    });
+  });
 });

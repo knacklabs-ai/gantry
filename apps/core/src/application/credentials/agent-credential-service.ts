@@ -131,6 +131,20 @@ export async function ensureModelCredentialBinding(input: {
   mode: CredentialBrokerProfile;
   broker?: AgentCredentialBroker;
 }): Promise<{ created?: boolean } | undefined> {
+  return ensureAgentCredentialBinding({
+    mode: input.mode,
+    broker: input.broker,
+    name: MODEL_RUNTIME_CREDENTIAL_NAME,
+    identifier: MODEL_RUNTIME_CREDENTIAL_IDENTIFIER,
+  });
+}
+
+export async function ensureAgentCredentialBinding(input: {
+  mode: CredentialBrokerProfile;
+  broker?: AgentCredentialBroker;
+  name: string;
+  identifier: string;
+}): Promise<{ created?: boolean } | undefined> {
   if (input.mode !== 'onecli') return undefined;
   const broker = input.broker;
   if (!broker) {
@@ -147,7 +161,7 @@ export async function ensureModelCredentialBinding(input: {
       })
     | undefined;
   return bindable?.ensureAgent?.({
-    name: MODEL_RUNTIME_CREDENTIAL_NAME,
-    identifier: MODEL_RUNTIME_CREDENTIAL_IDENTIFIER,
+    name: input.name,
+    identifier: input.identifier,
   });
 }
