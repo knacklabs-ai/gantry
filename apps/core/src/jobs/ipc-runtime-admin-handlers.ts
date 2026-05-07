@@ -57,12 +57,13 @@ function validateSameChannelApprovalTarget(input: {
 }
 
 export const serviceRestartHandler: TaskHandler = async (context) => {
-  const { data, sourceAgentFolder } = context;
+  const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
   const taskId = toTrimmedString(data.taskId, { maxLen: 128 });
   const { accept, reject } = createTaskResponder(
     sourceAgentFolder,
     taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   if (!(await sourceAgentHasAdminToolCapability(context, 'service_restart'))) {
     logger.warn(
@@ -77,6 +78,23 @@ export const serviceRestartHandler: TaskHandler = async (context) => {
   }
 
   try {
+    const requestedTargetJid = validateSameChannelApprovalTarget({
+      data,
+      sourceAgentFolderJids,
+      requestKind: 'Service restart',
+      reject,
+    });
+    if (!requestedTargetJid) return;
+    if (
+      typeof deps.requestPermissionApproval !== 'function' ||
+      typeof deps.sendMessage !== 'function'
+    ) {
+      reject(
+        'Service restart requests require a configured approval surface.',
+        'preflight_failed',
+      );
+      return;
+    }
     const validation = await validateRuntimePreflightWithStorage(MYCLAW_HOME);
     if (!validation.ok) {
       reject(
@@ -84,6 +102,36 @@ export const serviceRestartHandler: TaskHandler = async (context) => {
           'Runtime configuration validation failed.',
         'preflight_failed',
         validation.failure?.details || [],
+      );
+      return;
+    }
+    const reason =
+      toTrimmedString(data.payload?.reason, { maxLen: 2000 }) ||
+      'Agent requested a runtime service restart.';
+    const decision = await deps.requestPermissionApproval({
+      requestId: `service-restart-${randomUUID()}`,
+      sourceAgentFolder,
+      targetJid: requestedTargetJid,
+      threadId: data.authThreadId,
+      decisionPolicy: 'same_channel',
+      toolName: 'service_restart',
+      displayName: 'Service restart',
+      title: 'Approve service restart',
+      description:
+        'Approving restarts the local MyClaw runtime service after runtime preflight passes.',
+      decisionReason: reason,
+      toolInput: {
+        runtimeHome: MYCLAW_HOME,
+        activation: 'immediate_service_restart',
+      },
+    });
+    if (!decision.approved || !decision.decidedBy) {
+      const message = `Rejected service restart: ${decision.reason || 'not approved'}.`;
+      reject(message, 'permission_denied');
+      await deps.sendMessage(
+        requestedTargetJid,
+        message,
+        data.authThreadId ? { threadId: data.authThreadId } : undefined,
       );
       return;
     }
@@ -123,6 +171,7 @@ export const settingsDesiredStateHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   if (
     !(await sourceAgentHasAdminToolCapability(
@@ -155,6 +204,7 @@ export const requestSettingsUpdateHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   if (
     !(await sourceAgentHasAdminToolCapability(

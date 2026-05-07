@@ -182,8 +182,6 @@ export interface ConversationBinding {
 export interface SchedulerJobAccess {
   sourceAgentFolder: string;
   originConversationJid: string;
-  // Main-agent status does not widen scheduler job visibility or mutation.
-  isMain: boolean;
   conversationBindings: Record<string, ConversationBinding>;
   sourceConversationJids?: string[];
   authThreadId?: string;

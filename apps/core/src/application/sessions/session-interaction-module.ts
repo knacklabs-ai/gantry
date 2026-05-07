@@ -448,7 +448,6 @@ type AppGroupRegistration = {
   trigger: string;
   added_at: string;
   requiresTrigger: boolean;
-  isMain: boolean;
 };
 
 export function makeAppGroup(input: {
@@ -473,7 +472,6 @@ export function makeAppGroup(input: {
     trigger: '',
     added_at: input.addedAt,
     requiresTrigger: false,
-    isMain: false,
   };
 }
 

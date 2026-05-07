@@ -7,12 +7,14 @@ import { renderDefaultCapabilityRules } from '../shared/capability-guidance.js';
 import { providerFromGroupJid, getProviderIds } from './provider-utils.js';
 import {
   addControlSenderForAgent,
+  ensureConfiguredConversationBinding,
   loadRuntimeSettings,
   saveRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
 import { ensureRuntimeLayout } from '../config/settings/runtime-home.js';
 import { RuntimeGroupDb, openRuntimeGroupDb } from './runtime-group-db.js';
 import { normalizeTelegramChatJid } from './telegram.js';
+import { providerForJid } from '../channels/provider-registry.js';
 
 export function usage(): string {
   const channels = getProviderIds().join('|');
@@ -21,12 +23,12 @@ export function usage(): string {
     '  myclaw agent list',
     '  myclaw agent info <jid|folder>',
     '  myclaw agent name <name>',
-    '  myclaw agent add <jid|chat-id> [--name <name>] [--folder <folder>] [--trigger <word>] [--main] [--requires-trigger true|false] [--test-message|--no-test-message]',
+    '  myclaw agent add <jid|chat-id> [--name <name>] [--folder <folder>] [--trigger <word>] [--requires-trigger true|false] [--test-message|--no-test-message]',
     '  myclaw agent remove <jid|folder> [--delete-folder] [--yes]',
     '  myclaw agent trigger <jid|folder> <word>',
     '  myclaw agent trigger <jid|folder> --off',
-    '  myclaw agent dm-access <agentId> [--provider <provider> --allow <userId,userId> --admin <userId>]',
-    '    dm-access sets provider-specific direct/private DM admins; use myclaw conversation approvers for group/channel approvers.',
+    '  myclaw conversation approvers <conversation-id> [--allow <userId,userId>]',
+    '    conversation approvers manage direct/private and group/channel approval policy.',
     '  myclaw agent policy <jid|folder> --allow <"*"|id1,id2> [--mode trigger|drop]',
     '  myclaw agent policy <jid|folder> --clear',
     `  myclaw agent policy-default --channel ${channels} --allow <"*"|id1,id2> [--mode trigger|drop]`,
@@ -43,16 +45,32 @@ export function pruneAgentSenderPolicyOverride(
   if (!channel) return { pruned: false };
   try {
     const settings = loadRuntimeSettings(runtimeHome);
+    const provider = providerForJid(jid);
+    const externalId =
+      provider && jid.startsWith(provider.jidPrefix)
+        ? jid.slice(provider.jidPrefix.length)
+        : jid;
     let pruned = false;
     for (const [bindingId, binding] of Object.entries(settings.bindings)) {
       if (binding.agent !== folder) continue;
+      const agentBinding = settings.agents[folder]?.bindings[bindingId];
+      if (agentBinding?.jid && agentBinding.jid !== jid) continue;
       const conversation = settings.conversations[binding.conversation];
       if (!conversation) continue;
       const connection =
         settings.providerConnections[conversation.providerConnection];
       if (connection?.provider !== channel) continue;
+      if (!agentBinding?.jid && conversation.externalId !== externalId) {
+        continue;
+      }
       delete settings.bindings[bindingId];
       delete settings.agents[folder]?.bindings[bindingId];
+      const stillReferenced = Object.values(settings.bindings).some(
+        (candidate) => candidate.conversation === binding.conversation,
+      );
+      if (!stillReferenced) {
+        delete settings.conversations[binding.conversation];
+      }
       pruned = true;
     }
     if (!pruned) return { pruned: false };
@@ -64,6 +82,29 @@ export function pruneAgentSenderPolicyOverride(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+export function syncConfiguredConversationBinding(input: {
+  runtimeHome: string;
+  agentId: string;
+  agentName: string;
+  agentFolder: string;
+  jid: string;
+  displayName: string;
+  trigger: string;
+  requiresTrigger: boolean;
+}): void {
+  const settings = loadRuntimeSettings(input.runtimeHome);
+  ensureConfiguredConversationBinding(settings, {
+    agentId: input.agentId,
+    agentName: input.agentName,
+    agentFolder: input.agentFolder,
+    jid: input.jid,
+    displayName: input.displayName,
+    trigger: input.trigger,
+    requiresTrigger: input.requiresTrigger,
+  });
+  saveRuntimeSettings(input.runtimeHome, settings);
 }
 
 function inferTelegramPrivateChatApprover(chatJid: string): string | undefined {
@@ -185,11 +226,7 @@ export function listGroupsWithJid(
 ): Array<{ jid: string; group: ConversationRoute }> {
   return Object.entries(groups)
     .map(([jid, group]) => ({ jid, group }))
-    .sort((a, b) => {
-      if (a.group.isMain && !b.group.isMain) return -1;
-      if (!a.group.isMain && b.group.isMain) return 1;
-      return a.group.name.localeCompare(b.group.name);
-    });
+    .sort((a, b) => a.group.name.localeCompare(b.group.name));
 }
 
 function resolveGroup(

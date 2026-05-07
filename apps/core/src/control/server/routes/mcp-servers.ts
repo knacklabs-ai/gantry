@@ -240,6 +240,7 @@ export async function handleMcpServerRoutes(
         disabledBy: parsed.data.disabledBy,
         reason: parsed.data.reason,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, { server: serverToResponse(server) });
     } catch (error) {
       sendRouteError(res, error, 'MCP server disable failed');
@@ -319,6 +320,7 @@ export async function handleMcpServerRoutes(
         required: parsed.data.required,
         permissionPolicyIds: parsed.data.permissionPolicyIds as never,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, { binding: bindingToResponse(binding) });
     } catch (error) {
       sendRouteError(res, error, 'MCP server binding failed');
@@ -338,6 +340,7 @@ export async function handleMcpServerRoutes(
         agentId: decodeURIComponent(agentMcpMatch[1]) as AgentId,
         serverId: decodeURIComponent(agentMcpMatch[2]) as McpServerId,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, {
         disabled: Boolean(binding),
         binding: binding ? bindingToResponse(binding) : null,

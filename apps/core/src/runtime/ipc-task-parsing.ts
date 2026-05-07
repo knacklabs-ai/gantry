@@ -126,6 +126,9 @@ export function parseTaskIpcData(
     sourceAgentFolder,
     'IPC task',
   );
+  if (!threadBinding.responseKeyId) {
+    throw new Error('IPC task responseKeyId is required');
+  }
   const type = toTrimmedString(raw.type, { maxLen: 80 });
   if (!type) throw new Error('IPC task type is required');
   const parsed: TaskIpcData = { type };
@@ -222,6 +225,9 @@ export function parseTaskIpcData(
   if (groupScope) parsed.groupScope = groupScope;
   if (threadBinding.authThreadId) {
     parsed.authThreadId = threadBinding.authThreadId;
+  }
+  if (threadBinding.responseKeyId) {
+    parsed.responseKeyId = threadBinding.responseKeyId;
   }
   if (threadBinding.payloadThreadId !== undefined) {
     parsed.threadId = threadBinding.payloadThreadId;

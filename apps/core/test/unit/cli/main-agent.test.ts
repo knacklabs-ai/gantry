@@ -5,20 +5,20 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  allocateMainAgentFolder,
+  allocateDefaultAgentFolder,
   defaultTriggerForAgentName,
   displayAgentName,
-  mainAgentNameFromSettings,
-  MAIN_AGENT_FOLDER,
-  MAIN_AGENT_NAME,
-  normalizeMainAgentName,
+  defaultAgentNameFromSettings,
+  DEFAULT_AGENT_FOLDER,
+  DEFAULT_AGENT_CLI_NAME,
+  normalizeDefaultAgentName,
 } from '@core/cli/main-agent.js';
 
 const tempDirs: string[] = [];
 
 function makeRuntimeHome(): string {
   const runtimeHome = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'myclaw-main-agent-test-'),
+    path.join(os.tmpdir(), 'myclaw-default-agent-test-'),
   );
   tempDirs.push(runtimeHome);
   return runtimeHome;
@@ -30,55 +30,52 @@ afterEach(() => {
   }
 });
 
-describe('main-agent helpers', () => {
-  it('normalizes blank names to Main Agent and trims configured names', () => {
-    expect(normalizeMainAgentName(undefined)).toBe(MAIN_AGENT_NAME);
-    expect(normalizeMainAgentName('   ')).toBe(MAIN_AGENT_NAME);
-    expect(normalizeMainAgentName('  Kai  ')).toBe('Kai');
-    expect(mainAgentNameFromSettings({ agent: { name: '  ' } })).toBe(
-      MAIN_AGENT_NAME,
+describe('default-agent helpers', () => {
+  it('normalizes blank names to Default Agent and trims configured names', () => {
+    expect(normalizeDefaultAgentName(undefined)).toBe(DEFAULT_AGENT_CLI_NAME);
+    expect(normalizeDefaultAgentName('   ')).toBe(DEFAULT_AGENT_CLI_NAME);
+    expect(normalizeDefaultAgentName('  Kai  ')).toBe('Kai');
+    expect(defaultAgentNameFromSettings({ agent: { name: '  ' } })).toBe(
+      DEFAULT_AGENT_CLI_NAME,
     );
   });
 
   it('derives default triggers from normalized names', () => {
-    expect(defaultTriggerForAgentName('')).toBe(`@${MAIN_AGENT_NAME}`);
+    expect(defaultTriggerForAgentName('')).toBe(`@${DEFAULT_AGENT_CLI_NAME}`);
     expect(defaultTriggerForAgentName('  Kai  ')).toBe('@Kai');
   });
 
   it('allocates main_agent when no collision exists', () => {
     const runtimeHome = makeRuntimeHome();
-    expect(allocateMainAgentFolder(runtimeHome, {})).toBe(MAIN_AGENT_FOLDER);
+    expect(allocateDefaultAgentFolder(runtimeHome, {})).toBe(
+      DEFAULT_AGENT_FOLDER,
+    );
   });
 
   it('allocates the next available folder when main_agent already exists', () => {
     const runtimeHome = makeRuntimeHome();
     expect(
-      allocateMainAgentFolder(runtimeHome, {
-        'tg:1': { folder: MAIN_AGENT_FOLDER },
+      allocateDefaultAgentFolder(runtimeHome, {
+        'tg:1': { folder: DEFAULT_AGENT_FOLDER },
       }),
-    ).toBe(`${MAIN_AGENT_FOLDER}_2`);
+    ).toBe(`${DEFAULT_AGENT_FOLDER}_2`);
   });
 
   it('treats on-disk folders as collisions when allocating', () => {
     const runtimeHome = makeRuntimeHome();
-    fs.mkdirSync(path.join(runtimeHome, 'agents', MAIN_AGENT_FOLDER), {
+    fs.mkdirSync(path.join(runtimeHome, 'agents', DEFAULT_AGENT_FOLDER), {
       recursive: true,
     });
 
-    expect(allocateMainAgentFolder(runtimeHome, {})).toBe(
-      `${MAIN_AGENT_FOLDER}_2`,
+    expect(allocateDefaultAgentFolder(runtimeHome, {})).toBe(
+      `${DEFAULT_AGENT_FOLDER}_2`,
     );
   });
 
-  it('displays configured main agent name only for main entries', () => {
+  it('displays the route name without default-agent override', () => {
     expect(
-      displayAgentName(
-        { isMain: true, name: 'Ops Chat' },
-        'Configured Main Agent',
-      ),
-    ).toBe('Configured Main Agent');
-    expect(
-      displayAgentName({ isMain: false, name: 'Ops Chat' }, 'Ignored'),
+      displayAgentName({ name: 'Ops Chat' }, 'Configured Default Agent'),
     ).toBe('Ops Chat');
+    expect(displayAgentName({ name: 'Ops Chat' }, 'Ignored')).toBe('Ops Chat');
   });
 });

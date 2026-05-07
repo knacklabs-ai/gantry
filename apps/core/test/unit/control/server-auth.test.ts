@@ -45,6 +45,7 @@ vi.mock('@core/config/index.js', async () => {
   return {
     MYCLAW_HOME: runtimeHome,
     getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+    syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
     getDefaultModelConfig: vi.fn(() => ({
       model: 'opus',
       source: 'system default',
@@ -200,6 +201,7 @@ const controlRepo = {
 };
 
 const opsRepo = {
+  getAllConversationRoutes: vi.fn(async () => ({})),
   storeChatMetadata: vi.fn(async () => undefined),
   storeMessage: vi.fn(async () => undefined),
   getJobRunById: vi.fn(async () => undefined),
@@ -225,15 +227,6 @@ const domainRepositories = {
     })),
     listAgents: vi.fn(async () => []),
     saveAgent: vi.fn(async () => undefined),
-    listAgentDmAccess: vi.fn(async () => []),
-    listAgentDmApprovers: vi.fn(async () => []),
-    replaceAgentDmAccess: vi.fn(async () => []),
-    replaceAgentDmAccessPolicy: vi.fn(async () => ({
-      access: [],
-      approvers: [],
-    })),
-    replaceAgentDmApprovers: vi.fn(async () => []),
-    findAgentsByDmAccess: vi.fn(async () => []),
     replaceAgentCapabilityBindings: vi.fn(async () => undefined),
   },
   providerConnections: {
@@ -261,7 +254,24 @@ const domainRepositories = {
     listThreads: vi.fn(async () => []),
     listParticipantExternalUserIds: vi.fn(async () => []),
     listConversationApprovers: vi.fn(async () => []),
+    listConversationApproversForConversations: vi.fn(async () => []),
     replaceConversationApprovers: vi.fn(async () => []),
+  },
+  tools: {
+    getTool: vi.fn(async () => null),
+    listTools: vi.fn(async () => []),
+    listAgentToolBindings: vi.fn(async () => []),
+    listAgentToolBindingsForAgents: vi.fn(async () => []),
+  },
+  skills: {
+    getSkill: vi.fn(async () => null),
+    listAgentSkillBindings: vi.fn(async () => []),
+    listAgentSkillBindingsForAgents: vi.fn(async () => []),
+  },
+  mcpServers: {
+    getServer: vi.fn(async () => null),
+    listAgentBindings: vi.fn(async () => []),
+    listAgentBindingsForAgents: vi.fn(async () => []),
   },
   messages: {
     listMessages: vi.fn(async () => []),
@@ -488,6 +498,7 @@ beforeEach(() => {
     stalePendingFailed: 0,
   });
   opsRepo.storeChatMetadata.mockResolvedValue(undefined);
+  opsRepo.getAllConversationRoutes.mockResolvedValue({});
   opsRepo.storeMessage.mockResolvedValue(undefined);
   opsRepo.getJobRunById.mockResolvedValue(undefined);
   opsRepo.getJobById.mockResolvedValue(undefined);
@@ -505,15 +516,6 @@ beforeEach(() => {
   });
   domainRepositories.agents.listAgents.mockResolvedValue([]);
   domainRepositories.agents.saveAgent.mockResolvedValue(undefined);
-  domainRepositories.agents.listAgentDmAccess.mockResolvedValue([]);
-  domainRepositories.agents.listAgentDmApprovers.mockResolvedValue([]);
-  domainRepositories.agents.replaceAgentDmAccess.mockResolvedValue([]);
-  domainRepositories.agents.replaceAgentDmAccessPolicy.mockResolvedValue({
-    access: [],
-    approvers: [],
-  });
-  domainRepositories.agents.replaceAgentDmApprovers.mockResolvedValue([]);
-  domainRepositories.agents.findAgentsByDmAccess.mockResolvedValue([]);
   domainRepositories.agents.replaceAgentCapabilityBindings.mockResolvedValue(
     undefined,
   );
@@ -570,7 +572,24 @@ beforeEach(() => {
   domainRepositories.conversations.listConversationApprovers.mockResolvedValue(
     [],
   );
+  domainRepositories.conversations.listConversationApproversForConversations.mockResolvedValue(
+    [],
+  );
   domainRepositories.conversations.replaceConversationApprovers.mockResolvedValue(
+    [],
+  );
+  domainRepositories.tools.getTool.mockResolvedValue(null);
+  domainRepositories.tools.listTools.mockResolvedValue([]);
+  domainRepositories.tools.listAgentToolBindings.mockResolvedValue([]);
+  domainRepositories.tools.listAgentToolBindingsForAgents.mockResolvedValue([]);
+  domainRepositories.skills.getSkill.mockResolvedValue(null);
+  domainRepositories.skills.listAgentSkillBindings.mockResolvedValue([]);
+  domainRepositories.skills.listAgentSkillBindingsForAgents.mockResolvedValue(
+    [],
+  );
+  domainRepositories.mcpServers.getServer.mockResolvedValue(null);
+  domainRepositories.mcpServers.listAgentBindings.mockResolvedValue([]);
+  domainRepositories.mcpServers.listAgentBindingsForAgents.mockResolvedValue(
     [],
   );
   domainRepositories.messages.listMessages.mockResolvedValue([]);
@@ -823,7 +842,7 @@ describe('control server runtime hardening', () => {
       expect(getResponse.status).toBe(200);
       await expect(getResponse.json()).resolves.toMatchObject({
         settings: {
-          agent: { name: 'Main Agent', defaultModel: '' },
+          agent: { name: 'Default Agent', defaultModel: '' },
           memory: { enabled: true, dreaming: { enabled: false } },
         },
       });
@@ -1823,7 +1842,6 @@ describe('control server runtime hardening', () => {
       status: 'disabled',
       triggerMode: 'mention',
       requiresTrigger: true,
-      isAdminBinding: false,
       memoryScope: 'conversation',
       memorySubject: {
         kind: 'conversation',
@@ -2013,7 +2031,7 @@ describe('control server runtime hardening', () => {
     }
   });
 
-  it('manages agent-owned DM access through the agent admin API', async () => {
+  it('shows agent capabilities and conversation-owned policies in agent admin API', async () => {
     const port = await reservePort();
     process.env.MYCLAW_CONTROL_PORT = String(port);
     process.env.MYCLAW_CONTROL_API_KEYS_JSON = JSON.stringify([
@@ -2033,28 +2051,6 @@ describe('control server runtime hardening', () => {
       createdAt: iso,
       updatedAt: iso,
     });
-    domainRepositories.agents.listAgentDmAccess.mockResolvedValue([
-      {
-        id: 'dm-1',
-        appId: 'app-one',
-        agentId: 'agent-1',
-        providerId: 'slack',
-        externalUserId: 'U1',
-        createdAt: iso,
-        updatedAt: iso,
-      },
-    ]);
-    domainRepositories.agents.listAgentDmApprovers.mockResolvedValue([
-      {
-        id: 'dm-admin-1',
-        appId: 'app-one',
-        agentId: 'agent-1',
-        providerId: 'slack',
-        externalUserId: 'UADMIN',
-        createdAt: iso,
-        updatedAt: iso,
-      },
-    ]);
     domainRepositories.providerConnections.listAgentConversationBindings.mockResolvedValue(
       [
         {
@@ -2063,6 +2059,7 @@ describe('control server runtime hardening', () => {
           agentId: 'agent-1',
           conversationId: 'conversation:slack:C123',
           status: 'active',
+          requiresTrigger: true,
         },
         {
           id: 'binding-teams',
@@ -2070,6 +2067,7 @@ describe('control server runtime hardening', () => {
           agentId: 'agent-1',
           conversationId: 'conversation:teams:19:channel@thread.tacv2',
           status: 'active',
+          requiresTrigger: false,
         },
         {
           id: 'binding-disabled',
@@ -2077,6 +2075,7 @@ describe('control server runtime hardening', () => {
           agentId: 'agent-1',
           conversationId: 'conversation:slack:C999',
           status: 'disabled',
+          requiresTrigger: true,
         },
       ],
     );
@@ -2158,29 +2157,6 @@ describe('control server runtime hardening', () => {
         }));
       },
     );
-    domainRepositories.agents.replaceAgentDmAccessPolicy.mockImplementation(
-      async (input: any) => ({
-        access: input.accessEntries.map((entry: any) => ({
-          id: `dm:${entry.providerId}:${entry.externalUserId}`,
-          appId: input.appId,
-          agentId: input.agentId,
-          providerId: entry.providerId,
-          externalUserId: entry.externalUserId,
-          createdAt: iso,
-          updatedAt: input.updatedAt,
-        })),
-        approvers: input.approverEntries.map((entry: any) => ({
-          id: `dm-admin:${entry.providerId}`,
-          appId: input.appId,
-          agentId: input.agentId,
-          providerId: entry.providerId,
-          externalUserId: entry.externalUserId,
-          createdAt: iso,
-          updatedAt: input.updatedAt,
-        })),
-      }),
-    );
-
     const handle = startControlServer({
       app: {
         registerGroup: vi.fn(),
@@ -2196,11 +2172,6 @@ describe('control server runtime hardening', () => {
       expect(adminResponse.status).toBe(200);
       expect(await adminResponse.json()).toMatchObject({
         agent: { id: 'agent-1' },
-        dmAccess: {
-          entries: [
-            { provider: 'slack', userIds: ['U1'], adminUserId: 'UADMIN' },
-          ],
-        },
         boundConversations: [
           {
             conversationId: 'conversation:slack:C123',
@@ -2208,6 +2179,7 @@ describe('control server runtime hardening', () => {
             kind: 'channel',
             displayName: 'Sales Slack',
             approverUserIds: ['UADMIN'],
+            requiresTrigger: true,
           },
           {
             conversationId: 'conversation:teams:19:channel@thread.tacv2',
@@ -2215,59 +2187,10 @@ describe('control server runtime hardening', () => {
             kind: 'channel',
             displayName: 'Sales Teams',
             approverUserIds: ['8:orgid:admin'],
+            requiresTrigger: false,
           },
         ],
       });
-
-      const replaceResponse = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/agents/agent-1/dm-access`,
-        'agents-admin-token',
-        {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            entries: [
-              {
-                provider: 'teams',
-                userIds: ['user-1', 'user-1'],
-                adminUserId: 'admin-1',
-              },
-              { provider: 'telegram', userIds: ['123'] },
-            ],
-          }),
-        },
-      );
-      expect(replaceResponse.status).toBe(200);
-      expect(await replaceResponse.json()).toMatchObject({
-        agentId: 'agent-1',
-        dmAccess: {
-          entries: [
-            {
-              provider: 'teams',
-              userIds: ['user-1'],
-              adminUserId: 'admin-1',
-            },
-            { provider: 'telegram', userIds: ['123'] },
-          ],
-        },
-      });
-      expect(
-        domainRepositories.agents.replaceAgentDmAccessPolicy,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          accessEntries: [
-            { providerId: 'teams', externalUserId: 'user-1' },
-            { providerId: 'telegram', externalUserId: '123' },
-          ],
-        }),
-      );
-      expect(
-        domainRepositories.agents.replaceAgentDmAccessPolicy,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          approverEntries: [{ providerId: 'teams', externalUserId: 'admin-1' }],
-        }),
-      );
     } finally {
       await handle.close();
     }
@@ -2568,7 +2491,6 @@ describe('control server runtime hardening', () => {
         status: 'disabled',
         triggerMode: 'mention',
         requiresTrigger: true,
-        isAdminBinding: false,
         memoryScope: 'conversation',
         memorySubject: {
           kind: 'conversation',

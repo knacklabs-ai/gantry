@@ -141,7 +141,6 @@ function makeModule(overrides?: {
           trigger: '',
           added_at: '2026-04-30T00:00:00.000Z',
           requiresTrigger: false,
-          isMain: false,
         },
       },
     })),

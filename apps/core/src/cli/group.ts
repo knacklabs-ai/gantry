@@ -15,8 +15,8 @@ import {
 import {
   defaultTriggerForAgentName,
   displayAgentName,
-  mainAgentNameFromSettings,
-  normalizeMainAgentName,
+  defaultAgentNameFromSettings,
+  normalizeDefaultAgentName,
 } from './main-agent.js';
 import { RuntimeGroupDb } from './runtime-group-db.js';
 import { verifyTelegramChatAccess } from './telegram.js';
@@ -41,7 +41,6 @@ import {
   usage,
 } from './group-helpers.js';
 import { printPolicyChannel } from './group-policy-format.js';
-import { runAgentDmAccessCommand } from './agent-dm-access.js';
 import {
   buildAgentToolAccessView,
   buildRequestableAdminToolAccess,
@@ -117,21 +116,20 @@ async function runList(runtimeHome: string): Promise<number> {
     }
 
     const settings = loadRuntimeSettings(runtimeHome);
-    const mainAgentName = mainAgentNameFromSettings(settings);
+    const defaultAgentName = defaultAgentNameFromSettings(settings);
     const lines = [
       'Registered agents:',
       '',
-      'JID | Name | Folder | Trigger | Main | Requires Trigger',
+      'JID | Name | Folder | Trigger | Requires Trigger',
     ];
 
     for (const entry of groups) {
       lines.push(
         [
           entry.jid,
-          displayAgentName(entry.group, mainAgentName),
+          displayAgentName(entry.group, defaultAgentName),
           entry.group.folder,
           entry.group.trigger,
-          entry.group.isMain ? 'yes' : 'no',
           entry.group.requiresTrigger === false ? 'no' : 'yes',
         ].join(' | '),
       );
@@ -182,7 +180,7 @@ async function runInfo(
 
     const found = resolved.found;
     const settings = loadRuntimeSettings(runtimeHome);
-    const mainAgentName = mainAgentNameFromSettings(settings);
+    const defaultAgentName = defaultAgentNameFromSettings(settings);
     const configuredTools = (
       settings.agents[found.group.folder]?.capabilities.toolIds ?? []
     ).map((tool) => tool.trim());
@@ -196,11 +194,10 @@ async function runInfo(
     );
     const lines = [
       `JID: ${found.jid}`,
-      `Name: ${displayAgentName(found.group, mainAgentName)}`,
+      `Name: ${displayAgentName(found.group, defaultAgentName)}`,
       `Folder: ${found.group.folder}`,
       `Trigger: ${found.group.trigger}`,
       `Requires Trigger: ${found.group.requiresTrigger === false ? 'no' : 'yes'}`,
-      `Main Agent: ${found.group.isMain ? 'yes' : 'no'}`,
       `Added At: ${found.group.added_at}`,
       '',
       formatAgentToolAccess(
@@ -320,10 +317,9 @@ async function runAdd(runtimeHome: string, args: string[]): Promise<number> {
     }
 
     const settings = loadRuntimeSettings(runtimeHome);
-    const requiresTrigger =
-      parsed.requiresTrigger ?? (parsed.isMain ? false : true);
+    const requiresTrigger = parsed.requiresTrigger ?? true;
     const defaultTrigger = defaultTriggerForAgentName(
-      mainAgentNameFromSettings(settings),
+      defaultAgentNameFromSettings(settings),
     );
 
     const record: ConversationRoute = {
@@ -332,19 +328,9 @@ async function runAdd(runtimeHome: string, args: string[]): Promise<number> {
       trigger: (parsed.trigger || defaultTrigger).trim() || defaultTrigger,
       added_at: new Date().toISOString(),
       requiresTrigger,
-      isMain: parsed.isMain || false,
     };
 
     try {
-      if (record.isMain) {
-        for (const [jid, group] of Object.entries(groups)) {
-          if (!group.isMain) continue;
-          await db.setConversationRoute(jid, {
-            ...group,
-            isMain: false,
-          });
-        }
-      }
       await db.setConversationRoute(normalized, record);
       try {
         ensureConfiguredConversationBinding(settings, {
@@ -355,7 +341,6 @@ async function runAdd(runtimeHome: string, args: string[]): Promise<number> {
           displayName,
           trigger: record.trigger,
           requiresTrigger: record.requiresTrigger !== false,
-          isMain: record.isMain === true,
         });
         saveRuntimeSettings(runtimeHome, settings);
       } catch {
@@ -403,18 +388,18 @@ async function runAdd(runtimeHome: string, args: string[]): Promise<number> {
 }
 
 async function runName(runtimeHome: string, args: string[]): Promise<number> {
-  const nextName = normalizeMainAgentName(args.join(' '));
+  const nextName = normalizeDefaultAgentName(args.join(' '));
   if (nextName.length > 80) {
-    p.log.error('Main agent name must be 80 characters or fewer.');
+    p.log.error('Default agent name must be 80 characters or fewer.');
     return 1;
   }
   try {
     const settings = loadRuntimeSettings(runtimeHome);
-    const previous = mainAgentNameFromSettings(settings);
+    const previous = defaultAgentNameFromSettings(settings);
     settings.agent.name = nextName;
     saveRuntimeSettings(runtimeHome, settings);
     p.log.success(
-      `Main agent name updated from "${previous}" to "${nextName}".`,
+      `Default agent name updated from "${previous}" to "${nextName}".`,
     );
     p.log.info(
       'Restart MyClaw for all running processes to pick up the new identity.',
@@ -422,7 +407,7 @@ async function runName(runtimeHome: string, args: string[]): Promise<number> {
     return 0;
   } catch (err) {
     p.log.error(
-      `Could not update main agent name: ${err instanceof Error ? err.message : String(err)}`,
+      `Could not update default agent name: ${err instanceof Error ? err.message : String(err)}`,
     );
     return 1;
   }
@@ -594,6 +579,22 @@ async function runTrigger(
 
     try {
       await db.setConversationRoute(found.jid, nextGroup);
+      try {
+        const settings = loadRuntimeSettings(runtimeHome);
+        ensureConfiguredConversationBinding(settings, {
+          agentId: found.group.folder,
+          agentName: found.group.name,
+          agentFolder: found.group.folder,
+          jid: found.jid,
+          displayName: found.group.name,
+          trigger: nextGroup.trigger,
+          requiresTrigger: nextGroup.requiresTrigger !== false,
+        });
+        saveRuntimeSettings(runtimeHome, settings);
+      } catch {
+        // Generic local JIDs are still allowed for file-backed agents; only
+        // known provider JIDs participate in conversation desired state.
+      }
     } catch (err) {
       p.log.error(`Could not update trigger settings: ${errorMessage(err)}`);
       return 1;
@@ -661,7 +662,6 @@ async function runPolicy(runtimeHome: string, args: string[]): Promise<number> {
       displayName: found.group.name,
       trigger: found.group.trigger,
       requiresTrigger: found.group.requiresTrigger !== false,
-      isMain: found.group.isMain === true,
     });
     const conversation =
       settings.conversations[
@@ -798,8 +798,6 @@ export async function runAgentCommand(
       return runRemove(runtimeHome, rest);
     case 'trigger':
       return runTrigger(runtimeHome, rest);
-    case 'dm-access':
-      return runAgentDmAccessCommand(rest);
     case 'policy':
       return runPolicy(runtimeHome, rest);
     case 'policy-default':

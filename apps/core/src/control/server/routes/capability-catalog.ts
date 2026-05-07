@@ -87,6 +87,7 @@ export async function handleCapabilityCatalogRoutes(
           (id) => id as McpServerId,
         ),
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, capabilitiesToResponse(capabilities));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;

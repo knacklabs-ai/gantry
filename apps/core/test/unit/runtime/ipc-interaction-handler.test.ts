@@ -3,6 +3,10 @@ import os from 'os';
 import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createIpcResponseSigningKeyPair,
+  verifyIpcResponsePayload,
+} from '@core/infrastructure/ipc/response-signing.js';
 
 import {
   processPermissionIpcRequest,
@@ -86,11 +90,12 @@ describe('ipc-interaction-handler', () => {
   });
 
   it('writes permission responses to permission-responses directory', () => {
+    const keys = createIpcResponseSigningKeyPair();
     writePermissionIpcResponse(tempDir, 'grp', {
       requestId: 'perm-2',
       approved: false,
       reason: 'denied',
-    });
+    }, keys.privateKeyPem);
 
     const responsePath = path.join(
       tempDir,
@@ -99,16 +104,24 @@ describe('ipc-interaction-handler', () => {
       'perm-2.json',
     );
     const payload = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
-    expect(payload).toEqual({
+    expect(payload).toMatchObject({
       requestId: 'perm-2',
       approved: false,
       reason: 'denied',
     });
+    expect(
+      verifyIpcResponsePayload(
+        keys.publicKeyPem,
+        { requestId: 'perm-2', approved: false, reason: 'denied' },
+        payload.signature,
+      ),
+    ).toBe(true);
     expect(fileMode(path.dirname(responsePath))).toBe(0o700);
     expect(fileMode(responsePath)).toBe(0o400);
   });
 
   it('writes persistent permission metadata for runner SDK responses', () => {
+    const keys = createIpcResponseSigningKeyPair();
     writePermissionIpcResponse(tempDir, 'grp', {
       requestId: 'perm-3',
       approved: true,
@@ -123,7 +136,7 @@ describe('ipc-interaction-handler', () => {
         },
       ],
       decisionClassification: 'user_permanent',
-    });
+    }, keys.privateKeyPem);
 
     const responsePath = path.join(
       tempDir,
@@ -149,6 +162,7 @@ describe('ipc-interaction-handler', () => {
   });
 
   it('sanitizes user answer keys and values when writing responses', () => {
+    const keys = createIpcResponseSigningKeyPair();
     const answers = {
       mode: 'trigger',
       '': 'ignored',
@@ -159,11 +173,11 @@ describe('ipc-interaction-handler', () => {
       requestId: 'q-2',
       answers,
       answeredBy: 'user',
-    });
+    }, keys.privateKeyPem);
 
     const responsePath = path.join(tempDir, 'grp', 'user-answers', 'q-2.json');
     const payload = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
-    expect(payload).toEqual({
+    expect(payload).toMatchObject({
       requestId: 'q-2',
       answers: {
         mode: 'trigger',

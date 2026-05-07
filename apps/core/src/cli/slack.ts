@@ -16,9 +16,9 @@ import {
   ensureRuntimeLayout,
 } from '../config/settings/runtime-home.js';
 import {
-  allocateMainAgentFolder,
+  allocateDefaultAgentFolder,
   defaultTriggerForAgentName,
-  normalizeMainAgentName,
+  normalizeDefaultAgentName,
 } from './main-agent.js';
 import {
   ensureConfiguredConversationBinding,
@@ -419,9 +419,9 @@ export async function registerSlackMainGroup(options: {
     const existingGroup = existing[options.chatJid];
     const folder =
       existingGroup?.folder ||
-      allocateMainAgentFolder(options.runtimeHome, existing);
+      allocateDefaultAgentFolder(options.runtimeHome, existing);
 
-    const groupName = normalizeMainAgentName(options.displayName);
+    const groupName = normalizeDefaultAgentName(options.displayName);
 
     const groupDir = path.join(options.runtimeHome, 'agents', folder);
     fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -435,15 +435,26 @@ export async function registerSlackMainGroup(options: {
       fs.writeFileSync(soulPath, defaultSoulMarkdown(groupName), 'utf-8');
     }
 
-    await db.setConversationRoute(options.chatJid, {
+    const route = {
       name: groupName,
       folder,
       trigger: existingGroup?.trigger || defaultTriggerForAgentName(groupName),
       added_at: existingGroup?.added_at || new Date().toISOString(),
       requiresTrigger: false,
-      isMain: true,
       agentConfig: existingGroup?.agentConfig,
+    };
+    await db.setConversationRoute(options.chatJid, route);
+    const settings = loadRuntimeSettings(options.runtimeHome);
+    ensureConfiguredConversationBinding(settings, {
+      agentId: folder,
+      agentName: groupName,
+      agentFolder: folder,
+      jid: options.chatJid,
+      displayName: options.displayName,
+      trigger: route.trigger,
+      requiresTrigger: false,
     });
+    saveRuntimeSettings(options.runtimeHome, settings);
 
     return { folder, groupName };
   } finally {
@@ -538,7 +549,7 @@ export async function runSlackConnectCommand(
   const approverInput = normalizedChatJid
     ? await promptForValue({
         message:
-          'Slack admin/approver user IDs (comma-separated; seeds main_agent DM admin and conversation approvers; must be members of this conversation)',
+          'Slack approver user IDs (comma-separated; seeds conversation approvers; must be members of this conversation)',
         defaultValue: '',
       })
     : '';
@@ -590,7 +601,6 @@ export async function runSlackConnectCommand(
       displayName: conversationRouteName || settings.agent.name,
       trigger: `@${conversationRouteName || settings.agent.name}`,
       requiresTrigger: false,
-      isMain: true,
       approverIds,
     });
   }

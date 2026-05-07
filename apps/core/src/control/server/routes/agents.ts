@@ -3,27 +3,21 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
   CreateAgentRequestSchema,
-  AgentDmAccessRequestSchema,
   UpdateAgentRequestSchema,
 } from '@myclaw/contracts';
 
-import { AgentDmAccessAdministrationService } from '../../../application/agents/agent-dm-access-administration-service.js';
 import { ApplicationError } from '../../../application/common/application-error.js';
+import { AgentCapabilityAdministrationService } from '../../../application/agents/agent-capability-administration-service.js';
 import { getRuntimeStorage } from '../../../adapters/storage/postgres/runtime-store.js';
 import type { Agent, AgentId } from '../../../domain/agent/agent.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { ConversationId } from '../../../domain/conversation/conversation.js';
+import type { AgentConversationBinding } from '../../../domain/provider/provider.js';
 import {
   authorizeControlRequest,
   type ControlRouteContext,
 } from '../handler-context.js';
 import { readJson, sendError, sendJson } from '../http.js';
-
-function dmAccessService(): AgentDmAccessAdministrationService {
-  return new AgentDmAccessAdministrationService(
-    getRuntimeStorage().repositories,
-  );
-}
 
 function sendApplicationError(res: ServerResponse, error: unknown): boolean {
   if (!(error instanceof ApplicationError)) return false;
@@ -80,6 +74,7 @@ export async function handleAgentRoutes(
       updatedAt: now,
     };
     await getRuntimeStorage().repositories.agents.saveAgent(agent);
+    await ctx.syncSettingsFromProjection(auth.appId as AppId);
     sendJson(res, 201, agentToResponse(agent));
     return true;
   }
@@ -96,43 +91,28 @@ export async function handleAgentRoutes(
       return true;
     }
     try {
-      const dmAccess = await dmAccessService().getDmAccess({
-        appId: auth.appId as AppId,
-        agentId,
-      });
       const boundConversations = await agentBoundConversations({
         appId: auth.appId as AppId,
         agentId,
       });
+      const repositories = getRuntimeStorage().repositories;
+      const capabilities =
+        repositories.tools && repositories.skills && repositories.mcpServers
+          ? await new AgentCapabilityAdministrationService({
+              agents: repositories.agents,
+              tools: repositories.tools,
+              skills: repositories.skills,
+              mcpServers: repositories.mcpServers,
+            }).getCapabilities({
+              appId: auth.appId as AppId,
+              agentId,
+            })
+          : undefined;
       sendJson(res, 200, {
         agent: agentToResponse(agent),
-        dmAccess: dmAccess.dmAccess,
+        capabilities,
         boundConversations,
       });
-    } catch (error) {
-      if (!sendApplicationError(res, error)) throw error;
-    }
-    return true;
-  }
-
-  const agentDmAccessMatch = pathname.match(
-    /^\/v1\/agents\/([^/]+)\/dm-access$/,
-  );
-  if (agentDmAccessMatch && req.method === 'PUT') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
-    if (!auth) return true;
-    const parsed = AgentDmAccessRequestSchema.safeParse(await readJson(req));
-    if (!parsed.success) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Invalid agent DM access');
-      return true;
-    }
-    try {
-      const response = await dmAccessService().replaceDmAccess({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentDmAccessMatch[1]) as AgentId,
-        entries: parsed.data.entries,
-      });
-      sendJson(res, 200, response);
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
     }
@@ -178,6 +158,7 @@ export async function handleAgentRoutes(
       updatedAt: new Date().toISOString(),
     };
     await repository.saveAgent(updated);
+    await ctx.syncSettingsFromProjection(auth.appId as AppId);
     sendJson(res, 200, agentToResponse(updated));
     return true;
   }
@@ -207,6 +188,7 @@ async function agentBoundConversations(input: {
     kind: string;
     displayName?: string;
     approverUserIds: string[];
+    requiresTrigger: boolean;
   }>
 > {
   const repositories = getRuntimeStorage().repositories;
@@ -215,16 +197,14 @@ async function agentBoundConversations(input: {
       input.appId,
       input.agentId,
     );
-  const conversationIds = [
-    ...new Set(
-      bindings
-        .filter((binding) => binding.status === 'active')
-        .map((binding) => binding.conversationId),
-    ),
-  ].sort((a, b) => String(a).localeCompare(String(b)));
+  const activeBindings = bindings
+    .filter((binding) => binding.status === 'active')
+    .sort((a, b) =>
+      String(a.conversationId).localeCompare(String(b.conversationId)),
+    );
   const summaries = await Promise.all(
-    conversationIds.map(async (conversationId) =>
-      agentBoundConversation(input.appId, conversationId),
+    activeBindings.map(async (binding) =>
+      agentBoundConversation(input.appId, binding),
     ),
   );
   return summaries.filter(
@@ -234,17 +214,19 @@ async function agentBoundConversations(input: {
 
 async function agentBoundConversation(
   appId: AppId,
-  conversationId: ConversationId,
+  binding: AgentConversationBinding,
 ): Promise<{
   conversationId: string;
   provider: string;
   kind: string;
   displayName?: string;
   approverUserIds: string[];
+  requiresTrigger: boolean;
 } | null> {
   const repositories = getRuntimeStorage().repositories;
-  const conversation =
-    await repositories.conversations.getConversation(conversationId);
+  const conversation = await repositories.conversations.getConversation(
+    binding.conversationId,
+  );
   if (!conversation || conversation.appId !== appId) return null;
   const providerConnection =
     await repositories.providerConnections.getProviderConnection(
@@ -260,5 +242,6 @@ async function agentBoundConversation(
     kind: conversation.kind,
     ...(conversation.title ? { displayName: conversation.title } : {}),
     approverUserIds: approvers.map((approver) => approver.externalUserId),
+    requiresTrigger: binding.requiresTrigger,
   };
 }

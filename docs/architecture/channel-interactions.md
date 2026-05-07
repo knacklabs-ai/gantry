@@ -23,25 +23,17 @@ Conversations can bind multiple agents. Routing priority is deterministic:
 3. conversation default agent
 4. picker when the route is ambiguous
 
-Agent DM access is a provider-neutral allowlist. It is displayed and managed on
-the Agent admin surface, separately from Conversation membership and Conversation
-approvers. DM access can include external Slack, Teams, Telegram, Web, or local
-users who are not members of any configured Conversation. Each agent can set one DM
-approval admin per provider; that admin can approve permission prompts only for
-direct/private DM sessions bound to that agent on the same provider. DM access
-users are not approvers unless they are also configured as the provider's DM
-admin. The same MyClaw agent can be bound to Slack and Teams at once, but Slack
-and Teams admin user ids remain independent provider identities.
+Conversation sender policy is a Conversation-owned allowlist. It is displayed
+and managed on the Conversation/admin surfaces, separately from Conversation
+membership and control approvers. It controls who may send messages into that
+conversation, but it does not grant approval rights by itself.
 
-Conversation approvers are a Conversation-owned allowlist. They decide
-permission prompts for all agents bound to the Conversation, must be verified
-members of that Conversation before save and again when approving, and never
-grant agent capabilities by themselves. Slack, Telegram, Teams, and App/Web
-conversations must expose the same admin behavior: same-conversation origin
-check, Conversation approver check, and separate Agent DM access. Runtime
-approval callbacks first detect direct/private DM sessions and check the bound
-agent's DM admin; group/channel callbacks check Conversation approvers after
-same-conversation origin checks and before accepting a decision.
+Conversation control approvers decide permission prompts for all agents bound
+to the Conversation, must be verified members of that Conversation before save
+and again when approving, and never grant agent capabilities by themselves.
+Slack, Telegram, Teams, and App/Web conversations must expose the same admin
+behavior for direct/private and group/channel conversations: same-conversation
+origin check, Conversation approver check, and Conversation sender policy.
 
 Conversation setup should prefer provider discovery and validation. Pasted Slack,
 Teams, or Telegram IDs are accepted as a fallback only after MyClaw verifies
@@ -74,7 +66,7 @@ Descriptors are data, not policy. They can display `send_message`,
 `request_skill_dependency_install`, `request_mcp_server`,
 `request_permission`, `settings_desired_state`, `request_settings_update`,
 `service_restart`, and `register_agent` requests, but approval authority stays
-with the configured conversation/DM admin rules.
+with the configured conversation/conversation approver rules.
 
 ## Tool Selection Rules
 

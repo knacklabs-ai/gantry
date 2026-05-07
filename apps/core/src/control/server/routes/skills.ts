@@ -265,6 +265,7 @@ export async function handleSkillRoutes(
         agentId: decodeURIComponent(agentSkillMatch[1]) as AgentId,
         skillId: decodeURIComponent(agentSkillMatch[2]) as SkillId,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, { binding: bindingToResponse(binding) });
     } catch (error) {
       sendError(
@@ -290,6 +291,7 @@ export async function handleSkillRoutes(
         agentId: decodeURIComponent(agentSkillMatch[1]) as AgentId,
         skillId: decodeURIComponent(agentSkillMatch[2]) as SkillId,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, {
         disabled: Boolean(binding),
         binding: binding ? bindingToResponse(binding) : null,

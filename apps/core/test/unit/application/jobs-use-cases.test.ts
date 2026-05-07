@@ -508,7 +508,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
         'tg:sibling': { folder: 'team' },
@@ -596,7 +595,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
         'tg:sibling': { folder: 'team' },
@@ -690,7 +688,7 @@ describe('job application use cases', () => {
     });
   });
 
-  it('pushes non-main linked-session access into the bounded repository query', async () => {
+  it('pushes linked-session access into the bounded repository query', async () => {
     const ops = {
       listJobs: vi.fn(async () => []),
     };
@@ -705,7 +703,6 @@ describe('job application use cases', () => {
       access: {
         sourceAgentFolder: 'team',
         originConversationJid: 'tg:team',
-        isMain: false,
         conversationBindings: {
           'tg:team': { folder: 'team' },
           'tg:other': { folder: 'other' },
@@ -728,7 +725,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
       },
@@ -783,7 +779,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: true,
           conversationBindings: {},
           sourceAgentFolderJids: ['tg:team'],
         },
@@ -812,7 +807,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: true,
           conversationBindings: {},
           sourceAgentFolderJids: ['tg:team'],
         },
@@ -846,7 +840,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: false,
           conversationBindings: {
             'tg:team': { folder: 'team' },
           },
@@ -1247,7 +1240,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
       },
@@ -1300,7 +1292,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
         'tg:other': { folder: 'other' },
@@ -1340,7 +1331,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
         'tg:sibling': { folder: 'team' },
@@ -1379,7 +1369,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
       },
@@ -1462,7 +1451,6 @@ describe('job application use cases', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
-      isMain: false,
       conversationBindings: {
         'tg:team': { folder: 'team' },
       },
@@ -1556,7 +1544,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: false,
           conversationBindings: {
             'tg:team': { folder: 'team' },
           },
@@ -1629,7 +1616,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: false,
           conversationBindings: {
             'tg:team': { folder: 'team' },
           },
@@ -1679,7 +1665,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: false,
           conversationBindings: {
             'tg:team': { folder: 'team' },
           },
@@ -1724,7 +1709,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'team',
           originConversationJid: 'tg:team',
-          isMain: false,
           conversationBindings: {
             'tg:team': { folder: 'team' },
           },
@@ -1896,7 +1880,6 @@ describe('job application use cases', () => {
       access: {
         sourceAgentFolder: 'app-folder',
         originConversationJid: 'app:app-one:conv-1',
-        isMain: true,
         conversationBindings: {
           'app:app-one:conv-1': { folder: 'app-folder' },
         },
@@ -1986,7 +1969,7 @@ describe('job application use cases', () => {
     expect(ops.updateJob).not.toHaveBeenCalled();
   });
 
-  it('rejects broad MyClaw MCP wildcards for non-main job extras', async () => {
+  it('rejects broad MyClaw MCP wildcards for conversation-scoped job extras', async () => {
     const ops = makeOps(makeJob({ capability_policy: { allowed_tools: [] } }));
     const service = new JobManagementService({
       ops: ops as RuntimeJobRepository,
@@ -1999,7 +1982,6 @@ describe('job application use cases', () => {
         access: {
           sourceAgentFolder: 'app-folder',
           originConversationJid: 'app:app-one:conv-1',
-          isMain: false,
           conversationBindings: {
             'app:app-one:conv-1': { folder: 'app-folder' },
           },

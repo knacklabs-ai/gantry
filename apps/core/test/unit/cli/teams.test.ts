@@ -340,7 +340,6 @@ describe('cli teams helpers', () => {
     expect(groupsStore.get('teams:19:general@thread.tacv2')).toEqual(
       expect.objectContaining({
         folder: 'main_agent',
-        isMain: true,
       }),
     );
     expect(outro).toHaveBeenCalledWith(

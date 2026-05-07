@@ -96,17 +96,13 @@ function createGroupSnapshotSync(
 
       const registeredJids = new Set(Object.keys(conversationRoutes));
       await Promise.all(
-        Object.values(conversationRoutes).flatMap((group) => {
-          const isMain = group.isMain === true;
-          return [
-            deps.writeGroupsSnapshot(
-              group.folder,
-              isMain,
-              availableGroups,
-              registeredJids,
-            ),
-          ];
-        }),
+        Object.values(conversationRoutes).map((group) =>
+          deps.writeGroupsSnapshot(
+            group.folder,
+            availableGroups,
+            registeredJids,
+          ),
+        ),
       );
     } while (syncDirty);
   };
@@ -185,13 +181,8 @@ export async function startRuntimeServices(
       await channelWiring.syncGroups(force);
     },
     getAvailableGroups: app.getAvailableGroups,
-    writeGroupsSnapshot: (folder, isMain, availableGroups, registeredJids) =>
-      resolved.writeGroupsSnapshot(
-        folder,
-        isMain,
-        availableGroups,
-        registeredJids,
-      ),
+    writeGroupsSnapshot: (folder, availableGroups, registeredJids) =>
+      resolved.writeGroupsSnapshot(folder, availableGroups, registeredJids),
     onSchedulerChanged,
     opsRepository: resolved.opsRepository,
     getToolRepository: resolved.getToolRepository,

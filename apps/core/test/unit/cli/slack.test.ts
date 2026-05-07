@@ -375,7 +375,7 @@ describe('cli slack helpers', () => {
     expect(result).toEqual({ type: 'skip' });
     expect(select).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'Choose the Slack conversation for the Main Agent',
+        message: 'Choose the Slack conversation for the Default Agent',
         options: expect.arrayContaining([
           expect.objectContaining({ value: 'sl:C0123456789' }),
           expect.objectContaining({ value: 'manual' }),

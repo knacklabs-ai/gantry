@@ -128,8 +128,6 @@ export async function runMessagePollingTick(
           continue;
         }
 
-        const isMainGroup = group.isMain === true;
-
         const triggerPattern = getTriggerPattern(group.trigger);
         const loopCmdMsg = groupMessages.find(
           (m) => extractSessionCommand(m.content, triggerPattern) !== null,
@@ -174,7 +172,7 @@ export async function runMessagePollingTick(
           continue;
         }
 
-        const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+        const needsTrigger = group.requiresTrigger !== false;
         if (needsTrigger) {
           const allowlistCfg = loadSenderAllowlist();
           const hasTrigger = groupMessages.some(

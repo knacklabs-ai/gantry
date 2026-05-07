@@ -47,6 +47,7 @@ export function writeTaskIpcResponse(
     data?: unknown;
   },
   authThreadId?: string,
+  responseKeyId?: string,
 ): void {
   if (!taskId || !TASK_IPC_RESPONSE_ID_PATTERN.test(taskId)) return;
   if (!isValidGroupFolder(sourceAgentFolder)) return;
@@ -66,11 +67,13 @@ export function writeTaskIpcResponse(
   const privateKeyPem = getIpcResponseSigningPrivateKey(
     sourceAgentFolder,
     authThreadId,
+    responseKeyId,
   );
   const signature = signIpcResponsePayload(privateKeyPem, responsePayload);
+  if (!signature) return;
   writeJsonAtomic(
     responsePath,
-    signature ? { ...responsePayload, signature } : responsePayload,
+    { ...responsePayload, signature },
   );
 }
 
@@ -78,6 +81,7 @@ export function createTaskResponder(
   sourceAgentFolder: string,
   taskIdRaw: unknown,
   authThreadId?: string,
+  responseKeyId?: string,
 ): {
   accept: (message: string, code?: string, details?: string[]) => void;
   acceptData: (
@@ -101,6 +105,7 @@ export function createTaskResponder(
           ...(details && details.length > 0 ? { details } : {}),
         },
         authThreadId,
+        responseKeyId,
       );
     },
     acceptData: (
@@ -120,6 +125,7 @@ export function createTaskResponder(
           ...(details && details.length > 0 ? { details } : {}),
         },
         authThreadId,
+        responseKeyId,
       );
     },
     reject: (error: string, code?: string, details?: string[]) => {
@@ -133,6 +139,7 @@ export function createTaskResponder(
           ...(details && details.length > 0 ? { details } : {}),
         },
         authThreadId,
+        responseKeyId,
       );
     },
   };

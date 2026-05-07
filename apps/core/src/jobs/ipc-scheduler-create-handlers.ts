@@ -81,6 +81,7 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
 
   if (typeof data.script === 'string' && data.script.trim().length > 0) {

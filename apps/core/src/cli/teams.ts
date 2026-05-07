@@ -24,9 +24,9 @@ import {
 } from '../config/settings/runtime-settings.js';
 import { openRuntimeGroupDb } from './runtime-group-db.js';
 import {
-  allocateMainAgentFolder,
+  allocateDefaultAgentFolder,
   defaultTriggerForAgentName,
-  normalizeMainAgentName,
+  normalizeDefaultAgentName,
 } from './main-agent.js';
 import { renderDefaultCapabilityRules } from '../shared/capability-guidance.js';
 
@@ -114,18 +114,29 @@ export async function registerTeamsMainGroup(options: {
     const existingGroup = existing[options.chatJid];
     const folder =
       existingGroup?.folder ||
-      allocateMainAgentFolder(options.runtimeHome, existing);
-    const groupName = normalizeMainAgentName(options.displayName);
+      allocateDefaultAgentFolder(options.runtimeHome, existing);
+    const groupName = normalizeDefaultAgentName(options.displayName);
 
-    await db.setConversationRoute(options.chatJid, {
+    const route = {
       name: groupName,
       folder,
       trigger: existingGroup?.trigger || defaultTriggerForAgentName(groupName),
       added_at: existingGroup?.added_at || new Date().toISOString(),
       requiresTrigger: false,
-      isMain: true,
       agentConfig: existingGroup?.agentConfig,
+    };
+    await db.setConversationRoute(options.chatJid, route);
+    const settings = loadRuntimeSettings(options.runtimeHome);
+    ensureConfiguredConversationBinding(settings, {
+      agentId: folder,
+      agentName: groupName,
+      agentFolder: folder,
+      jid: options.chatJid,
+      displayName: options.displayName,
+      trigger: route.trigger,
+      requiresTrigger: false,
     });
+    saveRuntimeSettings(options.runtimeHome, settings);
 
     const groupDir = path.join(options.runtimeHome, 'agents', folder);
     fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -228,7 +239,7 @@ async function chooseTeamsChannelForConnect(
 
   spinner.stop(`Found ${discovery.channels.length} Teams channel(s).`);
   const selected = await p.select({
-    message: 'Choose the Teams channel for the Main Agent',
+    message: 'Choose the Teams channel for the Default Agent',
     options: [
       ...discovery.channels.slice(0, 20).map((channel) => ({
         value: channel.chatJid,
@@ -327,7 +338,7 @@ export async function runTeamsConnectCommand(
     channelChoice.type === 'selected'
       ? await promptForValue({
           message:
-            'Teams admin/approver user IDs (comma-separated; seeds main_agent DM admin and conversation approvers; must be members of this conversation)',
+            'Teams admin/approver user IDs (comma-separated; seeds this conversation approvers; must be members of this conversation)',
           defaultValue: '',
         })
       : '';
@@ -378,7 +389,6 @@ export async function runTeamsConnectCommand(
       displayName: registeredChatTitle || conversationRouteName,
       trigger: `@${conversationRouteName || settings.agent.name}`,
       requiresTrigger: false,
-      isMain: true,
       approverIds,
     });
   }

@@ -11,6 +11,7 @@ import {
   BROWSER_RESPONSES_DIR,
   BROWSER_IPC_AUTH_TOKEN,
   IPC_AUTH_TOKEN,
+  IPC_RESPONSE_KEY_ID,
   IPC_RESPONSE_VERIFY_KEY,
   MEMORY_IPC_AUTH_TOKEN,
   MEMORY_REQUESTS_DIR,
@@ -54,13 +55,16 @@ export function writeIpcFile(dir: string, data: object): string {
     !Array.isArray(data.context)
       ? (data.context as Record<string, unknown>)
       : {};
+  const requestContext = {
+    ...existingContext,
+    ...(threadId ? { threadId } : {}),
+    ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
+  };
   const payload = {
     ...data,
-    ...(threadId
-      ? { context: { ...existingContext, threadId } }
-      : 'context' in data
-        ? { context: existingContext }
-        : {}),
+    ...(Object.keys(requestContext).length > 0
+      ? { context: requestContext }
+      : {}),
   };
   const envelope = createSignedIpcRequestEnvelope(IPC_AUTH_TOKEN, payload);
   writePrivateFileSync(tempPath, JSON.stringify(envelope, null, 2));
@@ -78,7 +82,6 @@ export function hasValidIpcResponseSignature(
     typeof raw.signature === 'string' ? raw.signature.trim() : '';
   return verifyIpcResponsePayload(
     IPC_RESPONSE_VERIFY_KEY,
-    IPC_AUTH_TOKEN,
     payload,
     signature,
   );
@@ -107,6 +110,7 @@ export async function requestMemoryAction(
     context: {
       ...(threadId ? { threadId } : {}),
       ...(memoryUserId ? { userId: memoryUserId } : {}),
+      ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
       defaultScope: memoryDefaultScope,
     },
     expiresAt: new Date(Date.now() + timeoutMs).toISOString(),
@@ -157,6 +161,11 @@ export async function requestMemoryAction(
         fs.unlinkSync(responsePath);
         return data;
       } catch (err) {
+        try {
+          fs.unlinkSync(responsePath);
+        } catch {
+          // ignore
+        }
         return {
           ok: false,
           error:
@@ -196,6 +205,7 @@ export async function requestBrowserAction(
     context: {
       chatJid,
       ...(threadId ? { threadId } : {}),
+      ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
     },
     expiresAt: new Date(Date.now() + timeoutMs).toISOString(),
   };
@@ -241,6 +251,11 @@ export async function requestBrowserAction(
         fs.unlinkSync(responsePath);
         return data;
       } catch (err) {
+        try {
+          fs.unlinkSync(responsePath);
+        } catch {
+          // ignore
+        }
         return {
           ok: false,
           error:

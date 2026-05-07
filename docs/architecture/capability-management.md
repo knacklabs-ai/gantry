@@ -22,21 +22,15 @@ activation, but they are not collapsed into one untyped blob.
 The deterministic ownership rule is:
 
 - Agents own `selectedToolIds`, `selectedSkillIds`, and
-  `selectedMcpServerIds`, plus provider-neutral DM access entries and one
-  optional DM approval admin per provider.
-- Channels own bound agents, default/routing metadata, sessions, and control
-  approver allowlists.
-- Agent DM access is separate from conversation membership and conversation approvers
-  approvers. It can name provider user ids from Slack, Teams, Telegram, Web,
-  or local surfaces. DM access does not grant approval rights by itself.
-- Agent DM admins are separate from DM access users. A provider-specific DM
-  admin can approve permission prompts only for that agent's direct/private DM
-  sessions on that provider.
-- Control approvers are separate from DM access. They must be verifiable
-  members of the Channel and apply to every agent bound to that Channel.
-- Agent identity is shared across provider bindings, but admin authority is not:
-  Slack user ids, Teams user ids, Telegram user ids, Web users, and local users
-  must be configured on their own provider or conversation surfaces.
+  `selectedMcpServerIds`.
+- Conversations own bound agents, default/routing metadata, sessions, sender
+  policy, trigger policy, and control approver allowlists.
+- Conversation sender policy is separate from conversation membership and
+  control approvers. It controls who may send messages into that conversation.
+- Control approvers must be verifiable members of the Conversation and apply to
+  every agent bound to that Conversation, including direct/private sessions.
+- Agent identity is shared across provider bindings, but approval authority is
+  configured on each provider conversation surface.
 
 There is no channel-scoped tool selection field and no separate browser
 capability list. Browser is a normal catalog tool. Channel-provider flags

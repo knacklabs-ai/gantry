@@ -243,7 +243,6 @@ function runnerInput(
     groupFolder: 'group',
     chatJid: 'tg:group',
     threadId: 'thread-1',
-    isMain: false,
     compiledSystemPrompt: 'compiled MyClaw system profile',
     ...overrides,
   };
@@ -400,6 +399,7 @@ describe('Claude Agent SDK boundary integration', () => {
         MYCLAW_MEMORY_DEFAULT_SCOPE: 'group',
         MYCLAW_BROWSER_PROFILE_NAME: '',
         MYCLAW_ADMIN_MCP_TOOLS_JSON: '[]',
+        MYCLAW_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
         MYCLAW_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedMyClawMcpToolNames([]),
         ),

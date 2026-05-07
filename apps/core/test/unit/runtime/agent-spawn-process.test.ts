@@ -115,7 +115,6 @@ function makeSpec(
       prompt: 'Hello there',
       groupFolder: 'test-group',
       chatJid: 'test@g.us',
-      isMain: false,
     },
     command: '/usr/bin/node',
     args: ['runner.js'],
@@ -744,7 +743,6 @@ describe('executeRunnerProcess', () => {
             prompt: 'test prompt',
             groupFolder: 'test-group',
             chatJid: 'test@g.us',
-            isMain: false,
             sessionId: 'sess-existing',
           },
         });

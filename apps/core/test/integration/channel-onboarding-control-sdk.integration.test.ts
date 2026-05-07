@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createClient } from '../../../../packages/sdk/src/index.js';
@@ -8,6 +10,7 @@ import {
   ProviderConnectionResponseSchema,
   ProviderListResponseSchema,
 } from '@myclaw/contracts';
+import { syncRuntimeSettingsFromProjection } from '@core/config/index.js';
 
 const state = vi.hoisted(() => ({
   providerConnections: new Map<string, any>(),
@@ -20,6 +23,7 @@ vi.mock('@core/config/index.js', () => ({
   MYCLAW_HOME: '/tmp/myclaw-channel-integration-home',
   ONECLI_ALLOWED_ENV_KEYS: [],
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+  syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: vi.fn(() => ({
     model: 'opus',
     source: 'system default',
@@ -126,6 +130,13 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
             (!agentId || binding.agentId === agentId),
         ),
     ),
+    listAgentConversationBindingsByConversation: vi.fn(async (input: any) =>
+      [...state.bindings.values()].filter(
+        (binding) =>
+          binding.appId === input.appId &&
+          binding.conversationId === input.conversationId,
+      ),
+    ),
   };
   const conversations = {
     listConversations: vi.fn(async (input: any) =>
@@ -162,6 +173,7 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
         (thread) => thread.conversationId === conversationId,
       ),
     ),
+    listConversationApproversForConversations: vi.fn(async () => []),
   };
   return {
     getRuntimeControlRepository: () => ({
@@ -169,12 +181,23 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
       claimDueWebhookDeliveries: vi.fn(async () => []),
     }),
     getRuntimeRepositories: () => ({
+      getAllConversationRoutes: vi.fn(async () => ({})),
       storeChatMetadata: vi.fn(async () => undefined),
       storeMessage: vi.fn(async () => undefined),
     }),
     getRuntimeStorage: () => ({
       repositories: {
         agents: {
+          listAgents: vi.fn(async (appId: string) => [
+            {
+              id: 'agent:one',
+              appId,
+              name: 'Agent One',
+              status: 'active',
+              createdAt: new Date(0).toISOString(),
+              updatedAt: new Date(0).toISOString(),
+            },
+          ]),
           getAgent: vi.fn(async (agentId: string) => {
             if (agentId === 'agent:one') {
               return {
@@ -201,6 +224,16 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
         },
         providerConnections,
         conversations,
+        tools: {
+          listTools: vi.fn(async () => []),
+          listAgentToolBindingsForAgents: vi.fn(async () => []),
+        },
+        skills: {
+          listAgentSkillBindingsForAgents: vi.fn(async () => []),
+        },
+        mcpServers: {
+          listAgentBindingsForAgents: vi.fn(async () => []),
+        },
         messages: {
           listMessages: vi.fn(async () => []),
         },
@@ -211,6 +244,10 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
 
 describe('provider conversation onboarding control SDK integration', () => {
   beforeEach(() => {
+    fs.rmSync('/tmp/myclaw-channel-integration-home', {
+      recursive: true,
+      force: true,
+    });
     state.providerConnections.clear();
     state.conversations.clear();
     state.threads.clear();
@@ -284,6 +321,10 @@ describe('provider conversation onboarding control SDK integration', () => {
         status: 'active',
         runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
       });
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appId: 'app-one' }),
+      );
 
       const conversation = {
         id: 'conversation:slack:C123',
@@ -340,6 +381,10 @@ describe('provider conversation onboarding control SDK integration', () => {
       expect(runtimeApp.app.projectConversationRoute).not.toHaveBeenCalled();
       expect(runtimeApp.app.registerGroup).not.toHaveBeenCalled();
       expect(runtimeApp.registered.has('sl:C123')).toBe(false);
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(2);
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appId: 'app-one' }),
+      );
 
       const listed = await client.agents.conversationBindings.list('agent:one');
       const parsedList =

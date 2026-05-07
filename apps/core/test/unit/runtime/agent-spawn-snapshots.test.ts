@@ -52,7 +52,7 @@ beforeEach(() => {
 
 describe('writeGroupsSnapshot', () => {
   it('creates the IPC directory', async () => {
-    await writeGroupsSnapshot('group-a', true, [], new Set());
+    await writeGroupsSnapshot('group-a', [], new Set());
 
     expect(resolveGroupIpcPath).toHaveBeenCalledWith('group-a');
     expect(fs.promises.mkdir).toHaveBeenCalledWith('/mock/ipc/group-a', {
@@ -60,13 +60,13 @@ describe('writeGroupsSnapshot', () => {
     });
   });
 
-  it('writes all groups when isMain is true', async () => {
+  it('writes all groups for every conversation', async () => {
     const groups = [
       makeGroup({ jid: 'jid-1', name: 'Alpha' }),
       makeGroup({ jid: 'jid-2', name: 'Beta' }),
     ];
 
-    await writeGroupsSnapshot('group-a', true, groups, new Set(['jid-1']));
+    await writeGroupsSnapshot('group-a', groups, new Set(['jid-1']));
 
     const written = JSON.parse(
       (fs.promises.writeFile as ReturnType<typeof vi.fn>).mock.calls[0][1],
@@ -76,21 +76,10 @@ describe('writeGroupsSnapshot', () => {
     expect(typeof written.lastSync).toBe('string');
   });
 
-  it('writes empty groups array when isMain is false', async () => {
-    const groups = [makeGroup({ jid: 'jid-1', name: 'Alpha' })];
-
-    await writeGroupsSnapshot('group-a', false, groups, new Set(['jid-1']));
-
-    const written = JSON.parse(
-      (fs.promises.writeFile as ReturnType<typeof vi.fn>).mock.calls[0][1],
-    );
-    expect(written.groups).toEqual([]);
-  });
-
   it('always includes a lastSync ISO timestamp', async () => {
     const before = new Date().toISOString();
 
-    await writeGroupsSnapshot('group-a', false, [], new Set());
+    await writeGroupsSnapshot('group-a', [], new Set());
 
     const written = JSON.parse(
       (fs.promises.writeFile as ReturnType<typeof vi.fn>).mock.calls[0][1],
@@ -103,7 +92,7 @@ describe('writeGroupsSnapshot', () => {
   });
 
   it('writes to the correct file path', async () => {
-    await writeGroupsSnapshot('group-a', true, [], new Set());
+    await writeGroupsSnapshot('group-a', [], new Set());
 
     expect(fs.promises.rename).toHaveBeenCalledWith(
       expect.stringContaining('/mock/ipc/group-a/.available_groups.json.'),

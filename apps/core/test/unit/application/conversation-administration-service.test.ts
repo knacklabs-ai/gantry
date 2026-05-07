@@ -180,7 +180,7 @@ describe('ConversationAdministrationService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('rejects control allowlist updates for direct conversations', async () => {
+  it('allows control allowlist updates for direct conversations', async () => {
     const { service, repositories } = makeService({
       providerId: 'slack',
       conversationKind: 'direct',
@@ -194,10 +194,10 @@ describe('ConversationAdministrationService', () => {
         userIds: ['U123'],
         updatedAt: iso,
       }),
-    ).rejects.toThrow(/direct/i);
+    ).resolves.toEqual({ userIds: ['U123'] });
     expect(
       repositories.conversations.replaceConversationApprovers,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalled();
   });
 
   it('keeps approvers scoped to the origin conversation provider', async () => {

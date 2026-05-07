@@ -19,7 +19,7 @@ import { settingsFilePath } from '@core/config/settings/runtime-home.js';
 describe('runtime settings', () => {
   it('defaults, renders, and parses agent.name', () => {
     const settings = createDefaultRuntimeSettings();
-    expect(settings.agent.name).toBe('Main Agent');
+    expect(settings.agent.name).toBe('Default Agent');
 
     settings.agent.name = 'Kai';
     const yaml = renderRuntimeSettingsYaml(settings);
@@ -275,20 +275,13 @@ provider_connections:
     const settings = createDefaultRuntimeSettings();
     settings.desiredState.authoritative = true;
     settings.agents.main_agent = {
-      name: 'Main Agent',
+      name: 'Default Agent',
       folder: 'main_agent',
       persona: 'personal_assistant',
       model: 'sonnet',
       oneTimeJobDefaultModel: 'haiku',
       recurringJobDefaultModel: 'opus',
       bindings: {},
-      dmAccess: [
-        {
-          provider: 'telegram',
-          userIds: ['42'],
-          adminUserId: '42',
-        },
-      ],
       capabilities: {
         toolIds: ['Read'],
         skillIds: ['skill:admin'],
@@ -316,7 +309,6 @@ provider_connections:
       trigger: '@kai',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: false,
-      isMain: true,
       memoryScope: 'conversation',
     };
 
@@ -333,14 +325,12 @@ provider_connections:
       name: 'Main DM',
       trigger: '@kai',
       requiresTrigger: false,
-      isMain: true,
     });
     expect(parsed.bindings.main_dm).toMatchObject({
       agent: 'main_agent',
       conversation: 'main_dm',
       trigger: '@kai',
       requiresTrigger: false,
-      isMain: true,
       memoryScope: 'conversation',
     });
   });
@@ -355,7 +345,6 @@ provider_connections:
         name: 'Main',
         folder: 'main_agent',
         bindings: {},
-        dmAccess: [],
         capabilities: {
           toolIds: ['mcp__myclaw__service_restart'],
           skillIds: [],
@@ -393,7 +382,6 @@ provider_connections:
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: ['tool:permission-rule:abc123'],
         skillIds: [],
@@ -440,7 +428,6 @@ provider_connections:
         name: 'Main',
         folder: 'main_agent',
         bindings: {},
-        dmAccess: [],
         capabilities: {
           toolIds: [],
           skillIds: [],
@@ -473,17 +460,15 @@ provider_connections:
       runtimeSecretRefs: { bot_token: 'TELEGRAM_BOT_TOKEN' },
     };
     settings.agents.main_agent = {
-      name: 'Main Agent',
+      name: 'Default Agent',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.agents.helper = {
       name: 'Helper',
       folder: 'helper',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.conversations.team = {
@@ -508,7 +493,6 @@ provider_connections:
       trigger: '@main',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: false,
-      isMain: true,
       memoryScope: 'conversation',
     };
     settings.bindings.helper_team = {
@@ -517,7 +501,6 @@ provider_connections:
       trigger: '@helper',
       addedAt: '2026-05-03T00:00:00.000Z',
       requiresTrigger: true,
-      isMain: false,
       memoryScope: 'conversation',
     };
     settings.bindings.main_solo = {
@@ -526,7 +509,6 @@ provider_connections:
       trigger: '@main',
       addedAt: '2026-05-04T00:00:00.000Z',
       requiresTrigger: false,
-      isMain: true,
       memoryScope: 'conversation',
     };
 
@@ -626,7 +608,6 @@ agents:
       displayName: 'First',
       trigger: '@main',
       requiresTrigger: true,
-      isMain: true,
     });
     const second = ensureConfiguredConversationBinding(settings, {
       agentId: 'second_agent',
@@ -636,7 +617,6 @@ agents:
       displayName: 'Second',
       trigger: '@second',
       requiresTrigger: true,
-      isMain: false,
     });
 
     expect(first.conversationId).not.toEqual(second.conversationId);
@@ -648,39 +628,31 @@ agents:
     expect(Object.keys(settings.bindings)).toHaveLength(2);
   });
 
-  it('seeds onboarding approvers into default agent DM admin and conversation policy', () => {
+  it('seeds onboarding approvers into conversation policy only', () => {
     const settings = createDefaultRuntimeSettings();
 
     ensureConfiguredConversationBinding(settings, {
       agentId: 'main_agent',
-      agentName: 'Main Agent',
+      agentName: 'Default Agent',
       agentFolder: 'main_agent',
       jid: 'sl:C123',
       displayName: 'Engineering',
-      trigger: '@Main Agent',
+      trigger: '@Default Agent',
       requiresTrigger: true,
-      isMain: true,
       approverIds: ['UADMIN', 'UHELPER'],
     });
 
-    expect(settings.agents.main_agent?.dmAccess).toEqual([
-      {
-        provider: 'slack',
-        userIds: ['UADMIN', 'UHELPER'],
-        adminUserId: 'UADMIN',
-      },
-    ]);
     const conversation = Object.values(settings.conversations)[0];
     expect(conversation?.controlApprovers).toEqual(['UADMIN', 'UHELPER']);
     expect(conversation?.senderPolicy).toEqual({ allow: '*', mode: 'trigger' });
     const yaml = renderRuntimeSettingsYaml(settings);
-    expect(yaml).toContain('    dm_access:');
+    expect(yaml).not.toContain('dm_access:');
     expect(yaml).toContain('    sender_policy:');
     expect(yaml).toContain('      mode: trigger');
     expect(yaml).toContain('    control_approvers: ["UADMIN","UHELPER"]');
   });
 
-  it('maps compact DM conversation approvers to agent DM admins', () => {
+  it('maps compact DM conversation approvers to conversation policy', () => {
     const parsed = parseRuntimeSettings(`providers:
   telegram:
     enabled: true
@@ -699,16 +671,79 @@ conversations:
     agent: main_agent
 `);
 
-    expect(parsed.agents.main_agent.dmAccess).toEqual([
-      {
-        provider: 'telegram',
-        userIds: ['5759865942'],
-        adminUserId: '5759865942',
-      },
+    expect(parsed.conversations.main_dm.controlApprovers).toEqual([
+      '5759865942',
     ]);
   });
 
-  it('keeps same-agent Slack and Teams admins provider-scoped in settings', () => {
+  it('rejects agent dm_access because policy belongs to conversations', () => {
+    expect(() =>
+      parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    dm_access:
+      slack:
+        allow: ["U123"]
+`),
+    ).toThrow('agents.main_agent.dm_access is not supported');
+  });
+
+  it('rejects conversation main because conversation policy has no privileged main flag', () => {
+    expect(() =>
+      parseRuntimeSettings(`providers:
+  telegram:
+    enabled: true
+    bot_token_env: TELEGRAM_BOT_TOKEN
+
+agents:
+  main_agent:
+    name: Default Agent
+
+conversations:
+  team:
+    provider: telegram
+    id: "100"
+    type: group
+    agent: main_agent
+    main: true
+`),
+    ).toThrow('conversations.team.main is not supported');
+  });
+
+  it('rejects binding main because bindings only carry trigger and conversation routing', () => {
+    expect(() =>
+      parseRuntimeSettings(`providers:
+  telegram:
+    enabled: true
+    bot_token_env: TELEGRAM_BOT_TOKEN
+
+provider_connections:
+  telegram_default:
+    provider: telegram
+    runtime_secret_refs:
+      bot_token: TELEGRAM_BOT_TOKEN
+
+agents:
+  main_agent:
+    name: Default Agent
+
+conversations:
+  team:
+    provider_connection: telegram_default
+    external_id: "100"
+    kind: group
+
+bindings:
+  team:
+    agent: main_agent
+    conversation: team
+    trigger: "@Default Agent"
+    main: true
+`),
+    ).toThrow('bindings.team.main is not supported');
+  });
+
+  it('keeps same-agent Slack and Teams approvers conversation-scoped in settings', () => {
     const parsed = parseRuntimeSettings(`providers:
   slack:
     enabled: true
@@ -720,13 +755,6 @@ conversations:
 agents:
   main_agent:
     name: Main
-    dm_access:
-      slack:
-        allow: ["U123"]
-        admin: "U123"
-      teams:
-        allow: ["8:orgid:abc"]
-        admin: "8:orgid:abc"
 
 conversations:
   sales_slack:
@@ -743,27 +771,18 @@ conversations:
     agent: main_agent
 `);
 
-    expect(parsed.agents.main_agent.dmAccess).toEqual([
-      { provider: 'slack', userIds: ['U123'], adminUserId: 'U123' },
-      {
-        provider: 'teams',
-        userIds: ['8:orgid:abc'],
-        adminUserId: '8:orgid:abc',
-      },
-    ]);
     expect(parsed.conversations.sales_slack.controlApprovers).toEqual(['U123']);
     expect(parsed.conversations.sales_teams.controlApprovers).toEqual([
       '8:orgid:abc',
     ]);
   });
 
-  it('does not render opaque skill UUIDs into human settings', () => {
+  it('renders opaque skill UUIDs because durable skill grants are restart-owned settings', () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.kai = {
       name: 'Kai',
       folder: 'kai',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: [
@@ -776,7 +795,13 @@ conversations:
 
     const yaml = renderRuntimeSettingsYaml(settings);
 
-    expect(yaml).not.toContain('skill:3014949c-a616-4b2c-80e7-0bc61bb31e85');
+    expect(yaml).toContain('skill:3014949c-a616-4b2c-80e7-0bc61bb31e85');
     expect(yaml).toContain('company-handbook');
+    expect(parseRuntimeSettings(yaml).agents.kai.capabilities.skillIds).toEqual(
+      [
+        'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
+        'company-handbook',
+      ],
+    );
   });
 });

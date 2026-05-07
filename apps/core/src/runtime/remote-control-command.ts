@@ -24,13 +24,7 @@ export async function handleRemoteControlCommand(
   cwd = MYCLAW_HOME,
 ): Promise<void> {
   const group = getGroup(chatJid);
-  if (!group?.isMain) {
-    logger.warn(
-      { chatJid, sender: msg.sender },
-      'Remote control rejected: not main group',
-    );
-    return;
-  }
+  if (!group) return;
 
   if (!(msg.is_from_me === true || isSenderControlAllowlisted(msg))) {
     logger.warn(

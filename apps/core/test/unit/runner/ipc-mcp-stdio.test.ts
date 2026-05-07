@@ -111,6 +111,10 @@ function createMcpFixture(): {
     path.join(sharedDir, 'private-fs.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/tool-access-view.ts'),
+    path.join(sharedDir, 'tool-access-view.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/infrastructure/time/datetime.ts'),
     path.join(infrastructureTimeDir, 'datetime.ts'),
   );
@@ -319,6 +323,7 @@ async function runMcpFixture(
         MYCLAW_IPC_DIR: fixture.ipcDir,
         MYCLAW_IPC_AUTH_TOKEN: 'mcp-test-token',
         MYCLAW_IPC_RESPONSE_VERIFY_KEY: fixture.responseVerifyKey,
+        MYCLAW_IPC_RESPONSE_KEY_ID: 'mcp-test-response-key-id',
         TEST_IPC_RESPONSE_SIGNING_KEY: fixture.responseSigningKey,
         MYCLAW_CHAT_JID: 'tg:team',
         MYCLAW_GROUP_FOLDER: 'team',
@@ -453,6 +458,8 @@ describe('agent-runner MCP stdio tools', { timeout: 10_000 }, () => {
       ),
     );
     expect(task.type).toBe('service_restart');
+    expect(task.chatJid).toBe('tg:team');
+    expect(task.targetJid).toBe('tg:team');
 
     const statusFixture = createMcpFixture();
     const statusResult = await runMcpFixture(

@@ -44,6 +44,7 @@ import {
   computeBrowserIpcAuthToken,
   createIpcAuthEnvelope,
   computeMemoryIpcAuthToken,
+  revokeIpcResponseSigningKey,
 } from './ipc-auth.js';
 import { getContinuationInputDir } from './continuation-input.js';
 import { getPromptProfileService } from './prompt-profile.js';
@@ -199,7 +200,6 @@ export async function spawnAgent(
   }
   const browserWiring = createAgentBrowserRunWiring(
     {
-      isMain: input.isMain,
       browserProfileName,
     },
     {
@@ -303,6 +303,7 @@ export async function spawnAgent(
       threadId: input.threadId,
     }),
     MYCLAW_IPC_RESPONSE_VERIFY_KEY: ipcAuth.responseVerifyKey,
+    MYCLAW_IPC_RESPONSE_KEY_ID: ipcAuth.responseKeyId,
     MYCLAW_THREAD_ID: input.threadId || '',
     MYCLAW_MEMORY_USER_ID: input.memoryUserId || '',
     MYCLAW_MEMORY_DEFAULT_SCOPE: input.memoryDefaultScope || 'group',
@@ -352,6 +353,11 @@ export async function spawnAgent(
       )
     ) {
       claudeRuntimeMaterialization.cleanup();
+      revokeIpcResponseSigningKey(
+        ipcAuth.responseKeyId,
+        group.folder,
+        input.threadId,
+      );
       return {
         status: 'error',
         result: null,
@@ -361,6 +367,11 @@ export async function spawnAgent(
     }
   } catch (err) {
     claudeRuntimeMaterialization.cleanup();
+    revokeIpcResponseSigningKey(
+      ipcAuth.responseKeyId,
+      group.folder,
+      input.threadId,
+    );
     return {
       status: 'error',
       result: null,
@@ -411,7 +422,6 @@ export async function spawnAgent(
       processName,
       model: effectiveModel ?? null,
       modelSource: effectiveModelSource,
-      isMain: input.isMain,
       systemPromptChars: compiledSystemPrompt.length,
     },
     'Spawning host agent',
@@ -440,6 +450,11 @@ export async function spawnAgent(
   } finally {
     cleanupRunnerMcpConfigFile(mcpConfigPath);
     claudeRuntimeMaterialization.cleanup();
+    revokeIpcResponseSigningKey(
+      ipcAuth.responseKeyId,
+      group.folder,
+      input.threadId,
+    );
   }
 }
 

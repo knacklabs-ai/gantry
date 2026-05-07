@@ -4,7 +4,6 @@ import type {
   RuntimeConfiguredAgent,
   RuntimeConfiguredAgentBinding,
   RuntimeConfiguredAgentCapabilities,
-  RuntimeConfiguredAgentDmAccessEntry,
   RuntimeDesiredStateSettings,
 } from './runtime-settings-types.js';
 
@@ -61,55 +60,6 @@ function isValidSettingsAgentFolder(folder: string): boolean {
   return folder.toLowerCase() !== 'global' && folder.toLowerCase() !== 'shared';
 }
 
-function parseConfiguredAgentDmAccess(
-  raw: unknown,
-  pathPrefix: string,
-): RuntimeConfiguredAgentDmAccessEntry[] {
-  if (raw === undefined) return [];
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new Error(`${pathPrefix} must be a mapping`);
-  }
-  const entries: RuntimeConfiguredAgentDmAccessEntry[] = [];
-  for (const [provider, providerRaw] of Object.entries(
-    raw as Record<string, unknown>,
-  )) {
-    if (!/^[a-z][a-z0-9_-]{0,62}$/.test(provider)) {
-      throw new Error(
-        `${pathPrefix}.${provider} must use a lowercase provider id`,
-      );
-    }
-    if (
-      typeof providerRaw !== 'object' ||
-      providerRaw === null ||
-      Array.isArray(providerRaw)
-    ) {
-      throw new Error(`${pathPrefix}.${provider} must be a mapping`);
-    }
-    const providerMap = providerRaw as Record<string, unknown>;
-    for (const key of Object.keys(providerMap)) {
-      if (key !== 'allow' && key !== 'admin') {
-        throw new Error(
-          `${pathPrefix}.${provider}.${key} is not supported. Configure allow or admin.`,
-        );
-      }
-    }
-    const adminRaw = providerMap.admin;
-    const adminUserId =
-      adminRaw === undefined
-        ? undefined
-        : parseStringValue(adminRaw, `${pathPrefix}.${provider}.admin`);
-    entries.push({
-      provider,
-      userIds: parseStringArrayValue(
-        providerMap.allow ?? [],
-        `${pathPrefix}.${provider}.allow`,
-      ),
-      adminUserId,
-    });
-  }
-  return entries;
-}
-
 function parseConfiguredAgentCapabilities(
   raw: unknown,
   pathPrefix: string,
@@ -153,7 +103,6 @@ function parseConfiguredAgentBindings(
     trigger?: unknown;
     addedAt?: unknown;
     requiresTrigger?: unknown;
-    isMain?: unknown;
     model?: string;
   },
 ): Record<string, RuntimeConfiguredAgentBinding> {
@@ -170,7 +119,7 @@ function parseConfiguredAgentBindings(
         trigger: parseStringValue(
           fallback.trigger,
           `${pathPrefix}.primary.trigger`,
-          '@Main Agent',
+          '@Default Agent',
         ),
         addedAt: parseStringValue(
           fallback.addedAt,
@@ -181,11 +130,6 @@ function parseConfiguredAgentBindings(
           fallback.requiresTrigger,
           `${pathPrefix}.primary.requires_trigger`,
           true,
-        ),
-        isMain: parseOptionalBooleanValue(
-          fallback.isMain,
-          `${pathPrefix}.primary.main`,
-          false,
         ),
         model: fallback.model,
       },
@@ -218,11 +162,10 @@ function parseConfiguredAgentBindings(
         key !== 'trigger' &&
         key !== 'added_at' &&
         key !== 'requires_trigger' &&
-        key !== 'main' &&
         key !== 'model'
       ) {
         throw new Error(
-          `${bindingPath}.${key} is not supported. Configure jid, provider, name, trigger, added_at, requires_trigger, main, or model.`,
+          `${bindingPath}.${key} is not supported. Configure jid, provider, name, trigger, added_at, requires_trigger, or model.`,
         );
       }
     }
@@ -255,7 +198,6 @@ function parseConfiguredAgentBindings(
         `${bindingPath}.requires_trigger`,
         true,
       ),
-      isMain: parseOptionalBooleanValue(map.main, `${bindingPath}.main`, false),
       model,
     };
   }
@@ -293,16 +235,14 @@ export function parseConfiguredAgents(
         key !== 'trigger' &&
         key !== 'added_at' &&
         key !== 'requires_trigger' &&
-        key !== 'main' &&
         key !== 'model' &&
         key !== 'one_time_job_default_model' &&
         key !== 'recurring_job_default_model' &&
         key !== 'bindings' &&
-        key !== 'dm_access' &&
         key !== 'capabilities'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, model, job model defaults, bindings, dm_access, or capabilities.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, bindings, or capabilities.`,
         );
       }
     }
@@ -367,13 +307,8 @@ export function parseConfiguredAgents(
           trigger: map.trigger,
           addedAt: map.added_at,
           requiresTrigger: map.requires_trigger,
-          isMain: map.main,
           model,
         },
-      ),
-      dmAccess: parseConfiguredAgentDmAccess(
-        map.dm_access,
-        `${pathPrefix}.dm_access`,
       ),
       capabilities: parseConfiguredAgentCapabilities(
         map.capabilities,

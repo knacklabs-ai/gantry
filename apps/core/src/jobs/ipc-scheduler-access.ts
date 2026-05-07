@@ -27,7 +27,6 @@ export function schedulerAccessFromContext(
   return {
     sourceAgentFolder: context.sourceAgentFolder,
     originConversationJid,
-    isMain: context.isMain,
     conversationBindings: context.conversationBindings,
     sourceConversationJids: context.sourceAgentFolderJids,
     authThreadId: context.data.authThreadId,

@@ -12,7 +12,6 @@ function group(folder: string, name: string): ConversationRoute {
     name,
     trigger: '',
     requiresTrigger: false,
-    isMain: false,
     conversationKind: 'channel',
   } as ConversationRoute;
 }

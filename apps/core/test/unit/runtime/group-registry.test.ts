@@ -124,7 +124,7 @@ describe('registerGroup', () => {
   });
 
   it('creates default CLAUDE.md when template file does not exist', async () => {
-    const group = makeGroup({ isMain: false });
+    const group = makeGroup({});
     mockFs.existsSync.mockReturnValueOnce(false).mockReturnValueOnce(false);
 
     await registerGroup(groups, 'g1@g.us', group, {
@@ -138,7 +138,7 @@ describe('registerGroup', () => {
     );
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
       '/resolved/test-group/CLAUDE.md',
-      expect.stringContaining('assistant for this chat'),
+      expect.stringContaining('assistant for this conversation'),
     );
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
       '/resolved/test-group/CLAUDE.md',
@@ -155,7 +155,7 @@ describe('registerGroup', () => {
   });
 
   it('uses provided assistant name in default CLAUDE.md', async () => {
-    const group = makeGroup({ isMain: true });
+    const group = makeGroup({});
     mockFs.existsSync.mockReturnValueOnce(false);
 
     await registerGroup(groups, 'g1@g.us', group, {
@@ -170,7 +170,7 @@ describe('registerGroup', () => {
     );
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
       '/resolved/test-group/CLAUDE.md',
-      expect.stringContaining('main control chat'),
+      expect.stringContaining('assistant for this conversation'),
     );
   });
 

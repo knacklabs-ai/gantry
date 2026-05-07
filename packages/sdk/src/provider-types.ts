@@ -33,7 +33,6 @@ export type AgentConversationBindingInput = {
   triggerMode?: 'always' | 'mention' | 'keyword' | 'manual' | 'webhook';
   triggerPattern?: string | null;
   requiresTrigger?: boolean;
-  isAdminBinding?: boolean;
   memoryScope?: 'user' | 'conversation' | 'thread' | 'agent' | 'app';
   memorySubject?: Record<string, unknown>;
   workspaceSnapshotId?: string | null;

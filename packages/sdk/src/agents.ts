@@ -6,34 +6,23 @@ type TransportLike = {
   }): Promise<T>;
 };
 
-export type AgentDmAccessEntry = {
-  provider: string;
-  userIds: string[];
-  adminUserId?: string;
-};
-
 export type AgentAdminBoundConversation = {
   conversationId: string;
   provider: string;
   kind: string;
   displayName?: string;
+  senderPolicy?: {
+    allow: '*' | string[];
+    mode: 'trigger' | 'drop';
+  };
+  requiresTrigger?: boolean;
   approverUserIds: string[];
 };
 
 export type AgentAdminResponse = {
   agent: Record<string, unknown>;
-  dmAccess: {
-    entries: AgentDmAccessEntry[];
-  };
+  capabilities?: Record<string, unknown>;
   boundConversations: AgentAdminBoundConversation[];
-};
-
-export type AgentDmAccessResponse = {
-  agentId: string;
-  dmAccess: {
-    entries: AgentDmAccessEntry[];
-  };
-  updatedAt: string;
 };
 
 export function createAgentAdminClient(transport: TransportLike) {
@@ -42,12 +31,6 @@ export function createAgentAdminClient(transport: TransportLike) {
       transport.request<AgentAdminResponse>({
         method: 'GET',
         path: `/v1/agents/${encodeURIComponent(agentId)}/admin`,
-      }),
-    setDmAccess: (agentId: string, entries: AgentDmAccessEntry[]) =>
-      transport.request<AgentDmAccessResponse>({
-        method: 'PUT',
-        path: `/v1/agents/${encodeURIComponent(agentId)}/dm-access`,
-        body: { entries },
       }),
   };
 }

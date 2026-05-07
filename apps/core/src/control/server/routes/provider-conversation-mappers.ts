@@ -248,7 +248,6 @@ export function bindingToResponse(binding: AgentConversationBinding) {
     triggerMode: binding.triggerMode,
     triggerPattern: binding.triggerPattern ?? null,
     requiresTrigger: binding.requiresTrigger,
-    isAdminBinding: binding.isAdminBinding,
     memoryScope: binding.memoryScope,
     memorySubject: memorySubjectToContract(binding.memorySubject),
     workspaceSnapshotId: binding.workspaceSnapshotId ?? null,
@@ -268,7 +267,6 @@ export function bindingPatchFromParsed(
     triggerMode?: AgentBindingPatch['triggerMode'];
     triggerPattern?: string | null;
     requiresTrigger?: boolean;
-    isAdminBinding?: boolean;
     memoryScope?: AgentBindingPatch['memoryScope'];
     memorySubject?: { type: string; id: string };
     workspaceSnapshotId?: string | null;
@@ -293,9 +291,6 @@ export function bindingPatchFromParsed(
       : {}),
     ...(data.requiresTrigger !== undefined
       ? { requiresTrigger: data.requiresTrigger }
-      : {}),
-    ...(data.isAdminBinding !== undefined
-      ? { isAdminBinding: data.isAdminBinding }
       : {}),
     ...(data.memoryScope ? { memoryScope: data.memoryScope } : {}),
     ...(data.memorySubject

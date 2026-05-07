@@ -240,7 +240,6 @@ export interface SimilarMemoryItemMatch {
 }
 
 export interface MemoryWriteContext {
-  isMain: boolean;
   groupFolder: string;
   actor?: string;
   threadId?: string;

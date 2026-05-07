@@ -4,6 +4,7 @@ import { IpcDeps } from '../runtime/ipc-domain-types.js';
 export interface TaskIpcData {
   type: string;
   authThreadId?: string;
+  responseKeyId?: string;
   taskId?: string;
   runHandle?: string;
   prompt?: string;
@@ -50,7 +51,6 @@ export interface TaskIpcData {
 export interface TaskContext {
   data: TaskIpcData;
   sourceAgentFolder: string;
-  isMain: boolean;
   ipcBaseDir?: string;
   deps: IpcDeps;
   conversationBindings: Record<string, ConversationRoute>;

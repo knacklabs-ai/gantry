@@ -173,7 +173,6 @@ maybeDescribe('Postgres domain repositories', () => {
       status: 'active',
       triggerMode: 'trigger',
       requiresTrigger: true,
-      isAdminBinding: false,
       memoryScope: 'conversation',
       memorySubject: {
         kind: 'conversation',
@@ -206,7 +205,6 @@ maybeDescribe('Postgres domain repositories', () => {
       status: 'active',
       triggerMode: 'trigger',
       requiresTrigger: true,
-      isAdminBinding: false,
       memoryScope: 'conversation',
       memorySubject: {
         kind: 'conversation',
@@ -759,7 +757,6 @@ maybeDescribe('Postgres domain repositories', () => {
       status: 'active',
       triggerMode: 'always',
       requiresTrigger: false,
-      isAdminBinding: false,
       memoryScope: 'conversation',
       memorySubject: { kind: 'conversation', appId, conversationId },
       permissionPolicyIds: [DEFAULT_PERMISSION_POLICY_ID],

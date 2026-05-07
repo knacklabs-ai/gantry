@@ -2,14 +2,6 @@ import { z } from 'zod';
 
 import { AgentPersonaSchema } from '../agents/index.js';
 
-export const RuntimeSettingsConfiguredAgentDmAccessSchema = z
-  .object({
-    provider: z.string().trim().min(1),
-    userIds: z.array(z.string().trim().min(1)),
-    adminUserId: z.string().trim().min(1).optional(),
-  })
-  .strict();
-
 export const RuntimeSettingsConfiguredAgentBindingSchema = z
   .object({
     jid: z.string().trim().min(1),
@@ -18,7 +10,6 @@ export const RuntimeSettingsConfiguredAgentBindingSchema = z
     trigger: z.string().trim().min(1),
     addedAt: z.string().trim().min(1),
     requiresTrigger: z.boolean(),
-    isMain: z.boolean(),
     model: z.string().optional(),
   })
   .strict();
@@ -40,7 +31,6 @@ export const RuntimeSettingsConfiguredAgentSchema = z
     oneTimeJobDefaultModel: z.string().optional(),
     recurringJobDefaultModel: z.string().optional(),
     bindings: z.record(z.string(), RuntimeSettingsConfiguredAgentBindingSchema),
-    dmAccess: z.array(RuntimeSettingsConfiguredAgentDmAccessSchema),
     capabilities: RuntimeSettingsConfiguredAgentCapabilitiesSchema,
   })
   .strict();
@@ -91,7 +81,6 @@ export const RuntimeSettingsBindingSchema = z
     trigger: z.string().trim().min(1),
     addedAt: z.string().trim().min(1),
     requiresTrigger: z.boolean(),
-    isMain: z.boolean(),
     memoryScope: z.enum(['conversation', 'thread', 'user', 'agent']),
     model: z.string().optional(),
   })

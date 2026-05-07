@@ -6,6 +6,7 @@ vi.mock('@core/config/index.js', () => ({
   MYCLAW_HOME: '/tmp/myclaw-control-test-home',
   ONECLI_ALLOWED_ENV_KEYS: [],
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+  syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: vi.fn(() => ({
     model: 'opus',
     source: 'system default',
@@ -326,7 +327,6 @@ describe('control job trigger', () => {
             folder: 'app-folder',
             trigger: '@App',
             requiresTrigger: false,
-            isMain: false,
             conversationKind: 'channel',
             agentConfig: { persona: 'personal_assistant' },
           },
@@ -398,7 +398,6 @@ describe('control job trigger', () => {
             folder: 'app-folder',
             trigger: '@App',
             requiresTrigger: false,
-            isMain: false,
             conversationKind: 'channel',
             agentConfig: { persona: 'personal_assistant' },
           },

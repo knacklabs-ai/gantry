@@ -531,7 +531,7 @@ describe('GroupQueue', () => {
     const taskCount = 20;
 
     for (let i = 0; i < taskCount; i++) {
-      const jid = `__scheduler__:main:job-${i}`;
+      const jid = `__scheduler__:primary:job-${i}`;
       queue.enqueueTask(jid, `task-${i}`, async () => {});
     }
 
@@ -1277,7 +1277,7 @@ describe('GroupQueue', () => {
       });
     });
 
-    const schedulerQueueJid = '__scheduler__:main:job-1';
+    const schedulerQueueJid = '__scheduler__:primary:job-1';
     queue.enqueueTask(schedulerQueueJid, 'job-1', blockingTask);
     await vi.advanceTimersByTimeAsync(10);
 

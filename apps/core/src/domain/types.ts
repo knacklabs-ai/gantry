@@ -23,8 +23,8 @@ export interface MountAllowlist {
   allowedRoots: AllowedRoot[];
   // Glob patterns for paths that should never be mounted (e.g., ".ssh", ".gnupg")
   blockedPatterns: string[];
-  // If true, non-main groups can only mount read-only regardless of config
-  nonMainReadOnly: boolean;
+  // If true, routes without explicit write capability can only mount read-only regardless of config
+  conversationReadOnlyByDefault: boolean;
 }
 
 export interface AllowedRoot {
@@ -50,8 +50,7 @@ export interface ConversationRoute {
   trigger: string;
   added_at: string;
   agentConfig?: AgentConfig;
-  requiresTrigger?: boolean; // Default: true for groups, false for solo chats
-  isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  requiresTrigger?: boolean;
   conversationKind?: 'dm' | 'channel';
 }
 
@@ -166,6 +165,7 @@ export interface PermissionApprovalRequest {
   targetJid?: string;
   approvalContextJid?: string;
   threadId?: string;
+  responseKeyId?: string;
   decisionPolicy?: 'control_allowlist' | 'same_channel';
   toolName: string;
   toolUseID?: string;
@@ -240,6 +240,7 @@ export interface UserQuestionRequest {
   sourceAgentFolder: string;
   targetJid?: string;
   threadId?: string;
+  responseKeyId?: string;
   questions: UserQuestionItem[];
   interaction?: InteractionDescriptor;
 }

@@ -16,7 +16,24 @@ const runtimeHomes: string[] = [];
 async function loadHandlers(runtimeHome: string) {
   vi.resetModules();
   vi.stubEnv('MYCLAW_HOME', runtimeHome);
-  return await import('@core/jobs/ipc-runtime-admin-handlers.js');
+  const ipcAuth = await import('@core/runtime/ipc-auth.js');
+  const handlers = await import('@core/jobs/ipc-runtime-admin-handlers.js');
+  return {
+    ...handlers,
+    taskData: (
+      taskId: string,
+      extra: Record<string, unknown> = {},
+      threadId?: string,
+    ) => {
+      const envelope = ipcAuth.createIpcAuthEnvelope('main_agent', threadId);
+      return {
+        taskId,
+        ...(threadId ? { authThreadId: threadId } : {}),
+        responseKeyId: envelope.responseKeyId,
+        ...extra,
+      };
+    },
+  };
 }
 
 function readResponse(runtimeHome: string, taskId: string) {
@@ -71,23 +88,25 @@ function depsWithAdminTools(
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.doUnmock('@core/adapters/storage/postgres/runtime-store.js');
+  vi.doUnmock('@core/config/preflight.js');
+  vi.doUnmock('@core/infrastructure/service/manager.js');
   for (const runtimeHome of runtimeHomes.splice(0)) {
     fs.rmSync(runtimeHome, { recursive: true, force: true });
   }
 });
 
 describe('runtime admin IPC handlers', () => {
-  it('returns a settings revision with full desired state for main agents', async () => {
+  it('returns a settings revision with full desired state for configured agents', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'myclaw-settings-ipc-'),
     );
     runtimeHomes.push(runtimeHome);
-    const { settingsDesiredStateHandler } = await loadHandlers(runtimeHome);
+    const { settingsDesiredStateHandler, taskData } =
+      await loadHandlers(runtimeHome);
 
     await settingsDesiredStateHandler({
-      data: { taskId: 'settings-read' },
+      data: taskData('settings-read') as never,
       sourceAgentFolder: 'main_agent',
-      isMain: true,
       deps: depsWithAdminTools([
         'mcp__myclaw__settings_desired_state',
       ]) as never,
@@ -109,12 +128,12 @@ describe('runtime admin IPC handlers', () => {
       path.join(os.tmpdir(), 'myclaw-settings-ipc-'),
     );
     runtimeHomes.push(runtimeHome);
-    const { settingsDesiredStateHandler } = await loadHandlers(runtimeHome);
+    const { settingsDesiredStateHandler, taskData } =
+      await loadHandlers(runtimeHome);
 
     await settingsDesiredStateHandler({
-      data: { taskId: 'settings-read' },
+      data: taskData('settings-read') as never,
       sourceAgentFolder: 'main_agent',
-      isMain: true,
       deps: depsWithAdminTools([]) as never,
       conversationBindings: {},
       sourceAgentFolderJids: ['tg:100'],
@@ -132,19 +151,18 @@ describe('runtime admin IPC handlers', () => {
       path.join(os.tmpdir(), 'myclaw-settings-ipc-'),
     );
     runtimeHomes.push(runtimeHome);
-    const { requestSettingsUpdateHandler } = await loadHandlers(runtimeHome);
+    const { requestSettingsUpdateHandler, taskData } =
+      await loadHandlers(runtimeHome);
 
     await requestSettingsUpdateHandler({
-      data: {
-        taskId: 'settings-update',
+      data: taskData('settings-update', {
         chatJid: 'tg:100',
         payload: {
           replacementYaml: 'version: 1',
           reason: 'test',
         },
-      },
+      }) as never,
       sourceAgentFolder: 'main_agent',
-      isMain: true,
       deps: depsWithAdminTools([]) as never,
       conversationBindings: {},
       sourceAgentFolderJids: ['tg:100'],
@@ -157,25 +175,79 @@ describe('runtime admin IPC handlers', () => {
     });
   });
 
+  it('requires same-channel approval before accepting service restart', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'myclaw-settings-ipc-'),
+    );
+    runtimeHomes.push(runtimeHome);
+    const startService = vi.fn(() => ({ ok: true, message: 'started' }));
+    vi.doMock('@core/config/preflight.js', () => ({
+      validateRuntimePreflightWithStorage: vi.fn(async () => ({ ok: true })),
+    }));
+    vi.doMock('@core/infrastructure/service/manager.js', () => ({
+      getServiceStatus: vi.fn(() => ({ kind: 'launchd' })),
+      startService,
+      stopService: vi.fn(() => ({ ok: true, message: 'stopped' })),
+    }));
+    const { serviceRestartHandler, taskData } =
+      await loadHandlers(runtimeHome);
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: false,
+      reason: 'not now',
+    }));
+    const sendMessage = vi.fn(async () => undefined);
+
+    await serviceRestartHandler({
+      data: taskData('restart-denied', {
+        chatJid: 'tg:100',
+        payload: { reason: 'test restart' },
+      }) as never,
+      sourceAgentFolder: 'main_agent',
+      deps: depsWithAdminTools(['mcp__myclaw__service_restart'], {
+        requestPermissionApproval,
+        sendMessage,
+      }) as never,
+      conversationBindings: {},
+      sourceAgentFolderJids: ['tg:100'],
+    });
+
+    expect(readResponse(runtimeHome, 'restart-denied')).toMatchObject({
+      ok: false,
+      code: 'permission_denied',
+    });
+    expect(requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionPolicy: 'same_channel',
+        targetJid: 'tg:100',
+        toolName: 'service_restart',
+      }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      'tg:100',
+      expect.stringContaining('Rejected service restart'),
+      undefined,
+    );
+    expect(startService).not.toHaveBeenCalled();
+  });
+
   it('rejects stale settings updates before approval', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'myclaw-settings-ipc-'),
     );
     runtimeHomes.push(runtimeHome);
-    const { requestSettingsUpdateHandler } = await loadHandlers(runtimeHome);
+    const { requestSettingsUpdateHandler, taskData } =
+      await loadHandlers(runtimeHome);
 
     await requestSettingsUpdateHandler({
-      data: {
-        taskId: 'settings-update',
+      data: taskData('settings-update', {
         chatJid: 'tg:100',
         payload: {
           replacementYaml: 'version: 1',
           expectedRevision: 'sha256:stale',
           reason: 'test',
         },
-      },
+      }) as never,
       sourceAgentFolder: 'main_agent',
-      isMain: true,
       deps: depsWithAdminTools([
         'mcp__myclaw__request_settings_update',
       ]) as never,
@@ -229,20 +301,19 @@ describe('runtime admin IPC handlers', () => {
         },
       }),
     }));
-    const { requestSettingsUpdateHandler } = await loadHandlers(runtimeHome);
+    const { requestSettingsUpdateHandler, taskData } =
+      await loadHandlers(runtimeHome);
 
     await requestSettingsUpdateHandler({
-      data: {
-        taskId: 'settings-update',
+      data: taskData('settings-update', {
         chatJid: 'tg:100',
         payload: {
           replacementYaml,
           expectedRevision,
           reason: 'test',
         },
-      },
+      }) as never,
       sourceAgentFolder: 'main_agent',
-      isMain: true,
       deps: {
         ...depsWithAdminTools(['mcp__myclaw__request_settings_update']),
         requestPermissionApproval,

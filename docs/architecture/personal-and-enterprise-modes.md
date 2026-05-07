@@ -54,10 +54,10 @@ storage, not domain identity.
 
 Personal administration should be represented as policy:
 
-- A private DM can seed a DM admin, and a trusted group/channel can seed
+- A private DM can seed a conversation approver, and a trusted group/channel can seed
   conversation approvers.
-- Admin ability comes from `PermissionPolicy` and `PermissionRule`, not from a
-  hard-coded main group concept.
+- Admin ability comes from selected capabilities plus conversation approval,
+  not from a hard-coded privileged conversation.
 - `/new` and related session commands operate on canonical `AgentSession`
   records for the binding while preserving configured model overrides when the
   policy requires it.
@@ -166,7 +166,7 @@ application layers should not know provider SDK types.
 | App           | Seeded local app                                      | Explicit app per deployment, team, product, or tenant boundary |
 | Agent         | Default local agent plus optional custom agents       | Managed agents with versioned configs                          |
 | Conversation setup | CLI-guided local provider connections and bindings | Web UI/control API/SDK-managed provider connections and bindings |
-| Admin surface | Seeded DM admin/conversation approvers and local CLI  | Web UI, control API, SDK, conversation approver bindings        |
+| Admin surface | Seeded conversation approver/conversation approvers and local CLI  | Web UI, control API, SDK, conversation approver bindings        |
 | Credentials   | Local runtime secrets plus brokered agent credentials | Runtime secret provider and enterprise credential broker       |
 | Permissions   | Conservative defaults with local approvals            | Explicit policies, roles, audit, and approval flows            |
 | Workspace     | Local folders and snapshots                           | Managed workspace projections and snapshots                    |
@@ -181,7 +181,7 @@ Future code movement should keep personal setup as a convenience layer:
 - Store local folders as workspace projections.
 - Convert group registration flows into provider connection plus binding
   flows.
-- Convert main group behavior into explicit conversation approver policy.
+- Keep administration behavior explicit in conversation approver policy.
 - Convert Claude session storage into provider sessions attached to agent
   sessions.
 - Route CLI and control HTTP through application use cases.

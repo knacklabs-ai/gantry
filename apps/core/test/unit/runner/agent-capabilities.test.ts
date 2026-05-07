@@ -92,12 +92,12 @@ describe('agent capability composition', () => {
       threadId: 'topic-1',
       memoryUserId: '5759865942',
       browserProfileName: 'c-team-abc123abc123',
-      isMain: false,
       ipcDir: '/tmp/ipc/team',
       ipcAuthToken: 'token',
       browserIpcAuthToken: 'browser-token',
       memoryIpcAuthToken: 'memory-token',
       ipcResponseVerifyKey: 'verify-key',
+      ipcResponseKeyId: 'verify-key-id',
       persona: 'personal_assistant',
     });
 
@@ -134,6 +134,7 @@ describe('agent capability composition', () => {
         MYCLAW_MEMORY_DEFAULT_SCOPE: 'group',
         MYCLAW_BROWSER_PROFILE_NAME: 'c-team-abc123abc123',
         MYCLAW_ADMIN_MCP_TOOLS_JSON: '[]',
+        MYCLAW_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
         MYCLAW_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedMyClawMcpToolNames([]),
         ),
@@ -142,6 +143,7 @@ describe('agent capability composition', () => {
         MYCLAW_BROWSER_IPC_AUTH_TOKEN: 'browser-token',
         MYCLAW_MEMORY_IPC_AUTH_TOKEN: 'memory-token',
         MYCLAW_IPC_RESPONSE_VERIFY_KEY: 'verify-key',
+        MYCLAW_IPC_RESPONSE_KEY_ID: 'verify-key-id',
         NO_PROXY:
           '127.0.0.1,localhost,::1,github.com,.github.com,api.github.com,raw.githubusercontent.com,objects.githubusercontent.com,codeload.github.com',
         no_proxy:
@@ -155,7 +157,6 @@ describe('agent capability composition', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:main',
       groupFolder: 'main_agent',
-      isMain: false,
       configuredAllowedTools: [
         'mcp__myclaw__settings_desired_state',
         'mcp__myclaw__request_settings_update',
@@ -197,7 +198,6 @@ describe('agent capability composition', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:main-assistant',
       groupFolder: 'main_assistant',
-      isMain: true,
     });
 
     expect(profile.allowedTools).toEqual(DEVELOPER_ALLOWED_TOOLS);
@@ -218,7 +218,6 @@ describe('agent capability composition', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:dev',
       groupFolder: 'dev',
-      isMain: false,
     });
 
     expect(profile.allowedTools).toEqual(DEVELOPER_ALLOWED_TOOLS);
@@ -235,7 +234,6 @@ describe('agent capability composition', () => {
       chatJid: 'tg:typo',
       groupFolder: 'typo',
       persona: 'saless' as never,
-      isMain: false,
     });
 
     expect(profile.allowedTools).toEqual(SAFE_DEFAULT_ALLOWED_TOOLS);
@@ -258,7 +256,6 @@ describe('agent capability composition', () => {
       chatJid: `tg:${persona}`,
       groupFolder: persona,
       persona,
-      isMain: false,
     });
 
     expect(profile.allowedTools).not.toContain('Browser');
@@ -283,7 +280,6 @@ describe('agent capability composition', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:team',
       groupFolder: 'telegram_team',
-      isMain: false,
       configuredAllowedTools: ['Bash(git status)', 'ToolName(scope-pattern)'],
     });
 
@@ -299,7 +295,6 @@ describe('agent capability composition', () => {
       chatJid: 'tg:sales',
       groupFolder: 'sales',
       persona: 'sales',
-      isMain: true,
       configuredAllowedTools: [
         'Agent',
         'Browser',
@@ -358,7 +353,6 @@ describe('agent capability composition', () => {
         mcpServerPath: '/tmp/ipc-mcp-stdio.js',
         chatJid: 'tg:team',
         groupFolder: 'telegram_team',
-        isMain: true,
       },
       [...BUILTIN_AGENT_CAPABILITY_PROVIDERS, extraProvider],
     );
@@ -374,7 +368,6 @@ describe('agent capability composition', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:team',
       groupFolder: 'telegram_team',
-      isMain: true,
       externalMcpServers: {
         github: {
           type: 'http',
@@ -401,7 +394,6 @@ describe('agent capability composition', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:team',
       groupFolder: 'telegram_team',
-      isMain: true,
       externalMcpServers: {
         agent_browser: {
           type: 'stdio',

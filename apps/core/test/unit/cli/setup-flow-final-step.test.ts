@@ -28,7 +28,7 @@ function makeDraft(runtimeHome: string): any {
     selectedModel: 'sonnet',
     telegramBotToken: 'telegram-token',
     telegramChatJid: 'tg:-100123',
-    telegramDisplayName: 'Main Agent',
+    telegramDisplayName: 'Default Agent',
     telegramAdminSenderId: '123',
     telegramAdminSenderName: 'Admin',
     telegramPermissionApproverIds: '123',
@@ -36,7 +36,7 @@ function makeDraft(runtimeHome: string): any {
     slackBotToken: '',
     slackAppToken: '',
     slackChatJid: '',
-    slackDisplayName: 'Main Agent',
+    slackDisplayName: 'Default Agent',
     slackPermissionApproverIds: '',
     memoryEnabled: true,
     embeddingsEnabled: false,
@@ -164,7 +164,7 @@ async function loadGroupStep() {
   };
   const registerTelegramMainGroup = vi.fn(async () => ({
     folder: 'main_agent',
-    groupName: 'Main Agent',
+    groupName: 'Default Agent',
   }));
   vi.doMock('@clack/prompts', () => ({
     note: vi.fn(),
@@ -243,13 +243,6 @@ describe('setup group step', () => {
     );
     expect(Object.keys(settings.agents)).toEqual(['main_agent']);
     expect(Object.values(settings.bindings)).toHaveLength(1);
-    expect(settings.agents.main_agent?.dmAccess).toEqual([
-      {
-        provider: 'telegram',
-        userIds: ['123', '456'],
-        adminUserId: '123',
-      },
-    ]);
     expect(conversation?.controlApprovers).toEqual(['123', '456']);
     expect(conversation?.senderPolicy).toEqual({ allow: '*', mode: 'trigger' });
   });

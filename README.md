@@ -33,7 +33,7 @@ Then follow this order:
 1. Run `myclaw` with no args.
 2. Choose `Use local Postgres URL` if you started the provided Compose stack, or choose hosted/existing Postgres and paste those URLs.
 3. Choose your first channel: `Telegram` or `Slack`.
-4. Follow the in-CLI channel guide, choose the main agent name, paste channel credentials, and pick a discovered chat/channel (or enter an ID manually). This first chat becomes the user-facing main agent; channel IDs and runtime folders stay internal.
+4. Follow the in-CLI channel guide, choose the default agent name, paste channel credentials, and pick a discovered chat/channel (or enter an ID manually). Setup binds that conversation to the default agent; channel IDs and runtime folders stay internal.
 5. Connect Model Access once for all agent, subagent, memory, and scheduled job model calls. MyClaw uses the reserved `myclaw-model-access` OneCLI profile for Claude/OpenRouter credentials; agents only select catalog model aliases and never receive database URLs or raw provider credentials.
 6. Choose main model by friendly alias (`opus` recommended; `sonnet`, `haiku`, or broker-backed `kimi` optional).
 7. Confirm memory settings (memory on, embeddings off, dreaming on by default).
@@ -64,7 +64,7 @@ myclaw provider list
 myclaw provider doctor
 myclaw conversation approvers <conversation-id> [--allow <userId,userId>]
 myclaw agent list
-myclaw agent add <jid|chat-id> [--name <name>] [--main]
+myclaw agent add <jid|chat-id> [--name <name>]
 myclaw service install|start|stop|restart
 ```
 
@@ -78,7 +78,7 @@ Defaults in v1:
 - embeddings: off by default; external embedding providers require brokered Model Access and are not configured through MyClaw `.env`
 - dreaming: on in guided setup; disable with `myclaw memory dreaming off`
 - provider connections, conversations, bindings, and conversation approvers live under `providers`, `provider_connections`, `conversations`, and `bindings` in `settings.yaml`
-- conversation approvers approve group/channel actions only when listed on that conversation and currently a member; agent DM admins are only for private/direct agent administration
+- conversation approvers approve direct/private and group/channel actions only when listed on that conversation and currently a member
 - the same agent can be bound across providers, but admin user ids stay provider-scoped: Slack approvers are Slack member ids and Teams approvers are Teams user ids
 
 Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default unless `--runtime-home` or `MYCLAW_HOME` is set.
@@ -88,7 +88,7 @@ shape is compact and only includes values users normally change:
 
 ```yaml
 defaults:
-  name: Main Agent
+  name: Default Agent
   model: opus
   jobs:
     one_time_model: haiku
@@ -100,8 +100,8 @@ providers:
     bot_token_env: TELEGRAM_BOT_TOKEN
 
 agents:
-  main:
-    name: Main Agent
+  main_agent:
+    name: Default Agent
     persona: personal_assistant
 
 memory:
@@ -119,24 +119,17 @@ conversations:
     id: "5759865942"
     type: dm
     approvers: ["5759865942"]
-    agent: main
-    trigger: "@Main Agent"
+    agent: main_agent
+    trigger: "@Default Agent"
 ```
 
-For the same agent across Slack and Teams, configure the provider-specific DM
-admins on the agent and the group/channel approvers on each conversation:
+For the same agent across Slack and Teams, configure approvers on each
+conversation:
 
 ```yaml
 agents:
-  main:
-    name: Main Agent
-    dm_access:
-      slack:
-        allow: ["U123"]
-        admin: "U123"
-      teams:
-        allow: ["8:orgid:abc"]
-        admin: "8:orgid:abc"
+  main_agent:
+    name: Default Agent
 
 conversations:
   sales_slack:
@@ -144,14 +137,14 @@ conversations:
     id: "C123"
     type: channel
     approvers: ["U123"]
-    agent: main
+    agent: main_agent
 
   sales_teams:
     provider: teams
     id: "19:channel@thread.tacv2"
     type: channel
     approvers: ["8:orgid:abc"]
-    agent: main
+    agent: main_agent
 ```
 
 Advanced storage and credential broker overrides stay supported, but setup keeps

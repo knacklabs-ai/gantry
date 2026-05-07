@@ -4,7 +4,6 @@ import type { AgentMcpServerBinding } from '../../domain/mcp/mcp-servers.js';
 import type { AgentSkillBinding } from '../../domain/skills/skills.js';
 import type { AgentToolBinding } from '../../domain/tools/tools.js';
 import type {
-  RuntimeConfiguredAgent,
   RuntimeConfiguredAgentCapabilities,
   RuntimeConfiguredBinding,
   RuntimeConfiguredConversation,
@@ -47,26 +46,6 @@ export function readableActiveCapabilities(
       return tool ? [displayToolReference({ toolId, tool })] : [];
     }),
   };
-}
-
-export function mergeDmAccess(
-  existing: RuntimeConfiguredAgent['dmAccess'],
-  access: Array<{ provider: string; externalUserId: string }>,
-  approvers: Array<{ provider: string; externalUserId: string }>,
-): RuntimeConfiguredAgent['dmAccess'] {
-  if (existing.length > 0) return existing;
-  const providers = new Map<string, Set<string>>();
-  for (const entry of access) {
-    const set = providers.get(entry.provider) ?? new Set<string>();
-    set.add(entry.externalUserId);
-    providers.set(entry.provider, set);
-  }
-  return [...providers.entries()].map(([provider, userIds]) => ({
-    provider,
-    userIds: [...userIds].sort(),
-    adminUserId: approvers.find((entry) => entry.provider === provider)
-      ?.externalUserId,
-  }));
 }
 
 export function configuredConversationId(input: {

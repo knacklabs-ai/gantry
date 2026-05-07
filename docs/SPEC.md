@@ -55,7 +55,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │  Working directory: /workspace/group (mounted from host)       │    │
 │  │  Volume mounts:                                                │    │
 │  │    • agents/{name}/ → /workspace/group                         │    │
-│  │    • agents/shared/ → /workspace/shared/ (non-main only)       │    │
+│  │    • agents/shared/ → /workspace/shared/ (when policy allows)      │    │
 │  │    • temp CLAUDE_CONFIG_DIR for settings, skills, artifacts     │    │
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
@@ -338,7 +338,7 @@ setRegisteredGroup('telegram:dev-team', {
 });
 ```
 
-Folder names follow the convention `{channel}_{group-name}` (e.g., `slack_engineering`, `telegram_dev-team`). The main group has `isMain: true` set during registration.
+Folder names follow the convention `{channel}_{group-name}` (e.g., `slack_engineering`, `telegram_dev-team`). Trigger behavior is stored on each conversation binding as `requiresTrigger`.
 
 Additional mounts appear under `/workspace/extra/` in the runtime workspace.
 
@@ -751,7 +751,7 @@ From any group:
 - `@Andy resume job [id]` - Resume a paused job
 - `@Andy delete job [id]` - Delete a job
 
-From main channel:
+With selected scheduler capability and conversation approval:
 
 - `@Andy list all jobs` - View jobs from all groups
 - `@Andy schedule job for "Family Chat": [prompt]` - Schedule for another group

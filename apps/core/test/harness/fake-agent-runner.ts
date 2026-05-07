@@ -2,7 +2,6 @@ export interface FakeAgentInvocation {
   groupFolder: string;
   chatJid: string;
   prompt: string;
-  isMain: boolean;
   isScheduledJob: boolean;
   sessionId?: string;
   memoryContextBlock?: string;
@@ -43,7 +42,6 @@ export function createFakeAgentRunner(options: FakeAgentRunnerOptions = {}) {
       groupFolder: group.folder,
       chatJid: input.chatJid,
       prompt: input.prompt,
-      isMain: input.isMain === true,
       isScheduledJob: input.isScheduledJob === true,
       sessionId: input.sessionId,
       memoryContextBlock: input.memoryContextBlock,

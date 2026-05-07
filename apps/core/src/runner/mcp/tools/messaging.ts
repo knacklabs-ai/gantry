@@ -12,6 +12,7 @@ import {
   groupFolder,
   IPC_AUTH_TOKEN,
   IPC_DIR,
+  IPC_RESPONSE_KEY_ID,
   MESSAGES_DIR,
   threadId,
 } from '../context.js';
@@ -179,7 +180,10 @@ export function registerMessagingTools(server: McpServer): void {
         requestId,
         sourceAgentFolder: groupFolder,
         questions: args.questions,
-        ...(threadId ? { threadId } : {}),
+        context: {
+          ...(threadId ? { threadId } : {}),
+          ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
+        },
         timestamp: nowIso(),
         expiresAt: new Date(
           Date.now() + USER_QUESTION_TIMEOUT_MS,

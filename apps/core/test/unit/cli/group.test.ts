@@ -9,6 +9,7 @@ import {
   parseRuntimeSettings,
   saveRuntimeSettings,
   validateRuntimeSettings,
+  ensureConfiguredConversationBinding,
 } from '@core/config/settings/runtime-settings.js';
 import { parseRuntimeMemorySnapshotFromRoot } from '@core/config/settings/memory-snapshot.js';
 import {
@@ -329,113 +330,6 @@ describe('group CLI commands', () => {
     );
   });
 
-  it('replaces one provider in agent-owned DM access', async () => {
-    vi.resetModules();
-    const replaceAgentDmAccessPolicy = vi.fn(async (input: any) => ({
-      access: input.accessEntries.map((entry: any) => ({
-        id: `dm:${entry.providerId}:${entry.externalUserId}`,
-        appId: input.appId,
-        agentId: input.agentId,
-        providerId: entry.providerId,
-        externalUserId: entry.externalUserId,
-        createdAt: input.updatedAt,
-        updatedAt: input.updatedAt,
-      })),
-      approvers: input.approverEntries.map((entry: any) => ({
-        id: `dm-admin:${entry.providerId}`,
-        appId: input.appId,
-        agentId: input.agentId,
-        providerId: entry.providerId,
-        externalUserId: entry.externalUserId,
-        createdAt: input.updatedAt,
-        updatedAt: input.updatedAt,
-      })),
-    }));
-    vi.doMock('@core/adapters/storage/postgres/runtime-store.js', () => ({
-      getRuntimeStorage: () => ({
-        repositories: {
-          agents: {
-            getAgent: vi.fn(async () => ({
-              id: 'agent:one',
-              appId: 'default',
-              name: 'One',
-              status: 'active',
-              createdAt: '2026-05-01T00:00:00.000Z',
-              updatedAt: '2026-05-01T00:00:00.000Z',
-            })),
-            listAgentDmAccess: vi.fn(async () => [
-              {
-                id: 'dm:slack:U0',
-                appId: 'default',
-                agentId: 'agent:one',
-                providerId: 'slack',
-                externalUserId: 'U0',
-                createdAt: '2026-05-01T00:00:00.000Z',
-                updatedAt: '2026-05-01T00:00:00.000Z',
-              },
-              {
-                id: 'dm:telegram:123',
-                appId: 'default',
-                agentId: 'agent:one',
-                providerId: 'telegram',
-                externalUserId: '123',
-                createdAt: '2026-05-01T00:00:00.000Z',
-                updatedAt: '2026-05-01T00:00:00.000Z',
-              },
-            ]),
-            listAgentDmApprovers: vi.fn(async () => [
-              {
-                id: 'dm-admin:telegram',
-                appId: 'default',
-                agentId: 'agent:one',
-                providerId: 'telegram',
-                externalUserId: '999',
-                createdAt: '2026-05-01T00:00:00.000Z',
-                updatedAt: '2026-05-01T00:00:00.000Z',
-              },
-            ]),
-            replaceAgentDmAccess: vi.fn(async () => []),
-            replaceAgentDmApprovers: vi.fn(async () => []),
-            replaceAgentDmAccessPolicy,
-            findAgentsByDmAccess: vi.fn(async () => []),
-          },
-        },
-      }),
-    }));
-    const { runAgentCommand } = await import('@core/cli/group.js');
-
-    expect(
-      await runAgentCommand(runtimeHome, [
-        'dm-access',
-        'agent:one',
-        '--provider',
-        'slack',
-        '--allow',
-        'U1,U2',
-        '--admin',
-        'UADMIN',
-      ]),
-    ).toBe(0);
-
-    expect(replaceAgentDmAccessPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accessEntries: [
-          { providerId: 'slack', externalUserId: 'U1' },
-          { providerId: 'slack', externalUserId: 'U2' },
-          { providerId: 'telegram', externalUserId: '123' },
-        ],
-      }),
-    );
-    expect(replaceAgentDmAccessPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        approverEntries: [
-          { providerId: 'slack', externalUserId: 'UADMIN' },
-          { providerId: 'telegram', externalUserId: '999' },
-        ],
-      }),
-    );
-  });
-
   it('seeds SOUL.md when adding an agent', async () => {
     const { runAgentCommand } = await import('@core/cli/group.js');
     const jid = `dc:soul-seed-${Date.now().toString(36)}`;
@@ -560,7 +454,7 @@ describe('group CLI commands', () => {
     }
   });
 
-  it('persists the configurable main agent name', async () => {
+  it('persists the configurable default agent name', async () => {
     const { runAgentCommand } = await import('@core/cli/group.js');
 
     expect(await runAgentCommand(runtimeHome, ['name', 'Kai'])).toBe(0);
@@ -577,7 +471,7 @@ describe('group CLI commands', () => {
       await runAgentCommand(runtimeHome, ['add', jid, '--name', 'Defaulted']),
     ).toBe(0);
 
-    expect(groupsStore.get(jid)?.trigger).toBe('@Main Agent');
+    expect(groupsStore.get(jid)?.trigger).toBe('@Default Agent');
   });
 
   it('updates and disables trigger mode', async () => {
@@ -784,5 +678,58 @@ describe('group CLI commands', () => {
       fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8'),
     );
     expect(settings.bindings.slack_remove_policy).toBeUndefined();
+  });
+
+  it('prunes only the removed conversation binding for multi-conversation agents', async () => {
+    const { runAgentCommand } = await import('@core/cli/group.js');
+    const suffix = Date.now().toString(36);
+    const firstJid = `sl:remove-one-${suffix}`;
+    const secondJid = `sl:keep-one-${suffix}`;
+    const folder = 'slack_multi_remove';
+
+    expect(
+      await runAgentCommand(runtimeHome, [
+        'add',
+        firstJid,
+        '--name',
+        'Multi First',
+        '--folder',
+        folder,
+      ]),
+    ).toBe(0);
+    const seeded = loadRuntimeSettingsFromPath(settingsFilePath(runtimeHome));
+    ensureConfiguredConversationBinding(seeded, {
+      agentId: folder,
+      agentName: 'Multi First',
+      agentFolder: folder,
+      jid: secondJid,
+      displayName: 'Multi Second',
+      trigger: '@Multi',
+      requiresTrigger: true,
+    });
+    saveRuntimeSettings(runtimeHome, seeded);
+
+    expect(
+      await runAgentCommand(runtimeHome, ['remove', firstJid, '--yes']),
+    ).toBe(0);
+
+    const settings = parseRuntimeSettings(
+      fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8'),
+    );
+    const folderBindings = Object.values(settings.bindings).filter(
+      (binding) => binding.agent === folder,
+    );
+    expect(folderBindings).toHaveLength(1);
+    const remainingConversation =
+      settings.conversations[folderBindings[0].conversation];
+    expect(remainingConversation?.externalId).toBe(
+      secondJid.replace(/^sl:/, ''),
+    );
+    expect(
+      Object.values(settings.conversations).some(
+        (conversation) =>
+          conversation.externalId === firstJid.replace(/^sl:/, ''),
+      ),
+    ).toBe(false);
   });
 });

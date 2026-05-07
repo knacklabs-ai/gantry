@@ -49,7 +49,7 @@ describe('resolveIpcTargetJidForSourceGroup', () => {
       resolveIpcTargetJidForSourceGroup(
         {
           'tg:-100123': group('kai_tg_100123'),
-          'tg:5759865942': { ...group('main_agent'), isMain: true },
+          'tg:5759865942': { ...group('main_agent') },
         },
         'kai_tg_100123',
       ),
@@ -60,7 +60,7 @@ describe('resolveIpcTargetJidForSourceGroup', () => {
     expect(
       resolveIpcTargetJidForSourceGroup(
         {
-          'tg:5759865942': { ...group('main_agent'), isMain: true },
+          'tg:5759865942': { ...group('main_agent') },
         },
         'unknown_agent',
       ),

@@ -7,6 +7,7 @@ import { hasValidIpcResponseSignature } from './ipc-signing.js';
 import { createSignedIpcRequestEnvelope } from './ipc-signing.js';
 import {
   IPC_AUTH_TOKEN,
+  IPC_RESPONSE_KEY_ID,
   PERMISSION_REQUEST_TIMEOUT_MS,
   resolveGroupIpcDir,
 } from './runtime-env.js';
@@ -58,6 +59,10 @@ export async function requestPermissionApproval(options: {
       ...(options.agentID ? { agentID: options.agentID } : {}),
       ...(options.suggestions ? { suggestions: options.suggestions } : {}),
       ...(options.threadId ? { threadId: options.threadId } : {}),
+      context: {
+        ...(options.threadId ? { threadId: options.threadId } : {}),
+        ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
+      },
       timestamp: nowIso(),
     };
     const envelope = createSignedIpcRequestEnvelope(IPC_AUTH_TOKEN, payload);

@@ -3,11 +3,15 @@ import path from 'path';
 import { McpServerService } from '../application/mcp/mcp-server-service.js';
 import { McpToolProxy } from '../application/mcp/mcp-tool-proxy.js';
 import { SkillDraftService } from '../application/skills/skill-draft-service.js';
-import { getRuntimeStorage } from '../adapters/storage/postgres/runtime-store.js';
+import {
+  getRuntimeRepositories,
+  getRuntimeStorage,
+} from '../adapters/storage/postgres/runtime-store.js';
+import { MYCLAW_HOME, syncRuntimeSettingsFromProjection } from '../config/index.js';
 import { nowIso } from '../infrastructure/time/datetime.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { isValidGroupFolder } from '../platform/group-folder.js';
-import { TaskHandler } from './ipc-types.js';
+import { TaskContext, TaskHandler } from './ipc-types.js';
 import {
   DEFAULT_MEMORY_APP_ID,
   memoryAgentIdForGroupFolder,
@@ -33,22 +37,18 @@ import {
   sourceAgentHasAdminToolCapability,
 } from './ipc-admin-authorization.js';
 
-const refreshGroupsHandler: TaskHandler = async (context) => {
-  const { data, sourceAgentFolder, isMain, deps, conversationBindings } =
-    context;
-  const { accept, reject } = createTaskResponder(
-    sourceAgentFolder,
-    data.taskId,
-    data.authThreadId,
+function createContextTaskResponder(context: TaskContext) {
+  return createTaskResponder(
+    context.sourceAgentFolder,
+    context.data.taskId,
+    context.data.authThreadId,
+    context.data.responseKeyId,
   );
-  if (!isMain) {
-    logger.warn(
-      { sourceAgentFolder },
-      'Unauthorized refresh_groups attempt blocked',
-    );
-    reject('Only the setup/routing agent can refresh groups.', 'forbidden');
-    return;
-  }
+}
+
+const refreshGroupsHandler: TaskHandler = async (context) => {
+  const { data, sourceAgentFolder, deps, conversationBindings } = context;
+  const { accept, reject } = createContextTaskResponder(context);
 
   try {
     logger.info(
@@ -59,7 +59,6 @@ const refreshGroupsHandler: TaskHandler = async (context) => {
     const availableGroups = await deps.getAvailableGroups();
     await deps.writeGroupsSnapshot(
       sourceAgentFolder,
-      true,
       availableGroups,
       new Set(Object.keys(conversationBindings)),
     );
@@ -76,63 +75,40 @@ const refreshGroupsHandler: TaskHandler = async (context) => {
   }
 };
 
+// prettier-ignore
 const registerAgentHandler: TaskHandler = async (context) => {
-  const { data, sourceAgentFolder, deps, conversationBindings } = context;
-  const { accept, reject } = createTaskResponder(
+  const { data, sourceAgentFolder, deps, sourceAgentFolderJids } = context;
+  const { accept, reject } = createContextTaskResponder(context);
+  if (!(await sourceAgentHasAdminToolCapability(context, 'register_agent'))) { logger.warn({ sourceAgentFolder }, 'Unauthorized register_agent attempt blocked'); reject(adminCapabilityRequiredMessage('register_agent'), 'missing_capability'); return; }
+  if (!data.jid || !data.name || !data.folder || !data.trigger) { logger.warn({ data }, 'Invalid register_agent request - missing required fields'); reject('Missing required fields: jid, name, folder, trigger.', 'invalid_request'); return; }
+  const requestedTargetJid = validateSameChannelApprovalTarget({ data, sourceAgentFolderJids, requestKind: 'Agent registration', reject });
+  if (!requestedTargetJid) return;
+  if (data.jid !== requestedTargetJid) { reject('Agent registration can only bind the originating conversation.', 'forbidden'); return; }
+  if (typeof deps.requestPermissionApproval !== 'function' || typeof deps.sendMessage !== 'function') { reject('Agent registration requests require a configured approval surface.', 'preflight_failed'); return; }
+  if (!isValidGroupFolder(data.folder)) { logger.warn({ sourceAgentFolder, folder: data.folder }, 'Invalid register_agent request - unsafe folder name'); reject(`Invalid agent folder: ${data.folder}`, 'invalid_request'); return; }
+  const reason = toTrimmedString(data.payload?.reason, { maxLen: 2000 }) || `Register ${data.name} for ${data.jid}.`;
+  const decision = await deps.requestPermissionApproval({
+    requestId: `register-agent-${globalThis.crypto.randomUUID()}`,
     sourceAgentFolder,
-    data.taskId,
-    data.authThreadId,
-  );
-  if (!(await sourceAgentHasAdminToolCapability(context, 'register_agent'))) {
-    logger.warn(
-      { sourceAgentFolder },
-      'Unauthorized register_agent attempt blocked',
-    );
-    reject(
-      adminCapabilityRequiredMessage('register_agent'),
-      'missing_capability',
-    );
-    return;
-  }
-  if (data.jid && data.name && data.folder && data.trigger) {
-    if (!isValidGroupFolder(data.folder)) {
-      logger.warn(
-        { sourceAgentFolder, folder: data.folder },
-        'Invalid register_agent request - unsafe folder name',
-      );
-      reject(`Invalid agent folder: ${data.folder}`, 'invalid_request');
-      return;
-    }
-    const existingGroup = conversationBindings[data.jid];
-    await deps.registerGroup(data.jid, {
-      name: data.name,
-      folder: data.folder,
-      trigger: data.trigger,
-      added_at: nowIso(),
-      agentConfig: data.agentConfig,
-      requiresTrigger: data.requiresTrigger,
-      isMain: existingGroup?.isMain,
-    });
-    accept(`Agent "${data.name}" registered.`);
-    return;
-  }
-  logger.warn(
-    { data },
-    'Invalid register_agent request - missing required fields',
-  );
-  reject(
-    'Missing required fields: jid, name, folder, trigger.',
-    'invalid_request',
-  );
+    targetJid: requestedTargetJid,
+    threadId: data.authThreadId,
+    decisionPolicy: 'same_channel',
+    toolName: 'register_agent',
+    displayName: `Register agent: ${data.name}`,
+    title: 'Approve agent registration',
+    description: 'Approving binds this agent to the originating conversation and writes the desired-state settings projection.',
+    decisionReason: reason,
+    toolInput: { jid: data.jid, name: data.name, folder: data.folder, trigger: data.trigger, requiresTrigger: data.requiresTrigger, activation: 'current_and_future_sessions' },
+  });
+  if (!decision.approved || !decision.decidedBy) { const message = `Rejected agent registration: ${decision.reason || 'not approved'}.`; reject(message, 'permission_denied'); await deps.sendMessage(requestedTargetJid, message, data.authThreadId ? { threadId: data.authThreadId } : undefined); return; }
+  await deps.registerGroup(data.jid, { name: data.name, folder: data.folder, trigger: data.trigger, added_at: nowIso(), agentConfig: data.agentConfig, requiresTrigger: data.requiresTrigger });
+  await syncApprovedCapabilitySettings();
+  accept(`Agent "${data.name}" registered.`);
 };
 
 const requestMcpServerHandler: TaskHandler = async (context) => {
   const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
-  const { acceptData, reject } = createTaskResponder(
-    sourceAgentFolder,
-    data.taskId,
-    data.authThreadId,
-  );
+  const { acceptData, reject } = createContextTaskResponder(context);
   const payload = data.payload || {};
   const name = toTrimmedString(payload.name, { maxLen: 80 });
   const transport = toTrimmedString(payload.transport, { maxLen: 32 });
@@ -223,11 +199,7 @@ const requestMcpServerHandler: TaskHandler = async (context) => {
 
 const mcpListToolsHandler: TaskHandler = async (context) => {
   const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
-  const { acceptData, reject } = createTaskResponder(
-    sourceAgentFolder,
-    data.taskId,
-    data.authThreadId,
-  );
+  const { acceptData, reject } = createContextTaskResponder(context);
   const requestedTargetJid = validateSameChannelApprovalTarget({
     data,
     sourceAgentFolderJids,
@@ -255,11 +227,7 @@ const mcpListToolsHandler: TaskHandler = async (context) => {
 
 const mcpCallToolHandler: TaskHandler = async (context) => {
   const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
-  const { acceptData, reject } = createTaskResponder(
-    sourceAgentFolder,
-    data.taskId,
-    data.authThreadId,
-  );
+  const { acceptData, reject } = createContextTaskResponder(context);
   const requestedTargetJid = validateSameChannelApprovalTarget({
     data,
     sourceAgentFolderJids,
@@ -303,11 +271,7 @@ const mcpCallToolHandler: TaskHandler = async (context) => {
 
 const requestSkillDraftHandler: TaskHandler = async (context) => {
   const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
-  const { acceptData, reject } = createTaskResponder(
-    sourceAgentFolder,
-    data.taskId,
-    data.authThreadId,
-  );
+  const { acceptData, reject } = createContextTaskResponder(context);
   const payload = data.payload || {};
   const reason = toTrimmedString(payload.reason, { maxLen: 2000 }) || '';
   if (!reason) {
@@ -394,7 +358,7 @@ const requestOnlyCapabilitySpecs: Record<RequestOnlyCapabilityToolName, { kind: 
 // prettier-ignore
 const requestOnlyCapabilityHandler: TaskHandler = async (context) => {
   const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
-  const { accept, reject } = createTaskResponder(sourceAgentFolder, data.taskId, data.authThreadId);
+  const { accept, reject } = createContextTaskResponder(context);
   const toolName = data.type as RequestOnlyCapabilityToolName;
   const parsed = parseRequestOnlyCapabilityReview(toolName, data.payload || {});
   if (!parsed.ok) { reject(parsed.error, 'invalid_request'); return; }
@@ -641,6 +605,7 @@ async function completeMcpPermissionReview(
     agentId: memoryAgentIdForGroupFolder(input.sourceAgentFolder) as never,
     serverId: input.server.id as never,
   });
+  await syncApprovedCapabilitySettings();
   const sameSessionContext = {
     type: 'approved_mcp_context',
     activation: 'current_and_future_sessions',
@@ -804,6 +769,7 @@ async function completeSkillPermissionReview(
     agentId: memoryAgentIdForGroupFolder(input.sourceAgentFolder) as never,
     skillId: input.skill.id as never,
   });
+  await syncApprovedCapabilitySettings();
   const sameSessionContext = buildApprovedSkillSameSessionContext(input);
   await input.deps.sendMessage(
     input.targetJid,
@@ -815,6 +781,10 @@ async function completeSkillPermissionReview(
     sameSessionContext,
     'skill_approved',
   );
+}
+
+async function syncApprovedCapabilitySettings(): Promise<void> {
+  await syncRuntimeSettingsFromProjection({ runtimeHome: MYCLAW_HOME, ops: getRuntimeRepositories(), repositories: getRuntimeStorage().repositories, appId: DEFAULT_MEMORY_APP_ID as never });
 }
 
 async function rejectSkillDraftFromPermission(

@@ -125,7 +125,7 @@ describe('OnecliAgentCredentialBroker', () => {
     });
 
     await broker.ensureAgent({
-      name: 'Main Agent',
+      name: 'Default Agent',
       identifier: 'agent:main_agent',
     });
     await broker.getInjection({
@@ -137,7 +137,7 @@ describe('OnecliAgentCredentialBroker', () => {
     });
 
     expect(ensureAgent).toHaveBeenCalledWith({
-      name: 'Main Agent',
+      name: 'Default Agent',
       identifier: expect.stringMatching(/^agent-main-agent-[a-f0-9]{10}$/),
     });
     expect(getContainerConfig).toHaveBeenCalledWith(

@@ -82,7 +82,7 @@ function makeDeps(overrides: Partial<MessageLoopDeps> = {}): MessageLoopDeps & {
         folder: 'team',
         trigger: '@Andy',
         added_at: '2024-01-01T00:00:00.000Z',
-        isMain: true,
+        requiresTrigger: false,
       },
     }),
     getLastTimestamp: () => '2024-01-01T00:00:00.000Z',
@@ -237,12 +237,14 @@ describe('recoverPendingMessages', () => {
           folder: 'team1',
           trigger: '@Andy',
           added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
         },
         'group2@g.us': {
           name: 'Team 2',
           folder: 'team2',
           trigger: '@Andy',
           added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
         },
       }),
     });
@@ -520,7 +522,7 @@ describe('startMessagePollingLoop', () => {
     expect(deps.enqueued).toContain('group@g.us');
   });
 
-  it('skips non-main groups without trigger match', async () => {
+  it('skips trigger-required conversations without trigger match', async () => {
     const msg = {
       id: 1,
       chat_jid: 'group@g.us',
@@ -864,7 +866,7 @@ describe('startMessagePollingLoop', () => {
     expect(deps.sentTo).toContain('group@g.us');
   });
 
-  it('processes non-main group when trigger matches and sender is allowed', async () => {
+  it('processes conversation-scoped group when trigger matches and sender is allowed', async () => {
     const msg = {
       id: '1',
       chat_jid: 'group@g.us',
@@ -890,7 +892,7 @@ describe('startMessagePollingLoop', () => {
           folder: 'team',
           trigger: '@Andy',
           added_at: '2024-01-01T00:00:00.000Z',
-          // isMain not set, requiresTrigger not set (defaults to needing trigger)
+          // requiresTrigger not set defaults to needing trigger.
         },
       }),
     });
@@ -903,7 +905,7 @@ describe('startMessagePollingLoop', () => {
     expect(deps.sentTo).toContain('group@g.us');
   });
 
-  it('processes non-main group with requiresTrigger=false without trigger', async () => {
+  it('processes conversation-scoped group with requiresTrigger=false without trigger', async () => {
     const msg = {
       id: '1',
       chat_jid: 'group@g.us',
@@ -940,7 +942,7 @@ describe('startMessagePollingLoop', () => {
     expect(deps.sentTo).toContain('group@g.us');
   });
 
-  it('skips non-main group when trigger matches but sender is not allowed (not from me)', async () => {
+  it('skips conversation-scoped group when trigger matches but sender is not allowed (not from me)', async () => {
     const msg = {
       id: '1',
       chat_jid: 'group@g.us',

@@ -4,7 +4,6 @@ import path from 'path';
 import { BrowserIpcAction } from '@myclaw/contracts';
 
 import {
-  signIpcResponseAuthPayload,
   signIpcResponsePayload,
 } from '../infrastructure/ipc/response-signing.js';
 import {
@@ -37,7 +36,7 @@ interface BrowserResponse {
 
 type BrowserContext = Pick<
   IpcDomainContext,
-  'sourceAgentFolder' | 'isMain' | 'browserProfileName'
+  'sourceAgentFolder' | 'browserProfileName'
 > & {
   getCredentialBroker?: IpcDomainContext['deps']['getCredentialBroker'];
   getCredentialBrokerProfile?: IpcDomainContext['deps']['getCredentialBrokerProfile'];
@@ -222,18 +221,6 @@ export async function processBrowserIpcRequest(
   request: BrowserRequest,
   context: BrowserContext,
 ): Promise<BrowserResponse> {
-  const mainOnlyActions = new Set<BrowserIpcAction>([
-    'browser_profile_list',
-    'browser_close',
-  ]);
-
-  if (!context.isMain && mainOnlyActions.has(request.action)) {
-    return {
-      ok: false,
-      error: `Browser action ${request.action} is restricted to the main group`,
-    };
-  }
-
   try {
     const handler = browserActionHandlers[request.action];
     if (!handler) {
@@ -265,7 +252,6 @@ export function writeBrowserIpcResponse(
   sourceAgentFolder: string,
   response: { requestId: string; ok: boolean; data?: unknown; error?: string },
   privateKeyPem?: string,
-  responseSigningKey?: string,
 ): void {
   const responseDir = path.join(
     ipcBaseDir,
@@ -281,12 +267,9 @@ export function writeBrowserIpcResponse(
     ...(response.data !== undefined ? { data: response.data } : {}),
     ...(response.error ? { error: response.error } : {}),
   };
-  const signature =
-    signIpcResponseAuthPayload(responseSigningKey, payload) ||
-    signIpcResponsePayload(privateKeyPem, payload);
-  if (signature) {
-    payload.signature = signature;
-  }
+  const signature = signIpcResponsePayload(privateKeyPem, payload);
+  if (!signature) return;
+  payload.signature = signature;
   writePrivateFileSync(tmpPath, JSON.stringify(payload, null, 2));
   fs.renameSync(tmpPath, responsePath);
 }

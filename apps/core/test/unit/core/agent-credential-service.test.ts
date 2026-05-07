@@ -360,13 +360,13 @@ describe('agent credential service', () => {
       ensureAgentCredentialBinding({
         mode: 'onecli',
         broker,
-        name: 'Main Agent',
+        name: 'Default Agent',
         identifier: 'agent:main_agent',
       }),
     ).resolves.toEqual({ created: false });
 
     expect(ensureAgent).toHaveBeenCalledWith({
-      name: 'Main Agent',
+      name: 'Default Agent',
       identifier: 'agent:main_agent',
     });
   });

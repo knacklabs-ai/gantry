@@ -66,7 +66,6 @@ import {
   ensureBrowserReady,
   getBrowserStatus,
 } from '@core/runtime/browser-capability.js';
-import { verifyIpcResponseAuthPayload } from '@core/infrastructure/ipc/response-signing.js';
 
 function fileMode(filePath: string): number {
   return fs.statSync(filePath).mode & 0o777;
@@ -84,7 +83,7 @@ describe('ipc-browser-handler', () => {
     vi.clearAllMocks();
   });
 
-  it('allows non-main groups to inspect browser status', async () => {
+  it('allows conversation-scoped groups to inspect browser status', async () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1',
@@ -93,7 +92,6 @@ describe('ipc-browser-handler', () => {
       },
       {
         sourceAgentFolder: 'child',
-        isMain: false,
         browserProfileName: 'c-child-abc123abc123',
       },
     );
@@ -111,7 +109,7 @@ describe('ipc-browser-handler', () => {
     expect(response.data).not.toHaveProperty('targetId');
   });
 
-  it('ignores non-main profile overrides and uses the host-derived profile', async () => {
+  it('ignores conversation-scoped profile overrides and uses the host-derived profile', async () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1a',
@@ -120,7 +118,6 @@ describe('ipc-browser-handler', () => {
       },
       {
         sourceAgentFolder: 'child',
-        isMain: false,
         browserProfileName: 'c-child-abc123abc123',
       },
     );
@@ -138,7 +135,6 @@ describe('ipc-browser-handler', () => {
       },
       {
         sourceAgentFolder: 'child',
-        isMain: false,
         browserProfileName: 'c-child-abc123abc123',
       },
     );
@@ -157,7 +153,6 @@ describe('ipc-browser-handler', () => {
       } as never,
       {
         sourceAgentFolder: 'child',
-        isMain: false,
         browserProfileName: 'c-child-abc123abc123',
       },
     );
@@ -166,14 +161,14 @@ describe('ipc-browser-handler', () => {
     expect(getBrowserStatus).toHaveBeenCalledWith('c-child-abc123abc123');
   });
 
-  it('sanitizes browser profile lists for main agents', async () => {
+  it('sanitizes browser profile lists for configured agents', async () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1c',
         action: 'browser_profile_list',
         payload: {},
       },
-      { sourceAgentFolder: 'main', isMain: true },
+      { sourceAgentFolder: 'main' },
     );
 
     expect(response.ok).toBe(true);
@@ -196,7 +191,7 @@ describe('ipc-browser-handler', () => {
           headless: true,
         },
       },
-      { sourceAgentFolder: 'main', isMain: true },
+      { sourceAgentFolder: 'main' },
     );
 
     expect(response.ok).toBe(true);
@@ -229,7 +224,6 @@ describe('ipc-browser-handler', () => {
       },
       {
         sourceAgentFolder: 'main_agent',
-        isMain: true,
         getCredentialBrokerProfile: () => 'onecli',
         getCredentialBroker: async () => ({
           getInjection: vi.fn(),
@@ -271,7 +265,6 @@ describe('ipc-browser-handler', () => {
       },
       {
         sourceAgentFolder: 'main_agent',
-        isMain: true,
         getCredentialBrokerProfile: () => 'onecli',
         getCredentialBroker: async () => ({
           getInjection: vi.fn(),
@@ -312,7 +305,6 @@ describe('ipc-browser-handler', () => {
       },
       {
         sourceAgentFolder: 'main',
-        isMain: true,
         browserProfileName: 'c-main-abc123abc123',
       },
     );
@@ -330,7 +322,7 @@ describe('ipc-browser-handler', () => {
         action: 'not-real-action' as BrowserIpcAction,
         payload: {},
       },
-      { sourceAgentFolder: 'main', isMain: true },
+      { sourceAgentFolder: 'main' },
     );
 
     expect(response.ok).toBe(false);
@@ -338,11 +330,12 @@ describe('ipc-browser-handler', () => {
   });
 
   it('writes browser response files atomically', () => {
+    const keys = createIpcResponseSigningKeyPair();
     writeBrowserIpcResponse(tempDir, 'grp', {
       requestId: 'req-4',
       ok: true,
       data: { running: true },
-    });
+    }, keys.privateKeyPem);
 
     const responsePath = path.join(
       tempDir,
@@ -351,7 +344,7 @@ describe('ipc-browser-handler', () => {
       'req-4.json',
     );
     const payload = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
-    expect(payload).toEqual({
+    expect(payload).toMatchObject({
       requestId: 'req-4',
       ok: true,
       data: { running: true },
@@ -397,7 +390,7 @@ describe('ipc-browser-handler', () => {
     ).toBe(true);
   });
 
-  it('signs browser responses with deterministic IPC auth when provided', () => {
+  it('does not write browser responses without a run response signing key', () => {
     writeBrowserIpcResponse(
       tempDir,
       'grp',
@@ -406,8 +399,6 @@ describe('ipc-browser-handler', () => {
         ok: true,
         data: { running: true },
       },
-      undefined,
-      'thread-ipc-auth-token',
     );
 
     const responsePath = path.join(
@@ -416,20 +407,6 @@ describe('ipc-browser-handler', () => {
       'browser-responses',
       'req-5.json',
     );
-    const raw = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
-    const payload = {
-      ok: true,
-      requestId: 'req-5',
-      data: { running: true },
-    };
-
-    expect(raw.signature).toEqual(expect.any(String));
-    expect(
-      verifyIpcResponseAuthPayload(
-        'thread-ipc-auth-token',
-        payload,
-        raw.signature,
-      ),
-    ).toBe(true);
+    expect(fs.existsSync(responsePath)).toBe(false);
   });
 });

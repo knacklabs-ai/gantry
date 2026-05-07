@@ -10,9 +10,8 @@ export async function replaceDesiredStateCapabilities(input: {
   capabilities: RuntimeConfiguredAgentCapabilities;
   repositories: SettingsDesiredStateRepositories;
   now: string;
-  preserveOpaqueSkillBindings?: boolean;
 }): Promise<void> {
-  const skillIds = await skillIdsForReplacement(input);
+  const skillIds = [...new Set(input.capabilities.skillIds)];
   const mcpServersById = await getApprovedMcpServersById(input);
   const toolIds = await toolIdsForReplacement(input);
   await input.repositories.agents.replaceAgentCapabilityBindings({
@@ -75,28 +74,6 @@ async function toolIdsForReplacement(input: {
   return ids;
 }
 
-async function skillIdsForReplacement(input: {
-  appId: AppId;
-  agentId: AgentId;
-  capabilities: RuntimeConfiguredAgentCapabilities;
-  repositories: SettingsDesiredStateRepositories;
-  preserveOpaqueSkillBindings?: boolean;
-}): Promise<string[]> {
-  const next = new Set(input.capabilities.skillIds);
-  if (!input.preserveOpaqueSkillBindings) return [...next];
-  const existing = await input.repositories.skills.listAgentSkillBindings({
-    appId: input.appId,
-    agentId: input.agentId,
-  });
-  for (const binding of existing) {
-    const skillId = String(binding.skillId);
-    if (binding.status === 'active' && isOpaqueSkillId(skillId)) {
-      next.add(skillId);
-    }
-  }
-  return [...next];
-}
-
 async function getApprovedMcpServersById(input: {
   capabilities: RuntimeConfiguredAgentCapabilities;
   repositories: SettingsDesiredStateRepositories;
@@ -117,11 +94,5 @@ async function getApprovedMcpServersById(input: {
         serverId,
         { latestApprovedVersionId: server!.latestApprovedVersionId },
       ]),
-  );
-}
-
-function isOpaqueSkillId(value: string): boolean {
-  return /^skill:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    value,
   );
 }

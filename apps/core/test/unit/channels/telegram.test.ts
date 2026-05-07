@@ -152,7 +152,6 @@ function createTestOpts(
           trigger: '@Andy',
           addedAt: '2024-01-01T00:00:00.000Z',
           requiresTrigger: true,
-          isMain: false,
           memoryScope: 'conversation',
         },
       },
@@ -428,7 +427,7 @@ describe('TelegramChannel', () => {
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
-    it('delivers unregistered Telegram private chats so agent DM access can route centrally', async () => {
+    it('delivers unregistered Telegram private chats to the shared persistence policy', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -2156,7 +2155,7 @@ describe('TelegramChannel', () => {
       };
       await triggerCallbackQuery(deniedCtx);
       expect(deniedCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Only the agent DM admin or this conversation control approver can approve.',
+        text: 'Only a conversation control approver can approve.',
         show_alert: true,
       });
 
@@ -2197,7 +2196,7 @@ describe('TelegramChannel', () => {
       await triggerCallbackQuery(deniedCtx);
 
       expect(deniedCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Only the agent DM admin or this conversation control approver can approve.',
+        text: 'Only a conversation control approver can approve.',
         show_alert: true,
       });
 
@@ -2381,7 +2380,7 @@ describe('TelegramChannel', () => {
       };
       await triggerCallbackQuery(deniedCtx);
       expect(deniedCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Only the agent DM admin or this conversation control approver can answer.',
+        text: 'Only a conversation control approver can answer.',
         show_alert: true,
       });
 

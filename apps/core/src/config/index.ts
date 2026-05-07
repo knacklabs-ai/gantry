@@ -25,6 +25,7 @@ import type { RuntimeSettings } from './settings/runtime-settings-types.js';
 import { isValidTimezone } from '../shared/timezone.js';
 
 export * from './memory.js';
+export { syncRuntimeSettingsFromProjection } from './settings/restart-sync.js';
 
 export const POLL_INTERVAL = 2000;
 

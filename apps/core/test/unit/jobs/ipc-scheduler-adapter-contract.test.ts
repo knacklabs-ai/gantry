@@ -76,7 +76,6 @@ function makeContext(data: TaskIpcData): TaskContext {
       ...data,
     },
     sourceAgentFolder: 'team',
-    isMain: false,
     conversationBindings: {
       'tg:team': { folder: 'team' },
       'tg:team-a': { folder: 'team' },

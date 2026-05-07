@@ -74,7 +74,6 @@ export function createSaveProcedureHandler(input: {
 export function createSenderCommandPolicy(input: {
   chatJid: string;
   group: SenderPolicyGroup;
-  isMainGroup: boolean;
   triggerPattern: RegExp;
 }) {
   return {
@@ -87,10 +86,8 @@ export function createSenderCommandPolicy(input: {
       ),
     canSenderInteract: (msg: NewMessage) => {
       const hasTrigger = input.triggerPattern.test(msg.content.trim());
-      const reqTrigger =
-        !input.isMainGroup && input.group.requiresTrigger !== false;
+      const reqTrigger = input.group.requiresTrigger !== false;
       return (
-        input.isMainGroup ||
         !reqTrigger ||
         (hasTrigger &&
           (msg.is_from_me ||

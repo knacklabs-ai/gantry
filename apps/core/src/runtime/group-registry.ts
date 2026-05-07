@@ -52,15 +52,11 @@ function commitGroupOverride(
   commit();
 }
 
-function defaultAgentClaudeMarkdown(
-  assistantName: string,
-  isMain: boolean,
-): string {
-  const roleLabel = isMain ? 'main control chat' : 'chat';
+function defaultAgentClaudeMarkdown(assistantName: string): string {
   return [
     `# ${assistantName}`,
     '',
-    `You are ${assistantName}, the assistant for this ${roleLabel}.`,
+    `You are ${assistantName}, the assistant for this conversation.`,
     'Keep responses clear, concise, and directly actionable.',
     '',
     'Rules:',
@@ -98,10 +94,7 @@ export async function registerGroup(
 
   const groupMdFile = path.join(groupDir, 'CLAUDE.md');
   if (!fs.existsSync(groupMdFile)) {
-    fs.writeFileSync(
-      groupMdFile,
-      defaultAgentClaudeMarkdown(assistantName, group.isMain === true),
-    );
+    fs.writeFileSync(groupMdFile, defaultAgentClaudeMarkdown(assistantName));
     logger.info(
       { folder: group.folder },
       'Created default agent prompt file for registered agent',

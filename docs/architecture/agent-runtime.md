@@ -105,11 +105,11 @@ classDiagram
     +Thinking? thinking
     +Budget? budget
   }
-  class AgentDmAccess {
+  class ConversationSenderPolicy {
     +string providerId
     +string externalUserId
   }
-  class AgentDmApprover {
+  class ConversationApprover {
     +string providerId
     +string externalUserId
   }
@@ -125,7 +125,6 @@ classDiagram
     +string? threadId
     +string agentFolder
     +AgentPersona? persona
-    +bool isMain
     +McpServerConfigs externalMcpServers
     +string[] configuredAllowedTools
   }
@@ -138,16 +137,16 @@ classDiagram
 
   Agent "1" --> "many" AgentConfigVersion : versioned
   AgentConfigVersion --> LlmProfile : llmProfileId
-  Agent "1" --> "many" AgentDmAccess : per provider
-  Agent "1" --> "many" AgentDmApprover : one per provider
+  Agent "1" --> "many" ConversationSenderPolicy : per provider
+  Agent "1" --> "many" ConversationApprover : one per provider
   AgentConfig --> Agent : per ConversationRoute
   AgentCapabilityContext --> AgentCapabilityProfile : composeAgentCapabilities()
 ```
 
 Sources:
 
-- `Agent`, `AgentConfigVersion`, `LlmProfile`, `AgentDmAccess`,
-  `AgentDmApprover` — `apps/core/src/domain/agent/agent.ts:41` through
+- `Agent`, `AgentConfigVersion`, `LlmProfile`, `ConversationSenderPolicy`,
+  `ConversationApprover` — `apps/core/src/domain/agent/agent.ts:41` through
   `apps/core/src/domain/agent/agent.ts:88`.
 - `AgentConfig` (carrying `persona`, model override, additional mounts) —
   `apps/core/src/domain/types.ts:39`.

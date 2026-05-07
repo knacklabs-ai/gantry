@@ -274,7 +274,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('hello')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -287,7 +286,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -312,7 +310,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact', { is_from_me: false })],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -330,7 +327,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -360,7 +356,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/stop')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -381,7 +376,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/stop')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -400,7 +394,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/dream')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -424,7 +417,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/dream')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -450,7 +442,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/dream')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -476,7 +467,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/memory-status')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -497,7 +487,6 @@ describe('handleSessionCommand', () => {
       missedMessages: [
         makeMsg('/save-procedure "Deploy flow"\n1. Build\n2. Ship'),
       ],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -513,11 +502,10 @@ describe('handleSessionCommand', () => {
     );
   });
 
-  it('sends denial to interactable sender in non-main group', async () => {
+  it('sends denial to interactable sender in conversation-scoped group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact', { is_from_me: false })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -539,7 +527,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact', { is_from_me: false })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -560,7 +547,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -580,11 +566,10 @@ describe('handleSessionCommand', () => {
     expect(deps.archiveCurrentSession).toHaveBeenCalledWith('manual-compact');
   });
 
-  it('allows is_from_me sender in non-main group', async () => {
+  it('allows is_from_me sender in conversation-scoped group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact', { is_from_me: true })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -598,11 +583,10 @@ describe('handleSessionCommand', () => {
     expect(deps.archiveCurrentSession).toHaveBeenCalledWith('manual-compact');
   });
 
-  it('allows is_from_me sender for /new in non-main group', async () => {
+  it('allows is_from_me sender for /new in conversation-scoped group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new', { is_from_me: true })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -613,11 +597,10 @@ describe('handleSessionCommand', () => {
     expect(deps.clearCurrentSession).toHaveBeenCalledTimes(1);
   });
 
-  it('denies unauthorized /new in non-main group', async () => {
+  it('denies unauthorized /new in conversation-scoped group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new', { is_from_me: false })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -640,7 +623,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -661,7 +643,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -686,7 +667,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -711,7 +691,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -731,7 +710,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -752,7 +730,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -774,7 +751,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -794,7 +770,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -812,7 +787,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking high')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -839,7 +813,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking high')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -858,7 +831,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking default')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -881,7 +853,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking default')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -899,7 +870,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps({ updateModelStatusSelection: vi.fn() });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model opus')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -930,7 +900,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model opus')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -949,7 +918,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model opuus')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -971,7 +939,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model default')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1002,7 +969,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model default')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1024,7 +990,6 @@ describe('handleSessionCommand', () => {
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model default')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1043,7 +1008,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model bad-model')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1058,11 +1022,10 @@ describe('handleSessionCommand', () => {
     expect(deps.setGroupModelOverride).not.toHaveBeenCalled();
   });
 
-  it('denies unauthorized /model in non-main group', async () => {
+  it('denies unauthorized /model in conversation-scoped group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model opus', { is_from_me: false })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1080,7 +1043,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1096,12 +1058,11 @@ describe('handleSessionCommand', () => {
     );
   });
 
-  it('denies unauthorized /thinking in non-main group', async () => {
+  it('denies unauthorized /thinking in conversation-scoped group', async () => {
     const deps = makeDeps();
 
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking low', { is_from_me: false })],
-      isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1131,7 +1092,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1157,7 +1117,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1178,7 +1137,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps({ onSessionArchived });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1192,7 +1150,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model claude-opus-4-7')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1212,7 +1169,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1233,7 +1189,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1253,7 +1208,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1270,7 +1224,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model kimi 2.6')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1304,7 +1257,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1331,7 +1283,6 @@ describe('handleSessionCommand', () => {
     ];
     const result = await handleSessionCommand({
       missedMessages: msgs,
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1352,7 +1303,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/models')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1433,7 +1383,6 @@ describe('handleSessionCommand', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/status')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1460,7 +1409,6 @@ describe('handleSessionCommand', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/model sonnet 4.6')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1540,7 +1488,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1558,7 +1505,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1576,7 +1522,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1596,7 +1541,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1612,7 +1556,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking off')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1628,7 +1571,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking enabled')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1644,7 +1586,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking enabled 4096')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
@@ -1665,7 +1606,6 @@ describe('handleSessionCommand - describeThinking coverage', () => {
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/thinking')],
-      isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',

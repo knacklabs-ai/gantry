@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 function makeDraft(): any {
   return {
-    agentName: 'Main Agent',
+    agentName: 'Default Agent',
     selectedModel: 'opus',
   };
 }
@@ -15,7 +15,7 @@ afterEach(() => {
 
 async function loadModelStep(selection: string) {
   const select = vi.fn(async () => selection);
-  const text = vi.fn(async () => 'Main Agent');
+  const text = vi.fn(async () => 'Default Agent');
   vi.doMock('@clack/prompts', () => ({
     isCancel: () => false,
     select,

@@ -40,6 +40,7 @@ export function writePermissionInteractionFailure(input: {
   requestId: string;
   responseNonce?: string;
   threadId?: string;
+  responseKeyId?: string;
   logger: IpcInteractionLogger;
 }): void {
   try {
@@ -52,7 +53,11 @@ export function writePermissionInteractionFailure(input: {
         approved: false,
         reason: 'Failed to process permission request',
       },
-      getIpcResponseSigningPrivateKey(input.sourceAgentFolder, input.threadId),
+      getIpcResponseSigningPrivateKey(
+        input.sourceAgentFolder,
+        input.threadId,
+        input.responseKeyId,
+      ),
     );
   } catch (err) {
     input.logger.warn(
@@ -71,6 +76,7 @@ export function writeUserQuestionInteractionFailure(input: {
   sourceAgentFolder: string;
   requestId: string;
   threadId?: string;
+  responseKeyId?: string;
   logger: IpcInteractionLogger;
 }): void {
   try {
@@ -81,7 +87,11 @@ export function writeUserQuestionInteractionFailure(input: {
         requestId: input.requestId,
         answers: {},
       },
-      getIpcResponseSigningPrivateKey(input.sourceAgentFolder, input.threadId),
+      getIpcResponseSigningPrivateKey(
+        input.sourceAgentFolder,
+        input.threadId,
+        input.responseKeyId,
+      ),
     );
   } catch (err) {
     input.logger.warn(
@@ -124,6 +134,7 @@ export async function processPermissionInteractionIpc(input: {
       getIpcResponseSigningPrivateKey(
         input.sourceAgentFolder,
         input.request.threadId,
+        input.request.responseKeyId,
       ),
     );
     fs.unlinkSync(input.claimedPath);
@@ -134,6 +145,7 @@ export async function processPermissionInteractionIpc(input: {
       requestId: input.request.requestId,
       responseNonce: input.request.responseNonce,
       threadId: input.request.threadId,
+      responseKeyId: input.request.responseKeyId,
       logger: input.logger,
     });
     input.logger.error(
@@ -173,6 +185,7 @@ export async function processUserQuestionInteractionIpc(input: {
       getIpcResponseSigningPrivateKey(
         input.sourceAgentFolder,
         input.request.threadId,
+        input.request.responseKeyId,
       ),
     );
     fs.unlinkSync(input.claimedPath);
@@ -182,6 +195,7 @@ export async function processUserQuestionInteractionIpc(input: {
       sourceAgentFolder: input.sourceAgentFolder,
       requestId: input.request.requestId,
       threadId: input.request.threadId,
+      responseKeyId: input.request.responseKeyId,
       logger: input.logger,
     });
     input.logger.error(

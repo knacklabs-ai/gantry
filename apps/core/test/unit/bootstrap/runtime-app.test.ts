@@ -6,12 +6,11 @@ function makeGroup(
   overrides: Partial<ConversationRoute> = {},
 ): ConversationRoute {
   return {
-    name: 'Main Agent',
+    name: 'Default Agent',
     folder: 'main_agent',
     trigger: '@main',
     added_at: '2026-04-24T09:00:00.000Z',
     requiresTrigger: false,
-    isMain: true,
     ...overrides,
   };
 }
@@ -23,7 +22,7 @@ async function loadRuntimeApp() {
       await importOriginal<typeof import('@core/config/index.js')>();
     return {
       ...actual,
-      ASSISTANT_NAME: 'Main Agent',
+      ASSISTANT_NAME: 'Default Agent',
       DATA_DIR: '/tmp/myclaw-test',
       MYCLAW_IPC_AUTH_SECRET: 'runtime-app-test-secret',
       getCredentialBrokerRuntimeConfig: () => ({
@@ -50,7 +49,6 @@ describe('runtime app credential binding', () => {
     const sideGroup = makeGroup({
       name: 'Side Agent',
       folder: 'side_agent',
-      isMain: false,
     });
     const ensureCredentialBinding = vi.fn(async () => ({ created: true }));
     const app = createRuntimeApp({ ensureCredentialBinding });
@@ -74,7 +72,7 @@ describe('runtime app credential binding', () => {
       groupJid: 'tg:first',
       group: firstGroup,
       agentIdentifier: 'agent:main_agent',
-      agentName: 'Main Agent',
+      agentName: 'Default Agent',
     });
     expect(ensureCredentialBinding).toHaveBeenCalledWith({
       groupJid: 'tg:second',
@@ -110,7 +108,7 @@ describe('runtime app credential binding', () => {
         groupJid: 'tg:first',
         group,
         agentIdentifier: 'agent:main_agent',
-        agentName: 'Main Agent',
+        agentName: 'Default Agent',
       },
       {
         groupJid: 'tg:first',

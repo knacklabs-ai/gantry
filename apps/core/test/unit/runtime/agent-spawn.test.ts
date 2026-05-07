@@ -190,7 +190,6 @@ const testInput = {
   prompt: 'Hello',
   groupFolder: 'test-group',
   chatJid: 'test@g.us',
-  isMain: false,
 };
 
 class SpawnMcpRepository implements McpServerRepository {
@@ -895,7 +894,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.CLAUDE_CONFIG_DIR).not.toBe('/tmp/myclaw-config/.claude');
   });
 
-  it('requests shared model runtime credentials for main agent runs', async () => {
+  it('requests shared model runtime credentials for default agent runs', async () => {
     vi.mocked(getEffectiveModelConfig).mockReturnValue({
       source: 'unset',
     });
@@ -903,11 +902,10 @@ describe('agent-spawn timeout behavior', () => {
     const mainGroup: ConversationRoute = {
       ...testGroup,
       folder: 'main_agent',
-      isMain: true,
     };
     const resultPromise = spawnAgent(
       mainGroup,
-      { ...testInput, groupFolder: 'main_agent', isMain: true },
+      { ...testInput, groupFolder: 'main_agent' },
       () => {},
     );
     await vi.advanceTimersByTimeAsync(10);
@@ -922,12 +920,8 @@ describe('agent-spawn timeout behavior', () => {
     );
   });
 
-  it('does not auto-launch the browser for the main agent', async () => {
-    const resultPromise = spawnAgent(
-      testGroup,
-      { ...testInput, isMain: true },
-      () => {},
-    );
+  it('does not auto-launch the browser for the default agent', async () => {
+    const resultPromise = spawnAgent(testGroup, { ...testInput }, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
@@ -960,11 +954,7 @@ describe('agent-spawn timeout behavior', () => {
       headless: false,
     });
 
-    const resultPromise = spawnAgent(
-      testGroup,
-      { ...testInput, isMain: true },
-      () => {},
-    );
+    const resultPromise = spawnAgent(testGroup, { ...testInput }, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
@@ -1024,7 +1014,7 @@ describe('agent-spawn timeout behavior', () => {
     }
   });
 
-  it('checks conversation browser status for non-main agents without auto-launching', async () => {
+  it('checks conversation browser status for conversation-scoped agents without auto-launching', async () => {
     const resultPromise = spawnAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
@@ -1047,11 +1037,7 @@ describe('agent-spawn timeout behavior', () => {
       throw new Error('Chrome unavailable');
     });
 
-    const resultPromise = spawnAgent(
-      testGroup,
-      { ...testInput, isMain: true },
-      () => {},
-    );
+    const resultPromise = spawnAgent(testGroup, { ...testInput }, () => {});
     await vi.advanceTimersByTimeAsync(10);
     emitOutputMarker(fakeProc, {
       status: 'success',

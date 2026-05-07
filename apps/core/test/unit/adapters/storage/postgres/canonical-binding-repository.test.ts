@@ -23,7 +23,6 @@ describe('canonical binding repository route projection', () => {
       displayName: 'Main Telegram',
       triggerPattern: '@main',
       requiresTrigger: false,
-      isAdminBinding: true,
       createdAt: '2026-05-06T00:00:00.000Z',
     };
 
@@ -35,7 +34,6 @@ describe('canonical binding repository route projection', () => {
         trigger: '@main',
         added_at: '2026-05-06T00:00:00.000Z',
         requiresTrigger: false,
-        isMain: true,
       },
     });
     expect(JSON.parse(row.memorySubjectJson)).not.toHaveProperty('group');
@@ -58,7 +56,6 @@ describe('canonical binding repository route projection', () => {
       displayName: 'Main Telegram',
       triggerPattern: '@main',
       requiresTrigger: false,
-      isAdminBinding: true,
       createdAt: '2026-05-06T00:00:00.000Z',
     };
 
@@ -96,7 +93,6 @@ describe('canonical binding repository route projection', () => {
       displayName: 'Ops',
       triggerPattern: '@ops',
       requiresTrigger: true,
-      isAdminBinding: false,
       createdAt: '2026-05-06T00:00:00.000Z',
     };
 

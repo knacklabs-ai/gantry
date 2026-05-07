@@ -33,7 +33,7 @@ export function adminCapabilityRequiredMessage(
   const fullName = adminMcpToolFullName(toolName);
   return [
     `${fullName} requires a selected capability for this agent.`,
-    `Ask a configured DM or conversation approver to approve request_permission with permissionKind=tool, toolName=${fullName}, temporaryOnly=false, then choose Always allow.`,
+    `Ask a configured conversation approver to approve request_permission with permissionKind=tool, toolName=${fullName}, temporaryOnly=false, then choose Always allow.`,
     `Admins can also grant tool id tool:${fullName} through settings.yaml or the control API.`,
   ].join(' ');
 }

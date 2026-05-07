@@ -116,7 +116,6 @@ function makeGroup(
     trigger: 'Andy',
     added_at: '2024-01-01',
     requiresTrigger: true,
-    isMain: false,
     ...overrides,
   };
 }
@@ -210,7 +209,7 @@ function setupHappyPath(
     agentOutput?: AgentOutput;
   } = {},
 ) {
-  const group = opts.group ?? makeGroup({ isMain: true });
+  const group = opts.group ?? makeGroup({ requiresTrigger: false });
   const channel = makeChannel();
   const messages = opts.messages ?? [makeMessage()];
   const agentOutput: AgentOutput = opts.agentOutput ?? {
@@ -360,13 +359,12 @@ describe('createGroupProcessor', () => {
   });
 
   // =======================================================================
-  // Trigger pattern gating for non-main groups
+  // Trigger pattern gating
   // =======================================================================
 
-  describe('trigger pattern filtering (non-main groups)', () => {
-    it('returns true without processing when non-main group has no trigger in messages', async () => {
+  describe('trigger pattern filtering', () => {
+    it('returns true without processing when a trigger-required conversation has no trigger in messages', async () => {
       const group = makeGroup({
-        isMain: false,
         requiresTrigger: true,
         trigger: 'Andy',
       });
@@ -381,9 +379,8 @@ describe('createGroupProcessor', () => {
       expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
-    it('processes messages when non-main group has trigger in messages', async () => {
+    it('processes messages when a trigger-required conversation has trigger in messages', async () => {
       const group = makeGroup({
-        isMain: false,
         requiresTrigger: true,
         trigger: 'Andy',
       });
@@ -398,8 +395,8 @@ describe('createGroupProcessor', () => {
       expect(mockSpawnAgent).toHaveBeenCalled();
     });
 
-    it('skips trigger check for main groups', async () => {
-      const group = makeGroup({ isMain: true, requiresTrigger: true });
+    it('does not bypass trigger checks for any conversation id convention', async () => {
+      const group = makeGroup({ requiresTrigger: true });
       const messages = [makeMessage({ content: 'no trigger here' })];
       const { deps } = setupHappyPath({ group, messages });
 
@@ -407,11 +404,11 @@ describe('createGroupProcessor', () => {
       const result = await processGroupMessages('group1@g.us');
 
       expect(result).toBe(true);
-      expect(mockSpawnAgent).toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
     it('skips trigger check when requiresTrigger is false', async () => {
-      const group = makeGroup({ isMain: false, requiresTrigger: false });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ content: 'no trigger here' })];
       const { deps } = setupHappyPath({ group, messages });
 
@@ -424,7 +421,6 @@ describe('createGroupProcessor', () => {
 
     it('allows trigger from own messages (is_from_me)', async () => {
       const group = makeGroup({
-        isMain: false,
         requiresTrigger: true,
         trigger: 'Andy',
       });
@@ -444,7 +440,6 @@ describe('createGroupProcessor', () => {
 
     it('blocks trigger from non-allowlisted sender', async () => {
       const group = makeGroup({
-        isMain: false,
         requiresTrigger: true,
         trigger: 'Andy',
       });
@@ -678,7 +673,7 @@ describe('createGroupProcessor', () => {
 
   describe('agent error with no output sent', () => {
     it('rolls back cursor and returns false', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ timestamp: '1700000001' })];
       const { deps } = setupHappyPath({ group, messages });
 
@@ -718,7 +713,7 @@ describe('createGroupProcessor', () => {
 
   describe('agent error AFTER output was sent to user', () => {
     it('does NOT roll back cursor and returns true (prevents duplicates)', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ timestamp: '1700000001' })];
       const { deps, channel } = setupHappyPath({ group, messages });
 
@@ -777,7 +772,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('treats partial channel delivery as output sent and avoids cursor rollback', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ timestamp: '1700000001' })];
       const { deps, channel } = setupHappyPath({ group, messages });
       const partialDeliveryError = new PartialMessageDeliveryError({
@@ -815,7 +810,7 @@ describe('createGroupProcessor', () => {
 
   describe('agent spawn throws exception', () => {
     it('rolls back cursor and returns false when spawnAgent throws', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ timestamp: '1700000001' })];
       const { deps } = setupHappyPath({ group, messages });
 
@@ -838,7 +833,7 @@ describe('createGroupProcessor', () => {
 
   describe('Postgres-authoritative session context', () => {
     it('passes hydrated memory context and provider session resume id', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group });
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
@@ -870,7 +865,7 @@ describe('createGroupProcessor', () => {
         result: 'response',
         newSessionId: 'new-sess-123',
       };
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group, agentOutput });
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
@@ -892,7 +887,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('persists SDK session ids from streamed output before the runner exits', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group });
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
@@ -953,7 +948,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('closes stdin after IDLE_TIMEOUT ms when agent produces output', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
       const { deps } = setupHappyPath({ group, messages });
 
@@ -981,7 +976,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('clears idle timer after agent completes', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
       const { deps } = setupHappyPath({ group, messages });
 
@@ -1013,7 +1008,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('keeps typing heartbeat alive and posts elapsed progress for long runs', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
       const channel = makeChannel({
         sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
@@ -1067,7 +1062,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('posts no-output warning for long silent runs without auto-failing', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
       const channel = makeChannel({
         sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
@@ -1573,7 +1568,7 @@ describe('createGroupProcessor', () => {
 
   describe('cursor management', () => {
     it('uses cursor from deps.getCursor when calling getMessagesSince', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const channel = makeChannel();
       const deps = makeDeps({
         channelRuntime: channel,
@@ -1629,7 +1624,7 @@ describe('createGroupProcessor', () => {
 
   describe('process registration', () => {
     it('passes registerProcess callback to spawnAgent', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group });
 
       const mockProc = {} as ChildProcess;
@@ -1669,8 +1664,8 @@ describe('createGroupProcessor', () => {
   describe('agent input construction', () => {
     it('passes correct input fields to spawnAgent', async () => {
       const group = makeGroup({
-        isMain: true,
         folder: 'my-group',
+        requiresTrigger: false,
         agentConfig: { thinking: { mode: 'adaptive' } },
       });
       const { deps } = setupHappyPath({ group });
@@ -1684,7 +1679,6 @@ describe('createGroupProcessor', () => {
           prompt: 'formatted prompt',
           groupFolder: 'my-group',
           chatJid: 'group1@g.us',
-          isMain: true,
           assistantName: 'Andy',
           thinking: { mode: 'adaptive' },
         }),
@@ -1713,8 +1707,7 @@ describe('createGroupProcessor', () => {
         queueJid?: string;
       } = {},
     ) {
-      const group =
-        opts.group ?? makeGroup({ isMain: true, folder: 'grp-folder' });
+      const group = opts.group ?? makeGroup({ folder: 'grp-folder' });
       const channel = makeChannel();
       const messages = opts.messages ?? [makeMessage()];
 
@@ -1821,7 +1814,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('getGroupModelOverride returns the group agentConfig.model', async () => {
-      const group = makeGroup({ isMain: true, agentConfig: { model: 'opus' } });
+      const group = makeGroup({ agentConfig: { model: 'opus' } });
       const { capturedDeps } = await captureSessionDeps({ group });
       const getGroupModelOverride = capturedDeps.getGroupModelOverride as () =>
         | string
@@ -1846,7 +1839,6 @@ describe('createGroupProcessor', () => {
 
     it('getGroupThinkingOverride returns the group agentConfig.thinking', async () => {
       const group = makeGroup({
-        isMain: true,
         agentConfig: { thinking: { mode: 'enabled' } },
       });
       const { capturedDeps } = await captureSessionDeps({ group });
@@ -1965,8 +1957,8 @@ describe('createGroupProcessor', () => {
     });
 
     describe('canSenderInteract', () => {
-      it('returns true for main group regardless of trigger', async () => {
-        const group = makeGroup({ isMain: true });
+      it('returns true when requiresTrigger=false', async () => {
+        const group = makeGroup({ requiresTrigger: false });
         const { capturedDeps } = await captureSessionDeps({ group });
         const canSenderInteract = capturedDeps.canSenderInteract as (
           msg: NewMessage,
@@ -1976,8 +1968,8 @@ describe('createGroupProcessor', () => {
         expect(canSenderInteract(msg)).toBe(true);
       });
 
-      it('returns true for non-main group with requiresTrigger=false', async () => {
-        const group = makeGroup({ isMain: false, requiresTrigger: false });
+      it('returns true for another requiresTrigger=false conversation', async () => {
+        const group = makeGroup({ requiresTrigger: false });
         const { capturedDeps } = await captureSessionDeps({ group });
         const canSenderInteract = capturedDeps.canSenderInteract as (
           msg: NewMessage,
@@ -1987,9 +1979,8 @@ describe('createGroupProcessor', () => {
         expect(canSenderInteract(msg)).toBe(true);
       });
 
-      it('returns true for non-main group when trigger present and is_from_me', async () => {
+      it('returns true for conversation-scoped group when trigger present and is_from_me', async () => {
         const group = makeGroup({
-          isMain: false,
           requiresTrigger: true,
           trigger: 'Andy',
         });
@@ -2002,9 +1993,8 @@ describe('createGroupProcessor', () => {
         expect(canSenderInteract(msg)).toBe(true);
       });
 
-      it('returns true for non-main group when trigger present and sender is allowlisted', async () => {
+      it('returns true for conversation-scoped group when trigger present and sender is allowlisted', async () => {
         const group = makeGroup({
-          isMain: false,
           requiresTrigger: true,
           trigger: 'Andy',
         });
@@ -2018,9 +2008,8 @@ describe('createGroupProcessor', () => {
         expect(canSenderInteract(msg)).toBe(true);
       });
 
-      it('returns false for non-main group when trigger present but sender not allowed', async () => {
+      it('returns false for conversation-scoped group when trigger present but sender not allowed', async () => {
         const group = makeGroup({
-          isMain: false,
           requiresTrigger: true,
           trigger: 'Andy',
         });
@@ -2034,9 +2023,8 @@ describe('createGroupProcessor', () => {
         expect(canSenderInteract(msg)).toBe(false);
       });
 
-      it('returns false for non-main group when no trigger in message', async () => {
+      it('returns false for conversation-scoped group when no trigger in message', async () => {
         const group = makeGroup({
-          isMain: false,
           requiresTrigger: true,
           trigger: 'Andy',
         });
@@ -2054,7 +2042,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('runAgent delegates to the internal runAgent function', async () => {
-      const group = makeGroup({ isMain: true, folder: 'grp-folder' });
+      const group = makeGroup({ folder: 'grp-folder' });
       const channel = makeChannel();
       const messages = [makeMessage()];
 
@@ -2101,7 +2089,7 @@ describe('createGroupProcessor', () => {
     });
 
     it('runAgent collects memory when SDK auto-compacts', async () => {
-      const group = makeGroup({ isMain: true, folder: 'grp-folder' });
+      const group = makeGroup({ folder: 'grp-folder' });
       const channel = makeChannel();
       const messages = [makeMessage()];
       const deps = makeDeps({
@@ -2161,7 +2149,7 @@ describe('createGroupProcessor', () => {
 
   describe('stale session set from errored agent run', () => {
     it('should not set session ID when agent returns error status', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const channel = makeChannel();
       const messages = [makeMessage()];
 
@@ -2205,7 +2193,7 @@ describe('createGroupProcessor', () => {
 
   describe('double setSession from streamed + final output', () => {
     it('persists a streamed SDK session ID once even when final output repeats it', async () => {
-      const group = makeGroup({ isMain: true });
+      const group = makeGroup({ requiresTrigger: false });
       const channel = makeChannel();
       const messages = [makeMessage()];
 

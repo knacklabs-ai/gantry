@@ -51,7 +51,6 @@ function makeConversationRoute(): ConversationRoute {
     trigger: '',
     added_at: now,
     requiresTrigger: false,
-    isMain: false,
   };
 }
 

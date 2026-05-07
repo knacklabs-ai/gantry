@@ -26,10 +26,10 @@ MyClaw must present one runtime truth across runtime code, CLI, diagnostics, set
    job prompt drives retrieval, and no memory block is injected when nothing
    matches. Provider/session continuity remains separate from durable memory and
    memory tooling; commitment/inbox/digest controls are separate future work.
-8. Local desired-state configuration uses `agents.<agentId>` for agent display,
-   DM access/admins, and selected capabilities, while `conversations.<id>`
-   owns provider conversation IDs, approvers, and the usual single-agent
-   binding. It references approved catalog ids or aliases only; skill source
+8. Local desired-state configuration uses `agents.<agentId>` for agent display
+   and selected capabilities, while `conversations.<id>` owns provider
+   conversation IDs, sender policy, trigger policy, control approvers, and the
+   usual single-agent binding. It references approved catalog ids or aliases only; skill source
    bytes, MCP definitions, artifacts, messages, jobs history, browser profiles,
    memory records, and raw provider secrets stay out of `settings.yaml`.
 9. Phase 1 desired-state reconciliation is additive/update-only. DB-only

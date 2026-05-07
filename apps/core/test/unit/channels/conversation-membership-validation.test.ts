@@ -51,7 +51,7 @@ describe('RuntimeSecretConversationMembershipValidator', () => {
         providerConnectionId: 'providerConnection-tg' as never,
         externalRef: { kind: 'conversation', value: 'tg:-100123' },
         kind: 'group',
-        title: 'Main Agent Telegram Group',
+        title: 'Default Agent Telegram Group',
         status: 'active',
         createdAt: iso,
         updatedAt: iso,

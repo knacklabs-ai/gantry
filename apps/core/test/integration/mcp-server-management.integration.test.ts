@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 import { startTestControlServer } from '../harness/control-http-server.js';
@@ -6,6 +8,7 @@ import {
   AgentMcpServerBindingResponseSchema,
   McpServerDefinitionResponseSchema,
 } from '@myclaw/contracts';
+import { syncRuntimeSettingsFromProjection } from '@core/config/index.js';
 
 import type { AgentId } from '@core/domain/agent/agent.js';
 import type { AppId } from '@core/domain/app/app.js';
@@ -198,6 +201,7 @@ vi.mock('@core/config/index.js', () => ({
   MYCLAW_IPC_AUTH_SECRET: 'test-ipc-secret',
   ONECLI_ALLOWED_ENV_KEYS: [],
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+  syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: vi.fn(() => ({
     model: 'opus',
     source: 'system default',
@@ -229,6 +233,16 @@ vi.mock('@core/jobs/scheduler.js', () => ({
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
   const agentsRepo = {
+    listAgents: vi.fn(async (appId: string) => [
+      {
+        id: 'agent:one',
+        appId,
+        name: 'Agent One',
+        status: 'active',
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    ]),
     getAgent: vi.fn(async (agentId: string) => {
       if (agentId === 'agent:one') {
         return {
@@ -259,17 +273,40 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => {
       claimDueWebhookDeliveries: vi.fn(async () => []),
     }),
     getRuntimeRepositories: () => ({
+      getAllConversationRoutes: vi.fn(async () => ({})),
       storeChatMetadata: vi.fn(async () => undefined),
       storeMessage: vi.fn(async () => undefined),
     }),
     getRuntimeStorage: () => ({
-      repositories: { agents: agentsRepo, mcpServers: state.mcpServers },
+      repositories: {
+        agents: agentsRepo,
+        mcpServers: state.mcpServers,
+        tools: {
+          listTools: vi.fn(async () => []),
+          listAgentToolBindingsForAgents: vi.fn(async () => []),
+        },
+        skills: {
+          listAgentSkillBindingsForAgents: vi.fn(async () => []),
+        },
+        providerConnections: {
+          listProviderConnections: vi.fn(async () => []),
+          listAgentConversationBindings: vi.fn(async () => []),
+        },
+        conversations: {
+          listConversations: vi.fn(async () => []),
+          listConversationApproversForConversations: vi.fn(async () => []),
+        },
+      },
     }),
   };
 });
 
 describe('MCP server management integration flow', () => {
   beforeEach(() => {
+    fs.rmSync('/tmp/myclaw-mcp-integration-home', {
+      recursive: true,
+      force: true,
+    });
     state.mcpServers = new InMemoryMcpServerRepository();
   });
 
@@ -809,7 +846,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       {
         conversationRoutes: () => ({
           'chat-1': {
@@ -871,7 +907,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       {
         conversationRoutes: () => ({
           'chat-1': {
@@ -957,7 +992,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
     await vi.waitFor(() => {
@@ -994,7 +1028,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
     await vi.waitFor(() => {
@@ -1039,6 +1072,10 @@ describe('MCP server management integration flow', () => {
       'chat-1',
       expect.stringContaining('Approved MCP server github'),
       undefined,
+    );
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appId: 'default' }),
     );
   });
 
@@ -1090,7 +1127,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -1162,7 +1198,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -1214,7 +1249,6 @@ describe('MCP server management integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 

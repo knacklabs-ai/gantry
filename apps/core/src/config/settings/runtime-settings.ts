@@ -84,7 +84,6 @@ export interface EnsureConfiguredConversationBindingInput {
   displayName: string;
   trigger: string;
   requiresTrigger: boolean;
-  isMain: boolean;
   persona?: AgentPersona;
   approverIds?: string[];
 }
@@ -200,14 +199,6 @@ export function addControlSenderForAgent(
   return changed;
 }
 
-export function inferRecoverableMainAgentJid(
-  runtimeSettings: RuntimeSettings,
-): string | null {
-  const telegram = runtimeSettings.providers?.telegram;
-  if (!telegram?.enabled) return null;
-  return null;
-}
-
 export function ensureConfiguredConversationBinding(
   settings: RuntimeSettings,
   input: EnsureConfiguredConversationBindingInput,
@@ -248,16 +239,12 @@ export function ensureConfiguredConversationBinding(
     folder,
     persona: input.persona ?? 'developer',
     bindings: {},
-    dmAccess: [],
     capabilities: {
       toolIds: [],
       skillIds: [],
       mcpServerIds: [],
     },
   };
-  seedAgentDmAdminFromApprovers(settings.agents[agentId], provider.id, [
-    ...(input.approverIds || []),
-  ]);
 
   const externalId = stripProviderPrefix(input.jid, provider.id);
   const conversationId = configuredConversationId({
@@ -299,7 +286,6 @@ export function ensureConfiguredConversationBinding(
     trigger: input.trigger,
     addedAt: existingBinding?.addedAt || new Date().toISOString(),
     requiresTrigger: input.requiresTrigger,
-    isMain: input.isMain,
     memoryScope: existingBinding?.memoryScope || 'conversation',
     model: existingBinding?.model,
   };
@@ -310,7 +296,6 @@ export function ensureConfiguredConversationBinding(
     trigger: input.trigger,
     addedAt: settings.bindings[bindingId].addedAt,
     requiresTrigger: input.requiresTrigger,
-    isMain: input.isMain,
     model: settings.bindings[bindingId].model ?? settings.agents[agentId].model,
   };
 
@@ -320,33 +305,6 @@ export function ensureConfiguredConversationBinding(
     conversationId,
     bindingId,
   };
-}
-
-function seedAgentDmAdminFromApprovers(
-  agent: RuntimeSettings['agents'][string],
-  providerId: string,
-  approverIds: string[],
-): void {
-  const userIds = [
-    ...new Set(approverIds.map((value) => value.trim()).filter(Boolean)),
-  ];
-  if (userIds.length === 0) return;
-
-  const existing = agent.dmAccess.find(
-    (entry) => entry.provider === providerId,
-  );
-  if (existing) {
-    existing.userIds = [...new Set([...existing.userIds, ...userIds])].sort();
-    existing.adminUserId ??= userIds[0];
-    return;
-  }
-
-  agent.dmAccess.push({
-    provider: providerId,
-    userIds,
-    adminUserId: userIds[0],
-  });
-  agent.dmAccess.sort((a, b) => a.provider.localeCompare(b.provider));
 }
 
 function stripProviderPrefix(jid: string, providerId: string): string {

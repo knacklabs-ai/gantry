@@ -25,7 +25,6 @@ export interface AgentInput {
   persona?: AgentPersona;
   browserProfileName?: string;
   allowedTools?: string[];
-  isMain: boolean;
   isScheduledJob?: boolean;
   jobModelUseKind?: 'oneTimeJob' | 'recurringJob';
   assistantName?: string;

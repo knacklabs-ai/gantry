@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { RuntimeSettingsResponse } from '@myclaw/contracts';
 import type { RuntimeApp } from '../../app/bootstrap/runtime-app.js';
+import type { AppId } from '../../domain/app/app.js';
 import { authenticate, type ApiKeyRecord, type Scope } from './auth.js';
 import { sendError } from './http.js';
 import type { RateLimiter } from './rate-limit.js';
@@ -32,6 +33,7 @@ export type ControlRouteContext = {
     kind?: 'interactive' | 'oneTimeJob' | 'recurringJob',
     agentFolder?: string,
   ) => ControlDefaultModelConfig;
+  syncSettingsFromProjection: (appId: AppId) => Promise<void>;
 };
 
 export function authorizeControlRequest(

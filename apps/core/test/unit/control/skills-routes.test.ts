@@ -1,11 +1,13 @@
 import net from 'node:net';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { syncRuntimeSettingsFromProjection } from '@core/config/index.js';
 
 vi.mock('@core/config/index.js', () => ({
   MYCLAW_HOME: '/tmp/myclaw-control-test-home',
   ONECLI_ALLOWED_ENV_KEYS: [],
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+  syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: vi.fn(() => ({
     model: 'opus',
     source: 'system default',
@@ -41,6 +43,7 @@ const controlRepo = {
 };
 
 const opsRepo = {
+  getAllConversationRoutes: vi.fn(async () => ({})),
   storeChatMetadata: vi.fn(async () => undefined),
   storeMessage: vi.fn(async () => undefined),
 };
@@ -117,6 +120,13 @@ const skillsRepo = {
         binding.appId === input.appId && binding.agentId === input.agentId,
     ),
   ),
+  listAgentSkillBindingsForAgents: vi.fn(async (input: any) =>
+    [...skillsRepo.bindings.values()].filter(
+      (binding) =>
+        binding.appId === input.appId &&
+        input.agentIds.includes(binding.agentId),
+    ),
+  ),
   listEnabledSkillsForAgent: vi.fn(async (input: any) => {
     const skills: StoredSkill[] = [];
     for (const binding of skillsRepo.bindings.values()) {
@@ -155,6 +165,39 @@ const agentsRepo = {
       updatedAt: new Date(0).toISOString(),
     };
   }),
+  listAgents: vi.fn(async (appId: string) => [
+    {
+      id: 'agent:one',
+      appId,
+      name: 'Agent one',
+      status: 'active',
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    },
+  ]),
+};
+
+const toolsRepo = {
+  getTool: vi.fn(async () => null),
+  listTools: vi.fn(async () => []),
+  listAgentToolBindings: vi.fn(async () => []),
+  listAgentToolBindingsForAgents: vi.fn(async () => []),
+};
+
+const mcpServersRepo = {
+  getServer: vi.fn(async () => null),
+  listAgentBindings: vi.fn(async () => []),
+  listAgentBindingsForAgents: vi.fn(async () => []),
+};
+
+const providerConnectionsRepo = {
+  listProviderConnections: vi.fn(async () => []),
+  listAgentConversationBindings: vi.fn(async () => []),
+};
+
+const conversationsRepo = {
+  listConversations: vi.fn(async () => []),
+  listConversationApproversForConversations: vi.fn(async () => []),
 };
 
 const skillArtifacts = {
@@ -177,6 +220,10 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
     repositories: {
       agents: agentsRepo,
       skills: skillsRepo,
+      tools: toolsRepo,
+      mcpServers: mcpServersRepo,
+      providerConnections: providerConnectionsRepo,
+      conversations: conversationsRepo,
     },
     skillArtifacts,
   }),
@@ -228,6 +275,7 @@ async function requestWithRetry(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  opsRepo.getAllConversationRoutes.mockResolvedValue({});
   skillsRepo.skills.clear();
   skillsRepo.bindings.clear();
   skillsRepo.skills.set('skill:approved', {
@@ -412,6 +460,10 @@ describe('control skill routes', () => {
       const enableBody = await enable.json();
       expect(enable.status).toBe(200);
       expect(enableBody.binding?.status).toBe('active');
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appId: 'app-one' }),
+      );
 
       const listed = await requestWithRetry(
         `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills`,
@@ -431,6 +483,10 @@ describe('control skill routes', () => {
       expect(disable.status).toBe(200);
       expect(disableBody.disabled).toBe(true);
       expect(disableBody.binding?.status).toBe('disabled');
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(2);
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appId: 'app-one' }),
+      );
     } finally {
       await handle.close();
     }

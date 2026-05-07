@@ -126,32 +126,19 @@ export type AgentCapabilitiesResponse = z.infer<
   typeof AgentCapabilitiesResponseSchema
 >;
 
-export const AgentDmAccessEntrySchema = z.object({
-  provider: z.string().min(1),
-  userIds: z.array(z.string().min(1)),
-  adminUserId: z.string().min(1).optional(),
-});
-export type AgentDmAccessEntry = z.infer<typeof AgentDmAccessEntrySchema>;
-
-export const AgentDmAccessRequestSchema = z.object({
-  entries: z.array(AgentDmAccessEntrySchema),
-});
-export type AgentDmAccessRequest = z.infer<typeof AgentDmAccessRequestSchema>;
-
-export const AgentDmAccessResponseSchema = z.object({
-  agentId: z.string(),
-  dmAccess: z.object({
-    entries: z.array(AgentDmAccessEntrySchema),
-  }),
-  updatedAt: IsoDateTimeSchema,
-});
-export type AgentDmAccessResponse = z.infer<typeof AgentDmAccessResponseSchema>;
-
 export const AgentAdminBoundConversationSchema = z.object({
   conversationId: z.string(),
   provider: z.string().min(1),
   kind: z.string().min(1),
   displayName: z.string().min(1).optional(),
+  senderPolicy: z
+    .object({
+      allow: z.union([z.literal('*'), z.array(z.string().min(1))]),
+      mode: z.enum(['trigger', 'drop']),
+    })
+    .strict()
+    .optional(),
+  requiresTrigger: z.boolean().optional(),
   approverUserIds: z.array(z.string().min(1)),
 });
 export type AgentAdminBoundConversation = z.infer<
@@ -160,7 +147,12 @@ export type AgentAdminBoundConversation = z.infer<
 
 export const AgentAdminResponseSchema = z.object({
   agent: AgentResponseSchema,
-  dmAccess: AgentDmAccessResponseSchema.shape.dmAccess,
+  capabilities: AgentCapabilitiesResponseSchema.pick({
+    selectedToolIds: true,
+    selectedSkillIds: true,
+    selectedMcpServerIds: true,
+    toolAccess: true,
+  }).optional(),
   boundConversations: z.array(AgentAdminBoundConversationSchema),
 });
 export type AgentAdminResponse = z.infer<typeof AgentAdminResponseSchema>;

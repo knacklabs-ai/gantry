@@ -32,12 +32,11 @@ function makeApp(): RuntimeApp {
     clearSessionForChatJid: vi.fn(),
     processGroupMessages: vi.fn(async () => true),
     getConversationRoutes: vi.fn(() => ({
-      'tg:main': {
+      'tg:primary': {
         name: 'Main',
         folder: 'main',
         trigger: '@M',
         added_at: 't',
-        isMain: true,
       },
     })),
     getLastTimestamp: vi.fn(() => ''),
@@ -150,19 +149,18 @@ describe('startRuntimeServices', () => {
     );
 
     const handled = await capturedDeps?.handleActiveControlCommand?.({
-      chatJid: 'tg:main',
-      queueJid: 'tg:main::thread:topic-42',
+      chatJid: 'tg:primary',
+      queueJid: 'tg:primary::thread:topic-42',
       group: {
         name: 'Main',
         folder: 'main',
         trigger: '@M',
         added_at: 't',
-        isMain: true,
       },
       command: { kind: 'stop', raw: '/stop' } as any,
       message: {
         id: '1',
-        chat_jid: 'tg:main',
+        chat_jid: 'tg:primary',
         sender: 'user',
         sender_name: 'User',
         content: '/stop',
@@ -173,13 +171,13 @@ describe('startRuntimeServices', () => {
 
     expect(handled).toBe(true);
     expect(app.queue.isGroupActive).toHaveBeenCalledWith(
-      'tg:main::thread:topic-42',
+      'tg:primary::thread:topic-42',
     );
     expect(app.queue.stopGroup).toHaveBeenCalledWith(
-      'tg:main::thread:topic-42',
+      'tg:primary::thread:topic-42',
     );
     expect(channelWiring.sendMessage).toHaveBeenCalledWith(
-      'tg:main',
+      'tg:primary',
       'Stopping current run.',
       { messageOptions: { threadId: 'topic-42' } },
     );
@@ -263,19 +261,18 @@ describe('startRuntimeServices', () => {
     );
 
     const handled = await capturedDeps?.handleActiveControlCommand?.({
-      chatJid: 'tg:main',
-      queueJid: 'tg:main::thread:topic-42',
+      chatJid: 'tg:primary',
+      queueJid: 'tg:primary::thread:topic-42',
       group: {
         name: 'Main',
         folder: 'main',
         trigger: '@M',
         added_at: 't',
-        isMain: true,
       },
       command: { kind: 'new', raw: '/new' } as any,
       message: {
         id: '1',
-        chat_jid: 'tg:main',
+        chat_jid: 'tg:primary',
         sender: 'user',
         sender_name: 'User',
         content: '/new',
@@ -286,15 +283,15 @@ describe('startRuntimeServices', () => {
 
     expect(handled).toBe(true);
     expect(app.clearSessionForChatJid).toHaveBeenCalledWith(
-      'tg:main',
+      'tg:primary',
       'topic-42',
     );
     expect(app.setAgentCursor).toHaveBeenCalledWith(
-      'tg:main::thread:topic-42',
+      'tg:primary::thread:topic-42',
       expect.any(String),
     );
     expect(channelWiring.sendMessage).toHaveBeenCalledWith(
-      'tg:main',
+      'tg:primary',
       'Started a fresh session.',
       { messageOptions: { threadId: 'topic-42' } },
     );

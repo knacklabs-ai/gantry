@@ -4,8 +4,8 @@
 
 | Entity            | Trust Level   | Rationale                                                      |
 | ----------------- | ------------- | -------------------------------------------------------------- |
-| Main group        | Trusted       | Private self-chat, admin control                               |
-| Non-main groups   | Untrusted     | Other users may be malicious                                   |
+| Conversations     | Policy-scoped | Sender policy and control approvers govern each conversation   |
+| Group channels    | Shared input  | Other users may be malicious                                   |
 | Runtime agents    | Host-executed | Agent processes run on host, so host controls are the boundary |
 | Incoming messages | User input    | Potential prompt injection                                     |
 
@@ -41,7 +41,7 @@ private_key, .secret
 
 - symlink resolution before validation (prevents traversal attacks)
 - path validation (rejects `..` and unsafe absolute rewrites)
-- `nonMainReadOnly` option to keep non-main mounts read-only
+- read-only mount defaults for conversations without explicit write capability
 
 ### 3. Session Isolation
 
@@ -54,27 +54,29 @@ Each group has isolated canonical session state in Postgres:
 
 ### 4. IPC Authorization
 
-Messages and scheduler operations are verified against group identity:
+Messages and scheduler operations are verified against the originating agent
+folder, bound conversation, selected capabilities, and that conversation's
+approval policy:
 
-| Operation                   | Main Group | Non-Main Group |
-| --------------------------- | ---------- | -------------- |
-| Send message to own chat    | ✓          | ✓              |
-| Send message to other chats | ✓          | ✗              |
-| Schedule job for self       | ✓          | ✓              |
-| Schedule job for others     | ✓          | ✗              |
-| View all jobs               | ✓          | Own only       |
-| Manage other groups         | ✓          | ✗              |
+| Operation                   | Authorization source |
+| --------------------------- | -------------------- |
+| Send message to own chat    | Bound conversation route |
+| Send message to other chats | Selected send capability plus target conversation policy |
+| Schedule job for self       | Originating bound conversation |
+| Schedule job for others     | Selected scheduler capability plus target conversation approval |
+| View jobs                   | Originating agent/conversation scope unless an admin capability is approved |
+| Manage conversations        | Selected admin capability plus same-conversation approver |
 
 ## Privilege Comparison (Host Runtime)
 
-| Capability                          | Main Group                   | Non-Main Group                       |
-| ----------------------------------- | ---------------------------- | ------------------------------------ |
-| Project root access                 | Allowed by configured mounts | Not granted by default               |
-| Group folder                        | Own group (rw)               | Own group (rw)                       |
-| Common app memory access            | Admin/service write          | Read-only by host policy             |
-| Additional mounts                   | Configurable by admin policy | Read-only unless policy allows write |
-| Scheduler control scope             | All groups                   | Own group only                       |
-| Session commands (`/new`, `/model`) | Allowed                      | Admin/trusted sender only            |
+| Capability                          | Authorization source |
+| ----------------------------------- | -------------------- |
+| Project root access                 | Configured mounts and selected host-tool capability |
+| Group folder                        | Originating agent folder |
+| Common app memory access            | Capability-specific memory policy and conversation approval |
+| Additional mounts                   | Mount allowlist plus selected capability |
+| Scheduler control scope             | Job capability and originating conversation policy |
+| Session commands (`/new`, `/model`) | Sender policy and conversation control approvers |
 
 ### 5. Credential Isolation (OneCLI Agent Vault)
 

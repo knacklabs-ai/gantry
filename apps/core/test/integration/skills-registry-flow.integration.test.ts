@@ -11,6 +11,7 @@ import {
   SkillCatalogItemResponseSchema,
   type SkillCatalogItemResponse,
 } from '@myclaw/contracts';
+import { syncRuntimeSettingsFromProjection } from '@core/config/index.js';
 import { createClient } from '../../../../packages/sdk/src/index.js';
 
 type StoredSkill = SkillCatalogItemResponse;
@@ -26,6 +27,7 @@ vi.mock('@core/config/index.js', () => ({
   ONECLI_ALLOWED_ENV_KEYS: [],
   MYCLAW_IPC_AUTH_SECRET: 'test-ipc-secret',
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
+  syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: vi.fn(() => ({
     model: 'opus',
     source: 'system default',
@@ -94,6 +96,13 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', async () => {
           binding.appId === input.appId && binding.agentId === input.agentId,
       ),
     ),
+    listAgentSkillBindingsForAgents: vi.fn(async (input: any) =>
+      [...state.bindings.values()].filter(
+        (binding) =>
+          binding.appId === input.appId &&
+          input.agentIds.includes(binding.agentId),
+      ),
+    ),
     listEnabledSkillsForAgent: vi.fn(async (input: any) =>
       [...state.bindings.values()]
         .filter(
@@ -111,6 +120,16 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', async () => {
     ),
   };
   const agentsRepo = {
+    listAgents: vi.fn(async (appId: string) => [
+      {
+        id: 'agent:one',
+        appId,
+        name: 'Agent One',
+        status: 'active',
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    ]),
     getAgent: vi.fn(async (agentId: string) => {
       if (agentId === 'agent:one') {
         return {
@@ -141,11 +160,30 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', async () => {
       claimDueWebhookDeliveries: vi.fn(async () => []),
     }),
     getRuntimeRepositories: () => ({
+      getAllConversationRoutes: vi.fn(async () => ({})),
       storeChatMetadata: vi.fn(async () => undefined),
       storeMessage: vi.fn(async () => undefined),
     }),
     getRuntimeStorage: () => ({
-      repositories: { agents: agentsRepo, skills: skillsRepo },
+      repositories: {
+        agents: agentsRepo,
+        skills: skillsRepo,
+        tools: {
+          listTools: vi.fn(async () => []),
+          listAgentToolBindingsForAgents: vi.fn(async () => []),
+        },
+        mcpServers: {
+          listAgentBindingsForAgents: vi.fn(async () => []),
+        },
+        providerConnections: {
+          listProviderConnections: vi.fn(async () => []),
+          listAgentConversationBindings: vi.fn(async () => []),
+        },
+        conversations: {
+          listConversations: vi.fn(async () => []),
+          listConversationApproversForConversations: vi.fn(async () => []),
+        },
+      },
       skillArtifacts: new LocalSkillArtifactStore(state.artifactRoot),
     }),
   };
@@ -155,6 +193,10 @@ describe('skill registry integration flow', () => {
   let artifactRoot: string;
 
   beforeEach(() => {
+    fs.rmSync('/tmp/myclaw-skills-integration-home', {
+      recursive: true,
+      force: true,
+    });
     artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-skills-'));
     state.artifactRoot = artifactRoot;
     state.skills.clear();
@@ -508,7 +550,6 @@ describe('skill registry integration flow', () => {
           payload,
         },
         'agent:one',
-        false,
         deps as any,
       );
 
@@ -561,7 +602,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -599,7 +639,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -671,7 +710,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -743,7 +781,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -785,7 +822,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -845,7 +881,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -906,6 +941,10 @@ describe('skill registry integration flow', () => {
         status: 'active',
       }),
     ]);
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appId: 'default' }),
+    );
   });
 
   it('rejects agent-created skill drafts when SKILL.md cannot be fully shown for channel approval', async () => {
@@ -958,7 +997,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 
@@ -1017,7 +1055,6 @@ describe('skill registry integration flow', () => {
         },
       },
       'agent:one',
-      false,
       deps as any,
     );
 

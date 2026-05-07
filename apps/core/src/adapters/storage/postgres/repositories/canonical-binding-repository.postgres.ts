@@ -22,7 +22,6 @@ export interface CanonicalBindingRecord {
   displayName: string;
   triggerPattern: string | null;
   requiresTrigger: boolean;
-  isAdminBinding: boolean;
   createdAt: string;
 }
 
@@ -83,7 +82,6 @@ export class PostgresCanonicalBindingRepository {
           triggerMode: group.requiresTrigger === false ? 'always' : 'keyword',
           triggerPattern: group.trigger,
           requiresTrigger: group.requiresTrigger ?? true,
-          isAdminBinding: Boolean(group.isMain),
           memoryScope: 'conversation',
           memorySubjectJson: json(routeMemorySubject(conversationId, group)),
           permissionPolicyIdsJson: '[]',
@@ -98,7 +96,6 @@ export class PostgresCanonicalBindingRepository {
             triggerMode: group.requiresTrigger === false ? 'always' : 'keyword',
             triggerPattern: group.trigger,
             requiresTrigger: group.requiresTrigger ?? true,
-            isAdminBinding: Boolean(group.isMain),
             memoryScope: 'conversation',
             memorySubjectJson: json(routeMemorySubject(conversationId, group)),
             updatedAt: now,
@@ -130,7 +127,6 @@ export class PostgresCanonicalBindingRepository {
         displayName: b.displayName,
         triggerPattern: b.triggerPattern,
         requiresTrigger: b.requiresTrigger,
-        isAdminBinding: b.isAdminBinding,
         createdAt: b.createdAt,
       })
       .from(b)
@@ -179,7 +175,6 @@ export function bindingRowToGroup(
       trigger: row.triggerPattern || '',
       added_at: row.createdAt,
       requiresTrigger: row.requiresTrigger,
-      isMain: row.isAdminBinding || undefined,
       ...(agentConfig ? { agentConfig } : {}),
     },
   };

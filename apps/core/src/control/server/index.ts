@@ -8,9 +8,15 @@ import {
   getControlEnvValue,
   getDefaultModelConfig,
   getPublicRuntimeSettings,
+  syncRuntimeSettingsFromProjection,
 } from '../../config/index.js';
 import { logger } from '../../infrastructure/logging/logger.js';
-import { getRuntimeControlRepository } from '../../adapters/storage/postgres/runtime-store.js';
+import {
+  getRuntimeControlRepository,
+  getRuntimeRepositories,
+  getRuntimeStorage,
+} from '../../adapters/storage/postgres/runtime-store.js';
+import type { AppId } from '../../domain/app/app.js';
 import { canAccessApp, makeAppGroup } from './app-identity.js';
 import {
   isValidControlId,
@@ -146,6 +152,13 @@ export function startControlServer(input: {
     triggerRateLimiter: createRateLimiter(),
     getRuntimeSettings: () => getPublicRuntimeSettings(),
     getDefaultModelConfig,
+    syncSettingsFromProjection: (appId: AppId) =>
+      syncRuntimeSettingsFromProjection({
+        runtimeHome: MYCLAW_HOME,
+        ops: getRuntimeRepositories(),
+        repositories: getRuntimeStorage().repositories,
+        appId,
+      }),
   };
 
   const server = http.createServer(createControlRequestHandler(ctx));

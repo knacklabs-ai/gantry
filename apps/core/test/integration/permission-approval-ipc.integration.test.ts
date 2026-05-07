@@ -84,11 +84,13 @@ describe('permission approval IPC boundary', () => {
     const responseSigningKey = getIpcResponseSigningPrivateKey(
       groupFolder,
       threadId,
+      envelope.responseKeyId,
     );
     expect(responseSigningKey).toBeTruthy();
 
     vi.stubEnv('MYCLAW_IPC_AUTH_TOKEN', envelope.authToken);
     vi.stubEnv('MYCLAW_IPC_RESPONSE_VERIFY_KEY', envelope.responseVerifyKey);
+    vi.stubEnv('MYCLAW_IPC_RESPONSE_KEY_ID', envelope.responseKeyId);
     vi.stubEnv('MYCLAW_PERMISSION_TIMEOUT_MS', '10000');
 
     vi.resetModules();
@@ -213,6 +215,7 @@ describe('permission approval IPC boundary', () => {
     const envelope = createIpcAuthEnvelope(groupFolder);
     vi.stubEnv('MYCLAW_IPC_AUTH_TOKEN', envelope.authToken);
     vi.stubEnv('MYCLAW_IPC_RESPONSE_VERIFY_KEY', envelope.responseVerifyKey);
+    vi.stubEnv('MYCLAW_IPC_RESPONSE_KEY_ID', envelope.responseKeyId);
     vi.stubEnv('MYCLAW_PERMISSION_TIMEOUT_MS', '10000');
 
     vi.resetModules();

@@ -86,6 +86,7 @@ const schedulerGetJobHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   if (!jobId) {
@@ -132,6 +133,7 @@ const schedulerListJobsHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   try {
     const service = makeJobService(context);
@@ -190,6 +192,7 @@ const schedulerListRunsHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   try {
@@ -215,6 +218,7 @@ const schedulerListEventsHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const filters = schedulerEventFilters(data);
   try {
@@ -245,6 +249,7 @@ const schedulerWaitForEventsHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const filters = schedulerEventFilters(data);
   const timeoutMs = normalizeSchedulerWaitTimeoutMs(data.timeoutMs);
@@ -287,6 +292,7 @@ const schedulerGetDeadLetterHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   try {
     const result = await makeJobService(context).listDeadLetterRuns({

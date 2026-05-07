@@ -271,7 +271,6 @@ function normalizeBodyForComparison(value: string): string {
  */
 export async function handleSessionCommand(opts: {
   missedMessages: NewMessage[];
-  isMainGroup: boolean;
   groupName: string;
   triggerPattern: RegExp;
   timezone: string;

@@ -24,13 +24,13 @@ export interface AgentCapabilityContext {
   memoryDefaultScope?: 'user' | 'group';
   persona?: AgentPersona;
   browserProfileName?: string;
-  isMain: boolean;
   configuredAllowedTools?: readonly string[];
   ipcDir?: string;
   ipcAuthToken?: string;
   browserIpcAuthToken?: string;
   memoryIpcAuthToken?: string;
   ipcResponseVerifyKey?: string;
+  ipcResponseKeyId?: string;
   externalMcpServers?: Record<string, McpServerConfig>;
   externalMcpAllowedTools?: readonly string[];
   externalMcpAlwaysAllowedTools?: readonly string[];
@@ -193,6 +193,9 @@ const myclawMcpProvider: AgentCapabilityProvider = {
         : {}),
       ...(ctx.ipcResponseVerifyKey
         ? { MYCLAW_IPC_RESPONSE_VERIFY_KEY: ctx.ipcResponseVerifyKey }
+        : {}),
+      ...(ctx.ipcResponseKeyId
+        ? { MYCLAW_IPC_RESPONSE_KEY_ID: ctx.ipcResponseKeyId }
         : {}),
     };
     applyAgentEgressNoProxyEnv(env);

@@ -27,8 +27,8 @@ providers:
     bot_token_env: TELEGRAM_BOT_TOKEN
 
 agents:
-  main:
-    name: 'Main Agent'
+  main_agent:
+    name: 'Default Agent'
 
   kai:
     name: Kai
@@ -43,8 +43,8 @@ conversations:
     type: dm
     display_name: 'Main DM'
     approvers: ['5759865942']
-    agent: main
-    trigger: '@Main Agent'
+    agent: main_agent
+    trigger: '@Default Agent'
 
   kai:
     provider: telegram
@@ -53,8 +53,7 @@ conversations:
     display_name: Kai
     approvers: ['5759865942']
     agent: kai
-    trigger: '@Main Agent'
-    main: true
+    trigger: '@Default Agent'
 ```
 
 Do not render disabled providers, empty arrays, empty inherited model defaults,

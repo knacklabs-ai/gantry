@@ -24,7 +24,6 @@ function makeDeps() {
       agents: {
         listAgents: vi.fn(async () => []),
         saveAgent: vi.fn(async () => undefined),
-        replaceAgentDmAccessPolicy: vi.fn(async () => undefined),
         replaceAgentCapabilityBindings: vi.fn(async () => undefined),
         disableAgent: vi.fn(async () => undefined),
       },

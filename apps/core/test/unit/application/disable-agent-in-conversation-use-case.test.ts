@@ -15,7 +15,6 @@ function binding() {
     status: 'active',
     triggerMode: 'always',
     requiresTrigger: false,
-    isAdminBinding: false,
     memoryScope: 'conversation',
     memorySubject: {
       type: 'conversation',

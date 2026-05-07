@@ -38,12 +38,6 @@ function quoteYamlKey(key: string): string {
   return JSON.stringify(key);
 }
 
-function isOpaqueSkillId(value: string): boolean {
-  return /^skill:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    value,
-  );
-}
-
 function renderDefaultsYaml(
   lines: string[],
   agent: RuntimeAgentSettings,
@@ -175,28 +169,11 @@ function renderConfiguredAgentsYaml(
         `    recurring_job_default_model: ${quoteYamlString(agent.recurringJobDefaultModel)}`,
       );
     }
-    if (agent.dmAccess.length > 0) {
-      lines.push('    dm_access:');
-      for (const entry of [...agent.dmAccess].sort((a, b) =>
-        a.provider.localeCompare(b.provider),
-      )) {
-        lines.push(
-          `      ${quoteYamlKey(entry.provider)}:`,
-          `        allow: ${JSON.stringify(entry.userIds)}`,
-        );
-        if (entry.adminUserId) {
-          lines.push(`        admin: ${quoteYamlString(entry.adminUserId)}`);
-        }
-      }
-    }
     if (agent.capabilities.toolIds.length > 0) {
       lines.push(`    tools: ${JSON.stringify(agent.capabilities.toolIds)}`);
     }
-    const visibleSkillIds = agent.capabilities.skillIds.filter(
-      (skillId) => !isOpaqueSkillId(skillId),
-    );
-    if (visibleSkillIds.length > 0) {
-      lines.push(`    skills: ${JSON.stringify(visibleSkillIds)}`);
+    if (agent.capabilities.skillIds.length > 0) {
+      lines.push(`    skills: ${JSON.stringify(agent.capabilities.skillIds)}`);
     }
     if (agent.capabilities.mcpServerIds.length > 0) {
       lines.push(
@@ -297,9 +274,6 @@ function renderConversationsYaml(
           `    requires_trigger: ${binding.requiresTrigger ? 'true' : 'false'}`,
         );
       }
-      if (binding.isMain) {
-        lines.push('    main: true');
-      }
       if (binding.memoryScope !== 'conversation') {
         lines.push(`    memory_scope: ${quoteYamlString(binding.memoryScope)}`);
       }
@@ -331,7 +305,6 @@ function renderBindingsYaml(
       `    trigger: ${quoteYamlString(binding.trigger)}`,
       `    added_at: ${quoteYamlString(binding.addedAt)}`,
       `    requires_trigger: ${binding.requiresTrigger ? 'true' : 'false'}`,
-      `    main: ${binding.isMain ? 'true' : 'false'}`,
       `    memory_scope: ${quoteYamlString(binding.memoryScope)}`,
     );
     if (binding.model) {

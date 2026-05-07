@@ -11,11 +11,6 @@ function makeRepositories(overrides: Record<string, unknown> = {}) {
   return {
     agents: {
       saveAgent: vi.fn(async () => undefined),
-      listAgentDmAccess: vi.fn(async () => []),
-      listAgentDmAccessForAgents: vi.fn(async () => []),
-      listAgentDmApprovers: vi.fn(async () => []),
-      listAgentDmApproversForAgents: vi.fn(async () => []),
-      replaceAgentDmAccessPolicy: vi.fn(async () => undefined),
       replaceAgentCapabilityBindings: vi.fn(async () => undefined),
       disableAgent: vi.fn(async () => undefined),
       listAgents: vi.fn(async () => []),
@@ -106,7 +101,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: ['Read', 'tool:read', '*'],
         skillIds: ['skill:admin'],
@@ -140,10 +134,8 @@ describe('SettingsDesiredStateService', () => {
           trigger: '@main',
           addedAt: '2026-05-02T00:00:00.000Z',
           requiresTrigger: true,
-          isMain: true,
         },
       },
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: [],
@@ -184,7 +176,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.conversations.sales_slack = {
@@ -201,7 +192,6 @@ describe('SettingsDesiredStateService', () => {
       trigger: '@main',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: true,
-      isMain: true,
       memoryScope: 'conversation',
     };
     const ops = makeOps();
@@ -219,7 +209,6 @@ describe('SettingsDesiredStateService', () => {
         name: 'Sales Slack',
         folder: 'main_agent',
         trigger: '@main',
-        isMain: true,
       }),
     );
   });
@@ -237,14 +226,12 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.agents.ops_agent = {
       name: 'Ops',
       folder: 'ops_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.conversations.sales = {
@@ -261,7 +248,6 @@ describe('SettingsDesiredStateService', () => {
       trigger: '@main',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: true,
-      isMain: false,
       memoryScope: 'agent',
     };
     settings.bindings.sales_ops = {
@@ -270,7 +256,6 @@ describe('SettingsDesiredStateService', () => {
       trigger: '@ops',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: true,
-      isMain: false,
       memoryScope: 'conversation',
     };
     const savedConversations: any[] = [];
@@ -330,7 +315,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.conversations.direct_user = {
@@ -347,7 +331,6 @@ describe('SettingsDesiredStateService', () => {
       trigger: '@main',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: true,
-      isMain: false,
       memoryScope: 'user',
     };
     const savedConversations: any[] = [];
@@ -399,7 +382,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.conversations.main = {
@@ -416,7 +398,6 @@ describe('SettingsDesiredStateService', () => {
       trigger: '@main',
       addedAt: '2026-05-02T00:00:00.000Z',
       requiresTrigger: true,
-      isMain: true,
       memoryScope: 'conversation',
     };
     const service = new SettingsDesiredStateService({
@@ -444,7 +425,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: [],
@@ -476,7 +456,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: [],
@@ -503,14 +482,13 @@ describe('SettingsDesiredStateService', () => {
     );
   });
 
-  it('removes hidden opaque skill bindings in authoritative mode', async () => {
+  it('removes DB-only skill bindings in authoritative mode', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.desiredState.authoritative = true;
     settings.agents.main_agent = {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: ['skill:admin'],
@@ -545,14 +523,13 @@ describe('SettingsDesiredStateService', () => {
     );
   });
 
-  it('preserves hidden opaque skill bindings only for non-authoritative visible settings', async () => {
+  it('does not preserve DB-only skills when visible settings declare capabilities', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.desiredState.authoritative = false;
     settings.agents.main_agent = {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: ['skill:admin'],
@@ -582,12 +559,7 @@ describe('SettingsDesiredStateService', () => {
       repositories.agents.replaceAgentCapabilityBindings,
     ).toHaveBeenCalledWith(
       expect.objectContaining({
-        skillBindings: expect.arrayContaining([
-          expect.objectContaining({ skillId: 'skill:admin' }),
-          expect.objectContaining({
-            skillId: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
-          }),
-        ]),
+        skillBindings: [expect.objectContaining({ skillId: 'skill:admin' })],
       }),
     );
   });
@@ -738,7 +710,7 @@ describe('SettingsDesiredStateService', () => {
     ).resolves.toBe(true);
   });
 
-  it('reconciles one agent with provider-scoped DM admins and conversation approvers', async () => {
+  it('reconciles one agent with conversation approvers', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.providers.slack.enabled = true;
     settings.providers.slack.defaultConnection = 'slack_default';
@@ -764,7 +736,6 @@ describe('SettingsDesiredStateService', () => {
           trigger: '@main',
           addedAt: '2026-05-02T00:00:00.000Z',
           requiresTrigger: true,
-          isMain: true,
         },
         teams_sales: {
           jid: 'teams:19:channel@thread.tacv2',
@@ -772,17 +743,8 @@ describe('SettingsDesiredStateService', () => {
           trigger: '@main',
           addedAt: '2026-05-02T00:00:00.000Z',
           requiresTrigger: true,
-          isMain: false,
         },
       },
-      dmAccess: [
-        { provider: 'slack', userIds: ['U123'], adminUserId: 'U123' },
-        {
-          provider: 'teams',
-          userIds: ['8:orgid:abc'],
-          adminUserId: '8:orgid:abc',
-        },
-      ],
       capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
     };
     settings.conversations.sales_slack = {
@@ -871,22 +833,9 @@ describe('SettingsDesiredStateService', () => {
 
     expect(result.applied).toEqual(
       expect.arrayContaining([
-        'dm_access:main_agent',
         'conversation_approvers:sales_slack',
         'conversation_approvers:sales_teams',
       ]),
-    );
-    expect(repositories.agents.replaceAgentDmAccessPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accessEntries: [
-          { providerId: 'slack', externalUserId: 'U123' },
-          { providerId: 'teams', externalUserId: '8:orgid:abc' },
-        ],
-        approverEntries: [
-          { providerId: 'slack', externalUserId: 'U123' },
-          { providerId: 'teams', externalUserId: '8:orgid:abc' },
-        ],
-      }),
     );
     expect(savedApprovers).toEqual(
       new Map([
@@ -1086,21 +1035,6 @@ describe('SettingsDesiredStateService', () => {
     const repositories = makeRepositories({
       agents: {
         ...makeRepositories().agents,
-        listAgentDmAccess: vi.fn(async () => {
-          throw new Error('single-agent DM access read should not run');
-        }),
-        listAgentDmAccessForAgents: vi.fn(async () => [
-          {
-            appId: 'default',
-            agentId: 'agent:main_agent',
-            providerId: 'slack',
-            externalUserId: '42',
-          },
-        ]),
-        listAgentDmApprovers: vi.fn(async () => {
-          throw new Error('single-agent DM approver read should not run');
-        }),
-        listAgentDmApproversForAgents: vi.fn(async () => []),
       },
       tools: {
         ...makeRepositories().tools,
@@ -1144,7 +1078,6 @@ describe('SettingsDesiredStateService', () => {
           trigger: '@main',
           added_at: '2026-05-01T00:00:00.000Z',
           requiresTrigger: false,
-          isMain: true,
         },
         'sl:C200': {
           name: 'Side Slack',
@@ -1159,14 +1092,8 @@ describe('SettingsDesiredStateService', () => {
     const exported = await service.exportCurrent(settings);
 
     expect(
-      repositories.agents.listAgentDmAccessForAgents,
-    ).toHaveBeenCalledTimes(1);
-    expect(
       repositories.conversations.listConversationApproversForConversations,
     ).toHaveBeenCalledTimes(1);
-    expect(exported.agents.main_agent.dmAccess).toEqual([
-      { provider: 'slack', userIds: ['42'], adminUserId: undefined },
-    ]);
     expect(exported.conversations.main_agent_slack.controlApprovers).toEqual([
       '5759865942',
     ]);
@@ -1221,10 +1148,9 @@ describe('SettingsDesiredStateService', () => {
         'tg:-100123': {
           name: 'Telegram Group',
           folder: 'main_agent',
-          trigger: '@Main Agent',
+          trigger: '@Default Agent',
           added_at: '2026-05-01T00:00:00.000Z',
           requiresTrigger: false,
-          isMain: true,
         },
       }),
       repositories: makeRepositories({ conversations }),
@@ -1267,37 +1193,34 @@ describe('SettingsDesiredStateService', () => {
       providerConnection: 'telegram_default',
       externalId: '-100123',
       kind: 'group',
-      displayName: 'Main Agent Telegram Group',
+      displayName: 'Default Agent Telegram Group',
       senderPolicy: { allow: '*', mode: 'trigger' },
       controlApprovers: ['5759865942'],
     };
     settings.bindings.main_agent_telegram = {
       agent: 'main_agent',
       conversation: 'main_agent_telegram',
-      trigger: '@Main Agent',
+      trigger: '@Default Agent',
       addedAt: '2026-05-01T00:00:00.000Z',
       requiresTrigger: false,
-      isMain: true,
       memoryScope: 'conversation',
     };
     settings.bindings.main_telegram_group = {
       agent: 'main_agent',
       conversation: 'main_telegram_group',
-      trigger: '@Main Agent',
+      trigger: '@Default Agent',
       addedAt: '2026-05-01T00:00:00.000Z',
       requiresTrigger: false,
-      isMain: true,
       memoryScope: 'conversation',
     };
     const service = new SettingsDesiredStateService({
       ops: makeOps({
         'tg:-100123': {
-          name: 'Main Agent Telegram Group',
+          name: 'Default Agent Telegram Group',
           folder: 'main_agent',
-          trigger: '@Main Agent',
+          trigger: '@Default Agent',
           added_at: '2026-05-01T00:00:00.000Z',
           requiresTrigger: false,
-          isMain: true,
         },
       }),
       repositories: makeRepositories(),
@@ -1315,13 +1238,219 @@ describe('SettingsDesiredStateService', () => {
         'main_telegram_group',
         expect.objectContaining({
           controlApprovers: ['5759865942'],
-          displayName: 'Main Agent Telegram Group',
+          displayName: 'Default Agent Telegram Group',
         }),
       ],
     ]);
     expect(Object.values(exported.bindings)).toEqual([
       expect.objectContaining({ conversation: 'main_telegram_group' }),
     ]);
+  });
+
+  it('exports active agents, capabilities, conversations, approvers, and bindings from projection', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.side_agent = {
+      name: 'Stale Side',
+      folder: 'side_agent',
+      persona: 'research',
+      model: 'sonnet',
+      bindings: {},
+      capabilities: {
+        toolIds: ['stale-tool'],
+        skillIds: ['stale-skill'],
+        mcpServerIds: [],
+      },
+    };
+    settings.providerConnections.slack_default = {
+      provider: 'slack',
+      label: 'Old Slack Label',
+      runtimeSecretRefs: {
+        bot_token: 'SLACK_BOT_TOKEN',
+        app_token: 'SLACK_APP_TOKEN',
+      },
+    };
+    settings.conversations.sales = {
+      providerConnection: 'slack_default',
+      externalId: 'C123',
+      kind: 'channel',
+      displayName: 'Sales',
+      senderPolicy: { allow: ['U111'], mode: 'always' },
+      controlApprovers: ['STALE'],
+    };
+    settings.bindings.side_sales = {
+      agent: 'side_agent',
+      conversation: 'sales',
+      trigger: '@old',
+      addedAt: '2026-05-01T00:00:00.000Z',
+      requiresTrigger: true,
+      memoryScope: 'conversation',
+      model: 'haiku',
+    };
+    settings.bindings.stale = {
+      agent: 'side_agent',
+      conversation: 'missing',
+      trigger: '@stale',
+      addedAt: '2026-05-01T00:00:00.000Z',
+      requiresTrigger: true,
+      memoryScope: 'conversation',
+    };
+    const storedConversation = {
+      id: 'conversation:sl:C123',
+      appId: 'default',
+      providerConnectionId: 'slack_default',
+      externalRef: { kind: 'conversation', value: 'C123' },
+      kind: 'channel',
+      title: 'Sales Channel',
+      status: 'active',
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:00.000Z',
+    };
+    const repositories = makeRepositories({
+      agents: {
+        ...makeRepositories().agents,
+        listAgents: vi.fn(async () => [
+          {
+            id: 'agent:side_agent',
+            appId: 'default',
+            name: 'Side',
+            status: 'active',
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+          },
+        ]),
+      },
+      providerConnections: {
+        ...makeRepositories().providerConnections,
+        listProviderConnections: vi.fn(async () => [
+          {
+            id: 'slack_default',
+            appId: 'default',
+            providerId: 'slack',
+            label: 'Slack Workspace',
+            status: 'active',
+            config: {},
+            runtimeSecretRefs: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'],
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+          },
+        ]),
+        listAgentConversationBindings: vi.fn(async () => [
+          {
+            id: 'binding:side_sales',
+            appId: 'default',
+            agentId: 'agent:side_agent',
+            providerConnectionId: 'slack_default',
+            conversationId: storedConversation.id,
+            displayName: 'Sales Channel',
+            status: 'active',
+            triggerMode: 'keyword',
+            triggerPattern: '@side',
+            requiresTrigger: true,
+            memoryScope: 'conversation',
+            memorySubject: { kind: 'conversation' },
+            permissionPolicyIds: [],
+            createdAt: '2026-05-02T00:00:00.000Z',
+            updatedAt: '2026-05-02T00:00:00.000Z',
+          },
+        ]),
+      },
+      conversations: {
+        listConversations: vi.fn(async () => [storedConversation]),
+        listConversationApproversForConversations: vi.fn(async () => [
+          {
+            conversationId: storedConversation.id,
+            externalUserId: 'U999',
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+          },
+        ]),
+      },
+      tools: {
+        ...makeRepositories().tools,
+        listAgentToolBindingsForAgents: vi.fn(async () => [
+          {
+            id: 'agent-tool-binding:side-read',
+            appId: 'default',
+            agentId: 'agent:side_agent',
+            toolId: 'tool:read',
+            status: 'active',
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+          },
+        ]),
+      },
+      skills: {
+        ...makeRepositories().skills,
+        listAgentSkillBindingsForAgents: vi.fn(async () => [
+          {
+            id: 'agent-skill-binding:side-custom',
+            appId: 'default',
+            agentId: 'agent:side_agent',
+            skillId: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
+            status: 'active',
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+          },
+        ]),
+      },
+      mcpServers: {
+        ...makeRepositories().mcpServers,
+        listAgentBindingsForAgents: vi.fn(async () => [
+          {
+            id: 'agent-mcp-binding:side-github',
+            appId: 'default',
+            agentId: 'agent:side_agent',
+            serverId: 'mcp:github',
+            status: 'active',
+            versionId: 'mcp-version:github',
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+          },
+        ]),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    const exported = await service.exportCurrent(settings);
+
+    expect(exported.agents.side_agent).toEqual(
+      expect.objectContaining({
+        name: 'Side',
+        persona: 'research',
+        model: 'sonnet',
+        capabilities: {
+          toolIds: ['Read'],
+          skillIds: ['skill:3014949c-a616-4b2c-80e7-0bc61bb31e85'],
+          mcpServerIds: ['mcp:github'],
+        },
+      }),
+    );
+    expect(exported.providerConnections.slack_default).toEqual({
+      provider: 'slack',
+      label: 'Slack Workspace',
+      runtimeSecretRefs: {
+        bot_token: 'SLACK_BOT_TOKEN',
+        app_token: 'SLACK_APP_TOKEN',
+      },
+    });
+    expect(exported.conversations.sales).toEqual(
+      expect.objectContaining({
+        displayName: 'Sales',
+        senderPolicy: { allow: ['U111'], mode: 'always' },
+        controlApprovers: ['U999'],
+      }),
+    );
+    expect(exported.bindings.side_sales).toEqual(
+      expect.objectContaining({
+        trigger: '@side',
+        addedAt: '2026-05-02T00:00:00.000Z',
+        model: 'haiku',
+      }),
+    );
+    expect(exported.bindings.stale).toBeUndefined();
   });
 
   it('disables DB-only agents and clears their policies in authoritative mode', async () => {
@@ -1331,7 +1460,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: [],
         skillIds: [],
@@ -1351,9 +1479,6 @@ describe('SettingsDesiredStateService', () => {
             updatedAt: '2026-05-01T00:00:00.000Z',
           },
         ]),
-        listAgentDmAccess: vi.fn(async () => []),
-        listAgentDmApprovers: vi.fn(async () => []),
-        replaceAgentDmAccessPolicy: vi.fn(async () => undefined),
         replaceAgentCapabilityBindings: vi.fn(async () => undefined),
         disableAgent: vi.fn(async () => undefined),
       },
@@ -1367,13 +1492,6 @@ describe('SettingsDesiredStateService', () => {
 
     expect(repositories.agents.disableAgent).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: 'agent:old_agent' }),
-    );
-    expect(repositories.agents.replaceAgentDmAccessPolicy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentId: 'agent:old_agent',
-        accessEntries: [],
-        approverEntries: [],
-      }),
     );
   });
 
@@ -1397,7 +1515,6 @@ describe('SettingsDesiredStateService', () => {
       name: 'Main',
       folder: 'main_agent',
       bindings: {},
-      dmAccess: [],
       capabilities: {
         toolIds: ['Read'],
         skillIds: [],

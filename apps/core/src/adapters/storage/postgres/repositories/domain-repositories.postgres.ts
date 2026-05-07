@@ -579,7 +579,6 @@ export class PostgresProviderConnectionRepository implements ProviderConnectionR
         triggerMode: binding.triggerMode,
         triggerPattern: binding.triggerPattern ?? null,
         requiresTrigger: binding.requiresTrigger,
-        isAdminBinding: binding.isAdminBinding,
         memoryScope: binding.memoryScope,
         memorySubjectJson: encodeJson(binding.memorySubject),
         workspaceSnapshotId: binding.workspaceSnapshotId ?? null,
@@ -599,7 +598,6 @@ export class PostgresProviderConnectionRepository implements ProviderConnectionR
           triggerMode: binding.triggerMode,
           triggerPattern: binding.triggerPattern ?? null,
           requiresTrigger: binding.requiresTrigger,
-          isAdminBinding: binding.isAdminBinding,
           memoryScope: binding.memoryScope,
           memorySubjectJson: encodeJson(binding.memorySubject),
           workspaceSnapshotId: binding.workspaceSnapshotId ?? null,
@@ -752,7 +750,6 @@ export class PostgresProviderConnectionRepository implements ProviderConnectionR
           : 'always')) as AgentConversationBinding['triggerMode'],
       triggerPattern: row.triggerPattern ?? undefined,
       requiresTrigger: row.requiresTrigger,
-      isAdminBinding: row.isAdminBinding,
       memoryScope: (row.memoryScope ??
         'conversation') as AgentConversationBinding['memoryScope'],
       memorySubject: parseJson<MemorySubject>(row.memorySubjectJson, {

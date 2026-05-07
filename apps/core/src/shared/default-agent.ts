@@ -1,1 +1,1 @@
-export const DEFAULT_AGENT_NAME = 'Main Agent';
+export const DEFAULT_AGENT_NAME = 'Default Agent';

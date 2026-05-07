@@ -34,8 +34,9 @@ rules such as `Tool(scope-pattern)`, and `mcp__server__*`. Scoped rules are
 evaluated by `apps/core/src/shared/tool-rule-matcher.ts`; new tools must be
 registered there with allow/deny tests before they can be used in scheduled job
 policy. Empty rules, global `*`, unregistered scoped tools, and other wildcard
-forms are invalid. Non-main jobs cannot add main/admin-only MyClaw tools as job
-extras.
+forms are invalid. Jobs cannot add admin-only MyClaw tools as extras unless the
+originating agent has the selected capability and the originating conversation
+approval policy allows it.
 
 ## Execution
 

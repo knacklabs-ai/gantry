@@ -302,7 +302,6 @@ export async function runGroupStep(draft: SetupDraft): Promise<FlowAction> {
         displayName: result.groupName,
         trigger: `@${result.groupName}`,
         requiresTrigger: false,
-        isMain: true,
         approverIds: parseApproverIds(draft.slackPermissionApproverIds),
       });
       saveRuntimeSettings(draft.runtimeHome, settings);
@@ -325,7 +324,6 @@ export async function runGroupStep(draft: SetupDraft): Promise<FlowAction> {
         displayName: result.groupName,
         trigger: `@${result.groupName}`,
         requiresTrigger: false,
-        isMain: true,
         approverIds,
       });
       saveRuntimeSettings(draft.runtimeHome, settings);

@@ -41,15 +41,9 @@ export type RuntimeSettingsResponse = {
             trigger: string;
             addedAt: string;
             requiresTrigger: boolean;
-            isMain: boolean;
             model?: string;
           }
         >;
-        dmAccess: Array<{
-          provider: string;
-          userIds: string[];
-          adminUserId?: string;
-        }>;
         capabilities: {
           toolIds: string[];
           skillIds: string[];

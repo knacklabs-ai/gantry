@@ -69,12 +69,6 @@ export class ConversationAdministrationService {
   }): Promise<{ userIds: string[] }> {
     const { conversation, providerConnection } =
       await this.requireConversation(input);
-    if (conversation.kind === 'direct') {
-      throw new ApplicationError(
-        'INVALID_REQUEST',
-        'Conversation approvers are not supported for direct conversations; use the agent DM admin for direct/private prompts',
-      );
-    }
     const userIds = normalizeUserIds(input.userIds);
     const invalidShape = userIds.filter((id) => !isValidExternalUserId(id));
     if (invalidShape.length > 0) {
@@ -123,7 +117,6 @@ export class ConversationAdministrationService {
     if (!userId) return false;
     const conversation = await this.findConversationForJid(input);
     if (!conversation) return false;
-    if (conversation.kind === 'direct') return false;
     const approvers =
       await this.repositories.conversations.listConversationApprovers(
         conversation.id,

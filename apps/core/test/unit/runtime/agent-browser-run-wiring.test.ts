@@ -47,8 +47,8 @@ describe('agent browser run wiring', () => {
     });
   });
 
-  it('exposes browser guidance and status for non-main agents', async () => {
-    const wiring = createAgentBrowserRunWiring({ isMain: false }, adapters);
+  it('exposes browser guidance and status for conversation-scoped agents', async () => {
+    const wiring = createAgentBrowserRunWiring({}, adapters);
     const projection = await wiring.activate();
 
     expect(wiring.skillSources).toEqual([browserSkillSource]);
@@ -60,8 +60,8 @@ describe('agent browser run wiring', () => {
     expect(mockGetBrowserStatus).toHaveBeenCalledWith('myclaw');
   });
 
-  it('exposes the runtime-installed browser skill for the main agent', async () => {
-    const wiring = createAgentBrowserRunWiring({ isMain: true }, adapters);
+  it('exposes the runtime-installed browser skill for the default agent', async () => {
+    const wiring = createAgentBrowserRunWiring({}, adapters);
 
     expect(wiring.skillSources).toHaveLength(1);
     await expect(wiring.skillSources[0]?.listSkills()).resolves.toMatchObject([
@@ -75,7 +75,7 @@ describe('agent browser run wiring', () => {
 
   it('does not launch Chrome or attach action MCP when the browser is stopped', async () => {
     const wiring = createAgentBrowserRunWiring(
-      { isMain: true, browserProfileName: 'c-kai-abc123abc123' },
+      { browserProfileName: 'c-kai-abc123abc123' },
       adapters,
     );
 
@@ -99,7 +99,7 @@ describe('agent browser run wiring', () => {
       port: 4567,
       headless: false,
     });
-    const wiring = createAgentBrowserRunWiring({ isMain: true }, adapters);
+    const wiring = createAgentBrowserRunWiring({}, adapters);
 
     const projection = await wiring.activate();
 
@@ -141,7 +141,7 @@ describe('agent browser run wiring', () => {
     mockGetBrowserStatus.mockImplementationOnce(() => {
       throw new Error('status unavailable');
     });
-    const wiring = createAgentBrowserRunWiring({ isMain: true }, adapters);
+    const wiring = createAgentBrowserRunWiring({}, adapters);
 
     const projection = await wiring.activate();
 

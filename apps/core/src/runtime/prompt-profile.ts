@@ -121,7 +121,7 @@ function personaPrompt(persona: AgentPersona): string {
       return [
         '# Sales persona',
         '- Help with customer context, account follow-up, scheduling, messaging, and approved CRM-backed workflows.',
-        '- Use generic Agent delegation for bounded account research, meeting prep, follow-up critique, or synthesis; keep customer-facing output owned by the main agent.',
+        '- Use generic Agent delegation for bounded account research, meeting prep, follow-up critique, or synthesis; keep customer-facing output owned by the coordinating agent.',
         '- Do not assume repository, shell, Git, deployment, PR, or runtime-admin work by default.',
       ].join('\n');
     case 'marketing':
@@ -136,7 +136,7 @@ function personaPrompt(persona: AgentPersona): string {
         '# Operations persona',
         '- Help with coordination, runbook-style status, scheduling, messaging, and approved operational workflows.',
         '- Use generic Agent delegation for runbook checks, status summarization, incident context gathering, and blocker analysis.',
-        '- Runtime-admin actions require explicit main/admin capability and approval.',
+        '- Runtime-admin actions require selected admin capability and conversation approval.',
       ].join('\n');
     case 'research':
       return [

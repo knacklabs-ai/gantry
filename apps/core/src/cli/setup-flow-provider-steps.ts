@@ -12,7 +12,7 @@ import {
   validateTelegramBotToken,
   verifyTelegramChatAccess,
 } from './telegram.js';
-import { MAIN_AGENT_NAME } from './main-agent.js';
+import { DEFAULT_AGENT_CLI_NAME } from './main-agent.js';
 import { listTelegramRecentChats } from './telegram-chat-discovery.js';
 import {
   type FlowAction,
@@ -80,7 +80,7 @@ async function promptTelegramPermissionApproverIds(
     draft.telegramPermissionApproverIds || draft.telegramAdminSenderId;
   const input = await p.text({
     message:
-      'Telegram admin/approver user IDs; seeds main_agent DM admin and conversation approvers (/back, /resume, /cancel)',
+      'Telegram approver user IDs; seeds conversation approvers (/back, /resume, /cancel)',
     placeholder: '12345,67890',
     defaultValue,
     validate: validateTelegramPermissionApproverIdsInput,
@@ -329,11 +329,11 @@ export async function runTelegramStep(draft: SetupDraft): Promise<FlowAction> {
       return { type: 'cancel' };
     }
     chatCheckSpinner.stop(chatAccess.message);
-    draft.telegramDisplayName = draft.agentName || MAIN_AGENT_NAME;
+    draft.telegramDisplayName = draft.agentName || DEFAULT_AGENT_CLI_NAME;
 
     p.note(
       [
-        `Agent: ${draft.agentName || MAIN_AGENT_NAME}`,
+        `Agent: ${draft.agentName || DEFAULT_AGENT_CLI_NAME}`,
         `Bot: ${draft.telegramBotUsername ? `@${draft.telegramBotUsername}` : 'Configured'}`,
         `Chat: ${draft.telegramChatJid}`,
         `Session admin: ${
@@ -628,11 +628,11 @@ export async function runSlackStep(draft: SetupDraft): Promise<FlowAction> {
       if (retryChoice === 'resume') return { type: 'resume' };
       return { type: 'cancel' };
     }
-    draft.slackDisplayName = MAIN_AGENT_NAME;
+    draft.slackDisplayName = DEFAULT_AGENT_CLI_NAME;
 
     const approverInput = await p.text({
       message:
-        'Slack admin/approver user IDs; seeds main_agent DM admin and conversation approvers (/back, /resume, /cancel)',
+        'Slack admin/approver user IDs; seeds this conversation approvers (/back, /resume, /cancel)',
       placeholder: 'U0123456789,U0987654321',
       defaultValue: draft.slackPermissionApproverIds,
       validate: validateSlackPermissionApproverIdsInput,
@@ -646,7 +646,7 @@ export async function runSlackStep(draft: SetupDraft): Promise<FlowAction> {
 
     p.note(
       [
-        `Agent: ${draft.agentName || MAIN_AGENT_NAME}`,
+        `Agent: ${draft.agentName || DEFAULT_AGENT_CLI_NAME}`,
         `Conversation: ${draft.slackChatJid}`,
         `Permission approvers: ${draft.slackPermissionApproverIds}`,
       ].join('\n'),

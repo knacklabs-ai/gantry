@@ -39,15 +39,11 @@ export async function registerSystemJobs(
 ): Promise<void> {
   const groups = deps.conversationRoutes();
   const byFolder = new Map<string, string[]>();
-  const mainFolders = new Set<string>();
 
   for (const [jid, group] of Object.entries(groups)) {
     const linked = byFolder.get(group.folder) || [];
     linked.push(jid);
     byFolder.set(group.folder, linked);
-    if (group.isMain) {
-      mainFolders.add(group.folder);
-    }
   }
 
   const registrationSignature = JSON.stringify({

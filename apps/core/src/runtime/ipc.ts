@@ -10,7 +10,7 @@ import { logger } from '../infrastructure/logging/logger.js';
 // prettier-ignore
 import { processMemoryRequest, writeMemoryResponse } from '../memory/memory-ipc.js';
 // prettier-ignore
-import { computeIpcAuthToken, getIpcResponseSigningPrivateKey } from './ipc-auth.js';
+import { getIpcResponseSigningPrivateKey } from './ipc-auth.js';
 // prettier-ignore
 import { processBrowserIpcRequest, writeBrowserIpcResponse } from './ipc-browser-handler.js';
 import { resolveConversationBrowserProfile } from '../shared/browser-profile-scope.js';
@@ -63,15 +63,18 @@ const isLongRunningTask = (type: string): boolean =>
 async function processLongRunningTaskIpc(input: {
   data: ReturnType<typeof parseTaskIpcData>;
   sourceAgentFolder: string;
-  isMain: boolean;
   deps: IpcDeps;
   ipcBaseDir: string;
   file: string;
   claimedPath: string;
 }): Promise<void> {
   try {
-    // prettier-ignore
-    await processTaskIpc(input.data, input.sourceAgentFolder, input.isMain, input.deps, input.ipcBaseDir);
+    await processTaskIpc(
+      input.data,
+      input.sourceAgentFolder,
+      input.deps,
+      input.ipcBaseDir,
+    );
     fs.unlinkSync(input.claimedPath);
   } catch (err) {
     writeTaskIpcResponse(
@@ -82,6 +85,7 @@ async function processLongRunningTaskIpc(input: {
         error: err instanceof Error ? err.message : String(err),
       },
       input.data.authThreadId,
+      input.data.responseKeyId,
     );
     logger.error(
       { file: input.file, sourceAgentFolder: input.sourceAgentFolder, err },
@@ -253,18 +257,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
       }
     }
 
-    const folderIsMain = new Map<string, boolean>();
     const folderTargetJid = new Map<string, string>();
-    for (const group of Object.values(groupRegistry)) {
-      if (group.isMain) folderIsMain.set(group.folder, true);
-    }
     for (const [jid, group] of Object.entries(groupRegistry)) {
       if (!folderTargetJid.has(group.folder))
         folderTargetJid.set(group.folder, jid);
     }
 
     for (const sourceAgentFolder of ipcFolders) {
-      const isMain = folderIsMain.get(sourceAgentFolder) === true;
       resolveConversationBrowserProfile({
         workspaceKey: sourceAgentFolder,
         conversationId: folderTargetJid.get(sourceAgentFolder),
@@ -310,10 +309,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               const data = parseIpcMessage(rawData, sourceAgentFolder);
               // Authorization: verify this group can send to this chatJid
               const targetGroup = groupRegistry[data.chatJid];
-              if (
-                isMain ||
-                (targetGroup && targetGroup.folder === sourceAgentFolder)
-              ) {
+              if (targetGroup && targetGroup.folder === sourceAgentFolder) {
                 if (data.threadId) {
                   await deps.sendMessage(data.chatJid, data.text, {
                     threadId: data.threadId,
@@ -380,7 +376,6 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 void processLongRunningTaskIpc({
                   data,
                   sourceAgentFolder,
-                  isMain,
                   deps,
                   ipcBaseDir,
                   file,
@@ -388,21 +383,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 });
                 continue;
               }
-              // prettier-ignore
-              await processTaskIpc(data, sourceAgentFolder, isMain, deps, ipcBaseDir);
+              await processTaskIpc(data, sourceAgentFolder, deps, ipcBaseDir);
               fs.unlinkSync(claimedPath);
             } catch (err) {
-              const errorMessage =
-                err instanceof Error ? err.message : String(err);
-              if (isPlainObject(rawTaskData)) {
-                const taskId = toTrimmedString(rawTaskData.taskId, {
-                  maxLen: 128,
-                });
-                writeTaskIpcResponse(sourceAgentFolder, taskId, {
-                  ok: false,
-                  error: errorMessage,
-                });
-              }
               logger.error(
                 { file, sourceAgentFolder, err },
                 'Error processing IPC task',
@@ -458,7 +441,6 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   ...(request.context ? { context: request.context } : {}),
                 },
                 sourceAgentFolder,
-                isMain,
               );
               writeMemoryResponse(
                 sourceAgentFolder,
@@ -467,6 +449,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 getIpcResponseSigningPrivateKey(
                   sourceAgentFolder,
                   request.context?.threadId,
+                  request.responseKeyId,
                 ),
               );
               fs.unlinkSync(claimedPath);
@@ -507,6 +490,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             let claimedPath = filePath;
             let requestId: string | undefined;
             let authThreadId: string | undefined;
+            let responseKeyId: string | undefined;
             try {
               if (!canProcessIpcFile(sourceAgentFolder, 'browser')) {
                 throw new Error('Browser IPC rate limit exceeded');
@@ -521,13 +505,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
               );
               requestId = request.requestId;
               authThreadId = request.threadId;
+              responseKeyId = request.responseKeyId;
               const browserProfileName = resolveConversationBrowserProfile({
                 workspaceKey: sourceAgentFolder,
                 conversationId: request.chatJid,
               });
               const response = await processBrowserIpcRequest(request, {
                 sourceAgentFolder,
-                isMain,
                 browserProfileName,
                 getCredentialBroker: deps.getCredentialBroker,
                 getCredentialBrokerProfile: deps.getCredentialBrokerProfile,
@@ -544,8 +528,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 getIpcResponseSigningPrivateKey(
                   sourceAgentFolder,
                   request.threadId,
+                  request.responseKeyId,
                 ),
-                computeIpcAuthToken(sourceAgentFolder, request.threadId),
               );
               fs.unlinkSync(claimedPath);
             } catch (err) {
@@ -562,8 +546,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     getIpcResponseSigningPrivateKey(
                       sourceAgentFolder,
                       authThreadId,
+                      responseKeyId,
                     ),
-                    computeIpcAuthToken(sourceAgentFolder, authThreadId),
                   );
                 } catch (writeErr) {
                   logger.warn(
@@ -608,6 +592,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             let claimedPath = filePath;
             let requestId: string | undefined;
             let requestThreadId: string | undefined;
+            let responseKeyId: string | undefined;
             try {
               if (!canProcessIpcFile(sourceAgentFolder, 'permission')) {
                 throw new Error('Permission IPC rate limit exceeded');
@@ -624,6 +609,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 request.targetJid || folderTargetJid.get(sourceAgentFolder);
               requestId = request.requestId;
               requestThreadId = request.threadId;
+              responseKeyId = request.responseKeyId;
               if (
                 inFlightInteractionIpc.size >= MAX_IN_FLIGHT_INTERACTION_IPC
               ) {
@@ -655,6 +641,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   sourceAgentFolder,
                   requestId,
                   threadId: requestThreadId,
+                  responseKeyId,
                   logger,
                 });
               }
@@ -694,6 +681,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             let claimedPath = filePath;
             let requestId: string | undefined;
             let requestThreadId: string | undefined;
+            let responseKeyId: string | undefined;
             try {
               if (!canProcessIpcFile(sourceAgentFolder, 'user-question')) {
                 throw new Error('User question IPC rate limit exceeded');
@@ -710,6 +698,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 request.targetJid || folderTargetJid.get(sourceAgentFolder);
               requestId = request.requestId;
               requestThreadId = request.threadId;
+              responseKeyId = request.responseKeyId;
               if (
                 inFlightInteractionIpc.size >= MAX_IN_FLIGHT_INTERACTION_IPC
               ) {
@@ -741,6 +730,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   sourceAgentFolder,
                   requestId,
                   threadId: requestThreadId,
+                  responseKeyId,
                   logger,
                 });
               }

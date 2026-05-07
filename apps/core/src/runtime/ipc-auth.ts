@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
+import { createHash, createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { createIpcResponseSigningKeyPair } from '../infrastructure/ipc/response-signing.js';
 import { MYCLAW_IPC_AUTH_SECRET } from '../config/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
@@ -20,14 +20,23 @@ function authScope(workspaceKey: string, threadId?: string | null): string {
     : workspaceKey;
 }
 
-function responseScope(workspaceKey: string, threadId?: string | null): string {
-  return `response\0${authScope(workspaceKey, threadId)}`;
+function normalizedThreadId(threadId?: string | null): string {
+  return threadId?.trim() || '';
 }
 
 const responseSigningKeys = new Map<
   string,
-  { publicKeyPem: string; privateKeyPem: string }
+  {
+    workspaceKey: string;
+    threadId: string;
+    publicKeyPem: string;
+    privateKeyPem: string;
+  }
 >();
+
+export function responseSigningKeyId(publicKeyPem: string): string {
+  return createHash('sha256').update(publicKeyPem).digest('base64url');
+}
 
 export function computeIpcAuthToken(
   workspaceKey: string,
@@ -82,20 +91,46 @@ export function createIpcAuthEnvelope(
 ): {
   authToken: string;
   responseVerifyKey: string;
+  responseKeyId: string;
 } {
-  const scope = responseScope(workspaceKey, threadId);
   const keys = createIpcResponseSigningKeyPair();
-  responseSigningKeys.set(scope, keys);
+  const responseKeyId = responseSigningKeyId(keys.publicKeyPem);
+  responseSigningKeys.set(responseKeyId, {
+    workspaceKey,
+    threadId: normalizedThreadId(threadId),
+    ...keys,
+  });
   return {
     authToken: computeIpcAuthToken(workspaceKey, threadId),
     responseVerifyKey: keys.publicKeyPem,
+    responseKeyId,
   };
 }
 
 export function getIpcResponseSigningPrivateKey(
   workspaceKey: string,
   threadId?: string | null,
+  responseKeyId?: string | null,
 ): string | undefined {
-  return responseSigningKeys.get(responseScope(workspaceKey, threadId))
-    ?.privateKeyPem;
+  const keyId = responseKeyId?.trim();
+  if (!keyId) return undefined;
+  const keys = responseSigningKeys.get(keyId);
+  if (!keys) return undefined;
+  if (keys.workspaceKey !== workspaceKey) return undefined;
+  if (keys.threadId !== normalizedThreadId(threadId)) return undefined;
+  return keys.privateKeyPem;
+}
+
+export function revokeIpcResponseSigningKey(
+  responseKeyId: string | undefined,
+  workspaceKey: string,
+  threadId?: string | null,
+): boolean {
+  const keyId = responseKeyId?.trim();
+  if (!keyId) return false;
+  const keys = responseSigningKeys.get(keyId);
+  if (!keys) return false;
+  if (keys.workspaceKey !== workspaceKey) return false;
+  if (keys.threadId !== normalizedThreadId(threadId)) return false;
+  return responseSigningKeys.delete(keyId);
 }

@@ -25,7 +25,6 @@ export type { TaskIpcData } from './ipc-types.js';
 export async function processTaskIpc(
   data: TaskIpcData,
   sourceAgentFolder: string,
-  isMain: boolean,
   deps: IpcDeps,
   ipcBaseDir?: string,
 ): Promise<void> {
@@ -49,6 +48,7 @@ export async function processTaskIpc(
         error: `Unsupported IPC task type: ${data.type}`,
       },
       data.authThreadId,
+      data.responseKeyId,
     );
     return;
   }
@@ -74,7 +74,6 @@ export async function processTaskIpc(
     await handler({
       data,
       sourceAgentFolder,
-      isMain,
       ipcBaseDir,
       deps: resolvedDeps,
       conversationBindings,
@@ -94,6 +93,7 @@ export async function processTaskIpc(
         error: err instanceof Error ? err.message : String(err),
       },
       data.authThreadId,
+      data.responseKeyId,
     );
   }
 }

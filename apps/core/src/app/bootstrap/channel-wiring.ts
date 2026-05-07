@@ -41,15 +41,7 @@ import { EnvRuntimeSecretProvider } from '../../adapters/credentials/env-runtime
 import { RuntimeApp } from './runtime-app.js';
 import { ConversationAdministrationService } from '../../application/provider-conversations/conversation-administration-service.js';
 import { RuntimeSecretConversationMembershipValidator } from '../../channels/conversation-membership-validation.js';
-import { AgentDmAccessAdministrationService } from '../../application/agents/agent-dm-access-administration-service.js';
-import type { Agent, AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
-import type {
-  AgentConversationBinding,
-  ProviderConnectionId,
-} from '../../domain/provider/provider.js';
-import type { ConversationId } from '../../domain/conversation/conversation.js';
-import type { MemorySubject } from '../../domain/memory/memory.js';
 import {
   asGroupDiscoverySource,
   asPermissionApprovalSurface,
@@ -86,10 +78,6 @@ function sanitizeDeliveryError(err: unknown, provider: string): string {
       .slice(0, 500)
       .trim() || `${provider} delivery failed`
   );
-}
-
-function waitForMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function createChannelWiring(
@@ -134,17 +122,6 @@ export function createChannelWiring(
       ops,
       findBoundChannel,
       persistenceQueue,
-      appId: resolved.appId,
-      dmAccess: {
-        resolveDmAgent: (input) =>
-          new AgentDmAccessAdministrationService({
-            agents: getRuntimeStorage().repositories.agents,
-            providerConnections:
-              getRuntimeStorage().repositories.providerConnections,
-            conversations: getRuntimeStorage().repositories.conversations,
-          }).resolveDmAgent(input),
-      },
-      saveDmAgentConversationBinding,
     }),
     conversationRoutes: () => app.getConversationRoutes(),
     runtimeSettings: () => currentRuntimeSettings,
@@ -155,46 +132,6 @@ export function createChannelWiring(
     isControlApproverAllowed: authorizeConversationApprover,
   };
   let currentRuntimeSettings: RuntimeSettings;
-
-  async function saveDmAgentConversationBinding(input: {
-    agent: Agent;
-    chatJid: string;
-    providerId: string;
-  }): Promise<void> {
-    const repositories = getRuntimeStorage().repositories;
-    const now = new Date().toISOString();
-    const conversationId = `conversation:${input.chatJid}` as ConversationId;
-    const providerConnectionId =
-      `channel-providerConnection:default:${input.providerId}` as ProviderConnectionId;
-    await repositories.providerConnections.saveAgentConversationBinding({
-      id: `agent-dm-binding:${safeIdPart(input.agent.id)}:${safeIdPart(input.chatJid)}` as AgentConversationBinding['id'],
-      appId: resolved.appId,
-      agentId: input.agent.id as AgentId,
-      providerConnectionId,
-      conversationId,
-      displayName: `${input.agent.name} DM`,
-      status: 'active',
-      triggerMode: 'always',
-      requiresTrigger: false,
-      isAdminBinding: false,
-      memoryScope: 'conversation',
-      memorySubject: {
-        kind: 'conversation',
-        appId: resolved.appId,
-        conversationId,
-      } as MemorySubject,
-      permissionPolicyIds: [],
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
-
-  function safeIdPart(value: string): string {
-    return value
-      .trim()
-      .replace(/[^a-zA-Z0-9._:@-]/g, '_')
-      .slice(0, 96);
-  }
 
   function findBoundChannel(jid: string): ChannelAdapter | undefined {
     return findChannel(connectedChannels, jid);
@@ -429,32 +366,9 @@ export function createChannelWiring(
       }
     }
 
-    const mainEntries = Object.entries(app.getConversationRoutes()).filter(
-      ([, group]) => group.isMain === true,
-    );
-
-    for (const [mainJid] of mainEntries) {
-      const channel = findBoundChannel(mainJid);
-      if (!channel) continue;
-      const approvalSurface = asPermissionApprovalSurface(channel);
-      if (!approvalSurface) continue;
-      try {
-        return await approvalSurface.requestPermissionApproval(
-          mainJid,
-          request,
-        );
-      } catch (err) {
-        resolved.logger.error(
-          { err, mainJid, requestId: request.requestId },
-          'Channel permission approval flow failed',
-        );
-        return { approved: false, reason: 'Permission approval flow failed' };
-      }
-    }
-
     return {
       approved: false,
-      reason: 'No main channel supports interactive permission approvals',
+      reason: 'Permission approval target is missing',
     };
   }
 
@@ -468,82 +382,7 @@ export function createChannelWiring(
     if (!targetJid) {
       return { blockedReason: 'Permission approval target is missing' };
     }
-    const repositories = getRuntimeStorage().repositories;
-    const conversationId = `conversation:${targetJid}` as ConversationId;
-    const conversation =
-      await repositories.conversations.getConversation(conversationId);
-    const isDirectConversation =
-      conversation?.kind === 'direct' || String(conversation?.kind) === 'dm';
-    if (!conversation || !isDirectConversation) {
-      return { targetJid, request };
-    }
-
-    let activeBindings: AgentConversationBinding[] = [];
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const bindings =
-        await repositories.providerConnections.listAgentConversationBindingsByConversation(
-          {
-            appId: resolved.appId,
-            conversationId,
-          },
-        );
-      activeBindings = bindings.filter(
-        (binding) => binding.status === 'active',
-      );
-      if (activeBindings.length === 1 || attempt === 2) break;
-      await waitForMs(50 * (attempt + 1));
-    }
-    if (activeBindings.length !== 1) {
-      return {
-        blockedReason:
-          'DM permission approval requires exactly one active agent binding.',
-      };
-    }
-    const binding = activeBindings[0]!;
-    const providerConnection =
-      await repositories.providerConnections.getProviderConnection(
-        binding.providerConnectionId,
-      );
-    if (!providerConnection || providerConnection.appId !== resolved.appId) {
-      return {
-        blockedReason:
-          'DM permission approval requires a valid provider connection.',
-      };
-    }
-    const approvers = await repositories.agents.listAgentDmApprovers({
-      appId: resolved.appId,
-      agentId: binding.agentId,
-    });
-    const providerId = providerConnection.providerId.toString();
-    const approver = approvers.find(
-      (candidate) => candidate.providerId.toString() === providerId,
-    );
-    if (!approver) {
-      return {
-        blockedReason:
-          'DM permission approval requires a configured agent DM admin.',
-      };
-    }
-    const provider = resolved.providerIds.find(
-      (candidate) => candidate.id === providerId,
-    );
-    if (!provider) {
-      return {
-        blockedReason:
-          'DM permission approval requires a connected provider for the admin.',
-      };
-    }
-    const adminJid = approver.externalUserId.startsWith(provider.jidPrefix)
-      ? approver.externalUserId
-      : `${provider.jidPrefix}${approver.externalUserId}`;
-    return {
-      targetJid: adminJid,
-      request: {
-        ...request,
-        targetJid: adminJid,
-        approvalContextJid: targetJid,
-      },
-    };
+    return { targetJid, request };
   }
 
   async function authorizeConversationApprover(input: {
@@ -558,18 +397,6 @@ export function createChannelWiring(
     }
     try {
       const repositories = getRuntimeStorage().repositories;
-      const dmApprover = await new AgentDmAccessAdministrationService({
-        agents: repositories.agents,
-        providerConnections: repositories.providerConnections,
-        conversations: repositories.conversations,
-      }).isDmApproverAllowed({
-        appId: resolved.appId,
-        providerId: input.providerId,
-        channelJid: input.conversationJid,
-        userId: input.userId,
-      });
-      if (dmApprover !== null) return dmApprover;
-
       const service = new ConversationAdministrationService(
         {
           providerConnections: repositories.providerConnections,
@@ -618,26 +445,6 @@ export function createChannelWiring(
         resolved.logger.error(
           { err, targetJid: request.targetJid, requestId: request.requestId },
           'Target channel user question flow failed',
-        );
-        return { requestId: request.requestId, answers: {} };
-      }
-    }
-
-    const mainEntries = Object.entries(app.getConversationRoutes()).filter(
-      ([, group]) => group.isMain === true,
-    );
-
-    for (const [mainJid] of mainEntries) {
-      const channel = findBoundChannel(mainJid);
-      if (!channel) continue;
-      const questionSurface = asUserQuestionSurface(channel);
-      if (!questionSurface) continue;
-      try {
-        return await questionSurface.requestUserAnswer(mainJid, request);
-      } catch (err) {
-        resolved.logger.error(
-          { err, mainJid, requestId: request.requestId },
-          'Channel user question flow failed',
         );
         return { requestId: request.requestId, answers: {} };
       }

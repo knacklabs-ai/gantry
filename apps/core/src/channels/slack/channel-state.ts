@@ -11,6 +11,7 @@ import {
   writePrivateFileSync,
 } from '../../shared/private-fs.js';
 import {
+  NewMessage,
   PermissionApprovalDecision,
   PermissionApprovalRequest,
   UserQuestionRequest,
@@ -26,6 +27,10 @@ interface SlackAttachmentDownload {
   filePath: string;
   storageRef: string;
 }
+
+type SlackMessageAttachments = NonNullable<NewMessage['attachments']>;
+type UQSelection = { selected: string | string[]; answeredBy?: string };
+type PendingPermissionPromptMap = Map<string, PendingPermissionPrompt>;
 
 export interface ActiveStreamState {
   channelId: string;
@@ -68,10 +73,7 @@ export interface PendingUserQuestionState {
   sourceAgentFolder: string;
   messageTs: string;
   timer?: ReturnType<typeof setTimeout>;
-  resolve: (selection: {
-    selected: string | string[];
-    answeredBy?: string;
-  }) => void;
+  resolve: (selection: UQSelection) => void;
   settled: boolean;
 }
 
@@ -116,10 +118,7 @@ export abstract class SlackChannelState {
   protected sealedStreamGenerationByJid = new Map<string, number>();
   protected activeProgress = new Map<string, ActiveProgressState>();
   protected progressStateLoaded = false;
-  protected pendingPermissionPrompts = new Map<
-    string,
-    PendingPermissionPrompt
-  >();
+  protected pendingPermissionPrompts: PendingPermissionPromptMap = new Map();
   protected pendingUserQuestions = new Map<string, PendingUserQuestionState>();
 
   constructor(botToken: string, appToken: string, opts: ChannelOpts) {
@@ -668,16 +667,9 @@ export abstract class SlackChannelState {
   protected async enrichMessage(
     jid: string,
     event: SlackMessageLike,
-  ): Promise<{
-    text: string;
-    attachments: NonNullable<
-      import('../../domain/types.js').NewMessage['attachments']
-    >;
-  }> {
+  ): Promise<{ text: string; attachments: SlackMessageAttachments }> {
     const lines: string[] = [];
-    const attachments: NonNullable<
-      import('../../domain/types.js').NewMessage['attachments']
-    > = [];
+    const attachments: SlackMessageAttachments = [];
     const text = typeof event.text === 'string' ? event.text.trim() : '';
     if (text) lines.push(text);
 

@@ -152,6 +152,14 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'tool-rule-matcher.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/private-fs.ts'),
+    path.join(sharedDir, 'private-fs.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/tool-access-view.ts'),
+    path.join(sharedDir, 'tool-access-view.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/live-tool-rules.ts'),
     path.join(sharedDir, 'live-tool-rules.ts'),
   );
@@ -417,7 +425,6 @@ function baseInput(
     prompt: 'initial prompt',
     groupFolder: 'team',
     chatJid: 'tg:team',
-    isMain: false,
     compiledSystemPrompt: 'compiled system profile',
     ...overrides,
   };

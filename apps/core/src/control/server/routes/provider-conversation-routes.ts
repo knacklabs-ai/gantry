@@ -71,7 +71,6 @@ interface RuntimeConversationRouteState {
   trigger: string;
   added_at: string;
   requiresTrigger: boolean;
-  isMain?: boolean;
   conversationKind: 'dm' | 'channel';
 }
 
@@ -188,6 +187,7 @@ export async function handleProviderConversationRoutes(
         runtimeSecretRefs: parsed.data.runtimeSecretRefs,
         enabled: parsed.data.enabled,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 201, providerConnectionToResponse(providerConnection));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
@@ -251,6 +251,7 @@ export async function handleProviderConversationRoutes(
           runtimeSecretRefs: parsed.data.runtimeSecretRefs,
         },
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, providerConnectionToResponse(providerConnection));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
@@ -269,6 +270,7 @@ export async function handleProviderConversationRoutes(
         providerConnectionId:
           providerConnectionRoute.providerConnectionId as ProviderConnectionId,
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, {
         deleted: true,
         providerConnection: providerConnectionToResponse(providerConnection),
@@ -407,6 +409,7 @@ export async function handleProviderConversationRoutes(
         userIds: parsed.data.userIds,
         updatedAt: nowIso(),
       });
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, { approvers: result });
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
@@ -497,6 +500,7 @@ export async function handleProviderConversationRoutes(
         patch,
       });
       await projectBindingToRuntime(ctx, binding);
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, bindingToResponse(binding));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
@@ -532,6 +536,7 @@ export async function handleProviderConversationRoutes(
         patch,
       });
       await projectBindingToRuntime(ctx, binding);
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, bindingToResponse(binding));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
@@ -555,6 +560,7 @@ export async function handleProviderConversationRoutes(
           undefined,
       });
       await removeBindingFromRuntime(ctx, binding);
+      await ctx.syncSettingsFromProjection(auth.appId as AppId);
       sendJson(res, 200, {
         disabled: true,
         binding: bindingToResponse(binding),
@@ -646,7 +652,6 @@ function routeStateForBinding(input: {
     trigger: input.binding.triggerPattern ?? '',
     added_at: input.binding.createdAt,
     requiresTrigger: input.binding.requiresTrigger,
-    isMain: input.binding.isAdminBinding || undefined,
     conversationKind: input.conversation.kind === 'direct' ? 'dm' : 'channel',
   };
 }

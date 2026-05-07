@@ -43,7 +43,6 @@ export interface AgentBindingPatch {
   triggerMode?: AgentConversationBindingTriggerMode;
   triggerPattern?: string | null;
   requiresTrigger?: boolean;
-  isAdminBinding?: boolean;
   memoryScope?: AgentConversationBindingMemoryScope;
   memorySubject?: MemorySubject;
   workspaceSnapshotId?: WorkspaceSnapshotId | null;
@@ -563,8 +562,6 @@ export class AgentConversationBindingControlService {
           ? triggerModeToRequiresTrigger(triggerMode)
           : existing?.requiresTrigger) ??
         triggerModeToRequiresTrigger(triggerMode),
-      isAdminBinding:
-        input.patch.isAdminBinding ?? existing?.isAdminBinding ?? false,
       memoryScope,
       memorySubject: memorySubjectForScope({
         appId: input.appId,

@@ -540,7 +540,7 @@ describe('cli telegram helpers', () => {
     expect(code).toBe(0);
     expect(select).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'Choose the Telegram chat for the Main Agent',
+        message: 'Choose the Telegram chat for the Default Agent',
         options: expect.arrayContaining([
           expect.objectContaining({ value: 'tg:-100123' }),
           expect.objectContaining({ value: 'manual' }),
@@ -597,7 +597,7 @@ describe('cli telegram helpers', () => {
       }),
       readTelegramFromRuntimeEnv: vi.fn(() => ({ token: '' })),
       registerTelegramMainGroup: vi.fn(async () => ({
-        groupName: 'Main Agent',
+        groupName: 'Default Agent',
         folder: 'main_agent',
       })),
       validateTelegramBotToken: vi.fn(async () => ({
@@ -632,7 +632,7 @@ describe('cli telegram helpers', () => {
     expect(text).toHaveBeenCalledWith(
       expect.objectContaining({
         message:
-          'Telegram admin/approver user IDs for permissions; seeds main_agent DM admin and conversation approvers (required)',
+          'Telegram approver user IDs for permissions; seeds conversation approvers (required)',
       }),
     );
   });
@@ -684,7 +684,7 @@ describe('cli telegram helpers', () => {
       }),
       readTelegramFromRuntimeEnv: vi.fn(() => ({ token: '' })),
       registerTelegramMainGroup: vi.fn(async () => ({
-        groupName: 'Main Agent',
+        groupName: 'Default Agent',
         folder: 'main_agent',
       })),
       validateTelegramBotToken: vi.fn(async () => ({
@@ -718,7 +718,7 @@ describe('cli telegram helpers', () => {
       2,
       expect.objectContaining({
         message:
-          'Telegram admin/approver user IDs for permissions; seeds main_agent DM admin and conversation approvers (required)',
+          'Telegram approver user IDs for permissions; seeds conversation approvers (required)',
         defaultValue: '',
       }),
     );

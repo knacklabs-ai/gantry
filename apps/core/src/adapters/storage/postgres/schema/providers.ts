@@ -76,7 +76,6 @@ export const agentConversationBindingsPostgres = pgTable(
     triggerMode: text('trigger_mode').notNull().default('keyword'),
     triggerPattern: text('trigger_pattern'),
     requiresTrigger: boolean('requires_trigger').notNull().default(true),
-    isAdminBinding: boolean('is_admin_binding').notNull().default(false),
     memoryScope: text('memory_scope').notNull().default('conversation'),
     memorySubjectJson: text('memory_subject_json').notNull(),
     workspaceSnapshotId: text('workspace_snapshot_id').references(

@@ -340,12 +340,11 @@ function parseConfiguredBindings(
         key !== 'trigger' &&
         key !== 'added_at' &&
         key !== 'requires_trigger' &&
-        key !== 'main' &&
         key !== 'memory_scope' &&
         key !== 'model'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure agent, conversation, trigger, added_at, requires_trigger, main, memory_scope, or model.`,
+          `${pathPrefix}.${key} is not supported. Configure agent, conversation, trigger, added_at, requires_trigger, memory_scope, or model.`,
         );
       }
     }
@@ -394,7 +393,7 @@ function parseConfiguredBindings(
       trigger: parseStringValue(
         map.trigger,
         `${pathPrefix}.trigger`,
-        '@Main Agent',
+        '@Default Agent',
       ),
       addedAt: parseStringValue(
         map.added_at,
@@ -406,7 +405,6 @@ function parseConfiguredBindings(
         `${pathPrefix}.requires_trigger`,
         true,
       ),
-      isMain: parseBooleanValue(map.main, `${pathPrefix}.main`, false),
       memoryScope,
       model,
     };
@@ -845,7 +843,6 @@ function deriveAgentBindingsFromDesiredState(input: {
       trigger: binding.trigger,
       addedAt: binding.addedAt,
       requiresTrigger: binding.requiresTrigger,
-      isMain: binding.isMain,
       model: binding.model ?? agent.model,
     };
   }

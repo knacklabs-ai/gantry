@@ -109,7 +109,7 @@ async function promptTelegramPermissionApproverIds(
 ): Promise<string | null> {
   const result = await p.text({
     message:
-      'Telegram admin/approver user IDs for permissions; seeds main_agent DM admin and conversation approvers (required)',
+      'Telegram approver user IDs for permissions; seeds conversation approvers (required)',
     placeholder: '12345,67890',
     defaultValue,
     validate: (value) => {
@@ -147,7 +147,7 @@ async function chooseChatFromDiscovery(
 
   spinner.stop(`Found ${discovery.chats.length} recent chats.`);
   const selected = await p.select({
-    message: 'Choose the Telegram chat for the Main Agent',
+    message: 'Choose the Telegram chat for the Default Agent',
     options: [
       ...discovery.chats.slice(0, 15).map((chat) => ({
         value: chat.chatJid,
@@ -281,7 +281,6 @@ export async function runTelegramConnectCommand(
       displayName: conversationRouteName || settings.agent.name,
       trigger: `@${conversationRouteName || settings.agent.name}`,
       requiresTrigger: false,
-      isMain: true,
       approverIds,
     });
     if (approverIds.length > 0) {

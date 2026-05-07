@@ -52,7 +52,6 @@ export function configuredRoutingBindings(
         trigger: binding.trigger,
         addedAt: binding.addedAt,
         requiresTrigger: binding.requiresTrigger,
-        isMain: binding.isMain,
         model: binding.model,
         conversation: Object.values(settings.conversations).find(
           (candidate) =>
@@ -80,7 +79,6 @@ export function configuredRoutingBindings(
       trigger: binding.trigger,
       addedAt: binding.addedAt,
       requiresTrigger: binding.requiresTrigger,
-      isMain: binding.isMain,
       model: binding.model,
       conversation,
     });

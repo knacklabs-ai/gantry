@@ -38,6 +38,8 @@ export const MEMORY_IPC_AUTH_TOKEN =
   process.env.MYCLAW_MEMORY_IPC_AUTH_TOKEN || IPC_AUTH_TOKEN;
 export const IPC_RESPONSE_VERIFY_KEY =
   process.env.MYCLAW_IPC_RESPONSE_VERIFY_KEY || '';
+export const IPC_RESPONSE_KEY_ID =
+  process.env.MYCLAW_IPC_RESPONSE_KEY_ID || '';
 
 export const chatJid = process.env.MYCLAW_CHAT_JID!;
 export const groupFolder = process.env.MYCLAW_GROUP_FOLDER!;

@@ -234,7 +234,6 @@ export async function runJob(
     error = err instanceof Error ? err.message : String(err);
   }
 
-  const isMain = execution.group.isMain === true;
   const linkedSessions = Array.from(new Set(currentJob.linked_sessions));
   const shouldDeliverToChat = !currentJob.silent && linkedSessions.length > 0;
   const streamGeneration = nextJobStreamingGeneration();
@@ -404,7 +403,6 @@ export async function runJob(
             persona: execution.group.agentConfig?.persona,
             memoryUserId,
             memoryDefaultScope,
-            isMain,
             isScheduledJob: true,
             jobModelUseKind,
             assistantName: ASSISTANT_NAME,

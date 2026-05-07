@@ -9,7 +9,6 @@ describe('tool capability safety', () => {
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:team',
       groupFolder: 'telegram_team',
-      isMain: false,
     });
 
     expect(profile.allowedTools).toContain(

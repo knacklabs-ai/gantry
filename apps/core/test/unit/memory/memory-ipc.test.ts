@@ -3,6 +3,10 @@ import os from 'os';
 import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createIpcResponseSigningKeyPair,
+  verifyIpcResponsePayload,
+} from '@core/infrastructure/ipc/response-signing.js';
 
 const ORIGINAL_ENV = { ...process.env };
 const tempRoots: string[] = [];
@@ -592,7 +596,7 @@ describe('processMemoryRequest additional branches', () => {
     );
   });
 
-  it('handles memory_consolidate action (non-main)', async () => {
+  it('handles memory_consolidate action from a conversation-scoped route', async () => {
     vi.resetModules();
     const consolidateGroupMemory = vi.fn().mockResolvedValue({ merged: 3 });
     vi.doMock('@core/memory/app-memory-service.js', () => ({
@@ -607,7 +611,7 @@ describe('processMemoryRequest additional branches', () => {
         payload: { group_folder: 'other-group' },
       },
       'team',
-      false, // non-main: should ignore requested group_folder
+      false, // conversation-scoped: should ignore requested group_folder
     );
 
     expect(response.ok).toBe(true);
@@ -617,7 +621,7 @@ describe('processMemoryRequest additional branches', () => {
         merged: 3,
       },
     );
-    // non-main agents cannot override groupFolder
+    // conversation-scoped agents cannot override groupFolder
     expect(consolidateGroupMemory).toHaveBeenCalledWith(
       expect.objectContaining({
         appId: 'default',
@@ -655,7 +659,7 @@ describe('processMemoryRequest additional branches', () => {
     );
   });
 
-  it('handles memory_dream action (non-main)', async () => {
+  it('handles memory_dream action from a conversation-scoped route', async () => {
     vi.resetModules();
     const runDreamingSweep = vi
       .fn()
@@ -681,7 +685,7 @@ describe('processMemoryRequest additional branches', () => {
       promoted: 2,
       decayed: 1,
     });
-    // non-main: ignores requested group_folder
+    // conversation-scoped: ignores requested group_folder
     expect(runDreamingSweep).toHaveBeenCalledWith(
       expect.objectContaining({
         appId: 'default',
@@ -1109,6 +1113,7 @@ describe('writeMemoryResponse', () => {
 
     const { writeMemoryResponse } = await import('@core/memory/memory-ipc.js');
 
+    const keys = createIpcResponseSigningKeyPair();
     const response = {
       ok: true as const,
       requestId: 'req-42',
@@ -1116,14 +1121,17 @@ describe('writeMemoryResponse', () => {
       data: { results: [1, 2, 3] },
     };
 
-    writeMemoryResponse('team', 'req-42', response);
+    writeMemoryResponse('team', 'req-42', response, keys.privateKeyPem);
 
     const responsesDir = path.join(tmpDir, 'memory-responses');
     const filePath = path.join(responsesDir, 'req-42.json');
     expect(fs.existsSync(filePath)).toBe(true);
 
     const written = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    expect(written).toEqual(response);
+    expect(written).toMatchObject(response);
+    expect(
+      verifyIpcResponsePayload(keys.publicKeyPem, response, written.signature),
+    ).toBe(true);
     expect(fileMode(responsesDir)).toBe(0o700);
     expect(fileMode(filePath)).toBe(0o600);
 
@@ -1147,11 +1155,12 @@ describe('writeMemoryResponse', () => {
     const responsesDir = path.join(tmpDir, 'memory-responses');
     expect(fs.existsSync(responsesDir)).toBe(false);
 
+    const keys = createIpcResponseSigningKeyPair();
     writeMemoryResponse('team', 'req-mkdir', {
       ok: false,
       requestId: 'req-mkdir',
       error: 'boom',
-    });
+    }, keys.privateKeyPem);
 
     expect(fs.existsSync(responsesDir)).toBe(true);
     const written = JSON.parse(

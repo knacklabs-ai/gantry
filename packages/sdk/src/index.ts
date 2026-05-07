@@ -35,8 +35,6 @@ import type {
 export type {
   AgentAdminBoundConversation,
   AgentAdminResponse,
-  AgentDmAccessEntry,
-  AgentDmAccessResponse,
 } from './agents.js';
 export type {
   CreateJobInput,

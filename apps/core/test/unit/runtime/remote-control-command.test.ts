@@ -60,10 +60,9 @@ describe('handleRemoteControlCommand', () => {
     };
   }
 
-  it('rejects commands from non-main groups', async () => {
+  it('rejects commands from conversation-scoped groups', async () => {
     const channel = makeChannel();
-    const getGroup = () =>
-      ({ isMain: false }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => channel;
 
     await handleRemoteControlCommand(
@@ -96,8 +95,7 @@ describe('handleRemoteControlCommand', () => {
   });
 
   it('does nothing if channel is not found', async () => {
-    const getGroup = () =>
-      ({ isMain: true }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => undefined;
 
     await handleRemoteControlCommand(
@@ -113,8 +111,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('rejects unauthorized sender in main group', async () => {
     const channel = makeChannel();
-    const getGroup = () =>
-      ({ isMain: true }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => channel;
 
     await handleRemoteControlCommand(
@@ -131,8 +128,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('sends URL on successful /remote-control start', async () => {
     const channel = makeChannel();
-    const getGroup = () =>
-      ({ isMain: true }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => channel;
 
     const { startRemoteControl } =
@@ -177,8 +173,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('sends error message when /remote-control start fails', async () => {
     const channel = makeChannel();
-    const getGroup = () =>
-      ({ isMain: true }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => channel;
 
     const mockStart = vi
@@ -211,8 +206,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('sends success message on /remote-control-end', async () => {
     const channel = makeChannel();
-    const getGroup = () =>
-      ({ isMain: true }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => channel;
 
     const mockStop = vi.fn().mockReturnValue({ ok: true });
@@ -241,8 +235,7 @@ describe('handleRemoteControlCommand', () => {
 
   it('sends error message when /remote-control-end fails', async () => {
     const channel = makeChannel();
-    const getGroup = () =>
-      ({ isMain: true }) as unknown as ConversationRoute | undefined;
+    const getGroup = () => ({}) as unknown as ConversationRoute | undefined;
     const findChannel = () => channel;
 
     const mockStop = vi

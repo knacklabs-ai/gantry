@@ -51,9 +51,9 @@ function protectTerminalResponseFile(filePath: string): void {
 function withSignature(
   privateKeyPem: string | undefined,
   payload: Record<string, unknown>,
-): Record<string, unknown> {
+): Record<string, unknown> | null {
   const signature = signIpcResponsePayload(privateKeyPem, payload);
-  if (!signature) return payload;
+  if (!signature) return null;
   return { ...payload, signature };
 }
 
@@ -91,6 +91,7 @@ export function writePermissionIpcResponse(
       ? { decisionClassification: decision.decisionClassification }
       : {}),
   });
+  if (!payload) return;
   writePrivateFileSync(tmpPath, JSON.stringify(payload, null, 2));
   if (fs.existsSync(responsePath)) {
     fs.rmSync(tmpPath, { force: true });
@@ -132,6 +133,7 @@ export function writeUserQuestionIpcResponse(
     answers: safeAnswers,
     ...(response.answeredBy ? { answeredBy: response.answeredBy } : {}),
   });
+  if (!payload) return;
   writePrivateFileSync(tmpPath, JSON.stringify(payload, null, 2));
   if (fs.existsSync(responsePath)) {
     fs.rmSync(tmpPath, { force: true });

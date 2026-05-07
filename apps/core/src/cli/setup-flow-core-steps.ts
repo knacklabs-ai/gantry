@@ -369,14 +369,14 @@ export async function runChannelStep(draft: SetupDraft): Promise<FlowAction> {
 
 export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
   const agentName = await p.text({
-    message: 'Main agent name (/back, /resume, /cancel)',
-    defaultValue: draft.agentName || 'Main Agent',
+    message: 'Default agent name (/back, /resume, /cancel)',
+    defaultValue: draft.agentName || 'Default Agent',
     validate: (input) => {
       const trimmed = String(input ?? '').trim();
       if (isInputFlowControl(trimmed)) return undefined;
-      if (!trimmed) return 'Main agent name is required.';
+      if (!trimmed) return 'Default agent name is required.';
       if (trimmed.length > 80) {
-        return 'Main agent name must be 80 characters or fewer.';
+        return 'Default agent name must be 80 characters or fewer.';
       }
       return undefined;
     },

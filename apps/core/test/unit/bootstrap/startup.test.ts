@@ -20,13 +20,12 @@ function makeApp(overrides: Partial<RuntimeApp> = {}): RuntimeApp {
     clearSessionForChatJid: vi.fn(async () => {}),
     processGroupMessages: vi.fn(),
     getConversationRoutes: vi.fn(() => ({
-      'app:main': {
-        name: 'Main Agent',
+      'app:default': {
+        name: 'Default Agent',
         folder: 'main_agent',
-        trigger: '@Main Agent',
+        trigger: '@Default Agent',
         added_at: '2026-01-01T00:00:00.000Z',
         requiresTrigger: false,
-        isMain: true,
       },
     })),
     getLastTimestamp: vi.fn(() => ''),
@@ -133,7 +132,7 @@ describe('runStartup', () => {
     expect(warn).toHaveBeenCalledOnce();
   });
 
-  it('creates an internal main agent for a fresh runtime with no registered groups', async () => {
+  it('creates an internal default agent for a fresh runtime with no registered groups', async () => {
     const groups: Record<string, any> = {};
     const app = makeApp({
       getConversationRoutes: vi.fn(() => groups),
@@ -150,7 +149,7 @@ describe('runStartup', () => {
         () =>
           ({
             providers: {},
-            agent: { name: 'Main Agent' },
+            agent: { name: 'Default Agent' },
             storage: {
               postgres: { urlEnv: 'MYCLAW_DATABASE_URL', schema: 'myclaw' },
             },
@@ -162,13 +161,12 @@ describe('runStartup', () => {
     });
 
     expect(app.registerGroup).toHaveBeenCalledWith(
-      'app:main',
+      'app:default',
       expect.objectContaining({
-        name: 'Main Agent',
+        name: 'Default Agent',
         folder: 'main_agent',
-        trigger: '@Main Agent',
+        trigger: '@Default Agent',
         requiresTrigger: false,
-        isMain: true,
       }),
     );
   });
@@ -216,7 +214,6 @@ describe('runStartup', () => {
                 trigger: '@agent',
                 addedAt: '2026-01-01T00:00:00.000Z',
                 requiresTrigger: true,
-                isMain: true,
                 memoryScope: 'conversation',
               },
             },
@@ -232,13 +229,12 @@ describe('runStartup', () => {
     });
 
     expect(app.registerGroup).toHaveBeenCalledWith(
-      'app:main',
+      'app:default',
       expect.objectContaining({
         name: 'Ravi Agent',
         folder: 'main_agent',
         trigger: '@Ravi Agent',
         requiresTrigger: false,
-        isMain: true,
       }),
     );
   });

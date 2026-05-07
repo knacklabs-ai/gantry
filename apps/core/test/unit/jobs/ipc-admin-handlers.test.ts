@@ -1,0 +1,187 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const runtimeHomes: string[] = [];
+
+async function loadAdminHandlers(runtimeHome: string) {
+  vi.resetModules();
+  vi.stubEnv('MYCLAW_HOME', runtimeHome);
+  const syncRuntimeSettingsFromProjection = vi.fn(async () => undefined);
+  vi.doMock('@core/config/index.js', async (importOriginal) => {
+    const actual =
+      await importOriginal<typeof import('@core/config/index.js')>();
+    return { ...actual, syncRuntimeSettingsFromProjection };
+  });
+  vi.doMock('@core/adapters/storage/postgres/runtime-store.js', () => ({
+    getRuntimeRepositories: vi.fn(() => ({})),
+    getRuntimeStorage: vi.fn(() => ({ repositories: {} })),
+  }));
+  const ipcAuth = await import('@core/runtime/ipc-auth.js');
+  const handlers = await import('@core/jobs/ipc-admin-handlers.js');
+  return {
+    ...handlers,
+    syncRuntimeSettingsFromProjection,
+    taskData: (
+      taskId: string,
+      extra: Record<string, unknown> = {},
+      threadId?: string,
+    ) => {
+      const envelope = ipcAuth.createIpcAuthEnvelope('main_agent', threadId);
+      return {
+        taskId,
+        ...(threadId ? { authThreadId: threadId } : {}),
+        responseKeyId: envelope.responseKeyId,
+        ...extra,
+      };
+    },
+  };
+}
+
+function readResponse(runtimeHome: string, taskId: string) {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(
+        runtimeHome,
+        'data',
+        'ipc',
+        'main_agent',
+        'task-responses',
+        `task-${taskId}.json`,
+      ),
+      'utf-8',
+    ),
+  );
+}
+
+function depsWithAdminTools(
+  toolNames: string[],
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    sendMessage: vi.fn(async () => undefined),
+    registerGroup: vi.fn(async () => undefined),
+    syncGroups: vi.fn(async () => undefined),
+    getAvailableGroups: vi.fn(async () => []),
+    writeGroupsSnapshot: vi.fn(async () => undefined),
+    onSchedulerChanged: vi.fn(() => undefined),
+    requestUserAnswer: vi.fn(async () => ({ response: '' })),
+    opsRepository: {},
+    ...extra,
+    getToolRepository: () => ({
+      listAgentToolBindings: async () =>
+        toolNames.map((toolName) => ({
+          status: 'active',
+          toolId: `tool:${toolName}`,
+        })),
+    }),
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.doUnmock('@core/config/index.js');
+  vi.doUnmock('@core/adapters/storage/postgres/runtime-store.js');
+  for (const runtimeHome of runtimeHomes.splice(0)) {
+    fs.rmSync(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+describe('admin IPC handlers', () => {
+  it('requires same-channel approval and syncs settings after register_agent', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'myclaw-admin-ipc-'),
+    );
+    runtimeHomes.push(runtimeHome);
+    const { adminTaskHandlers, syncRuntimeSettingsFromProjection, taskData } =
+      await loadAdminHandlers(runtimeHome);
+    const registerGroup = vi.fn(async () => undefined);
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'U_APPROVER',
+    }));
+
+    await adminTaskHandlers.register_agent({
+      data: taskData('register-agent', {
+        chatJid: 'sl:C123',
+        jid: 'sl:C123',
+        name: 'Ops',
+        folder: 'ops_agent',
+        trigger: '@Ops',
+        requiresTrigger: true,
+        payload: { reason: 'bind ops agent' },
+      }) as never,
+      sourceAgentFolder: 'main_agent',
+      deps: depsWithAdminTools(['mcp__myclaw__register_agent'], {
+        registerGroup,
+        requestPermissionApproval,
+      }) as never,
+      conversationBindings: {},
+      sourceAgentFolderJids: ['sl:C123'],
+    });
+
+    expect(requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionPolicy: 'same_channel',
+        targetJid: 'sl:C123',
+        toolName: 'register_agent',
+      }),
+    );
+    expect(registerGroup).toHaveBeenCalledWith(
+      'sl:C123',
+      expect.objectContaining({
+        name: 'Ops',
+        folder: 'ops_agent',
+        trigger: '@Ops',
+      }),
+    );
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+    expect(readResponse(runtimeHome, 'register-agent')).toMatchObject({
+      ok: true,
+      message: 'Agent "Ops" registered.',
+    });
+  });
+
+  it('rejects register_agent when the requested jid is not the originating conversation', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'myclaw-admin-ipc-'),
+    );
+    runtimeHomes.push(runtimeHome);
+    const { adminTaskHandlers, syncRuntimeSettingsFromProjection, taskData } =
+      await loadAdminHandlers(runtimeHome);
+    const registerGroup = vi.fn(async () => undefined);
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'U_APPROVER',
+    }));
+
+    await adminTaskHandlers.register_agent({
+      data: taskData('register-other', {
+        chatJid: 'sl:C123',
+        targetJid: 'sl:C123',
+        jid: 'sl:C999',
+        name: 'Other',
+        folder: 'other_agent',
+        trigger: '@Other',
+      }) as never,
+      sourceAgentFolder: 'main_agent',
+      deps: depsWithAdminTools(['mcp__myclaw__register_agent'], {
+        registerGroup,
+        requestPermissionApproval,
+      }) as never,
+      conversationBindings: {},
+      sourceAgentFolderJids: ['sl:C123'],
+    });
+
+    expect(readResponse(runtimeHome, 'register-other')).toMatchObject({
+      ok: false,
+      code: 'forbidden',
+      error: 'Agent registration can only bind the originating conversation.',
+    });
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(registerGroup).not.toHaveBeenCalled();
+    expect(syncRuntimeSettingsFromProjection).not.toHaveBeenCalled();
+  });
+});

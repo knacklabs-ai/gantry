@@ -16,7 +16,6 @@ export interface AgentRunnerInput {
   persona?: AgentPersona;
   browserProfileName?: string;
   allowedTools?: string[];
-  isMain: boolean;
   isScheduledJob?: boolean;
   assistantName?: string;
   script?: string;

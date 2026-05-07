@@ -1,13 +1,9 @@
-import { createHash } from 'node:crypto';
-
 import type { ChannelAdapter } from '../../channels/channel-provider.js';
-import type { ConversationRoute, NewMessage } from '../../domain/types.js';
+import type { NewMessage } from '../../domain/types.js';
 import type {
   RuntimeChatMetadataRepository,
   RuntimeMessageRepository,
 } from '../../domain/repositories/ops-repo.js';
-import type { Agent } from '../../domain/agent/agent.js';
-import type { AppId } from '../../domain/app/app.js';
 import type { RuntimeApp } from './runtime-app.js';
 import type { AsyncTaskQueue } from './async-task-queue.js';
 import type { ChannelWiringDeps } from './channel-wiring-types.js';
@@ -21,23 +17,6 @@ interface ChannelPersistenceHandlerDeps {
   ops: () => ChannelPersistenceRepository;
   findBoundChannel: (jid: string) => ChannelAdapter | undefined;
   persistenceQueue: AsyncTaskQueue;
-  appId: AppId;
-  dmAccess?: {
-    resolveDmAgent(input: {
-      appId: AppId;
-      providerId: string;
-      externalUserId: string;
-    }): Promise<
-      | { status: 'none' }
-      | { status: 'single'; agent: Agent }
-      | { status: 'ambiguous'; agents: Agent[] }
-    >;
-  };
-  saveDmAgentConversationBinding?: (input: {
-    agent: Agent;
-    chatJid: string;
-    providerId: string;
-  }) => Promise<void>;
 }
 
 async function enqueueAndWait(
@@ -73,94 +52,33 @@ export function createChannelPersistenceHandlers({
   ops,
   findBoundChannel,
   persistenceQueue,
-  appId,
-  dmAccess,
-  saveDmAgentConversationBinding,
 }: ChannelPersistenceHandlerDeps) {
   const chatIsGroup = new Map<string, boolean>();
-  const chatProvider = new Map<string, string>();
 
-  const ensureDmAgentRegistration = async (
+  const ensureConfiguredConversationRoute = async (
     chatJid: string,
     msg: NewMessage,
   ): Promise<boolean> => {
     const groupsByChat = app.getConversationRoutes();
     const existingGroup = groupsByChat[chatJid];
-    if (msg.is_from_me || msg.is_bot_message) return Boolean(existingGroup);
     const isKnownDirect =
       chatIsGroup.get(chatJid) === false ||
-      existingGroup?.folder.startsWith('dm_') === true;
+      existingGroup?.conversationKind === 'dm';
     if (!isKnownDirect) return Boolean(existingGroup);
-
-    const providerId = providerIdForMessage(
-      chatJid,
-      msg,
-      chatProvider,
-      resolved.providerIds,
-    );
-    const externalUserId = msg.sender.trim();
-    if (!providerId || !externalUserId) return false;
-    if (!dmAccess || !saveDmAgentConversationBinding) return false;
-
-    const resolution = await dmAccess.resolveDmAgent({
-      appId,
-      providerId,
-      externalUserId,
-    });
-
-    if (resolution.status === 'none') {
-      resolved.logger.debug(
-        { chatJid, providerId, externalUserId },
-        'Dropping direct message without active agent DM access',
-      );
-      return false;
-    }
-    if (resolution.status === 'ambiguous') {
+    if (!existingGroup && !msg.is_from_me && !msg.is_bot_message) {
       resolved.logger.warn(
-        {
-          chatJid,
-          providerId,
-          externalUserId,
-          agentIds: resolution.agents.map((agent) => agent.id),
-        },
-        'Dropping direct message because DM access matches multiple agents',
-      );
-      return false;
-    }
-
-    const group = dmAgentGroup(providerId, resolution.agent, chatJid);
-    if (existingGroup?.folder === group.folder) return true;
-    if (existingGroup) {
-      resolved.logger.info(
-        {
-          chatJid,
-          providerId,
-          externalUserId,
-          previousFolder: existingGroup.folder,
-          nextFolder: group.folder,
-          agentId: resolution.agent.id,
-        },
-        'Refreshing direct conversation registration from agent DM access',
+        { chatJid, sender: msg.sender },
+        'Dropping direct message without configured conversation binding',
       );
     }
-    await saveDmAgentConversationBinding({
-      agent: resolution.agent,
-      chatJid,
-      providerId,
-    });
-    await app.registerGroup(chatJid, group);
-    resolved.logger.info(
-      { chatJid, providerId, externalUserId, agentId: resolution.agent.id },
-      'Registered direct conversation from agent DM access',
-    );
-    return true;
+    return Boolean(existingGroup);
   };
 
   return {
-    ensureMessageRoute: ensureDmAgentRegistration,
+    ensureMessageRoute: ensureConfiguredConversationRoute,
     onMessage: async (chatJid: string, msg: NewMessage) => {
       const trimmed = msg.content.trim();
-      const canRoute = await ensureDmAgentRegistration(chatJid, msg);
+      const canRoute = await ensureConfiguredConversationRoute(chatJid, msg);
       if (!canRoute) return;
       const groupsByChat = app.getConversationRoutes();
       if (!msg.is_from_me && !msg.is_bot_message && groupsByChat[chatJid]) {
@@ -238,8 +156,6 @@ export function createChannelPersistenceHandlers({
       isGroup?: boolean,
     ) => {
       if (isGroup !== undefined) chatIsGroup.set(chatJid, Boolean(isGroup));
-      const provider = channel?.trim().toLowerCase();
-      if (provider) chatProvider.set(chatJid, provider);
       const persistMetadata = async () => {
         try {
           await ops().storeChatMetadata(
@@ -265,58 +181,4 @@ export function createChannelPersistenceHandlers({
       );
     },
   };
-}
-
-function providerIdForMessage(
-  chatJid: string,
-  msg: NewMessage,
-  metadataProviders: ReadonlyMap<string, string>,
-  providers: ChannelWiringDeps['providerIds'],
-): string {
-  const explicit = msg.provider?.trim().toLowerCase();
-  if (explicit) return explicit;
-  const metadataProvider = metadataProviders.get(chatJid);
-  if (metadataProvider) return metadataProvider;
-  const provider = providers.find((candidate) =>
-    chatJid.startsWith(candidate.jidPrefix),
-  );
-  if (provider) return provider.id;
-  const separator = chatJid.indexOf(':');
-  if (separator > 0) return chatJid.slice(0, separator).trim().toLowerCase();
-  throw new Error(`Unable to resolve provider for chat JID: ${chatJid}`);
-}
-
-function dmAgentGroup(
-  providerId: string,
-  agent: Agent,
-  chatJid: string,
-): ConversationRoute {
-  return {
-    name: `${agent.name} DM`,
-    folder: agentDmFolder(providerId, agent.id, chatJid),
-    trigger: `@${agent.name}`,
-    added_at: new Date().toISOString(),
-    requiresTrigger: false,
-    isMain: false,
-    conversationKind: 'dm',
-  };
-}
-
-function agentDmFolder(
-  providerId: string,
-  agentId: string,
-  chatJid: string,
-): string {
-  const hash = createHash('sha256')
-    .update(`${providerId}:${agentId}:${chatJid}`)
-    .digest('hex')
-    .slice(0, 16);
-  return `dm_${safeIdPart(providerId)}_${hash}`;
-}
-
-function safeIdPart(value: string): string {
-  return value
-    .trim()
-    .replace(/[^a-zA-Z0-9._:@-]/g, '_')
-    .slice(0, 96);
 }

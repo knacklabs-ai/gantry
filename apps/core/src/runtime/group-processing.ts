@@ -98,7 +98,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       };
     },
   ): Promise<'success' | 'error'> {
-    const isMain = group.isMain === true;
     const sessionThreadId = options?.memoryContext?.threadId ?? null;
     const modelStatus = createRuntimeModelStatusAccess(
       group.folder,
@@ -232,7 +231,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
             ...(turnContext?.externalSessionId
               ? { sessionId: turnContext.externalSessionId }
               : {}),
-            isMain,
             assistantName: ASSISTANT_NAME,
             thinking: group.agentConfig?.thinking,
             memoryContextBlock: input.memoryContextBlock,
@@ -305,8 +303,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       return true;
     }
 
-    const isMainGroup = group.isMain === true;
-
     const scopedQueue = options.queued === true || queueThreadId !== undefined;
     const messageFilter = scopedQueue
       ? { threadId: queueThreadId ?? null }
@@ -367,12 +363,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const senderCommandPolicy = createSenderCommandPolicy({
       chatJid,
       group,
-      isMainGroup,
       triggerPattern: getTriggerPattern(group.trigger),
     });
     const cmdResult = await handleSessionCommand({
       missedMessages,
-      isMainGroup,
       groupName: group.name,
       triggerPattern: getTriggerPattern(group.trigger),
       timezone: TIMEZONE,
@@ -432,14 +426,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         saveProcedure: createSaveProcedureHandler({
           folder: group.folder,
           threadId: activeThreadId,
-          isAdminWrite: isMainGroup,
+          isAdminWrite: true,
         }),
         ...senderCommandPolicy,
       },
     });
     if (cmdResult.handled) return cmdResult.success;
 
-    if (!isMainGroup && group.requiresTrigger !== false) {
+    if (group.requiresTrigger !== false) {
       const triggerPattern = getTriggerPattern(group.trigger);
       const allowlistCfg = loadSenderAllowlist();
       const hasTrigger = missedMessages.some(

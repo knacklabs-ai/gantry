@@ -56,7 +56,6 @@ POST   /v1/agents
 GET    /v1/agents/:agentId
 PATCH  /v1/agents/:agentId
 GET    /v1/agents/:agentId/admin
-PUT    /v1/agents/:agentId/dm-access
 GET    /v1/agents/:agentId/capabilities
 PUT    /v1/agents/:agentId/capabilities
 
@@ -79,12 +78,11 @@ DELETE /v1/agents/:agentId/conversation-bindings/:conversationId
 ```
 
 Agents own exactly `selectedToolIds`, `selectedSkillIds`, and
-`selectedMcpServerIds`, plus provider-neutral DM access and one optional DM
-approval admin per provider. Conversations own bound agents, sessions, and control
-approvers. DM access, DM admins, and control approvers are separate; DM admins
-approve only direct/private DM permission prompts for that agent/provider, while
-control approvers must be members of the Conversation. There is no conversation-scoped
-tool selection field, and Browser is one normal catalog tool.
+`selectedMcpServerIds`. Conversations own sender policy, trigger policy, bound
+agents, sessions, and control approvers. Control approvers must be members of
+the Conversation and are used for both direct/private and group/channel
+approval flows. There is no conversation-scoped tool selection field, and
+Browser is one normal catalog tool.
 Agent-requested changes use MyClaw MCP request tools, not public API request
 approval endpoints.
 
@@ -418,7 +416,6 @@ POST   /v1/agents                                  agents:admin
 GET    /v1/agents/:id                              agents:admin
 PATCH  /v1/agents/:id                              agents:admin
 GET    /v1/agents/:id/admin                        agents:admin
-PUT    /v1/agents/:id/dm-access                    agents:admin
 GET    /v1/agents/:id/capabilities                 agents:admin
 PUT    /v1/agents/:id/capabilities                 agents:admin
 
@@ -446,23 +443,20 @@ DELETE /v1/agents/:id/conversation-bindings/:conversationId agents:admin
 ```
 
 `GET /v1/agents/:id/admin` returns Agent admin state, including
-provider-neutral `dmAccess` and read-only `boundConversations` summaries with
+provider-neutral `boundConversationPolicies` and read-only `boundConversations` summaries with
 the provider, conversation kind, display name, and current conversation
-approver user ids. `PUT /v1/agents/:id/dm-access` replaces DM access with
-`{ "entries": [{ "provider": "slack", "userIds": ["U123"], "adminUserId": "UADMIN" }] }`.
-`adminUserId` is optional and names the single provider-specific user allowed
-to approve permission prompts for that agent's direct/private DM sessions.
-For the same agent in Slack and Teams, configure Slack and Teams entries
-separately; MyClaw does not infer a shared person identity across providers.
+approver user ids. Direct/private and group/channel approvals are configured
+through the conversation approver endpoints below; agents do not expose a
+separate direct-message policy API.
 
 `GET /v1/conversations/:id/approvers` returns the Conversation approver list.
 `PUT /v1/conversations/:id/approvers` replaces it with
 `{ "userIds": ["..."] }` and fails when any user cannot be verified as a
 member of the Conversation. Slack, Telegram, Teams, and App/Web conversations
 use the same API shape; Teams validation uses Microsoft Graph membership for
-chat or team-channel members. Agent DM access remains independent and may
-include non-members; those users are not conversation approvers unless they are
-also listed on the conversation. A Slack approver can approve only Slack-origin
+chat or team-channel members. Conversation sender policy remains independent
+from control approvers; allowed senders are not conversation approvers unless
+they are also listed on the conversation. A Slack approver can approve only Slack-origin
 conversation requests; the corresponding Teams user id must be listed on the
 Teams conversation to approve Teams-origin requests.
 
@@ -485,7 +479,7 @@ client.agents.conversationBindings.enable(agentId, conversationId, {
   triggerMode?, // always | mention | keyword | manual | webhook
   triggerPattern?,
   requiresTrigger?,
-  isAdminBinding?,
+  requiresTrigger?,
   memoryScope?, // user | conversation | thread | agent | app
   memorySubject?,
   workspaceSnapshotId?,

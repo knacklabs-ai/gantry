@@ -8,7 +8,6 @@ export interface GroupAddOptions {
   folder?: string;
   trigger?: string;
   requiresTrigger?: boolean;
-  isMain?: boolean;
   sendTestMessage: boolean;
 }
 
@@ -108,15 +107,6 @@ export function parseGroupAddArgs(
     }
     if (arg.startsWith('--trigger=')) {
       options.trigger = arg.slice('--trigger='.length);
-      continue;
-    }
-
-    if (arg === '--main') {
-      options.isMain = true;
-      continue;
-    }
-    if (arg === '--no-main') {
-      options.isMain = false;
       continue;
     }
 

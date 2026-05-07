@@ -12,20 +12,10 @@ import type {
   ProviderId,
 } from '../../domain/provider/provider.js';
 import { replaceDesiredStateCapabilities } from './desired-state-capability-reconcile.js';
-import {
-  configuredBindingId,
-  configuredConversationId,
-  dedupeConfiguredConversation,
-  mergeDmAccess,
-  stableBindingId,
-  stableSettingsId,
-  readableActiveCapabilities,
-} from './desired-state-export-helpers.js';
+import { exportCurrentDesiredState } from './desired-state-current-export.js';
 import {
   configuredConversationKind,
-  defaultRuntimeSecretRefs,
   jidForConfiguredConversation,
-  providerInfoForJid,
   stripProviderPrefix,
 } from './desired-state-provider-conversations.js';
 import {
@@ -34,13 +24,10 @@ import {
   configuredRoutingBindingsByAgent,
   errorMessage,
   folderForAgentId,
-  groupByAgentId,
-  groupByConversationId,
   hasAnyCapability,
   loadMcpServersById,
   loadSkillsById,
   memorySubjectForConfiguredBinding,
-  storedConversationKey,
 } from './desired-state-service-helpers.js';
 export {
   agentIdForFolder,
@@ -61,12 +48,9 @@ import type {
   SettingsReconcileResult,
 } from './desired-state-service-types.js';
 import type {
-  RuntimeConfiguredAgent,
   RuntimeConfiguredAgentCapabilities,
-  RuntimeConfiguredBinding,
   RuntimeConfiguredConversation,
   RuntimeProviderConnectionSettings,
-  RuntimeProviderSettings,
   RuntimeSettings,
 } from './runtime-settings-types.js';
 import { resolveAgentToolReference } from '../../domain/tools/agent-tool-catalog-references.js';
@@ -81,248 +65,12 @@ export class SettingsDesiredStateService {
   }
 
   async exportCurrent(settings: RuntimeSettings): Promise<RuntimeSettings> {
-    const groups = await this.deps.ops.getAllConversationRoutes();
-    const agents: Record<string, RuntimeConfiguredAgent> = {
-      ...settings.agents,
-    };
-    const providers: Record<string, RuntimeProviderSettings> = {
-      ...settings.providers,
-    };
-    const providerConnections: Record<
-      string,
-      RuntimeProviderConnectionSettings
-    > = {
-      ...settings.providerConnections,
-    };
-    const conversations: Record<string, RuntimeConfiguredConversation> = {
-      ...settings.conversations,
-    };
-    const bindings: Record<string, RuntimeConfiguredBinding> = {
-      ...settings.bindings,
-    };
-
-    const groupEntries = Object.entries(groups);
-    const agentIds = [
-      ...new Set(
-        groupEntries.map(([, group]) => agentIdForFolder(group.folder)),
-      ),
-    ];
-    const [
-      dmAccessRows,
-      dmApproverRows,
-      toolBindingRows,
-      skillBindingRows,
-      mcpBindingRows,
-      toolCatalogRows,
-      storedConversations,
-    ] = await Promise.all([
-      this.deps.repositories.agents.listAgentDmAccessForAgents({
-        appId: this.appId,
-        agentIds,
-      }),
-      this.deps.repositories.agents.listAgentDmApproversForAgents({
-        appId: this.appId,
-        agentIds,
-      }),
-      this.deps.repositories.tools.listAgentToolBindingsForAgents({
-        appId: this.appId,
-        agentIds,
-      }),
-      this.deps.repositories.skills.listAgentSkillBindingsForAgents({
-        appId: this.appId,
-        agentIds,
-      }),
-      this.deps.repositories.mcpServers.listAgentBindingsForAgents({
-        appId: this.appId,
-        agentIds,
-        limitPerAgent: 500,
-      }),
-      this.deps.repositories.tools.listTools({
-        appId: this.appId,
-        statuses: ['active'],
-      }),
-      this.deps.repositories.conversations
-        ? this.deps.repositories.conversations.listConversations({
-            appId: this.appId,
-          })
-        : Promise.resolve([]),
-    ]);
-    const dmAccessByAgent = groupByAgentId(dmAccessRows);
-    const dmApproversByAgent = groupByAgentId(dmApproverRows);
-    const toolBindingsByAgent = groupByAgentId(toolBindingRows);
-    const skillBindingsByAgent = groupByAgentId(skillBindingRows);
-    const mcpBindingsByAgent = groupByAgentId(mcpBindingRows);
-    const toolCatalogById = new Map(
-      toolCatalogRows.map((tool) => [tool.id, tool]),
-    );
-    const storedConversationsByExternal = new Map<string, Conversation>();
-    for (const conversation of storedConversations) {
-      const externalId = conversation.externalRef?.value?.trim();
-      if (!externalId) continue;
-      storedConversationsByExternal.set(
-        storedConversationKey(conversation.providerConnectionId, externalId),
-        conversation,
-      );
-    }
-    const storedApproversByConversation = groupByConversationId(
-      this.deps.repositories.conversations
-        ? await this.deps.repositories.conversations.listConversationApproversForConversations(
-            storedConversations.map((conversation) => conversation.id),
-          )
-        : [],
-    );
-
-    const exportedGroups = groupEntries.map(([jid, group]) => {
-      const agentId = agentIdForFolder(group.folder);
-      return {
-        jid,
-        group,
-        dmAccess: dmAccessByAgent.get(agentId) ?? [],
-        dmApprovers: dmApproversByAgent.get(agentId) ?? [],
-        toolBindings: toolBindingsByAgent.get(agentId) ?? [],
-        skillBindings: skillBindingsByAgent.get(agentId) ?? [],
-        mcpBindings: mcpBindingsByAgent.get(agentId) ?? [],
-      };
+    return exportCurrentDesiredState({
+      deps: this.deps,
+      appId: this.appId,
+      settings,
     });
-
-    for (const exported of exportedGroups) {
-      const {
-        jid,
-        group,
-        dmAccess,
-        dmApprovers,
-        toolBindings,
-        skillBindings,
-        mcpBindings,
-      } = exported;
-      const folder = group.folder;
-      const existing = agents[folder];
-      const provider = providerInfoForJid(jid);
-      const providerId = provider?.id ?? 'app';
-      const connectionId =
-        providers[providerId]?.defaultConnection ?? `${providerId}_default`;
-      const externalId = stripProviderPrefix(jid);
-      const kind = provider?.isGroupJid(jid) ? 'group' : 'dm';
-      providers[providerId] = {
-        enabled: true,
-        defaultConnection: connectionId,
-      };
-      providerConnections[connectionId] ??= {
-        provider: providerId,
-        label: provider?.label ?? providerId,
-        runtimeSecretRefs: defaultRuntimeSecretRefs(providerId),
-      };
-      const conversationId =
-        configuredConversationId({
-          providerConnectionId: connectionId,
-          externalId,
-          conversations,
-        }) ?? stableSettingsId(`${folder}_${providerId}`, conversations);
-      const storedConversation =
-        storedConversationsByExternal.get(
-          storedConversationKey(connectionId, externalId),
-        ) ?? null;
-      const storedApprovers =
-        kind === 'dm' || !storedConversation
-          ? []
-          : (
-              storedApproversByConversation.get(storedConversation.id) ?? []
-            ).map((approver) => approver.externalUserId);
-      const existingConversation = conversations[conversationId];
-      const controlApprovers =
-        kind === 'dm'
-          ? []
-          : existingConversation?.controlApprovers.length
-            ? existingConversation.controlApprovers
-            : storedApprovers;
-      conversations[conversationId] = {
-        providerConnection: connectionId,
-        externalId,
-        kind,
-        displayName: existingConversation?.displayName ?? group.name,
-        senderPolicy: existingConversation?.senderPolicy ?? {
-          allow: '*',
-          mode: 'trigger',
-        },
-        controlApprovers: [...new Set(controlApprovers)].sort((a, b) =>
-          a.localeCompare(b),
-        ),
-      };
-      dedupeConfiguredConversation({
-        canonicalId: conversationId,
-        providerConnectionId: connectionId,
-        externalId,
-        conversations,
-        bindings,
-      });
-      const desiredBindingId =
-        configuredBindingId({
-          agent: folder,
-          conversationId,
-          bindings,
-        }) ?? stableSettingsId(`${folder}_${conversationId}`, bindings);
-      bindings[desiredBindingId] = {
-        agent: folder,
-        conversation: conversationId,
-        trigger: group.trigger,
-        addedAt: group.added_at,
-        requiresTrigger: group.requiresTrigger !== false,
-        isMain: group.isMain === true,
-        memoryScope: 'conversation',
-        model: group.agentConfig?.model,
-      };
-      const bindingId = stableBindingId(jid, existing?.bindings ?? {});
-      agents[folder] = {
-        name: existing?.name ?? group.name,
-        folder,
-        persona: existing?.persona ?? group.agentConfig?.persona ?? 'developer',
-        model: existing?.model ?? group.agentConfig?.model,
-        oneTimeJobDefaultModel: existing?.oneTimeJobDefaultModel,
-        recurringJobDefaultModel: existing?.recurringJobDefaultModel,
-        bindings: {
-          ...(existing?.bindings ?? {}),
-          [bindingId]: {
-            jid,
-            name: group.name,
-            trigger: group.trigger,
-            addedAt: group.added_at,
-            requiresTrigger: group.requiresTrigger !== false,
-            isMain: group.isMain === true,
-            model: group.agentConfig?.model,
-          },
-        },
-        dmAccess: mergeDmAccess(
-          existing?.dmAccess ?? [],
-          dmAccess.map((entry) => ({
-            provider: entry.providerId,
-            externalUserId: entry.externalUserId,
-          })),
-          dmApprovers.map((entry) => ({
-            provider: entry.providerId,
-            externalUserId: entry.externalUserId,
-          })),
-        ),
-        capabilities:
-          existing?.capabilities ??
-          readableActiveCapabilities(
-            toolBindings,
-            skillBindings,
-            mcpBindings,
-            toolCatalogById,
-          ),
-      };
-    }
-
-    return {
-      ...settings,
-      providers,
-      providerConnections,
-      conversations,
-      bindings,
-      agents,
-    };
   }
-
   async drift(
     settings: RuntimeSettings,
   ): Promise<SettingsDesiredStateDriftReport> {
@@ -381,7 +129,6 @@ export class SettingsDesiredStateService {
           trigger: binding.trigger,
           added_at: binding.addedAt,
           requiresTrigger: binding.requiresTrigger,
-          isMain: binding.isMain,
           conversationKind:
             conversation?.kind === 'dm' || conversation?.kind === 'direct'
               ? 'dm'
@@ -394,40 +141,11 @@ export class SettingsDesiredStateService {
         applied.push(`binding:${binding.jid}`);
       }
 
-      if (settings.desiredState.authoritative || agent.dmAccess.length > 0) {
-        await this.deps.repositories.agents.replaceAgentDmAccessPolicy({
-          appId: this.appId,
-          agentId,
-          accessEntries: agent.dmAccess.flatMap((entry) =>
-            entry.userIds.map((externalUserId) => ({
-              providerId: entry.provider,
-              externalUserId,
-            })),
-          ),
-          approverEntries: agent.dmAccess.flatMap((entry) =>
-            entry.adminUserId
-              ? [
-                  {
-                    providerId: entry.provider,
-                    externalUserId: entry.adminUserId,
-                  },
-                ]
-              : [],
-          ),
-          updatedAt: now,
-        });
-        applied.push(`dm_access:${folder}`);
-      } else {
-        skipped.push(`dm_access:${folder}:not-authoritative-empty`);
-      }
-
       if (
         settings.desiredState.authoritative ||
         hasAnyCapability(agent.capabilities)
       ) {
-        await this.replaceCapabilities(agentId, agent.capabilities, now, {
-          preserveOpaqueSkillBindings: !settings.desiredState.authoritative,
-        });
+        await this.replaceCapabilities(agentId, agent.capabilities, now);
         applied.push(`capabilities:${folder}`);
       } else {
         skipped.push(`capabilities:${folder}:not-authoritative-empty`);
@@ -496,19 +214,11 @@ export class SettingsDesiredStateService {
           agentId: agent.id,
           updatedAt: now,
         });
-        await this.deps.repositories.agents.replaceAgentDmAccessPolicy({
-          appId: this.appId,
-          agentId: agent.id,
-          accessEntries: [],
-          approverEntries: [],
-          updatedAt: now,
-        });
-        await this.replaceCapabilities(
-          agent.id,
-          { toolIds: [], skillIds: [], mcpServerIds: [] },
-          now,
-          { preserveOpaqueSkillBindings: false },
-        );
+        await this.replaceCapabilities(agent.id, {
+          toolIds: [],
+          skillIds: [],
+          mcpServerIds: [],
+        }, now);
         applied.push(`authoritative:disabled_absent_agent:${folder}`);
       }
     }
@@ -636,7 +346,6 @@ export class SettingsDesiredStateService {
         triggerMode: binding.requiresTrigger === false ? 'always' : 'keyword',
         triggerPattern: binding.trigger,
         requiresTrigger: binding.requiresTrigger,
-        isAdminBinding: binding.isMain,
         memoryScope: binding.memoryScope,
         memorySubject: memorySubjectForConfiguredBinding({
           appId: this.appId,
@@ -659,11 +368,6 @@ export class SettingsDesiredStateService {
   }): Promise<void> {
     const conversations = this.deps.repositories.conversations;
     if (!conversations) return;
-    if (input.conversation.kind === 'direct') {
-      throw new Error(
-        'Conversation approvers are not supported for direct conversations; use the agent DM admin for direct/private prompts',
-      );
-    }
     const userIds = normalizeUserIds(input.userIds);
     const invalidShape = userIds.filter((id) => !isValidExternalUserId(id));
     if (invalidShape.length > 0) {
@@ -780,7 +484,6 @@ export class SettingsDesiredStateService {
     agentId: AgentId,
     capabilities: RuntimeConfiguredAgentCapabilities,
     now: string,
-    options: { preserveOpaqueSkillBindings?: boolean } = {},
   ): Promise<void> {
     await replaceDesiredStateCapabilities({
       appId: this.appId,
@@ -788,7 +491,6 @@ export class SettingsDesiredStateService {
       capabilities,
       repositories: this.deps.repositories,
       now,
-      preserveOpaqueSkillBindings: options.preserveOpaqueSkillBindings,
     });
   }
 }

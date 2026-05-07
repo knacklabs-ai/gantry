@@ -179,7 +179,7 @@ describe('resolveClaudeAuthState', () => {
       await import('@core/config/index.js');
 
     expect(getPublicRuntimeSettings()).toMatchObject({
-      agent: { name: 'Main Agent', defaultModel: '' },
+      agent: { name: 'Default Agent', defaultModel: '' },
       memory: { enabled: true, dreaming: { enabled: false } },
     });
 
@@ -232,7 +232,7 @@ describe('resolveClaudeAuthState', () => {
     const { updatePublicRuntimeSettings } =
       await import('@core/config/index.js');
     const result = updatePublicRuntimeSettings({
-      agent: { name: 'Main Agent', defaultModel: '' },
+      agent: { name: 'Default Agent', defaultModel: '' },
       memory: { enabled: true, dreaming: { enabled: false } },
     });
 

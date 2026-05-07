@@ -175,13 +175,11 @@ describe('host child-process runtime smoke', () => {
         folder: 'main',
         trigger: 'Andy',
         added_at: new Date().toISOString(),
-        isMain: true,
       },
       {
         prompt: 'real child smoke prompt',
         groupFolder: 'main',
         chatJid: 'tg:main',
-        isMain: true,
         memoryContextBlock: 'host smoke memory context',
       },
       onProcess,

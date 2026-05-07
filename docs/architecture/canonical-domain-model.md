@@ -2,8 +2,8 @@
 
 This document defines the product vocabulary MyClaw code should converge on.
 It is intentionally provider-neutral and channel-neutral. Current
-implementation names such as registered group, group folder, main group, JID,
-and Claude session id are implementation details unless they are
+implementation names such as registered group, group folder, JID, and Claude
+session id are implementation details unless they are
 explicitly mapped to one of the concepts below.
 
 ## Model Summary
@@ -126,7 +126,7 @@ conversation.
 owns trigger behavior, routing, sender policy, memory subject selection,
 default workspace projection, and permission policy selection. A group folder
 is only one possible workspace projection of this binding. Conversation
-approvers belong to the conversation, while DM admins belong to an agent's
+approvers belong to the conversation, while conversation approvers belong to an agent's
 private/direct conversation policy.
 
 ### Users And Messages
@@ -276,7 +276,6 @@ These mappings describe current code so future refactors know what to replace:
 | Registered group                   | `AgentConversationBinding` plus `Conversation` and optional `ConversationThread`            |
 | Group JID/chat JID                 | Provider alias for `Conversation`                                                           |
 | Group folder                       | Workspace projection for `AgentConversationBinding` and `WorkspaceSnapshot`                 |
-| Main group                         | Seeded DM admin or conversation approver policy                                             |
 | Legacy sender/control lists        | Sender policy and conversation approver inputs                                              |
 | Claude session id                  | `ProviderSession` attached to `AgentSession`                                                |
 | Group queue key                    | Queue key derived from canonical app, agent, conversation, thread, session, and run context |
@@ -319,7 +318,7 @@ CLI, control HTTP, Web UI, SDK, and ACP/ACPX adapters:
 Future implementation phases should remove or replace:
 
 - old personal group folder model as domain identity
-- main group specific behavior as a primary architecture concept
+- hard-coded privileged conversation behavior
 - provider-specific session as the only resume mechanism
 - direct tool execution on host
 - CLI-owned business logic

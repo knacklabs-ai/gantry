@@ -154,7 +154,6 @@ function createOpts(
           trigger: '@bot',
           addedAt: '2024-01-01T00:00:00.000Z',
           requiresTrigger: true,
-          isMain: false,
           memoryScope: 'conversation',
         },
       },
@@ -234,7 +233,7 @@ describe('Slack channel', () => {
     expect(opts.onMessage).not.toHaveBeenCalled();
   });
 
-  it('delivers unregistered Slack DMs so agent DM access can route centrally', async () => {
+  it('delivers unregistered Slack DMs to the shared persistence policy', async () => {
     const opts = createOpts();
     const channel = new SlackChannel('xoxb-token', 'xapp-token', opts as any);
     await channel.connect();

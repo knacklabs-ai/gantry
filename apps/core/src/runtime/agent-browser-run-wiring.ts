@@ -18,7 +18,6 @@ export interface AgentBrowserRunWiring<SkillSourceT> {
 
 export function createAgentBrowserRunWiring<SkillSourceT>(
   input: {
-    isMain: boolean;
     browserProfileName?: string;
   },
   adapters: {

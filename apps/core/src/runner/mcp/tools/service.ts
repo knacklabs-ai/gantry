@@ -424,6 +424,8 @@ export function registerServiceTools(server: McpServer): void {
         writeIpcFile(TASKS_DIR, {
           type: 'service_restart',
           taskId,
+          targetJid: chatJid,
+          chatJid,
           timestamp: nowIso(),
         });
 
@@ -468,9 +470,9 @@ export function registerServiceTools(server: McpServer): void {
   if (isAdminMcpToolEnabled('register_agent')) {
     server.tool(
       'register_agent',
-      `Register a new chat/channel agent so MyClaw can respond to messages there. Requires selected agent tool grant mcp__myclaw__register_agent.
+      `Register the current chat/channel agent so MyClaw can respond to messages there. Requires selected agent tool grant mcp__myclaw__register_agent and same-conversation approver approval.
 
-Use available_groups.json to find the JID for a conversation. The folder name must be channel-prefixed: "{channel}_{conversation-name}" (e.g., "telegram_dev-team", "slack_eng", "teams_engineering"). Use lowercase with hyphens for the conversation name part.`,
+The JID must be the current conversation. The folder name must be channel-prefixed: "{channel}_{conversation-name}" (e.g., "telegram_dev-team", "slack_eng", "teams_engineering"). Use lowercase with hyphens for the conversation name part.`,
       {
         jid: z
           .string()
@@ -481,7 +483,7 @@ Use available_groups.json to find the JID for a conversation. The folder name mu
         folder: z
           .string()
           .describe('Channel-prefixed folder name (e.g., "teams_engineering")'),
-        trigger: z.string().describe('Trigger word (e.g., "@Main Agent")'),
+        trigger: z.string().describe('Trigger word (e.g., "@Default Agent")'),
         requiresTrigger: z
           .boolean()
           .optional()
@@ -495,6 +497,8 @@ Use available_groups.json to find the JID for a conversation. The folder name mu
           type: 'register_agent',
           taskId,
           jid: args.jid,
+          targetJid: chatJid,
+          chatJid,
           name: args.name,
           folder: args.folder,
           trigger: args.trigger,

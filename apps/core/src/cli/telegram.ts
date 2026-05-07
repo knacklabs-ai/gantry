@@ -13,11 +13,12 @@ import {
   ensureRuntimeLayout,
 } from '../config/settings/runtime-home.js';
 import {
-  allocateMainAgentFolder,
+  allocateDefaultAgentFolder,
   defaultTriggerForAgentName,
-  normalizeMainAgentName,
+  normalizeDefaultAgentName,
 } from './main-agent.js';
 import { renderDefaultCapabilityRules } from '../shared/capability-guidance.js';
+import { syncConfiguredConversationBinding } from './group-helpers.js';
 
 export interface TelegramTokenValidation {
   ok: boolean;
@@ -375,17 +376,27 @@ export async function registerTelegramMainGroup(options: {
     const existingGroup = existing[options.chatJid];
     const folder =
       existingGroup?.folder ||
-      allocateMainAgentFolder(options.runtimeHome, existing);
-    const groupName = normalizeMainAgentName(options.displayName);
+      allocateDefaultAgentFolder(options.runtimeHome, existing);
+    const groupName = normalizeDefaultAgentName(options.displayName);
 
-    await db.setConversationRoute(options.chatJid, {
+    const route = {
       name: groupName,
       folder,
       trigger: existingGroup?.trigger || defaultTriggerForAgentName(groupName),
       added_at: new Date().toISOString(),
       requiresTrigger: false,
-      isMain: true,
       agentConfig: existingGroup?.agentConfig,
+    };
+    await db.setConversationRoute(options.chatJid, route);
+    syncConfiguredConversationBinding({
+      runtimeHome: options.runtimeHome,
+      agentId: folder,
+      agentName: groupName,
+      agentFolder: folder,
+      jid: options.chatJid,
+      displayName: options.displayName,
+      trigger: route.trigger,
+      requiresTrigger: false,
     });
 
     const groupDir = path.join(options.runtimeHome, 'agents', folder);

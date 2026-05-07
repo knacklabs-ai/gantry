@@ -117,6 +117,7 @@ const schedulerUpdateJobHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   if (!jobId) {
@@ -223,6 +224,7 @@ const schedulerDeleteJobHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   if (!jobId) {
@@ -252,6 +254,7 @@ const schedulerPauseJobHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   if (!jobId) {
@@ -282,6 +285,7 @@ const schedulerResumeJobHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   if (!jobId) {
@@ -313,6 +317,7 @@ const schedulerRunNowHandler: TaskHandler = async (context) => {
     sourceAgentFolder,
     data.taskId,
     data.authThreadId,
+    data.responseKeyId,
   );
   const jobId = toTrimmedString(data.jobId, { maxLen: 128 });
   if (!jobId) {

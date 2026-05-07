@@ -84,12 +84,6 @@ export interface RuntimeAgentSettings {
   };
 }
 
-export interface RuntimeConfiguredAgentDmAccessEntry {
-  provider: string;
-  userIds: string[];
-  adminUserId?: string;
-}
-
 export interface RuntimeConfiguredAgentBinding {
   jid: string;
   provider?: string;
@@ -97,7 +91,6 @@ export interface RuntimeConfiguredAgentBinding {
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
-  isMain: boolean;
   model?: string;
 }
 
@@ -107,7 +100,6 @@ export interface RuntimeConfiguredBinding {
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
-  isMain: boolean;
   memoryScope: 'conversation' | 'thread' | 'user' | 'agent';
   model?: string;
 }
@@ -126,7 +118,6 @@ export interface RuntimeConfiguredAgent {
   oneTimeJobDefaultModel?: string;
   recurringJobDefaultModel?: string;
   bindings: Record<string, RuntimeConfiguredAgentBinding>;
-  dmAccess: RuntimeConfiguredAgentDmAccessEntry[];
   capabilities: RuntimeConfiguredAgentCapabilities;
 }
 

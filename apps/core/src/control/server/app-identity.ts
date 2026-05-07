@@ -47,7 +47,6 @@ export function makeAppGroup(input: {
     trigger: '',
     added_at: nowIso(),
     requiresTrigger: false,
-    isMain: false,
   };
 }
 

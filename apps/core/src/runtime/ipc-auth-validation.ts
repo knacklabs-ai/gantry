@@ -14,6 +14,7 @@ import {
 interface IpcThreadBinding {
   authThreadId?: string;
   payloadThreadId?: string | null;
+  responseKeyId?: string;
 }
 
 interface IpcBrowserBinding extends IpcThreadBinding {
@@ -41,6 +42,17 @@ function readPayloadThreadIdField(
 ): string | null | undefined {
   if (value === null) return null;
   return readThreadIdField(value, label);
+}
+
+function readResponseKeyIdField(
+  value: unknown,
+  label: string,
+): string | undefined {
+  const parsed = toTrimmedString(value, { maxLen: 128 });
+  if (parsed === undefined) {
+    throw new Error(`${label} must be a string up to 128 characters`);
+  }
+  return parsed;
 }
 
 function readTrustedThreadBinding(
@@ -73,12 +85,17 @@ function readTrustedThreadBinding(
   const trustedThreadId = hasContextThreadId
     ? contextThreadId
     : payloadThreadId;
+  const responseKeyId =
+    context && Object.prototype.hasOwnProperty.call(context, 'responseKeyId')
+      ? readResponseKeyIdField(context.responseKeyId, `${label} responseKeyId`)
+      : undefined;
   return {
     authThreadId:
       typeof trustedThreadId === 'string' && trustedThreadId
         ? trustedThreadId
         : undefined,
     ...(hasPayloadThreadId ? { payloadThreadId } : {}),
+    ...(responseKeyId ? { responseKeyId } : {}),
   };
 }
 

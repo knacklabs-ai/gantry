@@ -152,11 +152,11 @@ classDiagram
     +Thinking? thinking
     +Budget? budget
   }
-  class AgentDmAccess {
+  class ConversationSenderPolicy {
     +string providerId
     +string externalUserId
   }
-  class AgentDmApprover {
+  class ConversationApprover {
     +string providerId
     +string externalUserId
   }
@@ -172,7 +172,6 @@ classDiagram
     +string? threadId
     +string agentFolder
     +AgentPersona? persona
-    +bool isMain
     +McpServerConfigs externalMcpServers
     +string[] configuredAllowedTools
   }
@@ -185,16 +184,16 @@ classDiagram
 
   Agent "1" --> "many" AgentConfigVersion : versioned
   AgentConfigVersion --> LlmProfile : llmProfileId
-  Agent "1" --> "many" AgentDmAccess : per provider
-  Agent "1" --> "many" AgentDmApprover : one per provider
+  Agent "1" --> "many" ConversationSenderPolicy : per provider
+  Agent "1" --> "many" ConversationApprover : one per provider
   AgentConfig --> Agent : per ConversationRoute
   AgentCapabilityContext --> AgentCapabilityProfile : composeAgentCapabilities()
 ```
 
 Cited at:
 
-- `Agent`, `AgentConfigVersion`, `LlmProfile`, `AgentDmAccess`,
-  `AgentDmApprover` — `apps/core/src/domain/agent/agent.ts:41` through
+- `Agent`, `AgentConfigVersion`, `LlmProfile`, `ConversationSenderPolicy`,
+  `ConversationApprover` — `apps/core/src/domain/agent/agent.ts:41` through
   `apps/core/src/domain/agent/agent.ts:88`.
 - `AgentConfig` (carrying `persona`, model override, and additional mounts) —
   `apps/core/src/domain/types.ts:39`.
@@ -308,7 +307,7 @@ DM vs channel/group routing differs on three axes:
 | -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Trigger requirement  | `requiresTrigger=false` by default                          | `requiresTrigger=true` by default                                      |
 | Default memory scope | `'user'` — see `domain/ports/session-memory-collector.ts:2` | `'group'` — same file, same toggle                                     |
-| Approval authority   | Bound agent's per-provider DM admin (`AgentDmApprover`)     | Conversation control approvers; see channel-interactions.md §approvers |
+| Approval authority   | Bound agent's per-provider conversation approver (`ConversationApprover`)     | Conversation control approvers; see channel-interactions.md §approvers |
 
 `conversationKind: 'dm' | 'channel'` is carried by `ConversationRoute`
 while active domain and application ports use canonical conversation/session
@@ -416,7 +415,7 @@ sequenceDiagram
   participant Ipc as "Signed IPC dir"
   participant Host as "IPC interaction handler"
   participant Surface as "Channel adapter<br/>InteractionDescriptor"
-  participant Approver as "DM admin / Conversation approver"
+  participant Approver as "conversation approver / Conversation approver"
 
   Agent->>Mcp: request_permission / request_skill_install /<br/>request_mcp_server / request_settings_update / ...
   Mcp->>Ipc: writeIpcFile(TASKS_DIR, signed task)
@@ -450,7 +449,7 @@ Cited at:
   `apps/core/src/runtime/ipc-interaction-handler.ts`.
 - Runner-side `canUseTool` —
   `apps/core/src/runner/claude/permission-callback.ts`.
-- DM admin vs Conversation approver routing —
+- conversation approver vs Conversation approver routing —
   [channel-interactions.md §Conversation Administration Model](./channel-interactions.md#conversation-administration-model).
 
 ## 8. Scheduler + Job Lifecycle
@@ -724,7 +723,7 @@ This overview is the map. Subsystem docs are the territory:
 - [capability-management.md](./capability-management.md) — capability model,
   request/approval semantics, admin boundary.
 - [channel-interactions.md](./channel-interactions.md) —
-  `InteractionDescriptor`, DM admin vs Conversation approver, provider
+  `InteractionDescriptor`, conversation approver vs Conversation approver, provider
   rendering.
 - [../MEMORY.md](../MEMORY.md) — boundary model, dreaming pipeline, retrieval
   injection, SDK APIs.

@@ -8,7 +8,7 @@ and older docs still expose several implementation concepts as if they were the
 product architecture:
 
 - personal group folders
-- a main group as the primary administration model
+- privileged group administration as a product model
 - Claude session ids as the only resume mechanism
 - host tool execution as a direct runner capability
 - CLI and control routes that own business behavior
@@ -110,7 +110,7 @@ changes.
 Replace or delete:
 
 - old personal group folder model as domain identity
-- main group specific behavior as a primary architecture concept
+- privileged group-specific behavior as a primary architecture concept
 - provider-specific session as the only resume mechanism
 - direct tool execution on host
 - CLI-owned business logic
@@ -120,7 +120,7 @@ Replacement direction:
 
 - Group folders become workspace and storage projections of
   `AgentConversationBinding`, not the identity of an agent, app, or conversation.
-- Main group privileges become `PermissionPolicy` and admin binding behavior.
+- Privileged group permissions become deterministic permission policy and conversation approver checks.
 - Claude session ids and other provider resume tokens become `ProviderSession`
   records attached to canonical `AgentSession` records.
 - Host execution becomes one sandbox implementation governed by

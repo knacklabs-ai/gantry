@@ -72,7 +72,6 @@ export interface AgentConversationBinding {
   triggerMode: AgentConversationBindingTriggerMode;
   triggerPattern?: string;
   requiresTrigger: boolean;
-  isAdminBinding: boolean;
   memoryScope: AgentConversationBindingMemoryScope;
   memorySubject: MemorySubject;
   workspaceSnapshotId?: WorkspaceSnapshotId;

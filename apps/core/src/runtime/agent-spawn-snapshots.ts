@@ -64,15 +64,13 @@ export function clearSnapshotWriteCacheForTests(): void {
 
 export async function writeGroupsSnapshot(
   groupFolder: string,
-  isMain: boolean,
   groups: AvailableGroup[],
   _registeredJids: Set<string>,
 ): Promise<void> {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  const visibleGroups = isMain ? groups : [];
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   await writeSnapshotJson(groupsFile, {
-    groups: visibleGroups,
+    groups,
     lastSync: new Date().toISOString(),
   });
 }

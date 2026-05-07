@@ -260,7 +260,6 @@ function parsePatchProcedureInput(payload: unknown): PatchProcedureInput {
 export async function processMemoryRequest(
   request: TrustedMemoryRequest,
   sourceAgentFolder: string,
-  isMain: boolean,
 ): Promise<MemoryIpcResponse> {
   let provider = 'uninitialized';
 
@@ -269,7 +268,7 @@ export async function processMemoryRequest(
     const memory = AppMemoryService.getInstance();
     provider = 'postgres';
     logger.debug(
-      { action: request.action, sourceAgentFolder, isMain, provider },
+      { action: request.action, sourceAgentFolder, provider },
       'Processing memory IPC request',
     );
 
@@ -326,7 +325,7 @@ export async function processMemoryRequest(
           confidence: input.confidence,
           source: input.source || 'mcp-tool',
           actorId: 'mcp-tool',
-          isAdminWrite: isMain,
+          isAdminWrite: false,
           evidenceText: input.why || input.value,
         });
         return {
@@ -350,7 +349,7 @@ export async function processMemoryRequest(
           confidence: input.confidence,
           isPinned: input.load_bearing,
           expectedVersion: input.expected_version,
-          isAdminWrite: isMain,
+          isAdminWrite: false,
         });
         return {
           ok: true,
@@ -418,7 +417,7 @@ export async function processMemoryRequest(
           confidence: input.confidence,
           source: input.source || 'mcp-tool',
           actorId: 'mcp-tool',
-          isAdminWrite: isMain,
+          isAdminWrite: false,
           evidenceText: input.body,
         });
         return {
@@ -441,7 +440,7 @@ export async function processMemoryRequest(
           why: input.trigger === null ? null : input.trigger,
           confidence: input.confidence,
           expectedVersion: input.expected_version,
-          isAdminWrite: isMain,
+          isAdminWrite: false,
         });
         return {
           ok: true,
@@ -486,9 +485,8 @@ export function writeMemoryResponse(
     ...(response.error ? { error: response.error } : {}),
   };
   const signature = signIpcResponsePayload(privateKeyPem, payload);
-  if (signature) {
-    payload.signature = signature;
-  }
+  if (!signature) return;
+  payload.signature = signature;
   writePrivateFileSync(tmpPath, JSON.stringify(payload, null, 2));
   fs.renameSync(tmpPath, filePath);
 }

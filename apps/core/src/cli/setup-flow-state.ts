@@ -17,7 +17,7 @@ import {
 } from '../shared/model-catalog.js';
 import { writeOnboardingState } from './onboarding-state.js';
 import type { OnboardingState, OnboardingStep } from './onboarding-state.js';
-import { MAIN_AGENT_NAME } from './main-agent.js';
+import { DEFAULT_AGENT_CLI_NAME } from './main-agent.js';
 
 export const FULL_SEQUENCE: OnboardingStep[] = [
   'welcome',
@@ -230,14 +230,15 @@ export function restoreDraft(
     primaryProvider,
     credentialMode,
     onecliUrl: settings.credentialBroker.onecli.url || '',
-    agentName: state?.data.agentName || settings.agent.name || MAIN_AGENT_NAME,
+    agentName:
+      state?.data.agentName || settings.agent.name || DEFAULT_AGENT_CLI_NAME,
     selectedModel:
       resolveModelAlias(
         state?.data.selectedModel || settings.agent.defaultModel,
       ) || DEFAULT_SETUP_MODEL_ALIAS,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || '',
     telegramChatJid: '',
-    telegramDisplayName: settings.agent.name || MAIN_AGENT_NAME,
+    telegramDisplayName: settings.agent.name || DEFAULT_AGENT_CLI_NAME,
     telegramAdminSenderId: '',
     telegramAdminSenderName: '',
     telegramPermissionApproverIds: '',
@@ -245,7 +246,7 @@ export function restoreDraft(
     slackBotToken: env.SLACK_BOT_TOKEN || '',
     slackAppToken: env.SLACK_APP_TOKEN || '',
     slackChatJid: '',
-    slackDisplayName: settings.agent.name || MAIN_AGENT_NAME,
+    slackDisplayName: settings.agent.name || DEFAULT_AGENT_CLI_NAME,
     slackPermissionApproverIds: firstConversationApprovers(
       settings,
       'slack',

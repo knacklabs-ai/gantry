@@ -2,8 +2,6 @@ import type {
   Agent,
   AgentConfigVersion,
   AgentConfigVersionId,
-  AgentDmAccess,
-  AgentDmApprover,
   AgentId,
 } from '../agent/agent.js';
 import type { App, AppId } from '../app/app.js';
@@ -88,27 +86,6 @@ export interface AgentRepository {
   getAgent(id: AgentId): Promise<Agent | null>;
   listAgents(appId: AppId): Promise<Agent[]>;
   saveAgent(agent: Agent): Promise<void>;
-  listAgentDmAccess(input: {
-    appId: AppId;
-    agentId: AgentId;
-  }): Promise<AgentDmAccess[]>;
-  listAgentDmAccessForAgents(input: {
-    appId: AppId;
-    agentIds: readonly AgentId[];
-  }): Promise<AgentDmAccess[]>;
-  replaceAgentDmAccess(input: {
-    appId: AppId;
-    agentId: AgentId;
-    entries: Array<{ providerId: string; externalUserId: string }>;
-    updatedAt: string;
-  }): Promise<AgentDmAccess[]>;
-  replaceAgentDmAccessPolicy(input: {
-    appId: AppId;
-    agentId: AgentId;
-    accessEntries: Array<{ providerId: string; externalUserId: string }>;
-    approverEntries: Array<{ providerId: string; externalUserId: string }>;
-    updatedAt: string;
-  }): Promise<{ access: AgentDmAccess[]; approvers: AgentDmApprover[] }>;
   replaceAgentCapabilityBindings(input: {
     appId: AppId;
     agentId: AgentId;
@@ -122,25 +99,6 @@ export interface AgentRepository {
     agentId: AgentId;
     updatedAt: string;
   }): Promise<Agent | null>;
-  findAgentsByDmAccess(input: {
-    appId: AppId;
-    providerId: string;
-    externalUserId: string;
-  }): Promise<Agent[]>;
-  listAgentDmApprovers(input: {
-    appId: AppId;
-    agentId: AgentId;
-  }): Promise<AgentDmApprover[]>;
-  listAgentDmApproversForAgents(input: {
-    appId: AppId;
-    agentIds: readonly AgentId[];
-  }): Promise<AgentDmApprover[]>;
-  replaceAgentDmApprovers(input: {
-    appId: AppId;
-    agentId: AgentId;
-    entries: Array<{ providerId: string; externalUserId: string }>;
-    updatedAt: string;
-  }): Promise<AgentDmApprover[]>;
 }
 
 export interface AgentConfigRepository {

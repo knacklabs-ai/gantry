@@ -6,13 +6,22 @@ import {
   computeBrowserIpcAuthToken,
   computeIpcAuthToken,
   computeMemoryIpcAuthToken,
+  createIpcAuthEnvelope,
+  getIpcResponseSigningPrivateKey,
+  revokeIpcResponseSigningKey,
 } from '@core/runtime/ipc-auth.js';
+import {
+  signIpcResponsePayload,
+  verifyIpcResponsePayload,
+} from '@core/infrastructure/ipc/response-signing.js';
 import { stopIpcWatcher, validateIpcAuthRequest } from '@core/runtime/ipc.js';
 import {
   parseBrowserIpcRequest,
   parseMemoryIpcRequest,
 } from '@core/runtime/ipc-parsing.js';
 import { parseTaskIpcData } from '@core/runtime/ipc-task-parsing.js';
+
+const TEST_RESPONSE_KEY_ID = 'test-response-key';
 
 function signedPayload(
   payload: Record<string, unknown>,
@@ -92,7 +101,7 @@ describe('validateIpcAuthRequest', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'scheduler_update_job',
       jobId: 'job-1',
-      context: { threadId: 'thread-1' },
+      context: { threadId: 'thread-1', responseKeyId: TEST_RESPONSE_KEY_ID },
       threadId: null,
     };
 
@@ -105,6 +114,7 @@ describe('validateIpcAuthRequest', () => {
     expect(result).toEqual({
       authThreadId: 'thread-1',
       payloadThreadId: null,
+      responseKeyId: TEST_RESPONSE_KEY_ID,
     });
     expect(
       parseTaskIpcData(
@@ -136,6 +146,7 @@ describe('validateIpcAuthRequest', () => {
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'scheduler_upsert_job',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
       name: 'Job',
       prompt: 'Run',
       scheduleType: 'interval',
@@ -147,6 +158,7 @@ describe('validateIpcAuthRequest', () => {
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'scheduler_update_job',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
       jobId: 'job-1',
       allowedTools: ['Read', 'mcp__agent_browser__*'],
     });
@@ -155,6 +167,7 @@ describe('validateIpcAuthRequest', () => {
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'scheduler_update_job',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
       jobId: 'job-1',
       allowedTools: [],
     });
@@ -182,7 +195,7 @@ describe('validateIpcAuthRequest', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       action: 'browser_status',
       payload: { profile_name: 'c-team-abc123abc123' },
-      context: { chatJid: 'tg:team' },
+      context: { chatJid: 'tg:team', responseKeyId: TEST_RESPONSE_KEY_ID },
     };
 
     expect(
@@ -204,7 +217,11 @@ describe('validateIpcAuthRequest', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       action: 'memory_search',
       payload: { query: 'travel' },
-      context: { userId: 'u-1', defaultScope: 'user' },
+      context: {
+        userId: 'u-1',
+        defaultScope: 'user',
+        responseKeyId: TEST_RESPONSE_KEY_ID,
+      },
     };
 
     expect(
@@ -239,6 +256,7 @@ describe('validateIpcAuthRequest', () => {
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'register_agent',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
       agentConfig: { model: 'kimi 2.6' },
     });
 
@@ -248,12 +266,107 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
+  it('rejects response-bearing IPC requests that omit the run response key id', () => {
+    const payload = signedPayload({
+      requestId: 'task-missing-response-key',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'scheduler_list_jobs',
+      taskId: 'task-1',
+    });
+
+    expect(() => parseTaskIpcData(payload, 'team')).toThrow(
+      /responseKeyId is required/,
+    );
+  });
+
+  it('keeps delayed task responses bound to the run response key that requested them', () => {
+    const firstRun = createIpcAuthEnvelope('team', 'thread-1');
+    const firstPayload = {
+      requestId: 'task-run-1',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'scheduler_wait_for_events',
+      taskId: 'wait-1',
+      context: {
+        threadId: 'thread-1',
+        responseKeyId: firstRun.responseKeyId,
+      },
+    };
+    const parsed = parseTaskIpcData(
+      {
+        ...firstPayload,
+        signature: signIpcRequestPayload(firstRun.authToken, firstPayload),
+      },
+      'team',
+    );
+
+    const secondRun = createIpcAuthEnvelope('team', 'thread-1');
+    expect(secondRun.responseKeyId).not.toBe(firstRun.responseKeyId);
+
+    const privateKey = getIpcResponseSigningPrivateKey(
+      'team',
+      parsed.authThreadId,
+      parsed.responseKeyId,
+    );
+    expect(privateKey).toBeTruthy();
+
+    const responsePayload = {
+      taskId: 'wait-1',
+      ok: true,
+      message: 'Listed 0 scheduler event(s).',
+      timestamp: '2026-05-07T14:58:39.000Z',
+    };
+    const signature = signIpcResponsePayload(privateKey, responsePayload);
+
+    expect(
+      verifyIpcResponsePayload(
+        firstRun.responseVerifyKey,
+        responsePayload,
+        signature,
+      ),
+    ).toBe(true);
+    expect(
+      verifyIpcResponsePayload(
+        secondRun.responseVerifyKey,
+        responsePayload,
+        signature,
+      ),
+    ).toBe(false);
+  });
+
+  it('revokes response signing keys only for the matching run scope', () => {
+    const run = createIpcAuthEnvelope('team', 'thread-1');
+
+    expect(
+      getIpcResponseSigningPrivateKey(
+        'team',
+        'thread-1',
+        run.responseKeyId,
+      ),
+    ).toBeTruthy();
+    expect(
+      revokeIpcResponseSigningKey(run.responseKeyId, 'team', 'other-thread'),
+    ).toBe(false);
+    expect(
+      revokeIpcResponseSigningKey(run.responseKeyId, 'team', 'thread-1'),
+    ).toBe(true);
+    expect(
+      getIpcResponseSigningPrivateKey(
+        'team',
+        'thread-1',
+        run.responseKeyId,
+      ),
+    ).toBeUndefined();
+  });
+
   it('rejects raw provider IDs in IPC agentConfig model overrides', () => {
     const payload = signedPayload({
       requestId: 'task-agent-config-raw-model',
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'register_agent',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
       agentConfig: { model: 'moonshotai/kimi-k2.6' },
     });
 

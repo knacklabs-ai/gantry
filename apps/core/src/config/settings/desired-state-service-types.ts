@@ -16,7 +16,6 @@ export interface StoredAgentBinding {
   trigger: string;
   added_at: string;
   requiresTrigger?: boolean;
-  isMain?: boolean;
   conversationKind?: 'dm' | 'channel';
   agentConfig?: { model?: string; persona?: AgentPersona };
 }
@@ -28,7 +27,6 @@ export interface ConfiguredRoutingBinding {
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
-  isMain: boolean;
   model?: string;
   conversation?: RuntimeConfiguredConversation;
 }
