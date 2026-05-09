@@ -9,6 +9,7 @@ export const BASELINE_MYCLAW_MCP_TOOL_NAMES = [
   'ask_user_question',
   'memory_search',
   'memory_save',
+  'continuity_summary',
   'procedure_save',
   'browser_launch',
   'browser_status',
@@ -28,6 +29,7 @@ export const OPTIONAL_MYCLAW_MCP_TOOL_NAMES = [
   'scheduler_list_models',
   'scheduler_upsert_job',
   'scheduler_get_job',
+  'scheduler_grant_tool',
   'scheduler_list_jobs',
   'scheduler_list_notification_targets',
   'scheduler_update_job',
@@ -43,6 +45,7 @@ export const OPTIONAL_MYCLAW_MCP_TOOL_NAMES = [
 
 export const REVIEWED_MYCLAW_MCP_TOOL_NAMES = [
   'memory_patch',
+  'memory_demote',
   'procedure_patch',
   'memory_dream',
   'memory_consolidate',

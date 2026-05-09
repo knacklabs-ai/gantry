@@ -23,6 +23,7 @@ export interface AgentCapabilityContext {
   threadId?: string;
   memoryUserId?: string;
   memoryDefaultScope?: 'user' | 'group';
+  memoryReviewerIsControlApprover?: boolean;
   persona?: AgentPersona;
   browserProfileName?: string;
   configuredAllowedTools?: readonly string[];
@@ -174,6 +175,8 @@ const myclawMcpProvider: AgentCapabilityProvider = {
       MYCLAW_THREAD_ID: ctx.threadId || '',
       MYCLAW_MEMORY_USER_ID: ctx.memoryUserId || '',
       MYCLAW_MEMORY_DEFAULT_SCOPE: ctx.memoryDefaultScope || 'group',
+      MYCLAW_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
+        ctx.memoryReviewerIsControlApprover ? '1' : '',
       MYCLAW_BROWSER_PROFILE_NAME: ctx.browserProfileName || '',
       MYCLAW_ADMIN_MCP_TOOLS_JSON: JSON.stringify(
         selectedAdminMcpToolNames(ctx.configuredAllowedTools ?? []),

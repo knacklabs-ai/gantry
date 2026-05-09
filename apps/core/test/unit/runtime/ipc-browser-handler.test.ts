@@ -43,10 +43,6 @@ vi.mock('@core/runtime/browser-profiles.js', () => ({
       auth_markers: [],
     },
   })),
-  summarizeBrowserProfileState: vi.fn(() => ({
-    hasState: false,
-    authMarkers: [],
-  })),
   isValidBrowserProfileName: vi.fn((name: string) =>
     /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name),
   ),

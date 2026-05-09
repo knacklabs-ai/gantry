@@ -63,37 +63,3 @@ export function normalizeExecutionMode(
   }
   return 'parallel';
 }
-
-export function resolveSchedulerThreadArg(
-  value: unknown,
-  disallowNull: boolean,
-): { threadId: string | null | undefined; error?: string } {
-  if (value === undefined) return { threadId: undefined };
-  if (value === null) {
-    if (disallowNull) {
-      return {
-        threadId: undefined,
-        error: 'thread_id cannot be null for this operation.',
-      };
-    }
-    return { threadId: null };
-  }
-  if (typeof value !== 'string') {
-    return {
-      threadId: undefined,
-      error: 'thread_id must be a string.',
-    };
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return {
-      threadId: undefined,
-      error: disallowNull
-        ? 'thread_id must be a non-empty string.'
-        : 'thread_id must be a non-empty string or null.',
-    };
-  }
-  const shortcut = parseSchedulerTargetShortcut(trimmed);
-  if (shortcut) return resolveSchedulerShortcut(shortcut);
-  return { threadId: trimmed };
-}

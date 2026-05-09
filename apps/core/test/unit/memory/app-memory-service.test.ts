@@ -4,7 +4,10 @@ import {
   _testAppMemory,
   AppMemoryService,
 } from '@core/memory/app-memory-service.js';
-import { normalizeKind } from '@core/memory/app-memory-canonical-codec.js';
+import {
+  normalizeKind,
+  parseItemSource,
+} from '@core/memory/app-memory-canonical-codec.js';
 
 function collectSqlParamValues(node: unknown): unknown[] {
   if (!node || typeof node !== 'object') return [];
@@ -31,6 +34,7 @@ function memoryRow(input: {
   return {
     id: input.id ?? 'mem_test',
     appId: input.appId,
+    agentId: input.agentId,
     subjectId: `subject:${input.subjectId}`,
     kind: 'fact',
     key: 'key',
@@ -63,12 +67,16 @@ function memoryRow(input: {
 }
 
 describe('app-grade memory boundaries', () => {
-  it('normalizes personal defaults without relying on storage providers', () => {
-    const context = _testAppMemory.normalizeSubject({});
+  it('requires explicit agent context for normalized app memory boundaries', () => {
+    expect(() => _testAppMemory.normalizeSubject({})).toThrow(
+      /memory subject requires agentId/,
+    );
+
+    const context = _testAppMemory.normalizeSubject({ agentId: 'agent:kai' });
 
     expect(context).toMatchObject({
       appId: 'default',
-      agentId: 'agent:personal',
+      agentId: 'agent:kai',
       subjectType: 'group',
       subjectId: 'default',
     });
@@ -148,6 +156,20 @@ describe('app-grade memory boundaries', () => {
 
   it('does not preserve retired project_fact as an active memory kind', () => {
     expect(normalizeKind('project_fact')).toBe('fact');
+  });
+
+  it('uses the trusted row agent id when decoded source metadata omits agentId', () => {
+    const row = memoryRow({
+      appId: 'app-a',
+      agentId: 'agent-a',
+      subjectType: 'group',
+      subjectId: 'group-a',
+    });
+    const source = JSON.parse(row.sourceRefJson);
+    delete source.subject.agentId;
+    row.sourceRefJson = JSON.stringify(source);
+
+    expect(parseItemSource(row).subject.agentId).toBe('agent-a');
   });
 
   it('matches owned rows only inside the same normalized subject boundary', () => {
@@ -259,6 +281,160 @@ describe('app-grade memory boundaries', () => {
       }),
     ).rejects.toThrow(/common memory patches require admin/);
     expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks secrets but allows benign prompt-injection discussion in memory evidence', async () => {
+    const insertedRows: any[] = [];
+    const db = {
+      insert: vi.fn(() => ({
+        values: vi.fn((value: any) => ({
+          returning: vi.fn(async () => {
+            insertedRows.push(value);
+            return [value];
+          }),
+        })),
+      })),
+    };
+    const service = new AppMemoryService(db as any);
+
+    await expect(
+      service.recordEvidence({
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        sourceType: 'manual',
+        text: 'This evidence discusses prompt injection and system prompt handling.',
+      }),
+    ).resolves.toMatchObject({
+      text: 'This evidence discusses prompt injection and system prompt handling.',
+    });
+
+    await expect(
+      service.recordEvidence({
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        sourceType: 'manual',
+        text: 'api_key=abcdefghi',
+      }),
+    ).rejects.toThrow(/sensitive material blocked in memory evidence/);
+    expect(insertedRows).toHaveLength(1);
+  });
+
+  it('blocks secrets but allows benign prompt-injection discussion in direct memory saves', async () => {
+    const insertedRows: any[] = [];
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => []),
+            orderBy: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          })),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn((value: any) => ({
+          returning: vi.fn(async () => {
+            insertedRows.push(value);
+            return [value];
+          }),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
+      })),
+    };
+    const service = new AppMemoryService(db as any);
+
+    await expect(
+      service.save({
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        key: 'decision:security-discussion',
+        value:
+          'Discuss prompt injection, system prompt exposure, and ignore previous instructions examples as threat-model text.',
+      }),
+    ).resolves.toMatchObject({
+      key: 'decision:security-discussion',
+      value:
+        'Discuss prompt injection, system prompt exposure, and ignore previous instructions examples as threat-model text.',
+    });
+
+    await expect(
+      service.save({
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        key: 'fact:secret',
+        value: 'access_token=abcdefghi',
+      }),
+    ).rejects.toThrow(/sensitive material blocked in memory value/);
+    expect(insertedRows).toHaveLength(1);
+  });
+
+  it('blocks secrets but allows benign prompt-injection discussion in memory patches', async () => {
+    const current = memoryRow({
+      id: 'mem_patch_security',
+      appId: 'app-a',
+      agentId: 'agent-a',
+      subjectType: 'group',
+      subjectId: 'group-a',
+      version: 1,
+    });
+    const updated = {
+      ...current,
+      valueJson: JSON.stringify({
+        value:
+          'Track prompt injection, system prompt, and ignore previous instructions as benign discussion phrases.',
+        why: null,
+      }),
+      sourceRefJson: JSON.stringify({
+        ...JSON.parse(current.sourceRefJson),
+        version: 2,
+      }),
+    };
+    const set = vi.fn(() => ({
+      where: vi.fn(() => ({
+        returning: vi.fn(async () => [updated]),
+      })),
+    }));
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [current]),
+          })),
+        })),
+      })),
+      update: vi.fn(() => ({ set })),
+    };
+    const service = new AppMemoryService(db as any);
+
+    await expect(
+      service.patch({
+        id: 'mem_patch_security',
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        value:
+          'Track prompt injection, system prompt, and ignore previous instructions as benign discussion phrases.',
+      }),
+    ).resolves.toMatchObject({
+      value:
+        'Track prompt injection, system prompt, and ignore previous instructions as benign discussion phrases.',
+    });
+
+    await expect(
+      service.patch({
+        id: 'mem_patch_security',
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        value: 'password=abcdefghi',
+      }),
+    ).rejects.toThrow(/sensitive material blocked in memory patch/);
+    expect(set).toHaveBeenCalledTimes(1);
   });
 
   it('recomputes content hash when patching memory content', async () => {
@@ -503,6 +679,153 @@ describe('app-grade memory boundaries', () => {
     expect(whereParams[1]).toContain(persisted.subjectId);
     expect(whereParams[0]).not.toContain('kai');
     expect(whereParams[1]).not.toContain('kai');
+  });
+
+  it('persists dreaming promotion metadata in source references', async () => {
+    const rows: any[] = [];
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => []),
+            orderBy: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          })),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn((value: any) => ({
+          returning: vi.fn(async () => {
+            rows[0] = value;
+            return [value];
+          }),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
+      })),
+    };
+    const service = new AppMemoryService(db as any);
+
+    await service.save({
+      appId: 'default',
+      agentId: 'agent:kai',
+      groupId: 'kai',
+      kind: 'fact',
+      key: 'fact:runtime-home',
+      value: 'Runtime home defaults to ~/myclaw.',
+      source: 'dreaming',
+      evidenceIds: ['mev-one'],
+      dreamingPromotion: {
+        runId: 'mdr-one',
+        promotedAt: '2026-05-08T00:00:00.000Z',
+        candidateId: 'mca-one',
+      },
+    });
+
+    expect(JSON.parse(rows[0]!.sourceRefJson)).toMatchObject({
+      source: 'dreaming',
+      evidenceIds: ['mev-one'],
+      promoted_by: 'dreaming',
+      promoted_at: '2026-05-08T00:00:00.000Z',
+      dream_run_id: 'mdr-one',
+      dream_candidate_id: 'mca-one',
+    });
+  });
+
+  it('demotes only dreaming-promoted active memory rows', async () => {
+    const current = {
+      ...memoryRow({
+        id: 'mem_dreamed',
+        appId: 'app-a',
+        agentId: 'agent-a',
+        subjectType: 'group',
+        subjectId: 'group-a',
+        version: 3,
+      }),
+      sourceRefJson: JSON.stringify({
+        subject: {
+          agentId: 'agent-a',
+          subjectType: 'group',
+          subjectId: 'group-a',
+        },
+        source: 'dreaming',
+        evidenceIds: ['mev-one'],
+        isPinned: false,
+        version: 3,
+        promoted_by: 'dreaming',
+        promoted_at: '2026-05-08T00:00:00.000Z',
+        dream_run_id: 'mdr-one',
+      }),
+    };
+    const set = vi.fn((value: any) => ({
+      where: vi.fn(() => ({
+        returning: vi.fn(async () => [{ id: current.id, ...value }]),
+      })),
+    }));
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [current]),
+          })),
+        })),
+      })),
+      update: vi.fn(() => ({ set })),
+    };
+    const service = new AppMemoryService(db as any);
+
+    await expect(
+      service.demoteDreamingPromoted({
+        id: 'mem_dreamed',
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+        expectedVersion: 3,
+      }),
+    ).resolves.toEqual({ demoted: true });
+
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'demoted',
+        updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
+      }),
+    );
+    expect(JSON.parse(set.mock.calls[0]![0].sourceRefJson)).toMatchObject({
+      promoted_by: 'dreaming',
+      dream_run_id: 'mdr-one',
+      demoted_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
+    });
+  });
+
+  it('rejects demotion for memory not promoted by dreaming', async () => {
+    const current = memoryRow({
+      id: 'mem_manual',
+      appId: 'app-a',
+      agentId: 'agent-a',
+      subjectType: 'group',
+      subjectId: 'group-a',
+    });
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [current]),
+          })),
+        })),
+      })),
+      update: vi.fn(),
+    };
+    const service = new AppMemoryService(db as any);
+
+    await expect(
+      service.demoteDreamingPromoted({
+        id: 'mem_manual',
+        appId: 'app-a',
+        agentId: 'agent-a',
+        groupId: 'group-a',
+      }),
+    ).rejects.toThrow(/only dreaming-promoted memory can be demoted/);
+    expect(db.update).not.toHaveBeenCalled();
   });
 
   it('exposes retrieval metadata on search results from source references', async () => {

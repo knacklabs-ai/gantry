@@ -6,8 +6,10 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ARTIFACTS_DIR,
   DATA_DIR,
   PERMISSION_APPROVAL_TIMEOUT_MS,
+  RUNTIME_SETTINGS_PATH,
   TIMEZONE,
   getEffectiveModelConfig,
 } from '../config/index.js';
@@ -65,6 +67,8 @@ import { selectedMemoryIpcActionsFromToolRules } from '../shared/memory-ipc-acti
 type RunnerAgentInput = AgentInput & {
   modelCredentialEnv?: Record<string, string>;
 };
+
+const PROTECTED_FILESYSTEM_PATHS_ENV = 'MYCLAW_PROTECTED_FILESYSTEM_PATHS_JSON';
 
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
 export type {
@@ -226,10 +230,9 @@ export async function spawnAgent(
   let claudeRuntimeMaterialization: Awaited<
     ReturnType<typeof materializeClaudeRuntime>
   >;
+  let packageRoot = '';
   try {
-    const packageRoot = resolvePackageRootFromSourceDir(
-      path.dirname(hostRunnerPath),
-    );
+    packageRoot = resolvePackageRootFromSourceDir(path.dirname(hostRunnerPath));
     const skillSources: SkillSource[] = [
       new BundledClaudeSkillSource(packageRoot),
     ];
@@ -253,10 +256,13 @@ export async function spawnAgent(
     }
     claudeRuntimeMaterialization = await materializeClaudeRuntime({
       groupDir,
-      baseTempDir: path.join(groupDir, '.claude-runtime'),
+      globalDir: hostRuntime.globalDir,
+      baseTempDir: path.join(groupDir, '.llm-runtime'),
       cleanupPolicy: 'retain-for-debug',
       cliEntryPoint: path.join(packageRoot, 'dist', 'cli', 'index.js'),
       packageRoot,
+      runtimeSettingsPath: RUNTIME_SETTINGS_PATH,
+      managedSkillArtifactRoots: [path.join(ARTIFACTS_DIR, 'skills')],
       skillSource: new CompositeSkillSource(skillSources),
       settings: {
         model: effectiveModel,
@@ -308,6 +314,7 @@ export async function spawnAgent(
       defaultScope: input.memoryDefaultScope || 'group',
       threadId: input.threadId,
       allowedActions: memoryIpcAllowedActions,
+      reviewerIsControlApprover: input.memoryReviewerIsControlApprover,
     }),
     MYCLAW_MEMORY_IPC_ACTIONS_JSON: JSON.stringify(memoryIpcAllowedActions),
     MYCLAW_IPC_RESPONSE_VERIFY_KEY: ipcAuth.responseVerifyKey,
@@ -315,6 +322,11 @@ export async function spawnAgent(
     MYCLAW_THREAD_ID: input.threadId || '',
     MYCLAW_MEMORY_USER_ID: input.memoryUserId || '',
     MYCLAW_MEMORY_DEFAULT_SCOPE: input.memoryDefaultScope || 'group',
+    MYCLAW_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
+      input.memoryReviewerIsControlApprover ? '1' : '',
+    MYCLAW_INTERACTIVE_PERMISSION_TIMEOUT_MS: String(
+      PERMISSION_APPROVAL_TIMEOUT_MS,
+    ),
     MYCLAW_PERMISSION_TIMEOUT_MS: String(PERMISSION_APPROVAL_TIMEOUT_MS),
     CLAUDE_CONFIG_DIR: claudeRuntimeMaterialization.claudeConfigDir,
   };
@@ -401,6 +413,14 @@ export async function spawnAgent(
       ),
     );
   }
+  env[PROTECTED_FILESYSTEM_PATHS_ENV] = JSON.stringify(
+    mcpConfigPath
+      ? [
+          ...claudeRuntimeMaterialization.protectedFilesystemPaths,
+          mcpConfigPath,
+        ]
+      : claudeRuntimeMaterialization.protectedFilesystemPaths,
+  );
 
   const runtimeDetails = [
     `groupDir=${hostRuntime.groupDir}`,

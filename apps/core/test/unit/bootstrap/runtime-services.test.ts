@@ -671,7 +671,7 @@ describe('startRuntimeServices', () => {
     );
   });
 
-  it('surfaces retry-tail metadata from recovery dispatch partials without nested legacy row writes', async () => {
+  it('surfaces retry-tail metadata from recovery dispatch partials without nested message-row writes', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
     const sendProviderMessage = vi.fn(async () => {

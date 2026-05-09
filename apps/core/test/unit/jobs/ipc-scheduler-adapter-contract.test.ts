@@ -294,25 +294,6 @@ describe('scheduler IPC adapter contracts', () => {
     );
   });
 
-  it('rejects legacy scheduler upsert fields in IPC payloads', async () => {
-    await schedulerCreateTaskHandlers.scheduler_upsert_job(
-      makeContext({
-        type: 'scheduler_upsert_job',
-        name: 'Daily review',
-        prompt: 'Review memory',
-        scheduleType: 'once',
-        scheduleValue: '2026-05-04T00:00:00.000Z',
-        ...({ linkedSessions: ['tg:team'] } as unknown as TaskIpcData),
-      }),
-    );
-
-    expect(mocks.responder.reject).toHaveBeenCalledWith(
-      'Unsupported legacy scheduler fields. Use executionContext and notificationRoutes.',
-      'invalid_request',
-    );
-    expect(mocks.jobService.upsertJobFromIpc).not.toHaveBeenCalled();
-  });
-
   it('injects canonical app session control for app-origin scheduler upserts', async () => {
     mocks.runtimeControlRepository.getAppSessionByChatJid.mockResolvedValueOnce(
       {
@@ -508,22 +489,6 @@ describe('scheduler IPC adapter contracts', () => {
       access: expect.any(Object),
       patch: { allowedTools: ['Read'] },
     });
-  });
-
-  it('rejects legacy scheduler update fields in IPC payloads', async () => {
-    await schedulerMutateTaskHandlers.scheduler_update_job(
-      makeContext({
-        type: 'scheduler_update_job',
-        jobId: 'job-1',
-        ...({ deliverTo: ['tg:team'] } as unknown as TaskIpcData),
-      }),
-    );
-
-    expect(mocks.responder.reject).toHaveBeenCalledWith(
-      'Unsupported legacy scheduler fields. Use executionContext and notificationRoutes.',
-      'invalid_request',
-    );
-    expect(mocks.jobService.updateJob).not.toHaveBeenCalled();
   });
 
   it('routes scheduler update job tool approvals to the originating conversation', async () => {

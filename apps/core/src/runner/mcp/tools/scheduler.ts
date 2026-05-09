@@ -9,9 +9,9 @@ import {
   schedulerJobSummary,
   schedulerJobsSummary,
 } from './scheduler-formatters.js';
+import { validateAutonomousToolRule } from '../../../shared/tool-rule-matcher.js';
 import {
   canonicalTargetFromArgs,
-  hasLegacySchedulerField,
   normalizeSchedulerWaitTimeoutMs,
   requestSchedulerData,
   schedulerDataRecord as dataRecord,
@@ -20,12 +20,63 @@ import {
   SCHEDULER_WAIT_RESPONSE_GRACE_MS,
 } from './scheduler-tool-helpers.js';
 
-function legacySchedulerFieldError(legacyField: string) {
+const SCHEDULER_UPSERT_ARG_KEYS = new Set([
+  'job_id',
+  'name',
+  'prompt',
+  'model_alias',
+  'model_profile_id',
+  'schedule_type',
+  'schedule_value',
+  'target',
+  'execution_context',
+  'notification_routes',
+  'silent',
+  'cleanup_after_ms',
+  'timeout_ms',
+  'max_retries',
+  'retry_backoff_ms',
+  'max_consecutive_failures',
+  'execution_mode',
+  'serialize',
+  'allowed_tools',
+]);
+
+const SCHEDULER_UPDATE_ARG_KEYS = new Set([
+  'job_id',
+  'name',
+  'prompt',
+  'model_alias',
+  'model_profile_id',
+  'schedule_type',
+  'schedule_value',
+  'target',
+  'execution_context',
+  'notification_routes',
+  'silent',
+  'cleanup_after_ms',
+  'timeout_ms',
+  'max_retries',
+  'retry_backoff_ms',
+  'max_consecutive_failures',
+  'execution_mode',
+  'serialize',
+  'allowed_tools',
+]);
+
+function unsupportedSchedulerArgError(
+  args: Record<string, unknown>,
+  allowedKeys: ReadonlySet<string>,
+) {
+  const unsupported = Object.keys(args).filter((key) => !allowedKeys.has(key));
+  if (unsupported.length === 0) return null;
   return {
     content: [
       {
         type: 'text' as const,
-        text: `Unsupported legacy scheduler field "${legacyField}". Use execution_context and notification_routes.`,
+        text: `Unsupported scheduler fields: ${unsupported.join(
+          ', ',
+        )}. Use execution_context and notification_routes for routing.`,
       },
     ],
     isError: true,
@@ -108,7 +159,6 @@ export function registerSchedulerTools(server: McpServer): void {
         .optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
-      group_scope: z.string().optional(),
       timeout_ms: z.number().optional(),
       max_retries: z.number().optional(),
       retry_backoff_ms: z.number().optional(),
@@ -118,12 +168,11 @@ export function registerSchedulerTools(server: McpServer): void {
       allowed_tools: z.array(z.string()).optional(),
     },
     async (args) => {
-      const legacyField = hasLegacySchedulerField(
+      const unsupportedArgError = unsupportedSchedulerArgError(
         args as Record<string, unknown>,
+        SCHEDULER_UPSERT_ARG_KEYS,
       );
-      if (legacyField) {
-        return legacySchedulerFieldError(legacyField);
-      }
+      if (unsupportedArgError) return unsupportedArgError;
       const scheduleError = validateScheduleInput(args);
       if (scheduleError) return scheduleError;
       const canonicalTarget = canonicalTargetFromArgs(
@@ -152,8 +201,6 @@ export function registerSchedulerTools(server: McpServer): void {
           notificationRoutes: canonicalTarget.notificationRoutes,
           silent: args.silent,
           cleanupAfterMs: args.cleanup_after_ms,
-          groupScope:
-            args.group_scope ?? canonicalTarget.executionContext.groupScope,
           timeoutMs: args.timeout_ms,
           maxRetries: args.max_retries,
           retryBackoffMs: args.retry_backoff_ms,
@@ -192,6 +239,61 @@ export function registerSchedulerTools(server: McpServer): void {
           },
         ],
       };
+    },
+  );
+  server.tool(
+    'scheduler_grant_tool',
+    'Append one extra allowed tool rule to a scheduler job capability policy.',
+    { job_id: z.string(), rule: z.string() },
+    async (args) => {
+      const rule = args.rule.trim();
+      if (!rule) {
+        return {
+          content: [{ type: 'text' as const, text: 'Tool rule is required.' }],
+          isError: true,
+        };
+      }
+      const validation = validateAutonomousToolRule(rule);
+      if (!validation.ok) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: validation.reason ?? 'Invalid scheduler tool rule.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      const getResponse = await requestSchedulerData('scheduler_get_job', {
+        jobId: args.job_id,
+      });
+      const getError = taskError(getResponse, 'Scheduler get job failed.');
+      if (getError) return getError;
+      const job = dataRecord(getResponse!).job;
+      if (!job || typeof job !== 'object') {
+        return {
+          content: [{ type: 'text' as const, text: 'Job not found.' }],
+          isError: true,
+        };
+      }
+      const allowedTools = schedulerJobExtraTools(job);
+      const nextAllowedTools = allowedTools.includes(rule)
+        ? allowedTools
+        : [...allowedTools, rule];
+      const taskId = makeIpcId('scheduler-grant-tool');
+      return submitSchedulerMutationTask({
+        taskType: 'scheduler_update_job',
+        taskId,
+        payload: {
+          jobId: args.job_id,
+          allowedTools: nextAllowedTools,
+        },
+        timeoutText:
+          'Scheduler tool grant timed out waiting for host confirmation.',
+        rejectedText: 'Scheduler tool grant was rejected.',
+        successText: `Scheduler job tool rule granted: ${rule}`,
+      });
     },
   );
   server.tool(
@@ -273,7 +375,6 @@ export function registerSchedulerTools(server: McpServer): void {
         .optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
-      group_scope: z.string().optional(),
       timeout_ms: z.number().optional(),
       max_retries: z.number().optional(),
       retry_backoff_ms: z.number().optional(),
@@ -283,12 +384,11 @@ export function registerSchedulerTools(server: McpServer): void {
       allowed_tools: z.array(z.string()).optional(),
     },
     async (args) => {
-      const legacyField = hasLegacySchedulerField(
+      const unsupportedArgError = unsupportedSchedulerArgError(
         args as Record<string, unknown>,
+        SCHEDULER_UPDATE_ARG_KEYS,
       );
-      if (legacyField) {
-        return legacySchedulerFieldError(legacyField);
-      }
+      if (unsupportedArgError) return unsupportedArgError;
       const executionMode =
         args.execution_mode !== undefined || args.serialize !== undefined
           ? normalizeExecutionMode(args.execution_mode, args.serialize)
@@ -324,8 +424,6 @@ export function registerSchedulerTools(server: McpServer): void {
             : {}),
           silent: args.silent,
           cleanupAfterMs: args.cleanup_after_ms,
-          groupScope:
-            args.group_scope ?? canonicalTarget.executionContext.groupScope,
           timeoutMs: args.timeout_ms,
           maxRetries: args.max_retries,
           retryBackoffMs: args.retry_backoff_ms,
@@ -527,4 +625,41 @@ export function registerSchedulerTools(server: McpServer): void {
       };
     },
   );
+}
+
+function schedulerJobExtraTools(job: unknown): string[] {
+  const record =
+    typeof job === 'object' && job !== null
+      ? (job as Record<string, unknown>)
+      : {};
+  const visibility =
+    typeof record.visibility === 'object' && record.visibility !== null
+      ? (record.visibility as Record<string, unknown>)
+      : {};
+  const toolAccess =
+    typeof visibility.toolAccess === 'object' && visibility.toolAccess !== null
+      ? (visibility.toolAccess as Record<string, unknown>)
+      : {};
+  const visibleExtraTools = stringArray(toolAccess.jobExtraTools);
+  if (visibleExtraTools.length > 0) return visibleExtraTools;
+  const targetJson =
+    typeof record.targetJson === 'object' && record.targetJson !== null
+      ? (record.targetJson as Record<string, unknown>)
+      : {};
+  const target =
+    typeof record.target_json === 'object' && record.target_json !== null
+      ? (record.target_json as Record<string, unknown>)
+      : targetJson;
+  const capabilityPolicy =
+    typeof target.capabilityPolicy === 'object' &&
+    target.capabilityPolicy !== null
+      ? (target.capabilityPolicy as Record<string, unknown>)
+      : {};
+  return stringArray(capabilityPolicy.allowedTools);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }

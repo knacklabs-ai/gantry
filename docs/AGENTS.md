@@ -20,3 +20,5 @@
 - Continuity docs must preserve the clean-cut contract: unsupported old continuity rows fail closed and are not imported, backfilled, or repaired.
 - Memory tool docs must keep `memory_save` limited to canonical direct-save kinds (`preference`, `decision`, `fact`, `correction`, `constraint`) and state that common/global writes require approved admin or service authority.
 - SDK docs must describe `sessions.sendMessage` as durable acceptance into the runtime event stream. Do not imply `accepted` or `acceptedEventId` means synchronous model completion or provider/channel delivery success.
+- Runtime refactor plans must keep code anchors current with repo-relative paths and verified line ranges; note stale or removed anchors in the plan instead of leaving historical paths as active guidance.
+- Runtime refactor budget docs must distinguish LOCAL-35 phase checks from final PR checks: phase checks use the recorded T0 `--baseline-file`, and final/overall deletion targets use an explicit branch `--base-ref`.

@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
-
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-
 import * as pgSchema from '../adapters/storage/postgres/schema/schema.js';
-import { classifySensitiveMemoryMaterial } from './sensitive-material.js';
+import { classifySensitiveMemoryMaterial } from '../shared/sensitive-material.js';
 import {
   itemMatchesSubjectBoundary,
   parseItemSource,
@@ -24,14 +22,14 @@ import type {
   MemorySubjectType,
   NormalizedMemorySubject,
   PatchAppMemoryInput,
+  SaveAppMemoryInput,
 } from './memory-types.js';
-
 type Db = NodePgDatabase<typeof pgSchema>;
 type MemoryReviewRow =
   typeof pgSchema.memoryReviewRequestsPostgres.$inferSelect;
-
 const sqlThreadIdentityFilter = createSqlThreadIdentityFilter({ eq, isNull });
 const REVIEW_APPLYABLE_ACTIONS = new Set([
+  'promote',
   'retire',
   'rewrite',
   'merge',
@@ -56,7 +54,6 @@ const GROUNDING_STOP_WORDS = new Set([
   'this',
   'with',
 ]);
-
 function parseJsonStringRecord(value: string): Record<string, string> {
   const parsed = parseJsonObject(value);
   return Object.fromEntries(
@@ -65,7 +62,6 @@ function parseJsonStringRecord(value: string): Record<string, string> {
     ),
   );
 }
-
 function parseJsonNumberRecord(value: string): Record<string, number> {
   const parsed = parseJsonObject(value);
   return Object.fromEntries(
@@ -75,7 +71,6 @@ function parseJsonNumberRecord(value: string): Record<string, number> {
     ),
   );
 }
-
 function significantGroundingTokens(value: string): string[] {
   const tokens = value.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g);
   if (!tokens) return [];
@@ -83,7 +78,6 @@ function significantGroundingTokens(value: string): string[] {
     (token) => !GROUNDING_STOP_WORDS.has(token),
   );
 }
-
 function isValueGroundedInEvidence(
   value: string,
   evidenceRows: Array<typeof pgSchema.memoryEvidencePostgres.$inferSelect>,
@@ -102,7 +96,6 @@ function isValueGroundedInEvidence(
       : Math.ceil(valueTokens.length * 0.5);
   return hits >= required;
 }
-
 function parseReviewProposal(value: string): MemoryLifecycleProposal {
   const parsed = parseJsonObject(value);
   const action = typeof parsed.action === 'string' ? parsed.action : '';
@@ -140,7 +133,6 @@ function parseReviewProposal(value: string): MemoryLifecycleProposal {
       : [],
   };
 }
-
 function toMemoryReview(row: MemoryReviewRow): MemoryReviewRecord {
   return {
     id: row.id,
@@ -166,7 +158,6 @@ function toMemoryReview(row: MemoryReviewRow): MemoryReviewRecord {
     decidedAt: row.decidedAt,
   };
 }
-
 export async function listPendingMemoryReviews(input: {
   db: Db;
   subject: NormalizedMemorySubject;
@@ -200,7 +191,6 @@ export async function listPendingMemoryReviews(input: {
     .limit(20);
   return rows.map(toMemoryReview);
 }
-
 export async function createPendingMemoryReview(input: {
   db: Db;
   runId: string;
@@ -235,11 +225,11 @@ export async function createPendingMemoryReview(input: {
   });
   return id;
 }
-
 export async function decideMemoryReview(input: {
   db: Db;
   subject: NormalizedMemorySubject;
   decision: MemoryReviewDecisionInput;
+  save: (value: SaveAppMemoryInput) => Promise<AppMemoryItem>;
   patch: (value: PatchAppMemoryInput) => Promise<AppMemoryItem>;
   delete: (value: DeleteAppMemoryInput) => Promise<{ deleted: boolean }>;
 }): Promise<MemoryReviewRecord> {
@@ -281,7 +271,6 @@ export async function decideMemoryReview(input: {
       .returning();
     return toMemoryReview(updated!);
   }
-
   const proposal: MemoryLifecycleProposal = {
     ...review.proposal,
     ...(input.decision.decision === 'edit_approve' &&
@@ -317,12 +306,12 @@ export async function decideMemoryReview(input: {
       .returning();
     return toMemoryReview(updated!);
   }
-
   const outcome = await applyMemoryReviewProposal({
     db: input.db,
     subject: input.subject,
     proposal,
     itemVersions: validation.itemVersions,
+    save: input.save,
     patch: input.patch,
     delete: input.delete,
   });
@@ -342,7 +331,6 @@ export async function decideMemoryReview(input: {
     .returning();
   return toMemoryReview(updated!);
 }
-
 async function validateMemoryReviewProposal(input: {
   db: Db;
   subject: NormalizedMemorySubject;
@@ -361,6 +349,17 @@ async function validateMemoryReviewProposal(input: {
   }
   if (proposal.action === 'retire' && !proposal.itemId) {
     return failure('retire proposal requires a target memory item');
+  }
+  if (
+    proposal.action === 'promote' &&
+    (!proposal.candidateId ||
+      !proposal.kind ||
+      !proposal.key ||
+      !proposal.value)
+  ) {
+    return failure(
+      'promote proposal requires a candidate, kind, key, and value',
+    );
   }
   if (
     (proposal.action === 'rewrite' || proposal.action === 'needs_review') &&
@@ -405,7 +404,6 @@ async function validateMemoryReviewProposal(input: {
   ) {
     return failure('proposal uses unsupported memory kind');
   }
-
   const evidenceRows = await input.db
     .select()
     .from(pgSchema.memoryEvidencePostgres)
@@ -414,6 +412,18 @@ async function validateMemoryReviewProposal(input: {
     return failure('proposal references missing evidence');
   }
   for (const evidence of evidenceRows) {
+    const metadata = parseJsonObject(evidence.metadataJson);
+    if (
+      metadata.unsafeSource === true ||
+      metadata.quarantined === true ||
+      metadata.promptInjection === true ||
+      metadata.safety === 'unsafe' ||
+      metadata.safety === 'quarantined'
+    ) {
+      return failure(
+        'proposal references quarantined or unsafe Memory Source evidence',
+      );
+    }
     if (
       evidence.appId !== input.subject.appId ||
       evidence.agentId !== input.subject.agentId ||
@@ -430,7 +440,6 @@ async function validateMemoryReviewProposal(input: {
   ) {
     return failure('proposal value is not grounded in cited evidence');
   }
-
   const itemIds = [
     proposal.itemId,
     proposal.targetItemId,
@@ -468,7 +477,6 @@ async function validateMemoryReviewProposal(input: {
       }
     }
   }
-
   const candidateVersions: Record<string, string> = {};
   if (proposal.candidateId) {
     const candidateRows = await input.db
@@ -515,16 +523,40 @@ async function validateMemoryReviewProposal(input: {
     candidateVersions,
   };
 }
-
 async function applyMemoryReviewProposal(input: {
   db: Db;
   subject: NormalizedMemorySubject;
   proposal: MemoryLifecycleProposal;
   itemVersions: Record<string, number>;
+  save: (value: SaveAppMemoryInput) => Promise<AppMemoryItem>;
   patch: (value: PatchAppMemoryInput) => Promise<AppMemoryItem>;
   delete: (value: DeleteAppMemoryInput) => Promise<{ deleted: boolean }>;
 }): Promise<{ applied: boolean; reason: string }> {
   const { subject, proposal } = input;
+  if (proposal.action === 'promote') {
+    const { candidateId, kind, key, value } = proposal;
+    if (!candidateId || !kind || !key || !value) {
+      return { applied: false, reason: 'reviewed promote proposal is invalid' };
+    }
+    const saved = await input.save({
+      ...subject,
+      kind,
+      key,
+      value,
+      why: proposal.reason,
+      confidence: proposal.confidence,
+      evidenceIds: proposal.evidenceIds,
+      isAdminWrite: subject.subjectType === 'common',
+    });
+    await input.db
+      .update(pgSchema.memoryCandidatesPostgres)
+      .set({ status: 'promoted', updatedAt: nowIso() })
+      .where(eq(pgSchema.memoryCandidatesPostgres.id, candidateId));
+    return {
+      applied: true,
+      reason: `promoted reviewed memory candidate into ${saved.id}`,
+    };
+  }
   if (proposal.action === 'retire' && proposal.itemId) {
     const result = await input.delete({
       ...subject,
@@ -607,7 +639,6 @@ async function applyMemoryReviewProposal(input: {
     reason: `review proposal action ${proposal.action} is not applyable`,
   };
 }
-
 function failure(reason: string): {
   ok: false;
   reason: string;

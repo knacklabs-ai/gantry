@@ -271,11 +271,9 @@ describe('control job trigger', () => {
       name: 'Job',
       prompt: 'Run',
       model: null,
-      script: null,
       schedule_type: 'manual',
       schedule_value: 'manual',
       status: 'active',
-      linked_sessions: ['app:app-one:conv-1'],
       session_id: 'session-1',
       thread_id: null,
       execution_context: {
@@ -622,7 +620,6 @@ describe('control job trigger', () => {
     ]);
     opsRepo.getJobById.mockResolvedValue(
       makeJob({
-        linked_sessions: ['app:app-two:conv-1'],
         session_id: 'session-app-two',
       }),
     );
@@ -1046,7 +1043,6 @@ describe('control job trigger', () => {
     schedulerMocks.isSchedulerReady.mockReturnValue(false);
     opsRepo.getJobById.mockResolvedValue({
       id: 'job-1',
-      linked_sessions: ['app:app-one:conv-1'],
       session_id: 'session-1',
       status: 'active',
     });
@@ -1088,7 +1084,6 @@ describe('control job trigger', () => {
     );
     opsRepo.getJobById.mockResolvedValue({
       id: 'job-1',
-      linked_sessions: ['app:app-one:conv-1'],
       session_id: 'session-1',
       status: 'active',
     });
@@ -1130,7 +1125,6 @@ describe('control job trigger', () => {
     ]);
     opsRepo.getJobById.mockResolvedValue({
       id: 'job-1',
-      linked_sessions: ['app:app-one:conv-1'],
       session_id: 'session-1',
       status: 'running',
     });
@@ -1241,13 +1235,11 @@ describe('control job trigger', () => {
         schedule_type: 'once',
         schedule_value: '2000-01-01T00:00:00.000Z',
         next_run: '2000-01-01T00:00:00.000Z',
-        linked_sessions: ['app:app-one:conv-1'],
         capability_policy: { allowed_tools: ['Read'] },
       }),
       makeJob({
         id: 'mixed',
         session_id: 'session-app-two',
-        linked_sessions: ['app:app-one:conv-1', 'app:app-two:conv-2'],
       }),
     ]);
     const handle = startControlServer({

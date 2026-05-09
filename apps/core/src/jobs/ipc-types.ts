@@ -14,7 +14,6 @@ export interface TaskIpcData {
   scheduleType?: string;
   scheduleValue?: string;
   contextMode?: string;
-  script?: string;
   jobId?: string;
   executionContext?: {
     conversationJid: string;

@@ -13,10 +13,12 @@ vi.mock('@core/config/index.js', () => ({
   AGENT_MAX_OUTPUT_SIZE: 10485760,
   AGENT_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/myclaw-test-data',
+  ARTIFACTS_DIR: '/tmp/myclaw-test-data/artifacts',
   AGENTS_DIR: '/tmp/myclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   MYCLAW_HOME: '/tmp/myclaw-config',
   MYCLAW_HOME: '/tmp/myclaw-config',
+  RUNTIME_SETTINGS_PATH: '/tmp/myclaw-config/settings.yaml',
   CHROME_PATH: undefined,
   ONECLI_URL: 'http://localhost:10254',
   PERMISSION_APPROVAL_TIMEOUT_MS: 300000,
@@ -70,6 +72,7 @@ vi.mock('@core/runtime/agent-spawn-host.js', () => ({
   }),
   prepareHostRuntimeContext: vi.fn(() => ({
     groupDir: '/tmp/myclaw-test-data/agents/test-group',
+    globalDir: '/tmp/myclaw-test-data/agents/shared',
     groupIpcDir: '/tmp/myclaw-test-data/ipc/test-group',
     runnerDistDir: '/tmp/myclaw-home/dist/runner',
   })),
@@ -335,7 +338,23 @@ describe('agent-spawn timeout behavior', () => {
     });
     mockMaterializeClaudeRuntime.mockReset();
     mockMaterializeClaudeRuntime.mockImplementation(async (input: any) => ({
-      claudeConfigDir: `${input.groupDir}/.claude-runtime/claude`,
+      claudeConfigDir: `${input.groupDir}/.llm-runtime/claude`,
+      protectedFilesystemPaths: [
+        `${input.groupDir}/.llm-runtime/claude`,
+        input.runtimeSettingsPath,
+        `${input.groupDir}/.mcp.json`,
+        `${input.groupDir}/.claude/settings.json`,
+        `${input.groupDir}/.claude/skills`,
+        `${input.groupDir}/skills`,
+        `${input.globalDir}/.mcp.json`,
+        `${input.globalDir}/.claude/settings.json`,
+        `${input.globalDir}/.claude/skills`,
+        `${input.globalDir}/skills`,
+        `${input.packageRoot}/.claude/skills`,
+        `${input.packageRoot}/.codex/skills`,
+        `${input.packageRoot}/.agents/skills`,
+        ...(input.managedSkillArtifactRoots ?? []),
+      ],
       cleanup: vi.fn(),
     }));
   });
@@ -482,7 +501,12 @@ describe('agent-spawn timeout behavior', () => {
         userId: 'user-a',
         defaultScope: 'user',
       },
-      allowedActions: ['memory_search', 'memory_save', 'procedure_save'],
+      allowedActions: [
+        'memory_search',
+        'memory_save',
+        'continuity_summary',
+        'procedure_save',
+      ],
     });
 
     expect(() =>
@@ -963,9 +987,42 @@ describe('agent-spawn timeout behavior', () => {
       string
     >;
     expect(env.CLAUDE_CONFIG_DIR).toContain(
-      '/tmp/myclaw-test-data/agents/test-group/.claude-runtime/claude',
+      '/tmp/myclaw-test-data/agents/test-group/.llm-runtime/claude',
     );
     expect(env.CLAUDE_CONFIG_DIR).not.toBe('/tmp/myclaw-config/.claude');
+  });
+
+  it('hands protected filesystem paths to the runner for SDK sandboxing', async () => {
+    const resultPromise = spawnAgent(testGroup, testInput, () => {});
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    const protectedPaths = JSON.parse(
+      env.MYCLAW_PROTECTED_FILESYSTEM_PATHS_JSON,
+    ) as string[];
+    expect(protectedPaths).toEqual(
+      expect.arrayContaining([
+        '/tmp/myclaw-config/settings.yaml',
+        env.CLAUDE_CONFIG_DIR,
+        '/tmp/myclaw-test-data/agents/test-group/.mcp.json',
+        '/tmp/myclaw-test-data/agents/test-group/.claude/settings.json',
+        '/tmp/myclaw-test-data/agents/test-group/.claude/skills',
+        '/tmp/myclaw-test-data/agents/test-group/skills',
+        '/tmp/myclaw-test-data/agents/shared/.mcp.json',
+        '/tmp/myclaw-test-data/agents/shared/.claude/settings.json',
+        '/tmp/myclaw-test-data/agents/shared/skills',
+        '/tmp/myclaw-home/dist/runner/claude/.claude/skills',
+        '/tmp/myclaw-home/dist/runner/claude/.codex/skills',
+        '/tmp/myclaw-home/dist/runner/claude/.agents/skills',
+        '/tmp/myclaw-test-data/artifacts/skills',
+      ]),
+    );
   });
 
   it('requests shared model runtime credentials for default agent runs', async () => {

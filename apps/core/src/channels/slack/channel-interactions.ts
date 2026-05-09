@@ -1,4 +1,3 @@
-import { getSlackPermissionApproverIds } from '../../config/index.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import {
   PermissionApprovalDecision,
@@ -11,7 +10,6 @@ import {
   formatPermissionReceiptText,
   normalizePermissionAction,
 } from '../permission-interaction.js';
-
 import { SlackChannelState, SlackMessageLike } from './channel-state.js';
 import {
   SLACK_NATIVE_APPEND_MAX_LENGTH,
@@ -19,14 +17,12 @@ import {
 } from './text-limits.js';
 const SLACK_RETRY_DELAY_FALLBACK_MS = 1000;
 const SLACK_RETRY_DELAY_MAX_MS = 5000;
-
 function clampSlackRetryDelayMs(delayMs: number): number {
   if (!Number.isFinite(delayMs) || delayMs <= 0) {
     return SLACK_RETRY_DELAY_FALLBACK_MS;
   }
   return Math.min(SLACK_RETRY_DELAY_MAX_MS, Math.max(1, Math.round(delayMs)));
 }
-
 export abstract class SlackChannelInteractions extends SlackChannelState {
   private rateLimitRetryDelayMs(input: unknown): number | null {
     const candidate = input as {
@@ -68,23 +64,19 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     }
     return null;
   }
-
   private async waitForRetry(delayMs: number): Promise<void> {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, clampSlackRetryDelayMs(delayMs));
     });
   }
-
   protected async ingestSlackMessage(event: SlackMessageLike): Promise<void> {
     if (!event.channel || !event.ts) return;
     if (event.bot_id) return;
     if (event.subtype && event.subtype !== 'file_share') return;
     if (event.subtype === 'message_changed') return;
     if (event.edited) return;
-
     const jid = `sl:${event.channel}`;
     const chatName = await this.resolveChannelName(event.channel);
-
     await this.opts.onChatMetadata(
       jid,
       new Date().toISOString(),
@@ -92,7 +84,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       'slack',
       this.isLikelyGroupConversation(event.channel),
     );
-
     const group = this.opts.conversationRoutes()[jid];
     const isGroupConversation = this.isLikelyGroupConversation(event.channel);
     if (!group && isGroupConversation) {
@@ -102,14 +93,11 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       );
       return;
     }
-
     const enriched = await this.enrichMessage(jid, event);
     const content = enriched.text;
     if (!content) return;
-
     const sender = event.user || 'unknown';
     const senderName = await this.resolveUserName(event.user);
-
     await this.opts.onMessage(jid, {
       id: event.ts,
       chat_jid: jid,
@@ -128,7 +116,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
           : undefined,
     });
   }
-
   protected async tryNativeStreamStart(
     channelId: string,
     threadId: string | undefined,
@@ -147,7 +134,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       return undefined;
     }
   }
-
   protected async tryNativeStreamAppend(
     channelId: string,
     streamTs: string,
@@ -171,7 +157,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         'Slack streaming append split to respect payload limits',
       );
     }
-
     let sentPrefix = '';
     let appendedChunks = 0;
     for (const chunk of chunks) {
@@ -236,7 +221,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     }
     return { completed: true, sentPrefix };
   }
-
   protected async tryNativeStreamStop(
     channelId: string,
     streamTs: string,
@@ -252,7 +236,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       return false;
     }
   }
-
   protected async canDecidePermission(
     userId: string,
     sourceAgentFolder: string,
@@ -269,18 +252,14 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         decisionPolicy,
       });
     }
-    const allowedIds = getSlackPermissionApproverIds(sourceAgentFolder);
-    if (allowedIds.size === 0) return false;
-    return allowedIds.has(userId);
+    return false;
   }
-
   protected formatPermissionPromptText(
     request: PermissionApprovalRequest,
     timeoutMs: number,
   ): string {
     return formatSharedPermissionPromptText(request, timeoutMs);
   }
-
   protected async resolvePermissionPrompt(
     requestId: string,
     decision: PermissionApprovalDecision,
@@ -292,13 +271,11 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     clearTimeout(pending.timer);
     pending.resolve(decision);
     if (!this.app) return;
-
     const text = formatPermissionReceiptText(
       requestId,
       pending.request,
       decision,
     );
-
     try {
       await this.app.client.chat.update({
         channel: pending.channelId,
@@ -313,22 +290,17 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       );
     }
   }
-
   protected registerBoltHandlers(): void {
     if (!this.app) return;
-
     this.app.event('message', async (args: any) => {
       await this.ingestSlackMessage(args.event as SlackMessageLike);
     });
-
     this.app.event('app_mention', async (args: any) => {
       await this.ingestSlackMessage(args.event as SlackMessageLike);
     });
-
     this.app.event('app_home_opened', async (args: any) => {
       const event = args.event as { user?: string };
       if (!event.user) return;
-
       const blocks: Array<Record<string, unknown>> = [
         {
           type: 'section',
@@ -345,7 +317,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
           },
         },
       ];
-
       try {
         await this.app?.client.views.publish({
           user_id: event.user,
@@ -358,7 +329,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         logger.debug({ err }, 'Failed to publish Slack App Home');
       }
     });
-
     this.app.shortcut('myclaw_open_home', async (args: any) => {
       await args.ack();
       const triggerId = args.shortcut?.trigger_id as string | undefined;
@@ -391,7 +361,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         logger.debug({ err }, 'Failed to open Slack shortcut modal');
       }
     });
-
     this.app.shortcut('myclaw_reply_with_context', async (args: any) => {
       await args.ack();
       const shortcut = args.shortcut as {
@@ -414,7 +383,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         logger.debug({ err }, 'Failed to respond to Slack message shortcut');
       }
     });
-
     this.app.action('myclaw_perm_decision', async (args: any) => {
       await args.ack();
       const body = args.body as {
@@ -424,7 +392,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       const action = args.action as { value?: string };
       const userId = body.user?.id || '';
       if (!action.value || !userId) return;
-
       let payload:
         | {
             requestId: string;
@@ -442,7 +409,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       if (!payload?.requestId) return;
       const mode = normalizePermissionAction(payload.decision);
       if (!mode) return;
-
       const pending = this.pendingPermissionPrompts.get(payload.requestId);
       if (!pending) return;
       if (
@@ -460,7 +426,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         }
         return;
       }
-
       if (
         !(await this.canDecidePermission(
           userId,
@@ -481,7 +446,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         }
         return;
       }
-
       const decidedBy =
         body.user?.name || body.user?.username || body.user?.id || 'unknown';
       const decision = decisionForMode(pending.request, mode, decidedBy);
@@ -489,7 +453,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         ...decision,
       });
     });
-
     this.app.action('myclaw_userq_select', async (args: any) => {
       await args.ack();
       const action = args.action as { value?: string };
@@ -499,7 +462,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       };
       const parsed = this.parseUserQuestionActionValue(action.value);
       if (!parsed || parsed.optionIndex === undefined) return;
-
       const key = this.pendingUserQuestionKey(
         parsed.requestId,
         parsed.questionIndex,
@@ -535,7 +497,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       ) {
         return;
       }
-
       const answeredBy =
         body.user?.name || body.user?.username || body.user?.id || 'unknown';
       if (!pending.question.multiSelect) {
@@ -544,7 +505,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         await this.finalizeUserQuestionPrompt(pending, label, answeredBy);
         return;
       }
-
       if (pending.selectedOptionIndexes.has(parsed.optionIndex)) {
         pending.selectedOptionIndexes.delete(parsed.optionIndex);
       } else {
@@ -552,7 +512,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       }
       await this.refreshUserQuestionPrompt(pending);
     });
-
     this.app.action('myclaw_userq_done', async (args: any) => {
       await args.ack();
       const action = args.action as { value?: string };
@@ -562,7 +521,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       };
       const parsed = this.parseUserQuestionActionValue(action.value);
       if (!parsed) return;
-
       const key = this.pendingUserQuestionKey(
         parsed.requestId,
         parsed.questionIndex,
@@ -592,7 +550,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         }
         return;
       }
-
       const selectedLabels = Array.from(pending.selectedOptionIndexes)
         .sort((a, b) => a - b)
         .map((index) => pending.question.options[index]?.label || '')

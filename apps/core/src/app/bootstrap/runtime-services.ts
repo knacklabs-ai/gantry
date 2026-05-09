@@ -37,8 +37,7 @@ import type {
 } from '../../domain/ports/repositories.js';
 import type { SessionMemoryCollector } from '../../domain/ports/session-memory-collector.js';
 import { ChannelWiring } from './channel-wiring.js';
-import { RuntimeApp } from './runtime-app.js';
-import { collectDurableMemoryAtSessionBoundary } from '../../memory/app-memory-service.js';
+import { RuntimeApp, collectRuntimeSessionMemory } from './runtime-app.js';
 import { OutboundDeliveryService } from '../../application/outbound-delivery/outbound-delivery-service.js';
 import {
   getPartialMessageDeliveryMetadata,
@@ -95,7 +94,7 @@ function makeDefaultDeps(): RuntimeServicesDefaults {
     recoverPendingMessages,
     startMessagePollingLoop,
     logger,
-    collectSessionMemory: collectDurableMemoryAtSessionBoundary,
+    collectSessionMemory: collectRuntimeSessionMemory,
     startOutboundDeliveryRecoveryLoop,
     exit: (code: number) => process.exit(code),
   };

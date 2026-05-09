@@ -29,6 +29,7 @@ interface IpcMemoryBinding extends IpcThreadBinding {
   chatJid?: string;
   userId?: string;
   defaultScope?: 'user' | 'group';
+  reviewerIsControlApprover?: boolean;
   allowedActions: readonly MyClawMemoryIpcAction[];
 }
 
@@ -213,6 +214,7 @@ export function validateMemoryIpcAuthRequest(
         )
       : undefined,
   );
+  const reviewerIsControlApprover = context?.reviewerIsControlApprover === true;
   const signature = toTrimmedString(raw.signature, { maxLen: 512 }) || '';
   const payload = { ...raw };
   delete payload.signature;
@@ -223,6 +225,7 @@ export function validateMemoryIpcAuthRequest(
     defaultScope: defaultScope || 'group',
     threadId: binding.authThreadId,
     allowedActions,
+    reviewerIsControlApprover,
   });
   if (!verifyIpcRequestPayload(requestSigningKey, payload, signature)) {
     throw new Error(`Invalid ${label} signature`);
@@ -245,6 +248,7 @@ export function validateMemoryIpcAuthRequest(
     ...(chatJid ? { chatJid } : {}),
     ...(userId ? { userId } : {}),
     ...(defaultScope ? { defaultScope } : {}),
+    ...(reviewerIsControlApprover ? { reviewerIsControlApprover } : {}),
     allowedActions,
   };
 }

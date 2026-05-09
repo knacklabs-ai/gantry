@@ -48,6 +48,8 @@ export const memoryUserId =
   process.env.MYCLAW_MEMORY_USER_ID?.trim() || undefined;
 export const memoryDefaultScope =
   process.env.MYCLAW_MEMORY_DEFAULT_SCOPE === 'user' ? 'user' : 'group';
+export const memoryReviewerIsControlApprover =
+  process.env.MYCLAW_MEMORY_REVIEWER_IS_CONTROL_APPROVER === '1';
 export const memoryIpcAllowedActions = normalizeMemoryIpcActions(
   parseJsonStringArray(process.env.MYCLAW_MEMORY_IPC_ACTIONS_JSON),
 );
@@ -130,6 +132,12 @@ export function capabilityStatusText(): string {
         `  request_permission: permissionKind=tool toolName=${fullName} temporaryOnly=false reason="<why this agent needs ${toolName}>"`,
       ].join('\n');
     }),
+    '',
+    'Memory IPC actions available in this run:',
+    ...memoryIpcAllowedActions
+      .slice()
+      .sort()
+      .map((action) => `- available: ${action}`),
   ];
   const view = buildAgentToolAccessView({
     configuredTools: configuredAllowedTools,

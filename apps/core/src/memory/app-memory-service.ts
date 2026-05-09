@@ -12,12 +12,10 @@ import {
 import { getRuntimeStorage } from '../adapters/storage/postgres/runtime-store.js';
 import type { PostgresStorageService } from '../adapters/storage/postgres/storage-service.js';
 import * as pgSchema from '../adapters/storage/postgres/schema/schema.js';
-import type { SessionMemoryCollector } from '../domain/ports/session-memory-collector.js';
 import { ApplicationError } from '../application/common/application-error.js';
-import { classifySensitiveMemoryMaterial } from './sensitive-material.js';
+import { classifySensitiveMemoryMaterial } from '../shared/sensitive-material.js';
 import { runAppMemoryDreamPass } from './app-memory-dreaming.js';
 import { normalizeSubject, subjectIdFor } from './app-memory-boundaries.js';
-import { collectDurableMemoryAtBoundary } from './app-memory-session-boundary-collector.js';
 import {
   clampConfidence,
   encodeItemSource,
@@ -36,6 +34,7 @@ import type {
   AppMemoryItem,
   AppMemorySearchInput,
   AppMemorySearchResult,
+  DemoteDreamingMemoryInput,
   DeleteAppMemoryInput,
   DreamingRunStatus,
   DreamingTriggerInput,
@@ -80,10 +79,15 @@ import {
   listPendingMemoryReviews,
 } from './app-memory-review.js';
 import {
+  demoteDreamingPromotedMemoryItem,
   deleteOwnedMemoryItem,
   findActiveMemoryByKey,
   getOwnedMemoryItem,
 } from './app-memory-item-queries.js';
+import {
+  buildAppMemoryContinuityStatus,
+  buildAppMemoryContinuitySummary,
+} from './app-memory-continuity.js';
 
 type Db = NodePgDatabase<typeof pgSchema>;
 const APP_MEMORY_RECALL_DEPS = {
@@ -435,15 +439,28 @@ export class AppMemoryService {
     return toAppItem(row!);
   }
 
-  async delete(input: DeleteAppMemoryInput): Promise<{ deleted: boolean }> {
+  // prettier-ignore
+  async delete(input: DeleteAppMemoryInput) {
+    this.assertEnabled(); return deleteOwnedMemoryItem({ db: this.db, context: normalizeSubject(input), ...input });
+  }
+
+  // prettier-ignore
+  async demoteDreamingPromoted(input: DemoteDreamingMemoryInput) {
+    this.assertEnabled(); return demoteDreamingPromotedMemoryItem({ db: this.db, context: normalizeSubject(input), ...input });
+  }
+
+  async demote(input: DemoteDreamingMemoryInput) {
+    return this.demoteDreamingPromoted(input);
+  }
+
+  async continuityStatus(input: Partial<MemoryBoundaryContext> = {}) {
     this.assertEnabled();
-    return deleteOwnedMemoryItem({
-      db: this.db,
-      context: normalizeSubject(input),
-      id: input.id,
-      expectedVersion: input.expectedVersion,
-      isAdminWrite: input.isAdminWrite,
-    });
+    return buildAppMemoryContinuityStatus(this, input);
+  }
+
+  async continuitySummary(input: Partial<MemoryBoundaryContext> = {}) {
+    this.assertEnabled();
+    return buildAppMemoryContinuitySummary(this, input);
   }
 
   async triggerDreaming(
@@ -596,9 +613,9 @@ export class AppMemoryService {
             subject,
             activeItems,
           }),
-        createPendingReview: (proposal) =>
+        createPendingReview: (proposal, db = this.db) =>
           createPendingMemoryReview({
-            db: this.db,
+            db,
             runId,
             subject,
             phase,
@@ -672,28 +689,12 @@ export class AppMemoryService {
       db: this.db,
       subject,
       decision: input,
+      save: (value) => this.save(value),
       patch: (value) => this.patch(value),
       delete: (value) => this.delete(value),
     });
   }
 }
 
-export const collectDurableMemoryAtSessionBoundary: SessionMemoryCollector =
-  async (input) => {
-    const { repositories } = getRuntimeStorage();
-    const memoryService = AppMemoryService.getInstance();
-    return collectDurableMemoryAtBoundary(input, {
-      repositories,
-      memory: {
-        recordEvidence: (value) => memoryService.recordEvidence(value),
-      },
-    });
-  };
-
-export const _testAppMemory = {
-  conversationIdForChannel,
-  conflictingDreamPhases: pgSchema.conflictingDreamPhases,
-  itemMatchesSubjectBoundary,
-  normalizeSubject,
-  subjectIdFor,
-};
+// prettier-ignore
+export const _testAppMemory = { conversationIdForChannel, conflictingDreamPhases: pgSchema.conflictingDreamPhases, itemMatchesSubjectBoundary, normalizeSubject, subjectIdFor };

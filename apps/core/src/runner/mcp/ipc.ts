@@ -20,6 +20,7 @@ import {
   chatJid,
   memoryDefaultScope,
   memoryIpcAllowedActions,
+  memoryReviewerIsControlApprover,
   memoryUserId,
   threadId,
 } from './context.js';
@@ -111,6 +112,7 @@ export async function requestMemoryAction(
       ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
       defaultScope: memoryDefaultScope,
       allowedActions: memoryIpcAllowedActions,
+      reviewerIsControlApprover: memoryReviewerIsControlApprover,
     },
     expiresAt: new Date(Date.now() + timeoutMs).toISOString(),
   };

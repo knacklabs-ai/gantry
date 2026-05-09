@@ -5,7 +5,6 @@ import type {
   AgentId,
 } from '../agent/agent.js';
 import type { App, AppId } from '../app/app.js';
-import type { BrowserProfile, BrowserProfileId } from '../browser/browser.js';
 import type {
   AgentConversationBinding,
   ConversationApprover,
@@ -28,8 +27,6 @@ import type {
   RuntimeEventFilter,
   RuntimeEventPublishInput,
 } from '../events/events.js';
-import type { Job, JobId, JobTrigger } from '../jobs/jobs.js';
-import type { MemoryItem, MemoryItemId } from '../memory/memory.js';
 import type { Message, MessageId } from '../messages/messages.js';
 import type {
   ClaimedOutboundDeliveryItem,
@@ -359,18 +356,6 @@ export interface OutboundDeliveryRepository {
   ): Promise<OutboundDeliveryReceipt | null>;
 }
 
-export interface MemoryRepository {
-  getMemoryItem(id: MemoryItemId): Promise<MemoryItem | null>;
-  saveMemoryItem(item: MemoryItem): Promise<void>;
-}
-
-export interface JobRepository {
-  getJob(id: JobId): Promise<Job | null>;
-  saveJob(job: Job): Promise<void>;
-  listJobs(appId: AppId): Promise<Job[]>;
-  saveJobTrigger(trigger: JobTrigger): Promise<void>;
-}
-
 export interface ToolCatalogRepository {
   getTool(id: ToolId): Promise<ToolCatalogItem | null>;
   listTools(input: {
@@ -499,9 +484,4 @@ export interface SandboxRepository {
   getWorkspaceSnapshot(
     id: WorkspaceSnapshotId,
   ): Promise<WorkspaceSnapshot | null>;
-}
-
-export interface BrowserProfileRepository {
-  getBrowserProfile(id: BrowserProfileId): Promise<BrowserProfile | null>;
-  saveBrowserProfile(profile: BrowserProfile): Promise<void>;
 }

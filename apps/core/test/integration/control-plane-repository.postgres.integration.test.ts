@@ -22,7 +22,6 @@ function makeJob(id: string, patch: Partial<JobUpsertInput> = {}) {
     schedule_type: 'manual',
     schedule_value: '',
     status: 'active',
-    linked_sessions: ['app:control-repo'],
     session_id: null,
     thread_id: 'thread-control',
     execution_context: {

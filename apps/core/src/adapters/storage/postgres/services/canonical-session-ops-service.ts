@@ -6,7 +6,10 @@ import type {
 } from '../../../../domain/ports/repositories.js';
 import { makeSessionScopeKey } from '../../../../domain/repositories/ops-repo.js';
 import type { AgentSession } from '../../../../domain/sessions/sessions.js';
+import { CanonicalJobOpsService } from './canonical-job-ops-service.js';
+import { PostgresCanonicalJobRepository } from '../repositories/canonical-job-repository.postgres.js';
 import type { PostgresCanonicalSessionRepository } from '../repositories/canonical-session-repository.postgres.js';
+import type { CanonicalDb } from '../repositories/canonical-graph-repository.postgres.js';
 
 type SessionAppMemoryLoaderInput = {
   session: AgentSession;
@@ -21,9 +24,18 @@ type HydratedAppMemoryItem = {
   value: string;
   subject: Record<string, unknown>;
 };
+type HydratedContinuityJob = {
+  id: string;
+  name: string;
+  status: 'active' | 'paused' | 'running' | 'dead_lettered';
+  nextRunAt?: string;
+  lastRunAt?: string;
+  target?: unknown;
+};
 
 export class CanonicalSessionOpsService {
   private readonly hydrateService?: HydrateAgentContextService;
+  private readonly continuityJobOps?: CanonicalJobOpsService;
 
   constructor(
     private readonly repository: PostgresCanonicalSessionRepository,
@@ -34,12 +46,17 @@ export class CanonicalSessionOpsService {
       loadAppMemoryItems?: (
         input: SessionAppMemoryLoaderInput,
       ) => Promise<HydratedAppMemoryItem[]>;
+      loadContinuityJobs?: (input: {
+        session: AgentSession;
+        limit: number;
+      }) => Promise<HydratedContinuityJob[]>;
     },
     options: {
       memoryItemLimit?: number;
       maxMemoryContextChars?: number;
     } = {},
   ) {
+    this.continuityJobOps = createContinuityJobOps(repository);
     if (repositories) {
       this.hydrateService = new HydrateAgentContextService(
         repositories.agentSessions,
@@ -69,6 +86,11 @@ export class CanonicalSessionOpsService {
                 });
               }
             : undefined,
+          loadContinuityJobs:
+            repositories.loadContinuityJobs ??
+            (this.continuityJobOps
+              ? (input) => this.loadProductionContinuityJobs(input)
+              : undefined),
         },
       );
     }
@@ -178,4 +200,75 @@ export class CanonicalSessionOpsService {
   async deleteSessionsByGroupFolder(groupFolder: string): Promise<void> {
     await this.repository.deleteGroupFolder(groupFolder);
   }
+
+  private async loadProductionContinuityJobs(input: {
+    session: AgentSession;
+    limit: number;
+  }): Promise<HydratedContinuityJob[]> {
+    if (!this.continuityJobOps) return [];
+    const conversationJid = conversationJidFromCanonicalId(
+      input.session.conversationId,
+    );
+    if (!conversationJid) return [];
+    const threadId = threadIdFromCanonicalId(
+      input.session.threadId,
+      conversationJid,
+    );
+    const jobs = await this.continuityJobOps.listJobs({
+      appId: input.session.appId,
+      statuses: ['active', 'paused'],
+      agentId: input.session.agentId,
+      conversationJid,
+      threadId,
+      limit: Math.max(input.limit, 1),
+    });
+    return jobs
+      .filter((job) => {
+        const execution = job.execution_context;
+        return (
+          (job.status === 'active' || job.status === 'paused') &&
+          execution?.conversationJid === conversationJid &&
+          (execution.threadId ?? null) === (threadId ?? null)
+        );
+      })
+      .slice(0, input.limit)
+      .map((job) => ({
+        id: job.id,
+        name: job.name,
+        status: job.status as 'active' | 'paused',
+        ...(job.next_run ? { nextRunAt: job.next_run } : {}),
+        ...(job.last_run ? { lastRunAt: job.last_run } : {}),
+        target: {
+          executionContext: job.execution_context,
+          notificationRoutes: job.notification_routes,
+        },
+      }));
+  }
+}
+
+function createContinuityJobOps(
+  repository: PostgresCanonicalSessionRepository,
+): CanonicalJobOpsService | undefined {
+  const db = (repository as unknown as { db?: CanonicalDb }).db;
+  return db
+    ? new CanonicalJobOpsService(new PostgresCanonicalJobRepository(db))
+    : undefined;
+}
+
+function conversationJidFromCanonicalId(
+  conversationId: string | undefined,
+): string | undefined {
+  if (!conversationId) return undefined;
+  return conversationId.startsWith('conversation:')
+    ? conversationId.slice('conversation:'.length)
+    : conversationId;
+}
+
+function threadIdFromCanonicalId(
+  threadId: string | undefined,
+  conversationJid: string,
+): string | null {
+  if (!threadId) return null;
+  const prefix = `thread:${conversationJid}:`;
+  return threadId.startsWith(prefix) ? threadId.slice(prefix.length) : threadId;
 }

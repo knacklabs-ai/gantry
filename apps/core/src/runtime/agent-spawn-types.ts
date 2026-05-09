@@ -22,13 +22,14 @@ export interface AgentInput {
   threadId?: string;
   memoryUserId?: string;
   memoryDefaultScope?: 'user' | 'group';
+  memoryReviewerIsControlApprover?: boolean;
   persona?: AgentPersona;
   browserProfileName?: string;
   allowedTools?: string[];
   isScheduledJob?: boolean;
+  jobId?: string;
   jobModelUseKind?: 'oneTimeJob' | 'recurringJob';
   assistantName?: string;
-  script?: string;
   compiledSystemPrompt?: string;
   thinking?: ThinkingOverride;
   memoryContextBlock?: string;

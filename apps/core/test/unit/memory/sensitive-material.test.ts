@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeOutboundLlmText } from '@core/memory/sensitive-material.js';
+import { sanitizeOutboundLlmText } from '@core/shared/sensitive-material.js';
 
 describe('sensitive material sanitizer', () => {
   it('continues scanning mixed content after replacing known secret markers', () => {

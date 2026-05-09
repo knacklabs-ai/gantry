@@ -15,6 +15,16 @@ export interface MemoryStatusSnapshot {
   top10_most_used: Array<{ key: string; retrieval_count: number }>;
   top10_stalest: Array<{ key: string; updated_at: string }>;
   last_dream_run?: { at?: string; summary?: string };
+  memory_pipeline?: {
+    staged?: number;
+    promoted?: number;
+    needs_review?: number;
+  };
+  last_injected_block?: {
+    subject?: string;
+    bytes?: number;
+    at?: string;
+  };
   disk_kb?: Record<string, number>;
   retrieval?: {
     searchMode?: 'lexical_keyword';
@@ -82,6 +92,19 @@ export function formatMemoryStatus(status: MemoryStatusSnapshot): string {
     .map((row) => `${row.key}@${row.updated_at.slice(0, 10)}`)
     .join(', ');
   const dream = status.last_dream_run?.at || 'never';
+  const pipeline = status.memory_pipeline;
+  const lastInjected = status.last_injected_block;
+  const lastInjectedText = lastInjected
+    ? [
+        lastInjected.subject || 'unknown subject',
+        typeof lastInjected.bytes === 'number'
+          ? `${lastInjected.bytes} bytes`
+          : 'unknown bytes',
+        lastInjected.at ? `at ${lastInjected.at}` : undefined,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(', ')
+    : 'none';
   const disk = status.disk_kb
     ? Object.entries(status.disk_kb)
         .map(([k, v]) => `${k}:${v}kb`)
@@ -97,6 +120,8 @@ export function formatMemoryStatus(status: MemoryStatusSnapshot): string {
     `retrieval: ${searchMode}`,
     `embeddings: ${retrieval?.embeddings || 'unknown'}`,
     `vector_search: ${retrieval?.vectorSearch || 'inactive'}`,
+    `pipeline: staged:${pipeline?.staged ?? 0}, promoted:${pipeline?.promoted ?? 0}, needs_review:${pipeline?.needs_review ?? 0}`,
+    `last_injected_block: ${lastInjectedText}`,
     `top_used: ${used || 'none'}`,
     `stale: ${stalest || 'none'}`,
     `last_dream: ${dream}`,

@@ -40,7 +40,8 @@ import {
   getRuntimeSkillArtifactStore,
   getRuntimeStorage,
 } from '../../adapters/storage/postgres/runtime-store.js';
-import { collectDurableMemoryAtSessionBoundary } from '../../memory/app-memory-service.js';
+import { AppMemoryService } from '../../memory/app-memory-service.js';
+import { collectDurableMemoryAtBoundary } from '../../memory/app-memory-session-boundary-collector.js';
 import { memoryAgentIdForGroupFolder } from '../../memory/app-memory-boundaries.js';
 
 type RuntimeAppRepository = RuntimeRouterStateRepository &
@@ -445,6 +446,9 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
         channelRuntime.setTyping(chatJid, isTyping),
       sendProgressUpdate: (chatJid, text, options) =>
         channelRuntime.sendProgressUpdate(chatJid, text, options),
+      isControlApproverAllowed: (input) =>
+        channelRuntime.isControlApproverAllowed?.(input) ??
+        Promise.resolve(false),
     },
     getGroup: (chatJid) => conversationRoutes[chatJid],
     clearSession: async (groupFolder, threadId, metadata) => {
@@ -492,7 +496,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     getSkillArtifactStore:
       options.skillArtifactStore ?? getRuntimeSkillArtifactStore,
     collectSessionMemory:
-      options.collectSessionMemory ?? collectDurableMemoryAtSessionBoundary,
+      options.collectSessionMemory ?? collectRuntimeSessionMemory,
   });
 
   return {
@@ -525,6 +529,18 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     },
   };
 }
+
+export const collectRuntimeSessionMemory: import('../../domain/ports/session-memory-collector.js').SessionMemoryCollector =
+  async (input) => {
+    const { repositories } = getRuntimeStorage();
+    const memoryService = AppMemoryService.getInstance();
+    return collectDurableMemoryAtBoundary(input, {
+      repositories,
+      memory: {
+        recordEvidence: (value) => memoryService.recordEvidence(value),
+      },
+    });
+  };
 
 let defaultRuntimeApp: RuntimeApp | null = null;
 

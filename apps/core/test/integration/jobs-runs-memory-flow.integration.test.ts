@@ -27,7 +27,6 @@ function makeJob(id: string, patch: Partial<JobUpsertInput> = {}) {
     schedule_type: 'manual',
     schedule_value: '',
     status: 'active',
-    linked_sessions: ['tg:scheduler'],
     session_id: null,
     thread_id: 'thread-scheduled',
     execution_context: {
@@ -376,7 +375,6 @@ maybeDescribe('jobs, runs, memory, and scheduler flow', () => {
       title: 'App Two',
     });
     const appOneJob = makeJob('job:integration:owner-app-one', {
-      linked_sessions: ['app:app-one:conversation'],
       session_id: appOneSession.sessionId,
       group_scope: 'app_one_agent',
       thread_id: null,
@@ -395,7 +393,6 @@ maybeDescribe('jobs, runs, memory, and scheduler flow', () => {
       ],
     });
     const appTwoJob = makeJob('job:integration:owner-app-two', {
-      linked_sessions: ['app:app-two:conversation'],
       session_id: appTwoSession.sessionId,
       group_scope: 'app_two_agent',
       thread_id: null,

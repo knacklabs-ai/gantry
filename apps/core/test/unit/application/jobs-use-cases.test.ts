@@ -18,11 +18,9 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     name: 'Job',
     prompt: 'Run',
     model: null,
-    script: null,
     schedule_type: 'manual',
     schedule_value: 'manual',
     status: 'active',
-    linked_sessions: ['app:app-one:conv-1'],
     session_id: 'session-app-one',
     thread_id: null,
     group_scope: 'app-folder',
@@ -449,7 +447,6 @@ describe('job application use cases', () => {
 
   it('uses canonical session ownership instead of linked session strings for app access', async () => {
     const job = makeJob({
-      linked_sessions: ['app:app-one:conv-1'],
       session_id: 'session-app-two',
     });
     const ops = makeOps(job);
@@ -472,12 +469,10 @@ describe('job application use cases', () => {
     const appOneJob = makeJob({
       id: 'job-app-one',
       session_id: 'session-app-one',
-      linked_sessions: ['app:stale-app:conv-1'],
     });
     const staleLinkedJob = makeJob({
       id: 'job-stale-linked',
       session_id: 'session-app-two',
-      linked_sessions: ['app:app-one:conv-1'],
     });
     const ops = {
       listJobs: vi.fn(async () => [appOneJob, staleLinkedJob]),
@@ -501,17 +496,14 @@ describe('job application use cases', () => {
     const missingSessionJob = makeJob({
       id: 'job-missing-session',
       session_id: null,
-      linked_sessions: ['app:app-one:conv-1'],
     });
     const malformedAppJob = makeJob({
       id: 'job-malformed-app',
       session_id: null,
-      linked_sessions: ['app:app-one:conv:extra'],
     });
     const crossAppJob = makeJob({
       id: 'job-cross-app',
       session_id: null,
-      linked_sessions: ['app:app-one:conv-1', 'app:app-two:conv-1'],
     });
     const ops = {
       listJobs: vi.fn(async () => [
@@ -596,7 +588,21 @@ describe('job application use cases', () => {
         }),
         access,
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      canAccessSchedulerJob(
+        makeJob({
+          group_scope: 'team',
+          thread_id: 'other-thread',
+          execution_context: {
+            conversationJid: 'tg:team',
+            threadId: null,
+            groupScope: 'team',
+          },
+        }),
+        access,
+      ),
+    ).toBe(false);
     expect(
       canAccessSchedulerJob(
         makeJob({
@@ -649,7 +655,7 @@ describe('job application use cases', () => {
     );
   });
 
-  it('does not derive scheduler access from linked_sessions membership', () => {
+  it('uses execution context rather than legacy linked-session membership', () => {
     const access = {
       sourceAgentFolder: 'team',
       originConversationJid: 'tg:team',
@@ -664,7 +670,6 @@ describe('job application use cases', () => {
       canAccessSchedulerJob(
         makeJob({
           group_scope: 'team',
-          linked_sessions: ['tg:other'],
           execution_context: {
             conversationJid: 'tg:team',
             threadId: null,
@@ -804,7 +809,6 @@ describe('job application use cases', () => {
     const threadedJob = makeJob({
       id: 'lead:knacklabs-controller',
       group_scope: 'team',
-      linked_sessions: ['tg:team'],
       thread_id: '2771',
       execution_context: {
         conversationJid: 'tg:team',
@@ -1012,7 +1016,6 @@ describe('job application use cases', () => {
     const service = new JobManagementService({
       ops: makeOps(
         makeJob({
-          linked_sessions: ['telegram:chat', 'app:app-one:conv-1'],
           session_id: 'session-1',
         }),
       ) as RuntimeJobRepository,
@@ -1125,7 +1128,6 @@ describe('job application use cases', () => {
     const service = new JobManagementService({
       ops: makeOps(
         makeJob({
-          linked_sessions: [],
           session_id: 'session-1',
         }),
       ) as RuntimeJobRepository,
@@ -1168,7 +1170,6 @@ describe('job application use cases', () => {
     const service = new JobManagementService({
       ops: makeOps(
         makeJob({
-          linked_sessions: [],
           session_id: 'session-1',
         }),
       ) as RuntimeJobRepository,
@@ -1378,7 +1379,6 @@ describe('job application use cases', () => {
         makeJob({
           id: 'other-job',
           group_scope: 'other',
-          linked_sessions: ['tg:other'],
         }),
       ),
       listJobRuns: vi.fn(async () => []),
@@ -1476,7 +1476,6 @@ describe('job application use cases', () => {
     const visibleJob = makeJob({
       id: 'job-1',
       group_scope: 'team',
-      linked_sessions: ['tg:team'],
       execution_context: {
         conversationJid: 'tg:team',
         threadId: null,
@@ -1608,7 +1607,6 @@ describe('job application use cases', () => {
         makeJob({
           id: 'job-1',
           group_scope: 'team',
-          linked_sessions: ['tg:team'],
           session_id: 'session-1',
           schedule_type: 'cron',
           schedule_value: '0 9 * * *',
@@ -1682,7 +1680,6 @@ describe('job application use cases', () => {
         makeJob({
           id: 'job-1',
           group_scope: 'team',
-          linked_sessions: ['tg:team'],
           session_id: null,
         }),
       ) as RuntimeJobRepository,
@@ -1732,7 +1729,6 @@ describe('job application use cases', () => {
         makeJob({
           status: 'paused',
           group_scope: 'team',
-          linked_sessions: ['tg:team'],
         }),
       ) as RuntimeJobRepository,
       scheduler: { requestSchedulerSync: vi.fn() },
@@ -1776,7 +1772,6 @@ describe('job application use cases', () => {
       ops: makeOps(
         makeJob({
           group_scope: 'team',
-          linked_sessions: ['tg:team'],
         }),
       ) as RuntimeJobRepository,
       scheduler: { requestSchedulerSync: vi.fn() },
@@ -1891,7 +1886,6 @@ describe('job application use cases', () => {
     const ops = makeOps(
       makeJob({
         session_id: 'session-app-one',
-        linked_sessions: ['app:stale-app:conv-1'],
       }),
     );
     const approveJobExtraTools = vi.fn(async () => ({ approved: true }));

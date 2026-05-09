@@ -18,7 +18,6 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     schedule: '',
     enabled: true,
     status: 'active',
-    linked_sessions: ['tg:1'],
     created_by: 'user',
     created_at: '2024-01-01T00:00:00.000Z',
     updated_at: '2024-01-01T00:00:00.000Z',

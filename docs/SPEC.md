@@ -462,16 +462,16 @@ decisions. It stores app-grade memory in Postgres.
 
 #### Storage Backend
 
-| Component           | Technology                          | Purpose                                                             |
-| ------------------- | ----------------------------------- | ------------------------------------------------------------------- |
-| **Memory items**    | Postgres (`memory_items`)           | Canonical durable statements with flattened app/agent/subject columns, confidence, status, version metadata, and evidence links |
-| **Evidence**        | Postgres (`memory_evidence`)        | Grounding from sessions, messages, tools, manual saves, and sources |
-| **Candidates**      | Postgres (`memory_candidates`)      | Extracted facts awaiting promotion or review                        |
-| **Recall events**   | Postgres (`memory_recall_events`)   | Search/usefulness signals for future dreaming                       |
-| **Dream runs**      | Postgres (`memory_dream_runs`)      | Dreaming lifecycle runs per boundary                                |
-| **Dream decisions** | Postgres (`memory_dream_decisions`) | Auditable promotion, merge, rewrite, decay, retire, or review rows  |
-| **Lexical search**  | Postgres full-text search           | Always-on memory retrieval path                                     |
-| **Vector search**   | Future `pgvector` path              | Inactive until memory item embedding indexing and query are fully implemented |
+| Component           | Technology                                                                       | Purpose                                                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Memory items**    | Postgres (`memory_items`)                                                        | Canonical durable statements with flattened app/agent/subject columns, confidence, status, version metadata, and evidence links |
+| **Evidence**        | Postgres (`memory_evidence`)                                                     | Grounding from sessions, messages, tools, manual saves, and sources                                                             |
+| **Candidates**      | Postgres (`memory_candidates`)                                                   | Extracted facts awaiting promotion or review                                                                                    |
+| **Recall events**   | Postgres (`memory_recall_events`)                                                | Search/usefulness signals for future dreaming                                                                                   |
+| **Dream runs**      | Postgres (`memory_dream_runs`)                                                   | Dreaming lifecycle runs per boundary                                                                                            |
+| **Dream decisions** | Postgres (`memory_dream_decisions`)                                              | Auditable promotion, merge, rewrite, decay, retire, or review rows                                                              |
+| **Lexical search**  | Postgres full-text search                                                        | Always-on memory retrieval path                                                                                                 |
+| **Vector search**   | Future `pgvector` path                                                           | Inactive until memory item embedding indexing and query are fully implemented                                                   |
 
 `memory_subjects` is not an active current-schema table. Subject identity is
 flattened into `memory_items` and preserved in item metadata for visibility
@@ -481,14 +481,14 @@ checks.
 
 Agents interact with memory via MCP tools over IPC:
 
-| Tool             | Purpose                                                                            |
-| ---------------- | ---------------------------------------------------------------------------------- |
-| `memory_save`    | Save a durable preference, decision, fact, correction, or constraint in user/group scope |
-| `memory_search`  | Search scoped memory statements and source snippets                                |
-| `procedure_save` | Save a reusable multi-step procedure                                               |
+| Tool                    | Purpose                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `memory_save`           | Save a durable preference, decision, fact, correction, or constraint in user/group scope           |
+| `memory_search`         | Search scoped memory statements and source snippets                                                |
+| `procedure_save`        | Save a reusable multi-step procedure                                                               |
 
-Patch tools exist in the host protocol for reviewed/admin flows, but they are
-not part of the default agent capability bundle.
+Patch and review tools exist in the host protocol for reviewed/admin flows, but
+they are not part of the default agent capability bundle.
 Common/global memory writes are restricted to approved admin or service
 workflows; default agent IPC/MCP memory saves must not write shared common
 memory directly.
@@ -696,11 +696,11 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 ### Commands Available in Main Channel Only
 
-| Command                          | Example                             | Effect                 |
-| -------------------------------- | ----------------------------------- | ---------------------- |
-| `@Assistant add group "Name"`    | `@Andy add group "Family Chat"`     | Register a new group   |
-| `@Assistant remove group "Name"` | `@Andy remove group "Work Team"`    | Unregister a group     |
-| `@Assistant list groups`         | `@Andy list groups`                 | Show registered groups |
+| Command                          | Example                             | Effect                    |
+| -------------------------------- | ----------------------------------- | ------------------------- |
+| `@Assistant add group "Name"`    | `@Andy add group "Family Chat"`     | Register a new group      |
+| `@Assistant remove group "Name"` | `@Andy remove group "Work Team"`    | Unregister a group        |
+| `@Assistant list groups`         | `@Andy list groups`                 | Show registered groups    |
 | `@Assistant remember [fact]`     | `@Andy remember I prefer dark mode` | Add scoped durable memory |
 
 ---

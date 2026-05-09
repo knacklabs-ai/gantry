@@ -128,32 +128,6 @@ describe('system memory dreaming jobs', () => {
     expect(deleteJob).not.toHaveBeenCalled();
   });
 
-  it('deletes obsolete per-folder system dreaming jobs during registration', async () => {
-    const { registerSystemJobs } = await loadSystemJobs();
-    const upsertJob = vi.fn().mockResolvedValue({ created: true });
-    const getJobById = vi.fn().mockResolvedValue(undefined);
-    const deleteJob = vi.fn(async () => undefined);
-    const routes = {
-      'sl:C123': makeRoute({ folder: 'agent-a', conversationKind: 'channel' }),
-    };
-
-    await registerSystemJobs({
-      conversationRoutes: () => routes,
-      opsRepository: {
-        getAllJobs: vi.fn(async () => [
-          makeJob({ id: 'system:dreaming:agent-a' }),
-          makeJob({ id: 'system:dreaming:agent-a:abcdef0123456789' }),
-        ]),
-        getJobById,
-        deleteJob,
-        upsertJob,
-      },
-    } as never);
-
-    expect(deleteJob).toHaveBeenCalledTimes(1);
-    expect(deleteJob).toHaveBeenCalledWith('system:dreaming:agent-a');
-  });
-
   it('runs scheduled channel dreaming against channel subject with thread scope', async () => {
     const triggerDreaming = vi.fn().mockResolvedValue({ runId: 'dream-1' });
     const { _setMemoryMaintenanceQueueForTests, handleSystemJob } =

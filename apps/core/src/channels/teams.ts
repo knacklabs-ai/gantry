@@ -8,6 +8,7 @@ import type {
 } from '../domain/types.js';
 import type { RuntimeSecretProvider } from '../domain/ports/runtime-secret-provider.js';
 import { logger } from '../infrastructure/logging/logger.js';
+import { PERMISSION_APPROVAL_TIMEOUT_MS } from '../shared/permission-timeout.js';
 import {
   decisionForMode,
   formatPermissionPromptText,
@@ -95,7 +96,7 @@ export interface TeamsChannelDependencies {
   sdkClient?: TeamsSdkClient;
   credentials?: TeamsChannelCredentials;
 }
-const TEAMS_PERMISSION_APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+const TEAMS_PERMISSION_APPROVAL_TIMEOUT_MS = PERMISSION_APPROVAL_TIMEOUT_MS;
 export interface TeamsAdaptiveCardAction {
   type: 'Action.Execute';
   title: string;

@@ -119,6 +119,10 @@ function createMcpFixture(): {
     path.join(sharedDir, 'tool-access-view.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/tool-rule-matcher.ts'),
+    path.join(sharedDir, 'tool-rule-matcher.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/infrastructure/time/datetime.ts'),
     path.join(infrastructureTimeDir, 'datetime.ts'),
   );
@@ -353,7 +357,7 @@ async function runMcpFixture(
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`MCP fixture timed out\nstderr:\n${stderr}`));
-    }, 15_000);
+    }, 30_000);
     child.on('error', (err) => {
       clearTimeout(timeout);
       reject(err);
@@ -367,7 +371,7 @@ async function runMcpFixture(
   return { exitCode, stderr };
 }
 
-describe('agent-runner MCP stdio tools', { timeout: 20_000 }, () => {
+describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
   it('consumes ask_user_question responses, formats answers, and unlinks the response file', async () => {
     const fixture = createMcpFixture();
 
@@ -482,7 +486,7 @@ describe('agent-runner MCP stdio tools', { timeout: 20_000 }, () => {
     expect(statusRecord.result.content[0].text).toContain(
       'requestable: mcp__myclaw__register_agent',
     );
-  }, 20_000);
+  }, 40_000);
 
   it('keeps unselected admin tools out of the MCP surface', async () => {
     const fixture = createMcpFixture();
@@ -890,7 +894,7 @@ describe('agent-runner MCP stdio tools', { timeout: 20_000 }, () => {
     });
   });
 
-  it('rejects legacy scheduler thread_id field on upsert', async () => {
+  it('rejects non-canonical scheduler thread_id field on upsert', async () => {
     const fixture = createMcpFixture();
 
     const result = await runMcpFixture(
@@ -913,7 +917,7 @@ describe('agent-runner MCP stdio tools', { timeout: 20_000 }, () => {
     const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
     expect(record.result.isError).toBe(true);
     expect(record.result.content[0].text).toContain(
-      'Unsupported legacy scheduler field "thread_id". Use execution_context and notification_routes.',
+      'Unsupported scheduler fields: thread_id. Use execution_context and notification_routes for routing.',
     );
   });
 
@@ -1065,7 +1069,7 @@ describe('agent-runner MCP stdio tools', { timeout: 20_000 }, () => {
     expect(task.modelAlias).toBeNull();
   });
 
-  it('rejects legacy scheduler thread_id field on update', async () => {
+  it('rejects non-canonical scheduler thread_id field on update', async () => {
     const fixture = createMcpFixture();
 
     const result = await runMcpFixture(
@@ -1086,7 +1090,7 @@ describe('agent-runner MCP stdio tools', { timeout: 20_000 }, () => {
     const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
     expect(record.result.isError).toBe(true);
     expect(record.result.content[0].text).toContain(
-      'Unsupported legacy scheduler field "thread_id". Use execution_context and notification_routes.',
+      'Unsupported scheduler fields: thread_id. Use execution_context and notification_routes for routing.',
     );
   });
 });

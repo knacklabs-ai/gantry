@@ -4,6 +4,7 @@ import type {
   UserQuestionRequest,
   UserQuestionResponse,
 } from '../../domain/types.js';
+import { PERMISSION_APPROVAL_TIMEOUT_MS } from '../../shared/permission-timeout.js';
 
 type ChannelLike = object;
 
@@ -34,6 +35,15 @@ interface PermissionApprovalTargetResolution {
 interface PermissionApprovalTargetBlocked {
   blockedReason: string;
 }
+
+const permissionTimeoutDecision = (
+  request: PermissionApprovalRequest,
+): PermissionApprovalDecision => ({
+  approved: false,
+  decidedBy: 'system',
+  reason: `Permission approval timed out after ${PERMISSION_APPROVAL_TIMEOUT_MS}ms for ${request.toolName}. Recovery: retry the request or approve a narrower persistent rule from the originating conversation.`,
+  decisionClassification: 'user_reject',
+});
 
 function resolvePermissionApprovalTarget(
   request: PermissionApprovalRequest,
@@ -79,10 +89,53 @@ export function createPermissionApprovalRequester(input: {
       };
     }
     try {
-      return await approvalSurface.requestPermissionApproval(
-        routed.targetJid,
-        routed.request,
-      );
+      return await new Promise<PermissionApprovalDecision>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          resolve(permissionTimeoutDecision(request));
+        }, PERMISSION_APPROVAL_TIMEOUT_MS);
+        approvalSurface
+          .requestPermissionApproval(routed.targetJid, routed.request)
+          .then((decision) => {
+            if (settled) {
+              input.logger.error({
+                targetJid: routed.targetJid,
+                requestId: request.requestId,
+                message: 'Late permission approval ignored after timeout',
+              });
+              return;
+            }
+            settled = true;
+            clearTimeout(timer);
+            resolve(decision);
+          })
+          .catch((err: unknown) => {
+            if (settled) {
+              input.logger.error({
+                err,
+                targetJid: routed.targetJid,
+                requestId: request.requestId,
+                message:
+                  'Late permission approval failure ignored after timeout',
+              });
+              return;
+            }
+            settled = true;
+            clearTimeout(timer);
+            input.logger.error({
+              err,
+              targetJid: routed.targetJid,
+              requestId: request.requestId,
+              message: 'Target channel permission approval flow failed',
+            });
+            resolve({
+              approved: false,
+              reason: 'Permission approval flow failed',
+            });
+          });
+      });
     } catch (err) {
       input.logger.error({
         err,

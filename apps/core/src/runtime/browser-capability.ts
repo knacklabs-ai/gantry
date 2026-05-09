@@ -621,21 +621,6 @@ export async function closeAllBrowsers(): Promise<void> {
   }
 }
 
-export async function listActiveBrowserSessions(): Promise<
-  BrowserSessionStatus[]
-> {
-  const statuses: BrowserSessionStatus[] = [];
-  for (const session of sessions.values()) {
-    const running = await isSessionHealthy(session);
-    if (!running) {
-      await closeUnhealthySession(session.profileName, session);
-      continue;
-    }
-    statuses.push(toRunningStatus(session));
-  }
-  return statuses;
-}
-
 export async function listBrowserProfiles(): Promise<BrowserProfileStatus[]> {
   const profiles = listProfiles();
   if (profiles.length === 0) {
@@ -674,13 +659,4 @@ export async function listBrowserProfiles(): Promise<BrowserProfileStatus[]> {
     });
   }
   return statuses;
-}
-
-export async function ensureBrowserProfileExists(
-  profileName = DEFAULT_BROWSER_PROFILE_NAME,
-): Promise<void> {
-  const normalized = resolveProfileName(profileName);
-  if (!getProfile(normalized)) {
-    createProfile(normalized);
-  }
 }

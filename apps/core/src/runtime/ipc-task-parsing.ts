@@ -57,6 +57,7 @@ const DISALLOWED_TASK_FIELDS = [
   'linked_sessions',
   'group_scope',
   'thread_id',
+  'session_id',
   'run_at',
   'created_by',
   'cleanup_after_ms',
@@ -73,13 +74,16 @@ const DISALLOWED_TASK_FIELDS = [
   'since_id',
 ] as const;
 
-const LEGACY_JOB_TASK_FIELDS = [
+const UNSUPPORTED_SCHEDULER_JOB_TASK_FIELDS = [
+  'script',
   'linked_sessions',
   'linkedSessions',
   'deliver_to',
   'deliverTo',
   'notificationTarget',
   'thread_id',
+  'sessionId',
+  'groupScope',
 ] as const;
 
 function isSchedulerJobMutationTask(type: string): boolean {
@@ -96,13 +100,13 @@ function findDisallowedTaskFields(raw: Record<string, unknown>): string[] {
   return found;
 }
 
-function findLegacyJobTaskFields(
+function findUnsupportedSchedulerJobTaskFields(
   raw: Record<string, unknown>,
   type: string,
 ): string[] {
   if (!isSchedulerJobMutationTask(type)) return [];
   const found: string[] = [];
-  for (const key of LEGACY_JOB_TASK_FIELDS) {
+  for (const key of UNSUPPORTED_SCHEDULER_JOB_TASK_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(raw, key)) {
       found.push(key);
     }
@@ -123,14 +127,14 @@ function assertNoDisallowedTaskFields(raw: Record<string, unknown>): void {
   );
 }
 
-function assertNoLegacyJobTaskFields(
+function assertNoUnsupportedSchedulerJobTaskFields(
   raw: Record<string, unknown>,
   type: string,
 ): void {
-  const fields = findLegacyJobTaskFields(raw, type);
+  const fields = findUnsupportedSchedulerJobTaskFields(raw, type);
   if (fields.length === 0) return;
   throw new Error(
-    `Unsupported legacy scheduler job fields: ${fields.join(
+    `Unsupported scheduler job fields: ${fields.join(
       ', ',
     )}. Use executionContext and notificationRoutes.`,
   );
@@ -269,7 +273,7 @@ export function parseTaskIpcData(
   }
   const type = toTrimmedString(raw.type, { maxLen: 80 });
   if (!type) throw new Error('IPC task type is required');
-  assertNoLegacyJobTaskFields(raw, type);
+  assertNoUnsupportedSchedulerJobTaskFields(raw, type);
   const parsed: TaskIpcData = { type };
   const taskId = toTrimmedString(raw.taskId, { maxLen: 128 });
   const prompt = toTrimmedString(raw.prompt, { maxLen: 20000 });
@@ -292,10 +296,6 @@ export function parseTaskIpcData(
     allowEmpty: true,
   });
   const contextMode = toTrimmedString(raw.contextMode, { maxLen: 64 });
-  const script = toTrimmedString(raw.script, {
-    maxLen: 50_000,
-    allowEmpty: true,
-  });
   const jobId = toTrimmedString(raw.jobId, { maxLen: 128 });
   const allowedTools = toOptionalStringArray(raw.allowedTools, 200, 255);
   const executionContext = toOptionalExecutionContext(raw.executionContext);
@@ -355,7 +355,6 @@ export function parseTaskIpcData(
   if (scheduleType !== undefined) parsed.scheduleType = scheduleType;
   if (scheduleValue !== undefined) parsed.scheduleValue = scheduleValue;
   if (contextMode) parsed.contextMode = contextMode;
-  if (script !== undefined) parsed.script = script;
   if (jobId) parsed.jobId = jobId;
   if (allowedTools !== undefined) parsed.allowedTools = allowedTools;
   if (executionContext !== undefined) {

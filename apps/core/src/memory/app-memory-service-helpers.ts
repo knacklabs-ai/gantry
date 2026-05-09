@@ -57,6 +57,27 @@ export function buildMemoryItemWriteBase(input: {
   const nextVersion = input.existingSource
     ? input.existingSource.version + 1
     : 1;
+  const sourceRef = JSON.parse(
+    encodeItemSource({
+      subject: input.subject,
+      source: input.saveInput.source || 'sdk',
+      evidenceIds: nextEvidenceIds,
+      isPinned: input.existingSource?.isPinned ?? false,
+      version: nextVersion,
+      retrievalCount: input.existingSource?.retrievalCount,
+      totalScore: input.existingSource?.totalScore,
+      maxScore: input.existingSource?.maxScore,
+    }),
+  ) as Record<string, unknown>;
+  if (input.saveInput.dreamingPromotion) {
+    sourceRef.promoted_by = 'dreaming';
+    sourceRef.promoted_at = input.saveInput.dreamingPromotion.promotedAt;
+    sourceRef.dream_run_id = input.saveInput.dreamingPromotion.runId;
+    if (input.saveInput.dreamingPromotion.candidateId) {
+      sourceRef.dream_candidate_id =
+        input.saveInput.dreamingPromotion.candidateId;
+    }
+  }
   return {
     appId: input.subject.appId,
     agentId: input.subject.agentId,
@@ -79,16 +100,7 @@ export function buildMemoryItemWriteBase(input: {
         value: input.value,
       }),
     }),
-    sourceRefJson: encodeItemSource({
-      subject: input.subject,
-      source: input.saveInput.source || 'sdk',
-      evidenceIds: nextEvidenceIds,
-      isPinned: input.existingSource?.isPinned ?? false,
-      version: nextVersion,
-      retrievalCount: input.existingSource?.retrievalCount,
-      totalScore: input.existingSource?.totalScore,
-      maxScore: input.existingSource?.maxScore,
-    }),
+    sourceRefJson: JSON.stringify(sourceRef),
     confidence: clampConfidence(input.saveInput.confidence),
     status: 'active' as const,
     lastObservedAt: input.timestamp,

@@ -46,19 +46,6 @@ function systemDreamingJobId(input: { folder: string; jid: string }): string {
   return `system:dreaming:${input.folder}:${routeDigest(input.jid)}`;
 }
 
-async function deleteObsoletePerFolderDreamingJobs(
-  deps: SchedulerDependencies,
-): Promise<void> {
-  const legacyPrefix = 'system:dreaming:';
-  const jobs = await deps.opsRepository.getAllJobs();
-  for (const job of jobs) {
-    if (!job.id.startsWith(legacyPrefix)) continue;
-    const suffix = job.id.slice(legacyPrefix.length);
-    if (!suffix || suffix.includes(':')) continue;
-    await deps.opsRepository.deleteJob(job.id);
-  }
-}
-
 export async function registerSystemJobs(
   deps: SchedulerDependencies,
 ): Promise<void> {
@@ -90,7 +77,6 @@ export async function registerSystemJobs(
 
   const nowIso = currentIso();
   if (RUNTIME_MEMORY_DREAMING_ENABLED) {
-    await deleteObsoletePerFolderDreamingJobs(deps);
     for (const { jid, group } of registrations) {
       const jobId = systemDreamingJobId({ folder: group.folder, jid });
       const existing = await deps.opsRepository.getJobById(jobId);

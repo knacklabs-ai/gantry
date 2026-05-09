@@ -100,7 +100,6 @@ describe('CanonicalJobOpsService', () => {
 
     await expect(service.getJobById('job-1')).resolves.toMatchObject({
       capability_policy: { allowed_tools: [] },
-      linked_sessions: [],
       session_id: 'session-1',
       thread_id: null,
       group_scope: 'agent_one',

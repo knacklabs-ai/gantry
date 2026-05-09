@@ -81,6 +81,8 @@ export const MEMORY_IPC_ACTIONS = [
   'memory_search',
   'memory_save',
   'memory_patch',
+  'memory_demote',
+  'continuity_summary',
   'memory_consolidate',
   'memory_dream',
   'memory_review_pending',

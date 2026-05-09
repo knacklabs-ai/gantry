@@ -87,19 +87,6 @@ function scheduleType(raw: unknown): JobScheduleType | undefined {
     : undefined;
 }
 
-function hasLegacySchedulerFields(data: TaskContext['data']): boolean {
-  const legacy = data as TaskContext['data'] & {
-    linkedSessions?: unknown;
-    deliverTo?: unknown;
-    threadId?: unknown;
-  };
-  return (
-    legacy.linkedSessions !== undefined ||
-    legacy.deliverTo !== undefined ||
-    legacy.threadId !== undefined
-  );
-}
-
 async function resumeDeadLetterDetails(
   context: TaskContext,
   jobId: string,
@@ -137,25 +124,6 @@ const schedulerUpdateJobHandler: TaskHandler = async (context) => {
     reject('scheduler_update_job requires jobId.', 'invalid_request');
     return;
   }
-  if (data.script !== undefined) {
-    logger.warn(
-      { sourceAgentFolder, jobId },
-      'Rejected scheduler_update_job script mutation from IPC',
-    );
-    reject(
-      'script mutation is not allowed for scheduler_update_job.',
-      'forbidden',
-    );
-    return;
-  }
-  if (hasLegacySchedulerFields(data)) {
-    reject(
-      'Unsupported legacy scheduler fields. Use executionContext and notificationRoutes.',
-      'invalid_request',
-    );
-    return;
-  }
-
   try {
     const patch: Parameters<JobManagementService['updateJob']>[0]['patch'] = {};
     if (data.name !== undefined) patch.name = data.name;
@@ -185,7 +153,6 @@ const schedulerUpdateJobHandler: TaskHandler = async (context) => {
     }
     if (data.scheduleValue !== undefined)
       patch.scheduleValue = data.scheduleValue;
-    if (data.groupScope !== undefined) patch.groupScope = data.groupScope;
     if (data.timeoutMs !== undefined) patch.timeoutMs = data.timeoutMs;
     if (data.maxRetries !== undefined) patch.maxRetries = data.maxRetries;
     if (data.retryBackoffMs !== undefined) {

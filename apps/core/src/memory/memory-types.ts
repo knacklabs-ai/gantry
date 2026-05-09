@@ -172,6 +172,11 @@ export interface SaveAppMemoryInput extends Partial<MemoryBoundaryContext> {
   evidenceIds?: string[];
   actorId?: string;
   isAdminWrite?: boolean;
+  dreamingPromotion?: {
+    runId: string;
+    promotedAt: string;
+    candidateId?: string;
+  };
 }
 
 export interface AppMemorySearchInput extends Partial<MemoryBoundaryContext> {
@@ -198,6 +203,14 @@ export interface DeleteAppMemoryInput extends Partial<MemoryBoundaryContext> {
   id: string;
   expectedVersion?: number;
   isAdminWrite?: boolean;
+}
+
+export interface DemoteDreamingMemoryInput extends Partial<MemoryBoundaryContext> {
+  id: string;
+  expectedVersion?: number;
+  isAdminWrite?: boolean;
+  actorId?: string;
+  reason?: string;
 }
 
 export interface DreamingTriggerInput extends Partial<MemoryBoundaryContext> {

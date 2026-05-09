@@ -75,7 +75,7 @@ export function parseItemSource(row: CanonicalMemoryItemRow): {
       agentId:
         typeof subjectPayload.agentId === 'string'
           ? subjectPayload.agentId
-          : undefined,
+          : row.agentId || undefined,
       subjectType:
         typeof subjectPayload.subjectType === 'string'
           ? (subjectPayload.subjectType as MemorySubjectType)

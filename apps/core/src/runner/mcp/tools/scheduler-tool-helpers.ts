@@ -17,16 +17,6 @@ const SCHEDULER_WAIT_MIN_TIMEOUT_MS = 1_000;
 const SCHEDULER_WAIT_MAX_TIMEOUT_MS = 300_000;
 export const SCHEDULER_WAIT_RESPONSE_GRACE_MS = 10_000;
 
-const LEGACY_SCHEDULER_FIELDS = [
-  'linked_sessions',
-  'linkedSessions',
-  'deliver_to',
-  'deliverTo',
-  'thread_id',
-  'threadId',
-  'notificationTarget',
-] as const;
-
 const ambientGroupScope = process.env.MYCLAW_GROUP_FOLDER?.trim() ?? '';
 
 export async function requestSchedulerData(
@@ -137,15 +127,6 @@ export function schedulerDataRecord(
     !Array.isArray(response.data)
     ? (response.data as Record<string, unknown>)
     : {};
-}
-
-export function hasLegacySchedulerField(
-  args: Record<string, unknown>,
-): string | null {
-  for (const key of LEGACY_SCHEDULER_FIELDS) {
-    if (Object.prototype.hasOwnProperty.call(args, key)) return key;
-  }
-  return null;
 }
 
 function normalizeExecutionContextArg(value: unknown): {

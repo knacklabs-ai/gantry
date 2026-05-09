@@ -68,10 +68,16 @@ vi.mock('@core/messaging/router.js', () => ({
 }));
 
 const mockIsTriggerAllowed = vi.fn();
+const mockIsSenderControlAllowed = vi.fn();
 const mockLoadSenderAllowlist = vi.fn();
+const mockLoadSenderControlAllowlist = vi.fn();
 vi.mock('@core/platform/sender-allowlist.js', () => ({
   isTriggerAllowed: (...args: unknown[]) => mockIsTriggerAllowed(...args),
+  isSenderControlAllowed: (...args: unknown[]) =>
+    mockIsSenderControlAllowed(...args),
   loadSenderAllowlist: (...args: unknown[]) => mockLoadSenderAllowlist(...args),
+  loadSenderControlAllowlist: (...args: unknown[]) =>
+    mockLoadSenderControlAllowlist(...args),
 }));
 
 const mockGetAllJobs = vi.fn();
@@ -251,7 +257,9 @@ function setupHappyPath(
   mockGetMemoryStatus.mockResolvedValue([]);
   mockSaveProcedure.mockReturnValue({ id: 'proc-1' });
   mockLoadSenderAllowlist.mockReturnValue({});
+  mockLoadSenderControlAllowlist.mockReturnValue({});
   mockIsTriggerAllowed.mockReturnValue(true);
+  mockIsSenderControlAllowed.mockReturnValue(false);
 
   // spawnAgent: by default calls onOutput with a successful result then returns it
   mockSpawnAgent.mockImplementation(
@@ -1016,6 +1024,75 @@ describe('createGroupProcessor', () => {
           memoryUserId: 'sl:U123',
         }),
       );
+    });
+
+    it('derives memory review approver status from canonical conversation approvers', async () => {
+      const group = makeGroup({
+        requiresTrigger: false,
+        conversationKind: 'dm',
+      });
+      const messages = [makeMessage({ sender: 'sl:UADMIN', content: 'hello' })];
+      const isControlApproverAllowed = vi.fn(async () => true);
+      const { deps } = setupHappyPath({ group, messages });
+      deps.channelRuntime.isControlApproverAllowed = isControlApproverAllowed;
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:D123');
+
+      expect(isControlApproverAllowed).toHaveBeenCalledWith({
+        conversationJid: 'sl:D123',
+        userId: 'sl:UADMIN',
+        sourceAgentFolder: group.folder,
+        decisionPolicy: 'same_channel',
+      });
+      expect(mockSpawnAgent.mock.calls[0][1]).toMatchObject({
+        memoryReviewerIsControlApprover: true,
+      });
+      expect(mockIsSenderControlAllowed).not.toHaveBeenCalled();
+    });
+
+    it('fails memory review approver status closed when canonical lookup is unavailable', async () => {
+      const group = makeGroup({
+        requiresTrigger: false,
+        conversationKind: 'dm',
+      });
+      const messages = [makeMessage({ sender: 'sl:UADMIN', content: 'hello' })];
+      const { deps } = setupHappyPath({ group, messages });
+      mockIsSenderControlAllowed.mockReturnValue(true);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:D123');
+
+      expect(mockSpawnAgent.mock.calls[0][1]).toMatchObject({
+        memoryReviewerIsControlApprover: false,
+      });
+      expect(mockIsSenderControlAllowed).not.toHaveBeenCalled();
+    });
+
+    it('caches live memory review approver checks and cached denials fail closed', async () => {
+      const group = makeGroup({
+        folder: 'cache-agent',
+        requiresTrigger: false,
+        conversationKind: 'dm',
+      });
+      const messages = [
+        makeMessage({ sender: 'sl:UCACHE', content: 'hello cache' }),
+      ];
+      const isControlApproverAllowed = vi.fn(async () => false);
+      const { deps } = setupHappyPath({ group, messages });
+      deps.channelRuntime.isControlApproverAllowed = isControlApproverAllowed;
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:DCACHE');
+      await processGroupMessages('sl:DCACHE');
+
+      expect(isControlApproverAllowed).toHaveBeenCalledTimes(1);
+      expect(mockSpawnAgent.mock.calls[0][1]).toMatchObject({
+        memoryReviewerIsControlApprover: false,
+      });
+      expect(mockSpawnAgent.mock.calls[1][1]).toMatchObject({
+        memoryReviewerIsControlApprover: false,
+      });
     });
   });
 

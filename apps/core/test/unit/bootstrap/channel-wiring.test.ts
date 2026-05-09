@@ -42,6 +42,8 @@ import { Provider } from '@core/channels/provider-registry.js';
 import { AsyncTaskQueue } from '@core/app/bootstrap/async-task-queue.js';
 import { createChannelPersistenceHandlers } from '@core/app/bootstrap/channel-persistence-handlers.js';
 import { createChannelWiring } from '@core/app/bootstrap/channel-wiring.js';
+import { createPermissionApprovalRequester } from '@core/app/bootstrap/channel-wiring-interactions.js';
+import { PERMISSION_APPROVAL_TIMEOUT_MS } from '@core/config/index.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
 import { AmbiguousDurableDeliveryError } from '@core/domain/messages/durable-delivery.js';
@@ -158,6 +160,39 @@ function makeProvider(
 }
 
 describe('createChannelWiring', () => {
+  it('writes a host-side timeout denial when a channel approval surface wedges', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestPermissionApproval = createPermissionApprovalRequester({
+        findBoundChannel: () => ({}),
+        asPermissionApprovalSurface: () => ({
+          requestPermissionApproval: vi.fn(() => new Promise(() => undefined)),
+        }),
+        logger: { error: vi.fn() },
+      });
+
+      const decisionPromise = requestPermissionApproval({
+        requestId: 'perm-1',
+        sourceAgentFolder: 'team',
+        targetJid: 'tg:team',
+        toolName: 'Bash',
+        toolInput: { command: 'npm test' },
+      });
+      await vi.advanceTimersByTimeAsync(PERMISSION_APPROVAL_TIMEOUT_MS);
+
+      await expect(decisionPromise).resolves.toMatchObject({
+        approved: false,
+        decidedBy: 'system',
+        decisionClassification: 'user_reject',
+        reason: expect.stringContaining(
+          `timed out after ${PERMISSION_APPROVAL_TIMEOUT_MS}ms`,
+        ),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('skips disabled channels in runtime settings', async () => {
     const app = makeApp();
     const info = vi.fn();
@@ -764,7 +799,7 @@ describe('createChannelWiring', () => {
     );
   });
 
-  it('omits mismatched Telegram chatId retry-tail metadata before durable and legacy partial persistence', async () => {
+  it('omits mismatched Telegram chatId retry-tail metadata before durable and message-row partial persistence', async () => {
     const app = makeApp();
     const storeMessage = vi.fn().mockResolvedValue(undefined);
     const settlePartiallyDelivered = vi.fn(async () => undefined);

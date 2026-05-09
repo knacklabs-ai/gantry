@@ -17,7 +17,7 @@ import type {
 } from './extractor-types.js';
 import { resolveScopedMemorySubject } from './app-memory-subject-resolver.js';
 import { rawThreadIdFromSession } from './app-memory-session-scope.js';
-import { sanitizeOutboundLlmText } from './sensitive-material.js';
+import { sanitizeOutboundLlmText } from '../shared/sensitive-material.js';
 
 const EXTRACTION_PART_CHAR_BUDGET = 900;
 const EXTRACTION_TURN_CHAR_BUDGET = 2200;

@@ -519,6 +519,17 @@ describe('memory IPC provider integration', () => {
     expect(response.ok).toBe(true);
     expect(response.requestId).toBe('req-search');
     expect(response.provider).toBe('postgres');
+    expect(response.data).toMatchObject({
+      results: [],
+      resolved_subject: {
+        appId: 'default',
+        agentId: 'agent:team',
+        subjectType: 'group',
+        subjectId: 'team',
+        groupId: 'team',
+      },
+      empty_reason: 'no_matching_memory',
+    });
   });
 
   it('returns error for empty search query', async () => {
@@ -592,12 +603,21 @@ describe('processMemoryRequest additional branches', () => {
     const decideReview =
       overrides.decideReview ||
       vi.fn().mockResolvedValue({ id: 'mrv-1', status: 'applied' });
+    const demote =
+      overrides.demote ||
+      vi.fn().mockResolvedValue({ id: 'mem-1', status: 'demoted' });
+    const list = overrides.list || vi.fn().mockResolvedValue([]);
+    const dreamingStatus =
+      overrides.dreamingStatus || vi.fn().mockResolvedValue([]);
     return {
       getInstance: () => ({
         search: vi.fn(),
+        list,
         save,
         patch,
+        demote,
         triggerDreaming,
+        dreamingStatus,
         listPendingReviews,
         decideReview,
         ...overrides,
@@ -728,6 +748,123 @@ describe('processMemoryRequest additional branches', () => {
         subjectId: 'conversation:sl:C123',
         groupId: 'team',
         channelId: 'conversation:sl:C123',
+        threadId: 'thread-7',
+      }),
+    );
+  });
+
+  it('handles memory_demote action for the trusted subject', async () => {
+    vi.resetModules();
+    const demote = vi
+      .fn()
+      .mockResolvedValue({ id: 'mem-1', status: 'demoted' });
+    vi.doMock('@core/memory/app-memory-service.js', () => ({
+      AppMemoryService: mockMemoryService({ demote }),
+    }));
+
+    const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-demote',
+        action: 'memory_demote',
+        allowedActions: ['memory_demote'],
+        payload: {
+          id: 'mem-1',
+          expected_version: 2,
+          reason: 'No longer reliable.',
+          group_folder: 'attacker-group',
+        },
+        context: { chatJid: 'sl:C123', threadId: 'thread-7' },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(true);
+    expect((response.data as { memory: unknown }).memory).toEqual({
+      id: 'mem-1',
+      status: 'demoted',
+    });
+    expect(demote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'default',
+        agentId: 'agent:team',
+        subjectType: 'channel',
+        subjectId: 'conversation:sl:C123',
+        channelId: 'conversation:sl:C123',
+        threadId: 'thread-7',
+        id: 'mem-1',
+        expectedVersion: 2,
+        reason: 'No longer reliable.',
+        actorId: 'mcp-tool',
+      }),
+    );
+  });
+
+  it('rejects memory_demote when the host allowlist omits it', async () => {
+    vi.resetModules();
+    const demote = vi.fn();
+    vi.doMock('@core/memory/app-memory-service.js', () => ({
+      AppMemoryService: mockMemoryService({ demote }),
+    }));
+
+    const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-demote-denied',
+        action: 'memory_demote',
+        allowedActions: ['memory_search'],
+        payload: { id: 'mem-1' },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain(
+      'Memory IPC action is not allowed: memory_demote',
+    );
+    expect(demote).not.toHaveBeenCalled();
+  });
+
+  it('handles continuity_summary action with the service continuity status when available', async () => {
+    vi.resetModules();
+    const continuitySummary = vi.fn().mockResolvedValue({
+      staged_count: 3,
+      promoted_count: 2,
+      needs_review_count: 1,
+      last_injected_block: { subject: 'channel:team', bytes: 2048 },
+    });
+    vi.doMock('@core/memory/app-memory-service.js', () => ({
+      AppMemoryService: mockMemoryService({ continuitySummary }),
+    }));
+
+    const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-continuity',
+        action: 'continuity_summary',
+        payload: {},
+        context: { chatJid: 'sl:C123', threadId: 'thread-7' },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(true);
+    expect((response.data as { continuity: unknown }).continuity).toMatchObject(
+      {
+        staged_count: 3,
+        promoted_count: 2,
+        needs_review_count: 1,
+      },
+    );
+    expect(continuitySummary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'default',
+        agentId: 'agent:team',
+        subjectType: 'channel',
+        subjectId: 'conversation:sl:C123',
         threadId: 'thread-7',
       }),
     );
@@ -921,7 +1058,11 @@ describe('processMemoryRequest additional branches', () => {
           edited_reason: 'Reviewer corrected wording.',
           reviewer_id: 'spoofed-reviewer',
         },
-        context: { chatJid: 'sl:C123', userId: 'trusted-reviewer' },
+        context: {
+          chatJid: 'sl:C123',
+          userId: 'trusted-reviewer',
+          reviewerIsControlApprover: true,
+        },
       },
       'team',
       false,
@@ -968,6 +1109,40 @@ describe('processMemoryRequest additional branches', () => {
     expect(response.ok).toBe(false);
     expect(response.error).toContain(
       'memory_review_decision requires a trusted reviewer user id',
+    );
+    expect(decideReview).not.toHaveBeenCalled();
+  });
+
+  it('rejects memory review decisions when reviewer is not a control approver', async () => {
+    vi.resetModules();
+    const decideReview = vi.fn();
+    vi.doMock('@core/memory/app-memory-service.js', () => ({
+      AppMemoryService: mockMemoryService({ decideReview }),
+    }));
+
+    const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-review-decision-not-approver',
+        action: 'memory_review_decision',
+        allowedActions: ['memory_review_decision'],
+        payload: {
+          review_id: 'mrv-1',
+          decision: 'approve',
+        },
+        context: {
+          chatJid: 'sl:C123',
+          userId: 'trusted-reviewer',
+          reviewerIsControlApprover: false,
+        },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain(
+      'memory_review_decision requires a conversation control approver',
     );
     expect(decideReview).not.toHaveBeenCalled();
   });

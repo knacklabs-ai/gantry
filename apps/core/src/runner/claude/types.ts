@@ -17,8 +17,8 @@ export interface AgentRunnerInput {
   browserProfileName?: string;
   allowedTools?: string[];
   isScheduledJob?: boolean;
+  jobId?: string;
   assistantName?: string;
-  script?: string;
   compiledSystemPrompt?: string;
   memoryContextBlock?: string;
   modelCredentialEnv?: Record<string, string>;

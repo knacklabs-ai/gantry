@@ -23,10 +23,8 @@ function job(input: Partial<Job>): Job {
     name: 'Job',
     prompt: 'Run',
     model: null,
-    script: null,
     schedule_type: 'once',
     schedule_value: '',
-    linked_sessions: [],
     session_id: null,
     thread_id: null,
     group_scope: 'agent-folder',
@@ -74,7 +72,7 @@ describe('resolveExecutionContext', () => {
     const groups = { 'chat-a': group('agent-folder', 'Conversation A') };
 
     const resolved = resolveExecutionContext(
-      job({ linked_sessions: ['chat-a'], group_scope: 'agent-folder' }),
+      job({ group_scope: 'agent-folder' }),
       groups,
     );
 

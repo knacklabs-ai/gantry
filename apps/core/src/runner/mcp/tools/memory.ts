@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MemoryIpcAction } from '@myclaw/contracts';
 import { z } from 'zod';
 import { groupFolder, memoryDefaultScope, memoryUserId } from '../context.js';
 import { formatMemoryToolResponse } from '../formatting.js';
@@ -7,6 +8,30 @@ import {
   buildMemorySavePayload,
   buildProcedureSavePayload,
 } from './memory-payload.js';
+
+async function memoryToolResult(
+  label: string,
+  action: MemoryIpcAction,
+  args: Record<string, unknown>,
+) {
+  const response = await requestMemoryAction(action, args);
+  if (!response.ok) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `${label} failed: ${response.error || 'unknown error'}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  return {
+    content: [
+      { type: 'text' as const, text: formatMemoryToolResponse(response) },
+    ],
+  };
+}
 
 export function registerMemoryTools(server: McpServer): void {
   server.tool(
@@ -120,6 +145,25 @@ export function registerMemoryTools(server: McpServer): void {
         ],
       };
     },
+  );
+
+  server.tool(
+    'memory_demote',
+    'Demote an active memory item from the current trusted memory subject using optimistic concurrency.',
+    {
+      id: z.string(),
+      expected_version: z.number().int().min(1).optional(),
+      reason: z.string().optional(),
+    },
+    async (args) => memoryToolResult('Memory demote', 'memory_demote', args),
+  );
+
+  server.tool(
+    'continuity_summary',
+    'Summarize current durable memory continuity for the trusted memory subject, including active memory, staged candidates, reviews, dreaming, and last injected context when available.',
+    {},
+    async () =>
+      memoryToolResult('Continuity summary', 'continuity_summary', {}),
   );
 
   server.tool(

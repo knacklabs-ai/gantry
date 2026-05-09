@@ -1,12 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { CreateAgentUseCase } from '@core/application/agents/create-agent-use-case.js';
-import { PublishAgentConfigVersionUseCase } from '@core/application/agents/publish-agent-config-version-use-case.js';
-import { ResolveEffectiveAgentConfigService } from '@core/application/agents/resolve-effective-agent-config-service.js';
-import { UpdateAgentConfigUseCase } from '@core/application/agents/update-agent-config-use-case.js';
-import { RecordPermissionDecisionUseCase } from '@core/application/permissions/record-permission-decision-use-case.js';
-import { StartAgentRunUseCase } from '@core/application/runs/start-agent-run-use-case.js';
-import { CreateSandboxLeaseUseCase } from '@core/application/sandbox/create-sandbox-lease-use-case.js';
 import { AppMemoryService } from '@core/memory/app-memory-service.js';
 import {
   DEFAULT_APP_ID,
@@ -28,9 +21,6 @@ const now = '2026-04-28T00:00:00.000Z';
 
 maybeDescribe('application services with Postgres repositories', () => {
   let runtime: PostgresIntegrationRuntime;
-  let idCounter = 0;
-  const ids = { generate: () => `integration-id:${++idCounter}` };
-  const clock = { now: () => now };
 
   beforeAll(async () => {
     runtime = await createPostgresIntegrationRuntime({
@@ -43,20 +33,19 @@ maybeDescribe('application services with Postgres repositories', () => {
   });
 
   it('persists agent config, run events, memory, permission decisions, and sandbox leases across service boundaries', async () => {
-    const created = await new CreateAgentUseCase({
-      agents: runtime.repositories.agents,
-      ids,
-      clock,
-    }).execute({
+    const agentId = 'agent:integration:1' as AgentId;
+    await runtime.repositories.agents.saveAgent({
+      id: agentId,
       appId,
       name: 'Integration Agent',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
     });
-    const agentId = created.agent.id as AgentId;
 
-    const published = await new PublishAgentConfigVersionUseCase({
-      configs: runtime.repositories.agentConfigs,
-      ids,
-    }).execute({
+    const configVersionId = 'agent-config:integration:1' as never;
+    await runtime.repositories.agentConfigs.saveConfigVersion({
+      id: configVersionId,
       appId,
       agentId,
       version: 1,
@@ -69,39 +58,32 @@ maybeDescribe('application services with Postgres repositories', () => {
       createdAt: now,
     });
 
-    await new UpdateAgentConfigUseCase({
-      agents: runtime.repositories.agents,
-      clock,
-    }).execute({
-      agentId,
-      currentConfigVersionId: published.version.id,
+    await runtime.repositories.agents.saveAgent({
+      id: agentId,
+      appId,
+      name: 'Integration Agent',
+      status: 'active',
+      currentConfigVersionId: configVersionId,
+      createdAt: now,
+      updatedAt: now,
     });
     await expect(
-      new ResolveEffectiveAgentConfigService({
-        agents: runtime.repositories.agents,
-        configs: runtime.repositories.agentConfigs,
-      }).resolve({ agentId }),
+      runtime.repositories.agentConfigs.getConfigVersion(configVersionId),
     ).resolves.toMatchObject({
-      config: {
-        id: published.version.id,
-        permissionPolicyIds: ['permission-policy:review'],
-        skillIds: ['skill:approved'],
-      },
+      id: configVersionId,
+      permissionPolicyIds: ['permission-policy:review'],
+      skillIds: ['skill:approved'],
     });
 
-    await new RecordPermissionDecisionUseCase(
-      runtime.repositories.permissions,
-    ).execute({
-      decision: {
-        id: 'permission-decision:integration:allow' as never,
-        appId,
-        effect: 'allow',
-        reason: 'Approved in integration test',
-        actorContext: { channel: 'slack' },
-        actionPreview: 'Run tool',
-        approverRef: 'user:admin',
-        createdAt: now,
-      },
+    await runtime.repositories.permissions.saveDecision({
+      id: 'permission-decision:integration:allow' as never,
+      appId,
+      effect: 'allow',
+      reason: 'Approved in integration test',
+      actorContext: { channel: 'slack' },
+      actionPreview: 'Run tool',
+      approverRef: 'user:admin',
+      createdAt: now,
     });
     await expect(
       runtime.repositories.permissions.getDecision(
@@ -141,7 +123,7 @@ maybeDescribe('application services with Postgres repositories', () => {
       id: 'agent-run:integration:1',
       appId,
       agentId,
-      configVersionId: published.version.id,
+      configVersionId,
       llmProfileId: DEFAULT_LLM_PROFILE_ID,
       permissionDecisionIds: ['permission-decision:integration:allow'],
       cause: 'manual',
@@ -149,9 +131,7 @@ maybeDescribe('application services with Postgres repositories', () => {
       createdAt: now,
       startedAt: now,
     } as never;
-    await new StartAgentRunUseCase(runtime.repositories.agentRuns).execute({
-      run,
-    });
+    await runtime.repositories.agentRuns.saveAgentRun(run);
     await runtime.repositories.runtimeEvents.appendRuntimeEvent({
       appId,
       runId: 'agent-run:integration:1' as never,
@@ -185,24 +165,15 @@ maybeDescribe('application services with Postgres repositories', () => {
       createdAt: now,
       updatedAt: now,
     });
-    const sandboxProvider = {
-      acquireLease: async () => ({
-        id: 'sandbox-lease:integration' as never,
-        appId,
-        profileId: 'sandbox-profile:integration' as never,
-        runId: 'agent-run:integration:1' as never,
-        permissionDecisionId: 'permission-decision:integration:allow' as never,
-        status: 'active',
-        grantedAt: now,
-        expiresAt: '2026-04-28T00:30:00.000Z',
-      }),
-    };
-    await new CreateSandboxLeaseUseCase({
-      provider: sandboxProvider as never,
-      sandboxes: runtime.repositories.sandboxes,
-    }).execute({
-      profile: { id: 'sandbox-profile:integration' } as never,
-      run,
+    await runtime.repositories.sandboxes.saveSandboxLease({
+      id: 'sandbox-lease:integration' as never,
+      appId,
+      profileId: 'sandbox-profile:integration' as never,
+      runId: 'agent-run:integration:1' as never,
+      permissionDecisionId: 'permission-decision:integration:allow' as never,
+      status: 'active',
+      grantedAt: now,
+      expiresAt: '2026-04-28T00:30:00.000Z',
     });
     await expect(
       runtime.repositories.sandboxes.getSandboxLease(

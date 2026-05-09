@@ -10,7 +10,6 @@ import type {
 } from './memory-types.js';
 
 export const DEFAULT_MEMORY_APP_ID = 'default';
-export const DEFAULT_MEMORY_AGENT_ID = 'agent:personal';
 
 export function memoryAgentIdForGroupFolder(groupFolder: string): string {
   return groupFolder.startsWith('agent:')
@@ -43,6 +42,14 @@ function normalizeId(value: string | undefined, fallback: string): string {
   return next;
 }
 
+function normalizeRequiredId(value: string | undefined, label: string): string {
+  const next = value?.trim();
+  if (!next) {
+    throw new Error(`memory subject requires ${label}`);
+  }
+  return normalizeId(next, next);
+}
+
 export function normalizeSubject(
   input: Partial<MemoryBoundaryContext> & {
     subjectType?: MemorySubjectType;
@@ -51,7 +58,7 @@ export function normalizeSubject(
   },
 ): NormalizedMemorySubject {
   const appId = normalizeId(input.appId, DEFAULT_MEMORY_APP_ID);
-  const agentId = normalizeId(input.agentId, DEFAULT_MEMORY_AGENT_ID);
+  const agentId = normalizeRequiredId(input.agentId, 'agentId');
   const userId = input.userId?.trim() || undefined;
   const groupId = input.groupId?.trim() || undefined;
   const channelId = input.channelId?.trim() || undefined;

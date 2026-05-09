@@ -42,6 +42,7 @@ export interface ParsedMemoryIpcRequest {
     chatJid?: string;
     userId?: string;
     defaultScope?: 'user' | 'group';
+    reviewerIsControlApprover?: boolean;
   };
 }
 
@@ -225,6 +226,7 @@ export function parseMemoryIpcRequest(
     responseKeyId,
     userId,
     defaultScope,
+    reviewerIsControlApprover,
     allowedActions,
   } = validateMemoryIpcAuthRequest(raw, sourceAgentFolder, 'memory IPC');
   if (!responseKeyId) {
@@ -254,13 +256,18 @@ export function parseMemoryIpcRequest(
     payload,
     allowedActions,
     ...(responseKeyId ? { responseKeyId } : {}),
-    ...(threadId || chatJid || userId || defaultScope
+    ...(threadId ||
+    chatJid ||
+    userId ||
+    defaultScope ||
+    reviewerIsControlApprover
       ? {
           context: {
             ...(threadId ? { threadId } : {}),
             ...(chatJid ? { chatJid } : {}),
             ...(userId ? { userId } : {}),
             ...(defaultScope ? { defaultScope } : {}),
+            ...(reviewerIsControlApprover ? { reviewerIsControlApprover } : {}),
           },
         }
       : {}),

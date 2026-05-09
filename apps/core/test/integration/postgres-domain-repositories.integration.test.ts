@@ -882,7 +882,7 @@ maybeDescribe('Postgres domain repositories', () => {
         agentSessionId: firstSessionId,
         provider: 'anthropic',
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     await expect(
       repositories.providerSessions.getLatestProviderSession({
         agentSessionId: secondSessionId,

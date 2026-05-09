@@ -17,7 +17,6 @@ import type {
   LlmProfileId,
 } from '../../../../domain/agent/agent.js';
 import type { App } from '../../../../domain/app/app.js';
-import type { BrowserProfile } from '../../../../domain/browser/browser.js';
 import type {
   AgentConversationBinding,
   ConversationApprover,
@@ -29,11 +28,7 @@ import type {
   ConversationThread,
 } from '../../../../domain/conversation/conversation.js';
 import type { AgentRun } from '../../../../domain/events/events.js';
-import type { Job, JobTrigger } from '../../../../domain/jobs/jobs.js';
-import type {
-  MemoryItem,
-  MemorySubject,
-} from '../../../../domain/memory/memory.js';
+import type { MemorySubject } from '../../../../domain/memory/memory.js';
 import type {
   Message,
   MessageAttachment,
@@ -52,11 +47,8 @@ import type {
   AgentSessionRepository,
   AgentSessionSummaryRepository,
   AppRepository,
-  BrowserProfileRepository,
   ProviderConnectionRepository,
   ConversationRepository,
-  JobRepository,
-  MemoryRepository,
   MessageRepository,
   McpServerRepository,
   PermissionRepository,
@@ -101,14 +93,11 @@ export interface PostgresDomainRepositoryBundle {
   agentSessionSummaries: AgentSessionSummaryRepository;
   agentRuns: AgentRunRepository;
   runtimeEvents: RuntimeEventRepository;
-  memory: MemoryRepository;
-  jobs: JobRepository;
   tools: ToolCatalogRepository;
   skills: SkillCatalogRepository;
   mcpServers: McpServerRepository;
   permissions: PermissionRepository;
   sandboxes: SandboxRepository;
-  browserProfiles: BrowserProfileRepository;
   outboundDeliveries: OutboundDeliveryRepository;
 }
 type JsonRecord = Record<string, unknown>;
@@ -128,6 +117,10 @@ function parseJson<T>(value: unknown, fallback: T): T {
     }
     return fallback;
   }
+}
+function toIsoTimestamp(value: string): string {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : value;
 }
 function isUniqueViolation(err: unknown): boolean {
   return (
@@ -1305,10 +1298,12 @@ export class PostgresMessageRepository implements MessageRepository {
       senderUserId: row.senderUserId ?? undefined,
       senderDisplayName: row.senderDisplayName ?? undefined,
       trust: row.trust as Message['trust'],
-      createdAt: row.createdAt,
-      receivedAt: row.receivedAt ?? undefined,
+      createdAt: toIsoTimestamp(row.createdAt),
+      receivedAt: row.receivedAt ? toIsoTimestamp(row.receivedAt) : undefined,
       deliveryStatus: row.deliveryStatus ?? undefined,
-      deliveredAt: row.deliveredAt ?? undefined,
+      deliveredAt: row.deliveredAt
+        ? toIsoTimestamp(row.deliveredAt)
+        : undefined,
       deliveryError: row.deliveryError ?? undefined,
       parts: parts.map((part) =>
         payloadToMessagePart(part.kind, part.payloadJson),
@@ -1421,168 +1416,6 @@ export class PostgresAgentRunRepository implements AgentRunRepository {
       resultSummary: row.resultSummary ?? undefined,
       errorSummary: row.errorSummary ?? undefined,
     } as AgentRun;
-  }
-}
-export class PostgresMemoryRepository implements MemoryRepository {
-  constructor(private readonly db: CanonicalDb) {}
-  async getMemoryItem(id: MemoryItem['id']): Promise<MemoryItem | null> {
-    const rows = await this.db
-      .select()
-      .from(pgSchema.memoryItemsPostgres)
-      .where(eq(pgSchema.memoryItemsPostgres.id, id))
-      .limit(1);
-    return rows[0] ? this.memoryFromRow(rows[0]) : null;
-  }
-  async saveMemoryItem(item: MemoryItem): Promise<void> {
-    void item;
-    throw new Error(
-      'Legacy memory repository writes are disabled. Use AppMemoryService.save.',
-    );
-  }
-  private memoryFromRow(
-    row: typeof pgSchema.memoryItemsPostgres.$inferSelect,
-  ): MemoryItem {
-    const source = parseJson<{ source?: string; isPinned?: boolean }>(
-      row.sourceRefJson,
-      {},
-    );
-    const value = parseJson<{ value?: string }>(row.valueJson, {});
-    return {
-      id: row.id,
-      appId: row.appId,
-      agentId: row.agentId ?? undefined,
-      subject: memorySubjectFromRow(row),
-      kind: row.kind as MemoryItem['kind'],
-      key: row.key,
-      value: String(value.value ?? ''),
-      source: source.source ?? '',
-      confidence: row.confidence,
-      isPinned: Boolean(source.isPinned),
-      isDeleted: row.status === 'deleted',
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    } as MemoryItem;
-  }
-}
-export class PostgresJobRepository implements JobRepository {
-  constructor(private readonly db: CanonicalDb) {}
-  async getJob(id: Job['id']): Promise<Job | null> {
-    const rows = await this.db
-      .select()
-      .from(pgSchema.canonicalJobsPostgres)
-      .where(eq(pgSchema.canonicalJobsPostgres.id, id))
-      .limit(1);
-    return rows[0] ? this.jobFromRow(rows[0]) : null;
-  }
-  async saveJob(job: Job): Promise<void> {
-    await this.db
-      .insert(pgSchema.canonicalJobsPostgres)
-      .values({
-        id: job.id,
-        appId: job.appId,
-        agentId: job.agentId,
-        conversationId: job.target?.conversationId ?? null,
-        threadId: job.target?.threadId ?? null,
-        createdByActorId: job.target?.userId ?? 'runtime',
-        createdBySource: 'repository',
-        name: job.name,
-        prompt: job.prompt,
-        model: job.model ?? null,
-        scheduleJson: encodeJson(job.schedule),
-        status: job.status,
-        executionMode: job.executionMode,
-        targetJson: encodeJson(job.target ?? {}),
-        silent: job.silent,
-        timeoutMs: job.timeoutMs,
-        maxRetries: job.maxRetries,
-        retryBackoffMs: job.retryBackoffMs,
-        nextRunAt: job.nextRunAt ?? null,
-        lastRunAt: job.lastRunAt ?? null,
-        leaseRunId: job.leaseRunId ?? null,
-        leaseExpiresAt: job.leaseExpiresAt ?? null,
-        createdAt: job.createdAt,
-        updatedAt: job.updatedAt,
-      })
-      .onConflictDoUpdate({
-        target: pgSchema.canonicalJobsPostgres.id,
-        set: {
-          name: job.name,
-          prompt: job.prompt,
-          model: job.model ?? null,
-          scheduleJson: encodeJson(job.schedule),
-          status: job.status,
-          executionMode: job.executionMode,
-          targetJson: encodeJson(job.target ?? {}),
-          silent: job.silent,
-          timeoutMs: job.timeoutMs,
-          maxRetries: job.maxRetries,
-          retryBackoffMs: job.retryBackoffMs,
-          nextRunAt: job.nextRunAt ?? null,
-          lastRunAt: job.lastRunAt ?? null,
-          leaseRunId: job.leaseRunId ?? null,
-          leaseExpiresAt: job.leaseExpiresAt ?? null,
-          updatedAt: job.updatedAt,
-        },
-      });
-  }
-  async listJobs(appId: App['id']): Promise<Job[]> {
-    const rows = await this.db
-      .select()
-      .from(pgSchema.canonicalJobsPostgres)
-      .where(eq(pgSchema.canonicalJobsPostgres.appId, appId))
-      .orderBy(desc(pgSchema.canonicalJobsPostgres.updatedAt));
-    return rows.map((row) => this.jobFromRow(row));
-  }
-  async saveJobTrigger(trigger: JobTrigger): Promise<void> {
-    await this.db
-      .insert(pgSchema.canonicalJobTriggersPostgres)
-      .values({
-        id: trigger.id,
-        appId: trigger.appId,
-        jobId: trigger.jobId,
-        runId: trigger.runId ?? null,
-        requestedBy: trigger.requestedBy,
-        requestedAt: trigger.requestedAt,
-        status: trigger.status,
-        createdAt: trigger.createdAt,
-        updatedAt: trigger.updatedAt,
-      })
-      .onConflictDoUpdate({
-        target: pgSchema.canonicalJobTriggersPostgres.id,
-        set: {
-          runId: trigger.runId ?? null,
-          status: trigger.status,
-          updatedAt: trigger.updatedAt,
-        },
-      });
-  }
-  private jobFromRow(
-    row: typeof pgSchema.canonicalJobsPostgres.$inferSelect,
-  ): Job {
-    return {
-      id: row.id,
-      appId: row.appId,
-      agentId: row.agentId ?? '',
-      name: row.name,
-      prompt: row.prompt,
-      model: row.model ?? undefined,
-      schedule: parseJson<Job['schedule']>(row.scheduleJson, {
-        kind: 'manual',
-      }),
-      status: row.status as Job['status'],
-      executionMode: row.executionMode as Job['executionMode'],
-      target: parseJson<Job['target']>(row.targetJson, undefined),
-      silent: row.silent,
-      timeoutMs: row.timeoutMs,
-      maxRetries: row.maxRetries,
-      retryBackoffMs: row.retryBackoffMs,
-      nextRunAt: row.nextRunAt ?? undefined,
-      lastRunAt: row.lastRunAt ?? undefined,
-      leaseRunId: row.leaseRunId ?? undefined,
-      leaseExpiresAt: row.leaseExpiresAt ?? undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    } as Job;
   }
 }
 export class PostgresPermissionRepository implements PermissionRepository {
@@ -1782,59 +1615,6 @@ export class PostgresSandboxRepository implements SandboxRepository {
     } as unknown as WorkspaceSnapshot;
   }
 }
-export class PostgresBrowserProfileRepository implements BrowserProfileRepository {
-  constructor(private readonly db: CanonicalDb) {}
-  async getBrowserProfile(
-    id: BrowserProfile['id'],
-  ): Promise<BrowserProfile | null> {
-    const rows = await this.db
-      .select()
-      .from(pgSchema.browserProfilesPostgres)
-      .where(eq(pgSchema.browserProfilesPostgres.id, id))
-      .limit(1);
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      id: row.id,
-      appId: row.appId,
-      agentId: row.agentId ?? undefined,
-      label: row.label,
-      storageStateRef: row.storageStateRef ?? undefined,
-      authMarkers: parseJsonArray(row.authMarkersJson),
-      permissionPolicyId: row.permissionPolicyId ?? undefined,
-      status: row.status as BrowserProfile['status'],
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    } as BrowserProfile;
-  }
-  async saveBrowserProfile(profile: BrowserProfile): Promise<void> {
-    await this.db
-      .insert(pgSchema.browserProfilesPostgres)
-      .values({
-        id: profile.id,
-        appId: profile.appId,
-        agentId: profile.agentId ?? null,
-        label: profile.label,
-        storageStateRef: profile.storageStateRef ?? null,
-        authMarkersJson: encodeJson(profile.authMarkers),
-        permissionPolicyId: profile.permissionPolicyId ?? null,
-        status: profile.status,
-        createdAt: profile.createdAt,
-        updatedAt: profile.updatedAt,
-      })
-      .onConflictDoUpdate({
-        target: pgSchema.browserProfilesPostgres.id,
-        set: {
-          label: profile.label,
-          storageStateRef: profile.storageStateRef ?? null,
-          authMarkersJson: encodeJson(profile.authMarkers),
-          permissionPolicyId: profile.permissionPolicyId ?? null,
-          status: profile.status,
-          updatedAt: profile.updatedAt,
-        },
-      });
-  }
-}
 export function createPostgresDomainRepositories(
   db: CanonicalDb,
   _pool?: Pool,
@@ -1852,14 +1632,11 @@ export function createPostgresDomainRepositories(
     agentSessionSummaries: new PostgresAgentSessionSummaryRepository(db),
     agentRuns: new PostgresAgentRunRepository(db),
     runtimeEvents: new PostgresRuntimeEventRepository(db),
-    memory: new PostgresMemoryRepository(db),
-    jobs: new PostgresJobRepository(db),
     tools: new PostgresToolCatalogRepository(db),
     skills: new PostgresSkillCatalogRepository(db),
     mcpServers: new PostgresMcpServerRepository(db),
     permissions: new PostgresPermissionRepository(db),
     sandboxes: new PostgresSandboxRepository(db),
-    browserProfiles: new PostgresBrowserProfileRepository(db),
     outboundDeliveries: new PostgresOutboundDeliveryRepository(db),
   };
 }

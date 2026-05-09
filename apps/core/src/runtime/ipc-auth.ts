@@ -66,6 +66,7 @@ export function computeMemoryIpcAuthToken(
     defaultScope?: 'user' | 'group' | null;
     threadId?: string | null;
     allowedActions?: readonly string[] | null;
+    reviewerIsControlApprover?: boolean | null;
   },
 ): string {
   const normalizedChatJid = input.chatJid?.trim() || '';
@@ -74,9 +75,10 @@ export function computeMemoryIpcAuthToken(
   const normalizedAllowedActions = normalizeMemoryIpcActions(
     input.allowedActions ?? undefined,
   ).join(',');
+  const reviewerScope = input.reviewerIsControlApprover ? 'approver' : 'user';
   return createHmac('sha256', IPC_AUTH_SECRET)
     .update(
-      `memory\0${authScope(workspaceKey, input.threadId)}\0chat\0${normalizedChatJid}\0user\0${normalizedUserId}\0scope\0${normalizedDefaultScope}\0actions\0${normalizedAllowedActions}`,
+      `memory\0${authScope(workspaceKey, input.threadId)}\0chat\0${normalizedChatJid}\0user\0${normalizedUserId}\0scope\0${normalizedDefaultScope}\0actions\0${normalizedAllowedActions}\0reviewer\0${reviewerScope}`,
     )
     .digest('hex');
 }

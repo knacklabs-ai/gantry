@@ -54,6 +54,7 @@ import {
 import {
   listChannelProviders,
   providerForJid,
+  providerIdForJid,
 } from '../../channels/provider-registry.js';
 import type {
   ChannelWiring,
@@ -115,11 +116,9 @@ export function createChannelWiring(
   };
 
   let currentRuntimeSettings: RuntimeSettings;
-
   function findBoundChannel(jid: string): ChannelAdapter | undefined {
     return findChannel(connectedChannels, jid);
   }
-
   async function authorizeConversationApprover(input: {
     providerId: string;
     conversationJid: string;
@@ -159,6 +158,7 @@ export function createChannelWiring(
       return false;
     }
   }
+
   const requestPermissionApproval = createPermissionApprovalRequester({
     findBoundChannel,
     asPermissionApprovalSurface: (channel) =>
@@ -222,7 +222,6 @@ export function createChannelWiring(
   function hasConnectedChannels(): boolean {
     return connectedChannels.length > 0;
   }
-
   function describeDestinationJid(jid: string) {
     const provider = providerForJid(jid);
     return provider
@@ -237,7 +236,6 @@ export function createChannelWiring(
   function hasChannel(jid: string): boolean {
     return findBoundChannel(jid) !== undefined;
   }
-
   function supportsStreaming(jid: string): boolean {
     const channel = findBoundChannel(jid);
     if (!channel) return false;
@@ -260,7 +258,6 @@ export function createChannelWiring(
     );
     return false;
   }
-
   async function sendMessage(
     jid: string,
     rawText: string,
@@ -272,10 +269,9 @@ export function createChannelWiring(
   ): Promise<void> {
     await sendProviderMessageInternal(jid, rawText, {
       ...options,
-      persistence: 'legacy_message_row',
+      persistence: 'message_row_projection',
     });
   }
-
   async function sendProviderMessage(
     jid: string,
     rawText: string,
@@ -297,7 +293,6 @@ export function createChannelWiring(
       persistence: 'none',
     });
   }
-
   async function sendProviderMessageInternal(
     jid: string,
     rawText: string,
@@ -305,7 +300,7 @@ export function createChannelWiring(
       durability: 'required' | 'best_effort';
       throwOnMissing?: boolean;
       messageOptions?: MessageSendOptions;
-      persistence: 'legacy_message_row' | 'none';
+      persistence: 'message_row_projection' | 'none';
     },
   ): Promise<MessageDeliveryResult | undefined> {
     const channel = findBoundChannel(jid);
@@ -365,7 +360,7 @@ export function createChannelWiring(
     }
 
     let outboundOps = (() => {
-      if (options.persistence !== 'legacy_message_row') return undefined;
+      if (options.persistence !== 'message_row_projection') return undefined;
       return optionalOps();
     })();
     try {
@@ -376,7 +371,7 @@ export function createChannelWiring(
     } catch (err) {
       resolved.logger.warn(
         { err, jid },
-        'Legacy outbound pending projection persistence failed; continuing with provider send',
+        'Outbound pending message-row projection persistence failed; continuing with provider send',
       );
       outboundOps = undefined;
     }
@@ -560,7 +555,7 @@ export function createChannelWiring(
           deliveryWarnings: result?.warnings,
         },
         options.durability === 'required'
-          ? 'Provider send succeeded but legacy outbound sent-status projection failed'
+          ? 'Provider send succeeded but outbound sent-status projection failed'
           : 'Provider send succeeded but outbound sent-status persistence failed',
       );
       if (options.durability === 'required') {
@@ -695,5 +690,11 @@ export function createChannelWiring(
     requestPermissionApproval,
     requestUserAnswer: userQuestionResponder.requestUserAnswer,
     disconnectChannels,
+    isControlApproverAllowed: (input) => {
+      const providerId = providerIdForJid(input.conversationJid, '');
+      return providerId
+        ? authorizeConversationApprover({ ...input, providerId })
+        : Promise.resolve(false);
+    },
   };
 }

@@ -6,7 +6,17 @@ import { hashText, parseItemSource } from './app-memory-canonical-codec.js';
 import type {
   AppMemorySearchInput,
   AppMemorySearchResult,
+  NormalizedMemorySubject,
 } from './memory-types.js';
+
+export type AppMemorySearchEmptyReason =
+  | 'no_visible_subject_filters'
+  | 'no_matching_memory';
+
+export interface AppMemorySearchOutcome {
+  resolvedSubject: NormalizedMemorySubject;
+  empty_reason?: AppMemorySearchEmptyReason;
+}
 
 interface AppMemoryRecallDeps {
   schema: {
@@ -41,6 +51,37 @@ function sqlThreadVisibilityFilter(
   return threadId
     ? or(eq(i.threadId, threadId), isNull(i.threadId))
     : isNull(i.threadId);
+}
+
+function visibleSubjectFilterCount(input: AppMemorySearchInput): number {
+  const context = normalizeSubject(input);
+  const allowed = new Set(
+    input.subjectTypes || ['user', 'group', 'channel', 'common'],
+  );
+  let count = 0;
+  if (input.includeCommon !== false && allowed.has('common')) count += 1;
+  if (context.userId && allowed.has('user')) count += 1;
+  if (context.groupId && allowed.has('group')) count += 1;
+  if (context.channelId && allowed.has('channel')) count += 1;
+  if (count === 0 && allowed.has(context.subjectType)) count += 1;
+  return count;
+}
+
+export function describeAppMemorySearchOutcome(
+  input: AppMemorySearchInput,
+  resultCount: number,
+): AppMemorySearchOutcome {
+  const resolvedSubject = normalizeSubject(input);
+  if (resultCount > 0) {
+    return { resolvedSubject };
+  }
+  return {
+    resolvedSubject,
+    empty_reason:
+      visibleSubjectFilterCount(input) === 0
+        ? 'no_visible_subject_filters'
+        : 'no_matching_memory',
+  };
 }
 
 export async function queryAppMemoryItems(

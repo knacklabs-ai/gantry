@@ -70,19 +70,6 @@ function scheduleType(raw: unknown): JobScheduleType | undefined {
     : undefined;
 }
 
-function hasLegacySchedulerFields(data: TaskContext['data']): boolean {
-  const legacy = data as TaskContext['data'] & {
-    linkedSessions?: unknown;
-    deliverTo?: unknown;
-    threadId?: unknown;
-  };
-  return (
-    legacy.linkedSessions !== undefined ||
-    legacy.deliverTo !== undefined ||
-    legacy.threadId !== undefined
-  );
-}
-
 const schedulerUpsertJobHandler: TaskHandler = async (context) => {
   const {
     data,
@@ -96,25 +83,6 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
     data.authThreadId,
     data.responseKeyId,
   );
-
-  if (typeof data.script === 'string' && data.script.trim().length > 0) {
-    logger.warn(
-      { sourceAgentFolder, name: data.name },
-      'Rejected scheduler_upsert_job with script payload from IPC',
-    );
-    reject(
-      'script mutation is not allowed for scheduler_upsert_job.',
-      'forbidden',
-    );
-    return;
-  }
-  if (hasLegacySchedulerFields(data)) {
-    reject(
-      'Unsupported legacy scheduler fields. Use executionContext and notificationRoutes.',
-      'invalid_request',
-    );
-    return;
-  }
 
   if (
     data.scheduleType === undefined ||
@@ -150,7 +118,6 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
       maxConsecutiveFailures: data.maxConsecutiveFailures,
       executionMode: data.executionMode,
       serialize: data.serialize,
-      groupScope: data.groupScope,
       createdBy: data.createdBy,
       allowedTools: data.allowedTools,
     });

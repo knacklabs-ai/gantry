@@ -22,9 +22,9 @@ import {
 import { createRuntimeModelStatusAccess } from './model-status-store.js';
 import { recordRuntimeModelUsage } from './model-status-output.js';
 import { buildBoundedMemoryRecallQuery } from '../memory/app-memory-recall-query.js';
-
 const DEFAULT_ASSISTANT_NAME = 'MyClaw';
 const DEFAULT_MODEL_ALIAS = 'opus';
+const MEMORY_REVIEW_APPROVER_CACHE_TTL_MS = 60_000;
 const WORKSPACE_FOLDER_INPUT_KEY = `group${'Folder'}`;
 const RUNTIME_LOG_PROVIDER_FIELDS =
   'sessionId|newSessionId|providerSessionId|externalSessionId|latestProviderSessionId|session_id';
@@ -52,7 +52,7 @@ const RUNTIME_LOG_PROVIDER_VALUE_PATTERNS: RegExp[] = [
 ];
 const RUNTIME_LOG_REDACT_KEY_PATTERN =
   /^(sessionId|newSessionId|providerSessionId|externalSessionId|latestProviderSessionId|session_id)$/i;
-
+const memoryReviewApproverCache = new Map<string, [boolean, number]>();
 function redactRuntimeLogString(value: string): string {
   let out = value;
   for (const pattern of RUNTIME_LOG_PROVIDER_FIELD_PATTERNS) {
@@ -65,7 +65,6 @@ function redactRuntimeLogString(value: string): string {
   }
   return out;
 }
-
 function redactRuntimeLogValue(value: unknown, depth: number): unknown {
   if (depth > 6) return '[TRUNCATED_DEPTH]';
   if (typeof value === 'string') return redactRuntimeLogString(value);
@@ -85,7 +84,32 @@ function redactRuntimeLogValue(value: unknown, depth: number): unknown {
   }
   return value;
 }
-
+async function memoryReviewerApproverAllowed(
+  deps: GroupProcessingDeps,
+  conversationJid: string,
+  sourceAgentFolder: string,
+  userId?: string,
+): Promise<boolean> {
+  if (!userId) return false;
+  const hook = deps.channelRuntime.isControlApproverAllowed;
+  if (!hook) return false;
+  const key = `${conversationJid}\0${sourceAgentFolder}\0${userId}`;
+  const now = Date.now();
+  const cached = memoryReviewApproverCache.get(key);
+  if (cached && cached[1] > now) return cached[0];
+  const allowed =
+    (await hook({
+      conversationJid,
+      userId,
+      sourceAgentFolder,
+      decisionPolicy: 'same_channel',
+    }).catch(() => false)) === true;
+  memoryReviewApproverCache.set(key, [
+    allowed,
+    now + MEMORY_REVIEW_APPROVER_CACHE_TTL_MS,
+  ]);
+  return allowed;
+}
 const runtimeLogger = {
   info(payload: Record<string, unknown>, message: string) {
     console.info(
@@ -106,7 +130,6 @@ const runtimeLogger = {
     );
   },
 };
-
 export function createGroupAgentRunner(input: {
   deps: GroupProcessingDeps;
   ops: () => GroupProcessingRepository;
@@ -114,7 +137,6 @@ export function createGroupAgentRunner(input: {
   const { deps, ops } = input;
   const runAgentImpl = deps.runAgent ?? spawnAgent;
   const collectSessionMemory = deps.collectSessionMemory;
-
   return async function runAgent(
     group: ConversationRoute,
     prompt: string,
@@ -170,6 +192,12 @@ export function createGroupAgentRunner(input: {
     let defaultRuntimeModel: string | undefined;
     const defaultMemoryScope = memoryScopeForConversationKind(
       group.conversationKind,
+    );
+    const memoryReviewerIsControlApprover = await memoryReviewerApproverAllowed(
+      deps,
+      chatJid,
+      group.folder,
+      options?.memoryContext?.userId,
     );
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
@@ -268,6 +296,7 @@ export function createGroupAgentRunner(input: {
             threadId: options?.memoryContext?.threadId,
             memoryUserId: options?.memoryContext?.userId,
             memoryDefaultScope: defaultMemoryScope,
+            memoryReviewerIsControlApprover,
             persona: group.agentConfig?.persona,
             allowedTools: configuredAllowedTools,
             ...(turnContext?.externalSessionId

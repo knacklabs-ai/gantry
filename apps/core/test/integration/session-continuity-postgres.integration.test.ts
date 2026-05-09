@@ -5,6 +5,7 @@ import {
   DEFAULT_LLM_PROFILE_ID,
 } from '@core/adapters/storage/postgres/seeds.js';
 import type { AgentRunId } from '@core/domain/events/events.js';
+import type { JobUpsertInput } from '@core/domain/repositories/ops-repo.js';
 import type { ProviderSessionId } from '@core/domain/sessions/sessions.js';
 
 import {
@@ -14,6 +15,47 @@ import {
 } from '../harness/postgres-integration-runtime.js';
 
 const maybeDescribe = hasPostgresIntegrationDatabase ? describe : describe.skip;
+const now = '2026-04-28T00:00:00.000Z';
+
+function makeContinuityJob(
+  id: string,
+  patch: Partial<JobUpsertInput> = {},
+): JobUpsertInput {
+  return {
+    id,
+    name: `Job ${id}`,
+    prompt: 'Summarize current status',
+    schedule_type: 'manual',
+    schedule_value: '',
+    status: 'active',
+    session_id: null,
+    thread_id: null,
+    execution_context: {
+      conversationJid: 'app:shared:conversation',
+      threadId: null,
+      groupScope: 'shared_agent',
+      sessionId: null,
+    },
+    notification_routes: [
+      {
+        conversationJid: 'app:shared:conversation',
+        threadId: null,
+        label: 'primary',
+      },
+    ],
+    group_scope: 'shared_agent',
+    created_by: 'human',
+    created_at: now,
+    updated_at: now,
+    next_run: null,
+    silent: false,
+    timeout_ms: 30_000,
+    max_retries: 1,
+    retry_backoff_ms: 1,
+    execution_mode: 'serialized',
+    ...patch,
+  };
+}
 
 maybeDescribe('Postgres memory continuity', () => {
   let runtime: PostgresIntegrationRuntime;
@@ -623,6 +665,94 @@ maybeDescribe('Postgres memory continuity', () => {
     expect(restarted.agentSessionId).toBeDefined();
     expect(restarted).not.toHaveProperty('externalSessionId');
     expect(restarted).not.toHaveProperty('latestArtifactId');
+  });
+
+  it('hydrates continuity jobs only from the current session app scope', async () => {
+    const conversationJid = 'app:shared:conversation';
+    const threadId = 'topic-1';
+    const agentId = 'agent:shared_agent';
+    const appOneSession = await runtime.control.ensureAppSession({
+      appId: 'app-one',
+      conversationId: 'shared-conversation',
+      chatJid: conversationJid,
+      groupFolder: 'shared_agent',
+      title: 'Shared App One',
+    });
+    const appTwoSession = await runtime.control.ensureAppSession({
+      appId: 'app-two',
+      conversationId: 'shared-conversation',
+      chatJid: conversationJid,
+      groupFolder: 'shared_agent',
+      title: 'Shared App Two',
+    });
+    await runtime.ops.upsertJob(
+      makeContinuityJob('job:continuity:app-one', {
+        status: 'paused',
+        session_id: appOneSession.sessionId,
+        thread_id: threadId,
+        execution_context: {
+          conversationJid,
+          threadId,
+          groupScope: 'shared_agent',
+          sessionId: appOneSession.sessionId,
+        },
+        notification_routes: [{ conversationJid, threadId, label: 'primary' }],
+      }),
+    );
+    await runtime.ops.upsertJob(
+      makeContinuityJob('job:continuity:app-two', {
+        status: 'active',
+        session_id: appTwoSession.sessionId,
+        thread_id: threadId,
+        execution_context: {
+          conversationJid,
+          threadId,
+          groupScope: 'shared_agent',
+          sessionId: appTwoSession.sessionId,
+        },
+        notification_routes: [{ conversationJid, threadId, label: 'primary' }],
+      }),
+    );
+
+    const loadProductionContinuityJobs = (
+      runtime.ops as unknown as {
+        sessions: {
+          loadProductionContinuityJobs(input: {
+            session: {
+              id: string;
+              appId: string;
+              agentId: string;
+              conversationId: string;
+              threadId?: string;
+              status: 'active';
+              createdAt: string;
+              updatedAt: string;
+            };
+            limit: number;
+          }): Promise<Array<{ id: string }>>;
+        };
+      }
+    ).sessions.loadProductionContinuityJobs.bind(
+      (runtime.ops as unknown as { sessions: unknown }).sessions,
+    );
+
+    await expect(
+      loadProductionContinuityJobs({
+        session: {
+          id: appOneSession.sessionId,
+          appId: 'app-one',
+          agentId,
+          conversationId: `conversation:${conversationJid}`,
+          threadId: `thread:${conversationJid}:${threadId}`,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        },
+        limit: 8,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: 'job:continuity:app-one' }),
+    ]);
   });
 
   it('keeps session state isolated across independent test schemas', async () => {

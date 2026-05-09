@@ -12,11 +12,9 @@ export interface JobUpsertInput {
   name: string;
   prompt: string;
   model?: string | null;
-  script?: string | null;
   schedule_type: Job['schedule_type'];
   schedule_value: string;
   status?: Job['status'];
-  linked_sessions?: string[];
   session_id?: string | null;
   thread_id?: string | null;
   group_scope: string;

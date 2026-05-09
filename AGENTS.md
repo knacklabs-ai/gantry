@@ -50,6 +50,7 @@ Important constraints:
 - Do not add more provider-specific behavior to core runtime.
 - Hide LLM and model-provider behavior behind provider ports.
 - Route all risky tool execution through deterministic permission evaluation and sandbox policy.
+- SDK-managed Bash/file/MCP execution must receive Claude SDK sandbox settings with fail-closed availability and protected-path `denyWrite` entries; direct host-owned scheduler scripts are not supported.
 - Domain must not import adapters, runtime, CLI, HTTP, Postgres, Slack, Telegram, Teams, WhatsApp, Claude, Anthropic SDK, OpenAI, Gemini, or provider-specific packages.
 - Application may depend on domain and ports, not provider implementations.
 - Adapters implement ports and may depend on external systems.

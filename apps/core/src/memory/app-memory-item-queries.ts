@@ -4,6 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as pgSchema from '../adapters/storage/postgres/schema/schema.js';
 import {
   itemMatchesSubjectBoundary,
+  parseJsonObject,
   parseItemSource,
   type CanonicalMemoryItemRow,
 } from './app-memory-canonical-codec.js';
@@ -13,6 +14,7 @@ import {
   nowIso,
 } from './app-memory-service-query-helpers.js';
 import type {
+  DemoteDreamingMemoryInput,
   DeleteAppMemoryInput,
   MemoryBoundaryContext,
   NormalizedMemorySubject,
@@ -104,6 +106,61 @@ export async function deleteOwnedMemoryItem(input: {
     .returning({ id: pgSchema.memoryItemsPostgres.id });
   if (!deleted) throw new Error('stale memory delete');
   return { deleted: true };
+}
+
+export async function demoteDreamingPromotedMemoryItem(input: {
+  db: Db;
+  context: NormalizedMemorySubject;
+  id: string;
+  expectedVersion?: DemoteDreamingMemoryInput['expectedVersion'];
+  isAdminWrite?: DemoteDreamingMemoryInput['isAdminWrite'];
+  actorId?: DemoteDreamingMemoryInput['actorId'];
+  reason?: DemoteDreamingMemoryInput['reason'];
+}): Promise<{ demoted: boolean }> {
+  const current = await getOwnedMemoryItem(input);
+  if (!current) return { demoted: false };
+  const currentSource = parseItemSource(current);
+  if (currentSource.subject.subjectType === 'common' && !input.isAdminWrite) {
+    throw new Error('common memory demotions require admin/service authority');
+  }
+  if (
+    input.expectedVersion !== undefined &&
+    input.expectedVersion !== currentSource.version
+  ) {
+    throw new Error('stale memory demotion');
+  }
+  const sourceRef = parseJsonObject(current.sourceRefJson);
+  if (
+    currentSource.source !== 'dreaming' ||
+    sourceRef.promoted_by !== 'dreaming'
+  ) {
+    throw new Error('only dreaming-promoted memory can be demoted');
+  }
+  const timestamp = nowIso();
+  const [demoted] = await input.db
+    .update(pgSchema.memoryItemsPostgres)
+    .set({
+      status: 'demoted',
+      sourceRefJson: JSON.stringify({
+        ...sourceRef,
+        demoted_at: timestamp,
+        demoted_by: input.actorId ?? null,
+        demotion_reason: input.reason ?? null,
+      }),
+      updatedAt: timestamp,
+    })
+    .where(
+      and(
+        eq(pgSchema.memoryItemsPostgres.id, current.id),
+        eq(pgSchema.memoryItemsPostgres.status, 'active'),
+        input.expectedVersion === undefined
+          ? undefined
+          : sql`(${pgSchema.memoryItemsPostgres.sourceRefJson}::jsonb->>'version')::int = ${input.expectedVersion}`,
+      ),
+    )
+    .returning({ id: pgSchema.memoryItemsPostgres.id });
+  if (!demoted) throw new Error('stale memory demotion');
+  return { demoted: true };
 }
 
 export type OwnedMemoryItemLookupInput = {

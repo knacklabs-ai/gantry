@@ -20,7 +20,7 @@ import type {
   ExtractableMemoryKind,
   MemoryExtractionProvider,
 } from './extractor-types.js';
-import { sanitizeOutboundLlmText } from './sensitive-material.js';
+import { sanitizeOutboundLlmText } from '../shared/sensitive-material.js';
 import {
   parseItemSource,
   type CanonicalMemoryItemRow,

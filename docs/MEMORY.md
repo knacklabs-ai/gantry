@@ -59,15 +59,15 @@ flattened canonical `memory_items` schema for durable memory:
 - `memory_dream_runs`
 - `memory_dream_decisions`
 
-Markdown/file ingestion is an explicit knowledge-source feature. It is not the
-primary memory store.
+Pasted text and runtime observations must become bounded `memory_evidence` or
+reviewed candidates before they can affect active durable recall.
 
 ## Pipeline
 
 The current runtime pipeline is:
 
 1. collect evidence from sessions, messages, tool outcomes, manual saves, or
-   knowledge-source ingestion
+   Memory Source ingestion
 2. automatically capture a recent session digest at explicit continuation
    boundaries such as `/new`, `/compact`, stale-session archival, job
    completion, or observed SDK compact boundaries

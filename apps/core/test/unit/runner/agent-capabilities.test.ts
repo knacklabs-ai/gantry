@@ -119,6 +119,8 @@ describe('agent capability composition', () => {
     for (const tool of DANGEROUS_DEFAULT_TOOLS) {
       expect(profile.allowedTools).not.toContain(tool);
     }
+    expect(profile.allowedTools).toContain('mcp__myclaw__continuity_summary');
+    expect(selectedMemoryIpcActions([])).toContain('continuity_summary');
     for (const tool of UNAVAILABLE_DEFAULT_TOOLS) {
       expect(profile.availableTools).not.toContain(tool);
     }
@@ -133,6 +135,7 @@ describe('agent capability composition', () => {
         MYCLAW_THREAD_ID: 'topic-1',
         MYCLAW_MEMORY_USER_ID: '5759865942',
         MYCLAW_MEMORY_DEFAULT_SCOPE: 'group',
+        MYCLAW_MEMORY_REVIEWER_IS_CONTROL_APPROVER: '',
         MYCLAW_BROWSER_PROFILE_NAME: 'c-team-abc123abc123',
         MYCLAW_ADMIN_MCP_TOOLS_JSON: '[]',
         MYCLAW_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
@@ -277,7 +280,7 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).not.toContain('mcp__myclaw__register_agent');
   });
 
-  it('exposes memory patch tools only when explicitly selected', () => {
+  it('exposes memory mutation tools only when explicitly selected', () => {
     const profile = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:sales',
@@ -285,22 +288,28 @@ describe('agent capability composition', () => {
       persona: 'sales',
       configuredAllowedTools: [
         'mcp__myclaw__memory_patch',
+        'mcp__myclaw__memory_demote',
         'mcp__myclaw__procedure_patch',
       ],
     });
 
     expect(profile.allowedTools).toContain('mcp__myclaw__memory_patch');
+    expect(profile.allowedTools).toContain('mcp__myclaw__memory_demote');
     expect(profile.allowedTools).toContain('mcp__myclaw__procedure_patch');
     expect(selectedMemoryIpcActions([])).not.toContain('memory_patch');
+    expect(selectedMemoryIpcActions([])).not.toContain('memory_demote');
     expect(
       selectedMemoryIpcActions([
         'mcp__myclaw__memory_patch',
+        'mcp__myclaw__memory_demote',
         'mcp__myclaw__procedure_patch',
       ]),
     ).toEqual([
       'memory_search',
       'memory_save',
       'memory_patch',
+      'memory_demote',
+      'continuity_summary',
       'procedure_save',
       'procedure_patch',
     ]);

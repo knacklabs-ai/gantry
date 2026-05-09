@@ -97,6 +97,25 @@ Job-specific grants are single-cut runtime state. They remain on the job as
 public inspection surfaces expose the canonical `toolAccess` object instead of
 parallel count or legacy tool fields.
 
+When an autonomous job fails because a tool is missing, recovery output should
+name the exact rule command:
+
+```text
+scheduler_grant_tool { "job_id": "<job_id>", "rule": "Bash(npm test)" }
+```
+
+`scheduler_grant_tool` appends one reviewed job-scoped rule to
+`target_json.capabilityPolicy.allowedTools`. It does not mutate
+`settings.yaml`, grant persistent agent tools, or bypass the canonical tool
+execution policy. The rule is validated with the same autonomous tool-rule
+parser before any scheduler update task is written.
+
+Direct writes to `settings.json`, `settings.local.json`, `.mcp.json`,
+generated provider MCP directories, and skill capability files are protected
+wholesale. Provider settings files are not partially parsed for "safe" keys;
+agents must use reviewed MyClaw request tools because future provider settings
+can become execution or permission policy.
+
 Readable skill bytes live outside catalog rows:
 
 ```text

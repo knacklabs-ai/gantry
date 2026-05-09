@@ -161,6 +161,21 @@ function createOpts(
   };
 }
 
+function createOptsWithApproverHook(
+  allowedUsers: readonly string[],
+  controlAllowlist = {
+    default: Array.from(allowedUsers),
+    agents: {} as Record<string, string[]>,
+  },
+) {
+  return {
+    ...createOpts(controlAllowlist),
+    isControlApproverAllowed: vi.fn(async (input: { userId: string }) =>
+      allowedUsers.includes(input.userId),
+    ),
+  };
+}
+
 describe('Slack channel', () => {
   let savedMyclawHome: string | undefined;
 
@@ -453,7 +468,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -474,7 +489,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -511,7 +526,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -543,7 +558,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U123']) as any,
     );
     await channel.connect();
 
@@ -574,7 +589,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
     vi.useFakeTimers();
@@ -626,7 +641,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannelWithSnippetFallback(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U123']) as any,
     );
     await channel.connect();
 
@@ -651,7 +666,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -673,7 +688,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U123']) as any,
     );
     await channel.connect();
 
@@ -761,7 +776,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -805,7 +820,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -854,7 +869,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -1051,7 +1066,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U123']) as any,
     );
     await channel.connect();
 
@@ -1110,7 +1125,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -1182,7 +1197,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U123']) as any,
     );
     await channel.connect();
 
@@ -1262,7 +1277,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 
@@ -2033,7 +2048,7 @@ describe('Slack channel', () => {
     const channel = new SlackChannel(
       'xoxb-token',
       'xapp-token',
-      createOpts() as any,
+      createOptsWithApproverHook(['U_APPROVER']) as any,
     );
     await channel.connect();
 

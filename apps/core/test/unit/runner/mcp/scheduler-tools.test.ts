@@ -137,11 +137,17 @@ describe('scheduler MCP tools', () => {
     expect(
       schemas.get('scheduler_update_job')?.target.safeParse('here').success,
     ).toBe(true);
+    expect(schemas.get('scheduler_update_job')?.group_scope).toBeUndefined();
+    expect(schemas.get('scheduler_update_job')?.thread_id).toBeUndefined();
+    expect(schemas.get('scheduler_upsert_job')?.group_scope).toBeUndefined();
+    expect(schemas.get('scheduler_upsert_job')?.thread_id).toBeUndefined();
     expect(schemas.get('scheduler_list_jobs')?.group_scope).toBeUndefined();
     expect(
       schemas.get('scheduler_list_jobs')?.conversation_jid,
     ).toBeUndefined();
     expect(schemas.get('scheduler_run_now')?.job_id).toBeDefined();
+    expect(schemas.get('scheduler_grant_tool')?.job_id).toBeDefined();
+    expect(schemas.get('scheduler_grant_tool')?.rule).toBeDefined();
     expect(schemas.get('scheduler_list_notification_targets')).toBeDefined();
   });
 
@@ -196,6 +202,171 @@ describe('scheduler MCP tools', () => {
     expect(waitForTaskResponse).toHaveBeenCalledWith(
       expect.any(String),
       310_000,
+    );
+  });
+
+  it('appends one scheduler tool grant to the existing job policy', async () => {
+    const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-tools-'));
+    tempRoots.push(ipcDir);
+    process.env.MYCLAW_IPC_DIR = ipcDir;
+    const waitForTaskResponse = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          job: {
+            id: 'job-1',
+            visibility: {
+              toolAccess: {
+                jobExtraTools: ['Read'],
+              },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const writeIpcFile = vi.fn();
+    vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
+      waitForTaskResponse,
+      writeIpcFile,
+    }));
+    const { registerSchedulerTools } =
+      await import('../../../../src/runner/mcp/tools/scheduler.js');
+    const tools = new Map<
+      string,
+      (
+        args: Record<string, unknown>,
+      ) => Promise<{ content: { text: string }[]; isError?: boolean }>
+    >();
+    const server = {
+      tool: (
+        name: string,
+        _description: string,
+        _schema: unknown,
+        handler: never,
+      ) => {
+        tools.set(name, handler);
+      },
+    };
+
+    registerSchedulerTools(server as never);
+    const response = await tools.get('scheduler_grant_tool')!({
+      job_id: 'job-1',
+      rule: 'Bash(npm test)',
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(writeIpcFile).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.objectContaining({
+        type: 'scheduler_update_job',
+        jobId: 'job-1',
+        allowedTools: ['Read', 'Bash(npm test)'],
+      }),
+    );
+  });
+
+  it('rejects malformed scheduler tool grants before host mutation', async () => {
+    const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-tools-'));
+    tempRoots.push(ipcDir);
+    process.env.MYCLAW_IPC_DIR = ipcDir;
+    const writeIpcFile = vi.fn();
+    vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
+      waitForTaskResponse: vi.fn(),
+      writeIpcFile,
+    }));
+    const { registerSchedulerTools } =
+      await import('../../../../src/runner/mcp/tools/scheduler.js');
+    const tools = new Map<
+      string,
+      (
+        args: Record<string, unknown>,
+      ) => Promise<{ content: { text: string }[]; isError?: boolean }>
+    >();
+    const server = {
+      tool: (
+        name: string,
+        _description: string,
+        _schema: unknown,
+        handler: never,
+      ) => {
+        tools.set(name, handler);
+      },
+    };
+
+    registerSchedulerTools(server as never);
+    const response = await tools.get('scheduler_grant_tool')!({
+      job_id: 'job-1',
+      rule: '*',
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toContain(
+      'Global wildcard tool rule is not allowed',
+    );
+    expect(writeIpcFile).not.toHaveBeenCalled();
+  });
+
+  it('falls back to targetJson capability policy for scheduler tool grants', async () => {
+    const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-tools-'));
+    tempRoots.push(ipcDir);
+    process.env.MYCLAW_IPC_DIR = ipcDir;
+    const waitForTaskResponse = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          job: {
+            id: 'job-1',
+            targetJson: {
+              capabilityPolicy: {
+                allowedTools: ['Read'],
+              },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const writeIpcFile = vi.fn();
+    vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
+      waitForTaskResponse,
+      writeIpcFile,
+    }));
+    const { registerSchedulerTools } =
+      await import('../../../../src/runner/mcp/tools/scheduler.js');
+    const tools = new Map<
+      string,
+      (
+        args: Record<string, unknown>,
+      ) => Promise<{ content: { text: string }[]; isError?: boolean }>
+    >();
+    const server = {
+      tool: (
+        name: string,
+        _description: string,
+        _schema: unknown,
+        handler: never,
+      ) => {
+        tools.set(name, handler);
+      },
+    };
+
+    registerSchedulerTools(server as never);
+    const response = await tools.get('scheduler_grant_tool')!({
+      job_id: 'job-1',
+      rule: 'Bash(npm test)',
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(writeIpcFile).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.objectContaining({
+        type: 'scheduler_update_job',
+        jobId: 'job-1',
+        allowedTools: ['Read', 'Bash(npm test)'],
+      }),
     );
   });
 
@@ -260,10 +431,15 @@ describe('scheduler MCP tools', () => {
     );
   });
 
-  it('rejects legacy scheduler fields in scheduler_update_job tool calls', async () => {
+  it('rejects unsupported scheduler mutation fields before writing IPC tasks', async () => {
     const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-tools-'));
     tempRoots.push(ipcDir);
     process.env.MYCLAW_IPC_DIR = ipcDir;
+    const writeIpcFile = vi.fn();
+    vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
+      waitForTaskResponse: vi.fn(),
+      writeIpcFile,
+    }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
     const tools = new Map<
@@ -291,8 +467,9 @@ describe('scheduler MCP tools', () => {
 
     expect(response.isError).toBe(true);
     expect(response.content[0].text).toContain(
-      'Unsupported legacy scheduler field "deliver_to"',
+      'Unsupported scheduler fields: deliver_to',
     );
+    expect(writeIpcFile).not.toHaveBeenCalled();
   });
 
   it('renders missed-window staleness in scheduler job summaries', async () => {

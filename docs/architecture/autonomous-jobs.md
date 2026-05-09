@@ -47,11 +47,28 @@ approval during execution. If a tool is outside the effective job allowlist, the
 runner denies it immediately with:
 
 ```text
-tool not on autonomous job allowlist
+Tool not on autonomous job allowlist: Bash.
+Recovery: scheduler_grant_tool { "job_id": "job-1", "rule": "Bash(git status --short)" }
 ```
+
+If a safe scoped `Bash(<command>)` rule cannot represent the requested command,
+fallback to broad `Bash` should require manual review.
 
 The scheduler records the failure summary, emits `job.tool_denied`, and notifies
 the linked group/thread or DM unless the job is silent.
+
+Host-owned job scripts are not supported. Raw host Bash is not equivalent to
+Claude SDK Bash because it does not inherit the SDK filesystem sandbox,
+provider tool lifecycle, or per-tool permission callback. Move job logic into
+the scheduled prompt and grant exact SDK tools with `scheduler_grant_tool`. Any
+future script-like job runner must first provide the same protected-path
+deny-write boundary on macOS, Linux, and Docker deployments.
+
+`scheduler_grant_tool` is the agent-facing recovery path for job-local tools.
+It reads the current job, appends one rule if absent, and writes the updated
+`target_json.capabilityPolicy.allowedTools` through the normal scheduler update
+IPC path after validating the rule. It is not a settings-owned persistent agent
+grant.
 
 ## Visibility
 

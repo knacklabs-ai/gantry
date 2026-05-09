@@ -3,7 +3,7 @@ import type {
   MemoryScope,
   NormalizedMemorySubject,
 } from './memory-types.js';
-import { classifySensitiveMemoryMaterial } from './sensitive-material.js';
+import { classifySensitiveMemoryMaterial } from '../shared/sensitive-material.js';
 
 const CANONICAL_DREAM_KINDS = new Set<MemoryKind>([
   'preference',
@@ -255,11 +255,49 @@ export function parseStagedCandidateMetadata(candidate: MemoryCandidateRow): {
 export function validatePromotableCandidate(candidate: MemoryCandidateRow): {
   ok: boolean;
   rationale: string;
+  needsReview?: boolean;
 } {
   if (!CANONICAL_DREAM_KINDS.has(candidate.kind as MemoryKind)) {
     return {
       ok: false,
       rationale: 'Staged candidate kind is not canonical for dreaming.',
+    };
+  }
+  if (candidate.kind === 'preference') {
+    return {
+      ok: false,
+      needsReview: true,
+      rationale:
+        'Staged preference candidates require review before becoming durable memory.',
+    };
+  }
+  const metadata = parseJsonObject(candidate.metadataJson);
+  if (
+    metadata.requiresReview === true ||
+    metadata.requires_review === true ||
+    metadata.risky === true ||
+    metadata.risk === 'high' ||
+    metadata.riskLevel === 'high' ||
+    metadata.risk_level === 'high'
+  ) {
+    return {
+      ok: false,
+      needsReview: true,
+      rationale:
+        'Staged candidate is marked risky and requires memory review before promotion.',
+    };
+  }
+  if (
+    metadata.contradiction === true ||
+    metadata.contradicts === true ||
+    metadata.operation === 'rewrite' ||
+    metadata.action === 'rewrite'
+  ) {
+    return {
+      ok: false,
+      needsReview: true,
+      rationale:
+        'Staged candidate may contradict existing memory and requires review before promotion.',
     };
   }
   if (

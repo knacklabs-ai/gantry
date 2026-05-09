@@ -4,6 +4,25 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Postgres migration journal', () => {
+  it('has a SQL file for every journal entry', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ tag: string }>;
+    };
+
+    for (const entry of journal.entries) {
+      expect(
+        fs.existsSync(
+          path.resolve(
+            `apps/core/src/adapters/storage/postgres/schema/migrations/${entry.tag}.sql`,
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
   it('applies the memory schema migration on fresh databases', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',

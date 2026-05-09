@@ -234,9 +234,9 @@ inbound session message. The response shape is:
 
 ```ts
 {
-  accepted: boolean
-  messageId: string
-  acceptedEventId: number
+  accepted: boolean;
+  messageId: string;
+  acceptedEventId: number;
 }
 ```
 
@@ -618,10 +618,21 @@ client.memory.patch(memoryId, { appId?, agentId?, expectedVersion?, key?, value?
 client.memory.delete(memoryId, { appId?, agentId? })
 client.memory.dreaming.trigger({ appId?, agentId?, subjectType?, subjectId?, phase?, dryRun? })
 client.memory.dreaming.status({ appId?, agentId? })
+
+client.memory.sources.add({ sourceType: "text", text, title?, appId?, agentId?, userId?, groupId?, channelId?, threadId?, ingest? })
+client.memory.sources.list({ appId?, agentId?, userId?, groupId?, channelId?, threadId?, limit? })
+client.memory.sources.status(sourceId, { appId?, agentId?, userId?, groupId?, channelId?, threadId? })
+client.memory.sources.search({ query, appId?, agentId?, userId?, groupId?, channelId?, threadId?, limit? })
+client.memory.sources.delete(sourceId, { appId?, agentId? })
+client.memory.sources.ingest(sourceId, { appId?, agentId? })
 ```
 
 `reference` memory is reserved for procedure/knowledge-source flows instead of
 direct `memory_save` payloads.
+Blogs, articles, docs, posts, tweets/X content, pasted text, and files should
+be added through `client.memory.sources.*`; source ingestion stores
+provenance/chunks and stages reviewable candidates, but it does not directly
+create active `memory_items`.
 
 ## Webhooks
 

@@ -227,7 +227,6 @@ export class JobManagementService {
       name,
       prompt,
       model: modelAlias ?? null,
-      script: null,
       schedule_type: scheduleType,
       schedule_value: input.scheduleValue.trim(),
       session_id: canonicalSession?.sessionId ?? null,

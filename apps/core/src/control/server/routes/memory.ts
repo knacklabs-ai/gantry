@@ -106,6 +106,8 @@ export async function handleMemoryRoutes(
   url: URL,
   pathname: string,
 ): Promise<boolean> {
+  if (!pathname.startsWith('/v1/memory')) return false;
+
   const service = AppMemoryService.getInstance();
 
   if (pathname === '/v1/memory' && req.method === 'POST') {

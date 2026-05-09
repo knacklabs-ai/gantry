@@ -146,7 +146,6 @@ export async function createManagedJob(
     name: input.name.trim(),
     prompt: input.prompt.trim(),
     model: modelAlias ?? null,
-    script: null,
     schedule_type: schedule.scheduleType,
     schedule_value: schedule.scheduleValue,
     status: 'active',

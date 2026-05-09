@@ -168,5 +168,11 @@ export interface ChannelWiring {
   requestUserAnswer: (
     request: UserQuestionRequest,
   ) => Promise<UserQuestionResponse>;
+  isControlApproverAllowed: (input: {
+    conversationJid: string;
+    userId: string;
+    sourceAgentFolder: string;
+    decisionPolicy?: 'same_channel';
+  }) => Promise<boolean>;
   disconnectChannels: () => Promise<void>;
 }

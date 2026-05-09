@@ -1547,6 +1547,62 @@ describe('getGroupMemoryStatus', () => {
     }
   });
 
+  it('uses continuity status without calling direct dreaming status', async () => {
+    vi.resetModules();
+    const list = vi.fn().mockResolvedValue([]);
+    const continuityStatus = vi.fn().mockResolvedValue({
+      stagedCount: 2,
+      promotedCount: 1,
+      needsReviewCount: 3,
+      lastDreamRun: {
+        completedAt: '2026-04-04T00:00:00.000Z',
+        summary: { staged: 99, promoted: 99, needsReview: 99 },
+      },
+    });
+    const dreamingStatus = vi.fn().mockResolvedValue([
+      {
+        completedAt: '2026-04-05T00:00:00.000Z',
+        summary: { staged: 10, promoted: 10, needsReview: 10 },
+      },
+    ]);
+    vi.doMock('@core/memory/app-memory-service.js', () => ({
+      AppMemoryService: {
+        getInstance: () => ({
+          list,
+          continuityStatus,
+          dreamingStatus,
+        }),
+      },
+    }));
+
+    try {
+      const { getGroupMemoryStatus } =
+        await import('@core/runtime/group-memory-commands.js');
+      const status = await getGroupMemoryStatus('test');
+
+      expect(continuityStatus).toHaveBeenCalledWith({
+        appId: 'default',
+        agentId: 'agent:test',
+        subjectType: 'group',
+        subjectId: 'test',
+        groupId: 'test',
+      });
+      expect(dreamingStatus).not.toHaveBeenCalled();
+      expect(status.memory_pipeline).toEqual({
+        staged: 2,
+        promoted: 1,
+        needs_review: 3,
+      });
+      expect(status.last_dream_run).toEqual({
+        at: '2026-04-04T00:00:00.000Z',
+        summary: JSON.stringify({ staged: 99, promoted: 99, needsReview: 99 }),
+      });
+    } finally {
+      vi.doUnmock('@core/memory/app-memory-service.js');
+      vi.resetModules();
+    }
+  });
+
   it('reports embeddings disabled when runtime settings do not configure them', async () => {
     vi.resetModules();
     vi.doMock('@core/memory/app-memory-service.js', () => ({

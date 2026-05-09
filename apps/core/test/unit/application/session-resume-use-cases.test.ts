@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { CreateOrResumeSessionUseCase } from '@core/application/sessions/create-or-resume-session-use-case.js';
 import { HydrateAgentContextService } from '@core/application/sessions/hydrate-agent-context-service.js';
-import { ResumeSessionUseCase } from '@core/application/sessions/resume-session-use-case.js';
+import {
+  clearSessionContinuityInjectionStatusForTests,
+  getLastSessionContinuityInjectionStatus,
+  recordSessionContinuityInjectionStatus,
+} from '@core/application/sessions/session-continuity-injection-status.js';
 import { loadSessionAppMemoryItems } from '@core/memory/app-memory-session-hydration.js';
 import { AppMemoryService } from '@core/memory/app-memory-service.js';
 import {
@@ -12,7 +15,6 @@ import {
 import type {
   AgentSessionDigestRepository,
   AgentSessionRepository,
-  ProviderSessionRepository,
 } from '@core/domain/ports/repositories.js';
 import {
   scopedDigestMetadataForSession,
@@ -22,6 +24,14 @@ import {
 import { makeSessionScopeKey } from '@core/domain/repositories/ops-repo.js';
 
 const now = '2026-04-27T00:00:00.000Z';
+
+function parseMemoryContextBlock(block: string): any {
+  const opening = '<myclaw_memory_context trust="untrusted_data_only">';
+  const closing = '</myclaw_memory_context>';
+  expect(block.startsWith(opening)).toBe(true);
+  expect(block.endsWith(closing)).toBe(true);
+  return JSON.parse(block.slice(opening.length, -closing.length).trim());
+}
 
 function collectSqlParamValues(node: unknown): unknown[] {
   if (!node || typeof node !== 'object') return [];
@@ -161,7 +171,6 @@ function makeSession(input: Partial<AgentSession> = {}): AgentSession {
 
 function makeRepos() {
   const sessions = new Map<string, AgentSession>();
-  const providers = new Map<string, any>();
   const sessionRepo: AgentSessionRepository = {
     getAgentSession: async (id) => sessions.get(id) ?? null,
     getAgentSessionByKey: async (input) =>
@@ -177,24 +186,7 @@ function makeRepos() {
       sessions.set(session.id, session);
     },
   };
-  const providerRepo: ProviderSessionRepository = {
-    getProviderSession: async (id) => providers.get(id) ?? null,
-    getLatestProviderSession: async ({ agentSessionId, provider }) =>
-      [...providers.values()].find(
-        (item) =>
-          item.agentSessionId === agentSessionId &&
-          item.status === 'active' &&
-          (!provider || item.provider === provider),
-      ) ?? null,
-    saveProviderSession: async (session) => {
-      providers.set(session.id, session);
-    },
-    markProviderSessionStatus: async (id, status) => {
-      const item = providers.get(id);
-      if (item) providers.set(id, { ...item, status });
-    },
-  };
-  return { sessions, providers, sessionRepo, providerRepo };
+  return { sessions, sessionRepo };
 }
 
 describe('durable session resume use cases', () => {
@@ -259,115 +251,6 @@ describe('durable session resume use cases', () => {
     expect(channelA).not.toContain('user:');
   });
 
-  it('loads an existing AgentSession instead of creating a duplicate', async () => {
-    const repos = makeRepos();
-    const existing = makeSession({ id: 'agent-session:existing' as never });
-    await repos.sessionRepo.saveAgentSession(existing);
-    const useCase = new CreateOrResumeSessionUseCase(
-      repos.sessionRepo,
-      repos.providerRepo,
-    );
-
-    await expect(
-      useCase.execute({
-        appId: existing.appId,
-        agentId: existing.agentId,
-        conversationId: existing.conversationId!,
-        now,
-      }),
-    ).resolves.toMatchObject({
-      created: false,
-      session: { id: existing.id },
-    });
-    expect(repos.sessions.size).toBe(1);
-  });
-
-  it('returns the canonical session with active provider resume metadata', async () => {
-    const repos = makeRepos();
-    const session = makeSession();
-    await repos.sessionRepo.saveAgentSession(session);
-    await repos.providerRepo.saveProviderSession({
-      id: 'provider-session:test' as never,
-      appId: session.appId,
-      agentSessionId: session.id,
-      provider: 'anthropic',
-      externalSessionId: 'claude-session-1',
-      latestArtifactId: 'provider-session-artifact:test' as never,
-      providerRef: {
-        kind: 'provider_session',
-        value: 'anthropic:claude-session-1',
-      },
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const useCase = new ResumeSessionUseCase(
-      repos.sessionRepo,
-      repos.providerRepo,
-    );
-    await expect(
-      useCase.execute({ sessionId: session.id, provider: 'anthropic' }),
-    ).resolves.toMatchObject({
-      session: { id: session.id },
-      providerSession: {
-        id: 'provider-session:test',
-        externalSessionId: 'claude-session-1',
-      },
-    });
-  });
-
-  it('returns the canonical session when no provider session exists', async () => {
-    const repos = makeRepos();
-    const session = makeSession();
-    await repos.sessionRepo.saveAgentSession(session);
-    const useCase = new ResumeSessionUseCase(
-      repos.sessionRepo,
-      repos.providerRepo,
-    );
-
-    await expect(
-      useCase.execute({ sessionId: session.id, provider: 'anthropic' }),
-    ).resolves.toMatchObject({
-      session: { id: session.id },
-      providerSession: null,
-    });
-  });
-
-  it('returns provider sessions even without artifacts', async () => {
-    const repos = makeRepos();
-    const session = makeSession();
-    await repos.sessionRepo.saveAgentSession(session);
-    await repos.providerRepo.saveProviderSession({
-      id: 'provider-session:test' as never,
-      appId: session.appId,
-      agentSessionId: session.id,
-      provider: 'anthropic',
-      externalSessionId: 'claude-session-1',
-      providerRef: {
-        kind: 'provider_session',
-        value: 'anthropic:claude-session-1',
-      },
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const useCase = new ResumeSessionUseCase(
-      repos.sessionRepo,
-      repos.providerRepo,
-    );
-    await expect(
-      useCase.execute({ sessionId: session.id, provider: 'anthropic' }),
-    ).resolves.toMatchObject({
-      session: { id: session.id },
-      providerSession: {
-        id: 'provider-session:test',
-        externalSessionId: 'claude-session-1',
-      },
-    });
-  });
-
   it('hydrates persisted session digests before app-memory recall rows', async () => {
     const repos = makeRepos();
     const session = makeSession();
@@ -425,10 +308,370 @@ describe('durable session resume use cases', () => {
     );
     expect(hydrated.block).toContain('Ravi prefers concise continuity.');
     expect(hydrated.block.indexOf('recent_session_digests')).toBeLessThan(
-      hydrated.block.indexOf('"memories"'),
+      hydrated.block.indexOf('top_scoped_memories'),
     );
     expect(hydrated.block).not.toContain('recent_messages');
     expect(hydrated.block).not.toContain('recent_runs');
+  });
+
+  it('emits stable structured continuity sections and records injection status', async () => {
+    clearSessionContinuityInjectionStatusForTests();
+    const repos = makeRepos();
+    const session = makeSession();
+    await repos.sessionRepo.saveAgentSession(session);
+    const digest: AgentSessionDigest = {
+      id: 'agent-session-digest:structured' as never,
+      appId: session.appId,
+      agentSessionId: session.id,
+      trigger: 'session-end',
+      digest: 'Recent digest: Worker C kept continuity focused.',
+      messageCount: 4,
+      extractedFactCount: 1,
+      metadata: scopedDigestMetadataForSession(session),
+      createdAt: now as never,
+    };
+    const digestsRepo: AgentSessionDigestRepository = {
+      getAgentSessionDigest: async () => digest,
+      listAgentSessionDigests: async () => [digest],
+      saveAgentSessionDigest: async () => {},
+    };
+    const service = new HydrateAgentContextService(
+      repos.sessionRepo,
+      {},
+      {
+        digests: digestsRepo,
+        loadAppMemoryItems: async () => [
+          {
+            id: 'memory:decision:1',
+            kind: 'decision',
+            key: 'decision:hydration-shape',
+            value: 'Use stable section names for memory hydration.',
+            subject: {
+              subjectType: 'channel',
+              subjectId: session.conversationId,
+            },
+          },
+          {
+            id: 'memory:preference:1',
+            kind: 'preference',
+            key: 'preference:brief',
+            value: 'Prefer concise status summaries.',
+            subject: {
+              subjectType: 'channel',
+              subjectId: session.conversationId,
+            },
+          },
+        ],
+        loadContinuityJobs: async () => [
+          {
+            id: 'job:manual-followup',
+            name: 'Manual follow-up',
+            status: 'paused',
+            nextRunAt: '2026-04-28T00:00:00.000Z',
+            target: { conversationId: session.conversationId },
+          },
+        ],
+      },
+    );
+
+    const hydrated = await service.hydrate({ sessionId: session.id });
+    const payload = parseMemoryContextBlock(hydrated.block);
+
+    expect(Object.keys(payload.sections)).toEqual([
+      'recent_session_digests',
+      'top_scoped_memories',
+      'recent_decisions',
+      'active_paused_jobs',
+    ]);
+    expect(payload.sections.recent_session_digests).toMatchObject({
+      status: 'populated',
+      items: [
+        expect.objectContaining({
+          id: 'agent-session-digest:structured',
+          digest: 'Recent digest: Worker C kept continuity focused.',
+        }),
+      ],
+    });
+    expect(payload.sections.top_scoped_memories).toMatchObject({
+      status: 'populated',
+      items: [
+        expect.objectContaining({ key: 'decision:hydration-shape' }),
+        expect.objectContaining({ key: 'preference:brief' }),
+      ],
+    });
+    expect(payload.sections.recent_decisions).toMatchObject({
+      status: 'populated',
+      items: [expect.objectContaining({ key: 'decision:hydration-shape' })],
+    });
+    expect(payload.sections.active_paused_jobs).toMatchObject({
+      status: 'populated',
+      items: [
+        expect.objectContaining({
+          id: 'job:manual-followup',
+          status: 'paused',
+        }),
+      ],
+    });
+    expect(hydrated.continuityStatus.sections).toMatchObject({
+      recent_session_digests: { status: 'populated', count: 1 },
+      top_scoped_memories: { status: 'populated', count: 2 },
+      recent_decisions: { status: 'populated', count: 1 },
+      active_paused_jobs: { status: 'populated', count: 1 },
+    });
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: session.appId,
+        agentId: session.agentId,
+        conversationId: session.conversationId,
+        threadId: session.threadId,
+      }),
+    ).toMatchObject({
+      subject: {
+        appId: session.appId,
+        agentId: session.agentId,
+        conversationId: session.conversationId,
+      },
+      bytes: Buffer.byteLength(hydrated.block, 'utf8'),
+      maxBytes: 12_000,
+      truncated: false,
+      blockEmpty: false,
+      sections: hydrated.continuityStatus.sections,
+    });
+    expect(
+      hydrated.continuityStatus.sections.recent_session_digests.items,
+    ).toEqual([
+      expect.not.objectContaining({
+        digest: expect.any(String),
+        metadata: expect.anything(),
+      }),
+    ]);
+    expect(
+      hydrated.continuityStatus.sections.top_scoped_memories.items,
+    ).toEqual([
+      expect.not.objectContaining({ value: expect.any(String) }),
+      expect.not.objectContaining({ value: expect.any(String) }),
+    ]);
+    expect(hydrated.continuityStatus.sections.active_paused_jobs.items).toEqual(
+      [expect.not.objectContaining({ target: expect.anything() })],
+    );
+  });
+
+  it('bounds continuity injection status cache and expires stale subjects', () => {
+    clearSessionContinuityInjectionStatusForTests();
+    const baseStatus = {
+      maxBytes: 12_000,
+      truncated: false,
+      blockEmpty: false,
+      sections: {
+        recent_session_digests: {
+          status: 'empty' as const,
+          count: 0,
+          items: [],
+        },
+        top_scoped_memories: { status: 'empty' as const, count: 0, items: [] },
+        recent_decisions: { status: 'empty' as const, count: 0, items: [] },
+        active_paused_jobs: { status: 'empty' as const, count: 0, items: [] },
+      },
+    };
+    const nowIso = new Date().toISOString();
+
+    recordSessionContinuityInjectionStatus({
+      ...baseStatus,
+      injectedAt: '2000-01-01T00:00:00.000Z',
+      subject: { appId: 'app:old', agentId: 'agent:test' },
+      bytes: 1,
+    });
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: 'app:old',
+        agentId: 'agent:test',
+      }),
+    ).toBeUndefined();
+
+    for (let index = 0; index < 129; index += 1) {
+      recordSessionContinuityInjectionStatus({
+        ...baseStatus,
+        injectedAt: nowIso,
+        subject: { appId: `app:${index}`, agentId: 'agent:test' },
+        bytes: index,
+      });
+    }
+
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: 'app:0',
+        agentId: 'agent:test',
+      }),
+    ).toBeUndefined();
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: 'app:128',
+        agentId: 'agent:test',
+      }),
+    ).toMatchObject({ bytes: 128 });
+  });
+
+  it('keeps continuity injection status isolated by subject', async () => {
+    clearSessionContinuityInjectionStatusForTests();
+    const repos = makeRepos();
+    const sessionA = makeSession({
+      id: 'agent-session:subject-a' as never,
+      conversationId: 'conversation:sl:C-A' as never,
+      threadId: 'thread:sl:C-A:111' as never,
+    });
+    const sessionB = makeSession({
+      id: 'agent-session:subject-b' as never,
+      conversationId: 'conversation:sl:C-B' as never,
+      threadId: 'thread:sl:C-B:222' as never,
+    });
+    await repos.sessionRepo.saveAgentSession(sessionA);
+    await repos.sessionRepo.saveAgentSession(sessionB);
+    const service = new HydrateAgentContextService(
+      repos.sessionRepo,
+      {},
+      {
+        loadAppMemoryItems: async ({ session: hydratedSession }) => [
+          {
+            id: `memory:${hydratedSession.conversationId}`,
+            kind: 'decision',
+            key: `decision:${hydratedSession.conversationId}`,
+            value: 'Subject-local continuity status.',
+            subject: {
+              subjectType: 'channel',
+              subjectId: hydratedSession.conversationId,
+            },
+          },
+        ],
+      },
+    );
+
+    const hydratedA = await service.hydrate({ sessionId: sessionA.id });
+    await service.hydrate({ sessionId: sessionB.id });
+
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: sessionA.appId,
+        agentId: sessionA.agentId,
+        conversationId: sessionA.conversationId,
+        threadId: '111',
+      }),
+    ).toMatchObject({
+      subject: hydratedA.continuityStatus.subject,
+      bytes: Buffer.byteLength(hydratedA.block, 'utf8'),
+    });
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: sessionA.appId,
+        agentId: sessionA.agentId,
+        conversationId: sessionB.conversationId,
+        threadId: '111',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('emits empty and unavailable continuity sections explicitly when scoped data is absent', async () => {
+    const repos = makeRepos();
+    const session = makeSession();
+    await repos.sessionRepo.saveAgentSession(session);
+    const digestsRepo: AgentSessionDigestRepository = {
+      getAgentSessionDigest: async () => null,
+      listAgentSessionDigests: async () => [],
+      saveAgentSessionDigest: async () => {},
+    };
+    const service = new HydrateAgentContextService(
+      repos.sessionRepo,
+      {},
+      {
+        digests: digestsRepo,
+        loadAppMemoryItems: async () => [],
+      },
+    );
+
+    const hydrated = await service.hydrate({ sessionId: session.id });
+    const payload = parseMemoryContextBlock(hydrated.block);
+
+    expect(payload.sections.recent_session_digests).toMatchObject({
+      status: 'empty',
+      items: [],
+    });
+    expect(payload.sections.top_scoped_memories).toMatchObject({
+      status: 'empty',
+      items: [],
+    });
+    expect(payload.sections.recent_decisions).toMatchObject({
+      status: 'empty',
+      items: [],
+    });
+    expect(payload.sections.active_paused_jobs).toMatchObject({
+      status: 'unavailable',
+      items: [],
+    });
+    expect(hydrated.continuityStatus.blockEmpty).toBe(false);
+  });
+
+  it('records truncation and logs continuity_empty_unexpected when scoped state collapses to an empty payload', async () => {
+    clearSessionContinuityInjectionStatusForTests();
+    const logContinuityEmptyUnexpected = vi.fn();
+    const repos = makeRepos();
+    const session = makeSession();
+    await repos.sessionRepo.saveAgentSession(session);
+    const service = new HydrateAgentContextService(
+      repos.sessionRepo,
+      { maxChars: 10 },
+      {
+        loadAppMemoryItems: async () => [
+          {
+            id: 'memory:too-large',
+            kind: 'decision',
+            key: 'decision:large',
+            value: 'A scoped memory exists but the configured budget is tiny.',
+            subject: {
+              subjectType: 'channel',
+              subjectId: session.conversationId,
+            },
+          },
+        ],
+        logContinuityEmptyUnexpected,
+      },
+    );
+
+    const hydrated = await service.hydrate({ sessionId: session.id });
+
+    expect(hydrated.continuityStatus).toMatchObject({
+      bytes: Buffer.byteLength(hydrated.block, 'utf8'),
+      maxBytes: 10,
+      truncated: true,
+      blockEmpty: true,
+      sections: {
+        top_scoped_memories: { status: 'populated', count: 1 },
+        recent_decisions: { status: 'populated', count: 1 },
+      },
+    });
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: session.appId,
+        agentId: session.agentId,
+        conversationId: session.conversationId,
+        threadId: session.threadId,
+      }),
+    ).toMatchObject(hydrated.continuityStatus);
+    expect(logContinuityEmptyUnexpected).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.objectContaining({
+          appId: session.appId,
+          agentId: session.agentId,
+          conversationId: session.conversationId,
+        }),
+        sectionCounts: expect.objectContaining({
+          top_scoped_memories: expect.objectContaining({
+            status: 'populated',
+            count: 1,
+          }),
+        }),
+        maxChars: 10,
+      }),
+      'continuity_empty_unexpected',
+    );
   });
 
   it('does not hydrate a digest from another direct message sharing the same agent session id', async () => {
@@ -647,7 +890,11 @@ describe('durable session resume use cases', () => {
     const hydrated = await service.hydrate({ sessionId: session.id });
 
     expect(hydrated.digests).toEqual([]);
-    expect(hydrated.block).toBe('');
+    expect(hydrated.block).not.toContain('Unscoped digest must not hydrate.');
+    expect(parseMemoryContextBlock(hydrated.block).sections).toMatchObject({
+      recent_session_digests: { status: 'empty', items: [] },
+      top_scoped_memories: { status: 'unavailable', items: [] },
+    });
   });
 
   it('requires every digest sessionScope field to exactly match the current session', async () => {
@@ -949,16 +1196,24 @@ describe('durable session resume use cases', () => {
   });
 
   it('hydrates channel memory in channel contexts and never falls back to direct/user-only scope', async () => {
+    clearSessionContinuityInjectionStatusForTests();
     const repos = makeRepos();
+    const scopeKey = makeSessionScopeKey('team-folder', 'topic-7', {
+      conversationJid: 'sl:C123',
+      conversationKind: 'channel',
+      userId: 'U123',
+    });
     const session = makeSession({
       agentId: 'agent:team-folder' as never,
       conversationId: 'conversation:sl:C123' as never,
       threadId: 'thread:sl:C123:topic-7' as never,
-      userId: 'team-folder::thread:topic-7' as never,
+      userId: scopeKey as never,
     });
     await repos.sessionRepo.saveAgentSession(session);
     const { db } = createInMemoryAppMemoryDb();
     const appMemoryService = new AppMemoryService(db as any);
+    vi.spyOn(appMemoryService, 'dreamingStatus').mockResolvedValue([]);
+    vi.spyOn(appMemoryService, 'listPendingReviews').mockResolvedValue([]);
     await appMemoryService.save({
       appId: session.appId,
       agentId: session.agentId,
@@ -996,10 +1251,21 @@ describe('durable session resume use cases', () => {
             limit,
             conversationKind: 'group',
           }),
+        loadContinuityJobs: async () => [
+          {
+            id: 'job:paused-channel-followup',
+            name: 'Paused channel follow-up',
+            status: 'paused',
+            target: { conversationId: session.conversationId },
+          },
+        ],
       },
     );
 
-    const hydrated = await service.hydrate({ sessionId: session.id });
+    const hydrated = await service.hydrate({
+      sessionId: session.id,
+      conversationKind: 'channel',
+    });
 
     expect(hydrated.memories).toHaveLength(1);
     expect(hydrated.memories[0]).toMatchObject({
@@ -1017,6 +1283,30 @@ describe('durable session resume use cases', () => {
         (memory) => memory.key === 'preference:wrong-scope',
       ),
     ).toBe(false);
+
+    const summary = await appMemoryService.continuitySummary({
+      appId: session.appId,
+      agentId: session.agentId,
+      channelId: session.conversationId,
+      threadId: 'topic-7',
+    });
+    expect(summary.last_injected_block).toMatchObject({
+      bytes: Buffer.byteLength(hydrated.block, 'utf8'),
+    });
+    expect(summary.sections.active_paused_jobs).toMatchObject({
+      status: 'populated',
+      count: 1,
+      items: [expect.objectContaining({ id: 'job:paused-channel-followup' })],
+    });
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: session.appId,
+        agentId: session.agentId,
+        conversationId: session.conversationId,
+        userId: scopeKey,
+        threadId: 'topic-7',
+      }),
+    ).toBeUndefined();
     getInstance.mockRestore();
   });
 
@@ -1225,6 +1515,7 @@ describe('durable session resume use cases', () => {
   });
 
   it('hydrates direct-message memory saved via app-memory service using trusted user identity', async () => {
+    clearSessionContinuityInjectionStatusForTests();
     const repos = makeRepos();
     const session = makeSession({
       agentId: 'agent:team-folder' as never,
@@ -1273,6 +1564,47 @@ describe('durable session resume use cases', () => {
         subjectId: 'U999',
         userId: 'U999',
       },
+    });
+    const status = await appMemoryService.continuityStatus({
+      appId: session.appId,
+      agentId: session.agentId,
+      userId: 'U999',
+      subjectType: 'user',
+      subjectId: 'U999',
+    });
+    expect(status.lastInjectedBlock).toMatchObject({
+      bytes: Buffer.byteLength(hydrated.block, 'utf8'),
+    });
+    const summary = await appMemoryService.continuitySummary({
+      appId: session.appId,
+      agentId: session.agentId,
+      userId: 'U999',
+      subjectType: 'user',
+      subjectId: 'U999',
+    });
+    expect(summary.last_injected_block).toMatchObject({
+      bytes: Buffer.byteLength(hydrated.block, 'utf8'),
+    });
+    expect(summary.sections.recent_decisions).toMatchObject({
+      status: 'empty',
+      count: 0,
+      items: [],
+    });
+    expect(
+      getLastSessionContinuityInjectionStatus({
+        appId: session.appId,
+        agentId: session.agentId,
+        conversationId: session.conversationId,
+        userId: 'U999',
+      }),
+    ).toMatchObject({
+      subject: {
+        appId: session.appId,
+        agentId: session.agentId,
+        conversationId: session.conversationId,
+        userId: 'U999',
+      },
+      bytes: Buffer.byteLength(hydrated.block, 'utf8'),
     });
     getInstance.mockRestore();
   });

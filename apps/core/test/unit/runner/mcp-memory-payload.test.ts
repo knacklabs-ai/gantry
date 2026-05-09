@@ -80,6 +80,8 @@ describe('memory MCP tool schema', () => {
       expect(kindSchema?.unwrap().options).not.toContain('recent_work');
       expect(schemas.has('procedure_save')).toBe(true);
       expect(schemas.has('procedure_patch')).toBe(true);
+      expect(schemas.has('memory_demote')).toBe(true);
+      expect(schemas.has('continuity_summary')).toBe(true);
     } finally {
       if (originalIpcDir === undefined) {
         delete process.env.MYCLAW_IPC_DIR;

@@ -399,6 +399,7 @@ describe('Claude Agent SDK boundary integration', () => {
         MYCLAW_GROUP_FOLDER: 'group',
         MYCLAW_THREAD_ID: 'thread-1',
         MYCLAW_MEMORY_USER_ID: '',
+        MYCLAW_MEMORY_REVIEWER_IS_CONTROL_APPROVER: '',
         MYCLAW_MEMORY_DEFAULT_SCOPE: 'group',
         MYCLAW_BROWSER_PROFILE_NAME: '',
         MYCLAW_ADMIN_MCP_TOOLS_JSON: '[]',

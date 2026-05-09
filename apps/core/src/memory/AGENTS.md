@@ -37,11 +37,14 @@
 - LLM dreaming and consolidation outputs are advisory JSON proposals only.
   Durable mutation still requires host validation against subject scope,
   evidence ids, current target versions, allowed memory kinds, confidence, and
-  sensitive-material checks.
+  shared sensitive-material checks.
 - Retire, rewrite, contradiction, and merge proposals belong in
   `memory_review_requests` with `pending_review` status; do not route these
   through `request_permission`, because review approves a specific data
   mutation rather than a reusable capability grant.
+- Dreaming must record or leave `needs_review` only after durable pending
+  review creation returns an id; empty or rejected review creation must block
+  the candidate or dream decision instead.
 - Staged retire candidates must create pending memory reviews. They must not
   call `delete` directly from dreaming, even after candidate validation.
 - `memory_review_decision` must use the trusted runtime context user id as the
@@ -83,6 +86,9 @@
   `preference`, `decision`, `fact`, `correction`, or `constraint`; omitted kind
   may continue to use the service default.
 - Direct HTTP `POST /v1/memory` uses the same direct-save kind allowlist.
+- URLs, files, pasted docs, articles, posts, and other long-form raw content
+  must become bounded evidence or reviewable candidates first. Raw content
+  must not bypass dreaming review into active `memory_items`.
 - Automatic boundary capture (`precompact`/`session-end`) must persist
   `agent_session_digests` and grounded `memory_evidence` metadata first; it
   must not write active `memory_items` directly.
@@ -95,6 +101,10 @@
 - Session digests must never persist raw `tool_result`/structured payload
   bodies; digest capture stores only safe structural summaries and redacts
   sensitive text before persistence and hydration reinjection.
+- Continuity injection status is an operational cache only. Keep it bounded and
+  store section counts plus minimal previews; do not retain full injected
+  digest text, memory values, job targets, or session-scoped payloads for
+  `continuity_summary`.
 - Keep `app-memory-service.ts` and `app-memory-dreaming.ts` under the
   architecture file-size budget by moving cohesive recall/candidate guardrail
   helpers into narrowly named sibling modules.

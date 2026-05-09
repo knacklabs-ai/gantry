@@ -149,9 +149,9 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
-  it('rejects legacy scheduler job routing fields at task parsing boundary', () => {
+  it('rejects non-canonical scheduler job routing fields at task parsing boundary', () => {
     const basePayload = {
-      requestId: 'task-legacy-job-fields',
+      requestId: 'task-non-canonical-job-fields',
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       type: 'scheduler_upsert_job',
@@ -175,7 +175,7 @@ describe('validateIpcAuthRequest', () => {
     };
 
     const assertRejected = (extra: Record<string, unknown>) => {
-      const requestId = `task-legacy-job-fields-${Math.random().toString(36).slice(2)}`;
+      const requestId = `task-non-canonical-job-fields-${Math.random().toString(36).slice(2)}`;
       expect(() =>
         parseTaskIpcData(
           signedPayload(
@@ -190,7 +190,7 @@ describe('validateIpcAuthRequest', () => {
           ),
           'team',
         ),
-      ).toThrow(/Unsupported (legacy scheduler job fields|IPC task fields)/);
+      ).toThrow(/Unsupported (scheduler job fields|IPC task fields)/);
     };
 
     assertRejected({ linked_sessions: ['tg:team'] });
@@ -200,6 +200,10 @@ describe('validateIpcAuthRequest', () => {
     assertRejected({ notificationTarget: { linkedSessions: ['tg:team'] } });
     assertRejected({ thread_id: 'thread-1' });
     assertRejected({ threadId: 'thread-1' });
+    assertRejected({ session_id: 'session-1' });
+    assertRejected({ sessionId: 'session-1' });
+    assertRejected({ group_scope: 'team' });
+    assertRejected({ groupScope: 'team' });
   });
 
   it('preserves scheduler job allowedTools creates, replaces, and clears', () => {

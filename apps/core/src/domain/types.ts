@@ -14,19 +14,6 @@ export interface ThinkingOverride {
   display?: 'summarized' | 'omitted';
 }
 
-/**
- * Mount allowlist configuration for additional host mounts.
- * Stored at `MYCLAW_HOME/mount-allowlist.json` and only editable from the host.
- */
-export interface MountAllowlist {
-  // Directories that can be exposed to agent runs.
-  allowedRoots: AllowedRoot[];
-  // Glob patterns for paths that should never be mounted (e.g., ".ssh", ".gnupg")
-  blockedPatterns: string[];
-  // If true, routes without explicit write capability can only mount read-only regardless of config
-  conversationReadOnlyByDefault: boolean;
-}
-
 export interface AllowedRoot {
   // Absolute path or ~ for home (e.g., "~/projects", "/var/repos")
   path: string;
@@ -116,11 +103,9 @@ export interface Job {
   name: string;
   prompt: string;
   model?: string | null;
-  script?: string | null;
   schedule_type: JobScheduleType;
   schedule_value: string;
   status: JobStatus;
-  linked_sessions: string[];
   session_id: string | null;
   thread_id: string | null;
   group_scope: string;
@@ -384,11 +369,6 @@ export type MessageDeliveryStatus =
   | 'failed'
   | 'partially_sent';
 
-export type OutboundDeliverySettlementStatus =
-  | 'sent'
-  | 'partially_delivered'
-  | 'failed';
-
 export interface MessageDeliveryResult {
   externalMessageId?: string;
   externalMessageIds?: string[];
@@ -414,11 +394,6 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => Promise<void>;
-
-export interface InboundMessageSource {
-  onMessage: OnInboundMessage;
-  onChatMetadata: OnChatMetadata;
-}
 
 export interface ChannelLifecyclePort {
   name: string;

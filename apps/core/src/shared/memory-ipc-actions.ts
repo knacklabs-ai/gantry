@@ -2,6 +2,8 @@ export const MEMORY_IPC_ACTIONS_BY_TOOL_NAME = {
   memory_search: 'memory_search',
   memory_save: 'memory_save',
   memory_patch: 'memory_patch',
+  memory_demote: 'memory_demote',
+  continuity_summary: 'continuity_summary',
   memory_consolidate: 'memory_consolidate',
   memory_dream: 'memory_dream',
   memory_review_pending: 'memory_review_pending',
@@ -17,6 +19,8 @@ const MEMORY_IPC_ACTION_ORDER = [
   'memory_search',
   'memory_save',
   'memory_patch',
+  'memory_demote',
+  'continuity_summary',
   'memory_consolidate',
   'memory_dream',
   'memory_review_pending',
@@ -29,6 +33,7 @@ const MEMORY_IPC_ACTION_SET = new Set<string>(MEMORY_IPC_ACTION_ORDER);
 const DEFAULT_MEMORY_IPC_ACTIONS = [
   'memory_search',
   'memory_save',
+  'continuity_summary',
   'procedure_save',
 ] as const satisfies readonly MyClawMemoryIpcAction[];
 

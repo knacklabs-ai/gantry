@@ -67,6 +67,7 @@ export async function startMyClawRuntime(
     resetStreaming: channelWiring.resetStreaming,
     setTyping: channelWiring.setTyping,
     sendProgressUpdate: channelWiring.sendProgressUpdate,
+    isControlApproverAllowed: channelWiring.isControlApproverAllowed,
   });
 
   const { runtimeSettings } = await runStartup(app);

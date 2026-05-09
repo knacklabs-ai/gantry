@@ -64,7 +64,6 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     schedule: '',
     enabled: true,
     status: 'active',
-    linked_sessions: ['tg:scheduler'],
     session_id: null,
     thread_id: 'thread-scheduled',
     execution_context: {

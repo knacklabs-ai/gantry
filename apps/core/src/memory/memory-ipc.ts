@@ -13,7 +13,6 @@ import {
   writePrivateFileSync,
 } from '../shared/private-fs.js';
 import { logger } from '../infrastructure/logging/logger.js';
-import { isPlainObject } from '../shared/object.js';
 import { resolveGroupIpcPath } from '../platform/group-folder.js';
 import {
   DEFAULT_MEMORY_APP_ID,
@@ -24,14 +23,21 @@ import {
   canonicalConversationIdForMemory,
   searchInputForResolvedMemorySubject,
 } from './app-memory-subject-resolver.js';
+import { describeAppMemorySearchOutcome } from './app-memory-recall.js';
 import { AppMemoryService } from './app-memory-service.js';
 import {
-  isDirectSaveMemoryKind,
-  PatchMemoryInput,
-  PatchProcedureInput,
-  SaveMemoryInput,
-  SaveProcedureInput,
-} from './memory-types.js';
+  parseDemoteMemoryInput,
+  parsePatchMemoryInput,
+  parsePatchProcedureInput,
+  parseReviewDecisionInput,
+  parseSaveMemoryInput,
+  parseSaveProcedureInput,
+} from './memory-ipc-parsing.js';
+export {
+  parseOptionalNumber,
+  parseOptionalString,
+} from './memory-ipc-parsing.js';
+import { SaveMemoryInput, SaveProcedureInput } from './memory-types.js';
 
 const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
@@ -40,6 +46,7 @@ interface TrustedMemoryContext {
   chatJid?: string;
   userId?: string;
   defaultScope?: 'user' | 'group';
+  reviewerIsControlApprover?: boolean;
 }
 
 type TrustedMemoryRequest = Omit<MemoryIpcRequest, 'context'> & {
@@ -50,183 +57,23 @@ type TrustedMemoryRequest = Omit<MemoryIpcRequest, 'context'> & {
 const DEFAULT_ALLOWED_MEMORY_IPC_ACTIONS = new Set<MemoryIpcAction>([
   'memory_search',
   'memory_save',
+  'continuity_summary',
   'procedure_save',
 ]);
 
-function parseOptionalString(
-  value: unknown,
-  opts: { maxLen?: number } = {},
-): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  if (opts.maxLen && trimmed.length > opts.maxLen) return undefined;
-  return trimmed;
-}
+type SubjectForMemoryIpc = ReturnType<typeof resolveTrustedMemorySubject>;
+type MemoryDemoteService = {
+  demote(input: Record<string, unknown>): Promise<unknown>;
+};
 
-function parseOptionalNumber(
-  value: unknown,
-  opts: { min?: number; max?: number } = {},
-): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  if (opts.min !== undefined && value < opts.min) return undefined;
-  if (opts.max !== undefined && value > opts.max) return undefined;
-  return value;
-}
-
-function parseOptionalTags(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const out: string[] = [];
-  for (const item of value) {
-    const parsed = parseOptionalString(item, { maxLen: 64 });
-    if (!parsed) return undefined;
-    out.push(parsed);
+function asMemoryDemoteService(memory: AppMemoryService): MemoryDemoteService {
+  const candidate = memory as unknown as Partial<MemoryDemoteService>;
+  if (typeof candidate.demote === 'function') {
+    return candidate as MemoryDemoteService;
   }
-  return out;
-}
-
-function parseMemoryScope(
-  value: unknown,
-): SaveMemoryInput['scope'] | SaveProcedureInput['scope'] | undefined {
-  const scope = parseOptionalString(value, { maxLen: 16 });
-  if (scope === 'user' || scope === 'group' || scope === 'global') return scope;
-  return undefined;
-}
-
-function parseMemoryKind(value: unknown): SaveMemoryInput['kind'] | undefined {
-  const kind = parseOptionalString(value, { maxLen: 32 });
-  if (isDirectSaveMemoryKind(kind)) return kind;
-  return undefined;
-}
-
-function parseDirectSaveMemoryKind(
-  payload: Record<string, unknown>,
-): SaveMemoryInput['kind'] | undefined {
-  if (!Object.prototype.hasOwnProperty.call(payload, 'kind')) return undefined;
-  const kind = parseMemoryKind(payload.kind);
-  if (kind) return kind;
   throw new Error(
-    'memory_save.kind must be one of preference, decision, fact, correction, or constraint',
+    'memory demote service is unavailable; AppMemoryService.demote(input) is required',
   );
-}
-
-function parseSaveMemoryInput(payload: unknown): SaveMemoryInput {
-  if (!isPlainObject(payload)) {
-    throw new Error('memory_save payload must be an object');
-  }
-  const key = parseOptionalString(payload.key, { maxLen: 256 });
-  const value = parseOptionalString(payload.value, { maxLen: 10_000 });
-  if (!key || !value) {
-    throw new Error('memory_save requires key and value');
-  }
-  const scope = parseMemoryScope(payload.scope);
-  const kind = parseDirectSaveMemoryKind(payload);
-  const groupFolder = parseOptionalString(payload.group_folder, {
-    maxLen: 128,
-  });
-  const userId = parseOptionalString(payload.user_id, { maxLen: 255 });
-  const confidence = parseOptionalNumber(payload.confidence, {
-    min: 0,
-    max: 1,
-  });
-  const why = parseOptionalString(payload.why, { maxLen: 500 });
-  const sourceTurnId = parseOptionalString(payload.source_turn_id, {
-    maxLen: 255,
-  });
-  const loadBearing =
-    typeof payload.load_bearing === 'boolean'
-      ? payload.load_bearing
-      : undefined;
-  const source = parseOptionalString(payload.source, { maxLen: 255 });
-  const supersedes = Array.isArray(payload.supersedes)
-    ? payload.supersedes
-        .map((entry) => parseOptionalString(entry, { maxLen: 128 }))
-        .filter((entry): entry is string => Boolean(entry))
-    : undefined;
-  return {
-    key,
-    value,
-    ...(scope ? { scope } : {}),
-    ...(kind ? { kind } : {}),
-    ...(groupFolder ? { group_folder: groupFolder } : {}),
-    ...(userId ? { user_id: userId } : {}),
-    ...(confidence !== undefined ? { confidence } : {}),
-    ...(why ? { why } : {}),
-    ...(sourceTurnId ? { source_turn_id: sourceTurnId } : {}),
-    ...(loadBearing !== undefined ? { load_bearing: loadBearing } : {}),
-    ...(supersedes && supersedes.length > 0 ? { supersedes } : {}),
-    ...(source ? { source } : {}),
-  };
-}
-
-function parsePatchMemoryInput(payload: unknown): PatchMemoryInput {
-  if (!isPlainObject(payload)) {
-    throw new Error('memory_patch payload must be an object');
-  }
-  const id = parseOptionalString(payload.id, { maxLen: 128 });
-  const expectedVersion = parseOptionalNumber(payload.expected_version, {
-    min: 1,
-  });
-  if (!id || expectedVersion === undefined) {
-    throw new Error('memory_patch requires id and expected_version');
-  }
-  const key = parseOptionalString(payload.key, { maxLen: 256 });
-  const value = parseOptionalString(payload.value, { maxLen: 10_000 });
-  const confidence = parseOptionalNumber(payload.confidence, {
-    min: 0,
-    max: 1,
-  });
-  const why = parseOptionalString(payload.why, { maxLen: 500 });
-  const loadBearing =
-    typeof payload.load_bearing === 'boolean'
-      ? payload.load_bearing
-      : undefined;
-  return {
-    id,
-    expected_version: Math.round(expectedVersion),
-    ...(key ? { key } : {}),
-    ...(value ? { value } : {}),
-    ...(why ? { why } : {}),
-    ...(loadBearing !== undefined ? { load_bearing: loadBearing } : {}),
-    ...(confidence !== undefined ? { confidence } : {}),
-  };
-}
-
-function parseReviewDecisionInput(payload: unknown): {
-  reviewId: string;
-  decision: 'approve' | 'reject' | 'edit_approve';
-  editedValue?: string;
-  editedReason?: string;
-} {
-  if (!isPlainObject(payload)) {
-    throw new Error('memory_review_decision payload must be an object');
-  }
-  const reviewId =
-    parseOptionalString(payload.review_id, { maxLen: 128 }) ||
-    parseOptionalString(payload.reviewId, { maxLen: 128 });
-  const decision = parseOptionalString(payload.decision, { maxLen: 32 });
-  if (!reviewId) throw new Error('memory_review_decision requires review_id');
-  if (
-    decision !== 'approve' &&
-    decision !== 'reject' &&
-    decision !== 'edit_approve'
-  ) {
-    throw new Error(
-      'memory_review_decision.decision must be approve, reject, or edit_approve',
-    );
-  }
-  const editedValue = parseOptionalString(payload.edited_value, {
-    maxLen: 10_000,
-  });
-  const editedReason = parseOptionalString(payload.edited_reason, {
-    maxLen: 500,
-  });
-  return {
-    reviewId,
-    decision,
-    ...(editedValue ? { editedValue } : {}),
-    ...(editedReason ? { editedReason } : {}),
-  };
 }
 
 function assertValidRequestId(requestId: string): void {
@@ -248,7 +95,7 @@ function assertMemoryActionAllowed(request: TrustedMemoryRequest): void {
   }
 }
 
-function resolveTrustedMemorySubject(
+export function resolveTrustedMemorySubject(
   sourceAgentFolder: string,
   context: TrustedMemoryContext | undefined,
   scope?: SaveMemoryInput['scope'] | SaveProcedureInput['scope'],
@@ -263,79 +110,6 @@ function resolveTrustedMemorySubject(
     defaultScope: context?.defaultScope,
     ...(scope ? { scope } : {}),
   }).subject;
-}
-
-function parseSaveProcedureInput(payload: unknown): SaveProcedureInput {
-  if (!isPlainObject(payload)) {
-    throw new Error('procedure_save payload must be an object');
-  }
-  const title = parseOptionalString(payload.title, { maxLen: 256 });
-  const body = parseOptionalString(payload.body, { maxLen: 50_000 });
-  if (!title || !body) {
-    throw new Error('procedure_save requires title and body');
-  }
-  const scope = parseMemoryScope(payload.scope);
-  const groupFolder = parseOptionalString(payload.group_folder, {
-    maxLen: 128,
-  });
-  const userId = parseOptionalString(payload.user_id, { maxLen: 255 });
-  const tags = parseOptionalTags(payload.tags);
-  const originRaw = parseOptionalString(payload.origin, { maxLen: 64 });
-  const origin =
-    originRaw === 'explicit' || originRaw === 'accepted_suggestion'
-      ? originRaw
-      : undefined;
-  const trigger = parseOptionalString(payload.trigger, { maxLen: 280 });
-  const confidence = parseOptionalNumber(payload.confidence, {
-    min: 0,
-    max: 1,
-  });
-  const source = parseOptionalString(payload.source, { maxLen: 255 });
-  return {
-    title,
-    body,
-    ...(scope ? { scope } : {}),
-    ...(groupFolder ? { group_folder: groupFolder } : {}),
-    ...(userId ? { user_id: userId } : {}),
-    ...(tags ? { tags } : {}),
-    ...(origin ? { origin } : {}),
-    ...(trigger ? { trigger } : {}),
-    ...(confidence !== undefined ? { confidence } : {}),
-    ...(source ? { source } : {}),
-  };
-}
-
-function parsePatchProcedureInput(payload: unknown): PatchProcedureInput {
-  if (!isPlainObject(payload)) {
-    throw new Error('procedure_patch payload must be an object');
-  }
-  const id = parseOptionalString(payload.id, { maxLen: 128 });
-  const expectedVersion = parseOptionalNumber(payload.expected_version, {
-    min: 1,
-  });
-  if (!id || expectedVersion === undefined) {
-    throw new Error('procedure_patch requires id and expected_version');
-  }
-  const title = parseOptionalString(payload.title, { maxLen: 256 });
-  const body = parseOptionalString(payload.body, { maxLen: 50_000 });
-  const tags = parseOptionalTags(payload.tags);
-  const trigger =
-    payload.trigger === null
-      ? null
-      : parseOptionalString(payload.trigger, { maxLen: 280 });
-  const confidence = parseOptionalNumber(payload.confidence, {
-    min: 0,
-    max: 1,
-  });
-  return {
-    id,
-    expected_version: Math.round(expectedVersion),
-    ...(title ? { title } : {}),
-    ...(body ? { body } : {}),
-    ...(tags ? { tags } : {}),
-    ...(trigger !== undefined ? { trigger } : {}),
-    ...(confidence !== undefined ? { confidence } : {}),
-  };
 }
 
 export async function processMemoryRequest(
@@ -366,18 +140,29 @@ export async function processMemoryRequest(
         );
         // IPC memory reads are always scoped to the source group to prevent
         // cross-group data access from agent processes.
-        const results = await memory.search({
+        const searchInput = {
           query,
           ...searchInputForResolvedMemorySubject(subject),
-          limit: request.payload.limit
-            ? Number(request.payload.limit)
-            : undefined,
-        });
+          ...(request.payload.limit
+            ? { limit: Number(request.payload.limit) }
+            : {}),
+        };
+        const results = await memory.search(searchInput);
+        const outcome = describeAppMemorySearchOutcome(
+          searchInput,
+          results.length,
+        );
         return {
           ok: true,
           requestId: request.requestId,
           provider,
-          data: { results },
+          data: {
+            results,
+            resolved_subject: outcome.resolvedSubject,
+            ...(outcome.empty_reason
+              ? { empty_reason: outcome.empty_reason }
+              : {}),
+          },
         };
       }
       case 'memory_save': {
@@ -440,6 +225,46 @@ export async function processMemoryRequest(
           requestId: request.requestId,
           provider,
           data: { memory: patched },
+        };
+      }
+      case 'memory_demote': {
+        const input = parseDemoteMemoryInput(request.payload);
+        const subject = resolveTrustedMemorySubject(
+          sourceAgentFolder,
+          request.context,
+        );
+        const demoted = await asMemoryDemoteService(memory).demote({
+          ...subject,
+          appId: subject.appId,
+          agentId: subject.agentId,
+          subjectType: subject.subjectType,
+          subjectId: subject.subjectId,
+          id: input.id,
+          ...(input.expectedVersion !== undefined
+            ? { expectedVersion: input.expectedVersion }
+            : {}),
+          ...(input.reason ? { reason: input.reason } : {}),
+          actorId: 'mcp-tool',
+          isAdminWrite: false,
+        });
+        return {
+          ok: true,
+          requestId: request.requestId,
+          provider,
+          data: { memory: demoted },
+        };
+      }
+      case 'continuity_summary': {
+        const subject = resolveTrustedMemorySubject(
+          sourceAgentFolder,
+          request.context,
+        );
+        const continuity = await memory.continuitySummary(subject);
+        return {
+          ok: true,
+          requestId: request.requestId,
+          provider,
+          data: { continuity },
         };
       }
       case 'memory_consolidate': {
@@ -512,6 +337,11 @@ export async function processMemoryRequest(
         if (!request.context?.userId) {
           throw new Error(
             'memory_review_decision requires a trusted reviewer user id',
+          );
+        }
+        if (!request.context.reviewerIsControlApprover) {
+          throw new Error(
+            'memory_review_decision requires a conversation control approver',
           );
         }
         const review = await memory.decideReview({

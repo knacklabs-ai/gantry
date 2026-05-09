@@ -23,14 +23,22 @@ const legacyJobNotificationTerms = [
   'notifyLinkedSessions',
 ] as const;
 
+const unsupportedSchedulerRoutingAliases = [
+  'linked_sessions',
+  'linkedSessions',
+  'notificationTarget',
+  'deliver_to',
+  'deliverTo',
+  'threadId',
+  'sessionId',
+  'groupScope',
+] as const;
+
 const allowedLegacyReferenceFiles = new Set([
-  'apps/core/src/domain/types.ts',
-  'apps/core/src/domain/repositories/ops-repo.ts',
   'apps/core/src/jobs/ipc-scheduler-create-handlers.ts',
   'apps/core/src/jobs/ipc-scheduler-mutate-handlers.ts',
   'apps/core/src/runtime/ipc-task-parsing.ts',
   'apps/core/src/runner/mcp/tools/scheduler-tool-helpers.ts',
-  'apps/core/src/adapters/storage/postgres/services/canonical-job-ops-service.ts',
   'apps/core/src/adapters/storage/postgres/schema/migrations/0000_initial.sql',
   'apps/core/src/adapters/storage/postgres/schema/migrations/0040_jobs_target_execution_context_notification_routes.sql',
 ]);
@@ -47,6 +55,14 @@ function collectFiles(root: string): string[] {
     out.push(absolute);
   }
   return out;
+}
+
+function extractConstSetItems(source: string, name: string): string[] {
+  const match = new RegExp(
+    `const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`,
+  ).exec(source);
+  if (!match) throw new Error(`Could not find ${name}`);
+  return Array.from(match[1].matchAll(/'([^']+)'/g), (item) => item[1]);
 }
 
 describe('job notification cleanup', () => {
@@ -101,6 +117,46 @@ describe('job notification cleanup', () => {
     expect(migration).not.toContain(
       "jsonb_array_elements_text(normalized.target -> 'linkedSessions')",
     );
+  });
+
+  it('keeps scheduler MCP mutation tools from accepting legacy routing aliases', () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'apps/core/src/runner/mcp/tools/scheduler.ts'),
+      'utf8',
+    );
+
+    const upsertKeys = extractConstSetItems(
+      source,
+      'SCHEDULER_UPSERT_ARG_KEYS',
+    );
+    const updateKeys = extractConstSetItems(
+      source,
+      'SCHEDULER_UPDATE_ARG_KEYS',
+    );
+
+    for (const alias of unsupportedSchedulerRoutingAliases) {
+      expect(upsertKeys).not.toContain(alias);
+      expect(updateKeys).not.toContain(alias);
+    }
+  });
+
+  it('keeps runtime scheduler IPC legacy aliases reject-only', () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'apps/core/src/runtime/ipc-task-parsing.ts'),
+      'utf8',
+    );
+
+    const rejectGuardIndex = source.indexOf(
+      'assertNoUnsupportedSchedulerJobTaskFields(raw, type);',
+    );
+    const parsedObjectIndex = source.indexOf('const parsed: TaskIpcData');
+
+    expect(rejectGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(parsedObjectIndex).toBeGreaterThan(rejectGuardIndex);
+    expect(source).not.toContain('raw.linkedSessions');
+    expect(source).not.toContain('raw.notificationTarget');
+    expect(source).not.toContain('raw.deliverTo');
+    expect(source).not.toContain('raw.sessionId');
   });
 
   it('keeps legacy job notification fields out of active docs', () => {

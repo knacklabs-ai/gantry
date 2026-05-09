@@ -40,4 +40,30 @@ describe('memory legacy read surface cleanup', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it('does not retain the legacy personal-agent subject default in active memory code', () => {
+    const sourceRoots = [
+      path.join(repoRoot, 'apps/core/src/memory'),
+      path.join(repoRoot, 'apps/core/src/runtime'),
+      path.join(repoRoot, 'apps/core/src/runner/mcp/tools'),
+    ];
+    const offenders: string[] = [];
+
+    for (const sourceRoot of sourceRoots) {
+      for (const absolutePath of collectFiles(sourceRoot)) {
+        if (!absolutePath.endsWith('.ts')) continue;
+        const relativePath = path.relative(repoRoot, absolutePath);
+        const source = fs.readFileSync(absolutePath, 'utf8');
+        if (
+          source.includes('DEFAULT_MEMORY_AGENT_ID') ||
+          source.includes("'agent:personal'") ||
+          source.includes('"agent:personal"')
+        ) {
+          offenders.push(relativePath);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
 });
