@@ -1,4 +1,4 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
 ALTER TABLE outbound_deliveries
   ADD COLUMN IF NOT EXISTS idempotency_fingerprint text;
