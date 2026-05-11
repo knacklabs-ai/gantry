@@ -105,6 +105,14 @@ describe('browser tool proxy file policy', () => {
     );
   });
 
+  it('starts the private backend with a nonzero headed viewport', () => {
+    const config = createBrowserActionMcpServerConfig('http://127.0.0.1:12345');
+
+    expect(config.args).toEqual(
+      expect.arrayContaining(['--viewport-size', '1280x900']),
+    );
+  });
+
   it('uses a stable backend action timeout while clamping each tool call', async () => {
     const root = tempRoot();
     browserMcpMocks.nextResult = { content: [{ type: 'text', text: 'ok' }] };
@@ -924,6 +932,79 @@ describe('browser tool proxy file policy', () => {
     });
   });
 
+  it('closes the cached backend when a tool returns an isError result', async () => {
+    const root = tempRoot();
+    browserMcpMocks.nextResult = {
+      content: [{ type: 'text', text: 'Cannot take screenshot with 0 width.' }],
+      isError: true,
+    };
+
+    const errorResult = await callBrowserTool({
+      toolName: 'browser_take_screenshot',
+      arguments: {},
+      session: {
+        running: true,
+        cdpReady: true,
+        port: 12345,
+        profileName: 'c-main',
+      },
+      fileAccessRoot: root,
+    });
+
+    expect(errorResult).toMatchObject({ isError: true });
+    expect(browserMcpMocks.clients[0]?.close).toHaveBeenCalledTimes(1);
+    expect(browserMcpMocks.transports[0]?.close).toHaveBeenCalledTimes(1);
+
+    browserMcpMocks.nextResult = { content: [{ type: 'text', text: 'ok' }] };
+    await callBrowserTool({
+      toolName: 'browser_snapshot',
+      arguments: {},
+      session: {
+        running: true,
+        cdpReady: true,
+        port: 12345,
+        profileName: 'c-main',
+      },
+      fileAccessRoot: root,
+    });
+
+    expect(browserMcpMocks.clients).toHaveLength(2);
+  });
+
+  it('returns a fresh snapshot when navigate back times out after navigation', async () => {
+    const root = tempRoot();
+    browserMcpMocks.callToolImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Timeout 60000ms exceeded.'))
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'snapshot after back' }],
+      });
+
+    const result = await callBrowserTool({
+      toolName: 'browser_navigate_back',
+      arguments: {},
+      session: {
+        running: true,
+        cdpReady: true,
+        port: 12345,
+        profileName: 'c-main',
+      },
+      fileAccessRoot: root,
+    });
+
+    expect(result).toEqual({
+      content: [{ type: 'text', text: 'snapshot after back' }],
+    });
+    expect(browserMcpMocks.clients[0]?.close).toHaveBeenCalledTimes(1);
+    expect(browserMcpMocks.transports[0]?.close).toHaveBeenCalledTimes(1);
+    expect(browserMcpMocks.clients).toHaveLength(2);
+    expect(browserMcpMocks.clients[1]?.callTool).toHaveBeenCalledWith(
+      { name: 'browser_snapshot', arguments: {} },
+      undefined,
+      { timeout: expect.any(Number) },
+    );
+  });
+
   it('refreshes the snapshot once when an aria ref is stale', async () => {
     const root = tempRoot();
     browserMcpMocks.callToolImpl = vi
@@ -1356,6 +1437,14 @@ describe('browser tool proxy file policy', () => {
         fileAccessRoot: root,
       }),
     ).rejects.toThrow('needs a fresh browser_tabs list');
+    await expect(
+      callBrowserTool({
+        toolName: 'browser_tabs',
+        arguments: { action: 'close', index: 0 },
+        session,
+        fileAccessRoot: root,
+      }),
+    ).rejects.toThrow('needs a fresh browser_tabs list');
     expect(browserMcpMocks.clients[0]?.callTool).toHaveBeenCalledTimes(2);
   });
 
@@ -1630,6 +1719,90 @@ describe('browser tool proxy file policy', () => {
     );
   });
 
+  it('projects Playwright MCP markdown tab lists into usable select and close indices', async () => {
+    const root = tempRoot();
+    const session = {
+      running: true,
+      cdpReady: true,
+      port: 12345,
+      profileName: 'c-main',
+    };
+
+    browserMcpMocks.nextResult = {
+      content: [
+        {
+          type: 'text',
+          text: [
+            '- 4: (current) [Example](https://example.test/)',
+            '- 9: [Other](about:blank)',
+          ].join('\n'),
+        },
+      ],
+    };
+
+    const result = await callBrowserTool({
+      toolName: 'browser_tabs',
+      arguments: { action: 'list' },
+      session,
+      fileAccessRoot: root,
+    });
+
+    expect(result).toMatchObject({
+      content: [
+        {
+          text: [
+            '- 0: (current) [Example](https://example.test/)',
+            '- 1: [Other](about:blank)',
+          ].join('\n'),
+        },
+      ],
+      structuredContent: {
+        tabs: [
+          {
+            index: 0,
+            title: 'Example',
+            url: 'https://example.test/',
+            current: true,
+          },
+          { index: 1, title: 'Other', url: 'about:blank' },
+        ],
+      },
+    });
+
+    browserMcpMocks.nextResult = {
+      content: [{ type: 'text', text: 'selected' }],
+    };
+    await callBrowserTool({
+      toolName: 'browser_tabs',
+      arguments: { action: 'select', index: 1 },
+      session,
+      fileAccessRoot: root,
+    });
+
+    browserMcpMocks.nextResult = {
+      content: [{ type: 'text', text: 'closed' }],
+    };
+    await callBrowserTool({
+      toolName: 'browser_tabs',
+      arguments: { action: 'close', index: 0 },
+      session,
+      fileAccessRoot: root,
+    });
+
+    expect(browserMcpMocks.clients[0]?.callTool).toHaveBeenNthCalledWith(
+      2,
+      { name: 'browser_tabs', arguments: { action: 'select', index: 9 } },
+      undefined,
+      { timeout: expect.any(Number) },
+    );
+    expect(browserMcpMocks.clients[0]?.callTool).toHaveBeenNthCalledWith(
+      3,
+      { name: 'browser_tabs', arguments: { action: 'close', index: 4 } },
+      undefined,
+      { timeout: expect.any(Number) },
+    );
+  });
+
   it('fails closed and clears stale mapping for unparseable markdown tab lists', async () => {
     const root = tempRoot();
     const session = {
@@ -1667,6 +1840,14 @@ describe('browser tool proxy file policy', () => {
       callBrowserTool({
         toolName: 'browser_tabs',
         arguments: { action: 'select', index: 0 },
+        session,
+        fileAccessRoot: root,
+      }),
+    ).rejects.toThrow('needs a fresh browser_tabs list');
+    await expect(
+      callBrowserTool({
+        toolName: 'browser_tabs',
+        arguments: { action: 'close', index: 0 },
         session,
         fileAccessRoot: root,
       }),

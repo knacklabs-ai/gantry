@@ -111,12 +111,28 @@ export async function callBrowserTool(input: {
       backendArgs,
       deadline,
     );
-    return normalizeBrowserToolResult(input.toolName, args, result, {
-      artifactRoot: outputDir,
-      tabSessionKey: sessionKey,
-    });
+    const normalized = normalizeBrowserToolResult(
+      input.toolName,
+      args,
+      result,
+      {
+        artifactRoot: outputDir,
+        tabSessionKey: sessionKey,
+      },
+    );
+    if (isBrowserToolErrorResult(normalized)) {
+      await closeCachedBackend(backend.key);
+    }
+    return normalized;
   } catch (err) {
     await closeCachedBackend(backend.key);
+    if (shouldReturnSnapshotAfterNavigateBackTimeout(input.toolName, err)) {
+      return await callBrowserTool({
+        ...input,
+        toolName: 'browser_snapshot',
+        arguments: {},
+      });
+    }
     throw new Error(formatBackendError(input.toolName, err));
   } finally {
     scheduleBackendIdleClose(backend.key);
@@ -173,6 +189,16 @@ function shouldRefreshSnapshotAndRetry(
   return isStalePlaywrightMcpSnapshotRefResult(err);
 }
 
+function shouldReturnSnapshotAfterNavigateBackTimeout(
+  toolName: BrowserIpcAction,
+  err: unknown,
+): boolean {
+  return (
+    toolName === 'browser_navigate_back' &&
+    /timed? out|timeout/i.test(errorMessage(err))
+  );
+}
+
 export function normalizeBrowserToolResult(
   toolName: BrowserIpcAction,
   args: Record<string, unknown>,
@@ -199,6 +225,15 @@ export function normalizeBrowserToolResult(
   const stat = browserOutputFileStat(filename);
   if (!saved.wroteFile && !stat) return sanitized;
   return browserFileReferenceResult(filename, stat, saved.mimeType);
+}
+
+function isBrowserToolErrorResult(result: unknown): boolean {
+  return (
+    !!result &&
+    typeof result === 'object' &&
+    !Array.isArray(result) &&
+    (result as { isError?: unknown }).isError === true
+  );
 }
 
 function compactLargeBrowserSnapshot(result: unknown, artifactRoot: string) {

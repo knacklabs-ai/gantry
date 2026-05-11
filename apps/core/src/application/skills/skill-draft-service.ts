@@ -203,6 +203,34 @@ export class SkillDraftService {
     });
   }
 
+  async rollbackApprovedSkillBinding(input: {
+    appId: AppId;
+    agentId: AgentId;
+    skillId: SkillId;
+    now?: string;
+  }): Promise<void> {
+    const now = input.now ?? nowIso();
+    await this.skills.disableAgentSkillBinding({
+      appId: input.appId,
+      agentId: input.agentId,
+      skillId: input.skillId,
+      updatedAt: now,
+    });
+    const skill = await this.requireSkill(input.appId, input.skillId);
+    if (skill.status !== 'approved') return;
+    if (skill.providerRef && this.hostedPublisher?.unpublishSkill) {
+      await this.hostedPublisher.unpublishSkill(skill.providerRef);
+    }
+    await this.skills.saveSkill({
+      ...skill,
+      status: 'draft',
+      providerRef: undefined,
+      approvedBy: undefined,
+      approvedAt: undefined,
+      updatedAt: now,
+    });
+  }
+
   async resolveLocalSkillsForAgent(input: {
     appId: AppId;
     agentId: AgentId;

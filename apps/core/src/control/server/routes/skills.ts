@@ -255,19 +255,33 @@ export async function handleSkillRoutes(
       sendError(res, 403, 'FORBIDDEN', 'API key cannot bind for this app');
       return true;
     }
+    const appId = auth.appId as AppId;
+    const agentId = decodeURIComponent(agentSkillMatch[1]) as AgentId;
+    const skillId = decodeURIComponent(agentSkillMatch[2]) as SkillId;
+    const skillService = service();
+    let binding: AgentSkillBinding | undefined;
     try {
       await requireAgentInApp({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentSkillMatch[1]) as AgentId,
+        appId,
+        agentId,
       });
-      const binding = await service().bindSkillToAgent({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentSkillMatch[1]) as AgentId,
-        skillId: decodeURIComponent(agentSkillMatch[2]) as SkillId,
+      binding = await skillService.bindSkillToAgent({
+        appId,
+        agentId,
+        skillId,
       });
-      await ctx.syncSettingsFromProjection(auth.appId as AppId);
+      await ctx.syncSettingsFromProjection(appId);
       sendJson(res, 200, { binding: bindingToResponse(binding) });
     } catch (error) {
+      if (binding) {
+        await skillService
+          .unbindSkillFromAgent({
+            appId,
+            agentId,
+            skillId,
+          })
+          .catch(() => undefined);
+      }
       sendError(
         res,
         400,

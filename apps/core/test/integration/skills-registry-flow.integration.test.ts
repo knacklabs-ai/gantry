@@ -361,6 +361,57 @@ describe('skill registry integration flow', () => {
     }
   });
 
+  it('rolls back Control API skill bindings when settings sync fails', async () => {
+    state.skills.set('skill:approved', {
+      id: 'skill:approved',
+      appId: 'app-one',
+      name: 'Approved Skill',
+      version: 'v1',
+      source: 'admin_uploaded',
+      status: 'approved',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    });
+    vi.mocked(syncRuntimeSettingsFromProjection).mockRejectedValueOnce(
+      new Error('settings sync failed'),
+    );
+    const server = await startTestControlServer({
+      token: 'token-skills',
+      appId: 'app-one',
+      scopes: ['skills:admin'],
+    });
+    const client = createClient({
+      apiKey: server.token,
+      baseUrl: server.baseUrl,
+      timeoutMs: 3000,
+    });
+
+    try {
+      await expect(
+        client.agents.skills.enable('agent:one', 'skill:approved'),
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+      expect([...state.bindings.values()]).toEqual([
+        expect.objectContaining({
+          appId: 'app-one',
+          agentId: 'agent:one',
+          skillId: 'skill:approved',
+          status: 'disabled',
+        }),
+      ]);
+      expect(state.skills.get('skill:approved')).toMatchObject({
+        status: 'approved',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects cross-app skill actions before artifact or binding mutation', async () => {
     const server = await startTestControlServer({
       token: 'token-skills',
@@ -386,7 +437,7 @@ describe('skill registry integration flow', () => {
 
       state.skills.set('skill:approved', {
         id: 'skill:approved',
-        appId: 'app-one',
+        appId: 'default',
         name: 'Approved',
         version: 'v1',
         source: 'admin_uploaded',
@@ -543,6 +594,7 @@ describe('skill registry integration flow', () => {
       await processTaskIpc(
         {
           type,
+          appId: 'app-one',
           taskId: `${type}-approve-test`,
           targetJid: 'chat-origin',
           chatJid: 'chat-origin',
@@ -591,6 +643,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'app-one',
         taskId: 'request-permission-deny-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -626,6 +679,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'app-one',
         taskId: 'request-permission-persistent-suggestion-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -672,6 +726,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'app-one',
         taskId: 'request-permission-temporary-browser-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -724,6 +779,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'app-one',
         taskId: 'request-permission-persistent-approval-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -744,7 +800,7 @@ describe('skill registry integration flow', () => {
       expect(toolRepository.saveTool).toHaveBeenCalledWith(
         expect.objectContaining({
           id: expect.stringMatching(/^tool:permission-rule:/),
-          appId: 'default',
+          appId: 'app-one',
           name: 'mcp__internal__deploy_preview(environment:staging)',
           displayName: 'mcp__internal__deploy_preview(environment:staging)',
           adapterRef: 'permission/request_permission',
@@ -754,15 +810,17 @@ describe('skill registry integration flow', () => {
     });
     expect(toolRepository.saveAgentToolBinding).toHaveBeenCalledWith(
       expect.objectContaining({
-        appId: 'default',
+        appId: 'app-one',
         agentId: 'agent:one',
         toolId: expect.stringMatching(/^tool:permission-rule:/),
         status: 'active',
       }),
     );
-    expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith('agent:one', [
-      'mcp__internal__deploy_preview(environment:staging)',
-    ]);
+    expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith(
+      'agent:one',
+      ['mcp__internal__deploy_preview(environment:staging)'],
+      { appId: 'app-one' },
+    );
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         'chat-origin',
@@ -801,7 +859,7 @@ describe('skill registry integration flow', () => {
     toolRepository.listTools.mockResolvedValueOnce([
       {
         id: 'tool:Browser',
-        appId: 'default',
+        appId: 'app-one',
         name: 'Browser',
         status: 'active',
         selectable: true,
@@ -811,6 +869,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'app-one',
         taskId: 'request-permission-browser-persistent-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -829,7 +888,7 @@ describe('skill registry integration flow', () => {
     await vi.waitFor(() => {
       expect(toolRepository.saveAgentToolBinding).toHaveBeenCalledWith(
         expect.objectContaining({
-          appId: 'default',
+          appId: 'app-one',
           agentId: 'agent:one',
           toolId: 'tool:Browser',
           status: 'active',
@@ -837,9 +896,11 @@ describe('skill registry integration flow', () => {
       );
     });
     expect(toolRepository.saveTool).not.toHaveBeenCalled();
-    expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith('agent:one', [
-      'Browser',
-    ]);
+    expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith(
+      'agent:one',
+      ['Browser'],
+      { appId: 'app-one' },
+    );
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         'chat-origin',
@@ -872,6 +933,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'app-one',
         taskId: 'request-permission-allow-once-no-persist-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -913,6 +975,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_permission',
+        appId: 'default',
         taskId: 'request-permission-forum-shopping-test',
         chatJid: 'chat-origin',
         targetJid: 'chat-admin-dm',
@@ -962,6 +1025,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_skill_proposal',
+        appId: 'app-one',
         taskId: 'request-skill-approve-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -994,6 +1058,8 @@ describe('skill registry integration flow', () => {
           threadId: 'thread-origin',
           decisionPolicy: 'same_channel',
           toolName: 'request_skill_proposal',
+          appId: 'app-one',
+          agentId: 'agent:one',
         }),
       );
     });
@@ -1037,7 +1103,7 @@ describe('skill registry integration flow', () => {
     });
     expect([...state.bindings.values()]).toEqual([
       expect.objectContaining({
-        appId: 'default',
+        appId: 'app-one',
         agentId: 'agent:one',
         skillId: approved[0].id,
         status: 'active',
@@ -1045,7 +1111,90 @@ describe('skill registry integration flow', () => {
     ]);
     expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
     expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appId: 'default' }),
+      expect.objectContaining({ appId: 'app-one' }),
+    );
+  });
+
+  it('rolls back approved skill proposals when settings sync fails', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const sendMessage = vi.fn(async () => undefined);
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'Approver',
+      reason: 'approved',
+    }));
+    vi.mocked(syncRuntimeSettingsFromProjection).mockRejectedValueOnce(
+      new Error('settings sync failed'),
+    );
+    const deps = {
+      conversationRoutes: () => ({
+        'chat-origin': {
+          name: 'Agent One Origin',
+          folder: 'agent:one',
+          jid: 'chat-origin',
+        } as any,
+      }),
+      syncGroups: vi.fn(async () => undefined),
+      getAvailableGroups: vi.fn(async () => []),
+      writeGroupsSnapshot: vi.fn(async () => undefined),
+      sendMessage,
+      requestPermissionApproval,
+      requestUserAnswer: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+      registerGroup: vi.fn(),
+    };
+
+    await processTaskIpc(
+      {
+        type: 'request_skill_proposal',
+        appId: 'app-one',
+        taskId: 'request-skill-sync-failure-test',
+        targetJid: 'chat-origin',
+        chatJid: 'chat-origin',
+        authThreadId: 'thread-origin',
+        payload: {
+          reason: 'Reuse a channel-specific posting workflow.',
+          files: [
+            {
+              path: 'SKILL.md',
+              content: [
+                '---',
+                'name: Rollback Skill',
+                'description: Drafts channel posts',
+                '---',
+                '# Rollback Skill',
+              ].join('\n'),
+            },
+          ],
+        },
+      },
+      'agent:one',
+      deps as any,
+    );
+
+    await vi.waitFor(() => {
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+    });
+    const skills = [...state.skills.values()];
+    expect(skills).toHaveLength(1);
+    expect(skills[0]).toMatchObject({
+      name: 'Rollback Skill',
+      status: 'draft',
+      approvedBy: undefined,
+      approvedAt: undefined,
+    });
+    expect([...state.bindings.values()]).toEqual([
+      expect.objectContaining({
+        appId: 'app-one',
+        agentId: 'agent:one',
+        skillId: skills[0].id,
+        status: 'disabled',
+      }),
+    ]);
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      'chat-origin',
+      expect.stringContaining('Approved skill Rollback Skill'),
+      { threadId: 'thread-origin' },
     );
   });
 
@@ -1136,6 +1285,7 @@ describe('skill registry integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_skill_proposal',
+        appId: 'app-one',
         taskId: 'request-skill-deny-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -1168,6 +1318,8 @@ describe('skill registry integration flow', () => {
           threadId: 'thread-origin',
           decisionPolicy: 'same_channel',
           toolName: 'request_skill_proposal',
+          appId: 'app-one',
+          agentId: 'agent:one',
         }),
       );
     });

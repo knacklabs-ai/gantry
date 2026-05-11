@@ -432,6 +432,74 @@ describe('MCP server management integration flow', () => {
     }
   });
 
+  it('rolls back Control API MCP bindings when settings sync fails', async () => {
+    const { McpServerService } =
+      await import('@core/application/mcp/mcp-server-service.js');
+    const service = new McpServerService(state.mcpServers);
+    const draft = await service.createDraft({
+      appId: 'app-one' as never,
+      name: 'control_sync_failure',
+      transportConfig: {
+        transport: 'http',
+        url: 'https://93.184.216.34/control-sync-failure',
+      },
+      createdBy: 'admin-user',
+    });
+    await service.approveDraft({
+      appId: 'app-one' as never,
+      serverId: draft.definition.id,
+      approvedBy: 'reviewer',
+    });
+    vi.mocked(syncRuntimeSettingsFromProjection).mockRejectedValueOnce(
+      new Error('settings sync failed'),
+    );
+    const server = await startTestControlServer({
+      token: 'token-mcp',
+      appId: 'app-one',
+      scopes: ['mcp:admin', 'agents:admin'],
+    });
+    const client = createClient({
+      apiKey: server.token,
+      baseUrl: server.baseUrl,
+      timeoutMs: 3000,
+    });
+
+    try {
+      await expect(
+        client.agents.mcpServers.enable('agent:one', draft.definition.id),
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+      await expect(
+        state.mcpServers.listAgentBindings({
+          appId: 'app-one' as never,
+          agentId: 'agent:one' as never,
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          appId: 'app-one',
+          agentId: 'agent:one',
+          serverId: draft.definition.id,
+          status: 'disabled',
+        }),
+      ]);
+      await expect(
+        state.mcpServers.listServers({
+          appId: 'app-one' as never,
+          statuses: ['approved'],
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          id: draft.definition.id,
+          status: 'approved',
+        }),
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('fails closed when an approved MCP credential ref is not brokered', async () => {
     const { McpServerService } =
       await import('@core/application/mcp/mcp-server-service.js');
@@ -833,6 +901,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-test',
         targetJid: 'chat-1',
         chatJid: 'chat-1',
@@ -861,7 +930,7 @@ describe('MCP server management integration flow', () => {
     );
 
     const drafts = await state.mcpServers.listServers({
-      appId: 'default' as never,
+      appId: 'app-one' as never,
       statuses: ['draft'],
     });
     expect(drafts).toHaveLength(0);
@@ -895,6 +964,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-stale-draft-test',
         targetJid: 'chat-1',
         chatJid: 'chat-1',
@@ -926,13 +996,21 @@ describe('MCP server management integration flow', () => {
       } as any,
     );
 
-    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(requestPermissionApproval).toHaveBeenCalledTimes(1);
+    });
     await expect(
       state.mcpServers.listServers({
         appId: 'default' as never,
         statuses: ['draft'],
       }),
     ).resolves.toEqual([stale.definition]);
+    await expect(
+      state.mcpServers.listServers({
+        appId: 'app-one' as never,
+        statuses: ['approved'],
+      }),
+    ).resolves.toHaveLength(1);
     await expect(
       state.mcpServers.listVersions(stale.definition.id),
     ).resolves.toEqual([
@@ -979,6 +1057,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-reject-test',
         targetJid: 'chat-1',
         chatJid: 'chat-1',
@@ -1001,13 +1080,13 @@ describe('MCP server management integration flow', () => {
       await import('@core/application/mcp/mcp-server-service.js');
     await expect(
       new McpServerService(state.mcpServers).materializeForAgent({
-        appId: 'default' as never,
+        appId: 'app-one' as never,
         agentId: 'agent:one' as never,
       }),
     ).resolves.toEqual([]);
     await expect(
       state.mcpServers.listServers({
-        appId: 'default' as never,
+        appId: 'app-one' as never,
         statuses: ['rejected'],
       }),
     ).resolves.toHaveLength(1);
@@ -1015,6 +1094,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-approve-test',
         targetJid: 'chat-1',
         chatJid: 'chat-1',
@@ -1037,13 +1117,13 @@ describe('MCP server management integration flow', () => {
     await vi.waitFor(async () => {
       await expect(
         state.mcpServers.listServers({
-          appId: 'default' as never,
+          appId: 'app-one' as never,
           statuses: ['draft'],
         }),
       ).resolves.toHaveLength(0);
     });
     const approved = await state.mcpServers.listServers({
-      appId: 'default' as never,
+      appId: 'app-one' as never,
       statuses: ['approved'],
     });
     expect(approved).toHaveLength(1);
@@ -1055,7 +1135,7 @@ describe('MCP server management integration flow', () => {
 
     await expect(
       new McpServerService(state.mcpServers).materializeForAgent({
-        appId: 'default' as never,
+        appId: 'app-one' as never,
         agentId: 'agent:one' as never,
         credentialEnv: { MCP_GITHUB_GITHUB_TOKEN_REF: 'broker-safe-token' },
       }),
@@ -1075,7 +1155,124 @@ describe('MCP server management integration flow', () => {
     );
     expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
     expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appId: 'default' }),
+      expect.objectContaining({ appId: 'app-one' }),
+    );
+  });
+
+  it('rolls back approved MCP server requests when settings sync fails', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const sendMessage = vi.fn(async () => undefined);
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'Approver',
+      reason: 'approved',
+    }));
+    vi.mocked(syncRuntimeSettingsFromProjection).mockRejectedValueOnce(
+      new Error('settings sync failed'),
+    );
+    const deps = {
+      conversationRoutes: () => ({
+        'chat-1': {
+          name: 'Agent One',
+          folder: 'agent:one',
+          jid: 'chat-1',
+        } as any,
+      }),
+      syncGroups: vi.fn(async () => undefined),
+      getAvailableGroups: vi.fn(async () => []),
+      writeGroupsSnapshot: vi.fn(async () => undefined),
+      sendMessage,
+      requestPermissionApproval,
+      requestUserAnswer: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+      registerGroup: vi.fn(),
+    };
+
+    await processTaskIpc(
+      {
+        type: 'request_mcp_server',
+        appId: 'app-one',
+        taskId: 'request-mcp-sync-failure-test',
+        targetJid: 'chat-1',
+        chatJid: 'chat-1',
+        payload: {
+          name: 'github',
+          transport: 'http',
+          origin: 'https://93.184.216.34/github',
+          requestedToolPatterns: ['search_repositories'],
+          credentialNeeds: ['GITHUB_TOKEN_REF'],
+          reason: 'Need repository search for triage.',
+        },
+      },
+      'agent:one',
+      deps as any,
+    );
+
+    await vi.waitFor(() => {
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+    });
+    await expect(
+      state.mcpServers.listServers({
+        appId: 'app-one' as never,
+        statuses: ['approved'],
+      }),
+    ).resolves.toHaveLength(0);
+    const drafts = await state.mcpServers.listServers({
+      appId: 'app-one' as never,
+      statuses: ['draft'],
+    });
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({
+      name: 'github',
+      status: 'draft',
+      latestApprovedVersionId: undefined,
+      approvedBy: undefined,
+      approvedAt: undefined,
+    });
+    const versions = await state.mcpServers.listVersions(drafts[0].id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({
+      reviewedBy: undefined,
+      reviewedAt: undefined,
+    });
+    const { McpServerService } =
+      await import('@core/application/mcp/mcp-server-service.js');
+    await expect(
+      new McpServerService(state.mcpServers).materializeForAgent({
+        appId: 'app-one' as never,
+        agentId: 'agent:one' as never,
+      }),
+    ).resolves.toEqual([]);
+    const bindings = await state.mcpServers.listAgentBindings({
+      appId: 'app-one' as never,
+      agentId: 'agent:one' as never,
+    });
+    expect(bindings).toEqual([
+      expect.objectContaining({
+        appId: 'app-one',
+        agentId: 'agent:one',
+        serverId: drafts[0].id,
+        status: 'disabled',
+      }),
+    ]);
+    await expect(
+      state.mcpServers.listAuditEvents({
+        appId: 'app-one' as never,
+        serverId: drafts[0].id,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ eventType: 'request' }),
+      expect.objectContaining({ eventType: 'approve' }),
+      expect.objectContaining({ eventType: 'bind' }),
+      expect.objectContaining({
+        eventType: 'reject',
+        reason: 'Rolled back approval after settings sync failure.',
+      }),
+    ]);
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      'chat-1',
+      expect.stringContaining('Approved MCP server github'),
+      undefined,
     );
   });
 
@@ -1113,6 +1310,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-origin-test',
         targetJid: 'chat-origin',
         chatJid: 'chat-origin',
@@ -1139,6 +1337,8 @@ describe('MCP server management integration flow', () => {
         targetJid: 'chat-origin',
         threadId: 'thread-origin',
         decisionPolicy: 'same_channel',
+        appId: 'app-one',
+        agentId: 'agent:one',
       }),
     );
     await vi.waitFor(() => {
@@ -1187,6 +1387,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-forum-shopping-test',
         chatJid: 'chat-origin',
         targetJid: 'chat-admin-dm',
@@ -1204,7 +1405,7 @@ describe('MCP server management integration flow', () => {
     expect(requestPermissionApproval).not.toHaveBeenCalled();
     await expect(
       state.mcpServers.listServers({
-        appId: 'default' as never,
+        appId: 'app-one' as never,
         statuses: ['draft', 'approved', 'rejected'],
       }),
     ).resolves.toHaveLength(0);
@@ -1238,6 +1439,7 @@ describe('MCP server management integration flow', () => {
     await processTaskIpc(
       {
         type: 'request_mcp_server',
+        appId: 'app-one',
         taskId: 'request-mcp-unbound-chat-test',
         targetJid: 'chat-other',
         chatJid: 'chat-other',
@@ -1256,7 +1458,7 @@ describe('MCP server management integration flow', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     await expect(
       state.mcpServers.listServers({
-        appId: 'default' as never,
+        appId: 'app-one' as never,
         statuses: ['draft', 'approved', 'rejected'],
       }),
     ).resolves.toHaveLength(0);

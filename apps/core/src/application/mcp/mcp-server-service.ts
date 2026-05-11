@@ -426,6 +426,55 @@ export class McpServerService {
     return binding;
   }
 
+  async rollbackApprovedBinding(input: {
+    appId: AppId;
+    agentId: AgentId;
+    serverId: McpServerId;
+  }): Promise<void> {
+    const now = nowIso();
+    await this.mcpServers.disableAgentBinding({
+      appId: input.appId,
+      agentId: input.agentId,
+      serverId: input.serverId,
+      updatedAt: now,
+    });
+    const server = await this.requireServer(input.appId, input.serverId);
+    if (!isMcpServerApproved(server)) return;
+    const versions = await this.mcpServers.listVersions(server.id);
+    const version = server.latestApprovedVersionId
+      ? versions.find((item) => item.id === server.latestApprovedVersionId)
+      : undefined;
+    const reverted: McpServerDefinition = {
+      ...server,
+      status: 'draft',
+      latestApprovedVersionId: undefined,
+      approvedBy: undefined,
+      approvedAt: undefined,
+      updatedAt: now,
+    };
+    await this.mcpServers.transitionServerStatus({
+      appId: input.appId,
+      serverId: server.id,
+      expectedStatus: 'approved',
+      next: reverted,
+    });
+    if (version) {
+      await this.mcpServers.saveVersion({
+        ...version,
+        reviewedBy: undefined,
+        reviewedAt: undefined,
+      });
+    }
+    await this.audit({
+      appId: input.appId,
+      agentId: input.agentId,
+      serverId: input.serverId,
+      versionId: version?.id,
+      eventType: 'reject',
+      reason: 'Rolled back approval after settings sync failure.',
+    });
+  }
+
   async listAgentBindings(input: {
     appId: AppId;
     agentId: AgentId;

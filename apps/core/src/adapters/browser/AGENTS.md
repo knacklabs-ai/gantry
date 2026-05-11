@@ -25,12 +25,43 @@
   immediately before backend dispatch with CDP `Target.activateTarget` plus
   page-level `Page.bringToFront`; target setup done earlier in the request is
   not enough for reliable headed Chrome interaction.
-- Headed Chrome launch must include an explicit nonzero window size. A 0x0
-  inner viewport makes Playwright report every target outside the viewport and
-  causes click, hover, and screenshot failures downstream.
-- Headed `browser_resize` should resize the visible Chrome window with CDP
-  `Browser.setWindowBounds` and force `windowState: normal` with the requested
-  bounds. Keep headless and emulated resize behavior backend-native.
+- Browser launch must set a nonzero initial page viewport through the
+  Playwright MCP backend. A 0x0 inner viewport makes Playwright report every
+  target outside the viewport and causes click, hover, and screenshot failures
+  downstream.
+- Agent-facing browser launch is visible by default and must not expose a
+  headless option. Any non-visible mode is an internal test harness detail, not
+  a durable setting or browser tool argument.
+- Persisted browser-session adoption must reject non-visible Chrome processes.
+  Check the owned process command line for `--headless*` before adopting a
+  stale CDP session, and relaunch visible Chrome instead.
+- Browser usage enforcement must never block `browser_status`,
+  `browser_launch`, or `browser_close`; those operations are observability and
+  cleanup boundaries, not site-driving actions.
+- Browser IPC authorization must be checked before usage settings lookup,
+  active-tab resolution, backend dispatch, or usage metering. A stale signed
+  request after Browser revocation must not consume per-site buckets.
+- Browser usage enforcement for URL-less page actions must use the backend's
+  current tab list, not the last explicit `browser_navigate` payload or the
+  first CDP target. In-page redirects, cross-site clicks, and multi-tab
+  selection can otherwise bypass owner-defined per-site overrides.
+- In enforce mode, a backend current-tab URL must normalize to a site before
+  metering. Internal or local URLs such as `about:blank`, `chrome://...`, or
+  `file://...` must fail closed instead of falling back to stale remembered
+  site state.
+- `browser_resize` viewport ownership belongs to the Playwright MCP backend.
+  Do not split viewport state between sidecar CDP `Browser.setWindowBounds`
+  calls and backend `page.setViewportSize`; explicit resize should stay
+  backend-native across internal browser modes.
+- `browser_take_screenshot` should dispatch directly to the Playwright MCP
+  screenshot tool. Do not auto-resize before screenshots; screenshot failures
+  should reset the cached backend instead of trying to repair page state in the
+  runtime wrapper.
+- Headed Playwright MCP backends must start with an explicit
+  `--viewport-size`. The bundled backend defaults headed shared-browser
+  contexts to `viewport: null` unless configured, so late CDP window sizing or
+  late `browser_resize` calls can still let the first page/screenshot observe a
+  0x0 or unusably tiny viewport.
 - `browser_file_upload` should accept inline file content and materialize it
   under the run artifact root. Requiring agents to pre-create files there is
   not usable from restricted tool sandboxes.
@@ -47,6 +78,10 @@
 - Text-only backend tab lists are not trusted UI state unless the compatibility
   layer can parse them into adapter-owned tab metadata. Unparseable tab lists
   must fail closed and clear stale visible-index mappings.
+- Playwright MCP tab lists render as Markdown links such as
+  `- 0: (current) [Title](https://example.test/)`. Keep that backend-specific
+  shape in the compatibility parser, then feed only structured tab metadata to
+  the neutral visible-index projection.
 - Treat an unhealthy tool-capability broker as a non-driveable browser status
   for agent tools. Reporting `cdpReady: true` while the credential broker is
   down is misleading because backend browser actions still cannot run.
