@@ -30,7 +30,9 @@
   causes click, hover, and screenshot failures downstream.
 - Headed `browser_resize` should resize the visible Chrome window with CDP
   `Browser.setWindowBounds` and force `windowState: normal` with the requested
-  bounds. Keep headless and emulated resize behavior backend-native.
+  bounds, then delegate to the Playwright backend resize so the active page
+  viewport is updated after navigation. Keep headless resize behavior
+  backend-native.
 - `browser_file_upload` should accept inline file content and materialize it
   under the run artifact root. Requiring agents to pre-create files there is
   not usable from restricted tool sandboxes.

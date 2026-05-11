@@ -58,6 +58,7 @@ type BrowserStatusPayload = Record<string, unknown> & {
 const BROKER_HEALTH_CACHE_MS = 5_000;
 const MIN_BROWSER_BACKEND_TIMEOUT_MS = 1_000;
 const MAX_HEADED_BROWSER_RESIZE_DIMENSION = 8_192;
+const DEFAULT_HEADED_BROWSER_WINDOW = { width: 1280, height: 900 } as const;
 const brokerHealthCache = new Map<
   string,
   { expiresAt: number; value: CredentialBrokerHealth | undefined }
@@ -313,6 +314,30 @@ async function handleBrowserToolAction(
         }),
         deadlineAtMs: deadline.deadlineAtMs,
       });
+      if (status.headless === false && status.port) {
+        const cdpOptions = browserCdpOptions(deadline);
+        const launchTargetId = cdpOptions
+          ? await ensureBrowserTarget(status.port, cdpOptions)
+          : await ensureBrowserTarget(status.port);
+        if (launchTargetId) {
+          if (cdpOptions) {
+            await resizeHeadedBrowserWindow(
+              status.port,
+              launchTargetId,
+              DEFAULT_HEADED_BROWSER_WINDOW.width,
+              DEFAULT_HEADED_BROWSER_WINDOW.height,
+              cdpOptions,
+            );
+          } else {
+            await resizeHeadedBrowserWindow(
+              status.port,
+              launchTargetId,
+              DEFAULT_HEADED_BROWSER_WINDOW.width,
+              DEFAULT_HEADED_BROWSER_WINDOW.height,
+            );
+          }
+        }
+      }
       return {
         ok: true,
         data: await attachToolCapabilityBrokerHealth(
@@ -360,6 +385,25 @@ async function handleBrowserToolAction(
     } else {
       await resizeHeadedBrowserWindow(session.port, targetId, width, height);
     }
+    if (!context.callBrowserTool) {
+      return {
+        ok: false,
+        error: 'Browser action backend is unavailable for viewport resize.',
+      };
+    }
+    const backendTimeoutMs = browserBackendTimeoutMs(deadline);
+    await context.callBrowserTool({
+      toolName: request.action,
+      arguments: { ...request.payload, width, height },
+      session,
+      fileAccessRoot: path.join(
+        DATA_DIR,
+        'sessions',
+        context.sourceAgentFolder,
+        'extra',
+      ),
+      timeoutMs: backendTimeoutMs,
+    });
     return {
       ok: true,
       data: {

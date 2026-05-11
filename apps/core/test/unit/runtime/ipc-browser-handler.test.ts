@@ -492,7 +492,7 @@ describe('ipc-browser-handler', () => {
     );
   });
 
-  it('resizes headed browser windows through CDP without backend delegation', async () => {
+  it('resizes headed browser windows through CDP and backend viewport delegation', async () => {
     vi.mocked(ensureBrowserReady).mockResolvedValueOnce({
       profile: 'c-main-abc123abc123',
       profileName: 'c-main-abc123abc123',
@@ -516,7 +516,7 @@ describe('ipc-browser-handler', () => {
         browserProfileName: 'c-main-abc123abc123',
         browserIpcAuthorized: true,
         callBrowserTool,
-        timeoutMs: 20,
+        timeoutMs: 5_000,
       },
     );
 
@@ -531,7 +531,13 @@ describe('ipc-browser-handler', () => {
       720,
       { deadlineAtMs: expect.any(Number) },
     );
-    expect(callBrowserTool).not.toHaveBeenCalled();
+    expect(callBrowserTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'browser_resize',
+        arguments: { width: 1280, height: 720 },
+        timeoutMs: expect.any(Number),
+      }),
+    );
     expect(response.data).toEqual({
       content: [{ type: 'text', text: 'Browser window resized to 1280x720.' }],
     });
@@ -571,7 +577,12 @@ describe('ipc-browser-handler', () => {
       8192,
       8192,
     );
-    expect(callBrowserTool).not.toHaveBeenCalled();
+    expect(callBrowserTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'browser_resize',
+        arguments: { width: 8192, height: 8192 },
+      }),
+    );
     expect(response.data).toEqual({
       content: [{ type: 'text', text: 'Browser window resized to 8192x8192.' }],
     });
@@ -834,6 +845,37 @@ describe('ipc-browser-handler', () => {
       keepAliveMs: undefined,
       deadlineAtMs: undefined,
     });
+  });
+
+  it('normalizes headed browser launch to a nonzero default window size', async () => {
+    vi.mocked(ensureBrowserReady).mockResolvedValueOnce({
+      profile: 'c-main-abc123abc123',
+      profileName: 'c-main-abc123abc123',
+      running: true,
+      cdpReady: true,
+      port: 9333,
+      targetId: 'stale-target',
+      headless: false,
+    });
+    vi.mocked(ensureBrowserTarget).mockResolvedValueOnce('content-target');
+
+    const response = await processBrowserIpcRequest(
+      {
+        requestId: 'req-launch-headed',
+        action: 'browser_launch',
+        payload: {},
+      },
+      { sourceAgentFolder: 'main', browserIpcAuthorized: true },
+    );
+
+    expect(response.ok).toBe(true);
+    expect(ensureBrowserTarget).toHaveBeenCalledWith(9333);
+    expect(resizeHeadedBrowserWindow).toHaveBeenCalledWith(
+      9333,
+      'content-target',
+      1280,
+      900,
+    );
   });
 
   it('fails closed before launch when the signed deadline is already exhausted', async () => {
