@@ -361,6 +361,57 @@ describe('skill registry integration flow', () => {
     }
   });
 
+  it('rolls back Control API skill bindings when settings sync fails', async () => {
+    state.skills.set('skill:approved', {
+      id: 'skill:approved',
+      appId: 'app-one',
+      name: 'Approved Skill',
+      version: 'v1',
+      source: 'admin_uploaded',
+      status: 'approved',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    });
+    vi.mocked(syncRuntimeSettingsFromProjection).mockRejectedValueOnce(
+      new Error('settings sync failed'),
+    );
+    const server = await startTestControlServer({
+      token: 'token-skills',
+      appId: 'app-one',
+      scopes: ['skills:admin'],
+    });
+    const client = createClient({
+      apiKey: server.token,
+      baseUrl: server.baseUrl,
+      timeoutMs: 3000,
+    });
+
+    try {
+      await expect(
+        client.agents.skills.enable('agent:one', 'skill:approved'),
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+      expect([...state.bindings.values()]).toEqual([
+        expect.objectContaining({
+          appId: 'app-one',
+          agentId: 'agent:one',
+          skillId: 'skill:approved',
+          status: 'disabled',
+        }),
+      ]);
+      expect(state.skills.get('skill:approved')).toMatchObject({
+        status: 'approved',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects cross-app skill actions before artifact or binding mutation', async () => {
     const server = await startTestControlServer({
       token: 'token-skills',
@@ -1061,6 +1112,89 @@ describe('skill registry integration flow', () => {
     expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
     expect(syncRuntimeSettingsFromProjection).toHaveBeenLastCalledWith(
       expect.objectContaining({ appId: 'app-one' }),
+    );
+  });
+
+  it('rolls back approved skill proposals when settings sync fails', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const sendMessage = vi.fn(async () => undefined);
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'Approver',
+      reason: 'approved',
+    }));
+    vi.mocked(syncRuntimeSettingsFromProjection).mockRejectedValueOnce(
+      new Error('settings sync failed'),
+    );
+    const deps = {
+      conversationRoutes: () => ({
+        'chat-origin': {
+          name: 'Agent One Origin',
+          folder: 'agent:one',
+          jid: 'chat-origin',
+        } as any,
+      }),
+      syncGroups: vi.fn(async () => undefined),
+      getAvailableGroups: vi.fn(async () => []),
+      writeGroupsSnapshot: vi.fn(async () => undefined),
+      sendMessage,
+      requestPermissionApproval,
+      requestUserAnswer: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+      registerGroup: vi.fn(),
+    };
+
+    await processTaskIpc(
+      {
+        type: 'request_skill_proposal',
+        appId: 'app-one',
+        taskId: 'request-skill-sync-failure-test',
+        targetJid: 'chat-origin',
+        chatJid: 'chat-origin',
+        authThreadId: 'thread-origin',
+        payload: {
+          reason: 'Reuse a channel-specific posting workflow.',
+          files: [
+            {
+              path: 'SKILL.md',
+              content: [
+                '---',
+                'name: Rollback Skill',
+                'description: Drafts channel posts',
+                '---',
+                '# Rollback Skill',
+              ].join('\n'),
+            },
+          ],
+        },
+      },
+      'agent:one',
+      deps as any,
+    );
+
+    await vi.waitFor(() => {
+      expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
+    });
+    const skills = [...state.skills.values()];
+    expect(skills).toHaveLength(1);
+    expect(skills[0]).toMatchObject({
+      name: 'Rollback Skill',
+      status: 'draft',
+      approvedBy: undefined,
+      approvedAt: undefined,
+    });
+    expect([...state.bindings.values()]).toEqual([
+      expect.objectContaining({
+        appId: 'app-one',
+        agentId: 'agent:one',
+        skillId: skills[0].id,
+        status: 'disabled',
+      }),
+    ]);
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      'chat-origin',
+      expect.stringContaining('Approved skill Rollback Skill'),
+      { threadId: 'thread-origin' },
     );
   });
 

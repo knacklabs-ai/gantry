@@ -311,18 +311,32 @@ export async function handleMcpServerRoutes(
       );
       return true;
     }
+    const appId = auth.appId as AppId;
+    const agentId = decodeURIComponent(agentMcpMatch[1]) as AgentId;
+    const serverId = decodeURIComponent(agentMcpMatch[2]) as McpServerId;
+    const mcpService = service();
+    let binding: AgentMcpServerBinding | undefined;
     try {
-      const binding = await service().bindToAgent({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentMcpMatch[1]) as AgentId,
-        serverId: decodeURIComponent(agentMcpMatch[2]) as McpServerId,
+      binding = await mcpService.bindToAgent({
+        appId,
+        agentId,
+        serverId,
         versionId: parsed.data.versionId as never,
         required: parsed.data.required,
         permissionPolicyIds: parsed.data.permissionPolicyIds as never,
       });
-      await ctx.syncSettingsFromProjection(auth.appId as AppId);
+      await ctx.syncSettingsFromProjection(appId);
       sendJson(res, 200, { binding: bindingToResponse(binding) });
     } catch (error) {
+      if (binding) {
+        await mcpService
+          .unbindFromAgent({
+            appId,
+            agentId,
+            serverId,
+          })
+          .catch(() => undefined);
+      }
       sendRouteError(res, error, 'MCP server binding failed');
     }
     return true;

@@ -80,17 +80,30 @@ async function completeSkillPermissionReview(
   if (!decision.decidedBy)
     return rejectSkillDraftFromPermission(input, 'missing approving principal');
 
-  await input.service.approveDraft({
-    appId: input.appId,
-    skillId: input.skill.id as never,
-    approvedBy: decision.decidedBy,
-  });
-  await input.service.bindSkillToAgent({
-    appId: input.appId,
-    agentId: input.agentId,
-    skillId: input.skill.id as never,
-  });
-  await input.syncApprovedCapabilitySettings(input.appId);
+  let approvalApplied = false;
+  try {
+    await input.service.approveDraft({
+      appId: input.appId,
+      skillId: input.skill.id as never,
+      approvedBy: decision.decidedBy,
+    });
+    approvalApplied = true;
+    await input.service.bindSkillToAgent({
+      appId: input.appId,
+      agentId: input.agentId,
+      skillId: input.skill.id as never,
+    });
+    await input.syncApprovedCapabilitySettings(input.appId);
+  } catch (err) {
+    if (approvalApplied) {
+      await input.service.rollbackApprovedSkillBinding({
+        appId: input.appId,
+        agentId: input.agentId,
+        skillId: input.skill.id as never,
+      });
+    }
+    throw err;
+  }
   const sameSessionContext = buildApprovedSkillSameSessionContext(input);
   await input.deps.sendMessage(
     input.targetJid,

@@ -656,17 +656,30 @@ async function completeMcpPermissionReview(
     return;
   }
 
-  await input.service.approveDraft({
-    appId: input.appId,
-    serverId: input.server.id as never,
-    approvedBy: decision.decidedBy,
-  });
-  await input.service.bindToAgent({
-    appId: input.appId,
-    agentId: input.agentId,
-    serverId: input.server.id as never,
-  });
-  await syncApprovedCapabilitySettings(input.appId);
+  let approvalApplied = false;
+  try {
+    await input.service.approveDraft({
+      appId: input.appId,
+      serverId: input.server.id as never,
+      approvedBy: decision.decidedBy,
+    });
+    approvalApplied = true;
+    await input.service.bindToAgent({
+      appId: input.appId,
+      agentId: input.agentId,
+      serverId: input.server.id as never,
+    });
+    await syncApprovedCapabilitySettings(input.appId);
+  } catch (err) {
+    if (approvalApplied) {
+      await input.service.rollbackApprovedBinding({
+        appId: input.appId,
+        agentId: input.agentId,
+        serverId: input.server.id as never,
+      });
+    }
+    throw err;
+  }
   const sameSessionContext = {
     type: 'approved_mcp_context',
     activation: 'current_and_future_sessions',
