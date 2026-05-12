@@ -47,20 +47,6 @@ function writeJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
 }
 
-function symlinkPackage(
-  root: string,
-  packageName: string,
-  target: string,
-): void {
-  const packagePath = path.join(
-    root,
-    'node_modules',
-    ...packageName.split('/'),
-  );
-  fs.mkdirSync(path.dirname(packagePath), { recursive: true });
-  fs.symlinkSync(path.resolve(target), packagePath, 'dir');
-}
-
 function createRunnerFixture(): {
   root: string;
   runnerPath: string;
@@ -1116,6 +1102,7 @@ describe('agent-runner IPC lifecycle', () => {
       expect(call?.permissionRequest).toEqual(
         expect.objectContaining({
           sourceAgentFolder: 'team',
+          runHandle: 'runner-test-run',
           toolName: 'Bash',
           signature: expect.any(String),
         }),
