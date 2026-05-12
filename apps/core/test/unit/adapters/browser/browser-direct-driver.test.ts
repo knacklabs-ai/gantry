@@ -21,6 +21,7 @@ import {
   formatBackendError,
   sanitizeBrowserTabsResult,
 } from '@core/adapters/browser/browser-direct-driver.js';
+import { snapshotPage } from '@core/adapters/browser/browser-direct-page-actions.js';
 
 const tempRoots: string[] = [];
 
@@ -119,6 +120,32 @@ function createBrowser(pages: any[]) {
   return { browser, context };
 }
 
+function createDomElement(input: {
+  tagName: string;
+  text?: string;
+  value?: string;
+  rect?: { width: number; height: number };
+  attributes?: Record<string, string>;
+}) {
+  const attributes = new Map(Object.entries(input.attributes ?? {}));
+  return {
+    tagName: input.tagName,
+    innerText: input.text ?? '',
+    value: input.value ?? '',
+    getBoundingClientRect: vi.fn(() => input.rect ?? { width: 10, height: 10 }),
+    getAttribute: vi.fn((name: string) => attributes.get(name) ?? null),
+    setAttribute: vi.fn((name: string, value: string) => {
+      attributes.set(name, value);
+    }),
+    removeAttribute: vi.fn((name: string) => {
+      attributes.delete(name);
+    }),
+    attributeValue(name: string) {
+      return attributes.get(name);
+    },
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -184,6 +211,53 @@ describe('browser direct driver', () => {
       'http://127.0.0.1:12345',
       { timeout: 10_000 },
     );
+  });
+
+  it('clears stale element refs before assigning refs for a new snapshot', async () => {
+    const oldHidden = createDomElement({
+      tagName: 'BUTTON',
+      text: 'Old hidden button',
+      rect: { width: 0, height: 0 },
+      attributes: { 'data-myclaw-ref': 'e1' },
+    });
+    const newVisible = createDomElement({
+      tagName: 'BUTTON',
+      text: 'New visible button',
+    });
+    const originalDocument = (globalThis as any).document;
+    const originalLocation = (globalThis as any).location;
+    const page = {
+      evaluate: vi.fn(async (callback: () => unknown) => {
+        (globalThis as any).document = {
+          title: 'Changed controls',
+          body: { innerText: 'New visible button' },
+          querySelectorAll: vi.fn((selector: string) =>
+            selector === '[data-myclaw-ref]'
+              ? [oldHidden]
+              : [oldHidden, newVisible],
+          ),
+        };
+        (globalThis as any).location = {
+          href: 'https://example.test/changed',
+        };
+        try {
+          return callback();
+        } finally {
+          (globalThis as any).document = originalDocument;
+          (globalThis as any).location = originalLocation;
+        }
+      }),
+    };
+
+    const output = await snapshotPage(page as never, {});
+
+    expect(oldHidden.removeAttribute).toHaveBeenCalledWith('data-myclaw-ref');
+    expect(oldHidden.attributeValue('data-myclaw-ref')).toBeUndefined();
+    expect(newVisible.setAttribute).toHaveBeenCalledWith(
+      'data-myclaw-ref',
+      'e1',
+    );
+    expect(output).toContain('- e1: button "New visible button"');
   });
 
   it('keeps a pending CDP connection shared after one caller times out', async () => {
