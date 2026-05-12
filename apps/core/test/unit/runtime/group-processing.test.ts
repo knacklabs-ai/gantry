@@ -853,17 +853,35 @@ describe('createGroupProcessor', () => {
       const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ timestamp: '1700000001' })];
       const { deps } = setupHappyPath({ group, messages });
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
 
-      mockSpawnAgent.mockRejectedValue(new Error('spawn failed'));
-      (deps.getCursor as ReturnType<typeof vi.fn>).mockReturnValue(
-        'prev-cursor',
-      );
+      try {
+        mockSpawnAgent.mockRejectedValue(new Error('spawn failed'));
+        (deps.getCursor as ReturnType<typeof vi.fn>).mockReturnValue(
+          'prev-cursor',
+        );
 
-      const { processGroupMessages } = createGroupProcessor(deps);
-      const result = await processGroupMessages('group1@g.us');
+        const { processGroupMessages } = createGroupProcessor(deps);
+        const result = await processGroupMessages('group1@g.us');
 
-      // runAgent catches the error and returns 'error', no output was sent
-      expect(result).toBe(false);
+        // runAgent catches the error and returns 'error', no output was sent
+        expect(result).toBe(false);
+        expect(consoleError).toHaveBeenCalledWith(
+          'Agent error',
+          expect.objectContaining({
+            err: expect.objectContaining({
+              type: 'Error',
+              name: 'Error',
+              message: 'spawn failed',
+              stack: expect.stringContaining('spawn failed'),
+            }),
+          }),
+        );
+      } finally {
+        consoleError.mockRestore();
+      }
     });
   });
 

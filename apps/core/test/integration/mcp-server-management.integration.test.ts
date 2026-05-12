@@ -154,13 +154,21 @@ class InMemoryMcpServerRepository implements McpServerRepository {
   async listMaterializedServersForAgent(input: {
     appId: AppId;
     agentId: AgentId;
+    serverIds?: readonly McpServerId[];
   }): Promise<MaterializedMcpServer[]> {
+    if (input.serverIds && input.serverIds.length === 0) {
+      return [];
+    }
+    const selectedServerIds = input.serverIds
+      ? new Set(input.serverIds)
+      : undefined;
     return [...this.bindings.values()]
       .filter(
         (binding) =>
           binding.appId === input.appId &&
           binding.agentId === input.agentId &&
-          binding.status === 'active',
+          binding.status === 'active' &&
+          (!selectedServerIds || selectedServerIds.has(binding.serverId)),
       )
       .map((binding) => ({
         binding,

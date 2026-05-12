@@ -97,12 +97,59 @@ describe.runIf(hasPostgresIntegrationDatabase)(
         },
       ]);
 
+      const second = await service.createDraft({
+        appId: 'app-one' as never,
+        name: 'github',
+        transportConfig: {
+          transport: 'http',
+          url: 'https://93.184.216.34/github',
+        },
+        allowedToolPatterns: ['search_repositories'],
+      });
+      await service.approveDraft({
+        appId: 'app-one' as never,
+        serverId: second.definition.id,
+        approvedBy: 'reviewer',
+      });
+      await service.bindToAgent({
+        appId: 'app-one' as never,
+        agentId: 'agent:one' as never,
+        serverId: second.definition.id,
+      });
+
       await expect(
         runtime.repositories.mcpServers.listMaterializedServersForAgent({
           appId: 'app-one' as never,
           agentId: 'agent:one' as never,
         }),
+      ).resolves.toHaveLength(2);
+      await expect(
+        runtime.repositories.mcpServers.listMaterializedServersForAgent({
+          appId: 'app-one' as never,
+          agentId: 'agent:one' as never,
+          serverIds: [created.definition.id],
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          definition: expect.objectContaining({ id: created.definition.id }),
+        }),
+      ]);
+      await expect(
+        service.materializeForAgent({
+          appId: 'app-one' as never,
+          agentId: 'agent:one' as never,
+          serverIds: [created.definition.id],
+          credentialEnv: { LINEAR_TOKEN_REF: 'broker-safe-linear-token' },
+        }),
       ).resolves.toHaveLength(1);
+      await expect(
+        service.materializeForAgent({
+          appId: 'app-one' as never,
+          agentId: 'agent:one' as never,
+          serverIds: [],
+          credentialEnv: { LINEAR_TOKEN_REF: 'broker-safe-linear-token' },
+        }),
+      ).resolves.toEqual([]);
       await expect(
         runtime.repositories.mcpServers.listAuditEvents({
           appId: 'app-one' as never,

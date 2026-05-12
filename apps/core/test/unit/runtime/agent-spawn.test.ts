@@ -184,6 +184,8 @@ import type {
   McpServerVersionId,
 } from '@core/domain/mcp/mcp-servers.js';
 import type { McpServerRepository } from '@core/domain/ports/repositories.js';
+import type { AgentId } from '@core/domain/agent/agent.js';
+import type { AppId } from '@core/domain/app/app.js';
 
 const testGroup: ConversationRoute = {
   name: 'Test Group',
@@ -200,6 +202,11 @@ const testInput = {
 
 class SpawnMcpRepository implements McpServerRepository {
   auditEvents: McpServerAuditEvent[] = [];
+  materializedInputs: {
+    appId: AppId;
+    agentId: AgentId;
+    serverIds?: readonly McpServerId[];
+  }[] = [];
 
   constructor(private readonly records: MaterializedMcpServer[]) {}
 
@@ -245,8 +252,15 @@ class SpawnMcpRepository implements McpServerRepository {
     return [];
   }
 
-  async listMaterializedServersForAgent() {
-    return this.records;
+  async listMaterializedServersForAgent(input: {
+    appId: AppId;
+    agentId: AgentId;
+    serverIds?: readonly McpServerId[];
+  }) {
+    this.materializedInputs.push(input);
+    if (!input.serverIds) return this.records;
+    const selected = new Set(input.serverIds);
+    return this.records.filter((record) => selected.has(record.definition.id));
   }
 
   async appendAuditEvent(event: McpServerAuditEvent) {
@@ -315,6 +329,7 @@ describe('agent-spawn timeout behavior', () => {
     vi.mocked(spawn).mockClear();
     vi.mocked(fs.writeFileSync).mockClear();
     vi.mocked(getEffectiveModelConfig).mockClear();
+    vi.mocked(getHostRuntimeCredentialEnv).mockReset();
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValue({
       env: {},
       credentialProviders: {},
@@ -892,7 +907,7 @@ describe('agent-spawn timeout behavior', () => {
     ]);
     const resultPromise = spawnAgent(
       testGroup,
-      testInput,
+      { ...testInput, selectedMcpServerIds: ['mcp:github'] },
       () => {},
       undefined,
       {
@@ -920,6 +935,13 @@ describe('agent-spawn timeout behavior', () => {
       string,
       string
     >;
+    expect(repository.materializedInputs).toEqual([
+      expect.objectContaining({
+        appId: 'app-one',
+        agentId: 'agent-one',
+        serverIds: ['mcp:github'],
+      }),
+    ]);
     expect(env.MYCLAW_MCP_SERVERS_JSON).toBeUndefined();
     expect(env.MYCLAW_MCP_CONFIG_FILE).toMatch(/mcp-.*\.json$/);
     expect(JSON.parse(env.MYCLAW_MCP_ALLOWED_TOOLS_JSON)).toEqual([
@@ -953,6 +975,49 @@ describe('agent-spawn timeout behavior', () => {
       ]),
     );
     rmSyncSpy.mockRestore();
+  });
+
+  it('does not materialize MCP bindings when no MCP servers are selected for the run', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValue({
+      env: { GITHUB_TOKEN_REF: 'broker-token' },
+      credentialProviders: {},
+      brokerApplied: true,
+      brokerProfile: 'test',
+    });
+    const repository = new SpawnMcpRepository([mcpRecord()]);
+
+    const resultPromise = spawnAgent(
+      testGroup,
+      { ...testInput, selectedMcpServerIds: [] },
+      () => {},
+      undefined,
+      {
+        mcpServerRepository: repository,
+        mcpContext: { appId: 'app-one', agentId: 'agent-one' },
+        mcpHostnameLookup: vi.fn(async () => [
+          { address: '93.184.216.34', family: 4 as const },
+        ]),
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(repository.materializedInputs).toEqual([]);
+    expect(
+      vi
+        .mocked(getHostRuntimeCredentialEnv)
+        .mock.calls.some((call) => call[2]?.purpose === 'tool_capability'),
+    ).toBe(false);
+    expect(env.MYCLAW_MCP_CONFIG_FILE).toBeUndefined();
+    expect(env.MYCLAW_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
   });
 
   it('does not write MCP handoff files when runner files are missing', async () => {

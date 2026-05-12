@@ -310,16 +310,19 @@ export async function spawnAgent(
     appId: runnerAppId,
     agentId: input.agentId,
   });
+  const selectedMcpServerIds = input.selectedMcpServerIds ?? [];
   const allMcpCapabilities: MaterializedMcpCapability[] =
     options?.mcpServerRepository &&
     options.mcpContext?.appId &&
-    options.mcpContext.agentId
+    options.mcpContext.agentId &&
+    selectedMcpServerIds.length > 0
       ? await new McpServerService(options.mcpServerRepository, undefined, {
           lookupHostname: options.mcpHostnameLookup,
           dnsValidationCache: options.mcpDnsValidationCache,
         }).materializeForAgent({
           appId: options.mcpContext.appId as never,
           agentId: options.mcpContext.agentId as never,
+          serverIds: selectedMcpServerIds as never,
           credentialEnv: (
             await getHostRuntimeCredentialEnv(
               agentIdentifier,

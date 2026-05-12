@@ -74,6 +74,25 @@ function redactRuntimeLogValue(value: unknown, depth: number): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => redactRuntimeLogValue(entry, depth + 1));
   }
+  if (value instanceof Error) {
+    const errorPayload: Record<string, unknown> = {
+      type: value.constructor?.name || 'Error',
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+    const withCause = value as Error & {
+      cause?: unknown;
+      code?: unknown;
+    };
+    if ('code' in withCause) {
+      errorPayload.code = withCause.code;
+    }
+    if ('cause' in withCause) {
+      errorPayload.cause = withCause.cause;
+    }
+    return redactRuntimeLogValue(errorPayload, depth + 1);
+  }
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
