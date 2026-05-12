@@ -6,6 +6,7 @@ import type {
   NewMessage,
   ConversationRoute,
 } from './domain-types.js';
+import type { RuntimeEventType } from '../events/runtime-event-types.js';
 
 export interface JobUpsertInput {
   id: string;
@@ -60,7 +61,7 @@ export interface JobEventListFilters {
   job_id?: string;
   job_ids?: string[];
   run_id?: string;
-  event_type?: string;
+  event_type?: RuntimeEventType;
   since_id?: number;
   since?: string;
 }

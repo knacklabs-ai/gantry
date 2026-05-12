@@ -22,3 +22,6 @@
 - Drizzle may wrap Postgres `23505` unique violations under `cause`; retry or
   deterministic-upsert guards must inspect the wrapped cause instead of only
   the top-level error.
+- Runtime events must be appended only through `PostgresRuntimeEventRepository`.
+  Broker readiness belongs in `event_bus_outbox`; do not add direct
+  `runtime_events` inserts, dual event tables, or retired event aliases.

@@ -6,7 +6,10 @@ import type {
   JobRunListFilters,
   ReleasedStaleJobLease,
 } from '../../../../domain/repositories/ops-repo.js';
-import { RUNTIME_EVENT_TYPES } from '../../../../domain/events/runtime-event-types.js';
+import {
+  RUNTIME_EVENT_TYPES,
+  type RuntimeEventType,
+} from '../../../../domain/events/runtime-event-types.js';
 import { nowIso as currentIso } from '../../../../shared/time/datetime.js';
 import * as pgSchema from '../schema/schema.js';
 import {
@@ -475,25 +478,6 @@ export class PostgresCanonicalJobRepository {
     return rows[0]?.appId;
   }
 
-  async insertEvent(event: {
-    id: string;
-    runId: string;
-    type: string;
-    payloadJson: string;
-    createdAt: string;
-  }): Promise<void> {
-    const payload = parseJson<{ job_id?: string }>(event.payloadJson, {});
-    await this.db.insert(pgSchema.runtimeEventsPostgres).values({
-      appId: CANONICAL_APP_ID,
-      runId: event.runId,
-      jobId: payload.job_id ?? null,
-      eventType: event.type,
-      actor: 'runtime',
-      payloadJson: event.payloadJson,
-      createdAt: event.createdAt,
-    });
-  }
-
   async listEvents(
     limit = 200,
     filters?: {
@@ -502,7 +486,7 @@ export class PostgresCanonicalJobRepository {
       jobIds?: string[];
       ownerAppId?: string;
       runId?: string;
-      eventType?: string;
+      eventType?: RuntimeEventType;
       sinceId?: number;
       since?: string;
     },
@@ -537,10 +521,7 @@ export class PostgresCanonicalJobRepository {
           )
         : undefined,
       filters?.eventType
-        ? eq(
-            pgSchema.runtimeEventsPostgres.eventType,
-            filters.eventType as never,
-          )
+        ? eq(pgSchema.runtimeEventsPostgres.eventType, filters.eventType)
         : inArray(
             pgSchema.runtimeEventsPostgres.eventType,
             CANONICAL_JOB_EVENT_TYPES,

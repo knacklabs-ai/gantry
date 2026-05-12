@@ -1,5 +1,4 @@
 export const RUNTIME_EVENT_TYPES = {
-  SESSION_MESSAGE_ACCEPTED: 'session.message.accepted',
   SESSION_MESSAGE_INBOUND: 'session.message.inbound',
   SESSION_MESSAGE_OUTBOUND: 'session.message.outbound',
   SESSION_MESSAGE_STREAMING: 'session.message.streaming',
@@ -26,3 +25,28 @@ export const RUNTIME_EVENT_TYPES = {
 
 export type RuntimeEventType =
   (typeof RUNTIME_EVENT_TYPES)[keyof typeof RUNTIME_EVENT_TYPES];
+
+const RUNTIME_EVENT_TYPE_VALUES = new Set<string>(
+  Object.values(RUNTIME_EVENT_TYPES),
+);
+
+export function isRuntimeEventType(value: unknown): value is RuntimeEventType {
+  return (
+    typeof value === 'string' &&
+    RUNTIME_EVENT_TYPE_VALUES.has(value as RuntimeEventType)
+  );
+}
+
+export function parseRuntimeEventType(
+  value: unknown,
+): RuntimeEventType | undefined {
+  return isRuntimeEventType(value) ? value : undefined;
+}
+
+export function requireRuntimeEventType(
+  value: unknown,
+  context = 'Runtime event type',
+): RuntimeEventType {
+  if (isRuntimeEventType(value)) return value;
+  throw new Error(`${context} must be a known runtime event type.`);
+}

@@ -337,6 +337,13 @@
       "when": 1777155000000,
       "tag": "0047_agent_runs_notified_at",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1777158600000,
+      "tag": "0048_event_bus_outbox",
+      "breakpoints": true
     }
   ]
 }

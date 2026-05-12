@@ -13,7 +13,7 @@
 - `myclaw` CLI commands should return actionable plain-English recovery guidance instead of raw startup failures.
 - When path-sensitive code changes, update the matching tests in `apps/core/src/**/*.test.ts` in the same change.
 - Integration tests for runtime features must use shared harnesses under `apps/core/test/harness/`; DB-backed cases must guard on `MYCLAW_TEST_DATABASE_URL` and isolate schemas.
-- Run `npm run test:integration:postgres` for DB-backed feature work. A plain `npm run test:integration` is allowed to skip those suites when the local Postgres test URL is absent.
+- Run `npm run test:integration:postgres` for DB-backed feature work. Use a disposable Docker Postgres container for each task, enable `vector` and `pg_trgm` before migrations, pass its URL through `MYCLAW_TEST_DATABASE_URL`, and remove the container after the check. A plain `npm run test:integration` is allowed to skip those suites when the local Postgres test URL is absent.
 - When adding DB-backed outbound delivery coverage, include the suite in the `test:integration:postgres` script so the required database gate cannot silently omit it.
 - Claude Agent SDK boundary tests must stay hermetic: mock the SDK provider, assert generated options at the adapter boundary, and never require real Anthropic auth.
 - Claude runtime materialization owns generated Claude config paths and protected-path projection; host spawn code should consume the materializer result instead of naming `.claude` settings or skills as durable inputs.

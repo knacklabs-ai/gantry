@@ -1256,6 +1256,28 @@ describe('job application use cases', () => {
     });
   });
 
+  it('rejects unknown scheduler event filters before querying events', async () => {
+    const ops = {
+      listRecentJobEvents: vi.fn(async () => []),
+    };
+    const service = new JobManagementService({
+      ops: ops as unknown as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+    });
+
+    await expect(
+      service.listJobEvents({
+        appId: 'app-one',
+        eventType: 'runtime.unknown',
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'Unknown runtime event type "runtime.unknown".',
+    });
+    expect(ops.listRecentJobEvents).not.toHaveBeenCalled();
+  });
+
   it('uses repository app ownership filters for app-scoped run and event pages', async () => {
     const run: JobRun = {
       run_id: 'run-1',

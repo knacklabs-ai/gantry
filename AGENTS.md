@@ -124,6 +124,12 @@ Important constraints:
 - Discover and document exact verification commands before changing implementation behavior.
 - Run the smallest relevant checks after each change.
 - Run full checks at the end of a phase.
+- For Postgres-backed verification, use a disposable Docker Postgres container
+  for each task instead of the developer's persistent `~/myclaw/postgres` data.
+  The disposable database must enable the same bootstrap extensions as local
+  Compose before migrations run: `CREATE EXTENSION IF NOT EXISTS vector;` and
+  `CREATE EXTENSION IF NOT EXISTS pg_trgm;`. Point tests at it with
+  `MYCLAW_TEST_DATABASE_URL`, then stop/remove the container after the check.
 - Before validating `~/myclaw`, build/restart from this checkout, confirm `myclaw status`, and treat older generated logs/state as stale.
 - Archive stale generated state under `~/myclaw/cleanup-archive/<timestamp>/`; keep secrets, settings, Postgres, OneCLI data, artifacts, and active agent folders unless reset is requested.
 - Architecture exceptions must be time-bounded ratchets with max counts; never relax the checker globally to hide new debt.
