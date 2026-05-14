@@ -36,6 +36,9 @@ export interface JobUpsertInput {
   pause_reason?: string | null;
   execution_context?: Job['execution_context'];
   notification_routes?: Job['notification_routes'];
+  required_tools?: string[];
+  required_mcp_servers?: string[];
+  setup_state?: Job['setup_state'];
 }
 
 export interface JobListFilters {
@@ -155,6 +158,9 @@ export interface RuntimeJobRepository {
     requireNextRun?: boolean;
   }): Promise<boolean>;
   releaseStaleJobLeases(nowIso?: string): Promise<ReleasedStaleJobLease[]>;
+  releaseInterruptedJobLeases?(
+    nowIso?: string,
+  ): Promise<ReleasedStaleJobLease[]>;
   createJobRun(run: JobRun): Promise<boolean>;
   completeJobRun(
     runId: string,

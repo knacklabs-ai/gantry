@@ -5,6 +5,11 @@ import type {
   JobScheduleType,
 } from '../../domain/types.js';
 import type {
+  McpServerRepository,
+  ToolCatalogRepository,
+} from '../../domain/ports/repositories.js';
+import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
+import type {
   RuntimeEventFilter,
   RuntimeEventPublishInput,
 } from '../../domain/events/events.js';
@@ -14,6 +19,7 @@ import type {
 } from '../../domain/repositories/ops-repo.js';
 import type { Clock } from '../common/clock.js';
 import type { SchedulerCoordinationPort } from './scheduler-coordination-port.js';
+import type { JobReadinessBrowserStatus } from './job-readiness-service.js';
 
 export type JobKind = 'manual' | 'once' | 'recurring';
 
@@ -123,6 +129,12 @@ export interface JobManagementServiceDeps {
   control?: JobControlPort;
   runtimeEvents?: RuntimeEventPublisherPort;
   triggerQueue?: JobTriggerQueuePort;
+  toolRepository?: ToolCatalogRepository;
+  mcpServerRepository?: McpServerRepository;
+  getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
+  getBrowserStatus?: (
+    profileName: string,
+  ) => Promise<JobReadinessBrowserStatus | undefined>;
 }
 
 export interface CreateManagedJobInput {
@@ -132,6 +144,8 @@ export interface CreateManagedJobInput {
   sessionId: string;
   executionContext?: JobExecutionContextInput;
   notificationRoutes?: JobNotificationRouteInput[];
+  requiredTools?: string[];
+  requiredMcpServers?: string[];
   kind?: JobKind;
   runAt?: string;
   schedule?: { type?: unknown; value?: unknown };
@@ -151,6 +165,8 @@ export interface UpsertJobFromIpcInput {
   scheduleValue: string;
   executionContext?: JobExecutionContextInput;
   notificationRoutes?: JobNotificationRouteInput[];
+  requiredTools?: string[];
+  requiredMcpServers?: string[];
   threadId?: string;
   silent?: boolean;
   cleanupAfterMs?: number;
@@ -184,6 +200,8 @@ export type JobUpdatePatch = Partial<{
   scheduleValue: string;
   executionContext: JobExecutionContextInput;
   notificationRoutes: JobNotificationRouteInput[];
+  requiredTools: string[];
+  requiredMcpServers: string[];
   threadId: string | null;
   groupScope: string;
   silent: boolean;

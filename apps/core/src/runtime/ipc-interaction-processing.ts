@@ -12,7 +12,10 @@ import {
   formatPersistentPermissionRuleForEvent,
   formatPersistentPermissionRulesForUser,
 } from '../shared/persistent-permission-rules.js';
-import { permissionUpdateAllowedToolRules } from '../shared/permission-tool-rules.js';
+import {
+  permissionUpdateAllowedToolRules,
+  persistentPermissionUpdates,
+} from '../shared/permission-tool-rules.js';
 import { redactSensitiveText } from '../shared/sensitive-material.js';
 import { archiveIpcErrorFile } from './ipc-filesystem.js';
 import { getIpcResponseSigningPrivateKey } from './ipc-auth.js';
@@ -237,6 +240,9 @@ export async function processPermissionInteractionIpc(input: {
         approved: decision.approved,
       }),
     });
+    const responsePermissionUpdates = persistentPermissionUpdates(decision) as
+      | PermissionApprovalDecision['updatedPermissions']
+      | undefined;
     writePermissionIpcResponse(
       input.ipcBaseDir,
       input.sourceAgentFolder,
@@ -247,8 +253,9 @@ export async function processPermissionInteractionIpc(input: {
         mode: decision.mode,
         decidedBy: decision.decidedBy,
         reason: decision.reason,
-        updatedPermissions: decision.updatedPermissions,
+        updatedPermissions: responsePermissionUpdates,
         decisionClassification: decision.decisionClassification,
+        timedGrantExpiresAtMs: decision.timedGrantExpiresAtMs,
       },
       getIpcResponseSigningPrivateKey(
         input.sourceAgentFolder,

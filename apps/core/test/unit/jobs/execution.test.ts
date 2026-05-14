@@ -47,6 +47,8 @@ vi.mock('@core/jobs/system-jobs.js', () => ({
 }));
 
 const { runJob } = await import('@core/jobs/execution.js');
+const { evaluateJobReadiness } =
+  await import('@core/application/jobs/job-readiness-service.js');
 const { RUNTIME_RESULT_SUMMARY_MAX_CHARS } =
   await import('@core/runtime/session-resume-runtime.js');
 const compactMemory = await import('@core/jobs/compact-memory.js');
@@ -119,6 +121,26 @@ function makeOpsRepository(job: Job) {
     updateJob: vi.fn(async () => undefined),
     completeJobRun: vi.fn(async () => undefined),
     markJobRunNotified: vi.fn(async () => undefined),
+    listRecentJobEvents: vi.fn(async () => []),
+  };
+}
+
+function makeToolRepository(toolNames: string[]) {
+  return {
+    listAgentToolBindings: vi.fn(async () =>
+      toolNames.map((toolName) => ({
+        toolId: toolName,
+        appId: 'default',
+        agentId: 'agent:scheduler_agent',
+        status: 'active',
+      })),
+    ),
+    getTool: vi.fn(async (toolId: string) => ({
+      id: toolId,
+      appId: 'default',
+      name: toolId,
+      status: 'active',
+    })),
   };
 }
 
@@ -250,7 +272,7 @@ describe('jobs/execution', () => {
     expect(runCompletedEvent?.payload?.summary).not.toContain('json-result');
   });
 
-  it('dead-letters policy-denied recurring jobs with structured recovery events', async () => {
+  it('pauses policy-denied recurring jobs with structured setup recovery events', async () => {
     const job = makeJob({
       schedule_type: 'interval',
       schedule_value: '60000',
@@ -280,13 +302,16 @@ describe('jobs/execution', () => {
     expect(opsRepository.updateJob).toHaveBeenCalledWith(
       job.id,
       expect.objectContaining({
-        status: 'dead_lettered',
-        pause_reason: 'Needs permission: mcp__myclaw__browser_navigate',
+        status: 'paused',
+        pause_reason: 'Setup required',
+        setup_state: expect.objectContaining({
+          state: 'missing_capability',
+        }),
       }),
     );
     expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
       expect.any(String),
-      'dead_lettered',
+      'failed',
       null,
       expect.stringContaining('Tool not on autonomous job allowlist'),
     );
@@ -298,6 +323,120 @@ describe('jobs/execution', () => {
         denied_tool: 'mcp__myclaw__browser_navigate',
         recovery_kind: 'persistent_capability',
         recovery_action: expect.stringContaining('request_permission'),
+      }),
+    );
+  });
+
+  it('pauses policy-denied manual jobs instead of reactivating them', async () => {
+    const job = makeJob();
+    const opsRepository = makeOpsRepository(job);
+    const error =
+      'Tool not on autonomous job allowlist: Bash. Recovery: request_permission {"toolName":"Bash"}';
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        runAgent: vi.fn(async () => ({
+          status: 'error',
+          result: null,
+          error,
+        })) as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.updateJob).toHaveBeenCalledWith(
+      job.id,
+      expect.objectContaining({
+        status: 'paused',
+        pause_reason: 'Setup required',
+        setup_state: expect.objectContaining({
+          state: 'missing_capability',
+        }),
+      }),
+    );
+    expect(opsRepository.updateJob).not.toHaveBeenCalledWith(
+      job.id,
+      expect.objectContaining({
+        status: 'active',
+        pause_reason: null,
+      }),
+    );
+  });
+
+  it('pauses recurring jobs after transient permission approvals', async () => {
+    const job = makeJob({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      next_run: '2026-05-08T00:00:00.000Z',
+    });
+    const opsRepository = makeOpsRepository(job);
+    const runAgent = vi.fn(async (_group, _input, _onProcess, onStream) => {
+      await onStream({
+        status: 'success',
+        result: null,
+        runtimeEvents: [
+          {
+            eventType: 'job.tool_activity',
+            payload: {
+              phase: 'permission_allowed',
+              tool: 'Bash',
+              mode: 'allow_once',
+              ok: true,
+            },
+          },
+        ],
+      } as never);
+      return { status: 'success', result: 'completed with one-time grant' };
+    });
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'completed',
+      'completed with one-time grant',
+      null,
+    );
+    expect(opsRepository.updateJob).toHaveBeenCalledWith(
+      job.id,
+      expect.objectContaining({
+        status: 'paused',
+        pause_reason: 'Setup required',
+        next_run: null,
+        setup_state: expect.objectContaining({
+          state: 'missing_capability',
+          blockers: expect.arrayContaining([
+            expect.objectContaining({
+              requirementId: 'Bash',
+              nextAction: expect.stringContaining('request_permission'),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.setup_required',
+        payload: expect.objectContaining({
+          setup_state: 'missing_capability',
+        }),
       }),
     );
   });
@@ -928,6 +1067,478 @@ describe('jobs/execution', () => {
           pendingPermissionRequests: 1,
           totalToolCalls: 3,
         },
+      }),
+    );
+  });
+
+  it('fails required Browser preflight before spawning when Browser is not available', async () => {
+    const job = makeJob({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      required_tools: ['Browser'],
+    });
+    const opsRepository = makeOpsRepository(job);
+    const runAgent = vi.fn();
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(opsRepository.completeJobRun).not.toHaveBeenCalled();
+    expect(opsRepository.updateJob).toHaveBeenCalledWith(
+      job.id,
+      expect.objectContaining({
+        status: 'paused',
+        pause_reason: 'Setup required',
+        setup_state: expect.objectContaining({
+          state: 'missing_capability',
+        }),
+      }),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.setup_required',
+        payload: expect.objectContaining({
+          setup_state: 'missing_capability',
+        }),
+      }),
+    );
+  });
+
+  it('pauses after claim when final readiness fails before model spawn', async () => {
+    const job = makeJob({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      required_tools: ['Browser'],
+      next_run: '2026-05-08T00:00:00.000Z',
+    });
+    const opsRepository = makeOpsRepository(job);
+    const toolRepository = makeToolRepository(['Browser']);
+    const getBrowserStatus = vi
+      .fn()
+      .mockResolvedValueOnce({ hasState: true })
+      .mockResolvedValueOnce({ hasState: false });
+    const runAgent = vi.fn();
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus,
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.claimDueJobRunStart).toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(opsRepository.updateJob).toHaveBeenCalledWith(
+      job.id,
+      expect.objectContaining({
+        status: 'paused',
+        pause_reason: 'Setup required',
+        next_run: null,
+      }),
+    );
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      null,
+      expect.stringContaining('Setup required'),
+    );
+  });
+
+  it('does not repeat setup notifications for an unchanged blocker fingerprint', async () => {
+    const initialJob = makeJob({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      required_tools: ['Browser'],
+    });
+    const readiness = await evaluateJobReadiness({
+      job: initialJob,
+      appId: 'default',
+      agentId: 'agent:scheduler_agent',
+      clock: { now: () => '2026-05-08T00:00:00.000Z' },
+    });
+    const job = makeJob({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      required_tools: ['Browser'],
+      setup_state: {
+        ...readiness.setupState,
+        notified_fingerprint: readiness.setupState.fingerprint,
+      },
+    });
+    const opsRepository = makeOpsRepository(job);
+    const runAgent = vi.fn();
+    const sendMessage = vi.fn(async () => undefined);
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: sendMessage as never,
+        opsRepository: opsRepository as never,
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.setup_required',
+        payload: expect.objectContaining({
+          notified: false,
+        }),
+      }),
+    );
+  });
+
+  it('fails explicitly when required Browser was available but unused', async () => {
+    const job = makeJob({ required_tools: ['Browser'] });
+    const opsRepository = makeOpsRepository(job);
+    const toolRepository = makeToolRepository(['Browser']);
+    const runAgent = vi.fn(async () => ({
+      status: 'success',
+      result: 'done without browser',
+    }));
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(runAgent).toHaveBeenCalled();
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      'done without browser',
+      expect.stringContaining('Browser was available but not used'),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.tool_activity',
+        payload: expect.objectContaining({
+          phase: 'required_tool_unsatisfied',
+          tool: 'Browser',
+          ok: false,
+        }),
+      }),
+    );
+  });
+
+  it('keeps explicit tool denial as terminal error before required Browser post-check', async () => {
+    const job = makeJob({ required_tools: ['Browser'] });
+    const opsRepository = makeOpsRepository(job);
+    const toolRepository = makeToolRepository(['Browser']);
+    const runAgent = vi.fn(async (_group, _input, _onProcess, onStream) => {
+      await onStream({
+        status: 'success',
+        result: null,
+        runtimeEvents: [
+          {
+            eventType: 'job.tool_activity',
+            payload: {
+              phase: 'permission_wait',
+              tool: 'Bash',
+              ok: false,
+              reason: 'Tool not on autonomous job allowlist: Bash.',
+              recovery_action: 'request_permission { "toolName": "Bash" }',
+            },
+          },
+          {
+            eventType: 'job.tool_activity',
+            payload: {
+              phase: 'permission_denied',
+              tool: 'Bash',
+              ok: false,
+              reason: 'Autonomous permission approval is disabled.',
+            },
+          },
+        ],
+      } as never);
+      return { status: 'success', result: 'blocked' };
+    });
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      'blocked',
+      expect.stringContaining('Permission denied for Bash'),
+    );
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      'blocked',
+      expect.not.stringContaining('Browser was available but not used'),
+    );
+  });
+
+  it('satisfies required Browser from durable browser IPC activity', async () => {
+    const job = makeJob({ required_tools: ['Browser'] });
+    const opsRepository = makeOpsRepository(job);
+    vi.mocked(opsRepository.listRecentJobEvents).mockResolvedValue([
+      {
+        id: 1,
+        job_id: 'job-1',
+        run_id: 'run-1',
+        event_type: 'job.tool_activity',
+        payload: JSON.stringify({ tool: 'browser_navigate', ok: true }),
+        created_at: '2026-05-08T00:00:01.000Z',
+      },
+    ]);
+    const toolRepository = makeToolRepository(['Browser']);
+    const runAgent = vi.fn(async () => ({
+      status: 'success',
+      result: 'browser done',
+    }));
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'completed',
+      'browser done',
+      null,
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.tool_activity',
+        payload: expect.objectContaining({
+          phase: 'required_tool_satisfied',
+          tool: 'Browser',
+          browser_activity_count: 1,
+          ok: true,
+        }),
+      }),
+    );
+  });
+
+  it('keeps Browser activity diagnostics when a required-Browser run fails later', async () => {
+    const job = makeJob({ required_tools: ['Browser'] });
+    const opsRepository = makeOpsRepository(job);
+    vi.mocked(opsRepository.listRecentJobEvents).mockResolvedValue([
+      {
+        id: 1,
+        job_id: 'job-1',
+        run_id: 'run-1',
+        event_type: 'job.tool_activity',
+        payload: JSON.stringify({ tool: 'browser_navigate', ok: true }),
+        created_at: '2026-05-08T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        job_id: 'job-1',
+        run_id: 'run-1',
+        event_type: 'job.tool_activity',
+        payload: JSON.stringify({ tool: 'browser_snapshot', ok: true }),
+        created_at: '2026-05-08T00:00:02.000Z',
+      },
+    ]);
+    const toolRepository = makeToolRepository(['Browser']);
+    const runAgent = vi.fn(async () => ({
+      status: 'error',
+      error:
+        'Scheduled job made no runner or tool progress for 10 min. lastTool=SandboxNetworkAccess',
+    }));
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      null,
+      expect.stringContaining('Scheduled job made no runner or tool progress'),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.failed',
+        payload: expect.objectContaining({
+          diagnostics: expect.objectContaining({
+            browser_activity_count: 2,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('does not satisfy required Browser from status or permission events alone', async () => {
+    const job = makeJob({ required_tools: ['Browser'] });
+    const opsRepository = makeOpsRepository(job);
+    vi.mocked(opsRepository.listRecentJobEvents).mockResolvedValue([
+      {
+        id: 1,
+        job_id: 'job-1',
+        run_id: 'run-1',
+        event_type: 'job.tool_activity',
+        payload: JSON.stringify({ tool: 'browser_status', ok: true }),
+        created_at: '2026-05-08T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        job_id: 'job-1',
+        run_id: 'run-1',
+        event_type: 'job.tool_activity',
+        payload: JSON.stringify({
+          phase: 'permission_allowed',
+          tool: 'mcp__myclaw__browser_navigate',
+          ok: true,
+        }),
+        created_at: '2026-05-08T00:00:02.000Z',
+      },
+    ]);
+    const toolRepository = makeToolRepository(['Browser']);
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+        runAgent: vi.fn(async () => ({
+          status: 'success',
+          result: 'status only',
+        })) as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      'status only',
+      expect.stringContaining('Browser was available but not used'),
+    );
+  });
+
+  it('forwards non-heartbeat scheduled runner runtime events', async () => {
+    const job = makeJob();
+    const opsRepository = makeOpsRepository(job);
+    const runAgent = vi.fn(async (_group, _input, _onProcess, onStream) => {
+      await onStream({
+        status: 'success',
+        result: null,
+        runtimeEvents: [
+          {
+            eventType: 'task.notification',
+            payload: { taskId: 'task-1', status: 'started' },
+          },
+          {
+            eventType: 'permission.requested',
+            payload: { toolName: 'Bash' },
+          },
+          {
+            eventType: 'sandbox.blocked',
+            payload: { toolName: 'Bash', reason: 'protected path' },
+          },
+        ],
+      } as never);
+      return { status: 'success', result: 'done' };
+    });
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        runAgent: runAgent as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'task.notification',
+        payload: { taskId: 'task-1', status: 'started' },
+      }),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'permission.requested',
+        payload: { toolName: 'Bash' },
+      }),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'sandbox.blocked',
+        payload: { toolName: 'Bash', reason: 'protected path' },
       }),
     );
   });

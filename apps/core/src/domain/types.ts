@@ -97,6 +97,37 @@ export interface JobNotificationRoute {
   label: string;
 }
 
+export type JobSetupReadinessState =
+  | 'ready'
+  | 'missing_capability'
+  | 'broker_unreachable'
+  | 'credential_unknown'
+  | 'browser_login_may_be_required'
+  | 'mcp_missing_credential'
+  | 'draft_only';
+
+export interface JobSetupBlocker {
+  state: Exclude<JobSetupReadinessState, 'ready'>;
+  message: string;
+  nextAction: string;
+  requirementType:
+    | 'tool'
+    | 'semantic_capability'
+    | 'browser'
+    | 'mcp_server'
+    | 'credential'
+    | 'local_cli';
+  requirementId: string;
+}
+
+export interface JobSetupState {
+  state: JobSetupReadinessState;
+  checked_at: string;
+  fingerprint: string;
+  blockers: JobSetupBlocker[];
+  notified_fingerprint?: string | null;
+}
+
 export interface Job {
   id: string;
   name: string;
@@ -125,6 +156,9 @@ export interface Job {
   pause_reason: string | null;
   execution_context?: JobExecutionContext;
   notification_routes?: JobNotificationRoute[];
+  required_tools?: string[];
+  required_mcp_servers?: string[];
+  setup_state?: JobSetupState;
 }
 
 export type JobRunStatus =
@@ -194,6 +228,7 @@ export interface PermissionApprovalRequest {
 export type PermissionApprovalDecisionMode =
   | 'allow_once'
   | 'allow_persistent_rule'
+  | 'allow_timed_grant'
   | 'cancel';
 
 export interface PermissionApprovalRuleValue {
@@ -228,6 +263,7 @@ export interface PermissionApprovalDecision {
   reason?: string;
   updatedPermissions?: PermissionApprovalUpdate[];
   decisionClassification?: 'user_temporary' | 'user_permanent' | 'user_reject';
+  timedGrantExpiresAtMs?: number;
 }
 
 export interface UserQuestionOption {

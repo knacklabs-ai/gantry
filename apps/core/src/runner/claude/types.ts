@@ -83,11 +83,16 @@ export interface AgentRunnerRuntimeEventOutput {
 
 export interface PermissionDecision {
   approved: boolean;
-  mode?: 'allow_once' | 'allow_persistent_rule' | 'cancel';
+  mode?:
+    | 'allow_once'
+    | 'allow_persistent_rule'
+    | 'allow_timed_grant'
+    | 'cancel';
   decidedBy?: string;
   reason?: string;
   updatedPermissions?: unknown[];
   decisionClassification?: 'user_temporary' | 'user_permanent' | 'user_reject';
+  timedGrantExpiresAtMs?: number;
 }
 
 export interface SessionSlashCommand {

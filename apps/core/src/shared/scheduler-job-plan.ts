@@ -19,6 +19,8 @@ export interface SchedulerJobPlanInput {
     threadId: string | null;
     label: string;
   }>;
+  requiredTools?: string[];
+  requiredMcpServers?: string[];
   silent?: boolean;
   cleanupAfterMs?: number;
   timeoutMs?: number;
@@ -64,11 +66,21 @@ export function formatSchedulerJobPlan(
   const runtime =
     input.runtimeDescription ??
     `execution ${formatExecutionContext(input.executionContext)}; notifications ${routeText}; background`;
+  const requiredTools =
+    input.requiredTools && input.requiredTools.length > 0
+      ? input.requiredTools.join(', ')
+      : 'none';
+  const requiredMcpServers =
+    input.requiredMcpServers && input.requiredMcpServers.length > 0
+      ? input.requiredMcpServers.join(', ')
+      : 'none';
   return [
     'Scheduler job plan. Review before confirming.',
     `- Schedule: ${input.scheduleType} ${input.scheduleValue || '(empty)'}`,
     `- Model: ${model}`,
-    '- Tool access: inherited from the target agent capability selection; missing tools will pause the job for permission.',
+    `- Required tools: ${requiredTools}`,
+    `- Required MCP servers: ${requiredMcpServers}`,
+    '- Tool access: inherited from the target agent capability selection; required tools are assertions only and missing tools will pause the job for permission.',
     '- Network: governed by the same tool permission and sandbox policy as live runs; no standalone scheduler network grant is created.',
     '- Memory: uses the target agent runtime memory settings; no memory schema or store changes are made by this plan.',
     `- Runtime: ${runtime}`,
@@ -97,6 +109,8 @@ function normalizePlanInput(
     scheduleValue: input.scheduleValue,
     executionContext: input.executionContext,
     notificationRoutes: input.notificationRoutes ?? [],
+    requiredTools: input.requiredTools ?? [],
+    requiredMcpServers: input.requiredMcpServers ?? [],
     silent: input.silent ?? false,
     cleanupAfterMs: input.cleanupAfterMs,
     timeoutMs: input.timeoutMs,

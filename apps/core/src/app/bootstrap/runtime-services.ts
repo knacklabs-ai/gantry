@@ -54,6 +54,7 @@ import {
 } from '../../domain/messages/partial-delivery.js';
 import { isAmbiguousDurableDeliveryError } from '../../domain/messages/durable-delivery.js';
 import { startOutboundDeliveryRecoveryLoop } from '../../jobs/outbound-delivery-recovery.js';
+import { getBrowserStatus } from '../../runtime/browser-capability.js';
 import type { OutboundDeliveryProfile } from '../../domain/outbound-delivery/planner.js';
 import {
   LIVE_SEND_PROFILE_ID,
@@ -216,6 +217,7 @@ export async function startRuntimeServices(
     getMcpDnsValidationCache: resolved.getMcpDnsValidationCache,
     getSkillArtifactStore: resolved.getSkillArtifactStore,
     getToolRepository: resolved.getToolRepository,
+    getBrowserStatus,
   });
 
   resolved.startIpcWatcher({
@@ -236,6 +238,7 @@ export async function startRuntimeServices(
     onSchedulerChanged,
     opsRepository: resolved.opsRepository,
     getToolRepository: resolved.getToolRepository,
+    getMcpServerRepository: resolved.getMcpServerRepository,
     getPermissionRepository: resolved.getPermissionRepository,
     publishRuntimeEvent: resolved.publishRuntimeEvent,
     mirrorAgentToolRulesToSettings: createAgentToolRuleSettingsMirror({
@@ -248,6 +251,7 @@ export async function startRuntimeServices(
     getCredentialBrokerProfile: () => getCredentialBrokerRuntimeConfig().mode,
     callBrowserTool: resolved.callBrowserTool,
     publishBrowserJobActivity: resolved.publishBrowserJobActivity,
+    getBrowserStatus,
     closeBrowserToolBackends: resolved.closeBrowserToolBackends,
     getBrowserUsageSettings: () => getRuntimeSettingsForConfig().browser.usage,
     requestPermissionApproval: channelWiring.requestPermissionApproval,

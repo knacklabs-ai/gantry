@@ -239,12 +239,14 @@ describe('contracts package', () => {
           label: 'primary',
         },
       ],
+      requiredTools: ['Browser'],
       kind: 'recurring',
       schedule: { type: 'cron', value: '0 9 * * *' },
       modelAlias: 'sonnet',
     } satisfies CreateJobInput;
     expect(CreateJobRequestSchema.parse(sdkCreatePayload)).toMatchObject({
       name: 'Daily summary',
+      requiredTools: ['Browser'],
       executionContext: {
         conversationJid: 'app:app-one:session-1',
         sessionId: 'session-1',
@@ -353,10 +355,12 @@ describe('contracts package', () => {
 
     const sdkUpdatePayload = {
       modelAlias: null,
+      requiredTools: ['Browser'],
       status: 'paused',
     } satisfies UpdateJobInput;
     expect(UpdateJobRequestSchema.parse(sdkUpdatePayload)).toEqual({
       modelAlias: null,
+      requiredTools: ['Browser'],
       status: 'paused',
     });
     expectInvalid(UpdateJobRequestSchema, {
@@ -422,6 +426,8 @@ describe('contracts package', () => {
             label: 'primary',
           },
         ],
+        requiredTools: ['Browser'],
+        requiredMcpServers: [],
         nextRun: iso,
         lastRun: null,
         staleness: 'missed_window',

@@ -9,12 +9,16 @@ import {
 import type { RuntimeJobRepository } from '../domain/repositories/ops-repo.js';
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import type {
+  McpServerRepository,
   PermissionRepository,
   ToolCatalogRepository,
 } from '../domain/ports/repositories.js';
 import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
 import type { CredentialBrokerProfile } from '../domain/models/credentials.js';
-import type { JobControlPort } from '../application/jobs/job-management-types.js';
+import type {
+  JobControlPort,
+  JobManagementServiceDeps,
+} from '../application/jobs/job-management-types.js';
 import type { BrowserIpcAction } from '@myclaw/contracts';
 import type { BrowserSessionStatus } from './browser-capability-types.js';
 import type { BrowserUsageSettings } from './browser-usage-governor.js';
@@ -48,6 +52,7 @@ export interface IpcDeps {
   mcpHostnameLookup?: HostnameLookup;
   opsRepository: RuntimeJobRepository;
   getToolRepository?: () => ToolCatalogRepository | undefined;
+  getMcpServerRepository?: () => McpServerRepository | undefined;
   getPermissionRepository?: () => PermissionRepository | undefined;
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<void>;
   getJobControl?: () => JobControlPort | undefined;
@@ -77,6 +82,7 @@ export interface IpcDeps {
     warning?: string | null;
     error?: string | null;
   }) => Promise<void> | void;
+  getBrowserStatus?: JobManagementServiceDeps['getBrowserStatus'];
   closeBrowserToolBackends?: (profileName?: string) => Promise<void>;
   getBrowserUsageSettings?: () =>
     | BrowserUsageSettings

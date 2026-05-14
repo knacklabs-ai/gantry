@@ -4,7 +4,11 @@ export interface DurationFormatOptions {
 
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return '';
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const durationMs = Math.max(0, ms);
+  if (durationMs > 0 && durationMs < 1000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+  const totalSeconds = Math.round(durationMs / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
   const totalMinutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;

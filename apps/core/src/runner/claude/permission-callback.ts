@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { nowIso, nowMs, sleep } from '../../shared/time/datetime.js';
 import { formatDuration } from '../../shared/human-format.js';
 import { isPlainObject } from '../../shared/object.js';
+import { persistentPermissionUpdates } from '../../shared/permission-tool-rules.js';
 import { hasValidIpcResponseSignature } from './ipc-signing.js';
 import { createSignedIpcRequestEnvelope } from './ipc-signing.js';
 import {
@@ -151,6 +152,14 @@ export async function requestPermissionApproval(options: {
                     ).decisionClassification,
                   }
                 : {}),
+              ...(typeof (raw as { timedGrantExpiresAtMs?: unknown })
+                .timedGrantExpiresAtMs === 'number'
+                ? {
+                    timedGrantExpiresAtMs: (
+                      raw as { timedGrantExpiresAtMs: number }
+                    ).timedGrantExpiresAtMs,
+                  }
+                : {}),
             };
             if (
               (raw as { responseNonce?: unknown }).responseNonce !==
@@ -175,6 +184,7 @@ export async function requestPermissionApproval(options: {
             const mode =
               responsePayload.mode === 'allow_once' ||
               responsePayload.mode === 'allow_persistent_rule' ||
+              responsePayload.mode === 'allow_timed_grant' ||
               responsePayload.mode === 'cancel'
                 ? responsePayload.mode
                 : undefined;
@@ -184,8 +194,18 @@ export async function requestPermissionApproval(options: {
               responsePayload.decisionClassification === 'user_reject'
                 ? responsePayload.decisionClassification
                 : undefined;
-            return {
+            const sanitizedDecision = {
               approved: responsePayload.approved as boolean,
+              mode,
+              decisionClassification,
+              updatedPermissions: Array.isArray(
+                responsePayload.updatedPermissions,
+              )
+                ? (responsePayload.updatedPermissions as never)
+                : undefined,
+            };
+            return {
+              approved: sanitizedDecision.approved,
               decidedBy:
                 typeof responsePayload.decidedBy === 'string'
                   ? responsePayload.decidedBy
@@ -195,12 +215,14 @@ export async function requestPermissionApproval(options: {
                   ? responsePayload.reason
                   : undefined,
               mode,
-              updatedPermissions: Array.isArray(
-                responsePayload.updatedPermissions,
-              )
-                ? (responsePayload.updatedPermissions as never)
-                : undefined,
+              updatedPermissions: persistentPermissionUpdates(
+                sanitizedDecision,
+              ) as never,
               decisionClassification,
+              timedGrantExpiresAtMs:
+                typeof responsePayload.timedGrantExpiresAtMs === 'number'
+                  ? (responsePayload.timedGrantExpiresAtMs as number)
+                  : undefined,
             };
           }
           return { approved: false, reason: 'Malformed permission response' };

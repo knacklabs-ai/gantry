@@ -223,6 +223,12 @@ export class PostgresRuntimeRepositoryBundle
     return this.jobs.releaseStaleJobLeases(nowIso);
   }
 
+  async releaseInterruptedJobLeases(
+    nowIso?: string,
+  ): Promise<ReleasedStaleJobLease[]> {
+    return this.jobs.releaseInterruptedJobLeases(nowIso);
+  }
+
   async createJobRun(run: JobRun): Promise<boolean> {
     return this.jobs.createJobRun(run);
   }

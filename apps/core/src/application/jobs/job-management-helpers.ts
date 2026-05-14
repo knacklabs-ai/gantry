@@ -297,6 +297,12 @@ export function buildJobUpdates(
     );
     updates.notification_routes = notificationRoutes;
   }
+  if (patch.requiredTools !== undefined) {
+    updates.required_tools = patch.requiredTools;
+  }
+  if (patch.requiredMcpServers !== undefined) {
+    updates.required_mcp_servers = patch.requiredMcpServers;
+  }
   if (patch.silent !== undefined) updates.silent = patch.silent;
   if (patch.cleanupAfterMs !== undefined)
     updates.cleanup_after_ms = patch.cleanupAfterMs;

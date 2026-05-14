@@ -8,21 +8,46 @@ export async function releaseStaleCanonicalJobLeases(
   db: CanonicalDb,
   nowIso: string,
 ): Promise<ReleasedStaleJobLease[]> {
+  return releaseCanonicalJobLeases(db, nowIso, {
+    errorSummary: 'Scheduler run lease expired before completion.',
+    staleOnly: true,
+  });
+}
+
+export async function releaseInterruptedCanonicalJobLeases(
+  db: CanonicalDb,
+  nowIso: string,
+): Promise<ReleasedStaleJobLease[]> {
+  return releaseCanonicalJobLeases(db, nowIso, {
+    errorSummary: 'Scheduler runtime restarted before completion.',
+    staleOnly: false,
+  });
+}
+
+async function releaseCanonicalJobLeases(
+  db: CanonicalDb,
+  nowIso: string,
+  options: { errorSummary: string; staleOnly: boolean },
+): Promise<ReleasedStaleJobLease[]> {
   return db.transaction(async (tx) => {
     const jobs = pgSchema.canonicalJobsPostgres;
     const runs = pgSchema.agentRunsPostgres;
+    const stalePredicate = and(
+      eq(jobs.status, 'running'),
+      isNotNull(jobs.leaseExpiresAt),
+      lt(jobs.leaseExpiresAt, nowIso),
+    );
+    const interruptedPredicate = and(
+      eq(jobs.status, 'running'),
+      isNotNull(jobs.leaseRunId),
+    );
+    const predicate = options.staleOnly ? stalePredicate : interruptedPredicate;
     const staleJobs = await tx
       .select({ id: jobs.id, leaseRunId: jobs.leaseRunId })
       .from(jobs)
-      .where(
-        and(
-          eq(jobs.status, 'running'),
-          isNotNull(jobs.leaseExpiresAt),
-          lt(jobs.leaseExpiresAt, nowIso),
-        ),
-      );
+      .where(predicate);
     if (staleJobs.length === 0) return [];
-    await tx
+    const releasedJobs = await tx
       .update(jobs)
       .set({
         status: 'active',
@@ -31,12 +56,20 @@ export async function releaseStaleCanonicalJobLeases(
         updatedAt: nowIso,
       })
       .where(
-        inArray(
-          jobs.id,
-          staleJobs.map((job) => job.id),
+        and(
+          inArray(
+            jobs.id,
+            staleJobs.map((job) => job.id),
+          ),
+          predicate,
         ),
-      );
-    const runIds = staleJobs
+      )
+      .returning({ id: jobs.id });
+    const releasedJobIds = new Set(releasedJobs.map((job) => job.id));
+    const releasedStaleJobs = staleJobs.filter((job) =>
+      releasedJobIds.has(job.id),
+    );
+    const runIds = releasedStaleJobs
       .map((job) => job.leaseRunId)
       .filter((runId): runId is string => Boolean(runId));
     const timedOutRunIds = new Set<string>();
@@ -46,13 +79,13 @@ export async function releaseStaleCanonicalJobLeases(
         .set({
           status: 'timeout',
           endedAt: nowIso,
-          errorSummary: 'Scheduler run lease expired before completion.',
+          errorSummary: options.errorSummary,
         })
         .where(and(inArray(runs.id, runIds), eq(runs.status, 'running')))
         .returning({ id: runs.id });
       for (const row of timedOutRows) timedOutRunIds.add(row.id);
     }
-    return staleJobs.map((job) => ({
+    return releasedStaleJobs.map((job) => ({
       jobId: job.id,
       runId: job.leaseRunId,
       releasedAt: nowIso,

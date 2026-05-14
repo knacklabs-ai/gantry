@@ -7,6 +7,7 @@ import {
   createIpcResponseSigningKeyPair,
   verifyIpcResponsePayload,
 } from '@core/infrastructure/ipc/response-signing.js';
+import { createIpcAuthEnvelope } from '@core/runtime/ipc-auth.js';
 
 import {
   processPermissionIpcRequest,
@@ -248,6 +249,75 @@ describe('ipc-interaction-handler', () => {
       expect.stringContaining('Persistent permission applied:'),
       expect.any(Object),
     );
+  });
+
+  it('strips live-rule updates from non-permanent permission IPC responses', async () => {
+    const envelope = createIpcAuthEnvelope('main_agent', null);
+    const claimedPath = path.join(tempDir, 'claimed-allow-once.json');
+    fs.writeFileSync(claimedPath, '{}');
+
+    await processPermissionInteractionIpc({
+      request: {
+        requestId: 'perm-once',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        responseNonce: 'nonce-once',
+        responseKeyId: envelope.responseKeyId,
+        sourceAgentFolder: 'main_agent',
+        runHandle: 'agent-run-once',
+        targetJid: 'tg:team',
+        toolName: 'Bash',
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        requestPermissionApproval: vi.fn(async () => ({
+          approved: true,
+          mode: 'allow_once',
+          decidedBy: 'owner',
+          decisionClassification: 'user_temporary',
+          updatedPermissions: [
+            {
+              type: 'addRules',
+              behavior: 'allow',
+              rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+            },
+          ],
+        })),
+      },
+      ipcBaseDir: tempDir,
+      file: 'claimed-allow-once.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    const response = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'permission-responses',
+          'perm-once.json',
+        ),
+        'utf-8',
+      ),
+    );
+    expect(response).toMatchObject({
+      requestId: 'perm-once',
+      approved: true,
+      mode: 'allow_once',
+      decisionClassification: 'user_temporary',
+    });
+    expect(response.updatedPermissions).toBeUndefined();
+    expect(
+      fs.existsSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'live-tool-rules',
+          'agent-run-once.json',
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('emits structured permission events and redacted Bash command telemetry', async () => {

@@ -131,6 +131,7 @@ export class PgBossSchedulerEngine {
       },
       (jobs) => this.processBossJobs(jobs),
     );
+    await this.releaseInterruptedStartupLeases();
     await this.syncAllJobs();
     this.ready = true;
     this.startMaintenanceTimer();
@@ -267,6 +268,28 @@ export class PgBossSchedulerEngine {
     for (const jobId of this.scheduleSignatures.keys()) {
       if (!liveJobIds.has(jobId)) await this.clearDeletedJob(boss, jobId);
     }
+  }
+
+  private async releaseInterruptedStartupLeases(): Promise<void> {
+    const releaseInterrupted =
+      this.deps.opsRepository.releaseInterruptedJobLeases;
+    if (!releaseInterrupted) return;
+    const released = await releaseInterrupted.call(this.deps.opsRepository);
+    if (released.length === 0) return;
+    logger.warn(
+      {
+        count: released.length,
+        releases: released.map((release) => ({
+          jobId: release.jobId,
+          runId: release.runId,
+          runTimedOut: release.runTimedOut,
+        })),
+      },
+      'Released interrupted scheduler leases after runtime startup',
+    );
+    await this.callbacks.handleReleasedStaleLeases?.(released, this.deps);
+    this.scheduleSignatures.clear();
+    this.deps.onSchedulerChanged?.();
   }
 
   private async syncOneJob(jobId: string): Promise<void> {

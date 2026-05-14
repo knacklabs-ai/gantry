@@ -19,6 +19,7 @@ import { stopSchedulerLoop } from '../jobs/scheduler.js';
 import { stopOutboundDeliveryRecoveryLoop } from '../jobs/outbound-delivery-recovery.js';
 import { publishBrowserJobActivityEvent } from '../jobs/browser-activity-events.js';
 import { MYCLAW_HOME } from '../config/index.js';
+import { getBrowserStatus } from '../runtime/browser-capability.js';
 import { startSettingsReloadWatcher } from '../runtime/settings-reload-watcher.js';
 import {
   formatRuntimePreflightFailure,
@@ -154,7 +155,7 @@ export async function startMyClawRuntime(
         (await loadBrowserToolModule()).closeBrowserToolBackends(profileName),
     },
   );
-  controlServerRef.current = startControlServer({ app });
+  controlServerRef.current = startControlServer({ app, getBrowserStatus });
 }
 
 const isDirectRun =

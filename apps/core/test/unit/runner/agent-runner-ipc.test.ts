@@ -547,6 +547,11 @@ export async function* query({ prompt, options }) {
       }
     }
 
+    if (process.env.TEST_CHECK_STREAM_ENDED === '1') {
+      const closed = await nextWithTimeout(iterator, 1000);
+      call.streamEnded = Boolean(closed?.done);
+    }
+
     if (process.env.TEST_ACTIVE_INPUT_ORDER === '1') {
       writeInput('001-active-first.json', 'active follow-up first');
       writeInput('002-active-second.json', 'active follow-up second');
@@ -1746,6 +1751,30 @@ describe('agent-runner IPC lifecycle', () => {
       expect(
         fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
       ).toBe(false);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'closes the SDK prompt stream for one-shot scheduled jobs',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          isScheduledJob: true,
+          jobId: 'job-1',
+        }),
+        {
+          TEST_CHECK_STREAM_ENDED: '1',
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.streamMessages).toHaveLength(1);
+      expect(call?.streamEnded).toBe(true);
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );

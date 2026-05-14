@@ -98,6 +98,7 @@ describe('permission interaction', () => {
     expect(firstPersistentRule(request)).toBeUndefined();
     expect(permissionDecisionOptions(request)).toEqual([
       'allow_once',
+      'allow_timed_grant',
       'cancel',
     ]);
     const decision = decisionForMode(request, 'allow_persistent_rule');
@@ -117,6 +118,7 @@ describe('permission interaction', () => {
     expect(firstPersistentRule(request)).toBeUndefined();
     expect(permissionDecisionOptions(request)).toEqual([
       'allow_once',
+      'allow_timed_grant',
       'cancel',
     ]);
   });
@@ -136,6 +138,7 @@ describe('permission interaction', () => {
     expect(firstPersistentRule(request)).toBeUndefined();
     expect(permissionDecisionOptions(request)).toEqual([
       'allow_once',
+      'allow_timed_grant',
       'cancel',
     ]);
   });
@@ -482,6 +485,7 @@ describe('permission interaction', () => {
     expect(persistentRules(request)).toEqual([]);
     expect(permissionDecisionOptions(request)).toEqual([
       'allow_once',
+      'allow_timed_grant',
       'cancel',
     ]);
   });

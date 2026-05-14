@@ -127,6 +127,12 @@ export const JobHealthSchema = z
   .object({
     state: z.enum([
       'ready',
+      'missing_capability',
+      'broker_unreachable',
+      'credential_unknown',
+      'browser_login_may_be_required',
+      'mcp_missing_credential',
+      'draft_only',
       'running',
       'completed',
       'failed',
@@ -146,6 +152,35 @@ export const JobHealthSchema = z
   .strict();
 export type JobHealth = z.infer<typeof JobHealthSchema>;
 
+export const JobSetupSchema = z
+  .object({
+    state: z.enum([
+      'ready',
+      'missing_capability',
+      'broker_unreachable',
+      'credential_unknown',
+      'browser_login_may_be_required',
+      'mcp_missing_credential',
+      'draft_only',
+    ]),
+    checkedAt: IsoDateTimeSchema.nullable(),
+    fingerprint: z.string().nullable(),
+    blockers: z.array(
+      z
+        .object({
+          state: z.string(),
+          message: z.string(),
+          nextAction: z.string(),
+          requirementType: z.string(),
+          requirementId: z.string(),
+        })
+        .strict(),
+    ),
+    nextAction: z.string().nullable(),
+  })
+  .strict();
+export type JobSetup = z.infer<typeof JobSetupSchema>;
+
 export const JobToolAccessSchema = z
   .object({
     inheritedAgentTools: z.array(z.string()),
@@ -156,12 +191,22 @@ export const JobToolAccessSchema = z
   .strict();
 export type JobToolAccess = z.infer<typeof JobToolAccessSchema>;
 
+export const JobRequiredToolsSchema = z.array(z.string().min(1)).default([]);
+export type JobRequiredTools = z.infer<typeof JobRequiredToolsSchema>;
+
+export const JobRequiredMcpServersSchema = z
+  .array(z.string().min(1))
+  .default([]);
+export type JobRequiredMcpServers = z.infer<typeof JobRequiredMcpServersSchema>;
+
 export const CreateJobRequestSchema = z
   .object({
     name: z.string().min(1),
     prompt: z.string().min(1),
     executionContext: JobRequestExecutionContextSchema,
     notificationRoutes: z.array(JobNotificationRouteSchema).optional(),
+    requiredTools: z.array(z.string().min(1)).optional(),
+    requiredMcpServers: z.array(z.string().min(1)).optional(),
     kind: z.enum(['manual', 'once', 'recurring']).optional(),
     runAt: IsoDateTimeSchema.optional(),
     schedule: z
@@ -187,6 +232,8 @@ export const UpdateJobRequestSchema = z
     prompt: z.string().min(1).optional(),
     executionContext: JobRequestExecutionContextSchema.optional(),
     notificationRoutes: z.array(JobNotificationRouteSchema).optional(),
+    requiredTools: z.array(z.string().min(1)).optional(),
+    requiredMcpServers: z.array(z.string().min(1)).optional(),
     status: z.enum(['active', 'paused']).optional(),
     modelAlias: z.string().nullable().optional(),
     modelProfileId: z.string().nullable().optional(),
@@ -220,6 +267,9 @@ export const JobResponseSchema = z
       .nullable(),
     executionContext: JobExecutionContextSchema,
     notificationRoutes: z.array(JobNotificationRouteSchema),
+    requiredTools: z.array(z.string()),
+    requiredMcpServers: z.array(z.string()),
+    setup: JobSetupSchema.optional(),
     nextRun: IsoDateTimeSchema.nullable(),
     lastRun: IsoDateTimeSchema.nullable(),
     staleness: JobStalenessSchema.nullable().optional(),
@@ -240,6 +290,8 @@ export type JobResponse = z.infer<typeof JobResponseSchema>;
 export const CreateJobResponseSchema = z.object({
   jobId: z.string().optional(),
   dryRun: z.boolean().optional(),
+  status: JobStatusSchema.optional(),
+  setup: JobSetupSchema.optional(),
   modelAlias: z.string().nullable().optional(),
   modelSource: JobModelSourceSchema.optional(),
   model: JobModelPreviewSchema.nullable().optional(),

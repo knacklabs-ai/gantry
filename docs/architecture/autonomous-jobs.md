@@ -18,7 +18,7 @@ catalog tools, exact MyClaw admin tools, approved third-party MCP server
 bindings, or scoped Bash rules such as `Bash(npm test *)`. Runtime expands
 semantic capabilities and may still project approved third-party MCP server
 bindings into SDK allowances for that run. Empty rules, global `*`, broad exact
-SDK/native request_permission grants, exact third-party MCP tool grants, bare
+SDK/native request*permission grants, exact third-party MCP tool grants, bare
 `Bash`, `Bash(*)`, leading-wildcard Bash scopes, scoped non-Bash rules, raw
 Browser action MCP rules, and projected `mcp__myclaw__browser_*` rules are
 invalid as persistent request_permission authority.
@@ -28,6 +28,51 @@ Browser is one durable public capability: `Browser`. A job with an inherited
 without that inherited grant must request `Browser` through `request_permission`;
 it must not request or persist raw Playwright, Puppeteer, agent-browser, or
 projected browser action tool names.
+
+## Readiness Gates
+
+Job create/update surfaces accept declared setup requirements:
+
+- `requiredTools`: durable readable tool rules such as `Browser`,
+  `capability:google.sheets.write`, exact first-party MyClaw MCP tools, or
+  scoped `Bash(...)` rules.
+- `requiredMcpServers`: approved third-party MCP server names or ids expected
+  by the job.
+
+The declarations are UX assertions, not authorization. The runtime still
+enforces actual tool use at the permission boundary, and under-declared jobs
+pause if a run later reaches a denied tool.
+Create/update surfaces validate these assertions up front. Unsupported raw
+browser action names, projected browser MCP tool names, MyClaw wildcards, broad
+or bare Bash, and scoped non-Bash rules fail the request instead of becoming
+compatibility state.
+
+Before activation and immediately before model spawn, MyClaw performs a
+best-effort readiness check against durable target-agent capability bindings,
+tool-capability broker health, selected MCP server materialization metadata,
+MCP credential references, and browser profile state. If setup is not ready,
+the job is stored as `paused` with the short redacted `pause_reason`
+`Setup required`, `next_run=null`, and structured `setup` metadata. The
+conservative setup states are:
+
+```text
+ready
+missing_capability
+broker_unreachable
+credential_unknown
+browser_login_may_be_required
+mcp_missing_credential
+draft_only
+```
+
+`Allow once` can resume the current blocked tool call, but it is not durable
+readiness for future recurring runs. Recurring activation requires a persistent
+target-agent capability binding such as `Browser`, `capability:<id>`, an exact
+approved MyClaw admin tool, a scoped Bash rule, or an approved MCP server
+binding. Browser auth remains profile/session based; MyClaw reports that login
+may be required unless the profile already has durable state or auth markers.
+MCP readiness may inspect materialized definitions and broker credential refs,
+but must not start arbitrary MCP servers as a readiness side effect.
 
 ## Execution
 
@@ -63,15 +108,27 @@ agent's durable bindings, exports the readable projection to `settings.yaml`,
 and activates on the next scheduled run or a manual rerun.
 
 The scheduler records the failure summary, emits `job.tool_denied`, pauses
-recurring jobs that need a missing persistent capability, and notifies the
-linked group/thread or DM unless the job is silent. Notification routes receive
-one terminal outcome message; they do not receive streamed assistant output or
-full-output fallback messages. Successful scheduled runs must end with a concise
-user-facing `Final Job Report` that states the outcome, notable counts, and the
-next action, and the terminal outcome message may summarize that report.
+recurring jobs that need a missing persistent capability as `Setup required`,
+and notifies the linked group/thread or DM unless the job is silent.
+Pre-spawn readiness blockers emit `job.setup_required` and pause before a
+`JobRun` is claimed. After a run is claimed, the scheduler emits
+`job.tool_activity` for required-tool preflight, SDK tool requests, allow/deny
+decisions, permission waits, browser IPC actions, and required-tool
+satisfaction. Notification routes receive one terminal outcome message; they
+do not receive streamed assistant output or full-output fallback messages.
+Successful scheduled runs must end with a concise user-facing
+`Final Job Report` that states the outcome, notable counts, and the next
+action, and the terminal outcome message may summarize that report.
 Browser calls made by jobs emit
 `job.tool_activity` events with the job id, run id, tool name, result, elapsed
 time, and normalized site.
+When `Browser` is listed in `requiredTools`, a completed model run is only
+successful if at least one browser IPC action was observed for that run. If
+Browser was available but unused, the run fails with an explicit Browser
+unsatisfied diagnostic rather than a generic timeout or silent completion.
+Terminal job events and run summaries include last heartbeat, last/current
+tool, pending permission state, total tool calls, browser activity count, and
+streamed-output size diagnostics.
 
 Jobs use a job-owned `AgentSession` keyed by the target agent, source
 conversation/thread, and `jobId`. That gives each job its own provider resume
@@ -111,13 +168,21 @@ object:
     "latestRunStatus": null,
     "activeRunId": null,
     "nextAction": null
+  },
+  "setup": {
+    "state": "ready",
+    "checkedAt": null,
+    "fingerprint": null,
+    "blockers": [],
+    "nextAction": null
   }
 }
 ```
 
 `health.state` is the user-facing run condition for list/detail views. It can
-show `ready`, `running`, `completed`, `failed`, `needs_permission`,
-`timed_out`, `dead_lettered`, `stale_lease`, or `missed_window`.
+show `ready`, the setup blocker states listed above, `running`, `completed`,
+`failed`, `needs_permission`, `timed_out`, `dead_lettered`, `stale_lease`, or
+`missed_window`.
 The pg-boss scheduler runs periodic full sync maintenance so expired running
 leases move to timed-out runs even when the process is otherwise idle.
 
@@ -130,4 +195,6 @@ thread id may be checked to prevent a caller from retargeting delivery outside
 the authenticated thread, but it never grants job visibility or run authority.
 
 Admin-wide job visibility and triggering remain on the Control API, SDK, and
-local/admin CLI surfaces.
+local/admin CLI surfaces. Event inspection is exposed through the scheduler
+MCP event tools, Control API `GET /v1/jobs/:jobId/events`, SDK `jobs.events`,
+and `myclaw jobs events <job_id> [--run <run_id>]`.

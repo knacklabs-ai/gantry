@@ -68,6 +68,9 @@ export class CanonicalJobOpsService {
         pause_reason: job.pause_reason,
         execution_context: job.execution_context,
         notification_routes: job.notification_routes,
+        required_tools: job.required_tools,
+        required_mcp_servers: job.required_mcp_servers,
+        setup_state: job.setup_state,
         created_at: job.created_at || now,
         updated_at: job.updated_at || now,
       }),
@@ -162,6 +165,12 @@ export class CanonicalJobOpsService {
     nowIso: string = currentIso(),
   ): Promise<ReleasedStaleJobLease[]> {
     return this.repository.releaseStaleLeases(nowIso);
+  }
+
+  async releaseInterruptedJobLeases(
+    nowIso: string = currentIso(),
+  ): Promise<ReleasedStaleJobLease[]> {
+    return this.repository.releaseInterruptedLeases(nowIso);
   }
 
   async createJobRun(run: JobRun): Promise<boolean> {
@@ -279,6 +288,9 @@ export class CanonicalJobOpsService {
       targetRoutes: target.notificationRoutes,
       executionContext,
     });
+    const requiredTools = parseRequiredTools(target.requiredTools);
+    const requiredMcpServers = parseRequiredTools(target.requiredMcpServers);
+    const setupState = parseSetupState(target.setupState);
     return {
       id: row.id,
       name: row.name,
@@ -307,6 +319,9 @@ export class CanonicalJobOpsService {
       pause_reason: (target.pauseReason as string | null | undefined) ?? null,
       execution_context: executionContext,
       notification_routes: notificationRoutes,
+      required_tools: requiredTools,
+      required_mcp_servers: requiredMcpServers,
+      setup_state: setupState,
     };
   }
 
@@ -316,7 +331,10 @@ export class CanonicalJobOpsService {
     job: JobRecordSource,
   ): JobRecordInput {
     const now = currentIso();
-    const executionContext = resolveExecutionContext(job, agentId);
+    const executionContext = mergeExecutionContextSessionId(
+      resolveExecutionContext(job, agentId),
+      job.session_id,
+    );
     const notificationRoutes = resolveNotificationRoutes(job, executionContext);
     return {
       id,
@@ -337,6 +355,9 @@ export class CanonicalJobOpsService {
         maxConsecutiveFailures: job.max_consecutive_failures ?? 5,
         consecutiveFailures: job.consecutive_failures ?? 0,
         pauseReason: job.pause_reason ?? null,
+        requiredTools: parseRequiredTools(job.required_tools),
+        requiredMcpServers: parseRequiredTools(job.required_mcp_servers),
+        setupState: parseSetupState(job.setup_state),
       }),
       silent: Boolean(job.silent),
       timeoutMs: job.timeout_ms ?? 300000,
@@ -418,6 +439,88 @@ function parseNotificationRoutes(input: unknown): CanonicalNotificationRoute[] {
   return routes;
 }
 
+function parseRequiredTools(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    const value = typeof item === 'string' ? item.trim() : '';
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function parseSetupState(input: unknown): Job['setup_state'] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return undefined;
+  }
+  const record = input as Record<string, unknown>;
+  const state = normalizeString(record.state);
+  if (
+    state !== 'ready' &&
+    state !== 'missing_capability' &&
+    state !== 'broker_unreachable' &&
+    state !== 'credential_unknown' &&
+    state !== 'browser_login_may_be_required' &&
+    state !== 'mcp_missing_credential' &&
+    state !== 'draft_only'
+  ) {
+    return undefined;
+  }
+  const checkedAt = normalizeString(record.checked_at ?? record.checkedAt);
+  const fingerprint = normalizeString(record.fingerprint);
+  if (!checkedAt || !fingerprint) return undefined;
+  const blockers = Array.isArray(record.blockers)
+    ? record.blockers.flatMap((item) => parseSetupBlocker(item))
+    : [];
+  return {
+    state,
+    checked_at: checkedAt,
+    fingerprint,
+    blockers,
+    notified_fingerprint:
+      normalizeString(
+        record.notified_fingerprint ?? record.notifiedFingerprint,
+      ) ?? null,
+  };
+}
+
+function parseSetupBlocker(
+  input: unknown,
+): NonNullable<Job['setup_state']>['blockers'] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
+  const record = input as Record<string, unknown>;
+  const state = normalizeString(record.state);
+  if (
+    state !== 'missing_capability' &&
+    state !== 'broker_unreachable' &&
+    state !== 'credential_unknown' &&
+    state !== 'browser_login_may_be_required' &&
+    state !== 'mcp_missing_credential' &&
+    state !== 'draft_only'
+  ) {
+    return [];
+  }
+  const requirementType = normalizeString(record.requirementType);
+  if (
+    requirementType !== 'tool' &&
+    requirementType !== 'semantic_capability' &&
+    requirementType !== 'browser' &&
+    requirementType !== 'mcp_server' &&
+    requirementType !== 'credential' &&
+    requirementType !== 'local_cli'
+  ) {
+    return [];
+  }
+  const message = normalizeString(record.message);
+  const nextAction = normalizeString(record.nextAction);
+  const requirementId = normalizeString(record.requirementId);
+  if (!message || !nextAction || !requirementId) return [];
+  return [{ state, requirementType, requirementId, message, nextAction }];
+}
+
 function resolveExecutionContext(
   job: JobRecordSource,
   agentId: string,
@@ -443,16 +546,23 @@ function resolveExecutionContext(
   };
 }
 
+function mergeExecutionContextSessionId(
+  executionContext: CanonicalExecutionContext,
+  sessionId: unknown,
+): CanonicalExecutionContext {
+  if (executionContext.sessionId) return executionContext;
+  const fallback = normalizeNullableString(sessionId);
+  return fallback
+    ? { ...executionContext, sessionId: fallback }
+    : executionContext;
+}
+
 function resolveNotificationRoutes(
   job: JobRecordSource,
   executionContext: CanonicalExecutionContext,
 ): CanonicalNotificationRoute[] {
   const explicitRoutes = parseNotificationRoutes(job.notification_routes);
-  const canonicalRoutes = matchingExecutionRoutes(
-    explicitRoutes,
-    executionContext,
-  );
-  if (canonicalRoutes.length > 0) return canonicalRoutes;
+  if (explicitRoutes.length > 0) return explicitRoutes;
 
   return [
     {
@@ -474,11 +584,7 @@ function resolveNotificationRoutesFromTarget(input: {
   executionContext: CanonicalExecutionContext;
 }): CanonicalNotificationRoute[] {
   const explicitRoutes = parseNotificationRoutes(input.targetRoutes);
-  const canonicalRoutes = matchingExecutionRoutes(
-    explicitRoutes,
-    input.executionContext,
-  );
-  if (canonicalRoutes.length > 0) return canonicalRoutes;
+  if (explicitRoutes.length > 0) return explicitRoutes;
   if (!input.executionContext.conversationJid) return [];
   return [
     {
@@ -487,17 +593,6 @@ function resolveNotificationRoutesFromTarget(input: {
       label: 'Primary',
     },
   ];
-}
-
-function matchingExecutionRoutes(
-  routes: readonly CanonicalNotificationRoute[],
-  executionContext: CanonicalExecutionContext,
-): CanonicalNotificationRoute[] {
-  return routes.filter(
-    (route) =>
-      route.conversationJid === executionContext.conversationJid &&
-      (route.threadId ?? null) === (executionContext.threadId ?? null),
-  );
 }
 
 function normalizeNullableString(input: unknown): string | null {

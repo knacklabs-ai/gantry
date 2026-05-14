@@ -275,7 +275,9 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             ? 'allowed once via Telegram'
             : mode === 'allow_persistent_rule'
               ? 'persistent rule allowed via Telegram'
-              : 'canceled via Telegram',
+              : mode === 'allow_timed_grant'
+                ? `timed grant (5 min) via Telegram`
+                : 'canceled via Telegram',
       });
       await ctx.answerCallbackQuery({
         text:
@@ -283,7 +285,9 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             ? 'Allowed once.'
             : mode === 'allow_persistent_rule'
               ? 'Approval received; applying.'
-              : 'Canceled.',
+              : mode === 'allow_timed_grant'
+                ? 'Timed grant active for 5 min.'
+                : 'Canceled.',
       });
     });
 

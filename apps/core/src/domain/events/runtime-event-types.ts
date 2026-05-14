@@ -9,6 +9,7 @@ export const RUNTIME_EVENT_TYPES = {
   JOB_STARTED: 'job.started',
   JOB_STREAMING: 'job.streaming',
   JOB_HEARTBEAT: 'job.heartbeat',
+  JOB_SETUP_REQUIRED: 'job.setup_required',
   JOB_TOOL_DENIED: 'job.tool_denied',
   JOB_TOOL_ACTIVITY: 'job.tool_activity',
   TASK_NOTIFICATION: 'task.notification',

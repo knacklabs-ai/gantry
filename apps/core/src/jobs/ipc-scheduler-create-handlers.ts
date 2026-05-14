@@ -27,6 +27,10 @@ function makeJobService(context: TaskContext): JobManagementService {
     control: context.deps.getJobControl?.(),
     scheduler: { requestSchedulerSync: context.deps.onSchedulerChanged },
     schedulePlanner: runtimeJobSchedulePlanner,
+    toolRepository: context.deps.getToolRepository?.(),
+    mcpServerRepository: context.deps.getMcpServerRepository?.(),
+    getCredentialBroker: context.deps.getCredentialBroker,
+    getBrowserStatus: context.deps.getBrowserStatus,
   });
 }
 
@@ -75,6 +79,8 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
       scheduleValue: data.scheduleValue || '',
       executionContext: data.executionContext,
       notificationRoutes: data.notificationRoutes,
+      requiredTools: data.requiredTools,
+      requiredMcpServers: data.requiredMcpServers,
       silent: data.silent,
       cleanupAfterMs: data.cleanupAfterMs,
       timeoutMs: data.timeoutMs,
@@ -114,6 +120,8 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
       scheduleValue: data.scheduleValue || '',
       executionContext: data.executionContext,
       notificationRoutes: data.notificationRoutes,
+      requiredTools: data.requiredTools,
+      requiredMcpServers: data.requiredMcpServers,
       silent: data.silent,
       cleanupAfterMs: data.cleanupAfterMs,
       timeoutMs: data.timeoutMs,
@@ -149,12 +157,14 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
     const runtimeThreadId =
       data.executionContext?.threadId ?? data.authThreadId;
     const runtimeText = ` Runtime: notifications ${runtimeThreadId ? 'this thread' : 'this conversation'}; browser ${formatBrowserProfileLabel({ agentName: sourceConversation?.name ?? sourceAgentFolder, conversationKind: sourceConversation?.conversationKind })}.`;
+    const setupText = formatSetupOutcome(result.setupState);
     accept(
       (result.created
         ? `Scheduler job created (${result.jobId}).`
         : `Scheduler job updated (${result.jobId}).`) +
         modelText +
-        runtimeText,
+        runtimeText +
+        setupText,
     );
   } catch (err) {
     const mapped = mapApplicationError(err, 'Failed to upsert scheduler job.');
@@ -162,6 +172,16 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
     reject(mapped.message, mapped.code);
   }
 };
+
+function formatSetupOutcome(
+  setupState: Awaited<
+    ReturnType<JobManagementService['upsertJobFromIpc']>
+  >['setupState'],
+): string {
+  if (!setupState || setupState.state === 'ready') return '';
+  const nextAction = setupState.blockers[0]?.nextAction;
+  return ` Setup required: ${nextAction ?? setupState.state}.`;
+}
 
 export const schedulerCreateTaskHandlers: Record<string, TaskHandler> = {
   scheduler_upsert_job: schedulerUpsertJobHandler,

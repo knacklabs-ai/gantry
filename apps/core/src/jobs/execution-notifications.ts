@@ -1,5 +1,6 @@
 import type {
   Job,
+  JobSetupState,
   JobRunStatus,
   MessageActionAffordance,
 } from '../domain/types.js';
@@ -86,6 +87,42 @@ export async function notifySchedulerRunStart(input: {
     })})`,
     phase: 'start',
     runId: input.runId,
+    sendMessage: input.sendMessage,
+  });
+}
+
+export async function notifySchedulerSetupRequired(input: {
+  job: Job;
+  setupState: JobSetupState;
+  sendMessage: SchedulerSendMessage;
+}): Promise<boolean> {
+  if (input.job.silent) return false;
+  if (input.setupState.state === 'ready') return false;
+  if (input.setupState.notified_fingerprint === input.setupState.fingerprint) {
+    return false;
+  }
+  const blocker = input.setupState.blockers[0];
+  const action = blocker?.nextAction ?? 'Fix setup, then resume the job.';
+  const reason = blocker
+    ? `${blocker.requirementType}:${blocker.requirementId}`
+    : input.setupState.state;
+  return sendJobNotification({
+    job: input.job,
+    text: [
+      `Setup required: ${input.job.name}`,
+      `Blocker: ${reason}`,
+      `Action: ${action}`,
+      'Next: Resume the job after setup is fixed.',
+    ].join('\n'),
+    phase: 'summary',
+    runId: `setup:${input.setupState.fingerprint}`,
+    actionAffordances: [
+      {
+        kind: 'scheduler_open',
+        label: 'Open in scheduler',
+        jobId: input.job.id,
+      },
+    ],
     sendMessage: input.sendMessage,
   });
 }

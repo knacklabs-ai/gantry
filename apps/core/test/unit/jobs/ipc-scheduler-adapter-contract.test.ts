@@ -275,6 +275,7 @@ describe('scheduler IPC adapter contracts', () => {
             label: 'primary',
           },
         ],
+        requiredTools: ['Browser'],
         confirmationToken: schedulerJobConfirmationToken({
           name: 'Daily review',
           prompt: 'Review memory',
@@ -292,6 +293,7 @@ describe('scheduler IPC adapter contracts', () => {
               label: 'primary',
             },
           ],
+          requiredTools: ['Browser'],
         }),
       }),
     );
@@ -310,6 +312,7 @@ describe('scheduler IPC adapter contracts', () => {
             label: 'primary',
           },
         ],
+        requiredTools: ['Browser'],
       }),
     );
   });
@@ -401,6 +404,22 @@ describe('scheduler IPC adapter contracts', () => {
     expect(mocks.responder.accept).toHaveBeenCalledWith(
       'Scheduler job updated (job-1).',
     );
+  });
+
+  it('passes scheduler update requiredTools through to the job service', async () => {
+    await schedulerMutateTaskHandlers.scheduler_update_job(
+      makeContext({
+        type: 'scheduler_update_job',
+        jobId: 'job-1',
+        requiredTools: ['Browser'],
+      }),
+    );
+
+    expect(mocks.jobService.updateJob).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      access: expect.any(Object),
+      patch: { requiredTools: ['Browser'] },
+    });
   });
 
   it('clears scheduler update models with null alias', async () => {

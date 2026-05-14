@@ -24,6 +24,7 @@ export function startJobHeartbeat(input: {
   const { agentInput } = input;
   let lastActivityAtMs = nowMs();
   let currentTool: string | undefined;
+  let lastTool: string | undefined;
   let totalToolCalls = 0;
   const markActivity = () => {
     lastActivityAtMs = nowMs();
@@ -39,6 +40,7 @@ export function startJobHeartbeat(input: {
   }
 
   const emitHeartbeat = () => {
+    const pendingPermissions = readPendingPermissionRequests();
     input.writeOutput({
       status: 'success',
       result: null,
@@ -56,8 +58,11 @@ export function startJobHeartbeat(input: {
           responseMode: 'none',
           payload: {
             ...(currentTool ? { currentTool } : {}),
+            ...(lastTool ? { lastTool } : {}),
+            lastActivityAt: new Date(lastActivityAtMs).toISOString(),
             lastActivityAgoMs: Math.max(0, nowMs() - lastActivityAtMs),
-            pendingPermissionRequests: readPendingPermissionRequestCount(),
+            pendingPermissionRequests: pendingPermissions.count,
+            pendingPermissionToolNames: pendingPermissions.toolNames,
             totalToolCalls,
           },
         },
@@ -72,20 +77,35 @@ export function startJobHeartbeat(input: {
     recordToolActivity: (toolName) => {
       totalToolCalls += 1;
       currentTool = permissionRequestToolName(toolName);
+      lastTool = currentTool;
       lastActivityAtMs = nowMs();
     },
     stop: () => clearInterval(timer),
   };
 }
 
-function readPendingPermissionRequestCount(): number {
+function readPendingPermissionRequests(): {
+  count: number;
+  toolNames: string[];
+} {
   const responsesDir = path.join(IPC_BASE_DIR, 'permission-responses');
   const responseIds = new Set(
     readJsonFileNames(responsesDir).map((file) => file.replace(/\.json$/, '')),
   );
-  return readJsonFileNames(path.join(IPC_BASE_DIR, 'permission-requests'))
+  const requests = readJsonFileNames(
+    path.join(IPC_BASE_DIR, 'permission-requests'),
+  )
     .filter((file) => !responseIds.has(file.replace(/\.json$/, '')))
-    .filter((file) => permissionRequestMatchesCurrentRun(file)).length;
+    .map((file) => readCurrentRunPermissionRequest(file))
+    .filter((request): request is { toolName?: string } => Boolean(request));
+  const toolNames = Array.from(
+    new Set(
+      requests
+        .map((request) => request.toolName)
+        .filter((toolName): toolName is string => Boolean(toolName)),
+    ),
+  );
+  return { count: requests.length, toolNames };
 }
 
 function readJsonFileNames(dir: string): string[] {
@@ -98,7 +118,9 @@ function readJsonFileNames(dir: string): string[] {
   }
 }
 
-function permissionRequestMatchesCurrentRun(file: string): boolean {
+function readCurrentRunPermissionRequest(
+  file: string,
+): { toolName?: string } | undefined {
   try {
     const raw = JSON.parse(
       fs.readFileSync(
@@ -110,15 +132,21 @@ function permissionRequestMatchesCurrentRun(file: string): boolean {
       raw && typeof raw === 'object' && 'payload' in raw
         ? (raw as { payload?: unknown }).payload
         : raw;
-    if (!payload || typeof payload !== 'object') return false;
+    if (!payload || typeof payload !== 'object') return undefined;
     const record = payload as Record<string, unknown>;
-    return (
+    const matches =
       (!process.env.MYCLAW_JOB_ID ||
         record.jobId === process.env.MYCLAW_JOB_ID) &&
       (!process.env.MYCLAW_JOB_RUN_ID ||
-        record.runId === process.env.MYCLAW_JOB_RUN_ID)
-    );
+        record.runId === process.env.MYCLAW_JOB_RUN_ID);
+    if (!matches) return undefined;
+    return {
+      toolName:
+        typeof record.toolName === 'string'
+          ? permissionRequestToolName(record.toolName)
+          : undefined,
+    };
   } catch {
-    return false;
+    return undefined;
   }
 }

@@ -29,8 +29,10 @@ import { jobListQuery } from './job-list-query.js';
 import type {
   CreateJobInput,
   CreateJobResponse,
+  JobEventRecord,
   JobRecord,
   JobTriggerWaitResult,
+  ListJobEventsInput,
   ListJobsInput,
   ModelRecord,
   UpdateJobInput,
@@ -42,12 +44,14 @@ export type {
 export type {
   CreateJobInput,
   CreateJobResponse,
+  JobEventRecord,
   JobHealth,
   JobHealthState,
   JobKind,
   JobRecord,
   JobStatus,
   JobTriggerWaitResult,
+  ListJobEventsInput,
   ListJobsInput,
   ModelRecord,
   UpdateJobInput,
@@ -373,6 +377,17 @@ export class MyClawClient {
         method: 'PATCH',
         path: `/v1/jobs/${encodeURIComponent(jobId)}`,
         body: patch,
+      }),
+    events: (jobId: string, input: ListJobEventsInput = {}) =>
+      this.transport.request<{ events: JobEventRecord[] }>({
+        method: 'GET',
+        path: `/v1/jobs/${encodeURIComponent(jobId)}/events${querySuffix({
+          run: input.runId,
+          eventType: input.eventType,
+          sinceId: input.sinceId,
+          since: input.since,
+          limit: input.limit,
+        })}`,
       }),
     delete: (jobId: string) =>
       this.transport.request<{ deleted: boolean }>({

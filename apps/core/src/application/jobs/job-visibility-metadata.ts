@@ -39,7 +39,10 @@ export interface JobVisibilityMetadata {
   fullPrompt?: string;
   inheritedTools: string[];
   effectiveAllowedTools: string[];
+  requiredTools: string[];
+  requiredMcpServers: string[];
   toolAccess: JobToolAccessView;
+  setup: JobSetupMetadata;
   health: JobHealthMetadata;
   recentRunErrors: Array<{
     runId: string;
@@ -53,6 +56,12 @@ export interface JobVisibilityMetadata {
 export interface JobHealthMetadata {
   state:
     | 'ready'
+    | 'missing_capability'
+    | 'broker_unreachable'
+    | 'credential_unknown'
+    | 'browser_login_may_be_required'
+    | 'mcp_missing_credential'
+    | 'draft_only'
     | 'running'
     | 'completed'
     | 'failed'
@@ -66,6 +75,20 @@ export interface JobHealthMetadata {
   latestSummary: string | null;
   activeRunId: string | null;
   leaseExpiresAt: string | null;
+  nextAction: string | null;
+}
+
+export interface JobSetupMetadata {
+  state: NonNullable<Job['setup_state']>['state'];
+  checkedAt: string | null;
+  fingerprint: string | null;
+  blockers: Array<{
+    state: string;
+    message: string;
+    nextAction: string;
+    requirementType: string;
+    requirementId: string;
+  }>;
   nextAction: string | null;
 }
 
@@ -102,6 +125,7 @@ export async function buildJobVisibilityMetadata(input: {
     staleness,
     nowMs,
   });
+  const setup = setupMetadataForJob(input.job);
   return {
     executionContext,
     notificationRoutes,
@@ -116,10 +140,13 @@ export async function buildJobVisibilityMetadata(input: {
     fullPrompt: input.job.prompt,
     inheritedTools: policy.inheritedTools,
     effectiveAllowedTools: policy.effectiveAllowedTools,
+    requiredTools: input.job.required_tools ?? [],
+    requiredMcpServers: input.job.required_mcp_servers ?? [],
     toolAccess: buildJobToolAccessView({
       inheritedAgentTools: policy.inheritedTools,
       effectiveAllowedTools: policy.effectiveAllowedTools,
     }),
+    setup,
     health,
     staleness,
     recentRunErrors: runs
@@ -184,10 +211,13 @@ export async function buildJobListVisibilityMetadata(input: {
           promptPreview: promptPreview(job.prompt),
           inheritedTools,
           effectiveAllowedTools,
+          requiredTools: job.required_tools ?? [],
+          requiredMcpServers: job.required_mcp_servers ?? [],
           toolAccess: buildJobToolAccessView({
             inheritedAgentTools: inheritedTools,
             effectiveAllowedTools,
           }),
+          setup: setupMetadataForJob(job),
           health: buildJobHealth({
             job,
             runs,
@@ -244,27 +274,33 @@ function buildJobHealth(input: {
   const denial =
     parseAutonomousToolDenial(latestSummary) ??
     parsePermissionPauseReason(input.job.pause_reason);
+  const setupBlocker =
+    input.job.pause_reason === 'Setup required'
+      ? input.job.setup_state?.blockers[0]
+      : undefined;
   const leaseExpired =
     input.job.status === 'running' &&
     Boolean(input.job.lease_expires_at) &&
     Date.parse(input.job.lease_expires_at || '') < input.nowMs;
   const state: JobHealthMetadata['state'] = leaseExpired
     ? 'stale_lease'
-    : denial
-      ? 'needs_permission'
-      : input.job.status === 'dead_lettered'
-        ? 'dead_lettered'
-        : input.job.status === 'running' || latestRun?.status === 'running'
-          ? 'running'
-          : latestRun?.status === 'timeout'
-            ? 'timed_out'
-            : latestRun?.status === 'failed'
-              ? 'failed'
-              : latestRun?.status === 'completed'
-                ? 'completed'
-                : input.staleness === 'missed_window'
-                  ? 'missed_window'
-                  : 'ready';
+    : setupBlocker
+      ? setupBlocker.state
+      : denial
+        ? 'needs_permission'
+        : input.job.status === 'dead_lettered'
+          ? 'dead_lettered'
+          : input.job.status === 'running' || latestRun?.status === 'running'
+            ? 'running'
+            : latestRun?.status === 'timeout'
+              ? 'timed_out'
+              : latestRun?.status === 'failed'
+                ? 'failed'
+                : latestRun?.status === 'completed'
+                  ? 'completed'
+                  : input.staleness === 'missed_window'
+                    ? 'missed_window'
+                    : 'ready';
   return {
     state,
     latestRunId: latestRun?.run_id ?? null,
@@ -274,7 +310,25 @@ function buildJobHealth(input: {
       input.job.lease_run_id ??
       (latestRun?.status === 'running' ? latestRun.run_id : null),
     leaseExpiresAt: input.job.lease_expires_at,
-    nextAction: nextJobHealthAction(state, denial),
+    nextAction: setupBlocker?.nextAction ?? nextJobHealthAction(state, denial),
+  };
+}
+
+function setupMetadataForJob(job: Job): JobSetupMetadata {
+  const setup = job.setup_state;
+  const blockers = setup?.blockers ?? [];
+  return {
+    state: setup?.state ?? 'ready',
+    checkedAt: setup?.checked_at ?? null,
+    fingerprint: setup?.fingerprint ?? null,
+    blockers: blockers.map((blocker) => ({
+      state: blocker.state,
+      message: blocker.message,
+      nextAction: blocker.nextAction,
+      requirementType: blocker.requirementType,
+      requirementId: blocker.requirementId,
+    })),
+    nextAction: blockers[0]?.nextAction ?? null,
   };
 }
 

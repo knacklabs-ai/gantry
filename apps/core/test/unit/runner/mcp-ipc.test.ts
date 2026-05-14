@@ -368,7 +368,7 @@ describe('runner MCP browser IPC signature verification', () => {
     await expect(requestPromise).resolves.toEqual({
       ok: false,
       error:
-        'Browser IPC timeout after 30000ms waiting for browser service response',
+        'Browser IPC timeout after 30s waiting for browser service response',
     });
     expect(fs.existsSync(requestPath)).toBe(false);
   });
@@ -410,7 +410,7 @@ describe('runner MCP browser IPC signature verification', () => {
     await expect(requestPromise).resolves.toEqual({
       ok: false,
       error:
-        'Browser IPC timeout after 120000ms waiting for browser service response',
+        'Browser IPC timeout after 2 min waiting for browser service response',
     });
     expect(fs.existsSync(requestPath)).toBe(false);
   });
@@ -442,7 +442,7 @@ describe('runner MCP browser IPC signature verification', () => {
 
     await expect(requestPromise).resolves.toEqual({
       ok: false,
-      error: 'Timed out waiting for memory service response (15000ms)',
+      error: 'Timed out waiting for memory service response (15s)',
     });
     expect(fs.existsSync(requestPath)).toBe(false);
   });

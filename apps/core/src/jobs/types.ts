@@ -21,6 +21,7 @@ import type {
   ToolCatalogRepository,
 } from '../domain/ports/repositories.js';
 import type { SkillArtifactStore } from '../domain/ports/skill-artifact-store.js';
+import type { JobReadinessBrowserStatus } from '../application/jobs/job-readiness-service.js';
 
 export interface SchedulerDependencies {
   conversationRoutes: () => Record<string, ConversationRoute>;
@@ -50,6 +51,9 @@ export interface SchedulerDependencies {
   getMcpDnsValidationCache?: () => RemoteMcpDnsValidationCache | undefined;
   getSkillArtifactStore?: () => SkillArtifactStore | undefined;
   getToolRepository?: () => ToolCatalogRepository | undefined;
+  getBrowserStatus?: (
+    profileName: string,
+  ) => Promise<JobReadinessBrowserStatus | undefined>;
 }
 
 export type JobTurnContext = Awaited<

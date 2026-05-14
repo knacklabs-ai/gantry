@@ -30,6 +30,7 @@ describe('CanonicalJobOpsService', () => {
           label: 'Primary',
         },
       ],
+      required_tools: ['Browser'],
       group_scope: '',
     });
 
@@ -51,6 +52,48 @@ describe('CanonicalJobOpsService', () => {
         label: 'Primary',
       },
     ]);
+    expect(target.requiredTools).toEqual(['Browser']);
+  });
+
+  it('merges canonical session_id into executionContext when target sessionId is missing', async () => {
+    const repository = {
+      findJobById: vi.fn(async () => null),
+      upsertJob: vi.fn(async () => undefined),
+    } as unknown as PostgresCanonicalJobRepository;
+    const service = new CanonicalJobOpsService(repository);
+
+    await service.upsertJob({
+      id: 'job-1',
+      name: 'Job',
+      prompt: 'Run',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      session_id: 'session-canonical',
+      execution_context: {
+        conversationJid: 'tg:1',
+        threadId: null,
+        groupScope: 'agent_one',
+      },
+      notification_routes: [
+        {
+          conversationJid: 'tg:1',
+          threadId: null,
+          label: 'Primary',
+        },
+      ],
+      group_scope: '',
+    });
+
+    const stored = vi.mocked(repository.upsertJob).mock.calls[0]?.[0] as {
+      targetJson: string;
+    };
+    const target = JSON.parse(stored.targetJson) as Record<string, unknown>;
+    expect(target.executionContext).toEqual({
+      conversationJid: 'tg:1',
+      threadId: null,
+      groupScope: 'agent_one',
+      sessionId: 'session-canonical',
+    });
   });
 
   it('projects target routing context into job records', async () => {
@@ -77,6 +120,7 @@ describe('CanonicalJobOpsService', () => {
               label: 'Primary',
             },
           ],
+          requiredTools: ['Browser'],
         }),
         silent: false,
         timeoutMs: 300000,
@@ -109,6 +153,7 @@ describe('CanonicalJobOpsService', () => {
           label: 'Primary',
         },
       ],
+      required_tools: ['Browser'],
     });
   });
 
@@ -182,7 +227,7 @@ describe('CanonicalJobOpsService', () => {
     );
   });
 
-  it('drops notification routes that do not match executionContext during writes', async () => {
+  it('preserves approved notification routes beyond the execution context during writes', async () => {
     const repository = {
       findJobById: vi.fn(async () => null),
       upsertJob: vi.fn(async () => undefined),
@@ -225,10 +270,15 @@ describe('CanonicalJobOpsService', () => {
         threadId: null,
         label: 'Primary',
       },
+      {
+        conversationJid: 'tg:other',
+        threadId: null,
+        label: 'Linked',
+      },
     ]);
   });
 
-  it('drops off-context stored notification routes when loading jobs', async () => {
+  it('preserves approved stored notification routes beyond the execution context when loading jobs', async () => {
     const repository = {
       findJobById: vi.fn(async () => ({
         id: 'job-1',
@@ -278,6 +328,11 @@ describe('CanonicalJobOpsService', () => {
           conversationJid: 'tg:team',
           threadId: null,
           label: 'Primary',
+        },
+        {
+          conversationJid: 'tg:other',
+          threadId: null,
+          label: 'Linked',
         },
       ],
     });

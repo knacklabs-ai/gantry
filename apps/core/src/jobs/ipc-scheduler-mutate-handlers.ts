@@ -20,6 +20,10 @@ function makeJobService(context: TaskContext): JobManagementService {
     control: context.deps.getJobControl?.(),
     scheduler: { requestSchedulerSync: context.deps.onSchedulerChanged },
     schedulePlanner: runtimeJobSchedulePlanner,
+    toolRepository: context.deps.getToolRepository?.(),
+    mcpServerRepository: context.deps.getMcpServerRepository?.(),
+    getCredentialBroker: context.deps.getCredentialBroker,
+    getBrowserStatus: context.deps.getBrowserStatus,
   });
 }
 
@@ -34,6 +38,10 @@ function makeRunNowJobService(context: TaskContext): JobManagementService {
       isReady: isSchedulerReady,
       enqueue: enqueueJobTrigger,
     },
+    toolRepository: context.deps.getToolRepository?.(),
+    mcpServerRepository: context.deps.getMcpServerRepository?.(),
+    getCredentialBroker: context.deps.getCredentialBroker,
+    getBrowserStatus: context.deps.getBrowserStatus,
   });
 }
 
@@ -127,13 +135,21 @@ const schedulerUpdateJobHandler: TaskHandler = async (context) => {
     if (Array.isArray(data.notificationRoutes)) {
       patch.notificationRoutes = data.notificationRoutes;
     }
-    await makeJobService(context).updateJob({
+    if (Array.isArray(data.requiredTools)) {
+      patch.requiredTools = data.requiredTools;
+    }
+    if (Array.isArray(data.requiredMcpServers)) {
+      patch.requiredMcpServers = data.requiredMcpServers;
+    }
+    const result = await makeJobService(context).updateJob({
       jobId,
       access: schedulerAccessFromContext(context),
       patch,
     });
     invalidateSystemJobRegistrationSignature(context.deps.opsRepository);
-    accept(`Scheduler job updated (${jobId}).`);
+    accept(
+      `Scheduler job updated (${jobId}).${formatSetupOutcome(result?.job)}`,
+    );
   } catch (err) {
     const mapped = mapApplicationError(err, 'Failed to mutate scheduler job.');
     logger.error(
@@ -219,13 +235,17 @@ const schedulerResumeJobHandler: TaskHandler = async (context) => {
     return;
   }
   try {
-    await makeJobService(context).resumeJob({
+    const result = await makeJobService(context).resumeJob({
       jobId,
       access: schedulerAccessFromContext(context),
       invalidSchedulePolicy: 'dead_letter',
     });
     invalidateSystemJobRegistrationSignature(context.deps.opsRepository);
-    accept(`Scheduler job resumed (${jobId}).`);
+    accept(
+      result?.resumed !== false
+        ? `Scheduler job resumed (${jobId}).`
+        : `Scheduler job remains paused (${jobId}).${formatSetupOutcome(result.job)}`,
+    );
   } catch (err) {
     const mapped = mapApplicationError(err, 'Failed to mutate scheduler job.');
     const details = await resumeDeadLetterDetails(context, jobId, err);
@@ -271,6 +291,20 @@ const schedulerRunNowHandler: TaskHandler = async (context) => {
     reject(mapped.message, mapped.code);
   }
 };
+
+function formatSetupOutcome(job?: { setup_state?: unknown }): string {
+  const setupState = job?.setup_state;
+  if (!setupState || typeof setupState !== 'object') return '';
+  const state = (setupState as { state?: unknown }).state;
+  if (state === 'ready') return '';
+  const blockers = (setupState as { blockers?: unknown }).blockers;
+  const firstBlocker = Array.isArray(blockers) ? blockers[0] : undefined;
+  const nextAction =
+    firstBlocker && typeof firstBlocker === 'object'
+      ? (firstBlocker as { nextAction?: unknown }).nextAction
+      : undefined;
+  return ` Setup required: ${typeof nextAction === 'string' ? nextAction : String(state ?? 'unknown')}.`;
+}
 
 export const schedulerMutateTaskHandlers: Record<string, TaskHandler> = {
   scheduler_update_job: schedulerUpdateJobHandler,

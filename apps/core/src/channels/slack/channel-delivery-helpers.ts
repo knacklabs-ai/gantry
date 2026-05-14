@@ -96,9 +96,9 @@ function postMessageRetryDelayMs(input: unknown): number | null {
 }
 
 async function waitForPostMessageRetry(delayMs: number): Promise<void> {
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, clampSlackRetryDelayMs(delayMs));
-  });
+  await new Promise<void>((resolve) =>
+    setTimeout(resolve, clampSlackRetryDelayMs(delayMs)),
+  );
 }
 
 export function isSlackPayloadTooLarge(err: unknown): boolean {
@@ -346,9 +346,7 @@ export async function sendSlackFallbackStreamParts(input: {
         [],
         input.log,
       );
-      if (posted.ts) {
-        input.state.fallbackMessageTs[partIndex] = posted.ts;
-      }
+      if (posted.ts) input.state.fallbackMessageTs[partIndex] = posted.ts;
       deliveredParts += 1;
     } catch (err) {
       const externalMessageIds = visibleFallbackMessageIds();
@@ -600,9 +598,8 @@ export async function sendSlackProgressUpdate(input: {
   }
 
   existing.lastText = trimmed;
-  if (input.options.generation !== undefined) {
+  if (input.options.generation !== undefined)
     existing.generation = input.options.generation;
-  }
   if (input.options.done) {
     input.activeProgress.delete(input.key);
   } else {
@@ -722,9 +719,7 @@ export async function disconnectSlackDelivery(input: {
   input.sealedStreamGenerationByJid.clear();
   input.activeProgress.clear();
 
-  if (input.app) {
-    await input.app.stop();
-  }
+  if (input.app) await input.app.stop();
   return null;
 }
 

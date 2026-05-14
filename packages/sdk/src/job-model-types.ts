@@ -11,6 +11,12 @@ export type JobStaleness = 'missed_window';
 
 export type JobHealthState =
   | 'ready'
+  | 'missing_capability'
+  | 'broker_unreachable'
+  | 'credential_unknown'
+  | 'browser_login_may_be_required'
+  | 'mcp_missing_credential'
+  | 'draft_only'
   | 'running'
   | 'completed'
   | 'failed'
@@ -35,6 +41,29 @@ export interface JobToolAccess {
   effectiveAllowedTools: string[];
   projectedRuntimeTools?: string[];
   source: string;
+}
+
+export interface JobSetup {
+  state: Extract<
+    JobHealthState,
+    | 'ready'
+    | 'missing_capability'
+    | 'broker_unreachable'
+    | 'credential_unknown'
+    | 'browser_login_may_be_required'
+    | 'mcp_missing_credential'
+    | 'draft_only'
+  >;
+  checkedAt: string | null;
+  fingerprint: string | null;
+  blockers: Array<{
+    state: string;
+    message: string;
+    nextAction: string;
+    requirementType: string;
+    requirementId: string;
+  }>;
+  nextAction: string | null;
 }
 
 export interface JobExecutionContext {
@@ -71,6 +100,9 @@ export interface JobRecord {
     | { type: 'cron' | 'interval'; value: string };
   executionContext: JobExecutionContext;
   notificationRoutes: JobNotificationRoute[];
+  requiredTools: string[];
+  requiredMcpServers: string[];
+  setup?: JobSetup;
   nextRun: string | null;
   lastRun: string | null;
   staleness?: JobStaleness | null;
@@ -97,6 +129,15 @@ export interface JobRecord {
   silent?: boolean;
 }
 
+export interface JobEventRecord {
+  id: number;
+  job_id: string;
+  run_id: string | null;
+  event_type: string;
+  payload: string | null;
+  created_at: string;
+}
+
 export interface ModelRecord {
   id: string;
   modelProfileId: string;
@@ -118,6 +159,8 @@ export interface CreateJobInput {
   prompt: string;
   executionContext: JobRequestExecutionContext;
   notificationRoutes?: JobNotificationRoute[];
+  requiredTools?: string[];
+  requiredMcpServers?: string[];
   kind?: JobKind;
   runAt?: string;
   schedule?: { type: 'cron' | 'interval'; value: string };
@@ -131,6 +174,8 @@ export interface UpdateJobInput {
   prompt?: string;
   executionContext?: JobRequestExecutionContext;
   notificationRoutes?: JobNotificationRoute[];
+  requiredTools?: string[];
+  requiredMcpServers?: string[];
   status?: 'active' | 'paused';
   modelAlias?: string | null;
   modelProfileId?: string | null;
@@ -145,9 +190,19 @@ export interface ListJobsInput {
   limit?: number;
 }
 
+export interface ListJobEventsInput {
+  runId?: string;
+  eventType?: string;
+  sinceId?: number;
+  since?: string;
+  limit?: number;
+}
+
 export interface CreateJobResponse {
   jobId?: string;
   dryRun?: boolean;
+  status?: JobStatus;
+  setup?: JobSetup;
   modelAlias?: string | null;
   modelSource?: JobModelSource;
   model?: JobModelPreview | null;

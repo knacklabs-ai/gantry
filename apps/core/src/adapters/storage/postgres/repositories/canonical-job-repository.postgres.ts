@@ -20,7 +20,10 @@ import {
   configVersionIdForAgent,
   parseJson,
 } from './canonical-graph-repository.postgres.js';
-import { releaseStaleCanonicalJobLeases } from './canonical-job-lease-release.postgres.js';
+import {
+  releaseInterruptedCanonicalJobLeases,
+  releaseStaleCanonicalJobLeases,
+} from './canonical-job-lease-release.postgres.js';
 
 export interface CanonicalJobRecord {
   id: string;
@@ -93,8 +96,18 @@ const CANONICAL_JOB_EVENT_TYPES = [
   RUNTIME_EVENT_TYPES.JOB_STARTED,
   RUNTIME_EVENT_TYPES.JOB_STREAMING,
   RUNTIME_EVENT_TYPES.JOB_HEARTBEAT,
+  RUNTIME_EVENT_TYPES.JOB_SETUP_REQUIRED,
   RUNTIME_EVENT_TYPES.JOB_TOOL_DENIED,
   RUNTIME_EVENT_TYPES.JOB_TOOL_ACTIVITY,
+  RUNTIME_EVENT_TYPES.TASK_NOTIFICATION,
+  RUNTIME_EVENT_TYPES.PERMISSION_REQUESTED,
+  RUNTIME_EVENT_TYPES.PERMISSION_ALLOWED,
+  RUNTIME_EVENT_TYPES.PERMISSION_DENIED,
+  RUNTIME_EVENT_TYPES.PERMISSION_CANCELLED,
+  RUNTIME_EVENT_TYPES.PERMISSION_PERSISTED,
+  RUNTIME_EVENT_TYPES.PERMISSION_RESUMED,
+  RUNTIME_EVENT_TYPES.PERMISSION_FINAL_OUTCOME,
+  RUNTIME_EVENT_TYPES.SANDBOX_BLOCKED,
   RUNTIME_EVENT_TYPES.RUN_COMPLETED,
   RUNTIME_EVENT_TYPES.RUN_FAILED,
   RUNTIME_EVENT_TYPES.RUN_TIMEOUT,
@@ -314,6 +327,12 @@ export class PostgresCanonicalJobRepository {
     nowIso: string = currentIso(),
   ): Promise<ReleasedStaleJobLease[]> {
     return releaseStaleCanonicalJobLeases(this.db, nowIso);
+  }
+
+  async releaseInterruptedLeases(
+    nowIso: string = currentIso(),
+  ): Promise<ReleasedStaleJobLease[]> {
+    return releaseInterruptedCanonicalJobLeases(this.db, nowIso);
   }
 
   async insertRun(
@@ -659,7 +678,6 @@ export class PostgresCanonicalJobRepository {
     );
     return { agentId, configVersionId: configVersionIdForAgent(agentId) };
   }
-
   private async nextRunShortId(
     jobId: string,
     executor:

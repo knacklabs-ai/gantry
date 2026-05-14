@@ -12,6 +12,26 @@ function makeInsertOnlyDb() {
   };
 }
 
+function flattenSqlShape(value: unknown, seen = new Set<object>()): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value !== 'object') return '';
+  if (seen.has(value)) return '';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((entry) => flattenSqlShape(entry, seen)).join(' ');
+  }
+  const record = value as Record<string | symbol, unknown>;
+  return [
+    typeof record.value === 'string'
+      ? record.value
+      : flattenSqlShape(record.value, seen),
+    typeof record.name === 'string' ? record.name : '',
+    flattenSqlShape(record.queryChunks, seen),
+    flattenSqlShape(record.config, seen),
+  ].join(' ');
+}
+
 describe('PostgresCanonicalJobRepository', () => {
   it('marks stale lease runs as timed out when releasing job leases', async () => {
     const selectWhere = vi.fn(async () => [
@@ -20,8 +40,9 @@ describe('PostgresCanonicalJobRepository', () => {
     ]);
     const selectFrom = vi.fn(() => ({ where: selectWhere }));
     const updateWheres = [
-      vi.fn(async () => undefined),
-      vi.fn(async () => undefined),
+      vi.fn(() => ({
+        returning: vi.fn(async () => [{ id: 'job-1' }, { id: 'job-2' }]),
+      })),
     ];
     const updateSets = [
       vi.fn(() => ({ where: updateWheres[0] })),
@@ -68,6 +89,9 @@ describe('PostgresCanonicalJobRepository', () => {
         updatedAt: '2026-05-12T09:00:00.000Z',
       }),
     );
+    const releasePredicate = updateWheres[0].mock.calls[0]?.[0];
+    expect(flattenSqlShape(releasePredicate)).toContain('status');
+    expect(flattenSqlShape(releasePredicate)).toContain('lease_expires_at');
     expect(updateSets[1]).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'timeout',
@@ -75,6 +99,31 @@ describe('PostgresCanonicalJobRepository', () => {
         errorSummary: 'Scheduler run lease expired before completion.',
       }),
     );
+  });
+
+  it('does not time out runs for stale leases changed before release update', async () => {
+    const selectWhere = vi.fn(async () => [
+      { id: 'job-1', leaseRunId: 'run-1' },
+    ]);
+    const selectFrom = vi.fn(() => ({ where: selectWhere }));
+    const jobReturning = vi.fn(async () => []);
+    const jobWhere = vi.fn(() => ({ returning: jobReturning }));
+    const jobSet = vi.fn(() => ({ where: jobWhere }));
+    const tx = {
+      select: vi.fn(() => ({ from: selectFrom })),
+      update: vi.fn().mockReturnValueOnce({ set: jobSet }),
+    };
+    const db = {
+      transaction: vi.fn(async (callback) => callback(tx)),
+    };
+    const repository = new PostgresCanonicalJobRepository(db as never);
+
+    await expect(
+      repository.releaseStaleLeases('2026-05-12T09:00:00.000Z'),
+    ).resolves.toEqual([]);
+
+    expect(jobReturning).toHaveBeenCalled();
+    expect(tx.update).toHaveBeenCalledTimes(1);
   });
 
   it('does not claim a queued dispatch after the job is paused', async () => {

@@ -160,11 +160,19 @@ describe('scheduler MCP tools', () => {
     expect(schemas.get('scheduler_run_now')?.job_id).toBeDefined();
     expect(schemas.get('scheduler_grant_tool')).toBeUndefined();
     expect(schemas.get('scheduler_upsert_job')?.allowed_tools).toBeUndefined();
+    expect(
+      schemas.get('scheduler_upsert_job')?.required_tools.safeParse(['Browser'])
+        .success,
+    ).toBe(true);
     expect(schemas.get('scheduler_upsert_job')?.confirm).toBeDefined();
     expect(
       schemas.get('scheduler_upsert_job')?.confirmation_token,
     ).toBeDefined();
     expect(schemas.get('scheduler_update_job')?.allowed_tools).toBeUndefined();
+    expect(
+      schemas.get('scheduler_update_job')?.required_tools.safeParse(['Browser'])
+        .success,
+    ).toBe(true);
     expect(schemas.get('scheduler_list_notification_targets')).toBeDefined();
   });
 
@@ -207,7 +215,8 @@ describe('scheduler MCP tools', () => {
       timeout_ms: 300_000,
     });
 
-    expect(response.content[0].text).toBe('[]');
+    expect(response.content[0].text).toContain('Scheduler events (0)');
+    expect(response.content[0].text).toContain('[]');
     expect(writeIpcFile).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -260,6 +269,7 @@ describe('scheduler MCP tools', () => {
       schedule_type: 'once',
       schedule_value: '2026-05-04T00:00:00.000Z',
       target: 'here',
+      required_tools: ['Browser'],
     });
 
     expect(response.isError).not.toBe(true);
@@ -267,6 +277,7 @@ describe('scheduler MCP tools', () => {
     expect(response.content[0].text).toContain('- Schedule: once');
     expect(response.content[0].text).toContain('- Model: job default');
     expect(response.content[0].text).toContain('- Tool access:');
+    expect(response.content[0].text).toContain('- Required tools: Browser');
     expect(response.content[0].text).toContain('- Network:');
     expect(response.content[0].text).toContain('- Memory:');
     expect(response.content[0].text).toContain('- Runtime:');
@@ -325,6 +336,7 @@ describe('scheduler MCP tools', () => {
           label: 'primary',
         },
       ],
+      requiredTools: ['Browser'],
       createdBy: 'agent',
     });
     const response = await tools.get('scheduler_upsert_job')!({
@@ -333,6 +345,7 @@ describe('scheduler MCP tools', () => {
       schedule_type: 'once',
       schedule_value: '2026-05-04T00:00:00.000Z',
       target: 'here',
+      required_tools: ['Browser'],
       confirm: true,
       confirmation_token: confirmationToken,
     });
@@ -356,6 +369,7 @@ describe('scheduler MCP tools', () => {
             label: 'primary',
           },
         ],
+        requiredTools: ['Browser'],
       }),
     );
   });

@@ -448,6 +448,92 @@ describe('agent-spawn timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
+  it('preserves structured runner errors on nonzero streaming exit', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = spawnAgent(testGroup, testInput, () => {}, onOutput);
+
+    emitOutputMarker(fakeProc, {
+      status: 'error',
+      result: null,
+      error: 'Permission denied: scoped Bash rule missing',
+      newSessionId: 'session-denied',
+    });
+    fakeProc.stderr.push('sdk stack tail should not replace structured error');
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 1);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result).toMatchObject({
+      status: 'error',
+      error: 'Permission denied: scoped Bash rule missing',
+      newSessionId: 'session-denied',
+    });
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'error',
+        error: 'Permission denied: scoped Bash rule missing',
+      }),
+    );
+  });
+
+  it('fails scheduled jobs with an explicit idle-stall diagnostic', async () => {
+    process.env.MYCLAW_SCHEDULED_JOB_IDLE_TIMEOUT_MS = '60000';
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = spawnAgent(
+      testGroup,
+      {
+        ...testInput,
+        isScheduledJob: true,
+        jobId: 'job-idle',
+        runId: 'run-idle',
+      },
+      () => {},
+      onOutput,
+      { timeoutMs: 1800000 },
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      runtimeEvents: [
+        {
+          eventType: 'job.heartbeat',
+          payload: {
+            lastTool: 'SandboxNetworkAccess',
+            lastActivityAt: '2026-05-13T22:01:55.091Z',
+            lastActivityAgoMs: 61000,
+            pendingPermissionRequests: 0,
+            pendingPermissionToolNames: [],
+            totalToolCalls: 4,
+          },
+        },
+      ],
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fakeProc.kill).toHaveBeenCalledWith('SIGKILL');
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.error).toContain(
+      'Scheduled job made no runner or tool progress',
+    );
+    expect(result.error).toContain('lastTool=SandboxNetworkAccess');
+    expect(result.error).toContain('pendingPermissions=0 (none)');
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeEvents: [
+          expect.objectContaining({ eventType: 'job.heartbeat' }),
+        ],
+      }),
+    );
+    delete process.env.MYCLAW_SCHEDULED_JOB_IDLE_TIMEOUT_MS;
+  });
+
   it('ensures group IPC layout before spawning host runner', async () => {
     const resultPromise = spawnAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);

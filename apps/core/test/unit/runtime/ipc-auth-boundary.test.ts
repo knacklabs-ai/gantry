@@ -228,6 +228,7 @@ describe('validateIpcAuthRequest', () => {
     assertRejected({ sessionId: 'session-1' });
     assertRejected({ group_scope: 'team' });
     assertRejected({ groupScope: 'team' });
+    assertRejected({ required_mcp_servers: ['mcp:legacy'] });
   });
 
   it('rejects scheduler job allowedTools because jobs inherit agent capabilities', () => {
@@ -259,6 +260,28 @@ describe('validateIpcAuthRequest', () => {
     expect(() => parseTaskIpcData(replacePayload, 'team')).toThrow(
       /Unsupported scheduler job fields: allowedTools/,
     );
+  });
+
+  it('preserves scheduler required MCP server assertions at the IPC boundary', () => {
+    const payload = signedPayload({
+      requestId: 'task-required-mcp-servers',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'scheduler_upsert_job',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
+      name: 'Job',
+      prompt: 'Run',
+      scheduleType: 'interval',
+      scheduleValue: '60000',
+      requiredTools: ['Browser'],
+      requiredMcpServers: ['mcp:company-crm'],
+    });
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'scheduler_upsert_job',
+      requiredTools: ['Browser'],
+      requiredMcpServers: ['mcp:company-crm'],
+    });
   });
 
   it('requires browser IPC signatures to match the chat-scoped token', () => {

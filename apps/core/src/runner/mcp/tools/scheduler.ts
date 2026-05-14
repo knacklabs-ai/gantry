@@ -5,6 +5,7 @@ import { parseIso } from '../../../shared/time/datetime.js';
 import { makeIpcId } from '../ipc-ids.js';
 import { formatModelCatalog } from '../../../shared/model-catalog.js';
 import {
+  schedulerEventsSummary,
   schedulerJobSummary,
   schedulerJobsSummary,
 } from './scheduler-formatters.js';
@@ -34,6 +35,8 @@ const SCHEDULER_UPSERT_ARG_KEYS = new Set([
   'target',
   'execution_context',
   'notification_routes',
+  'required_tools',
+  'required_mcp_servers',
   'silent',
   'cleanup_after_ms',
   'timeout_ms',
@@ -55,6 +58,8 @@ const SCHEDULER_UPDATE_ARG_KEYS = new Set([
   'target',
   'execution_context',
   'notification_routes',
+  'required_tools',
+  'required_mcp_servers',
   'silent',
   'cleanup_after_ms',
   'timeout_ms',
@@ -156,6 +161,8 @@ export function registerSchedulerTools(server: McpServer): void {
           }),
         )
         .optional(),
+      required_tools: z.array(z.string()).optional(),
+      required_mcp_servers: z.array(z.string()).optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
       timeout_ms: z.number().optional(),
@@ -203,6 +210,8 @@ export function registerSchedulerTools(server: McpServer): void {
         scheduleValue: args.schedule_value,
         executionContext: canonicalTarget.executionContext,
         notificationRoutes: canonicalTarget.notificationRoutes,
+        requiredTools: args.required_tools,
+        requiredMcpServers: args.required_mcp_servers,
         silent: args.silent,
         cleanupAfterMs: args.cleanup_after_ms,
         timeoutMs: args.timeout_ms,
@@ -316,7 +325,7 @@ export function registerSchedulerTools(server: McpServer): void {
       const result = Array.isArray(targets) ? targets : [];
       return {
         content: [
-          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+          { type: 'text' as const, text: schedulerEventsSummary(result) },
         ],
       };
     },
@@ -350,6 +359,8 @@ export function registerSchedulerTools(server: McpServer): void {
           }),
         )
         .optional(),
+      required_tools: z.array(z.string()).optional(),
+      required_mcp_servers: z.array(z.string()).optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
       timeout_ms: z.number().optional(),
@@ -391,6 +402,12 @@ export function registerSchedulerTools(server: McpServer): void {
           ...(args.notification_routes !== undefined ||
           args.target !== undefined
             ? { notificationRoutes: canonicalTarget.notificationRoutes }
+            : {}),
+          ...(args.required_tools !== undefined
+            ? { requiredTools: args.required_tools }
+            : {}),
+          ...(args.required_mcp_servers !== undefined
+            ? { requiredMcpServers: args.required_mcp_servers }
             : {}),
           silent: args.silent,
           cleanupAfterMs: args.cleanup_after_ms,
@@ -566,7 +583,7 @@ export function registerSchedulerTools(server: McpServer): void {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(result, null, 2),
+            text: schedulerEventsSummary(result),
           },
         ],
       };

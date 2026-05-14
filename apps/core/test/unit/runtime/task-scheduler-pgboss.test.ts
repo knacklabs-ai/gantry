@@ -176,6 +176,49 @@ describe('PgBossSchedulerEngine', () => {
     expect(onSchedulerChanged).toHaveBeenCalledWith();
   });
 
+  it('releases interrupted running job leases during scheduler startup recovery', async () => {
+    const release = {
+      jobId: 'job-1',
+      runId: 'run-1',
+      releasedAt: '2026-04-24T08:00:00.000Z',
+      runTimedOut: true,
+    };
+    const opsRepository = {
+      releaseInterruptedJobLeases: vi.fn().mockResolvedValue([release]),
+    };
+    const onSchedulerChanged = vi.fn();
+    const handleReleasedStaleLeases = vi.fn().mockResolvedValue(undefined);
+    const engine = new PgBossSchedulerEngine(
+      {
+        conversationRoutes: () => ({}),
+        queue: {} as never,
+        onProcess: vi.fn(),
+        sendMessage: vi.fn(),
+        opsRepository: opsRepository as never,
+        onSchedulerChanged,
+      },
+      {
+        registerSystemJobs: vi.fn().mockResolvedValue(undefined),
+        runJob: vi.fn().mockResolvedValue(undefined),
+        sweepCompletedOneTimeJobs: vi.fn().mockResolvedValue(false),
+        handleReleasedStaleLeases,
+      },
+    );
+
+    await (
+      engine as unknown as {
+        releaseInterruptedStartupLeases: () => Promise<void>;
+      }
+    ).releaseInterruptedStartupLeases();
+
+    expect(opsRepository.releaseInterruptedJobLeases).toHaveBeenCalledTimes(1);
+    expect(handleReleasedStaleLeases).toHaveBeenCalledWith(
+      [release],
+      expect.objectContaining({ opsRepository }),
+    );
+    expect(onSchedulerChanged).toHaveBeenCalledWith();
+  });
+
   it('periodically runs a full sync so stale leases are released while idle', async () => {
     vi.useFakeTimers();
     try {

@@ -27,6 +27,8 @@ export interface TaskIpcData {
     threadId: string | null;
     label: string;
   }>;
+  requiredTools?: string[];
+  requiredMcpServers?: string[];
   groupScope?: string;
   threadId?: string | null;
   createdBy?: 'agent' | 'human';

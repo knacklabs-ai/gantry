@@ -2,6 +2,7 @@ import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js'
 import { ApplicationError } from '../common/application-error.js';
 import type { Clock } from '../common/clock.js';
 import {
+  DEFAULT_JOB_RUNTIME_APP_ID,
   filterJobsByCanonicalAppSession,
   resolveJobAppSession,
 } from './job-access.js';
@@ -28,9 +29,7 @@ import {
 } from './job-management-helpers.js';
 import type {
   Job,
-  JobEvent,
   JobManagementServiceDeps,
-  JobRun,
   JobUpsertInput,
   SchedulerJobAccess,
   SchedulerRunNowInput,
@@ -60,6 +59,19 @@ import {
   listManagedJobEvents,
   listManagedJobRuns,
 } from './job-management-read-queries.js';
+import {
+  normalizeRequiredMcpServers,
+  normalizeRequiredMcpServersInput,
+  normalizeRequiredTools,
+  normalizeRequiredToolsInput,
+} from './job-required-tools.js';
+import {
+  applyJobReadinessToUpdates,
+  evaluateManagedJobReadiness,
+  pauseJobForSetup,
+  recordJobSetupRequired,
+  setupBlockerDetails,
+} from './job-management-readiness.js';
 import { waitForTriggerCompletion } from './job-management-trigger-wait.js';
 import {
   assertJobAppAccess,
@@ -77,9 +89,7 @@ export class JobManagementService {
     return createManagedJob(this.deps, input);
   }
 
-  async upsertJobFromIpc(
-    input: UpsertJobFromIpcInput,
-  ): Promise<{ jobId: string; created: boolean; modelAlias?: string }> {
+  async upsertJobFromIpc(input: UpsertJobFromIpcInput) {
     const access = input.access;
     const name = input.name.trim();
     const prompt = input.prompt.trim();
@@ -149,6 +159,10 @@ export class JobManagementService {
         },
       ],
     );
+    const requiredTools = normalizeRequiredTools(input.requiredTools ?? []);
+    const requiredMcpServers = normalizeRequiredMcpServers(
+      input.requiredMcpServers ?? [],
+    );
 
     const requestedJobId = normalizeOptional(input.jobId);
     let id = this.deps.schedulePlanner.createJobId({
@@ -170,6 +184,10 @@ export class JobManagementService {
       access,
       control: this.deps.control,
     });
+    const storedExecutionContext =
+      canonicalSession?.sessionId && executionContext.sessionId == null
+        ? { ...executionContext, sessionId: canonicalSession.sessionId }
+        : executionContext;
     await requireJobNotificationRouteApproval({
       deps: this.deps as never,
       request: {
@@ -206,20 +224,50 @@ export class JobManagementService {
       max_retries: input.maxRetries,
       retry_backoff_ms: input.retryBackoffMs,
       max_consecutive_failures: input.maxConsecutiveFailures,
-      execution_context: executionContext,
+      execution_context: storedExecutionContext,
       notification_routes: requestedNotificationRoutes,
+      required_tools: requiredTools,
+      required_mcp_servers: requiredMcpServers,
     };
+    const readiness = await evaluateManagedJobReadiness({
+      deps: this.deps,
+      job,
+      appId: canonicalSession?.appId,
+    });
+    if (!readiness.ready) {
+      job.status = 'paused';
+      job.pause_reason = readiness.pauseReason;
+      job.next_run = null;
+    }
+    job.setup_state = readiness.setupState;
     const result = await this.deps.ops.upsertJob(job);
+    if (!readiness.ready) {
+      await recordJobSetupRequired({
+        deps: this.deps,
+        job,
+        readiness,
+        appId: canonicalSession?.appId,
+      });
+    }
     this.deps.scheduler.requestSchedulerSync(id);
-    return { jobId: id, created: result.created, modelAlias };
+    return {
+      jobId: id,
+      created: result.created,
+      modelAlias,
+      status: job.status ?? 'active',
+      setupState: job.setup_state,
+      pauseReason: job.pause_reason,
+    };
   }
 
   async listJobs(input: ManagedJobListInput): Promise<{ jobs: Job[] }> {
     const queryGroupScope = input.access
       ? input.access.sourceAgentFolder
       : input.groupScope;
+    const repositoryAppId =
+      input.appId === DEFAULT_JOB_RUNTIME_APP_ID ? undefined : input.appId;
     const jobs = await this.deps.ops.listJobs({
-      appId: input.appId,
+      appId: repositoryAppId,
       statuses: input.statuses,
       groupScope: queryGroupScope,
       agentId: input.agentId,
@@ -303,6 +351,14 @@ export class JobManagementService {
       patch.notificationRoutes === undefined
         ? undefined
         : normalizeNotificationRoutes(patch.notificationRoutes);
+    const normalizedRequiredTools = normalizeRequiredToolsInput(
+      patch.requiredTools,
+      'requiredTools',
+    );
+    const normalizedRequiredMcpServers = normalizeRequiredMcpServersInput(
+      patch.requiredMcpServers,
+      'requiredMcpServers',
+    );
     if (normalizedNotificationRoutes) {
       if (!authenticatedContext) {
         throw new ApplicationError(
@@ -338,6 +394,12 @@ export class JobManagementService {
         ...(normalizedNotificationRoutes
           ? { notificationRoutes: normalizedNotificationRoutes }
           : {}),
+        ...(normalizedRequiredTools !== undefined
+          ? { requiredTools: normalizedRequiredTools }
+          : {}),
+        ...(normalizedRequiredMcpServers !== undefined
+          ? { requiredMcpServers: normalizedRequiredMcpServers }
+          : {}),
       },
       this.deps.schedulePlanner,
       this.clock(),
@@ -346,7 +408,35 @@ export class JobManagementService {
       validateSchedulerUpdate(job, updates, input.access);
     }
     if (Object.keys(updates).length === 0) return { job };
+    const mergedForReadiness = { ...job, ...updates };
+    let readinessForSetupEvent:
+      | Awaited<ReturnType<typeof evaluateManagedJobReadiness>>
+      | undefined;
+    if (
+      mergedForReadiness.status === 'active' ||
+      normalizedRequiredTools !== undefined ||
+      normalizedRequiredMcpServers !== undefined
+    ) {
+      const readiness = await evaluateManagedJobReadiness({
+        deps: this.deps,
+        job: mergedForReadiness,
+        appId: input.appId,
+      });
+      applyJobReadinessToUpdates(updates, readiness, {
+        clearPauseWhenActive: true,
+        mergedStatus: mergedForReadiness.status,
+      });
+      readinessForSetupEvent = readiness.ready ? undefined : readiness;
+    }
     await this.deps.ops.updateJob(job.id, updates);
+    if (readinessForSetupEvent) {
+      await recordJobSetupRequired({
+        deps: this.deps,
+        job: { ...job, ...updates },
+        readiness: readinessForSetupEvent,
+        appId: input.appId,
+      });
+    }
     this.deps.scheduler.requestSchedulerSync(job.id);
     return { job: { ...job, ...updates } };
   }
@@ -373,7 +463,7 @@ export class JobManagementService {
 
   async resumeJob(
     input: ManagedJobResumeInput,
-  ): Promise<{ resumed: true; job: Job }> {
+  ): Promise<{ resumed: boolean; job: Job }> {
     const job = await this.requireJob(input.jobId);
     await this.assertAccess(job, input);
     let nextRun = this.deps.schedulePlanner.planResume({
@@ -407,9 +497,23 @@ export class JobManagementService {
       pause_reason: null,
       next_run: nextRun,
     };
+    const readiness = await evaluateManagedJobReadiness({
+      deps: this.deps,
+      job: { ...job, ...updates },
+      appId: input.appId,
+    });
+    applyJobReadinessToUpdates(updates, readiness);
     await this.deps.ops.updateJob(job.id, updates);
+    if (!readiness.ready) {
+      await recordJobSetupRequired({
+        deps: this.deps,
+        job: { ...job, ...updates },
+        readiness,
+        appId: input.appId,
+      });
+    }
     this.deps.scheduler.requestSchedulerSync(job.id);
-    return { resumed: true, job: { ...job, ...updates } };
+    return { resumed: readiness.ready, job: { ...job, ...updates } };
   }
 
   async triggerJob(
@@ -440,6 +544,24 @@ export class JobManagementService {
       throw new ApplicationError(
         'CONFLICT',
         `Cannot trigger job while status is ${job.status}; resume the job explicitly first.`,
+      );
+    }
+    const readiness = await evaluateManagedJobReadiness({
+      deps: this.deps,
+      job,
+      appId: appSession.appId,
+    });
+    if (!readiness.ready) {
+      await pauseJobForSetup({
+        deps: this.deps,
+        job,
+        readiness,
+        appId: appSession.appId,
+      });
+      throw new ApplicationError(
+        'CONFLICT',
+        'Job requires setup before it can be triggered.',
+        { details: setupBlockerDetails(readiness.setupState) },
       );
     }
     if (
@@ -522,7 +644,7 @@ export class JobManagementService {
     access?: SchedulerJobAccess;
     jobId?: string;
     limit?: number;
-  }): Promise<{ runs: JobRun[] }> {
+  }) {
     return listManagedJobRuns({
       deps: this.deps,
       visibility: this.visibilityReaders(),
@@ -539,7 +661,7 @@ export class JobManagementService {
     sinceId?: number;
     since?: string;
     limit?: number;
-  }): Promise<{ events: JobEvent[] }> {
+  }) {
     return listManagedJobEvents({
       deps: this.deps,
       visibility: this.visibilityReaders(),
@@ -551,7 +673,7 @@ export class JobManagementService {
     appId?: string;
     access?: SchedulerJobAccess;
     limit?: number;
-  }): Promise<{ deadLetterRuns: JobRun[] }> {
+  }) {
     return listManagedDeadLetterRuns({
       deps: this.deps,
       visibility: this.visibilityReaders(),

@@ -4,15 +4,9 @@ import type {
   PermissionApprovalDecision,
   PermissionApprovalDecisionMode,
   PermissionApprovalRequest,
-  PermissionApprovalRuleValue,
-  PermissionApprovalUpdate,
 } from '../domain/types.js';
 import { logger } from '../infrastructure/logging/logger.js';
-import { firstDestructiveRedirectTarget } from '../shared/bash-command-parser.js';
-import {
-  formatPersistentPermissionRulesForUser,
-  validatePersistentRequestPermissionRule,
-} from '../shared/persistent-permission-rules.js';
+import { formatPersistentPermissionRulesForUser } from '../shared/persistent-permission-rules.js';
 import {
   redactSensitiveText,
   sanitizeOutboundLlmText,
@@ -22,14 +16,23 @@ import {
   type SemanticCapabilityDefinition,
 } from '../shared/semantic-capabilities.js';
 import { parseSemanticCapabilityRule } from '../shared/semantic-capability-ids.js';
+import {
+  firstPersistentRule,
+  PERSISTENT_RULE_APPROVAL_MAX_RULES,
+  persistentPermissionUpdates,
+  persistentRules,
+} from './permission-decision.js';
+import { formatPermissionToolInputLines } from './permission-tool-input-format.js';
+
+export {
+  decisionForMode,
+  firstPersistentRule,
+  persistentPermissionUpdates,
+  persistentRules,
+  TIMED_GRANT_DURATION_MS,
+} from './permission-decision.js';
 
 const PERMISSION_MESSAGE_BUDGET = 2800;
-const PERMISSION_JSON_MAX_DEPTH = 2;
-const PERMISSION_JSON_MAX_KEYS = 12;
-const PERMISSION_JSON_MAX_ARRAY_ITEMS = 8;
-const PERSISTENT_RULE_APPROVAL_MAX_RULES = 5;
-const SENSITIVE_INPUT_KEY_PATTERN =
-  /(secret|token|password|credential|api[_-]?key|private[_-]?key|session|cookie|authorization)/i;
 
 export type PermissionActionToken =
   | PermissionApprovalDecisionMode
@@ -41,51 +44,9 @@ export function normalizePermissionAction(
 ): PermissionApprovalDecisionMode | null {
   if (action === 'allow_once' || action === 'approve') return 'allow_once';
   if (action === 'allow_persistent_rule') return 'allow_persistent_rule';
+  if (action === 'allow_timed_grant') return 'allow_timed_grant';
   if (action === 'cancel' || action === 'deny') return 'cancel';
   return null;
-}
-
-export function persistentPermissionUpdates(
-  request: PermissionApprovalRequest,
-): PermissionApprovalUpdate[] {
-  const candidates = (request.suggestions || []).filter(
-    (update) =>
-      (update.type === 'addRules' || update.type === 'replaceRules') &&
-      update.behavior === 'allow' &&
-      Array.isArray(update.rules) &&
-      update.rules.length > 0,
-  );
-  if (candidates.length !== 1) return [];
-  const rules = candidates[0].rules ?? [];
-  if (rules.length > PERSISTENT_RULE_APPROVAL_MAX_RULES) return [];
-  return rules.every((rule) => persistentRuleForSuggestion(rule))
-    ? candidates
-    : [];
-}
-
-export function persistentRules(request: PermissionApprovalRequest): string[] {
-  const [update] = persistentPermissionUpdates(request);
-  return (update?.rules || [])
-    .map(persistentRuleForSuggestion)
-    .filter((rule): rule is string => Boolean(rule));
-}
-
-export function firstPersistentRule(
-  request: PermissionApprovalRequest,
-): string | undefined {
-  return persistentRules(request)[0];
-}
-
-function persistentRuleForSuggestion(
-  rule: PermissionApprovalRuleValue,
-): string | undefined {
-  if (!rule?.toolName) return undefined;
-  const persistentRule = rule.ruleContent
-    ? `${rule.toolName}(${rule.ruleContent})`
-    : rule.toolName;
-  return validatePersistentRequestPermissionRule(persistentRule).ok
-    ? persistentRule
-    : undefined;
 }
 
 export function permissionDecisionOptions(
@@ -95,8 +56,8 @@ export function permissionDecisionOptions(
   const persistentRule = firstPersistentRule(request);
   if (!persistentRule) logPersistentOptionDrop(request);
   return persistentRule
-    ? ['allow_once', 'allow_persistent_rule', 'cancel']
-    : ['allow_once', 'cancel'];
+    ? ['allow_once', 'allow_timed_grant', 'allow_persistent_rule', 'cancel']
+    : ['allow_once', 'allow_timed_grant', 'cancel'];
 }
 
 function logPersistentOptionDrop(request: PermissionApprovalRequest): void {
@@ -136,6 +97,7 @@ export function permissionButtonLabel(
   request: PermissionApprovalRequest,
 ): string {
   if (mode === 'allow_once') return 'Allow once';
+  if (mode === 'allow_timed_grant') return 'Allow 5 min for this tool';
   if (mode === 'cancel') return 'Cancel';
   const rule = firstPersistentRule(request);
   if (!rule) return 'Always allow';
@@ -144,52 +106,6 @@ export function permissionButtonLabel(
   const rules = persistentRules(request);
   if (rules.length > 1) return `Always allow ${rules.length} rules`;
   return `Always allow ${headTailTruncate(rule, 24, 9)}`;
-}
-
-export function decisionForMode(
-  request: PermissionApprovalRequest,
-  mode: PermissionApprovalDecisionMode,
-  decidedBy?: string,
-): PermissionApprovalDecision {
-  if (mode === 'cancel') {
-    return {
-      approved: false,
-      mode,
-      decidedBy,
-      reason: 'canceled',
-      decisionClassification: 'user_reject',
-    };
-  }
-  if (mode === 'allow_persistent_rule') {
-    const updates = persistentPermissionUpdates(request).map((update) => ({
-      ...update,
-      destination: 'session' as const,
-    }));
-    if (updates.length === 0) {
-      return {
-        approved: false,
-        mode: 'cancel',
-        decidedBy,
-        reason: 'persistent rule unavailable',
-        decisionClassification: 'user_reject',
-      };
-    }
-    return {
-      approved: true,
-      mode,
-      decidedBy,
-      reason: 'persistent rule allowed',
-      updatedPermissions: updates,
-      decisionClassification: 'user_permanent',
-    };
-  }
-  return {
-    approved: true,
-    mode,
-    decidedBy,
-    reason: 'allowed once',
-    decisionClassification: 'user_temporary',
-  };
 }
 
 export function formatPermissionPromptText(
@@ -225,7 +141,10 @@ export function formatPermissionPromptText(
   }
   if (request.threadId)
     lines.push(`Thread: ${sanitizePermissionText(request.threadId, 60, 20)}`);
-  const inputLines = formatPermissionToolInputLines(request);
+  const inputLines = formatPermissionToolInputLines(
+    request,
+    sanitizePermissionText,
+  );
   if (inputLines.length > 0) lines.push('', ...inputLines);
   if (request.blockedPath)
     lines.push(
@@ -266,6 +185,23 @@ export function formatPermissionReceiptText(
   if (!decision.approved || decision.mode === 'cancel') {
     return limitPermissionMessage(
       `Canceled: no permission changed\nAction: ${sanitizePermissionText(action, 160, 40)}\nBy: ${sanitizePermissionText(actor, 120, 40)}`,
+    );
+  }
+  if (decision.mode === 'allow_timed_grant') {
+    const expiresAt = decision.timedGrantExpiresAtMs;
+    const expiresLabel = expiresAt
+      ? new Date(expiresAt).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : 'soon';
+    return limitPermissionMessage(
+      [
+        `Timed grant active until ${expiresLabel}`,
+        `For tool: ${formatPermissionActionSummary(request)}`,
+        `By: ${sanitizePermissionText(actor, 120, 40)}`,
+        `Request ID: \`${sanitizePermissionText(requestId, 160, 40)}\``,
+      ].join('\n'),
     );
   }
   if (decision.mode === 'allow_persistent_rule') {
@@ -318,158 +254,6 @@ function formatRuleList(rules: string[]): string[] {
     .map((rule) => `  • ${sanitizePermissionText(rule, 260, 100)}`);
   const remaining = rules.length - shown.length;
   return remaining > 0 ? [...shown, `  …and ${remaining} more`] : shown;
-}
-
-function formatPermissionToolInputLines(
-  request: PermissionApprovalRequest,
-): string[] {
-  if (!request.toolInput || typeof request.toolInput !== 'object') return [];
-  const input = request.toolInput;
-  if (
-    request.toolName === 'Bash' &&
-    typeof input.command === 'string' &&
-    input.command.trim()
-  ) {
-    const command = sanitizePermissionText(input.command.trim(), 900, 300);
-    const redirectTarget = firstDestructiveRedirectTarget(input.command);
-    return [
-      'Command:',
-      '```',
-      command,
-      '```',
-      ...(redirectTarget ? [`Redirect: ${redirectTarget}`] : []),
-    ];
-  }
-  if (request.toolName === 'Edit' || request.toolName === 'Write') {
-    const lines: string[] = [];
-    if (typeof input.file_path === 'string' && input.file_path.trim()) {
-      lines.push(
-        `File: ${sanitizePermissionText(input.file_path.trim(), 200, 80)}`,
-      );
-    }
-    const diffLines: string[] = [];
-    if (request.toolName === 'Edit') {
-      if (typeof input.old_string === 'string' && input.old_string.trim()) {
-        diffLines.push(
-          `-${sanitizePermissionText(input.old_string.trim(), 200, 100)}`,
-        );
-      }
-      if (typeof input.new_string === 'string' && input.new_string.trim()) {
-        diffLines.push(
-          `+${sanitizePermissionText(input.new_string.trim(), 200, 100)}`,
-        );
-      }
-    } else if (typeof input.content === 'string' && input.content.trim()) {
-      diffLines.push(
-        `+${sanitizePermissionText(input.content.trim(), 200, 100)}`,
-      );
-    }
-    if (diffLines.length > 0) {
-      lines.push('Change:', '```diff', ...diffLines, '```');
-    }
-    if (lines.length > 0) return lines;
-  }
-  const fieldLines = formatKnownToolInputFields(request.toolName, input);
-  if (fieldLines.length > 0) return fieldLines;
-  try {
-    const json = sanitizePermissionText(boundedJsonPreview(input), 450, 150);
-    return ['Input:', '```json', json, '```'];
-  } catch {
-    return ['Input: [unserializable]'];
-  }
-}
-
-function boundedJsonPreview(input: Record<string, unknown>): string {
-  return JSON.stringify(boundedJsonValue(input, 0), null, 2);
-}
-
-function boundedJsonValue(value: unknown, depth: number): unknown {
-  if (typeof value === 'string') {
-    return sanitizePermissionText(value, 160, 80);
-  }
-  if (
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    value === null
-  ) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    const items = value
-      .slice(0, PERMISSION_JSON_MAX_ARRAY_ITEMS)
-      .map((item) => boundedJsonValue(item, depth + 1));
-    if (value.length > items.length) {
-      items.push(`... ${value.length - items.length} more item(s) omitted`);
-    }
-    return items;
-  }
-  if (value && typeof value === 'object') {
-    if (depth >= PERMISSION_JSON_MAX_DEPTH) return '[nested object omitted]';
-    const out: Record<string, unknown> = {};
-    let seen = 0;
-    for (const key in value as Record<string, unknown>) {
-      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-      if (seen >= PERMISSION_JSON_MAX_KEYS) {
-        out.__omitted_keys = 'more';
-        break;
-      }
-      seen += 1;
-      const entry = (value as Record<string, unknown>)[key];
-      out[key] = SENSITIVE_INPUT_KEY_PATTERN.test(key)
-        ? '[REDACTED_SECRET]'
-        : boundedJsonValue(entry, depth + 1);
-    }
-    return out;
-  }
-  return sanitizePermissionText(String(value), 160, 80);
-}
-
-function formatKnownToolInputFields(
-  toolName: string,
-  input: Record<string, unknown>,
-): string[] {
-  const lines: string[] = [];
-  const add = (label: string, value: unknown, limit = 300) => {
-    if (typeof value !== 'string' && typeof value !== 'number') return;
-    const text = String(value).trim();
-    if (!text) return;
-    lines.push(`${label}: ${sanitizePermissionText(text, limit, 100)}`);
-  };
-  if (toolName === 'Read') add('Path', input.file_path);
-  if (toolName === 'LS') add('Path', input.path);
-  if (toolName === 'Glob') {
-    add('Pattern', input.pattern);
-    add('Path', input.path);
-  }
-  if (toolName === 'Grep') {
-    add('Pattern', input.pattern);
-    add('Path', input.path);
-    add('Include', input.include);
-  }
-  if (toolName === 'WebFetch') {
-    add('URL', input.url);
-    add('Prompt', input.prompt, 300);
-  }
-  if (toolName.startsWith('mcp__myclaw__browser_')) {
-    add('URL', input.url);
-    add('Selector', input.selector);
-    add('Text', input.text);
-    add('Path', input.path);
-    add('Key', input.key);
-  }
-  if (
-    toolName.startsWith('mcp__myclaw__scheduler_') ||
-    toolName.startsWith('scheduler_')
-  ) {
-    add('Job ID', input.job_id ?? input.jobId);
-    add('Name', input.name);
-    add(
-      'Schedule',
-      input.schedule ?? input.schedule_value ?? input.scheduleValue,
-    );
-    add('Prompt', input.prompt, 300);
-  }
-  return lines;
 }
 
 function formatInteractionPermissionPrompt(
@@ -559,7 +343,9 @@ function formatPermissionBoundaryLines(
   const rule = firstPersistentRule(request);
   const capabilityName = semanticCapabilityName(request, rule);
   if (!rule) {
-    return ['What this changes: Allow once applies only to this tool call.'];
+    return [
+      'What this changes: Allow once applies only to this tool call. Allow 5 min auto-approves additional calls to the same tool for 5 minutes.',
+    ];
   }
   if (capabilityName) {
     return [

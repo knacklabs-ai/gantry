@@ -198,8 +198,11 @@ export function toolRuleCoversRule(
     return allowed.toolName === candidate.toolName;
   }
   if (candidate.kind !== 'scoped') return false;
+  if (allowed.toolName !== candidate.toolName) return false;
+  if (allowed.scope === candidate.scope) return true;
   return (
-    allowed.toolName === candidate.toolName && allowed.scope === candidate.scope
+    allowed.toolName === 'Bash' &&
+    bashScopeCoversScope(allowed.scope, candidate.scope)
   );
 }
 
@@ -438,6 +441,12 @@ function bashScopeMatchesLeaf(scope: string, leaf: BashCommandLeaf): boolean {
     if (!globPatternMatches(pattern, value)) return false;
   }
   return argv.length === patternArgs.length || hasTrailingRestWildcard;
+}
+
+function bashScopeCoversScope(allowedScope: string, candidateScope: string) {
+  const candidate = parseBashCommand(candidateScope.trim());
+  if (!candidate.ok || candidate.leaves.length !== 1) return false;
+  return bashScopeMatchesLeaf(allowedScope, candidate.leaves[0]);
 }
 
 function globPatternMatches(pattern: string, value: string): boolean {

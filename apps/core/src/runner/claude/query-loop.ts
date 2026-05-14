@@ -5,8 +5,6 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { composeAgentCapabilities } from '../agent-capabilities.js';
-import { denyMemoryBoundaryToolUse } from '../memory-boundary.js';
-import { denyProtectedCapabilityToolUse } from './protected-capability-guard.js';
 import { MessageStream } from './message-stream.js';
 import {
   drainInteractionBoundaries,
@@ -16,7 +14,6 @@ import {
 import { SteeringDeliveryGate } from './steering-delivery-gate.js';
 import { log } from './logging.js';
 import { writeOutput } from './output.js';
-import { requestPermissionApproval } from './permission-callback.js';
 import {
   buildSdkFilesystemSandbox,
   readProtectedFilesystemPaths,
@@ -36,51 +33,21 @@ import type {
   AgentRunnerInput,
   AgentRunnerToolAttemptOutput,
 } from './types.js';
-import {
-  findModelByRunnerModel,
-  normalizeModelUsage,
-} from '../../shared/model-catalog.js';
-import { validateAgentToolInput } from './agent-model-selection.js';
+import { normalizeModelUsage } from '../../shared/model-catalog.js';
 import { usageEventIdForMessage } from './query-usage-event-id.js';
-import { readLiveToolRules } from '../../shared/live-tool-rules.js';
-import { permissionUpdateAllowedToolRules } from '../../shared/permission-tool-rules.js';
-import {
-  ToolExecutionClassifier,
-  ToolExecutionPolicyService,
-} from '../../shared/tool-execution-policy-service.js';
-import {
-  permissionRequestToolName,
-  scheduledPermissionSuggestions,
-} from './permission-suggestions.js';
 import {
   assertRequiredMcpServerReady,
   readExternalMcpServers,
 } from './mcp-server-validation.js';
-import { sandboxBlockedRuntimeEvents } from './sandbox-events.js';
-import { createSdkSandboxNetworkGate } from './sdk-sandbox-network-gate.js';
 import {
   readExternalMcpAllowedTools,
   readExternalMcpAlwaysAllowedTools,
 } from './external-mcp-tool-rules.js';
-import { applyBashTrustEnv } from './bash-trust-env.js';
 import { startJobHeartbeat } from './job-heartbeat.js';
 import { logUsage } from './usage-logging.js';
 import { readContextUsage } from './context-usage.js';
 import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
-function forceBackgroundNativeAgentInput(
-  toolName: string,
-  input: unknown,
-): Record<string, unknown> {
-  if (toolName !== 'Agent' && toolName !== 'Task') {
-    return input !== null && typeof input === 'object' && !Array.isArray(input)
-      ? (input as Record<string, unknown>)
-      : {};
-  }
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
-    return { run_in_background: true };
-  }
-  return { ...(input as Record<string, unknown>), run_in_background: true };
-}
+import { createCanUseToolCallback } from './tool-permission-gate.js';
 export async function runQuery(
   prompt: string,
   mcpServerPath: string,
@@ -100,6 +67,9 @@ export async function runQuery(
   const queryRunId = randomUUID();
   const memoryBlock = readMemoryContextBlock(agentInput);
   stream.pushInitialPrompt(prompt, memoryBlock);
+  if (!enableIpcFollowups) {
+    stream.end();
+  }
   let ipcPolling = true;
   let closedDuringQuery = false;
   const steeringGate = new SteeringDeliveryGate((text) => {
@@ -156,7 +126,6 @@ export async function runQuery(
   const systemPrompt = buildRunnerSystemPrompt(agentInput, memoryBlock);
   const extraDirs = discoverAdditionalDirectories();
   const protectedFilesystemPaths = readProtectedFilesystemPaths();
-  const currentModel = findModelByRunnerModel(configuredModel);
   const workspaceFolder = agentInput.groupFolder;
   const capabilities = composeAgentCapabilities({
     mcpServerPath,
@@ -181,32 +150,6 @@ export async function runQuery(
     externalMcpAllowedTools: readExternalMcpAllowedTools(),
     externalMcpAlwaysAllowedTools: readExternalMcpAlwaysAllowedTools(),
   });
-  const toolExecutionClassifier = new ToolExecutionClassifier();
-  const toolExecutionPolicy = new ToolExecutionPolicyService();
-  const liveApprovedRules = new Set<string>();
-  const sdkSandboxNetworkGate = createSdkSandboxNetworkGate(agentInput);
-  function currentAllowedToolRules(): string[] {
-    return [
-      ...(agentInput.allowedTools ?? []),
-      ...capabilities.allowedTools,
-      ...readLiveToolRules({
-        ipcDir: process.env.MYCLAW_IPC_DIR,
-        runHandle: process.env.MYCLAW_AGENT_RUN_HANDLE,
-      }),
-      ...liveApprovedRules,
-    ];
-  }
-  function currentScheduledAllowedToolRules(): string[] {
-    return [
-      ...(agentInput.allowedTools ?? []),
-      ...readExternalMcpAllowedTools(),
-      ...readLiveToolRules({
-        ipcDir: process.env.MYCLAW_IPC_DIR,
-        runHandle: process.env.MYCLAW_AGENT_RUN_HANDLE,
-      }),
-      ...liveApprovedRules,
-    ];
-  }
   const sdkQuery = query({
     prompt: stream,
     options: {
@@ -240,321 +183,19 @@ export async function runQuery(
           },
         ],
       },
-      canUseTool: async (toolName, input, permissionOpts) => {
-        heartbeat.recordToolActivity(toolName);
-        const toolInput = forceBackgroundNativeAgentInput(toolName, input);
-        if (agentInput.runMode === 'prime') {
-          const deniedReason =
-            'Prime mode records requested tool access without executing tools.';
-          const publicToolName = permissionRequestToolName(toolName);
-          const attempt: AgentRunnerToolAttemptOutput = {
-            runMode: 'prime',
-            requestedToolName: toolName,
-            toolName: publicToolName,
-            title: permissionOpts.title,
-            displayName:
-              publicToolName === toolName
-                ? permissionOpts.displayName
-                : publicToolName,
-            description: permissionOpts.description,
-            decisionReason: permissionOpts.decisionReason,
-            blockedPath: permissionOpts.blockedPath,
-            toolUseID: permissionOpts.toolUseID,
-            agentID: permissionOpts.agentID,
-            toolInput,
-            suggestions: scheduledPermissionSuggestions(
-              toolName,
-              permissionOpts.suggestions,
-              {
-                blockedPath: permissionOpts.blockedPath,
-                toolInput,
-              },
-            ),
-            deniedReason,
-          };
-          primeToolAttempts.push(attempt);
-          writeOutput({
-            status: 'success',
-            result: null,
-            newSessionId,
-            primeToolAttempts: [attempt],
-            runtimeEvents: [
-              {
-                appId: agentInput.appId,
-                agentId: agentInput.agentId,
-                runId: agentInput.runId,
-                jobId: agentInput.jobId,
-                conversationId: agentInput.chatJid,
-                threadId: agentInput.threadId,
-                eventType: RUNTIME_EVENT_TYPES.PERMISSION_REQUESTED,
-                actor: 'runner',
-                responseMode: 'none',
-                payload: attempt,
-              },
-            ],
-          });
-          return {
-            behavior: 'deny' as const,
-            message: deniedReason,
-            interrupt: false,
-          };
-        }
-        const trustInput = () => applyBashTrustEnv(toolName, toolInput, sdkEnv);
-        const rememberAllowedTool = () =>
-          sdkSandboxNetworkGate.rememberAllowedTool(
-            toolName,
-            toolInput,
-            permissionOpts,
-          );
-        const allowToolUse = () => {
-          rememberAllowedTool();
-          return { behavior: 'allow' as const, updatedInput: trustInput() };
-        };
-        if (toolName === 'Agent' || toolName === 'Task') {
-          const modelDenial = validateAgentToolInput(toolInput, currentModel);
-          if (modelDenial) {
-            log(`Permission denied by model catalog guard: ${modelDenial}`);
-            return {
-              behavior: 'deny' as const,
-              message: modelDenial,
-              interrupt: false,
-            };
-          }
-        }
-        const protectedCapabilityDenial = denyProtectedCapabilityToolUse(
-          toolName,
-          toolInput,
-          permissionOpts,
-        );
-        if (protectedCapabilityDenial) {
-          log(
-            `Permission denied by protected capability guard: ${protectedCapabilityDenial}`,
-          );
-          writeOutput({
-            status: 'success',
-            result: null,
-            runtimeEvents: sandboxBlockedRuntimeEvents(agentInput, {
-              toolName,
-              reason: protectedCapabilityDenial,
-              decision: 'protected_capability_denied',
-            }),
-          });
-          return {
-            behavior: 'deny' as const,
-            message: protectedCapabilityDenial,
-            interrupt: false,
-          };
-        }
-        const memoryGuardDenial = denyMemoryBoundaryToolUse(
-          toolName,
-          toolInput,
-          permissionOpts,
-          memoryBlock,
-        );
-        if (memoryGuardDenial) {
-          log(
-            `Permission denied by memory boundary guard: ${memoryGuardDenial}`,
-          );
-          return {
-            behavior: 'deny' as const,
-            message: memoryGuardDenial,
-            interrupt: false,
-          };
-        }
-        const sandboxNetworkAccessDecision = sdkSandboxNetworkGate.decide(
-          toolName,
-          toolInput,
-          permissionOpts,
-        );
-        if (sandboxNetworkAccessDecision) return sandboxNetworkAccessDecision;
-        const toolExecutionRequest = toolExecutionClassifier.classify({
-          origin: 'sdk',
-          toolName,
-          toolInput,
-          executionMode: agentInput.isScheduledJob
-            ? 'autonomous'
-            : 'interactive',
-          runContext: {
-            jobId: agentInput.isScheduledJob ? agentInput.jobId : undefined,
-            threadId: agentInput.threadId,
-            conversationId: agentInput.chatJid,
-          },
-        });
-        if (agentInput.isScheduledJob) {
-          const toolDecision = toolExecutionPolicy.evaluate({
-            request: toolExecutionRequest,
-            schedulerAllowedToolRules: currentScheduledAllowedToolRules(),
-          });
-          if (toolDecision.status === 'allow') {
-            log(
-              `Autonomous job allowed tool ${toolName}: ${toolDecision.reason}`,
-            );
-            return allowToolUse();
-          }
-          if (permissionOpts.signal.aborted) {
-            return {
-              behavior: 'deny' as const,
-              message: 'Permission request aborted',
-              interrupt: true,
-            };
-          }
-          const recoveryMessage = `${toolDecision.reason} Recovery: ${toolDecision.recoveryAction}`;
-          const publicToolName = permissionRequestToolName(toolName);
-          log(
-            `Autonomous job requesting permission for tool ${toolName}: ${recoveryMessage}`,
-          );
-          emitInteractionBoundary();
-          const decision = await requestPermissionApproval({
-            appId: agentInput.appId,
-            agentId: agentInput.agentId,
-            groupFolder: workspaceFolder,
-            targetJid: agentInput.chatJid,
-            toolName: publicToolName,
-            title: permissionOpts.title,
-            displayName:
-              publicToolName === toolName
-                ? permissionOpts.displayName
-                : publicToolName,
-            description: permissionOpts.description,
-            decisionReason:
-              permissionOpts.decisionReason ?? toolDecision.reason,
-            closestRule: toolDecision.closestRule,
-            blockedPath: permissionOpts.blockedPath,
-            toolInput,
-            toolUseID: permissionOpts.toolUseID,
-            agentID: permissionOpts.agentID,
-            suggestions: scheduledPermissionSuggestions(
-              toolName,
-              permissionOpts.suggestions,
-              { blockedPath: permissionOpts.blockedPath, toolInput },
-            ),
-            threadId: agentInput.threadId,
-          });
-          if (decision.approved) {
-            for (const rule of permissionUpdateAllowedToolRules(
-              decision.updatedPermissions,
-            )) {
-              liveApprovedRules.add(rule);
-            }
-            rememberAllowedTool();
-            log(
-              `Autonomous job permission approved for tool ${toolName} by ${decision.decidedBy || 'unknown'}`,
-            );
-            return {
-              behavior: 'allow' as const,
-              updatedInput: applyBashTrustEnv(toolName, toolInput, sdkEnv),
-              ...(decision.updatedPermissions
-                ? { updatedPermissions: decision.updatedPermissions as never }
-                : {}),
-              ...(decision.decisionClassification
-                ? {
-                    decisionClassification:
-                      decision.decisionClassification as never,
-                  }
-                : {}),
-            };
-          }
-          const reason = decision.reason || 'Denied by operator';
-          const message = `Permission denied: ${reason}. ${recoveryMessage}`;
-          log(`Autonomous job denied tool ${toolName}: ${message}`);
-          return {
-            behavior: 'deny' as const,
-            message,
-            interrupt: true,
-            ...(decision.decisionClassification
-              ? {
-                  decisionClassification:
-                    decision.decisionClassification as never,
-                }
-              : {}),
-          };
-        }
-        if (capabilities.alwaysAllowedTools.includes(toolName)) {
-          return allowToolUse();
-        }
-        const currentToolDecision = toolExecutionPolicy.evaluate({
-          request: toolExecutionRequest,
-          allowedToolRules: currentAllowedToolRules(),
-        });
-        if (currentToolDecision.status === 'allow') {
-          log(
-            `Permission allowed for tool ${toolName}: ${currentToolDecision.reason}`,
-          );
-          return allowToolUse();
-        }
-        if (permissionOpts.signal.aborted) {
-          return {
-            behavior: 'deny' as const,
-            message: 'Permission request aborted',
-          };
-        }
-        const publicToolName = permissionRequestToolName(toolName);
-        emitInteractionBoundary();
-        const decision = await requestPermissionApproval({
-          appId: agentInput.appId,
-          agentId: agentInput.agentId,
-          groupFolder: workspaceFolder,
-          toolName: publicToolName,
-          title: permissionOpts.title,
-          displayName:
-            publicToolName === toolName
-              ? permissionOpts.displayName
-              : publicToolName,
-          description: permissionOpts.description,
-          decisionReason: permissionOpts.decisionReason,
-          closestRule: currentToolDecision.closestRule,
-          blockedPath: permissionOpts.blockedPath,
-          toolInput,
-          toolUseID: permissionOpts.toolUseID,
-          agentID: permissionOpts.agentID,
-          suggestions: scheduledPermissionSuggestions(
-            toolName,
-            permissionOpts.suggestions,
-            {
-              blockedPath: permissionOpts.blockedPath,
-              toolInput,
-            },
-          ),
-          threadId: agentInput.threadId,
-        });
-        if (decision.approved) {
-          for (const rule of permissionUpdateAllowedToolRules(
-            decision.updatedPermissions,
-          )) {
-            liveApprovedRules.add(rule);
-          }
-          rememberAllowedTool();
-          log(
-            `Permission approved for tool ${toolName} by ${decision.decidedBy || 'unknown'}`,
-          );
-          return {
-            behavior: 'allow' as const,
-            updatedInput: applyBashTrustEnv(toolName, toolInput, sdkEnv),
-            ...(decision.updatedPermissions
-              ? { updatedPermissions: decision.updatedPermissions as never }
-              : {}),
-            ...(decision.decisionClassification
-              ? {
-                  decisionClassification:
-                    decision.decisionClassification as never,
-                }
-              : {}),
-          };
-        }
-        const reason = decision.reason || 'Denied by operator';
-        log(`Permission denied for tool ${toolName}: ${reason}`);
-        return {
-          behavior: 'deny' as const,
-          message: `Permission denied: ${reason}`,
-          interrupt: false,
-          ...(decision.decisionClassification
-            ? {
-                decisionClassification:
-                  decision.decisionClassification as never,
-              }
-            : {}),
-        };
-      },
+      canUseTool: createCanUseToolCallback({
+        agentInput,
+        sdkEnv,
+        workspaceFolder,
+        memoryBlock,
+        configuredModel,
+        capabilities,
+        primeToolAttempts,
+        getNewSessionId: () => newSessionId,
+        emitInteractionBoundary,
+        recordToolActivity: (toolName) =>
+          heartbeat.recordToolActivity(toolName),
+      }),
       settingSources: ['user'],
       mcpServers: capabilities.mcpServers,
       includePartialMessages: true,

@@ -65,6 +65,8 @@ const DISALLOWED_TASK_FIELDS = [
   'max_retries',
   'retry_backoff_ms',
   'max_consecutive_failures',
+  'required_tools',
+  'required_mcp_servers',
   'execution_mode',
   'executionMode',
   'serialize',
@@ -306,6 +308,12 @@ export function parseTaskIpcData(
   const notificationRoutes = toOptionalNotificationRoutes(
     raw.notificationRoutes,
   );
+  const requiredTools = toOptionalStringArray(raw.requiredTools, 100, 255);
+  const requiredMcpServers = toOptionalStringArray(
+    raw.requiredMcpServers,
+    100,
+    255,
+  );
   const groupScope = toTrimmedString(raw.groupScope, { maxLen: 128 });
   const silent = toOptionalBoolean(raw.silent);
   const confirm = toOptionalBoolean(raw.confirm);
@@ -316,6 +324,7 @@ export function parseTaskIpcData(
   const statuses = toOptionalStringArray(raw.statuses, 50, 64);
   const runId = toTrimmedString(raw.runId, { maxLen: 128 });
   const eventType = toTrimmedString(raw.eventType, { maxLen: 128 });
+  const since = toTrimmedString(raw.since, { maxLen: 128 });
   const groupFolder = toTrimmedString(raw.groupFolder, { maxLen: 128 });
   const chatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
   const targetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
@@ -372,6 +381,10 @@ export function parseTaskIpcData(
       }
     ).notificationRoutes = notificationRoutes;
   }
+  if (requiredTools !== undefined) parsed.requiredTools = requiredTools;
+  if (requiredMcpServers !== undefined) {
+    parsed.requiredMcpServers = requiredMcpServers;
+  }
   if (groupScope) parsed.groupScope = groupScope;
   if (threadBinding.authThreadId) {
     parsed.authThreadId = threadBinding.authThreadId;
@@ -394,6 +407,7 @@ export function parseTaskIpcData(
   if (statuses !== undefined) parsed.statuses = statuses;
   if (runId) parsed.runId = runId;
   if (eventType) parsed.eventType = eventType;
+  if (since) parsed.since = since;
   if (groupFolder) parsed.groupFolder = groupFolder;
   if (chatJid) parsed.chatJid = chatJid;
   if (targetJid) parsed.targetJid = targetJid;
