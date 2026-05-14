@@ -212,7 +212,7 @@ describe('job readiness service', () => {
 
   it('canonicalizes projected browser tool denials to Browser setup', () => {
     const setup = setupStateForDeniedTool({
-      toolName: 'mcp__myclaw__browser_navigate',
+      toolName: 'mcp__myclaw__browser_act',
       checkedAt: '2026-05-14T00:00:00.000Z',
     });
 

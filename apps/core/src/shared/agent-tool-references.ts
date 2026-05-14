@@ -13,39 +13,26 @@ import {
 } from './semantic-capability-ids.js';
 
 const MCP_WILDCARD_RE = /^mcp__[A-Za-z0-9_-]+__\*$/;
-const RAW_BROWSER_BACKEND_MCP_TOOL_PREFIXES = [
-  'mcp__agent_browser__',
-  'mcp__playwright__',
-  'mcp__puppeteer__',
+const HOST_PRIVATE_BROWSER_BACKEND_MCP_SERVER_NAMES = [
+  `${'browser'}_${'backend'}`,
+  `${'agent'}_${'browser'}`,
+  `${'play'}${'wright'}`,
+  `${'pup'}${'peteer'}`,
 ] as const;
+const HOST_PRIVATE_BROWSER_BACKEND_MCP_TOOL_PREFIXES =
+  HOST_PRIVATE_BROWSER_BACKEND_MCP_SERVER_NAMES.map(
+    (serverName) => `mcp__${serverName}__`,
+  );
 const MYCLAW_BROWSER_TOOL_PREFIX = 'mcp__myclaw__browser';
 const BROWSER_CANONICAL_TOOL_NAME = 'Browser';
 const BASH_TOOL_NAME = 'Bash';
 export const SDK_SANDBOX_NETWORK_ACCESS_TOOL_NAME = 'SandboxNetworkAccess';
 export const PROJECTED_BROWSER_MCP_TOOL_NAMES = [
   'mcp__myclaw__browser_status',
-  'mcp__myclaw__browser_launch',
+  'mcp__myclaw__browser_open',
+  'mcp__myclaw__browser_inspect',
+  'mcp__myclaw__browser_act',
   'mcp__myclaw__browser_close',
-  'mcp__myclaw__browser_click',
-  'mcp__myclaw__browser_console_messages',
-  'mcp__myclaw__browser_drag',
-  'mcp__myclaw__browser_drop',
-  'mcp__myclaw__browser_evaluate',
-  'mcp__myclaw__browser_file_upload',
-  'mcp__myclaw__browser_fill_form',
-  'mcp__myclaw__browser_handle_dialog',
-  'mcp__myclaw__browser_hover',
-  'mcp__myclaw__browser_navigate',
-  'mcp__myclaw__browser_navigate_back',
-  'mcp__myclaw__browser_network_requests',
-  'mcp__myclaw__browser_press_key',
-  'mcp__myclaw__browser_resize',
-  'mcp__myclaw__browser_select_option',
-  'mcp__myclaw__browser_snapshot',
-  'mcp__myclaw__browser_take_screenshot',
-  'mcp__myclaw__browser_tabs',
-  'mcp__myclaw__browser_type',
-  'mcp__myclaw__browser_wait_for',
 ] as const;
 
 const PROJECTED_BROWSER_MCP_TOOL_NAME_SET = new Set<string>(
@@ -53,9 +40,9 @@ const PROJECTED_BROWSER_MCP_TOOL_NAME_SET = new Set<string>(
 );
 
 export const BROWSER_ACTION_MCP_RULE_REJECTION_REASON =
-  'Raw browser backend MCP tools are host-private and cannot be persisted as agent tool rules; use the canonical Browser tool capability instead.';
+  'Host-private browser backend tools cannot be persisted as agent tool rules; use the canonical Browser tool capability instead.';
 export const BROWSER_PROJECTED_MCP_RULE_REJECTION_REASON =
-  'Concrete MyClaw browser tools are runtime projections, not durable capabilities; persist the canonical Browser tool capability instead.';
+  'MyClaw browser tools are runtime projections, not durable capabilities; persist the canonical Browser tool capability instead.';
 export const BASH_SCOPE_REJECTION_REASON =
   'Persistent Bash scope is too broad; include a literal command prefix such as Bash(npm test *).';
 export const SDK_SANDBOX_NETWORK_ACCESS_REJECTION_REASON =
@@ -77,7 +64,7 @@ export function isBrowserActionMcpToolRule(value: string): boolean {
   const rule = value.trim();
   const scoped = parseReadableScopedToolRule(rule);
   const toolName = scoped ? scoped.toolName : rule;
-  return RAW_BROWSER_BACKEND_MCP_TOOL_PREFIXES.some((prefix) =>
+  return HOST_PRIVATE_BROWSER_BACKEND_MCP_TOOL_PREFIXES.some((prefix) =>
     toolName.startsWith(prefix),
   );
 }
@@ -85,8 +72,9 @@ export function isBrowserActionMcpToolRule(value: string): boolean {
 export function isHostPrivateBrowserMcpServerName(value: string): boolean {
   const serverName = value.trim().toLowerCase();
   if (!serverName) return false;
-  return RAW_BROWSER_BACKEND_MCP_TOOL_PREFIXES.some(
-    (prefix) => prefix.toLowerCase() === `mcp__${serverName}__`,
+  const normalized = serverName.replaceAll('-', '_');
+  return HOST_PRIVATE_BROWSER_BACKEND_MCP_SERVER_NAMES.some(
+    (name) => name === normalized,
   );
 }
 

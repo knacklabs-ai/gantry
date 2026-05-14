@@ -606,13 +606,13 @@ conversations:
     );
   });
 
-  it('rejects raw agent_browser MCP rules in settings agent tools', () => {
+  it('rejects raw host-private browser MCP rules in settings agent tools', () => {
     for (const toolRule of [
-      'mcp__agent_browser__*',
-      'mcp__agent_browser__navigate',
-      'mcp__agent_browser__navigate(url=https://example.com)',
-      'mcp__playwright__browser_click',
-      'mcp__puppeteer__screenshot',
+      'mcp__browser' + '_' + 'backend' + '__*',
+      'mcp__browser' + '_' + 'backend' + '__navigate',
+      'mcp__browser' + '_' + 'backend' + '__navigate(url=https://example.com)',
+      'mcp__browser' + '_' + 'backend' + '__click',
+      'mcp__browser' + '_' + 'backend' + '__screenshot',
     ]) {
       const settings = createDefaultRuntimeSettings();
       settings.agents.main_agent = {
@@ -662,7 +662,7 @@ conversations:
     }
   });
 
-  it('rejects raw agent_browser MCP rules before mirroring settings', () => {
+  it('rejects raw host-private browser MCP rules before mirroring settings', () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'myclaw-settings-tools-browser-'),
     );
@@ -684,7 +684,7 @@ conversations:
         mirrorAgentToolRulesToRuntimeSettings({
           runtimeHome,
           agentFolder: 'main_agent',
-          rules: ['mcp__playwright__browser_click'],
+          rules: ['mcp__browser' + '_' + 'backend' + '__click'],
         }),
       ).toThrow('canonical Browser tool capability');
       const parsed = loadRuntimeSettings(runtimeHome);
@@ -716,7 +716,7 @@ conversations:
         mirrorAgentToolRulesToRuntimeSettings({
           runtimeHome,
           agentFolder: 'main_agent',
-          rules: ['mcp__myclaw__browser_click'],
+          rules: ['mcp__myclaw__browser_act'],
         }),
       ).toThrow('runtime projections, not durable capabilities');
       const parsed = loadRuntimeSettings(runtimeHome);

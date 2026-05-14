@@ -19,7 +19,7 @@ import type {
   JobControlPort,
   JobManagementServiceDeps,
 } from '../application/jobs/job-management-types.js';
-import type { BrowserIpcAction } from '@myclaw/contracts';
+import type { BrowserBackendAction } from '../shared/browser-backend-actions.js';
 import type { BrowserSessionStatus } from './browser-capability-types.js';
 import type { BrowserUsageSettings } from './browser-usage-governor.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
@@ -65,7 +65,7 @@ export interface IpcDeps {
   getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
   getCredentialBrokerProfile?: () => CredentialBrokerProfile;
   callBrowserTool?: (input: {
-    toolName: BrowserIpcAction;
+    toolName: BrowserBackendAction;
     arguments: Record<string, unknown>;
     session: BrowserSessionStatus;
     fileAccessRoot: string;
@@ -74,7 +74,10 @@ export interface IpcDeps {
   publishBrowserJobActivity?: (input: {
     jobId: string;
     runId: string;
-    tool: BrowserIpcAction;
+    tool: 'Browser';
+    publicToolName?: string;
+    action: BrowserBackendAction;
+    satisfiesRequiredTool: boolean;
     ok: boolean;
     elapsedMs: number;
     normalizedSite?: string | null;

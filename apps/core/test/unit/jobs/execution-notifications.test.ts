@@ -130,10 +130,10 @@ describe('jobs/execution-notifications', () => {
       runId: 'run-1',
       runStatus: 'dead_lettered',
       summary:
-        'Tool not on autonomous job allowlist: mcp__myclaw__browser_navigate. Recovery: request_permission { "toolName": "Browser" }',
+        'Tool not on autonomous job allowlist: mcp__myclaw__browser_act. Recovery: request_permission { "toolName": "Browser" }',
       nextRun: null,
       retryCount: 1,
-      pauseReason: 'Needs permission: mcp__myclaw__browser_navigate',
+      pauseReason: 'Needs permission: mcp__myclaw__browser_act',
       sendMessage,
       durationMs: 41_000,
     });

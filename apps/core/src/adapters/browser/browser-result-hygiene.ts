@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { BrowserIpcAction } from '@myclaw/contracts';
+import type { BrowserBackendAction } from '../../shared/browser-backend-actions.js';
 
 import {
   ensureBrowserArtifactRoot,
@@ -13,11 +13,11 @@ import { nowMs } from '../../shared/time/datetime.js';
 
 const INLINE_SNAPSHOT_COMPACTION_BYTES = 32 * 1024;
 const SNAPSHOT_PREVIEW_BYTES = 4 * 1024;
-const BROWSER_FILE_OUTPUT_TOOLS = new Set<BrowserIpcAction>([
-  'browser_snapshot',
-  'browser_console_messages',
-  'browser_network_requests',
-  'browser_evaluate',
+const BROWSER_FILE_OUTPUT_TOOLS = new Set<BrowserBackendAction>([
+  'snapshot',
+  'console_messages',
+  'network_requests',
+  'evaluate',
 ]);
 
 export function textResult(text: string): Record<string, unknown> {
@@ -59,7 +59,7 @@ export function writeOptionalTextOutput(
 }
 
 export function normalizeBrowserToolResult(
-  toolName: BrowserIpcAction,
+  toolName: BrowserBackendAction,
   args: Record<string, unknown>,
   result: unknown,
   options: { artifactRoot?: string; tabSessionKey?: string } = {},
@@ -74,7 +74,7 @@ export function normalizeBrowserToolResult(
   );
   const filename = stringValue(args.filename);
   if (!filename || !BROWSER_FILE_OUTPUT_TOOLS.has(toolName)) {
-    if (toolName === 'browser_snapshot' && options.artifactRoot) {
+    if (toolName === 'snapshot' && options.artifactRoot) {
       return compactLargeBrowserSnapshot(sanitized, options.artifactRoot);
     }
     return sanitized;
@@ -88,7 +88,7 @@ export function sanitizeBrowserTabsResult(result: unknown): unknown {
   return projectBrowserTabsResult(
     sanitizeInternalChromeTargets(result),
     undefined,
-    'browser_tabs',
+    'tabs',
     { action: 'list' },
   );
 }

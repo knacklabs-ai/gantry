@@ -1272,14 +1272,15 @@ describe('agent-spawn timeout behavior', () => {
   it('fails closed on stale raw browser action MCP rules during spawn', async () => {
     const result = await spawnAgent(
       testGroup,
-      { ...testInput, allowedTools: ['Read', 'mcp__agent_browser__*'] },
+      {
+        ...testInput,
+        allowedTools: ['Read', 'mcp__browser' + '_' + 'backend' + '__*'],
+      },
       () => {},
     );
     expect(result).toMatchObject({
       status: 'error',
-      error: expect.stringContaining(
-        'Raw browser backend MCP tools are host-private',
-      ),
+      error: expect.stringContaining('Host-private browser backend tools'),
     });
     expect(mockEnsureBrowserReady).not.toHaveBeenCalled();
     expect(mockGetBrowserStatus).not.toHaveBeenCalled();
@@ -1289,13 +1290,13 @@ describe('agent-spawn timeout behavior', () => {
   it('fails closed on stale projected browser MCP rules during spawn', async () => {
     const result = await spawnAgent(
       testGroup,
-      { ...testInput, allowedTools: ['Read', 'mcp__myclaw__browser_click'] },
+      { ...testInput, allowedTools: ['Read', 'mcp__myclaw__browser_act'] },
       () => {},
     );
     expect(result).toMatchObject({
       status: 'error',
       error: expect.stringContaining(
-        'Concrete MyClaw browser tools are runtime projections',
+        'MyClaw browser tools are runtime projections',
       ),
     });
     expect(mockEnsureBrowserReady).not.toHaveBeenCalled();

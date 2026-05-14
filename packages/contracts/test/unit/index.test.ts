@@ -10,8 +10,6 @@ import {
   AgentConversationBindingRequestSchema,
   AgentConversationBindingListResponseSchema,
   AgentConversationBindingResponseSchema,
-  BROWSER_BACKEND_TOOL_NAMES,
-  BROWSER_IPC_ACTIONS,
   BrowserProfileResponseSchema,
   ProviderConnectionListResponseSchema,
   ProviderConnectionResponseSchema,
@@ -103,13 +101,6 @@ describe('contracts package', () => {
   it('rejects retired project_fact as a public memory kind', () => {
     expect(MemoryKindSchema.safeParse('project_fact').success).toBe(false);
     expect(MemoryKindSchema.parse('fact')).toBe('fact');
-  });
-
-  it('exports browser IPC actions from the canonical browser module', () => {
-    expect(BROWSER_IPC_ACTIONS).toEqual(BROWSER_BACKEND_TOOL_NAMES);
-    expect(BROWSER_IPC_ACTIONS).toContain('browser_status');
-    expect(BROWSER_IPC_ACTIONS).toContain('browser_navigate');
-    expect(BROWSER_IPC_ACTIONS).toContain('browser_take_screenshot');
   });
 
   it('exports and validates contract primitives', () => {

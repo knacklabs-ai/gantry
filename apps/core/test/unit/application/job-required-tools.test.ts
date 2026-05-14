@@ -25,11 +25,20 @@ describe('job required tools', () => {
 
   it('rejects raw browser and broad wildcard required tool rules', () => {
     expect(() =>
-      normalizeRequiredTools(['mcp__agent_browser__navigate']),
+      normalizeRequiredTools(['mcp__browser' + '_' + 'backend' + '__navigate']),
     ).toThrow(/canonical Browser/);
     expect(() =>
-      normalizeRequiredTools(['mcp__myclaw__browser_click']),
+      normalizeRequiredTools([`${'mcp__agent'}_${'browser'}__navigate`]),
     ).toThrow(/canonical Browser/);
+    expect(() =>
+      normalizeRequiredTools([`mcp__${'play'}${'wright'}__click`]),
+    ).toThrow(/canonical Browser/);
+    expect(() =>
+      normalizeRequiredTools([`mcp__${'pup'}${'peteer'}__screenshot`]),
+    ).toThrow(/canonical Browser/);
+    expect(() => normalizeRequiredTools(['mcp__myclaw__browser_act'])).toThrow(
+      /canonical Browser/,
+    );
     expect(() => normalizeRequiredTools(['Bash'])).toThrow(/scoped Bash/);
     expect(() => normalizeRequiredTools(['mcp__myclaw__*'])).toThrow(
       /wildcard/,

@@ -3,10 +3,7 @@ import {
   isRuntimeEventType,
   type RuntimeEventType,
 } from '../domain/events/runtime-event-types.js';
-import {
-  isCanonicalBrowserCapabilityRule,
-  isProjectedBrowserMcpToolRule,
-} from '../shared/agent-tool-references.js';
+import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-references.js';
 import type { SchedulerDependencies } from './types.js';
 
 export const FORWARDED_RUNNER_EVENT_TYPES = new Set<RuntimeEventType>([
@@ -249,7 +246,6 @@ function stringArrayValue(value: unknown): string[] {
 }
 
 function isBrowserToolActivity(payload: Record<string, unknown>): boolean {
-  const tool = stringValue(payload.tool);
   if (payload.ok !== true) return false;
   const phase = stringValue(payload.phase);
   if (
@@ -262,14 +258,56 @@ function isBrowserToolActivity(payload: Record<string, unknown>): boolean {
   ) {
     return false;
   }
-  return Boolean(
-    tool &&
-    tool !== 'browser_status' &&
-    tool !== 'mcp__myclaw__browser_status' &&
-    (tool.startsWith('browser_') || isProjectedBrowserMcpToolRule(tool)),
-  );
+  const publicTool = stringValue(payload.public_tool);
+  const action = stringValue(payload.action);
+  if (payload.satisfies_required_tool === true) {
+    return isBrowserGatewayActivity(publicTool, action);
+  }
+  return isBrowserGatewayActivity(publicTool, action);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+const BROWSER_INSPECT_BACKEND_ACTIONS = new Set([
+  'tabs',
+  'snapshot',
+  'screenshot',
+  'console_messages',
+  'network_requests',
+]);
+
+const BROWSER_ACT_BACKEND_ACTIONS = new Set([
+  'navigate',
+  'back',
+  'tabs',
+  'click',
+  'type',
+  'wait_for',
+  'screenshot',
+  'evaluate',
+  'press_key',
+  'hover',
+  'drag',
+  'drop',
+  'select_option',
+  'fill_form',
+  'file_upload',
+  'handle_dialog',
+  'resize',
+]);
+
+function isBrowserGatewayActivity(
+  publicTool: string | undefined,
+  action: string | undefined,
+): boolean {
+  if (publicTool === 'browser_open') return action === 'navigate';
+  if (publicTool === 'browser_inspect') {
+    return action ? BROWSER_INSPECT_BACKEND_ACTIONS.has(action) : false;
+  }
+  if (publicTool === 'browser_act') {
+    return action ? BROWSER_ACT_BACKEND_ACTIONS.has(action) : false;
+  }
+  return false;
 }

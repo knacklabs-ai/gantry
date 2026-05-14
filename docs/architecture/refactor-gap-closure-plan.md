@@ -174,7 +174,7 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 
 **Scope:**
 
-- `mcp__myclaw__browser_status` checks both process liveness and credential broker reachability before reporting `cdpReady: true`. If the broker is unreachable, `cdpReady: false` with `formatOperatorError`-shaped reason.
+- `browser_status` checks both process liveness and credential broker reachability before reporting `cdpReady: true`. If the broker is unreachable, `cdpReady: false` with `formatOperatorError`-shaped reason.
 - `mcp_list_tools` / `mcp_call_tool` failures during broker outage return the cause chain (Phase 6 helper), not the wrapper.
 
 **Exit criteria:**

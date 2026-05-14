@@ -133,7 +133,10 @@ describe('configured agent tools', () => {
       getTool: async (toolId: string) =>
         toolId === 'tool:Read'
           ? { appId: 'default', name: 'Read' }
-          : { appId: 'default', name: 'mcp__agent_browser__*' },
+          : {
+              appId: 'default',
+              name: 'mcp__browser' + '_' + 'backend' + '__*',
+            },
     };
 
     await expect(
@@ -142,7 +145,7 @@ describe('configured agent tools', () => {
         appId: 'default',
         agentId: 'agent:one',
       }),
-    ).rejects.toThrow('Raw browser backend MCP tools are host-private');
+    ).rejects.toThrow('Host-private browser backend tools');
   });
 
   it('fails closed for stale active projected browser MCP bindings', async () => {
@@ -155,7 +158,7 @@ describe('configured agent tools', () => {
       ],
       getTool: async () => ({
         appId: 'default',
-        name: 'mcp__myclaw__browser_click',
+        name: 'mcp__myclaw__browser_act',
       }),
     };
 

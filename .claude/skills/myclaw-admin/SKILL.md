@@ -555,18 +555,18 @@ active memory directly.
 
 Browser:
 
-- `mcp__myclaw__browser_profile_list`
-- `mcp__myclaw__browser_launch`
-- `mcp__myclaw__browser_close`
 - `mcp__myclaw__browser_status`
+- `mcp__myclaw__browser_open`
+- `mcp__myclaw__browser_inspect`
+- `mcp__myclaw__browser_act`
+- `mcp__myclaw__browser_close`
 
 MyClaw owns browser lifecycle for the current agent conversation's Chrome
 profile. DM sessions, channel/group conversations, and jobs created from them
-use separate profiles by default. The runtime installs `agent-browser` into the
-generated per-run Claude config and exposes MyClaw-owned
-`mcp__myclaw__browser_*` action tools only when the canonical `Browser`
-capability is selected. Do not ask the user to install browser skills or edit
-`.claude/skills` manually.
+use separate profiles by default. The runtime installs `myclaw-browser` into the
+generated per-run Claude config and exposes MyClaw-owned browser gateway tools
+only when the canonical `Browser` capability is selected. Do not ask the user to
+install browser skills or edit `.claude/skills` manually.
 
 ## Scheduler Usage
 

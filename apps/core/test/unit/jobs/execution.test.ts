@@ -280,7 +280,7 @@ describe('jobs/execution', () => {
     });
     const opsRepository = makeOpsRepository(job);
     const error =
-      'Tool not on autonomous job allowlist: mcp__myclaw__browser_navigate. Recovery: request_permission { "toolName": "Browser" }';
+      'Tool not on autonomous job allowlist: mcp__myclaw__browser_act. Recovery: request_permission { "toolName": "Browser" }';
 
     await runJob(
       job,
@@ -320,7 +320,7 @@ describe('jobs/execution', () => {
     )?.[0];
     expect(deniedEvent?.payload).toEqual(
       expect.objectContaining({
-        denied_tool: 'mcp__myclaw__browser_navigate',
+        denied_tool: 'mcp__myclaw__browser_act',
         recovery_kind: 'persistent_capability',
         recovery_action: expect.stringContaining('request_permission'),
       }),
@@ -1427,7 +1427,13 @@ describe('jobs/execution', () => {
         job_id: 'job-1',
         run_id: 'run-1',
         event_type: 'job.tool_activity',
-        payload: JSON.stringify({ tool: 'browser_navigate', ok: true }),
+        payload: JSON.stringify({
+          tool: 'Browser',
+          public_tool: 'browser_open',
+          action: 'navigate',
+          satisfies_required_tool: true,
+          ok: true,
+        }),
         created_at: '2026-05-08T00:00:01.000Z',
       },
     ]);
@@ -1480,7 +1486,13 @@ describe('jobs/execution', () => {
         job_id: 'job-1',
         run_id: 'run-1',
         event_type: 'job.tool_activity',
-        payload: JSON.stringify({ tool: 'browser_click', ok: true }),
+        payload: JSON.stringify({
+          tool: 'Browser',
+          public_tool: 'browser_act',
+          action: 'click',
+          satisfies_required_tool: true,
+          ok: true,
+        }),
         created_at: '2026-05-08T00:00:01.000Z',
       },
     ]);
@@ -1540,7 +1552,13 @@ describe('jobs/execution', () => {
         job_id: 'job-1',
         run_id: 'run-1',
         event_type: 'job.tool_activity',
-        payload: JSON.stringify({ tool: 'browser_navigate', ok: true }),
+        payload: JSON.stringify({
+          tool: 'Browser',
+          public_tool: 'browser_open',
+          action: 'navigate',
+          satisfies_required_tool: true,
+          ok: true,
+        }),
         created_at: '2026-05-08T00:00:01.000Z',
       },
       {
@@ -1548,7 +1566,13 @@ describe('jobs/execution', () => {
         job_id: 'job-1',
         run_id: 'run-1',
         event_type: 'job.tool_activity',
-        payload: JSON.stringify({ tool: 'browser_snapshot', ok: true }),
+        payload: JSON.stringify({
+          tool: 'Browser',
+          public_tool: 'browser_inspect',
+          action: 'snapshot',
+          satisfies_required_tool: true,
+          ok: true,
+        }),
         created_at: '2026-05-08T00:00:02.000Z',
       },
     ]);
@@ -1601,7 +1625,12 @@ describe('jobs/execution', () => {
         job_id: 'job-1',
         run_id: 'run-1',
         event_type: 'job.tool_activity',
-        payload: JSON.stringify({ tool: 'browser_status', ok: true }),
+        payload: JSON.stringify({
+          tool: 'Browser',
+          public_tool: 'browser_status',
+          action: 'status',
+          ok: true,
+        }),
         created_at: '2026-05-08T00:00:01.000Z',
       },
       {
@@ -1611,7 +1640,7 @@ describe('jobs/execution', () => {
         event_type: 'job.tool_activity',
         payload: JSON.stringify({
           phase: 'permission_allowed',
-          tool: 'mcp__myclaw__browser_navigate',
+          tool: 'mcp__myclaw__browser_act',
           ok: true,
         }),
         created_at: '2026-05-08T00:00:02.000Z',
@@ -1641,6 +1670,51 @@ describe('jobs/execution', () => {
       expect.any(String),
       'failed',
       'status only',
+      expect.stringContaining('Browser was available but not used'),
+    );
+  });
+
+  it('does not satisfy required Browser from backend-only browser activity', async () => {
+    const job = makeJob({ required_tools: ['Browser'] });
+    const opsRepository = makeOpsRepository(job);
+    vi.mocked(opsRepository.listRecentJobEvents).mockResolvedValue([
+      {
+        id: 1,
+        job_id: 'job-1',
+        run_id: 'run-1',
+        event_type: 'job.tool_activity',
+        payload: JSON.stringify({
+          tool: 'Browser',
+          action: 'navigate',
+          ok: true,
+        }),
+        created_at: '2026-05-08T00:00:01.000Z',
+      },
+    ]);
+    const toolRepository = makeToolRepository(['Browser']);
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        getToolRepository: () => toolRepository as never,
+        getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+        runAgent: vi.fn(async () => ({
+          status: 'success',
+          result: 'backend only',
+        })) as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      'backend only',
       expect.stringContaining('Browser was available but not used'),
     );
   });

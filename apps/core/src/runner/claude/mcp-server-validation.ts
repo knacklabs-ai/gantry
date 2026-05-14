@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 
 import type { McpServerConfig } from '../agent-capabilities.js';
+import { isHostPrivateBrowserMcpServerName } from '../../shared/agent-tool-references.js';
 
 export function readExternalMcpServers(): Record<string, McpServerConfig> {
   const configPath = process.env.MYCLAW_MCP_CONFIG_FILE?.trim();
@@ -53,7 +54,7 @@ function validateExternalMcpServers(
     }
     if (isHostPrivateBrowserServerName(name)) {
       throw new Error(
-        `${name} is host-private. Use the canonical Browser capability and MyClaw-owned browser_* tools.`,
+        'Host-private browser MCP servers are not configurable. Use the canonical Browser capability and MyClaw-owned browser gateway tools.',
       );
     }
     servers[name] = config;
@@ -61,11 +62,4 @@ function validateExternalMcpServers(
   return servers;
 }
 
-function isHostPrivateBrowserServerName(name: string): boolean {
-  const normalized = name.trim().toLowerCase().replaceAll('-', '_');
-  return (
-    normalized === 'agent_browser' ||
-    normalized === 'playwright' ||
-    normalized === 'puppeteer'
-  );
-}
+const isHostPrivateBrowserServerName = isHostPrivateBrowserMcpServerName;

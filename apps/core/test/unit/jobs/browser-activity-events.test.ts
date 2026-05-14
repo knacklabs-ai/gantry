@@ -20,7 +20,7 @@ describe('publishBrowserJobActivityEvent', () => {
       activity: {
         jobId: 'job-1',
         runId: 'run-1',
-        tool: 'browser_navigate',
+        tool: 'navigate',
         ok: true,
         elapsedMs: 12,
       },
@@ -44,7 +44,7 @@ describe('publishBrowserJobActivityEvent', () => {
         jobId: 'job-1',
         runId: 'run-1',
         payload: expect.objectContaining({
-          tool: 'browser_navigate',
+          tool: 'navigate',
           ok: true,
           elapsed_ms: 12,
         }),

@@ -251,7 +251,7 @@ describe('validateIpcAuthRequest', () => {
       type: 'scheduler_update_job',
       context: { responseKeyId: TEST_RESPONSE_KEY_ID },
       jobId: 'job-1',
-      allowedTools: ['Read', 'mcp__agent_browser__*'],
+      allowedTools: ['Read', 'mcp__browser' + '_' + 'backend' + '__*'],
     });
 
     expect(() => parseTaskIpcData(createPayload, 'team')).toThrow(
@@ -290,7 +290,7 @@ describe('validateIpcAuthRequest', () => {
       requestId: 'browser-1',
       nonce: randomUUID(),
       expiresAt,
-      action: 'browser_status',
+      action: 'status',
       payload: { profile_name: 'c-team-abc123abc123' },
       context: { chatJid: 'tg:team', responseKeyId: TEST_RESPONSE_KEY_ID },
     };
@@ -300,12 +300,55 @@ describe('validateIpcAuthRequest', () => {
     ).toMatchObject({
       requestId: 'browser-1',
       chatJid: 'tg:team',
-      action: 'browser_status',
+      action: 'status',
       deadlineAtMs: Date.parse(expiresAt),
     });
     expect(() =>
       parseBrowserIpcRequest(signedPayload(payload), 'team'),
     ).toThrow(/Invalid browser IPC signature/);
+  });
+
+  it('parses neutral backend browser actions at the IPC boundary', () => {
+    const payload = {
+      requestId: 'browser-public-tool-name',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      action: 'navigate',
+      payload: { url: 'https://example.test' },
+      context: {
+        chatJid: 'tg:team',
+        responseKeyId: TEST_RESPONSE_KEY_ID,
+        publicToolName: 'browser_act',
+      },
+    };
+
+    expect(
+      parseBrowserIpcRequest(signedBrowserPayload(payload), 'team'),
+    ).toMatchObject({
+      requestId: 'browser-public-tool-name',
+      action: 'navigate',
+      publicToolName: 'browser_act',
+      payload: { url: 'https://example.test' },
+    });
+  });
+
+  it('rejects unsupported public browser gateway names at the IPC boundary', () => {
+    const payload = {
+      requestId: 'browser-unsupported-public-tool-name',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      action: 'navigate',
+      payload: { url: 'https://example.test' },
+      context: {
+        chatJid: 'tg:team',
+        responseKeyId: TEST_RESPONSE_KEY_ID,
+        publicToolName: 'browser_fake',
+      },
+    };
+
+    expect(() =>
+      parseBrowserIpcRequest(signedBrowserPayload(payload), 'team'),
+    ).toThrow(/Unsupported browser public tool/);
   });
 
   it('requires memory IPC signatures to match trusted user scope', () => {

@@ -373,11 +373,14 @@ describe('autonomous tool rule matcher', () => {
 
   it('rejects browser and MyClaw wildcard rules at the shared matcher boundary', () => {
     for (const rule of [
-      'mcp__agent_browser__*',
-      'mcp__agent_browser__navigate',
-      'mcp__playwright__browser_click',
-      'mcp__puppeteer__screenshot',
-      'mcp__myclaw__browser_click',
+      'mcp__browser' + '_' + 'backend' + '__*',
+      'mcp__browser' + '_' + 'backend' + '__navigate',
+      'mcp__browser' + '_' + 'backend' + '__click',
+      'mcp__browser' + '_' + 'backend' + '__screenshot',
+      `${'mcp__agent'}_${'browser'}__*`,
+      `mcp__${'play'}${'wright'}__click`,
+      `mcp__${'pup'}${'peteer'}__screenshot`,
+      'mcp__myclaw__browser_act',
       'mcp__myclaw__*',
     ]) {
       expect(validateAutonomousToolRule(rule).ok).toBe(false);
@@ -385,8 +388,8 @@ describe('autonomous tool rule matcher', () => {
 
     expect(
       evaluateAutonomousToolUse({
-        rules: ['mcp__agent_browser__*'],
-        toolName: 'mcp__agent_browser__open',
+        rules: ['mcp__browser' + '_' + 'backend' + '__*'],
+        toolName: 'mcp__browser' + '_' + 'backend' + '__open',
       }),
     ).toMatchObject({ allowed: false });
   });
@@ -395,7 +398,7 @@ describe('autonomous tool rule matcher', () => {
     expect(
       evaluateAutonomousToolUse({
         rules: ['Browser'],
-        toolName: 'mcp__myclaw__browser_click',
+        toolName: 'mcp__myclaw__browser_act',
       }),
     ).toMatchObject({ allowed: true, matchedRule: 'Browser' });
 

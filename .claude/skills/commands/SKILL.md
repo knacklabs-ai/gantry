@@ -33,12 +33,12 @@ These are handled by the MyClaw host runtime, not by skill files:
 ## Runtime Browser Capability
 
 - `Browser` -- Canonical browser capability selected per agent
-- `agent-browser` -- Runtime-installed browser action guidance
+- `myclaw-browser` -- Runtime-installed browser gateway guidance
 
 MyClaw launches the persistent browser profile headed by default. Durable
 authority is the canonical `Browser` capability; runtime projects it to
-MyClaw-owned `mcp__myclaw__browser_*` action tools. Users do not install or edit
-browser skills manually.
+MyClaw-owned browser gateway tools. Users do not install or edit browser skills
+manually.
 
 ## Semantic Tool Capabilities
 

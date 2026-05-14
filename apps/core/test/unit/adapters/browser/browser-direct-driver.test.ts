@@ -193,14 +193,14 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_navigate',
+      toolName: 'navigate',
       arguments: { url: 'https://93.184.216.34/one' },
       session: session(),
       fileAccessRoot: root,
       timeoutMs: 2_000,
     });
     await callBrowserTool({
-      toolName: 'browser_snapshot',
+      toolName: 'snapshot',
       arguments: {},
       session: session(),
       fileAccessRoot: root,
@@ -271,7 +271,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockReturnValue(pending.promise);
 
     const shortWaiter = callBrowserTool({
-      toolName: 'browser_snapshot',
+      toolName: 'snapshot',
       arguments: {},
       session: session(),
       fileAccessRoot: root,
@@ -279,7 +279,7 @@ describe('browser direct driver', () => {
     });
     const shortWaiterResult = shortWaiter.catch((err) => err);
     const longWaiter = callBrowserTool({
-      toolName: 'browser_snapshot',
+      toolName: 'snapshot',
       arguments: {},
       session: session(),
       fileAccessRoot: root,
@@ -312,13 +312,13 @@ describe('browser direct driver', () => {
       .mockResolvedValueOnce(other.browser);
 
     await callBrowserTool({
-      toolName: 'browser_snapshot',
+      toolName: 'snapshot',
       arguments: {},
       session: session(12345),
       fileAccessRoot: root,
     });
     await callBrowserTool({
-      toolName: 'browser_snapshot',
+      toolName: 'snapshot',
       arguments: {},
       session: { ...session(23456), profileName: 'c-other' },
       fileAccessRoot: root,
@@ -330,7 +330,7 @@ describe('browser direct driver', () => {
     expect(other.browser.close).not.toHaveBeenCalled();
 
     await callBrowserTool({
-      toolName: 'browser_snapshot',
+      toolName: 'snapshot',
       arguments: {},
       session: { ...session(23456), profileName: 'c-other' },
       fileAccessRoot: root,
@@ -345,7 +345,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_file_upload',
+      toolName: 'file_upload',
       arguments: {
         files: [
           { name: 'note.txt', content: 'hello' },
@@ -376,7 +376,7 @@ describe('browser direct driver', () => {
 
     await expect(
       callBrowserTool({
-        toolName: 'browser_file_upload',
+        toolName: 'file_upload',
         arguments: { paths: ['/tmp/outside.txt'] },
         session: session(),
         fileAccessRoot: root,
@@ -385,7 +385,7 @@ describe('browser direct driver', () => {
 
     await expect(
       callBrowserTool({
-        toolName: 'browser_snapshot',
+        toolName: 'snapshot',
         arguments: { filename: '../outside.txt' },
         session: session(),
         fileAccessRoot: root,
@@ -399,7 +399,7 @@ describe('browser direct driver', () => {
 
     await expect(
       callBrowserTool({
-        toolName: 'browser_file_upload',
+        toolName: 'file_upload',
         arguments: { files: [{ name: 'note.txt', content: 'hello' }] },
         session: session(),
         fileAccessRoot: root,
@@ -421,7 +421,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     const result = await callBrowserTool({
-      toolName: 'browser_take_screenshot',
+      toolName: 'screenshot',
       arguments: { filename: 'shot.png' },
       session: session(),
       fileAccessRoot: root,
@@ -455,7 +455,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_take_screenshot',
+      toolName: 'screenshot',
       arguments: { filename: 'full.png', fullPage: true },
       session: session(),
       fileAccessRoot: root,
@@ -480,7 +480,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_take_screenshot',
+      toolName: 'screenshot',
       arguments: { filename: 'viewport.png' },
       session: session(),
       fileAccessRoot: root,
@@ -507,7 +507,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_take_screenshot',
+      toolName: 'screenshot',
       arguments: { target: 'e1', filename: 'element.png' },
       session: session(),
       fileAccessRoot: root,
@@ -533,7 +533,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_take_screenshot',
+      toolName: 'screenshot',
       arguments: { filename: 'compressed.png' },
       session: session(),
       fileAccessRoot: root,
@@ -558,7 +558,7 @@ describe('browser direct driver', () => {
 
     await expect(
       callBrowserTool({
-        toolName: 'browser_navigate',
+        toolName: 'navigate',
         arguments: { url: 'https://example.com/' },
         session: session(),
         fileAccessRoot: root,
@@ -583,7 +583,7 @@ describe('browser direct driver', () => {
 
     await expect(
       callBrowserTool({
-        toolName: 'browser_navigate',
+        toolName: 'navigate',
         arguments: { url: 'https://93.184.216.34/' },
         session: session(),
         fileAccessRoot: root,
@@ -601,7 +601,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_navigate_back',
+      toolName: 'back',
       arguments: {},
       session: session(),
       fileAccessRoot: root,
@@ -622,7 +622,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_click',
+      toolName: 'click',
       arguments: { target: 'e1' },
       session: session(),
       fileAccessRoot: root,
@@ -643,7 +643,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_resize',
+      toolName: 'resize',
       arguments: { width: 1024, height: 768 },
       session: session(),
       fileAccessRoot: root,
@@ -673,7 +673,7 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     const result = await callBrowserTool({
-      toolName: 'browser_tabs',
+      toolName: 'tabs',
       arguments: { action: 'list' },
       session: session(),
       fileAccessRoot: root,
@@ -689,7 +689,7 @@ describe('browser direct driver', () => {
       },
     });
     await callBrowserTool({
-      toolName: 'browser_tabs',
+      toolName: 'tabs',
       arguments: { action: 'select', index: 1 },
       session: session(),
       fileAccessRoot: root,
@@ -699,12 +699,12 @@ describe('browser direct driver', () => {
     await closeBrowserToolBackends('c-main');
     await expect(
       callBrowserTool({
-        toolName: 'browser_tabs',
+        toolName: 'tabs',
         arguments: { action: 'select', index: 0 },
         session: session(),
         fileAccessRoot: root,
       }),
-    ).rejects.toThrow('needs a fresh browser_tabs list');
+    ).rejects.toThrow('needs a fresh tabs list');
   });
 
   it('reconnects once on stale page/context/browser errors', async () => {
@@ -726,7 +726,7 @@ describe('browser direct driver', () => {
       .mockResolvedValueOnce(second.browser);
 
     const result = await callBrowserTool({
-      toolName: 'browser_click',
+      toolName: 'click',
       arguments: { target: 'e1' },
       session: session(),
       fileAccessRoot: root,
@@ -747,13 +747,13 @@ describe('browser direct driver', () => {
     browserMocks.connectOverCDP.mockResolvedValue(browser);
 
     await callBrowserTool({
-      toolName: 'browser_click',
+      toolName: 'click',
       arguments: { target: 'e1', modifiers: ['Shift', 'Meta', 'Bad'] },
       session: session(),
       fileAccessRoot: root,
     });
     await callBrowserTool({
-      toolName: 'browser_drop',
+      toolName: 'drop',
       arguments: { target: 'e1', data: { 'text/plain': 'hello' } },
       session: session(),
       fileAccessRoot: root,
@@ -770,7 +770,7 @@ describe('browser direct driver', () => {
     });
     await expect(
       callBrowserTool({
-        toolName: 'browser_drop',
+        toolName: 'drop',
         arguments: { target: 'e1', paths: ['old-secret.txt'] },
         session: session(),
         fileAccessRoot: root,
@@ -780,10 +780,7 @@ describe('browser direct driver', () => {
 
   it('formats timeout failures distinctly from other backend failures', () => {
     expect(
-      formatBackendError(
-        'browser_tabs',
-        new Error('Timed out waiting for tab list'),
-      ),
+      formatBackendError('tabs', new Error('Timed out waiting for tab list')),
     ).toContain('Browser backend timeout');
   });
 
@@ -816,7 +813,7 @@ describe('browser direct driver', () => {
 
   it('sanitizes invalid unicode from browser tool output before SDK delivery', () => {
     const result = normalizeBrowserToolResult(
-      'browser_snapshot',
+      'snapshot',
       {},
       {
         content: [

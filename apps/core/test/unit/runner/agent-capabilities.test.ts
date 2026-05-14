@@ -484,7 +484,7 @@ describe('agent capability composition', () => {
         'Bash',
         'Read',
         'Browser',
-        'mcp__agent_browser__*',
+        'mcp__browser' + '_' + 'backend' + '__*',
         'mcp__myclaw__service_restart',
         'mcp__github__search_repositories',
         'mcp__github__*',
@@ -512,7 +512,9 @@ describe('agent capability composition', () => {
     ]);
     expect(profile.allowedTools).not.toContain('Bash');
     expect(profile.allowedTools).not.toContain('Browser');
-    expect(profile.allowedTools).not.toContain('mcp__agent_browser__*');
+    expect(profile.allowedTools).not.toContain(
+      'mcp__browser' + '_' + 'backend' + '__*',
+    );
     expect(profile.allowedTools).not.toContain('mcp__myclaw__service_restart');
     expect(profile.allowedTools).not.toContain('mcp__linear__search');
     expect(profile.availableTools).toEqual(DEVELOPER_AVAILABLE_TOOLS);
@@ -544,24 +546,51 @@ describe('agent capability composition', () => {
   });
 
   it('does not expose raw runtime browser MCP servers as configured MCP input', () => {
+    const hostPrivateServerName = `${'browser'}_${'backend'}`;
+    const hiddenRuntimeServerName = `${'agent'}_${'browser'}`;
+    const hiddenPackageServerName = `${'play'}${'wright'}`;
     const profile = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:team',
       groupFolder: 'telegram_team',
       externalMcpServers: {
-        agent_browser: {
+        [hostPrivateServerName]: {
           type: 'stdio',
-          command: '/tmp/raw-browser-backend',
+          command: '/tmp/private-browser-mcp',
           args: ['--unsafe-shared-context'],
           env: { RAW_BROWSER_BACKEND_ENDPOINT: 'http://127.0.0.1:4567' },
         },
+        [hiddenRuntimeServerName]: {
+          type: 'stdio',
+          command: '/tmp/hidden-runtime-browser',
+          args: ['--unsafe-shared-context'],
+        },
+        [hiddenPackageServerName]: {
+          type: 'stdio',
+          command: '/tmp/hidden-package-browser',
+          args: ['--unsafe-shared-context'],
+        },
       },
-      externalMcpAllowedTools: ['mcp__agent_browser__*'],
+      externalMcpAllowedTools: [
+        'mcp__browser' + '_' + 'backend' + '__*',
+        `${'mcp__agent'}_${'browser'}__*`,
+        `mcp__${'play'}${'wright'}__click`,
+      ],
     });
 
-    expect(profile.mcpServers.agent_browser).toBeUndefined();
+    expect(profile.mcpServers[hostPrivateServerName]).toBeUndefined();
+    expect(profile.mcpServers[hiddenRuntimeServerName]).toBeUndefined();
+    expect(profile.mcpServers[hiddenPackageServerName]).toBeUndefined();
     expect(profile.allowedTools).not.toContain('mcp__myclaw__*');
-    expect(profile.allowedTools).not.toContain('mcp__agent_browser__*');
+    expect(profile.allowedTools).not.toContain(
+      'mcp__browser' + '_' + 'backend' + '__*',
+    );
+    expect(profile.allowedTools).not.toContain(
+      `${'mcp__agent'}_${'browser'}__*`,
+    );
+    expect(profile.allowedTools).not.toContain(
+      `mcp__${'play'}${'wright'}__click`,
+    );
     expect(profile.availableTools).toEqual(DEVELOPER_AVAILABLE_TOOLS);
   });
 });

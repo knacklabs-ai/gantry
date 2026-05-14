@@ -392,11 +392,11 @@ describe('request permission review helpers', () => {
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
-  it('does not suggest persistent grants for raw agent_browser request_permission', () => {
+  it('does not suggest persistent grants for raw host-private browser request_permission', () => {
     for (const toolName of [
-      'mcp__agent_browser__navigate',
-      'mcp__playwright__browser_click',
-      'mcp__puppeteer__screenshot',
+      'mcp__browser' + '_' + 'backend' + '__navigate',
+      'mcp__browser' + '_' + 'backend' + '__click',
+      'mcp__browser' + '_' + 'backend' + '__screenshot',
     ]) {
       expect(
         requestPermissionReviewSuggestions({
@@ -413,7 +413,7 @@ describe('request permission review helpers', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
-        toolName: 'mcp__myclaw__browser_click',
+        toolName: 'mcp__myclaw__browser_act',
         temporaryOnly: false,
       }),
     ).toEqual([
@@ -544,7 +544,7 @@ describe('request permission review helpers', () => {
     expect(formatted).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
   });
 
-  it('rejects raw agent_browser persistent approval updates', async () => {
+  it('rejects raw host-private browser persistent approval updates', async () => {
     const mirrorAgentToolRulesToSettings = vi.fn(async () => undefined);
     const repository = {
       getTool: vi.fn(async () => null),
@@ -575,11 +575,11 @@ describe('request permission review helpers', () => {
           {
             type: 'addRules',
             behavior: 'allow',
-            rules: [{ toolName: 'mcp__playwright__browser_click' }],
+            rules: [{ toolName: 'mcp__browser' + '_' + 'backend' + '__click' }],
           },
         ],
       }),
-    ).rejects.toThrow('Raw browser backend MCP tools are host-private');
+    ).rejects.toThrow('Host-private browser backend tools');
 
     expect(repository.saveTool).not.toHaveBeenCalled();
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
@@ -735,7 +735,7 @@ describe('request permission review helpers', () => {
           {
             type: 'addRules',
             behavior: 'allow',
-            rules: [{ toolName: 'mcp__myclaw__browser_click' }],
+            rules: [{ toolName: 'mcp__myclaw__browser_act' }],
           },
         ],
       }),

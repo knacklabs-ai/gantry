@@ -456,7 +456,7 @@ describe('scheduler MCP tools', () => {
           toolAccess: {
             inheritedAgentTools: ['Browser'],
             effectiveAllowedTools: ['Browser'],
-            projectedRuntimeTools: ['mcp__myclaw__browser_navigate'],
+            projectedRuntimeTools: ['mcp__myclaw__browser_act'],
           },
           health: {
             state: 'needs_permission',

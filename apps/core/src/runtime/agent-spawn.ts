@@ -38,7 +38,7 @@ import {
   ArtifactClaudeSkillSource,
   BundledClaudeSkillSource,
   CompositeSkillSource,
-  RuntimeInstalledAgentBrowserSkillSource,
+  RuntimeInstalledMyClawBrowserSkillSource,
   type SkillSource,
 } from '../adapters/llm/anthropic-claude-agent/claude-skill-materializer.js';
 import { ensureGroupIpcLayout } from './agent-spawn-layout.js';
@@ -258,7 +258,7 @@ export async function spawnAgent(
       new BundledClaudeSkillSource(packageRoot),
     ];
     if (browserIpcEnabled) {
-      skillSources.push(new RuntimeInstalledAgentBrowserSkillSource());
+      skillSources.push(new RuntimeInstalledMyClawBrowserSkillSource());
     }
     if (
       options?.skillRepository &&

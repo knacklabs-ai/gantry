@@ -106,7 +106,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestId = await waitForRequestId(
       path.join(tempRoot, 'browser-requests'),
     );
@@ -158,7 +158,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestId = await waitForRequestId(
       path.join(tempRoot, 'browser-requests'),
     );
@@ -195,7 +195,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestId = await waitForRequestId(
       path.join(tempRoot, 'browser-requests'),
     );
@@ -235,7 +235,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestId = await waitForRequestId(
       path.join(tempRoot, 'browser-requests'),
     );
@@ -279,7 +279,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestId = await waitForRequestId(
       path.join(tempRoot, 'browser-requests'),
     );
@@ -319,7 +319,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestId = await waitForRequestId(
       path.join(tempRoot, 'browser-requests'),
     );
@@ -357,7 +357,7 @@ describe('runner MCP browser IPC signature verification', () => {
       tempRoot,
       responseVerifyKey,
     );
-    const requestPromise = requestBrowserAction('browser_status', {});
+    const requestPromise = requestBrowserAction('status', {});
     const requestDir = path.join(tempRoot, 'browser-requests');
     const requestFiles = fs.readdirSync(requestDir);
     expect(requestFiles).toHaveLength(1);
@@ -387,7 +387,7 @@ describe('runner MCP browser IPC signature verification', () => {
       responseVerifyKey,
     );
     const requestPromise = requestBrowserAction(
-      'browser_take_screenshot',
+      'screenshot',
       {},
       { timeoutMs: 120_000 },
     );

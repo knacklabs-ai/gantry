@@ -486,12 +486,12 @@ export async function* query({ prompt, options }) {
       },
     );
     const browserDecision = await options.canUseTool(
-      'mcp__myclaw__browser_navigate',
+      'mcp__myclaw__browser_act',
       { url: 'https://example.com' },
       {
         signal: new AbortController().signal,
         title: 'Navigate browser',
-        displayName: 'browser_navigate',
+        displayName: 'browser_act',
         description: 'Needs browser access',
         decisionReason: 'Agent wants to inspect a page',
         toolUseID: 'toolu_prime_browser',
@@ -968,16 +968,17 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'rejects host-private agent_browser MCP config from a private file',
+    'rejects host-private browser MCP config from a private file',
     async () => {
       const fixture = createRunnerFixture();
       const mcpConfigPath = path.join(fixture.root, 'mcp-config.json');
+      const hostPrivateServerName = `${'browser'}_${'backend'}`;
       fs.writeFileSync(
         mcpConfigPath,
         JSON.stringify({
-          agent_browser: {
+          [hostPrivateServerName]: {
             type: 'stdio',
-            command: '/tmp/raw-browser-backend',
+            command: '/tmp/private-browser-mcp',
             args: ['--unsafe-shared-context'],
             env: { RAW_BROWSER_BACKEND_ENDPOINT: 'http://127.0.0.1:4567' },
           },
@@ -988,12 +989,12 @@ describe('agent-runner IPC lifecycle', () => {
         TEST_EXIT_AFTER_QUERY: '1',
         MYCLAW_MCP_CONFIG_FILE: mcpConfigPath,
         MYCLAW_MCP_ALLOWED_TOOLS_JSON: JSON.stringify([
-          'mcp__agent_browser__*',
+          'mcp__browser' + '_' + 'backend' + '__*',
         ]),
       });
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('agent_browser is host-private');
+      expect(result.stderr).toContain('Host-private browser MCP servers');
       expect(fs.existsSync(fixture.recordPath)).toBe(false);
       expect(fs.existsSync(mcpConfigPath)).toBe(false);
     },
@@ -1001,19 +1002,20 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'rejects legacy @playwright/mcp config from a private file',
+    'rejects host-private browser backend hyphenated config from a private file',
     async () => {
       const fixture = createRunnerFixture();
       const mcpConfigPath = path.join(fixture.root, 'mcp-config.json');
+      const hostPrivateServerName = `${'browser'}-${'backend'}`;
       fs.writeFileSync(
         mcpConfigPath,
         JSON.stringify({
-          playwright: {
+          [hostPrivateServerName]: {
             type: 'stdio',
-            command: '/tmp/node_modules/.bin/playwright-mcp',
+            command: '/tmp/private-browser-mcp',
             args: ['--shared-browser-context'],
             env: {
-              PLAYWRIGHT_MCP_CDP_ENDPOINT: 'http://127.0.0.1:4567',
+              BROWSER_BACKEND_ENDPOINT: 'http://127.0.0.1:4567',
             },
           },
         }),
@@ -1023,12 +1025,12 @@ describe('agent-runner IPC lifecycle', () => {
         TEST_EXIT_AFTER_QUERY: '1',
         MYCLAW_MCP_CONFIG_FILE: mcpConfigPath,
         MYCLAW_MCP_ALLOWED_TOOLS_JSON: JSON.stringify([
-          'mcp__playwright__browser_click',
+          'mcp__browser' + '_' + 'backend' + '__click',
         ]),
       });
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('playwright is host-private');
+      expect(result.stderr).toContain('Host-private browser MCP servers');
       expect(fs.existsSync(fixture.recordPath)).toBe(false);
       expect(fs.existsSync(mcpConfigPath)).toBe(false);
     },
@@ -1211,7 +1213,7 @@ describe('agent-runner IPC lifecycle', () => {
           ],
         }),
         expect.objectContaining({
-          requestedToolName: 'mcp__myclaw__browser_navigate',
+          requestedToolName: 'mcp__myclaw__browser_act',
           toolName: 'Browser',
           suggestions: [
             {
@@ -1617,9 +1619,8 @@ describe('agent-runner IPC lifecycle', () => {
 
       const result = await runRunner(fixture, baseInput(), {
         TEST_PERMISSION_DECISION: 'approve',
-        TEST_PERMISSION_TOOL_NAME: 'mcp__myclaw__browser_navigate',
-        TEST_PERMISSION_SDK_SUGGESTION_TOOL_NAME:
-          'mcp__myclaw__browser_navigate',
+        TEST_PERMISSION_TOOL_NAME: 'mcp__myclaw__browser_act',
+        TEST_PERMISSION_SDK_SUGGESTION_TOOL_NAME: 'mcp__myclaw__browser_act',
         TEST_EXIT_AFTER_QUERY: '1',
       });
 

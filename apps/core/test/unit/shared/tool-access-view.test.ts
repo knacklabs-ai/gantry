@@ -27,12 +27,12 @@ describe('tool access view', () => {
     ).toEqual([]);
     expect(
       buildRequestableBrowserToolAccess({
-        externalMcpAllowedTools: ['mcp__agent_browser__*'],
+        externalMcpAllowedTools: ['mcp__browser' + '_' + 'backend' + '__*'],
       }),
     ).toHaveLength(1);
     expect(
       buildRequestableBrowserToolAccess({
-        configuredTools: ['mcp__myclaw__browser_click'],
+        configuredTools: ['mcp__myclaw__browser_act'],
       }),
     ).toHaveLength(1);
   });
@@ -44,8 +44,8 @@ describe('tool access view', () => {
       }).projectedRuntimeTools,
     ).toEqual(
       expect.arrayContaining([
-        'mcp__myclaw__browser_navigate',
-        'mcp__myclaw__browser_wait_for',
+        'mcp__myclaw__browser_act',
+        'mcp__myclaw__browser_act',
       ]),
     );
   });

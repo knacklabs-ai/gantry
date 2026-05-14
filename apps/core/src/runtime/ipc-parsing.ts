@@ -1,9 +1,4 @@
-import {
-  BROWSER_IPC_ACTIONS,
-  BrowserIpcAction,
-  MEMORY_IPC_ACTIONS,
-  MemoryIpcAction,
-} from '@myclaw/contracts';
+import { MEMORY_IPC_ACTIONS, MemoryIpcAction } from '@myclaw/contracts';
 
 import {
   PermissionApprovalRequest,
@@ -12,6 +7,10 @@ import {
   InteractionDetail,
   UserQuestionRequest,
 } from '../domain/types.js';
+import {
+  BROWSER_BACKEND_ACTIONS,
+  type BrowserBackendAction,
+} from '../shared/browser-backend-actions.js';
 import { isPlainObject, toTrimmedString } from '../shared/object.js';
 import {
   validateBrowserIpcAuthRequest,
@@ -24,6 +23,13 @@ const PERMISSION_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const BROWSER_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const USER_QUESTION_IPC_REQUEST_ID_PATTERN =
   /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const PUBLIC_BROWSER_GATEWAY_TOOL_NAMES = new Set([
+  'browser_status',
+  'browser_open',
+  'browser_inspect',
+  'browser_act',
+  'browser_close',
+]);
 
 export interface ParsedIpcMessage {
   type: 'message';
@@ -51,13 +57,14 @@ export interface ParsedMemoryIpcRequest {
 
 export interface ParsedBrowserIpcRequest {
   requestId: string;
-  action: BrowserIpcAction;
+  action: BrowserBackendAction;
   payload: Record<string, unknown>;
   chatJid: string;
   threadId?: string;
   responseKeyId?: string;
   jobId?: string;
   runId?: string;
+  publicToolName?: string;
   timeoutMs?: number;
   deadlineAtMs?: number;
 }
@@ -273,6 +280,15 @@ function parseInteractionDescriptor(
         }
       : {}),
   };
+}
+
+function normalizeBrowserBackendAction(
+  rawAction: string,
+): BrowserBackendAction | undefined {
+  if (BROWSER_BACKEND_ACTIONS.includes(rawAction as BrowserBackendAction)) {
+    return rawAction as BrowserBackendAction;
+  }
+  return undefined;
 }
 
 export function parseIpcMessage(
@@ -550,15 +566,16 @@ export function parseBrowserIpcRequest(
     throw new Error('browser IPC responseKeyId is required');
   }
   const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
-  const action = toTrimmedString(raw.action, { maxLen: 64 });
-  if (!requestId || !action) {
+  const rawAction = toTrimmedString(raw.action, { maxLen: 64 });
+  if (!requestId || !rawAction) {
     throw new Error('Invalid browser IPC request envelope');
   }
   if (!BROWSER_IPC_REQUEST_ID_PATTERN.test(requestId)) {
     throw new Error('Invalid browser IPC requestId');
   }
-  if (!BROWSER_IPC_ACTIONS.includes(action as BrowserIpcAction)) {
-    throw new Error(`Unsupported browser IPC action: ${action}`);
+  const action = normalizeBrowserBackendAction(rawAction);
+  if (!action) {
+    throw new Error(`Unsupported browser IPC action: ${rawAction}`);
   }
   const payload = raw.payload === undefined ? {} : raw.payload;
   if (!isPlainObject(payload)) {
@@ -568,6 +585,15 @@ export function parseBrowserIpcRequest(
   const rawTimeoutMs = context.timeoutMs;
   const jobId = toTrimmedString(context.jobId, { maxLen: 128 });
   const runId = toTrimmedString(context.runId, { maxLen: 128 });
+  const publicToolName = toTrimmedString(context.publicToolName, {
+    maxLen: 128,
+  });
+  if (
+    publicToolName &&
+    !PUBLIC_BROWSER_GATEWAY_TOOL_NAMES.has(publicToolName)
+  ) {
+    throw new Error(`Unsupported browser public tool: ${publicToolName}`);
+  }
   const timeoutMs =
     typeof rawTimeoutMs === 'number' && Number.isFinite(rawTimeoutMs)
       ? Math.max(1_000, Math.min(120_000, Math.trunc(rawTimeoutMs)))
@@ -576,13 +602,14 @@ export function parseBrowserIpcRequest(
   const deadlineAtMs = Date.parse(rawExpiresAt);
   return {
     requestId,
-    action: action as BrowserIpcAction,
+    action,
     payload,
     chatJid,
     ...(threadId ? { threadId } : {}),
     ...(responseKeyId ? { responseKeyId } : {}),
     ...(jobId ? { jobId } : {}),
     ...(runId ? { runId } : {}),
+    ...(publicToolName ? { publicToolName } : {}),
     ...(timeoutMs ? { timeoutMs } : {}),
     ...(Number.isFinite(deadlineAtMs) ? { deadlineAtMs } : {}),
   };

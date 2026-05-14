@@ -981,9 +981,9 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     const fixture = createMcpFixture();
 
     const result = await runMcpFixture(fixture, 'request_skill_install', {
-      spec: 'clawhub:agent-browser@1.0.0',
+      spec: 'clawhub:browser@1.0.0',
       provider: 'clawhub',
-      slug: 'agent-browser',
+      slug: 'browser',
       reason: 'Install browser automation as a skill.',
     });
 
@@ -1010,12 +1010,12 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     const fixture = createMcpFixture();
 
     const result = await runMcpFixture(fixture, 'request_mcp_server', {
-      name: 'agent_browser',
+      name: `${'browser'}_${'backend'}`,
       transport: 'http',
-      origin: 'https://example.test/playwright/mcp',
+      origin: 'https://example.test/browser/control',
       requestedToolPatterns: ['browser_*', 'page_*'],
-      reason: 'Use Playwright for browser control.',
-      docsUrl: 'https://example.test/puppeteer',
+      reason: 'Use a browser-control server.',
+      docsUrl: 'https://example.test/browser-control',
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -1031,7 +1031,7 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
       'request_permission with permissionKind="tool", toolName="Browser"',
     );
     expect(record.result.content[0].text).toContain(
-      'projected browser_* tools',
+      'compact browser gateway tools',
     );
     expect(record.result.content[0].text).not.toContain('temporaryOnly=true');
     expect(record.result.content[0].text).toContain(

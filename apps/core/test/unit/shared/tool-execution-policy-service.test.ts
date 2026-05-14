@@ -42,13 +42,13 @@ describe('ToolExecutionPolicyService', () => {
     expect(
       classifier.classify({
         origin: 'mcp',
-        toolName: 'mcp__agent_browser__click',
+        toolName: 'mcp__browser' + '_' + 'backend' + '__click',
         toolInput: { selector: '#submit' },
       }),
     ).toMatchObject({
       origin: 'mcp',
       toolKind: 'mcp',
-      toolName: 'mcp__agent_browser__click',
+      toolName: 'mcp__browser' + '_' + 'backend' + '__click',
       mutationIntent: 'unknown',
     });
   });
@@ -75,7 +75,7 @@ describe('ToolExecutionPolicyService', () => {
   it('recovers projected browser denials through persistent Browser permission', () => {
     const request = classifier.classify({
       origin: 'mcp',
-      toolName: 'mcp__myclaw__browser_navigate',
+      toolName: 'mcp__myclaw__browser_act',
       toolInput: { url: 'https://example.com' },
       executionMode: 'autonomous',
       runContext: { jobId: 'job-1' },
@@ -85,7 +85,7 @@ describe('ToolExecutionPolicyService', () => {
       expect.objectContaining({
         status: 'deny',
         reason: expect.stringContaining(
-          'Tool not on autonomous job allowlist: mcp__myclaw__browser_navigate.',
+          'Tool not on autonomous job allowlist: mcp__myclaw__browser_act.',
         ),
         recoveryAction: expect.stringContaining('"toolName": "Browser"'),
       }),

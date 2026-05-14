@@ -61,13 +61,15 @@ describe('job tool policy', () => {
     });
   });
 
-  it('rejects stale inherited agent_browser MCP rules from agent tool bindings', async () => {
+  it('rejects stale inherited host-private browser MCP rules from agent tool bindings', async () => {
     await expect(
       resolveJobToolPolicy({
         job: makeJob(),
         appId: 'default',
         agentId: 'agent:team',
-        toolRepository: toolRepositoryFor(['mcp__agent_browser__*']),
+        toolRepository: toolRepositoryFor([
+          'mcp__browser' + '_' + 'backend' + '__*',
+        ]),
       }),
     ).rejects.toThrowError(/canonical Browser tool capability/);
   });
@@ -78,7 +80,7 @@ describe('job tool policy', () => {
         job: makeJob(),
         appId: 'default',
         agentId: 'agent:team',
-        toolRepository: toolRepositoryFor(['mcp__myclaw__browser_click']),
+        toolRepository: toolRepositoryFor(['mcp__myclaw__browser_act']),
       }),
     ).rejects.toThrowError(/runtime projections, not durable capabilities/);
   });

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { BrowserIpcAction, MemoryIpcAction } from '@myclaw/contracts';
+import { MemoryIpcAction } from '@myclaw/contracts';
+import type { BrowserBackendAction } from '../../shared/browser-backend-actions.js';
 import {
   nowMs,
   nowMs as currentTimeMs,
@@ -193,9 +194,9 @@ export async function requestMemoryAction(
 }
 
 export async function requestBrowserAction(
-  action: BrowserIpcAction,
+  action: BrowserBackendAction,
   payload: Record<string, unknown>,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; publicToolName?: string } = {},
 ): Promise<{
   ok: boolean;
   data?: unknown;
@@ -223,6 +224,9 @@ export async function requestBrowserAction(
         ? { runId: process.env.MYCLAW_JOB_RUN_ID }
         : {}),
       ...(threadId ? { threadId } : {}),
+      ...(options.publicToolName
+        ? { publicToolName: options.publicToolName }
+        : {}),
       ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
     },
     expiresAt: new Date(currentTimeMs() + timeoutMs).toISOString(),

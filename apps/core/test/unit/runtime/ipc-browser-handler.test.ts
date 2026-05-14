@@ -42,7 +42,7 @@ vi.mock('@core/runtime/browser-cdp-targets.js', () => ({
   foregroundBrowserTarget: vi.fn(async () => undefined),
 }));
 
-import { BrowserIpcAction } from '@myclaw/contracts';
+import type { BrowserBackendAction } from '../../../src/shared/browser-backend-actions.js';
 
 import {
   createIpcResponseSigningKeyPair,
@@ -85,7 +85,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1',
-        action: 'browser_status',
+        action: 'status',
         payload: {},
       },
       {
@@ -112,7 +112,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1a',
-        action: 'browser_status',
+        action: 'status',
         payload: {
           profile_name: 'c-child-other123456',
         },
@@ -131,7 +131,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1b',
-        action: 'browser_status',
+        action: 'status',
         payload: { profile_name: 'default' },
       },
       {
@@ -148,7 +148,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1d',
-        action: 'browser_status',
+        action: 'status',
         payload: {
           profile_name: 'c-child-other123456',
         },
@@ -169,7 +169,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1c',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://example.test' },
       },
       {
@@ -188,7 +188,7 @@ describe('ipc-browser-handler', () => {
     expect(callBrowserTool).toHaveBeenCalledWith(
       expect.objectContaining({
         fileAccessRoot: expect.stringContaining('/sessions/main/extra'),
-        toolName: 'browser_navigate',
+        toolName: 'navigate',
         arguments: { url: 'https://example.test' },
       }),
     );
@@ -201,7 +201,43 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-job-browser',
-        action: 'browser_navigate',
+        action: 'navigate',
+        payload: { url: 'https://example.test' },
+        jobId: 'job-1',
+        runId: 'run-1',
+        publicToolName: 'browser_act',
+      },
+      {
+        sourceAgentFolder: 'main',
+        browserProfileName: 'c-main-abc123abc123',
+        browserIpcAuthorized: true,
+        callBrowserTool,
+        publishBrowserJobActivity,
+      },
+    );
+
+    expect(response.ok).toBe(true);
+    expect(publishBrowserJobActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        runId: 'run-1',
+        tool: 'Browser',
+        publicToolName: 'browser_act',
+        action: 'navigate',
+        satisfiesRequiredTool: true,
+        ok: true,
+        normalizedSite: 'example.test',
+      }),
+    );
+  });
+
+  it('does not satisfy required Browser from backend-only job browser calls', async () => {
+    const callBrowserTool = vi.fn(async () => ({ content: 'tool-result' }));
+    const publishBrowserJobActivity = vi.fn(async () => undefined);
+    const response = await processBrowserIpcRequest(
+      {
+        requestId: 'req-job-browser-private-only',
+        action: 'navigate',
         payload: { url: 'https://example.test' },
         jobId: 'job-1',
         runId: 'run-1',
@@ -218,11 +254,67 @@ describe('ipc-browser-handler', () => {
     expect(response.ok).toBe(true);
     expect(publishBrowserJobActivity).toHaveBeenCalledWith(
       expect.objectContaining({
+        tool: 'Browser',
+        action: 'navigate',
+        publicToolName: undefined,
+        satisfiesRequiredTool: false,
+      }),
+    );
+  });
+
+  it('satisfies required Browser for browser_open only when it navigates', async () => {
+    const callBrowserTool = vi.fn(async () => ({ content: 'tool-result' }));
+    const publishBrowserJobActivity = vi.fn(async () => undefined);
+
+    await processBrowserIpcRequest(
+      {
+        requestId: 'req-job-browser-open',
+        action: 'open',
+        payload: {},
         jobId: 'job-1',
         runId: 'run-1',
-        tool: 'browser_navigate',
-        ok: true,
-        normalizedSite: 'example.test',
+        publicToolName: 'browser_open',
+      },
+      {
+        sourceAgentFolder: 'main',
+        browserProfileName: 'c-main-abc123abc123',
+        browserIpcAuthorized: true,
+        callBrowserTool,
+        publishBrowserJobActivity,
+      },
+    );
+    await processBrowserIpcRequest(
+      {
+        requestId: 'req-job-browser-open-url',
+        action: 'navigate',
+        payload: { url: 'https://example.test' },
+        jobId: 'job-1',
+        runId: 'run-1',
+        publicToolName: 'browser_open',
+      },
+      {
+        sourceAgentFolder: 'main',
+        browserProfileName: 'c-main-abc123abc123',
+        browserIpcAuthorized: true,
+        callBrowserTool,
+        publishBrowserJobActivity,
+      },
+    );
+
+    expect(publishBrowserJobActivity).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        action: 'open',
+        publicToolName: 'browser_open',
+        satisfiesRequiredTool: false,
+      }),
+    );
+    expect(publishBrowserJobActivity).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        action: 'navigate',
+        publicToolName: 'browser_open',
+        satisfiesRequiredTool: true,
       }),
     );
   });
@@ -247,7 +339,7 @@ describe('ipc-browser-handler', () => {
     const first = await processBrowserIpcRequest(
       {
         requestId: 'req-audit-1',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://first.example.test/a' },
       },
       context,
@@ -255,7 +347,7 @@ describe('ipc-browser-handler', () => {
     const second = await processBrowserIpcRequest(
       {
         requestId: 'req-audit-2',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://second.example.test/b' },
       },
       context,
@@ -286,7 +378,7 @@ describe('ipc-browser-handler', () => {
     const first = await processBrowserIpcRequest(
       {
         requestId: 'req-enforce-1',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://first.example.test/a' },
       },
       context,
@@ -294,7 +386,7 @@ describe('ipc-browser-handler', () => {
     const second = await processBrowserIpcRequest(
       {
         requestId: 'req-enforce-2',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://second.example.test/b' },
       },
       context,
@@ -321,7 +413,7 @@ describe('ipc-browser-handler', () => {
     const unauthorized = await processBrowserIpcRequest(
       {
         requestId: 'req-unauthorized-before-metering',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://first.example.test/a' },
       },
       {
@@ -335,7 +427,7 @@ describe('ipc-browser-handler', () => {
     const authorized = await processBrowserIpcRequest(
       {
         requestId: 'req-authorized-after-stale-request',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://second.example.test/b' },
       },
       {
@@ -355,7 +447,7 @@ describe('ipc-browser-handler', () => {
     expect(getBrowserUsageSettings).toHaveBeenCalledTimes(1);
     expect(callBrowserTool).toHaveBeenCalledTimes(1);
     expect(callBrowserTool).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: 'browser_navigate' }),
+      expect.objectContaining({ toolName: 'navigate' }),
     );
   });
 
@@ -378,7 +470,7 @@ describe('ipc-browser-handler', () => {
     const navigate = await processBrowserIpcRequest(
       {
         requestId: 'req-enforce-navigate',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://first.example.test/a' },
       },
       context,
@@ -386,7 +478,7 @@ describe('ipc-browser-handler', () => {
     const status = await processBrowserIpcRequest(
       {
         requestId: 'req-enforce-status',
-        action: 'browser_status',
+        action: 'status',
         payload: {},
       },
       context,
@@ -394,7 +486,7 @@ describe('ipc-browser-handler', () => {
     const close = await processBrowserIpcRequest(
       {
         requestId: 'req-enforce-close',
-        action: 'browser_close',
+        action: 'close',
         payload: {},
       },
       context,
@@ -418,7 +510,7 @@ describe('ipc-browser-handler', () => {
       headless: false,
     });
     const callBrowserTool = vi.fn(async ({ toolName }) => {
-      if (toolName === 'browser_tabs') {
+      if (toolName === 'tabs') {
         return {
           structuredContent: {
             tabs: [
@@ -456,7 +548,7 @@ describe('ipc-browser-handler', () => {
     const navigate = await processBrowserIpcRequest(
       {
         requestId: 'req-cross-site-navigate',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://safe.example.org/start' },
       },
       context,
@@ -464,7 +556,7 @@ describe('ipc-browser-handler', () => {
     const firstClick = await processBrowserIpcRequest(
       {
         requestId: 'req-cross-site-click',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       context,
@@ -472,7 +564,7 @@ describe('ipc-browser-handler', () => {
     const secondClick = await processBrowserIpcRequest(
       {
         requestId: 'req-cross-site-click-again',
-        action: 'browser_type',
+        action: 'type',
         payload: { target: 'input-ref', text: 'hello' },
       },
       context,
@@ -483,14 +575,14 @@ describe('ipc-browser-handler', () => {
     expect(secondClick.ok).toBe(false);
     expect(secondClick.error).toContain('Browser usage policy warning');
     expect(callBrowserTool.mock.calls.map((call) => call[0].toolName)).toEqual([
-      'browser_navigate',
-      'browser_tabs',
-      'browser_click',
-      'browser_tabs',
+      'navigate',
+      'tabs',
+      'click',
+      'tabs',
     ]);
   });
 
-  it('ignores forged browser_tabs URLs unless creating a new tab', async () => {
+  it('ignores forged tabs URLs unless creating a new tab', async () => {
     vi.mocked(ensureBrowserReady).mockResolvedValue({
       profile: 'c-main-abc123abc123',
       profileName: 'c-main-abc123abc123',
@@ -529,7 +621,7 @@ describe('ipc-browser-handler', () => {
     const list = await processBrowserIpcRequest(
       {
         requestId: 'req-tabs-list',
-        action: 'browser_tabs',
+        action: 'tabs',
         payload: { action: 'list' },
       },
       context,
@@ -537,7 +629,7 @@ describe('ipc-browser-handler', () => {
     const select = await processBrowserIpcRequest(
       {
         requestId: 'req-tabs-select-forged-url',
-        action: 'browser_tabs',
+        action: 'tabs',
         payload: {
           action: 'select',
           index: 0,
@@ -551,9 +643,9 @@ describe('ipc-browser-handler', () => {
     expect(select.ok).toBe(false);
     expect(select.error).toContain('Browser usage policy warning');
     expect(callBrowserTool.mock.calls.map((call) => call[0].toolName)).toEqual([
-      'browser_tabs',
-      'browser_tabs',
-      'browser_tabs',
+      'tabs',
+      'tabs',
+      'tabs',
     ]);
   });
 
@@ -568,14 +660,14 @@ describe('ipc-browser-handler', () => {
       headless: false,
     });
     const callBrowserTool = vi.fn(async ({ toolName }) => {
-      if (toolName === 'browser_tabs') throw new Error('tabs unavailable');
+      if (toolName === 'tabs') throw new Error('tabs unavailable');
       return { content: 'clicked' };
     });
 
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-unverified-active-site',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -600,7 +692,7 @@ describe('ipc-browser-handler', () => {
     );
     expect(callBrowserTool).toHaveBeenCalledTimes(1);
     expect(callBrowserTool).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: 'browser_tabs' }),
+      expect.objectContaining({ toolName: 'tabs' }),
     );
   });
 
@@ -615,7 +707,7 @@ describe('ipc-browser-handler', () => {
       headless: false,
     });
     const callBrowserTool = vi.fn(async ({ toolName }) => {
-      if (toolName === 'browser_tabs') {
+      if (toolName === 'tabs') {
         return {
           structuredContent: {
             tabs: [
@@ -634,7 +726,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-unnormalizable-active-site',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -657,7 +749,7 @@ describe('ipc-browser-handler', () => {
     expect(response.error).toContain('not a normalizable site');
     expect(callBrowserTool).toHaveBeenCalledTimes(1);
     expect(callBrowserTool).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: 'browser_tabs' }),
+      expect.objectContaining({ toolName: 'tabs' }),
     );
   });
 
@@ -677,7 +769,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-pointer',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -702,7 +794,7 @@ describe('ipc-browser-handler', () => {
     );
     expect(callBrowserTool).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolName: 'browser_click',
+        toolName: 'click',
         session: expect.objectContaining({ port: 9333 }),
         timeoutMs: expect.any(Number),
       }),
@@ -742,7 +834,7 @@ describe('ipc-browser-handler', () => {
     const hoverResponse = await processBrowserIpcRequest(
       {
         requestId: 'req-hover',
-        action: 'browser_hover',
+        action: 'hover',
         payload: { target: 'button-ref' },
       },
       {
@@ -756,7 +848,7 @@ describe('ipc-browser-handler', () => {
     const screenshotResponse = await processBrowserIpcRequest(
       {
         requestId: 'req-screenshot',
-        action: 'browser_take_screenshot',
+        action: 'screenshot',
         payload: {},
       },
       {
@@ -784,11 +876,11 @@ describe('ipc-browser-handler', () => {
     );
     expect(callBrowserTool).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ toolName: 'browser_hover' }),
+      expect.objectContaining({ toolName: 'hover' }),
     );
     expect(callBrowserTool).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ toolName: 'browser_take_screenshot' }),
+      expect.objectContaining({ toolName: 'screenshot' }),
     );
     expect(
       vi.mocked(foregroundBrowserTarget).mock.invocationCallOrder[0],
@@ -814,7 +906,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-drag',
-        action: 'browser_drag',
+        action: 'drag',
         payload: { target: 'source', target2: 'destination' },
       },
       {
@@ -835,7 +927,7 @@ describe('ipc-browser-handler', () => {
       },
     );
     expect(callBrowserTool).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: 'browser_drag' }),
+      expect.objectContaining({ toolName: 'drag' }),
     );
   });
 
@@ -860,7 +952,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-foreground-deadline',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -893,7 +985,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-navigate-no-foreground',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://example.test' },
       },
       {
@@ -907,7 +999,7 @@ describe('ipc-browser-handler', () => {
     expect(response.ok).toBe(true);
     expect(foregroundBrowserTarget).not.toHaveBeenCalled();
     expect(callBrowserTool).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: 'browser_navigate' }),
+      expect.objectContaining({ toolName: 'navigate' }),
     );
   });
 
@@ -929,7 +1021,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-signed-deadline',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -975,7 +1067,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-resize-headed',
-        action: 'browser_resize',
+        action: 'resize',
         payload: { width: 1280, height: 720 },
       },
       {
@@ -993,7 +1085,7 @@ describe('ipc-browser-handler', () => {
     });
     expect(callBrowserTool).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolName: 'browser_resize',
+        toolName: 'resize',
         arguments: { width: 1280, height: 720 },
         timeoutMs: expect.any(Number),
       }),
@@ -1018,7 +1110,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-resize-headed-oversized',
-        action: 'browser_resize',
+        action: 'resize',
         payload: { width: 12_000, height: 20_000 },
       },
       {
@@ -1033,7 +1125,7 @@ describe('ipc-browser-handler', () => {
     expect(ensureBrowserTarget).toHaveBeenCalledWith(9333);
     expect(callBrowserTool).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolName: 'browser_resize',
+        toolName: 'resize',
         arguments: { width: 8192, height: 8192 },
       }),
     );
@@ -1042,7 +1134,7 @@ describe('ipc-browser-handler', () => {
     });
   });
 
-  it('fails browser_resize when the backend reports an error result', async () => {
+  it('fails resize when the backend reports an error result', async () => {
     vi.mocked(ensureBrowserReady).mockResolvedValueOnce({
       profile: 'c-main-abc123abc123',
       profileName: 'c-main-abc123abc123',
@@ -1060,7 +1152,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-resize-error',
-        action: 'browser_resize',
+        action: 'resize',
         payload: { width: 1280, height: 720 },
       },
       {
@@ -1099,7 +1191,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-remaining-budget',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -1153,7 +1245,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-exhausted-budget',
-        action: 'browser_click',
+        action: 'click',
         payload: { target: 'button-ref' },
       },
       {
@@ -1191,7 +1283,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-below-backend-min',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://example.test' },
       },
       {
@@ -1226,7 +1318,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-resize-headless',
-        action: 'browser_resize',
+        action: 'resize',
         payload: { width: 1280, height: 720 },
       },
       {
@@ -1241,7 +1333,7 @@ describe('ipc-browser-handler', () => {
     expect(ensureBrowserTarget).toHaveBeenCalledWith(9333);
     expect(callBrowserTool).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolName: 'browser_resize',
+        toolName: 'resize',
         arguments: { width: 1280, height: 720 },
       }),
     );
@@ -1266,7 +1358,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-resize-headless-oversized',
-        action: 'browser_resize',
+        action: 'resize',
         payload: { width: 12_000, height: 20_000 },
       },
       {
@@ -1281,7 +1373,7 @@ describe('ipc-browser-handler', () => {
     expect(ensureBrowserTarget).toHaveBeenCalledWith(9333);
     expect(callBrowserTool).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolName: 'browser_resize',
+        toolName: 'resize',
         arguments: { width: 8192, height: 8192 },
       }),
     );
@@ -1295,7 +1387,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-1e',
-        action: 'browser_navigate',
+        action: 'navigate',
         payload: { url: 'https://example.test' },
       },
       {
@@ -1315,7 +1407,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-2',
-        action: 'browser_launch',
+        action: 'open',
         payload: {
           profile_name: 'default',
         },
@@ -1340,11 +1432,11 @@ describe('ipc-browser-handler', () => {
     });
   });
 
-  it('rejects unsupported browser_launch payload fields', async () => {
+  it('rejects unsupported open payload fields', async () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-launch-headless',
-        action: 'browser_launch',
+        action: 'open',
         payload: {
           headless: true,
         },
@@ -1358,7 +1450,7 @@ describe('ipc-browser-handler', () => {
 
     expect(response.ok).toBe(false);
     expect(response.error).toContain(
-      'browser_launch does not support payload field(s): headless',
+      'open does not support payload field(s): headless',
     );
     expect(ensureBrowserReady).not.toHaveBeenCalled();
   });
@@ -1378,7 +1470,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-launch-headed',
-        action: 'browser_launch',
+        action: 'open',
         payload: {},
       },
       {
@@ -1413,7 +1505,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-launch-stale-backend',
-        action: 'browser_launch',
+        action: 'open',
         payload: {},
       },
       {
@@ -1439,7 +1531,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-launch-expired',
-        action: 'browser_launch',
+        action: 'open',
         payload: {},
       },
       {
@@ -1461,7 +1553,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-launch-deadline',
-        action: 'browser_launch',
+        action: 'open',
         payload: {},
       },
       {
@@ -1491,7 +1583,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-2b',
-        action: 'browser_launch',
+        action: 'open',
         payload: {},
       },
       {
@@ -1534,7 +1626,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-2c',
-        action: 'browser_status',
+        action: 'status',
         payload: {},
       },
       {
@@ -1590,7 +1682,7 @@ describe('ipc-browser-handler', () => {
       const response = await processBrowserIpcRequest(
         {
           requestId,
-          action: 'browser_status',
+          action: 'status',
           payload: {},
         },
         context,
@@ -1605,7 +1697,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-2a',
-        action: 'browser_launch',
+        action: 'open',
         payload: {
           profile_name: 'other-profile',
         },
@@ -1627,7 +1719,7 @@ describe('ipc-browser-handler', () => {
     const response = await processBrowserIpcRequest(
       {
         requestId: 'req-3',
-        action: 'browser_not_real' as BrowserIpcAction,
+        action: 'browser_not_real' as BrowserBackendAction,
         payload: {},
       },
       { sourceAgentFolder: 'main' },

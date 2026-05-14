@@ -633,8 +633,8 @@ function adminToolUnavailable(toolName: AdminMcpToolName): {
 
 const BROWSER_WRONG_LANE_GUIDANCE = [
   'Browser control is a built-in MyClaw tool capability, not a skill install or third-party MCP server request.',
-  'Do not request browser, agent-browser, agent_browser, Playwright, or Puppeteer through request_skill_install or request_mcp_server.',
-  'Use request_permission with permissionKind="tool", toolName="Browser", toolCategory="browser", temporaryOnly=false for persistent approval, then use the projected browser_* tools.',
+  'Do not request browser automation through request_skill_install or request_mcp_server.',
+  'Use request_permission with permissionKind="tool", toolName="Browser", toolCategory="browser", temporaryOnly=false for persistent approval, then use the compact browser gateway tools.',
 ].join(' ');
 
 function browserWrongLaneRequestGuidance(
@@ -676,14 +676,12 @@ function explicitWrongLaneText(value: unknown): string[] {
 function isBrowserWrongLaneText(value: string): boolean {
   const normalized = value.toLowerCase();
   const compact = normalized.replace(/[^a-z0-9]+/g, '');
-  if (
-    compact.includes('agentbrowser') ||
-    compact.includes('playwright') ||
-    compact.includes('puppeteer')
-  ) {
-    return true;
-  }
-  return normalized === 'browser' || normalized === 'browser-control';
+  return (
+    normalized === 'browser' ||
+    normalized === 'browser-control' ||
+    compact === 'browserbackend' ||
+    compact === 'browsercontrol'
+  );
 }
 
 type CapabilityReviewToolName =

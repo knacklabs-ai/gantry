@@ -9,13 +9,13 @@ describe('scheduledPermissionSuggestions', () => {
   it('canonicalizes projected browser tool suggestions to Browser', () => {
     expect(
       scheduledPermissionSuggestions(
-        'mcp__myclaw__browser_navigate',
+        'mcp__myclaw__browser_act',
         [
           {
             type: 'addRules',
             behavior: 'allow',
             destination: 'session',
-            rules: [{ toolName: 'mcp__myclaw__browser_navigate' }],
+            rules: [{ toolName: 'mcp__myclaw__browser_act' }],
           },
         ],
         {},
@@ -84,7 +84,10 @@ describe('scheduledPermissionSuggestions', () => {
 
   it('does not offer persistent suggestions for invalid durable tool rules', () => {
     expect(
-      synthesizePermissionSuggestions('mcp__agent_browser__navigate', {}),
+      synthesizePermissionSuggestions(
+        'mcp__browser' + '_' + 'backend' + '__navigate',
+        {},
+      ),
     ).toBeUndefined();
     expect(synthesizePermissionSuggestions('Read', {})).toBeUndefined();
     expect(

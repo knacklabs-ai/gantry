@@ -19,15 +19,15 @@ bindings, or scoped Bash rules such as `Bash(npm test *)`. Runtime expands
 semantic capabilities and may still project approved third-party MCP server
 bindings into SDK allowances for that run. Empty rules, global `*`, broad exact
 SDK/native request*permission grants, exact third-party MCP tool grants, bare
-`Bash`, `Bash(*)`, leading-wildcard Bash scopes, scoped non-Bash rules, raw
-Browser action MCP rules, and projected `mcp__myclaw__browser_*` rules are
+`Bash`, `Bash(*)`, leading-wildcard Bash scopes, scoped non-Bash rules, private
+browser backend rules, and projected browser gateway rules are
 invalid as persistent request_permission authority.
 
 Browser is one durable public capability: `Browser`. A job with an inherited
-`Browser` grant receives the projected MyClaw browser tools for that run. A job
+`Browser` grant receives the projected MyClaw browser gateway for that run. A job
 without that inherited grant must request `Browser` through `request_permission`;
-it must not request or persist raw Playwright, Puppeteer, agent-browser, or
-projected browser action tool names.
+it must not request or persist private browser backend names or projected
+browser gateway tool names.
 
 ## Readiness Gates
 
@@ -43,7 +43,7 @@ The declarations are UX assertions, not authorization. The runtime still
 enforces actual tool use at the permission boundary, and under-declared jobs
 pause if a run later reaches a denied tool.
 Create/update surfaces validate these assertions up front. Unsupported raw
-browser action names, projected browser MCP tool names, MyClaw wildcards, broad
+browser backend names, projected browser gateway names, MyClaw wildcards, broad
 or bare Bash, and scoped non-Bash rules fail the request instead of becoming
 compatibility state.
 
@@ -160,7 +160,7 @@ object:
   "toolAccess": {
     "inheritedAgentTools": ["Read", "Bash(npm test *)"],
     "effectiveAllowedTools": ["Read", "Bash(npm test *)"],
-    "projectedRuntimeTools": ["mcp__myclaw__browser_navigate"],
+    "projectedRuntimeTools": ["browser_open"],
     "source": "inherited target agent capabilities"
   },
   "health": {

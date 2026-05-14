@@ -162,7 +162,7 @@ place.
 | Third-party MCP  | Definition, reviewed version, credential refs, allowed tool patterns, binding. | SDK `mcpServers` for host-safe stdio transports plus exact allowed MCP tool names. Remote HTTP/SSE requires host DNS-pinned transport before projection. |
 | SDK tool         | Tool catalog entry, risk, permission policy, sandbox profile, binding.         | Exact non-Bash SDK tool names in `allowedTools`; scoped `Bash(<pattern>)` is enforced only in `canUseTool` and never projected as bare `Bash`.           |
 | Host tool        | Built-in MyClaw MCP tool entry, risk, binding, audit behavior.                 | Exact `mcp__myclaw__<tool>` name.                                                                                                                        |
-| Browser tool     | Canonical `Browser` capability and sandbox policy.                             | Gated MyClaw-owned `mcp__myclaw__browser_*` tools with MyClaw-owned schemas.                                                                             |
+| Browser tool     | Canonical `Browser` capability and sandbox policy.                             | Gated MyClaw-owned gateway tools with MyClaw-owned schemas.                                                                                              |
 | Channel tool     | Provider capability enum, scopes, affected conversations, binding.             | Provider adapter enables only the named Slack/Telegram/Teams/Web capability.                                                                             |
 | Channel binding  | Agent-to-conversation/thread binding and control policy.                       | Message routing, trigger handling, and same-channel approval target.                                                                                     |
 
@@ -236,7 +236,7 @@ authority, while `Always allow` stores either the approved semantic capability,
 canonical `Browser`, exact MyClaw admin tool, or scoped Bash rule for the active
 run and future runs. New skill or MCP materialization occurs on the next
 scheduled run or a manual rerun. Browser remains a single public `Browser` tool
-capability; projected browser tools and admin MyClaw MCP tools are not
+capability; projected browser gateway tools and admin MyClaw MCP tools are not
 job-local grants.
 
 Direct writes to `settings.json`, `settings.local.json`, `.mcp.json`,
@@ -340,8 +340,9 @@ Skills are projected only when approved and bound. Draft, denied, disabled, or
 unbound skill files are never copied into per-run Claude config.
 
 The `Browser` tool manages the agent conversation's persistent browser profile
-through projected MyClaw-owned `browser_*` tools. There is no separate
-browser-action run, phrase intent, raw `agent_browser` MCP projection, or
+through the projected MyClaw-owned gateway: `browser_status`, `browser_open`,
+`browser_inspect`, `browser_act`, and `browser_close`. There is no separate
+browser-action run, phrase intent, private browser backend projection, or
 durable per-action browser authority.
 
 SDK built-in tools are denied by default unless the profile explicitly grants
