@@ -1,90 +1,102 @@
 <p align="center">
-  A personal AI assistant runtime that stays small enough to understand and is meant to be customized in code.
+  <strong>Gantry</strong> — The enterprise agent runtime by CAW.
+</p>
+<p align="center">
+  A gantry holds a rocket upright, fuels it, runs diagnostics, and swings away at launch.<br/>
+  It does everything <em>except</em> fly — it exists so the rocket can.<br/><br/>
+  What a gantry is to a rocket, <strong>Gantry</strong> is to an AI agent.
 </p>
 
 ---
 
-## What MyClaw Is
+## What Gantry Is
 
-MyClaw is a single-process Node.js assistant runtime. Messages come in from one or more channels, get stored in the configured runtime database, and are routed to host-managed agents through a host runtime process.
+Gantry is an enterprise-grade agent runtime: the host process that gives AI agents a controlled place to run, people or applications to respond to, tools to use, durable memory, and an immutable audit trail. It is not a chatbot. It is not an LLM wrapper. It is not a workflow engine.
 
-The project is intentionally small. The goal is not to be a framework with every feature built in. The goal is to give one person a secure, understandable base they can shape to fit their own workflow.
+The runtime sits between five worlds and brokers work between them:
+
+- **Human chat surfaces** — Slack, Microsoft Teams, Telegram, plus a first-class web/SDK channel for in-product chat.
+- **Customer applications** — backend services (NestJS, Next.js, workers) that embed Gantry through the SDK.
+- **Signed application events** — external systems (CRMs, monitoring tools, schedulers) that push work in through scoped ingress credentials.
+- **Approved business tools** — internal APIs, databases behind approved connectors, browser automation, CRM tools, and MCP-connected services.
+- **Durable foundation** — Postgres-backed runtime state, secret providers, artifacts, and audit records.
+
+Three abstractions make the runtime composable: **stateless agents** as versioned configurations, **scoped memory** tied to app/agent/conversation context, and a **flexible interaction surface** where the same runtime can serve realtime chat, async jobs, and application action requests.
+
+Gantry is distributed as an obfuscated npm package through [CAW's GitHub Package Registry](https://github.com/orgs/AventCaw/packages). Client deployments pull the package and run it with their agent prompt configurations.
 
 ## Quick Start
 
 ```bash
-npm i -g myclaw
-myclaw
+npm i -g @caw/gantry
+gantry
 ```
 
 The first run is a guided CLI flow that collects setup choices first, then runs final doctor verification before marking the runtime ready.
 
 ### NPM Install First-Run Flow
 
-If you install from npm and want the fastest path to a working bot:
-
 ```bash
-npm i -g myclaw
-myclaw
+npm i -g @caw/gantry
+gantry
 ```
 
 Then follow this order:
 
-1. Run `myclaw` with no args.
+1. Run `gantry` with no args.
 2. Choose `Use local Postgres URL` if you started the provided Compose stack, or choose hosted/existing Postgres and paste those URLs.
 3. Choose your first channel: `Telegram` or `Slack`.
 4. Follow the in-CLI channel guide, choose the default agent name, paste channel credentials, and pick a discovered chat/channel (or enter an ID manually). Setup binds that conversation to the default agent; channel IDs and runtime folders stay internal.
-5. Connect Model Access once for all agent, subagent, memory, and scheduled job model calls. MyClaw uses the reserved `myclaw-model-access` OneCLI profile for Claude/OpenRouter credentials; agents only select catalog model aliases and never receive database URLs or raw provider credentials.
+5. Connect Model Access once for all agent, subagent, memory, and scheduled job model calls. Gantry uses the reserved `gantry-model-access` OneCLI profile for Claude/OpenRouter credentials; agents only select catalog model aliases and never receive database URLs or raw provider credentials.
 6. Choose main model by friendly alias (`opus` recommended; `sonnet`, `haiku`, or broker-backed `kimi` optional).
 7. Confirm memory settings (memory on, embeddings off, dreaming on by default).
 8. Choose whether to install/start a background service.
 9. Review the final summary and choose `Create Runtime`; before this point Back, Resume Later, and Cancel are transactional.
 10. Let setup write config, register the group, run final doctor verification, and show the ready screen.
-11. Finish setup. The default is to exit cleanly; choose `Start MyClaw now` only if you want the runtime to begin listening immediately.
+11. Finish setup. The default is to exit cleanly; choose `Start Gantry now` only if you want the runtime to begin listening immediately.
 
 ### CLI Commands
 
 ```bash
-myclaw
-myclaw setup
-myclaw doctor
-myclaw status
-myclaw start
-myclaw stop
-myclaw restart
-myclaw logs
-myclaw local setup|start|stop|status|logs|doctor
-myclaw model list
-myclaw model set-default chat|one-time|recurring <alias>
-myclaw model doctor
-myclaw provider connect telegram
-myclaw provider connect slack
-myclaw provider connect teams
-myclaw provider list
-myclaw provider doctor
-myclaw conversation approvers <conversation-id> [--allow <userId,userId>]
-myclaw agent list
-myclaw agent add <jid|chat-id> [--name <name>]
-myclaw service install|start|stop|restart
+gantry
+gantry setup
+gantry doctor
+gantry status
+gantry start
+gantry stop
+gantry restart
+gantry logs
+gantry local setup|start|stop|status|logs|doctor
+gantry model list
+gantry model set-default chat|one-time|recurring <alias>
+gantry model doctor
+gantry provider connect telegram
+gantry provider connect slack
+gantry provider connect teams
+gantry provider list
+gantry provider doctor
+gantry conversation approvers <conversation-id> [--allow <userId,userId>]
+gantry agent list
+gantry agent add <jid|chat-id> [--name <name>]
+gantry service install|start|stop|restart
 ```
 
 Defaults in v1:
 
-- runtime home: `~/myclaw`
-- runtime settings file: `~/myclaw/settings.yaml` (validated before `start`/`restart`)
+- runtime home: `~/gantry`
+- runtime settings file: `~/gantry/settings.yaml` (validated before `start`/`restart`)
 - setup flow: guided multi-channel first run (choose Telegram or Slack)
-- storage: Postgres through `MYCLAW_DATABASE_URL`; guided setup validates URLs but does not create Docker containers
+- storage: Postgres through `GANTRY_DATABASE_URL`; guided setup validates URLs but does not create Docker containers
 - memory: on
-- embeddings: off by default; external embedding providers require brokered Model Access and are not configured through MyClaw `.env`
-- dreaming: on in guided setup; disable with `myclaw memory dreaming off`
+- embeddings: off by default; external embedding providers require brokered Model Access and are not configured through Gantry `.env`
+- dreaming: on in guided setup; disable with `gantry memory dreaming off`
 - provider connections, conversations, bindings, and conversation approvers live under `providers`, `provider_connections`, `conversations`, and `bindings` in `settings.yaml`
 - conversation approvers approve direct/private and group/channel actions only when listed on that conversation and currently a member
 - the same agent can be bound across providers, but admin user ids stay provider-scoped: Slack approvers are Slack member ids and Teams approvers are Teams user ids
 
-Runtime home is a single-cut contract. MyClaw reads `~/myclaw` by default unless `--runtime-home` or `MYCLAW_HOME` is set.
+Runtime home is a single-cut contract. Gantry reads `~/gantry` by default unless `--runtime-home` or `GANTRY_HOME` is set.
 
-Human-editable runtime settings live in `~/myclaw/settings.yaml`. The common
-shape is compact and only includes values users normally change:
+Human-editable runtime settings live in `~/gantry/settings.yaml`. The common shape is compact and only includes values users normally change:
 
 ```yaml
 defaults:
@@ -123,8 +135,7 @@ conversations:
     trigger: "@Default Agent"
 ```
 
-For the same agent across Slack and Teams, configure approvers on each
-conversation:
+For the same agent across Slack and Teams, configure approvers on each conversation:
 
 ```yaml
 agents:
@@ -147,65 +158,49 @@ conversations:
     agent: main_agent
 ```
 
-Advanced storage and credential broker overrides stay supported, but setup keeps
-them out of `settings.yaml` unless you change them from defaults.
+Advanced storage and credential broker overrides stay supported, but setup keeps them out of `settings.yaml` unless you change them from defaults.
 
-MyClaw uses Postgres for runtime state, jobs, events, memory, semantic search, and lexical search. Runtime readiness expects `pgvector`, `pg_trgm`, and `pg-boss` schema readiness. The supported deployment model is one database with separate schemas and roles: `myclaw` for runtime state, `onecli` for broker state, and `pgboss` for job queue internals. `MYCLAW_DATABASE_URL` and `ONECLI_DATABASE_URL` must use different Postgres users.
+Gantry uses Postgres for runtime state, jobs, events, memory, semantic search, and lexical search. Runtime readiness expects `pgvector`, `pg_trgm`, and `pg-boss` schema readiness. The supported deployment model is one database with separate schemas and roles: `gantry` for runtime state, `onecli` for broker state, and `pgboss` for job queue internals. `GANTRY_DATABASE_URL` and `ONECLI_DATABASE_URL` must use different Postgres users.
 
 No Postgres or Model Access service installed? Use the provided Compose file, then paste the resulting URLs during setup:
 
 ```bash
-docker compose --env-file ~/myclaw/.env up -d
-myclaw setup
+docker compose --env-file ~/gantry/.env up -d
+gantry setup
 ```
 
-The Compose file hardcodes the local ports, schema names, and non-secret role names. `~/myclaw/.env` only needs local passwords, `SECRET_ENCRYPTION_KEY`, and the runtime connection URLs. MyClaw setup does not start Docker or create containers; it asks for `MYCLAW_DATABASE_URL` and `ONECLI_DATABASE_URL`, creates the `myclaw-model-access` Model Access profile, then writes the non-secret OneCLI gateway URL to `settings.yaml` as `credential_broker.onecli.url`.
+The Compose file hardcodes the local ports, schema names, and non-secret role names. `~/gantry/.env` only needs local passwords, `SECRET_ENCRYPTION_KEY`, and the runtime connection URLs. Gantry setup does not start Docker or create containers; it asks for `GANTRY_DATABASE_URL` and `ONECLI_DATABASE_URL`, creates the `gantry-model-access` Model Access profile, then writes the non-secret OneCLI gateway URL to `settings.yaml` as `credential_broker.onecli.url`.
 
-If an older local `.env` still contains settings-owned keys such as
-`MYCLAW_CREDENTIAL_MODE`, `ONECLI_URL`, `ANTHROPIC_MODEL`, or
-`SLACK_PERMISSION_APPROVER_IDS`, move those values into `settings.yaml` and
-remove them from `.env` before starting the runtime.
+If an older local `.env` still contains settings-owned keys such as `GANTRY_CREDENTIAL_MODE`, `ONECLI_URL`, `ANTHROPIC_MODEL`, or `SLACK_PERMISSION_APPROVER_IDS`, move those values into `settings.yaml` and remove them from `.env` before starting the runtime.
 
-MyClaw intentionally does not expose a destructive database-reset command in
-the runtime CLI. If you need to start over during development, stop MyClaw,
-reset your local Postgres outside the agent-facing CLI, then run
-`myclaw provider connect telegram` or `myclaw provider connect slack` to
-re-register chats.
+Gantry intentionally does not expose a destructive database-reset command in the runtime CLI. If you need to start over during development, stop Gantry, reset your local Postgres outside the agent-facing CLI, then run `gantry provider connect telegram` or `gantry provider connect slack` to re-register chats.
 
-For hosted Postgres, use Neon, Supabase, or another provider that supports `vector` and `pg_trgm`, then paste two URLs during setup: one MyClaw-role URL with `sslmode=require`, and one OneCLI-role URL for the same database with `sslmode=require` and `schema=onecli`.
+For hosted Postgres, use Neon, Supabase, or another provider that supports `vector` and `pg_trgm`, then paste two URLs during setup: one Gantry-role URL with `sslmode=require`, and one OneCLI-role URL for the same database with `sslmode=require` and `schema=onecli`.
 
 ### Provider And Conversation Setup
 
-MyClaw supports multiple providers. You can connect Telegram, Slack, or Teams and then bind an agent into a conversation:
+Gantry supports multiple providers. You can connect Telegram, Slack, or Teams and then bind an agent into a conversation:
 
 ```bash
-myclaw provider connect telegram
-myclaw provider connect slack
-myclaw provider connect teams
+gantry provider connect telegram
+gantry provider connect slack
+gantry provider connect teams
 ```
 
 Notes:
 
 - Telegram uses `TELEGRAM_BOT_TOKEN`; create it in Telegram by chatting with `@BotFather` and sending `/newbot`.
-- For Telegram groups, add the bot to the group and send a message before discovery; if MyClaw must see every group message, make the bot an admin or disable Group Privacy in BotFather with `/setprivacy`.
-- `myclaw provider connect telegram` auto-discovers recent chats and can register one without manual chat ID copy/paste. The human sender from the selected discovery message is added as a conversation approver, so `/new`, `/model`, `/dream`, and `/memory-status` work immediately.
+- For Telegram groups, add the bot to the group and send a message before discovery; if Gantry must see every group message, make the bot an admin or disable Group Privacy in BotFather with `/setprivacy`.
+- `gantry provider connect telegram` auto-discovers recent chats and can register one without manual chat ID copy/paste. The human sender from the selected discovery message is added as a conversation approver, so `/new`, `/model`, `/dream`, and `/memory-status` work immediately.
 - Slack uses Socket Mode with `SLACK_BOT_TOKEN` (`xoxb-...`) and `SLACK_APP_TOKEN` (`xapp-...`); create a Slack app, add a bot user/scopes, enable Socket Mode, generate the app-level token, install/reinstall the app, then invite it to the target channel or DM it once.
-- `myclaw provider connect slack` auto-discovers accessible conversations and can register one directly.
+- `gantry provider connect slack` auto-discovers accessible conversations and can register one directly.
 - Slack tool permission approvals are deny-by-default until approvers are listed on the target conversation in `settings.yaml`. Guided setup asks for comma-separated Slack member IDs like `U0123456789`; these users must be members of that conversation to approve tool permissions and answer interactive prompts.
 - Slack UX uses native Slack surfaces (threads, streaming updates, actions).
-- Teams setup uses Microsoft Teams app auth through `RuntimeSecretProvider`
-  (`TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, `TEAMS_TENANT_ID`), discovers
-  Teams channels through Microsoft Graph, and registers `teams:` conversation
-  IDs. Live Teams message transport remains behind the `TeamsSdkClient` adapter
-  seam; this checkout includes tested normalization and Adaptive Card approval
-  scaffolding, but not a concrete Bot Framework transport.
+- Teams setup uses Microsoft Teams app auth through `RuntimeSecretProvider` (`TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, `TEAMS_TENANT_ID`), discovers Teams channels through Microsoft Graph, and registers `teams:` conversation IDs. Live Teams message transport remains behind the `TeamsSdkClient` adapter seam; this checkout includes tested normalization and Adaptive Card approval scaffolding, but not a concrete Bot Framework transport.
 
 ### Capability Management
 
-Skills, MCP servers, SDK tools, host tools, browser tools, and channel-native
-tools are approved agent capabilities. Agents must not run dependency install
-commands, edit `.claude/skills`, edit `.mcp.json`, edit settings, or mutate
-generated Claude config directly. They use MyClaw request tools instead:
+Skills, MCP servers, SDK tools, host tools, browser tools, and channel-native tools are approved agent capabilities. Agents must not run dependency install commands, edit `.claude/skills`, edit `.mcp.json`, edit settings, or mutate generated Claude config directly. They use Gantry request tools instead:
 
 - `send_message`
 - `ask_user_question`
@@ -218,47 +213,39 @@ generated Claude config directly. They use MyClaw request tools instead:
 - `service_restart`
 - `register_agent`
 
-Capability changes are request, review, approval or cancellation, durable audit,
-new config version, and next-run activation. Tool and channel capability
-permission prompts use `request_permission` and present three decisions: `Allow
-once`, `Always allow <granular rule>`, or `Cancel`. Privileged admin tools such
-as `service_restart`, `register_agent`, `settings_desired_state`, and
-`request_settings_update` require exact selected tool capabilities; unselected
-agents see requestable tool IDs and `request_permission` arguments through
-`capability_status`.
+Capability changes follow a strict lifecycle: **request → review → approval or cancellation → durable audit → new config version → next-run activation**. Tool and channel capability permission prompts use `request_permission` and present three decisions: `Allow once`, `Always allow <granular rule>`, or `Cancel`. Privileged admin tools such as `service_restart`, `register_agent`, `settings_desired_state`, and `request_settings_update` require exact selected tool capabilities; unselected agents see requestable tool IDs and `request_permission` arguments through `capability_status`.
 
-Persistent agent tool grants are visible in `settings.yaml` under
-`agents.<id>.tools` as readable rules such as `Bash(git status *)`,
-`Write(/repo/**)`, or `mcp__myclaw__service_restart`. Jobs are scheduled agent
-runs and inherit the target agent's selected tools, skills, and MCP servers at
-execution time; job records do not carry a separate tool grant surface. The
-canonical `toolAccess` view in MCP, CLI, SDK, and Control API responses shows
-the inherited agent capability projection. Skill source is stored as readable
-skill folders with `SKILL.md` plus supporting files;
-Postgres stores metadata, source, hash, provider refs, binding, and audit
-records. ClawHub is the default provider-backed skill source, but provider
-verification never bypasses approval.
+Persistent agent tool grants are visible in `settings.yaml` under `agents.<id>.tools` as readable rules such as `Bash(git status *)`, `Write(/repo/**)`, or `mcp__gantry__service_restart`. Jobs are scheduled agent runs and inherit the target agent's selected tools, skills, and MCP servers at execution time; job records do not carry a separate tool grant surface. The canonical `toolAccess` view in MCP, CLI, SDK, and Control API responses shows the inherited agent capability projection. Skill source is stored as readable skill folders with `SKILL.md` plus supporting files; Postgres stores metadata, source, hash, provider refs, binding, and audit records. ClawHub is the default provider-backed skill source, but provider verification never bypasses approval.
 
-## Philosophy
+## Design Principles
 
-- Small enough to understand. One process, a small set of core files, and straightforward data flow.
-- Secure by explicit trust boundaries. The current runtime executes on host, so security depends on host controls, scoped mounts, and clear operational safeguards.
-- Customized in code. If you want different behavior, change the code instead of stacking on configuration.
-- Skills over core bloat. Reusable capabilities should be delivered as skills or narrowly scoped branches, not piled into the default runtime.
-- AI-native operations. Setup, debugging, and maintenance should be easy to drive from Claude Code.
+Gantry was designed from the ground up as infrastructure for enterprise AI deployments. Every design decision follows from one belief: **agents that operate inside a business need the same operational discipline as the business itself.**
+
+- **Security-first.** Every conversation is its own security perimeter. Every tool call passes through a two-axis gate: who is asking, and what is being asked. Agents cannot grant themselves approval.
+- **Stateless agents.** An agent is a versioned configuration, not a running process. The runtime spawns a fresh runner, executes work, and tears down. No hidden state drifting between runs. Capability changes are config changes, not model rewrites.
+- **Scoped memory, not a shared brain.** Memory is keyed to app, agent, and subject. The runtime physically cannot return records across boundaries. Privacy is enforced at the data layer, not asked nicely of the prompt.
+- **Composable, not monolithic.** Skills over core bloat. Reusable capabilities are delivered as skills or narrowly scoped packages, not piled into the default runtime.
+- **Observable.** Every action — tool calls, approvals, memory promotions, config changes — is audit-logged. The answer to "why did the agent do that?" is always traceable.
+- **Provider-neutral.** One agent definition works across Slack, Teams, Telegram, and in-product SDK channels. The team writes the agent once.
+- **Embeddable.** Gantry is a runtime, not a SaaS product. The SDK gives product teams one mental model, one auth model, and one set of contracts.
 
 ## What It Supports
 
-- Multi-channel messaging
-- Per-group context and memory
-- Scheduled jobs
+- Multi-channel messaging (Slack, Teams, Telegram, Web/SDK)
+- Per-conversation security perimeters with approval flows
+- Stateless versioned agent configurations
+- Scoped, auditable memory with dreaming lifecycle
+- Scheduled and triggered async jobs
 - Web access and browser automation
+- MCP server integration with per-tool allowlists
+- Signed external ingress for third-party system events
+- Outbound webhooks with HMAC-signed delivery
 - Host runtime execution
-- Skill-driven extensions and provider connection
+- Skill-driven extensions and provider connections
 
 ## Memory And Continuity
 
-Memory stores durable knowledge the agent should remember later:
+Memory stores durable knowledge the agent should retain across sessions:
 
 - preferences
 - decisions
@@ -267,8 +254,9 @@ Memory stores durable knowledge the agent should remember later:
 - constraints
 - reusable procedures
 
-Continuity is explicit runtime resume/current-work state. Durable memory is
-separate and is retrieved only when it matches the current query:
+Each memory record is scoped by `appId`, `agentId`, and subject (`user`, `group`, `channel`, `conversation`, or `common`). The runtime enforces these boundaries at the data layer — cross-boundary leakage is structurally impossible, not just policy-discouraged.
+
+Continuity is explicit runtime resume/current-work state. Durable memory is separate and is retrieved only when it matches the current query:
 
 - provider session resume state
 - query-relevant remembered facts
@@ -279,26 +267,21 @@ separate and is retrieved only when it matches the current query:
 
 Embeddings are off by default. Memory search and context injection work without embeddings today through lexical search and keyword fallback. Configuring embeddings prepares provider access, but vector retrieval is not active until the runtime indexing/query path is enabled.
 
-Host runtime injects a digest-first memory context block when a fresh chat
-runner or scheduled job starts: recent session digests (when persisted), then
-active durable memory items. Follow-up chat messages continue through the same
-live Claude SDK stream while the runner is alive, so MyClaw does not replay raw
-message history or run logs into every prompt. The memory block is sent as
-structured untrusted data with a system-level boundary policy that forbids
-treating memory records as instructions or tool-use authority.
+Host runtime injects a digest-first memory context block when a fresh chat runner or scheduled job starts: recent session digests (when persisted), then active durable memory items. Follow-up chat messages continue through the same live Claude SDK stream while the runner is alive, so Gantry does not replay raw message history or run logs into every prompt. The memory block is sent as structured untrusted data with a system-level boundary policy that forbids treating memory records as instructions or tool-use authority.
 
-Automatic boundaries such as `/new`, manual `/compact`, and observed SDK
-compact boundaries capture continuation digests and extraction evidence. `/new`
-resets scoped provider-session state first and finalizes the previous session's
-digest in the background, so a slow extractor cannot block starting fresh.
-Durable memory auto-promotion remains dreaming-only.
+Automatic boundaries such as `/new`, manual `/compact`, and observed SDK compact boundaries capture continuation digests and extraction evidence. `/new` resets scoped provider-session state first and finalizes the previous session's digest in the background, so a slow extractor cannot block starting fresh. Durable memory auto-promotion remains dreaming-only.
 
-Embedding work runs only during dreaming promotion/update passes. Runtime recall
-and context injection continue to use active memory items through lexical search
-and keyword fallback until memory item embedding indexing/querying is fully
-implemented.
+### Memory Dreaming
 
-Memory boundaries:
+Background dreaming cycles turn raw conversational evidence into curated, high-confidence durable memory. Three stages run in sequence:
+
+1. **Light Sleep** — sweeps recent evidence (messages, tool outputs, user corrections) and proposes candidate memories. Candidates start staged; they are not yet durable.
+2. **REM** — cross-checks candidates against existing memory and flags contradictions. If the user said X yesterday and not-X today, the conflict is surfaced rather than silently overwritten.
+3. **Deep Sleep** — high-confidence candidates promoted to durable memory. Low-confidence or contradicted candidates held back. Duplicates merged. Obsolete facts retired. Destructive changes are policy-gated.
+
+Embedding work runs only during dreaming promotion/update passes. Runtime recall and context injection continue to use active memory items through lexical search and keyword fallback until memory item embedding indexing/querying is fully implemented.
+
+### Memory Boundaries
 
 - `appId` and `agentId` are mandatory for every memory record.
 - Direct/private agent conversations default to user memory. Channel conversations, including Slack channels, Teams channels/chats, Telegram groups, and Telegram topics, default to conversation memory.
@@ -306,34 +289,53 @@ Memory boundaries:
 - `common` is app-wide shared memory and is write-restricted to admin/service flows.
 - `threadId` narrows recall without crossing app, agent, user, group, or channel boundaries.
 
-Runtime state and memory records are stored in Postgres through `MYCLAW_DATABASE_URL`.
+Runtime state and memory records are stored in Postgres through `GANTRY_DATABASE_URL`.
 See [docs/MEMORY.md](docs/MEMORY.md) for the app developer memory model and dreaming lifecycle.
+
+## Three Interaction Patterns
+
+Gantry supports three product patterns. They are not alternatives; most real products use all three, and they share the same agent runtime, memory, policy, and event model.
+
+1. **Realtime chat through a trusted product backend.** A user types in a chat UI; the customer's backend opens a session, sends the message, and streams the agent's response back over Server-Sent Events.
+2. **Async jobs from schedules or external systems.** A schedule, CRM, monitoring tool, or backend service fires a scoped request that triggers a job. The caller can get a trigger ID immediately, wait through the SDK, or rely on a configured webhook when the result is ready.
+3. **Application action requests.** A product sends a plain-language instruction such as "draft a follow-up for this lead" or "summarize the last 24 hours of incidents." The agent acts through approved tools, within the selected capability and policy boundary.
+
+All three patterns hit the same security gate, the same scoped memory, and the same audit trail.
+
+## SDK And Integration
+
+Backend apps can use `@caw/gantry-sdk` to ensure a session, send a message, and wait or stream durable runtime events. Normal SDK calls derive `appId` from the API key; request-body `appId` is only an optional assertion.
+
+External systems that should not hold a control API key use signed external ingress records under `/v1/ingresses`. Ingress supports session messages, existing job triggers, and constrained one-time job templates. Each ingress record has an explicit target policy, so its secret only authorizes configured sessions, conversations, jobs, or templates. `/v1/webhooks` remains outbound callback delivery for runtime events.
 
 ## Runtime
 
-MyClaw currently supports a single runtime mode: host execution.
+Gantry currently supports a single runtime mode: host execution.
 Use `npm run dev` for local development and `npm start` for production start.
 
-## Sidecar Integrations
+## Client Deployment Model
 
-Backend apps can use `@myclaw/sdk` to ensure a session, send a message, and wait
-or stream durable runtime events. Normal SDK calls derive `appId` from the API
-key; request-body `appId` is only an optional assertion.
+Gantry is published as an obfuscated and minified npm package on CAW's GitHub Package Registry.
 
-External systems that should not hold a control API key use signed external
-ingress records under `/v1/ingresses`. Ingress supports session messages,
-existing job triggers, and constrained one-time job templates. Each ingress
-record has an explicit target policy, so its secret only authorizes configured
-sessions, conversations, jobs, or templates. `/v1/webhooks` remains outbound
-callback delivery for runtime events.
+Client agent projects follow the naming convention `<Client>.<Project>.Agent` (e.g., `Hunger.Boondi.Agent`, `Flamingo.Operon.Agent`, `Manipal.Tender.Agent`). These are monorepos. If the agent includes a web interface (e.g., Manipal's Tender CoPilot, Operon Contact Center), the web app and backend live in the same repo.
+
+Inside each monorepo, the `apps/` folder contains the agent prompt folder(s) — the persona, skills, and configuration that define the agent's behavior.
+
+The deployment pipeline pulls Gantry from the private package registry onto an EC2 instance or VM and runs it with the client's prompt configurations.
+
+### Capcom (Control Panel)
+
+[Capcom](./CAPCOM.md) is the mission control web application for managing Gantry agents. It provides observability, cost tracking, prompt tuning, and configuration management from a single pane.
+
+Capcom can be deployed co-located on the same machine as the agent (single-agent enterprise deployment) or as a standalone instance managing multiple Gantry deployments from one interface.
 
 ## Repository Development
 
-Use this only when you are working on the source code:
+Use this only when you are working on the Gantry source code:
 
 ```bash
-git clone https://github.com/qwibitai/myclaw.git
-cd myclaw
+git clone https://github.com/AventCaw/Agent.Gantry.git
+cd Agent.Gantry
 npm install
 npm run build
 # local testing entrypoint (equivalent CLI flow)
@@ -368,15 +370,12 @@ npm run test:e2e
 
 ## Shipped Chat Skills
 
-Skills are agent instructions bundled into the npm package or uploaded as
-reviewable skill zips. Runtime copies approved skills into a temporary per-run
-Claude config directory; runtime-home `.claude/skills` is not the durable source
-of truth.
+Skills are agent instructions bundled into the npm package or uploaded as reviewable skill zips. Runtime copies approved skills into a temporary per-run Claude config directory; runtime-home `.claude/skills` is not the durable source of truth.
 
-| Skill          | Purpose                                                               |
-| -------------- | --------------------------------------------------------------------- |
-| `/commands`    | List available chat commands and installed skill packs                |
-| `myclaw-admin` | Internal administration reference used by agents when managing MyClaw |
+| Skill           | Purpose                                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| `/commands`     | List available chat commands and installed skill packs                   |
+| `gantry-admin`  | Internal administration reference used by agents when managing Gantry    |
 
 Session commands are handled by the host runtime, not bundled skills:
 
@@ -390,7 +389,7 @@ Session commands are handled by the host runtime, not bundled skills:
 /model default
 ```
 
-Optional skill packs like [gstack](https://github.com/garrytan/gstack) can be installed for additional capabilities (code review, QA, design review, security audits, and more). Run `/commands` after installing to see what's available.
+Optional skill packs can be installed for additional capabilities (code review, QA, design review, security audits, and more). Run `/commands` after installing to see what's available.
 
 ## Session Commands
 
@@ -416,7 +415,7 @@ Use these as standalone chat messages:
 
 ## Model Policy
 
-MyClaw uses a provider-neutral catalog. Normal users choose aliases; provider slugs are adapter details.
+Gantry uses a provider-neutral catalog. Normal users choose aliases; provider slugs are adapter details.
 
 - Default session model: `opus` (Opus 4.7)
 - Anthropic choices: `opus`, `opus-4.6`, `sonnet`, `haiku`
@@ -431,18 +430,18 @@ The model catalog is centralized in `apps/core/src/shared/model-catalog.ts`. Ope
 
 Key paths:
 
-- `apps/core/src/index.ts` - package/runtime entrypoint
-- `apps/core/src/app/bootstrap/runtime-app.ts` - orchestrator lifecycle and runtime wiring
-- `apps/core/src/runtime/group-queue.ts` - per-group queueing and retries
-- `apps/core/src/runtime/agent-spawn.ts` - host agent execution path
-- `apps/core/src/session/session-commands.ts` - host-managed slash commands
-- `apps/core/src/infrastructure/postgres/schema/` - Postgres runtime, control-plane, job, and memory persistence
-- `~/myclaw/agents/shared/CLAUDE.md` - static shared prompt guidance
-- `~/myclaw/agents/*/SOUL.md` - per-agent personality prompt
-- `~/myclaw/agents/*/CLAUDE.md` - static group-specific prompt guidance
-- `MYCLAW_DATABASE_URL` - Postgres runtime and memory database
-- `ONECLI_DATABASE_URL` - Same Postgres database with a separate OneCLI role and `schema=onecli` for broker persistence
-- `SECRET_ENCRYPTION_KEY` - Stable generated base64-encoded 32-byte OneCLI broker encryption secret for stateless restarts
+- `apps/core/src/index.ts` — package/runtime entrypoint
+- `apps/core/src/app/bootstrap/runtime-app.ts` — orchestrator lifecycle and runtime wiring
+- `apps/core/src/runtime/group-queue.ts` — per-group queueing and retries
+- `apps/core/src/runtime/agent-spawn.ts` — host agent execution path
+- `apps/core/src/session/session-commands.ts` — host-managed slash commands
+- `apps/core/src/infrastructure/postgres/schema/` — Postgres runtime, control-plane, job, and memory persistence
+- `~/gantry/agents/shared/CLAUDE.md` — static shared prompt guidance
+- `~/gantry/agents/*/SOUL.md` — per-agent personality prompt
+- `~/gantry/agents/*/CLAUDE.md` — static group-specific prompt guidance
+- `GANTRY_DATABASE_URL` — Postgres runtime and memory database
+- `ONECLI_DATABASE_URL` — same Postgres database with a separate OneCLI role and `schema=onecli` for broker persistence
+- `SECRET_ENCRYPTION_KEY` — stable generated base64-encoded 32-byte OneCLI broker encryption secret for stateless restarts
 
 ## Factory Mode
 
@@ -463,23 +462,18 @@ Then read:
 
 ## Customizing
 
-The intended workflow is simple: tell Claude Code what you want changed, keep the code readable, and prefer direct code edits over piles of configuration.
+Gantry agents are configured through prompt folders, not code changes to the runtime. Each agent's behavior is defined by its persona, skills, and tool configuration in `settings.yaml` and the corresponding prompt files under `~/gantry/agents/`.
 
-Examples:
+For client deployments, agent prompt folders live in the `apps/` directory of the client monorepo. The runtime reads these at startup.
 
-- "Change the trigger word to `@Bob`."
-- "Make scheduled summaries shorter."
-- "Add a morning greeting flow."
-- "Store weekly conversation summaries."
-
-Reusable guided workflows can be uploaded as skill zips with `SKILL.md`, then
-approved and bound to agents.
+Reusable guided workflows can be uploaded as skill zips with `SKILL.md`, then approved and bound to agents.
 
 ## Contributing
 
-Contributions should keep the core runtime small and maintainable. Bug fixes, simplifications, docs improvements, and reusable skills are good fits. Broad feature creep in the default runtime is not.
+Contributions should keep the core runtime small and maintainable. Bug fixes, simplifications, docs improvements, and reusable skills are good fits. Feature creep in the default runtime is not.
+
+All contributions go through the standard CAW PR review process. Gantry is a shared runtime powering client deployments — stability and backward compatibility matter.
 
 ## Documentation
 
-Project docs live in [`docs/`](docs/README.md). Product intent, architecture notes, and decisions live in-repo so planning and review can stay self-contained.
-For npm users, start with the Quick Start and first-run flow in this README.
+Project docs live in [`docs/`](docs/README.md). Product intent, architecture notes, and decisions live in-repo so planning and review can stay self-contained. For the high-level technical overview, see the [Gantry Overview](./GANTRY_OVERVIEW.md) document.
