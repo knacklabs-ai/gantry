@@ -316,7 +316,7 @@ export async function verifySlackChatAccess(options: {
           },
           body: JSON.stringify({
             channel: channelId,
-            text: 'MyClaw setup check: Slack channel access verified.',
+            text: 'Gantry setup check: Slack channel access verified.',
           }),
         },
       );

@@ -668,7 +668,7 @@ export async function startRuntimeServices(
     });
   }
 
-  resolved.logger.info(`MyClaw running (default trigger: ${DEFAULT_TRIGGER})`);
+  resolved.logger.info(`Gantry running (default trigger: ${DEFAULT_TRIGGER})`);
 
   resolved
     .startMessagePollingLoop({

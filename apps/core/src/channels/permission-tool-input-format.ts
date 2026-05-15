@@ -16,6 +16,7 @@ type PermissionTextSanitizer = (
 export function formatPermissionToolInputLines(
   request: PermissionApprovalRequest,
   sanitizePermissionText: PermissionTextSanitizer,
+  options: { sanitizeCommandText?: PermissionTextSanitizer } = {},
 ): string[] {
   if (!request.toolInput || typeof request.toolInput !== 'object') return [];
   const input = request.toolInput;
@@ -24,7 +25,11 @@ export function formatPermissionToolInputLines(
     typeof input.command === 'string' &&
     input.command.trim()
   ) {
-    const command = sanitizePermissionText(input.command.trim(), 900, 300);
+    const command = (options.sanitizeCommandText ?? sanitizePermissionText)(
+      input.command.trim(),
+      900,
+      300,
+    );
     const redirectTarget = firstDestructiveRedirectTarget(input.command);
     return [
       'Command:',

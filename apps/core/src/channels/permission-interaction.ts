@@ -146,6 +146,7 @@ export function formatPermissionPromptText(
   const inputLines = formatPermissionToolInputLines(
     request,
     sanitizePermissionText,
+    { sanitizeCommandText: sanitizePermissionCommandText },
   );
   if (inputLines.length > 0) lines.push('', ...inputLines);
   if (request.blockedPath)
@@ -242,6 +243,14 @@ function sanitizePermissionText(
   tail: number,
 ): string {
   return headTailTruncate(sanitizeOutboundLlmText(input).text, head, tail);
+}
+
+function sanitizePermissionCommandText(
+  input: string,
+  head: number,
+  tail: number,
+): string {
+  return headTailTruncate(redactSensitiveText(input), head, tail);
 }
 
 function limitPermissionMessage(input: string): string {
@@ -423,7 +432,7 @@ function formatPermissionAdvancedDetails(
   const command = permissionCommand(request);
   if (command) {
     details.push(
-      `Command preview: \`${sanitizePermissionText(command, 200, 100)}\``,
+      `Command preview: \`${sanitizePermissionCommandText(command, 200, 100)}\``,
       `Command hash: ${createHash('sha256').update(command).digest('hex')}`,
     );
   }
@@ -470,7 +479,7 @@ function formatPermissionActionSummary(
   if (!input || typeof input !== 'object') return tool;
   const command = permissionCommand(request);
   if (command) {
-    return `${tool} (${sanitizePermissionText(command, 200, 100)})`;
+    return `${tool} (${sanitizePermissionCommandText(command, 200, 100)})`;
   }
   const filePath = input.file_path;
   if (typeof filePath === 'string' && filePath.trim()) {

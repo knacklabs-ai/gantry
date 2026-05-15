@@ -260,7 +260,7 @@ export async function verifyTelegramChatAccess(options: {
           },
           body: JSON.stringify({
             chat_id: chatId,
-            text: 'MyClaw setup check: chat access verified.',
+            text: 'Gantry setup check: chat access verified.',
             disable_notification: true,
           }),
         },

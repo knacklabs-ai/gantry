@@ -315,7 +315,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: '*MyClaw Slack Channel*\\nUse threaded replies for best assistant UX.',
+            text: '*Gantry Slack Channel*\\nUse threaded replies for best assistant UX.',
           },
         },
         {
@@ -349,7 +349,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
             type: 'modal',
             title: {
               type: 'plain_text',
-              text: 'MyClaw',
+              text: 'Gantry',
             },
             close: {
               type: 'plain_text',
@@ -385,7 +385,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
           channel: channelId,
           user: userId,
           text: shortcut.message?.thread_ts
-            ? 'Reply in this thread to continue with MyClaw context.'
+            ? 'Reply in this thread to continue with Gantry context.'
             : 'Start a thread first, then reply to keep context grouped.',
         });
       } catch (err) {

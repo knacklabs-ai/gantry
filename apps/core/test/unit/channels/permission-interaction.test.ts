@@ -258,6 +258,25 @@ describe('permission interaction', () => {
     expect(text).toContain('Command:\n```');
   });
 
+  it('keeps Bash command context visible when an opaque token is redacted', () => {
+    const text = formatPermissionPromptText(
+      {
+        ...requestWithSuggestions([]),
+        toolInput: {
+          command:
+            'curl https://api.example.com -H "Authorization: bearer abcdefghijklmnopqrstuvwxyz123456" --data ok',
+        },
+      },
+      60_000,
+    );
+
+    expect(text).toContain('curl https://api.example.com');
+    expect(text).toContain('bearer [REDACTED_SECRET]');
+    expect(text).toContain('--data ok');
+    expect(text).not.toContain('[REDACTED_POTENTIALLY_SENSITIVE]');
+    expect(text).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
+  });
+
   it('renders closest existing rule mismatch details in permission prompts', () => {
     const text = formatPermissionPromptText(
       {

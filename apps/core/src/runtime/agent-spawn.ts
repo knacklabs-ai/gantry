@@ -260,7 +260,7 @@ export async function spawnAgent(
       status: 'error',
       result: null,
       error:
-        'Host runtime is missing required runner files. Reinstall MyClaw from npm and restart.',
+        'Host runtime is missing required runner files. Reinstall Gantry from npm and restart.',
     };
   }
   let llmRuntimeMaterialization: Awaited<
