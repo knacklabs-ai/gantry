@@ -26,6 +26,15 @@ Primary surfaces:
 
 Use `python3 .codex/scripts/stage_orchestrator.py` to get current phase commands and required artifacts.
 
+## Execution Standards
+
+- Always choose the best proven performance technique for the task and context.
+- Do not use laid-back approaches or loose thinking; reason precisely and verify assumptions.
+- Do the work, critique the work, and make sure the task is completed properly end-to-end.
+- Do not take shortcuts. Keep work well-structured, neat, and clean.
+- Do not overcomplicate. Make a plan, seal the flaws, and execute that plan through completion.
+- Do not bias toward the user's ideas or the agent's first idea. Be logical, push back when warranted, and prefer the simplest correct solution.
+
 ## Runtime Modes
 
 - Host runtime is the only supported runtime mode in this repo today.
