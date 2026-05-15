@@ -119,6 +119,53 @@ describe('session-resume-runtime', () => {
     expect(summary).not.toContain('claude-session-failed');
   });
 
+  it('does not throw when failed run bookkeeping cannot be persisted', async () => {
+    const completeSessionAgentRun = vi
+      .fn()
+      .mockRejectedValue(new Error('database unavailable'));
+    const ops = {
+      completeSessionAgentRun,
+    } as unknown as RuntimeAgentSessionRepository;
+
+    await expect(
+      completeFailedRuntimeSessionRun({
+        ops,
+        runId: 'run-failed-bookkeeping',
+        errorSummary: 'permission denied',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(completeSessionAgentRun).toHaveBeenCalledWith({
+      runId: 'run-failed-bookkeeping',
+      status: 'failed',
+      errorSummary: 'permission denied',
+    });
+  });
+
+  it('does not throw when successful run bookkeeping cannot be persisted', async () => {
+    const completeSessionAgentRun = vi
+      .fn()
+      .mockRejectedValue(new Error('database unavailable'));
+    const ops = {
+      completeSessionAgentRun,
+    } as unknown as RuntimeAgentSessionRepository;
+
+    await expect(
+      completeSuccessfulRuntimeSessionRun({
+        ops,
+        group: { name: 'Main', folder: 'main_agent' } as never,
+        runId: 'run-success-bookkeeping',
+        result: 'done',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(completeSessionAgentRun).toHaveBeenCalledWith({
+      runId: 'run-success-bookkeeping',
+      status: 'completed',
+      resultSummary: 'done',
+    });
+  });
+
   it('does not persist provider resume handles under the job-owned session scope', async () => {
     const setSession = vi.fn().mockResolvedValue(true);
     const ops = {

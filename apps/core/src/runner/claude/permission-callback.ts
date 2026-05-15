@@ -47,14 +47,6 @@ export async function requestPermissionApproval(options: {
     const appId = options.appId?.trim() || APP_ID || DEFAULT_RUNNER_APP_ID;
     const agentId = options.agentId?.trim() || AGENT_ID;
     const targetJid = options.targetJid?.trim() || CHAT_JID;
-    if (PERMISSION_REQUEST_TIMEOUT_MS <= 0) {
-      return {
-        approved: false,
-        reason:
-          'Autonomous permission approval is disabled for unattended jobs. The host denied this tool call immediately; approve a persistent capability rule before the next scheduled run.',
-        decisionClassification: 'user_reject',
-      };
-    }
     const groupIpcDir = resolveGroupIpcDir(options.groupFolder);
     const permissionRequestsDir = path.join(groupIpcDir, 'permission-requests');
     const permissionResponsesDir = path.join(
@@ -109,6 +101,15 @@ export async function requestPermissionApproval(options: {
     const envelope = createSignedIpcRequestEnvelope(IPC_AUTH_TOKEN, payload);
     fs.writeFileSync(requestTmpPath, JSON.stringify(envelope, null, 2));
     fs.renameSync(requestTmpPath, requestPath);
+
+    if (PERMISSION_REQUEST_TIMEOUT_MS <= 0) {
+      return {
+        approved: false,
+        reason:
+          'Permission request was sent to the host. Unattended jobs do not wait for approval during the active tool call; approve the requested capability before retrying the scheduled run.',
+        decisionClassification: 'user_reject',
+      };
+    }
 
     const responsePath = path.join(permissionResponsesDir, `${requestId}.json`);
     const deadline = nowMs() + PERMISSION_REQUEST_TIMEOUT_MS;

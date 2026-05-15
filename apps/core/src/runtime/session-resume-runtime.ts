@@ -396,11 +396,18 @@ export async function completeSuccessfulRuntimeSessionRun(input: {
   result?: string | null;
 }): Promise<void> {
   if (input.runId) {
-    await input.ops.completeSessionAgentRun?.({
-      runId: input.runId,
-      status: 'completed',
-      resultSummary: summarizeRuntimeResultForPersistence(input.result),
-    });
+    try {
+      await input.ops.completeSessionAgentRun?.({
+        runId: input.runId,
+        status: 'completed',
+        resultSummary: summarizeRuntimeResultForPersistence(input.result),
+      });
+    } catch (err) {
+      logger.warn(
+        { err, runId: input.runId },
+        'Failed to complete runtime session run; continuing with outer run finalization',
+      );
+    }
   }
   if (input.agentSessionId) {
     logger.debug(
@@ -420,11 +427,18 @@ export async function completeFailedRuntimeSessionRun(input: {
   errorSummary: string;
 }): Promise<void> {
   if (!input.runId) return;
-  await input.ops.completeSessionAgentRun?.({
-    runId: input.runId,
-    status: 'failed',
-    errorSummary: summarizeRuntimeResultForPersistence(input.errorSummary),
-  });
+  try {
+    await input.ops.completeSessionAgentRun?.({
+      runId: input.runId,
+      status: 'failed',
+      errorSummary: summarizeRuntimeResultForPersistence(input.errorSummary),
+    });
+  } catch (err) {
+    logger.warn(
+      { err, runId: input.runId },
+      'Failed to complete runtime session run; continuing with outer run finalization',
+    );
+  }
 }
 
 export async function buildApprovedSkillContextBlock(input: {

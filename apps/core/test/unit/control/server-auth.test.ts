@@ -859,6 +859,31 @@ describe('control server auth key parsing', () => {
     expect(_testControlServer.isValidControlId('')).toBe(false);
   });
 
+  it('classifies routine control client disconnect errors', () => {
+    expect(
+      _testControlServer.isControlClientDisconnectError(
+        Object.assign(new Error('reset'), { code: 'ECONNRESET' }),
+      ),
+    ).toBe(true);
+    expect(
+      _testControlServer.isControlClientDisconnectError(
+        Object.assign(new Error('pipe closed'), { code: 'EPIPE' }),
+      ),
+    ).toBe(true);
+    expect(
+      _testControlServer.isControlClientDisconnectError(
+        Object.assign(new Error('closed'), {
+          code: 'ERR_STREAM_PREMATURE_CLOSE',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      _testControlServer.isControlClientDisconnectError(
+        Object.assign(new Error('bad request'), { code: 'HPE_INVALID_METHOD' }),
+      ),
+    ).toBe(false);
+  });
+
   it('classifies non-public webhook addresses broadly', () => {
     expect(_testControlServer.isPrivateAddress('127.0.0.1')).toBe(true);
     expect(_testControlServer.isPrivateAddress('127.1.2.3')).toBe(true);

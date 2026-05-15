@@ -13,6 +13,7 @@ import {
   RUNTIME_EVENT_TYPES,
   type RuntimeEventType,
 } from '../domain/events/runtime-event-types.js';
+import { normalizeRuntimeEventConversationId } from '../domain/events/runtime-event-conversation.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import { logger } from '../infrastructure/logging/logger.js';
 
@@ -53,8 +54,6 @@ const EGRESS_GATEWAY_PORT_SPAN = 2_000;
 const EGRESS_GATEWAY_MAX_PORT_PROBES = 50;
 const EGRESS_GATEWAY_CONNECT_TIMEOUT_MS = 30_000;
 const gateways = new Map<string, EgressGatewayState>();
-const CANONICAL_CONVERSATION_PREFIX = 'conversation:';
-const CONTROL_CONVERSATION_PREFIX = 'control:';
 
 export async function closeEgressGatewaysForTest(): Promise<void> {
   const states = [...gateways.values()];
@@ -433,8 +432,8 @@ async function auditConnect(
   };
   logger.info(payload, 'Egress CONNECT decision');
   if (!state.publishRuntimeEvent) return;
-  const eventConversationId = canonicalConversationId(
-    state.principal.conversationId,
+  const eventConversationId = normalizeRuntimeEventConversationId(
+    state.principal.conversationId as never,
   );
   try {
     await state.publishRuntimeEvent({
@@ -456,20 +455,6 @@ async function auditConnect(
       'Egress CONNECT audit persistence failed',
     );
   }
-}
-
-function canonicalConversationId(
-  conversationId: string | undefined,
-): string | undefined {
-  const trimmed = conversationId?.trim();
-  if (!trimmed) return undefined;
-  if (
-    trimmed.startsWith(CANONICAL_CONVERSATION_PREFIX) ||
-    trimmed.startsWith(CONTROL_CONVERSATION_PREFIX)
-  ) {
-    return trimmed;
-  }
-  return `${CANONICAL_CONVERSATION_PREFIX}${trimmed}`;
 }
 
 function requireGatewayState(key: string): EgressGatewayState {

@@ -327,6 +327,66 @@ describe('jobs/execution', () => {
     );
   });
 
+  it('finalizes policy-denied jobs even when session-run bookkeeping fails', async () => {
+    const job = makeJob({
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      next_run: '2026-05-08T00:00:00.000Z',
+    });
+    const opsRepository = {
+      ...makeOpsRepository(job),
+      getAgentTurnContext: vi.fn(async () => ({
+        appId: 'default',
+        agentId: 'agent:scheduler_agent',
+        agentSessionId: 'agent-session:scheduler',
+      })),
+      createSessionAgentRun: vi.fn(async () => 'agent-run:job-1'),
+      completeSessionAgentRun: vi
+        .fn()
+        .mockRejectedValue(new Error('session bookkeeping unavailable')),
+    };
+    const error =
+      'Tool not on autonomous job allowlist: Bash. Recovery: request_permission {"toolName":"Bash"}';
+
+    await runJob(
+      job,
+      {
+        conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+        queue: {} as never,
+        onProcess: () => {},
+        sendMessage: vi.fn(async () => undefined) as never,
+        opsRepository: opsRepository as never,
+        runAgent: vi.fn(async () => ({
+          status: 'error',
+          result: null,
+          error,
+        })) as never,
+      },
+      'tg:scheduler',
+    );
+
+    expect(opsRepository.completeSessionAgentRun).toHaveBeenCalled();
+    expect(opsRepository.updateJob).toHaveBeenCalledWith(
+      job.id,
+      expect.objectContaining({
+        status: 'paused',
+        pause_reason: 'Setup required',
+        lease_run_id: null,
+      }),
+    );
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      null,
+      expect.stringContaining('Tool not on autonomous job allowlist'),
+    );
+    expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.run.failed',
+      }),
+    );
+  });
+
   it('pauses policy-denied manual jobs instead of reactivating them', async () => {
     const job = makeJob();
     const opsRepository = makeOpsRepository(job);
