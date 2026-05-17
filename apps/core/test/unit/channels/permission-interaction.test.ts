@@ -64,7 +64,7 @@ describe('permission interaction', () => {
       'allow_persistent_rule',
     );
     expect(permissionButtonLabel('allow_persistent_rule', request)).toBe(
-      'Always allow 2 rules',
+      'Always allow',
     );
     expect(
       decisionForMode(request, 'allow_persistent_rule').updatedPermissions,
@@ -142,7 +142,7 @@ describe('permission interaction', () => {
       'cancel',
     ]);
     expect(permissionButtonLabel('allow_timed_grant', request)).toBe(
-      'Allow for 5 min',
+      'Allow 5 min',
     );
   });
 
@@ -212,8 +212,6 @@ describe('permission interaction', () => {
     );
 
     expect(text.split('\n')[0]).toBe('Allow Google Sheets write?');
-    expect(text).toContain('Capability: capability:google.sheets.write');
-    expect(text).toContain('Risk: write');
     expect(text).toContain('Account: Configured Google access');
     expect(text).toContain(
       'Allows: Read and update spreadsheet values through configured Google access.',
@@ -221,7 +219,11 @@ describe('permission interaction', () => {
     expect(text).toContain(
       'Does not allow: Change sharing, manage Drive files outside Sheets operations, access Gmail, or receive raw OAuth tokens.',
     );
-    expect(text).not.toContain('Raw rule: capability:google.sheets.write');
+    expect(text).toContain(
+      'Details: capability:google.sheets.write; risk: write',
+    );
+    expect(text).not.toContain('Capability: capability:google.sheets.write');
+    expect(text).not.toContain('\nRisk: write');
     expect(text).not.toContain('ravi@example.com');
     expect(text).not.toContain('Change sharing or read Gmail.');
     expect(
@@ -235,7 +237,47 @@ describe('permission interaction', () => {
           },
         ]),
       ),
-    ).toBe('Always allow for this agent');
+    ).toBe('Always allow');
+  });
+
+  it('renders scoped Bash setup prompts as command rules even when capability metadata is present', () => {
+    const text = formatPermissionPromptText(
+      {
+        requestId: 'permission_123',
+        sourceAgentFolder: 'main_agent',
+        toolName: 'request_permission',
+        displayName: 'Permission: Google Sheets write using gog',
+        title: 'Approve permission request',
+        toolInput: {
+          capabilityId: 'google.sheets.write',
+          capabilityDisplayName: 'Google Sheets write using gog',
+          toolNames: ['Bash'],
+          rule: '/usr/local/bin/gog sheets append *',
+        },
+        suggestions: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            rules: [
+              {
+                toolName: 'Bash',
+                ruleContent: '/usr/local/bin/gog sheets append *',
+              },
+            ],
+          },
+        ],
+      },
+      60_000,
+    );
+
+    expect(text.split('\n')[0]).toBe('Allow exact command access?');
+    expect(text).toContain(
+      'Request: Permission: Google Sheets write using gog',
+    );
+    expect(text).toContain('Details: scoped Bash rule');
+    expect(text).not.toContain('Always allow grants this capability');
+    expect(text).not.toContain('Bash(/usr/local/bin/gog sheets append *)');
+    expect(text).not.toContain('Configured Google access');
   });
 
   it('hides Bash commands with secrets in permission prompt previews', () => {
@@ -284,7 +326,7 @@ describe('permission interaction', () => {
       {
         ...requestWithSuggestions([]),
         decisionReason:
-          'Tool not on autonomous job allowlist: Bash. Bash leaf npm test did not match any scoped autonomous rule.',
+          'Tool not on autonomous run allowlist: Bash. Bash leaf npm test did not match any scoped autonomous rule.',
         closestRule: {
           rule: 'Bash(npm run build)',
           reason:
@@ -313,8 +355,8 @@ describe('permission interaction', () => {
     );
 
     expect(text).toContain('Redirect: > /etc/passwd');
-    expect(text).toContain('Scope: Allow once applies only to this request.');
-    expect(text).not.toContain('Always allow applies');
+    expect(text).toContain('Scope: this request or a short 5-minute grant.');
+    expect(text).not.toContain('future matching tool calls');
   });
 
   it('renders a structured Bash prompt with persistent rules', () => {
@@ -345,9 +387,8 @@ describe('permission interaction', () => {
     );
 
     expect(text).toMatchInlineSnapshot(`
-      "Bash request
+      "Allow exact command access?
 
-      Tool: Bash
       From: agent chat
       Agent: main_agent
 
@@ -357,13 +398,10 @@ describe('permission interaction', () => {
       \`\`\`
       Redirect: > /tmp/leads.json
 
-      Approving persistent will grant:
-        • Bash(curl https://api.example.com/*)
-        • Bash(jq *)
+      Details: scoped Bash rule [sha256:9d6310e5b7e64980], scoped Bash rule [sha256:bbd7e6f7ba4bc0df]
 
-      Scope: Allow once applies only to this request.
-      Always allow applies these rules to matching future tool calls: Bash(curl https://api.example.com/*), Bash(jq *)
-      Safety: unrelated tools, secrets, settings edits, and broader access outside the rule are not allowed.
+      Scope: this request, a short 5-minute grant, or future matching tool calls.
+      Safety: only matching future access is included; unrelated tools, secrets, and settings changes are not included.
 
       Reply within 5 minute(s)."
     `);
@@ -488,7 +526,7 @@ describe('permission interaction', () => {
       },
     );
 
-    expect(receipt).toContain('Allowed once');
+    expect(receipt).toContain('Allowed once: exact command access');
     expect(receipt).toContain('For: Bash (git status --short)');
     expect(receipt).toContain('From: agent chat');
     expect(receipt).toContain('Agent: main_agent');
@@ -513,14 +551,12 @@ describe('permission interaction', () => {
       },
     );
 
-    expect(receipt).toContain('Allowed for 5 minutes');
+    expect(receipt).toContain('Allowed for 5 minutes: exact command access');
     expect(receipt).toContain('Until:');
-    expect(receipt).toContain('Why: Bash (git status --short)');
+    expect(receipt).toContain('For: Bash (git status --short)');
     expect(receipt).toContain('From: agent chat');
     expect(receipt).toContain('Agent: main_agent');
-    expect(receipt).toContain(
-      'Allows: eligible tools and SDK API/network prompts in this chat',
-    );
+    expect(receipt).not.toContain('eligible tools and SDK API/network prompts');
     expect(receipt).not.toContain('Request ID');
     expect(receipt).not.toContain('perm-abc-123');
   });
@@ -542,7 +578,7 @@ describe('permission interaction', () => {
       },
     );
 
-    expect(receipt).toContain('Allowed once');
+    expect(receipt).toContain('Allowed once: exact command access');
     expect(receipt).toContain('From: scheduled job');
     expect(receipt).toContain('Agent: main_agent');
     expect(receipt).not.toContain(
@@ -578,15 +614,12 @@ describe('permission interaction', () => {
       },
     );
 
-    expect(receipt).toContain('  • Bash(curl https://api.example.com/*)');
-    expect(receipt).toContain('  • Bash(jq *)');
-    expect(receipt).toContain('  • Browser');
-    expect(receipt).toContain(
-      'Applying persistent grants now; final success or failure will be reported separately.',
-    );
-    expect(receipt).toContain(
-      'If applied, revoke with: /permissions remove <rule>',
-    );
+    expect(receipt).toContain('Always allowed: exact command access');
+    expect(receipt).toContain('Details: scoped Bash rule');
+    expect(receipt).toContain('Browser [sha256:');
+    expect(receipt).not.toContain('Bash(curl https://api.example.com/*)');
+    expect(receipt).not.toContain('Bash(jq *)');
+    expect(receipt).toContain('Revoke: /permissions remove <rule>');
     expect(receipt).toContain(
       'For: Bash (curl https://api.example.com/leads > /tmp/out)',
     );

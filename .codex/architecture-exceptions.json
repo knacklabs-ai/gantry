@@ -917,13 +917,6 @@
     "maxOccurrences": 1
   },
   {
-    "file": "apps/core/src/runner/claude/permission-callback.ts",
-    "rule": "old_term_groupFolder",
-    "reason": "Baseline groupFolder terminology debt pending canonical conversation/workspace rename; capped so new occurrences fail.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxOccurrences": 3
-  },
-  {
     "file": "apps/core/src/runner/claude/query-loop.ts",
     "rule": "old_term_groupFolder",
     "reason": "Baseline groupFolder terminology debt pending canonical conversation/workspace rename; capped so new occurrences fail.",

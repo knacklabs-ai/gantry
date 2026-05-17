@@ -152,6 +152,7 @@ export async function runQuery(
     externalMcpServers: readExternalMcpServers(),
     externalMcpAllowedTools: readExternalMcpAllowedTools(),
     externalMcpAlwaysAllowedTools: readExternalMcpAlwaysAllowedTools(),
+    isScheduledJob: agentInput.isScheduledJob,
   });
   const sdkQuery = query({
     prompt: stream,

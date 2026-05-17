@@ -97,9 +97,9 @@ const BUILTIN_SEMANTIC_CAPABILITIES = [
       'Edit spreadsheets, change sharing, access Gmail, or receive raw OAuth tokens.',
     credentialSource: 'configured_access',
     implementationBindings: [
-      { kind: 'tool_rule', rule: 'Bash(onecli google sheets read *)' },
+      { kind: 'adapter', adapterRef: 'configured.google.sheets.read' },
     ],
-    preflight: { kind: 'broker', status: 'unknown' },
+    preflight: { kind: 'none' },
     sandboxProfile: { network: 'required', filesystem: 'read_only' },
   },
   {
@@ -113,9 +113,9 @@ const BUILTIN_SEMANTIC_CAPABILITIES = [
       'Change sharing, manage Drive files outside Sheets operations, access Gmail, or receive raw OAuth tokens.',
     credentialSource: 'configured_access',
     implementationBindings: [
-      { kind: 'tool_rule', rule: 'Bash(onecli google sheets write *)' },
+      { kind: 'adapter', adapterRef: 'configured.google.sheets.write' },
     ],
-    preflight: { kind: 'broker', status: 'unknown' },
+    preflight: { kind: 'none' },
     sandboxProfile: { network: 'required', filesystem: 'read_only' },
   },
   {
@@ -129,9 +129,9 @@ const BUILTIN_SEMANTIC_CAPABILITIES = [
       'Send mail, delete mail, change labels, access Sheets, or receive raw OAuth tokens.',
     credentialSource: 'configured_access',
     implementationBindings: [
-      { kind: 'tool_rule', rule: 'Bash(onecli google gmail read *)' },
+      { kind: 'adapter', adapterRef: 'configured.gmail.read' },
     ],
-    preflight: { kind: 'broker', status: 'unknown' },
+    preflight: { kind: 'none' },
     sandboxProfile: { network: 'required', filesystem: 'read_only' },
   },
 ] as const satisfies readonly SemanticCapabilityDefinition[];

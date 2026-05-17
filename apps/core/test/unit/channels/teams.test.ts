@@ -113,7 +113,7 @@ describe('Teams Adaptive Card payloads', () => {
       }),
       expect.objectContaining({
         type: 'Action.Execute',
-        title: 'Allow eligible tools and SDK API prompts for 5 min',
+        title: 'Allow 5 min',
         verb: 'myclaw.permission.allow',
         data: expect.objectContaining({
           requestId: 'perm-1',

@@ -23,6 +23,7 @@ import {
   submitSchedulerMutationTask,
   SCHEDULER_WAIT_RESPONSE_GRACE_MS,
 } from './scheduler-tool-helpers.js';
+import { schedulerCapabilityRequirementSchema } from './scheduler-capability-schema.js';
 
 const SCHEDULER_UPSERT_ARG_KEYS = new Set([
   'job_id',
@@ -47,31 +48,6 @@ const SCHEDULER_UPSERT_ARG_KEYS = new Set([
   'confirm',
   'confirmation_token',
 ]);
-
-const schedulerCapabilityRequirementSchema = z.object({
-  capability_id: z
-    .string()
-    .describe('Stable semantic capability id, such as google.sheets.write'),
-  reason: z.string().describe('Why this job needs the capability'),
-  implementation: z
-    .object({
-      kind: z.enum([
-        'configured_access',
-        'local_cli',
-        'mcp_server',
-        'builtin_tool',
-      ]),
-      name: z
-        .string()
-        .optional()
-        .describe('Human-readable implementation name, such as gog'),
-      executable_path: z.string().optional(),
-      command_template: z.string().optional(),
-      auth_preflight: z.string().optional(),
-      protected_paths: z.array(z.string()).optional(),
-    })
-    .optional(),
-});
 
 const SCHEDULER_UPDATE_ARG_KEYS = new Set([
   'job_id',

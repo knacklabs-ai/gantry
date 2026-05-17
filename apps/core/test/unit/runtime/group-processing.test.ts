@@ -1300,6 +1300,47 @@ describe('createGroupProcessor', () => {
       await processing;
     });
 
+    it('resets elapsed progress after an idle turn boundary inside the same agent process', async () => {
+      const group = makeGroup({ requiresTrigger: false });
+      const messages = [makeMessage()];
+      const channel = makeChannel({
+        sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath({ group, messages });
+      deps.channelRuntime = channel;
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({ status: 'success', result: 'first turn' });
+          await onOutput?.({ status: 'success', result: null });
+          await vi.advanceTimersByTimeAsync(10 * 60_000);
+          await onOutput?.({ status: 'success', result: 'second turn' });
+          await onOutput?.({ status: 'success', result: null });
+          return { status: 'success', result: null } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      const doneProgressTexts = (
+        channel.sendProgressUpdate as ReturnType<typeof vi.fn>
+      ).mock.calls
+        .map((call) => String(call[1]))
+        .filter((text) => text.startsWith('Done in '));
+
+      expect(doneProgressTexts.length).toBeGreaterThanOrEqual(2);
+      expect(doneProgressTexts.at(-1)).toBe('Done in 0s.');
+      expect(doneProgressTexts.some((text) => text.includes('10m'))).toBe(
+        false,
+      );
+    });
+
     it('does not post elapsed progress on the first heartbeat tick', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
@@ -1987,7 +2028,7 @@ describe('createGroupProcessor', () => {
       ]);
       expect(streamingChannel.sendProgressUpdate).toHaveBeenCalledWith(
         'group1@g.us',
-        'Paused for approval (0s).',
+        'Waiting for your response (0s).',
         expect.objectContaining({
           replaceOnly: true,
           generation: beforeGeneration,
@@ -2053,7 +2094,7 @@ describe('createGroupProcessor', () => {
 
       expect(streamingChannel.sendProgressUpdate).toHaveBeenCalledWith(
         'group1@g.us',
-        'Paused for approval (0s).',
+        'Waiting for your response (0s).',
         expect.objectContaining({ replaceOnly: true }),
       );
       expect(streamingChannel.sendProgressUpdate).toHaveBeenCalledWith(

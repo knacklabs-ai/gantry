@@ -14,6 +14,7 @@ import {
   type BashCommandLeaf,
   bashExecutableName,
   bashLeafRuleContent,
+  normalizePersistentBashRuleContent,
   parseBashCommand,
 } from './bash-command-parser.js';
 
@@ -422,7 +423,8 @@ function scopePatternMatches(scope: string, candidate: string): boolean {
 }
 
 function bashScopeMatchesLeaf(scope: string, leaf: BashCommandLeaf): boolean {
-  const parsedScope = parseBashCommand(scope.trim());
+  const normalizedScope = normalizePersistentBashRuleContent(scope.trim());
+  const parsedScope = parseBashCommand(normalizedScope);
   if (!parsedScope.ok || parsedScope.leaves.length !== 1) return false;
   const patternArgs = parsedScope.leaves[0]?.argv ?? [];
   if (patternArgs.length === 0) return false;

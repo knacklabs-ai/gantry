@@ -536,7 +536,8 @@ describe('control job trigger', () => {
                 implementation: {
                   kind: 'local_cli',
                   name: 'gog',
-                  commandTemplate: 'gog sheets append *',
+                  executablePath: '/usr/local/bin/gog',
+                  commandTemplate: '/usr/local/bin/gog sheets append *',
                 },
               },
             ],
@@ -1043,7 +1044,8 @@ describe('control job trigger', () => {
                 implementation: {
                   kind: 'local_cli',
                   name: 'gog',
-                  commandTemplate: 'gog sheets append *',
+                  executablePath: '/usr/local/bin/gog',
+                  commandTemplate: '/usr/local/bin/gog sheets append *',
                 },
               },
             ],

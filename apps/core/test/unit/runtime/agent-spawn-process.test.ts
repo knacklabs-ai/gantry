@@ -110,6 +110,7 @@ vi.mock('child_process', async () => {
 /* ------------------------------------------------------------------ */
 
 import { executeRunnerProcess } from '@core/runtime/agent-spawn-process.js';
+import { ACTIVE_RUN_STOP_REQUESTED } from '@core/runtime/group-queue-stop.js';
 import type { RunnerProcessSpec } from '@core/runtime/agent-spawn-types.js';
 import type { ConversationRoute } from '@core/domain/types.js';
 
@@ -757,6 +758,85 @@ describe('executeRunnerProcess', () => {
       );
       expect(JSON.stringify(mockLogger.info.mock.calls)).not.toContain(
         shortStreamingHandle,
+      );
+    });
+
+    it('treats SIGTERM after streamed output as closed, not failed', async () => {
+      const onOutput = vi.fn(async () => {});
+      const spec = makeSpec({ onOutput });
+      const resultP = executeRunnerProcess(spec);
+
+      const json = JSON.stringify({
+        status: 'success',
+        result: 'already visible',
+        newSessionId: 'sess-closed',
+      });
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      fakeProc.emit('close', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const result = await resultP;
+      expect(result).toEqual({
+        status: 'success',
+        result: null,
+        newSessionId: 'sess-closed',
+      });
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'test-runner exited with error',
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          group: 'Test Group',
+          signal: 'SIGTERM',
+        }),
+        'test-runner closed after streamed output',
+      );
+    });
+
+    it('preserves explicit stop as an error after streamed output', async () => {
+      const onOutput = vi.fn(async () => {});
+      const spec = makeSpec({ onOutput });
+      const resultP = executeRunnerProcess(spec);
+
+      const json = JSON.stringify({
+        status: 'success',
+        result: 'already visible',
+        newSessionId: 'sess-stopped',
+      });
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      (fakeProc as { [ACTIVE_RUN_STOP_REQUESTED]?: boolean })[
+        ACTIVE_RUN_STOP_REQUESTED
+      ] = true;
+      fakeProc.emit('close', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const result = await resultP;
+      expect(result).toEqual({
+        status: 'error',
+        result: null,
+        newSessionId: 'sess-stopped',
+        error: 'test-runner stopped by request',
+      });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          group: 'Test Group',
+          signal: 'SIGTERM',
+          hadStreamingOutput: true,
+        }),
+        'test-runner stopped by request',
+      );
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'test-runner closed after streamed output',
       );
     });
 

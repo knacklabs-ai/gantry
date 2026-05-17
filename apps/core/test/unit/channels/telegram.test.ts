@@ -2537,7 +2537,9 @@ describe('TelegramChannel', () => {
       expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
         '100200300',
         987,
-        expect.stringContaining('Allowed once\nFor: Bash'),
+        expect.stringContaining(
+          'Allowed once: exact command access\nFor: Bash',
+        ),
         expect.objectContaining({
           reply_markup: { inline_keyboard: [] },
         }),

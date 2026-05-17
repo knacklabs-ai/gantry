@@ -53,6 +53,22 @@ describe('autonomous tool rule matcher', () => {
     });
   });
 
+  it('canonicalizes legacy interpreter script Bash rules while matching', () => {
+    expect(
+      evaluateAutonomousToolUse({
+        rules: ['Bash(python3 /Users/example/scripts/dedup-append-lead.py)'],
+        toolName: 'Bash',
+        toolInput: {
+          command:
+            'python3 /Users/example/scripts/dedup-append-lead.py \'[["lead"]]\'',
+        },
+      }),
+    ).toMatchObject({
+      allowed: true,
+      matchedRule: 'Bash(python3 /Users/example/scripts/dedup-append-lead.py)',
+    });
+  });
+
   it('does not let wildcard scoped Bash rules cover extra shell segments', () => {
     expect(validateAutonomousToolRule('Bash(gog sheets *)')).toEqual({
       ok: true,

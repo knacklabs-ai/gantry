@@ -155,11 +155,17 @@ describe('host child-process runtime smoke', () => {
         }
       },
     }));
-    vi.doMock('@core/application/agents/prompt-profile-service.js', () => ({
-      PromptProfileService: vi.fn(() => ({
-        compileSystemPrompt: () => 'compiled host smoke prompt',
-      })),
-    }));
+    vi.doMock('@core/application/agents/prompt-profile-service.js', () => {
+      function MockPromptProfileService(this: {
+        compileSystemPrompt: () => Promise<string>;
+      }) {
+        this.compileSystemPrompt = async () => 'compiled host smoke prompt';
+      }
+      return {
+        PromptProfileService: MockPromptProfileService,
+        promptProfileAgentIdForFolder: (folder: string) => `agent:${folder}`,
+      };
+    });
     vi.doMock('@core/platform/group-folder.js', () => ({
       resolveGroupFolderPath: () => groupDir,
     }));
@@ -220,9 +226,11 @@ describe('host child-process runtime smoke', () => {
         brokerBaseUrlPresent: false,
       }),
     );
-    expect(childRecord.input.modelCredentialEnv).toEqual({
-      ANTHROPIC_BASE_URL: 'https://broker.example.com/anthropic',
-    });
+    expect(childRecord.input.modelCredentialEnv).toEqual(
+      expect.objectContaining({
+        ANTHROPIC_BASE_URL: 'https://broker.example.com/anthropic',
+      }),
+    );
     expect(childRecord.input.memoryContextBlock).toBe(
       'host smoke memory context',
     );

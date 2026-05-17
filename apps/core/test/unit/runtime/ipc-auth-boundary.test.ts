@@ -23,6 +23,7 @@ import {
   parseBrowserIpcRequest,
   parseMemoryIpcRequest,
   parsePermissionIpcRequest,
+  parseUserQuestionIpcRequest,
 } from '@core/runtime/ipc-parsing.js';
 import { parseTaskIpcData } from '@core/runtime/ipc-task-parsing.js';
 
@@ -574,6 +575,61 @@ describe('validateIpcAuthRequest', () => {
         signature,
       ),
     ).toBe(false);
+  });
+
+  it('accepts user question IPC signed with scoped app and agent context', () => {
+    const run = createIpcAuthEnvelope('main_agent', undefined, {
+      appId: 'app:telegram',
+      agentId: 'agent:main',
+    });
+    const payload = {
+      requestId: 'userq-1234567890-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      sourceAgentFolder: 'main_agent',
+      questions: [
+        {
+          header: 'Creds',
+          question: 'How should I handle the credential readiness gate?',
+          options: [
+            {
+              label: 'Retry',
+              description: 'Try the operation again now.',
+            },
+            {
+              label: 'Wait',
+              description: 'Wait for more input.',
+            },
+          ],
+          multiSelect: false,
+        },
+      ],
+      context: {
+        appId: 'app:telegram',
+        agentId: 'agent:main',
+        responseKeyId: run.responseKeyId,
+      },
+    };
+
+    const parsed = parseUserQuestionIpcRequest(
+      {
+        ...payload,
+        signature: signIpcRequestPayload(run.authToken, payload),
+      },
+      'main_agent',
+    );
+
+    expect(parsed).toMatchObject({
+      requestId: payload.requestId,
+      sourceAgentFolder: 'main_agent',
+      responseKeyId: run.responseKeyId,
+      questions: [
+        {
+          header: 'Creds',
+          question: 'How should I handle the credential readiness gate?',
+        },
+      ],
+    });
   });
 
   it('revokes response signing keys only for the matching run scope', () => {

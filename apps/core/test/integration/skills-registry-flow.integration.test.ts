@@ -799,14 +799,16 @@ describe('skill registry integration flow', () => {
         }),
       );
     });
-    expect(toolRepository.saveAgentToolBinding).toHaveBeenCalledWith(
-      expect.objectContaining({
-        appId: 'app-one',
-        agentId: 'agent:one',
-        toolId: 'tool:capability:google.sheets.write',
-        status: 'active',
-      }),
-    );
+    await vi.waitFor(() => {
+      expect(toolRepository.saveAgentToolBinding).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appId: 'app-one',
+          agentId: 'agent:one',
+          toolId: 'tool:capability:google.sheets.write',
+          status: 'active',
+        }),
+      );
+    });
     expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith(
       'agent:one',
       ['capability:google.sheets.write'],
@@ -815,9 +817,7 @@ describe('skill registry integration flow', () => {
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         'chat-origin',
-        expect.stringContaining(
-          'Persistent permission tool enabled for this run and future runs',
-        ),
+        expect.stringContaining('Always allowed by'),
         { threadId: 'thread-origin' },
       );
     });
@@ -895,7 +895,7 @@ describe('skill registry integration flow', () => {
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         'chat-origin',
-        expect.stringContaining('Persistent permission tool enabled'),
+        expect.stringContaining('Always allowed by'),
         { threadId: 'thread-origin' },
       );
     });

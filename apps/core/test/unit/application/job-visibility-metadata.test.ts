@@ -176,7 +176,7 @@ describe('job visibility metadata', () => {
           makeRun({
             status: 'dead_lettered',
             error_summary:
-              'Tool not on autonomous job allowlist: mcp__myclaw__browser_act. Recovery: request_permission { "toolName": "Browser" }',
+              'Tool not on autonomous run allowlist: mcp__myclaw__browser_act. Recovery: request_permission { "toolName": "Browser" }',
             result_summary: null,
           }),
         ]),

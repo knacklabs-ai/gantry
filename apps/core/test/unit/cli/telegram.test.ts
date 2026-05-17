@@ -805,12 +805,8 @@ describe('cli telegram helpers', () => {
       ),
     ).toBe(false);
     expect(claude).toContain('assistant for this conversation');
-    expect(claude).toContain(
-      'Use request_skill_install, request_skill_proposal, request_skill_dependency_install, request_mcp_server, capability_search, request_capability, propose_local_cli_capability, manage_capability, or request_permission for capability changes.',
-    );
-    expect(claude).toContain(
-      'Agents with selected admin capabilities may use service_restart after approved changes and register_agent for conversation binding.',
-    );
+    expect(claude).toContain('Keep responses clear');
+    expect(claude).not.toContain('capability changes');
     expect(soul).toContain('# Soul - Who You Are');
     expect(soul).toContain('- **Name:** Kai Telegram');
     expect(soul).toContain('## Continuity Boundary');

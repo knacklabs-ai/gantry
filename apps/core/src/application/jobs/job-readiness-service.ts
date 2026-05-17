@@ -36,6 +36,7 @@ import { nowIso } from '../../shared/time/datetime.js';
 import {
   capabilityRequirementSetupAction,
   formatCapabilityRequirement,
+  localCliCommandTemplatePermissionRule,
 } from './job-capability-requirements.js';
 
 export const SETUP_REQUIRED_PAUSE_REASON = 'Setup required';
@@ -101,12 +102,20 @@ export async function evaluateJobReadiness(
       .filter((requirement) => requirement.implementation?.kind === 'local_cli')
       .map((requirement) => semanticCapabilityRule(requirement.capabilityId)),
   );
+  const localCliRequirementCapabilities = new Set(
+    (input.job.capability_requirements ?? [])
+      .filter((requirement) => requirement.implementation?.kind === 'local_cli')
+      .map((requirement) => requirement.capabilityId),
+  );
   for (const missingTool of toolPreflight.missingTools) {
     if (draftOnlyRequirementRules.has(missingTool)) continue;
     blockers.push(missingToolBlocker(missingTool));
   }
   for (const requirement of input.job.capability_requirements ?? []) {
-    const blocker = capabilityRequirementBlocker(requirement);
+    const blocker = capabilityRequirementBlocker({
+      requirement,
+      effectiveAllowedTools: policy.effectiveAllowedTools,
+    });
     if (blocker) blockers.push(blocker);
   }
 
@@ -120,6 +129,9 @@ export async function evaluateJobReadiness(
     }
     const semanticCapabilityId = parseSemanticCapabilityRule(requiredTool);
     if (semanticCapabilityId) {
+      if (localCliRequirementCapabilities.has(semanticCapabilityId)) {
+        continue;
+      }
       const credentialBlocker = await semanticCapabilityCredentialBlocker({
         capabilityId: semanticCapabilityId,
         agentId,
@@ -152,10 +164,28 @@ export async function evaluateJobReadiness(
   };
 }
 
-function capabilityRequirementBlocker(
-  requirement: NonNullable<Job['capability_requirements']>[number],
-): JobSetupBlocker | null {
+function capabilityRequirementBlocker(input: {
+  requirement: NonNullable<Job['capability_requirements']>[number];
+  effectiveAllowedTools: readonly string[];
+}): JobSetupBlocker | null {
+  const { requirement } = input;
   if (requirement.implementation?.kind !== 'local_cli') return null;
+  const rule = localCliCommandTemplatePermissionRule(
+    requirement.implementation.commandTemplate,
+    requirement.implementation.executablePath,
+  );
+  if (!rule) {
+    return {
+      state: 'missing_capability',
+      requirementType: 'local_cli',
+      requirementId: requirement.capabilityId,
+      message: `${formatCapabilityRequirement(requirement)} has an invalid local CLI job requirement.`,
+      nextAction: capabilityRequirementSetupAction(requirement),
+    };
+  }
+  if (rule && input.effectiveAllowedTools.includes(`Bash(${rule})`)) {
+    return null;
+  }
   return {
     state: 'draft_only',
     requirementType: 'local_cli',
@@ -426,11 +456,8 @@ async function semanticCapabilityCredentialBlocker(input: {
 function semanticCapabilityNeedsBroker(
   capability: NonNullable<ReturnType<typeof getBuiltinSemanticCapability>>,
 ): boolean {
-  return capability.implementationBindings.some(
-    (binding) =>
-      binding.kind === 'adapter' ||
-      binding.kind === 'tool_rule' ||
-      binding.rule?.startsWith('Bash(onecli '),
+  return capability.implementationBindings.some((binding) =>
+    binding.rule?.startsWith('Bash(onecli '),
   );
 }
 
@@ -536,7 +563,7 @@ function mcpCredentialBlocker(serverName: string): JobSetupBlocker {
 function mcpRequestAction(requirement: string): string {
   return `request_mcp_server ${JSON.stringify({
     name: requirement,
-    reason: 'This scheduled job requires this MCP server.',
+    reason: 'This autonomous run requires this MCP server.',
   })}`;
 }
 

@@ -279,8 +279,9 @@ describe('jobs/execution', () => {
       next_run: '2026-05-08T00:00:00.000Z',
     });
     const opsRepository = makeOpsRepository(job);
+    const sendMessage = vi.fn(async () => undefined);
     const error =
-      'Tool not on autonomous job allowlist: mcp__myclaw__browser_act. Recovery: request_permission { "toolName": "Browser" }';
+      'Tool not on autonomous run allowlist: mcp__myclaw__browser_act. Recovery: request_permission { "toolName": "Browser" }';
 
     await runJob(
       job,
@@ -288,7 +289,7 @@ describe('jobs/execution', () => {
         conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
         queue: {} as never,
         onProcess: () => {},
-        sendMessage: vi.fn(async () => undefined) as never,
+        sendMessage: sendMessage as never,
         opsRepository: opsRepository as never,
         runAgent: vi.fn(async () => ({
           status: 'error',
@@ -313,7 +314,7 @@ describe('jobs/execution', () => {
       expect.any(String),
       'failed',
       null,
-      expect.stringContaining('Tool not on autonomous job allowlist'),
+      expect.stringContaining('Tool not on autonomous run allowlist'),
     );
     const deniedEvent = runtimeStoreMock.publish.mock.calls.find(
       ([event]) => event?.eventType === 'job.tool_denied',
@@ -324,6 +325,12 @@ describe('jobs/execution', () => {
         recovery_kind: 'persistent_capability',
         recovery_action: expect.stringContaining('request_permission'),
       }),
+    );
+    const messages = sendMessage.mock.calls.map((call) => String(call[1]));
+    expect(messages).toContainEqual(expect.stringContaining('Running:'));
+    expect(messages).toContainEqual(expect.stringContaining('Setup required:'));
+    expect(messages).not.toContainEqual(
+      expect.stringContaining('Needs permission:'),
     );
   });
 
@@ -346,7 +353,7 @@ describe('jobs/execution', () => {
         .mockRejectedValue(new Error('session bookkeeping unavailable')),
     };
     const error =
-      'Tool not on autonomous job allowlist: Bash. Recovery: request_permission {"toolName":"Bash"}';
+      'Tool not on autonomous run allowlist: Bash. Recovery: request_permission {"toolName":"Bash"}';
 
     await runJob(
       job,
@@ -378,7 +385,7 @@ describe('jobs/execution', () => {
       expect.any(String),
       'failed',
       null,
-      expect.stringContaining('Tool not on autonomous job allowlist'),
+      expect.stringContaining('Tool not on autonomous run allowlist'),
     );
     expect(runtimeStoreMock.publish).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -391,7 +398,7 @@ describe('jobs/execution', () => {
     const job = makeJob();
     const opsRepository = makeOpsRepository(job);
     const error =
-      'Tool not on autonomous job allowlist: Bash. Recovery: request_permission {"toolName":"Bash"}';
+      'Tool not on autonomous run allowlist: Bash. Recovery: request_permission {"toolName":"Bash"}';
 
     await runJob(
       job,
@@ -1318,7 +1325,7 @@ describe('jobs/execution', () => {
               phase: 'permission_wait',
               tool: 'Bash',
               ok: false,
-              reason: 'Tool not on autonomous job allowlist: Bash.',
+              reason: 'Tool not on autonomous run allowlist: Bash.',
               recovery_action: 'request_permission { "toolName": "Bash" }',
             },
           },
@@ -1387,7 +1394,7 @@ describe('jobs/execution', () => {
               tool: 'Bash',
               ok: false,
               reason:
-                'Tool not on autonomous job allowlist: Bash. Bash leaf ls scripts did not match any scoped autonomous rule.',
+                'Tool not on autonomous run allowlist: Bash. Bash leaf ls scripts did not match any scoped autonomous rule.',
               recovery_action:
                 'request_permission { "permissionKind": "tool", "toolName": "Bash" }',
             },

@@ -282,7 +282,8 @@ describe('scheduler IPC adapter contracts', () => {
             implementation: {
               kind: 'local_cli',
               name: 'gog',
-              commandTemplate: 'gog sheets append *',
+              executablePath: '/usr/local/bin/gog',
+              commandTemplate: '/usr/local/bin/gog sheets append *',
             },
           },
         ],
@@ -311,7 +312,8 @@ describe('scheduler IPC adapter contracts', () => {
               implementation: {
                 kind: 'local_cli',
                 name: 'gog',
-                commandTemplate: 'gog sheets append *',
+                executablePath: '/usr/local/bin/gog',
+                commandTemplate: '/usr/local/bin/gog sheets append *',
               },
             },
           ],
@@ -342,7 +344,8 @@ describe('scheduler IPC adapter contracts', () => {
             implementation: {
               kind: 'local_cli',
               name: 'gog',
-              commandTemplate: 'gog sheets append *',
+              executablePath: '/usr/local/bin/gog',
+              commandTemplate: '/usr/local/bin/gog sheets append *',
             },
           },
         ],

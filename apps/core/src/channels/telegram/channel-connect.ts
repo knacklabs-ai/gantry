@@ -292,7 +292,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
           mode === 'allow_once'
             ? 'Allowed once. Details posted in chat.'
             : mode === 'allow_persistent_rule'
-              ? 'Always allow requested. Details posted in chat.'
+              ? 'Always allowed. Details posted in chat.'
               : mode === 'allow_timed_grant'
                 ? 'Allowed for 5 minutes. Details posted in chat.'
                 : 'Canceled.',

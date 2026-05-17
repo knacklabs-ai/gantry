@@ -10,7 +10,7 @@
   a recent approved tool-use token is still unexpired and unambiguous, or a
   short-lived eligible-tools/SDK-API-prompt timed grant is active for the same principal and
   conversation. Never log raw hostnames or tool inputs for this gate.
-- Permission `Allow eligible tools and SDK API prompts for 5 min` is
+- Permission `Allow 5 min` is
   intentionally a short-lived yolo grant for every eligible SDK tool call and SDK network/API
   prompt by the same principal in the same conversation. Keep protected-path,
   memory-boundary, and fail-closed sandbox hard guards before the timed grant so

@@ -377,6 +377,42 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).not.toContain('Read(/repo/**)');
   });
 
+  it('does not expose unselected permission-gated native tools to scheduled jobs', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'tg:sales',
+      groupFolder: 'sales',
+      persona: 'sales',
+      isScheduledJob: true,
+      configuredAllowedTools: [
+        'Read',
+        'Bash(/usr/local/bin/gog sheets append *)',
+        'Bash(python3 /Users/example/scripts/dedup-append-lead.py)',
+      ],
+    });
+
+    expect(profile.allowedTools).toContain('Read');
+    expect(profile.allowedTools).not.toContain('Bash');
+    expect(profile.allowedTools).not.toContain(
+      'Bash(/usr/local/bin/gog sheets append *)',
+    );
+    expect(profile.availableTools).toEqual(
+      expect.arrayContaining([
+        'Agent',
+        'WebSearch',
+        'WebFetch',
+        'ToolSearch',
+        'Skill',
+        'Read',
+        'Bash',
+      ]),
+    );
+    expect(profile.availableTools).not.toContain('Write');
+    expect(profile.availableTools).not.toContain('Edit');
+    expect(profile.availableTools).not.toContain('MultiEdit');
+    expect(profile.availableTools).not.toContain('NotebookEdit');
+  });
+
   it('allows exact selected admin and native tools but filters unsupported wildcard rules for non-developer personas', () => {
     const profile = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',

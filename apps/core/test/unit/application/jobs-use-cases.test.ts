@@ -226,7 +226,8 @@ describe('job application use cases', () => {
           implementation: {
             kind: 'local_cli',
             name: 'gog',
-            commandTemplate: 'gog sheets append *',
+            executablePath: '/usr/local/bin/gog',
+            commandTemplate: '/usr/local/bin/gog sheets append *',
           },
         },
       ],
@@ -253,14 +254,55 @@ describe('job application use cases', () => {
               state: 'draft_only',
               requirementType: 'local_cli',
               requirementId: 'google.sheets.write',
-              nextAction: expect.stringContaining(
-                'propose_local_cli_capability',
-              ),
+              nextAction: expect.stringContaining('request_permission'),
             }),
           ]),
         }),
       }),
     );
+  });
+
+  it('rejects local CLI job requirements that rely on PATH command resolution', async () => {
+    const upsertJob = vi.fn(async () => ({ created: true }));
+    const scheduler = { requestSchedulerSync: vi.fn() };
+    const service = new JobManagementService({
+      ops: {
+        upsertJob,
+      } as unknown as RuntimeJobRepository,
+      scheduler,
+      schedulePlanner: runtimeJobSchedulePlanner,
+      control: makeControl({
+        'session-app-one': { sessionId: 'session-app-one', appId: 'app-one' },
+      }),
+      toolRepository: {
+        listAgentToolBindings: vi.fn(async () => []),
+      } as never,
+    });
+
+    await expect(
+      service.createJob({
+        appId: 'app-one',
+        name: 'Lead sync',
+        prompt: 'Append new leads to Google Sheets',
+        sessionId: 'session-app-one',
+        capabilityRequirements: [
+          {
+            capabilityId: 'google.sheets.write',
+            reason: 'Write lead rows after each run',
+            implementation: {
+              kind: 'local_cli',
+              name: 'gog',
+              executablePath: '/usr/local/bin/gog',
+              commandTemplate: 'gog sheets append *',
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      'capabilityRequirements local_cli implementation.commandTemplate must start with the exact executablePath.',
+    );
+    expect(upsertJob).not.toHaveBeenCalled();
+    expect(scheduler.requestSchedulerSync).not.toHaveBeenCalled();
   });
 
   it('recomputes readiness when job capability requirements are updated', async () => {
@@ -275,7 +317,8 @@ describe('job application use cases', () => {
           implementation: {
             kind: 'local_cli',
             name: 'old-cli',
-            commandTemplate: 'old-cli read *',
+            executablePath: '/usr/local/bin/old-cli',
+            commandTemplate: '/usr/local/bin/old-cli read *',
           },
         },
       ],
@@ -318,7 +361,8 @@ describe('job application use cases', () => {
             implementation: {
               kind: 'local_cli',
               name: 'gog',
-              commandTemplate: 'gog sheets append --dry-run',
+              executablePath: '/usr/local/bin/gog',
+              commandTemplate: '/usr/local/bin/gog sheets append --dry-run',
             },
           },
         ],
@@ -335,7 +379,8 @@ describe('job application use cases', () => {
             implementation: {
               kind: 'local_cli',
               name: 'gog',
-              commandTemplate: 'gog sheets append --dry-run',
+              executablePath: '/usr/local/bin/gog',
+              commandTemplate: '/usr/local/bin/gog sheets append --dry-run',
             },
           },
         ],
@@ -1643,6 +1688,34 @@ describe('job application use cases', () => {
       message: 'Unknown runtime event type "runtime.unknown".',
     });
     expect(ops.listRecentJobEvents).not.toHaveBeenCalled();
+  });
+
+  it('normalizes common scheduler event filter aliases before querying events', async () => {
+    const ops = {
+      listRecentJobEvents: vi.fn(async () => []),
+    };
+    const service = new JobManagementService({
+      ops: ops as unknown as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+    });
+
+    await expect(
+      service.listJobEvents({
+        appId: 'app-one',
+        eventType: 'run_completed',
+      }),
+    ).resolves.toEqual({ events: [] });
+    expect(ops.listRecentJobEvents).toHaveBeenCalledWith(200, {
+      app_id: undefined,
+      owner_app_id: 'app-one',
+      job_id: undefined,
+      job_ids: undefined,
+      run_id: undefined,
+      event_type: 'run.completed',
+      since_id: undefined,
+      since: undefined,
+    });
   });
 
   it('uses repository app ownership filters for app-scoped run and event pages', async () => {

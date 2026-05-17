@@ -221,6 +221,10 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'permission-timeout.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/stable-hash.ts'),
+    path.join(sharedDir, 'stable-hash.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/human-format.ts'),
     path.join(sharedDir, 'human-format.ts'),
   );
@@ -1778,7 +1782,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'scheduled jobs include a concise final report instruction in the prompt',
+    'scheduled jobs include the autonomous tool contract in the prompt',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -1787,6 +1791,10 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({
           isScheduledJob: true,
           jobId: 'job-1',
+          allowedTools: [
+            'Browser',
+            'Bash(/Users/example/runtime/scripts/append-lead.py *)',
+          ],
           prompt: 'Find new leads.',
         }),
       );
@@ -1798,6 +1806,11 @@ describe('agent-runner IPC lifecycle', () => {
         JSON.stringify(call?.streamMessages ?? []);
       expect(prompt).toContain('Final Job Report');
       expect(prompt).toContain('found, added, skipped, and errors');
+      expect(prompt).toContain('Durable tool rules for this autonomous run:');
+      expect(prompt).toContain(
+        'Bash(/Users/example/runtime/scripts/append-lead.py *)',
+      );
+      expect(prompt).toContain('Do not wrap it in python -c');
       expect(prompt).toContain('Find new leads.');
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
@@ -2115,7 +2128,7 @@ describe('agent-runner IPC lifecycle', () => {
         'Unattended jobs do not wait for approval during the active tool call',
       );
       expect(String(call?.permissionDecision?.message)).toContain(
-        'request_permission { "permissionKind": "tool", "toolName": "WebSearch", "temporaryOnly": false, "reason": "This scheduled job needs WebSearch access." }',
+        'request_permission { "permissionKind": "tool", "toolName": "WebSearch", "temporaryOnly": false, "reason": "This autonomous run needs WebSearch access." }',
       );
       expect(
         fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),

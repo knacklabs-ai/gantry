@@ -173,13 +173,42 @@ describe('scheduler MCP tools', () => {
             kind: 'local_cli',
             name: 'gog',
             executable_path: '/usr/local/bin/gog',
-            command_template: 'gog sheets append *',
-            auth_preflight: 'gog auth status',
+            command_template: '/usr/local/bin/gog sheets append *',
+            auth_preflight: '/usr/local/bin/gog auth status',
             protected_paths: ['~/.config/gog/*'],
           },
         },
       ]).success,
     ).toBe(true);
+    expect(
+      schemas.get('scheduler_upsert_job')?.capability_requirements.safeParse([
+        {
+          capability_id: 'google.sheets.write',
+          reason: 'Write lead rows after each run',
+          implementation: {
+            kind: 'local_cli',
+            name: 'gog',
+            executable_path: '/usr/local/bin/gog',
+            command_template: 'gog sheets append *',
+          },
+        },
+      ]).success,
+    ).toBe(false);
+    expect(
+      schemas.get('scheduler_upsert_job')?.capability_requirements.safeParse([
+        {
+          capability_id: 'google.sheets.write',
+          reason: 'Write lead rows after each run',
+          implementation: {
+            kind: 'local_cli',
+            name: 'gog',
+            executable_path: '/usr/local/bin/gog',
+            command_template: '/usr/local/bin/gog sheets append *',
+            auth_preflight: 'gog auth status',
+          },
+        },
+      ]).success,
+    ).toBe(false);
     expect(schemas.get('scheduler_upsert_job')?.confirm).toBeDefined();
     expect(
       schemas.get('scheduler_upsert_job')?.confirmation_token,
@@ -198,8 +227,8 @@ describe('scheduler MCP tools', () => {
             kind: 'local_cli',
             name: 'gog',
             executable_path: '/usr/local/bin/gog',
-            command_template: 'gog sheets append *',
-            auth_preflight: 'gog auth status',
+            command_template: '/usr/local/bin/gog sheets append *',
+            auth_preflight: '/usr/local/bin/gog auth status',
             protected_paths: ['~/.config/gog/*'],
           },
         },
@@ -252,7 +281,8 @@ describe('scheduler MCP tools', () => {
           implementation: {
             kind: 'local_cli',
             name: 'gog',
-            command_template: 'gog sheets append *',
+            executable_path: '/usr/local/bin/gog',
+            command_template: '/usr/local/bin/gog sheets append *',
           },
         },
       ],
@@ -276,7 +306,8 @@ describe('scheduler MCP tools', () => {
             implementation: {
               kind: 'local_cli',
               name: 'gog',
-              commandTemplate: 'gog sheets append *',
+              executablePath: '/usr/local/bin/gog',
+              commandTemplate: '/usr/local/bin/gog sheets append *',
             },
           },
         ],
@@ -384,7 +415,8 @@ describe('scheduler MCP tools', () => {
           implementation: {
             kind: 'local_cli',
             name: 'gog',
-            command_template: 'gog sheets append *',
+            executable_path: '/usr/local/bin/gog',
+            command_template: '/usr/local/bin/gog sheets append *',
           },
         },
       ],
@@ -589,7 +621,7 @@ describe('scheduler MCP tools', () => {
         },
       }),
     ).toContain(
-      'Health: needs_permission | latest dead_lettered | action request_permission',
+      'Health: needs_permission | latest dead_lettered | action Approve Browser access, then resume the job.',
     );
   });
 

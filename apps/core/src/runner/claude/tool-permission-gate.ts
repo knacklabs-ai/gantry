@@ -37,6 +37,7 @@ import {
 } from './tool-permission-events.js';
 import { waitOnlyBashMonitoringDenial } from './wait-only-bash-guard.js';
 import { forceBackgroundNativeAgentInput } from './native-agent-tool-input.js';
+import { denyNonPromptableAutonomousRecovery } from './autonomous-permission-recovery.js';
 
 type PermissionApprovalInput = Parameters<typeof requestPermissionApproval>[0];
 
@@ -97,12 +98,8 @@ export function createCanUseToolCallback(
   const sdkSandboxNetworkGate = createSdkSandboxNetworkGate(input.agentInput);
   const timedGrantConversationJid = input.agentInput.chatJid;
 
-  const effectiveTimedGrantPrincipal = (permissionOpts: {
-    agentID?: string;
-  }): string =>
-    permissionOpts.agentID?.trim() ||
-    input.agentInput.agentId ||
-    input.workspaceFolder;
+  const effectiveTimedGrantPrincipal = (): string =>
+    input.agentInput.agentId || input.workspaceFolder;
 
   const timedGrantKey = (principal: string): string =>
     stableTimedGrantKey({
@@ -168,7 +165,7 @@ export function createCanUseToolCallback(
     ...liveApprovedRules,
   ];
 
-  const currentScheduledAllowedToolRules = (): string[] => [
+  const currentAutonomousAllowedToolRules = (): string[] => [
     ...(input.agentInput.allowedTools ?? []),
     ...readExternalMcpAllowedTools(),
     ...readLiveToolRules({
@@ -269,13 +266,15 @@ export function createCanUseToolCallback(
 
     const trustInput = () =>
       applyBashTrustEnv(toolName, toolInput, input.sdkEnv);
-    const effectivePrincipal = effectiveTimedGrantPrincipal(permissionOpts);
+    const timedGrantPrincipal = effectiveTimedGrantPrincipal();
+    const sdkApprovalPrincipal =
+      permissionOpts.agentID?.trim() || timedGrantPrincipal;
     const rememberAllowedTool = () =>
       sdkSandboxNetworkGate.rememberAllowedTool(
         toolName,
         toolInput,
         permissionOpts,
-        effectivePrincipal,
+        sdkApprovalPrincipal,
       );
     const allowToolUse = (reason = 'allowed') => {
       emitJobToolActivity(
@@ -378,12 +377,12 @@ export function createCanUseToolCallback(
       toolName,
       toolInput,
       permissionOpts,
-      effectivePrincipal,
+      sdkApprovalPrincipal,
     );
     if (sandboxNetworkAccessDecision) return sandboxNetworkAccessDecision;
 
     let timedGrantDenylistReason: string | undefined;
-    if (isTimedGrantActive(toolName, effectivePrincipal)) {
+    if (isTimedGrantActive(toolName, timedGrantPrincipal)) {
       const yoloDenylistHit = evaluateYoloModeDenylist({
         settings: input.agentInput.yoloMode,
         toolName,
@@ -398,7 +397,7 @@ export function createCanUseToolCallback(
           agentInput: input.agentInput,
           getNewSessionId: input.getNewSessionId,
           match: yoloDenylistHit,
-          principal: effectivePrincipal,
+          principal: timedGrantPrincipal,
         });
       } else {
         log(`Timed grant auto-allow for tool ${toolName}`);
@@ -425,10 +424,10 @@ export function createCanUseToolCallback(
     if (input.agentInput.isScheduledJob) {
       const toolDecision = toolExecutionPolicy.evaluate({
         request: toolExecutionRequest,
-        schedulerAllowedToolRules: currentScheduledAllowedToolRules(),
+        autonomousAllowedToolRules: currentAutonomousAllowedToolRules(),
       });
       if (!timedGrantDenylistReason && toolDecision.status === 'allow') {
-        log(`Autonomous job allowed tool ${toolName}: ${toolDecision.reason}`);
+        log(`Autonomous run allowed tool ${toolName}: ${toolDecision.reason}`);
         return allowToolUse(toolDecision.reason);
       }
       if (permissionOpts.signal.aborted) {
@@ -447,9 +446,20 @@ export function createCanUseToolCallback(
         toolDecision.status === 'allow'
           ? undefined
           : toolDecision.recoveryAction;
+      if (!timedGrantDenylistReason) {
+        const nonPromptableDenial = denyNonPromptableAutonomousRecovery({
+          agentInput: input.agentInput,
+          getNewSessionId: input.getNewSessionId,
+          recoveryAction,
+          recoveryMessage,
+          toolName,
+          toolPolicyReason: toolDecision.reason,
+        });
+        if (nonPromptableDenial) return nonPromptableDenial;
+      }
       const publicToolName = permissionRequestToolName(toolName);
       log(
-        `Autonomous job requesting permission for tool ${toolName}: ${recoveryMessage}`,
+        `Autonomous run requesting permission for tool ${toolName}: ${recoveryMessage}`,
       );
       input.emitInteractionBoundary();
       emitJobToolActivity(
@@ -507,7 +517,7 @@ export function createCanUseToolCallback(
         ) {
           rememberTimedGrant(
             toolName,
-            effectivePrincipal,
+            timedGrantPrincipal,
             decision.timedGrantExpiresAtMs,
           );
         }
@@ -524,7 +534,7 @@ export function createCanUseToolCallback(
           },
         );
         log(
-          `Autonomous job permission approved for tool ${toolName} by ${decision.decidedBy || 'unknown'}`,
+          `Autonomous run permission approved for tool ${toolName} by ${decision.decidedBy || 'unknown'}`,
         );
         return {
           behavior: 'allow' as const,
@@ -542,7 +552,7 @@ export function createCanUseToolCallback(
       }
       const reason = decision.reason || 'Denied by operator';
       const message = `Permission denied: ${reason}. ${recoveryMessage}`;
-      log(`Autonomous job denied tool ${toolName}: ${message}`);
+      log(`Autonomous run denied tool ${toolName}: ${message}`);
       emitJobToolActivity(
         input.agentInput,
         input.getNewSessionId,
@@ -639,7 +649,7 @@ export function createCanUseToolCallback(
       ) {
         rememberTimedGrant(
           toolName,
-          effectivePrincipal,
+          timedGrantPrincipal,
           decision.timedGrantExpiresAtMs,
         );
       }

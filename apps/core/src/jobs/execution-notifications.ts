@@ -9,6 +9,12 @@ import { sendJobNotification } from './delivery.js';
 import { formatRunStatusMessage } from './status-formatting.js';
 import { MEMORY_DREAM_SYSTEM_PROMPT } from './system-jobs.js';
 import { formatRunLabel } from '../shared/human-format.js';
+import { SETUP_REQUIRED_PAUSE_REASON } from '../application/jobs/job-readiness-service.js';
+import { parseAutonomousToolDenial } from '../shared/autonomous-tool-denial.js';
+import {
+  setupActionLabel,
+  setupBlockerLabel,
+} from '../shared/job-setup-labels.js';
 
 type TerminalRunStatus = Extract<
   JobRunStatus,
@@ -102,10 +108,8 @@ export async function notifySchedulerSetupRequired(input: {
     return false;
   }
   const blocker = input.setupState.blockers[0];
-  const action = blocker?.nextAction ?? 'Fix setup, then resume the job.';
-  const reason = blocker
-    ? `${blocker.requirementType}:${blocker.requirementId}`
-    : input.setupState.state;
+  const action = setupActionLabel(blocker);
+  const reason = setupBlockerLabel(blocker, input.setupState.state);
   return sendJobNotification({
     job: input.job,
     text: [
@@ -146,6 +150,12 @@ export async function notifySchedulerTerminalRunState(input: {
   }) => Promise<JobNotificationLifecycleUpdateResult>;
 }): Promise<boolean> {
   if (input.job.silent) return false;
+  if (
+    input.pauseReason === SETUP_REQUIRED_PAUSE_REASON &&
+    parseAutonomousToolDenial(input.summary)
+  ) {
+    return false;
+  }
   const summaryMessage = formatRunStatusMessage({
     job: input.job,
     runId: input.runId,

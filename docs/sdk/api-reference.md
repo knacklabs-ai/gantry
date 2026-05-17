@@ -124,10 +124,8 @@ any runtime-only projected tools.
 Agent capability updates are bidirectional: settings-side changes reconcile
 Postgres immediately, and API/admin-side capability writes export the readable
 projection back into `settings.yaml` before returning.
-Permission prompts use `Allow once`, `Always allow for this agent/job` for
-semantic capabilities, `Always allow Browser`, `Always allow` for exact MyClaw
-admin tools, `Always allow Bash(<pattern>)` for low-level fallback grants, or
-`Cancel`.
+Permission prompts use the simple choices `Allow once`, `Allow 5 min`,
+`Always allow`, or `Cancel`.
 Same-conversation review binds the request to the originating chat or thread;
 it does not bypass the configured conversation approvers. Raw request ids,
 command hashes, scoped Bash rules, executable paths, and sandbox details are

@@ -5,6 +5,8 @@ import {
   semanticCapabilityRule,
 } from '../../shared/semantic-capability-ids.js';
 import { getBuiltinSemanticCapability } from '../../shared/semantic-capabilities.js';
+import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
+import { isAbsoluteFilePath } from '../../shared/path-validation.js';
 
 const IMPLEMENTATION_KINDS = new Set([
   'configured_access',
@@ -72,28 +74,31 @@ export function capabilityRequirementSetupAction(
 ): string {
   const implementation = requirement.implementation;
   if (implementation?.kind === 'local_cli') {
-    const name =
-      implementation.name || implementation.executablePath || 'local CLI';
+    const rule = localCliCommandTemplatePermissionRule(
+      implementation.commandTemplate,
+      implementation.executablePath,
+    );
+    if (rule) {
+      return [
+        'request_permission',
+        JSON.stringify({
+          permissionKind: 'tool',
+          toolName: 'Bash',
+          rule,
+          temporaryOnly: false,
+          riskClass: 'high',
+          capabilityId: requirement.capabilityId,
+          capabilityDisplayName: formatCapabilityRequirement(requirement),
+          reason: requirement.reason,
+        }),
+      ].join(' ');
+    }
     return [
-      'propose_local_cli_capability',
+      'scheduler_update_job',
       JSON.stringify({
         capabilityId: requirement.capabilityId,
-        displayName: humanizeCapabilityId(requirement.capabilityId),
-        category: name,
-        risk: 'write',
-        accountLabel: name,
-        can: requirement.reason,
-        cannot:
-          'Bypass protected paths, change credentials, or run commands outside reviewed templates.',
-        executablePath: implementation.executablePath ?? name,
-        executableVersion: 'unknown',
-        executableHash: 'unknown',
-        commandTemplates: implementation.commandTemplate
-          ? [implementation.commandTemplate]
-          : [`${name} *`],
-        authPreflightCommand: implementation.authPreflight,
-        protectedPaths: implementation.protectedPaths ?? [],
-        reason: requirement.reason,
+        reason:
+          'Fix local_cli implementation: executablePath must be absolute, and commandTemplate plus authPreflight must start with that exact executablePath.',
       }),
     ].join(' ');
   }
@@ -104,6 +109,21 @@ export function capabilityRequirementSetupAction(
       reason: requirement.reason,
     }),
   ].join(' ');
+}
+
+export function localCliCommandTemplatePermissionRule(
+  commandTemplate: string | undefined,
+  executablePath?: string | undefined,
+): string | undefined {
+  const normalized = normalizePlaceholderCommandTemplate(commandTemplate);
+  if (!normalized) return undefined;
+  const executableToken = normalized.split(/\s+/)[0];
+  if (!isAbsoluteFilePath(executableToken)) return undefined;
+  if (executablePath?.trim() && executableToken !== executablePath.trim()) {
+    return undefined;
+  }
+  const validation = validateReadableAgentToolRule(`Bash(${normalized})`);
+  return validation.ok ? normalized : undefined;
 }
 
 function normalizeImplementation(
@@ -129,6 +149,43 @@ function normalizeImplementation(
   if (commandTemplate) implementation.commandTemplate = commandTemplate;
   const authPreflight = optionalString(input.authPreflight);
   if (authPreflight) implementation.authPreflight = authPreflight;
+  if (input.kind === 'local_cli') {
+    if (!implementation.executablePath) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'capabilityRequirements local_cli implementation.executablePath is required so the runtime does not rely on PATH resolution.',
+      );
+    }
+    if (!isAbsoluteFilePath(implementation.executablePath)) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'capabilityRequirements local_cli implementation.executablePath must be an absolute path.',
+      );
+    }
+    if (!implementation.commandTemplate) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'capabilityRequirements local_cli implementation.commandTemplate is required so the runtime can request a scoped Bash permission.',
+      );
+    }
+    const executableToken = implementation.commandTemplate.split(/\s+/)[0];
+    if (executableToken !== implementation.executablePath) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'capabilityRequirements local_cli implementation.commandTemplate must start with the exact executablePath.',
+      );
+    }
+    const authPreflightToken = implementation.authPreflight?.split(/\s+/)[0];
+    if (
+      authPreflightToken &&
+      authPreflightToken !== implementation.executablePath
+    ) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'capabilityRequirements local_cli implementation.authPreflight must start with the exact executablePath.',
+      );
+    }
+  }
   const protectedPaths = Array.isArray(input.protectedPaths)
     ? input.protectedPaths
         .map(optionalString)
@@ -152,6 +209,27 @@ function stringField(value: unknown, field: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function normalizePlaceholderCommandTemplate(
+  commandTemplate: string | undefined,
+): string | undefined {
+  const trimmed = commandTemplate?.trim();
+  if (!trimmed) return undefined;
+  const tokens = trimmed.split(/\s+/);
+  const normalized: string[] = [];
+  for (const token of tokens) {
+    if (token === '*') {
+      normalized.push('*');
+      break;
+    }
+    if (token === '...' || /^<[^>]+>$/.test(token)) {
+      normalized.push('*');
+      break;
+    }
+    normalized.push(token);
+  }
+  return normalized.join(' ');
 }
 
 function humanizeCapabilityId(capabilityId: string): string {

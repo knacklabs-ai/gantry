@@ -46,6 +46,7 @@ export interface AgentCapabilityContext {
   externalMcpServers?: Record<string, McpServerConfig>;
   externalMcpAllowedTools?: readonly string[];
   externalMcpAlwaysAllowedTools?: readonly string[];
+  isScheduledJob?: boolean;
 }
 
 export type McpServerConfig =
@@ -151,6 +152,10 @@ function configuredToolAllowedForPersona(toolRule: string): boolean {
 }
 
 function configuredToolAvailableSdkName(toolRule: string): string | null {
+  const readableScopedRule = parseReadableScopedToolRule(toolRule);
+  if (readableScopedRule) {
+    return readableScopedRule.toolName === 'Bash' ? 'Bash' : null;
+  }
   if (toolRule.trim() === 'Bash') return null;
   if (hasScopeSyntax(toolRule)) return null;
   if (myclawMcpToolNameFromFullName(toolRule)) return null;
@@ -166,12 +171,18 @@ const sdkToolsProvider: AgentCapabilityProvider = {
   id: 'sdk-tools',
   provide: (ctx) => {
     const persona = resolveAgentPersona(ctx.persona);
+    const baseAvailableTools = ctx.isScheduledJob
+      ? [
+          ...(persona === 'developer' ? DEVELOPER_NATIVE_SDK_TOOLS : []),
+          ...SAFE_NATIVE_SDK_TOOLS,
+        ]
+      : AVAILABLE_NATIVE_SDK_TOOLS;
     return {
       allowedTools:
         persona === 'developer'
           ? [...DEVELOPER_NATIVE_SDK_TOOLS, ...DEFAULT_ALLOWED_TOOLS]
           : DEFAULT_ALLOWED_TOOLS,
-      availableTools: AVAILABLE_NATIVE_SDK_TOOLS,
+      availableTools: baseAvailableTools,
       disallowedTools: UNSUPPORTED_CLAUDE_CODE_BUILTIN_TOOLS,
     };
   },
@@ -317,7 +328,7 @@ const configuredToolProvider: AgentCapabilityProvider = {
     const allowedTools = (ctx.configuredAllowedTools ?? []).filter((toolRule) =>
       configuredToolAllowedForPersona(toolRule),
     );
-    const availableTools = allowedTools
+    const availableTools = (ctx.configuredAllowedTools ?? [])
       .map(configuredToolAvailableSdkName)
       .filter((toolName): toolName is string => toolName !== null);
     return {

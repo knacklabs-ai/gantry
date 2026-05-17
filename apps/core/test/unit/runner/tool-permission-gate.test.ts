@@ -328,21 +328,14 @@ describe('createCanUseToolCallback', () => {
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
   });
 
-  it('scopes timed grants to the effective SDK agent principal', async () => {
-    permissionMock.requestPermissionApproval
-      .mockResolvedValueOnce({
-        approved: true,
-        mode: 'allow_timed_grant',
-        timedGrantExpiresAtMs: Date.now() + 60_000,
-        updatedPermissions: undefined,
-        decidedBy: 'user',
-      })
-      .mockResolvedValueOnce({
-        approved: true,
-        mode: 'allow_once',
-        updatedPermissions: undefined,
-        decidedBy: 'user',
-      });
+  it('scopes timed grants to the Gantry agent even when SDK agent ids differ', async () => {
+    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
+      approved: true,
+      mode: 'allow_timed_grant',
+      timedGrantExpiresAtMs: Date.now() + 60_000,
+      updatedPermissions: undefined,
+      decidedBy: 'user',
+    });
 
     const canUseTool = makeCallback();
     const first = await canUseTool(
@@ -358,7 +351,7 @@ describe('createCanUseToolCallback', () => {
 
     expect(first.behavior).toBe('allow');
     expect(second.behavior).toBe('allow');
-    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(2);
+    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
   });
 
   it('ignores overlong timed grant expiries from permission responses', async () => {
@@ -526,7 +519,7 @@ describe('createCanUseToolCallback', () => {
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
   });
 
-  it('interrupts scheduled jobs when autonomous permission is denied', async () => {
+  it('interrupts autonomous runs when permission is denied', async () => {
     permissionMock.requestPermissionApproval.mockResolvedValueOnce({
       approved: false,
       reason: 'Autonomous permission approval is disabled for unattended jobs.',
@@ -568,5 +561,48 @@ describe('createCanUseToolCallback', () => {
       .join('');
     expect(output).toContain('"phase":"permission_denied"');
     expect(output).toContain('"jobId":"job-1"');
+  });
+
+  it('returns ungrantable autonomous Bash denials without pausing the job', async () => {
+    const canUseTool = makeCallback({
+      agentInput: {
+        runMode: 'normal',
+        isScheduledJob: true,
+        appId: 'default',
+        agentId: 'agent:test',
+        runId: 'run-1',
+        jobId: 'job-1',
+        chatJid: 'tg:test',
+        threadId: undefined,
+        allowedTools: ['Bash(/Users/example/runtime/scripts/append-lead.py *)'],
+      } as never,
+    });
+
+    await expect(
+      canUseTool(
+        'Bash',
+        {
+          command:
+            'python3 -c "import subprocess; subprocess.run([\\"/Users/example/runtime/scripts/append-lead.py\\", \\"[]\\"])"',
+        },
+        makePermissionOptions() as never,
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        interrupt: false,
+        message: expect.stringContaining(
+          'cannot be durably approved for autonomous runs',
+        ),
+      }),
+    );
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((call) => String(call[0]))
+      .join('');
+    expect(output).toContain('"phase":"permission_denied"');
+    expect(output).toContain('"terminal":false');
+    expect(permissionMock.requestPermissionApproval).not.toHaveBeenCalled();
   });
 });
