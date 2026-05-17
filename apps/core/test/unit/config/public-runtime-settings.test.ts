@@ -8,7 +8,7 @@ const runtimeHomes: string[] = [];
 
 async function loadConfigForRuntimeHome(runtimeHome: string) {
   vi.resetModules();
-  vi.stubEnv('MYCLAW_HOME', runtimeHome);
+  vi.stubEnv('GANTRY_HOME', runtimeHome);
   return await import('@core/config/index.js');
 }
 
@@ -22,7 +22,7 @@ afterEach(() => {
 describe('public runtime settings updates', () => {
   it('rejects patches that would enable dreaming while memory is disabled', async () => {
     const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'myclaw-settings-'),
+      path.join(os.tmpdir(), 'gantry-settings-'),
     );
     runtimeHomes.push(runtimeHome);
     const config = await loadConfigForRuntimeHome(runtimeHome);
@@ -41,7 +41,7 @@ describe('public runtime settings updates', () => {
 
   it('rejects disabling memory when dreaming is already enabled', async () => {
     const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'myclaw-settings-'),
+      path.join(os.tmpdir(), 'gantry-settings-'),
     );
     runtimeHomes.push(runtimeHome);
     const config = await loadConfigForRuntimeHome(runtimeHome);
@@ -64,11 +64,11 @@ describe('public runtime settings updates', () => {
 
   it('redacts owner-defined browser usage override sites from public settings', async () => {
     const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'myclaw-settings-'),
+      path.join(os.tmpdir(), 'gantry-settings-'),
     );
     runtimeHomes.push(runtimeHome);
     vi.resetModules();
-    vi.stubEnv('MYCLAW_HOME', runtimeHome);
+    vi.stubEnv('GANTRY_HOME', runtimeHome);
     const runtimeSettings =
       await import('@core/config/settings/runtime-settings.js');
     const defaults = runtimeSettings.ensureRuntimeSettings(runtimeHome);
@@ -96,7 +96,7 @@ describe('public runtime settings updates', () => {
 
   it('returns effective YOLO-mode denylist while persisting only user additions', async () => {
     const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'myclaw-settings-'),
+      path.join(os.tmpdir(), 'gantry-settings-'),
     );
     runtimeHomes.push(runtimeHome);
     const config = await loadConfigForRuntimeHome(runtimeHome);
@@ -139,7 +139,7 @@ describe('public runtime settings updates', () => {
 
   it('rejects malformed typed patch values before mutating settings', async () => {
     const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'myclaw-settings-'),
+      path.join(os.tmpdir(), 'gantry-settings-'),
     );
     runtimeHomes.push(runtimeHome);
     const config = await loadConfigForRuntimeHome(runtimeHome);

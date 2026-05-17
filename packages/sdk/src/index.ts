@@ -65,7 +65,7 @@ export type ResponseMode = 'sse' | 'webhook' | 'both' | 'none';
 export type MemorySubjectType = 'user' | 'group' | 'channel' | 'common';
 export type DreamPhase = 'light' | 'rem' | 'deep' | 'all';
 
-export interface MyClawError extends Error {
+export interface GantryError extends Error {
   code: string;
   details?: Record<string, unknown> | null;
   requestId?: string;
@@ -73,8 +73,8 @@ export interface MyClawError extends Error {
   restartRequired?: boolean;
   nextAction?: string;
 }
-function toError(input: unknown): MyClawError {
-  const fallback = new Error('MyClaw request failed') as MyClawError;
+function toError(input: unknown): GantryError {
+  const fallback = new Error('Gantry request failed') as GantryError;
   fallback.code = 'UNKNOWN_ERROR';
   if (
     input &&
@@ -85,8 +85,8 @@ function toError(input: unknown): MyClawError {
   ) {
     const error = input.error as Record<string, unknown>;
     const next = new Error(
-      String(error.message || 'MyClaw request failed'),
-    ) as MyClawError;
+      String(error.message || 'Gantry request failed'),
+    ) as GantryError;
     next.code = String(error.code || 'UNKNOWN_ERROR');
     next.details =
       error.details && typeof error.details === 'object'
@@ -113,8 +113,8 @@ function parseJsonBody(raw: string): unknown {
     return JSON.parse(raw);
   } catch {
     const error = new Error(
-      'MyClaw returned a non-JSON response',
-    ) as MyClawError;
+      'Gantry returned a non-JSON response',
+    ) as GantryError;
     error.code = 'INVALID_RESPONSE';
     throw error;
   }
@@ -185,13 +185,13 @@ class Transport {
         },
       );
       req.setTimeout(this.timeoutMs, () => {
-        req.destroy(new Error('MyClaw request timed out'));
+        req.destroy(new Error('Gantry request timed out'));
       });
       req.on('error', reject);
       if (options.signal) {
         options.signal.addEventListener(
           'abort',
-          () => req.destroy(new Error('MyClaw request aborted')),
+          () => req.destroy(new Error('Gantry request aborted')),
           { once: true },
         );
       }
@@ -221,7 +221,7 @@ class Transport {
     if (signal) {
       signal.addEventListener(
         'abort',
-        () => req.destroy(new Error('MyClaw stream aborted')),
+        () => req.destroy(new Error('Gantry stream aborted')),
         { once: true },
       );
     }
@@ -262,7 +262,7 @@ class Transport {
   }
 }
 
-export class MyClawClient {
+export class GantryClient {
   private readonly transport: Transport;
   private readonly request = <T>(options: RequestOptions) =>
     this.transport.request<T>(options);
@@ -678,7 +678,7 @@ export class MyClawClient {
   };
 }
 export const createClient = (options: ClientOptions) =>
-  new MyClawClient(options);
+  new GantryClient(options);
 
 export {
   buildIngressSignaturePayload,

@@ -23,7 +23,6 @@ import { parseSemanticCapabilityRule } from '../shared/semantic-capability-ids.j
 import {
   firstPersistentRule,
   PERSISTENT_RULE_APPROVAL_MAX_RULES,
-  persistentPermissionUpdates,
   persistentRules,
 } from './permission-decision.js';
 import { formatPermissionToolInputLines } from './permission-tool-input-format.js';
@@ -100,7 +99,7 @@ export function permissionButtonLabel(
   mode: PermissionApprovalDecisionMode,
   request: PermissionApprovalRequest,
 ): string {
-  if (mode === 'allow_once') return 'Allow once';
+  if (mode === 'allow_once') return request.jobId ? 'Allow' : 'Allow once';
   if (mode === 'allow_timed_grant') {
     return 'Allow 5 min';
   }
@@ -397,7 +396,7 @@ function permissionAccessLabel(
   const toolName =
     scopedRule?.toolName || requestedToolName || request.toolName;
   if (isCanonicalBrowserCapabilityRule(toolName)) return 'Browser';
-  if (toolName.startsWith('mcp__myclaw__browser_')) return 'Browser';
+  if (toolName.startsWith('mcp__gantry__browser_')) return 'Browser';
   const adminName = adminMcpToolNameFromFullName(toolName);
   if (adminName) return `Gantry ${humanizeIdentifier(adminName)}`;
   if (isThirdPartyMcpToolRule(toolName)) {

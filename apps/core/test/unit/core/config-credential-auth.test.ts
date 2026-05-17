@@ -16,8 +16,8 @@ describe('resolveClaudeAuthState', () => {
         'providers: {}',
         'storage:',
         '  postgres:',
-        '    url_env: MYCLAW_DATABASE_URL',
-        '    schema: myclaw',
+        '    url_env: GANTRY_DATABASE_URL',
+        '    schema: gantry',
         'agent:',
         '  default_model: ""',
         'credential_broker:',
@@ -44,9 +44,9 @@ describe('resolveClaudeAuthState', () => {
     mode: 'none' | 'onecli' | 'external',
     externalBaseUrl = '',
   ): void {
-    runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-config-'));
+    runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-config-'));
     writeCredentialSettings(mode, externalBaseUrl);
-    vi.stubEnv('MYCLAW_HOME', runtimeRoot);
+    vi.stubEnv('GANTRY_HOME', runtimeRoot);
   }
 
   afterEach(() => {
@@ -98,9 +98,9 @@ describe('resolveClaudeAuthState', () => {
   });
 
   it('does not silently fall back when settings.yaml is malformed', async () => {
-    runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-config-'));
+    runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-config-'));
     fs.writeFileSync(path.join(runtimeRoot, 'settings.yaml'), 'not: [yaml');
-    vi.stubEnv('MYCLAW_HOME', runtimeRoot);
+    vi.stubEnv('GANTRY_HOME', runtimeRoot);
     vi.resetModules();
 
     await expect(import('@core/config/index.js')).rejects.toThrow(
@@ -149,16 +149,16 @@ describe('resolveClaudeAuthState', () => {
     fs.writeFileSync(
       path.join(runtimeRoot, '.env'),
       [
-        'MYCLAW_DATABASE_URL=postgres://file:pass@localhost:15432/myclaw',
+        'GANTRY_DATABASE_URL=postgres://file:pass@localhost:15432/gantry',
         '',
       ].join('\n'),
       'utf-8',
     );
-    vi.stubEnv('MYCLAW_HOME', runtimeRoot);
+    vi.stubEnv('GANTRY_HOME', runtimeRoot);
     vi.stubEnv('ANTHROPIC_MODEL', 'claude-ambient-model');
     vi.stubEnv(
-      'MYCLAW_DATABASE_URL',
-      'postgres://ambient:pass@localhost:15432/myclaw',
+      'GANTRY_DATABASE_URL',
+      'postgres://ambient:pass@localhost:15432/gantry',
     );
     vi.resetModules();
 
@@ -167,7 +167,7 @@ describe('resolveClaudeAuthState', () => {
 
     expect(getConfiguredDefaultModel()).toBe('sonnet');
     expect(STORAGE_POSTGRES_URL).toBe(
-      'postgres://ambient:pass@localhost:15432/myclaw',
+      'postgres://ambient:pass@localhost:15432/gantry',
     );
   });
 

@@ -187,11 +187,11 @@ describe('contracts package', () => {
     expect(
       AgentCapabilitiesResponseSchema.parse({
         agentId: 'agent-1',
-        selectedToolIds: ['tool:mcp__myclaw__service_restart'],
+        selectedToolIds: ['tool:mcp__gantry__service_restart'],
         selectedSkillIds: [],
         selectedMcpServerIds: [],
         toolAccess: {
-          configuredTools: ['mcp__myclaw__service_restart'],
+          configuredTools: ['mcp__gantry__service_restart'],
           defaultTools: [],
           availableButGatedTools: ['Bash'],
           requestableAdminTools: [],

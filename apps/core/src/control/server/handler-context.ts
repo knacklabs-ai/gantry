@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { RuntimeSettingsResponse } from '@myclaw/contracts';
+import type { RuntimeSettingsResponse } from '@gantry/contracts';
 import type { RuntimeApp } from '../../app/bootstrap/runtime-app.js';
 import type { JobManagementServiceDeps } from '../../application/jobs/job-management-types.js';
 import type { AppId } from '../../domain/app/app.js';

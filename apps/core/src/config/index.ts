@@ -12,7 +12,7 @@ import {
 } from './env/index.js';
 import { parseBooleanEnv } from './env/parse.js';
 import { getMemoryModelConfig } from './memory.js';
-import { getMyclawHome } from '../shared/myclaw-home.js';
+import { getGantryHome } from '../shared/gantry-home.js';
 import { resolveRuntimeStorageConfig } from './settings/storage.js';
 import {
   ensureRuntimeSettings,
@@ -33,17 +33,17 @@ export * from './memory.js';
 export { syncRuntimeSettingsFromProjection } from './settings/restart-sync.js';
 export const POLL_INTERVAL = 2000;
 export type ControlEnvKey =
-  | 'MYCLAW_CONTROL_API_KEYS_JSON'
-  | 'MYCLAW_CONTROL_PORT'
-  | 'MYCLAW_CONTROL_SOCKET_PATH';
+  | 'GANTRY_CONTROL_API_KEYS_JSON'
+  | 'GANTRY_CONTROL_PORT'
+  | 'GANTRY_CONTROL_SOCKET_PATH';
 export function getControlEnvValue(key: ControlEnvKey): string {
   return envValueDynamic(key);
 }
-const MYCLAW_HOME_RAW =
-  process.env.MYCLAW_HOME?.trim() || envConfig.MYCLAW_HOME?.trim() || '';
-export const MYCLAW_HOME = getMyclawHome(MYCLAW_HOME_RAW);
-export const RUNTIME_SETTINGS_PATH = settingsFilePath(MYCLAW_HOME);
-const RUNTIME_ROOT = MYCLAW_HOME;
+const GANTRY_HOME_RAW =
+  process.env.GANTRY_HOME?.trim() || envConfig.GANTRY_HOME?.trim() || '';
+export const GANTRY_HOME = getGantryHome(GANTRY_HOME_RAW);
+export const RUNTIME_SETTINGS_PATH = settingsFilePath(GANTRY_HOME);
+const RUNTIME_ROOT = GANTRY_HOME;
 let runtimeSettingsCache:
   | {
       filePath: string;
@@ -53,7 +53,7 @@ let runtimeSettingsCache:
     }
   | undefined;
 export function getRuntimeSettingsForConfig(): RuntimeSettings {
-  const filePath = settingsFilePath(MYCLAW_HOME);
+  const filePath = settingsFilePath(GANTRY_HOME);
   try {
     const stat = fs.statSync(filePath);
     if (
@@ -63,7 +63,7 @@ export function getRuntimeSettingsForConfig(): RuntimeSettings {
     ) {
       return runtimeSettingsCache.settings;
     }
-    const settings = ensureRuntimeSettings(MYCLAW_HOME);
+    const settings = ensureRuntimeSettings(GANTRY_HOME);
     runtimeSettingsCache = {
       filePath,
       mtimeMs: stat.mtimeMs,
@@ -73,7 +73,7 @@ export function getRuntimeSettingsForConfig(): RuntimeSettings {
     return settings;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    const settings = ensureRuntimeSettings(MYCLAW_HOME);
+    const settings = ensureRuntimeSettings(GANTRY_HOME);
     const stat = fs.statSync(filePath);
     runtimeSettingsCache = {
       filePath,
@@ -271,7 +271,7 @@ export function updatePublicRuntimeSettings(patch: {
     }
   }
   if (changed.length > 0) {
-    saveRuntimeSettings(MYCLAW_HOME, settings);
+    saveRuntimeSettings(GANTRY_HOME, settings);
     runtimeSettingsCache = undefined;
   }
   return {
@@ -303,7 +303,7 @@ export const AGENTS_DIR = path.resolve(RUNTIME_ROOT, 'agents');
 export const DATA_DIR = path.resolve(RUNTIME_ROOT, 'data');
 export const ARTIFACTS_DIR = path.resolve(RUNTIME_ROOT, 'artifacts');
 const runtimeStorageConfig = resolveRuntimeStorageConfig(
-  MYCLAW_HOME,
+  GANTRY_HOME,
   RUNTIME_ROOT,
 );
 export const STORAGE_POSTGRES_URL_ENV = runtimeStorageConfig.postgresUrlEnv;
@@ -340,7 +340,7 @@ export function getConfiguredDefaultModel(): string {
 export const TELEGRAM_BOT_TOKEN = envValue('TELEGRAM_BOT_TOKEN');
 export const SLACK_BOT_TOKEN = envValue('SLACK_BOT_TOKEN');
 export const SLACK_APP_TOKEN = envValue('SLACK_APP_TOKEN');
-export const MYCLAW_IPC_AUTH_SECRET = envValue('MYCLAW_IPC_AUTH_SECRET');
+export const GANTRY_IPC_AUTH_SECRET = envValue('GANTRY_IPC_AUTH_SECRET');
 export const REMOTE_CONTROL_AUTO_ACCEPT = parseBooleanEnv(
   envValue('REMOTE_CONTROL_AUTO_ACCEPT'),
   false,
