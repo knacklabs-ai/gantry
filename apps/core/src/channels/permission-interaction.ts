@@ -99,7 +99,7 @@ export function permissionButtonLabel(
   mode: PermissionApprovalDecisionMode,
   request: PermissionApprovalRequest,
 ): string {
-  if (mode === 'allow_once') return request.jobId ? 'Allow' : 'Allow once';
+  if (mode === 'allow_once') return 'Allow once';
   if (mode === 'allow_timed_grant') {
     return 'Allow 5 min';
   }

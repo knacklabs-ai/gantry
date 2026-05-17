@@ -146,14 +146,14 @@ describe('permission interaction', () => {
     );
   });
 
-  it('uses a shorter allow label for scheduled job prompts', () => {
+  it('keeps scheduled job prompts aligned with the permission vocabulary', () => {
     const request = {
       ...requestWithSuggestions([]),
       jobId: 'job-1',
       jobName: 'Lead sync',
     };
 
-    expect(permissionButtonLabel('allow_once', request)).toBe('Allow');
+    expect(permissionButtonLabel('allow_once', request)).toBe('Allow once');
     expect(permissionButtonLabel('allow_timed_grant', request)).toBe(
       'Allow 5 min',
     );
