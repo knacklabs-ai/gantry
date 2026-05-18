@@ -290,6 +290,59 @@ describe('Postgres migration journal', () => {
     expect(migration).toContain('USING gin');
   });
 
+  it('keeps JSONB performance indexes narrow and operator-specific', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const jsonbIndexPerformance = journal.entries.find(
+      (entry) => entry.tag === '0056_jsonb_index_performance',
+    );
+    expect(jsonbIndexPerformance).toMatchObject({ idx: 56 });
+
+    const migration55 = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0055_runtime_payload_jsonb_columns.sql',
+      ),
+      'utf8',
+    );
+    const migration56 = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0056_jsonb_index_performance.sql',
+      ),
+      'utf8',
+    );
+    const controlSchema = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/control-http.ts',
+      ),
+      'utf8',
+    );
+    const jobsSchema = fs.readFileSync(
+      path.resolve('apps/core/src/adapters/storage/postgres/schema/jobs.ts'),
+      'utf8',
+    );
+
+    expect(migration55).not.toContain(
+      'ON control_http_sessions USING gin (external_ref_json)',
+    );
+    expect(migration55).toContain(
+      "ON jobs USING gin ((coalesce(target_json -> 'notificationRoutes', '[]'::jsonb)) jsonb_path_ops)",
+    );
+    expect(migration56).toContain(
+      'DROP INDEX IF EXISTS idx_control_http_sessions_external_ref',
+    );
+    expect(migration56).toContain(
+      "ON jobs USING gin ((coalesce(target_json -> 'notificationRoutes', '[]'::jsonb)) jsonb_path_ops)",
+    );
+    expect(controlSchema).not.toContain(
+      'idx_control_http_sessions_external_ref',
+    );
+    expect(jobsSchema).toContain('jsonb_path_ops');
+  });
+
   it('registers provider session resume lookup index migration and schema', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
@@ -433,6 +486,44 @@ describe('Postgres migration journal', () => {
     expect(migration).not.toContain('metadata_json::jsonb');
     expect(migration).not.toContain('{sessionScope,');
     expect(migration).not.toContain('UPDATE agent_session_digests');
+  });
+
+  it('registers runtime payload jsonb column conversion migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const jsonbPayloads = journal.entries.find(
+      (entry) => entry.tag === '0055_runtime_payload_jsonb_columns',
+    );
+    expect(jsonbPayloads).toMatchObject({ idx: 55 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0055_runtime_payload_jsonb_columns.sql',
+      ),
+      'utf8',
+    );
+    for (const statement of [
+      'ALTER COLUMN external_ref_json TYPE jsonb USING external_ref_json::jsonb',
+      'ALTER COLUMN payload_json TYPE jsonb USING payload_json::jsonb',
+      'ALTER COLUMN provider_ref_json TYPE jsonb USING provider_ref_json::jsonb',
+      'ALTER COLUMN metadata_json TYPE jsonb USING metadata_json::jsonb',
+      'ALTER COLUMN schedule_json TYPE jsonb USING schedule_json::jsonb',
+      'ALTER COLUMN target_json TYPE jsonb USING target_json::jsonb',
+      'ALTER COLUMN value_json TYPE jsonb USING value_json::jsonb',
+      'ALTER COLUMN source_ref_json TYPE jsonb USING source_ref_json::jsonb',
+      "ON jobs ((target_json #>> '{executionContext,sessionId}')",
+      "COALESCE(value_json->>'value', '')",
+    ]) {
+      expect(migration).toContain(statement);
+    }
+    expect(migration).not.toContain('NULLIF(');
+    expect(migration).not.toContain('jsonb_strip_nulls');
+    expect(migration).not.toContain('target_json::jsonb #>>');
+    expect(migration).not.toContain('value_json::jsonb->>');
   });
 
   it('flattens memory subjects during the canonical persistence cut', () => {

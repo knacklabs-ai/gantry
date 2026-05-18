@@ -379,6 +379,20 @@
       "when": 1777180200000,
       "tag": "0054_drop_skill_provider_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1777183800000,
+      "tag": "0055_runtime_payload_jsonb_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1777187400000,
+      "tag": "0056_jsonb_index_performance",
+      "breakpoints": true
     }
   ]
 }
