@@ -1034,9 +1034,13 @@ describe('createChannelWiring', () => {
 
     const wiring = createChannelWiring(app, {
       providerIds: [
-        makeProvider('slack', vi.fn(() => outbound), {
-          isGroupJid: () => false,
-        }),
+        makeProvider(
+          'slack',
+          vi.fn(() => outbound),
+          {
+            isGroupJid: () => false,
+          },
+        ),
       ],
     });
     await wiring.connectEnabledChannels(
