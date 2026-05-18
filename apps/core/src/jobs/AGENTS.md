@@ -24,3 +24,6 @@
   then give one next action only when needed. Keep raw tool ids, task ids,
   queue diagnostics, exact repair commands, and logs in details/audit paths
   instead of the primary channel message.
+- pg-boss `startAfter` accepts a `Date` or an ISO string ending in `Z`; persisted
+  Postgres timestamptz strings such as `2026-05-19 04:00:00+00` must be
+  converted to `Date` before `boss.send`, or pg-boss treats them as intervals.
