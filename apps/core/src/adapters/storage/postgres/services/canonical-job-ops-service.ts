@@ -184,8 +184,8 @@ export class CanonicalJobOpsService {
   }
 
   // prettier-ignore
-  async updateAgentRunProviderMetadata(input: { runId: string; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
-    await this.repository.updateRunProviderMetadata(input.runId, { providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
+  async updateAgentRunProviderMetadata(input: { runId: string; runIds?: string[]; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
+    await this.repository.updateRunProviderMetadata(input.runIds ?? input.runId, { providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
   }
 
   async getRecentJobRuns(limit = 200): Promise<JobRun[]> {

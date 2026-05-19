@@ -13,11 +13,10 @@ vi.mock('@core/config/index.js', () => ({
 }));
 
 vi.mock('@core/memory/memory-llm-port.js', () => ({
-  getMemoryLlmClient: () =>
-    Promise.resolve({
-      isConfigured: () => true,
-      query: memoryLlmQuery,
-    }),
+  getMemoryLlmClient: () => ({
+    isConfigured: () => true,
+    query: memoryLlmQuery,
+  }),
 }));
 
 const subject: NormalizedMemorySubject = {

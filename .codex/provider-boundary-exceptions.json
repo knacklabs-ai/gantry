@@ -138,6 +138,15 @@
       "removeByPlan": "myclaw-architecture-gates-20260517-provider-boundary-sentinels"
     },
     {
+      "file": "apps/core/test/unit/adapters/anthropic-execution-adapter.test.ts",
+      "matches": {
+        "provider: 'anthropic'": 1,
+        "ANTHROPIC_": 1
+      },
+      "reason": "Anthropic execution adapter tests exercise provider-specific credential rejection behavior while the provider-boundary test layout cleanup is still tracked by the ratchet plan.",
+      "removeByPlan": "myclaw-architecture-gates-20260517-provider-boundary-sentinels"
+    },
+    {
       "file": "apps/core/test/unit/adapters/credentials/env-runtime-secret-provider.test.ts",
       "matches": {
         "ANTHROPIC_": 3
@@ -307,7 +316,7 @@
       "file": "apps/core/test/unit/runtime/agent-spawn.test.ts",
       "matches": {
         "ANTHROPIC_": 34,
-        "CLAUDE_CONFIG_DIR": 4,
+        "CLAUDE_CONFIG_DIR": 6,
         "CLAUDE_CODE_OAUTH_TOKEN": 2
       },
       "reason": "Existing Anthropic/Claude provider-boundary debt; this gate is count-exact so new leakage fails before the provider extraction cleanup.",
@@ -325,14 +334,6 @@
       "file": "apps/core/test/unit/session/session-commands.test.ts",
       "matches": {
         "provider: 'anthropic'": 2
-      },
-      "reason": "Existing Anthropic/Claude provider-boundary debt; this gate is count-exact so new leakage fails before the provider extraction cleanup.",
-      "removeByPlan": "myclaw-architecture-gates-20260517-provider-boundary-sentinels"
-    },
-    {
-      "file": "packages/contracts/test/unit/index.test.ts",
-      "matches": {
-        "provider: 'anthropic'": 3
       },
       "reason": "Existing Anthropic/Claude provider-boundary debt; this gate is count-exact so new leakage fails before the provider extraction cleanup.",
       "removeByPlan": "myclaw-architecture-gates-20260517-provider-boundary-sentinels"

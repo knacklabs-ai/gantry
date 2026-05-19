@@ -164,6 +164,7 @@ export interface RuntimeJobRepository {
   }): Promise<boolean>;
   updateAgentRunProviderMetadata?(input: {
     runId: string;
+    runIds?: string[];
     providerRunId?: string | null;
     providerSessionId?: string | null;
   }): Promise<void>;
@@ -253,6 +254,7 @@ export interface RuntimeAgentSessionRepository {
   }): Promise<string | undefined>;
   updateAgentRunProviderMetadata?(input: {
     runId: string;
+    runIds?: string[];
     providerRunId?: string | null;
     providerSessionId?: string | null;
   }): Promise<void>;

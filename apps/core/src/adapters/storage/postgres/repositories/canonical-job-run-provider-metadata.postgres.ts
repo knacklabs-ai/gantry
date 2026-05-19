@@ -1,11 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 
 import * as pgSchema from '../schema/schema.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
 
 export async function updateCanonicalJobRunProviderMetadata(
   db: CanonicalDb,
-  runId: string,
+  runId: string | readonly string[],
   input: {
     providerRunId?: string | null;
     providerSessionId?: string | null;
@@ -18,8 +18,10 @@ export async function updateCanonicalJobRunProviderMetadata(
     updates.providerSessionId = input.providerSessionId;
   }
   if (Object.keys(updates).length === 0) return;
+  const runIds = Array.isArray(runId) ? [...new Set(runId)] : [runId];
+  if (runIds.length === 0) return;
   await db
     .update(pgSchema.agentRunsPostgres)
     .set(updates)
-    .where(eq(pgSchema.agentRunsPostgres.id, runId));
+    .where(inArray(pgSchema.agentRunsPostgres.id, runIds));
 }

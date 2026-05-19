@@ -10,7 +10,7 @@ const memoryQueryMock = vi.hoisted(() => vi.fn());
 const memoryIsConfiguredMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@core/memory/memory-llm-port.js', () => ({
-  getMemoryLlmClient: async () => ({
+  getMemoryLlmClient: () => ({
     isConfigured: memoryIsConfiguredMock,
     query: memoryQueryMock,
   }),

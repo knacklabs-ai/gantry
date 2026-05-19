@@ -3,12 +3,12 @@ import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobRun } from '../../../../domain/repositories/domain-types.js';
 // prettier-ignore
 import type { JobListFilters, JobRunListFilters, ReleasedStaleJobLease } from '../../../../domain/repositories/ops-repo.js';
-// prettier-ignore
-import { RUNTIME_EVENT_TYPES, type RuntimeEventType } from '../../../../domain/events/runtime-event-types.js';
+import type { RuntimeEventType } from '../../../../domain/events/runtime-event-types.js';
 import { nowIso as currentIso } from '../../../../shared/time/datetime.js';
 import * as pgSchema from '../schema/schema.js';
 // prettier-ignore
 import { CANONICAL_APP_ID, type CanonicalDb, PostgresCanonicalGraphRepository, configVersionIdForAgent, jsonb, jsonText, parseJson } from './canonical-graph-repository.postgres.js';
+import { CANONICAL_JOB_EVENT_TYPES } from './canonical-job-event-types.postgres.js';
 // prettier-ignore
 import { releaseInterruptedCanonicalJobLeases, releaseStaleCanonicalJobLeases } from './canonical-job-lease-release.postgres.js';
 import { insertCanonicalJobRun } from './canonical-job-run-insert.postgres.js';
@@ -75,6 +75,25 @@ export interface CanonicalRunRecord {
   notifiedAt: string | null;
 }
 
+const canonicalRunProjection = {
+  id: pgSchema.agentRunsPostgres.id,
+  shortId: pgSchema.agentRunsPostgres.shortId,
+  jobId: pgSchema.agentRunsPostgres.jobId,
+  executionProviderId: pgSchema.agentRunsPostgres.executionProviderId,
+  providerRunId: pgSchema.agentRunsPostgres.providerRunId,
+  providerSessionId: pgSchema.agentRunsPostgres.providerSessionId,
+  workerId: pgSchema.agentRunsPostgres.workerId,
+  leaseOwner: pgSchema.agentRunsPostgres.leaseOwner,
+  leaseExpiresAt: pgSchema.agentRunsPostgres.leaseExpiresAt,
+  status: pgSchema.agentRunsPostgres.status,
+  createdAt: pgSchema.agentRunsPostgres.createdAt,
+  startedAt: pgSchema.agentRunsPostgres.startedAt,
+  endedAt: pgSchema.agentRunsPostgres.endedAt,
+  resultSummary: pgSchema.agentRunsPostgres.resultSummary,
+  errorSummary: pgSchema.agentRunsPostgres.errorSummary,
+  notifiedAt: pgSchema.agentRunsPostgres.notifiedAt,
+} satisfies Record<keyof CanonicalRunRecord, unknown>;
+
 export interface CanonicalJobEventRecord {
   id: string;
   appId: string;
@@ -84,34 +103,6 @@ export interface CanonicalJobEventRecord {
   payloadJson: string;
   createdAt: string;
 }
-
-const CANONICAL_JOB_EVENT_TYPES = [
-  RUNTIME_EVENT_TYPES.JOB_TRIGGERED,
-  RUNTIME_EVENT_TYPES.JOB_RUN_STARTED,
-  RUNTIME_EVENT_TYPES.JOB_STARTED,
-  RUNTIME_EVENT_TYPES.JOB_STREAMING,
-  RUNTIME_EVENT_TYPES.JOB_HEARTBEAT,
-  RUNTIME_EVENT_TYPES.JOB_SETUP_REQUIRED,
-  RUNTIME_EVENT_TYPES.JOB_TOOL_DENIED,
-  RUNTIME_EVENT_TYPES.JOB_TOOL_ACTIVITY,
-  RUNTIME_EVENT_TYPES.TASK_NOTIFICATION,
-  RUNTIME_EVENT_TYPES.PERMISSION_REQUESTED,
-  RUNTIME_EVENT_TYPES.PERMISSION_ALLOWED,
-  RUNTIME_EVENT_TYPES.PERMISSION_DENIED,
-  RUNTIME_EVENT_TYPES.PERMISSION_CANCELLED,
-  RUNTIME_EVENT_TYPES.PERMISSION_PERSISTED,
-  RUNTIME_EVENT_TYPES.PERMISSION_RESUMED,
-  RUNTIME_EVENT_TYPES.PERMISSION_FINAL_OUTCOME,
-  RUNTIME_EVENT_TYPES.SANDBOX_BLOCKED,
-  RUNTIME_EVENT_TYPES.RUN_COMPLETED,
-  RUNTIME_EVENT_TYPES.RUN_FAILED,
-  RUNTIME_EVENT_TYPES.RUN_TIMEOUT,
-  RUNTIME_EVENT_TYPES.RUN_DEAD_LETTERED,
-  RUNTIME_EVENT_TYPES.JOB_COMPLETED,
-  RUNTIME_EVENT_TYPES.JOB_FAILED,
-  RUNTIME_EVENT_TYPES.JOB_RUN_COMPLETED,
-  RUNTIME_EVENT_TYPES.JOB_RUN_FAILED,
-] as const;
 
 function canonicalAgentId(agentId: string): string {
   const trimmed = agentId.trim();
@@ -387,7 +378,7 @@ export class PostgresCanonicalJobRepository {
   }
 
   // prettier-ignore
-  async updateRunProviderMetadata(runId: string, input: { providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
+  async updateRunProviderMetadata(runId: string | readonly string[], input: { providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
     await updateCanonicalJobRunProviderMetadata(this.db, runId, input);
   }
 
@@ -400,7 +391,7 @@ export class PostgresCanonicalJobRepository {
 
   async findRunById(runId: string): Promise<CanonicalRunRecord | undefined> {
     const rows = await this.db
-      .select()
+      .select(canonicalRunProjection)
       .from(pgSchema.agentRunsPostgres)
       .where(eq(pgSchema.agentRunsPostgres.id, runId))
       .limit(1);
@@ -416,7 +407,10 @@ export class PostgresCanonicalJobRepository {
     if (!jobId && filters?.ownerAppId) {
       return this.listRunsForOwnerApp(filters.ownerAppId, limit, filters);
     }
-    const query = this.db.select().from(pgSchema.agentRunsPostgres).$dynamic();
+    const query = this.db
+      .select(canonicalRunProjection)
+      .from(pgSchema.agentRunsPostgres)
+      .$dynamic();
     const clauses = [
       jobId ? eq(pgSchema.agentRunsPostgres.jobId, jobId) : undefined,
       isNull(pgSchema.agentRunsPostgres.sessionId),
@@ -452,7 +446,7 @@ export class PostgresCanonicalJobRepository {
         : undefined,
     ].filter(Boolean);
     const rows = await this.db
-      .select()
+      .select(canonicalRunProjection)
       .from(pgSchema.controlHttpSessionsPostgres)
       .innerJoin(
         pgSchema.canonicalJobsPostgres,
@@ -468,12 +462,12 @@ export class PostgresCanonicalJobRepository {
         desc(pgSchema.agentRunsPostgres.createdAt),
       )
       .limit(limit);
-    return rows.map((row) => row.agent_runs);
+    return rows;
   }
 
   async listDeadLetterRuns(limit = 50): Promise<CanonicalRunRecord[]> {
     return this.db
-      .select()
+      .select(canonicalRunProjection)
       .from(pgSchema.agentRunsPostgres)
       .where(
         and(

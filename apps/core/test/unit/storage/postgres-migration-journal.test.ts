@@ -419,36 +419,61 @@ describe('Postgres migration journal', () => {
     expect(schema).toContain('table.updatedAt.desc()');
   });
 
-  it('registers Anthropic execution provider id cutover for runs and provider sessions', () => {
+  it('registers execution provider id run backfill and provider session cutover', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
     );
     const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
       entries: Array<{ idx: number; tag: string }>;
     };
+    const runBackfill = journal.entries.find(
+      (entry) => entry.tag === '0057_agent_run_execution_provider',
+    );
+    expect(runBackfill).toMatchObject({ idx: 57 });
     const providerCutover = journal.entries.find(
       (entry) => entry.tag === '0058_anthropic_execution_provider_id_cutover',
     );
     expect(providerCutover).toMatchObject({ idx: 58 });
 
-    const migration = fs.readFileSync(
+    const runMigration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0057_agent_run_execution_provider.sql',
+      ),
+      'utf8',
+    );
+    expect(runMigration).toContain('UPDATE agent_runs');
+    expect(runMigration).toContain(
+      "execution_provider_id = 'anthropic:claude-agent-sdk'",
+    );
+    expect(runMigration).toContain('agent_runs_execution_provider_id_safe');
+    expect(runMigration).toContain(
+      "execution_provider_id text DEFAULT 'anthropic:claude-agent-sdk'",
+    );
+    expect(runMigration).toContain(
+      "ALTER COLUMN execution_provider_id SET DEFAULT 'anthropic:claude-agent-sdk'",
+    );
+
+    const providerMigration = fs.readFileSync(
       path.resolve(
         'apps/core/src/adapters/storage/postgres/schema/migrations/0058_anthropic_execution_provider_id_cutover.sql',
       ),
       'utf8',
     );
-    expect(migration).toContain('UPDATE agent_runs');
-    expect(migration).toContain(
-      "execution_provider_id = 'anthropic:claude-agent-sdk'",
+    expect(providerMigration).not.toContain('UPDATE agent_runs');
+    expect(providerMigration).toContain('UPDATE provider_sessions');
+    expect(providerMigration).toContain(
+      "provider = 'anthropic:claude-agent-sdk'",
     );
-    expect(migration).toContain('UPDATE provider_sessions');
-    expect(migration).toContain("provider = 'anthropic:claude-agent-sdk'");
-    expect(migration).toContain('provider_ref_json = jsonb_build_object');
-    expect(migration).toContain(
-      "'value', 'anthropic:claude-agent-sdk:' || external_session_id",
+    expect(providerMigration).toContain(
+      'provider_ref_json = jsonb_build_object',
     );
-    expect(migration).toContain("'provider', 'anthropic:claude-agent-sdk'");
-    expect(migration).toContain("'anthropic-claude-agent-sdk'");
+    expect(providerMigration).toContain(
+      "'anthropic:claude-agent-sdk:' || regexp_replace",
+    );
+    expect(providerMigration).toContain(
+      "'provider', 'anthropic:claude-agent-sdk'",
+    );
+    expect(providerMigration).toContain("'anthropic-claude-agent-sdk'");
   });
 
   it('registers message attachment message lookup index migration and schema', () => {
@@ -756,7 +781,41 @@ describe('Postgres migration journal', () => {
     expect(migration).toContain(`kind = '${['anthropic', 'sdk'].join('_')}'`);
     expect(migration).toContain(`provider = 'anth${'ropic'}'`);
     expect(migration).toContain("'tool:Read'");
+    expect(migration).toContain('BEGIN;');
+    expect(migration).toContain(
+      'CREATE TEMP TABLE provider_native_tool_cleanup_ids',
+    );
+    expect(migration).toContain('tool:removed-provider-native-sdk:');
+    expect(migration).toContain('UPDATE permission_decisions');
     expect(migration).toContain('DELETE FROM agent_tool_bindings');
     expect(migration).toContain('DELETE FROM tool_catalog');
+    expect(migration).toContain('COMMIT;');
+  });
+
+  it('registers agent run provider index migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const providerIndexes = journal.entries.find(
+      (entry) => entry.tag === '0060_agent_run_provider_indexes',
+    );
+    expect(providerIndexes).toMatchObject({ idx: 60 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0060_agent_run_provider_indexes.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(
+      'DROP INDEX IF EXISTS idx_agent_runs_execution_provider',
+    );
+    expect(migration).toContain('idx_agent_runs_provider_session');
+    expect(migration).toContain('idx_agent_runs_lease_claim');
+    expect(migration).toContain("WHERE status IN ('pending', 'leased')");
+    expect(migration).toContain('idx_provider_sessions_agent_provider');
   });
 });

@@ -42,6 +42,9 @@
   `provider_sessions.provider`, and `provider_sessions.provider_ref_json`.
   Leaving provider session rows on the old id breaks live SDK resume even when
   canonical `AgentSession` rows still exist.
+- Shared Postgres schema files must not carry provider-specific default values.
+  Runtime insertion paths should pass the resolved execution provider id
+  explicitly, while historical migrations may backfill concrete old values.
 - Conversation route projection must preserve the canonical conversation kind:
   `direct`/`dm` rows return runtime `conversationKind: "dm"` and group/channel
   rows return `conversationKind: "channel"`. Do not infer DM-vs-group memory

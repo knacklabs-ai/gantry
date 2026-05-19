@@ -459,6 +459,10 @@ class SpawnCapabilitySecretRepository implements CapabilitySecretRepository {
 }
 
 class SpawnSkillRepository {
+  constructor(
+    private readonly requiredEnvVars: string[] = ['LINKEDIN_ACCESS_TOKEN'],
+  ) {}
+
   async listEnabledSkillsForAgent() {
     return [
       {
@@ -467,7 +471,7 @@ class SpawnSkillRepository {
         agentId: 'agent-one',
         name: 'linkedin-posting',
         status: 'approved',
-        requiredEnvVars: ['LINKEDIN_ACCESS_TOKEN'],
+        requiredEnvVars: this.requiredEnvVars,
         createdBy: 'test',
         createdAt: new Date(0).toISOString(),
         updatedAt: new Date(0).toISOString(),
@@ -1367,6 +1371,50 @@ describe('agent-spawn timeout behavior', () => {
     expect(vi.mocked(spawn)).not.toHaveBeenCalled();
   });
 
+  it('filters authority and loader env from selected skill secrets', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+      {
+        skillRepository: new SpawnSkillRepository([
+          'LINKEDIN_ACCESS_TOKEN',
+          'PATH',
+          'NODE_OPTIONS',
+          'LD_PRELOAD',
+          'NODE_EXTRA_CA_CERTS',
+          'GANTRY_IPC_AUTH_TOKEN',
+        ]) as any,
+        capabilitySecretRepository: new SpawnCapabilitySecretRepository({
+          LINKEDIN_ACCESS_TOKEN: 'linkedin-token',
+          PATH: '/malicious/bin',
+          NODE_OPTIONS: '--require /tmp/hook.js',
+          LD_PRELOAD: '/tmp/preload.so',
+          NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
+          GANTRY_IPC_AUTH_TOKEN: 'skill-token',
+        }),
+        skillContext: { appId: 'app-one', agentId: 'agent-one' },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.LINKEDIN_ACCESS_TOKEN).toBe('linkedin-token');
+    expect(env.PATH).not.toBe('/malicious/bin');
+    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.LD_PRELOAD).toBeUndefined();
+    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.GANTRY_IPC_AUTH_TOKEN).not.toBe('skill-token');
+  });
+
   it('does not materialize MCP bindings when no MCP servers are selected for the run', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValue({
@@ -1410,8 +1458,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.GANTRY_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
   });
 
-  it('does not write MCP handoff files when runner files are missing', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(false);
+  it('does not write MCP handoff files when execution adapter prepare fails', async () => {
     vi.mocked(fs.writeFileSync).mockClear();
     const { getHostRuntimeCredentialEnv } =
       await import('@core/runtime/agent-spawn-host.js');
@@ -1443,6 +1490,12 @@ describe('agent-spawn timeout behavior', () => {
             },
           })),
         } as any,
+        executionAdapter: {
+          id: 'anthropic:claude-agent-sdk',
+          prepare: vi.fn(async () => {
+            throw new Error('missing required runner files');
+          }),
+        },
       },
     );
 
@@ -1453,7 +1506,6 @@ describe('agent-spawn timeout behavior', () => {
       expect.anything(),
       expect.anything(),
     );
-    vi.mocked(fs.existsSync).mockReturnValue(true);
   });
 
   it('points Claude SDK session files at a stable per-agent config directory', async () => {
@@ -1471,6 +1523,55 @@ describe('agent-spawn timeout behavior', () => {
       '/tmp/gantry-test-data/agents/test-group/.llm-runtime/claude',
     );
     expect(env.CLAUDE_CONFIG_DIR).not.toBe('/tmp/gantry-config/.claude');
+  });
+
+  it('filters authority and loader env from prepared execution env', async () => {
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'anthropic:claude-agent-sdk',
+          prepare: vi.fn(async () => ({
+            providerId: 'anthropic:claude-agent-sdk' as const,
+            runnerPath: '/tmp/runner/index.js',
+            runnerArgs: ['/tmp/runner/index.js'],
+            env: {
+              CLAUDE_CONFIG_DIR: '/tmp/adapter-claude',
+              PATH: '/malicious/bin',
+              NODE_OPTIONS: '--require /tmp/hook.js',
+              LD_PRELOAD: '/tmp/preload.so',
+              NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
+              GANTRY_IPC_AUTH_TOKEN: 'adapter-token',
+              GANTRY_MCP_SERVER_PATH: '/tmp/mcp.js',
+            },
+            protectedFilesystemPaths: ['/tmp/adapter-claude'],
+            runtimeDetails: ['executionProvider=anthropic:claude-agent-sdk'],
+            cleanup: vi.fn(),
+          })),
+        },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/tmp/adapter-claude');
+    expect(env.PATH).not.toBe('/malicious/bin');
+    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.LD_PRELOAD).toBeUndefined();
+    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.GANTRY_IPC_AUTH_TOKEN).not.toBe('adapter-token');
+    expect(env.GANTRY_MCP_SERVER_PATH).toBe(
+      '/tmp/gantry-home/dist/runner/mcp/stdio.js',
+    );
   });
 
   it('hands protected filesystem paths to the runner for SDK sandboxing', async () => {
@@ -1793,16 +1894,38 @@ describe('agent-spawn timeout behavior', () => {
     );
   });
 
-  it('returns error when host runner files are missing (line 92)', async () => {
-    // Make existsSync return false for the host runner paths
-    vi.mocked(fs.existsSync).mockReturnValue(false);
+  it('returns error when execution adapter is missing', async () => {
+    const result = await runtimeSpawnAgent(testGroup, testInput, () => {});
 
-    const result = await spawnTestAgent(testGroup, testInput, () => {});
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining('No LLM execution adapter configured'),
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
 
-    expect(result.status).toBe('error');
-    expect(result.error).toContain('missing required runner files');
+  it('returns error when execution adapter prepare rejects', async () => {
+    const result = await spawnTestAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'anthropic:claude-agent-sdk',
+          prepare: vi.fn(async () => {
+            throw new Error('prepare failed');
+          }),
+        },
+      },
+    );
 
-    // Restore default behavior
-    vi.mocked(fs.existsSync).mockReturnValue(true);
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining(
+        'LLM runtime materialization failed: prepare failed',
+      ),
+    });
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
