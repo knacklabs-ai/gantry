@@ -50,3 +50,7 @@
   partially updated belong in native `jsonb`. Pass objects/arrays to Drizzle
   `jsonb` columns, keep canonical route/lease/audit/join fields typed, and do
   not add `::jsonb` casts around columns that are already `jsonb`.
+- `tool_catalog` is Gantry durable capability state, not a provider SDK tool
+  manifest. Do not seed Claude/Anthropic native tool rows such as `Read`,
+  `Write`, `Bash`, `Agent`, or `WebSearch`; those names belong inside the
+  Anthropic execution adapter's per-run harness projection.

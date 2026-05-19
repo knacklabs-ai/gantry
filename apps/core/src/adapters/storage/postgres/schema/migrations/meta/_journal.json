@@ -407,6 +407,13 @@
       "when": 1777194600000,
       "tag": "0058_anthropic_execution_provider_id_cutover",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1777198200000,
+      "tag": "0059_remove_provider_native_tool_catalog",
+      "breakpoints": true
     }
   ]
 }

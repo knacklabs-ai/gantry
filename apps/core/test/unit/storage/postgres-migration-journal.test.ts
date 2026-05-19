@@ -734,4 +734,29 @@ describe('Postgres migration journal', () => {
       "digest(idempotency_fingerprint, 'sha256')",
     );
   });
+
+  it('registers provider-native tool catalog cleanup migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const cleanup = journal.entries.find(
+      (entry) => entry.tag === '0059_remove_provider_native_tool_catalog',
+    );
+    expect(cleanup).toMatchObject({ idx: 59 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0059_remove_provider_native_tool_catalog.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(`kind = '${['anthropic', 'sdk'].join('_')}'`);
+    expect(migration).toContain(`provider = 'anth${'ropic'}'`);
+    expect(migration).toContain("'tool:Read'");
+    expect(migration).toContain('DELETE FROM agent_tool_bindings');
+    expect(migration).toContain('DELETE FROM tool_catalog');
+  });
 });

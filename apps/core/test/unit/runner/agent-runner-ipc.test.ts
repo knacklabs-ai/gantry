@@ -122,6 +122,12 @@ function createRunnerFixture(): {
     path.join(adapterDir, 'agent-capabilities.ts'),
   );
   fs.copyFileSync(
+    path.resolve(
+      'apps/core/src/adapters/llm/anthropic-claude-agent/native-sdk-tools.ts',
+    ),
+    path.join(adapterDir, 'native-sdk-tools.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/runner/gantry-mcp-tool-surface.ts'),
     path.join(runnerDir, 'gantry-mcp-tool-surface.ts'),
   );

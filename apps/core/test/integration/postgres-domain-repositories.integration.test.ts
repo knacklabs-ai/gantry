@@ -337,10 +337,19 @@ maybeDescribe('Postgres domain repositories', () => {
       agentId,
       toolBindings: [
         {
-          id: `agent-tool-binding:${agentId}:tool:Read` as never,
+          id: `agent-tool-binding:${agentId}:tool:Browser` as never,
           appId,
           agentId,
-          toolId: 'tool:Read' as never,
+          toolId: 'tool:Browser' as never,
+          status: 'active',
+          createdAt: updatedAt,
+          updatedAt,
+        },
+        {
+          id: `agent-tool-binding:${agentId}:tool:mcp__gantry__service_restart` as never,
+          appId,
+          agentId,
+          toolId: 'tool:mcp__gantry__service_restart' as never,
           status: 'active',
           createdAt: updatedAt,
           updatedAt,
@@ -357,10 +366,46 @@ maybeDescribe('Postgres domain repositories', () => {
     });
 
     expect(
-      bindings.find((binding) => binding.toolId === 'tool:Read')?.status,
+      bindings.find((binding) => binding.toolId === 'tool:Browser')?.status,
     ).toBe('active');
     expect(
-      bindings.find((binding) => binding.toolId === 'tool:Agent')?.status,
+      bindings.find(
+        (binding) => binding.toolId === 'tool:mcp__gantry__service_restart',
+      )?.status,
+    ).toBe('active');
+
+    await repositories.agents.replaceAgentCapabilityBindings({
+      appId,
+      agentId,
+      toolBindings: [
+        {
+          id: `agent-tool-binding:${agentId}:tool:Browser` as never,
+          appId,
+          agentId,
+          toolId: 'tool:Browser' as never,
+          status: 'active',
+          createdAt: updatedAt,
+          updatedAt,
+        },
+      ],
+      skillBindings: [],
+      mcpBindings: [],
+      updatedAt,
+    });
+
+    const replacedBindings = await repositories.tools.listAgentToolBindings({
+      appId,
+      agentId,
+    });
+
+    expect(
+      replacedBindings.find((binding) => binding.toolId === 'tool:Browser')
+        ?.status,
+    ).toBe('active');
+    expect(
+      replacedBindings.find(
+        (binding) => binding.toolId === 'tool:mcp__gantry__service_restart',
+      )?.status,
     ).toBe('disabled');
   });
 

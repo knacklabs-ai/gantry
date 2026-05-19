@@ -1609,17 +1609,17 @@ describe('agent-spawn timeout behavior', () => {
   it.each([
     [
       'SDK sandbox network access',
-      ['Read', 'SandboxNetworkAccess'],
+      ['Browser', 'SandboxNetworkAccess'],
       'SDK sandbox network prompts are internal',
     ],
     [
       'exact third-party MCP tool',
-      ['Read', 'mcp__github__search_repositories'],
+      ['Browser', 'mcp__github__search_repositories'],
       'Third-party MCP tool names are not selected directly',
     ],
     [
       'bare Bash',
-      ['Read', 'Bash'],
+      ['Browser', 'Bash'],
       'Persistent bare Bash grants are too broad',
     ],
   ])(

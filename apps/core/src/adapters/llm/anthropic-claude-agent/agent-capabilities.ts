@@ -21,6 +21,13 @@ import {
   isHostPrivateBrowserMcpServerName,
   parseReadableScopedToolRule,
 } from '../../../shared/agent-tool-references.js';
+import {
+  AVAILABLE_NATIVE_SDK_TOOLS,
+  DEVELOPER_NATIVE_SDK_TOOLS,
+  PERMISSION_GATED_NATIVE_SDK_TOOLS,
+  SAFE_NATIVE_SDK_TOOLS,
+  UNSUPPORTED_CLAUDE_CODE_BUILTIN_TOOLS,
+} from './native-sdk-tools.js';
 
 export interface AgentCapabilityContext {
   mcpServerPath: string;
@@ -76,54 +83,9 @@ export interface AgentCapabilityProvider {
   provide: (ctx: AgentCapabilityContext) => Partial<AgentCapabilityProfile>;
 }
 
-const SAFE_NATIVE_SDK_TOOLS = [
-  'Agent',
-  'WebSearch',
-  'WebFetch',
-  'ToolSearch',
-  'Skill',
-] as const;
-
-const DEVELOPER_NATIVE_SDK_TOOLS = ['Read', 'Glob', 'Grep'] as const;
-const PERMISSION_GATED_NATIVE_SDK_TOOLS = [
-  'Bash',
-  'Edit',
-  'Write',
-  'LS',
-  'MultiEdit',
-  'NotebookEdit',
-] as const;
-const AVAILABLE_NATIVE_SDK_TOOLS = [
-  ...DEVELOPER_NATIVE_SDK_TOOLS,
-  ...PERMISSION_GATED_NATIVE_SDK_TOOLS,
-  ...SAFE_NATIVE_SDK_TOOLS,
-] as const;
-
 const CONFIGURABLE_NATIVE_SDK_TOOL_NAMES = new Set<string>([
   ...AVAILABLE_NATIVE_SDK_TOOLS,
 ]);
-
-export const UNSUPPORTED_CLAUDE_CODE_BUILTIN_TOOLS = [
-  'AskUserQuestion',
-  'SendMessage',
-  'CronCreate',
-  'CronDelete',
-  'RemoteTrigger',
-  'ScheduleWakeup',
-  'PushNotification',
-  'TeamCreate',
-  'TeamDelete',
-  'TaskOutput',
-  'TaskStop',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'EnterWorktree',
-  'ExitWorktree',
-  'Monitor',
-  'TodoWrite',
-  'ListMcpResources',
-  'ReadMcpResource',
-] as const;
 
 const GANTRY_MCP_ALLOWED_TOOLS = DEFAULT_GANTRY_MCP_TOOL_NAMES.map(
   gantryMcpFullToolName,
