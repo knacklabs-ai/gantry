@@ -50,7 +50,7 @@ import {
 import type { AgentExecutionAdapter } from '../../application/agent-execution/agent-execution-adapter.js';
 import { registerMemoryLlmClient } from '../../memory/memory-llm-port.js';
 
-type RuntimeAppRepository = RuntimeRouterStateRepository &
+export type RuntimeAppRepository = RuntimeRouterStateRepository &
   RuntimeMessageRepository &
   RuntimeConversationRouteRepository &
   RuntimeChatMetadataRepository &

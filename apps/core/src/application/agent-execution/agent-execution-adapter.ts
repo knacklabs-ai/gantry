@@ -13,14 +13,12 @@ import type {
 import type { HostnameLookup } from '../../domain/network/public-address-policy.js';
 import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
 import type { RemoteMcpDnsValidationCache } from '../mcp/mcp-server-policy.js';
-import type {
-  ModelCatalogEntry,
-  ModelProviderId,
-} from '../../shared/model-catalog.js';
+import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
+import type { ModelCatalogEntry } from '../../shared/model-catalog.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import type { YoloModeSettings } from '../../shared/yolo-mode-policy.js';
 
-export type AgentExecutionProviderId = `${ModelProviderId}:${string}`;
+export type AgentExecutionProviderId = ExecutionProviderId;
 
 export interface AgentExecutionRunInput {
   prompt: string;

@@ -5,6 +5,7 @@ import { ARTIFACTS_DIR, RUNTIME_SETTINGS_PATH } from '../../../config/index.js';
 import type {
   AgentExecutionAdapter,
   AgentExecutionAdapterPrepareInput,
+  AgentExecutionProviderId,
   PreparedAgentExecution,
 } from '../../../application/agent-execution/agent-execution-adapter.js';
 import {
@@ -25,7 +26,7 @@ const ANTHROPIC_MODEL_ENV = 'ANTHROPIC_MODEL';
 const GANTRY_MCP_SERVER_PATH_ENV = 'GANTRY_MCP_SERVER_PATH';
 
 export class AnthropicClaudeAgentExecutionAdapter implements AgentExecutionAdapter {
-  readonly id = 'anthropic:claude-agent-sdk' as const;
+  readonly id = 'anthropic:claude-agent-sdk' as AgentExecutionProviderId;
 
   async prepare(
     input: AgentExecutionAdapterPrepareInput,
