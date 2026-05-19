@@ -13,6 +13,7 @@ import type {
   AgentSession,
   ExecutionProviderId,
 } from '../../../../domain/sessions/sessions.js';
+import { assertSafeExecutionProviderId } from '../../../../domain/sessions/execution-provider-id.js';
 import type {
   JobEventListFilters,
   JobListFilters,
@@ -353,6 +354,7 @@ export class PostgresRuntimeRepositoryBundle
     providerSessionId?: string | null;
     cause: 'message' | 'job' | 'control' | 'manual';
   }): Promise<string | undefined> {
+    assertSafeExecutionProviderId(input.executionProviderId);
     const repositories = createPostgresDomainRepositories(this.db, this.pool);
     const session = await repositories.agentSessions.getAgentSession(
       input.agentSessionId as never,
@@ -393,6 +395,7 @@ export class PostgresRuntimeRepositoryBundle
 
   async updateAgentRunProviderMetadata(input: {
     runId: string;
+    runIds?: string[];
     providerRunId?: string | null;
     providerSessionId?: string | null;
   }): Promise<void> {

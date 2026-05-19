@@ -344,7 +344,7 @@ export class LlmMemoryExtractionProvider implements MemoryExtractionProvider {
     if (!turns.length) {
       return extractionResult([]);
     }
-    const memoryLlm = await getMemoryLlmClient();
+    const memoryLlm = getMemoryLlmClient();
     if (!memoryLlm.isConfigured()) {
       return extractionResult([], 'auth_unavailable', 'auth_unavailable');
     }
@@ -606,7 +606,7 @@ export async function proposeMemoryDreamingActions(input: {
   candidates: ProposalCandidateRow[];
   activeItems: CanonicalMemoryItemRow[];
 }): Promise<MemoryLifecycleProposal[]> {
-  const memoryLlm = await getMemoryLlmClient();
+  const memoryLlm = getMemoryLlmClient();
   if (!memoryLlm.isConfigured()) return [];
   const model = getMemoryModelRuntimeConfig().dreaming;
   const payload = {
@@ -660,7 +660,7 @@ export async function proposeMemoryConsolidationActions(input: {
   subject: NormalizedMemorySubject;
   activeItems: CanonicalMemoryItemRow[];
 }): Promise<MemoryLifecycleProposal[]> {
-  const memoryLlm = await getMemoryLlmClient();
+  const memoryLlm = getMemoryLlmClient();
   if (!memoryLlm.isConfigured()) return [];
   const model = getMemoryModelRuntimeConfig().consolidation;
   const payload = {

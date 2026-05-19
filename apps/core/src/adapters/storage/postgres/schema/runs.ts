@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -91,16 +92,11 @@ export const agentRunsPostgres = pgTable(
       table.startedAt.desc().nullsLast(),
       table.createdAt.desc(),
     ),
-    executionProviderIdx: index('idx_agent_runs_execution_provider').on(
-      table.executionProviderId,
-    ),
     providerSessionIdx: index('idx_agent_runs_provider_session').on(
       table.providerSessionId,
     ),
-    leaseClaimIdx: index('idx_agent_runs_lease_claim').on(
-      table.status,
-      table.leaseExpiresAt,
-      table.leaseOwner,
-    ),
+    leaseClaimIdx: index('idx_agent_runs_lease_claim')
+      .on(table.status, table.leaseExpiresAt, table.leaseOwner)
+      .where(sql`${table.status} IN ('pending', 'leased')`),
   }),
 );

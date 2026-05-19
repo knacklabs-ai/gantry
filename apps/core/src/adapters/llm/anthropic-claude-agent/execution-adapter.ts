@@ -49,6 +49,15 @@ export class AnthropicClaudeAgentExecutionAdapter implements AgentExecutionAdapt
     this.validateCredentialProjection(input);
 
     const packageRoot = input.packageRootFromRunner(runnerPath);
+    const relativeRunnerPath = path.relative(packageRoot, runnerPath);
+    if (
+      relativeRunnerPath.startsWith('..') ||
+      path.isAbsolute(relativeRunnerPath)
+    ) {
+      throw new Error(
+        'Anthropic execution adapter runner path escaped the Gantry package root.',
+      );
+    }
     const skillSources = this.skillSources(input, packageRoot);
     const materialization = await materializeClaudeRuntime({
       groupDir: input.groupDir,
@@ -174,7 +183,7 @@ export function createAnthropicClaudeAgentExecutionAdapter(): AgentExecutionAdap
 function isOpenRouterBaseUrl(value?: string): boolean {
   if (!value) return false;
   try {
-    const hostname = new URL(value).hostname.toLowerCase();
+    const hostname = new URL(value).hostname.toLowerCase().replace(/\.+$/, '');
     return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
   } catch {
     return false;

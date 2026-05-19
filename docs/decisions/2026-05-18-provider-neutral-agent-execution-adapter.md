@@ -42,6 +42,13 @@ registers the current Anthropic adapter implementation explicitly; memory
 extraction and dreaming code no longer imports the Anthropic SDK directly or
 uses a hidden dynamic provider fallback.
 
+Memory LLM calls are an explicit egress-policy exception for this adapter
+phase: they run in the host process through the model credential broker lane
+instead of the child runner's loopback egress gateway. The exemption is limited
+to memory extraction/dreaming traffic, does not expose agent tool subprocess
+environment, and must be removed by adding an application-level memory LLM
+egress port before any non-broker direct model transport is introduced.
+
 ## Consequences
 
 - Runtime orchestration can launch the current Claude behavior without importing
@@ -61,7 +68,7 @@ uses a hidden dynamic provider fallback.
 | Runtime behavior | Changed | Spawn now asks an execution adapter to prepare the child process. |
 | `settings.yaml` | Unchanged by design | No settings shape changes; model aliases and broker config stay current. |
 | Postgres/runtime projection | Changed | AgentRun records now persist execution provider metadata and ProviderSession rows are normalized to the adapter id; ProviderSession remains adapter metadata attached to AgentSession. |
-| Control API | Unchanged by design | Public API semantics do not change. |
+| Control API | Changed | Run list/detail responses omit provider-native session/run handles; runtime events remain the diagnostic surface. |
 | SDK/contracts | Changed | Public tool catalog contracts no longer expose provider-native SDK tool kinds; provider runner details remain adapter-private. |
 | CLI | Unchanged by design | Existing model and credential commands keep behavior. |
 | Gantry MCP tools/admin skill | Changed | Durable authority remains canonical; provider-native SDK tools are removed from selected catalog state while Gantry MCP/browser tools stay runtime projections. |

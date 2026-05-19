@@ -150,6 +150,41 @@ describe('jobs/execution', () => {
     vi.clearAllMocks();
   });
 
+  it('records a failed terminal run when execution throws before normal settlement', async () => {
+    const job = makeJob();
+    const opsRepository = {
+      ...makeOpsRepository(job),
+      getJobRunById: vi.fn(async () => {
+        throw new Error('run lookup down');
+      }),
+    };
+
+    await expect(
+      runJob(
+        job,
+        {
+          conversationRoutes: () => ({ 'tg:scheduler': makeRoute() }),
+          queue: {} as never,
+          onProcess: () => {},
+          sendMessage: vi.fn(async () => undefined) as never,
+          opsRepository: opsRepository as never,
+          runAgent: vi.fn(async () => ({
+            status: 'success',
+            result: 'runtime flow completed',
+          })) as never,
+        },
+        'tg:scheduler',
+      ),
+    ).rejects.toThrow('run lookup down');
+
+    expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      null,
+      'Scheduler run failed before terminal settlement.',
+    );
+  });
+
   it('records and notifies unresolved execution routes as dead-lettered runs', async () => {
     const job = makeJob({
       execution_context: {
@@ -725,13 +760,11 @@ describe('jobs/execution', () => {
     expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
       runId: expect.any(String),
       providerSessionId: 'provider-session:resume',
+      runIds: [expect.any(String)],
     });
     expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
       runId: expect.any(String),
-      providerRunId: 'provider-run:scheduler-1',
-    });
-    expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
-      runId: 'agent-run:job-1',
+      runIds: [expect.any(String), 'agent-run:job-1'],
       providerRunId: 'provider-run:scheduler-1',
     });
   });
@@ -850,6 +883,11 @@ describe('jobs/execution', () => {
     );
 
     expect(opsRepository.setSession).not.toHaveBeenCalled();
+    expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
+      runId: expect.any(String),
+      runIds: [expect.any(String), 'agent-run:job-1'],
+      providerSessionId: 'provider-session:streamed',
+    });
   });
 
   it('inherits Browser for jobs without projecting raw browser MCP tools', async () => {

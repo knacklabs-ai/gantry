@@ -195,20 +195,20 @@ describe('contracts package', () => {
     expectInvalid(CreateAgentRequestSchema, { appId: 'app-1', name: '' });
     expect(
       ProviderSessionResponseSchema.parse({
-        provider: 'anthropic',
+        provider: 'anthropic:claude-agent-sdk',
         status: 'active',
         hasProviderResume: true,
         createdAt: iso,
         updatedAt: iso,
       }),
     ).toMatchObject({
-      provider: 'anthropic',
+      provider: 'anthropic:claude-agent-sdk',
       status: 'active',
       hasProviderResume: true,
     });
     expectInvalid(ProviderSessionResponseSchema, {
       id: 'provider-session-sdk-resume-handle',
-      provider: 'anthropic',
+      provider: 'anthropic:claude-agent-sdk',
       status: 'active',
       hasProviderResume: true,
       createdAt: iso,

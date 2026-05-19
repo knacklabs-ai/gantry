@@ -21,6 +21,6 @@ const unconfiguredMemoryLlmClient: MemoryLlmClient = {
   },
 };
 
-export async function getMemoryLlmClient(): Promise<MemoryLlmClient> {
+export function getMemoryLlmClient(): MemoryLlmClient {
   return registeredClient ?? unconfiguredMemoryLlmClient;
 }

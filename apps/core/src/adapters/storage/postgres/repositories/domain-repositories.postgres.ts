@@ -66,6 +66,7 @@ import type {
   WorkspaceSnapshot,
 } from '../../../../domain/sandbox/sandbox.js';
 import type { AgentSession } from '../../../../domain/sessions/sessions.js';
+import { assertSafeExecutionProviderId } from '../../../../domain/sessions/execution-provider-id.js';
 import type { ExternalRef } from '../../../../shared/ids/branded-id.js';
 import * as pgSchema from '../schema/schema.js';
 import {
@@ -1349,6 +1350,7 @@ export class PostgresAgentRunRepository implements AgentRunRepository {
     return rows[0] ? this.runFromRow(rows[0]) : null;
   }
   async saveAgentRun(run: AgentRun): Promise<void> {
+    assertSafeExecutionProviderId(run.executionProviderId);
     await this.db
       .insert(pgSchema.agentRunsPostgres)
       .values({
