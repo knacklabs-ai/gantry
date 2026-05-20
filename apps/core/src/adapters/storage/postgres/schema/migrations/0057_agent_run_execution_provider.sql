@@ -30,6 +30,9 @@ BEGIN
 END $$;
 
 ALTER TABLE agent_runs
+  ALTER COLUMN execution_provider_id DROP DEFAULT;
+
+ALTER TABLE agent_runs
   DROP CONSTRAINT IF EXISTS agent_runs_execution_provider_id_safe,
   ADD CONSTRAINT agent_runs_execution_provider_id_safe
     CHECK (
