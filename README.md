@@ -190,6 +190,36 @@ gantry setup
 
 The Compose file hardcodes the local ports, schema names, and non-secret role names. `~/gantry/.env` only needs local passwords, `SECRET_ENCRYPTION_KEY`, and the runtime connection URLs. Gantry setup does not start Docker or create containers; it asks for `GANTRY_DATABASE_URL` and `ONECLI_DATABASE_URL`, creates the `gantry-model-access` Model Access profile, then writes the non-secret OneCLI gateway URL to `settings.yaml` as `credential_broker.onecli.url`.
 
+### Docker Runtime
+
+Gantry can also run as a Docker service. The image builds Gantry inside Linux,
+then starts the compiled runtime. Setup remains a runtime lifecycle step rather
+than an image-build step:
+
+```bash
+docker compose run --rm gantry gantry setup
+docker compose up --build gantry postgres onecli
+```
+
+The `gantry` service uses Compose DNS names for internal dependencies:
+
+- `postgres` for `GANTRY_DATABASE_URL`
+- `postgres` with the separate OneCLI role and `schema=onecli` for
+  `ONECLI_DATABASE_URL`
+- `onecli` for the credential broker URL stored in `settings.yaml`
+
+When publishing the Control API port from a container, Compose sets
+`GANTRY_CONTROL_HOST=0.0.0.0` and binds the published host port to
+`127.0.0.1`. Non-Docker host runtime keeps the safer default
+`GANTRY_CONTROL_HOST=127.0.0.1`.
+
+Control API health is authenticated. Use a key from
+`GANTRY_CONTROL_API_KEYS_JSON` with `sessions:read`:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/v1/health
+```
+
 If an older local `.env` still contains settings-owned keys such as `GANTRY_CREDENTIAL_MODE`, `ONECLI_URL`, `ANTHROPIC_MODEL`, or `SLACK_PERMISSION_APPROVER_IDS`, move those values into `settings.yaml` and remove them from `.env` before starting the runtime.
 
 Gantry intentionally does not expose a destructive database-reset command in the runtime CLI. If you need to start over during development, stop Gantry, reset your local Postgres outside the agent-facing CLI, then run `gantry provider connect telegram` or `gantry provider connect slack` to re-register chats.
@@ -215,7 +245,7 @@ Notes:
 - `gantry provider connect slack` auto-discovers accessible conversations and can register one directly.
 - Slack tool permission approvals are deny-by-default until approvers are listed on the target conversation in `settings.yaml`. Guided setup asks for comma-separated Slack member IDs like `U0123456789`; these users must be members of that conversation to approve tool permissions and answer interactive prompts.
 - Slack UX uses native Slack surfaces (threads, streaming updates, actions).
-- Teams setup uses Microsoft Teams app auth through `RuntimeSecretProvider` (`TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, `TEAMS_TENANT_ID`), discovers Teams channels through Microsoft Graph, and registers `teams:` conversation IDs. Live Teams message transport remains behind the `TeamsSdkClient` adapter seam; this checkout includes tested normalization and Adaptive Card approval scaffolding, but not a concrete Bot Framework transport.
+- Teams setup uses Microsoft Teams app auth through `RuntimeSecretProvider` (`TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, `TEAMS_TENANT_ID`), discovers Teams channels through Microsoft Graph, and registers `teams:` conversation IDs. Runtime messaging uses the Bot Framework endpoint `POST /v1/providers/teams/activities`; set `TEAMS_BOT_APP_ID`, `TEAMS_BOT_APP_PASSWORD`, and `TEAMS_BOT_TENANT_ID` only when the Azure Bot registration differs from the Graph discovery app.
 
 ### Capability Management
 

@@ -14,6 +14,7 @@ import {
   normalizeTeamsJid,
   teamsConversationIdFromJid,
 } from '@core/channels/teams.js';
+import { _testTeamsBotFrameworkClient } from '@core/channels/teams-bot-framework-client.js';
 import type { ChannelOpts } from '@core/channels/channel-provider.js';
 
 vi.mock('@core/infrastructure/logging/logger.js', () => ({
@@ -64,8 +65,38 @@ describe('Teams built-in provider', () => {
       'TEAMS_CLIENT_ID',
       'TEAMS_CLIENT_SECRET',
       'TEAMS_TENANT_ID',
+      'TEAMS_BOT_APP_ID',
+      'TEAMS_BOT_APP_PASSWORD',
     ]);
     expect(providerForJid('teams:19:abc@thread.v2')?.id).toBe('teams');
+  });
+});
+
+describe('Teams Bot Framework adapter helpers', () => {
+  it('prefers Teams AAD object ids for sender authorization', () => {
+    expect(
+      _testTeamsBotFrameworkClient.getTeamsSender({
+        type: 'message',
+        from: {
+          id: 'teams-user-id',
+          name: 'Priya',
+          aadObjectId: 'aad-user-id',
+        } as never,
+      }),
+    ).toEqual({ id: 'aad-user-id', name: 'Priya' });
+  });
+
+  it('reads tenant ids from Teams channel data', () => {
+    expect(
+      _testTeamsBotFrameworkClient.getTeamsTenantId({
+        type: 'message',
+        channelData: {
+          tenant: {
+            id: 'tenant-1',
+          },
+        },
+      }),
+    ).toBe('tenant-1');
   });
 });
 

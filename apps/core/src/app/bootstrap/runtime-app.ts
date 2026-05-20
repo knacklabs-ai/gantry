@@ -91,6 +91,11 @@ export interface RuntimeApp {
   setLastTimestamp: (timestamp: string) => void;
   setAgentCursor: (chatJid: string, timestamp: string) => void;
   setChannelRuntime: (runtime: GroupProcessingDeps['channelRuntime']) => void;
+  sendChannelMessage: (
+    chatJid: string,
+    rawText: string,
+    options?: Parameters<GroupProcessingDeps['channelRuntime']['sendMessage']>[2],
+  ) => Promise<void>;
 }
 
 export interface RuntimeAppOptions {
@@ -531,6 +536,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     setChannelRuntime: (runtime) => {
       channelRuntime = runtime;
     },
+    sendChannelMessage: (chatJid, rawText, options) =>
+      channelRuntime.sendMessage(chatJid, rawText, options),
   };
 }
 

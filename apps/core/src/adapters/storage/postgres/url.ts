@@ -15,10 +15,17 @@ export function parsePostgresConnectionUrl(url: string): URL {
 
 export function isLocalPostgresHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
+  const configuredLocalHosts = new Set(
+    (process.env.GANTRY_LOCAL_POSTGRES_HOSTS || '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
   return (
     normalized === 'localhost' ||
     normalized === '127.0.0.1' ||
-    normalized === '::1'
+    normalized === '::1' ||
+    configuredLocalHosts.has(normalized)
   );
 }
 

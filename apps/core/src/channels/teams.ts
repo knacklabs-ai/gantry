@@ -19,6 +19,7 @@ import {
 } from './permission-interaction.js';
 import { sendTeamsTextMessage } from './teams-delivery.js';
 import { nowIso } from '../shared/time/datetime.js';
+import { createTeamsBotFrameworkSdkClient } from './teams-bot-framework-client.js';
 
 export const TEAMS_JID_PREFIX = 'teams:';
 export const TEAMS_ADAPTIVE_CARD_CONTENT_TYPE =
@@ -28,6 +29,9 @@ export interface TeamsChannelCredentials {
   clientId: string;
   clientSecret: string;
   tenantId: string;
+  botAppId?: string;
+  botAppPassword?: string;
+  botTenantId?: string;
 }
 
 // Keep Microsoft SDK shapes behind this adapter-owned interface so domain,
@@ -527,7 +531,7 @@ export function createTeamsChannel(
     deps.sdkClient ?? createMicrosoftTeamsSdkClient(credentials);
   if (!sdkClient) {
     logger.warn(
-      'Teams: Microsoft Teams SDK transport is not configured for this scaffold',
+      'Teams: Microsoft Teams Bot Framework transport is not configured',
     );
     return null;
   }
@@ -545,11 +549,24 @@ function readTeamsCredentials(
   const tenantId =
     secrets.getOptionalSecret({ env: 'TEAMS_TENANT_ID' })?.trim() || '';
   if (!clientId || !clientSecret || !tenantId) return null;
-  return { clientId, clientSecret, tenantId };
+  const botAppId =
+    secrets.getOptionalSecret({ env: 'TEAMS_BOT_APP_ID' })?.trim() || '';
+  const botAppPassword =
+    secrets.getOptionalSecret({ env: 'TEAMS_BOT_APP_PASSWORD' })?.trim() || '';
+  const botTenantId =
+    secrets.getOptionalSecret({ env: 'TEAMS_BOT_TENANT_ID' })?.trim() || '';
+  return {
+    clientId,
+    clientSecret,
+    tenantId,
+    ...(botAppId ? { botAppId } : {}),
+    ...(botAppPassword ? { botAppPassword } : {}),
+    ...(botTenantId ? { botTenantId } : {}),
+  };
 }
 
 function createMicrosoftTeamsSdkClient(
   _credentials: TeamsChannelCredentials,
 ): TeamsSdkClient | null {
-  return null;
+  return createTeamsBotFrameworkSdkClient();
 }

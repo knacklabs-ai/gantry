@@ -9,6 +9,7 @@ export interface BrokerUrlValidationResult {
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (normalized === 'localhost') return true;
+  if (normalized === 'host.docker.internal') return true;
   const ipVersion = isIP(normalized);
   if (ipVersion === 4) return normalized.split('.')[0] === '127';
   if (ipVersion === 6) return normalized === '::1';
