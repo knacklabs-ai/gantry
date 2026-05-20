@@ -39,6 +39,7 @@ import { handleMemoryRoutes } from './routes/memory.js';
 import { handleMcpServerRoutes } from './routes/mcp-servers.js';
 import { handleManipalPlatformEventRoutes } from './routes/manipal-platform-events.js';
 import { handleModelRoutes } from './routes/models.js';
+import { handleOpenApiRoutes } from './routes/openapi.js';
 import { handleRunRoutes } from './routes/runs.js';
 import { handleSessionRoutes } from './routes/sessions.js';
 import { handleSettingsRoutes } from './routes/settings.js';
@@ -121,6 +122,7 @@ function createControlRequestHandler(ctx: ControlRouteContext) {
       if (await handleTeamsActivityRoutes(req, res, pathname)) return;
       if (await handleManipalPlatformEventRoutes(req, res, ctx, pathname))
         return;
+      if (await handleOpenApiRoutes(req, res, pathname)) return;
       if (await handleSystemRoutes(req, res, ctx, pathname)) return;
       if (await handleAgentRoutes(req, res, ctx, pathname)) return;
       if (await handleCapabilityCatalogRoutes(req, res, ctx, pathname)) return;
@@ -183,6 +185,7 @@ export function startControlServer(input: {
     path.join(GANTRY_HOME, 'run', 'control.sock');
   const port = Number(getControlEnvValue('GANTRY_CONTROL_PORT') || 0);
   const host = getControlEnvValue('GANTRY_CONTROL_HOST') || '127.0.0.1';
+  // const host = resolveControlHost();
   const state: ControlServerState = {
     activeStreams: 0,
     activeWaits: 0,
@@ -298,6 +301,10 @@ export function startControlServer(input: {
   };
 }
 
+function resolveControlHost(): string {
+  return getControlEnvValue('GANTRY_CONTROL_HOST') || '127.0.0.1';
+}
+
 export const _testControlServer = {
   parseControlApiKeys,
   parseControlApiKeysStrict,
@@ -307,6 +314,7 @@ export const _testControlServer = {
   isValidControlId,
   isPrivateAddress,
   makeAppGroup,
+  resolveControlHost,
   deliverWebhookDelivery,
   flushWebhookDeliveries,
 };

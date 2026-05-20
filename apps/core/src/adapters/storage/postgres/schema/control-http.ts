@@ -3,6 +3,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -34,7 +35,9 @@ export const controlHttpSessionsPostgres = pgTable(
       .references(() => agentsPostgres.id, { onDelete: 'cascade' }),
     defaultResponseMode: text('default_response_mode').notNull().default('sse'),
     defaultWebhookId: text('default_webhook_id'),
-    externalRefJson: text('external_ref_json').notNull().default('{}'),
+    externalRefJson: jsonb('external_ref_json')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', {
       withTimezone: true,
       mode: 'string',
@@ -52,12 +55,8 @@ export const controlHttpSessionsPostgres = pgTable(
     appConversationUnique: unique(
       'control_http_sessions_app_id_external_conversation_id_key',
     ).on(table.appId, table.externalConversationId),
-    externalRefIdx: index('idx_control_http_sessions_external_ref').using(
-      'gin',
-      sql`(${table.externalRefJson}::jsonb)`,
-    ),
     chatJidIdx: index('idx_control_http_sessions_chat_jid').on(
-      sql`(${table.externalRefJson}::jsonb->>'chatJid')`,
+      sql`(${table.externalRefJson}->>'chatJid')`,
     ),
   }),
 );
