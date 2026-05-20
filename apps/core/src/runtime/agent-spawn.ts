@@ -170,6 +170,16 @@ function applyOpenRouterCredentialProjection(
   }
 }
 
+function applyOpenRouterRunnerDefaults(
+  runnerInput: RunnerAgentInput,
+  effectiveModelEntry: ReturnType<typeof findModelByRunnerModel> | undefined,
+): void {
+  if (effectiveModelEntry?.provider !== 'openrouter' || runnerInput.thinking) {
+    return;
+  }
+  runnerInput.thinking = { mode: 'disabled' };
+}
+
 function validateRunnerAllowedTools(rules: readonly string[]): string | null {
   try {
     validateAgentToolRuntimeRules({
@@ -272,6 +282,7 @@ export async function spawnAgent(
       getRuntimeSettingsForConfig().permissions.yoloMode,
     ),
   };
+  applyOpenRouterRunnerDefaults(runnerInput, effectiveModelEntry);
 
   const hostRuntime = prepareHostRuntimeContext(group);
   ensureGroupIpcLayout(hostRuntime.groupIpcDir);
