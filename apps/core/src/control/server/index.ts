@@ -38,6 +38,7 @@ import { handleJobRoutes } from './routes/jobs.js';
 import { handleMemoryRoutes } from './routes/memory.js';
 import { handleMcpServerRoutes } from './routes/mcp-servers.js';
 import { handleModelRoutes } from './routes/models.js';
+import { handleOpenApiRoutes } from './routes/openapi.js';
 import { handleRunRoutes } from './routes/runs.js';
 import { handleSessionRoutes } from './routes/sessions.js';
 import { handleSettingsRoutes } from './routes/settings.js';
@@ -116,6 +117,7 @@ function createControlRequestHandler(ctx: ControlRouteContext) {
     res.on('error', (error) => logControlStreamError(error, pathname));
 
     try {
+      if (await handleOpenApiRoutes(req, res, pathname)) return;
       if (await handleSystemRoutes(req, res, ctx, pathname)) return;
       if (await handleAgentRoutes(req, res, ctx, pathname)) return;
       if (await handleCapabilityCatalogRoutes(req, res, ctx, pathname)) return;
@@ -177,6 +179,7 @@ export function startControlServer(input: {
     getControlEnvValue('GANTRY_CONTROL_SOCKET_PATH') ||
     path.join(GANTRY_HOME, 'run', 'control.sock');
   const port = Number(getControlEnvValue('GANTRY_CONTROL_PORT') || 0);
+  const host = resolveControlHost();
   const state: ControlServerState = {
     activeStreams: 0,
     activeWaits: 0,
@@ -217,8 +220,8 @@ export function startControlServer(input: {
   });
 
   if (port > 0) {
-    server.listen(port, '127.0.0.1');
-    logger.info({ port }, 'Control server listening on TCP');
+    server.listen(port, host);
+    logger.info({ host, port }, 'Control server listening on TCP');
   } else {
     fs.mkdirSync(path.dirname(socketPath), { recursive: true });
     if (fs.existsSync(socketPath)) {
@@ -292,6 +295,10 @@ export function startControlServer(input: {
   };
 }
 
+function resolveControlHost(): string {
+  return getControlEnvValue('GANTRY_CONTROL_HOST') || '127.0.0.1';
+}
+
 export const _testControlServer = {
   parseControlApiKeys,
   parseControlApiKeysStrict,
@@ -301,6 +308,7 @@ export const _testControlServer = {
   isValidControlId,
   isPrivateAddress,
   makeAppGroup,
+  resolveControlHost,
   deliverWebhookDelivery,
   flushWebhookDeliveries,
 };

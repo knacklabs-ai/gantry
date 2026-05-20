@@ -188,6 +188,29 @@ docker compose --env-file ~/gantry/.env up -d
 gantry setup
 ```
 
+On WSL/Docker Desktop amd64 hosts, use the additive WSL override instead of
+editing the default Compose file:
+
+```bash
+docker compose --env-file ~/gantry/.env -f docker-compose.yml -f docker-compose.wsl.yml up -d
+```
+
+The WSL override keeps the repo default unchanged, uses the multi-platform
+Postgres image tag, and keeps the default Postgres host port `5432`. If another
+local Postgres is already using that port, stop it before starting the Gantry
+Compose stack. For example, on a systemd-enabled WSL distro:
+
+```bash
+sudo systemctl stop postgresql
+```
+
+Then keep the runtime URLs pointed at the default host port:
+
+```env
+GANTRY_DATABASE_URL=postgresql://gantry_app:gantry_app_password@127.0.0.1:5432/gantry?schema=gantry
+ONECLI_DATABASE_URL=postgresql://onecli_app:onecli_app_password@127.0.0.1:5432/gantry?schema=onecli
+```
+
 The Compose file hardcodes the local ports, schema names, and non-secret role names. `~/gantry/.env` only needs local passwords, `SECRET_ENCRYPTION_KEY`, and the runtime connection URLs. Gantry setup does not start Docker or create containers; it asks for `GANTRY_DATABASE_URL` and `ONECLI_DATABASE_URL`, creates the `gantry-model-access` Model Access profile, then writes the non-secret OneCLI gateway URL to `settings.yaml` as `credential_broker.onecli.url`.
 
 If an older local `.env` still contains settings-owned keys such as `GANTRY_CREDENTIAL_MODE`, `ONECLI_URL`, `ANTHROPIC_MODEL`, or `SLACK_PERMISSION_APPROVER_IDS`, move those values into `settings.yaml` and remove them from `.env` before starting the runtime.
@@ -339,6 +362,12 @@ All three patterns hit the same security gate, the same scoped memory, and the s
 ## SDK And Integration
 
 Backend apps can use `@caw/gantry-sdk` to ensure a session, send a message, and wait or stream durable runtime events. Normal SDK calls derive `appId` from the API key; request-body `appId` is only an optional assertion.
+
+The runtime also serves Swagger docs for the Control API. Use `/docs` for the
+interactive view and `/openapi.json` for the machine-readable spec when the
+control server is exposed over `GANTRY_CONTROL_PORT`. TCP binding defaults to
+loopback; set `GANTRY_CONTROL_HOST=0.0.0.0` only for an authenticated hosted
+deployment such as Render.
 
 External systems that should not hold a control API key use signed external ingress records under `/v1/ingresses`. Ingress supports session messages, existing job triggers, and constrained one-time job templates. Each ingress record has an explicit target policy, so its secret only authorizes configured sessions, conversations, jobs, or templates. `/v1/webhooks` remains outbound callback delivery for runtime events.
 
