@@ -114,6 +114,24 @@ describe('job tool access requirements', () => {
     });
   });
 
+  it('preserves argv boundaries when projecting stale bare executable requirements', () => {
+    expect(
+      evaluateToolAccessRequirements({
+        toolAccessRequirements: [
+          'RunCommand(gog sheets get "Bot Recommendation!A1:Z1" --json *)',
+        ],
+        effectiveAllowedTools: [
+          'RunCommand(/opt/homebrew/bin/gog sheets get * --json *)',
+        ],
+      }),
+    ).toEqual({
+      toolAccessRequirements: [
+        'RunCommand(/opt/homebrew/bin/gog sheets get * --json *)',
+      ],
+      missingTools: [],
+    });
+  });
+
   it('does not satisfy a bare executable requirement with a different absolute CLI grant', () => {
     expect(
       evaluateToolAccessRequirements({

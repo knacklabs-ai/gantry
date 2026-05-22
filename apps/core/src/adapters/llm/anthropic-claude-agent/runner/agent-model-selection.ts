@@ -59,6 +59,11 @@ export function validateAgentModelRequest(
       message: `Agent model "${resolved.alias}" uses ${resolved.entry.responseFamily}, but the parent run is using ${currentModel.responseFamily}. Cross-response-family subagents are not supported in one SDK process; switch the parent session with /model ${resolved.alias} or create a separate Gantry job/session with that model.`,
     };
   }
+  if (resolved.entry.modelRoute.id !== currentModel.modelRoute.id) {
+    return {
+      message: `Agent model "${resolved.alias}" uses the ${resolved.entry.modelRoute.label} route, but the parent run is using the ${currentModel.modelRoute.label} route. Cross-route subagents are not supported in one SDK process; switch the parent session with /model ${resolved.alias} or create a separate Gantry job/session with that model.`,
+    };
+  }
   const nativeModel = nativeAgentModelAlias(resolved.entry);
   if (!nativeModel || requestedModel !== nativeModel) {
     return {

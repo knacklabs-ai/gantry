@@ -12,6 +12,7 @@ import { parseSemanticCapabilityRule } from '../../shared/semantic-capability-id
 import { toolRuleCoversRule } from '../../shared/tool-rule-matcher.js';
 import {
   bashExecutableName,
+  formatBashArgv,
   parseBashCommand,
 } from '../../shared/bash-command-parser.js';
 
@@ -206,10 +207,10 @@ function absoluteRunCommandRuleCoversBareExecutableRule(
   ) {
     return false;
   }
-  const projectedRequired = [
+  const projectedRequired = formatBashArgv([
     allowedExecutable,
     ...requiredCommand.argv.slice(1),
-  ].join(' ');
+  ]);
   return toolRuleCoversRule(
     allowedRule,
     `${RUN_COMMAND_TOOL_NAME}(${projectedRequired})`,
