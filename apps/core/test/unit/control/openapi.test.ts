@@ -310,7 +310,11 @@ describe('control OpenAPI documentation', () => {
           properties: expect.objectContaining({
             id: { type: 'string', enum: ['anthropic', 'openrouter'] },
             label: { type: 'string' },
-            metadata: { type: 'object', additionalProperties: true },
+            metadata: expect.objectContaining({
+              type: 'object',
+              required: ['providerModelId'],
+              additionalProperties: false,
+            }),
           }),
         }),
         capabilities: expect.objectContaining({ type: 'object' }),

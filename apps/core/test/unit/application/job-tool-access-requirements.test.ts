@@ -114,7 +114,7 @@ describe('job tool access requirements', () => {
     });
   });
 
-  it('preserves argv boundaries when projecting stale bare executable requirements', () => {
+  it('preserves specific argv boundaries when projecting stale bare executable requirements', () => {
     expect(
       evaluateToolAccessRequirements({
         toolAccessRequirements: [
@@ -126,7 +126,7 @@ describe('job tool access requirements', () => {
       }),
     ).toEqual({
       toolAccessRequirements: [
-        'RunCommand(/opt/homebrew/bin/gog sheets get * --json *)',
+        "RunCommand(/opt/homebrew/bin/gog sheets get 'Bot Recommendation!A1:Z1' --json *)",
       ],
       missingTools: [],
     });

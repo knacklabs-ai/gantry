@@ -45,7 +45,7 @@ export async function seedDefaultRuntimeData(
         appId: DEFAULT_APP_ID,
         purpose: 'default',
         responseFamily: 'anthropic',
-        modelAlias: 'default',
+        modelAlias: 'opus',
         thinkingJson: '{}',
         budgetJson: '{}',
       })

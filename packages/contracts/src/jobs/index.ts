@@ -38,17 +38,21 @@ export const JobModelSourceSchema = z.union([
 ]);
 export type JobModelSource = z.infer<typeof JobModelSourceSchema>;
 
-export const JobModelPreviewSchema = z.object({
-  displayName: z.string(),
-  responseFamily: z.enum(['anthropic', 'openai']),
-  modelRoute: z.object({
-    id: z.enum(['anthropic', 'openrouter']),
-    label: z.string(),
-  }),
-  contextWindowTokens: z.number().int().nonnegative(),
-  maxOutputTokens: z.number().int().nonnegative(),
-  cachePolicy: z.string(),
-});
+export const JobModelPreviewSchema = z
+  .object({
+    displayName: z.string(),
+    responseFamily: z.enum(['anthropic', 'openai']),
+    modelRoute: z
+      .object({
+        id: z.enum(['anthropic', 'openrouter']),
+        label: z.string(),
+      })
+      .strict(),
+    contextWindowTokens: z.number().int().nonnegative(),
+    maxOutputTokens: z.number().int().nonnegative(),
+    cachePolicy: z.string(),
+  })
+  .strict();
 export type JobModelPreview = z.infer<typeof JobModelPreviewSchema>;
 
 export const JobModelSelectionSchema = z

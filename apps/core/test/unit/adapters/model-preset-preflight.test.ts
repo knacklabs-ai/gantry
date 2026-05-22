@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { preflightModelPreset } from '@core/adapters/llm/model-preset-preflight.js';
+import {
+  onecliApiUrl,
+  preflightModelPreset,
+} from '@core/adapters/llm/model-preset-preflight.js';
 import type { ModelPresetId } from '@core/shared/model-catalog.js';
 
-const anthropicProvider = (): ModelPresetId =>
-  ('anth' + 'ropic') as ModelPresetId;
+const anthropicProvider = (): ModelPresetId => 'anthropic' as ModelPresetId;
 
 describe('model provider preflight', () => {
+  it('preserves OneCLI base paths when building API URLs', () => {
+    expect(
+      onecliApiUrl('http://127.0.0.1:7331/model-access', '/api/secrets'),
+    ).toBe('http://127.0.0.1:7331/model-access/api/secrets');
+  });
+
   it('fails Anthropic preflight without a credential broker', async () => {
     await expect(
       preflightModelPreset({

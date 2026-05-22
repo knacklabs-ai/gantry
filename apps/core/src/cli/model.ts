@@ -416,7 +416,7 @@ function formatPreviewWhy(preview: ModelPreviewResponse): string {
 
 function parsePresetFlag(args: string[]): ModelPresetId | undefined {
   const value = args.find((arg) => arg.startsWith('--preset='));
-  const preset = value?.includes('--preset=')
+  const preset = value
     ? value.slice('--preset='.length)
     : args.includes('--preset')
       ? args[args.indexOf('--preset') + 1]

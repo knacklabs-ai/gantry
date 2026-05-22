@@ -107,7 +107,8 @@ export class PostgresCanonicalGraphRepository {
         id: DEFAULT_LLM_PROFILE_ID,
         appId: CANONICAL_APP_ID,
         purpose: 'default',
-        modelAlias: 'default',
+        responseFamily: 'anthropic',
+        modelAlias: 'opus',
       })
       .onConflictDoNothing();
   }

@@ -13,9 +13,10 @@
   eligible-tools/SDK-API-prompt timed grant is active for the same principal and
   conversation, or, for scheduled jobs only, when a parentless SDK network
   prompt arrives immediately after the same principal's approved Bash/RunCommand
-  invocation and can be associated to that latest run-local token. Interactive
-  parentless SDK network prompts fail closed. Never log raw hostnames or tool
-  inputs for this gate.
+  invocation and matches a host hash derived from that latest run-local token.
+  Interactive parentless SDK network prompts fail closed, and scheduled
+  parentless prompts without a host-bound approved command fail closed. Never log
+  raw hostnames or tool inputs for this gate.
 - Permission `Allow 5 min` is intentionally a live-interactive-only short-lived
   yolo grant for every eligible SDK tool call and SDK network/API prompt by the
   same principal in the same conversation. Setup, scheduler, admin, and

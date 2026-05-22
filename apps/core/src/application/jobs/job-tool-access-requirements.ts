@@ -176,28 +176,32 @@ function matchingAllowedRule(
     if (allowedRule === required || toolRuleCoversRule(allowedRule, required)) {
       return { canonicalRule: required };
     }
-    if (absoluteRunCommandRuleCoversBareExecutableRule(allowedRule, required)) {
-      return { canonicalRule: allowedRule };
+    const projectedRequired = absoluteRunCommandRuleForBareExecutableRule(
+      allowedRule,
+      required,
+    );
+    if (projectedRequired) {
+      return { canonicalRule: projectedRequired };
     }
   }
   return undefined;
 }
 
-function absoluteRunCommandRuleCoversBareExecutableRule(
+function absoluteRunCommandRuleForBareExecutableRule(
   allowedRule: string,
   requiredRule: string,
-): boolean {
+): string | undefined {
   const allowed = parseReadableScopedToolRule(allowedRule);
   const required = parseReadableScopedToolRule(requiredRule);
   if (
     allowed?.toolName !== RUN_COMMAND_TOOL_NAME ||
     required?.toolName !== RUN_COMMAND_TOOL_NAME
   ) {
-    return false;
+    return undefined;
   }
   const allowedCommand = parseSingleLeafCommand(allowed.scope);
   const requiredCommand = parseSingleLeafCommand(required.scope);
-  if (!allowedCommand || !requiredCommand) return false;
+  if (!allowedCommand || !requiredCommand) return undefined;
   const allowedExecutable = allowedCommand.argv[0] ?? '';
   const requiredExecutable = requiredCommand.argv[0] ?? '';
   if (
@@ -205,22 +209,28 @@ function absoluteRunCommandRuleCoversBareExecutableRule(
     requiredExecutable.includes('/') ||
     bashExecutableName(allowedExecutable) !== requiredExecutable
   ) {
-    return false;
+    return undefined;
   }
-  const projectedRequired = formatBashArgv([
+  const projectedRequired = formatRunCommandRequirementArgv([
     allowedExecutable,
     ...requiredCommand.argv.slice(1),
   ]);
-  return toolRuleCoversRule(
-    allowedRule,
-    `${RUN_COMMAND_TOOL_NAME}(${projectedRequired})`,
-  );
+  const projectedRule = `${RUN_COMMAND_TOOL_NAME}(${projectedRequired})`;
+  return toolRuleCoversRule(allowedRule, projectedRule)
+    ? projectedRule
+    : undefined;
 }
 
 function parseSingleLeafCommand(scope: string) {
   const parsed = parseBashCommand(scope.trim());
   if (!parsed.ok || parsed.leaves.length !== 1) return undefined;
   return parsed.leaves[0];
+}
+
+function formatRunCommandRequirementArgv(argv: readonly string[]): string {
+  return argv
+    .map((arg) => (arg === '*' ? '*' : formatBashArgv([arg])))
+    .join(' ');
 }
 
 function dedupePreservingOrder(values: readonly string[]): string[] {

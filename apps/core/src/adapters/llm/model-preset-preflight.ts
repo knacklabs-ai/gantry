@@ -111,7 +111,7 @@ async function assertOnecliAnthropicSecretConfigured(
   rawOnecliUrl: string,
 ): Promise<void> {
   const validation = validateOnecliLocalUrl(rawOnecliUrl);
-  const response = await fetch(new URL('/api/secrets', validation).toString());
+  const response = await fetch(onecliApiUrl(validation, 'api/secrets'));
   if (!response.ok) {
     throw new Error(
       `Could not verify Anthropic Model Access credentials: OneCLI returned ${response.status}.`,
@@ -152,6 +152,16 @@ function validateOnecliLocalUrl(rawOnecliUrl: string): string {
     );
   }
   return parsed.toString().replace(/\/$/, '');
+}
+
+export function onecliApiUrl(rawOnecliUrl: string, apiPath: string): string {
+  const parsed = new URL(rawOnecliUrl);
+  const basePath = parsed.pathname.replace(/\/+$/, '');
+  const relativePath = apiPath.replace(/^\/+/, '');
+  parsed.pathname = `${basePath}/${relativePath}`;
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
 }
 
 function resolveExternalModelBrokerBaseUrl(rawBrokerUrl: string): string {

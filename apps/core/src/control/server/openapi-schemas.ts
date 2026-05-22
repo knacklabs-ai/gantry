@@ -245,7 +245,14 @@ export const openApiSchemas: Record<string, JsonSchema> = {
             enum: listModelPresets().map((preset) => preset.id),
           },
           label: { type: 'string' },
-          metadata,
+          metadata: {
+            type: 'object',
+            required: ['providerModelId'],
+            additionalProperties: false,
+            properties: {
+              providerModelId: { type: 'string' },
+            },
+          },
         },
       },
       capabilities: {

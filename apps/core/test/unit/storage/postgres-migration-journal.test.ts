@@ -484,6 +484,36 @@ describe('Postgres migration journal', () => {
     );
   });
 
+  it('registers LLM profile response family cutover without validating the check constraint in-place', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const responseFamilyCutover = journal.entries.find(
+      (entry) => entry.tag === '0064_llm_profile_response_family',
+    );
+    expect(responseFamilyCutover).toMatchObject({ idx: 64 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0064_llm_profile_response_family.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain('RENAME COLUMN provider TO response_family');
+    expect(migration).toContain('ADD COLUMN response_family text NOT NULL');
+    expect(migration).toContain('ALTER COLUMN response_family SET DEFAULT');
+    expect(migration).toContain("WHEN response_family = 'openai'");
+    expect(migration).toContain("SET model_alias = 'opus'");
+    expect(migration).toContain(
+      'ADD CONSTRAINT llm_profiles_response_family_valid',
+    );
+    expect(migration).toContain('NOT VALID');
+    expect(migration).not.toContain('VALIDATE CONSTRAINT');
+  });
+
   it('registers message attachment message lookup index migration and schema', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',

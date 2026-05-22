@@ -27,6 +27,7 @@ import {
   ExternalReferenceSchema,
   IsoDateTimeSchema,
   JobResponseSchema,
+  JobModelPreviewSchema,
   JobScheduleSchema,
   LlmProfileRefSchema,
   MEMORY_IPC_ACTIONS,
@@ -353,6 +354,31 @@ describe('contracts package', () => {
     ).toMatchObject({
       modelAlias: 'sonnet',
       modelSource: 'settings.yaml agents.<agent>.model',
+    });
+    const jobModelPreview = {
+      displayName: 'Claude Sonnet 4.6',
+      responseFamily: 'anthropic',
+      modelRoute: {
+        id: 'anthropic',
+        label: 'Anthropic',
+      },
+      contextWindowTokens: 200000,
+      maxOutputTokens: 64000,
+      cachePolicy: 'anthropic-prompt-cache',
+    };
+    expect(JobModelPreviewSchema.parse(jobModelPreview)).toEqual(
+      jobModelPreview,
+    );
+    expectInvalid(JobModelPreviewSchema, {
+      ...jobModelPreview,
+      providerSlug: 'anthropic',
+    });
+    expectInvalid(JobModelPreviewSchema, {
+      ...jobModelPreview,
+      modelRoute: {
+        ...jobModelPreview.modelRoute,
+        providerModelId: 'claude-sonnet-4-6',
+      },
     });
   });
 

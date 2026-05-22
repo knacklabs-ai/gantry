@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
-import { generateKeyPairSync } from 'crypto';
+import { createHash, generateKeyPairSync } from 'crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -12,6 +12,10 @@ import {
 } from '@core/adapters/llm/anthropic-claude-agent/native-sdk-skills.js';
 
 const tempRoots: string[] = [];
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
@@ -2086,8 +2090,16 @@ describe('agent-runner IPC lifecycle', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('"eventType":"sandbox.blocked"');
       expect(result.stdout).toContain('sdk_network_gate_suppressed');
-      expect(result.stdout).toContain('"networkToolUseID":"toolu_network_1"');
-      expect(result.stdout).toContain('"parentToolUseID":"toolu_bash_1"');
+      expect(result.stdout).toContain(
+        `"networkToolUseIDHash":"${sha256('toolu_network_1')}"`,
+      );
+      expect(result.stdout).toContain(
+        `"parentToolUseIDHash":"${sha256('toolu_bash_1')}"`,
+      );
+      expect(result.stdout).not.toContain(
+        '"networkToolUseID":"toolu_network_1"',
+      );
+      expect(result.stdout).not.toContain('"parentToolUseID":"toolu_bash_1"');
       expect(result.stdout).toContain('"approvedToolName":"Bash"');
       expect(result.stdout).toContain('"inputHash"');
       expect(result.stdout).toContain('"hostHash"');
@@ -2147,7 +2159,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'suppresses parentless SDK sandbox network prompts immediately after a scheduled scoped command',
+    'denies parentless SDK sandbox network prompts after a scheduled command without host binding',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -2167,10 +2179,11 @@ describe('agent-runner IPC lifecycle', () => {
       );
 
       expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('sdk_network_gate_denied');
       expect(result.stdout).toContain(
-        'sdk_network_gate_suppressed_parentless_recent_tool',
+        `"networkToolUseIDHash":"${sha256('toolu_network_1')}"`,
       );
-      expect(result.stdout).toContain('"parentToolUseID":"toolu_bash_1"');
+      expect(result.stdout).not.toContain('"parentToolUseID":"toolu_bash_1"');
       const call = readRecord(fixture.recordPath).calls[0];
       expect(call?.permissionDecisions?.tool).toEqual(
         expect.objectContaining({
@@ -2178,8 +2191,10 @@ describe('agent-runner IPC lifecycle', () => {
         }),
       );
       expect(call?.permissionDecisions?.network).toEqual({
-        behavior: 'allow',
-        updatedInput: { host: 'registry.npmjs.org' },
+        behavior: 'deny',
+        interrupt: false,
+        message:
+          'SDK requested sandbox network access without a parent tool-use id. Approve the tool call through Gantry first.',
       });
       expect(
         fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),

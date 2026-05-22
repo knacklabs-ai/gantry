@@ -486,7 +486,7 @@ function normalizeBashArg(arg: string): string {
 }
 
 function quoteBashArg(arg: string): string {
-  if (/^[A-Za-z0-9_./:@%+=,*-]+$/.test(arg)) return arg;
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(arg)) return arg;
   return `'${arg.replaceAll("'", "'\\''")}'`;
 }
 

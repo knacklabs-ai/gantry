@@ -38,8 +38,10 @@ interface SdkSandboxNetworkApprovalToken {
   parentToolUseID: string;
   approvedToolName: string;
   inputHash: string;
+  approvedHostHashes: readonly string[];
   createdAtMs: number;
   expiresAtMs: number;
+  parentlessAssociatedAtMs?: number;
 }
 
 export interface SdkSandboxNetworkGateOptions {
@@ -85,6 +87,7 @@ export function createSdkSandboxNetworkGate(
     parentToolUseID?: string;
     approvedToolName?: string;
     hostHash?: string;
+    approvedHostHashes?: readonly string[];
     inputHash?: string;
     tokenCreatedAtMs?: number;
     tokenExpiresAtMs?: number;
@@ -98,15 +101,18 @@ export function createSdkSandboxNetworkGate(
       reason: input.reason,
       tokenTtlMs: input.tokenTtlMs ?? ttlMs,
       ...(input.networkToolUseID
-        ? { networkToolUseID: input.networkToolUseID }
+        ? { networkToolUseIDHash: hashString(input.networkToolUseID) }
         : {}),
       ...(input.parentToolUseID
-        ? { parentToolUseID: input.parentToolUseID }
+        ? { parentToolUseIDHash: hashString(input.parentToolUseID) }
         : {}),
       ...(input.approvedToolName
         ? { approvedToolName: input.approvedToolName }
         : {}),
       ...(input.hostHash ? { hostHash: input.hostHash } : {}),
+      ...(input.approvedHostHashes?.length
+        ? { approvedHostHashes: input.approvedHostHashes }
+        : {}),
       ...(input.inputHash ? { inputHash: input.inputHash } : {}),
       ...(input.tokenCreatedAtMs !== undefined
         ? { tokenCreatedAtMs: input.tokenCreatedAtMs }
@@ -183,11 +189,14 @@ export function createSdkSandboxNetworkGate(
         return;
       }
       const createdAtMs = nowMs();
+      const inputHash = hashString(stableJson(input));
+      const approvedHostHashes = approvedToolInputHostHashes(input);
       const token: SdkSandboxNetworkApprovalToken = {
         principal: normalizedPrincipal,
         parentToolUseID,
         approvedToolName: toolName,
-        inputHash: hashString(stableJson(input)),
+        inputHash,
+        approvedHostHashes,
         createdAtMs,
         expiresAtMs: createdAtMs + ttlMs,
       };
@@ -197,6 +206,17 @@ export function createSdkSandboxNetworkGate(
       } else {
         latestNetworkToolTokenByPrincipal.delete(normalizedPrincipal);
       }
+      writeEvent({
+        decision: 'sdk_network_gate_token_minted',
+        reason:
+          'Gantry minted a short-lived sandbox network token for an approved tool invocation.',
+        parentToolUseID,
+        approvedToolName: toolName,
+        inputHash,
+        approvedHostHashes,
+        tokenCreatedAtMs: token.createdAtMs,
+        tokenExpiresAtMs: token.expiresAtMs,
+      });
     },
     decide(
       toolName,
@@ -256,19 +276,28 @@ export function createSdkSandboxNetworkGate(
       }
       if (!parentToolUseID && agentInput.isScheduledJob) {
         const latestToken = latestNetworkToolTokenByPrincipal.get(principal);
+        const networkToolUseID = permissionOpts.toolUseID?.trim();
         if (
           latestToken &&
+          !latestToken.parentlessAssociatedAtMs &&
+          latestToken.approvedToolName === 'Bash' &&
+          networkToolUseID &&
+          hostHash &&
+          latestToken.approvedHostHashes.includes(hostHash) &&
           latestToken.expiresAtMs > now &&
           now - latestToken.createdAtMs <= parentlessAssociationTtlMs
         ) {
+          latestToken.parentlessAssociatedAtMs = now;
+          latestNetworkToolTokenByPrincipal.delete(principal);
           writeEvent({
             decision: 'sdk_network_gate_suppressed_parentless_recent_tool',
             reason:
-              'SDK requested network approval without a parent tool-use id immediately after a recently approved scheduled command; associating it with the latest run-local tool approval.',
-            networkToolUseID: permissionOpts.toolUseID,
+              'SDK requested network approval without a parent tool-use id immediately after a recently approved scheduled command for the same host; associating it with the latest run-local tool approval.',
+            networkToolUseID,
             parentToolUseID: latestToken.parentToolUseID,
             approvedToolName: latestToken.approvedToolName,
             hostHash,
+            approvedHostHashes: latestToken.approvedHostHashes,
             inputHash: latestToken.inputHash,
             tokenCreatedAtMs: latestToken.createdAtMs,
             tokenExpiresAtMs: latestToken.expiresAtMs,
@@ -302,7 +331,8 @@ function sandboxNetworkHostHash(input: unknown): string | undefined {
   if (!input || typeof input !== 'object') return undefined;
   const host = (input as Record<string, unknown>).host;
   if (typeof host !== 'string' || !host.trim()) return undefined;
-  return hashString(host.trim());
+  const normalized = normalizeNetworkHost(host);
+  return normalized ? hashString(normalized) : undefined;
 }
 
 function sandboxNetworkParentToolUseID(input: unknown): string | undefined {
@@ -318,6 +348,85 @@ function sandboxNetworkParentToolUseID(input: unknown): string | undefined {
 
 function hashString(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function approvedToolInputHostHashes(input: unknown): readonly string[] {
+  const hosts = new Set<string>();
+  collectApprovedToolInputHosts(input, hosts);
+  return [...hosts].sort().map(hashString);
+}
+
+function collectApprovedToolInputHosts(
+  value: unknown,
+  hosts: Set<string>,
+  key?: string,
+): void {
+  if (typeof value === 'string') {
+    for (const host of networkHostsFromString(value, key)) hosts.add(host);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectApprovedToolInputHosts(item, hosts);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [childKey, childValue] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    collectApprovedToolInputHosts(childValue, hosts, childKey);
+  }
+}
+
+function networkHostsFromString(
+  value: string,
+  key?: string,
+): readonly string[] {
+  const hosts = new Set<string>();
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  if (key && /(?:^|[_-])(host|hostname|domain)(?:$|[_-])/i.test(key)) {
+    const host = normalizeNetworkHost(trimmed);
+    if (host) hosts.add(host);
+  }
+
+  for (const match of trimmed.matchAll(/\bhttps?:\/\/[^\s'"<>()]+/gi)) {
+    const rawUrl = match[0];
+    try {
+      const host = normalizeNetworkHost(new URL(rawUrl).hostname);
+      if (host) hosts.add(host);
+    } catch {
+      // Ignore malformed substrings; missing host bindings fail closed later.
+    }
+  }
+
+  if (key && /(?:url|uri|endpoint|base[_-]?url)$/i.test(key)) {
+    try {
+      const host = normalizeNetworkHost(new URL(trimmed).hostname);
+      if (host) hosts.add(host);
+    } catch {
+      // Non-URL labels are not enough to bind parentless network prompts.
+    }
+  }
+
+  return [...hosts];
+}
+
+function normalizeNetworkHost(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = new URL(
+      trimmed.includes('://') ? trimmed : `http://${trimmed}`,
+    );
+    const host = parsed.hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '')
+      .replace(/\.+$/, '');
+    return host || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function stableJson(value: unknown): string {

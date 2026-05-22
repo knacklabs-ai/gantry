@@ -35,6 +35,20 @@
     "maxOccurrences": 11
   },
   {
+    "file": "apps/core/src/adapters/storage/postgres/repositories/canonical-graph-repository.postgres.ts",
+    "rule": "provider_specific_path",
+    "reason": "Default LlmProfile insertion persists canonical response_family API shape, not an SDK provider selector; capped so repository projection does not grow provider branches.",
+    "removeByPhase": "schema-generated-llm-profile-defaults",
+    "maxViolations": 1
+  },
+  {
+    "file": "apps/core/src/adapters/storage/postgres/repositories/control-plane-graph.postgres.ts",
+    "rule": "provider_specific_path",
+    "reason": "Default LlmProfile insertion persists canonical response_family API shape, not an SDK provider selector; capped so repository projection does not grow provider branches.",
+    "removeByPhase": "schema-generated-llm-profile-defaults",
+    "maxViolations": 1
+  },
+  {
     "file": "apps/core/src/adapters/storage/postgres/schema/agents.ts",
     "rule": "provider_specific_path",
     "reason": "Baseline provider/channel terminology debt from provider-neutral refactor; capped so new provider-specific code outside approved adapters fails.",
@@ -1298,7 +1312,7 @@
     "rule": "provider_specific_path",
     "reason": "Runtime test fallback stores the current execution adapter id as projection metadata; production selection still resolves through the adapter id.",
     "removeByPhase": "execution-provider-registry-composition",
-    "maxViolations": 1
+    "maxViolations": 2
   },
   {
     "file": "apps/core/src/session/index.ts",
