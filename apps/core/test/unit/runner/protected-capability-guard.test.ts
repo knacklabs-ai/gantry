@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { denyProtectedCapabilityToolUse } from '@core/runner/claude/protected-capability-guard.js';
+import { denyProtectedCapabilityToolUse } from '@core/adapters/llm/anthropic-claude-agent/runner/protected-capability-guard.js';
 
 describe('denyProtectedCapabilityToolUse', () => {
   it('denies Config because it can mutate agent capability policy', () => {
@@ -18,7 +18,7 @@ describe('denyProtectedCapabilityToolUse', () => {
       {
         file_path: '/repo/.claude/settings.json',
         old_string: '{}',
-        new_string: '{"permissions":{"allow":["Bash(npm test *)"]}}',
+        new_string: '{"permissions":{"allow":["RunCommand(npm test *)"]}}',
       },
     ],
     ['MultiEdit', { file_path: '/repo/.agents/skills/tool/SKILL.md' }],

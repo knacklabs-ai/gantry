@@ -17,6 +17,20 @@ describe('extractSessionCommand', () => {
     });
   });
 
+  it('detects bare /commands', () => {
+    expect(extractSessionCommand('/commands', trigger)).toEqual({
+      kind: 'commands',
+      raw: '/commands',
+    });
+  });
+
+  it('detects /commands with trigger prefix', () => {
+    expect(extractSessionCommand('@Andy /commands', trigger)).toEqual({
+      kind: 'commands',
+      raw: '/commands',
+    });
+  });
+
   it('detects /compact with trigger prefix', () => {
     expect(extractSessionCommand('@Andy /compact', trigger)).toEqual({
       kind: 'compact',
@@ -284,6 +298,28 @@ describe('handleSessionCommand', () => {
       deps,
     });
     expect(result.handled).toBe(false);
+  });
+
+  it('handles authorized /commands without running the agent', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/commands')],
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('/commands - List available chat commands.'),
+    );
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('/model <alias>'),
+    );
+    expect(deps.advanceCursor).toHaveBeenCalledWith(
+      expect.objectContaining({ timestamp: '100' }),
+    );
   });
 
   it('handles authorized /compact in main group', async () => {
@@ -1302,7 +1338,7 @@ describe('handleSessionCommand', () => {
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.runAgent).not.toHaveBeenCalled();
-    expect(deps.setGroupModelOverride).toHaveBeenCalledWith('kimi');
+    expect(deps.setGroupModelOverride).toHaveBeenCalledWith('kimi-2.6');
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Using Kimi K2.6 for this session.',
     );
@@ -1382,7 +1418,7 @@ describe('handleSessionCommand', () => {
     expect(result).toEqual({ handled: true, success: true });
     const sentMsg = (deps.sendMessage as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as string;
-    expect(sentMsg).toContain('Supported models');
+    expect(sentMsg).toContain('Supported model aliases');
     expect(sentMsg).toContain('Opus 4.7');
     expect(sentMsg).toContain('Kimi K2.6');
     expect(sentMsg).toContain('chat default');
@@ -1487,7 +1523,7 @@ describe('handleSessionCommand', () => {
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.runAgent).not.toHaveBeenCalled();
-    expect(deps.setGroupModelOverride).toHaveBeenCalledWith('sonnet');
+    expect(deps.setGroupModelOverride).toHaveBeenCalledWith('sonnet-4.6');
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Using Sonnet 4.6 for this session.',
     );

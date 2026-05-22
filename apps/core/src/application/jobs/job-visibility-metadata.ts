@@ -1,5 +1,8 @@
 import type { Job, JobRun } from '../../domain/types.js';
-import type { ToolCatalogRepository } from '../../domain/ports/repositories.js';
+import type {
+  SkillCatalogRepository,
+  ToolCatalogRepository,
+} from '../../domain/ports/repositories.js';
 import type { RuntimeJobRepository } from '../../domain/repositories/ops-repo.js';
 import type {
   JobExecutionContextInput,
@@ -39,7 +42,8 @@ export interface JobVisibilityMetadata {
   fullPrompt?: string;
   inheritedTools: string[];
   effectiveAllowedTools: string[];
-  requiredTools: string[];
+  capabilityRequirements: NonNullable<Job['capability_requirements']>;
+  toolAccessRequirements: string[];
   requiredMcpServers: string[];
   toolAccess: JobToolAccessView;
   setup: JobSetupMetadata;
@@ -97,6 +101,7 @@ export async function buildJobVisibilityMetadata(input: {
   job: Job;
   ops: Pick<RuntimeJobRepository, 'listJobRuns'>;
   toolRepository?: ToolCatalogRepository;
+  skillRepository?: SkillCatalogRepository;
   appId?: string;
   recentRunLimit?: number;
   nowMs?: number;
@@ -113,6 +118,7 @@ export async function buildJobVisibilityMetadata(input: {
     appId,
     agentId,
     toolRepository: input.toolRepository,
+    skillRepository: input.skillRepository,
   });
   const nowMs = input.nowMs ?? currentTimeMs();
   const staleness = schedulerJobStaleness(input.job, nowMs);
@@ -141,7 +147,8 @@ export async function buildJobVisibilityMetadata(input: {
     fullPrompt: input.job.prompt,
     inheritedTools: policy.inheritedTools,
     effectiveAllowedTools: policy.effectiveAllowedTools,
-    requiredTools: input.job.required_tools ?? [],
+    capabilityRequirements: input.job.capability_requirements ?? [],
+    toolAccessRequirements: input.job.tool_access_requirements ?? [],
     requiredMcpServers: input.job.required_mcp_servers ?? [],
     toolAccess: buildJobToolAccessView({
       inheritedAgentTools: policy.inheritedTools,
@@ -165,6 +172,7 @@ export async function buildJobListVisibilityMetadata(input: {
   jobs: Job[];
   ops?: Pick<RuntimeJobRepository, 'listJobRuns'>;
   toolRepository?: ToolCatalogRepository;
+  skillRepository?: SkillCatalogRepository;
   appId?: string;
   nowMs?: number;
 }): Promise<Map<string, JobVisibilityMetadata>> {
@@ -177,6 +185,7 @@ export async function buildJobListVisibilityMetadata(input: {
     if (!promise) {
       promise = resolveAgentToolBindings({
         repository: input.toolRepository,
+        skillRepository: input.skillRepository,
         appId,
         agentId,
       });
@@ -212,7 +221,8 @@ export async function buildJobListVisibilityMetadata(input: {
           promptPreview: promptPreview(job.prompt),
           inheritedTools,
           effectiveAllowedTools,
-          requiredTools: job.required_tools ?? [],
+          capabilityRequirements: job.capability_requirements ?? [],
+          toolAccessRequirements: job.tool_access_requirements ?? [],
           requiredMcpServers: job.required_mcp_servers ?? [],
           toolAccess: buildJobToolAccessView({
             inheritedAgentTools: inheritedTools,

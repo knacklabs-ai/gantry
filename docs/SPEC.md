@@ -59,9 +59,9 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 │  │    • temp CLAUDE_CONFIG_DIR for settings, skills, artifacts     │    │
 │  │    • Additional dirs → /workspace/extra/*                      │    │
 │  │                                                                │    │
-│  │  Default tools (all groups):                                   │    │
-│  │    • Read, Glob, Grep, WebSearch, WebFetch                     │    │
-│  │    • Task, ToolSearch, Skill, worktree lifecycle               │    │
+│  │  Default tool authority (all groups):                          │    │
+│  │    • Gantry facades: WebSearch, WebRead, FileSearch, FileRead  │    │
+│  │    • AgentDelegation, ToolSearch, Skill, worktree lifecycle    │    │
 │  │    • Exact mcp__gantry__send_message / ask_user_question       │    │
 │  │    • Exact capability request tools via Gantry MCP             │    │
 │  │    • Optional tools only after approved next-run binding       │    │
@@ -78,7 +78,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 | Channel System     | Provider registry (`apps/core/src/channels/provider-registry.ts`) | Channels are looked up by provider id and JID prefix                  |
 | Message Storage    | Postgres with Drizzle                                             | Store messages, jobs, events, memory, and runtime state               |
 | Runtime Execution  | Host process execution                                            | Agent execution with runtime-home scoped paths                        |
-| Agent              | @anthropic-ai/claude-agent-sdk                                    | Run Claude with tools and MCP servers                                 |
+| Agent              | Provider execution adapters (current default: Anthropic Claude)    | Run agent models with tools and MCP servers through adapter boundaries |
 | Browser Automation | Gantry Browser capability + Chromium                              | Web interaction and screenshots through the projected Browser gateway |
 | Runtime            | Node.js 25+                                                       | Host process for routing and pg-boss job execution                    |
 
@@ -260,7 +260,6 @@ gantry/
 │
 ├── .claude/
 │   └── skills/
-│       ├── commands/SKILL.md            # /commands - command discovery
 │       └── gantry-admin/SKILL.md        # Internal runtime administration reference
 │
 ├── agents/
@@ -346,14 +345,20 @@ Interactive model precedence is:
 
 Job model precedence is:
 
-1. explicit job `modelAlias` or `modelProfileId`
+1. explicit job `modelAlias`
 2. `agent.one_time_job_default_model` or `agent.recurring_job_default_model`
 3. `agent.default_model`
 4. system default `opus`
 
+Memory model aliases live under `memory.llm.models` and are provider-managed.
+Provider presets set chat and memory defaults together: `anthropic` uses chat
+`opus`, job defaults inherit chat, and memory uses
+`haiku`/`sonnet`/`sonnet`; `openrouter` uses chat `kimi`, job defaults inherit
+chat, and memory uses `kimi` for extraction, dreaming, and consolidation.
+
 Use `/model` in a group session to switch the live model (`/model`, `/model <alias>`, `/model default`). Use `/models` to list supported aliases and `/status` to inspect the current model, context window usage percentage, cache hit percentage, token usage, cache read/write tokens, cache state, top context contributors when available, and cost when the provider reports it.
 
-### Claude Authentication
+### Model Access
 
 Gantry uses an agent credential broker boundary for agent and memory LLM
 credentials. `credential_broker.mode` in `settings.yaml` supports `onecli`,
@@ -367,7 +372,8 @@ secret configuration, not requested from the agent credential broker.
 Runtime `.env` is for runtime-owned secrets only. In `onecli` mode it stores
 `ONECLI_DATABASE_URL` and a generated base64-encoded 32-byte
 `SECRET_ENCRYPTION_KEY` used by OneCLI broker state and Gantry Secrets, but not
-the OneCLI URL, credential mode, default model, or raw Claude credentials.
+the OneCLI URL, credential mode, default model, or raw model-provider
+credentials.
 Non-secret broker and model configuration lives in `settings.yaml`, for example
 `credential_broker.onecli.url`,
 `agent.default_model`, or
@@ -580,9 +586,12 @@ continuation state.
 | ------------------------------------------- | ------------------------ | --------------------------------------------------------------- |
 | `storage.postgres.url_env`                  | `GANTRY_DATABASE_URL`    | Env key for Postgres connection URL                             |
 | `storage.postgres.schema`                   | `gantry`                 | Postgres schema name                                            |
-| `agent.default_model`                       | empty                    | Default Claude Code model alias/name                            |
+| `agent.default_model`                       | empty                    | Default provider-neutral model alias                            |
 | `agent.one_time_job_default_model`          | empty                    | One-time/manual job model alias; inherits `agent.default_model` |
 | `agent.recurring_job_default_model`         | empty                    | Cron/interval job model alias; inherits `agent.default_model`   |
+| `memory.llm.models.extractor`               | `haiku`                  | Memory extraction model alias                                   |
+| `memory.llm.models.dreaming`                | `sonnet`                 | Memory dreaming model alias                                     |
+| `memory.llm.models.consolidation`           | `sonnet`                 | Memory consolidation model alias                                |
 | `credential_broker.mode`                    | `onecli`                 | Agent credential broker mode (`onecli`, `external`, `none`)     |
 | `credential_broker.onecli.url`              | `http://localhost:10254` | OneCLI gateway URL                                              |
 | `credential_broker.onecli.postgres.url_env` | `ONECLI_DATABASE_URL`    | Env key for the OneCLI Postgres URL with `schema=onecli`        |
@@ -726,8 +735,10 @@ Postgres state and are never written to `settings.yaml`.
 
 1. **Group Context**: Jobs created in a group run with that group's working directory and memory
 2. **Agent Capabilities**: Scheduled jobs inherit the selected target agent's
-   selected tools, skills, and MCP servers. They do not carry job-specific
-   capability grants or receive all tools by default.
+   selected capabilities plus attached sources. They do not carry job-specific
+   capability grants, raw tool grants, or receive all tools by default.
+   Job `capabilityRequirements` are readiness assertions that pause the job
+   until the target agent has the required capability.
 3. **Optional Messaging**: Jobs can send messages to their group using the `send_message` tool, or complete silently
 4. **Admin Privileges**: Admin-wide job management belongs to the Control API
    and local/admin CLI surfaces. Normal agent-facing scheduler MCP tools stay

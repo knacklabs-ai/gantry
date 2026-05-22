@@ -1,3 +1,6 @@
+import type { ExecutionProviderId } from './sessions/sessions.js';
+import type { SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
+
 export interface AdditionalMount {
   hostPath: string; // Absolute path on host (supports ~ for home)
   workspacePath?: string; // Optional path exposed inside the agent workspace.
@@ -107,6 +110,8 @@ export interface JobCapabilityRequirementImplementation {
   kind: JobCapabilityRequirementImplementationKind;
   name?: string;
   executablePath?: string;
+  executableVersion?: string;
+  executableHash?: string;
   commandTemplate?: string;
   authPreflight?: string;
   protectedPaths?: string[];
@@ -178,7 +183,7 @@ export interface Job {
   execution_context?: JobExecutionContext;
   notification_routes?: JobNotificationRoute[];
   capability_requirements?: JobCapabilityRequirement[];
-  required_tools?: string[];
+  tool_access_requirements?: string[];
   required_mcp_servers?: string[];
   setup_state?: JobSetupState;
 }
@@ -194,6 +199,12 @@ export interface JobRun {
   run_id: string;
   short_id?: number | null;
   job_id: string;
+  execution_provider_id: ExecutionProviderId;
+  provider_run_id?: string | null;
+  provider_session_id?: string | null;
+  worker_id?: string | null;
+  lease_owner?: string | null;
+  lease_expires_at?: string | null;
   scheduled_for: string;
   started_at: string;
   ended_at: string | null;
@@ -243,6 +254,7 @@ export interface PermissionApprovalRequest {
   };
   blockedPath?: string;
   toolInput?: Record<string, unknown>;
+  semanticCapabilityDefinitions?: Record<string, SemanticCapabilityDefinition>;
   suggestions?: PermissionApprovalUpdate[];
   decisionOptions?: PermissionApprovalDecisionMode[];
   interaction?: InteractionDescriptor;

@@ -5,8 +5,10 @@ import type {
   PermissionApprovalRuleValue,
   PermissionApprovalUpdate,
 } from '../domain/types.js';
+import type { SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
 import { nowMs } from '../shared/time/datetime.js';
 import { validatePersistentRequestPermissionRule } from '../shared/persistent-permission-rules.js';
+import { permissionUpdateAllowedToolRules } from '../shared/permission-tool-rules.js';
 
 export const TIMED_GRANT_DURATION_MS = 5 * 60 * 1000;
 export const PERSISTENT_RULE_APPROVAL_MAX_RULES = 5;
@@ -24,7 +26,11 @@ export function persistentPermissionUpdates(
   if (candidates.length !== 1) return [];
   const rules = candidates[0].rules ?? [];
   if (rules.length > PERSISTENT_RULE_APPROVAL_MAX_RULES) return [];
-  return rules.every((rule) => persistentRuleForSuggestion(rule))
+  return rules.every((rule) =>
+    persistentRuleForSuggestion(rule, {
+      semanticCapabilityDefinitions: request.semanticCapabilityDefinitions,
+    }),
+  )
     ? candidates
     : [];
 }
@@ -32,7 +38,11 @@ export function persistentPermissionUpdates(
 export function persistentRules(request: PermissionApprovalRequest): string[] {
   const [update] = persistentPermissionUpdates(request);
   return (update?.rules || [])
-    .map(persistentRuleForSuggestion)
+    .map((rule) =>
+      persistentRuleForSuggestion(rule, {
+        semanticCapabilityDefinitions: request.semanticCapabilityDefinitions,
+      }),
+    )
     .filter((rule): rule is string => Boolean(rule));
 }
 
@@ -44,12 +54,25 @@ export function firstPersistentRule(
 
 function persistentRuleForSuggestion(
   rule: PermissionApprovalRuleValue,
+  options: {
+    semanticCapabilityDefinitions?: Record<
+      string,
+      SemanticCapabilityDefinition
+    >;
+  } = {},
 ): string | undefined {
   if (!rule?.toolName) return undefined;
-  const persistentRule = rule.ruleContent
-    ? `${rule.toolName}(${rule.ruleContent})`
-    : rule.toolName;
-  return validatePersistentRequestPermissionRule(persistentRule).ok
+  const [persistentRule] = permissionUpdateAllowedToolRules([
+    {
+      type: 'addRules',
+      behavior: 'allow',
+      rules: [rule],
+    },
+  ]);
+  if (!persistentRule) return undefined;
+  return validatePersistentRequestPermissionRule(persistentRule, {
+    semanticCapabilityDefinitions: options.semanticCapabilityDefinitions,
+  }).ok
     ? persistentRule
     : undefined;
 }

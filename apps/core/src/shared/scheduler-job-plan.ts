@@ -1,5 +1,4 @@
 import { createHash } from 'crypto';
-import { isCanonicalBrowserCapabilityRule } from './agent-tool-references.js';
 import { getBuiltinSemanticCapability } from './semantic-capabilities.js';
 
 export interface SchedulerJobPlanInput {
@@ -7,7 +6,6 @@ export interface SchedulerJobPlanInput {
   name: string;
   prompt: string;
   modelAlias?: string | null;
-  modelProfileId?: string | null;
   scheduleType: 'cron' | 'interval' | 'once';
   scheduleValue: string;
   executionContext?: {
@@ -33,7 +31,7 @@ export interface SchedulerJobPlanInput {
       protectedPaths?: string[];
     };
   }>;
-  requiredTools?: string[];
+  toolAccessRequirements?: string[];
   requiredMcpServers?: string[];
   silent?: boolean;
   cleanupAfterMs?: number;
@@ -65,9 +63,7 @@ export function formatSchedulerJobPlan(
     input.modelDescription ??
     (input.modelAlias
       ? `explicit alias ${input.modelAlias}`
-      : input.modelProfileId
-        ? `profile ${input.modelProfileId}`
-        : 'job default for this schedule type');
+      : 'job default for this schedule type');
   const routeText =
     input.notificationRoutes && input.notificationRoutes.length > 0
       ? input.notificationRoutes
@@ -80,9 +76,9 @@ export function formatSchedulerJobPlan(
   const runtime =
     input.runtimeDescription ??
     `execution ${formatExecutionContext(input.executionContext)}; notifications ${routeText}; background`;
-  const requiredTools =
-    input.requiredTools && input.requiredTools.length > 0
-      ? input.requiredTools.join(', ')
+  const toolAccessRequirements =
+    input.toolAccessRequirements && input.toolAccessRequirements.length > 0
+      ? input.toolAccessRequirements.join(', ')
       : 'none';
   const requiredCapabilities =
     input.capabilityRequirements && input.capabilityRequirements.length > 0
@@ -97,25 +93,15 @@ export function formatSchedulerJobPlan(
     `- Schedule: ${input.scheduleType} ${input.scheduleValue || '(empty)'}`,
     `- Model: ${model}`,
     `- Required capabilities: ${requiredCapabilities}`,
-    `- Required tools: ${requiredTools}`,
+    `- Tool access requirements: ${toolAccessRequirements}`,
     `- Required MCP servers: ${requiredMcpServers}`,
-    '- Tool access: inherited from the target agent capability selection; required tools are assertions only and missing tools will pause the job for permission.',
-    ...formatRequiredToolAssertionGuidance(input.requiredTools),
+    '- Tool access: inherited from the target agent capability selection; tool access requirements are preflight checks only and missing tools pause setup for permission.',
     '- Network: governed by the same tool permission and sandbox policy as live runs; no standalone scheduler network grant is created.',
     '- Memory: uses the target agent runtime memory settings; no memory schema or store changes are made by this plan.',
     `- Runtime: ${runtime}`,
     `- Confirmation token: ${token}`,
     'Re-run scheduler_upsert_job with confirm=true and confirmation_token set to this token to create or update the job.',
   ].join('\n');
-}
-
-function formatRequiredToolAssertionGuidance(
-  requiredTools: SchedulerJobPlanInput['requiredTools'],
-): string[] {
-  if (!requiredTools?.some(isCanonicalBrowserCapabilityRule)) return [];
-  return [
-    '- Browser assertion: Browser in required_tools means every successful run must perform real browser IPC activity, such as browser_open, browser_inspect, or browser_act. Do not include Browser in required_tools for optional enrichment or fallback use; keep it as an allowed agent capability instead.',
-  ];
 }
 
 function formatExecutionContext(
@@ -133,13 +119,12 @@ function normalizePlanInput(
     name: input.name,
     prompt: input.prompt,
     modelAlias: input.modelAlias ?? null,
-    modelProfileId: input.modelProfileId ?? null,
     scheduleType: input.scheduleType,
     scheduleValue: input.scheduleValue,
     executionContext: input.executionContext,
     notificationRoutes: input.notificationRoutes ?? [],
     capabilityRequirements: input.capabilityRequirements ?? [],
-    requiredTools: input.requiredTools ?? [],
+    toolAccessRequirements: input.toolAccessRequirements ?? [],
     requiredMcpServers: input.requiredMcpServers ?? [],
     silent: input.silent ?? false,
     cleanupAfterMs: input.cleanupAfterMs,

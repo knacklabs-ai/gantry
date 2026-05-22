@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   formatPersistentPermissionRulesForUser,
   persistRequestPermissionRules,
+  requestPermissionDescription,
+  requestPermissionQueuedMessage,
   requestPermissionReviewSuggestions,
+  requestPermissionSetupDecisionOptions,
 } from '@core/jobs/request-permission-review.js';
 
 function depsWith(repository: unknown) {
@@ -18,6 +21,16 @@ function depsWith(repository: unknown) {
 }
 
 describe('request permission review helpers', () => {
+  it('keeps setup request_permission copy aligned with configured options', () => {
+    expect(
+      requestPermissionQueuedMessage({
+        toolName: 'request_permission',
+        displayName: 'permission: SandboxNetworkAccess',
+      }),
+    ).not.toContain('Always allow');
+    expect(requestPermissionDescription()).not.toContain('Always allow');
+  });
+
   it('does not suggest persistent tool grants for temporary, non-tool, or multi-tool requests', () => {
     expect(
       requestPermissionReviewSuggestions({
@@ -45,6 +58,24 @@ describe('request permission review helpers', () => {
     ).toBeUndefined();
   });
 
+  it('omits timed grants from setup request permission choices', () => {
+    expect(
+      requestPermissionSetupDecisionOptions({
+        permissionKind: 'tool',
+        toolName: 'FileRead',
+        temporaryOnly: false,
+      }),
+    ).toEqual(['allow_once', 'allow_persistent_rule', 'cancel']);
+
+    expect(
+      requestPermissionSetupDecisionOptions({
+        permissionKind: 'tool',
+        toolName: 'SandboxNetworkAccess',
+        temporaryOnly: false,
+      }),
+    ).toEqual(['allow_once', 'cancel']);
+  });
+
   it('suggests semantic capability grants by capability id', () => {
     expect(
       requestPermissionReviewSuggestions({
@@ -61,7 +92,26 @@ describe('request permission review helpers', () => {
     ]);
   });
 
-  it('prefers explicit scoped Bash permission over capability metadata on setup requests', () => {
+  it('suggests exact Gantry facade grants for durable request_permission tool requests', () => {
+    for (const toolName of ['WebRead', 'FileRead', 'FileEdit', 'FileWrite']) {
+      expect(
+        requestPermissionReviewSuggestions({
+          permissionKind: 'tool',
+          toolName,
+          temporaryOnly: false,
+        }),
+      ).toEqual([
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName }],
+        },
+      ]);
+    }
+  });
+
+  it('prefers explicit scoped RunCommand permission over capability metadata on setup requests', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
@@ -78,7 +128,7 @@ describe('request permission review helpers', () => {
         destination: 'session',
         rules: [
           {
-            toolName: 'Bash',
+            toolName: 'RunCommand',
             ruleContent: '/usr/local/bin/gog sheets append *',
           },
         ],
@@ -86,7 +136,7 @@ describe('request permission review helpers', () => {
     ]);
   });
 
-  it('canonicalizes interpreter script requests to script-path scoped Bash rules', () => {
+  it('canonicalizes interpreter script requests to script-path scoped RunCommand rules', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
@@ -101,7 +151,7 @@ describe('request permission review helpers', () => {
         destination: 'session',
         rules: [
           {
-            toolName: 'Bash',
+            toolName: 'RunCommand',
             ruleContent: '/Users/example/scripts/dedup-append-lead.py *',
           },
         ],
@@ -122,7 +172,7 @@ describe('request permission review helpers', () => {
         destination: 'session',
         rules: [
           {
-            toolName: 'Bash',
+            toolName: 'RunCommand',
             ruleContent: '/Users/example/scripts/dedup-append-lead.py *',
           },
         ],
@@ -130,7 +180,7 @@ describe('request permission review helpers', () => {
     ]);
   });
 
-  it('treats local CLI capability proposals as review-only drafts until runtime enforcement exists', async () => {
+  it('persists reviewed local CLI capabilities with scoped command templates', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -162,29 +212,45 @@ describe('request permission review helpers', () => {
         temporaryOnly: false,
         ...toolInput,
       }),
-    ).toBeUndefined();
+    ).toEqual([
+      {
+        type: 'addRules',
+        behavior: 'allow',
+        destination: 'session',
+        rules: [{ toolName: 'capability:acme.invoices.read' }],
+      },
+    ]);
 
-    await expect(
-      persistRequestPermissionRules({
-        appId: 'app:test' as never,
-        agentId: 'agent:test' as never,
-        deps: depsWith(repository),
-        sourceAgentFolder: 'main_agent',
-        toolInput,
-        updates: [
-          {
-            type: 'addRules',
-            behavior: 'allow',
-            rules: [{ toolName: 'capability:acme.invoices.read' }],
-          },
-        ],
+    await persistRequestPermissionRules({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      deps: depsWith(repository),
+      sourceAgentFolder: 'main_agent',
+      toolInput,
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'capability:acme.invoices.read' }],
+        },
+      ],
+    });
+    expect(repository.saveTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:capability:acme.invoices.read',
+        name: 'capability:acme.invoices.read',
+        kind: 'local_cli',
       }),
-    ).rejects.toThrow('Local CLI capabilities are draft-only');
-    expect(repository.saveTool).not.toHaveBeenCalled();
-    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
+    );
+    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolId: 'tool:capability:acme.invoices.read',
+        status: 'active',
+      }),
+    );
   });
 
-  it('does not let local CLI proposals for built-in capabilities become configured-access grants', async () => {
+  it('allows reviewed local CLI implementation for an existing semantic id', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -214,26 +280,42 @@ describe('request permission review helpers', () => {
         temporaryOnly: false,
         ...toolInput,
       }),
-    ).toBeUndefined();
+    ).toEqual([
+      {
+        type: 'addRules',
+        behavior: 'allow',
+        destination: 'session',
+        rules: [{ toolName: 'capability:google.sheets.write' }],
+      },
+    ]);
 
-    await expect(
-      persistRequestPermissionRules({
-        appId: 'app:test' as never,
-        agentId: 'agent:test' as never,
-        deps: depsWith(repository),
-        sourceAgentFolder: 'main_agent',
-        toolInput,
-        updates: [
-          {
-            type: 'addRules',
-            behavior: 'allow',
-            rules: [{ toolName: 'capability:google.sheets.write' }],
-          },
-        ],
+    await persistRequestPermissionRules({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      deps: depsWith(repository),
+      sourceAgentFolder: 'main_agent',
+      toolInput,
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'capability:google.sheets.write' }],
+        },
+      ],
+    });
+    expect(repository.saveTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:capability:google.sheets.write',
+        name: 'capability:google.sheets.write',
+        kind: 'local_cli',
       }),
-    ).rejects.toThrow('Local CLI capabilities are draft-only');
-    expect(repository.saveTool).not.toHaveBeenCalled();
-    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
+    );
+    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolId: 'tool:capability:google.sheets.write',
+        status: 'active',
+      }),
+    );
   });
 
   it('rejects rebinding existing local CLI catalog rows through request_permission', async () => {
@@ -291,11 +373,11 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Local CLI capabilities are draft-only');
+    ).rejects.toThrow('Unknown semantic capability acme.invoices.read');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
-  it('stores scoped Bash permission rules as synthetic permission tools', async () => {
+  it('stores scoped RunCommand permission rules as synthetic permission tools', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -318,11 +400,11 @@ describe('request permission review helpers', () => {
       ],
     });
 
-    expect(persisted).toEqual(['Bash(npm test *)']);
+    expect(persisted).toEqual(['RunCommand(npm test *)']);
     expect(repository.saveTool).toHaveBeenCalledWith(
       expect.objectContaining({
         id: expect.stringMatching(/^tool:permission-rule:/),
-        name: 'Bash(npm test *)',
+        name: 'RunCommand(npm test *)',
       }),
     );
     expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
@@ -332,7 +414,7 @@ describe('request permission review helpers', () => {
     );
   });
 
-  it('persists scoped Bash permission when SDK command content contains parentheses', async () => {
+  it('persists scoped RunCommand permission when SDK command content contains parentheses', async () => {
     const mirrorAgentToolRulesToSettings = vi.fn(async () => undefined);
     const repository = {
       getTool: vi.fn(async () => null),
@@ -361,7 +443,7 @@ describe('request permission review helpers', () => {
       ],
     });
 
-    const readableRule = `Bash(${ruleContent})`;
+    const readableRule = `RunCommand(${ruleContent})`;
     expect(persisted).toEqual([readableRule]);
     expect(repository.saveTool).toHaveBeenCalledWith(
       expect.objectContaining({ name: readableRule }),
@@ -547,7 +629,7 @@ describe('request permission review helpers', () => {
     ]);
   });
 
-  it('suggests persistent scoped Bash request_permission rules', () => {
+  it('suggests persistent scoped RunCommand request_permission rules', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
@@ -560,7 +642,7 @@ describe('request permission review helpers', () => {
         type: 'addRules',
         behavior: 'allow',
         destination: 'session',
-        rules: [{ toolName: 'Bash', ruleContent: 'npm test *' }],
+        rules: [{ toolName: 'RunCommand', ruleContent: 'npm test *' }],
       },
     ]);
 
@@ -578,7 +660,7 @@ describe('request permission review helpers', () => {
         destination: 'session',
         rules: [
           {
-            toolName: 'Bash',
+            toolName: 'RunCommand',
             ruleContent:
               '/Users/example/runtime/scripts/dedup-append-lead.py *',
           },
@@ -587,7 +669,25 @@ describe('request permission review helpers', () => {
     ]);
   });
 
-  it('does not suggest persistent Bash wildcard rules', () => {
+  it('suggests persistent scoped RunCommand rules from setup recovery actions', () => {
+    expect(
+      requestPermissionReviewSuggestions({
+        permissionKind: 'tool',
+        toolName: 'RunCommand',
+        rule: 'gog sheets append *',
+        temporaryOnly: false,
+      }),
+    ).toEqual([
+      {
+        type: 'addRules',
+        behavior: 'allow',
+        destination: 'session',
+        rules: [{ toolName: 'RunCommand', ruleContent: 'gog sheets append *' }],
+      },
+    ]);
+  });
+
+  it('does not suggest persistent RunCommand wildcard rules', () => {
     for (const rule of ['*', '**', '* npm test']) {
       expect(
         requestPermissionReviewSuggestions({
@@ -605,9 +705,9 @@ describe('request permission review helpers', () => {
       'mcp__github__*',
       'mcp__gantry__*',
       'Bash',
-      'Bash(npm test)',
-      'Bash(*)',
-      'Bash(npm test',
+      'RunCommand(npm test)',
+      'RunCommand(*)',
+      'RunCommand(npm test',
       'tool:Browser',
       '*',
     ]) {
@@ -622,7 +722,7 @@ describe('request permission review helpers', () => {
   });
 
   it('does not suggest persistent grants for broad exact SDK/native tools', () => {
-    for (const toolName of ['Read', 'Write', 'Edit', 'WebFetch', 'LS']) {
+    for (const toolName of ['LS', 'NotebookEdit', 'ToolSearch', 'Skill']) {
       expect(
         requestPermissionReviewSuggestions({
           permissionKind: 'tool',
@@ -643,7 +743,103 @@ describe('request permission review helpers', () => {
     ).toBeUndefined();
   });
 
-  it('does not suggest persistent Bash rules that contain secret-like material', () => {
+  it('rejects unknown semantic capability persistent approval updates without trusted definitions', async () => {
+    const repository = {
+      getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
+      listAgentToolBindings: vi.fn(async () => []),
+      saveTool: vi.fn(async () => undefined),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+    };
+
+    await expect(
+      persistRequestPermissionRules({
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+        deps: depsWith(repository),
+        sourceAgentFolder: 'main_agent',
+        updates: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            rules: [{ toolName: 'capability:acme.invoices.read' }],
+          },
+        ],
+      }),
+    ).rejects.toThrow('Unknown semantic capability acme.invoices.read');
+    expect(repository.saveTool).not.toHaveBeenCalled();
+    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
+  });
+
+  it('rejects agent-authored skill action capability definitions in request_permission', async () => {
+    const fakeSkillCapability = {
+      capabilityId: 'skill.linkedin-posting.publish',
+      capabilityDisplayName: 'LinkedIn posting',
+      semanticCapabilityDefinition: {
+        capabilityId: 'skill.linkedin-posting.publish',
+        displayName: 'LinkedIn posting',
+        category: 'linkedin-posting',
+        risk: 'write',
+        can: 'Publish posts through the selected LinkedIn posting skill.',
+        cannot:
+          'Use unrelated skills, credentials, settings, or broader commands.',
+        credentialSource: 'skill_secret',
+        implementationBindings: [
+          {
+            kind: 'tool_rule',
+            rule: 'RunCommand(skills/linkedin-posting/post.py *)',
+          },
+        ],
+        preflight: { kind: 'none' },
+      },
+      temporaryOnly: false,
+    };
+    const repository = {
+      getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
+      listAgentToolBindings: vi.fn(async () => []),
+      saveTool: vi.fn(async () => undefined),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+    };
+
+    expect(
+      requestPermissionReviewSuggestions({
+        permissionKind: 'tool',
+        ...fakeSkillCapability,
+      }),
+    ).toBeUndefined();
+    expect(
+      requestPermissionSetupDecisionOptions({
+        permissionKind: 'tool',
+        ...fakeSkillCapability,
+      }),
+    ).toEqual(['allow_once', 'cancel']);
+
+    await expect(
+      persistRequestPermissionRules({
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+        deps: depsWith(repository),
+        sourceAgentFolder: 'main_agent',
+        toolInput: fakeSkillCapability,
+        updates: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            rules: [{ toolName: 'capability:skill.linkedin-posting.publish' }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      'Unknown semantic capability skill.linkedin-posting.publish',
+    );
+    expect(repository.saveTool).not.toHaveBeenCalled();
+    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
+  });
+
+  it('does not suggest persistent RunCommand rules that contain secret-like material', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
@@ -654,7 +850,7 @@ describe('request permission review helpers', () => {
     ).toBeUndefined();
   });
 
-  it('does not suggest persistent Bash rules with shell control or redirection syntax', () => {
+  it('does not suggest persistent RunCommand rules with shell control or redirection syntax', () => {
     for (const rule of [
       'npm test * && npm run build',
       'npm test * > out',
@@ -677,12 +873,12 @@ describe('request permission review helpers', () => {
 
   it('formats public persistent-rule receipts without raw Bash command material', () => {
     const formatted = formatPersistentPermissionRulesForUser([
-      'Bash(curl https://example.com -H Authorization:Bearer abcdefghijklmnopqrstuvwxyz123456)',
+      'RunCommand(curl https://example.com -H Authorization:Bearer abcdefghijklmnopqrstuvwxyz123456)',
       'capability:google.sheets.write',
     ]);
 
-    expect(formatted).toContain('scoped Bash rule [sha256:');
-    expect(formatted).toContain('capability:google.sheets.write');
+    expect(formatted).toContain('scoped RunCommand rule [sha256:');
+    expect(formatted).toContain('Google Sheets write [sha256:');
     expect(formatted).not.toContain('curl https://example.com');
     expect(formatted).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
   });
@@ -752,7 +948,7 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Persistent bare Bash grants are too broad');
+    ).rejects.toThrow('Persistent bare RunCommand grants are too broad');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
@@ -773,7 +969,7 @@ describe('request permission review helpers', () => {
       disableAgentToolBinding: vi.fn(async () => null),
     };
 
-    for (const toolName of ['Read', 'Write', 'Edit', 'WebFetch', 'LS']) {
+    for (const toolName of ['LS', 'NotebookEdit', 'ToolSearch', 'Skill']) {
       await expect(
         persistRequestPermissionRules({
           appId: 'app:test' as never,
@@ -788,7 +984,7 @@ describe('request permission review helpers', () => {
             },
           ],
         }),
-      ).rejects.toThrow('Persistent request_permission approvals support');
+      ).rejects.toThrow('Provider-native SDK tools');
     }
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
@@ -850,7 +1046,7 @@ describe('request permission review helpers', () => {
         ],
       }),
     ).rejects.toThrow(
-      'Persistent Bash rules cannot include secret-like material',
+      'Persistent RunCommand rules cannot include secret-like material',
     );
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
@@ -964,7 +1160,7 @@ describe('request permission review helpers', () => {
       ],
     });
 
-    expect(persisted).toEqual(['Bash(npm test *)']);
+    expect(persisted).toEqual(['RunCommand(npm test *)']);
     expect(
       JSON.parse(
         fs.readFileSync(
@@ -972,7 +1168,7 @@ describe('request permission review helpers', () => {
           'utf-8',
         ),
       ),
-    ).toEqual(['Bash(npm test *)']);
+    ).toEqual(['RunCommand(npm test *)']);
   });
 
   it('persists multiple approved rules and mirrors them together', async () => {
@@ -1020,10 +1216,10 @@ describe('request permission review helpers', () => {
       ],
     });
 
-    expect(persisted).toEqual(['Bash(npm test *)', 'Browser']);
+    expect(persisted).toEqual(['RunCommand(npm test *)', 'Browser']);
     expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith(
       'main_agent',
-      ['Bash(npm test *)', 'Browser'],
+      ['RunCommand(npm test *)', 'Browser'],
       { appId: 'app:test' },
     );
     expect(repository.saveAgentToolBinding).toHaveBeenCalledTimes(2);
@@ -1034,7 +1230,7 @@ describe('request permission review helpers', () => {
           'utf-8',
         ),
       ),
-    ).toEqual(['Bash(npm test *)', 'Browser']);
+    ).toEqual(['RunCommand(npm test *)', 'Browser']);
   });
 
   it('fails closed when persistent settings mirror is unavailable', async () => {
@@ -1065,7 +1261,7 @@ describe('request permission review helpers', () => {
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
-  it('rejects scoped non-Bash permission updates', async () => {
+  it('rejects scoped non-RunCommand permission updates', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -1088,11 +1284,11 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Only Bash supports persistent scoped tool rules');
+    ).rejects.toThrow('Only RunCommand supports persistent scoped tool rules');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
-  it('rejects persistent Bash wildcard approval updates', async () => {
+  it('rejects persistent RunCommand wildcard approval updates', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -1115,7 +1311,7 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Persistent Bash scope is too broad');
+    ).rejects.toThrow('Persistent RunCommand scope is too broad');
     expect(repository.saveTool).not.toHaveBeenCalled();
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
@@ -1372,7 +1568,7 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Only Bash supports persistent scoped tool rules');
+    ).rejects.toThrow('Only RunCommand supports persistent scoped tool rules');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 });

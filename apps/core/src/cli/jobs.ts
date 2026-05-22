@@ -53,7 +53,15 @@ interface JobRecord {
     errorSummary: string;
     endedAt: string | null;
   }>;
-  requiredTools?: string[];
+  capabilityRequirements?: Array<{
+    capabilityId?: string;
+    reason?: string;
+    implementation?: {
+      kind?: string;
+      name?: string;
+    };
+  }>;
+  toolAccessRequirements?: string[];
   requiredMcpServers?: string[];
 }
 
@@ -208,7 +216,8 @@ function formatJobTable(jobs: JobRecord[]): string {
     jobThreadId(job) ?? '',
     job.nextRun ?? '',
     compactToolList([
-      ...(job.requiredTools ?? []),
+      ...formatCapabilityRequirements(job.capabilityRequirements),
+      ...(job.toolAccessRequirements ?? []),
       ...(job.requiredMcpServers ?? []).map((server) => `mcp:${server}`),
     ]),
     compactToolList(job.toolAccess.effectiveAllowedTools),
@@ -251,8 +260,9 @@ function formatJobDetail(job: JobRecord): string {
     `Next Run: ${job.nextRun ?? '(none)'}`,
     `Last Run: ${job.lastRun ?? '(none)'}`,
     `Model: ${job.modelAlias ?? '(default)'}`,
-    `Required Tools: ${formatRequiredTools(job.requiredTools)}`,
-    `Required MCP Servers: ${formatRequiredTools(job.requiredMcpServers)}`,
+    `Capability Requirements: ${formatToolAccessRequirements(formatCapabilityRequirements(job.capabilityRequirements))}`,
+    `Tool Access Requirements: ${formatToolAccessRequirements(job.toolAccessRequirements)}`,
+    `Required MCP Servers: ${formatToolAccessRequirements(job.requiredMcpServers)}`,
     '',
     formatJobToolAccess(job.toolAccess),
   ];
@@ -334,8 +344,26 @@ function formatEventPayload(payload: string | null): string {
     : singleLine;
 }
 
-function formatRequiredTools(requiredTools: string[] | undefined): string {
-  return requiredTools && requiredTools.length > 0
-    ? requiredTools.join(', ')
+function formatToolAccessRequirements(
+  toolAccessRequirements: string[] | undefined,
+): string {
+  return toolAccessRequirements && toolAccessRequirements.length > 0
+    ? toolAccessRequirements.join(', ')
     : '(none)';
+}
+
+function formatCapabilityRequirements(
+  capabilityRequirements: JobRecord['capabilityRequirements'],
+): string[] {
+  return (capabilityRequirements ?? [])
+    .map((requirement) => {
+      const capabilityId = requirement.capabilityId?.trim();
+      if (!capabilityId) return undefined;
+      const implementation = requirement.implementation;
+      const implementationLabel = implementation?.name || implementation?.kind;
+      return implementationLabel
+        ? `${capabilityId} via ${implementationLabel}`
+        : capabilityId;
+    })
+    .filter((item): item is string => Boolean(item));
 }

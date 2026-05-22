@@ -21,6 +21,7 @@ import {
   ConversationThreadListResponseSchema,
   ConversationThreadResponseSchema,
   CreateAgentRequestSchema,
+  CreateJobResponseSchema,
   CreateJobRequestSchema,
   CreateSessionRequestSchema,
   ExternalReferenceSchema,
@@ -34,11 +35,18 @@ import {
   MemorySearchRequestSchema,
   MessageListResponseSchema,
   MessageResponseSchema,
+  ModelDefaultsPatchRequestSchema,
+  ModelDefaultsResponseSchema,
+  ModelPreviewRequestSchema,
+  ModelPreviewResponseSchema,
   PageRequestSchema,
   ProviderSessionResponseSchema,
   RuntimeLimitSchema,
   SchemaDescriptorSchema,
   StreamEventSchema,
+  ToolCatalogItemResponseSchema,
+  ToolCatalogKindSchema,
+  ToolCatalogProviderToolNameSchema,
   UpdateJobRequestSchema,
   createCursorPageResponseSchema,
   createPageResponseSchema,
@@ -131,6 +139,234 @@ describe('contracts package', () => {
     });
   });
 
+  it('validates provider-neutral model default contracts', () => {
+    expect(
+      ModelDefaultsPatchRequestSchema.parse({
+        provider: 'openrouter',
+        chat: 'kimi',
+        jobs: 'inherit',
+        memory: null,
+      }),
+    ).toMatchObject({ provider: 'openrouter', chat: 'kimi' });
+    expectInvalid(ModelDefaultsPatchRequestSchema, {
+      providerPreset: 'custom-provider',
+    });
+    expectInvalid(ModelDefaultsPatchRequestSchema, {
+      providerPreset: 'anthropic',
+      providerModelId: 'claude-sonnet-4-6',
+    });
+    expect(
+      ModelDefaultsResponseSchema.safeParse({
+        provider: {
+          id: 'openrouter',
+          label: 'OpenRouter',
+        },
+        chat: {
+          configuredAlias: 'kimi',
+          effectiveAlias: 'kimi',
+          source: 'settings.yaml agent.default_model',
+          inherited: false,
+          workload: 'chat',
+          model: null,
+        },
+        jobs: {
+          oneTime: {
+            configuredAlias: null,
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml agent.default_model',
+            inherited: true,
+            workload: 'one_time_job',
+            model: null,
+          },
+          recurring: {
+            configuredAlias: null,
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml agent.default_model',
+            inherited: true,
+            workload: 'recurring_job',
+            model: null,
+          },
+        },
+        memory: {
+          mode: 'provider-managed',
+          extractor: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml memory.llm.models.extractor',
+            inherited: false,
+            workload: 'memory_extractor',
+            model: null,
+          },
+          dreaming: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml memory.llm.models.dreaming',
+            inherited: false,
+            workload: 'memory_dreaming',
+            model: null,
+          },
+          consolidation: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml memory.llm.models.consolidation',
+            inherited: false,
+            workload: 'memory_consolidation',
+            model: null,
+          },
+        },
+        defaults: {
+          chat: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml agent.default_model',
+            inherited: false,
+            workload: 'chat',
+            model: {
+              id: 'openrouter:kimi-k2.6',
+              displayName: 'Kimi K2.6',
+              aliases: ['kimi'],
+              recommendedAlias: 'kimi',
+              provider: 'OpenRouter',
+              providerId: 'openrouter',
+              providerLabel: 'OpenRouter',
+              providerSlug: 'moonshotai/kimi-k2.6',
+              supportedWorkloads: ['chat', 'memory_extractor'],
+              contextWindowTokens: 262142,
+              maxOutputTokens: 64000,
+              cacheMode: 'openrouter-provider-prompt',
+              cacheTokenFields: [],
+              supportsThinking: true,
+              supportsTools: true,
+              source: {
+                label: 'OpenRouter Kimi K2.6 API',
+                url: 'https://openrouter.ai/moonshotai/kimi-k2.6/api',
+                verifiedAt: '2026-05-21',
+              },
+              experimental: true,
+            },
+          },
+          oneTime: {
+            configuredAlias: null,
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml agent.default_model',
+            inherited: true,
+            workload: 'one_time_job',
+            model: null,
+          },
+          recurring: {
+            configuredAlias: null,
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml agent.default_model',
+            inherited: true,
+            workload: 'recurring_job',
+            model: null,
+          },
+          memoryExtractor: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml memory.llm.models.extractor',
+            inherited: false,
+            workload: 'memory_extractor',
+            model: null,
+          },
+          memoryDreaming: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml memory.llm.models.dreaming',
+            inherited: false,
+            workload: 'memory_dreaming',
+            model: null,
+          },
+          memoryConsolidation: {
+            configuredAlias: 'kimi',
+            effectiveAlias: 'kimi',
+            source: 'settings.yaml memory.llm.models.consolidation',
+            inherited: false,
+            workload: 'memory_consolidation',
+            model: null,
+          },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      ModelPreviewRequestSchema.parse({
+        target: 'job',
+        jobId: 'job-1',
+      }),
+    ).toEqual({ target: 'job', jobId: 'job-1' });
+    expectInvalid(ModelPreviewRequestSchema, {
+      target: 'job',
+      providerSlug: 'moonshotai/kimi-k2.6',
+    });
+    expect(
+      ModelPreviewResponseSchema.parse({
+        target: 'job',
+        jobId: 'job-1',
+        kind: 'recurring',
+        selection: {
+          configuredAlias: null,
+          effectiveAlias: 'sonnet',
+          source: 'settings.yaml agents.<agent>.model',
+          inherited: true,
+          workload: 'recurring_job',
+          model: null,
+        },
+        why: ['job job-1 inherits settings.yaml agents.<agent>.model'],
+      }),
+    ).toMatchObject({
+      target: 'job',
+      selection: {
+        effectiveAlias: 'sonnet',
+        source: 'settings.yaml agents.<agent>.model',
+      },
+    });
+    expect(
+      CreateJobResponseSchema.parse({
+        jobId: 'job-1',
+        modelAlias: 'sonnet',
+        modelSource: 'settings.yaml agents.<agent>.model',
+        modelSelection: {
+          alias: 'sonnet',
+          source: 'settings.yaml agents.<agent>.model',
+          explicit: false,
+        },
+        model: null,
+      }),
+    ).toMatchObject({
+      modelAlias: 'sonnet',
+      modelSource: 'settings.yaml agents.<agent>.model',
+    });
+  });
+
+  it('keeps public tool catalog contracts provider-neutral', () => {
+    expect(
+      ToolCatalogKindSchema.safeParse(['anthropic', 'sdk'].join('_')).success,
+    ).toBe(false);
+    expect(ToolCatalogKindSchema.parse('browser')).toBe('browser');
+    expect(
+      ToolCatalogProviderToolNameSchema.parse('adapter-private-tool'),
+    ).toBe('adapter-private-tool');
+    expectInvalid(ToolCatalogProviderToolNameSchema, '');
+
+    expect(
+      ToolCatalogItemResponseSchema.parse({
+        id: 'tool:Browser',
+        appId: 'app-1',
+        name: 'Browser',
+        kind: 'browser',
+        provider: 'gantry',
+        displayName: 'Browser',
+        category: 'web',
+        inputSchema: { schema: {} },
+        risk: 'medium',
+        selectable: true,
+        status: 'active',
+        createdAt: iso,
+        updatedAt: iso,
+      }),
+    ).toMatchObject({ id: 'tool:Browser', kind: 'browser' });
+  });
+
   it('validates representative canonical DTOs and rejects constrained invalid input', () => {
     expect(
       CreateSessionRequestSchema.parse({
@@ -163,20 +399,20 @@ describe('contracts package', () => {
     expectInvalid(CreateAgentRequestSchema, { appId: 'app-1', name: '' });
     expect(
       ProviderSessionResponseSchema.parse({
-        provider: 'anthropic',
+        provider: 'anthropic:claude-agent-sdk',
         status: 'active',
         hasProviderResume: true,
         createdAt: iso,
         updatedAt: iso,
       }),
     ).toMatchObject({
-      provider: 'anthropic',
+      provider: 'anthropic:claude-agent-sdk',
       status: 'active',
       hasProviderResume: true,
     });
     expectInvalid(ProviderSessionResponseSchema, {
       id: 'provider-session-sdk-resume-handle',
-      provider: 'anthropic',
+      provider: 'anthropic:claude-agent-sdk',
       status: 'active',
       hasProviderResume: true,
       createdAt: iso,
@@ -185,30 +421,30 @@ describe('contracts package', () => {
     expect(
       AgentCapabilitiesResponseSchema.parse({
         agentId: 'agent-1',
-        selectedToolIds: ['tool:mcp__gantry__service_restart'],
-        selectedSkillIds: [],
-        selectedMcpServerIds: [],
+        sources: { skills: [], mcpServers: [], tools: [] },
+        capabilities: [
+          { id: 'mcp__gantry__service_restart', version: 'builtin' },
+        ],
         toolAccess: {
           configuredTools: ['mcp__gantry__service_restart'],
           defaultTools: [],
           availableButGatedTools: ['Bash'],
           requestableAdminTools: [],
-          source: 'settings.yaml agents.agent-1.tools',
+          source: 'settings.yaml agents.agent-1.capabilities',
         },
         updatedAt: iso,
       }),
     ).toMatchObject({ agentId: 'agent-1' });
     expectInvalid(AgentCapabilitiesResponseSchema, {
       agentId: 'agent-1',
-      selectedToolIds: [],
-      selectedSkillIds: [],
-      selectedMcpServerIds: [],
+      sources: { skills: [], mcpServers: [], tools: [] },
+      capabilities: [],
       toolAccess: {
         configuredTools: [],
         defaultTools: [],
         availableButGatedTools: [],
         requestableAdminTools: [],
-        source: 'settings.yaml agents.agent-1.tools',
+        source: 'settings.yaml agents.agent-1.capabilities',
         inheritedTools: [],
       },
       updatedAt: iso,
@@ -237,11 +473,14 @@ describe('contracts package', () => {
           implementation: {
             kind: 'local_cli',
             name: 'gog',
-            commandTemplate: 'gog sheets append *',
+            executablePath: '/usr/local/bin/gog',
+            executableVersion: 'v0.9.0',
+            executableHash: 'sha256:abc123',
+            commandTemplate: '/usr/local/bin/gog sheets append *',
           },
         },
       ],
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       kind: 'recurring',
       schedule: { type: 'cron', value: '0 9 * * *' },
       modelAlias: 'sonnet',
@@ -254,7 +493,7 @@ describe('contracts package', () => {
           implementation: expect.objectContaining({ name: 'gog' }),
         }),
       ],
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       executionContext: {
         conversationJid: 'app:app-one:session-1',
         sessionId: 'session-1',
@@ -369,7 +608,7 @@ describe('contracts package', () => {
           reason: 'Append rows after each run',
         },
       ],
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       status: 'paused',
     } satisfies UpdateJobInput;
     expect(UpdateJobRequestSchema.parse(sdkUpdatePayload)).toEqual({
@@ -380,7 +619,7 @@ describe('contracts package', () => {
           reason: 'Append rows after each run',
         },
       ],
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       status: 'paused',
     });
     expectInvalid(UpdateJobRequestSchema, {
@@ -452,7 +691,7 @@ describe('contracts package', () => {
             reason: 'Append rows after each run',
           },
         ],
-        requiredTools: ['Browser'],
+        toolAccessRequirements: ['Browser'],
         requiredMcpServers: [],
         nextRun: iso,
         lastRun: null,
@@ -467,7 +706,6 @@ describe('contracts package', () => {
           nextAction: 'Approve Browser access, then rerun the job.',
         },
         modelAlias: null,
-        modelProfileId: null,
         model: null,
         groupScope: 'app:app-one:session-1',
         sessionId: null,
@@ -498,7 +736,6 @@ describe('contracts package', () => {
       nextRun: iso,
       lastRun: null,
       modelAlias: null,
-      modelProfileId: null,
       model: null,
       groupScope: 'app:app-one:session-1',
       sessionId: null,
@@ -525,7 +762,6 @@ describe('contracts package', () => {
       lastRun: null,
       staleness: 'delayed',
       modelAlias: null,
-      modelProfileId: null,
       model: null,
       groupScope: 'app:app-one:session-1',
       sessionId: null,
@@ -541,7 +777,6 @@ describe('contracts package', () => {
       nextRun: iso,
       lastRun: null,
       modelAlias: null,
-      modelProfileId: null,
       model: null,
       groupScope: 'app:app-one:session-1',
       sessionId: null,

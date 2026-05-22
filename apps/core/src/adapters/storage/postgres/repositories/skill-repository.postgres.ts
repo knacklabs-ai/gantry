@@ -13,6 +13,7 @@ function encodeJson(value: unknown): string {
 }
 
 function parseJsonArray<T = string>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
   if (typeof value !== 'string' || value.length === 0) return [];
   try {
     const parsed = JSON.parse(value);
@@ -108,6 +109,7 @@ export class PostgresSkillCatalogRepository implements SkillCatalogRepository {
         toolIdsJson: encodeJson(item.toolIds),
         workflowRefsJson: encodeJson(item.workflowRefs),
         requiredEnvVarsJson: encodeJson(item.requiredEnvVars ?? []),
+        actionPermissionsJson: item.actionPermissions ?? [],
         storageType: item.storage?.storageType ?? null,
         storageRef: item.storage?.storageRef ?? null,
         contentHash: item.storage?.contentHash ?? null,
@@ -133,6 +135,7 @@ export class PostgresSkillCatalogRepository implements SkillCatalogRepository {
           toolIdsJson: encodeJson(item.toolIds),
           workflowRefsJson: encodeJson(item.workflowRefs),
           requiredEnvVarsJson: encodeJson(item.requiredEnvVars ?? []),
+          actionPermissionsJson: item.actionPermissions ?? [],
           storageType: item.storage?.storageType ?? null,
           storageRef: item.storage?.storageRef ?? null,
           contentHash: item.storage?.contentHash ?? null,
@@ -276,6 +279,7 @@ export class PostgresSkillCatalogRepository implements SkillCatalogRepository {
       toolIds: parseJsonArray(row.toolIdsJson),
       workflowRefs: parseJsonArray(row.workflowRefsJson),
       requiredEnvVars: parseJsonArray(row.requiredEnvVarsJson),
+      actionPermissions: parseJsonArray(row.actionPermissionsJson),
       storage:
         row.storageType && row.storageRef && row.contentHash
           ? {

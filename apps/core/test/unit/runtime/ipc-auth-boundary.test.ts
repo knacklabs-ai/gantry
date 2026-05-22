@@ -153,7 +153,6 @@ describe('validateIpcAuthRequest', () => {
             ...payload,
             requestId: 'task-clear-thread',
             modelAlias: null,
-            modelProfileId: null,
           },
           'team',
           'thread-1',
@@ -170,7 +169,6 @@ describe('validateIpcAuthRequest', () => {
         groupScope: 'team',
       },
       modelAlias: null,
-      modelProfileId: null,
     });
   });
 
@@ -215,7 +213,9 @@ describe('validateIpcAuthRequest', () => {
           ),
           'team',
         ),
-      ).toThrow(/Unsupported (scheduler job fields|IPC task fields)/);
+      ).toThrow(
+        /Unsupported (scheduler job fields|scheduler job field|IPC task fields|IPC task field)/,
+      );
     };
 
     assertRejected({ linked_sessions: ['tg:team'] });
@@ -230,11 +230,47 @@ describe('validateIpcAuthRequest', () => {
     assertRejected({ group_scope: 'team' });
     assertRejected({ groupScope: 'team' });
     assertRejected({ required_mcp_servers: ['mcp:legacy'] });
+    assertRejected({ required_tools: ['Browser'] });
     assertRejected({
       capability_requirements: [
         { capabilityId: 'google.sheets.write', reason: 'required' },
       ],
     });
+  });
+
+  it('rejects deprecated scheduler requiredTools at task parsing boundary', () => {
+    const payload = signedPayload(
+      {
+        requestId: 'task-required-tools-cutover',
+        nonce: randomUUID(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        type: 'scheduler_upsert_job',
+        context: { threadId: 'thread-1', responseKeyId: TEST_RESPONSE_KEY_ID },
+        name: 'Job',
+        prompt: 'Run it',
+        scheduleType: 'interval',
+        scheduleValue: '60000',
+        executionContext: {
+          conversationJid: 'tg:team',
+          threadId: 'thread-1',
+          groupScope: 'team',
+        },
+        notificationRoutes: [
+          {
+            conversationJid: 'tg:team',
+            threadId: 'thread-1',
+            label: 'primary',
+          },
+        ],
+        requiredTools: ['Browser'],
+      },
+      'team',
+      'thread-1',
+    );
+
+    expect(() => parseTaskIpcData(payload, 'team')).toThrow(
+      /requiredTools.*Use toolAccessRequirements/,
+    );
   });
 
   it('rejects scheduler job allowedTools because jobs inherit agent capabilities', () => {
@@ -279,13 +315,13 @@ describe('validateIpcAuthRequest', () => {
       prompt: 'Run',
       scheduleType: 'interval',
       scheduleValue: '60000',
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       requiredMcpServers: ['mcp:company-crm'],
     });
 
     expect(parseTaskIpcData(payload, 'team')).toMatchObject({
       type: 'scheduler_upsert_job',
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       requiredMcpServers: ['mcp:company-crm'],
     });
   });
@@ -504,7 +540,7 @@ describe('validateIpcAuthRequest', () => {
 
     expect(parseTaskIpcData(payload, 'team')).toMatchObject({
       type: 'register_agent',
-      agentConfig: { model: 'kimi' },
+      agentConfig: { model: 'kimi-2.6' },
     });
   });
 
@@ -762,7 +798,7 @@ describe('validateIpcAuthRequest', () => {
         'allow_once',
       ],
       closestRule: {
-        rule: 'Bash(npm run build)',
+        rule: 'RunCommand(npm run build)',
         reason: 'Bash leaf npm test did not match any scoped rule.',
       },
       context: {
@@ -789,7 +825,7 @@ describe('validateIpcAuthRequest', () => {
           'allow_timed_grant',
         ],
         closestRule: {
-          rule: 'Bash(npm run build)',
+          rule: 'RunCommand(npm run build)',
           reason: 'Bash leaf npm test did not match any scoped rule.',
         },
       }),

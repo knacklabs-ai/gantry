@@ -85,7 +85,7 @@ describe('permission approval IPC boundary', () => {
 
     vi.resetModules();
     const { requestPermissionApproval } =
-      await import('@core/runner/claude/permission-callback.js');
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
     const { parsePermissionIpcRequest } =
       await import('@core/runtime/ipc-parsing.js');
 
@@ -96,8 +96,8 @@ describe('permission approval IPC boundary', () => {
         groupFolder,
         toolName: 'Bash',
         closestRule: {
-          rule: 'Bash(/Users/example/bin/post-lead *)',
-          reason: 'Closest scoped Bash rule',
+          rule: 'RunCommand(/Users/example/bin/post-lead *)',
+          reason: 'Closest scoped command rule',
         },
       }),
     ).resolves.toEqual({
@@ -118,8 +118,8 @@ describe('permission approval IPC boundary', () => {
       sourceAgentFolder: groupFolder,
       toolName: 'Bash',
       closestRule: {
-        rule: 'Bash(/Users/example/bin/post-lead *)',
-        reason: 'Closest scoped Bash rule',
+        rule: 'RunCommand(/Users/example/bin/post-lead *)',
+        reason: 'Closest scoped command rule',
       },
     });
   });
@@ -164,7 +164,7 @@ describe('permission approval IPC boundary', () => {
 
     vi.resetModules();
     const { requestPermissionApproval } =
-      await import('@core/runner/claude/permission-callback.js');
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
     const { parsePermissionIpcRequest } =
       await import('@core/runtime/ipc-parsing.js');
     const { writePermissionIpcResponse } =
@@ -296,7 +296,7 @@ describe('permission approval IPC boundary', () => {
 
     vi.resetModules();
     const { requestPermissionApproval } =
-      await import('@core/runner/claude/permission-callback.js');
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
 
     const pendingDecision = requestPermissionApproval({
       appId: 'app:team',

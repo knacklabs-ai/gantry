@@ -8,6 +8,7 @@ import type {
 import type {
   CapabilitySecretRepository,
   McpServerRepository,
+  SkillCatalogRepository,
   ToolCatalogRepository,
 } from '../../domain/ports/repositories.js';
 import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
@@ -132,6 +133,7 @@ export interface JobManagementServiceDeps {
   runtimeEvents?: RuntimeEventPublisherPort;
   triggerQueue?: JobTriggerQueuePort;
   toolRepository?: ToolCatalogRepository;
+  skillRepository?: SkillCatalogRepository;
   mcpServerRepository?: McpServerRepository;
   capabilitySecretRepository?: CapabilitySecretRepository;
   getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
@@ -148,13 +150,12 @@ export interface CreateManagedJobInput {
   executionContext?: JobExecutionContextInput;
   notificationRoutes?: JobNotificationRouteInput[];
   capabilityRequirements?: JobCapabilityRequirement[];
-  requiredTools?: string[];
+  toolAccessRequirements?: string[];
   requiredMcpServers?: string[];
   kind?: JobKind;
   runAt?: string;
   schedule?: { type?: unknown; value?: unknown };
   modelAlias?: unknown;
-  modelProfileId?: unknown;
   dryRun?: unknown;
 }
 
@@ -164,13 +165,12 @@ export interface UpsertJobFromIpcInput {
   name: string;
   prompt: string;
   modelAlias?: string | null;
-  modelProfileId?: string | null;
   scheduleType: unknown;
   scheduleValue: string;
   executionContext?: JobExecutionContextInput;
   notificationRoutes?: JobNotificationRouteInput[];
   capabilityRequirements?: JobCapabilityRequirement[];
-  requiredTools?: string[];
+  toolAccessRequirements?: string[];
   requiredMcpServers?: string[];
   threadId?: string;
   silent?: boolean;
@@ -206,7 +206,7 @@ export type JobUpdatePatch = Partial<{
   executionContext: JobExecutionContextInput;
   notificationRoutes: JobNotificationRouteInput[];
   capabilityRequirements: JobCapabilityRequirement[];
-  requiredTools: string[];
+  toolAccessRequirements: string[];
   requiredMcpServers: string[];
   threadId: string | null;
   groupScope: string;

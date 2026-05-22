@@ -12,6 +12,7 @@ import {
   BROWSER_BACKEND_ACTIONS,
   type BrowserBackendAction,
 } from '../shared/browser-backend-actions.js';
+import { parseSemanticCapabilityDefinitionsRecord } from '../shared/semantic-capabilities.js';
 import { isPlainObject, toTrimmedString } from '../shared/object.js';
 import {
   validateBrowserIpcAuthRequest,
@@ -65,6 +66,8 @@ export interface ParsedBrowserIpcRequest {
   responseKeyId?: string;
   jobId?: string;
   runId?: string;
+  appId?: string;
+  agentId?: string;
   publicToolName?: string;
   timeoutMs?: number;
   deadlineAtMs?: number;
@@ -459,6 +462,8 @@ export function parsePermissionIpcRequest(
   const subagentType = toTrimmedString(raw.subagentType, { maxLen: 200 });
   const toolInput = sanitizeToolInput(raw.toolInput);
   const suggestions = parsePermissionApprovalUpdates(raw.suggestions);
+  const semanticCapabilityDefinitions =
+    parseSemanticCapabilityDefinitionsRecord(raw.semanticCapabilityDefinitions);
   const decisionOptions = parsePermissionDecisionOptions(raw.decisionOptions);
   const closestRule = parseClosestPermissionRule(raw.closestRule);
   const interaction = parseInteractionDescriptor(raw.interaction);
@@ -486,6 +491,7 @@ export function parsePermissionIpcRequest(
     ...(closestRule ? { closestRule } : {}),
     ...(blockedPath ? { blockedPath } : {}),
     ...(toolInput ? { toolInput } : {}),
+    ...(semanticCapabilityDefinitions ? { semanticCapabilityDefinitions } : {}),
     ...(suggestions ? { suggestions } : {}),
     ...(decisionOptions ? { decisionOptions } : {}),
     ...(interaction ? { interaction } : {}),
@@ -611,6 +617,8 @@ export function parseBrowserIpcRequest(
   const rawTimeoutMs = context.timeoutMs;
   const jobId = toTrimmedString(context.jobId, { maxLen: 128 });
   const runId = toTrimmedString(context.runId, { maxLen: 128 });
+  const appId = toTrimmedString(context.appId, { maxLen: 128 });
+  const agentId = toTrimmedString(context.agentId, { maxLen: 128 });
   const publicToolName = toTrimmedString(context.publicToolName, {
     maxLen: 128,
   });
@@ -635,6 +643,8 @@ export function parseBrowserIpcRequest(
     ...(responseKeyId ? { responseKeyId } : {}),
     ...(jobId ? { jobId } : {}),
     ...(runId ? { runId } : {}),
+    ...(appId ? { appId } : {}),
+    ...(agentId ? { agentId } : {}),
     ...(publicToolName ? { publicToolName } : {}),
     ...(timeoutMs ? { timeoutMs } : {}),
     ...(Number.isFinite(deadlineAtMs) ? { deadlineAtMs } : {}),

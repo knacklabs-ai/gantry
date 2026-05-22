@@ -195,6 +195,71 @@ describe('ipc-browser-handler', () => {
     expect(response.data).toEqual({ content: 'tool-result' });
   });
 
+  it('resolves file_attach artifact sources before direct backend dispatch', async () => {
+    const callBrowserTool = vi.fn(async () => ({ content: 'tool-result' }));
+    const readFileArtifact = vi.fn(async () => ({
+      artifact: {
+        id: 'file-artifact:1',
+        appId: 'app:test',
+        agentId: 'agent:main',
+        virtualScope: 'scratch',
+        virtualPath: 'reports/result.zip',
+        version: 1,
+        storageType: 'local-filesystem',
+        storageRef: 'ref',
+        contentHash: 'sha256:abc',
+        sizeBytes: 9,
+        contentType: 'application/zip',
+        metadata: {},
+        createdAt: '2026-05-19T00:00:00.000Z',
+      },
+      content: new Uint8Array(Buffer.from('zip-bytes')),
+    }));
+    const response = await processBrowserIpcRequest(
+      {
+        requestId: 'req-file-attach-artifact',
+        action: 'file_attach',
+        payload: {
+          target: 'upload-input',
+          source: { type: 'artifact', artifactId: 'file-artifact:1' },
+        },
+        appId: 'app:test',
+        agentId: 'agent:main',
+      },
+      {
+        sourceAgentFolder: 'main',
+        browserProfileName: 'c-main-abc123abc123',
+        browserIpcAuthorized: true,
+        callBrowserTool,
+        getFileArtifactStore: () =>
+          ({
+            readFileArtifact,
+          }) as never,
+      },
+    );
+
+    expect(response.ok).toBe(true);
+    expect(readFileArtifact).toHaveBeenCalledWith({
+      appId: 'app:test',
+      agentId: 'agent:main',
+      id: 'file-artifact:1',
+    });
+    expect(callBrowserTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'file_attach',
+        arguments: {
+          target: 'upload-input',
+          source: {
+            type: 'bytes',
+            name: 'result.zip',
+            content: Buffer.from('zip-bytes').toString('base64'),
+            encoding: 'base64',
+          },
+        },
+      }),
+    );
+  });
+
   it('publishes browser activity events for scheduled job browser calls', async () => {
     const callBrowserTool = vi.fn(async () => ({ content: 'tool-result' }));
     const publishBrowserJobActivity = vi.fn(async () => undefined);
@@ -224,14 +289,13 @@ describe('ipc-browser-handler', () => {
         tool: 'Browser',
         publicToolName: 'browser_act',
         action: 'navigate',
-        satisfiesRequiredTool: true,
         ok: true,
         normalizedSite: 'example.test',
       }),
     );
   });
 
-  it('does not satisfy required Browser from backend-only job browser calls', async () => {
+  it('publishes backend-only job browser calls without public tool metadata', async () => {
     const callBrowserTool = vi.fn(async () => ({ content: 'tool-result' }));
     const publishBrowserJobActivity = vi.fn(async () => undefined);
     const response = await processBrowserIpcRequest(
@@ -257,12 +321,11 @@ describe('ipc-browser-handler', () => {
         tool: 'Browser',
         action: 'navigate',
         publicToolName: undefined,
-        satisfiesRequiredTool: false,
       }),
     );
   });
 
-  it('satisfies required Browser for browser_open only when it navigates', async () => {
+  it('publishes browser_open job activity for open and navigate actions', async () => {
     const callBrowserTool = vi.fn(async () => ({ content: 'tool-result' }));
     const publishBrowserJobActivity = vi.fn(async () => undefined);
 
@@ -306,7 +369,6 @@ describe('ipc-browser-handler', () => {
       expect.objectContaining({
         action: 'open',
         publicToolName: 'browser_open',
-        satisfiesRequiredTool: false,
       }),
     );
     expect(publishBrowserJobActivity).toHaveBeenNthCalledWith(
@@ -314,7 +376,6 @@ describe('ipc-browser-handler', () => {
       expect.objectContaining({
         action: 'navigate',
         publicToolName: 'browser_open',
-        satisfiesRequiredTool: true,
       }),
     );
   });
