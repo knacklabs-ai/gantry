@@ -44,10 +44,15 @@ const cardEnvelope = {
         adaptiveCardVersion: '1.2',
         requiresBotForSubmitActions: true,
       },
+      resourceId: 'resource-1',
       title: 'MRI scanner maintenance tender',
       referenceNo: 'MPL-001',
       organization: 'External Hospital',
+      location: 'Bengaluru',
       deadline: '2026-05-31',
+      publishedDate: '2026-05-18',
+      emd: 50000,
+      currency: 'INR',
       summary: 'Maintenance tender for matched biomedical workspace.',
       sourceUrl: 'https://example.test/tender',
       workspace: {
@@ -57,17 +62,23 @@ const cardEnvelope = {
         matchedKeywords: ['mri'],
       },
       primaryDocument: {
-        signedDownloadUrl: null,
+        signedDownloadUrl: 'https://example.test/documents/notice.pdf',
       },
-      documents: [],
-      actions: [
+      documents: [
         {
-          actionType: 'open_source',
-          label: 'Open source',
-          presentation: 'open_url',
-          url: 'https://example.test/tender',
-          platformOperation: null,
+          documentLabel: 'notice.pdf',
+          fileName: 'notice.pdf',
+          downloadStatus: 'downloaded',
+          signedDownloadUrl: 'https://example.test/documents/notice.pdf',
         },
+        {
+          documentLabel: 'missing.pdf',
+          fileName: 'missing.pdf',
+          downloadStatus: 'missing',
+          signedDownloadUrl: null,
+        },
+      ],
+      actions: [
         {
           actionType: 'mark_watching',
           label: 'Watch',
@@ -85,6 +96,26 @@ const cardEnvelope = {
       ],
       fallbackText: 'Tender notice: MRI scanner maintenance tender',
     },
+  },
+};
+
+const adminNotificationEnvelope = {
+  integrationId: 'integration-test',
+  eventId: 'admin-outbox-1',
+  eventType: 'deep_analysis_admin_notification_requested',
+  occurredAt: '2026-05-18T10:00:00.000Z',
+  payload: {
+    eventType: 'deep_analysis_admin_notification_requested',
+    requestId: 'request-1',
+    tenderId: 'resource-1',
+    tenderTitle: 'MRI scanner maintenance tender',
+    workspaceId: 'workspace-1',
+    workspaceName: 'Biomedical',
+    requestedByExternalUserId: 'teams-user-1',
+    requestedByDisplayName: 'Platform User',
+    sourceChannelId: '19:channel@thread.v2',
+    requestedAt: '2026-05-18T10:00:00.000Z',
+    requestReason: 'Need deeper analysis',
   },
 };
 
@@ -160,8 +191,20 @@ describe('External platform event adapter helpers', () => {
       'Notification: MRI scanner maintenance tender',
     );
     expect(buildExternalPlatformMessage(envelope)).toContain(
-      'Organization: External Hospital',
+      'Organisation Details: External Hospital',
     );
+    expect(buildExternalPlatformMessage(envelope)).not.toContain('Reference');
+  });
+
+  it('builds deterministic Teams text for admin deep-analysis requests', () => {
+    const text = buildExternalPlatformMessage(adminNotificationEnvelope);
+    expect(text).toContain('Deeper analysis requested');
+    expect(text).toContain(
+      'Platform User requested deeper analysis for MRI scanner maintenance tender.',
+    );
+    expect(text).toContain('Tender ID: resource-1');
+    expect(text).toContain('Workspace: Biomedical');
+    expect(text).toContain('Reason: Need deeper analysis');
   });
 
   it('builds an Adaptive Card delivery when notification card data is present', () => {
@@ -173,12 +216,26 @@ describe('External platform event adapter helpers', () => {
       type: 'TextBlock',
       text: 'MRI scanner maintenance tender',
     });
+    expect(JSON.stringify(delivery.card.body)).toContain('Tender ID');
+    expect(JSON.stringify(delivery.card.body)).toContain('resource-1');
+    expect(JSON.stringify(delivery.card.body)).toContain('EMD');
+    expect(JSON.stringify(delivery.card.body)).toContain('INR 50,000');
+    expect(JSON.stringify(delivery.card.body)).toContain('Workspace matched');
+    expect(JSON.stringify(delivery.card.body)).toContain(
+      'Organisation Details',
+    );
+    expect(JSON.stringify(delivery.card.body)).toContain('Location Details');
+    expect(JSON.stringify(delivery.card.body)).toContain('Dead Line Date');
+    expect(JSON.stringify(delivery.card.body)).toContain('Published Date');
+    expect(JSON.stringify(delivery.card.body)).not.toContain('Reference');
+    expect(JSON.stringify(delivery.card.body)).not.toContain(
+      'Matched keywords',
+    );
+    expect(JSON.stringify(delivery.card.body)).toContain('Documents');
+    expect(JSON.stringify(delivery.card.body)).toContain(
+      '[notice.pdf](https://example.test/documents/notice.pdf)',
+    );
     expect(delivery.card.actions).toEqual([
-      {
-        type: 'Action.OpenUrl',
-        title: 'Open source',
-        url: 'https://example.test/tender',
-      },
       {
         type: 'Action.Submit',
         title: 'Watch',
@@ -206,6 +263,59 @@ describe('External platform event adapter helpers', () => {
     ]);
   });
 
+  it('renders document links in body text with escaping and URL validation', () => {
+    const delivery = buildExternalPlatformDelivery({
+      ...cardEnvelope,
+      payload: {
+        ...cardEnvelope.payload,
+        notificationCard: {
+          ...cardEnvelope.payload.notificationCard,
+          documents: [
+            {
+              documentLabel: 'Spec [final] (v2).pdf',
+              fileName: 'Spec [final] (v2).pdf',
+              downloadStatus: 'downloaded',
+              signedDownloadUrl: 'https://example.test/documents/spec(1).pdf',
+            },
+            {
+              documentLabel: 'bad.pdf',
+              fileName: 'bad.pdf',
+              downloadStatus: 'downloaded',
+              signedDownloadUrl: 'ftp://example.test/bad.pdf',
+            },
+            {
+              documentLabel: 'missing.pdf',
+              fileName: 'missing.pdf',
+              downloadStatus: 'missing',
+              signedDownloadUrl: null,
+            },
+            {
+              documentLabel: 'boq.pdf',
+              fileName: 'boq.pdf',
+              downloadStatus: 'downloaded',
+              signedDownloadUrl: 'https://example.test/documents/boq.pdf',
+            },
+          ],
+        },
+      },
+    });
+    expect(delivery.kind).toBe('adaptive_card');
+    if (delivery.kind !== 'adaptive_card') return;
+
+    const body = JSON.stringify(delivery.card.body);
+    expect(body).toContain(
+      '[Spec \\\\[final\\\\] \\\\(v2\\\\).pdf](https://example.test/documents/spec%281%29.pdf)',
+    );
+    expect(body).toContain(
+      '[boq.pdf](https://example.test/documents/boq.pdf)',
+    );
+    expect(body).not.toContain('ftp://example.test/bad.pdf');
+    expect(body).not.toContain('missing.pdf');
+    expect(JSON.stringify(delivery.card.actions)).not.toContain(
+      'Action.OpenUrl',
+    );
+  });
+
   it('omits submit actions when no Teams tenant id is available for signing', () => {
     delete process.env.GANTRY_EXTERNAL_TEAMS_TENANT_ID;
     delete process.env.TEAMS_TENANT_ID;
@@ -213,13 +323,10 @@ describe('External platform event adapter helpers', () => {
     const delivery = buildExternalPlatformDelivery(cardEnvelope);
     expect(delivery.kind).toBe('adaptive_card');
     if (delivery.kind !== 'adaptive_card') return;
-    expect(delivery.card.actions).toEqual([
-      {
-        type: 'Action.OpenUrl',
-        title: 'Open source',
-        url: 'https://example.test/tender',
-      },
-    ]);
+    expect(JSON.stringify(delivery.card.body)).toContain(
+      '[notice.pdf](https://example.test/documents/notice.pdf)',
+    );
+    expect(delivery.card.actions).toEqual([]);
   });
 
   it('signs External delivery status callbacks with the platform callback path', () => {

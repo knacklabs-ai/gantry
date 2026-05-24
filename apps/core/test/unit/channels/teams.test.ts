@@ -119,6 +119,45 @@ describe('Teams Bot Framework adapter helpers', () => {
       }),
     ).toBe('tenant-1');
   });
+
+  it('builds redacted Teams activity diagnostics for invoke ingress', () => {
+    expect(
+      _testTeamsBotFrameworkClient.buildTeamsActivityDiagnostic({
+        type: 'invoke',
+        name: 'adaptiveCard/action',
+        conversation: {
+          id: '19:abc@thread.v2',
+          conversationType: 'channel',
+        },
+        from: {
+          id: 'teams-user-id',
+          aadObjectId: 'aad-user-id',
+        } as never,
+        channelData: {
+          tenant: {
+            id: 'tenant-1',
+          },
+        },
+        value: {
+          action: {
+            data: {
+              nonce: 'secret-nonce',
+            },
+          },
+          trigger: 'manual',
+        },
+      }),
+    ).toEqual({
+      activityType: 'invoke',
+      activityName: 'adaptiveCard/action',
+      conversationId: '19:abc@thread.v2',
+      conversationType: 'channel',
+      tenantId: 'tenant-1',
+      senderIdKind: 'aad_object_id',
+      hasValue: true,
+      valueKeys: ['action', 'trigger'],
+    });
+  });
 });
 
 describe('Teams JID helpers', () => {
@@ -166,6 +205,26 @@ describe('Teams Adaptive Card payloads', () => {
     ).toEqual(expect.objectContaining(expectedAction));
   });
 
+  it('explains external card action parse misses without logging payload values', () => {
+    expect(
+      _testExternalCardActions.describeExternalCardActionParseMiss({
+        action: {
+          type: 'Action.Submit',
+          data: {
+            action: 'external_card_action',
+            eventId: 'outbox-1',
+          },
+        },
+        trigger: 'manual',
+      }),
+    ).toEqual({
+      reason:
+        'missing_fields:integrationId,resourceId,workspaceId,sourceChannelId,teamsTenantId,actionType,platformOperation,nonce,expiresAt,signature',
+      valueKeys: ['action', 'trigger'],
+      dataKeys: ['action', 'eventId'],
+    });
+  });
+
   it('calls external platform card actions with the conversation service actor and channel scope', () => {
     const request = buildExternalCardActionGraphqlRequest({
       action: {
@@ -207,6 +266,19 @@ describe('Teams Adaptive Card payloads', () => {
         nonce: 'nonce-1',
       }),
     );
+  });
+
+  it('canonicalizes Teams invoke conversation ids with message suffixes', () => {
+    expect(
+      _testExternalCardActions.canonicalTeamsConversationId(
+        '19:abc@thread.tacv2;messageid=1779532839539',
+      ),
+    ).toBe('19:abc@thread.tacv2');
+    expect(
+      _testExternalCardActions.canonicalTeamsConversationId(
+        '19:abc@thread.tacv2',
+      ),
+    ).toBe('19:abc@thread.tacv2');
   });
 
   it('builds Action.Execute allow-once and cancel actions', () => {

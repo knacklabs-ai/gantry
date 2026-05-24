@@ -6,6 +6,7 @@ import type {
 import type {
   CapabilitySecretRepository,
   McpServerRepository,
+  SkillCatalogRepository,
   ToolCatalogRepository,
 } from '../../domain/ports/repositories.js';
 import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
@@ -18,12 +19,14 @@ import {
   resolveJobToolPolicy,
 } from './job-tool-policy.js';
 import {
-  evaluateRequiredTools,
-  requiredToolRecoveryAction,
-} from './job-required-tools.js';
+  evaluateToolAccessRequirements,
+  toolAccessRequirementRecoveryAction,
+} from './job-tool-access-requirements.js';
 import {
   isCanonicalBrowserCapabilityRule,
   isProjectedBrowserMcpToolRule,
+  publicGantryToolNameForSdkTool,
+  RUN_COMMAND_TOOL_NAME,
 } from '../../shared/agent-tool-references.js';
 import {
   parseSemanticCapabilityRule,
@@ -54,6 +57,7 @@ export interface JobReadinessBrowserStatus {
 
 export interface JobReadinessDeps {
   toolRepository?: ToolCatalogRepository;
+  skillRepository?: SkillCatalogRepository;
   mcpServerRepository?: McpServerRepository;
   capabilitySecretRepository?: CapabilitySecretRepository;
   credentialBroker?: AgentCredentialBroker;
@@ -68,7 +72,7 @@ export interface JobReadinessInput extends JobReadinessDeps {
     Job,
     | 'id'
     | 'group_scope'
-    | 'required_tools'
+    | 'tool_access_requirements'
     | 'required_mcp_servers'
     | 'capability_requirements'
     | 'execution_context'
@@ -98,9 +102,10 @@ export async function evaluateJobReadiness(
     appId,
     agentId,
     toolRepository: input.toolRepository,
+    skillRepository: input.skillRepository,
   });
-  const toolPreflight = evaluateRequiredTools({
-    requiredTools: input.job.required_tools,
+  const toolPreflight = evaluateToolAccessRequirements({
+    toolAccessRequirements: input.job.tool_access_requirements,
     effectiveAllowedTools: policy.effectiveAllowedTools,
   });
   const draftOnlyRequirementRules = new Set(
@@ -126,14 +131,16 @@ export async function evaluateJobReadiness(
   }
 
   const missingToolSet = new Set(toolPreflight.missingTools);
-  for (const requiredTool of toolPreflight.requiredTools) {
-    if (missingToolSet.has(requiredTool)) continue;
-    if (isCanonicalBrowserCapabilityRule(requiredTool)) {
+  for (const toolAccessRequirement of toolPreflight.toolAccessRequirements) {
+    if (missingToolSet.has(toolAccessRequirement)) continue;
+    if (isCanonicalBrowserCapabilityRule(toolAccessRequirement)) {
       const browserBlocker = await browserReadinessBlocker(input);
       if (browserBlocker) blockers.push(browserBlocker);
       continue;
     }
-    const semanticCapabilityId = parseSemanticCapabilityRule(requiredTool);
+    const semanticCapabilityId = parseSemanticCapabilityRule(
+      toolAccessRequirement,
+    );
     if (semanticCapabilityId) {
       if (localCliRequirementCapabilities.has(semanticCapabilityId)) {
         continue;
@@ -189,7 +196,22 @@ function capabilityRequirementBlocker(input: {
       nextAction: capabilityRequirementSetupAction(requirement),
     };
   }
-  if (rule && input.effectiveAllowedTools.includes(`Bash(${rule})`)) {
+  if (
+    !requirement.implementation.executableVersion ||
+    !requirement.implementation.executableHash
+  ) {
+    return {
+      state: 'missing_capability',
+      requirementType: 'local_cli',
+      requirementId: requirement.capabilityId,
+      message: `${formatCapabilityRequirement(requirement)} needs pinned executable version and hash before this job can request reviewed local CLI access.`,
+      nextAction: capabilityRequirementSetupAction(requirement),
+    };
+  }
+  if (
+    rule &&
+    input.effectiveAllowedTools.includes(`${RUN_COMMAND_TOOL_NAME}(${rule})`)
+  ) {
     return null;
   }
   return {
@@ -218,7 +240,8 @@ export function setupStateForDeniedTool(input: {
         requirementId: toolName,
         message: `This job needs ${toolRequirementLabel(toolName)} before it can run.`,
         nextAction:
-          input.recoveryAction?.trim() || requiredToolRecoveryAction(toolName),
+          input.recoveryAction?.trim() ||
+          toolAccessRequirementRecoveryAction(toolName),
       },
     ],
   });
@@ -227,6 +250,7 @@ export function setupStateForDeniedTool(input: {
 export function setupStateForTransientPermission(input: {
   toolName: string;
   mode?: string | null;
+  recoveryAction?: string | null;
   checkedAt?: string;
   previous?: JobSetupState;
 }): JobSetupState {
@@ -240,7 +264,9 @@ export function setupStateForTransientPermission(input: {
         requirementType: requirementTypeForTool(toolName),
         requirementId: toolName,
         message: `This scheduled job used temporary ${toolRequirementLabel(toolName)}. Approve lasting access before future runs continue.`,
-        nextAction: requiredToolRecoveryAction(toolName),
+        nextAction:
+          input.recoveryAction?.trim() ||
+          toolAccessRequirementRecoveryAction(toolName),
       },
     ],
   });
@@ -310,7 +336,7 @@ function missingToolBlocker(toolName: string): JobSetupBlocker {
     requirementType: requirementTypeForTool(toolName),
     requirementId: toolName,
     message: `This job needs ${toolRequirementLabel(toolName)} before it can run.`,
-    nextAction: requiredToolRecoveryAction(toolName),
+    nextAction: toolAccessRequirementRecoveryAction(toolName),
   };
 }
 
@@ -323,7 +349,9 @@ function requirementTypeForTool(
 }
 
 function canonicalSetupToolName(toolName: string): string {
-  return isProjectedBrowserMcpToolRule(toolName) ? 'Browser' : toolName;
+  return isProjectedBrowserMcpToolRule(toolName)
+    ? 'Browser'
+    : publicGantryToolNameForSdkTool(toolName);
 }
 
 function toolRequirementLabel(toolName: string): string {
@@ -382,6 +410,7 @@ async function semanticCapabilityCredentialBlocker(input: {
   broker?: AgentCredentialBroker;
 }): Promise<JobSetupBlocker | null> {
   const capability = getBuiltinSemanticCapability(input.capabilityId);
+  if (!capability && input.capabilityId.startsWith('skill.')) return null;
   if (!capability) {
     return {
       state: 'missing_capability',
@@ -389,21 +418,10 @@ async function semanticCapabilityCredentialBlocker(input: {
       requirementId: input.capabilityId,
       message:
         'Semantic capability is not registered in the capability catalog.',
-      nextAction:
-        'Search for an available capability or request a reviewed capability, then resume or recheck the job.',
+      nextAction: proposeCapabilityAction(input.capabilityId),
     };
   }
-  if (capability.credentialSource === 'local_cli') {
-    return {
-      state: 'draft_only',
-      requirementType: 'local_cli',
-      requirementId: input.capabilityId,
-      message:
-        'Local CLI semantic capabilities are reviewable drafts until runtime enforcement verifies the executable.',
-      nextAction:
-        'Complete local CLI capability review and durable binding, then resume or recheck the job.',
-    };
-  }
+  if (capability.credentialSource === 'local_cli') return null;
   if (
     capability.credentialSource !== 'onecli' &&
     capability.credentialSource !== 'external_broker' &&
@@ -470,11 +488,26 @@ async function semanticCapabilityCredentialBlocker(input: {
   return null;
 }
 
+function proposeCapabilityAction(capabilityId: string): string {
+  return `propose_capability ${JSON.stringify({
+    capabilityId,
+    displayName: humanizeTechnicalIdentifier(capabilityId),
+    category: capabilityId.split('.')[0] ?? 'custom',
+    risk: 'read',
+    source: 'composite',
+    credentialSource: 'none',
+    can: 'Describe the exact actions this job needs.',
+    cannot: 'Describe excluded actions, accounts, and data boundaries.',
+    reason:
+      'This autonomous run requires a reviewed capability that is not in the approved catalog.',
+  })}`;
+}
+
 function semanticCapabilityNeedsBroker(
   capability: NonNullable<ReturnType<typeof getBuiltinSemanticCapability>>,
 ): boolean {
   return capability.implementationBindings.some((binding) =>
-    binding.rule?.startsWith('Bash(onecli '),
+    binding.rule?.startsWith(`${RUN_COMMAND_TOOL_NAME}(onecli `),
   );
 }
 

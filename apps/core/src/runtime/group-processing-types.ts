@@ -27,6 +27,7 @@ import type { HostnameLookup } from '../domain/network/public-address-policy.js'
 import type { RemoteMcpDnsValidationCache } from '../application/mcp/mcp-server-policy.js';
 import type { SessionMemoryCollector } from '../domain/ports/session-memory-collector.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
+import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
 
 export type GroupProcessingRepository = RuntimeAgentSessionRepository &
   RuntimeMessageRepository;
@@ -125,6 +126,7 @@ export interface GroupProcessingDeps {
   publishRuntimeEvent?: (
     event: RuntimeEventPublishInput,
   ) => Promise<void> | void;
+  executionAdapter?: AgentExecutionAdapter;
   opsRepository?: GroupProcessingRepository;
   getRuntimeRepository?: () => GroupProcessingRepository;
 }

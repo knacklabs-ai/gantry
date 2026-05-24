@@ -6,6 +6,11 @@ import type { AppId } from '../../../domain/app/app.js';
 import type { SkillArtifactStore } from '../../../domain/ports/skill-artifact-store.js';
 import type { SkillCatalogRepository } from '../../../domain/ports/repositories.js';
 import { isSkillMaterializableLocally } from '../../../domain/skills/skills.js';
+import {
+  sanitizeSkillDirectoryName,
+  type SkillActionPermission,
+} from '../../../domain/skills/skill-action-permissions.js';
+import { isClaudeNativeReservedSkillName } from './native-sdk-skills.js';
 
 export interface ClaudeSkillSourceItem {
   id: string;
@@ -13,6 +18,10 @@ export interface ClaudeSkillSourceItem {
   sourceType?: 'bundled' | 'artifact' | 'runtime';
   sourceDir?: string;
   assets?: Array<{ path: string; content: Uint8Array }>;
+  version?: string;
+  contentHash?: string;
+  actionPermissions?: SkillActionPermission[];
+  materializedName?: string;
   enabled: boolean;
 }
 
@@ -21,6 +30,8 @@ export interface SkillSource {
     enabledSkillIds?: string[];
   }): Promise<ClaudeSkillSourceItem[]>;
 }
+
+export const GANTRY_BUNDLED_CLAUDE_SKILL_IDS = ['gantry-admin'] as const;
 
 export class BundledClaudeSkillSource implements SkillSource {
   constructor(private readonly packageRoot: string) {}
@@ -34,19 +45,21 @@ export class BundledClaudeSkillSource implements SkillSource {
       ? new Set(input.enabledSkillIds)
       : undefined;
 
-    return fs
-      .readdirSync(skillsRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => {
-        const sourceDir = path.join(skillsRoot, entry.name);
-        return {
-          id: entry.name,
-          name: entry.name,
+    return GANTRY_BUNDLED_CLAUDE_SKILL_IDS.flatMap((skillId) => {
+      const sourceDir = path.join(skillsRoot, skillId);
+      if (!fs.existsSync(path.join(sourceDir, 'SKILL.md'))) {
+        return [];
+      }
+      return [
+        {
+          id: skillId,
+          name: skillId,
           sourceType: 'bundled',
           sourceDir,
-          enabled: !enabled || enabled.has(entry.name),
-        };
-      });
+          enabled: !enabled || enabled.has(skillId),
+        },
+      ];
+    });
   }
 }
 
@@ -78,6 +91,9 @@ export class ArtifactClaudeSkillSource implements SkillSource {
         name: skill.name,
         sourceType: 'artifact',
         assets: bundle.assets,
+        version: skill.version,
+        contentHash: skill.storage.contentHash,
+        actionPermissions: skill.actionPermissions ?? [],
         enabled: true,
       });
     }
@@ -170,27 +186,48 @@ export async function materializeClaudeSkills(input: {
   const targetDirs = new Set<string>();
   for (const skill of skills) {
     if (!skill.enabled) continue;
-    const targetName = skill.assets
-      ? sanitizeSkillName(skill.id)
-      : sanitizeSkillName(skill.name);
-    if (targetDirs.has(targetName)) continue;
-    targetDirs.add(targetName);
+    const targetName = sanitizeSkillDirectoryName(skill.name);
+    if (
+      isClaudeNativeReservedSkillName(skill.name) ||
+      isClaudeNativeReservedSkillName(targetName)
+    ) {
+      throw new Error(
+        `Skill "${skill.name}" uses a Claude-native reserved skill name and cannot be materialized.`,
+      );
+    }
+    const normalizedTargetName = targetName.toLowerCase();
+    if (targetDirs.has(normalizedTargetName)) {
+      throw new Error(
+        `Duplicate materialized skill directory ${targetName}; rename or unselect one of the colliding skills.`,
+      );
+    }
+    targetDirs.add(normalizedTargetName);
     const targetDir = path.join(input.skillsDir, targetName);
     fs.rmSync(targetDir, { recursive: true, force: true });
     if (skill.assets) {
       if (!isValidAssetSkill(skill.assets)) {
         continue;
       }
+      assertSkillFileNameMatchesMaterializedName({
+        skillName: skill.name,
+        targetName,
+        skillText: readSkillMdAssetText(skill.assets),
+      });
       writeAssets(skill.assets, targetDir);
     } else if (skill.sourceDir) {
       const sourceDir = path.resolve(skill.sourceDir);
       const skillFile = path.join(sourceDir, 'SKILL.md');
       if (!fs.existsSync(skillFile)) continue;
+      assertSkillFileNameMatchesMaterializedName({
+        skillName: skill.name,
+        targetName,
+        skillText: fs.readFileSync(skillFile, 'utf-8'),
+      });
       copyDirRecursive(sourceDir, targetDir);
     } else {
       continue;
     }
-    materialized.push(skill);
+    materialized.push({ ...skill, materializedName: targetName });
   }
   return materialized;
 }
@@ -212,16 +249,6 @@ function isValidAssetSkill(
   }
 }
 
-function sanitizeSkillName(value: string): string {
-  const safe = value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^\.+/, '')
-    .slice(0, 120);
-  return safe || 'skill';
-}
-
 function copyDirRecursive(src: string, dst: string): void {
   fs.mkdirSync(dst, { recursive: true, mode: 0o700 });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -234,6 +261,54 @@ function copyDirRecursive(src: string, dst: string): void {
       fs.copyFileSync(srcPath, dstPath);
     }
   }
+}
+
+function readSkillMdAssetText(
+  assets: Array<{ path: string; content: Uint8Array }>,
+): string {
+  const skillMd = assets.find(
+    (asset) => normalizeAssetPath(asset.path) === 'SKILL.md',
+  );
+  if (!skillMd) {
+    throw new Error('Skill asset bundle must include SKILL.md.');
+  }
+  return Buffer.from(skillMd.content).toString('utf-8');
+}
+
+function assertSkillFileNameMatchesMaterializedName(input: {
+  skillName: string;
+  targetName: string;
+  skillText: string;
+}): void {
+  const frontmatterName = readSkillFrontmatterName(input.skillText);
+  if (!frontmatterName) return;
+  const frontmatterTargetName = sanitizeSkillDirectoryName(frontmatterName);
+  if (isClaudeNativeReservedSkillName(frontmatterName)) {
+    throw new Error(
+      `Skill "${input.skillName}" declares Claude-native reserved skill name "${frontmatterName}" in SKILL.md and cannot be materialized.`,
+    );
+  }
+  if (frontmatterTargetName.toLowerCase() !== input.targetName.toLowerCase()) {
+    throw new Error(
+      `Skill "${input.skillName}" declares SDK skill name "${frontmatterName}" but materializes as "${input.targetName}". Keep the SKILL.md name aligned with the Gantry skill name.`,
+    );
+  }
+}
+
+function readSkillFrontmatterName(content: string): string | undefined {
+  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) {
+    return undefined;
+  }
+  const normalized = content.replace(/\r\n/g, '\n');
+  const end = normalized.indexOf('\n---', 4);
+  if (end < 0) return undefined;
+  for (const line of normalized.slice(4, end).split('\n')) {
+    const match = /^name:\s*(.*)$/.exec(line);
+    if (!match) continue;
+    const name = match[1].replace(/^['"]|['"]$/g, '').trim();
+    return name || undefined;
+  }
+  return undefined;
 }
 
 function writeAssets(

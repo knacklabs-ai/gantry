@@ -26,10 +26,6 @@ import {
   shouldLogDenied,
 } from '../../platform/sender-allowlist.js';
 import {
-  asRemoteControlCommand,
-  handleRemoteControlCommand,
-} from '../../runtime/remote-control-command.js';
-import {
   getPartialMessageDeliveryMetadata,
   isPartialMessageDeliveryError,
 } from '../../domain/messages/partial-delivery.js';
@@ -95,8 +91,6 @@ export function createChannelWiring(
     isSenderAllowed,
     isSenderControlAllowed,
     shouldLogDenied,
-    asRemoteControlCommand,
-    handleRemoteControlCommand,
     logger,
     runtimeSecrets: new EnvRuntimeSecretProvider(),
     ...deps,

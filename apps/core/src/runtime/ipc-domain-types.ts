@@ -12,6 +12,7 @@ import type {
   CapabilitySecretRepository,
   McpServerRepository,
   PermissionRepository,
+  SkillCatalogRepository,
   ToolCatalogRepository,
 } from '../domain/ports/repositories.js';
 import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
@@ -54,6 +55,7 @@ export interface IpcDeps {
   mcpHostnameLookup?: HostnameLookup;
   opsRepository: RuntimeJobRepository;
   getToolRepository?: () => ToolCatalogRepository | undefined;
+  getSkillRepository?: () => SkillCatalogRepository | undefined;
   getMcpServerRepository?: () => McpServerRepository | undefined;
   getCapabilitySecretRepository?: () => CapabilitySecretRepository | undefined;
   runApprovedCommand?: (input: {
@@ -71,7 +73,7 @@ export interface IpcDeps {
   mirrorAgentToolRulesToSettings?: (
     sourceAgentFolder: string,
     rules: string[],
-    options?: { appId?: string },
+    options?: { appId?: string; mode?: 'add' | 'remove' },
   ) => Promise<void> | void;
   reloadRuntimeState?: () => Promise<void>;
   getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
@@ -89,7 +91,6 @@ export interface IpcDeps {
     tool: 'Browser';
     publicToolName?: string;
     action: BrowserBackendAction;
-    satisfiesRequiredTool: boolean;
     ok: boolean;
     elapsedMs: number;
     normalizedSite?: string | null;

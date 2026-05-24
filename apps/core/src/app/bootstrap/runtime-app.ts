@@ -16,6 +16,7 @@ import {
 import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
 import { encodeGroupMessageCursor } from '../../shared/message-cursor.js';
 import { logger } from '../../infrastructure/logging/logger.js';
+import type { MessageSendOptions } from '../../domain/types.js';
 import { ConversationRoute, ThinkingOverride } from '../../domain/types.js';
 import { RemoteMcpDnsValidationCache } from '../../application/mcp/mcp-server-policy.js';
 import { createGroupProcessor } from '../../runtime/group-processing.js';
@@ -43,14 +44,22 @@ import {
 import { AppMemoryService } from '../../memory/app-memory-service.js';
 import { collectDurableMemoryAtBoundary } from '../../memory/app-memory-session-boundary-collector.js';
 import { memoryAgentIdForGroupFolder } from '../../memory/app-memory-boundaries.js';
+import {
+  createDefaultAgentExecutionAdapter,
+  createDefaultMemoryLlmClient,
+} from '../../adapters/llm/default-runtime-adapters.js';
+import type { AgentExecutionAdapter } from '../../application/agent-execution/agent-execution-adapter.js';
+import { registerMemoryLlmClient } from '../../memory/memory-llm-port.js';
+import type { MessageDeliveryResult } from '../../domain/types.js';
 
-type RuntimeAppRepository = RuntimeRouterStateRepository &
+export type RuntimeAppRepository = RuntimeRouterStateRepository &
   RuntimeMessageRepository &
   RuntimeConversationRouteRepository &
   RuntimeChatMetadataRepository &
   RuntimeAgentSessionRepository;
 
 export interface RuntimeApp {
+  executionAdapter: AgentExecutionAdapter;
   queue: GroupQueue;
   loadState: () => Promise<void>;
   saveState: () => Promise<void>;
@@ -94,10 +103,8 @@ export interface RuntimeApp {
   sendChannelMessage: (
     chatJid: string,
     rawText: string,
-    options?: Parameters<
-      GroupProcessingDeps['channelRuntime']['sendMessage']
-    >[2],
-  ) => Promise<void>;
+    options?: MessageSendOptions & { durability?: 'required' | 'best_effort' },
+  ) => Promise<MessageDeliveryResult | void>;
   sendChannelAdaptiveCard?: (
     chatJid: string,
     card: Parameters<
@@ -122,6 +129,7 @@ export interface RuntimeAppOptions {
   mcpHostnameLookup?: GroupProcessingDeps['getMcpHostnameLookup'];
   collectSessionMemory?: GroupProcessingDeps['collectSessionMemory'];
   publishRuntimeEvent?: GroupProcessingDeps['publishRuntimeEvent'];
+  executionAdapter?: AgentExecutionAdapter;
   opsRepository?: RuntimeAppRepository;
 }
 
@@ -133,6 +141,9 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   let stateSaveDirty = false;
 
   const queue = options.queue ?? new GroupQueue(getRuntimeQueueConfig());
+  const executionAdapter =
+    options.executionAdapter ?? createDefaultAgentExecutionAdapter();
+  registerMemoryLlmClient(createDefaultMemoryLlmClient());
   const mcpDnsValidationCache = new RemoteMcpDnsValidationCache();
   let credentialBrokerPromise:
     | Promise<AgentCredentialBroker | undefined>
@@ -517,9 +528,11 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     collectSessionMemory:
       options.collectSessionMemory ?? collectRuntimeSessionMemory,
     publishRuntimeEvent: options.publishRuntimeEvent,
+    executionAdapter,
   });
 
   return {
+    executionAdapter,
     queue,
     loadState,
     saveState,

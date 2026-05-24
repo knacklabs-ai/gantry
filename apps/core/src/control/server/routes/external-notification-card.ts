@@ -24,10 +24,15 @@ type NotificationCardAction = {
 type NotificationCard = {
   schemaVersion: string;
   renderer: string;
+  resourceId?: string | null;
   title: string;
   referenceNo?: string | null;
   organization?: string | null;
+  location?: string | null;
   deadline?: string | null;
+  publishedDate?: string | null;
+  emd?: number | string | null;
+  currency?: string | null;
   summary?: string | null;
   sourceUrl?: string | null;
   workspace?: {
@@ -40,6 +45,7 @@ type NotificationCard = {
   primaryDocument?: {
     signedDownloadUrl?: string | null;
   };
+  documents?: unknown;
   actions?: unknown;
   fallbackText?: string | null;
 };
@@ -61,15 +67,21 @@ export function buildExternalNotificationAdaptiveCard(
   if (envelope.eventType !== 'notification.card.requested') return null;
   const card = readNotificationCard(envelope.payload.notificationCard);
   if (!card) return null;
+  const resourceId =
+    readOptionalString(card.resourceId) ||
+    readOptionalString(envelope.payload.resourceId);
   const facts = [
-    fact('Organization', card.organization),
-    fact('Reference', card.referenceNo),
-    fact('Deadline', card.deadline),
-    fact('Workspace', card.workspace?.workspaceName),
-    fact('Matched keywords', readKeywords(card.workspace?.matchedKeywords)),
+    fact('Tender ID', resourceId),
+    fact('EMD', formatAmount(card.emd, card.currency)),
+    fact('Workspace matched', card.workspace?.workspaceName),
+    fact('Organisation Details', card.organization),
+    fact('Location Details', card.location),
+    fact('Dead Line Date', card.deadline),
+    fact('Published Date', card.publishedDate),
   ].filter((entry): entry is { title: string; value: string } =>
     Boolean(entry),
   );
+  const summary = sanitizeSummary(card.summary ?? null);
   const body: Array<Record<string, unknown>> = [
     {
       type: 'TextBlock',
@@ -78,11 +90,11 @@ export function buildExternalNotificationAdaptiveCard(
       text: card.title,
       wrap: true,
     },
-    ...(card.summary
+    ...(summary
       ? [
           {
             type: 'TextBlock',
-            text: card.summary,
+            text: summary,
             wrap: true,
           },
         ]
@@ -95,6 +107,7 @@ export function buildExternalNotificationAdaptiveCard(
           },
         ]
       : []),
+    ...buildDocumentLinkBlocks(card),
   ];
 
   return {
@@ -102,7 +115,11 @@ export function buildExternalNotificationAdaptiveCard(
     type: 'AdaptiveCard',
     version: '1.2',
     body,
-    actions: readActions(card.actions)
+    actions: [
+      ...readActions(card.actions).filter(
+        (action) => action.presentation === 'submit',
+      ),
+    ]
       .map((action) => buildTeamsAction(envelope, card, action))
       .filter((action): action is Record<string, unknown> => Boolean(action)),
   };
@@ -120,16 +137,6 @@ function buildTeamsAction(
   card: NotificationCard,
   action: NotificationCardAction,
 ): Record<string, unknown> | null {
-  if (action.presentation === 'open_url') {
-    const url = readOptionalString(action.url);
-    return url
-      ? {
-          type: 'Action.OpenUrl',
-          title: action.label,
-          url,
-        }
-      : null;
-  }
   if (action.presentation !== 'submit') return null;
   const operation = readOptionalString(action.platformOperation);
   if (!operation) return null;
@@ -160,6 +167,68 @@ function buildTeamsAction(
       }),
     },
   };
+}
+
+function buildDocumentLinkBlocks(card: NotificationCard): Record<string, unknown>[] {
+  if (!Array.isArray(card.documents)) return [];
+  const links = card.documents
+    .flatMap((entry, index): string[] => {
+      if (!entry || typeof entry !== 'object') return [];
+      const document = entry as Record<string, unknown>;
+      const url = normalizeHttpUrl(document.signedDownloadUrl);
+      if (!url) return [];
+      return [
+        `[${escapeMarkdownLinkLabel(
+          readOptionalString(document.documentLabel) ||
+            readOptionalString(document.fileName) ||
+            `Document ${index + 1}`,
+        )}](${escapeMarkdownLinkUrl(url)})`,
+      ];
+    })
+    .slice(0, 5);
+
+  if (links.length === 0) return [];
+  return [
+    {
+      type: 'TextBlock',
+      text: 'Documents',
+      weight: 'Bolder',
+      wrap: true,
+      spacing: 'Medium',
+    },
+    {
+      type: 'TextBlock',
+      text: links.join('\n'),
+      wrap: true,
+      spacing: 'Small',
+    },
+  ];
+}
+
+function normalizeHttpUrl(value: unknown): string | null {
+  const raw = readOptionalString(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function escapeMarkdownLinkLabel(value: string): string {
+  return value
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/([\\[\]()])/g, '\\$1');
+}
+
+function escapeMarkdownLinkUrl(value: string): string {
+  return value.replace(/[()]/g, (character) =>
+    character === '(' ? '%28' : '%29',
+  );
 }
 
 function signExternalCardAction(input: {
@@ -254,10 +323,15 @@ function readNotificationCard(value: unknown): NotificationCard | null {
     schemaVersion: card.schemaVersion,
     renderer: card.renderer,
     title: readOptionalString(card.title) ?? 'New notification',
+    resourceId: readOptionalString(card.resourceId),
     referenceNo: readOptionalString(card.referenceNo),
     organization: readOptionalString(card.organization),
+    location: readOptionalString(card.location),
     deadline: readOptionalString(card.deadline),
-    summary: readOptionalString(card.summary),
+    publishedDate: readOptionalString(card.publishedDate),
+    emd: readOptionalNumberOrString(card.emd),
+    currency: readOptionalString(card.currency),
+    summary: sanitizeSummary(readOptionalString(card.summary)),
     sourceUrl: readOptionalString(card.sourceUrl),
     workspace:
       card.workspace && typeof card.workspace === 'object'
@@ -267,6 +341,7 @@ function readNotificationCard(value: unknown): NotificationCard | null {
       card.primaryDocument && typeof card.primaryDocument === 'object'
         ? card.primaryDocument
         : undefined,
+    documents: Array.isArray(card.documents) ? card.documents : [],
     actions: card.actions,
     fallbackText: readOptionalString(card.fallbackText),
   };
@@ -303,14 +378,61 @@ function fact(
   return normalized ? { title, value: normalized } : null;
 }
 
-function readKeywords(value: unknown): string | null {
-  if (!Array.isArray(value)) return null;
-  const keywords = value
-    .map((entry) => readOptionalString(entry))
-    .filter((entry): entry is string => Boolean(entry));
-  return keywords.length ? keywords.join(', ') : null;
-}
-
 function readOptionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readOptionalNumberOrString(value: unknown): number | string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return readOptionalString(value);
+}
+
+function formatAmount(
+  amount: number | string | null | undefined,
+  currency: string | null | undefined,
+): string | null {
+  if (amount === null || amount === undefined || amount === '') return null;
+  if (typeof amount === 'number') {
+    return `${currency || 'INR'} ${amount.toLocaleString('en-IN')}`;
+  }
+  return amount;
+}
+
+const summaryNoisePatterns = [
+  /^screen reader access$/i,
+  /^search\s*\|/i,
+  /active tenders/i,
+  /corrigendum/i,
+  /results of tenders/i,
+  /^text$/i,
+  /^basic details$/i,
+  /^mis reports$/i,
+  /^tenders by /i,
+  /^tenders in archive$/i,
+  /^tenders status$/i,
+  /^cancelled\/retendered$/i,
+  /^downloads$/i,
+  /^department list$/i,
+  /^announcements$/i,
+  /^recognitions$/i,
+  /^site compatibility$/i,
+  /^view more details$/i,
+  /^tender details$/i,
+  /eprocurement system/i,
+];
+
+function sanitizeSummary(value: string | null): string | null {
+  const lines =
+    value
+      ?.split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter(
+        (line) =>
+          line && !summaryNoisePatterns.some((pattern) => pattern.test(line)),
+      ) ?? [];
+  const summary = lines.join(' ').replace(/\s+/g, ' ').trim();
+  if (!summary || summary.length < 12) return null;
+  return summary.length > 420
+    ? `${summary.slice(0, 417).trimEnd()}...`
+    : summary;
 }

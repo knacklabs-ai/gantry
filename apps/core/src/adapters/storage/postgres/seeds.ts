@@ -6,6 +6,11 @@ import {
   ADMIN_MCP_TOOL_FULL_NAMES,
   adminMcpToolIdForFullName,
 } from '../../../shared/admin-mcp-tools.js';
+import {
+  GANTRY_FACADE_EXACT_TOOL_NAMES,
+  GANTRY_FACADE_INPUT_SCHEMAS,
+  type GantryFacadeExactToolName,
+} from '../../../shared/agent-tool-references.js';
 
 export const DEFAULT_APP_ID = 'default';
 export const DEFAULT_AGENT_ID = 'agent:main_agent';
@@ -125,6 +130,7 @@ export async function seedDefaultRuntimeData(
           description: tool.description,
           category: tool.category,
           risk: tool.risk,
+          inputSchemaJson: JSON.stringify(tool.inputSchema ?? {}),
           selectable: true,
           status: 'active',
           permissionPolicyId: DEFAULT_PERMISSION_POLICY_ID,
@@ -133,25 +139,6 @@ export async function seedDefaultRuntimeData(
         })
         .onConflictDoNothing();
     }
-
-    await tx
-      .insert(pgSchema.agentToolBindingsPostgres)
-      .values({
-        id: `agent-tool-binding:${DEFAULT_AGENT_ID}:tool:Agent`,
-        appId: DEFAULT_APP_ID,
-        agentId: DEFAULT_AGENT_ID,
-        toolId: 'tool:Agent',
-        configVersionId,
-        status: 'active',
-      })
-      .onConflictDoUpdate({
-        target: pgSchema.agentToolBindingsPostgres.id,
-        set: {
-          configVersionId,
-          status: 'active',
-          updatedAt: sql`now()`,
-        },
-      });
 
     for (const skill of [
       { id: 'skill:memory', name: 'memory' },
@@ -173,67 +160,27 @@ export async function seedDefaultRuntimeData(
 }
 
 const DEFAULT_TOOL_CATALOG = [
-  sdkTool('Agent', 'Agent', 'Run a delegated agent task.', 'agent', 'medium'),
-  sdkTool(
-    'Bash',
-    'Bash',
-    'Run shell commands in the configured sandbox.',
-    'execution',
-    'high',
-  ),
-  sdkTool('Edit', 'Edit', 'Edit an existing file.', 'files', 'medium'),
-  sdkTool('Read', 'Read', 'Read files from the workspace.', 'files', 'low'),
-  sdkTool(
-    'Write',
-    'Write',
-    'Write a file in the workspace.',
-    'files',
-    'medium',
-  ),
-  sdkTool('Glob', 'Glob', 'Find files by glob pattern.', 'search', 'low'),
-  sdkTool('Grep', 'Grep', 'Search text in files.', 'search', 'low'),
-  sdkTool('LS', 'List files', 'List files in a directory.', 'files', 'low'),
-  sdkTool(
-    'MultiEdit',
-    'Multi edit',
-    'Apply multiple edits to an existing file.',
-    'files',
-    'medium',
-  ),
-  sdkTool(
-    'NotebookEdit',
-    'Notebook edit',
-    'Edit notebook cells.',
-    'files',
-    'medium',
-  ),
-  sdkTool(
-    'ToolSearch',
-    'Tool search',
-    'Search available tools and capabilities.',
-    'search',
-    'low',
-  ),
-  sdkTool(
-    'Skill',
-    'Skill',
-    'Use an approved materialized skill.',
-    'agent',
-    'low',
-  ),
-  sdkTool('WebFetch', 'Web fetch', 'Fetch a web URL.', 'web', 'medium'),
-  sdkTool('WebSearch', 'Web search', 'Search the web.', 'web', 'medium'),
   {
     id: 'tool:Browser',
     name: 'Browser',
     kind: 'browser',
     provider: 'gantry',
-    providerToolName: 'Browser',
+    providerToolName: undefined,
     displayName: 'Browser',
     description: 'Use the shared Gantry browser capability.',
     category: 'web',
     risk: 'medium',
+    inputSchema: undefined,
   },
+  ...GANTRY_FACADE_EXACT_TOOL_NAMES.map((name) =>
+    gantryFacadeTool(
+      name,
+      gantryFacadeDisplayName(name),
+      gantryFacadeDescription(name),
+      gantryFacadeCategory(name),
+      gantryFacadeRisk(name),
+    ),
+  ),
   ...ADMIN_MCP_TOOL_FULL_NAMES.map((name) =>
     hostTool(
       name,
@@ -245,31 +192,24 @@ const DEFAULT_TOOL_CATALOG = [
   ),
 ] as const;
 
-function sdkTool(
-  name: string,
+function gantryFacadeTool(
+  name: GantryFacadeExactToolName,
   displayName: string,
   description: string,
-  category:
-    | 'files'
-    | 'search'
-    | 'execution'
-    | 'web'
-    | 'agent'
-    | 'mcp'
-    | 'channel'
-    | 'admin',
+  category: 'files' | 'execution' | 'web' | 'agent',
   risk: 'low' | 'medium' | 'high',
 ) {
   return {
     id: `tool:${name}`,
     name,
-    kind: 'anthropic_sdk',
-    provider: `anth${'ropic'}`,
-    providerToolName: name,
+    kind: 'host',
+    provider: 'gantry',
+    providerToolName: undefined,
     displayName,
     description,
     category,
     risk,
+    inputSchema: GANTRY_FACADE_INPUT_SCHEMAS[name],
   } as const;
 }
 
@@ -298,7 +238,78 @@ function hostTool(
     description,
     category,
     risk,
+    inputSchema: undefined,
   } as const;
+}
+
+function gantryFacadeDisplayName(name: GantryFacadeExactToolName): string {
+  switch (name) {
+    case 'WebSearch':
+      return 'Web search';
+    case 'WebRead':
+      return 'Web read';
+    case 'FileSearch':
+      return 'File search';
+    case 'FileRead':
+      return 'File read';
+    case 'FileEdit':
+      return 'File edit';
+    case 'FileWrite':
+      return 'File write';
+    case 'AgentDelegation':
+      return 'Agent delegation';
+  }
+}
+
+function gantryFacadeDescription(name: GantryFacadeExactToolName): string {
+  switch (name) {
+    case 'WebSearch':
+      return 'Search the public web from a query through the selected execution harness.';
+    case 'WebRead':
+      return 'Read a known URL through the selected execution harness.';
+    case 'FileSearch':
+      return 'Search workspace files by path or content. Path mode may use glob-style queries; content mode uses include/exclude globs only.';
+    case 'FileRead':
+      return 'Read one exact safe relative workspace file path.';
+    case 'FileEdit':
+      return 'Patch one exact safe relative workspace file path.';
+    case 'FileWrite':
+      return 'Create or replace one exact safe relative workspace file path.';
+    case 'AgentDelegation':
+      return 'Delegate work to a subagent through the selected execution harness.';
+  }
+}
+
+function gantryFacadeCategory(
+  name: GantryFacadeExactToolName,
+): 'files' | 'execution' | 'web' | 'agent' {
+  switch (name) {
+    case 'WebSearch':
+    case 'WebRead':
+      return 'web';
+    case 'FileSearch':
+    case 'FileRead':
+    case 'FileEdit':
+    case 'FileWrite':
+      return 'files';
+    case 'AgentDelegation':
+      return 'agent';
+  }
+}
+
+function gantryFacadeRisk(name: GantryFacadeExactToolName) {
+  switch (name) {
+    case 'FileEdit':
+    case 'FileWrite':
+      return 'high';
+    case 'FileRead':
+    case 'WebRead':
+    case 'AgentDelegation':
+      return 'medium';
+    case 'FileSearch':
+    case 'WebSearch':
+      return 'low';
+  }
 }
 
 function adminToolDisplayName(name: string): string {

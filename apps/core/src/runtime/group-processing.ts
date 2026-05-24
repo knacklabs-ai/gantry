@@ -60,16 +60,19 @@ import {
   startInitialGroupProgress,
   startGroupProgressHeartbeats,
 } from './group-progress-heartbeats.js';
+import { createProgressChannelSender } from './group-progress-channel-sender.js';
 import { createGroupAgentRunner } from './group-agent-runner.js';
 import { buildMemoryRecallQueryFromMessages } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
+import {
+  isModelAccessAuthFailure,
+  sendModelAccessAuthFailureNotice,
+} from './model-access-auth-failure.js';
 let streamingGenerationCounter = 0;
 const PERMISSION_BACKGROUND_DEMOTE_MS = 120_000;
 type ProgressHeartbeat = ReturnType<typeof startGroupProgressHeartbeats>;
-const activeTurnUiCleanupByQueue = new Map<
-  string,
-  { token: symbol; cancel: () => void }
->();
+type ActiveTurnUiCleanup = { token: symbol; cancel: () => void };
+const activeTurnUiCleanupByQueue = new Map<string, ActiveTurnUiCleanup>();
 
 export function createGroupProcessor(deps: GroupProcessingDeps) {
   const collectSessionMemory = deps.collectSessionMemory;
@@ -147,40 +150,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         ? deps.channelRuntime.sendMessage(chatJid, text, options)
         : deps.channelRuntime.sendMessage(chatJid, text)));
     const finalizingProgressGenerations = new Set<number>();
-    const sendProgressToChannel = async (
-      text: string,
-      options?: ProgressUpdateOptions,
-    ): Promise<void> => {
-      if (
-        options?.done !== true &&
-        options?.generation !== undefined &&
-        finalizingProgressGenerations.has(options.generation)
-      ) {
-        return;
-      }
-      try {
-        if (options) {
-          await deps.channelRuntime.sendProgressUpdate(chatJid, text, options);
-        } else {
-          await deps.channelRuntime.sendProgressUpdate(chatJid, text);
-        }
-      } catch (err) {
-        logger.warn(
-          {
-            err,
-            chatJid,
-            group: group.name,
-            progressText: text,
-            done: options?.done ?? false,
-            replaceOnly: options?.replaceOnly ?? false,
-            generation: options?.generation,
-            threadId: options?.threadId,
-          },
-          'Progress lifecycle runtime send failed',
-        );
-        throw err;
-      }
-    };
+    const sendProgressToChannel = createProgressChannelSender({
+      channelRuntime: deps.channelRuntime,
+      chatJid,
+      groupName: group.name,
+      finalizingGenerations: finalizingProgressGenerations,
+      log: logger,
+    });
     const memoryUserId = resolveMemoryUserId(missedMessages);
     const defaultMemoryScope = memoryScopeForConversationKind(
       group.conversationKind,
@@ -248,6 +224,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           defaultScope: defaultMemoryScope,
           memoryUserId,
           collectMemory: collectSessionMemory,
+          executionAdapter: deps.executionAdapter,
         }),
         clearCurrentSession: () =>
           deps.clearSession(group.folder, activeThreadId, {
@@ -692,6 +669,18 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         hadError = true;
         await resumeActiveElapsed();
         await finalizeStreamingOutput('error-marker');
+        if (!outputSentToUser && isModelAccessAuthFailure(result.error)) {
+          applyDeliverySettlement(
+            await sendModelAccessAuthFailureNotice({
+              chatJid,
+              groupName: group.name,
+              messageOptions: await buildMessageOptions(),
+              sendMessageToChannel,
+              warn: (metadata, message) => logger.warn(metadata, message),
+            }),
+            { streamed: false, terminal: true },
+          );
+        }
         await setTypingState(false);
       }
     };

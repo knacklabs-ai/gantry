@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { envValueDynamic } from '../config/env/index.js';
 import { getRuntimeStorage } from '../adapters/storage/postgres/runtime-store.js';
+import { logger } from '../infrastructure/logging/logger.js';
 import type { TeamsInboundMessage, TeamsSdkClient } from './teams.js';
 
 export type ExternalCardAction = {
@@ -23,9 +24,30 @@ export async function handleExternalCardAction(input: {
   sdkClient: TeamsSdkClient;
 }): Promise<boolean> {
   const action = readExternalCardAction(input.message.value);
-  if (!action) return false;
+  if (!action) {
+    logger.debug(
+      {
+        activityName: input.message.name,
+        conversationId: input.message.conversationId,
+        ...describeExternalCardActionParseMiss(input.message.value),
+      },
+      'Teams external card action payload ignored',
+    );
+    return false;
+  }
   const actorId = input.message.senderId || input.message.from?.id;
   try {
+    logger.info(
+      {
+        actionType: action.actionType,
+        eventId: action.eventId,
+        integrationId: action.integrationId,
+        platformOperation: action.platformOperation,
+        sourceChannelId: action.sourceChannelId,
+        workspaceId: action.workspaceId,
+      },
+      'Teams external card action received',
+    );
     if (!actorId || actorId === 'unknown') {
       throw new Error('Teams actor id is required for card actions');
     }
@@ -43,7 +65,13 @@ export async function handleExternalCardAction(input: {
       throw new Error('This card action belongs to a different Teams tenant');
     }
     const conversationId = input.message.conversationId;
-    if (conversationId !== action.sourceChannelId) {
+    const canonicalConversationId =
+      canonicalTeamsConversationId(conversationId);
+    if (
+      !canonicalConversationId ||
+      canonicalConversationId !==
+        canonicalTeamsConversationId(action.sourceChannelId)
+    ) {
       throw new Error(
         'This card action belongs to a different Teams conversation',
       );
@@ -56,12 +84,35 @@ export async function handleExternalCardAction(input: {
       teamsTenantId,
       occurredAt: new Date().toISOString(),
     });
+    logger.info(
+      {
+        actionType: action.actionType,
+        eventId: action.eventId,
+        integrationId: action.integrationId,
+        platformOperation: action.platformOperation,
+        sourceChannelId: action.sourceChannelId,
+        workspaceId: action.workspaceId,
+      },
+      'Teams external card action forwarded to external platform',
+    );
     await recordExternalCardActionFinished(action.nonce, 'completed');
     await input.sdkClient.sendMessage({
       conversationId,
       text: 'Action accepted.',
     });
   } catch (error) {
+    logger.warn(
+      {
+        actionType: action.actionType,
+        err: error,
+        eventId: action.eventId,
+        integrationId: action.integrationId,
+        platformOperation: action.platformOperation,
+        sourceChannelId: action.sourceChannelId,
+        workspaceId: action.workspaceId,
+      },
+      'Teams external card action failed',
+    );
     if (action) {
       await recordExternalCardActionFinished(
         action.nonce,
@@ -157,6 +208,51 @@ function readExternalCardAction(value: unknown): ExternalCardAction | null {
   };
   if (Object.values(action).some((value) => !value)) return null;
   return action as ExternalCardAction;
+}
+
+function describeExternalCardActionParseMiss(value: unknown): {
+  reason: string;
+  valueKeys: string[];
+  dataKeys?: string[];
+} {
+  if (!value || typeof value !== 'object') {
+    return { reason: 'missing_or_non_object_value', valueKeys: [] };
+  }
+  const valueRecord = value as Record<string, unknown>;
+  const record = unwrapExternalCardActionValue(valueRecord);
+  if (!record) {
+    return {
+      reason: 'unsupported_payload_wrapper',
+      valueKeys: diagnosticKeys(valueRecord),
+    };
+  }
+  if (record.action !== 'external_card_action') {
+    return {
+      reason: 'missing_external_card_action_marker',
+      valueKeys: diagnosticKeys(valueRecord),
+      dataKeys: diagnosticKeys(record),
+    };
+  }
+  const missingFields = [
+    'integrationId',
+    'eventId',
+    'resourceId',
+    'workspaceId',
+    'sourceChannelId',
+    'teamsTenantId',
+    'actionType',
+    'platformOperation',
+    'nonce',
+    'expiresAt',
+    'signature',
+  ].filter((field) => !readString(record[field]));
+  return {
+    reason: missingFields.length
+      ? `missing_fields:${missingFields.join(',')}`
+      : 'unknown_parse_miss',
+    valueKeys: diagnosticKeys(valueRecord),
+    dataKeys: diagnosticKeys(record),
+  };
 }
 
 function unwrapExternalCardActionValue(
@@ -271,7 +367,7 @@ export function buildExternalCardActionGraphqlRequest(input: {
 } {
   return {
     headers: {
-      authorization: 'Bearer service:agent_conversation',
+      authorization: `Bearer ${resolveExternalPlatformServiceToken()}`,
       'content-type': 'application/json',
       'x-channel-id': input.action.sourceChannelId,
       'x-integration-id': input.action.integrationId,
@@ -308,10 +404,33 @@ function resolveExternalGraphqlUrl(): string {
   throw new Error('GANTRY_EXTERNAL_PLATFORM_GRAPHQL_URL is not configured');
 }
 
+function resolveExternalPlatformServiceToken(): string {
+  const explicit =
+    envValueDynamic('GANTRY_EXTERNAL_PLATFORM_SERVICE_TOKEN') ||
+    envValueDynamic('AGENT_CONVERSATION_SERVICE_TOKEN') ||
+    envValueDynamic('AGENT_RUNTIME_CONVERSATION_SERVICE_TOKEN') ||
+    envValueDynamic('OPENCLAW_CONVERSATION_SERVICE_TOKEN');
+  if (explicit) return explicit;
+  return 'service:agent_conversation';
+}
+
 function readString(value: unknown): string {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function canonicalTeamsConversationId(value: unknown): string | null {
+  const raw = readString(value);
+  if (!raw) return null;
+  return raw.split(';')[0]?.trim() || null;
+}
+
+function diagnosticKeys(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  return Object.keys(value as Record<string, unknown>).sort().slice(0, 20);
+}
+
 export const _testExternalCardActions = {
+  canonicalTeamsConversationId,
+  describeExternalCardActionParseMiss,
   readExternalCardAction,
 };

@@ -4,7 +4,6 @@ import {
   type RuntimeEventType,
 } from '../domain/events/runtime-event-types.js';
 import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-references.js';
-import type { SchedulerDependencies } from './types.js';
 
 export const FORWARDED_RUNNER_EVENT_TYPES = new Set<RuntimeEventType>([
   RUNTIME_EVENT_TYPES.JOB_HEARTBEAT,
@@ -28,7 +27,11 @@ export interface JobRunDiagnostics {
   pendingPermissionToolNames: string[];
   totalToolCalls: number;
   browserActivityCount: number;
-  transientPermissionApprovals: Array<{ toolName: string; mode: string }>;
+  transientPermissionApprovals: Array<{
+    toolName: string;
+    mode: string;
+    recoveryAction?: string;
+  }>;
   latestStreamedOutputChars: number;
   totalStreamedOutputChars: number;
   lastActivityAt?: string;
@@ -120,7 +123,17 @@ export function updateDiagnosticsFromRuntimeEvent(
     mode &&
     (mode === 'allow_once' || mode === 'allow_timed_grant')
   ) {
-    diagnostics.transientPermissionApprovals.push({ toolName: tool, mode });
+    const matchingWait =
+      diagnostics.lastPermissionWait?.toolName === tool
+        ? diagnostics.lastPermissionWait
+        : undefined;
+    const recoveryAction =
+      stringValue(payload.recovery_action) ?? matchingWait?.recoveryAction;
+    diagnostics.transientPermissionApprovals.push({
+      toolName: tool,
+      mode,
+      ...(recoveryAction ? { recoveryAction } : {}),
+    });
   }
 }
 
@@ -200,33 +213,12 @@ export function formatTerminalToolDenial(
   return parts.join(' ');
 }
 
-export function requiredToolsIncludeBrowser(
-  requiredTools: readonly string[],
+export function toolAccessRequirementsIncludeBrowser(
+  toolAccessRequirements: readonly string[],
 ): boolean {
-  return requiredTools.some((tool) => isCanonicalBrowserCapabilityRule(tool));
-}
-
-export async function countBrowserActivityForRun(input: {
-  deps: SchedulerDependencies;
-  jobId: string;
-  runId: string;
-  diagnostics: JobRunDiagnostics;
-}): Promise<number> {
-  const events = await input.deps.opsRepository.listRecentJobEvents(200, {
-    job_id: input.jobId,
-    run_id: input.runId,
-    event_type: RUNTIME_EVENT_TYPES.JOB_TOOL_ACTIVITY,
-  });
-  const persisted = events.filter((event) => {
-    if (!event.payload) return false;
-    try {
-      const parsed = JSON.parse(event.payload) as unknown;
-      return isRecord(parsed) && isBrowserToolActivity(parsed);
-    } catch {
-      return false;
-    }
-  }).length;
-  return Math.max(persisted, input.diagnostics.browserActivityCount);
+  return toolAccessRequirements.some((tool) =>
+    isCanonicalBrowserCapabilityRule(tool),
+  );
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -253,8 +245,8 @@ function isBrowserToolActivity(payload: Record<string, unknown>): boolean {
     phase === 'permission_wait' ||
     phase === 'permission_allowed' ||
     phase === 'allow' ||
-    phase === 'required_tool_preflight' ||
-    phase === 'required_tool_satisfied'
+    phase === 'tool_access_preflight' ||
+    phase === 'tool_access_missing'
   ) {
     return false;
   }
@@ -291,6 +283,7 @@ const BROWSER_ACT_BACKEND_ACTIONS = new Set([
   'select_option',
   'fill_form',
   'file_upload',
+  'file_attach',
   'handle_dialog',
   'resize',
 ]);

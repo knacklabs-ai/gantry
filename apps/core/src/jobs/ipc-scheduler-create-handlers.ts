@@ -9,7 +9,7 @@ import { runtimeJobSchedulePlanner } from './job-schedule-planner.js';
 import { getDefaultModelConfig } from '../config/index.js';
 import {
   findModelByRunnerModel,
-  resolveModelSelection,
+  resolveModelSelectionForWorkload,
 } from '../shared/model-catalog.js';
 import { setupActionLabel } from '../shared/job-setup-labels.js';
 import { schedulerAccessFromContext } from './ipc-scheduler-access.js';
@@ -28,6 +28,7 @@ function makeJobService(context: TaskContext): JobManagementService {
     scheduler: { requestSchedulerSync: context.deps.onSchedulerChanged },
     schedulePlanner: runtimeJobSchedulePlanner,
     toolRepository: context.deps.getToolRepository?.(),
+    skillRepository: context.deps.getSkillRepository?.(),
     mcpServerRepository: context.deps.getMcpServerRepository?.(),
     capabilitySecretRepository: context.deps.getCapabilitySecretRepository?.(),
     getCredentialBroker: context.deps.getCredentialBroker,
@@ -70,13 +71,12 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
       name: data.name || '',
       prompt: data.prompt || '',
       modelAlias: data.modelAlias || null,
-      modelProfileId: data.modelProfileId || null,
       scheduleType: normalizedScheduleType,
       scheduleValue: data.scheduleValue || '',
       executionContext: data.executionContext,
       notificationRoutes: data.notificationRoutes,
       capabilityRequirements: data.capabilityRequirements,
-      requiredTools: data.requiredTools,
+      toolAccessRequirements: data.toolAccessRequirements,
       requiredMcpServers: data.requiredMcpServers,
       silent: data.silent,
       cleanupAfterMs: data.cleanupAfterMs,
@@ -112,13 +112,12 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
       name: data.name || '',
       prompt: data.prompt || '',
       modelAlias: data.modelAlias || null,
-      modelProfileId: data.modelProfileId || null,
       scheduleType: normalizedScheduleType,
       scheduleValue: data.scheduleValue || '',
       executionContext: data.executionContext,
       notificationRoutes: data.notificationRoutes,
       capabilityRequirements: data.capabilityRequirements,
-      requiredTools: data.requiredTools,
+      toolAccessRequirements: data.toolAccessRequirements,
       requiredMcpServers: data.requiredMcpServers,
       silent: data.silent,
       cleanupAfterMs: data.cleanupAfterMs,
@@ -140,7 +139,10 @@ const schedulerUpsertJobHandler: TaskHandler = async (context) => {
         : getDefaultModelConfig('recurringJob', sourceAgentFolder);
     const selectedModel = result.modelAlias || defaultModel.model;
     const catalogModel = selectedModel
-      ? resolveModelSelection(selectedModel)
+      ? resolveModelSelectionForWorkload(
+          selectedModel,
+          normalizedScheduleType === 'once' ? 'one_time_job' : 'recurring_job',
+        )
       : undefined;
     const resolvedModel =
       (catalogModel?.ok ? catalogModel.entry : undefined) ??

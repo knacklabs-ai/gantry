@@ -10,9 +10,10 @@ import { isValidGroupFolder } from '../../platform/group-folder-rules.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import { ensureRuntimeLayout, settingsFilePath } from './runtime-home.js';
 import {
-  applyMemoryModelProfile,
+  applyModelProviderPreset,
+  applyProviderManagedMemoryDefaults,
   createDefaultRuntimeSettings,
-  getMemoryModelProfileDefaults,
+  getProviderManagedMemoryDefaults,
 } from './runtime-settings-defaults.js';
 import { parseRuntimeSettings } from './runtime-settings-parser.js';
 import { renderRuntimeSettingsYaml } from './runtime-settings-renderer.js';
@@ -25,7 +26,6 @@ import {
   validateLoadedRuntimeSettings,
 } from './runtime-settings-validation.js';
 import type {
-  MemoryModelProfile,
   RuntimeSettings,
   RuntimeSettingsValidationResult,
 } from './runtime-settings-types.js';
@@ -56,7 +56,6 @@ const DEFAULT_RUNTIME_SECRET_REFS: Record<string, Record<string, string>> = {
 
 export type {
   EmbeddingProviderName,
-  MemoryModelProfile,
   MemoryModelTask,
   RuntimeMemoryLlmModels,
   RuntimeMemorySettings,
@@ -69,9 +68,10 @@ export type {
 } from './runtime-settings-types.js';
 
 export {
-  applyMemoryModelProfile,
+  applyModelProviderPreset,
+  applyProviderManagedMemoryDefaults,
   createDefaultRuntimeSettings,
-  getMemoryModelProfileDefaults,
+  getProviderManagedMemoryDefaults,
   parseRuntimeSettings,
   readRuntimeMemorySettingsSnapshot,
   readRuntimeStorageSettingsSnapshot,
@@ -103,9 +103,22 @@ export function mirrorAgentToolRulesToRuntimeSettings(input: {
   runtimeHome: string;
   agentFolder: string;
   rules: readonly string[];
+  mode?: 'add' | 'remove';
 }): void {
   const settings = loadRuntimeSettings(input.runtimeHome);
-  addAgentToolRulesToRuntimeSettings(settings, input.agentFolder, input.rules);
+  if (input.mode === 'remove') {
+    removeAgentToolRulesFromRuntimeSettings(
+      settings,
+      input.agentFolder,
+      input.rules,
+    );
+  } else {
+    addAgentToolRulesToRuntimeSettings(
+      settings,
+      input.agentFolder,
+      input.rules,
+    );
+  }
   saveRuntimeSettings(input.runtimeHome, settings);
 }
 
@@ -122,8 +135,8 @@ export function addAgentToolRulesToRuntimeSettings(
     );
   }
   const next = new Set<string>();
-  for (const existingRule of agent.capabilities.toolIds) {
-    const readable = existingRule.trim();
+  for (const existing of agent.capabilities) {
+    const readable = capabilityToToolRule(existing.id);
     if (!readable) continue;
     const validation = validateReadableAgentToolRule(readable);
     if (!validation.ok) throw new Error(validation.reason);
@@ -135,7 +148,52 @@ export function addAgentToolRulesToRuntimeSettings(
     if (!validation.ok) throw new Error(validation.reason);
     if (readable) next.add(readable);
   }
-  agent.capabilities.toolIds = [...next];
+  agent.capabilities = [...next].map(toolRuleToCapability);
+}
+
+export function removeAgentToolRulesFromRuntimeSettings(
+  settings: RuntimeSettings,
+  agentFolder: string,
+  rules: readonly string[],
+): void {
+  const folder = agentFolder.trim();
+  const agent = settings.agents[folder];
+  if (!agent) {
+    throw new Error(
+      `Cannot mirror persistent tool rule removal for missing settings agent: ${folder || '(empty)'}`,
+    );
+  }
+  const remove = new Set<string>();
+  for (const rule of rules) {
+    const readable = rule.trim();
+    const validation = validateReadableAgentToolRule(readable);
+    if (!validation.ok) throw new Error(validation.reason);
+    if (readable) remove.add(readable);
+  }
+  agent.capabilities = agent.capabilities.filter((capability) => {
+    const readable = capabilityToToolRule(capability.id);
+    if (!readable) return false;
+    const validation = validateReadableAgentToolRule(readable);
+    if (!validation.ok) throw new Error(validation.reason);
+    return !remove.has(readable);
+  });
+}
+
+export function capabilityToToolRule(capabilityId: string): string {
+  const id = capabilityId.trim();
+  if (id === 'browser.use') return 'Browser';
+  if (id.includes('.') && !id.startsWith('RunCommand(')) {
+    return `capability:${id}`;
+  }
+  return id;
+}
+
+function toolRuleToCapability(rule: string): { id: string; version: string } {
+  if (rule === 'Browser') return { id: 'browser.use', version: 'builtin' };
+  if (rule.startsWith('capability:')) {
+    return { id: rule.slice('capability:'.length), version: 'builtin' };
+  }
+  return { id: rule, version: 'builtin' };
 }
 
 function writeSettingsYamlAtomic(filePath: string, content: string): void {
@@ -248,11 +306,8 @@ export function ensureConfiguredConversationBinding(
     folder,
     persona: input.persona ?? 'developer',
     bindings: {},
-    capabilities: {
-      toolIds: [],
-      skillIds: [],
-      mcpServerIds: [],
-    },
+    sources: { skills: [], mcpServers: [], tools: [] },
+    capabilities: [],
   };
 
   const externalId = stripProviderPrefix(input.jid, provider.id);
@@ -401,5 +456,3 @@ export function validateRuntimeSettings(
     return runtimeSettingsValidationError(runtimeHome, err);
   }
 }
-
-export type { MemoryModelProfile as RuntimeSettingsMemoryModelProfile };

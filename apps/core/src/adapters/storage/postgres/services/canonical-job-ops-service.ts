@@ -1,8 +1,5 @@
-import type {
-  Job,
-  JobEvent,
-  JobRun,
-} from '../../../../domain/repositories/domain-types.js';
+// prettier-ignore
+import type { Job, JobEvent, JobRun } from '../../../../domain/repositories/domain-types.js';
 import type {
   JobEventListFilters,
   JobListFilters,
@@ -17,13 +14,10 @@ import {
   json,
   parseJson,
 } from '../repositories/canonical-graph-repository.postgres.js';
-import type {
-  CanonicalJobEventRecord,
-  CanonicalJobRecord,
-  CanonicalRunRecord,
-  JobRecordInput,
-  PostgresCanonicalJobRepository,
-} from '../repositories/canonical-job-repository.postgres.js';
+import { assertSafeExecutionProviderId } from '../../../../domain/sessions/execution-provider-id.js';
+import type { ExecutionProviderId } from '../../../../domain/sessions/sessions.js';
+// prettier-ignore
+import type { CanonicalJobEventRecord, CanonicalJobRecord, CanonicalRunRecord, JobRecordInput, PostgresCanonicalJobRepository } from '../repositories/canonical-job-repository.postgres.js';
 import { redactProviderSessionHandlesInText } from '../../../../shared/provider-session-redaction.js';
 
 type JobRecordSource = Omit<JobUpsertInput, 'id'> | JobUpsertInput | Job;
@@ -68,7 +62,7 @@ export class CanonicalJobOpsService {
         pause_reason: job.pause_reason,
         execution_context: job.execution_context,
         notification_routes: job.notification_routes,
-        required_tools: job.required_tools,
+        tool_access_requirements: job.tool_access_requirements,
         required_mcp_servers: job.required_mcp_servers,
         capability_requirements: job.capability_requirements,
         setup_state: job.setup_state,
@@ -137,17 +131,27 @@ export class CanonicalJobOpsService {
   async claimDueJobRunStart(input: {
     jobId: string;
     runId: string;
+    executionProviderId: ExecutionProviderId;
+    workerId?: string | null;
+    leaseOwner?: string | null;
     scheduledFor: string;
     startedAt: string;
     retryCount: number;
     leaseExpiresAt: string;
     requireNextRun?: boolean;
   }): Promise<boolean> {
+    assertSafeExecutionProviderId(input.executionProviderId);
     return this.repository.claimDueRunStart({
       jobId: input.jobId,
       run: {
         run_id: input.runId,
         job_id: input.jobId,
+        execution_provider_id: input.executionProviderId,
+        provider_run_id: null,
+        provider_session_id: null,
+        worker_id: input.workerId ?? null,
+        lease_owner: input.leaseOwner ?? null,
+        lease_expires_at: input.leaseExpiresAt,
         scheduled_for: input.scheduledFor,
         started_at: input.startedAt,
         ended_at: null,
@@ -175,7 +179,13 @@ export class CanonicalJobOpsService {
   }
 
   async createJobRun(run: JobRun): Promise<boolean> {
+    assertSafeExecutionProviderId(run.execution_provider_id);
     return this.repository.insertRun(run);
+  }
+
+  // prettier-ignore
+  async updateAgentRunProviderMetadata(input: { runId: string; runIds?: string[]; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
+    await this.repository.updateRunProviderMetadata(input.runIds ?? input.runId, { providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
   }
 
   async getRecentJobRuns(limit = 200): Promise<JobRun[]> {
@@ -289,8 +299,12 @@ export class CanonicalJobOpsService {
       targetRoutes: target.notificationRoutes,
       executionContext,
     });
-    const requiredTools = parseRequiredTools(target.requiredTools);
-    const requiredMcpServers = parseRequiredTools(target.requiredMcpServers);
+    const toolAccessRequirements = parseToolAccessRequirements(
+      target.toolAccessRequirements,
+    );
+    const requiredMcpServers = parseToolAccessRequirements(
+      target.requiredMcpServers,
+    );
     const capabilityRequirements = parseCapabilityRequirements(
       target.capabilityRequirements,
     );
@@ -324,7 +338,7 @@ export class CanonicalJobOpsService {
       execution_context: executionContext,
       notification_routes: notificationRoutes,
       capability_requirements: capabilityRequirements,
-      required_tools: requiredTools,
+      tool_access_requirements: toolAccessRequirements,
       required_mcp_servers: requiredMcpServers,
       setup_state: setupState,
     };
@@ -363,8 +377,12 @@ export class CanonicalJobOpsService {
         capabilityRequirements: parseCapabilityRequirements(
           job.capability_requirements,
         ),
-        requiredTools: parseRequiredTools(job.required_tools),
-        requiredMcpServers: parseRequiredTools(job.required_mcp_servers),
+        toolAccessRequirements: parseToolAccessRequirements(
+          job.tool_access_requirements,
+        ),
+        requiredMcpServers: parseToolAccessRequirements(
+          job.required_mcp_servers,
+        ),
         setupState: parseSetupState(job.setup_state),
       }),
       silent: Boolean(job.silent),
@@ -385,6 +403,12 @@ export class CanonicalJobOpsService {
       run_id: row.id,
       short_id: row.shortId,
       job_id: row.jobId || '',
+      execution_provider_id: row.executionProviderId as ExecutionProviderId,
+      provider_run_id: row.providerRunId,
+      provider_session_id: row.providerSessionId,
+      worker_id: row.workerId,
+      lease_owner: row.leaseOwner,
+      lease_expires_at: row.leaseExpiresAt,
       scheduled_for: row.createdAt,
       started_at: row.startedAt || row.createdAt,
       ended_at: row.endedAt,
@@ -447,17 +471,15 @@ function parseNotificationRoutes(input: unknown): CanonicalNotificationRoute[] {
   return routes;
 }
 
-function parseRequiredTools(input: unknown): string[] {
+function parseToolAccessRequirements(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const item of input) {
-    const value = typeof item === 'string' ? item.trim() : '';
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
+  return [
+    ...new Set(
+      input
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function parseCapabilityRequirements(
@@ -524,7 +546,7 @@ function parseCapabilityImplementation(
     record.authPreflight ?? record.auth_preflight,
   );
   if (authPreflight) implementation.authPreflight = authPreflight;
-  const protectedPaths = parseRequiredTools(
+  const protectedPaths = parseToolAccessRequirements(
     record.protectedPaths ?? record.protected_paths,
   );
   if (protectedPaths.length > 0) implementation.protectedPaths = protectedPaths;
@@ -629,11 +651,10 @@ function mergeExecutionContextSessionId(
   executionContext: CanonicalExecutionContext,
   sessionId: unknown,
 ): CanonicalExecutionContext {
-  if (executionContext.sessionId) return executionContext;
   const fallback = normalizeNullableString(sessionId);
-  return fallback
-    ? { ...executionContext, sessionId: fallback }
-    : executionContext;
+  return executionContext.sessionId || !fallback
+    ? executionContext
+    : { ...executionContext, sessionId: fallback };
 }
 
 function resolveNotificationRoutes(
@@ -674,7 +695,5 @@ function resolveNotificationRoutesFromTarget(input: {
   ];
 }
 
-function normalizeNullableString(input: unknown): string | null {
-  if (input === null || input === undefined) return null;
-  return normalizeString(input) ?? null;
-}
+// prettier-ignore
+function normalizeNullableString(input: unknown): string | null { return input === null || input === undefined ? null : (normalizeString(input) ?? null); }

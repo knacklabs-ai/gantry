@@ -72,10 +72,13 @@ POST   /v1/agents
 GET    /v1/agents/:agentId
 PATCH  /v1/agents/:agentId
 GET    /v1/agents/:agentId/admin
+GET    /v1/inventory
+GET    /v1/agents/:agentId/sources
+PUT    /v1/agents/:agentId/sources
+GET    /v1/capabilities
+GET    /v1/capabilities/:capabilityId
 GET    /v1/agents/:agentId/capabilities
 PUT    /v1/agents/:agentId/capabilities
-
-GET    /v1/capability-catalog
 
 GET    /v1/providers
 GET    /v1/provider-connections
@@ -93,12 +96,16 @@ PATCH  /v1/agents/:agentId/conversation-bindings/:conversationId
 DELETE /v1/agents/:agentId/conversation-bindings/:conversationId
 ```
 
-Agents own exactly `selectedToolIds`, `selectedSkillIds`, and
-`selectedMcpServerIds`. Conversations own sender policy, trigger policy, bound
-agents, sessions, and control approvers. Control approvers must be members of
-the Conversation and are used for both direct/private and group/channel
-approval flows. There is no conversation-scoped tool selection field, and
-Browser is one normal catalog tool.
+Agents expose `sources` and `capabilities` as separate API surfaces.
+`sources` lists attached approved resources such as skills, MCP servers,
+built-in tools, adapters, and local CLIs. `capabilities` is the only durable
+grant list and contains approved capability ids plus immutable versions.
+Conversations own sender policy, trigger policy, bound agents, sessions, and
+control approvers. Control approvers must be members of the Conversation and
+are used for both direct/private and group/channel approval flows. There is no
+conversation-scoped tool selection field, and Browser is represented by a
+readable `browser.use` capability id that projects to the canonical runtime
+`Browser` tool rule.
 Agent-requested changes use Gantry MCP request tools, not public API request
 approval endpoints.
 
@@ -106,66 +113,91 @@ Agent-facing tools:
 
 - `send_message`: progress updates or direct channel messages while the agent is still running.
 - `ask_user_question`: structured choices with options, single-select, multi-select, preview/details, and channel-native buttons.
+- `continuity_summary`: inspect current durable continuity, staged memory candidates, reviewed memory state, and last injected context for the trusted subject.
+- `file`: list, read, write, or promote Gantry FileArtifacts by virtual scope/path; host filesystem paths and storage refs stay hidden.
 - `request_skill_install`: reviewed skill install requests with staged package files or an installer command that produces a `SKILL.md` package in host-controlled staging.
 - `request_skill_proposal`: agent-created or modified skill file bundles for review.
 - `request_skill_dependency_install`: dependency requests for npm, brew, go, uv, or downloads required by a skill.
 - `request_mcp_server`: third-party MCP server requests with transport, origin, tool patterns, credential needs, and reason.
-- `request_permission`: SDK, host, browser, scheduler, memory, service, MCP, semantic capability, or provider/channel capability permission requests.
+- `request_permission`: one-off exact access, Browser, exact Gantry admin tools, provider/channel permissions, or scoped `RunCommand` fallback when no reviewed semantic capability fits.
 - `capability_search`: search built-in semantic capabilities such as `google.sheets.write`.
-- `request_capability`: request a named semantic capability for the current agent.
-- `propose_local_cli_capability`: propose a user-defined authenticated local CLI capability draft with pinned executable, command templates, preflight, protected paths, and account label. Drafts do not become runnable durable authority until runtime local-CLI enforcement exists.
+- `propose_capability`: request an approved semantic capability when the id already exists, or propose a reviewed `local_cli` capability with pinned executable path/version/hash, command templates, preflight, protected paths, and account label.
 - `manage_capability`: view/change/revoke/test/audit guidance for selected capabilities.
 - `capability_status`: current tool access, semantic capability tools, readable configured rules, selected skills, selected MCP servers, and request arguments for missing admin tools.
 - `settings_desired_state`: selected-capability read of current local desired state.
 - `request_settings_update`: selected-capability reviewed edit to non-secret `settings.yaml` desired state.
+- `admin_permission_list`: selected-capability list of current-agent persistent Gantry MCP grants.
+- `admin_permission_revoke`: selected-capability revocation of a current-agent persistent Gantry MCP grant.
 - `mcp_list_tools` / `mcp_call_tool`: list and call approved third-party MCP tools through the Gantry proxy.
 - `service_restart`: selected-capability restart after approved changes that require host restart.
 - `register_agent`: selected-capability binding of a channel conversation to an agent.
 
 Every persistent capability change follows request, validation, review,
 decision, durable audit, new config version, and next-run activation.
-Persistent agent tool grants are mirrored into `settings.yaml` as readable
-`agents.<id>.tools` entries: semantic capabilities such as
-`capability:google.sheets.write`, canonical `Browser`, exact Gantry admin
-tools, or scoped Bash rules such as `Bash(npm test *)`. Durable
-`request_permission` does not mint broad exact SDK/native tools or exact
-third-party MCP tools; those must be represented by selected semantic
-capabilities or reviewed MCP server bindings. Jobs inherit the target agent's
-tools, skills, and MCP servers at run time;
-`toolAccess` in job responses reports that inherited effective projection and
-any runtime-only projected tools.
+Persistent agent grants are mirrored into `settings.yaml` as readable
+`agents.<id>.capabilities` entries such as `google.sheets.write`,
+`browser.use`, or a reviewed composite capability version. The `browser.use`
+entry projects to the canonical runtime `Browser` tool rule. Sources are
+mirrored under `agents.<id>.sources` and do not grant execution authority by
+themselves. Durable `request_permission` does not mint broad exact SDK/native
+tools or exact third-party MCP tools; those must be represented by selected
+semantic capabilities or reviewed MCP server bindings. Jobs inherit the target
+agent's capabilities and sources at run time; `toolAccess` in job responses
+reports that inherited effective projection and any runtime-only projected
+tools.
 Agent capability updates are bidirectional: settings-side changes reconcile
 Postgres immediately, and API/admin-side capability writes export the readable
 projection back into `settings.yaml` before returning.
-Permission prompts use the simple choices `Allow once`, `Allow 5 min`,
-`Always allow`, or `Cancel`.
+Live interactive permission prompts use `Allow once`, `Allow 5 min`,
+`Always allow`, or `Cancel`. Setup, scheduler, admin, and capability flows omit
+`Allow 5 min` because timed grants are transient and do not establish durable
+readiness.
 Same-conversation review binds the request to the originating chat or thread;
 it does not bypass the configured conversation approvers. Raw request ids,
-command hashes, scoped Bash rules, executable paths, and sandbox details are
+command hashes, scoped `RunCommand(...)` rules, executable paths, and sandbox details are
 Details/advanced data, not the primary permission prompt.
+
+Inventory response:
+
+```json
+{
+  "tools": [{ "id": "browser", "kind": "builtin", "displayName": "Browser" }],
+  "skills": [],
+  "mcpServers": [],
+  "adapters": [],
+  "localClis": []
+}
+```
 
 Capability catalog response:
 
 ```json
 {
-  "tools": [
+  "capabilities": [
     {
-      "id": "tool:capability:google.sheets.write",
-      "name": "capability:google.sheets.write",
-      "kind": "host",
-      "provider": "gantry",
+      "id": "google.sheets.write",
+      "version": "builtin",
       "displayName": "Google Sheets write",
-      "category": "productivity",
-      "risk": "high",
-      "semanticCapability": {
-        "capabilityId": "google.sheets.write",
-        "displayName": "Google Sheets write",
-        "credentialSource": "configured_access"
-      }
+      "category": "Google Sheets",
+      "risk": "write",
+      "source": "builtin"
     }
-  ],
-  "skills": [],
-  "mcpServers": []
+  ]
+}
+```
+
+Agent sources replacement:
+
+```http
+PUT /v1/agents/agent:main_agent/sources
+Content-Type: application/json
+
+{
+  "sources": {
+    "skills": [{ "id": "linkedin-posting", "version": 3 }],
+    "mcpServers": [{ "id": "linkedin", "version": 1 }],
+    "tools": [{ "id": "browser", "kind": "builtin" }]
+  }
 }
 ```
 
@@ -176,14 +208,47 @@ PUT /v1/agents/agent:main_agent/capabilities
 Content-Type: application/json
 
 {
-  "selectedToolIds": ["tool:capability:google.sheets.write", "tool:Browser"],
-  "selectedSkillIds": [],
-  "selectedMcpServerIds": []
+  "capabilities": [
+    { "id": "google.sheets.write", "version": "builtin" },
+    { "id": "browser.use", "version": "builtin" }
+  ]
 }
 ```
 
-The route validates catalog ownership, mirrors readable entries into
-`settings.yaml`, reconciles the Postgres projection, and returns `toolAccess`.
+Agent capability responses include the visible sources, selected capabilities,
+and projected runtime access:
+
+```json
+{
+  "agentId": "agent:main_agent",
+  "sources": {
+    "skills": [{ "id": "linkedin-posting", "version": 3 }],
+    "mcpServers": [{ "id": "linkedin", "version": 1 }],
+    "tools": [{ "id": "browser", "kind": "builtin" }]
+  },
+  "capabilities": [
+    { "id": "google.sheets.write", "version": "builtin" },
+    { "id": "browser.use", "version": "builtin" }
+  ],
+  "toolAccess": {
+    "configuredTools": ["capability:google.sheets.write", "Browser"],
+    "defaultTools": [],
+    "availableButGatedTools": ["RunCommand", "FileEdit", "FileWrite"],
+    "requestableAdminTools": [
+      {
+        "tool": "mcp__gantry__settings_desired_state",
+        "toolId": "tool:mcp__gantry__settings_desired_state",
+        "requestPermission": "permissionKind=tool toolName=mcp__gantry__settings_desired_state temporaryOnly=false reason=\"<why this agent needs settings_desired_state>\""
+      }
+    ],
+    "source": "Postgres agent_tool_bindings projected from settings.yaml"
+  },
+  "updatedAt": "2026-05-21T00:00:00.000Z"
+}
+```
+
+The routes validate catalog ownership, mirror readable entries into
+`settings.yaml`, reconcile the Postgres projection, and return `toolAccess`.
 
 ## Skills
 
@@ -399,11 +464,13 @@ client.jobs.create({
     sessionId, // required canonical app session id
   },
   notificationRoutes?, // defaults to primary execution context route
+  capabilityRequirements?, // semantic capability readiness, e.g. Browser
+  toolAccessRequirements?, // Gantry facades/rules, e.g. FileRead or RunCommand(npm test *)
+  requiredMcpServers?, // selected MCP source ids that must be ready
   kind?, // manual | once | recurring
   runAt?, // once
   schedule?, // recurring
   modelAlias?,    // friendly catalog alias, e.g. opus, sonnet, kimi
-  modelProfileId?,
   dryRun?,        // preview model plus runtime context without scheduling
 })
 
@@ -419,9 +486,11 @@ client.jobs.update(jobId, {
     sessionId, // required when executionContext is provided
   },
   notificationRoutes?,
+  capabilityRequirements?,
+  toolAccessRequirements?,
+  requiredMcpServers?,
   status?,
   modelAlias?,    // use null to clear back to inherited defaults
-  modelProfileId?,
 })
 client.jobs.delete(jobId)
 client.jobs.pause(jobId)
@@ -430,9 +499,52 @@ client.jobs.trigger(jobId)
 client.jobs.wait(triggerId, timeoutMs?)
 ```
 
+Job create, update, list, get, and trigger responses include `toolAccess` so
+callers can show the inherited target-agent projection. The arrays above are
+readiness assertions; they do not grant tools to the job. Use selected agent
+capabilities, attached sources, or the reviewed Gantry MCP request tools to
+change authority.
+
 Use `client.models.list()` to inspect supported model aliases, context windows,
-cache policy, and provider labels. API job creation rejects raw provider model
-IDs unless they are registered catalog aliases.
+cache policy, provider ids/labels, and supported workloads. API job creation
+rejects raw provider model IDs unless they are registered catalog aliases.
+
+Use `client.models.defaults.get()` to inspect configured and effective chat,
+job, and memory defaults. Use `client.models.defaults.update()` or
+`PATCH /v1/models/defaults` to select a provider default set, set chat/job
+aliases, or reset an area back to inheritance/provider defaults:
+
+```ts
+await client.models.defaults.update({
+  provider: 'openrouter',
+});
+
+await client.models.defaults.update({
+  chat: 'opus-4.7',
+  jobs: 'inherit',
+  memory: null,
+});
+```
+
+The defaults route writes `settings.yaml`; provider credentials remain in Model
+Access and are projected privately by the runtime adapter.
+
+Use `POST /v1/models/preview` for "why" checks before a run. `target: "chat"`
+can include `conversationJid` or `groupScope` to expose live session `/model`
+overrides; `target: "job"` with `jobId` distinguishes explicit job aliases from
+inherited defaults.
+
+```ts
+await client.models.preview({
+  target: 'job',
+  jobId,
+});
+
+await client.models.preview({
+  target: 'memory',
+  task: 'dreaming',
+});
+```
 
 Job create and dry-run responses include `runtimeContext`: source conversation,
 resolved `executionContext`, resolved `notificationRoutes`, resolved persona,
@@ -509,16 +621,22 @@ Control API scopes:
 ```http
 GET    /v1/settings                                agents:admin
 GET    /v1/models                                  sessions:read
+GET    /v1/models/defaults                         sessions:read
+POST   /v1/models/preview                          sessions:read or jobs:read; stored job previews require jobs:read
+PATCH  /v1/models/defaults                         agents:admin
 
 GET    /v1/agents                                  agents:admin
 POST   /v1/agents                                  agents:admin
 GET    /v1/agents/:id                              agents:admin
 PATCH  /v1/agents/:id                              agents:admin
 GET    /v1/agents/:id/admin                        agents:admin
+GET    /v1/inventory                               agents:admin
+GET    /v1/capabilities                            agents:admin
+GET    /v1/capabilities/:id                        agents:admin
+GET    /v1/agents/:id/sources                      agents:admin
+PUT    /v1/agents/:id/sources                      agents:admin
 GET    /v1/agents/:id/capabilities                 agents:admin
 PUT    /v1/agents/:id/capabilities                 agents:admin
-
-GET    /v1/capability-catalog                      agents:admin
 
 GET    /v1/providers                               providers:read
 POST   /v1/provider-connections                    providers:admin
@@ -592,9 +710,11 @@ it does not delete the row.
 
 ## Agent Skill Bindings
 
-Prefer `PUT /v1/agents/:agentId/capabilities` for deterministic replacement of
-all selected skills together with tools and MCP servers. The routes below remain
-specialized skill draft/file lifecycle routes.
+Prefer `PUT /v1/agents/:agentId/sources` for deterministic replacement of
+attached skills. Selecting a skill source does not grant risky skill actions;
+those actions require selected reviewed capabilities through
+`PUT /v1/agents/:agentId/capabilities`. The routes below remain specialized
+skill draft/file lifecycle routes.
 
 ```http
 POST   /v1/skills/drafts/upload                  skills:admin
@@ -614,9 +734,11 @@ skill artifacts.
 
 ## Agent MCP Server Bindings
 
-Prefer `PUT /v1/agents/:agentId/capabilities` for deterministic replacement of
-selected MCP servers together with tools and skills. The routes below remain
-specialized MCP draft, validation, and disable lifecycle routes.
+Prefer `PUT /v1/agents/:agentId/sources` for deterministic replacement of
+attached MCP servers. Selecting an MCP source does not grant execution by
+itself; callable MCP actions must be projected from selected reviewed
+capabilities. The routes below remain specialized MCP draft, validation, and
+disable lifecycle routes.
 
 ```http
 POST   /v1/mcp-servers/drafts                    mcp:admin

@@ -162,7 +162,7 @@ describe('job application use cases', () => {
       name: 'Browser summary',
       prompt: 'Summarize a web page',
       sessionId: 'session-app-one',
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       kind: 'recurring',
       schedule: { type: 'interval', value: '60000' },
     });
@@ -172,7 +172,7 @@ describe('job application use cases', () => {
         status: 'paused',
         pause_reason: 'Setup required',
         next_run: null,
-        required_tools: ['Browser'],
+        tool_access_requirements: ['Browser'],
         setup_state: expect.objectContaining({
           state: 'missing_capability',
         }),
@@ -195,7 +195,7 @@ describe('job application use cases', () => {
     );
   });
 
-  it('derives semantic required tools from job capability requirements', async () => {
+  it('derives semantic tool access requirements from job capability requirements', async () => {
     const upsertJob = vi.fn(async () => ({ created: true }));
     const runtimeEvents = { publish: vi.fn(async () => undefined) };
     const service = new JobManagementService({
@@ -227,6 +227,8 @@ describe('job application use cases', () => {
             kind: 'local_cli',
             name: 'gog',
             executablePath: '/usr/local/bin/gog',
+            executableVersion: 'v0.9.0',
+            executableHash: 'sha256:abc123',
             commandTemplate: '/usr/local/bin/gog sheets append *',
           },
         },
@@ -246,7 +248,7 @@ describe('job application use cases', () => {
             reason: 'Write lead rows after each run',
           }),
         ],
-        required_tools: ['capability:google.sheets.write'],
+        tool_access_requirements: ['capability:google.sheets.write'],
         setup_state: expect.objectContaining({
           state: 'draft_only',
           blockers: expect.arrayContaining([
@@ -254,7 +256,7 @@ describe('job application use cases', () => {
               state: 'draft_only',
               requirementType: 'local_cli',
               requirementId: 'google.sheets.write',
-              nextAction: expect.stringContaining('request_permission'),
+              nextAction: expect.stringContaining('propose_capability'),
             }),
           ]),
         }),
@@ -293,6 +295,8 @@ describe('job application use cases', () => {
               kind: 'local_cli',
               name: 'gog',
               executablePath: '/usr/local/bin/gog',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
               commandTemplate: 'gog sheets append *',
             },
           },
@@ -309,7 +313,7 @@ describe('job application use cases', () => {
     const runtimeEvents = { publish: vi.fn(async () => undefined) };
     const job = makeJob({
       id: 'job-1',
-      required_tools: ['Browser', 'capability:acme.old.read'],
+      tool_access_requirements: ['Browser', 'capability:acme.old.read'],
       capability_requirements: [
         {
           capabilityId: 'acme.old.read',
@@ -318,6 +322,8 @@ describe('job application use cases', () => {
             kind: 'local_cli',
             name: 'old-cli',
             executablePath: '/usr/local/bin/old-cli',
+            executableVersion: 'v0.8.0',
+            executableHash: 'sha256:old123',
             commandTemplate: '/usr/local/bin/old-cli read *',
           },
         },
@@ -362,6 +368,8 @@ describe('job application use cases', () => {
               kind: 'local_cli',
               name: 'gog',
               executablePath: '/usr/local/bin/gog',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
               commandTemplate: '/usr/local/bin/gog sheets append --dry-run',
             },
           },
@@ -380,11 +388,13 @@ describe('job application use cases', () => {
               kind: 'local_cli',
               name: 'gog',
               executablePath: '/usr/local/bin/gog',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
               commandTemplate: '/usr/local/bin/gog sheets append --dry-run',
             },
           },
         ],
-        required_tools: ['Browser', 'capability:google.sheets.write'],
+        tool_access_requirements: ['Browser', 'capability:google.sheets.write'],
         status: 'paused',
         pause_reason: 'Setup required',
       }),
@@ -392,10 +402,10 @@ describe('job application use cases', () => {
     expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-1');
   });
 
-  it('preserves capability-derived tool rules when only required tools are updated', async () => {
+  it('preserves capability-derived tool rules when only tool access requirements are updated', async () => {
     const job = makeJob({
       id: 'job-1',
-      required_tools: ['capability:google.sheets.write'],
+      tool_access_requirements: ['capability:google.sheets.write'],
       capability_requirements: [
         {
           capabilityId: 'google.sheets.write',
@@ -419,14 +429,14 @@ describe('job application use cases', () => {
       appId: 'app-one',
       jobId: 'job-1',
       patch: {
-        requiredTools: ['Browser'],
+        toolAccessRequirements: ['Browser'],
       },
     });
 
     expect(ops.updateJob).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({
-        required_tools: ['Browser', 'capability:google.sheets.write'],
+        tool_access_requirements: ['Browser', 'capability:google.sheets.write'],
       }),
     );
   });
@@ -492,7 +502,7 @@ describe('job application use cases', () => {
 
     expect(ops.updateJob).toHaveBeenCalledWith(
       'job-1',
-      expect.objectContaining({ model: 'kimi' }),
+      expect.objectContaining({ model: 'kimi-2.6' }),
     );
 
     await expect(
@@ -593,7 +603,7 @@ describe('job application use cases', () => {
         },
       },
       jobId: 'job-1',
-      patch: { status: 'active', requiredTools: ['Browser'] },
+      patch: { status: 'active', toolAccessRequirements: ['Browser'] },
     });
 
     expect(toolRepository.listAgentToolBindings).toHaveBeenCalledWith(
@@ -1282,7 +1292,7 @@ describe('job application use cases', () => {
     expect(ops.upsertJob).not.toHaveBeenCalled();
   });
 
-  it('rejects ambiguous IPC scheduler model selectors', async () => {
+  it('rejects raw provider IDs for IPC scheduler model selectors', async () => {
     const ops = {
       getJobById: vi.fn(),
       upsertJob: vi.fn(),
@@ -1301,16 +1311,16 @@ describe('job application use cases', () => {
           conversationBindings: {},
           sourceAgentFolderJids: ['tg:team'],
         },
-        name: 'Ambiguous model',
+        name: 'Raw model',
         prompt: 'Run',
-        modelAlias: 'kimi',
-        modelProfileId: 'openrouter:kimi-k2.6',
+        modelAlias: 'moonshotai/kimi-k2.6',
         scheduleType: 'once',
         scheduleValue: '2026-05-01T12:00:00.000Z',
       }),
     ).rejects.toMatchObject({
       code: 'INVALID_REQUEST',
-      message: 'Use either modelAlias or modelProfileId, not both.',
+      message:
+        'Provider model ID "moonshotai/kimi-k2.6" is not accepted here. Use a model alias from /models.',
     });
     expect(ops.upsertJob).not.toHaveBeenCalled();
   });

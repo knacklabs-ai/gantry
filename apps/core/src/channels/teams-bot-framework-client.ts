@@ -49,7 +49,13 @@ export async function handleTeamsBotFrameworkActivityRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<boolean> {
-  if (!activeClient) return false;
+  if (!activeClient) {
+    logger.warn(
+      { method: req.method, url: req.url },
+      'Teams Bot Framework activity received before transport start',
+    );
+    return false;
+  }
   await activeClient.processActivity(req, res);
   return true;
 }
@@ -101,6 +107,10 @@ export class TeamsBotFrameworkSdkClient implements TeamsSdkClient {
     res: ServerResponse,
   ): Promise<void> {
     const adapter = this.requireAdapter();
+    logger.debug(
+      { method: req.method, url: req.url },
+      'Teams Bot Framework activity request accepted',
+    );
     await adapter.processActivity(
       req as Parameters<BotFrameworkAdapter['processActivity']>[0],
       createBotFrameworkResponse(res) as Parameters<
@@ -113,9 +123,16 @@ export class TeamsBotFrameworkSdkClient implements TeamsSdkClient {
   async sendMessage(
     input: TeamsSdkOutboundMessage,
   ): Promise<TeamsSdkSendResult> {
+    const replyToId = teamsReplyToIdFromConversationId(input.conversationId);
     const response = await this.continueConversation(
       input.conversationId,
-      (ctx) => ctx.sendActivity(MessageFactory.text(input.text)),
+      (ctx) => {
+        const activity = MessageFactory.text(input.text);
+        if (replyToId) {
+          activity.replyToId = replyToId;
+        }
+        return ctx.sendActivity(activity);
+      },
     );
     if (!response?.id) {
       throw new Error(
@@ -131,6 +148,10 @@ export class TeamsBotFrameworkSdkClient implements TeamsSdkClient {
     const activity = MessageFactory.attachment(
       CardFactory.adaptiveCard(input.card),
     );
+    const replyToId = teamsReplyToIdFromConversationId(input.conversationId);
+    if (replyToId) {
+      activity.replyToId = replyToId;
+    }
     const response = await this.continueConversation(
       input.conversationId,
       (ctx) => ctx.sendActivity(activity),
@@ -145,6 +166,10 @@ export class TeamsBotFrameworkSdkClient implements TeamsSdkClient {
 
   private async handleTurn(context: TurnContext): Promise<void> {
     const activity = context.activity;
+    logger.info(
+      buildTeamsActivityDiagnostic(activity),
+      'Teams Bot Framework activity received',
+    );
     await this.rememberConversationReference(activity);
 
     if (activity.type === ActivityTypes.Message) {
@@ -244,7 +269,9 @@ export class TeamsBotFrameworkSdkClient implements TeamsSdkClient {
   ): Promise<ResourceResponse | undefined> {
     const adapter = this.requireAdapter();
     const store = this.requireStore();
-    const conversationJid = normalizeTeamsJid(conversationId);
+    const referenceConversationId =
+      teamsBaseConversationIdFromThreadConversationId(conversationId);
+    const conversationJid = normalizeTeamsJid(referenceConversationId);
     if (!conversationJid) {
       throw new Error(`Invalid Teams conversation ID: ${conversationId}`);
     }
@@ -257,6 +284,9 @@ export class TeamsBotFrameworkSdkClient implements TeamsSdkClient {
     const reference = JSON.parse(
       stored.rawReferenceJson,
     ) as Partial<ConversationReference>;
+    if (reference.conversation && conversationId !== referenceConversationId) {
+      reference.conversation.id = conversationId;
+    }
     let response: ResourceResponse | undefined;
     await adapter.continueConversation(reference, async (context) => {
       response = await send(context);
@@ -314,6 +344,17 @@ function createBotFrameworkResponse(
   };
 }
 
+function teamsBaseConversationIdFromThreadConversationId(
+  conversationId: string,
+): string {
+  return conversationId.split(';messageid=')[0]?.trim() || conversationId;
+}
+
+function teamsReplyToIdFromConversationId(conversationId: string): string | null {
+  const match = /;messageid=([^;]+)/.exec(conversationId);
+  return match?.[1]?.trim() || null;
+}
+
 function getTeamsSender(activity: Activity): {
   id: string;
   name: string;
@@ -358,6 +399,34 @@ function getTeamsTenantId(activity: Activity): string | undefined {
   return typeof tenant?.tenant?.id === 'string' ? tenant.tenant.id : undefined;
 }
 
+function buildTeamsActivityDiagnostic(activity: Activity): {
+  activityType: string | undefined;
+  activityName: string | undefined;
+  conversationId: string | undefined;
+  conversationType: string | undefined;
+  tenantId: string | undefined;
+  senderIdKind: ReturnType<typeof getTeamsSender>['idKind'];
+  hasValue: boolean;
+  valueKeys: string[];
+} {
+  const sender = getTeamsSender(activity);
+  return {
+    activityType: activity.type,
+    activityName: activity.name,
+    conversationId: activity.conversation?.id,
+    conversationType: activity.conversation?.conversationType,
+    tenantId: getTeamsTenantId(activity),
+    senderIdKind: sender.idKind,
+    hasValue: activity.value !== undefined && activity.value !== null,
+    valueKeys: diagnosticKeys(activity.value),
+  };
+}
+
+function diagnosticKeys(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  return Object.keys(value as Record<string, unknown>).sort().slice(0, 20);
+}
+
 function createAdaptiveCardInvokeResponse(
   statusCode: number,
   type: string,
@@ -377,6 +446,7 @@ function createAdaptiveCardInvokeResponse(
 }
 
 export const _testTeamsBotFrameworkClient = {
+  buildTeamsActivityDiagnostic,
   createAdaptiveCardInvokeResponse,
   createBotFrameworkResponse,
   getTeamsSender,

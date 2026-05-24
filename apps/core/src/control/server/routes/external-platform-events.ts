@@ -12,6 +12,7 @@ import {
   type ExternalPlatformDelivery,
   type PlatformEventEnvelope,
 } from './external-notification-card.js';
+import type { MessageDeliveryResult } from '../../../domain/types.js';
 
 const EXTERNAL_EVENTS_PATH = '/v1/integrations/platform-events';
 const MAX_BODY_BYTES = 256 * 1024;
@@ -20,7 +21,10 @@ const DELIVERY_BATCH_SIZE = 20;
 const DELIVERY_MAX_ATTEMPTS = 5;
 const DELIVERY_RETRY_BASE_DELAY_MS = 5000;
 const DELIVERY_RETRY_MAX_DELAY_MS = 60_000;
-const EVENT_TYPES = new Set(['notification.card.requested']);
+const EVENT_TYPES = new Set([
+  'notification.card.requested',
+  'deep_analysis_admin_notification_requested',
+]);
 
 type ExternalPlatformEventRow = {
   event_id: string;
@@ -150,16 +154,63 @@ export function buildExternalPlatformMessage(
       readOptionalString(card?.title) ??
       readOptionalString(payload.title) ??
       'New notification';
+    const resourceId =
+      readOptionalString(card?.resourceId) ??
+      readOptionalString(payload.resourceId);
+    const summary =
+      readOptionalString(card?.summary) ??
+      readOptionalString(payload.noticeSummary);
+    const emd = formatMessageAmount(
+      readOptionalNumberOrString(card?.emd) ??
+        readOptionalNumberOrString(payload.emd),
+      readOptionalString(card?.currency) ??
+        readOptionalString(payload.currency),
+    );
+    const workspace = readRecord(card?.workspace);
+    const workspaceName =
+      readOptionalString(workspace?.workspaceName) ??
+      readWorkspaceName(payload.workspaceTargets);
     const organization = readOptionalString(payload.organization);
-    const referenceNo = readOptionalString(payload.referenceNo);
-    const deadline = readOptionalString(payload.deadline);
-    const sourceUrl = readOptionalString(payload.sourceUrl);
+    const location =
+      readOptionalString(card?.location) ??
+      readOptionalString(payload.location);
+    const deadline =
+      readOptionalString(card?.deadline) ??
+      readOptionalString(payload.deadline);
+    const publishedDate =
+      readOptionalString(card?.publishedDate) ??
+      readOptionalString(payload.publishedDate);
     return [
       `Notification: ${title}`,
-      organization ? `Organization: ${organization}` : undefined,
-      referenceNo ? `Reference: ${referenceNo}` : undefined,
-      deadline ? `Deadline: ${deadline}` : undefined,
-      sourceUrl ? `Source: ${sourceUrl}` : undefined,
+      resourceId ? `Tender ID: ${resourceId}` : undefined,
+      summary ? `Notice: ${summary}` : undefined,
+      emd ? `EMD: ${emd}` : undefined,
+      workspaceName ? `Workspace matched: ${workspaceName}` : undefined,
+      organization ? `Organisation Details: ${organization}` : undefined,
+      location ? `Location Details: ${location}` : undefined,
+      deadline ? `Dead Line Date: ${deadline}` : undefined,
+      publishedDate ? `Published Date: ${publishedDate}` : undefined,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (envelope.eventType === 'deep_analysis_admin_notification_requested') {
+    const requester =
+      readOptionalString(payload.requestedByDisplayName) ??
+      readOptionalString(payload.requestedByExternalUserId) ??
+      'A workspace user';
+    const title = readOptionalString(payload.tenderTitle) ?? 'Unknown tender';
+    const tenderId = readOptionalString(payload.tenderId);
+    const workspace = readOptionalString(payload.workspaceName);
+    const requestedAt = readOptionalString(payload.requestedAt);
+    const reason = readOptionalString(payload.requestReason);
+    return [
+      'Deeper analysis requested',
+      `${requester} requested deeper analysis for ${title}.`,
+      tenderId ? `Tender ID: ${tenderId}` : undefined,
+      workspace ? `Workspace: ${workspace}` : undefined,
+      requestedAt ? `Requested at: ${requestedAt}` : undefined,
+      reason ? `Reason: ${reason}` : undefined,
     ]
       .filter(Boolean)
       .join('\n');
@@ -181,6 +232,27 @@ export function buildExternalPlatformDelivery(
     };
   }
   return { kind: 'text', message: buildExternalPlatformMessage(envelope) };
+}
+
+function readWorkspaceName(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const firstTarget = readRecord(value[0]);
+  return readOptionalString(firstTarget?.workspaceName);
+}
+
+function readOptionalNumberOrString(value: unknown): number | string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return readOptionalString(value);
+}
+
+function formatMessageAmount(
+  value: number | string | null,
+  currency: string | null,
+): string | null {
+  if (typeof value === 'number') {
+    return `${currency || 'INR'} ${value.toLocaleString('en-IN')}`;
+  }
+  return value;
 }
 
 function buildExternalSignaturePayload(input: {
@@ -324,8 +396,29 @@ async function acceptExternalEvent(
     ],
   );
   const duplicate = insert.rowCount === 0;
-  if (!duplicate && targetJid) {
-    await dispatchExternalEventToRuntime(ctx, envelope, targetJid);
+  if (!duplicate) {
+    if (targetJid) {
+      await dispatchExternalEventToRuntime(ctx, envelope, targetJid);
+    } else if (envelope.eventType === 'deep_analysis_admin_notification_requested') {
+      const deliveredAt = new Date().toISOString();
+      const error = 'admin_dm_not_configured';
+      await updateExternalEventStatus({
+        eventId: envelope.eventId,
+        status: 'failed',
+        error,
+        response: {},
+        attemptCount: 0,
+        nextAttemptAt: null,
+        deliveredAt,
+      });
+      await completeExternalDeliveryCallback({
+        eventId: envelope.eventId,
+        platformStatus: 'failed',
+        deliveredAt,
+        error,
+        response: {},
+      });
+    }
   }
   return {
     accepted: true,
@@ -343,10 +436,14 @@ async function dispatchExternalEventToRuntime(
 ): Promise<void> {
   try {
     await ensureExternalRuntimeConversation(targetJid);
-    await sendExternalDelivery(
+    const deliveryResult = await sendExternalDelivery(
       ctx,
       targetJid,
       buildExternalPlatformDelivery(envelope),
+    );
+    const deliveryMetadata = externalDeliveryMetadata(
+      targetJid,
+      deliveryResult,
     );
     const deliveredAt = new Date().toISOString();
     await updateExternalEventStatus({
@@ -355,6 +452,7 @@ async function dispatchExternalEventToRuntime(
       error: null,
       response: {
         targetJid,
+        ...deliveryMetadata,
       },
       attemptCount: 0,
       nextAttemptAt: deliveredAt,
@@ -364,7 +462,8 @@ async function dispatchExternalEventToRuntime(
       eventId: envelope.eventId,
       platformStatus: 'delivered',
       deliveredAt,
-      response: { targetJid },
+      response: { targetJid, ...deliveryMetadata },
+      ...deliveryMetadata,
     });
   } catch (error) {
     await markExternalEventRetry({
@@ -383,31 +482,31 @@ async function sendExternalDelivery(
   ctx: ControlRouteContext,
   targetJid: string,
   delivery: ExternalPlatformDelivery,
-): Promise<void> {
+): Promise<MessageDeliveryResult | void> {
   if (delivery.kind === 'adaptive_card' && ctx.app.sendChannelAdaptiveCard) {
-    await ctx.app.sendChannelAdaptiveCard(targetJid, delivery.card, {
+    return (await ctx.app.sendChannelAdaptiveCard(targetJid, delivery.card, {
       durability: 'required',
       fallbackText: delivery.fallbackText,
       throwOnMissing: true,
-    });
-    return;
+    })) as MessageDeliveryResult | void;
   }
   if (delivery.kind === 'adaptive_card') {
     throw new Error('Adaptive Card delivery is required but unavailable');
   }
-  await ctx.app.sendChannelMessage(targetJid, delivery.message);
+  return await ctx.app.sendChannelMessage(targetJid, delivery.message);
 }
 
 async function ensureExternalRuntimeConversation(
   targetJid: string,
 ): Promise<void> {
   const provider = targetJid.startsWith('teams:') ? 'teams' : undefined;
+  const isDirectTeamsConversation = targetJid.startsWith('teams:a:');
   const graph = new PostgresCanonicalGraphRepository(
     getRuntimeStorage().service.db,
   );
   await graph.ensureConversation(targetJid, {
     channel: provider,
-    isGroup: true,
+    isGroup: !isDirectTeamsConversation,
     name: targetJid,
   });
 }
@@ -503,6 +602,8 @@ async function completeExternalDeliveryCallback(input: {
   error?: string | null;
   response: unknown;
   attemptCount?: number;
+  teamsMessageId?: string | null;
+  conversationId?: string | null;
 }): Promise<void> {
   try {
     await sendExternalDeliveryCallback({
@@ -510,6 +611,8 @@ async function completeExternalDeliveryCallback(input: {
       status: input.platformStatus,
       deliveredAt: input.deliveredAt,
       error: input.error ?? null,
+      teamsMessageId: input.teamsMessageId ?? null,
+      conversationId: input.conversationId ?? null,
     });
     await updateExternalEventStatus({
       eventId: input.eventId,
@@ -536,6 +639,8 @@ async function sendExternalDeliveryCallback(input: {
   status: 'delivered' | 'failed';
   deliveredAt: string;
   error?: string | null;
+  teamsMessageId?: string | null;
+  conversationId?: string | null;
 }): Promise<void> {
   const callbackUrl = envValueDynamic('GANTRY_EXTERNAL_DELIVERY_STATUS_URL');
   if (!callbackUrl) {
@@ -551,6 +656,8 @@ async function sendExternalDeliveryCallback(input: {
     eventId: input.eventId,
     status: input.status,
     deliveredAt: input.deliveredAt,
+    ...(input.teamsMessageId ? { teamsMessageId: input.teamsMessageId } : {}),
+    ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     ...(input.error ? { error: input.error } : {}),
   });
   const url = new URL(callbackUrl);
@@ -636,17 +743,21 @@ async function processExternalPlatformEventDelivery(
   }
   if (!row.target_jid) return;
   try {
-    await sendExternalDelivery(
+    const deliveryResult = await sendExternalDelivery(
       ctx,
       row.target_jid,
       buildExternalPlatformDelivery(envelope),
+    );
+    const deliveryMetadata = externalDeliveryMetadata(
+      row.target_jid,
+      deliveryResult,
     );
     const deliveredAt = new Date().toISOString();
     await updateExternalEventStatus({
       eventId: row.event_id,
       status: 'delivered',
       error: null,
-      response: { targetJid: row.target_jid },
+      response: { targetJid: row.target_jid, ...deliveryMetadata },
       attemptCount: 0,
       nextAttemptAt: deliveredAt,
       deliveredAt,
@@ -655,7 +766,8 @@ async function processExternalPlatformEventDelivery(
       eventId: row.event_id,
       platformStatus: 'delivered',
       deliveredAt,
-      response: { targetJid: row.target_jid },
+      response: { targetJid: row.target_jid, ...deliveryMetadata },
+      ...deliveryMetadata,
     });
   } catch (error) {
     await markExternalEventRetry({
@@ -678,6 +790,9 @@ export function resolveExternalDeliveryRetryDelayMs(
 }
 
 function resolveTargetJid(envelope: PlatformEventEnvelope): string | null {
+  if (envelope.eventType === 'deep_analysis_admin_notification_requested') {
+    return resolveExternalAdminDmJid();
+  }
   const target = envelope.target ?? readRecord(envelope.payload.target);
   const raw =
     readOptionalString(target?.jid) ??
@@ -686,6 +801,14 @@ function resolveTargetJid(envelope: PlatformEventEnvelope): string | null {
     readOptionalString(target?.channelId);
   if (raw) return normalizeTeamsJid(raw);
   return null;
+}
+
+function resolveExternalAdminDmJid(): string | null {
+  const configured =
+    readOptionalString(envValueDynamic('GANTRY_EXTERNAL_ADMIN_DM_JID')) ??
+    readOptionalString(envValueDynamic('GANTRY_EXTERNAL_ADMIN_DM_JIDS'));
+  if (!configured) return null;
+  return normalizeTeamsJid(configured.split(',')[0]?.trim());
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -697,6 +820,37 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 function normalizeTeamsJid(value: string | null | undefined): string | null {
   if (!value) return null;
   return value.startsWith('teams:') ? value : `teams:${value}`;
+}
+
+function externalDeliveryMetadata(
+  targetJid: string,
+  result: MessageDeliveryResult | void,
+): { teamsMessageId?: string; conversationId?: string } {
+  return {
+    ...firstExternalMessageId(result),
+    ...teamsConversationIdFromTargetJid(targetJid),
+  };
+}
+
+function firstExternalMessageId(
+  result: MessageDeliveryResult | void,
+): { teamsMessageId?: string } {
+  if (!result) return {};
+  if (typeof result.externalMessageId === 'string' && result.externalMessageId.trim()) {
+    return { teamsMessageId: result.externalMessageId.trim() };
+  }
+  const first = result.externalMessageIds?.find(
+    (value) => typeof value === 'string' && value.trim(),
+  );
+  return first ? { teamsMessageId: first.trim() } : {};
+}
+
+function teamsConversationIdFromTargetJid(
+  targetJid: string,
+): { conversationId?: string } {
+  if (!targetJid.startsWith('teams:')) return {};
+  const conversationId = targetJid.slice('teams:'.length).trim();
+  return conversationId ? { conversationId } : {};
 }
 
 function readOptionalString(value: unknown): string | null {

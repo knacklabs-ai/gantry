@@ -20,10 +20,6 @@ import type {
   shouldLogDenied,
 } from '../../platform/sender-allowlist.js';
 import type {
-  asRemoteControlCommand,
-  handleRemoteControlCommand,
-} from '../../runtime/remote-control-command.js';
-import type {
   RuntimeChatMetadataRepository,
   RuntimeMessageRepository,
 } from '../../domain/repositories/ops-repo.js';
@@ -108,8 +104,6 @@ export interface ChannelWiringDeps {
   isSenderAllowed: typeof isSenderAllowed;
   isSenderControlAllowed: typeof isSenderControlAllowed;
   shouldLogDenied: typeof shouldLogDenied;
-  asRemoteControlCommand: typeof asRemoteControlCommand;
-  handleRemoteControlCommand: typeof handleRemoteControlCommand;
   logger: Pick<typeof logger, 'info' | 'warn' | 'debug' | 'error'>;
   runtimeSecrets: RuntimeSecretProvider;
 }

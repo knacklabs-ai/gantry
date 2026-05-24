@@ -46,8 +46,8 @@ import { runSchedulerJobNowFromMcp } from './job-management-run-now.js';
 import { listManagedDeadLetterRuns, listManagedJobEvents, listManagedJobRuns } from './job-management-read-queries.js';
 import {
   normalizeRequiredMcpServers,
-  normalizeRequiredTools,
-} from './job-required-tools.js';
+  normalizeToolAccessRequirements,
+} from './job-tool-access-requirements.js';
 import {
   capabilityRequirementToolRules,
   normalizeCapabilityRequirements,
@@ -103,7 +103,9 @@ export class JobManagementService {
     });
     const modelAlias = resolveRequestedJobModel(
       input.modelAlias,
-      input.modelProfileId,
+      scheduleType === 'cron' || scheduleType === 'interval'
+        ? 'recurring_job'
+        : 'one_time_job',
     );
     const groupScope = (input.groupScope || access.sourceAgentFolder).trim();
     if (groupScope !== access.sourceAgentFolder) {
@@ -144,12 +146,14 @@ export class JobManagementService {
         },
       ],
     );
-    const requiredTools = normalizeRequiredTools(input.requiredTools ?? []);
+    const toolAccessRequirements = normalizeToolAccessRequirements(
+      input.toolAccessRequirements ?? [],
+    );
     const capabilityRequirements = normalizeCapabilityRequirements(
       input.capabilityRequirements ?? [],
     );
-    const effectiveRequiredTools = normalizeRequiredTools([
-      ...requiredTools,
+    const effectiveToolAccessRequirements = normalizeToolAccessRequirements([
+      ...toolAccessRequirements,
       ...capabilityRequirementToolRules(capabilityRequirements),
     ]);
     const requiredMcpServers = normalizeRequiredMcpServers(
@@ -219,7 +223,7 @@ export class JobManagementService {
       execution_context: storedExecutionContext,
       notification_routes: requestedNotificationRoutes,
       capability_requirements: capabilityRequirements,
-      required_tools: effectiveRequiredTools,
+      tool_access_requirements: effectiveToolAccessRequirements,
       required_mcp_servers: requiredMcpServers,
     };
     const readiness = await evaluateManagedJobReadiness({

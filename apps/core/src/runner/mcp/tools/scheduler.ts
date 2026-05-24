@@ -30,14 +30,13 @@ const SCHEDULER_UPSERT_ARG_KEYS = new Set([
   'name',
   'prompt',
   'model_alias',
-  'model_profile_id',
   'schedule_type',
   'schedule_value',
   'target',
   'execution_context',
   'notification_routes',
   'capability_requirements',
-  'required_tools',
+  'tool_access_requirements',
   'required_mcp_servers',
   'silent',
   'cleanup_after_ms',
@@ -54,14 +53,13 @@ const SCHEDULER_UPDATE_ARG_KEYS = new Set([
   'name',
   'prompt',
   'model_alias',
-  'model_profile_id',
   'schedule_type',
   'schedule_value',
   'target',
   'execution_context',
   'notification_routes',
   'capability_requirements',
-  'required_tools',
+  'tool_access_requirements',
   'required_mcp_servers',
   'silent',
   'cleanup_after_ms',
@@ -75,6 +73,17 @@ function unsupportedSchedulerArgError(
   args: Record<string, unknown>,
   allowedKeys: ReadonlySet<string>,
 ) {
+  if (Object.prototype.hasOwnProperty.call(args, 'required_tools')) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'required_tools is no longer accepted. Use tool_access_requirements for access preflight checks.',
+        },
+      ],
+      isError: true,
+    };
+  }
   const unsupported = Object.keys(args).filter((key) => !allowedKeys.has(key));
   if (unsupported.length === 0) return null;
   return {
@@ -139,6 +148,8 @@ function normalizeSchedulerCapabilityRequirements(
             kind: requirement.implementation.kind,
             name: requirement.implementation.name,
             executablePath: requirement.implementation.executable_path,
+            executableVersion: requirement.implementation.executable_version,
+            executableHash: requirement.implementation.executable_hash,
             commandTemplate: requirement.implementation.command_template,
             authPreflight: requirement.implementation.auth_preflight,
             protectedPaths: requirement.implementation.protected_paths,
@@ -165,7 +176,6 @@ export function registerSchedulerTools(server: McpServer): void {
       name: z.string(),
       prompt: z.string(),
       model_alias: z.string().optional(),
-      model_profile_id: z.string().optional(),
       schedule_type: z.enum(['cron', 'interval', 'once']),
       schedule_value: z.string().default(''),
       target: z.enum(['here', 'this_thread', 'this_topic', 'me_dm']).optional(),
@@ -190,14 +200,15 @@ export function registerSchedulerTools(server: McpServer): void {
         .array(schedulerCapabilityRequirementSchema)
         .optional()
         .describe(
-          'Semantic capabilities this job needs, with optional implementation hints. These merge into required_tools as capability:<id> and pause setup if reviewed access is missing.',
+          'Semantic capabilities this job needs, with optional implementation hints. These merge into tool_access_requirements as capability:<id> and pause setup if reviewed access is missing.',
         ),
-      required_tools: z
+      tool_access_requirements: z
         .array(z.string())
         .optional()
         .describe(
-          'Hard run assertions, not permission hints. Missing tools pause setup for user approval; Browser also requires real browser IPC activity in every successful run. Do not include optional or fallback tools.',
+          'Tool access requirements for this job. Missing access pauses setup for user approval; successful runs are not required to use every listed tool.',
         ),
+      required_tools: z.array(z.string()).optional().describe('Deprecated.'),
       required_mcp_servers: z.array(z.string()).optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
@@ -241,7 +252,6 @@ export function registerSchedulerTools(server: McpServer): void {
         name: args.name,
         prompt: args.prompt,
         modelAlias: args.model_alias,
-        modelProfileId: args.model_profile_id,
         scheduleType: args.schedule_type,
         scheduleValue: args.schedule_value,
         executionContext: canonicalTarget.executionContext,
@@ -249,7 +259,7 @@ export function registerSchedulerTools(server: McpServer): void {
         capabilityRequirements: normalizeSchedulerCapabilityRequirements(
           args.capability_requirements,
         ),
-        requiredTools: args.required_tools,
+        toolAccessRequirements: args.tool_access_requirements,
         requiredMcpServers: args.required_mcp_servers,
         silent: args.silent,
         cleanupAfterMs: args.cleanup_after_ms,
@@ -377,7 +387,6 @@ export function registerSchedulerTools(server: McpServer): void {
       name: z.string().optional(),
       prompt: z.string().optional(),
       model_alias: z.string().nullable().optional(),
-      model_profile_id: z.string().nullable().optional(),
       schedule_type: z.enum(['cron', 'interval', 'once']).optional(),
       schedule_value: z.string().optional(),
       target: z.enum(['here', 'this_thread', 'this_topic', 'me_dm']).optional(),
@@ -402,14 +411,15 @@ export function registerSchedulerTools(server: McpServer): void {
         .array(schedulerCapabilityRequirementSchema)
         .optional()
         .describe(
-          'Semantic capabilities this job needs, with optional implementation hints. These merge into required_tools as capability:<id> and pause setup if reviewed access is missing.',
+          'Semantic capabilities this job needs, with optional implementation hints. These merge into tool_access_requirements as capability:<id> and pause setup if reviewed access is missing.',
         ),
-      required_tools: z
+      tool_access_requirements: z
         .array(z.string())
         .optional()
         .describe(
-          'Hard run assertions, not permission hints. Missing tools pause setup for user approval; Browser also requires real browser IPC activity in every successful run. Do not include optional or fallback tools.',
+          'Tool access requirements for this job. Missing access pauses setup for user approval; successful runs are not required to use every listed tool.',
         ),
+      required_tools: z.array(z.string()).optional().describe('Deprecated.'),
       required_mcp_servers: z.array(z.string()).optional(),
       silent: z.boolean().optional(),
       cleanup_after_ms: z.number().optional(),
@@ -443,7 +453,6 @@ export function registerSchedulerTools(server: McpServer): void {
           name: args.name,
           prompt: args.prompt,
           modelAlias: args.model_alias,
-          modelProfileId: args.model_profile_id,
           scheduleType: args.schedule_type,
           scheduleValue: args.schedule_value,
           ...(args.execution_context !== undefined || args.target !== undefined
@@ -453,8 +462,8 @@ export function registerSchedulerTools(server: McpServer): void {
           args.target !== undefined
             ? { notificationRoutes: canonicalTarget.notificationRoutes }
             : {}),
-          ...(args.required_tools !== undefined
-            ? { requiredTools: args.required_tools }
+          ...(args.tool_access_requirements !== undefined
+            ? { toolAccessRequirements: args.tool_access_requirements }
             : {}),
           ...(args.capability_requirements !== undefined
             ? {

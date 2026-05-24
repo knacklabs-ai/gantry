@@ -6,18 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ArcExtractionInput } from '@core/memory/extractor-types.js';
 
-const claudeQueryMock = vi.hoisted(() => vi.fn());
-const getContainerConfigMock = vi.hoisted(() => vi.fn());
+const memoryQueryMock = vi.hoisted(() => vi.fn());
+const memoryIsConfiguredMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: claudeQueryMock,
-}));
-
-vi.mock('@onecli-sh/sdk', () => ({
-  OneCLI: vi.fn(function OneCLI() {
-    return {
-      getContainerConfig: getContainerConfigMock,
-    };
+vi.mock('@core/memory/memory-llm-port.js', () => ({
+  getMemoryLlmClient: () => ({
+    isConfigured: memoryIsConfiguredMock,
+    query: memoryQueryMock,
   }),
 }));
 
@@ -34,7 +29,10 @@ import { logger } from '@core/infrastructure/logging/logger.js';
 
 let runtimeRoot = '';
 
-function writeCredentialSettings(mode: 'none' | 'onecli' | 'external'): void {
+function writeCredentialSettings(
+  mode: 'none' | 'onecli' | 'external',
+  memoryExtractorModel?: string,
+): void {
   fs.writeFileSync(
     path.join(runtimeRoot, 'settings.yaml'),
     [
@@ -57,6 +55,15 @@ function writeCredentialSettings(mode: 'none' | 'onecli' | 'external'): void {
       '    model: text-embedding-3-large',
       '  dreaming:',
       '    enabled: false',
+      ...(memoryExtractorModel
+        ? [
+            '  llm:',
+            '    models:',
+            `      extractor: ${memoryExtractorModel}`,
+            '      dreaming: sonnet',
+            '      consolidation: sonnet',
+          ]
+        : []),
       '',
     ].join('\n'),
     'utf-8',
@@ -69,35 +76,17 @@ async function createProvider() {
   return new LlmMemoryExtractionProvider();
 }
 
-function configureClaudeQueryMock(): void {
-  claudeQueryMock.mockImplementation(async function* () {
-    const call = claudeQueryMock.mock.calls.at(-1)?.[0] as
-      | {
-          options?: {
-            env?: Record<string, string>;
-          };
-        }
-      | undefined;
-    const env = call?.options?.env || {};
-    const response = await globalThis.fetch(
-      env.ANTHROPIC_BASE_URL || 'https://claude.local/mock',
-      {
-        method: 'POST',
-        headers: env.ANTHROPIC_MODEL
-          ? { 'x-gantry-model': env.ANTHROPIC_MODEL }
-          : undefined,
-      },
-    );
+function configureMemoryQueryMock(): void {
+  memoryIsConfiguredMock.mockReturnValue(true);
+  memoryQueryMock.mockImplementation(async (opts: { model?: string }) => {
+    const response = await globalThis.fetch('https://memory-llm.local/mock', {
+      method: 'POST',
+      headers: opts.model ? { 'x-gantry-model': opts.model } : undefined,
+    });
     const json = (await response.json()) as {
       content?: Array<{ type?: string; text?: string }>;
     };
-    const text = json.content?.find((entry) => entry.type === 'text')?.text;
-    yield {
-      type: 'assistant',
-      message: {
-        content: text ? [{ type: 'text', text }] : [],
-      },
-    };
+    return json.content?.find((entry) => entry.type === 'text')?.text ?? '';
   });
 }
 
@@ -106,15 +95,7 @@ beforeEach(() => {
   runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-extractor-llm-'));
   writeCredentialSettings('onecli');
   vi.stubEnv('GANTRY_HOME', runtimeRoot);
-  vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');
-  vi.stubEnv('ANTHROPIC_API_KEY', '');
-  getContainerConfigMock.mockReset();
-  getContainerConfigMock.mockResolvedValue({
-    env: {
-      ANTHROPIC_BASE_URL: 'https://broker.local/mock',
-      ANTHROPIC_MODEL: 'claude-haiku-4-5-20251001',
-    },
-  });
+  memoryIsConfiguredMock.mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -125,13 +106,13 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.resetModules();
-  claudeQueryMock.mockReset();
-  getContainerConfigMock.mockReset();
+  memoryQueryMock.mockReset();
+  memoryIsConfiguredMock.mockReset();
 });
 
 describe('LlmMemoryExtractionProvider', () => {
   it('uses broker-safe OneCLI env when extraction is enabled', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -182,22 +163,46 @@ describe('LlmMemoryExtractionProvider', () => {
 
     const requestInit = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(requestInit?.headers as HeadersInit);
-    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://broker.local/mock');
-    expect(headers.get('x-gantry-model')).toBeNull();
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://memory-llm.local/mock');
+    expect(headers.get('x-gantry-model')).toBe('claude-haiku-4-5-20251001');
     expect(headers.get('authorization')).toBeNull();
     expect(headers.get('x-api-key')).toBeNull();
-    expect(claudeQueryMock.mock.calls[0]?.[0]).toMatchObject({
-      options: {
-        model: 'haiku',
-        env: {
-          ANTHROPIC_BASE_URL: 'https://broker.local/mock',
-        },
-      },
+    expect(memoryQueryMock.mock.calls[0]?.[0]).toMatchObject({
+      model: 'claude-haiku-4-5-20251001',
+    });
+  });
+
+  it('reads the current memory model setting for the next extraction call', async () => {
+    configureMemoryQueryMock();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ content: [{ type: 'text', text: '[]' }] }),
+        ),
+    );
+
+    const provider = await createProvider();
+    const input: ArcExtractionInput = {
+      turns: [{ role: 'user', text: 'Remember that Kimi handles memory.' }],
+      trigger: 'session-end',
+      retrievedItems: [],
+    };
+
+    await provider.extractFacts(input);
+    writeCredentialSettings('onecli', 'kimi');
+    await provider.extractFacts(input);
+
+    expect(memoryQueryMock.mock.calls[0]?.[0]).toMatchObject({
+      model: 'claude-haiku-4-5-20251001',
+    });
+    expect(memoryQueryMock.mock.calls[1]?.[0]).toMatchObject({
+      model: 'moonshotai/kimi-k2.6',
     });
   });
 
   it('does not pre-filter non-keyword turns before LLM extraction', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockImplementation(
       async () =>
@@ -239,7 +244,7 @@ describe('LlmMemoryExtractionProvider', () => {
   });
 
   it('runs LLM extraction for role assignment facts like CTO', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -286,7 +291,7 @@ describe('LlmMemoryExtractionProvider', () => {
   });
 
   it('redacts sensitive retrieved items before building outbound LLM prompt', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -316,8 +321,8 @@ describe('LlmMemoryExtractionProvider', () => {
       ],
     });
 
-    expect(claudeQueryMock).toHaveBeenCalled();
-    const queryArg = claudeQueryMock.mock.calls[0]?.[0] as
+    expect(memoryQueryMock).toHaveBeenCalled();
+    const queryArg = memoryQueryMock.mock.calls[0]?.[0] as
       | { prompt?: string }
       | undefined;
     const prompt = queryArg?.prompt || '';
@@ -328,7 +333,7 @@ describe('LlmMemoryExtractionProvider', () => {
   });
 
   it('blocks outbound extraction when transcript contains uncertain secret-like material', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -368,7 +373,7 @@ describe('LlmMemoryExtractionProvider', () => {
   });
 
   it('retries once on transient extractor failures', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy
       .mockRejectedValueOnce(new Error('429 rate limit'))
@@ -419,7 +424,7 @@ describe('LlmMemoryExtractionProvider', () => {
   });
 
   it('logs LLM extraction failures and skips extraction when auth is configured', async () => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('oauth request rejected'),
     );
@@ -453,7 +458,7 @@ describe('LlmMemoryExtractionProvider', () => {
     ['malformed JSON', '[{"kind": "fact"'],
     ['non-array JSON', '{"kind": "fact"}'],
   ])('classifies %s extractor output as a failure', async (_name, text) => {
-    configureClaudeQueryMock();
+    configureMemoryQueryMock();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -487,8 +492,9 @@ describe('LlmMemoryExtractionProvider', () => {
     );
   });
 
-  it('skips extraction when Claude auth is unavailable', async () => {
+  it('skips extraction when the memory LLM client is unavailable', async () => {
     writeCredentialSettings('none');
+    memoryIsConfiguredMock.mockReturnValue(false);
     vi.resetModules();
     const provider = await createProvider();
 
@@ -506,6 +512,6 @@ describe('LlmMemoryExtractionProvider', () => {
       status: 'auth_unavailable',
       zeroFactReason: 'auth_unavailable',
     });
-    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(memoryQueryMock).not.toHaveBeenCalled();
   });
 });

@@ -51,9 +51,9 @@ Then follow this order:
 2. Choose `Use local Postgres URL` if you started the provided Compose stack, or choose hosted/existing Postgres and paste those URLs.
 3. Choose your first channel: `Telegram` or `Slack`.
 4. Follow the in-CLI channel guide, choose the default agent name, paste channel credentials, and pick a discovered chat/channel (or enter an ID manually). Setup binds that conversation to the default agent; channel IDs and runtime folders stay internal.
-5. Connect Model Access once for all agent, subagent, memory, and scheduled job model calls. Gantry uses the reserved `gantry-model-access` OneCLI profile for Claude/OpenRouter credentials; agents only select catalog model aliases and never receive database URLs or raw provider credentials.
-6. Choose main model by friendly alias (`opus` recommended; `sonnet`, `haiku`, or broker-backed `kimi` optional).
-7. Confirm memory settings (memory on, embeddings off, dreaming on by default).
+5. Connect Model Access once for all agent, subagent, memory, and scheduled job model calls. Gantry uses the reserved `gantry-model-access` OneCLI profile for Anthropic/OpenRouter credentials; agents only select catalog model aliases and never receive database URLs or raw provider credentials.
+6. Choose a provider, then a main model alias. Anthropic defaults to `opus`; OpenRouter defaults to `kimi`.
+7. Confirm memory settings. Memory model defaults are provider-managed.
 8. Choose whether to install/start a background service.
 9. Review the final summary and choose `Create Runtime`; before this point Back, Resume Later, and Cancel are transactional.
 10. Let setup write config, register the group, run final doctor verification, and show the ready screen.
@@ -72,7 +72,14 @@ gantry restart
 gantry logs
 gantry local setup|start|stop|status|logs|doctor
 gantry model list
-gantry model set-default chat|one-time|recurring <alias>
+gantry model status
+gantry model chat|jobs|memory
+gantry model use-provider anthropic|openrouter
+gantry model set chat <alias>
+gantry model set jobs inherit|<alias>
+gantry model reset chat|jobs|memory
+gantry model why chat [group-scope|conversation-id]
+gantry model why jobs|memory|job <id>
 gantry model doctor
 gantry secrets list
 gantry secrets set <NAME> [--allow <capabilityId>]
@@ -123,6 +130,12 @@ agents:
   main_agent:
     name: Default Agent
     persona: personal_assistant
+    sources:
+      skills: []
+      mcp_servers: []
+    capabilities:
+      - id: browser.use
+        version: builtin
 
 memory:
   enabled: true
@@ -276,18 +289,35 @@ Skills, MCP servers, SDK tools, host tools, browser tools, and channel-native to
 
 - `send_message`
 - `ask_user_question`
+- `continuity_summary`
+- `file`
 - `request_skill_install`
 - `request_skill_proposal`
 - `request_skill_dependency_install`
 - `request_mcp_server`
-- `request_permission`
 - `capability_status`
+- `capability_search`
+- `propose_capability`
+- `manage_capability`
+- `request_permission` for one-off exact fallback access only
+- `mcp_list_tools`
+- `mcp_call_tool`
+- `settings_desired_state`
+- `request_settings_update`
+- `admin_permission_list`
+- `admin_permission_revoke`
 - `service_restart`
 - `register_agent`
 
-Capability changes follow a strict lifecycle: **request → review → approval or cancellation → durable audit → new config version → next-run activation**. Tool and channel capability permission prompts use `request_permission` and present simple decisions: `Allow once`, `Allow 5 min`, `Always allow`, or `Cancel`. Details and audit records carry the durable authority shape, such as semantic capabilities, canonical `Browser`, exact Gantry admin tools, or scoped Bash rules. Privileged admin tools such as `service_restart`, `register_agent`, `settings_desired_state`, and `request_settings_update` require exact selected tool capabilities; unselected agents see requestable tool IDs and `request_permission` arguments through `capability_status`.
+Capability changes follow a strict lifecycle: **request → review → approval or cancellation → durable audit → new config version → next-run activation**. Durable semantic capability changes use `capability_search`, `propose_capability`, and `manage_capability`; `request_permission` is only for one-off exact access, Browser, exact Gantry admin tools, provider/channel permissions, or scoped `RunCommand` fallback when no reviewed semantic capability fits. Interactive fallback permission prompts present simple decisions: `Allow once`, `Allow 5 min`, `Always allow`, or `Cancel`. Privileged admin tools such as `settings_desired_state`, `request_settings_update`, `admin_permission_list`, `admin_permission_revoke`, `service_restart`, and `register_agent` require exact selected capabilities; `capability_status` reports what is available, requestable, and blocked without exposing raw grant internals as the primary user path.
 
-Persistent agent tool grants are visible in `settings.yaml` under `agents.<id>.tools` as readable rules such as `Bash(git status *)`, `Write(/repo/**)`, or `mcp__gantry__service_restart`. Jobs are scheduled agent runs and inherit the target agent's selected tools, skills, and MCP servers at execution time; job records do not carry a separate tool grant surface. The canonical `toolAccess` view in MCP, CLI, SDK, and Control API responses shows the inherited agent capability projection. Skill source is stored as readable skill folders with `SKILL.md` plus supporting files; Postgres stores metadata, source type, hash, binding, and audit records. Skills installed from catalogs, URLs, CLI commands, or uploads all become the same reviewed local skill package after approval.
+Persistent agent authority is visible in `settings.yaml` under `agents.<id>.capabilities` as readable capability ids and immutable versions, such as `browser.use`. Agent attachments live separately under `agents.<id>.sources`; sources can attach skills, MCP servers, built-in tools, adapters, or local CLIs, but do not grant execution authority by themselves.
+
+Durable SDK and host tool grants use Gantry names, not provider-native harness names. Exact web, file, and delegation facades are `WebSearch`, `WebRead`, `FileSearch`, `FileRead`, `FileEdit`, `FileWrite`, and `AgentDelegation`; command access is a scoped `RunCommand(<argv pattern>)` rule. Provider-native names such as `Read`, `Write`, `Edit`, `WebFetch`, `Bash`, and `Agent` are adapter projections and are rejected as persistent Gantry authority.
+
+Browser authority is selected in `settings.yaml` and the public capabilities API as `browser.use`, then translated to the canonical runtime `Browser` tool rule. When selected, the runtime projects it to Gantry-owned gateway tools: `browser_status`, `browser_open`, `browser_inspect`, `browser_act`, and `browser_close`. `browser_act` includes `action: "file_attach"` for upload inputs and accepts `bytes`, Gantry `artifact`, or allowlisted `path` sources through host-owned staging.
+
+Jobs are scheduled agent runs and inherit the target agent's selected capabilities and attached sources at execution time. Job `capabilityRequirements`, `toolAccessRequirements`, and `requiredMcpServers` are readiness and preflight assertions, not job-local grants. The canonical `toolAccess` view in MCP, CLI, SDK, and Control API responses shows the inherited agent capability projection. Skill source is stored as readable skill folders with `SKILL.md` plus supporting files; Postgres stores metadata, source type, hash, binding, and audit records. Skills installed from catalogs, URLs, CLI commands, or uploads all become the same reviewed local skill package after approval.
 
 Capability-owned secrets for selected skills and MCP servers use Gantry Secrets rather than runtime `.env` or model broker profiles. Use `gantry secrets set <NAME>`, `gantry secrets import-env <NAME>`, `gantry secrets list`, and `gantry secrets unset <NAME>`; add `--allow <capabilityId>` to scope a secret to a specific MCP definition, `mcp:<name>`, skill id, or `skill:<name>`.
 
@@ -461,28 +491,36 @@ npm run test:e2e
 - `npm test` runs contracts build + unit + integration tests.
 - `npm run test:e2e` runs hermetic end-to-end runtime flows without external service credentials.
 
-## Shipped Chat Skills
+## Shipped Chat Surfaces
 
-Skills are agent instructions bundled into the npm package or uploaded as reviewable skill zips. Runtime copies approved skills into a temporary per-run Claude config directory; runtime-home `.claude/skills` is not the durable source of truth.
+Gantry ships host-managed chat commands and in-house skill surfaces. Skills are bundled into the npm package or uploaded as reviewable skill zips. Runtime copies approved skills into a temporary per-run Claude config directory; runtime-home `.claude/skills` is not the durable source of truth.
 
-| Skill          | Purpose                                                               |
+| Surface        | Purpose                                                               |
 | -------------- | --------------------------------------------------------------------- |
-| `/commands`    | List available chat commands and installed skill packs                |
+| `/commands`    | Host-managed command that lists available chat commands               |
 | `gantry-admin` | Internal administration reference used by agents when managing Gantry |
 
 Session commands are handled by the host runtime, not bundled skills:
 
 ```text
 /compact
+/commands
 /new
+/stop
+/dream
+/memory-status
+/save-procedure "<title>"
 /model
 /model <value>
 /models
 /status
 /model default
+/thinking
+/thinking <value>
+/thinking default
 ```
 
-Optional skill packs can be installed for additional capabilities (code review, QA, design review, security audits, and more). Run `/commands` after installing to see what's available.
+Optional skill packs can be installed for additional capabilities through the reviewed skill/capability flow. `/commands` lists host-managed chat commands; installed skills remain governed by agent capability selection.
 
 ## Session Commands
 
@@ -490,16 +528,25 @@ Use these as standalone chat messages:
 
 ```text
 /compact
+/commands
 /new
+/stop
+/dream
+/memory-status
+/save-procedure "<title>"
 /model
 /model opus
 /model sonnet
-/model kimi 2.6
+/model kimi
 /models
 /status
 /model default
+/thinking
+/thinking high
+/thinking default
 ```
 
+- `/commands` lists the host-managed commands available in chat. It is direct Gantry runtime behavior, not a Claude SDK skill.
 - `/new` resets the current Gantry session boundary and captures best-effort boundary memory/digests. It preserves durable memory, approved skills, MCP bindings, model choices, and agent configuration; the next user message starts fresh and drives memory retrieval. Transcript export is an explicit debug/export workflow, not provider continuity.
 - `/models` lists the curated model catalog with aliases, provider label, context window, cache support, and default badges.
 - `/model <value>` switches the group model override through the catalog. Friendly aliases are case/punctuation-insensitive; raw provider model IDs are rejected.
@@ -508,16 +555,17 @@ Use these as standalone chat messages:
 
 ## Model Policy
 
-Gantry uses a provider-neutral catalog. Normal users choose aliases; provider slugs are adapter details.
+Gantry uses a provider-neutral catalog. Normal users choose providers and aliases; provider slugs and SDK environment variables are adapter details.
 
-- Default session model: `opus` (Opus 4.7)
-- Anthropic choices: `opus`, `opus-4.6`, `sonnet`, `haiku`
-- OpenRouter choices: `kimi` / `kimi 2.6` for Kimi K2.6
+- Anthropic preset: chat `opus`; job defaults inherit chat; memory uses provider-managed extractor `haiku`, dreaming `sonnet`, consolidation `sonnet`
+- OpenRouter preset: chat defaults to `kimi`; job defaults inherit chat; memory extractor, dreaming, and consolidation use `kimi`
+- Catalog choices: Anthropic `opus`, `opus-4.7`, `opus-4.6`, `sonnet`, `sonnet-4.6`, `haiku`, `haiku-4.5`; OpenRouter `kimi`, `kimi-k2.6`, `kimi-2.6`
 - Job defaults: `agent.one_time_job_default_model` and `agent.recurring_job_default_model` inherit `agent.default_model` when empty
-- Memory LLM API defaults: extractor Haiku 4.5, dreaming Sonnet 4.6, consolidation Sonnet 4.6
-- The generated Claude settings JSON includes `model` and `availableModels`; memory hooks are not installed in runtime materialization.
+- Memory task defaults are provider-managed. Use `gantry model memory` to inspect them and `gantry model reset memory` or `PATCH /v1/models/defaults` with `memory: null` to reapply provider-managed defaults.
+- Use `gantry model chat|jobs|memory` and `gantry model why ...` to preview what will actually run before changing defaults. SDK and Control API callers use `client.models.defaults.get()`, `client.models.defaults.update()`, and `client.models.preview()` over `GET /v1/models/defaults`, `PATCH /v1/models/defaults`, and `POST /v1/models/preview`.
+- The generated agent SDK settings JSON includes `model` and `availableModels`; memory hooks are not installed in runtime materialization.
 
-The model catalog is centralized in `apps/core/src/shared/model-catalog.ts`. OpenRouter uses the Anthropic SDK route at `https://openrouter.ai/api`; its API key must come from `AgentCredentialBroker` as child-process `ANTHROPIC_AUTH_TOKEN`, with `ANTHROPIC_API_KEY` explicitly blank for that run.
+The model catalog is centralized in `apps/core/src/shared/model-catalog.ts`. OpenRouter is selected by provider or catalog alias; the current adapter projects it through the Claude Agent SDK-compatible OpenRouter endpoint with brokered Model Access credentials.
 
 ## Project Layout
 
@@ -565,7 +613,7 @@ Reusable guided workflows can be uploaded as skill zips with `SKILL.md`, then ap
 
 Contributions should keep the core runtime small and maintainable. Bug fixes, simplifications, docs improvements, and reusable skills are good fits. Feature creep in the default runtime is not.
 
-All contributions go through the standard CAW PR review process. Gantry is a shared runtime powering client deployments — stability and backward compatibility matter.
+All contributions go through the standard CAW PR review process. Gantry is a shared runtime powering client deployments, so stability, clean replacement, and clear migration notes matter.
 
 ## Documentation
 
