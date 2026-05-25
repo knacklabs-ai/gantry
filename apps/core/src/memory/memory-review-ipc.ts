@@ -255,7 +255,10 @@ function resolveReviewIdFromBatchDecision(
   decision: { number?: number; reviewId?: string },
 ): { reviewId?: string; error?: string } {
   if (decision.number === undefined) {
-    return decision.reviewId ? { reviewId: decision.reviewId } : {};
+    if (!decision.reviewId) return {};
+    return pageContext.reviewIds.includes(decision.reviewId)
+      ? { reviewId: decision.reviewId }
+      : { error: 'review_id is not present in page_context' };
   }
   const mappedReviewId = pageContext.reviewIds[decision.number - 1];
   if (!mappedReviewId) {

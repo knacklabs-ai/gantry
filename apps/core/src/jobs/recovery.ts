@@ -29,6 +29,7 @@ import {
 import * as jobToolPolicy from '../application/jobs/job-tool-policy.js';
 import {
   buildExecutionTurnContextInput,
+  resolveExecutionContext,
   resolveExecutionMemoryContext,
 } from './execution-context.js';
 import type { JobTurnContext, SchedulerDependencies } from './types.js';
@@ -64,16 +65,98 @@ export async function queueJobRecoveryTurn(input: {
   if (!created) return;
   const intentJob: Job = { ...input.currentJob, recovery_intent: intent };
 
+  await enqueueJobRecoveryIntentTask({
+    currentJob: intentJob,
+    deps: input.deps,
+    execution: input.execution,
+    runtimeAppId: input.runtimeAppId,
+    publishRuntimeEvent: input.publishRuntimeEvent,
+  });
+}
+
+export async function rehydratePendingJobRecoveryTurns(input: {
+  jobs: readonly Job[];
+  deps: SchedulerDependencies;
+  runtimeAppId: string;
+  publishRuntimeEvent?: (
+    event: RuntimeEventPublishInput,
+  ) => Promise<unknown> | unknown;
+}): Promise<{
+  checked: number;
+  queued: number;
+  deferred: number;
+  skipped: number;
+}> {
+  let checked = 0;
+  let queued = 0;
+  let deferred = 0;
+  let skipped = 0;
+  const conversationRoutes = input.deps.conversationRoutes();
+
+  for (const job of input.jobs) {
+    const intent = job.recovery_intent;
+    if (
+      job.status !== 'paused' ||
+      !job.setup_state ||
+      !intent ||
+      intent.state !== 'pending'
+    ) {
+      skipped++;
+      continue;
+    }
+    if (!shouldRunRecoveryIntent(job, intent.dedupe_key)) {
+      skipped++;
+      continue;
+    }
+    const execution = resolveExecutionContext(job, conversationRoutes);
+    if (!execution) {
+      skipped++;
+      continue;
+    }
+    checked++;
+    const accepted = await enqueueJobRecoveryIntentTask({
+      currentJob: job,
+      deps: input.deps,
+      execution,
+      runtimeAppId: input.runtimeAppId,
+      publishRuntimeEvent: input.publishRuntimeEvent,
+    });
+    if (accepted) {
+      queued++;
+    } else {
+      deferred++;
+    }
+  }
+
+  return { checked, queued, deferred, skipped };
+}
+
+async function enqueueJobRecoveryIntentTask(input: {
+  currentJob: Job;
+  deps: SchedulerDependencies;
+  execution: {
+    group: JobExecutionGroup;
+    executionJid: string;
+    threadId: string | null;
+    stopAliasJids: string[];
+  };
+  runtimeAppId: string;
+  publishRuntimeEvent?: (
+    event: RuntimeEventPublishInput,
+  ) => Promise<unknown> | unknown;
+}): Promise<boolean> {
+  const intent = input.currentJob.recovery_intent;
+  if (!intent) return false;
   const enqueueTask = input.deps.queue?.enqueueTask?.bind(input.deps.queue);
   if (!enqueueTask) {
     await transitionJobRecoveryIntent({
-      job: intentJob,
+      job: input.currentJob,
       dedupeKey: intent.dedupe_key,
       state: 'failed',
       error: 'Scheduler queue unavailable for recovery turn.',
       opsRepository: input.deps.opsRepository,
     });
-    return;
+    return false;
   }
 
   const queueKey = makeThreadQueueKey(
@@ -81,14 +164,8 @@ export async function queueJobRecoveryTurn(input: {
     input.execution.threadId,
   );
   const taskId = `job-recovery:${input.currentJob.id}:${intent.dedupe_key}`;
-  await publishRecoveryEvent(input, input.currentJob, {
-    phase: 'recovery_queued',
-    recovery_kind: intent.kind,
-    recovery_state: intent.state,
-    dedupe_key: intent.dedupe_key,
-  });
   try {
-    enqueueTask(queueKey, taskId, async () => {
+    const accepted = enqueueTask(queueKey, taskId, async () => {
       try {
         await runQueuedJobRecoveryTurn({
           jobId: input.currentJob.id,
@@ -101,7 +178,7 @@ export async function queueJobRecoveryTurn(input: {
       } catch (err) {
         const failedJob =
           (await input.deps.opsRepository.getJobById(input.currentJob.id)) ??
-          intentJob;
+          input.currentJob;
         await transitionJobRecoveryIntent({
           job: failedJob,
           dedupeKey: intent.dedupe_key,
@@ -116,19 +193,37 @@ export async function queueJobRecoveryTurn(input: {
         });
       }
     });
+    if (!accepted) {
+      await publishRecoveryEvent(input, input.currentJob, {
+        phase: 'recovery_deferred',
+        recovery_kind: intent.kind,
+        recovery_state: intent.state,
+        dedupe_key: intent.dedupe_key,
+        reason: 'scheduler queue is shutting down',
+      });
+      return false;
+    }
+    await publishRecoveryEvent(input, input.currentJob, {
+      phase: 'recovery_queued',
+      recovery_kind: intent.kind,
+      recovery_state: intent.state,
+      dedupe_key: intent.dedupe_key,
+    });
+    return true;
   } catch (err) {
     await transitionJobRecoveryIntent({
-      job: intentJob,
+      job: input.currentJob,
       dedupeKey: intent.dedupe_key,
       state: 'failed',
       error: err instanceof Error ? err.message : String(err),
       opsRepository: input.deps.opsRepository,
     });
-    await publishRecoveryEvent(input, intentJob, {
+    await publishRecoveryEvent(input, input.currentJob, {
       phase: 'recovery_failed',
       dedupe_key: intent.dedupe_key,
       error: err instanceof Error ? err.message : String(err),
     });
+    return false;
   }
 }
 

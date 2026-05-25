@@ -1934,6 +1934,62 @@ describe('processMemoryRequest additional branches', () => {
     expect(decideReview).not.toHaveBeenCalled();
   });
 
+  it('rejects a batch review_id that is not on the current page context', async () => {
+    vi.resetModules();
+    const decideReview = vi.fn();
+    vi.doMock('@core/memory/app-memory-service.js', () => ({
+      AppMemoryService: mockMemoryService({ decideReview }),
+    }));
+
+    const { processMemoryRequest } = await import('@core/memory/memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-review-decision-batch-off-page-id',
+        action: 'memory_review_decision',
+        allowedActions: ['memory_review_decision'],
+        payload: {
+          page_context: {
+            subject: {
+              app_id: 'default',
+              agent_id: 'agent:team',
+              subject_type: 'channel',
+              subject_id: 'conversation:sl:C123',
+            },
+            limit: 1,
+            offset: 0,
+            review_ids: ['mrv-current'],
+          },
+          decisions: [{ review_id: 'mrv-off-page', decision: 'approve' }],
+        },
+        context: {
+          chatJid: 'sl:C123',
+          userId: 'trusted-reviewer',
+          reviewerIsControlApprover: true,
+        },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(true);
+    expect(response.data).toMatchObject({
+      decision_batch: {
+        requested_count: 1,
+        processed_count: 0,
+        failed_count: 1,
+        outcomes: [
+          {
+            number: null,
+            review_id: null,
+            ok: false,
+            error: 'review_id is not present in page_context',
+          },
+        ],
+      },
+    });
+    expect(decideReview).not.toHaveBeenCalled();
+  });
+
   it('rejects memory review decisions without a trusted reviewer identity', async () => {
     vi.resetModules();
     const decideReview = vi.fn();

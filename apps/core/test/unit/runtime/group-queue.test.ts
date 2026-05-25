@@ -821,6 +821,16 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('returns false when a task is enqueued after shutdown starts', async () => {
+    await queue.shutdown(0);
+
+    const taskFn = vi.fn(async () => {});
+    const accepted = queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+
+    expect(accepted).toBe(false);
+    expect(taskFn).not.toHaveBeenCalled();
+  });
+
   // --- Coverage for sendMessage returning false when not active ---
 
   it('sendMessage returns false when no agent run is active for the group', () => {

@@ -5,7 +5,11 @@ import type {
   Job,
   JobSetupState,
 } from '@core/domain/types.js';
-import { queueJobRecoveryTurn } from '@core/jobs/recovery.js';
+import { buildJobRecoveryIntent } from '@core/application/jobs/job-recovery-intent-service.js';
+import {
+  queueJobRecoveryTurn,
+  rehydratePendingJobRecoveryTurns,
+} from '@core/jobs/recovery.js';
 
 vi.mock('@core/platform/group-folder.js', () => ({
   resolveGroupFolderPath: () => '/tmp/gantry-unit-job-recovery',
@@ -111,6 +115,7 @@ describe('job recovery turn queueing', () => {
         queue: {
           enqueueTask: vi.fn((_queueKey, _taskId, fn) => {
             queuedTask = fn;
+            return true;
           }),
         },
         onProcess: vi.fn(),
@@ -267,6 +272,106 @@ describe('job recovery turn queueing', () => {
       expect.objectContaining({
         eventType: 'job.tool_activity',
         payload: expect.objectContaining({ phase: 'recovery_failed' }),
+      }),
+    );
+  });
+
+  it('leaves recovery pending when the scheduler queue is shutting down', async () => {
+    let storedJob = makeJob();
+    const updateJob = vi.fn(async (_id: string, updates: Partial<Job>) => {
+      storedJob = { ...storedJob, ...updates };
+    });
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+
+    await queueJobRecoveryTurn({
+      currentJob: storedJob,
+      deps: {
+        conversationRoutes: () => ({ 'tg:team': makeRoute() }),
+        queue: {
+          enqueueTask: vi.fn(() => false),
+        },
+        onProcess: vi.fn(),
+        sendMessage: vi.fn(),
+        opsRepository: {
+          getJobById: vi.fn(async () => storedJob),
+          updateJob,
+        },
+      } as never,
+      execution: {
+        group: makeRoute(),
+        executionJid: 'tg:team',
+        threadId: 'topic-1',
+        stopAliasJids: [],
+      },
+      setupState,
+      source: 'preflight_setup',
+      runId: 'job-run-1',
+      runtimeAppId: 'default',
+      publishRuntimeEvent,
+    });
+
+    expect(storedJob.recovery_intent).toMatchObject({
+      state: 'pending',
+      last_error: null,
+    });
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.tool_activity',
+        payload: expect.objectContaining({
+          phase: 'recovery_deferred',
+          reason: 'scheduler queue is shutting down',
+        }),
+      }),
+    );
+  });
+
+  it('rehydrates pending persisted recovery intents from scheduler job state', async () => {
+    const recoveryIntent = buildJobRecoveryIntent({
+      job: makeJob(),
+      setupState,
+      source: 'preflight_setup',
+      now: '2026-05-23T00:00:00.000Z',
+    });
+    const storedJob = makeJob({ recovery_intent: recoveryIntent });
+    let queuedTask: (() => Promise<void>) | undefined;
+    const enqueueTask = vi.fn((_queueKey, _taskId, fn) => {
+      queuedTask = fn;
+      return true;
+    });
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+
+    const summary = await rehydratePendingJobRecoveryTurns({
+      jobs: [storedJob],
+      deps: {
+        conversationRoutes: () => ({ 'tg:team': makeRoute() }),
+        queue: { enqueueTask },
+        onProcess: vi.fn(),
+        sendMessage: vi.fn(),
+        opsRepository: {
+          getJobById: vi.fn(async () => storedJob),
+          updateJob: vi.fn(async () => undefined),
+        },
+      } as never,
+      runtimeAppId: 'default',
+      publishRuntimeEvent,
+    });
+
+    expect(summary).toEqual({
+      checked: 1,
+      queued: 1,
+      deferred: 0,
+      skipped: 0,
+    });
+    expect(enqueueTask).toHaveBeenCalledWith(
+      'tg:team::thread:topic-1',
+      `job-recovery:job-1:${recoveryIntent.dedupe_key}`,
+      expect.any(Function),
+    );
+    expect(queuedTask).toBeTypeOf('function');
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.tool_activity',
+        payload: expect.objectContaining({ phase: 'recovery_queued' }),
       }),
     );
   });

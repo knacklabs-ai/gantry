@@ -233,18 +233,22 @@ export class GroupQueue {
     );
   }
 
-  enqueueTask(groupJid: string, taskId: string, fn: () => Promise<void>): void {
-    if (this.shuttingDown) return;
+  enqueueTask(
+    groupJid: string,
+    taskId: string,
+    fn: () => Promise<void>,
+  ): boolean {
+    if (this.shuttingDown) return false;
 
     const state = this.getGroup(groupJid);
 
     if (state.runningTaskId === taskId) {
       logger.debug({ groupJid, taskId }, 'Task already running, skipping');
-      return;
+      return true;
     }
     if (state.pendingTasks.some((t) => t.id === taskId)) {
       logger.debug({ groupJid, taskId }, 'Task already queued, skipping');
-      return;
+      return true;
     }
 
     if (state.active) {
@@ -253,7 +257,7 @@ export class GroupQueue {
         this.closeStdin(groupJid);
       }
       logger.debug({ groupJid, taskId }, 'Agent run active, task queued');
-      return;
+      return true;
     }
 
     if (!this.canStartTaskRun()) {
@@ -263,7 +267,7 @@ export class GroupQueue {
         { groupJid, taskId, activeTaskCount: this.activeTaskCount },
         'At task concurrency limit, task queued',
       );
-      return;
+      return true;
     }
 
     this.trackRun(
@@ -272,6 +276,7 @@ export class GroupQueue {
           logger.error({ groupJid, taskId, err }, 'Unhandled error in runTask'),
       ),
     );
+    return true;
   }
 
   private trackRun(promise: Promise<void>): void {
