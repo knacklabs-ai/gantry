@@ -1214,7 +1214,8 @@ describe('app memory dreaming settings', () => {
   function createDreamingDb() {
     const inserted: any[] = [];
     const updated: any[] = [];
-    const db = {
+    const db: any = {};
+    Object.assign(db, {
       select: vi.fn(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => {
@@ -1255,7 +1256,10 @@ describe('app memory dreaming settings', () => {
           };
         }),
       })),
-    };
+      transaction: vi.fn(async (work: (tx: any) => Promise<unknown>) =>
+        work({ ...db, execute: vi.fn(async () => undefined) }),
+      ),
+    });
     return { db, inserted, updated };
   }
 
@@ -1456,6 +1460,160 @@ describe('app memory dreaming settings', () => {
     vi.doUnmock('@core/config/memory.js');
     vi.doUnmock('@core/memory/memory-embeddings.js');
     vi.doUnmock('@core/memory/app-memory-dreaming.js');
+  });
+
+  it('uses the requested dreaming timeout for the run lease and pass deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-08T00:00:00.000Z'));
+    vi.resetModules();
+    const runAppMemoryDreamPass = vi.fn(async (input: any) => {
+      expect(input.signal).toEqual(expect.any(AbortSignal));
+      expect(input.remainingTimeoutMs()).toBeGreaterThan(0);
+      expect(input.remainingTimeoutMs()).toBeLessThanOrEqual(90_000);
+      return [];
+    });
+    vi.doMock('@core/config/memory.js', () => ({
+      RUNTIME_MEMORY_ENABLED: true,
+      RUNTIME_MEMORY_DREAMING_ENABLED: true,
+      MEMORY_DREAMING_EMBEDDINGS_ENABLED: false,
+      MEMORY_DREAMING_EMBED_PROVIDER: 'disabled',
+      MEMORY_DREAMING_EMBED_MODEL: 'text-embedding-3-large',
+    }));
+    vi.doMock('@core/memory/app-memory-dreaming.js', () => ({
+      runAppMemoryDreamPass,
+    }));
+    try {
+      const { AppMemoryService: MockedAppMemoryService } =
+        await import('@core/memory/app-memory-service.js');
+      const { db, inserted } = createDreamingDb();
+      const service = new MockedAppMemoryService(db as any);
+
+      await expect(
+        service.triggerDreaming({
+          appId: 'app-a',
+          agentId: 'agent-a',
+          groupId: 'group-a',
+          timeoutMs: 90_000,
+        }),
+      ).resolves.toMatchObject({
+        status: 'completed',
+      });
+
+      expect(inserted).toContainEqual(
+        expect.objectContaining({
+          status: 'running',
+          leaseExpiresAt: '2026-05-08T00:01:30.000Z',
+        }),
+      );
+    } finally {
+      vi.doUnmock('@core/config/memory.js');
+      vi.doUnmock('@core/memory/app-memory-dreaming.js');
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds requested dreaming timeout by the scheduler work deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-08T00:00:00.000Z'));
+    vi.resetModules();
+    const runAppMemoryDreamPass = vi.fn(async (input: any) => {
+      expect(input.signal).toEqual(expect.any(AbortSignal));
+      expect(input.remainingTimeoutMs()).toBeGreaterThan(0);
+      expect(input.remainingTimeoutMs()).toBeLessThanOrEqual(30_000);
+      return [];
+    });
+    vi.doMock('@core/config/memory.js', () => ({
+      RUNTIME_MEMORY_ENABLED: true,
+      RUNTIME_MEMORY_DREAMING_ENABLED: true,
+      MEMORY_DREAMING_EMBEDDINGS_ENABLED: false,
+      MEMORY_DREAMING_EMBED_PROVIDER: 'disabled',
+      MEMORY_DREAMING_EMBED_MODEL: 'text-embedding-3-large',
+    }));
+    vi.doMock('@core/memory/app-memory-dreaming.js', () => ({
+      runAppMemoryDreamPass,
+    }));
+    try {
+      const { AppMemoryService: MockedAppMemoryService } =
+        await import('@core/memory/app-memory-service.js');
+      const { db, inserted } = createDreamingDb();
+      const service = new MockedAppMemoryService(db as any);
+
+      await expect(
+        service.triggerDreaming({
+          appId: 'app-a',
+          agentId: 'agent-a',
+          groupId: 'group-a',
+          timeoutMs: 90_000,
+          deadlineAtMs: Date.now() + 30_000,
+        }),
+      ).resolves.toMatchObject({
+        status: 'completed',
+      });
+
+      expect(inserted).toContainEqual(
+        expect.objectContaining({
+          status: 'running',
+          leaseExpiresAt: '2026-05-08T00:00:30.000Z',
+        }),
+      );
+    } finally {
+      vi.doUnmock('@core/config/memory.js');
+      vi.doUnmock('@core/memory/app-memory-dreaming.js');
+      vi.useRealTimers();
+    }
+  });
+
+  it('finalizes and rethrows overall dreaming deadline expiry', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-08T00:00:00.000Z'));
+    vi.resetModules();
+    const runAppMemoryDreamPass = vi.fn(
+      async (input: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          input.signal.addEventListener(
+            'abort',
+            () => reject(input.signal.reason),
+            { once: true },
+          );
+        }),
+    );
+    vi.doMock('@core/config/memory.js', () => ({
+      RUNTIME_MEMORY_ENABLED: true,
+      RUNTIME_MEMORY_DREAMING_ENABLED: true,
+      MEMORY_DREAMING_EMBEDDINGS_ENABLED: false,
+      MEMORY_DREAMING_EMBED_PROVIDER: 'disabled',
+      MEMORY_DREAMING_EMBED_MODEL: 'text-embedding-3-large',
+    }));
+    vi.doMock('@core/memory/app-memory-dreaming.js', () => ({
+      runAppMemoryDreamPass,
+    }));
+    try {
+      const { AppMemoryService: MockedAppMemoryService } =
+        await import('@core/memory/app-memory-service.js');
+      const { db, updated } = createDreamingDb();
+      const service = new MockedAppMemoryService(db as any);
+
+      const expectation = expect(
+        service.triggerDreaming({
+          appId: 'app-a',
+          agentId: 'agent-a',
+          groupId: 'group-a',
+          timeoutMs: 5_000,
+        }),
+      ).rejects.toThrow('memory dreaming deadline exceeded after 5000ms');
+      await vi.advanceTimersByTimeAsync(5_001);
+      await expectation;
+      expect(updated).toContainEqual(
+        expect.objectContaining({
+          status: 'failed',
+          summaryJson: expect.stringContaining('dreaming_timeout'),
+        }),
+      );
+    } finally {
+      vi.doUnmock('@core/config/memory.js');
+      vi.doUnmock('@core/memory/app-memory-dreaming.js');
+      vi.useRealTimers();
+    }
   });
 
   it('dedupes concurrent dreaming by returning the running run for the same subject and phase', async () => {

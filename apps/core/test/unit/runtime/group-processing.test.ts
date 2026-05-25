@@ -2094,11 +2094,16 @@ describe('createGroupProcessor', () => {
       const { processGroupMessages } = createGroupProcessor(deps);
       await processGroupMessages('group1@g.us');
 
-      expect(deps.collectSessionMemory).toHaveBeenCalledWith({
-        agentSessionId: 'agent-session:1',
-        trigger: 'precompact',
-        defaultScope: 'group',
-      });
+      expect(deps.collectSessionMemory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentSessionId: 'agent-session:1',
+          trigger: 'precompact',
+          defaultScope: 'group',
+          signal: expect.any(AbortSignal),
+          timeoutMs: 30_000,
+          statementTimeoutMs: 30_000,
+        }),
+      );
       expect(deps.queue.notifyIdle).not.toHaveBeenCalled();
     });
 
@@ -3773,11 +3778,16 @@ describe('createGroupProcessor', () => {
 
       await capturedRunAgent!('test prompt', vi.fn());
 
-      expect(deps.collectSessionMemory).toHaveBeenCalledWith({
-        agentSessionId: 'agent-session:test',
-        trigger: 'precompact',
-        defaultScope: 'group',
-      });
+      expect(deps.collectSessionMemory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentSessionId: 'agent-session:test',
+          trigger: 'precompact',
+          defaultScope: 'group',
+          signal: expect.any(AbortSignal),
+          timeoutMs: 30_000,
+          statementTimeoutMs: 30_000,
+        }),
+      );
     });
   });
 

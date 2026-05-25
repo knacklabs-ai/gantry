@@ -65,6 +65,7 @@ type RunnerAgentInput = AgentInput & {
 };
 
 const PROTECTED_FILESYSTEM_PATHS_ENV = 'GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON';
+const LOCAL_CLI_CREDENTIAL_DIRS_ENV = 'GANTRY_LOCAL_CLI_CREDENTIAL_DIRS_JSON';
 const DEFAULT_RUNNER_APP_ID = 'default';
 
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
@@ -88,6 +89,17 @@ const SAFE_HOST_ENV_KEYS = [
   'FORCE_COLOR',
   'NO_PROXY',
   'no_proxy',
+] as const;
+const LOCAL_CLI_CREDENTIAL_ENV_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'USER',
+  'USERNAME',
+  'LOGNAME',
 ] as const;
 
 const PREPARED_EXECUTION_ENV_DENYLIST = new Set([
@@ -125,6 +137,64 @@ function pickSafeHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     }
   }
   return env;
+}
+
+function pickLocalCliCredentialEnv(
+  source: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of LOCAL_CLI_CREDENTIAL_ENV_KEYS) {
+    const value = source[key];
+    if (typeof value === 'string' && value.length > 0) env[key] = value;
+  }
+  return env;
+}
+
+function resolveHomeRelativePaths(
+  values: readonly string[],
+  source: NodeJS.ProcessEnv,
+): string[] {
+  const home = source.HOME ?? source.USERPROFILE;
+  const out = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (trimmed === '~') {
+      if (home) out.add(home);
+      continue;
+    }
+    if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+      if (home) out.add(path.join(home, trimmed.slice(2)));
+      continue;
+    }
+    const expanded = expandCredentialPathTemplate(trimmed, source);
+    if (expanded) out.add(expanded);
+  }
+  return [...out];
+}
+
+function expandCredentialPathTemplate(
+  value: string,
+  source: NodeJS.ProcessEnv,
+): string | null {
+  let missing = false;
+  const expanded = value
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, key: string) => {
+      const envValue = source[key];
+      if (!envValue) missing = true;
+      return envValue ?? '';
+    })
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, key: string) => {
+      const envValue = source[key];
+      if (!envValue) missing = true;
+      return envValue ?? '';
+    })
+    .replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_match, key: string) => {
+      const envValue = source[key];
+      if (!envValue) missing = true;
+      return envValue ?? '';
+    });
+  return missing ? null : expanded;
 }
 
 function pickPreparedExecutionEnv(
@@ -393,8 +463,18 @@ export async function spawnAgent(
     runnerInputPatch.modelCredentialEnv.https_proxy = egressGateway.proxyUrl;
     runnerInputPatch.modelCredentialEnv.NODE_USE_ENV_PROXY = '1';
     runnerInput.modelCredentialEnv = runnerInputPatch.modelCredentialEnv;
+    const localCliCredentialAccess = input.localCliCredentialAccess === true;
+    const localCliCredentialPaths = localCliCredentialAccess
+      ? resolveHomeRelativePaths(
+          input.localCliCredentialPaths ?? [],
+          process.env,
+        )
+      : [];
     const env: NodeJS.ProcessEnv = {
       ...pickSafeHostEnv(process.env),
+      ...(localCliCredentialAccess
+        ? pickLocalCliCredentialEnv(process.env)
+        : {}),
       ...pickPreparedExecutionEnv(preparedExecution.env),
       TZ: TIMEZONE,
       GANTRY_MCP_SERVER_PATH: mcpServerPath,
@@ -523,11 +603,16 @@ export async function spawnAgent(
         ),
       );
     }
-    env[PROTECTED_FILESYSTEM_PATHS_ENV] = JSON.stringify(
-      mcpConfigPath
-        ? [...preparedExecution.protectedFilesystemPaths, mcpConfigPath]
-        : preparedExecution.protectedFilesystemPaths,
-    );
+    env[PROTECTED_FILESYSTEM_PATHS_ENV] = JSON.stringify([
+      ...preparedExecution.protectedFilesystemPaths,
+      ...localCliCredentialPaths,
+      ...(mcpConfigPath ? [mcpConfigPath] : []),
+    ]);
+    if (localCliCredentialPaths.length > 0) {
+      env[LOCAL_CLI_CREDENTIAL_DIRS_ENV] = JSON.stringify(
+        localCliCredentialPaths,
+      );
+    }
     if (browserIpcEnabled) {
       registerBrowserIpcAuthorization({
         workspaceKey: group.folder,

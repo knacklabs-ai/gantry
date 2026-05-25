@@ -345,6 +345,34 @@ describe('sdk sandbox network gate', () => {
     });
   });
 
+  it('uses reviewed local CLI network host hints for scheduled commands', () => {
+    const now = { value: 1_000 };
+    const gate = makeGate(now, {
+      ...runnerInput,
+      isScheduledJob: true,
+      localCliNetworkHosts: ['sheets.googleapis.com'],
+    });
+
+    gate.rememberAllowedTool(
+      'Bash',
+      { command: 'gog sheets get leads --json' },
+      { toolUseID: 'toolu_bash_1' },
+    );
+    const decision = gate.decide(
+      'SandboxNetworkAccess',
+      { host: 'sheets.googleapis.com' },
+      { toolUseID: 'toolu_network_1' },
+    );
+
+    expect(decision?.behavior).toBe('allow');
+    expect(latestPayload()).toMatchObject({
+      decision: 'sdk_network_gate_suppressed_parentless_recent_tool',
+      networkToolUseIDHash: sha256('toolu_network_1'),
+      parentToolUseIDHash: sha256('toolu_bash_1'),
+      approvedHostHashes: [sha256('sheets.googleapis.com')],
+    });
+  });
+
   it('does not mint a network token without a tool-use id', () => {
     const now = { value: 1_000 };
     const gate = makeGate(now);

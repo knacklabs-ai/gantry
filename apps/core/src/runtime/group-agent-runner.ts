@@ -9,7 +9,7 @@ import type {
 } from './group-processing-types.js';
 import {
   memoryScopeForConversationKind,
-  resolveTurnAllowedTools,
+  resolveTurnToolPolicy,
   resolveTurnSelectedMcpServerIds,
   resolveTurnSelectedSkillIds,
 } from './group-run-context.js';
@@ -209,21 +209,21 @@ export function createGroupAgentRunner(input: {
       group.folder,
       options?.memoryContext?.userId,
     );
-    let runId: string | undefined;
+    const runState: { runId?: string } = {};
     let latestProviderSessionId =
       turnContext?.externalSessionId?.trim() || undefined;
     const updateRunProviderMetadata = async (input: {
       providerRunId?: string | null;
       providerSessionId?: string | null;
     }): Promise<void> => {
-      if (!runId) return;
+      if (!runState.runId) return;
       const repository = ops();
       if (!repository.updateAgentRunProviderMetadata) return;
       await repository
-        .updateAgentRunProviderMetadata({ runId, ...input })
+        .updateAgentRunProviderMetadata({ runId: runState.runId, ...input })
         .catch((err) => {
           runtimeLogger.warn(
-            { err, group: group.name, runId },
+            { err, group: group.name, runId: runState.runId },
             'Failed to update runtime run provider metadata',
           );
         });
@@ -305,8 +305,8 @@ export function createGroupAgentRunner(input: {
                   agentId: (event.agentId ?? turnContext?.agentId) as never,
                 }
               : {}),
-            ...((event.runId ?? runId)
-              ? { runId: (event.runId ?? runId) as never }
+            ...((event.runId ?? runState.runId)
+              ? { runId: (event.runId ?? runState.runId) as never }
               : {}),
             ...(event.jobId ? { jobId: event.jobId as never } : {}),
             conversationId: (event.conversationId ?? chatJid) as never,
@@ -343,14 +343,14 @@ export function createGroupAgentRunner(input: {
       skillArtifactStore: deps.getSkillArtifactStore?.(),
       turnContext,
     });
-    const [configuredAllowedTools, selectedSkillIds] = await Promise.all([
-      resolveTurnAllowedTools(deps, turnContext),
+    const [configuredToolPolicy, selectedSkillIds] = await Promise.all([
+      resolveTurnToolPolicy(deps, turnContext),
       resolveTurnSelectedSkillIds(deps, turnContext),
     ]);
     const selectedMcpServerIds = await resolveTurnSelectedMcpServerIds(
       deps,
       turnContext,
-      configuredAllowedTools,
+      configuredToolPolicy.allowedTools,
     );
     const memoryContextBlock = [
       turnContext?.memoryContextBlock,
@@ -358,7 +358,7 @@ export function createGroupAgentRunner(input: {
     ]
       .filter((block): block is string => Boolean(block?.trim()))
       .join('\n\n');
-    runId = turnContext?.agentSessionId
+    runState.runId = turnContext?.agentSessionId
       ? await ops().createSessionAgentRun?.({
           agentSessionId: turnContext.agentSessionId,
           executionProviderId,
@@ -397,7 +397,12 @@ export function createGroupAgentRunner(input: {
             memoryDefaultScope: defaultMemoryScope,
             memoryReviewerIsControlApprover,
             persona: group.agentConfig?.persona,
-            allowedTools: configuredAllowedTools,
+            allowedTools: configuredToolPolicy.allowedTools,
+            localCliCredentialAccess:
+              configuredToolPolicy.localCliCredentialAccess,
+            localCliCredentialPaths:
+              configuredToolPolicy.localCliCredentialPaths,
+            localCliNetworkHosts: configuredToolPolicy.localCliNetworkHosts,
             selectedSkillIds,
             selectedMcpServerIds,
             assistantName: group.trigger || DEFAULT_ASSISTANT_NAME,
@@ -430,7 +435,7 @@ export function createGroupAgentRunner(input: {
         );
         await completeFailedRuntimeSessionRun({
           ops: ops(),
-          runId,
+          runId: runState.runId,
           errorSummary: output.error ?? 'Agent runner error',
         });
         return 'error';
@@ -444,7 +449,7 @@ export function createGroupAgentRunner(input: {
         memoryUserId: options?.memoryContext?.userId,
         agentSessionId: turnContext?.agentSessionId,
         agentSessionResetAt: turnContext?.agentSessionResetAt ?? null,
-        runId,
+        runId: runState.runId,
         result:
           output.result == null
             ? streamedResult.snapshot()
@@ -455,7 +460,7 @@ export function createGroupAgentRunner(input: {
       runtimeLogger.error({ group: group.name, err }, 'Agent error');
       await completeFailedRuntimeSessionRun({
         ops: ops(),
-        runId,
+        runId: runState.runId,
         errorSummary: err instanceof Error ? err.message : String(err),
       });
       return 'error';

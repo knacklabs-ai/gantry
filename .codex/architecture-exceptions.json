@@ -119,13 +119,6 @@
     "maxViolations": 1
   },
   {
-    "file": "apps/core/src/app/bootstrap/channel-persistence-handlers.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 1
-  },
-  {
     "file": "apps/core/src/app/bootstrap/channel-wiring-types.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
@@ -819,6 +812,20 @@
     "maxViolations": 4
   },
   {
+    "file": "apps/core/src/memory/app-memory-trigger-dreaming.ts",
+    "rule": "forbidden_external_import_by_layer",
+    "reason": "Split from app-memory-service to keep file-size ratchet while preserving existing Postgres-backed memory dreaming debt; replace with repository ports in the canonical boundary cleanup.",
+    "removeByPhase": "canonical-boundary-cleanup-phase",
+    "maxViolations": 2
+  },
+  {
+    "file": "apps/core/src/memory/app-memory-trigger-dreaming.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "Split from app-memory-service to keep file-size ratchet while preserving existing Postgres-backed memory dreaming debt; replace with repository ports in the canonical boundary cleanup.",
+    "removeByPhase": "canonical-boundary-cleanup-phase",
+    "maxViolations": 2
+  },
+  {
     "file": "apps/core/src/memory/app-memory-item-queries.ts",
     "rule": "forbidden_external_import_by_layer",
     "reason": "Split from app-memory-service to keep file-size ratchet while preserving existing Postgres-backed memory debt; replace with repository ports in the canonical boundary cleanup.",
@@ -1373,6 +1380,13 @@
     "file": "apps/core/src/memory/extractor-llm.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Pre-existing memory runtime dependencies on config and logging remain unchanged by the Anthropic SDK extraction.",
+    "removeByPhase": "memory service layering cleanup",
+    "maxViolations": 2
+  },
+  {
+    "file": "apps/core/src/memory/memory-llm-proposals.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "Split from extractor-llm to keep file-size ratchet while preserving existing memory LLM config and logging dependencies.",
     "removeByPhase": "memory service layering cleanup",
     "maxViolations": 2
   },

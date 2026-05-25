@@ -9,6 +9,18 @@ import {
   parseJsonObject,
 } from './app-memory-canonical-codec.js';
 import {
+  normalizePendingReviewLimit,
+  normalizePendingReviewOffset,
+  reviewEvidenceIds,
+  reviewItemIds,
+  toMemoryReviewDisplayPage,
+  toMemoryReviewEvidenceSnippet,
+  toReadableReviewItem,
+  withProposedChanges,
+} from './app-memory-review-readable.js';
+import { isValueGroundedInEvidence } from './app-memory-review-grounding.js';
+import { toMemoryReview } from './app-memory-review-record.js';
+import {
   createSqlThreadIdentityFilter,
   nowIso,
   withStatementTimeout,
@@ -19,8 +31,10 @@ import type {
   DreamingRunStatus,
   MemoryLifecycleProposal,
   MemoryReviewDecisionInput,
+  MemoryReviewEvidenceSnippet,
+  MemoryReviewPage,
+  MemoryReviewReadableItem,
   MemoryReviewRecord,
-  MemorySubjectType,
   NormalizedMemorySubject,
   PatchAppMemoryInput,
   SaveAppMemoryInput,
@@ -28,6 +42,8 @@ import type {
 type Db = NodePgDatabase<typeof pgSchema>;
 type MemoryReviewRow =
   typeof pgSchema.memoryReviewRequestsPostgres.$inferSelect;
+type MemoryItemRow = typeof pgSchema.memoryItemsPostgres.$inferSelect;
+type MemoryEvidenceRow = typeof pgSchema.memoryEvidencePostgres.$inferSelect;
 const sqlThreadIdentityFilter = createSqlThreadIdentityFilter({ eq, isNull });
 const REVIEW_APPLYABLE_ACTIONS = new Set([
   'promote',
@@ -36,134 +52,88 @@ const REVIEW_APPLYABLE_ACTIONS = new Set([
   'merge',
   'needs_review',
 ]);
-const GROUNDING_STOP_WORDS = new Set([
-  'about',
-  'after',
-  'also',
-  'because',
-  'before',
-  'from',
-  'have',
-  'into',
-  'must',
-  'need',
-  'needs',
-  'only',
-  'that',
-  'their',
-  'them',
-  'this',
-  'with',
-]);
-function parseJsonStringRecord(value: string): Record<string, string> {
-  const parsed = parseJsonObject(value);
-  return Object.fromEntries(
-    Object.entries(parsed).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
+
+function pendingMemoryReviewFilter(subject: NormalizedMemorySubject) {
+  return and(
+    eq(pgSchema.memoryReviewRequestsPostgres.appId, subject.appId),
+    eq(pgSchema.memoryReviewRequestsPostgres.agentId, subject.agentId),
+    eq(pgSchema.memoryReviewRequestsPostgres.subjectType, subject.subjectType),
+    eq(pgSchema.memoryReviewRequestsPostgres.subjectId, subject.subjectId),
+    sqlThreadIdentityFilter(
+      pgSchema.memoryReviewRequestsPostgres,
+      subject.threadId,
     ),
+    eq(pgSchema.memoryReviewRequestsPostgres.status, 'pending_review'),
   );
 }
-function parseJsonNumberRecord(value: string): Record<string, number> {
-  const parsed = parseJsonObject(value);
-  return Object.fromEntries(
-    Object.entries(parsed).filter(
-      (entry): entry is [string, number] =>
-        typeof entry[1] === 'number' && Number.isFinite(entry[1]),
-    ),
-  );
+
+async function itemMapForReviews(
+  db: Db,
+  reviews: MemoryReviewRecord[],
+  statementTimeoutMs?: number,
+): Promise<Map<string, MemoryReviewReadableItem>> {
+  const itemIds = [
+    ...new Set(reviews.flatMap((review) => reviewItemIds(review.proposal))),
+  ];
+  if (!itemIds.length) return new Map();
+  const rows = (await withStatementTimeout(
+    db,
+    statementTimeoutMs,
+    (timeoutMs) =>
+      sql`select set_config('statement_timeout', ${String(timeoutMs)}, true)`,
+    (tx) =>
+      tx
+        .select()
+        .from(pgSchema.memoryItemsPostgres)
+        .where(inArray(pgSchema.memoryItemsPostgres.id, itemIds)),
+  )) as MemoryItemRow[];
+  return new Map(rows.map((row) => [row.id, toReadableReviewItem(row)]));
 }
-function significantGroundingTokens(value: string): string[] {
-  const tokens = value.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g);
-  if (!tokens) return [];
-  return [...new Set(tokens)].filter(
-    (token) => !GROUNDING_STOP_WORDS.has(token),
-  );
-}
-function isValueGroundedInEvidence(
-  value: string,
-  evidenceRows: Array<typeof pgSchema.memoryEvidencePostgres.$inferSelect>,
-): boolean {
-  const valueTokens = significantGroundingTokens(value);
-  if (!valueTokens.length) return false;
-  const corpusTokens = new Set(
-    evidenceRows.flatMap((evidence) =>
-      significantGroundingTokens(evidence.text),
-    ),
-  );
-  const hits = valueTokens.filter((token) => corpusTokens.has(token)).length;
-  const required =
-    valueTokens.length <= 3
-      ? valueTokens.length
-      : Math.ceil(valueTokens.length * 0.5);
-  return hits >= required;
-}
-function parseReviewProposal(value: string): MemoryLifecycleProposal {
-  const parsed = parseJsonObject(value);
-  const action = typeof parsed.action === 'string' ? parsed.action : '';
-  return {
-    action: action as MemoryLifecycleProposal['action'],
-    ...(typeof parsed.candidateId === 'string'
-      ? { candidateId: parsed.candidateId }
-      : {}),
-    ...(typeof parsed.itemId === 'string' ? { itemId: parsed.itemId } : {}),
-    ...(Array.isArray(parsed.itemIds)
-      ? {
-          itemIds: parsed.itemIds.filter(
-            (entry): entry is string => typeof entry === 'string',
+
+async function evidenceMapForReviews(
+  db: Db,
+  subject: NormalizedMemorySubject,
+  reviews: MemoryReviewRecord[],
+  statementTimeoutMs?: number,
+): Promise<Map<string, MemoryReviewEvidenceSnippet>> {
+  const evidenceIds = reviewEvidenceIds(reviews);
+  if (!evidenceIds.length) return new Map();
+  const rows = (await withStatementTimeout(
+    db,
+    statementTimeoutMs,
+    (timeoutMs) =>
+      sql`select set_config('statement_timeout', ${String(timeoutMs)}, true)`,
+    (tx) =>
+      tx
+        .select()
+        .from(pgSchema.memoryEvidencePostgres)
+        .where(
+          and(
+            inArray(pgSchema.memoryEvidencePostgres.id, evidenceIds),
+            eq(pgSchema.memoryEvidencePostgres.appId, subject.appId),
+            eq(pgSchema.memoryEvidencePostgres.agentId, subject.agentId),
+            eq(
+              pgSchema.memoryEvidencePostgres.subjectType,
+              subject.subjectType,
+            ),
+            eq(pgSchema.memoryEvidencePostgres.subjectId, subject.subjectId),
+            sqlThreadIdentityFilter(
+              pgSchema.memoryEvidencePostgres,
+              subject.threadId,
+            ),
           ),
-        }
-      : {}),
-    ...(typeof parsed.targetItemId === 'string'
-      ? { targetItemId: parsed.targetItemId }
-      : {}),
-    ...(typeof parsed.kind === 'string'
-      ? { kind: parsed.kind as MemoryLifecycleProposal['kind'] }
-      : {}),
-    ...(typeof parsed.key === 'string' ? { key: parsed.key } : {}),
-    ...(typeof parsed.value === 'string' ? { value: parsed.value } : {}),
-    reason: typeof parsed.reason === 'string' ? parsed.reason : '',
-    confidence:
-      typeof parsed.confidence === 'number' &&
-      Number.isFinite(parsed.confidence)
-        ? parsed.confidence
-        : 0,
-    evidenceIds: Array.isArray(parsed.evidenceIds)
-      ? parsed.evidenceIds.filter(
-          (entry): entry is string => typeof entry === 'string',
-        )
-      : [],
-  };
+        ),
+  )) as MemoryEvidenceRow[];
+  return new Map(
+    rows.map((row) => [row.id, toMemoryReviewEvidenceSnippet(row)]),
+  );
 }
-function toMemoryReview(row: MemoryReviewRow): MemoryReviewRecord {
-  return {
-    id: row.id,
-    runId: row.runId,
-    appId: row.appId,
-    agentId: row.agentId,
-    subjectType: row.subjectType as MemorySubjectType,
-    subjectId: row.subjectId,
-    ...(row.threadId ? { threadId: row.threadId } : {}),
-    phase: row.phase as DreamingRunStatus['phase'],
-    proposal: parseReviewProposal(row.proposalJson),
-    status: row.status as MemoryReviewRecord['status'],
-    itemVersions: parseJsonNumberRecord(row.itemVersionsJson),
-    candidateVersions: parseJsonStringRecord(row.candidateVersionsJson),
-    validationSummary: row.validationSummary,
-    reviewerId: row.reviewerId,
-    decision: row.decision as MemoryReviewRecord['decision'],
-    editedValue: row.editedValue,
-    editedReason: row.editedReason,
-    applyOutcome: row.applyOutcome,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    decidedAt: row.decidedAt,
-  };
-}
-export async function listPendingMemoryReviews(input: {
+
+export async function countPendingMemoryReviews(input: {
   db: Db;
   subject: NormalizedMemorySubject;
   statementTimeoutMs?: number;
-}): Promise<MemoryReviewRecord[]> {
+}): Promise<number> {
   const rows = (await withStatementTimeout(
     input.db,
     input.statementTimeoutMs,
@@ -171,38 +141,99 @@ export async function listPendingMemoryReviews(input: {
       sql`select set_config('statement_timeout', ${String(timeoutMs)}, true)`,
     (db) =>
       db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(pgSchema.memoryReviewRequestsPostgres)
+        .where(pendingMemoryReviewFilter(input.subject))
+        .limit(1),
+  )) as Array<{ count: number | string | null }>;
+  const count = Number(rows[0]?.count ?? 0);
+  return Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+}
+
+export async function listPendingMemoryReviews(input: {
+  db: Db;
+  subject: NormalizedMemorySubject;
+  statementTimeoutMs?: number;
+  limit?: number;
+  offset?: number;
+}): Promise<MemoryReviewRecord[]> {
+  const limit = normalizePendingReviewLimit(input.limit);
+  const offset = normalizePendingReviewOffset(input.offset);
+  const rows = (await withStatementTimeout(
+    input.db,
+    input.statementTimeoutMs,
+    (timeoutMs) =>
+      sql`select set_config('statement_timeout', ${String(timeoutMs)}, true)`,
+    (db) => {
+      const query = db
         .select()
         .from(pgSchema.memoryReviewRequestsPostgres)
-        .where(
-          and(
-            eq(
-              pgSchema.memoryReviewRequestsPostgres.appId,
-              input.subject.appId,
-            ),
-            eq(
-              pgSchema.memoryReviewRequestsPostgres.agentId,
-              input.subject.agentId,
-            ),
-            eq(
-              pgSchema.memoryReviewRequestsPostgres.subjectType,
-              input.subject.subjectType,
-            ),
-            eq(
-              pgSchema.memoryReviewRequestsPostgres.subjectId,
-              input.subject.subjectId,
-            ),
-            sqlThreadIdentityFilter(
-              pgSchema.memoryReviewRequestsPostgres,
-              input.subject.threadId,
-            ),
-            eq(pgSchema.memoryReviewRequestsPostgres.status, 'pending_review'),
-          ),
-        )
+        .where(pendingMemoryReviewFilter(input.subject))
         .orderBy(desc(pgSchema.memoryReviewRequestsPostgres.createdAt))
-        .limit(20),
+        .limit(limit);
+      return offset > 0 ? query.offset(offset) : query;
+    },
   )) as MemoryReviewRow[];
-  return rows.map(toMemoryReview);
+  const reviews = rows.map(toMemoryReview);
+  const itemsById = await itemMapForReviews(
+    input.db,
+    reviews,
+    input.statementTimeoutMs,
+  );
+  return withProposedChanges(reviews, itemsById);
 }
+
+export async function listPendingMemoryReviewPage(input: {
+  db: Db;
+  subject: NormalizedMemorySubject;
+  statementTimeoutMs?: number;
+  limit?: number;
+  offset?: number;
+}): Promise<MemoryReviewPage> {
+  const limit = normalizePendingReviewLimit(input.limit);
+  const offset = normalizePendingReviewOffset(input.offset);
+  const totalCount = await countPendingMemoryReviews({
+    db: input.db,
+    subject: input.subject,
+    statementTimeoutMs: input.statementTimeoutMs,
+  });
+  const reviews = await listPendingMemoryReviews({
+    db: input.db,
+    subject: input.subject,
+    statementTimeoutMs: input.statementTimeoutMs,
+    limit,
+    offset,
+  });
+  const returnedCount = reviews.length;
+  const nextOffset = offset + returnedCount;
+  const evidenceById = await evidenceMapForReviews(
+    input.db,
+    input.subject,
+    reviews,
+    input.statementTimeoutMs,
+  );
+  return {
+    reviews,
+    reviewPage: toMemoryReviewDisplayPage({
+      reviews,
+      subject: input.subject,
+      totalCount,
+      returnedCount,
+      remainingCount: Math.max(0, totalCount - nextOffset),
+      limit,
+      offset,
+      nextOffset: nextOffset < totalCount ? nextOffset : null,
+      evidenceById,
+    }),
+    totalCount,
+    returnedCount,
+    remainingCount: Math.max(0, totalCount - nextOffset),
+    limit,
+    offset,
+    nextOffset: nextOffset < totalCount ? nextOffset : null,
+  };
+}
+
 export async function createPendingMemoryReview(input: {
   db: Db;
   runId: string;

@@ -1,5 +1,9 @@
 import type { GroupProcessingDeps } from './group-processing-types.js';
-import { resolveConfiguredAllowedTools } from './configured-agent-tools.js';
+import {
+  resolveConfiguredAllowedTools,
+  resolveConfiguredToolPolicy,
+  type ConfiguredAgentToolPolicy,
+} from './configured-agent-tools.js';
 import { authorizedMcpServerIdsForAgent } from '../application/mcp/mcp-authorized-servers.js';
 
 export function memoryScopeForConversationKind(
@@ -14,6 +18,26 @@ export async function resolveTurnAllowedTools(
 ) {
   if (!turnContext) return undefined;
   return resolveConfiguredAllowedTools({
+    repository: deps.getToolRepository?.(),
+    skillRepository: deps.getSkillRepository?.(),
+    appId: turnContext.appId,
+    agentId: turnContext.agentId,
+  });
+}
+
+export async function resolveTurnToolPolicy(
+  deps: Pick<GroupProcessingDeps, 'getToolRepository' | 'getSkillRepository'>,
+  turnContext?: { appId: string; agentId: string } | null,
+): Promise<ConfiguredAgentToolPolicy> {
+  if (!turnContext) {
+    return {
+      allowedTools: undefined,
+      localCliCredentialAccess: false,
+      localCliCredentialPaths: [],
+      localCliNetworkHosts: [],
+    };
+  }
+  return resolveConfiguredToolPolicy({
     repository: deps.getToolRepository?.(),
     skillRepository: deps.getSkillRepository?.(),
     appId: turnContext.appId,

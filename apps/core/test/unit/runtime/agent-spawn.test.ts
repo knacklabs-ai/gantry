@@ -1247,6 +1247,111 @@ describe('agent-spawn timeout behavior', () => {
     });
   });
 
+  it('does not project local CLI credential env into ordinary agent runs', async () => {
+    process.env.HOME = '/Users/tester';
+    process.env.USER = 'tester';
+    process.env.LOGNAME = 'tester';
+
+    const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.HOME).toBeUndefined();
+    expect(env.USER).toBeUndefined();
+    expect(env.LOGNAME).toBeUndefined();
+  });
+
+  it('projects local CLI credential env from resolved reviewed local CLI policy', async () => {
+    process.env.HOME = '/Users/tester';
+    process.env.USERPROFILE = '/Users/tester';
+    process.env.XDG_CONFIG_HOME = '/Users/tester/.config';
+    process.env.APPDATA = 'C:\\Users\\tester\\AppData\\Roaming';
+    process.env.USER = 'tester';
+    process.env.USERNAME = 'tester';
+    process.env.LOGNAME = 'tester';
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        allowedTools: [
+          'capability:gog.sheets.get',
+          'RunCommand(/opt/homebrew/bin/gog sheets get *)',
+        ],
+        localCliCredentialAccess: true,
+        localCliCredentialPaths: [
+          '${XDG_CONFIG_HOME}/gog',
+          '~/.gog',
+          '%APPDATA%\\gogcli',
+          '${GANTRY_MISSING_CLI_CONFIG}/skip',
+        ],
+      },
+      () => {},
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.HOME).toBe('/Users/tester');
+    expect(env.USERPROFILE).toBe('/Users/tester');
+    expect(env.XDG_CONFIG_HOME).toBe('/Users/tester/.config');
+    expect(env.APPDATA).toBe('C:\\Users\\tester\\AppData\\Roaming');
+    expect(env.USER).toBe('tester');
+    expect(env.USERNAME).toBe('tester');
+    expect(env.LOGNAME).toBe('tester');
+    expect(JSON.parse(env.GANTRY_LOCAL_CLI_CREDENTIAL_DIRS_JSON)).toEqual([
+      '/Users/tester/.config/gog',
+      '/Users/tester/.gog',
+      'C:\\Users\\tester\\AppData\\Roaming\\gogcli',
+    ]);
+  });
+
+  it('projects local CLI credential env when catalog policy marks a reviewed user-defined CLI capability', async () => {
+    process.env.HOME = '/Users/tester';
+    process.env.USER = 'tester';
+    process.env.LOGNAME = 'tester';
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        allowedTools: [
+          'capability:acme.invoices.read',
+          'RunCommand(/usr/local/bin/acme invoices read *)',
+        ],
+        localCliCredentialAccess: true,
+        localCliCredentialPaths: ['~/.config/acme'],
+      },
+      () => {},
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.HOME).toBe('/Users/tester');
+    expect(env.USER).toBe('tester');
+    expect(env.LOGNAME).toBe('tester');
+    expect(JSON.parse(env.GANTRY_LOCAL_CLI_CREDENTIAL_DIRS_JSON)).toEqual([
+      '/Users/tester/.config/acme',
+    ]);
+  });
+
   it('materializes approved third-party stdio MCP servers through direct SDK MCP config', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const rmSyncSpy = vi

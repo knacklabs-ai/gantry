@@ -1,5 +1,9 @@
 ## Shared Runtime Safety
 
+- Shared timeout helpers must preserve cancellation semantics, not just return
+  early with `Promise.race`. If a helper enforces a deadline for mutating
+  runtime work, it must expose an `AbortSignal` and a disposable timer so the
+  owning service can stop provider calls and finalize durable state.
 - Bash parsing must treat common non-destructive file-descriptor duplication,
   such as `2>&1`, as redirect metadata instead of malformed shell syntax.
   Keep destructive output writes fail-closed, and require every pipeline leaf to

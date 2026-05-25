@@ -12,6 +12,10 @@ import { createExternalAgentCredentialInjection } from '../external-credential-i
 import type { AgentCredentialBroker } from '../../../domain/ports/agent-credential-broker.js';
 import type { AgentCredentialInjection } from '../../../domain/models/credentials.js';
 import type { MemoryLlmModelProfile } from '../../../domain/ports/memory-llm-client.js';
+import {
+  abortReason,
+  runWithMemoryOperationTimeout,
+} from '../../../shared/memory-dreaming-timeout.js';
 import { AGENT_CREDENTIAL_ENV_KEYS } from '../../../config/source-classification.js';
 import { applyNeutralCaTrustAliases } from '../../../shared/neutral-ca-trust-env.js';
 import {
@@ -35,6 +39,8 @@ export interface ClaudeQueryOpts {
     cacheStatic?: boolean;
   }>;
   onUsage?: (usage: ClaudeUsage) => void;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export interface ClaudeUsage {
@@ -164,7 +170,9 @@ function requireOnecliBroker(
 }
 
 async function runWithOnecli(opts: ClaudeQueryOpts): Promise<string> {
+  opts.signal?.throwIfAborted();
   const injection = await resolveOnecliMemoryInjection();
+  opts.signal?.throwIfAborted();
   const modelEntry = opts.modelProfile
     ? findModelByRunnerModel(opts.modelProfile.runnerModel)
     : findModelByRunnerModel(opts.model);
@@ -183,9 +191,17 @@ async function runWithOnecli(opts: ClaudeQueryOpts): Promise<string> {
     ...SDK_NATIVE_SKILL_DISABLE_ENV,
   };
   if (isOpenRouterModelRoute(modelEntry)) applyOpenRouterSdkEnv(sdkEnv);
+  const abortController = new AbortController();
+  const onAbort = () => abortController.abort(abortReason(opts.signal!));
+  if (opts.signal?.aborted) {
+    onAbort();
+  } else {
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+  }
   const stream = query({
     prompt: flattenPrompt(opts),
     options: {
+      abortController,
       model: opts.model,
       maxTurns: 1,
       env: sdkEnv,
@@ -201,12 +217,18 @@ async function runWithOnecli(opts: ClaudeQueryOpts): Promise<string> {
   let assistantText = '';
   let resultText = '';
 
-  for await (const message of stream) {
-    assistantText += readAssistantText(message);
-    if (!resultText) {
-      resultText = readResultText(message);
+  try {
+    for await (const message of stream) {
+      opts.signal?.throwIfAborted();
+      assistantText += readAssistantText(message);
+      if (!resultText) {
+        resultText = readResultText(message);
+      }
     }
+  } finally {
+    opts.signal?.removeEventListener('abort', onAbort);
   }
+  opts.signal?.throwIfAborted();
 
   return (assistantText || resultText).trim();
 }
@@ -228,5 +250,12 @@ export async function runClaudeQuery(opts: ClaudeQueryOpts): Promise<string> {
       'Claude auth is not configured (configure brokered model access)',
     );
   }
-  return runWithOnecli(opts);
+  return runWithMemoryOperationTimeout(
+    (signal) => runWithOnecli({ ...opts, signal }),
+    {
+      timeoutMs: opts.timeoutMs,
+      parentSignal: opts.signal,
+      label: 'memory LLM query',
+    },
+  );
 }

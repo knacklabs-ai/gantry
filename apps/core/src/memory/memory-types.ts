@@ -71,11 +71,89 @@ export interface MemoryLifecycleProposal {
   evidenceIds: string[];
 }
 
+export interface MemoryReviewReadableItem {
+  itemId: string;
+  kind?: MemoryKind | string;
+  key?: string;
+  value?: string;
+}
+
+export interface MemoryReviewProposedChange {
+  action: MemoryProposalAction;
+  summary: string;
+  before?: MemoryReviewReadableItem | null;
+  after?: {
+    kind?: MemoryKind | string;
+    key?: string;
+    value?: string;
+  } | null;
+  target?: MemoryReviewReadableItem | null;
+  retiring?: MemoryReviewReadableItem[];
+  reason: string;
+  confidence: number;
+  evidenceIds: string[];
+}
+
+export interface MemoryReviewEvidenceSnippet {
+  evidenceId: string;
+  sourceType: MemoryEvidenceSource | string;
+  sourceId?: string | null;
+  snippet: string;
+  createdAt: string;
+}
+
+export interface MemoryReviewPageSubject {
+  appId: string;
+  agentId: string;
+  subjectType: MemorySubjectType;
+  subjectId: string;
+  threadId?: string;
+}
+
+export interface MemoryReviewPageContext {
+  subject: MemoryReviewPageSubject;
+  limit: number;
+  offset: number;
+  reviewIds: string[];
+}
+
+export interface MemoryReviewPageItem {
+  number: number;
+  reviewId: string;
+  action: MemoryProposalAction;
+  summary: string;
+  before?: MemoryReviewReadableItem | null;
+  after?: {
+    kind?: MemoryKind | string;
+    key?: string;
+    value?: string;
+  } | null;
+  target?: MemoryReviewReadableItem | null;
+  retiring?: MemoryReviewReadableItem[];
+  reason: string;
+  confidence: number;
+  evidenceIds: string[];
+  evidence: MemoryReviewEvidenceSnippet[];
+  decisionOptions: MemoryReviewDecision[];
+}
+
+export interface MemoryReviewDisplayPage {
+  items: MemoryReviewPageItem[];
+  pageContext: MemoryReviewPageContext;
+  totalCount: number;
+  returnedCount: number;
+  remainingCount: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+}
+
 export interface MemoryReviewRecord extends NormalizedMemorySubject {
   id: string;
   runId: string;
   phase: DreamPhase;
   proposal: MemoryLifecycleProposal;
+  proposedChange?: MemoryReviewProposedChange;
   status: 'pending_review' | 'approved' | 'rejected' | 'applied' | 'failed';
   itemVersions: Record<string, number>;
   candidateVersions: Record<string, string>;
@@ -88,6 +166,17 @@ export interface MemoryReviewRecord extends NormalizedMemorySubject {
   createdAt: string;
   updatedAt: string;
   decidedAt?: string | null;
+}
+
+export interface MemoryReviewPage {
+  reviews: MemoryReviewRecord[];
+  reviewPage?: MemoryReviewDisplayPage;
+  totalCount: number;
+  returnedCount: number;
+  remainingCount: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
 }
 
 export interface MemoryReviewDecisionInput extends Partial<MemoryBoundaryContext> {
@@ -218,6 +307,9 @@ export interface DreamingTriggerInput extends Partial<MemoryBoundaryContext> {
   subjectId?: string;
   phase?: DreamPhase;
   dryRun?: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
 }
 
 export interface DreamingRunStatus {

@@ -24,6 +24,8 @@ export async function runDreamingForGroup(input: {
   userId?: string;
   defaultScope?: 'user' | 'group';
   activeThreadId?: string;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
 }) {
   const { subject } = resolveScopedMemorySubject({
     appId: DEFAULT_MEMORY_APP_ID,
@@ -44,6 +46,8 @@ export async function runDreamingForGroup(input: {
         subjectType: subject.subjectType,
         subjectId: subject.subjectId,
         phase: 'all',
+        signal: input.signal,
+        deadlineAtMs: input.deadlineAtMs,
       });
     },
     dreamingDedupeKey({
@@ -51,6 +55,7 @@ export async function runDreamingForGroup(input: {
       subjectId: subject.subjectId,
       activeThreadId: subject.threadId,
     }),
+    { signal: input.signal },
   );
   if (!result.queued) {
     if (result.reason === 'full')

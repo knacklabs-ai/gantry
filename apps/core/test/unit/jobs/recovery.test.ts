@@ -1,0 +1,183 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type {
+  ConversationRoute,
+  Job,
+  JobSetupState,
+} from '@core/domain/types.js';
+import { queueJobRecoveryTurn } from '@core/jobs/recovery.js';
+
+vi.mock('@core/platform/group-folder.js', () => ({
+  resolveGroupFolderPath: () => '/tmp/gantry-unit-job-recovery',
+}));
+
+const setupState: JobSetupState = {
+  state: 'missing_capability',
+  checked_at: '2026-05-23T00:00:00.000Z',
+  fingerprint: 'setup-browser',
+  blockers: [
+    {
+      state: 'missing_capability',
+      requirementType: 'browser',
+      requirementId: 'Browser',
+      message: 'This job needs Browser access before it can run.',
+      nextAction: 'request_permission { "toolName": "Browser" }',
+    },
+  ],
+};
+
+function makeJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: 'job-1',
+    name: 'Browser job',
+    prompt: 'Open the dashboard and report the status.',
+    schedule_type: 'cron',
+    schedule_value: '0 9 * * *',
+    status: 'paused',
+    session_id: null,
+    thread_id: 'topic-1',
+    group_scope: 'main_agent',
+    created_by: 'agent',
+    created_at: '2026-05-23T00:00:00.000Z',
+    updated_at: '2026-05-23T00:00:00.000Z',
+    next_run: null,
+    last_run: null,
+    silent: false,
+    cleanup_after_ms: 86_400_000,
+    timeout_ms: 300_000,
+    max_retries: 3,
+    retry_backoff_ms: 5_000,
+    max_consecutive_failures: 5,
+    consecutive_failures: 0,
+    lease_run_id: null,
+    lease_expires_at: null,
+    pause_reason: 'Setup required',
+    execution_context: {
+      conversationJid: 'tg:team',
+      threadId: 'topic-1',
+      groupScope: 'main_agent',
+    },
+    setup_state: setupState,
+    ...overrides,
+  };
+}
+
+function makeRoute(): ConversationRoute {
+  return {
+    name: 'Main Agent',
+    folder: 'main_agent',
+    trigger: '@agent',
+    added_at: '2026-05-23T00:00:00.000Z',
+    conversationKind: 'channel',
+  };
+}
+
+describe('job recovery turn queueing', () => {
+  it('persists one recovery intent and runs a bounded target-agent recovery turn', async () => {
+    let storedJob = makeJob();
+    let queuedTask: (() => Promise<void>) | undefined;
+    const updateJob = vi.fn(async (_id: string, updates: Partial<Job>) => {
+      storedJob = { ...storedJob, ...updates };
+    });
+    const runAgent = vi.fn(
+      async (
+        _group: unknown,
+        input: {
+          prompt: string;
+          isScheduledJob?: boolean;
+          allowedTools?: string[];
+        },
+      ) => {
+        expect(input.prompt).toContain('<gantry_scheduler_job_recovery>');
+        expect(input.prompt).toContain('request_permission');
+        expect(input.isScheduledJob).toBeUndefined();
+        expect(input.allowedTools).toEqual(['mcp__gantry__request_permission']);
+        return { status: 'success', result: 'Requested Browser access.' };
+      },
+    );
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+
+    await queueJobRecoveryTurn({
+      currentJob: storedJob,
+      deps: {
+        conversationRoutes: () => ({ 'tg:team': makeRoute() }),
+        queue: {
+          enqueueTask: vi.fn((_queueKey, _taskId, fn) => {
+            queuedTask = fn;
+          }),
+        },
+        onProcess: vi.fn(),
+        sendMessage: vi.fn(),
+        opsRepository: {
+          getJobById: vi.fn(async () => storedJob),
+          updateJob,
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentId: 'agent:main_agent',
+            agentSessionId: 'session-1',
+            providerSessionId: undefined,
+            memoryContextBlock: undefined,
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run-1'),
+          completeSessionAgentRun: vi.fn(async () => undefined),
+          updateAgentRunProviderMetadata: vi.fn(async () => undefined),
+        },
+        getToolRepository: () =>
+          ({
+            listAgentToolBindings: vi.fn(async () => [
+              {
+                toolId: 'tool:request_permission',
+                appId: 'default',
+                agentId: 'agent:main_agent',
+                status: 'active',
+              },
+            ]),
+            getTool: vi.fn(async () => ({
+              appId: 'default',
+              name: 'mcp__gantry__request_permission',
+            })),
+          }) as never,
+        runAgent: runAgent as never,
+      } as never,
+      execution: {
+        group: makeRoute(),
+        executionJid: 'tg:team',
+        threadId: 'topic-1',
+        stopAliasJids: [],
+      },
+      setupState,
+      source: 'preflight_setup',
+      runId: 'job-run-1',
+      runtimeAppId: 'default',
+      publishRuntimeEvent,
+    });
+
+    expect(storedJob.recovery_intent).toMatchObject({
+      state: 'pending',
+      kind: 'missing_capability',
+      requirement_id: 'Browser',
+    });
+    expect(queuedTask).toBeTypeOf('function');
+
+    await queuedTask!();
+
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(storedJob.recovery_intent).toMatchObject({
+      state: 'completed',
+      attempts: 1,
+      last_error: null,
+    });
+    expect(updateJob).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        recovery_intent: expect.objectContaining({ state: 'running' }),
+      }),
+    );
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'job.tool_activity',
+        payload: expect.objectContaining({ phase: 'recovery_queued' }),
+      }),
+    );
+  });
+});

@@ -138,6 +138,7 @@ export function mapManualJobToStored(
     toolAccessRequirements: job.tool_access_requirements ?? [],
     requiredMcpServers: job.required_mcp_servers ?? [],
     setup: metadata.setup,
+    recovery: metadata.recovery,
     nextRun: job.next_run,
     lastRun: job.last_run,
     staleness: metadata.staleness,

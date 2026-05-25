@@ -16,6 +16,8 @@ export interface MemoryLlmQueryOpts {
     text: string;
     cacheStatic?: boolean;
   }>;
+  signal?: AbortSignal;
+  timeoutMs?: number;
   onUsage?: (usage: MemoryLlmUsage) => void;
 }
 

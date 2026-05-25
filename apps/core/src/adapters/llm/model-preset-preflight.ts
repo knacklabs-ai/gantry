@@ -171,8 +171,8 @@ function resolveExternalModelBrokerBaseUrl(rawBrokerUrl: string): string {
   let parsed: URL;
   try {
     parsed = new URL(input);
-  } catch {
-    throw new Error(`${label} must be a valid URL.`);
+  } catch (error) {
+    throw new Error(`${label} must be a valid URL.`, { cause: error });
   }
   if (parsed.username || parsed.password) {
     throw new Error(`${label} must not contain embedded credentials.`);

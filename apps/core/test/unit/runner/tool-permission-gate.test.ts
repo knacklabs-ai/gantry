@@ -511,6 +511,7 @@ describe('createCanUseToolCallback', () => {
         jobId: 'job-1',
         chatJid: 'tg:test',
         threadId: undefined,
+        localCliNetworkHosts: ['oauth2.googleapis.com'],
         allowedTools: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
         yoloMode: {
           enabled: true,

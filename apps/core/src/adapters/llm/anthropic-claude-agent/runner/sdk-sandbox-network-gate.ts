@@ -190,7 +190,7 @@ export function createSdkSandboxNetworkGate(
       }
       const createdAtMs = nowMs();
       const inputHash = hashString(stableJson(input));
-      const approvedHostHashes = approvedToolInputHostHashes(input);
+      const approvedHostHashes = approvedToolInputHostHashes(input, agentInput);
       const token: SdkSandboxNetworkApprovalToken = {
         principal: normalizedPrincipal,
         parentToolUseID,
@@ -350,9 +350,18 @@ function hashString(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function approvedToolInputHostHashes(input: unknown): readonly string[] {
+function approvedToolInputHostHashes(
+  input: unknown,
+  agentInput: AgentRunnerInput,
+): readonly string[] {
   const hosts = new Set<string>();
   collectApprovedToolInputHosts(input, hosts);
+  if (agentInput.isScheduledJob) {
+    for (const host of agentInput.localCliNetworkHosts ?? []) {
+      const normalized = normalizeNetworkHost(host);
+      if (normalized) hosts.add(normalized);
+    }
+  }
   return [...hosts].sort().map(hashString);
 }
 

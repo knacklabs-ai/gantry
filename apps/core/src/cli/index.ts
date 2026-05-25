@@ -55,7 +55,7 @@ function usage(): string {
     '  gantry conversation info|approvers  # direct/private and group/channel permission approvers',
     '  gantry agent list|info|add|remove|trigger|policy',
     '  gantry browser profiles|status',
-    '  gantry jobs list|show|events',
+    '  gantry jobs list|show|resume|trigger|set-route|events [--full|--json]',
     '  gantry model status|list|set|reset|why|use-preset|doctor',
     '  gantry secrets list|set|import-env|unset',
     '  gantry settings export-current|drift',

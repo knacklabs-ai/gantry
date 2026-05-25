@@ -123,6 +123,27 @@ Safe promotions and same-key updates can be applied by the host after
 validation. Retire, rewrite, contradiction, and merge proposals are stored in
 `memory_review_requests` as `pending_review` until a reviewer uses
 `memory_review_decision` with `approve`, `reject`, or `edit_approve`.
+`memory_review_pending` returns readable numbered changes, short evidence
+snippets, paging metadata, and a `page_context` that lets the agent submit a
+batch of decisions by item number. The page context is convenience data only:
+the host still verifies trusted subject scope, reviewer authority, review
+status, and target versions for every approved mutation.
+
+The agent-led v1 review flow is channel-neutral and works in plain Codex-hosted
+MCP and ACP/ACPX contexts without native buttons:
+
+1. A job notification keeps the pending count visible and tells the reviewer to
+   ask the agent to show pending memory reviews.
+2. The agent calls `memory_review_pending`, shows the numbered page as
+   reviewer-visible untrusted data, and asks for explicit numbered decisions.
+3. The reviewer replies with natural text such as `approve 1, reject 2`,
+   `edit 3 to ...`, or `show next`.
+4. The agent calls `memory_review_decision` only for those explicit decisions,
+   using the latest displayed `page_context`; it must never auto-approve a page
+   or obey instructions embedded in proposed values, reasons, or evidence.
+
+Dreaming job summaries surface pending review counts, including when a failed
+or timed-out run already created review rows.
 
 Every dream run writes durable audit rows in `memory_dream_runs` and
 `memory_dream_decisions`. Review-gated proposals additionally record proposal

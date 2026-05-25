@@ -88,6 +88,17 @@ const MODEL_PROXY_ENV_KEYS = [
   'http_proxy',
   'https_proxy',
 ] as const;
+const LOCAL_CLI_CREDENTIAL_ENV_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'USER',
+  'USERNAME',
+  'LOGNAME',
+] as const;
 
 function readModelCredentialEnv(
   source: Record<string, unknown> | undefined,
@@ -155,6 +166,7 @@ export function buildSdkEnv(
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
     ...SDK_NATIVE_SKILL_DISABLE_ENV,
   };
+  copyEnv(sdkEnv, [...LOCAL_CLI_CREDENTIAL_ENV_KEYS]);
   Object.assign(sdkEnv, readModelCredentialEnv(modelCredentialEnv));
   applyNeutralCaTrustAliases(sdkEnv);
   copyPlaceholderEnv(sdkEnv, ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']);

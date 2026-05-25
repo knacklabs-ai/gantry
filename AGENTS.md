@@ -39,6 +39,7 @@ Use `python3 .codex/scripts/stage_orchestrator.py` to get current phase commands
 
 - Host runtime is the only supported runtime mode in this repo today.
 - The repo must work with plain Codex and with ACP/ACPX integrations; do not assume ACP is always present.
+- The local launchd service label is `com.gantry`; use it for build/restart/status workflows.
 
 Important constraints:
 

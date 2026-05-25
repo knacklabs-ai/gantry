@@ -13,6 +13,11 @@ import {
   vector,
 } from 'drizzle-orm/pg-core';
 
+import {
+  MEMORY_DREAM_RUN_TIMEOUT_MS,
+  memoryDreamRunLeaseExpiresAt,
+} from '../../../../shared/memory-dreaming-timeout.js';
+
 export * from './index.js';
 
 export const storageMetaPostgres = pgTable('storage_meta', {
@@ -354,13 +359,15 @@ type DreamSubject = {
   threadId?: string;
 };
 
-const DREAM_RUN_LEASE_MS = 20 * 60 * 1000;
 const CONCRETE_DREAM_PHASES = ['light', 'rem', 'deep'] as const;
 
-export function dreamRunLeaseExpiresAt(startedAt: string): string {
-  return new Date(
-    new Date(startedAt).getTime() + DREAM_RUN_LEASE_MS,
-  ).toISOString();
+export { MEMORY_DREAM_RUN_TIMEOUT_MS };
+
+export function dreamRunLeaseExpiresAt(
+  startedAt: string,
+  deadlineAtMs?: number,
+): string {
+  return memoryDreamRunLeaseExpiresAt(startedAt, deadlineAtMs);
 }
 
 export function conflictingDreamPhases(phase: DreamPhase): DreamPhase[] {

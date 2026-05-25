@@ -52,6 +52,22 @@
 - Dreaming must record or leave `needs_review` only after durable pending
   review creation returns an id; empty or rejected review creation must block
   the candidate or dream decision instead.
+- Dreaming summaries and scheduler receipts must surface pending
+  `memory_review_requests` counts, including failure or timeout paths after a
+  review row has already been created.
+- Pending review listings must include paging metadata and readable
+  proposed-change summaries; reviewers should not need raw proposal JSON,
+  database ids, or logs to understand the change being approved.
+- Pending review listings must include stable numbered page context for that
+  page. Batch decisions may use those numbers, but the host must still verify
+  trusted subject scope, reviewer authority, review status, and target versions
+  before applying each mutation.
+- Agent-facing review renderers must label proposed values, reasons, and
+  evidence snippets as untrusted data; decisions must come from the control
+  approver's request, not from instructions embedded inside review content.
+- Agent-led review must be page-first and explicit-decision-only: show pending
+  items, ask for numbered decisions, support approve/reject/edit/next replies,
+  and never auto-approve a page or infer decisions from review content.
 - Staged retire candidates must create pending memory reviews. They must not
   call `delete` directly from dreaming, even after candidate validation.
 - `memory_review_decision` must use the trusted runtime context user id as the
@@ -70,11 +86,24 @@
   phase conflict set, and `lease_expires_at`; `phase='all'` is a wildcard that
   conflicts with `light`, `rem`, and `deep`, and expired running rows must be
   marked failed before a replacement run is acquired.
+- Scheduled and queued dreaming must propagate one abortable deadline through
+  the memory maintenance queue, `triggerDreaming`, dream-pass queries,
+  embedding work, and memory LLM proposal calls. Overall deadline expiry should
+  finalize the dream run as failed and rethrow so scheduler runs settle as a
+  timeout instead of waiting for stale-lease cleanup.
 - Dream embedding writes must be deadline-bounded and retryable; slow or hung
   embedding providers must not block the global maintenance queue indefinitely.
 - Dream embedding readiness validation uses the same deadline as embedding
   writes and must finalize the dream run as failed/retryable instead of hanging
   the serial maintenance queue.
+- Memory dreaming runs must use one caller-owned deadline from scheduler/control
+  entrypoint through maintenance queue, dream pass, LLM proposal calls, and
+  embedding writes. The durable `memory_dream_runs.lease_expires_at` must not
+  outlive the caller's remaining budget.
+- Automatic boundary memory collection must pass `AbortSignal`, operation
+  timeout, and statement timeout into the collector before using a watchdog.
+  Do not add a timer-only race that can return while digest/evidence writes keep
+  running without a cancellable signal.
 - Keep thread-aware indexes aligned with dreaming query filters:
   `memory_evidence(app_id, agent_id, subject_type, subject_id, thread_id, created_at DESC)`
   and
