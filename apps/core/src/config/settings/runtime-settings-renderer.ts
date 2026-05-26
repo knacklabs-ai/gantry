@@ -239,7 +239,12 @@ function renderAgentSourceListYaml(
   if (sources.length === 0) return;
   lines.push(`      ${key}:`);
   for (const source of sources) {
-    lines.push(`        - id: ${quoteYamlString(source.id)}`);
+    if (source.name !== undefined) {
+      lines.push(`        - name: ${quoteYamlString(source.name)}`);
+      lines.push(`          id: ${quoteYamlString(source.id)}`);
+    } else {
+      lines.push(`        - id: ${quoteYamlString(source.id)}`);
+    }
     if (source.version !== undefined) {
       lines.push(`          version: ${quoteYamlString(source.version)}`);
     }

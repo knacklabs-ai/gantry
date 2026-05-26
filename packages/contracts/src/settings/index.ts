@@ -31,6 +31,7 @@ export const RuntimeSettingsConfiguredAgentBindingSchema = z
 
 export const RuntimeSettingsConfiguredAgentSourceRefSchema = z
   .object({
+    name: z.string().trim().min(1).optional(),
     id: z.string().trim().min(1),
     version: z.string().trim().min(1).optional(),
     kind: z.string().trim().min(1).optional(),

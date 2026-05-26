@@ -35,6 +35,7 @@ export interface AgentExecutionRunInput {
   browserProfileName?: string;
   allowedTools?: string[];
   selectedSkillIds?: string[];
+  selectedSkillDisplays?: string[];
   selectedMcpServerIds?: string[];
   isScheduledJob?: boolean;
   jobId?: string;

@@ -37,6 +37,7 @@ export interface AgentInput {
   allowedTools?: string[];
   toolAccessRequirements?: string[];
   selectedSkillIds?: string[];
+  selectedSkillDisplays?: string[];
   selectedMcpServerIds?: string[];
   isScheduledJob?: boolean;
   jobId?: string;

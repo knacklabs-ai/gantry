@@ -21,7 +21,6 @@ import {
   cleanupGeneratedRuntimeCapabilities,
   skillActionDefinitionsForSkills,
 } from './generated-runtime-capability-cleanup.js';
-import { displaySkillReference } from './desired-state-skill-references.js';
 
 export function activeCapabilities(
   toolBindings: AgentToolBinding[],
@@ -44,7 +43,8 @@ export function activeSources(
         const skillId = binding.skillId;
         const skill = skillCatalogById.get(skillId);
         return {
-          id: skill ? displaySkillReference(skill) : String(skillId),
+          ...(skill ? { name: skill.name } : {}),
+          id: String(skillId),
           version: 'approved',
         };
       }),

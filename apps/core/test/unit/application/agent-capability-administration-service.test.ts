@@ -19,7 +19,13 @@ describe('AgentCapabilityAdministrationService', () => {
       appId: 'app:one' as never,
       agentId: 'agent:one' as never,
       sources: {
-        skills: [{ id: 'skill:one', version: 'approved' }],
+        skills: [
+          {
+            name: 'stale-display-name',
+            id: 'skill:one',
+            version: 'approved',
+          },
+        ],
         mcpServers: [{ id: 'mcp:one', version: 'mcp-version:one' }],
         tools: [{ id: 'browser', kind: 'builtin' }],
       },
@@ -30,7 +36,7 @@ describe('AgentCapabilityAdministrationService', () => {
     });
     expect(sources).toMatchObject({
       sources: {
-        skills: [{ id: 'skill:one', version: 'approved' }],
+        skills: [{ name: 'One', id: 'skill:one', version: 'approved' }],
         mcpServers: [{ id: 'mcp:one', version: 'mcp-version:one' }],
         tools: [{ id: 'browser', kind: 'builtin' }],
       },
@@ -82,6 +88,36 @@ describe('AgentCapabilityAdministrationService', () => {
         capabilities: [{ id: 'internal.tool', version: 'builtin' }],
       }),
     ).rejects.toThrow('Unknown semantic capability internal.tool');
+  });
+
+  it('rejects selected skills that collide by materialized runtime directory', async () => {
+    const state = createState();
+    state.skills.set('skill:two', {
+      ...state.skills.get('skill:one')!,
+      id: 'skill:two',
+      name: 'one',
+    });
+    const service = new AgentCapabilityAdministrationService(
+      state.repositories,
+      { now: () => '2026-05-01T00:00:00.000Z' },
+    );
+
+    await expect(
+      service.replaceSources({
+        appId: 'app:one' as never,
+        agentId: 'agent:one' as never,
+        sources: {
+          skills: [
+            { id: 'skill:one', version: 'approved' },
+            { id: 'skill:two', version: 'approved' },
+          ],
+          mcpServers: [],
+          tools: [],
+        },
+      }),
+    ).rejects.toThrow(
+      'Selected skills materialize to the same runtime directory "one": skill:one, skill:two. Keep only one exact skill id.',
+    );
   });
 
   it('stores tool sources without granting tool authority', async () => {

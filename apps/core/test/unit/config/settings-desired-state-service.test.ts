@@ -493,8 +493,108 @@ describe('SettingsDesiredStateService', () => {
     const errors = await service.validateCapabilityReferences(settings);
 
     expect(errors).toEqual([
-      'agents.main_agent.sources.skills contains ambiguous skill name: admin matched 2 approved skills',
+      'agents.main_agent.sources.skills contains ambiguous skill name: admin matched 2 approved skills; use an exact skill id in settings, such as skill:first, skill:second',
     ]);
+  });
+
+  it('accepts exact skill ids when approved skill names are duplicated', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [{ id: 'skill:first', version: 'approved' }],
+        mcpServers: [],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const first = {
+      id: 'skill:first',
+      appId: 'default',
+      name: 'admin',
+      status: 'approved',
+      storage: { type: 'local' },
+    };
+    const second = {
+      id: 'skill:second',
+      appId: 'default',
+      name: 'admin',
+      status: 'approved',
+      storage: { type: 'local' },
+    };
+    const repositories = makeRepositories({
+      skills: {
+        ...makeRepositories().skills,
+        getSkill: vi.fn(async (id: string) =>
+          id === 'skill:first' ? first : null,
+        ),
+        listSkills: vi.fn(async () => [first, second]),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    const errors = await service.validateCapabilityReferences(settings);
+
+    expect(errors).toEqual([]);
+  });
+
+  it('treats source skill names as display hints and validates exact ids as authority', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [
+          {
+            name: 'stale-display-name',
+            id: 'skill:first',
+            version: 'approved',
+          },
+        ],
+        mcpServers: [],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const repositories = makeRepositories({
+      skills: {
+        ...makeRepositories().skills,
+        getSkill: vi.fn(async (id: string) =>
+          id === 'skill:first'
+            ? {
+                id: 'skill:first',
+                appId: 'default',
+                name: 'admin',
+                status: 'approved',
+                storage: { type: 'local' },
+              }
+            : null,
+        ),
+        listSkills: vi.fn(async () => [
+          {
+            id: 'skill:other',
+            appId: 'default',
+            name: 'stale-display-name',
+            status: 'approved',
+            storage: { type: 'local' },
+          },
+        ]),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    const errors = await service.validateCapabilityReferences(settings);
+
+    expect(errors).toEqual([]);
   });
 
   it('reconciles desired agents without deleting DB-only bindings in phase 1', async () => {
@@ -1818,7 +1918,13 @@ describe('SettingsDesiredStateService', () => {
         persona: 'research',
         model: 'sonnet',
         sources: {
-          skills: [{ id: 'custom-skill', version: 'approved' }],
+          skills: [
+            {
+              name: 'custom-skill',
+              id: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
+              version: 'approved',
+            },
+          ],
           mcpServers: [{ id: 'mcp:github', version: 'mcp-version:github' }],
           tools: [{ id: 'browser', kind: 'builtin' }],
         },
@@ -1945,7 +2051,7 @@ describe('SettingsDesiredStateService', () => {
     const exported = await service.exportCurrent(settings);
 
     expect(exported.agents.main_agent.sources.skills).toEqual([
-      { id: 'linkedin-posting', version: 'approved' },
+      { name: 'linkedin-posting', id: 'skill:linkedin', version: 'approved' },
     ]);
     expect(exported.agents.main_agent.capabilities).toEqual([
       { id: 'skill.linkedin-posting.publish', version: 'builtin' },

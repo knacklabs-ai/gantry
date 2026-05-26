@@ -32,8 +32,9 @@ agents:
   main_agent:
     sources:
       skills:
-        - id: linkedin-posting
-          version: 3
+        - name: linkedin-posting
+          id: "skill:266c421f-a072-44f7-9cb0-43c52eba8ad9"
+          version: approved
       mcp_servers:
         - id: linkedin
           version: 1
@@ -217,9 +218,13 @@ API, CLI, and MCP are adapters over the same application services:
   interactions. They create reviewable requests rendered through
   `InteractionDescriptor`.
 
-Skills, MCP servers, and tools are central catalog objects. V1 does not version
-skills; approved catalog items are disabled and replaced rather than edited in
-place.
+Skills, MCP servers, and tools are central catalog objects. Skill names are
+display labels and unique-alias conveniences only. Durable settings and API
+source selections show the readable name beside the exact `skill:<id>` catalog
+id, and the id is the only authority. Repeated installs of the same visible
+skill name cannot become ambiguous because runtime selection never uses the
+display name. V1 does not version skills; approved catalog items are disabled
+and replaced rather than edited in place.
 
 ## Tool Matrix
 

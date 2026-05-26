@@ -1303,7 +1303,7 @@ conversations:
     ]);
   });
 
-  it('renders opaque skill UUIDs because durable skill grants are restart-owned settings', () => {
+  it('renders readable skill names beside exact durable skill ids', () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.kai = {
       name: 'Kai',
@@ -1311,9 +1311,13 @@ conversations:
       bindings: {},
       sources: {
         skills: [
-          'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
-          'company-handbook',
-        ].map((id) => ({ id, version: 'approved' })),
+          {
+            name: 'linkedin-posting',
+            id: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
+            version: 'approved',
+          },
+          { id: 'company-handbook', version: 'approved' },
+        ],
         mcpServers: [],
         tools: [],
       },
@@ -1322,10 +1326,18 @@ conversations:
 
     const yaml = renderRuntimeSettingsYaml(settings);
 
-    expect(yaml).toContain('skill:3014949c-a616-4b2c-80e7-0bc61bb31e85');
+    expect(yaml).toContain(
+      [
+        '      skills:',
+        '        - name: linkedin-posting',
+        '          id: "skill:3014949c-a616-4b2c-80e7-0bc61bb31e85"',
+        '          version: approved',
+      ].join('\n'),
+    );
     expect(yaml).toContain('company-handbook');
     expect(parseRuntimeSettings(yaml).agents.kai.sources.skills).toEqual([
       {
+        name: 'linkedin-posting',
         id: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
         version: 'approved',
       },

@@ -122,29 +122,26 @@ agents:
 
 ## Skill And Capability UX
 
-Settings should reference skills by stable human aliases, not artifact IDs:
+Settings should make selected skills readable without making display labels
+authoritative. Skill source rows render the catalog name beside the exact
+catalog id:
 
 ```yaml
 agents:
   kai:
-    skills:
-      - company-handbook
-      - github-review
+    sources:
+      skills:
+        - name: company-handbook
+          id: "skill:266c421f-a072-44f7-9cb0-43c52eba8ad9"
+          version: approved
 ```
 
 The skill catalog keeps internal IDs, artifact hashes, versions, and audit
-history. Settings uses aliases. Editing a skill creates a new approved version
-under the same alias; old artifacts remain available for audit or rollback but
-do not appear in normal settings.
-
-Until every approved skill has a stable alias, compact rendering must hide raw
-`skill:<uuid>` references instead of exposing them as editable YAML. Those
-bindings remain in Postgres/runtime projection and should be managed through
-CLI/API/admin-tool surfaces that can show names and versions safely.
-
-CLI/API/admin-tool output should show display name, alias, latest approved
-version, and enabled agents. Raw skill IDs and artifact refs belong only in
-debug detail.
+history. The `name` field is a display hint exported from the catalog; editing
+or deleting it must not change what runs. The `id` field is the source of truth
+for selection, validation, runtime materialization, and duplicate-name
+disambiguation. CLI/API/admin-tool output should show `name (skill:<id>)` when
+space allows, while artifact refs remain debug detail.
 
 ## Surface Impact Matrix
 

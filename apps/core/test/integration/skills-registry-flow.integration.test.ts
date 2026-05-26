@@ -754,6 +754,89 @@ describe('skill registry integration flow', () => {
     expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
   });
 
+  it('replaces older active same-name skill bindings while retaining reviewed artifacts', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const { deps } = createCapabilityReviewDeps();
+
+    const installSkill = async (taskId: string, heading: string) => {
+      await processTaskIpc(
+        {
+          type: 'request_skill_install',
+          appId: 'app-one',
+          taskId,
+          targetJid: 'chat-origin',
+          chatJid: 'chat-origin',
+          authThreadId: 'thread-origin',
+          payload: {
+            reason: 'Reuse a reviewed posting workflow.',
+            files: [
+              {
+                path: 'SKILL.md',
+                content: [
+                  '---',
+                  'name: LinkedIn Posting',
+                  'description: Drafts LinkedIn posts',
+                  '---',
+                  heading,
+                ].join('\n'),
+              },
+            ],
+          },
+        },
+        'agent:one',
+        deps as any,
+      );
+    };
+
+    await installSkill('request-skill-install-v1', '# LinkedIn Posting');
+    await vi.waitFor(() => {
+      expect(
+        [...state.bindings.values()].filter(
+          (binding) => binding.status === 'active',
+        ),
+      ).toHaveLength(1);
+    });
+    const firstActiveSkillId = [...state.bindings.values()].find(
+      (binding) => binding.status === 'active',
+    )?.skillId;
+
+    await installSkill('request-skill-install-v2', '# LinkedIn Posting v2');
+    await vi.waitFor(() => {
+      const activeBindings = [...state.bindings.values()].filter(
+        (binding) => binding.status === 'active',
+      );
+      const disabledBindings = [...state.bindings.values()].filter(
+        (binding) => binding.status === 'disabled',
+      );
+      expect(activeBindings).toHaveLength(1);
+      expect(disabledBindings).toEqual([
+        expect.objectContaining({ skillId: firstActiveSkillId }),
+      ]);
+    });
+
+    const approved = [...state.skills.values()].filter(
+      (skill) => skill.status === 'approved',
+    );
+    const activeBinding = [...state.bindings.values()].find(
+      (binding) => binding.status === 'active',
+    );
+    expect(approved).toHaveLength(2);
+    expect(activeBinding?.skillId).not.toBe(firstActiveSkillId);
+
+    const storage =
+      await import('@core/adapters/storage/postgres/runtime-store.js');
+    const enabled = await storage
+      .getRuntimeStorage()
+      .repositories.skills.listEnabledSkillsForAgent({
+        appId: 'app-one',
+        agentId: 'agent:one',
+      });
+    expect(enabled.map((skill: StoredSkill) => skill.id)).toEqual([
+      activeBinding?.skillId,
+    ]);
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(2);
+  });
+
   it('coalesces duplicate pending staged skill install reviews', async () => {
     const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
     let resolveApproval:

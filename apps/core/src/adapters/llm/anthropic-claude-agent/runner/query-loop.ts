@@ -232,6 +232,7 @@ export async function runQuery(
     browserProfileName: agentInput.browserProfileName,
     configuredAllowedTools: agentInput.allowedTools,
     selectedSkillIds: agentInput.selectedSkillIds,
+    selectedSkillDisplays: agentInput.selectedSkillDisplays,
     selectedMcpServerIds: agentInput.selectedMcpServerIds,
     ipcDir: process.env.GANTRY_IPC_DIR,
     ipcAuthToken: process.env.GANTRY_IPC_AUTH_TOKEN,

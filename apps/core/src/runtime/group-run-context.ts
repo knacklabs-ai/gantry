@@ -4,6 +4,7 @@ import {
   type ConfiguredAgentToolPolicy,
 } from './configured-agent-tools.js';
 import { authorizedMcpServerIdsForAgent } from '../application/mcp/mcp-authorized-servers.js';
+import { selectedSkillDisplay } from '../domain/skills/skill-identity.js';
 
 export function memoryScopeForConversationKind(
   conversationKind?: string,
@@ -33,15 +34,34 @@ export async function resolveTurnSelectedSkillIds(
   deps: Pick<GroupProcessingDeps, 'getSkillRepository'>,
   turnContext?: { appId: string; agentId: string } | null,
 ): Promise<string[] | undefined> {
+  return (await resolveTurnSelectedSkillContext(deps, turnContext)).ids;
+}
+
+export async function resolveTurnSelectedSkillContext(
+  deps: Pick<GroupProcessingDeps, 'getSkillRepository'>,
+  turnContext?: { appId: string; agentId: string } | null,
+): Promise<{ ids?: string[]; displays?: string[] }> {
   const repository = deps.getSkillRepository?.();
-  if (!turnContext || !repository) return undefined;
+  if (!turnContext || !repository) return {};
   const bindings = await repository.listAgentSkillBindings({
     appId: turnContext.appId as never,
     agentId: turnContext.agentId as never,
   });
-  return bindings
+  const activeBindings = bindings
     .filter((binding) => binding.status === 'active')
-    .map((binding) => String(binding.skillId));
+    .sort((left, right) =>
+      String(left.skillId).localeCompare(String(right.skillId)),
+    );
+  const skillRows = await Promise.all(
+    activeBindings.map((binding) => repository.getSkill(binding.skillId)),
+  );
+  return {
+    ids: activeBindings.map((binding) => String(binding.skillId)),
+    displays: activeBindings.map((binding, index) => {
+      const skill = skillRows[index];
+      return skill ? selectedSkillDisplay(skill) : String(binding.skillId);
+    }),
+  };
 }
 
 export async function resolveTurnSelectedMcpServerIds(

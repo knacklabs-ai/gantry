@@ -98,6 +98,7 @@ export type AgentCapabilitySelection = z.infer<
 
 export const AgentSourceSelectionSchema = z
   .object({
+    name: z.string().trim().min(1).optional(),
     id: z.string().min(1),
     version: z.union([z.string().min(1), z.number()]).transform(String),
   })

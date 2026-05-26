@@ -16,6 +16,7 @@ import {
   materializedSkillDirectoryNameFor,
   reservedMaterializedSkillDirectoryNameFor,
 } from '../../domain/skills/skills.js';
+import { skillMaterializationKey } from '../../domain/skills/skill-identity.js';
 import { parseSkillActionPermissionsFromAssets } from '../../domain/skills/skill-action-permissions.js';
 import {
   assertValidCapabilitySecretName,
@@ -172,6 +173,12 @@ export class SkillDraftService {
       throw new Error(`Skill must be approved before binding: ${skill.id}`);
     }
     const now = input.now ?? nowIso();
+    await this.disableActiveMaterializationCollisions({
+      appId: input.appId,
+      agentId: input.agentId,
+      skill,
+      updatedAt: now,
+    });
     const binding: AgentSkillBinding = {
       id: `agent-skill-binding:${input.agentId}:${input.skillId}` as AgentSkillBindingId,
       appId: input.appId,
@@ -183,6 +190,38 @@ export class SkillDraftService {
     };
     await this.skills.saveAgentSkillBinding(binding);
     return binding;
+  }
+
+  private async disableActiveMaterializationCollisions(input: {
+    appId: AppId;
+    agentId: AgentId;
+    skill: SkillCatalogItem;
+    updatedAt: string;
+  }): Promise<void> {
+    const targetKey = skillMaterializationKey(input.skill);
+    const bindings = await this.skills.listAgentSkillBindings({
+      appId: input.appId,
+      agentId: input.agentId,
+    });
+    await Promise.all(
+      bindings
+        .filter(
+          (binding) =>
+            binding.status === 'active' && binding.skillId !== input.skill.id,
+        )
+        .map(async (binding) => {
+          const existing = await this.skills.getSkill(binding.skillId);
+          if (!existing || skillMaterializationKey(existing) !== targetKey) {
+            return;
+          }
+          await this.skills.disableAgentSkillBinding({
+            appId: input.appId,
+            agentId: input.agentId,
+            skillId: binding.skillId,
+            updatedAt: input.updatedAt,
+          });
+        }),
+    );
   }
 
   unbindSkillFromAgent(input: {

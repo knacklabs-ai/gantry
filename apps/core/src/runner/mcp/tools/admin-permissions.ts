@@ -10,6 +10,7 @@ import {
   configuredAllowedTools,
   currentEnabledAdminMcpTools,
   selectedMcpServerIds,
+  selectedSkillDisplays,
   selectedSkillIds,
   TASKS_DIR,
   threadId,
@@ -114,6 +115,8 @@ export function registerAdminPermissionTools(
 
 function formatAdminPermissionList(): string {
   const enabledAdminTools = currentEnabledAdminMcpTools();
+  const selectedSkillStatusItems =
+    selectedSkillDisplays.length > 0 ? selectedSkillDisplays : selectedSkillIds;
   return [
     'Admin permission inventory (read-only runner view):',
     ...ADMIN_MCP_TOOL_NAMES.map((toolName) => {
@@ -132,8 +135,8 @@ function formatAdminPermissionList(): string {
       : ['- none visible to this runner']),
     '',
     'Installed skills ready for this agent:',
-    ...(selectedSkillIds.length > 0
-      ? selectedSkillIds
+    ...(selectedSkillStatusItems.length > 0
+      ? selectedSkillStatusItems
           .slice()
           .sort()
           .map((skill) => `- ${skill}`)

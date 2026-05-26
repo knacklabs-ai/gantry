@@ -111,6 +111,7 @@ export interface RuntimeConfiguredBinding {
 }
 
 export interface RuntimeConfiguredAgentSourceRef {
+  name?: string;
   id: string;
   version?: string;
   kind?: 'builtin' | 'skill' | 'mcp' | 'adapter' | 'local_cli';

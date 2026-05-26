@@ -2,14 +2,11 @@ import type { AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
 import type { SkillCatalogRepository } from '../../domain/ports/repositories.js';
 import type { SkillCatalogItem, SkillId } from '../../domain/skills/skills.js';
+import { canonicalSkillReference } from '../../domain/skills/skill-identity.js';
 
 export interface ResolvedSkillReferences {
   skills: Map<string, SkillCatalogItem>;
   errors: Map<string, string>;
-}
-
-export function displaySkillReference(skill: Pick<SkillCatalogItem, 'name'>) {
-  return skill.name;
 }
 
 export async function resolveConfiguredSkillReferences(input: {
@@ -40,7 +37,12 @@ export async function resolveConfiguredSkillReferences(input: {
       continue;
     }
 
-    const skillName = skillNameFromSettingsReference(reference);
+    if (isExactSkillReference(reference)) {
+      errors.set(reference, `unavailable skill: ${reference}`);
+      continue;
+    }
+
+    const skillName = reference;
     const matches = approvedSkills.filter(
       (skill) =>
         skill.name === skillName &&
@@ -51,10 +53,7 @@ export async function resolveConfiguredSkillReferences(input: {
     } else if (matches.length === 0) {
       errors.set(reference, `unavailable skill: ${reference}`);
     } else {
-      errors.set(
-        reference,
-        `ambiguous skill name: ${skillName} matched ${matches.length} approved skills`,
-      );
+      errors.set(reference, ambiguousSkillNameError(skillName, matches));
     }
   }
 
@@ -81,10 +80,16 @@ async function loadExactSkillReferences(
   );
 }
 
-function skillNameFromSettingsReference(reference: string): string {
-  return reference.startsWith('skill:')
-    ? reference.slice('skill:'.length)
-    : reference;
+function isExactSkillReference(reference: string): boolean {
+  return reference.startsWith('skill:');
+}
+
+function ambiguousSkillNameError(
+  skillName: string,
+  matches: readonly SkillCatalogItem[],
+): string {
+  const candidates = matches.map(canonicalSkillReference).sort();
+  return `ambiguous skill name: ${skillName} matched ${matches.length} approved skills; use an exact skill id in settings, such as ${candidates.join(', ')}`;
 }
 
 function isUsableSkillForSettings(

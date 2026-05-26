@@ -44,6 +44,7 @@ export interface AgentCapabilityContext {
   browserProfileName?: string;
   configuredAllowedTools?: readonly string[];
   selectedSkillIds?: readonly string[];
+  selectedSkillDisplays?: readonly string[];
   selectedMcpServerIds?: readonly string[];
   ipcDir?: string;
   ipcAuthToken?: string;
@@ -181,6 +182,9 @@ const gantryMcpProvider: AgentCapabilityProvider = {
         ctx.configuredAllowedTools ?? [],
       ),
       GANTRY_SELECTED_SKILLS_JSON: JSON.stringify(ctx.selectedSkillIds ?? []),
+      GANTRY_SELECTED_SKILL_DISPLAYS_JSON: JSON.stringify(
+        ctx.selectedSkillDisplays ?? ctx.selectedSkillIds ?? [],
+      ),
       GANTRY_SELECTED_MCP_SERVERS_JSON: JSON.stringify(
         ctx.selectedMcpServerIds ?? [],
       ),

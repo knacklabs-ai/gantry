@@ -522,6 +522,7 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
       {
         GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: '["RunCommand(npm test *)"]',
         GANTRY_SELECTED_SKILLS_JSON: '["skill:release"]',
+        GANTRY_SELECTED_SKILL_DISPLAYS_JSON: '["release (skill:release)"]',
         GANTRY_SELECTED_MCP_SERVERS_JSON: '["mcp:github"]',
       },
     );
@@ -531,7 +532,9 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     expect(record.result.content[0].text).toContain(
       'Configured tools: RunCommand(npm test *)',
     );
-    expect(record.result.content[0].text).toContain('ready: skill:release');
+    expect(record.result.content[0].text).toContain(
+      'ready: release (skill:release)',
+    );
     expect(record.result.content[0].text).toContain('ready: mcp:github');
   });
 

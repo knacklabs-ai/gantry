@@ -11,7 +11,7 @@ import {
   memoryScopeForConversationKind,
   resolveTurnToolPolicy,
   resolveTurnSelectedMcpServerIds,
-  resolveTurnSelectedSkillIds,
+  resolveTurnSelectedSkillContext,
 } from './group-run-context.js';
 import {
   resolveSingleNonSelfSenderId,
@@ -351,9 +351,9 @@ export function createGroupAgentRunner(input: {
       skillArtifactStore: deps.getSkillArtifactStore?.(),
       turnContext,
     });
-    const [configuredToolPolicy, selectedSkillIds] = await Promise.all([
+    const [configuredToolPolicy, selectedSkillContext] = await Promise.all([
       resolveTurnToolPolicy(deps, turnContext),
-      resolveTurnSelectedSkillIds(deps, turnContext),
+      resolveTurnSelectedSkillContext(deps, turnContext),
     ]);
     const selectedMcpServerIds = await resolveTurnSelectedMcpServerIds(
       deps,
@@ -407,7 +407,8 @@ export function createGroupAgentRunner(input: {
             persona: group.agentConfig?.persona,
             allowedTools: configuredToolPolicy.allowedTools,
             runtimeAccess: configuredToolPolicy.runtimeAccess,
-            selectedSkillIds,
+            selectedSkillIds: selectedSkillContext.ids,
+            selectedSkillDisplays: selectedSkillContext.displays,
             selectedMcpServerIds,
             assistantName: group.trigger || DEFAULT_ASSISTANT_NAME,
             thinking: group.agentConfig?.thinking,

@@ -70,7 +70,10 @@ settings are not Gantry policy.
 
 ## Skills
 
-Local Claude skills are files. The materializer copies valid skill folders or
+Local Claude skills are files. Durable Gantry skill identity is the exact
+catalog id (`skill:<id>`). Settings and API source views may show the skill
+name beside that id for readability, but the name is only a display hint and
+per-run SDK directory name. The materializer copies valid skill folders or
 approved skill artifacts containing `SKILL.md` into the temp `skills/`
 directory for that run. The adapter then passes the exact materialized skill
 names to `query({ options: { skills } })`. Memory and slash helper queries pass
@@ -100,11 +103,12 @@ catalog name, temp directory, and declared SDK skill name must agree.
 
 Agent-created or admin-uploaded skills enter Gantry as zip uploads containing
 `SKILL.md`. Gantry parses display metadata from that file, stores the normalized
-skill files as readable folders, and records draft lifecycle state in Postgres.
-Pending drafts use `skill-drafts/<request-id>/<skill-slug>/...`; approved local
-skills use `skills/<skill-slug>/...`. Drafts survive restart but are not
-materialized or attached to hosted agents until approved. Rejected or disabled
-skills are retained for history and not used at runtime.
+reviewed package under runtime-home `artifacts/skills/...`, and records draft
+lifecycle state in Postgres. Settings and Control API source selections render
+the readable skill name beside the exact `skill:<id>` catalog id; the id is the
+authority and the name is display-only. Drafts survive restart but are not
+materialized or attached to hosted agents until approved. Rejected, disabled,
+and superseded skill artifacts are retained for history and not used at runtime.
 
 The canonical tool execution policy, projected through the Claude Agent SDK
 `PreToolUse` hook, blocks direct agent edits to skill capability files such as
