@@ -174,7 +174,6 @@ export function createChannelWiring(
       app,
       resolved,
       ops,
-      findBoundChannel,
       persistenceQueue,
     }),
     conversationRoutes: () => app.getConversationRoutes(),
