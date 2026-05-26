@@ -543,6 +543,64 @@ describe('SettingsDesiredStateService', () => {
     expect(errors).toEqual([]);
   });
 
+  it('rejects exact skill ids that collide by runtime directory before reconcile', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [
+          { id: 'skill:first', version: 'approved' },
+          { id: 'skill:second', version: 'approved' },
+        ],
+        mcpServers: [],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const first = {
+      id: 'skill:first',
+      appId: 'default',
+      name: 'admin',
+      status: 'approved',
+      storage: { type: 'local' },
+    };
+    const second = {
+      id: 'skill:second',
+      appId: 'default',
+      name: 'admin',
+      status: 'approved',
+      storage: { type: 'local' },
+    };
+    const repositories = makeRepositories({
+      skills: {
+        ...makeRepositories().skills,
+        getSkill: vi.fn(async (id: string) =>
+          id === 'skill:first' ? first : id === 'skill:second' ? second : null,
+        ),
+        listSkills: vi.fn(async () => [first, second]),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    const result = await service.reconcile(settings);
+
+    expect(result).toEqual({
+      applied: [],
+      skipped: [],
+      invalidReferences: [
+        'agents.main_agent.sources.skills contains selected skills that materialize to the same runtime directory "admin": skill:first, skill:second. Keep only one exact skill id',
+      ],
+    });
+    expect(
+      repositories.agents.replaceAgentCapabilityBindings,
+    ).not.toHaveBeenCalled();
+  });
+
   it('treats source skill names as display hints and validates exact ids as authority', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.main_agent = {

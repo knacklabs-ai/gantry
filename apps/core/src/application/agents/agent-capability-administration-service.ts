@@ -20,7 +20,10 @@ import type {
   SkillId,
 } from '../../domain/skills/skills.js';
 import { isSkillUsableForBinding } from '../../domain/skills/skills.js';
-import { skillMaterializationKey } from '../../domain/skills/skill-identity.js';
+import {
+  formatSkillMaterializationCollision,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 import type {
   AgentToolBinding,
   AgentToolSource,
@@ -629,21 +632,16 @@ function assertUniqueSkillMaterializationKeys(
   skillIds: readonly SkillId[],
   skills: ReadonlyMap<SkillId, SkillCatalogItem>,
 ): void {
-  const byKey = new Map<string, SkillId[]>();
-  for (const skillId of skillIds) {
-    const skill = skills.get(skillId);
-    if (!skill) continue;
-    const key = skillMaterializationKey(skill);
-    byKey.set(key, [...(byKey.get(key) ?? []), skillId]);
-  }
-  const collisions = [...byKey.entries()].filter(
-    ([, collidingSkillIds]) => collidingSkillIds.length > 1,
+  const [collision] = skillMaterializationCollisions(
+    skillIds.flatMap((skillId) => {
+      const skill = skills.get(skillId);
+      return skill ? [skill] : [];
+    }),
   );
-  if (collisions.length === 0) return;
-  const [key, collidingSkillIds] = collisions[0];
+  if (!collision) return;
   throw new ApplicationError(
     'CONFLICT',
-    `Selected skills materialize to the same runtime directory "${key}": ${collidingSkillIds.map(String).sort().join(', ')}. Keep only one exact skill id.`,
+    formatSkillMaterializationCollision(collision),
   );
 }
 

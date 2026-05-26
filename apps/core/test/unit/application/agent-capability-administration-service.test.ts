@@ -116,7 +116,7 @@ describe('AgentCapabilityAdministrationService', () => {
         },
       }),
     ).rejects.toThrow(
-      'Selected skills materialize to the same runtime directory "one": skill:one, skill:two. Keep only one exact skill id.',
+      'Selected skills that materialize to the same runtime directory "one": skill:one, skill:two. Keep only one exact skill id.',
     );
   });
 

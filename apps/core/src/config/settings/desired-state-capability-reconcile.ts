@@ -8,9 +8,16 @@ import type { SettingsDesiredStateRepositories } from './desired-state-service.j
 import type { RuntimeConfiguredAgent } from './runtime-settings-types.js';
 import { ensureAgentToolCatalogItem } from '../../domain/tools/agent-tool-catalog-references.js';
 import type { AgentToolSource } from '../../domain/tools/tools.js';
-import { resolveConfiguredSkillReferences } from './desired-state-skill-references.js';
+import {
+  resolveConfiguredSkillReferences,
+  selectedSkillsFromResolvedSkillReferences,
+} from './desired-state-skill-references.js';
 import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
 import { isValidSemanticCapabilityId } from '../../shared/semantic-capability-ids.js';
+import {
+  formatSkillMaterializationCollision,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 import {
   cleanupGeneratedRuntimeCapabilities,
   semanticCapabilityDefinitionsById,
@@ -42,6 +49,15 @@ export async function replaceDesiredStateCapabilities(input: {
         .map((reference) => String(resolvedSkills.skills.get(reference)!.id)),
     ),
   ];
+  const [skillCollision] = skillMaterializationCollisions(
+    selectedSkillsFromResolvedSkillReferences(
+      input.agent.sources.skills.map((source) => source.id),
+      resolvedSkills,
+    ),
+  );
+  if (skillCollision) {
+    throw new Error(formatSkillMaterializationCollision(skillCollision));
+  }
   const skillActionDefinitions = skillActionDefinitionsForSkills([
     ...resolvedSkills.skills.values(),
   ]);

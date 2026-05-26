@@ -180,7 +180,11 @@ describe('configured agent tools', () => {
                 authPreflightCommand: '/usr/local/bin/acme auth status',
               },
             ],
-            protectedPaths: ['~/.config/acme'],
+            protectedPaths: [
+              '~/.config/acme/*',
+              '/Users/tester/.config/acme/credentials.json',
+              '/Users/tester/.config/acme/*.token',
+            ],
             networkHosts: ['api.acme.test'],
           },
         },
@@ -230,7 +234,11 @@ describe('configured agent tools', () => {
                 authPreflightCommand: '/usr/local/bin/acme auth status',
               },
             ],
-            protectedPaths: ['~/.config/acme'],
+            protectedPaths: [
+              '~/.config/acme/*',
+              '/Users/tester/.config/acme/credentials.json',
+              '/Users/tester/.config/acme/*.token',
+            ],
             networkHosts: ['api.acme.test'],
           },
         },
@@ -254,7 +262,7 @@ describe('configured agent tools', () => {
           sourceType: 'local_cli',
           auditLabel: 'Acme invoices read',
           commandRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],
-          credentialDirs: ['~/.config/acme'],
+          credentialDirs: ['~/.config/acme', '/Users/tester/.config/acme'],
           networkBindings: [
             {
               commandRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],

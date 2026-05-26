@@ -37,7 +37,14 @@ import {
   loadMcpServersById,
   memorySubjectForConfiguredBinding,
 } from './desired-state-service-helpers.js';
-import { resolveConfiguredSkillReferences } from './desired-state-skill-references.js';
+import {
+  resolveConfiguredSkillReferences,
+  selectedSkillsFromResolvedSkillReferences,
+} from './desired-state-skill-references.js';
+import {
+  formatSkillMaterializationCollisionFragment,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 export {
   agentIdForFolder,
   classifySettingsChanges,
@@ -477,6 +484,17 @@ export class SettingsDesiredStateService {
         agentId: agentIdForFolder(folder),
         references: agent.sources.skills.map((source) => source.id),
       });
+      const [skillCollision] = skillMaterializationCollisions(
+        selectedSkillsFromResolvedSkillReferences(
+          agent.sources.skills.map((source) => source.id),
+          resolvedSkills,
+        ),
+      );
+      if (skillCollision) {
+        errors.push(
+          `agents.${folder}.sources.skills contains ${formatSkillMaterializationCollisionFragment(skillCollision)}`,
+        );
+      }
       const skillActionDefinitionsForAgent = skillActionDefinitionsForSkills([
         ...resolvedSkills.skills.values(),
       ]);

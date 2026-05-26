@@ -140,7 +140,9 @@ function projectCapabilityRuntimeAccess(
       ...common,
       sourceType: 'local_cli',
       commandRules: localCliCommandRules,
-      credentialDirs: stringList(capability.protectedPaths),
+      credentialDirs: credentialDirectoryHintsFromProtectedPaths(
+        capability.protectedPaths,
+      ),
       networkBindings:
         hosts.length > 0 ? [{ commandRules: localCliCommandRules, hosts }] : [],
     });
@@ -215,6 +217,60 @@ function commandRulesFromTemplates(
 
 function normalizedHosts(values: readonly string[] | undefined): string[] {
   return stringList(values).map((host) => host.toLowerCase());
+}
+
+function credentialDirectoryHintsFromProtectedPaths(
+  values: readonly string[] | undefined,
+): string[] {
+  const out = new Set<string>();
+  for (const value of stringList(values)) {
+    const directory = credentialDirectoryHintFromProtectedPath(value);
+    if (directory) out.add(directory);
+  }
+  return [...out];
+}
+
+function credentialDirectoryHintFromProtectedPath(
+  protectedPath: string,
+): string | undefined {
+  let value = protectedPath.trim();
+  while (pathHintLeaf(value)?.includes('*')) {
+    const parent = parentPathHint(value);
+    if (!parent) return undefined;
+    value = parent;
+  }
+  value = stripTrailingPathSeparator(value);
+  if (!value || value.includes('*')) return undefined;
+  const leaf = pathHintLeaf(value);
+  if (!leaf) return undefined;
+  if (looksLikeFilePathHint(leaf)) {
+    return parentPathHint(value);
+  }
+  return value;
+}
+
+function stripTrailingPathSeparator(value: string): string {
+  return value.replace(/[/\\]+$/, '');
+}
+
+function pathHintLeaf(value: string): string | undefined {
+  return value.split(/[/\\]/).filter(Boolean).pop();
+}
+
+function looksLikeFilePathHint(leaf: string): boolean {
+  if (leaf.startsWith('.')) return false;
+  return /^[^/\\]+\.[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(leaf);
+}
+
+function parentPathHint(value: string): string | undefined {
+  const separatorIndex = Math.max(
+    value.lastIndexOf('/'),
+    value.lastIndexOf('\\'),
+  );
+  if (separatorIndex === 0 && value.startsWith('/')) return '/';
+  if (separatorIndex <= 0) return undefined;
+  const parent = stripTrailingPathSeparator(value.slice(0, separatorIndex));
+  return parent || undefined;
 }
 
 function stringList(values: readonly string[] | undefined): string[] {

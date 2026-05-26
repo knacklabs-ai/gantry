@@ -9,6 +9,23 @@ export interface ResolvedSkillReferences {
   errors: Map<string, string>;
 }
 
+export function selectedSkillsFromResolvedSkillReferences(
+  references: readonly string[],
+  resolved: ResolvedSkillReferences,
+): SkillCatalogItem[] {
+  const seen = new Set<string>();
+  const skills: SkillCatalogItem[] = [];
+  for (const reference of references) {
+    const skill = resolved.skills.get(reference);
+    if (!skill) continue;
+    const canonicalReference = canonicalSkillReference(skill);
+    if (seen.has(canonicalReference)) continue;
+    seen.add(canonicalReference);
+    skills.push(skill);
+  }
+  return skills;
+}
+
 export async function resolveConfiguredSkillReferences(input: {
   repository: SkillCatalogRepository;
   appId: AppId;
