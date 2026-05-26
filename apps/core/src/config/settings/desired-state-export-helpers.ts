@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import type { AgentMcpServerBinding } from '../../domain/mcp/mcp-servers.js';
-import type { AgentSkillBinding } from '../../domain/skills/skills.js';
+import type {
+  AgentSkillBinding,
+  SkillCatalogItem,
+} from '../../domain/skills/skills.js';
 import type {
   AgentToolBinding,
   AgentToolSource,
@@ -14,7 +17,10 @@ import type {
 } from './runtime-settings-types.js';
 import { displayToolReference } from '../../shared/agent-tool-references.js';
 import { semanticCapabilityFromToolCatalogItem } from '../../shared/semantic-capabilities.js';
-import { displaySkillReference } from './desired-state-skill-references.js';
+import {
+  cleanupGeneratedRuntimeCapabilities,
+  skillActionDefinitionsForSkills,
+} from './generated-runtime-capability-cleanup.js';
 
 export function activeCapabilities(
   toolBindings: AgentToolBinding[],
@@ -37,7 +43,8 @@ export function activeSources(
         const skillId = binding.skillId;
         const skill = skillCatalogById.get(skillId);
         return {
-          id: skill ? displaySkillReference(skill) : String(skillId),
+          ...(skill ? { name: skill.name } : {}),
+          id: String(skillId),
           version: 'approved',
         };
       }),
@@ -62,22 +69,28 @@ export function activeSources(
 export function readableActiveCapabilities(
   toolBindings: AgentToolBinding[],
   toolCatalogById: Map<unknown, { name: string; inputSchema?: unknown }>,
+  options: {
+    skillBindings?: AgentSkillBinding[];
+    skillCatalogById?: Map<unknown, SkillCatalogItem>;
+  } = {},
 ): RuntimeConfiguredAgentCapability[] {
-  return activeCapabilities(toolBindings).flatMap((capability, index) => {
-    const binding = toolBindings.filter((item) => item.status === 'active')[
-      index
-    ];
-    if (!binding) return [];
-    const tool = toolCatalogById.get(binding.toolId);
-    return tool
-      ? [
-          capabilityFromToolReference(
-            displayToolReference({ toolId: binding.toolId, tool }),
-            tool,
-          ),
-        ]
-      : [capability];
-  });
+  const rawCapabilities = toolBindings
+    .filter((item) => item.status === 'active')
+    .map((binding) => {
+      const tool = toolCatalogById.get(binding.toolId);
+      const reference = tool
+        ? displayToolReference({ toolId: binding.toolId, tool })
+        : String(binding.toolId).replace(/^tool:/, '');
+      return capabilityFromToolReference(reference, tool);
+    });
+  const activeSkills = (options.skillBindings ?? [])
+    .filter((binding) => binding.status === 'active')
+    .map((binding) => options.skillCatalogById?.get(binding.skillId))
+    .filter((skill): skill is SkillCatalogItem => Boolean(skill));
+  return cleanupGeneratedRuntimeCapabilities({
+    capabilities: rawCapabilities,
+    skillActionDefinitions: skillActionDefinitionsForSkills(activeSkills),
+  }).capabilities;
 }
 
 function capabilityFromToolBinding(

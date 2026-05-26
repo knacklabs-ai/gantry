@@ -73,6 +73,9 @@ export const configuredAllowedTools = parseConfiguredAllowedTools(
 export const selectedSkillIds = parseJsonStringArray(
   process.env.GANTRY_SELECTED_SKILLS_JSON,
 );
+export const selectedSkillDisplays = parseJsonStringArray(
+  process.env.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+);
 export const selectedMcpServerIds = parseJsonStringArray(
   process.env.GANTRY_SELECTED_MCP_SERVERS_JSON,
 );
@@ -133,6 +136,8 @@ function parseEnabledAdminMcpTools(
 
 export function capabilityStatusText(): string {
   const currentAdminTools = currentEnabledAdminMcpTools();
+  const selectedSkillStatusItems =
+    selectedSkillDisplays.length > 0 ? selectedSkillDisplays : selectedSkillIds;
   const availableToolNames = [...enabledGantryMcpTools].filter(
     (toolName) => !isAdminMcpToolName(toolName),
   );
@@ -175,11 +180,11 @@ export function capabilityStatusText(): string {
       .map((action) => `- available: ${action}`),
     '',
     'Installed skills ready for this agent:',
-    ...(selectedSkillIds.length > 0
-      ? selectedSkillIds
+    ...(selectedSkillStatusItems.length > 0
+      ? selectedSkillStatusItems
           .slice()
           .sort()
-          .map((skillId) => `- ready: ${skillId}`)
+          .map((skill) => `- ready: ${skill}`)
       : ['- none installed yet']),
     '',
     'Connected MCP services ready for this agent:',

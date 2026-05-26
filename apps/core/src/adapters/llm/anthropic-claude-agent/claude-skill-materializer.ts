@@ -79,7 +79,7 @@ export class ArtifactClaudeSkillSource implements SkillSource {
     const enabled = await this.skills.listEnabledSkillsForAgent(this.context);
     const items: ClaudeSkillSourceItem[] = [];
     for (const skill of enabled.filter(isSkillMaterializableLocally)) {
-      if (allowed && !allowed.has(skill.id) && !allowed.has(skill.name)) {
+      if (allowed && !allowed.has(skill.id)) {
         continue;
       }
       if (!skill.storage) continue;

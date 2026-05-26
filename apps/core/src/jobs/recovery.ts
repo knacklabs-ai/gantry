@@ -13,7 +13,7 @@ import {
 } from '../runtime/session-resume-runtime.js';
 import {
   resolveTurnSelectedMcpServerIds,
-  resolveTurnSelectedSkillIds,
+  resolveTurnSelectedSkillContext,
 } from '../runtime/group-run-context.js';
 import {
   DEFAULT_RUNTIME_EXECUTION_PROVIDER_ID,
@@ -340,26 +340,30 @@ async function runJobRecoveryAgentTurn(input: {
   const executionAgentId =
     turnContext?.agentId ??
     jobToolPolicy.agentIdForJobGroupScope(input.execution.group.folder);
-  const [toolPolicy, selectedSkillIds, credentialBroker, approvedSkillContext] =
-    await Promise.all([
-      jobToolPolicy.resolveJobToolPolicy({
-        job: input.job,
-        appId: executionAppId,
-        agentId: executionAgentId,
-        toolRepository: input.deps.getToolRepository?.(),
-        skillRepository: input.deps.getSkillRepository?.(),
-      }),
-      resolveTurnSelectedSkillIds(input.deps, {
-        appId: executionAppId,
-        agentId: executionAgentId,
-      }),
-      input.deps.getCredentialBroker?.() ?? Promise.resolve(undefined),
-      buildApprovedSkillContextBlock({
-        skillRepository: input.deps.getSkillRepository?.(),
-        skillArtifactStore: input.deps.getSkillArtifactStore?.(),
-        turnContext: turnContextForSkillContext(turnContext),
-      }),
-    ]);
+  const [
+    toolPolicy,
+    selectedSkillContext,
+    credentialBroker,
+    approvedSkillContext,
+  ] = await Promise.all([
+    jobToolPolicy.resolveJobToolPolicy({
+      job: input.job,
+      appId: executionAppId,
+      agentId: executionAgentId,
+      toolRepository: input.deps.getToolRepository?.(),
+      skillRepository: input.deps.getSkillRepository?.(),
+    }),
+    resolveTurnSelectedSkillContext(input.deps, {
+      appId: executionAppId,
+      agentId: executionAgentId,
+    }),
+    input.deps.getCredentialBroker?.() ?? Promise.resolve(undefined),
+    buildApprovedSkillContextBlock({
+      skillRepository: input.deps.getSkillRepository?.(),
+      skillArtifactStore: input.deps.getSkillArtifactStore?.(),
+      turnContext: turnContextForSkillContext(turnContext),
+    }),
+  ]);
   const selectedMcpServerIds = await resolveTurnSelectedMcpServerIds(
     input.deps,
     {
@@ -412,10 +416,9 @@ async function runJobRecoveryAgentTurn(input: {
       .filter((block): block is string => Boolean(block?.trim()))
       .join('\n\n'),
     allowedTools: toolPolicy.effectiveAllowedTools,
-    localCliCredentialAccess: toolPolicy.localCliCredentialAccess,
-    localCliCredentialPaths: toolPolicy.localCliCredentialPaths,
-    localCliNetworkHosts: toolPolicy.localCliNetworkHosts,
-    selectedSkillIds,
+    runtimeAccess: toolPolicy.runtimeAccess,
+    selectedSkillIds: selectedSkillContext.ids,
+    selectedSkillDisplays: selectedSkillContext.displays,
     selectedMcpServerIds,
     ...(turnContext?.externalSessionId
       ? { sessionId: turnContext.externalSessionId }

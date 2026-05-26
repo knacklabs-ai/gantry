@@ -8,9 +8,23 @@ import type { SettingsDesiredStateRepositories } from './desired-state-service.j
 import type { RuntimeConfiguredAgent } from './runtime-settings-types.js';
 import { ensureAgentToolCatalogItem } from '../../domain/tools/agent-tool-catalog-references.js';
 import type { AgentToolSource } from '../../domain/tools/tools.js';
-import { resolveConfiguredSkillReferences } from './desired-state-skill-references.js';
+import {
+  resolveConfiguredSkillReferences,
+  selectedSkillsFromResolvedSkillReferences,
+} from './desired-state-skill-references.js';
 import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
 import { isValidSemanticCapabilityId } from '../../shared/semantic-capability-ids.js';
+import {
+  formatSkillMaterializationCollision,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
+import {
+  cleanupGeneratedRuntimeCapabilities,
+  semanticCapabilityDefinitionsById,
+  settingsCapabilityIdToToolRule,
+  skillActionDefinitionsForSkills,
+} from './generated-runtime-capability-cleanup.js';
+import type { SemanticCapabilityDefinition } from '../../shared/semantic-capabilities.js';
 
 export async function replaceDesiredStateCapabilities(input: {
   appId: AppId;
@@ -35,8 +49,23 @@ export async function replaceDesiredStateCapabilities(input: {
         .map((reference) => String(resolvedSkills.skills.get(reference)!.id)),
     ),
   ];
+  const [skillCollision] = skillMaterializationCollisions(
+    selectedSkillsFromResolvedSkillReferences(
+      input.agent.sources.skills.map((source) => source.id),
+      resolvedSkills,
+    ),
+  );
+  if (skillCollision) {
+    throw new Error(formatSkillMaterializationCollision(skillCollision));
+  }
+  const skillActionDefinitions = skillActionDefinitionsForSkills([
+    ...resolvedSkills.skills.values(),
+  ]);
   const mcpVersionByServerId = await resolveConfiguredMcpSourceVersions(input);
-  const toolIds = await toolIdsForReplacement(input);
+  const toolIds = await toolIdsForReplacement({
+    ...input,
+    skillActionDefinitions,
+  });
   await input.repositories.agents.replaceAgentCapabilityBindings({
     appId: input.appId,
     agentId: input.agentId,
@@ -139,18 +168,25 @@ async function toolIdsForReplacement(input: {
   agent: RuntimeConfiguredAgent;
   repositories: SettingsDesiredStateRepositories;
   now: string;
+  skillActionDefinitions?: readonly SemanticCapabilityDefinition[];
 }): Promise<string[]> {
+  const cleanup = cleanupGeneratedRuntimeCapabilities({
+    capabilities: input.agent.capabilities,
+    skillActionDefinitions: input.skillActionDefinitions,
+  });
+  const semanticCapabilityDefinitions = semanticCapabilityDefinitionsById(
+    input.skillActionDefinitions ?? [],
+  );
   const ids = await Promise.all(
     [
-      ...new Set(
-        input.agent.capabilities.map(settingsCapabilityToToolReference),
-      ),
+      ...new Set(cleanup.capabilities.map(settingsCapabilityToToolReference)),
     ].map(async (reference) => {
       const tool = await ensureAgentToolCatalogItem({
         repository: input.repositories.tools,
         appId: input.appId,
         reference,
         now: input.now,
+        semanticCapabilityDefinitions,
       });
       return String(tool.id);
     }),
@@ -203,9 +239,10 @@ export function settingsCapabilityToToolReference(capability: {
   if (capability.id === 'browser.use') return 'Browser';
   if (
     !isValidSemanticCapabilityId(capability.id) &&
-    validateReadableAgentToolRule(capability.id).ok
+    validateReadableAgentToolRule(settingsCapabilityIdToToolRule(capability.id))
+      .ok
   ) {
-    return capability.id;
+    return settingsCapabilityIdToToolRule(capability.id);
   }
   return `capability:${capability.id}`;
 }

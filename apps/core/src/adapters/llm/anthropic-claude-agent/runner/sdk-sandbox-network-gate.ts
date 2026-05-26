@@ -4,14 +4,12 @@ import {
   SDK_SANDBOX_NETWORK_ACCESS_TOOL_NAME,
   isSdkSandboxNetworkAccessToolName,
 } from '../../../../shared/agent-tool-references.js';
-import {
-  bashExecutableName,
-  parseBashCommand,
-} from '../../../../shared/bash-command-parser.js';
+import { evaluateAutonomousToolUse } from '../../../../shared/tool-rule-matcher.js';
 import { log } from './logging.js';
 import { writeOutput } from './output.js';
 import { sandboxBlockedRuntimeEvents } from './sandbox-events.js';
 import type { AgentRunnerInput } from './types.js';
+import type { LocalCliNetworkBinding } from '../../../../shared/capability-runtime-access.js';
 
 export interface SdkSandboxNetworkGate {
   rememberGlobalApproval(principal: string, expiresAtMs: number): void;
@@ -67,7 +65,6 @@ const LOCAL_ONLY_SDK_TOOLS = new Set([
   'Grep',
   'TodoWrite',
 ]);
-const NETWORK_CLIENTS_WITH_URL_TARGETS = new Set(['curl', 'wget']);
 
 export function createSdkSandboxNetworkGate(
   agentInput: AgentRunnerInput,
@@ -195,7 +192,11 @@ export function createSdkSandboxNetworkGate(
       }
       const createdAtMs = nowMs();
       const inputHash = hashString(stableJson(input));
-      const approvedHostHashes = approvedToolInputHostHashes(toolName, input);
+      const approvedHostHashes = approvedToolInputHostHashes(
+        toolName,
+        input,
+        agentInput,
+      );
       const token: SdkSandboxNetworkApprovalToken = {
         principal: normalizedPrincipal,
         parentToolUseID,
@@ -358,67 +359,69 @@ function hashString(value: string): string {
 function approvedToolInputHostHashes(
   toolName: string,
   input: unknown,
+  agentInput: AgentRunnerInput,
 ): readonly string[] {
   const hosts = new Set<string>();
   if (toolName === 'Bash') {
-    collectApprovedBashTargetHosts(input, hosts);
+    collectApprovedLocalCliNetworkHosts(input, agentInput, hosts);
   }
   return [...hosts].sort().map(hashString);
 }
 
-function collectApprovedBashTargetHosts(
+function collectApprovedLocalCliNetworkHosts(
   input: unknown,
+  agentInput: AgentRunnerInput,
   hosts: Set<string>,
 ): void {
-  if (!input || typeof input !== 'object') return;
-  const record = input as Record<string, unknown>;
-  const command =
-    typeof record.command === 'string'
-      ? record.command
-      : typeof record.cmd === 'string'
-        ? record.cmd
-        : '';
-  if (!command.trim()) return;
-  const parsed = parseBashCommand(command);
-  if (!parsed.ok) return;
-  for (const leaf of parsed.leaves) {
-    const executable = bashExecutableName(leaf.argv[0] ?? '');
-    if (!NETWORK_CLIENTS_WITH_URL_TARGETS.has(executable)) continue;
-    for (const host of networkHostsFromNetworkClientArgv(leaf.argv)) {
-      hosts.add(host);
+  const bindings = readLocalCliNetworkBindings(agentInput);
+  if (bindings.length === 0) return;
+  for (const binding of bindings) {
+    const commandRules = normalizeStringList(binding.commandRules);
+    if (commandRules.length === 0) continue;
+    const evaluation = evaluateAutonomousToolUse({
+      rules: commandRules,
+      toolName: 'Bash',
+      toolInput: input,
+    });
+    if (!evaluation.allowed) continue;
+    for (const host of normalizeStringList(binding.hosts)) {
+      const normalized = normalizeNetworkHost(host);
+      if (normalized) hosts.add(normalized);
     }
   }
 }
 
-function networkHostsFromNetworkClientArgv(argv: readonly string[]): string[] {
-  const hosts = new Set<string>();
-  for (let index = 1; index < argv.length; index += 1) {
-    const arg = argv[index] ?? '';
-    if (arg === '--url') {
-      const host = hostFromHttpUrl(argv[index + 1] ?? '');
-      if (host) hosts.add(host);
-      index += 1;
-      continue;
+function readLocalCliNetworkBindings(
+  agentInput: AgentRunnerInput,
+): LocalCliNetworkBinding[] {
+  if (!Array.isArray(agentInput.runtimeAccess)) return [];
+  return agentInput.runtimeAccess.flatMap((entry): LocalCliNetworkBinding[] => {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      entry.sourceType !== 'local_cli' ||
+      !Array.isArray(entry.networkBindings)
+    ) {
+      return [];
     }
-    if (arg.startsWith('--url=')) {
-      const host = hostFromHttpUrl(arg.slice('--url='.length));
-      if (host) hosts.add(host);
-      continue;
-    }
-    const host = hostFromHttpUrl(arg);
-    if (host) hosts.add(host);
-  }
-  return [...hosts];
+    return entry.networkBindings.filter(
+      (binding): binding is LocalCliNetworkBinding =>
+        Boolean(binding && typeof binding === 'object') &&
+        Array.isArray(binding.commandRules) &&
+        Array.isArray(binding.hosts),
+    );
+  });
 }
 
-function hostFromHttpUrl(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (!/^https?:\/\//i.test(trimmed)) return undefined;
-  try {
-    return normalizeNetworkHost(new URL(trimmed).hostname);
-  } catch {
-    return undefined;
+function normalizeStringList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const out = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) out.add(trimmed);
   }
+  return [...out];
 }
 
 function normalizeNetworkHost(value: string): string | undefined {

@@ -511,6 +511,62 @@ describe('SkillDraftService', () => {
     expect(skills[0]?.name).toBe('agent-skill');
   });
 
+  it('replaces older active bindings that materialize to the same skill directory', async () => {
+    const { repo, service } = createService();
+    const first = await service.importDraft({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      name: 'LinkedIn Posting',
+      assets: [asset],
+    });
+    const second = await service.importDraft({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      name: 'linkedin-posting',
+      assets: [
+        {
+          ...asset,
+          content: Buffer.from('# Durable skill v2'),
+        },
+      ],
+    });
+    await service.approveDraft({
+      appId: 'app:one' as never,
+      skillId: first.id,
+    });
+    await service.approveDraft({
+      appId: 'app:one' as never,
+      skillId: second.id,
+    });
+
+    await service.bindSkillToAgent({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      skillId: first.id,
+      now: '2026-05-01T00:00:00.000Z',
+    });
+    await service.bindSkillToAgent({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      skillId: second.id,
+      now: '2026-05-02T00:00:00.000Z',
+    });
+
+    expect(repo.bindings.get(`agent:one:${first.id}`)).toMatchObject({
+      status: 'disabled',
+      updatedAt: '2026-05-02T00:00:00.000Z',
+    });
+    expect(repo.bindings.get(`agent:one:${second.id}`)).toMatchObject({
+      status: 'active',
+    });
+    await expect(
+      service.resolveLocalSkillsForAgent({
+        appId: 'app:one' as never,
+        agentId: 'agent:one' as never,
+      }),
+    ).resolves.toMatchObject([{ id: second.id }]);
+  });
+
   it('does not materialize rejected or disabled skills', async () => {
     const { service } = createService();
     const rejected = await service.importDraft({

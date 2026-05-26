@@ -122,6 +122,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
     type: 'object',
     required: ['id'],
     properties: {
+      name: { type: 'string' },
       id: { type: 'string' },
       version: { oneOf: [{ type: 'string' }, { type: 'number' }] },
     },

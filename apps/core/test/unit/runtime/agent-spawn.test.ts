@@ -345,6 +345,10 @@ const testExecutionAdapter: AgentExecutionAdapter = {
           : {}),
       },
       protectedFilesystemPaths: materialization.protectedFilesystemPaths,
+      protectedFilesystemDenyReadPaths:
+        materialization.protectedFilesystemDenyReadPaths,
+      protectedFilesystemDenyWritePaths:
+        materialization.protectedFilesystemDenyWritePaths,
       runtimeDetails: [`executionProvider=anthropic:claude-agent-sdk`],
       cleanup: materialization.cleanup,
     };
@@ -570,6 +574,30 @@ describe('agent-spawn timeout behavior', () => {
     mockMaterializeClaudeRuntime.mockReset();
     mockMaterializeClaudeRuntime.mockImplementation(async (input: any) => ({
       claudeConfigDir: `${input.groupDir}/.llm-runtime/claude`,
+      protectedFilesystemDenyReadPaths: [
+        `${input.groupDir}/.llm-runtime/claude/settings.json`,
+        input.runtimeSettingsPath,
+        `${input.groupDir}/.mcp.json`,
+        `${input.groupDir}/.claude/settings.json`,
+        `${input.groupDir}/.claude/skills`,
+        `${input.groupDir}/skills`,
+        `${input.packageRoot}/.claude/skills`,
+        `${input.packageRoot}/.codex/skills`,
+        `${input.packageRoot}/.agents/skills`,
+        ...(input.managedSkillArtifactRoots ?? []),
+      ],
+      protectedFilesystemDenyWritePaths: [
+        `${input.groupDir}/.llm-runtime/claude`,
+        input.runtimeSettingsPath,
+        `${input.groupDir}/.mcp.json`,
+        `${input.groupDir}/.claude/settings.json`,
+        `${input.groupDir}/.claude/skills`,
+        `${input.groupDir}/skills`,
+        `${input.packageRoot}/.claude/skills`,
+        `${input.packageRoot}/.codex/skills`,
+        `${input.packageRoot}/.agents/skills`,
+        ...(input.managedSkillArtifactRoots ?? []),
+      ],
       protectedFilesystemPaths: [
         `${input.groupDir}/.llm-runtime/claude`,
         input.runtimeSettingsPath,
@@ -1343,12 +1371,20 @@ describe('agent-spawn timeout behavior', () => {
           'capability:gog.sheets.get',
           'RunCommand(/opt/homebrew/bin/gog sheets get *)',
         ],
-        localCliCredentialAccess: true,
-        localCliCredentialPaths: [
-          '${XDG_CONFIG_HOME}/gog',
-          '~/.gog',
-          '%APPDATA%\\gogcli',
-          '${GANTRY_MISSING_CLI_CONFIG}/skip',
+        runtimeAccess: [
+          {
+            selectedCapabilityId: 'gog.sheets.get',
+            sourceType: 'local_cli',
+            auditLabel: 'Gog Sheets get',
+            commandRules: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
+            credentialDirs: [
+              '${XDG_CONFIG_HOME}/gog',
+              '~/.gog',
+              '%APPDATA%\\gogcli',
+              '${GANTRY_MISSING_CLI_CONFIG}/skip',
+            ],
+            networkBindings: [],
+          },
         ],
       },
       () => {},
@@ -1374,6 +1410,75 @@ describe('agent-spawn timeout behavior', () => {
       '/Users/tester/.gog',
       'C:\\Users\\tester\\AppData\\Roaming\\gogcli',
     ]);
+    const denyReadPaths = JSON.parse(
+      env.GANTRY_PROTECTED_FILESYSTEM_DENY_READ_PATHS_JSON,
+    ) as string[];
+    const denyWritePaths = JSON.parse(
+      env.GANTRY_PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_JSON,
+    ) as string[];
+    for (const credentialPath of [
+      '/Users/tester/.config/gog',
+      '/Users/tester/.gog',
+      'C:\\Users\\tester\\AppData\\Roaming\\gogcli',
+    ]) {
+      expect(denyReadPaths).not.toContain(credentialPath);
+    }
+    expect(denyWritePaths).toEqual(
+      expect.arrayContaining([
+        '/Users/tester/.config/gog',
+        '/Users/tester/.gog',
+        'C:\\Users\\tester\\AppData\\Roaming\\gogcli',
+      ]),
+    );
+  });
+
+  it('projects local CLI credential dirs from typed runtime access', async () => {
+    process.env.HOME = '/Users/tester';
+    process.env.XDG_CONFIG_HOME = '/Users/tester/.config';
+    const writeSpy = vi.spyOn(fakeProc.stdin, 'write');
+
+    const runtimeAccess = [
+      {
+        selectedCapabilityId: 'acme.invoices.read',
+        sourceType: 'local_cli' as const,
+        auditLabel: 'Acme invoices read',
+        commandRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],
+        credentialDirs: ['${XDG_CONFIG_HOME}/acme'],
+        networkBindings: [
+          {
+            commandRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],
+            hosts: ['api.acme.test'],
+          },
+        ],
+      },
+    ];
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        allowedTools: [
+          'capability:acme.invoices.read',
+          'RunCommand(/usr/local/bin/acme invoices read *)',
+        ],
+        runtimeAccess,
+      },
+      () => {},
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(JSON.parse(env.GANTRY_LOCAL_CLI_CREDENTIAL_DIRS_JSON)).toEqual([
+      '/Users/tester/.config/acme',
+    ]);
+    const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
+    expect(runnerInput.runtimeAccess).toEqual(runtimeAccess);
   });
 
   it('keeps credential identity env scoped out of reviewed user-defined CLI runs', async () => {
@@ -1389,8 +1494,16 @@ describe('agent-spawn timeout behavior', () => {
           'capability:acme.invoices.read',
           'RunCommand(/usr/local/bin/acme invoices read *)',
         ],
-        localCliCredentialAccess: true,
-        localCliCredentialPaths: ['~/.config/acme'],
+        runtimeAccess: [
+          {
+            selectedCapabilityId: 'acme.invoices.read',
+            sourceType: 'local_cli',
+            auditLabel: 'Acme invoices read',
+            commandRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],
+            credentialDirs: ['~/.config/acme'],
+            networkBindings: [],
+          },
+        ],
       },
       () => {},
     );
@@ -1762,7 +1875,7 @@ describe('agent-spawn timeout behavior', () => {
     );
   });
 
-  it('hands protected filesystem paths to the runner for SDK sandboxing', async () => {
+  it('hands split protected filesystem paths to the runner for SDK sandboxing', async () => {
     const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
@@ -1776,10 +1889,17 @@ describe('agent-spawn timeout behavior', () => {
     const protectedPaths = JSON.parse(
       env.GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON,
     ) as string[];
+    const denyReadPaths = JSON.parse(
+      env.GANTRY_PROTECTED_FILESYSTEM_DENY_READ_PATHS_JSON,
+    ) as string[];
+    const denyWritePaths = JSON.parse(
+      env.GANTRY_PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_JSON,
+    ) as string[];
+    const providerConfigDir = env.CLAUDE_CONFIG_DIR;
     expect(protectedPaths).toEqual(
       expect.arrayContaining([
         '/tmp/gantry-config/settings.yaml',
-        env.CLAUDE_CONFIG_DIR,
+        providerConfigDir,
         '/tmp/gantry-test-data/agents/test-group/.mcp.json',
         '/tmp/gantry-test-data/agents/test-group/.claude/settings.json',
         '/tmp/gantry-test-data/agents/test-group/.claude/skills',
@@ -1790,6 +1910,22 @@ describe('agent-spawn timeout behavior', () => {
         '/tmp/gantry-test-data/artifacts/skills',
       ]),
     );
+    expect(denyWritePaths).toEqual(protectedPaths);
+    expect(denyReadPaths).toEqual(
+      expect.arrayContaining([
+        '/tmp/gantry-config/settings.yaml',
+        `${providerConfigDir}/settings.json`,
+        '/tmp/gantry-test-data/agents/test-group/.mcp.json',
+        '/tmp/gantry-test-data/agents/test-group/.claude/settings.json',
+        '/tmp/gantry-test-data/agents/test-group/.claude/skills',
+        '/tmp/gantry-test-data/agents/test-group/skills',
+        '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.claude/skills',
+        '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.codex/skills',
+        '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.agents/skills',
+        '/tmp/gantry-test-data/artifacts/skills',
+      ]),
+    );
+    expect(denyReadPaths).not.toContain(providerConfigDir);
   });
 
   it('requests shared model runtime credentials for default agent runs', async () => {
@@ -2110,6 +2246,35 @@ describe('agent-spawn timeout behavior', () => {
         'LLM runtime materialization failed: prepare failed',
       ),
     });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('returns actionable copy when execution adapter cannot write generated runtime files', async () => {
+    const result = await spawnTestAgent(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'anthropic:claude-agent-sdk',
+          prepare: vi.fn(async () => {
+            throw new Error(
+              "EACCES: permission denied, mkdir '/tmp/gantry/agents/main/.llm-runtime/claude'",
+            );
+          }),
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining(
+        'LLM runtime materialization could not access Gantry-generated .llm-runtime files.',
+      ),
+    });
+    expect(result.error).toContain('readable/executable');
+    expect(result.error).not.toContain('LLM runtime materialization failed');
     expect(spawn).not.toHaveBeenCalled();
   });
 });

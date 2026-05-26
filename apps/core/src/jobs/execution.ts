@@ -22,7 +22,7 @@ import {
 } from '../runtime/session-resume-runtime.js';
 import {
   resolveTurnSelectedMcpServerIds,
-  resolveTurnSelectedSkillIds,
+  resolveTurnSelectedSkillContext,
 } from '../runtime/group-run-context.js';
 import {
   DEFAULT_RUNTIME_EXECUTION_PROVIDER_ID,
@@ -305,7 +305,7 @@ export async function runJob(
           const executionAgentId =
             turnContext?.agentId ??
             jobToolPolicy.agentIdForJobGroupScope(execution.group.folder);
-          const [toolPolicy, selectedSkillIds, credentialBroker] =
+          const [toolPolicy, selectedSkillContext, credentialBroker] =
             await Promise.all([
               jobToolPolicy.resolveJobToolPolicy({
                 job: currentJob,
@@ -314,7 +314,7 @@ export async function runJob(
                 toolRepository: deps.getToolRepository?.(),
                 skillRepository: deps.getSkillRepository?.(),
               }),
-              resolveTurnSelectedSkillIds(deps, {
+              resolveTurnSelectedSkillContext(deps, {
                 appId: executionAppId,
                 agentId: executionAgentId,
               }),
@@ -401,10 +401,9 @@ export async function runJob(
                 allowedTools: toolPolicy.effectiveAllowedTools,
                 toolAccessRequirements:
                   toolAccessRequirementPreflight.toolAccessRequirements,
-                localCliCredentialAccess: toolPolicy.localCliCredentialAccess,
-                localCliCredentialPaths: toolPolicy.localCliCredentialPaths,
-                localCliNetworkHosts: toolPolicy.localCliNetworkHosts,
-                selectedSkillIds,
+                runtimeAccess: toolPolicy.runtimeAccess,
+                selectedSkillIds: selectedSkillContext.ids,
+                selectedSkillDisplays: selectedSkillContext.displays,
                 selectedMcpServerIds,
               },
               (proc, runHandle) => {

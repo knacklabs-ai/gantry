@@ -1063,6 +1063,11 @@ describe('jobs/execution', () => {
         { skillId: 'skill:release', status: 'active' },
         { skillId: 'skill:draft', status: 'inactive' },
       ]),
+      getSkill: vi.fn(async (id: string) =>
+        id === 'skill:release'
+          ? { id, appId: 'default', name: 'release', status: 'approved' }
+          : null,
+      ),
     };
     const mcpServerRepository = {
       listAgentBindings: vi.fn(async () => [
@@ -1152,6 +1157,7 @@ describe('jobs/execution', () => {
       expect.anything(),
       expect.objectContaining({
         selectedSkillIds: ['skill:release'],
+        selectedSkillDisplays: ['release (skill:release)'],
         selectedMcpServerIds: ['mcp:github'],
       }),
       expect.any(Function),

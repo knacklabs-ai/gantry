@@ -116,7 +116,7 @@ export async function persistRequestPermissionRules(input: {
     requestId: input.requestId,
     actor: input.actor,
     conversationId: input.conversationId,
-    threadId: input.threadId,
+    // Thread/topic ids route setup prompts; persistent grants bind to the parent conversation.
     runId: input.runId,
     jobId: input.jobId,
     reason: input.reason,
@@ -307,6 +307,13 @@ export function semanticCapabilityDefinitionsForToolInput(
     }),
     protectedPaths: sanitizedStringList(
       Array.isArray(toolInput.protectedPaths) ? toolInput.protectedPaths : [],
+    ),
+    networkHosts: sanitizedStringList(
+      Array.isArray(toolInput.networkHosts)
+        ? toolInput.networkHosts
+        : Array.isArray(toolInput.network_hosts)
+          ? toolInput.network_hosts
+          : [],
     ),
     deniedEnvPatterns: sanitizedStringList(
       Array.isArray(toolInput.deniedEnvPatterns)

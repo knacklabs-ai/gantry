@@ -454,6 +454,7 @@ describe('Claude Agent SDK boundary integration', () => {
         GANTRY_ADMIN_MCP_TOOLS_JSON: '[]',
         GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
         GANTRY_SELECTED_SKILLS_JSON: '[]',
+        GANTRY_SELECTED_SKILL_DISPLAYS_JSON: '[]',
         GANTRY_SELECTED_MCP_SERVERS_JSON: '[]',
         GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedGantryMcpToolNames([]),

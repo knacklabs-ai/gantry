@@ -20,6 +20,10 @@ import type {
   SkillId,
 } from '../../domain/skills/skills.js';
 import { isSkillUsableForBinding } from '../../domain/skills/skills.js';
+import {
+  formatSkillMaterializationCollision,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 import type {
   AgentToolBinding,
   AgentToolSource,
@@ -37,9 +41,20 @@ import {
   PERMISSION_GATED_NATIVE_TOOLS,
   type AgentToolAccessView,
 } from '../../shared/tool-access-view.js';
-import { semanticCapabilityFromToolCatalogItem } from '../../shared/semantic-capabilities.js';
 import { adminMcpToolNameFromFullName } from '../../shared/admin-mcp-tools.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import {
+  canonicalToolReferenceForView,
+  capabilityFromCanonicalToolReference,
+  skillActionDefinitionsForAgent,
+  skillActionDefinitionsForBindings,
+} from './agent-capability-skill-actions.js';
+import {
+  readableSkillSources,
+  readableToolSources,
+  type ReadableSkillSource,
+  type ReadableToolSource,
+} from './agent-source-views.js';
 
 export interface CapabilityCatalogView {
   tools: ToolCatalogItem[];
@@ -50,9 +65,9 @@ export interface CapabilityCatalogView {
 export interface AgentCapabilitiesView {
   agentId: AgentId;
   sources: {
-    skills: Array<{ id: string; version: string }>;
+    skills: ReadableSkillSource[];
     mcpServers: Array<{ id: string; version: string }>;
-    tools: Array<{ id: string; kind: string; version?: string }>;
+    tools: ReadableToolSource[];
   };
   capabilities: Array<{ id: string; version: string }>;
   toolAccess: AgentToolAccessView;
@@ -113,11 +128,17 @@ export class AgentCapabilityAdministrationService {
     const activeToolBindings = toolBindings.filter(
       (binding) => binding.status === 'active',
     );
-    const selectedTools = await Promise.all(
-      activeToolBindings.map((binding) =>
-        this.repositories.tools.getTool(binding.toolId),
+    const [selectedTools, configuredSkillSources] = await Promise.all([
+      Promise.all(
+        activeToolBindings.map((binding) =>
+          this.repositories.tools.getTool(binding.toolId),
+        ),
       ),
-    );
+      readableSkillSources({
+        skillBindings,
+        repository: this.repositories.skills,
+      }),
+    ]);
     const configuredToolEntries = activeToolBindings.flatMap(
       (binding, index) => {
         const tool = selectedTools[index];
@@ -135,19 +156,22 @@ export class AgentCapabilityAdministrationService {
           : [];
       },
     );
-    const configuredTools = configuredToolEntries.map(
-      (entry) => entry.reference,
+    const semanticCapabilityDefinitions =
+      await skillActionDefinitionsForBindings({
+        appId: input.appId,
+        skillBindings,
+        skillRepository: this.repositories.skills,
+      });
+    const configuredTools = configuredToolEntries.flatMap((entry) =>
+      canonicalToolReferenceForView(entry.reference, {
+        semanticCapabilityDefinitions,
+      }),
     );
     const enabledAdminTools = selectedAdminToolNames(configuredTools);
     return {
       agentId: input.agentId,
       sources: {
-        skills: skillBindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: String(binding.skillId),
-            version: 'approved',
-          })),
+        skills: configuredSkillSources,
         mcpServers: mcpBindings
           .filter((binding) => binding.status === 'active')
           .map((binding) => ({
@@ -156,8 +180,12 @@ export class AgentCapabilityAdministrationService {
           })),
         tools: readableToolSources(toolSources),
       },
-      capabilities: configuredToolEntries.map((entry) =>
-        toolReferenceToCapability(entry.reference, entry.tool),
+      capabilities: configuredToolEntries.flatMap((entry) =>
+        capabilityFromCanonicalToolReference(
+          entry.reference,
+          entry.tool,
+          semanticCapabilityDefinitions,
+        ),
       ),
       toolAccess: buildAgentToolAccessView({
         configuredTools,
@@ -191,9 +219,17 @@ export class AgentCapabilityAdministrationService {
       );
     }
     const now = this.clock.now();
+    const semanticCapabilityDefinitions = await skillActionDefinitionsForAgent({
+      appId: input.appId,
+      agentId: input.agentId,
+      skillRepository: this.repositories.skills,
+    });
     const selectedToolReferences = unique(
-      input.capabilities.map((capability) =>
-        capabilitySelectionToToolReference(capability.id),
+      input.capabilities.flatMap((capability) =>
+        canonicalToolReferenceForView(
+          capabilitySelectionToToolReference(capability.id),
+          { semanticCapabilityDefinitions },
+        ),
       ),
     );
 
@@ -204,6 +240,7 @@ export class AgentCapabilityAdministrationService {
           appId: input.appId,
           reference,
           now,
+          semanticCapabilityDefinitions,
         });
         return tool.id;
       }),
@@ -264,6 +301,10 @@ export class AgentCapabilityAdministrationService {
       updatedAt: now,
     });
 
+    const configuredSkillSources = await readableSkillSources({
+      skillBindings,
+      repository: this.repositories.skills,
+    });
     const configuredToolEntries = capabilityToolIds.map((toolId) => {
       const tool = toolMap.get(toolId);
       if (!tool) {
@@ -271,18 +312,15 @@ export class AgentCapabilityAdministrationService {
       }
       return { reference: displayToolReference({ toolId, tool }), tool };
     });
-    const configuredTools = configuredToolEntries.map(
-      (entry) => entry.reference,
+    const configuredTools = configuredToolEntries.flatMap((entry) =>
+      canonicalToolReferenceForView(entry.reference, {
+        semanticCapabilityDefinitions,
+      }),
     );
     return {
       agentId: input.agentId,
       sources: {
-        skills: skillBindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: String(binding.skillId),
-            version: 'approved',
-          })),
+        skills: configuredSkillSources,
         mcpServers: mcpBindings
           .filter((binding) => binding.status === 'active')
           .map((binding) => ({
@@ -291,8 +329,12 @@ export class AgentCapabilityAdministrationService {
           })),
         tools: readableToolSources(toolSources),
       },
-      capabilities: configuredToolEntries.map((entry) =>
-        toolReferenceToCapability(entry.reference, entry.tool),
+      capabilities: configuredToolEntries.flatMap((entry) =>
+        capabilityFromCanonicalToolReference(
+          entry.reference,
+          entry.tool,
+          semanticCapabilityDefinitions,
+        ),
       ),
       toolAccess: buildAgentToolAccessView({
         configuredTools,
@@ -350,10 +392,11 @@ export class AgentCapabilityAdministrationService {
       agentId: input.agentId,
       now,
     });
-    const [, mcpMap] = await Promise.all([
+    const [skillMap, mcpMap] = await Promise.all([
       this.requireApprovedSkills(input.appId, sourceSkillIds),
       this.requireApprovedMcpServers(input.appId, sourceMcpServerIds),
     ]);
+    assertUniqueSkillMaterializationKeys(sourceSkillIds, skillMap);
     const [toolBindings, skillBindings, mcpBindings] = await Promise.all([
       this.repositories.tools.listAgentToolBindings(input),
       this.repositories.skills.listAgentSkillBindings(input),
@@ -585,34 +628,28 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function assertUniqueSkillMaterializationKeys(
+  skillIds: readonly SkillId[],
+  skills: ReadonlyMap<SkillId, SkillCatalogItem>,
+): void {
+  const [collision] = skillMaterializationCollisions(
+    skillIds.flatMap((skillId) => {
+      const skill = skills.get(skillId);
+      return skill ? [skill] : [];
+    }),
+  );
+  if (!collision) return;
+  throw new ApplicationError(
+    'CONFLICT',
+    formatSkillMaterializationCollision(collision),
+  );
+}
+
 function capabilitySelectionToToolReference(capabilityId: string): string {
   const id = capabilityId.trim();
   if (id === 'browser.use') return 'Browser';
   if (id.startsWith('RunCommand(')) return id;
   return `capability:${id}`;
-}
-
-function toolReferenceToCapability(
-  reference: string,
-  tool?: ToolCatalogItem,
-): {
-  id: string;
-  version: string;
-} {
-  if (reference === 'Browser') return { id: 'browser.use', version: 'builtin' };
-  if (reference.startsWith('capability:')) {
-    const semanticCapability = tool
-      ? semanticCapabilityFromToolCatalogItem({
-          name: tool.name,
-          inputSchema: tool.inputSchema,
-        })
-      : undefined;
-    return {
-      id: reference.slice('capability:'.length),
-      version: semanticCapability?.version ?? 'builtin',
-    };
-  }
-  return { id: reference, version: 'builtin' };
 }
 
 function selectedAdminToolNames(tools: readonly string[]): Set<string> {
@@ -622,20 +659,6 @@ function selectedAdminToolNames(tools: readonly string[]): Set<string> {
     if (name) names.add(name);
   }
   return names;
-}
-
-function readableToolSources(
-  sources: readonly AgentToolSource[],
-): AgentCapabilitiesView['sources']['tools'] {
-  return sources
-    .filter((source) => source.status === 'active')
-    .map((source) => ({
-      id: source.sourceId,
-      kind: source.kind,
-      ...(source.version && source.version !== source.kind
-        ? { version: source.version }
-        : {}),
-    }));
 }
 
 function uniqueToolSources(

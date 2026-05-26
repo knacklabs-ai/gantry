@@ -194,7 +194,13 @@ Content-Type: application/json
 
 {
   "sources": {
-    "skills": [{ "id": "linkedin-posting", "version": 3 }],
+    "skills": [
+      {
+        "name": "linkedin-posting",
+        "id": "skill:266c421f-a072-44f7-9cb0-43c52eba8ad9",
+        "version": "approved"
+      }
+    ],
     "mcpServers": [{ "id": "linkedin", "version": 1 }],
     "tools": [{ "id": "browser", "kind": "builtin" }]
   }
@@ -222,7 +228,13 @@ and projected runtime access:
 {
   "agentId": "agent:main_agent",
   "sources": {
-    "skills": [{ "id": "linkedin-posting", "version": 3 }],
+    "skills": [
+      {
+        "name": "linkedin-posting",
+        "id": "skill:266c421f-a072-44f7-9cb0-43c52eba8ad9",
+        "version": "approved"
+      }
+    ],
     "mcpServers": [{ "id": "linkedin", "version": 1 }],
     "tools": [{ "id": "browser", "kind": "builtin" }]
   },
@@ -281,6 +293,11 @@ only. Draft, rejected, and disabled skills are not materialized into per-run
 `CLAUDE_CONFIG_DIR/skills`. Skill name and description are parsed from
 `SKILL.md`; upload, catalog, URL, and CLI-command installs all become the same
 reviewed local skill package after approval.
+
+Agent source responses include a readable skill `name` when the catalog row is
+available, but `id` is the only durable selection authority. Source replacement
+requests may include `name` for round-trip readability; the service ignores it
+for authorization and returns the current catalog name on the next read/export.
 
 ## MCP Servers
 

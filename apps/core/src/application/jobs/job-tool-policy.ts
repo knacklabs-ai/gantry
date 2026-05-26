@@ -8,13 +8,12 @@ import {
   resolveAgentToolRuntimePolicy,
   resolveAgentToolRuntimeRules,
 } from '../agents/agent-tool-runtime-rules.js';
+import type { CapabilityRuntimeAccess } from '../../shared/capability-runtime-access.js';
 
 export interface JobToolPolicyResolution {
   inheritedTools: string[];
   effectiveAllowedTools: string[];
-  localCliCredentialAccess: boolean;
-  localCliCredentialPaths: string[];
-  localCliNetworkHosts: string[];
+  runtimeAccess: CapabilityRuntimeAccess[];
 }
 
 export function agentIdForJobGroupScope(groupScope: string): string {
@@ -39,16 +38,12 @@ export async function resolveJobToolPolicy(input: {
         })
       : {
           rules: [],
-          localCliCredentialAccess: false,
-          localCliCredentialPaths: [],
-          localCliNetworkHosts: [],
+          runtimeAccess: [],
         };
   return {
     inheritedTools: inheritedTools.rules,
     effectiveAllowedTools: mergeUnique(inheritedTools.rules),
-    localCliCredentialAccess: inheritedTools.localCliCredentialAccess,
-    localCliCredentialPaths: inheritedTools.localCliCredentialPaths,
-    localCliNetworkHosts: inheritedTools.localCliNetworkHosts,
+    runtimeAccess: inheritedTools.runtimeAccess,
   };
 }
 
@@ -76,16 +71,12 @@ export async function resolveAgentToolBindingPolicy(input: {
   agentId: string;
 }): Promise<{
   rules: string[];
-  localCliCredentialAccess: boolean;
-  localCliCredentialPaths: string[];
-  localCliNetworkHosts: string[];
+  runtimeAccess: CapabilityRuntimeAccess[];
 }> {
   if (!input.repository) {
     return {
       rules: [],
-      localCliCredentialAccess: false,
-      localCliCredentialPaths: [],
-      localCliNetworkHosts: [],
+      runtimeAccess: [],
     };
   }
   const policy = await resolveAgentToolRuntimePolicy({
@@ -98,9 +89,7 @@ export async function resolveAgentToolBindingPolicy(input: {
   });
   return {
     rules: policy.rules,
-    localCliCredentialAccess: policy.localCliCredentialAccess,
-    localCliCredentialPaths: policy.localCliCredentialPaths,
-    localCliNetworkHosts: policy.localCliNetworkHosts,
+    runtimeAccess: policy.runtimeAccess,
   };
 }
 

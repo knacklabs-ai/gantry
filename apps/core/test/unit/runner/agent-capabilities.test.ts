@@ -154,6 +154,7 @@ describe('agent capability composition', () => {
         GANTRY_ADMIN_MCP_TOOLS_JSON: '[]',
         GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
         GANTRY_SELECTED_SKILLS_JSON: '[]',
+        GANTRY_SELECTED_SKILL_DISPLAYS_JSON: '[]',
         GANTRY_SELECTED_MCP_SERVERS_JSON: '[]',
         GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedGantryMcpToolNames([]),
@@ -544,6 +545,9 @@ describe('agent capability composition', () => {
     expect(profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILLS_JSON).toBe(
       JSON.stringify([]),
     );
+    expect(
+      profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+    ).toBe(JSON.stringify([]));
   });
 
   it('projects selected skills and MCP servers into capability_status environment', () => {
@@ -552,12 +556,16 @@ describe('agent capability composition', () => {
       chatJid: 'tg:sales',
       groupFolder: 'sales',
       selectedSkillIds: ['skill:release'],
+      selectedSkillDisplays: ['release (skill:release)'],
       selectedMcpServerIds: ['mcp:github'],
     });
 
     expect(profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILLS_JSON).toBe(
       JSON.stringify(['skill:release']),
     );
+    expect(
+      profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+    ).toBe(JSON.stringify(['release (skill:release)']));
     expect(
       profile.mcpServers.gantry?.env?.GANTRY_SELECTED_MCP_SERVERS_JSON,
     ).toBe(JSON.stringify(['mcp:github']));

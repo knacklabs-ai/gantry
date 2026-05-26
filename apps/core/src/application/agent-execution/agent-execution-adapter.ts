@@ -35,6 +35,7 @@ export interface AgentExecutionRunInput {
   browserProfileName?: string;
   allowedTools?: string[];
   selectedSkillIds?: string[];
+  selectedSkillDisplays?: string[];
   selectedMcpServerIds?: string[];
   isScheduledJob?: boolean;
   jobId?: string;
@@ -108,6 +109,8 @@ export interface PreparedAgentExecution {
   };
   env: NodeJS.ProcessEnv;
   protectedFilesystemPaths: string[];
+  protectedFilesystemDenyReadPaths?: string[];
+  protectedFilesystemDenyWritePaths?: string[];
   runtimeDetails: string[];
   cleanup: () => void;
 }

@@ -115,15 +115,7 @@ export class AnthropicClaudeAgentExecutionAdapter implements AgentExecutionAdapt
       ? new Set(input.input.selectedSkillIds)
       : undefined;
     const skillActionDefinitions = (materialization.materializedSkills ?? [])
-      .filter(
-        (skill) =>
-          !selectedSkillIds ||
-          selectedSkillIds.has(skill.id) ||
-          selectedSkillIds.has(skill.name) ||
-          (skill.materializedName
-            ? selectedSkillIds.has(skill.materializedName)
-            : false),
-      )
+      .filter((skill) => !selectedSkillIds || selectedSkillIds.has(skill.id))
       .flatMap((skill) =>
         (skill.actionPermissions ?? []).map((action) => {
           if (!skill.version || !skill.contentHash) return undefined;
@@ -156,6 +148,10 @@ export class AnthropicClaudeAgentExecutionAdapter implements AgentExecutionAdapt
       runnerInputPatch,
       env,
       protectedFilesystemPaths: materialization.protectedFilesystemPaths,
+      protectedFilesystemDenyReadPaths:
+        materialization.protectedFilesystemDenyReadPaths,
+      protectedFilesystemDenyWritePaths:
+        materialization.protectedFilesystemDenyWritePaths,
       runtimeDetails: [
         `executionProvider=${this.id}`,
         `runner=${runnerPath}`,

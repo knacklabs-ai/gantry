@@ -16,6 +16,7 @@ import type {
 } from '../shared/model-catalog.js';
 import type { AgentPersona } from '../shared/agent-persona.js';
 import type { YoloModeSettings } from '../shared/yolo-mode-policy.js';
+import type { CapabilityRuntimeAccess } from '../shared/capability-runtime-access.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
 
@@ -36,6 +37,7 @@ export interface AgentInput {
   allowedTools?: string[];
   toolAccessRequirements?: string[];
   selectedSkillIds?: string[];
+  selectedSkillDisplays?: string[];
   selectedMcpServerIds?: string[];
   isScheduledJob?: boolean;
   jobId?: string;
@@ -47,9 +49,7 @@ export interface AgentInput {
   thinking?: ThinkingOverride;
   memoryContextBlock?: string;
   yoloMode?: YoloModeSettings;
-  localCliCredentialAccess?: boolean;
-  localCliCredentialPaths?: string[];
-  localCliNetworkHosts?: string[];
+  runtimeAccess?: CapabilityRuntimeAccess[];
 }
 
 export interface AgentOutput {

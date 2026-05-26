@@ -356,6 +356,12 @@ describe('control OpenAPI documentation', () => {
     );
     expect(
       spec.components.schemas.AgentSourceSelection.properties,
+    ).toMatchObject({
+      name: { type: 'string' },
+      id: { type: 'string' },
+    });
+    expect(
+      spec.components.schemas.AgentSourceSelection.properties,
     ).not.toHaveProperty('kind');
     expect(
       spec.components.schemas.JobCreateRequest.properties.capabilityRequirements

@@ -65,15 +65,18 @@ function parseConfiguredAgentSourceRef(
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'id' && key !== 'version' && key !== 'kind') {
+    if (key !== 'name' && key !== 'id' && key !== 'version' && key !== 'kind') {
       throw new Error(
-        `${pathPrefix}.${key} is not supported. Configure id, version, or kind.`,
+        `${pathPrefix}.${key} is not supported. Configure name, id, version, or kind.`,
       );
     }
   }
   const source: RuntimeConfiguredAgentSourceRef = {
     id: parseStringValue(map.id, `${pathPrefix}.id`),
   };
+  if (map.name !== undefined) {
+    source.name = parseStringValue(map.name, `${pathPrefix}.name`);
+  }
   if (map.version !== undefined || options.requireVersion) {
     source.version = parseVersionValue(map.version, `${pathPrefix}.version`);
   }
