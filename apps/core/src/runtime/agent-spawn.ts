@@ -340,15 +340,6 @@ export async function spawnAgent(
 
   const hostRuntime = prepareHostRuntimeContext(group);
   ensureGroupIpcLayout(hostRuntime.groupIpcDir);
-  const hostCredentials = await getHostRuntimeCredentialEnv(
-    agentIdentifier,
-    options?.credentialBroker,
-    {
-      purpose: 'model_runtime',
-      runContext: input,
-      modelRouteId: effectiveModelEntry?.modelRoute.id,
-    },
-  );
   let executionAdapter: NonNullable<RunAgentOptions['executionAdapter']>;
   try {
     executionAdapter = resolveAgentExecutionAdapter({
@@ -371,6 +362,15 @@ export async function spawnAgent(
         'No LLM execution adapter configured. Runtime bootstrap must provide an AgentExecutionAdapterRegistry.',
     };
   }
+  const hostCredentials = await getHostRuntimeCredentialEnv(
+    agentIdentifier,
+    options?.credentialBroker,
+    {
+      purpose: 'model_runtime',
+      runContext: input,
+      modelRouteId: effectiveModelEntry?.modelRoute.id,
+    },
+  );
   let preparedExecution: Awaited<ReturnType<typeof executionAdapter.prepare>>;
   try {
     preparedExecution = await executionAdapter.prepare({
@@ -393,6 +393,12 @@ export async function spawnAgent(
       options,
     });
   } catch (err) {
+    await hostCredentials.revoke?.().catch((revokeErr) => {
+      logger.warn(
+        { err: revokeErr },
+        'Failed to revoke model gateway token after LLM runtime materialization failure',
+      );
+    });
     const errorText = err instanceof Error ? err.message : String(err);
     const generatedRuntimeError = formatGeneratedRuntimePathPermissionError({
       runnerLabel: 'LLM runtime materialization',

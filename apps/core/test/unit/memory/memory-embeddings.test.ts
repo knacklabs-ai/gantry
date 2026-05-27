@@ -268,6 +268,39 @@ describe('OpenAIEmbeddingClient', () => {
       );
     });
 
+    it('uses one brokered gateway connection and revokes it after use', async () => {
+      const vectors = [[0.1, 0.2, 0.3]];
+      const fetchSpy = mockFetchOk(vectors.map((v) => ({ embedding: v })));
+      const revoke = vi.fn(async () => undefined);
+      const resolveConnection = vi.fn(async () => ({
+        apiKey: 'gtw_openai_once',
+        baseUrl: 'http://127.0.0.1:8123/openai',
+        revoke,
+      }));
+
+      const client = new OpenAIEmbeddingClient(
+        null,
+        'text-embedding-test',
+        undefined,
+        'https://api.openai.com',
+        resolveConnection,
+      );
+      const result = await client.embedMany(['hello']);
+
+      expect(result).toEqual(vectors);
+      expect(resolveConnection).toHaveBeenCalledOnce();
+      expect(revoke).toHaveBeenCalledOnce();
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8123/openai/v1/embeddings',
+        expect.objectContaining({
+          headers: {
+            Authorization: 'Bearer gtw_openai_once',
+            'Content-Type': 'application/json',
+          },
+        }),
+      );
+    });
+
     it('throws on non-ok HTTP response', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue({
         ok: false,

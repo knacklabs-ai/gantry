@@ -16,8 +16,10 @@ import {
 import {
   getModelProviderDefinition,
   normalizeModelCredentialPayload,
-  singleSecretPayload,
+  normalizePartialModelCredentialPayload,
+  resolveModelCredentialMode,
   type ModelCredentialPayload,
+  type ModelProviderDefinition,
 } from '../../shared/model-provider-registry.js';
 
 type ModelCredentialAuditPublisher = (
@@ -50,17 +52,22 @@ export class ModelCredentialService {
       return {
         providerId,
         label: getModelProviderDefinition(providerId)?.label ?? providerId,
+        role: providerRole(getModelProviderDefinition(providerId)),
         configured: health === 'ready',
+        authMode: credential?.authMode ?? null,
         status: credential?.status ?? ('disabled' as ModelCredentialStatus),
         health,
         fingerprint: credential?.fingerprint ?? null,
         fieldFingerprints: credential?.fieldFingerprints ?? [],
         schemaVersion:
           credential?.schemaVersion ??
-          getModelProviderDefinition(providerId)?.credentialSchema.version ??
+          getModelProviderDefinition(providerId)?.credentialModes[0]?.version ??
           1,
         configuredFields:
           credential?.fieldFingerprints.map((item) => item.field) ?? [],
+        credentialModes: credentialModeMetadata(
+          getModelProviderDefinition(providerId),
+        ),
         supportedWorkloads:
           getModelProviderDefinition(providerId)?.supportedWorkloads ?? [],
         updatedAt: credential?.updatedAt ?? null,
@@ -71,20 +78,29 @@ export class ModelCredentialService {
   async set(input: {
     appId: AppId;
     providerId: string;
+    authMode?: string;
     payload: unknown;
     actor?: string;
   }) {
     const providerId = normalizeModelCredentialProvider(input.providerId);
+    const provider = getModelProviderDefinition(providerId);
+    if (!provider) throw new Error(`Unsupported model provider: ${providerId}`);
+    const mode = resolveModelCredentialMode(provider, input.authMode);
     const payload = normalizeModelCredentialPayload({
       providerId,
+      authMode: mode.id,
       payload: input.payload,
     });
-    const provider = getModelProviderDefinition(providerId);
-    const schemaVersion = provider?.credentialSchema.version ?? 1;
-    const fieldFingerprints = fingerprintCredentialFields(providerId, payload);
+    const schemaVersion = mode.version;
+    const fieldFingerprints = fingerprintCredentialFields(
+      providerId,
+      mode.id,
+      payload,
+    );
     const metadata = await this.credentials.upsertModelCredential({
       appId: input.appId,
       providerId,
+      authMode: mode.id,
       schemaVersion,
       payload,
       fingerprint: fingerprintCredentialPayload(payload),
@@ -97,6 +113,7 @@ export class ModelCredentialService {
       eventType: RUNTIME_EVENT_TYPES.CREDENTIAL_MODEL_UPDATED,
       payload: {
         providerId: metadata.providerId,
+        authMode: metadata.authMode,
         status: metadata.status,
         fingerprint: metadata.fingerprint,
         fieldFingerprints: metadata.fieldFingerprints,
@@ -107,21 +124,65 @@ export class ModelCredentialService {
     return metadata;
   }
 
-  async setSingleSecret(input: {
+  async rotate(input: {
     appId: AppId;
     providerId: string;
-    value: string;
+    payload: unknown;
     actor?: string;
   }) {
-    return this.set({
+    const providerId = normalizeModelCredentialProvider(input.providerId);
+    const existing = await this.credentials.getModelCredential({
       appId: input.appId,
-      providerId: input.providerId,
-      payload: singleSecretPayload({
-        providerId: input.providerId,
-        value: input.value,
-      }),
+      providerId,
+    });
+    if (!existing) {
+      throw new Error(`No ${providerId} model credential is configured.`);
+    }
+    if (existing.status !== 'active') {
+      throw new Error(`Cannot rotate disabled ${providerId} model credential.`);
+    }
+    const partial = normalizePartialModelCredentialPayload({
+      providerId,
+      authMode: existing.authMode,
+      payload: input.payload,
+    });
+    const payload = normalizeModelCredentialPayload({
+      providerId,
+      authMode: existing.authMode,
+      payload: { ...existing.payload, ...partial },
+    });
+    const provider = getModelProviderDefinition(providerId);
+    if (!provider) throw new Error(`Unsupported model provider: ${providerId}`);
+    const mode = resolveModelCredentialMode(provider, existing.authMode);
+    const metadata = await this.credentials.upsertModelCredential({
+      appId: input.appId,
+      providerId,
+      authMode: mode.id,
+      schemaVersion: mode.version,
+      payload,
+      fingerprint: fingerprintCredentialPayload(payload),
+      fieldFingerprints: fingerprintCredentialFields(
+        providerId,
+        mode.id,
+        payload,
+      ),
       actor: input.actor,
     });
+    await this.publishAudit({
+      appId: input.appId,
+      actor: input.actor ?? 'model-credential-service',
+      eventType: RUNTIME_EVENT_TYPES.CREDENTIAL_MODEL_UPDATED,
+      payload: {
+        providerId: metadata.providerId,
+        authMode: metadata.authMode,
+        status: metadata.status,
+        fingerprint: metadata.fingerprint,
+        fieldFingerprints: metadata.fieldFingerprints,
+        schemaVersion: metadata.schemaVersion,
+        updatedAt: metadata.updatedAt,
+      },
+    });
+    return metadata;
   }
 
   async disable(input: { appId: AppId; providerId: string; actor?: string }) {
@@ -138,6 +199,7 @@ export class ModelCredentialService {
         eventType: RUNTIME_EVENT_TYPES.CREDENTIAL_MODEL_DISABLED,
         payload: {
           providerId: metadata.providerId,
+          authMode: metadata.authMode,
           status: metadata.status,
           fingerprint: metadata.fingerprint,
           fieldFingerprints: metadata.fieldFingerprints,
@@ -156,17 +218,6 @@ export class ModelCredentialService {
     const credential = await this.credentials.getModelCredential(input);
     if (!credential || credential.status !== 'active') return null;
     return credential;
-  }
-
-  async getActiveSecret(input: {
-    appId: AppId;
-    providerId: ModelCredentialProvider;
-  }): Promise<string | null> {
-    const credential = await this.getActiveCredential(input);
-    if (!credential) return null;
-    const provider = getModelProviderDefinition(input.providerId);
-    const field = provider?.credentialSchema.fields.find((item) => item.secret);
-    return field ? (credential.payload[field.name] ?? null) : null;
   }
 
   private async publishAudit(input: RuntimeEventPublishInput): Promise<void> {
@@ -188,13 +239,38 @@ export function fingerprintCredentialPayload(
 
 function fingerprintCredentialFields(
   providerId: ModelCredentialProvider,
+  authMode: string,
   payload: ModelCredentialPayload,
 ): ModelCredentialFieldFingerprint[] {
   const provider = getModelProviderDefinition(providerId);
-  return (provider?.credentialSchema.fields ?? [])
-    .filter((field) => field.secret && payload[field.name])
+  const mode = provider ? resolveModelCredentialMode(provider, authMode) : null;
+  return (mode?.fields ?? [])
+    .filter((field) => payload[field.name])
     .map((field) => ({
       field: field.name,
       fingerprint: fingerprintCredential(payload[field.name]!),
     }));
+}
+
+function providerRole(provider: ModelProviderDefinition | undefined): string {
+  if (!provider) return 'provider';
+  if (provider.modelRoute) return 'model_route';
+  if (provider.embeddingProvider) return 'embedding_provider';
+  return 'provider';
+}
+
+function credentialModeMetadata(provider: ModelProviderDefinition | undefined) {
+  return (provider?.credentialModes ?? []).map((mode) => ({
+    id: mode.id,
+    label: mode.label,
+    helpText: mode.helpText,
+    schemaVersion: mode.version,
+    gatewayAuthStrategy: mode.gatewayAuth.strategy,
+    fields: mode.fields.map((field) => ({
+      name: field.name,
+      label: field.label,
+      secret: field.secret,
+      required: field.required,
+    })),
+  }));
 }

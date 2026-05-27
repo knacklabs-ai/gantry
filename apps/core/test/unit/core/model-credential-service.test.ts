@@ -12,6 +12,10 @@ import type {
   ModelCredentialProvider,
 } from '@core/domain/model-credentials/model-credentials.js';
 import type { ModelCredentialRepository } from '@core/domain/ports/repositories.js';
+import {
+  getModelProviderDefinition,
+  type ModelCredentialModeDefinition,
+} from '@core/shared/model-provider-registry.js';
 
 const appId = 'default' as AppId;
 
@@ -36,6 +40,7 @@ class InMemoryModelCredentialRepository implements ModelCredentialRepository {
   async upsertModelCredential(input: {
     appId: ModelCredentialMetadata['appId'];
     providerId: ModelCredentialProvider;
+    authMode: string;
     schemaVersion: number;
     payload: Record<string, string>;
     fingerprint: string;
@@ -50,6 +55,7 @@ class InMemoryModelCredentialRepository implements ModelCredentialRepository {
       id: `model-credential:${key}` as never,
       appId: input.appId,
       providerId: input.providerId,
+      authMode: input.authMode,
       status: 'active',
       schemaVersion: input.schemaVersion,
       payload: input.payload,
@@ -104,6 +110,7 @@ describe('ModelCredentialService', () => {
 
     expect(created).toMatchObject({
       providerId: 'anthropic',
+      authMode: 'api_key',
       status: 'active',
       fingerprint: fingerprintCredentialPayload({ apiKey: 'sk-ant-test' }),
       fieldFingerprints: [
@@ -111,15 +118,29 @@ describe('ModelCredentialService', () => {
       ],
     });
     expect(
-      await service.getActiveSecret({ appId, providerId: 'anthropic' }),
-    ).toBe('sk-ant-test');
+      await service.getActiveCredential({ appId, providerId: 'anthropic' }),
+    ).toMatchObject({ payload: { apiKey: 'sk-ant-test' } });
 
     const listed = await service.list({ appId });
     expect(listed.find((row) => row.providerId === 'anthropic')).toMatchObject({
       configured: true,
+      authMode: 'api_key',
       status: 'active',
       health: 'ready',
       fingerprint: created.fingerprint,
+      credentialModes: [
+        expect.objectContaining({
+          id: 'api_key',
+          gatewayAuthStrategy: 'header',
+          fields: [
+            expect.objectContaining({
+              name: 'apiKey',
+              secret: true,
+              required: true,
+            }),
+          ],
+        }),
+      ],
     });
     expect(listed.find((row) => row.providerId === 'openrouter')).toMatchObject(
       {
@@ -144,7 +165,7 @@ describe('ModelCredentialService', () => {
 
     await service.disable({ appId, providerId: 'anthropic', actor: 'owner' });
     expect(
-      await service.getActiveSecret({ appId, providerId: 'anthropic' }),
+      await service.getActiveCredential({ appId, providerId: 'anthropic' }),
     ).toBeNull();
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -175,6 +196,141 @@ describe('ModelCredentialService', () => {
         providerId: 'anthropic',
         payload: { apiKey: '   ' },
       }),
-    ).rejects.toThrow('Credential field apiKey is required for anthropic.');
+    ).rejects.toThrow(
+      'Credential field apiKey is required for anthropic api_key.',
+    );
+  });
+
+  it('rotates only supplied fields in the existing auth mode', async () => {
+    const service = new ModelCredentialService(
+      new InMemoryModelCredentialRepository(),
+    );
+    await service.set({
+      appId,
+      providerId: 'anthropic',
+      payload: { apiKey: 'sk-ant-old' },
+    });
+
+    const rotated = await service.rotate({
+      appId,
+      providerId: 'anthropic',
+      payload: { apiKey: 'sk-ant-new' },
+      actor: 'owner',
+    });
+
+    expect(rotated).toMatchObject({
+      providerId: 'anthropic',
+      authMode: 'api_key',
+      status: 'active',
+      fieldFingerprints: [
+        { field: 'apiKey', fingerprint: fingerprintCredential('sk-ant-new') },
+      ],
+    });
+    await expect(
+      service.rotate({
+        appId,
+        providerId: 'anthropic',
+        payload: {},
+      }),
+    ).rejects.toThrow('Credential payload must include at least one field.');
+    await expect(
+      service.rotate({
+        appId,
+        providerId: 'anthropic',
+        payload: { bogus: 'value' },
+      }),
+    ).rejects.toThrow(
+      'Credential field bogus is not supported for anthropic api_key.',
+    );
+  });
+
+  it('keeps omitted structured fields during partial rotation', async () => {
+    const provider = getModelProviderDefinition('anthropic')!;
+    const originalModes = provider.credentialModes;
+    const structuredMode: ModelCredentialModeDefinition = {
+      ...originalModes[0]!,
+      fields: [
+        ...originalModes[0]!.fields,
+        {
+          name: 'endpoint',
+          label: 'Anthropic endpoint',
+          secret: false,
+          required: true,
+        },
+      ],
+    };
+    (
+      provider as { credentialModes: readonly ModelCredentialModeDefinition[] }
+    ).credentialModes = [structuredMode];
+    try {
+      const service = new ModelCredentialService(
+        new InMemoryModelCredentialRepository(),
+      );
+      await service.set({
+        appId,
+        providerId: 'anthropic',
+        payload: {
+          apiKey: 'sk-ant-old',
+          endpoint: 'https://api.anthropic.com',
+        },
+      });
+
+      const rotated = await service.rotate({
+        appId,
+        providerId: 'anthropic',
+        payload: { apiKey: 'sk-ant-new' },
+      });
+      const active = await service.getActiveCredential({
+        appId,
+        providerId: 'anthropic',
+      });
+      const listed = await service.list({ appId });
+
+      expect(active?.payload).toEqual({
+        apiKey: 'sk-ant-new',
+        endpoint: 'https://api.anthropic.com',
+      });
+      expect(
+        rotated.fieldFingerprints.map((item) => item.field).sort(),
+      ).toEqual(['apiKey', 'endpoint']);
+      expect(
+        listed.find((row) => row.providerId === 'anthropic')?.configuredFields,
+      ).toEqual(['apiKey', 'endpoint']);
+    } finally {
+      (
+        provider as {
+          credentialModes: readonly ModelCredentialModeDefinition[];
+        }
+      ).credentialModes = originalModes;
+    }
+  });
+
+  it('rejects rotation for missing or disabled credentials', async () => {
+    const service = new ModelCredentialService(
+      new InMemoryModelCredentialRepository(),
+    );
+
+    await expect(
+      service.rotate({
+        appId,
+        providerId: 'anthropic',
+        payload: { apiKey: 'sk-ant-new' },
+      }),
+    ).rejects.toThrow('No anthropic model credential is configured.');
+
+    await service.set({
+      appId,
+      providerId: 'anthropic',
+      payload: { apiKey: 'sk-ant-old' },
+    });
+    await service.disable({ appId, providerId: 'anthropic' });
+
+    await expect(
+      service.rotate({
+        appId,
+        providerId: 'anthropic',
+        payload: { apiKey: 'sk-ant-new' },
+      }),
+    ).rejects.toThrow('Cannot rotate disabled anthropic model credential.');
   });
 });

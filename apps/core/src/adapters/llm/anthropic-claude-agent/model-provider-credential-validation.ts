@@ -50,9 +50,13 @@ function isLoopbackGatewayUrl(value?: string): boolean {
   if (!value) return false;
   try {
     const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
     return (
       url.protocol === 'http:' &&
-      (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+      (hostname === '127.0.0.1' ||
+        hostname === 'localhost' ||
+        hostname === '::1' ||
+        hostname === '[::1]')
     );
   } catch {
     return false;

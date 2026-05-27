@@ -50,7 +50,17 @@ export async function handleCredentialRoutes(
     return true;
   }
 
-  const providerId = pathname.split('/').pop() || '';
+  const parts = pathname.split('/').filter(Boolean);
+  if (
+    parts.length !== 4 ||
+    parts[0] !== 'v1' ||
+    parts[1] !== 'credentials' ||
+    parts[2] !== 'models'
+  ) {
+    sendError(res, 404, 'NOT_FOUND', 'Model credential route not found.');
+    return true;
+  }
+  const providerId = parts[3] || '';
   let normalizedProvider: ReturnType<typeof normalizeModelCredentialProvider>;
   try {
     normalizedProvider = normalizeModelCredentialProvider(providerId);
@@ -76,6 +86,20 @@ export async function handleCredentialRoutes(
       return true;
     }
     const payload = (rawBody as { payload?: unknown }).payload;
+    const authMode = (rawBody as { authMode?: unknown }).authMode;
+    const unknown = unknownKeys(rawBody as Record<string, unknown>, [
+      'authMode',
+      'payload',
+    ]);
+    if (unknown.length > 0) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        `Unsupported request field(s): ${unknown.join(', ')}.`,
+      );
+      return true;
+    }
     if (
       typeof payload !== 'object' ||
       payload === null ||
@@ -84,43 +108,142 @@ export async function handleCredentialRoutes(
       sendError(res, 400, 'INVALID_REQUEST', 'payload is required.');
       return true;
     }
-    const metadata = await modelCredentialService().set({
-      appId,
-      providerId: normalizedProvider,
-      payload,
-      actor: `control-api:${auth.kid}`,
-    });
-    sendJson(res, 200, {
-      providerId: metadata.providerId,
-      status: metadata.status,
-      health: 'ready',
-      fingerprint: metadata.fingerprint,
-      fieldFingerprints: metadata.fieldFingerprints,
-      schemaVersion: metadata.schemaVersion,
-      updatedAt: metadata.updatedAt,
-    });
+    if (
+      authMode !== undefined &&
+      (typeof authMode !== 'string' || !authMode.trim())
+    ) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        'authMode must be a non-empty string.',
+      );
+      return true;
+    }
+    try {
+      const service = modelCredentialService();
+      await service.set({
+        appId,
+        providerId: normalizedProvider,
+        ...(authMode ? { authMode: authMode.trim() } : {}),
+        payload,
+        actor: `control-api:${auth.kid}`,
+      });
+      sendJson(
+        res,
+        200,
+        await redactedProviderStatus(service, appId, normalizedProvider),
+      );
+    } catch (error) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        error instanceof Error ? error.message : 'Invalid credential request.',
+      );
+    }
+    return true;
+  }
+
+  if (req.method === 'PATCH') {
+    const rawBody = await readJson(req);
+    if (
+      typeof rawBody !== 'object' ||
+      rawBody === null ||
+      Array.isArray(rawBody)
+    ) {
+      sendError(res, 400, 'INVALID_REQUEST', 'Request body must be JSON.');
+      return true;
+    }
+    const unknown = unknownKeys(rawBody as Record<string, unknown>, [
+      'authMode',
+      'payload',
+    ]);
+    if (unknown.length > 0) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        `Unsupported request field(s): ${unknown.join(', ')}.`,
+      );
+      return true;
+    }
+    if (Object.hasOwn(rawBody, 'authMode')) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        'PATCH cannot change credential authMode. Use PUT to replace the credential.',
+      );
+      return true;
+    }
+    const payload = (rawBody as { payload?: unknown }).payload;
+    try {
+      const service = modelCredentialService();
+      await service.rotate({
+        appId,
+        providerId: normalizedProvider,
+        payload,
+        actor: `control-api:${auth.kid}`,
+      });
+      sendJson(
+        res,
+        200,
+        await redactedProviderStatus(service, appId, normalizedProvider),
+      );
+    } catch (error) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        error instanceof Error ? error.message : 'Invalid credential request.',
+      );
+    }
     return true;
   }
 
   if (req.method === 'DELETE') {
-    const metadata = await modelCredentialService().disable({
+    const service = modelCredentialService();
+    await service.disable({
       appId,
       providerId: normalizedProvider,
       actor: `control-api:${auth.kid}`,
     });
-    sendJson(res, 200, {
-      providerId: normalizedProvider,
-      status: metadata?.status ?? 'disabled',
-      health: 'disabled',
-      fingerprint: metadata?.fingerprint ?? null,
-      fieldFingerprints: metadata?.fieldFingerprints ?? [],
-      schemaVersion: metadata?.schemaVersion ?? null,
-      updatedAt: metadata?.updatedAt ?? null,
-    });
+    sendJson(
+      res,
+      200,
+      await redactedProviderStatus(service, appId, normalizedProvider),
+    );
     return true;
   }
 
-  res.setHeader('Allow', 'PUT, DELETE');
+  res.setHeader('Allow', 'PUT, PATCH, DELETE');
   sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
   return true;
+}
+
+function unknownKeys(
+  raw: Record<string, unknown>,
+  allowed: readonly string[],
+): string[] {
+  const allowedSet = new Set(allowed);
+  return Object.keys(raw)
+    .filter((key) => !allowedSet.has(key))
+    .sort();
+}
+
+async function redactedProviderStatus(
+  service: ModelCredentialService,
+  appId: AppId,
+  providerId: ReturnType<typeof normalizeModelCredentialProvider>,
+) {
+  const row = (await service.list({ appId })).find(
+    (item) => item.providerId === providerId,
+  );
+  if (!row) {
+    throw new Error(
+      `Model credential provider ${providerId} is not supported.`,
+    );
+  }
+  return row;
 }

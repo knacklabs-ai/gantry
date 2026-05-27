@@ -13,15 +13,28 @@ export interface ModelCredentialFieldDefinition {
   required: boolean;
 }
 
-export interface ModelProviderCredentialSchema {
-  version: number;
-  fields: readonly ModelCredentialFieldDefinition[];
-}
+export type ModelGatewayAuthStrategy =
+  | 'bearer'
+  | 'header'
+  | 'aws_bedrock_api_key'
+  | 'aws_sigv4'
+  | 'aws_sdk_default_chain'
+  | 'azure_api_key'
+  | 'azure_entra_default_credential';
 
 export interface ModelGatewayAuthDefinition {
-  type: 'bearer' | 'header';
-  field: string;
+  strategy: ModelGatewayAuthStrategy;
+  field?: string;
   headerName?: string;
+}
+
+export interface ModelCredentialModeDefinition {
+  id: string;
+  label: string;
+  helpText: string;
+  version: number;
+  fields: readonly ModelCredentialFieldDefinition[];
+  gatewayAuth: ModelGatewayAuthDefinition;
 }
 
 export interface ModelGatewaySdkProjectionDefinition {
@@ -37,7 +50,6 @@ export interface ModelGatewayDefinition {
   upstreamOrigin: string;
   upstreamPathPrefix: string;
   stripRequestHeaders: readonly string[];
-  auth: ModelGatewayAuthDefinition;
   sdkProjection: ModelGatewaySdkProjectionDefinition;
 }
 
@@ -91,7 +103,7 @@ export interface ModelProviderDefinition {
   embeddingProvider: boolean;
   responseFamily: ModelResponseFamily;
   supportedWorkloads: readonly ModelWorkload[];
-  credentialSchema: ModelProviderCredentialSchema;
+  credentialModes: readonly ModelCredentialModeDefinition[];
   gateway: ModelGatewayDefinition;
   cacheSupport: ModelProviderCacheSupport;
   executionProviderIds: readonly ModelExecutionProviderId[];
@@ -121,27 +133,32 @@ export const MODEL_PROVIDER_DEFINITIONS = [
       'memory_dreaming',
       'memory_consolidation',
     ],
-    credentialSchema: {
-      version: 1,
-      fields: [
-        {
-          name: 'apiKey',
-          label: 'Anthropic API key',
-          secret: true,
-          required: true,
+    credentialModes: [
+      {
+        id: 'api_key',
+        label: 'API key',
+        helpText: 'Use an Anthropic account key for direct Anthropic access.',
+        version: 1,
+        fields: [
+          {
+            name: 'apiKey',
+            label: 'Anthropic key',
+            secret: true,
+            required: true,
+          },
+        ],
+        gatewayAuth: {
+          strategy: 'header',
+          field: 'apiKey',
+          headerName: 'x-api-key',
         },
-      ],
-    },
+      },
+    ],
     gateway: {
       pathSegment: 'anthropic',
       upstreamOrigin: 'https://api.anthropic.com',
       upstreamPathPrefix: '',
       stripRequestHeaders: MODEL_GATEWAY_STRIP_REQUEST_HEADERS,
-      auth: {
-        type: 'header',
-        field: 'apiKey',
-        headerName: 'x-api-key',
-      },
       sdkProjection: {
         baseUrlEnv: 'ANTHROPIC_BASE_URL',
         tokenEnv: 'ANTHROPIC_API_KEY',
@@ -191,26 +208,31 @@ export const MODEL_PROVIDER_DEFINITIONS = [
       'memory_dreaming',
       'memory_consolidation',
     ],
-    credentialSchema: {
-      version: 1,
-      fields: [
-        {
-          name: 'apiKey',
-          label: 'OpenRouter API key',
-          secret: true,
-          required: true,
+    credentialModes: [
+      {
+        id: 'api_key',
+        label: 'API key',
+        helpText: 'Use an OpenRouter key for Anthropic-compatible routing.',
+        version: 1,
+        fields: [
+          {
+            name: 'apiKey',
+            label: 'OpenRouter key',
+            secret: true,
+            required: true,
+          },
+        ],
+        gatewayAuth: {
+          strategy: 'bearer',
+          field: 'apiKey',
         },
-      ],
-    },
+      },
+    ],
     gateway: {
       pathSegment: 'openrouter',
       upstreamOrigin: 'https://openrouter.ai',
       upstreamPathPrefix: '/api',
       stripRequestHeaders: MODEL_GATEWAY_STRIP_REQUEST_HEADERS,
-      auth: {
-        type: 'bearer',
-        field: 'apiKey',
-      },
       sdkProjection: {
         baseUrlEnv: 'ANTHROPIC_BASE_URL',
         tokenEnv: 'ANTHROPIC_API_KEY',
@@ -260,26 +282,31 @@ export const MODEL_PROVIDER_DEFINITIONS = [
     embeddingProvider: true,
     responseFamily: 'openai',
     supportedWorkloads: [],
-    credentialSchema: {
-      version: 1,
-      fields: [
-        {
-          name: 'apiKey',
-          label: 'OpenAI API key',
-          secret: true,
-          required: true,
+    credentialModes: [
+      {
+        id: 'api_key',
+        label: 'API key',
+        helpText: 'Use an OpenAI account key for OpenAI API access.',
+        version: 1,
+        fields: [
+          {
+            name: 'apiKey',
+            label: 'OpenAI key',
+            secret: true,
+            required: true,
+          },
+        ],
+        gatewayAuth: {
+          strategy: 'bearer',
+          field: 'apiKey',
         },
-      ],
-    },
+      },
+    ],
     gateway: {
       pathSegment: 'openai',
       upstreamOrigin: 'https://api.openai.com',
       upstreamPathPrefix: '',
       stripRequestHeaders: MODEL_GATEWAY_STRIP_REQUEST_HEADERS,
-      auth: {
-        type: 'bearer',
-        field: 'apiKey',
-      },
       sdkProjection: {
         baseUrlEnv: 'OPENAI_BASE_URL',
         tokenEnv: 'OPENAI_API_KEY',
@@ -394,6 +421,7 @@ export function normalizeModelRouteProviderId(
 
 export function normalizeModelCredentialPayload(input: {
   providerId: string;
+  authMode?: string;
   payload: unknown;
 }): ModelCredentialPayload {
   const provider = getModelProviderDefinition(
@@ -402,6 +430,7 @@ export function normalizeModelCredentialPayload(input: {
   if (!provider) {
     throw new Error(`Unsupported model provider: ${input.providerId}`);
   }
+  const mode = resolveModelCredentialMode(provider, input.authMode);
   if (
     !input.payload ||
     typeof input.payload !== 'object' ||
@@ -410,18 +439,16 @@ export function normalizeModelCredentialPayload(input: {
     throw new Error(`Credential payload is required for ${provider.id}.`);
   }
   const rawPayload = input.payload as Record<string, unknown>;
-  const allowed = new Set(
-    provider.credentialSchema.fields.map((field) => field.name),
-  );
+  const allowed = new Set(mode.fields.map((field) => field.name));
   for (const key of Object.keys(rawPayload)) {
     if (!allowed.has(key)) {
       throw new Error(
-        `Credential field ${key} is not supported for ${provider.id}.`,
+        `Credential field ${key} is not supported for ${provider.id} ${mode.id}.`,
       );
     }
   }
   const payload: ModelCredentialPayload = {};
-  for (const field of provider.credentialSchema.fields) {
+  for (const field of mode.fields) {
     const value = rawPayload[field.name];
     if (typeof value === 'string' && value.trim()) {
       payload[field.name] = value.trim();
@@ -429,28 +456,73 @@ export function normalizeModelCredentialPayload(input: {
     }
     if (field.required) {
       throw new Error(
-        `Credential field ${field.name} is required for ${provider.id}.`,
+        `Credential field ${field.name} is required for ${provider.id} ${mode.id}.`,
       );
     }
   }
   return payload;
 }
 
-export function singleSecretPayload(input: {
+export function normalizePartialModelCredentialPayload(input: {
   providerId: string;
-  value: string;
+  authMode: string;
+  payload: unknown;
 }): ModelCredentialPayload {
   const provider = getModelProviderDefinition(
     normalizeModelProviderId(input.providerId),
   );
-  const field = provider?.credentialSchema.fields.find((item) => item.secret);
-  if (!provider || !field) {
-    throw new Error(`Model provider ${input.providerId} has no secret field.`);
+  if (!provider) {
+    throw new Error(`Unsupported model provider: ${input.providerId}`);
   }
-  return normalizeModelCredentialPayload({
-    providerId: provider.id,
-    payload: { [field.name]: input.value },
-  });
+  const mode = resolveModelCredentialMode(provider, input.authMode);
+  if (
+    !input.payload ||
+    typeof input.payload !== 'object' ||
+    Array.isArray(input.payload)
+  ) {
+    throw new Error(`Credential payload is required for ${provider.id}.`);
+  }
+  const rawPayload = input.payload as Record<string, unknown>;
+  const keys = Object.keys(rawPayload);
+  if (keys.length === 0) {
+    throw new Error(`Credential payload must include at least one field.`);
+  }
+  const allowed = new Set(mode.fields.map((field) => field.name));
+  const payload: ModelCredentialPayload = {};
+  for (const key of keys) {
+    if (!allowed.has(key)) {
+      throw new Error(
+        `Credential field ${key} is not supported for ${provider.id} ${mode.id}.`,
+      );
+    }
+    const value = rawPayload[key];
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`Credential field ${key} must be a non-empty string.`);
+    }
+    payload[key] = value.trim();
+  }
+  return payload;
+}
+
+export function resolveModelCredentialMode(
+  provider: ModelProviderDefinition,
+  authMode?: string,
+): ModelCredentialModeDefinition {
+  if (authMode?.trim()) {
+    const normalized = authMode.trim();
+    const mode = provider.credentialModes.find(
+      (item) => item.id === normalized,
+    );
+    if (!mode) {
+      throw new Error(
+        `Credential auth mode ${normalized} is not supported for ${provider.id}.`,
+      );
+    }
+    return mode;
+  }
+  if (provider.credentialModes.length === 1)
+    return provider.credentialModes[0]!;
+  throw new Error(`Credential auth mode is required for ${provider.id}.`);
 }
 
 function indexProviderDefinitionsById(

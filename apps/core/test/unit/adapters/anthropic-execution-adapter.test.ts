@@ -210,6 +210,31 @@ describe('AnthropicClaudeAgentExecutionAdapter', () => {
     ).resolves.toBeDefined();
   });
 
+  it('allows IPv6 loopback Gantry gateway projections', async () => {
+    const adapter = new AnthropicClaudeAgentExecutionAdapter();
+
+    await expect(
+      adapter.prepare(
+        prepareInput({
+          effectiveModelEntry: {
+            ...catalogEntry('sonnet'),
+            displayName: 'Sonnet',
+            runnerModel: 'claude-sonnet-4-5',
+          },
+          modelCredentialProjection: {
+            env: Object.fromEntries([
+              [anthropicBaseUrlKey(), 'http://[::1]:4567/anthropic'],
+              [['ANTHROPIC', 'API_KEY'].join('_'), 'gtw_test'],
+            ]),
+            credentialProviders: {},
+            brokerProfile: 'gantry',
+            brokerApplied: true,
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
+  });
+
   it('rejects non-loopback gateway credentials for provider models', async () => {
     const adapter = new AnthropicClaudeAgentExecutionAdapter();
 

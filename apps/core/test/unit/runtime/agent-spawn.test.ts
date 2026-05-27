@@ -249,9 +249,13 @@ function isLoopbackGatewayUrl(value?: string): boolean {
   if (!value) return false;
   try {
     const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
     return (
       url.protocol === 'http:' &&
-      (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+      (hostname === '127.0.0.1' ||
+        hostname === 'localhost' ||
+        hostname === '::1' ||
+        hostname === '[::1]')
     );
   } catch {
     return false;
@@ -2283,10 +2287,23 @@ describe('agent-spawn timeout behavior', () => {
       status: 'error',
       error: expect.stringContaining('Unsupported model execution provider'),
     });
+    expect(getHostRuntimeCredentialEnv).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
   });
 
   it('returns error when execution adapter prepare rejects', async () => {
+    const revoke = vi.fn(async () => undefined);
+    vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
+      env: {
+        [['ANTHROPIC', 'BASE_URL'].join('_')]:
+          'http://127.0.0.1:4567/anthropic',
+        [['ANTHROPIC', 'API_KEY'].join('_')]: 'gtw_prepare_failure',
+      },
+      credentialProviders: {},
+      brokerApplied: true,
+      brokerProfile: 'gantry',
+      revoke,
+    });
     const result = await spawnTestAgent(
       testGroup,
       testInput,
@@ -2308,6 +2325,7 @@ describe('agent-spawn timeout behavior', () => {
         'LLM runtime materialization failed: prepare failed',
       ),
     });
+    expect(revoke).toHaveBeenCalledOnce();
     expect(spawn).not.toHaveBeenCalled();
   });
 

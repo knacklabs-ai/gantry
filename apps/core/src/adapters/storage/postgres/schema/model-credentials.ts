@@ -17,6 +17,7 @@ export const modelCredentialsPostgres = pgTable(
       .notNull()
       .references(() => appsPostgres.id, { onDelete: 'cascade' }),
     providerId: text('provider_id').notNull(),
+    authMode: text('auth_mode').notNull(),
     schemaVersion: integer('schema_version').notNull(),
     payloadEncrypted: text('payload_encrypted').notNull(),
     fingerprint: text('fingerprint').notNull(),

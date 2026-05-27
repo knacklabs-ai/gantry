@@ -70,6 +70,7 @@ export class PostgresModelCredentialRepository implements ModelCredentialReposit
   async upsertModelCredential(input: {
     appId: ModelCredentialMetadata['appId'];
     providerId: ModelCredentialProvider;
+    authMode: string;
     schemaVersion: number;
     payload: ModelCredentialPayload;
     fingerprint: string;
@@ -91,6 +92,7 @@ export class PostgresModelCredentialRepository implements ModelCredentialReposit
         id,
         appId: input.appId,
         providerId,
+        authMode: input.authMode,
         schemaVersion: input.schemaVersion,
         payloadEncrypted: encrypted,
         fingerprint: input.fingerprint,
@@ -107,6 +109,7 @@ export class PostgresModelCredentialRepository implements ModelCredentialReposit
           pgSchema.modelCredentialsPostgres.providerId,
         ],
         set: {
+          authMode: input.authMode,
           schemaVersion: input.schemaVersion,
           payloadEncrypted: encrypted,
           fingerprint: input.fingerprint,
@@ -149,6 +152,7 @@ function mapMetadata(row: {
   id: string;
   appId: string;
   providerId: string;
+  authMode: string;
   status: string;
   schemaVersion: number;
   fingerprint: string;
@@ -162,6 +166,7 @@ function mapMetadata(row: {
     id: row.id as ModelCredentialId,
     appId: row.appId as ModelCredentialMetadata['appId'],
     providerId: normalizeModelCredentialProvider(row.providerId),
+    authMode: row.authMode,
     status:
       row.status === 'active'
         ? 'active'

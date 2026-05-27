@@ -7,19 +7,21 @@ afterEach(() => {
 
 async function loadCredentialsStep() {
   const note = vi.fn();
+  const select = vi.fn(async () => 'anthropic');
   vi.doMock('@clack/prompts', () => ({
     isCancel: () => false,
     note,
+    select,
     log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
   }));
   const { runCredentialsStep, verifyModelAccess } =
     await import('@core/cli/setup-credentials.js');
-  return { runCredentialsStep, verifyModelAccess, note };
+  return { runCredentialsStep, verifyModelAccess, note, select };
 }
 
 describe('setup credentials step', () => {
   it('selects Gantry Model Gateway without collecting raw keys', async () => {
-    const { runCredentialsStep, note } = await loadCredentialsStep();
+    const { runCredentialsStep, note, select } = await loadCredentialsStep();
     const draft = {
       credentialMode: 'none' as const,
       postgresSetupKind: 'local' as const,
@@ -30,8 +32,15 @@ describe('setup credentials step', () => {
     expect(action).toEqual({ type: 'next' });
     expect(draft.credentialMode).toBe('gantry');
     expect(note).toHaveBeenCalledWith(
-      expect.stringContaining('gantry credentials model set <provider>'),
+      expect.stringContaining('gantry credentials model set anthropic'),
       'Model Access',
+    );
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.not.arrayContaining([
+          expect.objectContaining({ value: 'openai' }),
+        ]),
+      }),
     );
   });
 

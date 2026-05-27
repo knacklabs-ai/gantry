@@ -24,6 +24,7 @@ import {
   getDefaultModelRouteProvider,
   listExecutableModelProviders,
   normalizeModelProviderId,
+  resolveModelCredentialMode,
   type ModelCredentialPayload,
   type ModelProviderDefinition,
 } from '../../../shared/model-provider-registry.js';
@@ -289,7 +290,12 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
     );
     const body = await readRequestBody(req);
     const headers = sanitizeProxyHeaders(req.headers, provider);
-    injectProviderAuth(headers, provider, credential.payload);
+    injectProviderAuth(
+      headers,
+      provider,
+      credential.authMode,
+      credential.payload,
+    );
 
     const response = await fetch(upstreamUrl, {
       method: req.method ?? 'GET',
@@ -306,7 +312,7 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
     });
     res.statusCode = response.status;
     response.headers.forEach((value, key) => {
-      if (key.toLowerCase() === 'transfer-encoding') return;
+      if (shouldStripProxyResponseHeader(key)) return;
       res.setHeader(key, value);
     });
     await pipeUpstreamBody(response, res);
@@ -428,16 +434,27 @@ function projectedGatewayEnvKeys(): string[] {
 function injectProviderAuth(
   headers: Record<string, string>,
   provider: ModelProviderDefinition,
+  authMode: string,
   payload: ModelCredentialPayload,
 ): void {
-  const auth = provider.gateway.auth;
+  const auth = resolveModelCredentialMode(provider, authMode).gatewayAuth;
+  if (auth.strategy !== 'bearer' && auth.strategy !== 'header') {
+    throw new Error(
+      `Model gateway auth strategy ${auth.strategy} is not implemented for ${provider.id} ${authMode}.`,
+    );
+  }
+  if (!auth.field) {
+    throw new Error(
+      `Model gateway auth strategy ${auth.strategy} for ${provider.id} ${authMode} is missing a credential field.`,
+    );
+  }
   const value = payload[auth.field];
   if (!value) {
     throw new Error(
       `Model credential payload for ${provider.id} is missing ${auth.field}.`,
     );
   }
-  if (auth.type === 'bearer') {
+  if (auth.strategy === 'bearer') {
     headers.authorization = `Bearer ${value}`;
     return;
   }
@@ -482,6 +499,16 @@ function readRequestBody(req: http.IncomingMessage): Promise<Buffer> {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+function shouldStripProxyResponseHeader(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower === 'transfer-encoding' ||
+    lower === 'content-encoding' ||
+    lower === 'content-length' ||
+    lower === 'connection'
+  );
 }
 
 function sanitizeProxyHeaders(

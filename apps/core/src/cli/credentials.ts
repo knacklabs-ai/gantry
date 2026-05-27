@@ -11,6 +11,7 @@ import {
 import {
   getDefaultModelRouteProvider,
   getModelProviderDefinition,
+  resolveModelCredentialMode,
   type ModelCredentialPayload,
 } from '../shared/model-provider-registry.js';
 import {
@@ -119,6 +120,7 @@ async function runModelCredentialCommand(
             `${row.providerId}: ${row.health}`,
             `  label: ${row.label}`,
             `  health: ${row.health}`,
+            row.authMode ? `  auth mode: ${row.authMode}` : undefined,
             row.fingerprint ? `  fingerprint: ${row.fingerprint}` : undefined,
             row.configuredFields.length > 0
               ? `  fields: ${row.configuredFields.join(', ')}`
@@ -159,8 +161,38 @@ async function runModelCredentialCommand(
 
   if (action === 'set' || action === 'rotate') {
     const providerId = normalizeModelCredentialProvider(provider);
-    const payload = await promptModelCredentialPayload(providerId);
-    if (!payload) {
+    if (action === 'rotate') {
+      const rows = await withCredentialServices(runtimeHome, ({ model }) =>
+        model.list({ appId: DEFAULT_APP_ID }),
+      );
+      const existing = rows.find((row) => row.providerId === providerId);
+      if (!existing?.configured || !existing.authMode) {
+        p.log.error(
+          `${providerId} model credential must be active before rotation. Run \`gantry credentials model set ${providerId}\`.`,
+        );
+        return 1;
+      }
+      const credentialInput = await promptModelCredentialPayload(providerId, {
+        authMode: existing.authMode,
+        partial: true,
+      });
+      if (!credentialInput) {
+        p.outro('Credential unchanged.');
+        return 1;
+      }
+      await withCredentialServices(runtimeHome, ({ model }) =>
+        model.rotate({
+          appId: DEFAULT_APP_ID,
+          providerId,
+          payload: credentialInput.payload,
+          actor: 'cli',
+        }),
+      );
+      p.log.success(`Rotated ${providerId} model credential.`);
+      return 0;
+    }
+    const credentialInput = await promptModelCredentialPayload(providerId);
+    if (!credentialInput) {
       p.outro('Credential unchanged.');
       return 1;
     }
@@ -168,7 +200,8 @@ async function runModelCredentialCommand(
       model.set({
         appId: DEFAULT_APP_ID,
         providerId,
-        payload,
+        authMode: credentialInput.authMode,
+        payload: credentialInput.payload,
         actor: 'cli',
       }),
     );
@@ -199,32 +232,57 @@ async function runModelCredentialCommand(
 
 async function promptModelCredentialPayload(
   providerId: string,
-): Promise<ModelCredentialPayload | undefined> {
+  options: { authMode?: string; partial?: boolean } = {},
+): Promise<
+  | {
+      authMode: string;
+      payload: ModelCredentialPayload;
+    }
+  | undefined
+> {
   const provider = getModelProviderDefinition(providerId);
   if (!provider) {
     throw new Error(`Unsupported model credential provider: ${providerId}`);
   }
+  const authMode =
+    options.authMode ??
+    (provider.credentialModes.length === 1
+      ? provider.credentialModes[0]!.id
+      : await p.select({
+          message: 'Authentication mode',
+          options: provider.credentialModes.map((mode) => ({
+            value: mode.id,
+            label: mode.label,
+            hint: mode.helpText,
+          })),
+        }));
+  if (p.isCancel(authMode)) return undefined;
+  const mode = resolveModelCredentialMode(provider, String(authMode));
+  if (mode.helpText) p.log.info(mode.helpText);
   const payload: ModelCredentialPayload = {};
-  for (const field of provider.credentialSchema.fields) {
+  for (const field of mode.fields) {
+    const message = options.partial
+      ? `${field.label} (leave blank to keep current)`
+      : field.label;
     const value = field.secret
       ? await p.password({
-          message: field.label,
+          message,
           validate: (input) =>
-            !field.required || input?.trim()
+            options.partial || !field.required || input?.trim()
               ? undefined
               : `${field.label} is required.`,
         })
       : await p.text({
-          message: field.label,
+          message,
           validate: (input) =>
-            !field.required || input?.trim()
+            options.partial || !field.required || input?.trim()
               ? undefined
               : `${field.label} is required.`,
         });
     if (p.isCancel(value)) return undefined;
     if (String(value).trim()) payload[field.name] = String(value).trim();
   }
-  return payload;
+  return { authMode: mode.id, payload };
 }
 
 function requiredModelCredentialProvider(runtimeHome: string): string {

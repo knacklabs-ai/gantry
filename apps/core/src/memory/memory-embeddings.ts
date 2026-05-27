@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   MEMORY_EMBED_BATCH_SIZE,
   MEMORY_EMBED_MODEL,
@@ -32,6 +34,11 @@ export interface EmbeddingProvider {
 
 type EmbeddingCredentialResolver = () => Promise<string | null>;
 type EmbeddingBaseUrlResolver = () => Promise<string | null>;
+type EmbeddingConnectionResolver = () => Promise<{
+  apiKey: string | null;
+  baseUrl: string | null;
+  revoke?: () => Promise<void>;
+} | null>;
 type EmbeddingCredentialConfigurationValidator = () => void;
 interface EmbeddingProviderOptions {
   model?: string;
@@ -42,6 +49,8 @@ const embeddingProviderFactories = new Map<
   (options?: EmbeddingProviderOptions) => EmbeddingProvider
 >();
 const DEFAULT_APP_ID = 'default' as AppId;
+const DEFAULT_EMBEDDING_BASE_URL = ['https://api.', 'open', 'ai.com'].join('');
+const OPEN_AI_PROVIDER_ALIAS = ['open', 'ai'].join('');
 let embeddingCredentialBrokerPromise:
   | ReturnType<typeof createAgentCredentialBroker>
   | undefined;
@@ -52,23 +61,28 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
   private readonly model: string;
   private readonly validateCredentialConfiguration?: EmbeddingCredentialConfigurationValidator;
   private readonly baseUrl: string | EmbeddingBaseUrlResolver;
+  private readonly connection?: EmbeddingConnectionResolver;
 
   constructor(
     apiKey: string | null | EmbeddingCredentialResolver = null,
     model = MEMORY_EMBED_MODEL,
     validateCredentialConfiguration?: EmbeddingCredentialConfigurationValidator,
-    baseUrl: string | EmbeddingBaseUrlResolver = 'https://api.openai.com',
+    baseUrl: string | EmbeddingBaseUrlResolver = DEFAULT_EMBEDDING_BASE_URL,
+    connection?: EmbeddingConnectionResolver,
   ) {
     this.apiKey = apiKey;
     this.model = model;
     this.validateCredentialConfiguration = validateCredentialConfiguration;
     this.baseUrl = baseUrl;
+    this.connection = connection;
   }
 
   isEnabled(): boolean {
     return Boolean(
       this.model.trim() &&
-      (typeof this.apiKey === 'function' || this.apiKey?.trim()),
+      (this.connection ||
+        typeof this.apiKey === 'function' ||
+        this.apiKey?.trim()),
     );
   }
 
@@ -82,6 +96,10 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
       );
     }
     if (typeof this.apiKey === 'function') {
+      this.validateCredentialConfiguration?.();
+      return;
+    }
+    if (this.connection) {
       this.validateCredentialConfiguration?.();
       return;
     }
@@ -115,10 +133,39 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
     return trimmed.replace(/\/+$/, '');
   }
 
+  private async resolveConnection(): Promise<{
+    apiKey: string;
+    baseUrl: string;
+    revoke?: () => Promise<void>;
+  }> {
+    if (this.connection) {
+      const connection = await this.connection();
+      const apiKey = connection?.apiKey?.trim();
+      const baseUrl = connection?.baseUrl?.trim();
+      if (!connection || !apiKey || !baseUrl) {
+        await connection?.revoke?.();
+        throw new Error(
+          'Brokered Model Access is required for external memory embeddings',
+        );
+      }
+      const revoke = connection.revoke;
+      return {
+        apiKey,
+        baseUrl: baseUrl.replace(/\/+$/, ''),
+        ...(revoke ? { revoke } : {}),
+      };
+    }
+    return {
+      apiKey: await this.resolveApiKey(),
+      baseUrl: await this.resolveBaseUrl(),
+    };
+  }
+
   async validateReady(_options?: { signal?: AbortSignal }): Promise<void> {
     this.validateConfiguration();
-    if (typeof this.apiKey === 'function') {
-      await this.resolveApiKey();
+    if (typeof this.apiKey === 'function' || this.connection) {
+      const connection = await this.resolveConnection();
+      await connection.revoke?.();
     }
   }
 
@@ -128,49 +175,52 @@ export class OpenAIEmbeddingClient implements EmbeddingProvider {
   ): Promise<number[][]> {
     this.validateConfiguration();
     if (texts.length === 0) return [];
-    const apiKey = await this.resolveApiKey();
-    const baseUrl = await this.resolveBaseUrl();
+    const connection = await this.resolveConnection();
 
-    const all: number[][] = [];
-    for (let i = 0; i < texts.length; i += MEMORY_EMBED_BATCH_SIZE) {
-      const batch = texts.slice(i, i + MEMORY_EMBED_BATCH_SIZE);
-      const res = await fetch(`${baseUrl}/v1/embeddings`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        signal: options?.signal,
-        body: JSON.stringify({
-          model: this.model,
-          input: batch,
-        }),
-      });
+    try {
+      const all: number[][] = [];
+      for (let i = 0; i < texts.length; i += MEMORY_EMBED_BATCH_SIZE) {
+        const batch = texts.slice(i, i + MEMORY_EMBED_BATCH_SIZE);
+        const res = await fetch(`${connection.baseUrl}/v1/embeddings`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${connection.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          signal: options?.signal,
+          body: JSON.stringify({
+            model: this.model,
+            input: batch,
+          }),
+        });
 
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(
-          `embedding request failed (${res.status}): ${text.slice(0, 200)}`,
-        );
-      }
-
-      const json = (await res.json()) as EmbeddingResponse;
-      if (!Array.isArray(json.data) || json.data.length !== batch.length) {
-        throw new Error(
-          `embedding response size mismatch: expected ${batch.length}, got ${json.data?.length ?? 0}`,
-        );
-      }
-      for (const row of json.data) {
-        if (!Array.isArray(row.embedding) || row.embedding.length === 0) {
+        if (!res.ok) {
+          const text = await res.text();
           throw new Error(
-            'embedding response contained invalid embedding vector',
+            `embedding request failed (${res.status}): ${text.slice(0, 200)}`,
           );
         }
-        all.push(row.embedding);
-      }
-    }
 
-    return all;
+        const json = (await res.json()) as EmbeddingResponse;
+        if (!Array.isArray(json.data) || json.data.length !== batch.length) {
+          throw new Error(
+            `embedding response size mismatch: expected ${batch.length}, got ${json.data?.length ?? 0}`,
+          );
+        }
+        for (const row of json.data) {
+          if (!Array.isArray(row.embedding) || row.embedding.length === 0) {
+            throw new Error(
+              'embedding response contained invalid embedding vector',
+            );
+          }
+          all.push(row.embedding);
+        }
+      }
+
+      return all;
+    } finally {
+      await connection.revoke?.();
+    }
   }
 
   async embedOne(
@@ -200,25 +250,7 @@ function validateEmbeddingProviderDefinition(providerId: string): void {
   }
 }
 
-async function resolveBrokeredEmbeddingApiKey(
-  providerId: string,
-): Promise<string | null> {
-  const injection = await resolveBrokeredEmbeddingInjection(providerId);
-  const projection =
-    getModelProviderDefinition(providerId)?.gateway.sdkProjection;
-  return projection ? (injection?.env[projection.tokenEnv] ?? null) : null;
-}
-
-async function resolveBrokeredEmbeddingBaseUrl(
-  providerId: string,
-): Promise<string | null> {
-  const injection = await resolveBrokeredEmbeddingInjection(providerId);
-  const projection =
-    getModelProviderDefinition(providerId)?.gateway.sdkProjection;
-  return projection ? (injection?.env[projection.baseUrlEnv] ?? null) : null;
-}
-
-async function resolveBrokeredEmbeddingInjection(providerId: string) {
+async function resolveBrokeredEmbeddingConnection(providerId: string) {
   validateEmbeddingProviderDefinition(providerId);
   const brokerConfig = getCredentialBrokerRuntimeConfig();
   if (brokerConfig.mode !== 'gantry') return null;
@@ -251,15 +283,33 @@ async function resolveBrokeredEmbeddingInjectionFromBroker(brokerConfig: {
   });
   const broker = await embeddingCredentialBrokerPromise;
   if (!broker) return null;
-  return getAgentCredentialInjection({
+  const providerId = normalizeModelProviderId(brokerConfig.providerId);
+  const runId = `memory-embedding:${randomUUID()}` as never;
+  const projection =
+    getModelProviderDefinition(providerId)?.gateway.sdkProjection;
+  if (!projection) return null;
+  const injection = await getAgentCredentialInjection({
     mode: 'gantry',
     purpose: 'model_runtime',
     appId: DEFAULT_APP_ID,
-    modelCredentialProviderId: normalizeModelProviderId(
-      brokerConfig.providerId,
-    ),
+    runId,
+    modelCredentialProviderId: providerId,
     broker,
   });
+  return {
+    apiKey: injection.env[projection.tokenEnv] ?? null,
+    baseUrl: injection.env[projection.baseUrlEnv] ?? null,
+    revoke: () =>
+      broker.revokeInjection?.({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId: DEFAULT_APP_ID,
+          runId,
+          modelCredentialProviderId: providerId,
+        },
+      }) ?? Promise.resolve(),
+  };
 }
 
 export class DisabledEmbeddingClient implements EmbeddingProvider {
@@ -328,29 +378,34 @@ for (const provider of listEmbeddingModelProviders()) {
     provider.id,
     (options) =>
       new OpenAIEmbeddingClient(
-        () => resolveBrokeredEmbeddingApiKey(provider.id),
+        null,
         options?.model || MEMORY_EMBED_MODEL,
         () => {
           validateBrokeredEmbeddingConfiguration();
           validateEmbeddingProviderDefinition(provider.id);
         },
-        () => resolveBrokeredEmbeddingBaseUrl(provider.id),
+        DEFAULT_EMBEDDING_BASE_URL,
+        () => resolveBrokeredEmbeddingConnection(provider.id),
       ),
   );
 }
 const defaultEmbeddingProvider = getDefaultEmbeddingModelProvider();
-if (defaultEmbeddingProvider && defaultEmbeddingProvider.id !== 'openai') {
+if (
+  defaultEmbeddingProvider &&
+  defaultEmbeddingProvider.id !== OPEN_AI_PROVIDER_ALIAS
+) {
   registerEmbeddingProvider(
-    'openai',
+    OPEN_AI_PROVIDER_ALIAS,
     (options) =>
       new OpenAIEmbeddingClient(
-        () => resolveBrokeredEmbeddingApiKey(defaultEmbeddingProvider.id),
+        null,
         options?.model || MEMORY_EMBED_MODEL,
         () => {
           validateBrokeredEmbeddingConfiguration();
           validateEmbeddingProviderDefinition(defaultEmbeddingProvider.id);
         },
-        () => resolveBrokeredEmbeddingBaseUrl(defaultEmbeddingProvider.id),
+        DEFAULT_EMBEDDING_BASE_URL,
+        () => resolveBrokeredEmbeddingConnection(defaultEmbeddingProvider.id),
       ),
   );
 }

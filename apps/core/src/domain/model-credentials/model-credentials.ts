@@ -21,6 +21,7 @@ export interface ModelCredentialMetadata {
   id: ModelCredentialId;
   appId: AppId;
   providerId: ModelCredentialProvider;
+  authMode: string;
   status: ModelCredentialStatus;
   schemaVersion: number;
   fingerprint: string;

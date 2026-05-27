@@ -52,6 +52,7 @@ const expectedControlRoutes = [
   'GET /v1/conversations/{conversationId}/threads',
   'GET /v1/credentials/models',
   'DELETE /v1/credentials/models/{providerId}',
+  'PATCH /v1/credentials/models/{providerId}',
   'PUT /v1/credentials/models/{providerId}',
   'GET /v1/doctor',
   'GET /v1/health',
@@ -334,6 +335,22 @@ describe('control OpenAPI documentation', () => {
         'application/json'
       ].schema,
     ).toEqual({ $ref: '#/components/schemas/ModelDefaultsPatchRequest' });
+    expect(
+      spec.paths['/v1/credentials/models/{providerId}']?.patch.requestBody
+        .content['application/json'].schema,
+    ).toEqual({ $ref: '#/components/schemas/ModelCredentialPatchRequest' });
+    expect(
+      spec.components.schemas.ModelCredentialStatus.properties,
+    ).toMatchObject({
+      authMode: { type: ['string', 'null'], example: 'api_key' },
+      credentialModes: expect.objectContaining({ type: 'array' }),
+    });
+    expect(
+      spec.components.schemas.ModelCredentialWriteRequest.properties,
+    ).toHaveProperty('authMode');
+    expect(
+      spec.components.schemas.ModelCredentialPatchRequest.properties,
+    ).not.toHaveProperty('authMode');
     expect(
       spec.components.schemas.ModelDefaultsPatchRequest.properties,
     ).not.toHaveProperty('providerPreset');

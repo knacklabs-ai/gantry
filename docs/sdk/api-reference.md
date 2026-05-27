@@ -644,6 +644,7 @@ POST   /v1/models/preview                          sessions:read or jobs:read; s
 PATCH  /v1/models/defaults                         agents:admin
 GET    /v1/credentials/models                      agents:admin
 PUT    /v1/credentials/models/:providerId          agents:admin
+PATCH  /v1/credentials/models/:providerId          agents:admin
 DELETE /v1/credentials/models/:providerId          agents:admin
 
 GET    /v1/agents                                  agents:admin

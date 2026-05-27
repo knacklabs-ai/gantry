@@ -106,14 +106,19 @@ executable, command templates, preflight, protected paths, and denied
 environment overrides before projecting scoped command authority.
 
 Model-provider access is account-level Model Access. Gantry always requests it
-with `purpose=model_runtime` through the Gantry Model Gateway; it is not bound to an individual agent, conversation,
-memory worker, subagent, or job. Agents, subagents, jobs, and memory workers
-select catalog model aliases only. Anthropic, OpenRouter, and OpenAI embedding
-credentials are configured once with
-`gantry credentials model set anthropic`,
+with `purpose=model_runtime` through the Gantry Model Gateway; it is not bound
+to an individual agent, conversation, memory worker, subagent, or job. Agents,
+subagents, jobs, and memory workers select catalog model aliases only.
+Anthropic, OpenRouter, and OpenAI embedding credentials are configured once
+with `gantry credentials model set anthropic`,
 `gantry credentials model set openrouter`, or
 `gantry credentials model set openai` and then projected through the Gantry
 Model Gateway according to the selected model provider or embedding provider.
+Each provider exposes explicit credential modes through the control API as
+`credentialModes`; current built-in providers use `authMode: api_key`. `PUT
+/v1/credentials/models/:providerId` replaces a credential, `PATCH` rotates
+fields for the existing auth mode, and all read/mutation responses return only
+redacted status, fingerprints, configured field names, and mode metadata.
 
 Agents do not receive every raw secret value from Gantry. Runtime code projects
 only the selected capability's declared credential names. Selected skills get
@@ -195,9 +200,55 @@ providers behind Gantry Credential Center. They must not add ad hoc runtime
 
 The Gantry Model Gateway is the only active local model credential path. It
 stores provider credentials in `model_credentials` rows encrypted with
-`SECRET_ENCRYPTION_KEY`, exposes redacted status through the Control API and
+`SECRET_ENCRYPTION_KEY`, stores the selected provider `authMode` as non-secret
+metadata, exposes redacted status through the Control API and
 `gantry credentials model status`, and serves per-run loopback HTTP endpoints
 for Anthropic, OpenRouter, and OpenAI embedding traffic.
+
+Provider credential shape is owned by the model provider registry. Each
+provider declares one or more credential modes with:
+
+- stable mode id, label, and help text
+- user-facing field labels such as `Anthropic key`, `Azure endpoint`,
+  `Deployment name`, and `AWS region`
+- required field metadata
+- a gateway auth strategy
+
+The current Anthropic, OpenRouter, and OpenAI providers each expose one
+`api_key` mode, so setup stays direct. Providers that need more than one path,
+such as Azure Foundry or AWS Bedrock, add additional modes in the registry
+instead of adding CLI, API, storage, or gateway branches.
+
+All user-entered credential and provider configuration values stay in the
+encrypted structured payload. Read surfaces return only provider label, role,
+workloads, selected `authMode`, credential modes, field metadata, configured
+field names, fingerprints, health, and timestamps.
+
+Control API semantics:
+
+- `GET /v1/credentials/models` returns redacted admin-UI-ready status for all
+  supported providers.
+- `PUT /v1/credentials/models/:providerId` fully replaces one provider
+  credential and may set or change `authMode`.
+- `PATCH /v1/credentials/models/:providerId` rotates fields inside the
+  existing active `authMode`; omitted fields are preserved, while empty, null,
+  unknown, missing, disabled, or auth-mode-changing updates are rejected.
+- `DELETE /v1/credentials/models/:providerId` disables active use without
+  deleting the encrypted payload or metadata.
+
+Gateway auth strategies are fail-closed. Current `header` and `bearer`
+strategies inject Anthropic, OpenRouter, and OpenAI credentials at the outbound
+provider boundary. Future strategies such as `aws_bedrock_api_key`,
+`aws_sigv4`, `aws_sdk_default_chain`, `azure_api_key`, and
+`azure_entra_default_credential` are distinct strategy slots; they must not
+fall through to generic header injection.
+
+AWS Bedrock API keys are bearer-token style Bedrock credentials. AWS
+IAM/SigV4/default-chain modes are request-signing or SDK-identity flows, not
+stored raw token fields. Azure OpenAI/Foundry API-key mode needs endpoint,
+deployment, and key fields; Azure Entra mode uses bearer tokens produced from
+local or hosted identity, so onboarding explains the required identity and runs
+readiness checks instead of asking for a token.
 
 The Claude SDK process receives `ANTHROPIC_BASE_URL` pointed at the loopback
 gateway and a short-lived `gtw_*` token. The gateway swaps that token for the

@@ -1,5 +1,6 @@
 import type { JsonSchema } from './openapi-route-helpers.js';
 import { listModelPresets } from '../../shared/model-catalog.js';
+import { modelCredentialSchemas } from './openapi-model-credential-schemas.js';
 
 const isoDateTime = { type: 'string', format: 'date-time' };
 const metadata = { type: 'object', additionalProperties: true };
@@ -118,73 +119,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
     },
   },
   CapabilityListResponse: arrayEnvelope('capabilities', 'CapabilityManifest'),
-  ModelCredentialStatus: {
-    type: 'object',
-    required: ['providerId', 'configured', 'status', 'health'],
-    properties: {
-      providerId: { type: 'string', example: 'provider-id' },
-      label: { type: 'string' },
-      configured: { type: 'boolean' },
-      status: { type: 'string', enum: ['active', 'disabled'] },
-      health: { type: 'string', enum: ['ready', 'missing', 'disabled'] },
-      fingerprint: { type: ['string', 'null'], example: 'sha256:0123abcd' },
-      fieldFingerprints: {
-        type: 'array',
-        items: {
-          type: 'object',
-          required: ['field', 'fingerprint'],
-          properties: {
-            field: { type: 'string' },
-            fingerprint: { type: 'string' },
-          },
-        },
-      },
-      schemaVersion: { type: 'number' },
-      configuredFields: stringArray,
-      supportedWorkloads: stringArray,
-      updatedAt: { oneOf: [isoDateTime, { type: 'null' }] },
-    },
-  },
-  ModelCredentialListResponse: arrayEnvelope(
-    'providers',
-    'ModelCredentialStatus',
-  ),
-  ModelCredentialWriteRequest: {
-    type: 'object',
-    required: ['payload'],
-    additionalProperties: false,
-    properties: {
-      payload: {
-        type: 'object',
-        additionalProperties: { type: 'string', writeOnly: true },
-        description:
-          'Provider-specific credential payload. Stored encrypted; never returned by read APIs.',
-      },
-    },
-  },
-  ModelCredentialMutationResponse: {
-    type: 'object',
-    required: ['providerId', 'status', 'health'],
-    properties: {
-      providerId: { type: 'string' },
-      status: { type: 'string', enum: ['active', 'disabled'] },
-      health: { type: 'string', enum: ['ready', 'missing', 'disabled'] },
-      fingerprint: { type: ['string', 'null'] },
-      fieldFingerprints: {
-        type: 'array',
-        items: {
-          type: 'object',
-          required: ['field', 'fingerprint'],
-          properties: {
-            field: { type: 'string' },
-            fingerprint: { type: 'string' },
-          },
-        },
-      },
-      schemaVersion: { type: ['number', 'null'] },
-      updatedAt: { oneOf: [isoDateTime, { type: 'null' }] },
-    },
-  },
+  ...modelCredentialSchemas,
   AgentSourceSelection: {
     type: 'object',
     required: ['id'],

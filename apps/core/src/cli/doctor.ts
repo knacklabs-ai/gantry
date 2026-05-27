@@ -31,6 +31,7 @@ import { validatePostgresConnectionUrl } from '../adapters/storage/postgres/url.
 import { inspectRuntimeStorageReadiness } from '../adapters/storage/postgres/storage-readiness.js';
 import { validateRuntimeEnvPolicy } from '../config/source-classification.js';
 import { openRuntimeGroupDb } from './runtime-group-db.js';
+import { inspectModelCredentialReadiness } from './model-credential-readiness.js';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
 
@@ -389,7 +390,7 @@ export function runDoctor(
     credentialMode === 'gantry' ? 'pass' : 'warn';
   let modelAccessMessage =
     credentialMode === 'gantry'
-      ? 'Gantry Model Gateway is enabled; provider credentials are stored in Postgres and validated during model preflight.'
+      ? 'Gantry Model Gateway config is enabled; provider credential readiness is checked separately.'
       : 'Model Access is disabled. Agent execution and memory LLM extraction require Gantry Model Gateway credentials.';
   let modelAccessNextAction: string | undefined;
   if (credentialMode !== 'gantry') {
@@ -507,29 +508,10 @@ export async function runDoctorWithNetwork(
 
   const settings = loadSettingsForDoctor(runtimeHome).settings;
   if (settings) {
-    const env = readEnvFile(envFilePath(runtimeHome));
-    const credentialSecret = resolveRuntimeEnvValue(
-      env,
-      'SECRET_ENCRYPTION_KEY',
+    report = addToReport(
+      report,
+      await inspectModelCredentialReadiness(runtimeHome, settings),
     );
-    report = addToReport(report, {
-      id: 'model-credential-encryption',
-      title: 'Model Credential Encryption',
-      status:
-        settings.credentialBroker.mode === 'gantry' && !credentialSecret
-          ? 'fail'
-          : 'pass',
-      message:
-        settings.credentialBroker.mode === 'gantry'
-          ? credentialSecret
-            ? 'SECRET_ENCRYPTION_KEY is configured for Gantry credential encryption.'
-            : 'SECRET_ENCRYPTION_KEY is missing for Gantry credential encryption.'
-          : 'Model credential encryption is not required when model_access is disabled.',
-      nextAction:
-        settings.credentialBroker.mode === 'gantry' && !credentialSecret
-          ? 'Generate a base64-encoded 32-byte SECRET_ENCRYPTION_KEY, then restart Gantry.'
-          : undefined,
-    });
   }
   return report;
 }
@@ -565,7 +547,6 @@ export function hasRuntimeConfig(runtimeHome: string): boolean {
     return false;
   }
 }
-
 export async function hasProcessableGroupForConfiguredChannel(
   runtimeHome: string,
 ): Promise<boolean> {
@@ -597,6 +578,5 @@ export async function hasProcessableGroupForConfiguredChannel(
       await db?.close();
     }
   }
-
   return false;
 }

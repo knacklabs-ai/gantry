@@ -470,6 +470,7 @@ export interface ModelCredentialRepository {
   upsertModelCredential(input: {
     appId: ModelCredentialMetadata['appId'];
     providerId: ModelCredentialProvider;
+    authMode: string;
     schemaVersion: number;
     payload: ModelCredentialPayload;
     fingerprint: string;

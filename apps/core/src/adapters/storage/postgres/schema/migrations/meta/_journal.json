@@ -470,6 +470,13 @@
       "when": 1777227000000,
       "tag": "0067_model_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1777230600000,
+      "tag": "0068_model_credential_auth_mode",
+      "breakpoints": true
     }
   ]
 }

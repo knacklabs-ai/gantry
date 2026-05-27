@@ -5,6 +5,9 @@ import {
   getModelProviderDefinition,
   listExecutableModelProviders,
   listModelRouteProviders,
+  normalizeModelCredentialPayload,
+  resolveModelCredentialMode,
+  type ModelProviderDefinition,
 } from '@core/shared/model-provider-registry.js';
 import { listModelCatalogEntries } from '@core/shared/model-catalog.js';
 
@@ -76,5 +79,158 @@ describe('model provider registry', () => {
       },
       response: { mode: 'none', enabledByDefault: false },
     });
+  });
+
+  it('keeps current providers on one direct credential mode with friendly field labels', () => {
+    for (const provider of listExecutableModelProviders()) {
+      expect(provider.credentialModes).toHaveLength(1);
+      expect(provider.credentialModes[0]).toMatchObject({
+        id: 'api_key',
+        gatewayAuth: expect.objectContaining({
+          strategy: expect.stringMatching(/^(bearer|header)$/),
+        }),
+      });
+      for (const field of provider.credentialModes[0]!.fields) {
+        expect(field.label).not.toMatch(/^[A-Z0-9_]+$/);
+        expect(field.label).not.toContain('_');
+      }
+    }
+  });
+
+  it('validates payloads through the selected credential mode', () => {
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'anthropic',
+        authMode: 'api_key',
+        payload: { apiKey: '  sk-ant-test  ' },
+      }),
+    ).toEqual({ apiKey: 'sk-ant-test' });
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'anthropic',
+        authMode: 'api_key',
+        payload: { bogus: 'value' },
+      }),
+    ).toThrow('Credential field bogus is not supported for anthropic api_key.');
+  });
+
+  it('represents future multi-field and external-identity auth modes', () => {
+    const synthetic = {
+      id: 'synthetic-azure',
+      label: 'Synthetic Azure',
+      executable: true,
+      modelRoute: true,
+      embeddingProvider: false,
+      responseFamily: 'openai',
+      supportedWorkloads: ['chat'],
+      credentialModes: [
+        {
+          id: 'api_key',
+          label: 'API key',
+          helpText: 'Use an Azure API key.',
+          version: 1,
+          fields: [
+            {
+              name: 'endpoint',
+              label: 'Azure endpoint',
+              secret: false,
+              required: true,
+            },
+            {
+              name: 'deployment',
+              label: 'Deployment name',
+              secret: false,
+              required: true,
+            },
+            {
+              name: 'apiKey',
+              label: 'Azure key',
+              secret: true,
+              required: true,
+            },
+          ],
+          gatewayAuth: { strategy: 'azure_api_key', field: 'apiKey' },
+        },
+        {
+          id: 'entra_default',
+          label: 'Microsoft Entra',
+          helpText: 'Use local Azure identity.',
+          version: 1,
+          fields: [
+            {
+              name: 'endpoint',
+              label: 'Azure endpoint',
+              secret: false,
+              required: true,
+            },
+            {
+              name: 'deployment',
+              label: 'Deployment name',
+              secret: false,
+              required: true,
+            },
+          ],
+          gatewayAuth: { strategy: 'azure_entra_default_credential' },
+        },
+        {
+          id: 'aws_default_chain',
+          label: 'AWS default chain',
+          helpText: 'Use local AWS identity.',
+          version: 1,
+          fields: [
+            {
+              name: 'region',
+              label: 'AWS region',
+              secret: false,
+              required: true,
+            },
+          ],
+          gatewayAuth: { strategy: 'aws_sdk_default_chain' },
+        },
+      ],
+      gateway: {
+        pathSegment: 'synthetic-azure',
+        upstreamOrigin: 'https://example.invalid',
+        upstreamPathPrefix: '',
+        stripRequestHeaders: [],
+        sdkProjection: {
+          baseUrlEnv: 'SYNTHETIC_BASE_URL',
+          tokenEnv: 'SYNTHETIC_TOKEN',
+          credentialProviderEnvKey: 'SYNTHETIC_TOKEN',
+          credentialProvider: 'synthetic',
+        },
+      },
+      cacheSupport: {
+        prompt: {
+          mode: 'none',
+          automatic: false,
+          requestControl: 'none',
+          ttlOptions: [],
+          minimumTokenThresholds: [],
+          usageFields: {},
+        },
+        response: {
+          mode: 'none',
+          enabledByDefault: false,
+          requestControl: 'none',
+          requestHeaders: [],
+          responseHeaders: [],
+          usageBehavior: 'normal_usage',
+        },
+      },
+      executionProviderIds: [],
+    } satisfies ModelProviderDefinition;
+
+    expect(
+      resolveModelCredentialMode(synthetic, 'api_key').fields,
+    ).toHaveLength(3);
+    expect(
+      resolveModelCredentialMode(synthetic, 'entra_default').gatewayAuth
+        .strategy,
+    ).toBe('azure_entra_default_credential');
+    expect(
+      resolveModelCredentialMode(synthetic, 'aws_default_chain').gatewayAuth
+        .strategy,
+    ).toBe('aws_sdk_default_chain');
   });
 });

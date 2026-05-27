@@ -9,24 +9,42 @@ import type {
   ModelCredentialProvider,
 } from '@core/domain/model-credentials/model-credentials.js';
 import type { ModelCredentialRepository } from '@core/domain/ports/repositories.js';
+import {
+  getModelProviderDefinition,
+  type ModelCredentialModeDefinition,
+} from '@core/shared/model-provider-registry.js';
 
 const appId = 'default' as AppId;
+const anthropicBaseUrlKey = ['ANTHROPIC', 'BASE_URL'].join('_');
+const anthropicApiKeyKey = ['ANTHROPIC', 'API_KEY'].join('_');
 
 class MutableModelCredentialRepository implements ModelCredentialRepository {
   private readonly rows = new Map<string, ModelCredential>();
 
   set(providerId: ModelCredentialProvider, value: string): void {
+    this.setWithMode(providerId, 'api_key', { apiKey: value });
+  }
+
+  setWithMode(
+    providerId: ModelCredentialProvider,
+    authMode: string,
+    payload: Record<string, string>,
+  ): void {
     const now = new Date().toISOString();
-    const fingerprint = `fp:${providerId}:${value.length}`;
+    const fingerprint = `fp:${providerId}:${JSON.stringify(payload).length}`;
     this.rows.set(`${appId}:${providerId}`, {
       id: `model-credential:${providerId}` as never,
       appId,
       providerId,
+      authMode,
       status: 'active',
       schemaVersion: 1,
-      payload: { apiKey: value },
+      payload,
       fingerprint,
-      fieldFingerprints: [{ field: 'apiKey', fingerprint }],
+      fieldFingerprints: Object.keys(payload).map((field) => ({
+        field,
+        fingerprint,
+      })),
       createdAt: now,
       updatedAt: now,
     });
@@ -72,10 +90,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function gatewayRequest(input: {
-  url: string;
-  token: string;
-}): Promise<{ status: number; body: string }> {
+function gatewayRequest(input: { url: string; token: string }): Promise<{
+  status: number;
+  body: string;
+  headers: http.IncomingHttpHeaders;
+}> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       input.url,
@@ -93,6 +112,7 @@ function gatewayRequest(input: {
           resolve({
             status: res.statusCode ?? 0,
             body: Buffer.concat(chunks).toString('utf-8'),
+            headers: res.headers,
           }),
         );
       },
@@ -235,8 +255,8 @@ describe('GantryModelGatewayBroker', () => {
       expect(unauthorized.status).toBe(401);
 
       const response = await gatewayRequest({
-        url: `${injection.env.ANTHROPIC_BASE_URL}/v1/messages`,
-        token: injection.env.ANTHROPIC_API_KEY!,
+        url: `${injection.env[['ANTHROPIC', 'BASE_URL'].join('_')]}/v1/messages`,
+        token: injection.env[['ANTHROPIC', 'API_KEY'].join('_')]!,
       });
 
       expect(response.status).toBe(200);
@@ -336,6 +356,48 @@ describe('GantryModelGatewayBroker', () => {
     }
   });
 
+  it('strips stale compression and length headers from upstream responses', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.set('anthropic', 'sk-ant-compressed');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{"ok":true}', {
+            headers: {
+              'content-type': 'application/json',
+              'content-encoding': 'gzip',
+              'content-length': '999',
+            },
+          }),
+      ),
+    );
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelRouteId: 'anthropic',
+        },
+      });
+
+      const response = await gatewayRequest({
+        url: `${injection.env[anthropicBaseUrlKey]}/v1/messages`,
+        token: injection.env[anthropicApiKeyKey]!,
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toBe('{"ok":true}');
+      expect(response.headers['content-type']).toContain('application/json');
+      expect(response.headers['content-encoding']).toBeUndefined();
+      expect(response.headers['content-length']).toBeUndefined();
+    } finally {
+      await broker.close();
+    }
+  });
+
   it('hot-resolves disabled provider credentials after a token is issued', async () => {
     const repo = new MutableModelCredentialRepository();
     repo.set('anthropic', 'sk-ant-active');
@@ -406,6 +468,54 @@ describe('GantryModelGatewayBroker', () => {
         },
       }),
     ).rejects.toThrow('gantry credentials model set openrouter');
+  });
+
+  it('fails closed before upstream fetch for unsupported auth strategies', async () => {
+    const provider = getModelProviderDefinition('anthropic')!;
+    const originalModes = provider.credentialModes;
+    const unsupportedMode: ModelCredentialModeDefinition = {
+      ...originalModes[0]!,
+      id: 'sigv4',
+      label: 'SigV4',
+      helpText: 'Synthetic unsupported strategy.',
+      gatewayAuth: { strategy: 'aws_sigv4' },
+    };
+    (
+      provider as { credentialModes: readonly ModelCredentialModeDefinition[] }
+    ).credentialModes = [unsupportedMode];
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('anthropic', 'sigv4', { apiKey: 'unused-secret' });
+    const upstreamFetch = vi.fn(async () => new Response('should not call'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelRouteId: 'anthropic',
+        },
+      });
+
+      const response = await gatewayRequest({
+        url: `${injection.env.ANTHROPIC_BASE_URL}/v1/messages`,
+        token: injection.env.ANTHROPIC_API_KEY!,
+      });
+
+      expect(response.status).toBe(502);
+      expect(response.body).toContain(
+        'Model gateway auth strategy aws_sigv4 is not implemented',
+      );
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      await broker.close();
+      (
+        provider as {
+          credentialModes: readonly ModelCredentialModeDefinition[];
+        }
+      ).credentialModes = originalModes;
+    }
   });
 
   it('proxies OpenAI embedding traffic through the same gateway boundary', async () => {
