@@ -7,9 +7,9 @@ This inventory classifies local filesystem state by durability.
 - runtime home `settings.yaml`: non-secret runtime settings.
 - `<runtime-home>/artifacts/files/`: FileArtifact bytes when using the local
   filesystem artifact backend.
-- `<runtime-home>/skills/`: approved readable skill folders when using the
-  local skill backend. Each skill folder contains `SKILL.md` plus referenced
-  files and subfolders.
+- `<runtime-home>/artifacts/skills/`: reviewed skill artifact history when using
+  the local skill backend. Each approved package contains `SKILL.md` plus
+  referenced files and subfolders, keyed by exact `skill:<id>` and content hash.
 - `<runtime-home>/skill-drafts/`: pending readable skill proposal folders. The
   database stores metadata, lifecycle state, content hash, bindings, and audit;
   these folders store only reviewable files.
@@ -23,10 +23,11 @@ This inventory classifies local filesystem state by durability.
 - Per-run Claude `CLAUDE_CONFIG_DIR` directories under the OS temp directory.
   These include generated `settings.json` and materialized `skills/`.
 - Packaged or explicitly configured local skill folders are copied into per-run
-  Claude config as scratch input. They are not mirrored into a Gantry skill byte
-  registry.
+  Claude config as scratch input. They are not durable source-selection
+  identity.
 - Approved bound skill artifacts are unpacked into per-run Claude config as
-  scratch input. Draft, rejected, and disabled artifacts are never unpacked.
+  scratch input. Draft, rejected, disabled, and superseded artifacts are never
+  unpacked.
 - IPC input/output files for active runtime processes.
 - Build, test, coverage, and generated verification artifacts.
 

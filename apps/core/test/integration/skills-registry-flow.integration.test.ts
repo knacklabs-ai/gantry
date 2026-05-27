@@ -33,6 +33,8 @@ vi.mock('@core/config/index.js', () => ({
     model: 'opus',
     source: 'system default',
   })),
+  getRuntimeModelDefaults: vi.fn(() => ({ defaults: {} })),
+  patchRuntimeModelDefaults: vi.fn(() => ({ ok: true })),
 }));
 
 vi.mock('@core/jobs/scheduler.js', () => ({
@@ -752,6 +754,89 @@ describe('skill registry integration flow', () => {
     expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(1);
   });
 
+  it('replaces older active same-name skill bindings while retaining reviewed artifacts', async () => {
+    const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
+    const { deps } = createCapabilityReviewDeps();
+
+    const installSkill = async (taskId: string, heading: string) => {
+      await processTaskIpc(
+        {
+          type: 'request_skill_install',
+          appId: 'app-one',
+          taskId,
+          targetJid: 'chat-origin',
+          chatJid: 'chat-origin',
+          authThreadId: 'thread-origin',
+          payload: {
+            reason: 'Reuse a reviewed posting workflow.',
+            files: [
+              {
+                path: 'SKILL.md',
+                content: [
+                  '---',
+                  'name: LinkedIn Posting',
+                  'description: Drafts LinkedIn posts',
+                  '---',
+                  heading,
+                ].join('\n'),
+              },
+            ],
+          },
+        },
+        'agent:one',
+        deps as any,
+      );
+    };
+
+    await installSkill('request-skill-install-v1', '# LinkedIn Posting');
+    await vi.waitFor(() => {
+      expect(
+        [...state.bindings.values()].filter(
+          (binding) => binding.status === 'active',
+        ),
+      ).toHaveLength(1);
+    });
+    const firstActiveSkillId = [...state.bindings.values()].find(
+      (binding) => binding.status === 'active',
+    )?.skillId;
+
+    await installSkill('request-skill-install-v2', '# LinkedIn Posting v2');
+    await vi.waitFor(() => {
+      const activeBindings = [...state.bindings.values()].filter(
+        (binding) => binding.status === 'active',
+      );
+      const disabledBindings = [...state.bindings.values()].filter(
+        (binding) => binding.status === 'disabled',
+      );
+      expect(activeBindings).toHaveLength(1);
+      expect(disabledBindings).toEqual([
+        expect.objectContaining({ skillId: firstActiveSkillId }),
+      ]);
+    });
+
+    const approved = [...state.skills.values()].filter(
+      (skill) => skill.status === 'approved',
+    );
+    const activeBinding = [...state.bindings.values()].find(
+      (binding) => binding.status === 'active',
+    );
+    expect(approved).toHaveLength(2);
+    expect(activeBinding?.skillId).not.toBe(firstActiveSkillId);
+
+    const storage =
+      await import('@core/adapters/storage/postgres/runtime-store.js');
+    const enabled = await storage
+      .getRuntimeStorage()
+      .repositories.skills.listEnabledSkillsForAgent({
+        appId: 'app-one',
+        agentId: 'agent:one',
+      });
+    expect(enabled.map((skill: StoredSkill) => skill.id)).toEqual([
+      activeBinding?.skillId,
+    ]);
+    expect(syncRuntimeSettingsFromProjection).toHaveBeenCalledTimes(2);
+  });
+
   it('coalesces duplicate pending staged skill install reviews', async () => {
     const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
     let resolveApproval:
@@ -1024,7 +1109,7 @@ describe('skill registry integration flow', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('persists request_permission semantic approvals as configured capability rules', async () => {
+  it('persists proposed semantic capability approvals as configured capability rules', async () => {
     const { processTaskIpc } = await import('@core/jobs/ipc-handler.js');
     const {
       deps,
@@ -1063,6 +1148,7 @@ describe('skill registry integration flow', () => {
         authThreadId: 'thread-origin',
         payload: {
           permissionKind: 'tool',
+          capabilityRequestSource: 'propose_capability',
           capabilityId: 'google.sheets.write',
           capabilityDisplayName: 'Google Sheets write',
           accountLabel: 'Configured Google access',
@@ -1636,6 +1722,21 @@ describe('skill registry integration flow', () => {
       timeoutMs: 3000,
     });
     const reservedSkillId = 'skill:release/slash';
+    const storage = await new LocalSkillArtifactStore(
+      artifactRoot,
+    ).putSkillArtifact({
+      appId: 'app-one',
+      skillId: reservedSkillId,
+      bundle: {
+        assets: [
+          {
+            path: 'SKILL.md',
+            contentType: 'text/markdown',
+            content: Buffer.from('---\nname: Slash Skill\n---\n# Slash Skill'),
+          },
+        ],
+      },
+    });
 
     state.skills.set(reservedSkillId, {
       id: reservedSkillId,
@@ -1648,12 +1749,7 @@ describe('skill registry integration flow', () => {
       promptRefs: [],
       toolIds: [],
       workflowRefs: [],
-      storage: {
-        storageType: 'local-filesystem',
-        storageRef: 'skills/slash-skill',
-        contentHash: 'sha256:slash',
-        sizeBytes: 42,
-      },
+      storage,
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     });

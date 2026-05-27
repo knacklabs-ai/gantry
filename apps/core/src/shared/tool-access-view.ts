@@ -7,7 +7,14 @@ import {
 import {
   PROJECTED_BROWSER_MCP_TOOL_NAMES,
   isCanonicalBrowserCapabilityRule,
+  parseReadableScopedToolRule,
+  RUN_COMMAND_TOOL_NAME,
+  sdkToolsForGantryFacadeTool,
 } from './agent-tool-references.js';
+import {
+  canonicalizeGeneratedRuntimeSkillPaths,
+  generatedRuntimeSkillPathDisplay,
+} from './generated-runtime-paths.js';
 
 export interface RequestableAdminToolAccess {
   tool: string;
@@ -32,12 +39,9 @@ export interface JobToolAccessView {
 }
 
 export const PERMISSION_GATED_NATIVE_TOOLS = [
-  'Bash',
-  'Edit',
-  'Write',
-  'LS',
-  'MultiEdit',
-  'NotebookEdit',
+  'RunCommand',
+  'FileEdit',
+  'FileWrite',
 ] as const;
 
 export const BROWSER_TOOL_NAME = 'Browser';
@@ -87,7 +91,7 @@ export function buildAgentToolAccessView(input: {
   source: string;
 }): AgentToolAccessView {
   return {
-    configuredTools: uniqueStrings(input.configuredTools ?? []),
+    configuredTools: uniqueDisplayRules(input.configuredTools ?? []),
     defaultTools: uniqueStrings(input.defaultTools ?? []),
     availableButGatedTools: uniqueStrings(input.availableButGatedTools ?? []),
     requestableAdminTools: uniqueRequestableAdminTools(
@@ -107,8 +111,8 @@ export function buildJobToolAccessView(input: {
     input.effectiveAllowedTools ?? [],
   );
   return {
-    inheritedAgentTools: uniqueStrings(input.inheritedAgentTools ?? []),
-    effectiveAllowedTools,
+    inheritedAgentTools: uniqueDisplayRules(input.inheritedAgentTools ?? []),
+    effectiveAllowedTools: uniqueDisplayRules(effectiveAllowedTools),
     projectedRuntimeTools: uniqueStrings(
       input.projectedRuntimeTools ??
         projectedRuntimeToolsForRules(effectiveAllowedTools),
@@ -164,6 +168,24 @@ function uniqueStrings(values: readonly string[]): string[] {
   return [...out];
 }
 
+function uniqueDisplayRules(values: readonly string[]): string[] {
+  return uniqueStrings(values.map(formatToolRuleForUser));
+}
+
+function formatToolRuleForUser(value: string): string {
+  const generatedSkillPath = generatedRuntimeSkillPathDisplay(value);
+  if (!generatedSkillPath) return value;
+  const canonical = canonicalizeGeneratedRuntimeSkillPaths(value);
+  const scoped = parseReadableScopedToolRule(canonical);
+  if (
+    scoped?.toolName === RUN_COMMAND_TOOL_NAME &&
+    /^chmod\s+\+x\s+/.test(scoped.scope)
+  ) {
+    return `Generated skill action setup (${generatedSkillPath})`;
+  }
+  return `Generated skill action (${generatedSkillPath})`;
+}
+
 function uniqueRequestableAdminTools(
   values: readonly RequestableAdminToolAccess[],
 ): RequestableAdminToolAccess[] {
@@ -182,7 +204,18 @@ function isBrowserCapabilitySelected(
 }
 
 function projectedRuntimeToolsForRules(rules: readonly string[]): string[] {
-  return isBrowserCapabilitySelected(rules)
-    ? [...PROJECTED_BROWSER_MCP_TOOL_NAMES]
-    : [];
+  const projected = new Set<string>();
+  if (isBrowserCapabilitySelected(rules)) {
+    for (const toolName of PROJECTED_BROWSER_MCP_TOOL_NAMES) {
+      projected.add(toolName);
+    }
+  }
+  for (const rule of rules) {
+    const scoped = parseReadableScopedToolRule(rule);
+    if (scoped?.toolName === RUN_COMMAND_TOOL_NAME) projected.add('Bash');
+    for (const toolName of sdkToolsForGantryFacadeTool(rule)) {
+      projected.add(toolName);
+    }
+  }
+  return [...projected];
 }

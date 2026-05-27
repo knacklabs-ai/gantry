@@ -5,7 +5,11 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import type { AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
-import type { McpServerRepository } from '../../domain/ports/repositories.js';
+import type {
+  McpServerRepository,
+  SkillCatalogRepository,
+  ToolCatalogRepository,
+} from '../../domain/ports/repositories.js';
 import {
   isIpAddress,
   type HostnameLookup,
@@ -19,10 +23,9 @@ import {
   McpServerService,
   type MaterializedMcpCapability,
 } from './mcp-server-service.js';
-import {
-  CALLER_IDENTITY_UNAVAILABLE_MESSAGE,
-  projectCallerIdentityHeaders,
-} from './mcp-caller-identity.js';
+import { projectCallerIdentityHeaders } from './mcp-caller-identity.js';
+import { authorizedMcpServerIdsForAgent } from './mcp-authorized-servers.js';
+import { CUSTOMER_IDENTITY_MISMATCH_MESSAGE } from '../../shared/user-visible-messages.js';
 
 const MCP_PROXY_TIMEOUT_MS = 60_000;
 const MCP_PROXY_CLIENT_IDLE_MS = 120_000;
@@ -38,11 +41,13 @@ export class McpToolProxy {
   constructor(
     private readonly mcpServers: McpServerRepository,
     private readonly options: {
+      tools: ToolCatalogRepository;
+      skills?: SkillCatalogRepository;
       credentialEnv?: Record<string, string>;
       callerIdentityJid?: string;
       lookupHostname?: HostnameLookup;
       dnsValidationCache?: RemoteMcpDnsValidationCache;
-    } = {},
+    },
   ) {}
 
   async listTools(input: {
@@ -132,6 +137,13 @@ export class McpToolProxy {
     appId: AppId;
     agentId: AgentId;
   }): Promise<MaterializedMcpCapability[]> {
+    const serverIds = await authorizedMcpServerIdsForAgent({
+      mcpServers: this.mcpServers,
+      tools: this.options.tools,
+      skills: this.options.skills,
+      appId: input.appId,
+      agentId: input.agentId,
+    });
     const capabilities = await new McpServerService(
       this.mcpServers,
       undefined,
@@ -143,6 +155,7 @@ export class McpToolProxy {
     ).materializeForAgent({
       appId: input.appId,
       agentId: input.agentId,
+      serverIds: serverIds as never,
       credentialEnv: this.options.credentialEnv ?? {},
     });
     return projectMcpProxyCallerIdentity({
@@ -228,7 +241,7 @@ export function projectMcpProxyCallerIdentity(input: {
   if (!input.callerIdentityJid) {
     throw new ApplicationError(
       'FORBIDDEN',
-      CALLER_IDENTITY_UNAVAILABLE_MESSAGE,
+      CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
       {
         details: [
           'MCP caller identity projection requires a source conversation JID.',

@@ -37,16 +37,45 @@ describe('tool access view', () => {
     ).toHaveLength(1);
   });
 
-  it('projects canonical Browser grants into Gantry browser runtime tools for jobs', () => {
+  it('projects canonical Browser and facade grants into runtime tools for jobs', () => {
     expect(
       buildJobToolAccessView({
-        effectiveAllowedTools: ['Read', 'Browser'],
+        effectiveAllowedTools: [
+          'FileRead',
+          'FileSearch',
+          'RunCommand(npm test *)',
+          'Browser',
+        ],
       }).projectedRuntimeTools,
     ).toEqual(
       expect.arrayContaining([
         'mcp__gantry__browser_act',
-        'mcp__gantry__browser_act',
+        'Read',
+        'Glob',
+        'Grep',
+        'Bash',
       ]),
     );
+  });
+
+  it('hides generated runtime skill implementation paths in job tool access', () => {
+    const view = buildJobToolAccessView({
+      inheritedAgentTools: [
+        'RunCommand(/Users/tester/gantry/agents/main_agent/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+        'RunCommand(chmod +x /Users/tester/gantry/agents/main_agent/.llm-runtime/claude/skills/linkedin-posting/post.py)',
+      ],
+      effectiveAllowedTools: [
+        'RunCommand(/Users/tester/gantry/agents/main_agent/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+      ],
+    });
+
+    expect(view.inheritedAgentTools).toEqual([
+      'Generated skill action (skills/linkedin-posting/post.py)',
+      'Generated skill action setup (skills/linkedin-posting/post.py)',
+    ]);
+    expect(view.effectiveAllowedTools).toEqual([
+      'Generated skill action (skills/linkedin-posting/post.py)',
+    ]);
+    expect(view.projectedRuntimeTools).toContain('Bash');
   });
 });

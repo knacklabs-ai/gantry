@@ -3,15 +3,18 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@core/runner/claude/ipc-signing.js', async () => {
-  const actual = await vi.importActual<
-    typeof import('@core/runner/claude/ipc-signing.js')
-  >('@core/runner/claude/ipc-signing.js');
-  return {
-    ...actual,
-    hasValidIpcResponseSignature: vi.fn(() => true),
-  };
-});
+vi.mock(
+  '@core/adapters/llm/anthropic-claude-agent/runner/ipc-signing.js',
+  async () => {
+    const actual = await vi.importActual<
+      typeof import('@core/adapters/llm/anthropic-claude-agent/runner/ipc-signing.js')
+    >('@core/adapters/llm/anthropic-claude-agent/runner/ipc-signing.js');
+    return {
+      ...actual,
+      hasValidIpcResponseSignature: vi.fn(() => true),
+    };
+  },
+);
 
 async function waitForFiles(dir: string, count: number): Promise<string[]> {
   const deadline = Date.now() + 2_000;
@@ -55,13 +58,14 @@ describe('requestPermissionApproval', () => {
 
   it('shares one timed-grant approval across identical concurrent same-run permission requests', async () => {
     const { requestPermissionApproval } =
-      await import('@core/runner/claude/permission-callback.js');
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
 
     const first = requestPermissionApproval({
       appId: 'default',
       agentId: 'agent:main_agent',
       groupFolder: 'main_agent',
       targetJid: 'tg:test',
+      threadId: 'topic-1',
       toolName: 'Bash',
       toolInput: { command: 'find ~/persona -type f' },
     });
@@ -70,6 +74,7 @@ describe('requestPermissionApproval', () => {
       agentId: 'agent:main_agent',
       groupFolder: 'main_agent',
       targetJid: 'tg:test',
+      threadId: 'topic-2',
       toolName: 'Bash',
       toolInput: { command: 'find ~/persona -type f' },
     });
@@ -116,7 +121,7 @@ describe('requestPermissionApproval', () => {
 
   it('does not reuse a denial for a different requested tool in the same run', async () => {
     const { requestPermissionApproval } =
-      await import('@core/runner/claude/permission-callback.js');
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
 
     const first = requestPermissionApproval({
       appId: 'default',

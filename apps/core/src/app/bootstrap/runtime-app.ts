@@ -48,15 +48,22 @@ import {
 import { AppMemoryService } from '../../memory/app-memory-service.js';
 import { collectDurableMemoryAtBoundary } from '../../memory/app-memory-session-boundary-collector.js';
 import { memoryAgentIdForGroupFolder } from '../../memory/app-memory-boundaries.js';
-import { runModelQuery } from '../../memory/model-query.js';
+import {
+  createDefaultAgentExecutionAdapter,
+  createDefaultMemoryLlmClient,
+} from '../../adapters/llm/default-runtime-adapters.js';
+import type { AgentExecutionAdapter } from '../../application/agent-execution/agent-execution-adapter.js';
+import { registerMemoryLlmClient } from '../../memory/memory-llm-port.js';
+import { runClaudeQuery } from '../../adapters/llm/anthropic-claude-agent/memory-query.js';
 
-type RuntimeAppRepository = RuntimeRouterStateRepository &
+export type RuntimeAppRepository = RuntimeRouterStateRepository &
   RuntimeMessageRepository &
   RuntimeConversationRouteRepository &
   RuntimeChatMetadataRepository &
   RuntimeAgentSessionRepository;
 
 export interface RuntimeApp {
+  executionAdapter: AgentExecutionAdapter;
   queue: GroupQueue;
   loadState: () => Promise<void>;
   saveState: () => Promise<void>;
@@ -127,6 +134,7 @@ export interface RuntimeAppOptions {
   collectSessionMemory?: GroupProcessingDeps['collectSessionMemory'];
   publishRuntimeEvent?: GroupProcessingDeps['publishRuntimeEvent'];
   guardrailClassifier?: GroupProcessingDeps['guardrailClassifier'];
+  executionAdapter?: AgentExecutionAdapter;
   opsRepository?: RuntimeAppRepository;
 }
 
@@ -140,6 +148,9 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   let agentSettingsByFolder: Record<string, RuntimeConfiguredAgent> = {};
 
   const queue = options.queue ?? new GroupQueue(getRuntimeQueueConfig());
+  const executionAdapter =
+    options.executionAdapter ?? createDefaultAgentExecutionAdapter();
+  registerMemoryLlmClient(createDefaultMemoryLlmClient());
   const mcpDnsValidationCache = new RemoteMcpDnsValidationCache();
   let credentialBrokerPromise:
     | Promise<AgentCredentialBroker | undefined>
@@ -500,6 +511,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
         groupFolder,
         stopAliasJids,
         threadId,
+        registerOptions,
       ) =>
         queue.registerProcess(
           groupJid,
@@ -508,6 +520,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
           groupFolder,
           stopAliasJids,
           threadId,
+          registerOptions,
         ),
     },
     runAgent: options.runAgent,
@@ -526,10 +539,12 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     publishRuntimeEvent: options.publishRuntimeEvent,
     guardrailClassifier:
       options.guardrailClassifier ??
-      createGuardrailClassifier({ query: runModelQuery }),
+      createGuardrailClassifier({ query: runClaudeQuery }),
+    executionAdapter,
   });
 
   return {
+    executionAdapter,
     queue,
     loadState,
     saveState,

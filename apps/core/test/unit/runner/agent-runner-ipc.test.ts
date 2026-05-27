@@ -2,11 +2,20 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
-import { generateKeyPairSync } from 'crypto';
+import { createHash, generateKeyPairSync } from 'crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import {
+  GANTRY_CLAUDE_SDK_SKILLS_ENV,
+  SDK_NATIVE_SKILL_OVERRIDES,
+} from '@core/adapters/llm/anthropic-claude-agent/native-sdk-skills.js';
+
 const tempRoots: string[] = [];
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
@@ -31,7 +40,9 @@ interface RunnerRecord {
     sdkEnv?: Record<string, string>;
     mcpServers?: Record<string, unknown>;
     settings?: Record<string, unknown>;
+    skills?: string[];
     sandbox?: Record<string, unknown>;
+    additionalDirectories?: string[];
     persistSession?: boolean;
     resume?: unknown;
     resumeSessionAt?: unknown;
@@ -66,11 +77,22 @@ function createRunnerFixture(): {
   const responseSigningKey = privateKey
     .export({ format: 'pem', type: 'pkcs8' })
     .toString();
-  const runnerDir = path.join(root, 'runner');
-  const runnerClaudeDir = path.join(runnerDir, 'claude');
-  const infrastructureLoggingDir = path.join(root, 'infrastructure', 'logging');
-  const domainEventsDir = path.join(root, 'domain', 'events');
-  const sharedDir = path.join(root, 'shared');
+  const sourceRoot = path.join(root, 'apps', 'core', 'src');
+  const adapterDir = path.join(
+    sourceRoot,
+    'adapters',
+    'llm',
+    'anthropic-claude-agent',
+  );
+  const runnerDir = path.join(sourceRoot, 'runner');
+  const runnerClaudeDir = path.join(adapterDir, 'runner');
+  const infrastructureLoggingDir = path.join(
+    sourceRoot,
+    'infrastructure',
+    'logging',
+  );
+  const domainEventsDir = path.join(sourceRoot, 'domain', 'events');
+  const sharedDir = path.join(sourceRoot, 'shared');
   const sharedTimeDir = path.join(sharedDir, 'time');
   const runnerPath = path.join(runnerClaudeDir, 'index.ts');
   const sdkDir = path.join(
@@ -84,6 +106,7 @@ function createRunnerFixture(): {
   const recordPath = path.join(root, 'sdk-record.json');
 
   fs.mkdirSync(sdkDir, { recursive: true });
+  fs.mkdirSync(adapterDir, { recursive: true });
   fs.mkdirSync(runnerDir, { recursive: true });
   fs.mkdirSync(runnerClaudeDir, { recursive: true });
   fs.mkdirSync(infrastructureLoggingDir, { recursive: true });
@@ -91,18 +114,35 @@ function createRunnerFixture(): {
   fs.mkdirSync(sharedDir, { recursive: true });
   fs.mkdirSync(sharedTimeDir, { recursive: true });
   for (const file of fs.readdirSync(
-    path.resolve('apps/core/src/runner/claude'),
+    path.resolve('apps/core/src/adapters/llm/anthropic-claude-agent/runner'),
   )) {
     if (file.endsWith('.ts')) {
       fs.copyFileSync(
-        path.resolve('apps/core/src/runner/claude', file),
+        path.resolve(
+          'apps/core/src/adapters/llm/anthropic-claude-agent/runner',
+          file,
+        ),
         path.join(runnerClaudeDir, file),
       );
     }
   }
   fs.copyFileSync(
-    path.resolve('apps/core/src/runner/agent-capabilities.ts'),
-    path.join(runnerDir, 'agent-capabilities.ts'),
+    path.resolve(
+      'apps/core/src/adapters/llm/anthropic-claude-agent/agent-capabilities.ts',
+    ),
+    path.join(adapterDir, 'agent-capabilities.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve(
+      'apps/core/src/adapters/llm/anthropic-claude-agent/native-sdk-tools.ts',
+    ),
+    path.join(adapterDir, 'native-sdk-tools.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve(
+      'apps/core/src/adapters/llm/anthropic-claude-agent/native-sdk-skills.ts',
+    ),
+    path.join(adapterDir, 'native-sdk-skills.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/runner/gantry-mcp-tool-surface.ts'),
@@ -113,7 +153,9 @@ function createRunnerFixture(): {
     path.join(runnerDir, 'memory-boundary.ts'),
   );
   fs.copyFileSync(
-    path.resolve('apps/core/src/runner/claude/message-stream.ts'),
+    path.resolve(
+      'apps/core/src/adapters/llm/anthropic-claude-agent/runner/message-stream.ts',
+    ),
     path.join(runnerClaudeDir, 'message-stream.ts'),
   );
   fs.copyFileSync(
@@ -145,8 +187,16 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'model-catalog.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-usage.ts'),
+    path.join(sharedDir, 'model-usage.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/agent-persona.ts'),
     path.join(sharedDir, 'agent-persona.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/sdk-native-skill-names.ts'),
+    path.join(sharedDir, 'sdk-native-skill-names.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/admin-mcp-tools.ts'),
@@ -157,8 +207,16 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'agent-tool-references.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/gantry-tool-facades.ts'),
+    path.join(sharedDir, 'gantry-tool-facades.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/bash-command-parser.ts'),
     path.join(sharedDir, 'bash-command-parser.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/generated-runtime-paths.ts'),
+    path.join(sharedDir, 'generated-runtime-paths.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/semantic-capability-ids.ts'),
@@ -167,6 +225,10 @@ function createRunnerFixture(): {
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/semantic-capabilities.ts'),
     path.join(sharedDir, 'semantic-capabilities.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/capability-runtime-access.ts'),
+    path.join(sharedDir, 'capability-runtime-access.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/memory-ipc-actions.ts'),
@@ -296,7 +358,9 @@ export async function* query({ prompt, options }) {
     sdkEnv: options?.env,
     mcpServers: options?.mcpServers,
     settings: options?.settings,
+    skills: options?.skills,
     sandbox: options?.sandbox,
+    additionalDirectories: options?.additionalDirectories,
     tools: options?.tools,
     allowedTools: options?.allowedTools,
     persistSession: options?.persistSession,
@@ -431,6 +495,10 @@ export async function* query({ prompt, options }) {
   }
 
   if (process.env.TEST_SDK_NETWORK_AFTER_TOOL === '1') {
+    const useParentlessNetworkPrompt =
+      process.env.TEST_PARENTLESS_SDK_NETWORK_AFTER_TOOL === '1';
+    const networkHost =
+      process.env.TEST_SDK_NETWORK_HOST || 'registry.npmjs.org';
     const toolDecision = await options.canUseTool(
       'Bash',
       { cmd: process.env.TEST_TOOL_USE_CMD || 'npm test --runInBand' },
@@ -446,14 +514,17 @@ export async function* query({ prompt, options }) {
     );
     const networkDecision = await options.canUseTool(
       'SandboxNetworkAccess',
-      { host: 'registry.npmjs.org' },
+      { host: networkHost },
       {
         signal: new AbortController().signal,
         title: 'Network request outside of sandbox',
         displayName: 'SandboxNetworkAccess',
-        description: 'Allow network connection to registry.npmjs.org?',
+        description: 'Allow network connection to ' + networkHost + '?',
         decisionReason: 'Sandboxed tool attempted outbound network access',
         toolUseID: 'toolu_network_1',
+        ...(useParentlessNetworkPrompt
+          ? {}
+          : { parentToolUseID: 'toolu_bash_1' }),
       },
     );
     const secondNetworkDecision =
@@ -469,6 +540,7 @@ export async function* query({ prompt, options }) {
               decisionReason:
                 'Sandboxed tool attempted outbound network access',
               toolUseID: 'toolu_network_2',
+              parentToolUseID: 'toolu_bash_1',
             },
           )
         : undefined;
@@ -761,7 +833,8 @@ describe('agent-runner IPC lifecycle', () => {
       );
 
       expect(result.exitCode, result.stderr).toBe(0);
-      const sdkEnv = readRecord(fixture.recordPath).calls[0]?.sdkEnv || {};
+      const call = readRecord(fixture.recordPath).calls[0];
+      const sdkEnv = call?.sdkEnv || {};
       expect(sdkEnv.ANTHROPIC_BASE_URL).toBe('https://broker.local/anthropic');
       expect(sdkEnv.ANTHROPIC_API_KEY).toBeUndefined();
       expect(sdkEnv.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -800,6 +873,18 @@ describe('agent-runner IPC lifecycle', () => {
       expect(sdkEnv.GANTRY_MCP_CONFIG_FILE).toBeUndefined();
       expect(sdkEnv.GANTRY_MCP_SERVERS_JSON).toBeUndefined();
       expect(sdkEnv.GANTRY_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
+      const gantryMcpServer = call?.mcpServers?.gantry as
+        | { args?: string[] }
+        | undefined;
+      const gantryMcpServerPath = path.normalize(
+        gantryMcpServer?.args?.[0] ?? '',
+      );
+      expect(gantryMcpServerPath).toContain(
+        path.join('apps', 'core', 'src', 'runner', 'mcp', 'stdio.js'),
+      );
+      expect(gantryMcpServerPath).not.toContain(
+        path.join('adapters', 'llm', 'anthropic-claude-agent', 'mcp'),
+      );
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );
@@ -984,6 +1069,83 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
+    'keeps reviewed local CLI credential paths readable but write-protected in the SDK sandbox',
+    async () => {
+      const fixture = createRunnerFixture();
+      const protectedSettingsPath = path.join(
+        fixture.root,
+        'runtime',
+        'settings.json',
+      );
+      const runtimeProjectionDir = path.join(fixture.root, 'runtime');
+      const localCliCredentialDir = path.join(
+        fixture.root,
+        'credentials',
+        'gog',
+      );
+      fs.mkdirSync(runtimeProjectionDir, { recursive: true });
+      fs.mkdirSync(localCliCredentialDir, { recursive: true });
+
+      const result = await runRunner(fixture, baseInput(), {
+        TEST_EXIT_AFTER_QUERY: '1',
+        GANTRY_PROTECTED_FILESYSTEM_DENY_READ_PATHS_JSON: JSON.stringify([
+          protectedSettingsPath,
+        ]),
+        GANTRY_PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_JSON: JSON.stringify([
+          runtimeProjectionDir,
+        ]),
+        GANTRY_LOCAL_CLI_CREDENTIAL_DIRS_JSON: JSON.stringify([
+          localCliCredentialDir,
+        ]),
+      });
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const call = readRecord(fixture.recordPath).calls[0];
+      const sandboxFilesystem = call?.sandbox?.filesystem as
+        | { denyRead?: string[]; denyWrite?: string[] }
+        | undefined;
+
+      expect(sandboxFilesystem?.denyRead).toEqual(
+        expect.arrayContaining([
+          path.join(
+            fs.realpathSync.native(path.dirname(protectedSettingsPath)),
+            path.basename(protectedSettingsPath),
+          ),
+        ]),
+      );
+      expect(sandboxFilesystem?.denyRead).not.toEqual(
+        expect.arrayContaining([
+          path.join(
+            fs.realpathSync.native(path.dirname(localCliCredentialDir)),
+            path.basename(localCliCredentialDir),
+          ),
+        ]),
+      );
+      expect(call?.additionalDirectories).toEqual(
+        expect.arrayContaining([
+          path.join(
+            fs.realpathSync.native(path.dirname(localCliCredentialDir)),
+            path.basename(localCliCredentialDir),
+          ),
+        ]),
+      );
+      expect(sandboxFilesystem?.denyWrite).toEqual(
+        expect.arrayContaining([
+          path.join(
+            fs.realpathSync.native(path.dirname(runtimeProjectionDir)),
+            path.basename(runtimeProjectionDir),
+          ),
+          path.join(
+            fs.realpathSync.native(path.dirname(localCliCredentialDir)),
+            path.basename(localCliCredentialDir),
+          ),
+        ]),
+      );
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
     'rejects unsupported model credential env keys before Agent SDK launch',
     async () => {
       const fixture = createRunnerFixture();
@@ -1119,6 +1281,11 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({ persona: 'personal_assistant' }),
         {
           TEST_EXIT_AFTER_QUERY: '1',
+          [GANTRY_CLAUDE_SDK_SKILLS_ENV]: JSON.stringify([
+            'gantry-admin',
+            'gantry-browser',
+            'linkedin-posting',
+          ]),
         },
       );
 
@@ -1127,6 +1294,77 @@ describe('agent-runner IPC lifecycle', () => {
         readRecord(assistantFixture.recordPath).calls[0]?.settings
           ?.includeGitInstructions,
       ).toBe(false);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'hides Claude SDK-native skills while keeping the Skill tool available',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({ persona: 'personal_assistant' }),
+        {
+          TEST_EXIT_AFTER_QUERY: '1',
+          [GANTRY_CLAUDE_SDK_SKILLS_ENV]: JSON.stringify([
+            'gantry-admin',
+            'gantry-browser',
+            'linkedin-posting',
+          ]),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.tools).toContain('Skill');
+      expect(call?.allowedTools).toContain('Skill');
+      expect(call?.settings?.skillOverrides).toEqual(
+        SDK_NATIVE_SKILL_OVERRIDES,
+      );
+      expect(call?.skills).toEqual([
+        'gantry-admin',
+        'gantry-browser',
+        'linkedin-posting',
+      ]);
+      expect(call?.skills).not.toEqual(
+        expect.arrayContaining([
+          'commands',
+          'init',
+          'review',
+          'security-review',
+          'update-config',
+          'loop',
+          'schedule',
+        ]),
+      );
+      expect(call?.sdkEnv?.CLAUDE_CODE_DISABLE_POLICY_SKILLS).toBe('1');
+      expect(call?.sdkEnv?.CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL).toBe('1');
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'hides Claude SDK-native skills for session slash commands',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(fixture, baseInput({ prompt: '/model' }), {
+        TEST_EXIT_AFTER_QUERY: '1',
+      });
+
+      expect(result.exitCode).toBe(0);
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.promptKind).toBe('string');
+      expect(call?.stringPrompt).toBe('/model');
+      expect(call?.allowedTools).toEqual([]);
+      expect(call?.skills).toEqual([]);
+      expect(call?.settings?.skillOverrides).toEqual(
+        SDK_NATIVE_SKILL_OVERRIDES,
+      );
+      expect(call?.sdkEnv?.CLAUDE_CODE_DISABLE_POLICY_SKILLS).toBe('1');
+      expect(call?.sdkEnv?.CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL).toBe('1');
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );
@@ -1167,7 +1405,7 @@ describe('agent-runner IPC lifecycle', () => {
         {
           TEST_TOOL_USE_ONLY: 'Bash',
           TEST_TOOL_USE_CMD: 'npm test --runInBand',
-          TEST_LIVE_TOOL_RULE: 'Bash(npm test *)',
+          TEST_LIVE_TOOL_RULE: 'RunCommand(npm test *)',
         },
       );
 
@@ -1231,14 +1469,14 @@ describe('agent-runner IPC lifecycle', () => {
         'permission.requested',
       ]);
       expect(attemptEvents.map((event) => event.payload?.toolName)).toEqual([
-        'Bash',
+        'RunCommand',
         'Browser',
       ]);
 
       const finalOutput = outputs.at(-1);
       expect(finalOutput?.primeToolAttempts).toEqual([
         expect.objectContaining({
-          toolName: 'Bash',
+          toolName: 'RunCommand',
           suggestions: [
             {
               type: 'addRules',
@@ -1246,7 +1484,7 @@ describe('agent-runner IPC lifecycle', () => {
               destination: 'session',
               rules: [
                 {
-                  toolName: 'Bash',
+                  toolName: 'RunCommand',
                   ruleContent: 'npm test --runInBand',
                 },
               ],
@@ -1620,7 +1858,7 @@ describe('agent-runner IPC lifecycle', () => {
         expect.objectContaining({
           sourceAgentFolder: 'team',
           runHandle: 'runner-test-run',
-          toolName: 'Bash',
+          toolName: 'RunCommand',
           signature: expect.any(String),
         }),
       );
@@ -1634,7 +1872,7 @@ describe('agent-runner IPC lifecycle', () => {
           destination: 'session',
           rules: [
             {
-              toolName: 'Bash',
+              toolName: 'RunCommand',
               ruleContent: 'npm test',
             },
           ],
@@ -1793,7 +2031,7 @@ describe('agent-runner IPC lifecycle', () => {
           jobId: 'job-1',
           allowedTools: [
             'Browser',
-            'Bash(/Users/example/runtime/scripts/append-lead.py *)',
+            'RunCommand(/Users/example/runtime/scripts/append-lead.py *)',
           ],
           prompt: 'Find new leads.',
         }),
@@ -1808,7 +2046,7 @@ describe('agent-runner IPC lifecycle', () => {
       expect(prompt).toContain('found, added, skipped, and errors');
       expect(prompt).toContain('Durable tool rules for this autonomous run:');
       expect(prompt).toContain(
-        'Bash(/Users/example/runtime/scripts/append-lead.py *)',
+        'RunCommand(/Users/example/runtime/scripts/append-lead.py *)',
       );
       expect(prompt).toContain('Do not wrap it in python -c');
       expect(prompt).toContain('Find new leads.');
@@ -1817,7 +2055,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'scheduled jobs allow matching scoped Bash without writing permission IPC',
+    'scheduled jobs allow matching scoped RunCommand without writing permission IPC',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -1826,7 +2064,7 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({
           isScheduledJob: true,
           jobId: 'job-1',
-          allowedTools: ['Bash(npm test *)'],
+          allowedTools: ['RunCommand(npm test *)'],
         }),
         {
           TEST_TOOL_USE_ONLY: 'Bash',
@@ -1882,7 +2120,7 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({
           isScheduledJob: true,
           jobId: 'job-1',
-          allowedTools: ['Bash(gog sheets *)'],
+          allowedTools: ['RunCommand(gog sheets *)'],
           modelCredentialEnv: {
             NODE_EXTRA_CA_CERTS: '/tmp/onecli-ca.pem',
           },
@@ -1930,7 +2168,7 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({
           isScheduledJob: true,
           jobId: 'job-1',
-          allowedTools: ['Bash(npm test *)'],
+          allowedTools: ['RunCommand(npm test *)'],
         }),
         {
           TEST_SDK_NETWORK_AFTER_TOOL: '1',
@@ -1941,8 +2179,16 @@ describe('agent-runner IPC lifecycle', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('"eventType":"sandbox.blocked"');
       expect(result.stdout).toContain('sdk_network_gate_suppressed');
-      expect(result.stdout).toContain('"networkToolUseID":"toolu_network_1"');
-      expect(result.stdout).toContain('"parentToolUseID":"toolu_bash_1"');
+      expect(result.stdout).toContain(
+        `"networkToolUseIDHash":"${sha256('toolu_network_1')}"`,
+      );
+      expect(result.stdout).toContain(
+        `"parentToolUseIDHash":"${sha256('toolu_bash_1')}"`,
+      );
+      expect(result.stdout).not.toContain(
+        '"networkToolUseID":"toolu_network_1"',
+      );
+      expect(result.stdout).not.toContain('"parentToolUseID":"toolu_bash_1"');
       expect(result.stdout).toContain('"approvedToolName":"Bash"');
       expect(result.stdout).toContain('"inputHash"');
       expect(result.stdout).toContain('"hostHash"');
@@ -1975,7 +2221,7 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({
           isScheduledJob: true,
           jobId: 'job-1',
-          allowedTools: ['Bash(npm test *)'],
+          allowedTools: ['RunCommand(npm test *)'],
         }),
         {
           TEST_SDK_NETWORK_AFTER_TOOL: '1',
@@ -1993,6 +2239,111 @@ describe('agent-runner IPC lifecycle', () => {
       expect(call?.permissionDecisions?.network2).toEqual({
         behavior: 'allow',
         updatedInput: { host: 'example.com' },
+      });
+      expect(
+        fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
+      ).toBe(false);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'scheduled jobs correlate parentless SDK network prompts through typed local CLI runtime access',
+    async () => {
+      const fixture = createRunnerFixture();
+      const credentialDir = path.join(fixture.root, 'credentials', 'gog');
+      fs.mkdirSync(credentialDir, { recursive: true });
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          isScheduledJob: true,
+          jobId: 'job-1',
+          allowedTools: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
+          runtimeAccess: [
+            {
+              selectedCapabilityId: 'gog.sheets.get',
+              sourceType: 'local_cli',
+              auditLabel: 'Gog Sheets get',
+              commandRules: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
+              credentialDirs: [credentialDir],
+              networkBindings: [
+                {
+                  commandRules: [
+                    'RunCommand(/opt/homebrew/bin/gog sheets get *)',
+                  ],
+                  hosts: ['oauth2.googleapis.com', 'sheets.googleapis.com'],
+                },
+              ],
+            },
+          ],
+        }),
+        {
+          TEST_SDK_NETWORK_AFTER_TOOL: '1',
+          TEST_PARENTLESS_SDK_NETWORK_AFTER_TOOL: '1',
+          TEST_SDK_NETWORK_HOST: 'oauth2.googleapis.com',
+          TEST_TOOL_USE_CMD:
+            '/opt/homebrew/bin/gog sheets get 12s6uzwLDLV-DVcTH6XBa5vV3FZJUo04fLm0npfgACb4 "Bot Recommendation!A1:Z1" --json --account ravi@knacklabs.ai',
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(
+        'sdk_network_gate_suppressed_parentless_recent_tool',
+      );
+      const call = readRecord(fixture.recordPath).calls[0];
+      const expectedCredentialDir = path.join(
+        fs.realpathSync.native(path.dirname(credentialDir)),
+        path.basename(credentialDir),
+      );
+      expect(call?.additionalDirectories).toEqual(
+        expect.arrayContaining([expectedCredentialDir]),
+      );
+      expect(call?.permissionDecisions?.network).toEqual({
+        behavior: 'allow',
+        updatedInput: { host: 'oauth2.googleapis.com' },
+      });
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'denies parentless SDK sandbox network prompts after a scheduled command without host binding',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({
+          isScheduledJob: true,
+          jobId: 'job-1',
+          allowedTools: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
+        }),
+        {
+          TEST_SDK_NETWORK_AFTER_TOOL: '1',
+          TEST_PARENTLESS_SDK_NETWORK_AFTER_TOOL: '1',
+          TEST_TOOL_USE_CMD:
+            '/opt/homebrew/bin/gog sheets get 12s6uzwLDLV-DVcTH6XBa5vV3FZJUo04fLm0npfgACb4 "Bot Recommendation!A1:Z1" --json --account ravi@knacklabs.ai',
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('sdk_network_gate_denied');
+      expect(result.stdout).toContain(
+        `"networkToolUseIDHash":"${sha256('toolu_network_1')}"`,
+      );
+      expect(result.stdout).not.toContain('"parentToolUseID":"toolu_bash_1"');
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.permissionDecisions?.tool).toEqual(
+        expect.objectContaining({
+          behavior: 'allow',
+        }),
+      );
+      expect(call?.permissionDecisions?.network).toEqual({
+        behavior: 'deny',
+        interrupt: false,
+        message:
+          'SDK requested sandbox network access without a parent tool-use id. Approve the tool call through Gantry first.',
       });
       expect(
         fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
@@ -2035,7 +2386,7 @@ describe('agent-runner IPC lifecycle', () => {
         expect.objectContaining({
           targetJid: 'tg:team',
           sourceAgentFolder: 'team',
-          toolName: 'Bash',
+          toolName: 'RunCommand',
         }),
       );
       expect(call?.permissionRequest?.context).toEqual(
@@ -2083,7 +2434,7 @@ describe('agent-runner IPC lifecycle', () => {
           destination: 'session',
           rules: [
             {
-              toolName: 'Bash',
+              toolName: 'RunCommand',
               ruleContent: 'npm test',
             },
           ],

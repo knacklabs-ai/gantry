@@ -11,9 +11,15 @@ import {
 } from './bash-command-parser.js';
 import {
   isCanonicalBrowserCapabilityRule,
+  isGantryFacadeExactToolRule,
   parseReadableScopedToolRule,
+  RUN_COMMAND_TOOL_NAME,
   validateReadableAgentToolRule,
 } from './agent-tool-references.js';
+import {
+  containsGeneratedRuntimeSkillPath,
+  GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
+} from './generated-runtime-paths.js';
 import {
   getBuiltinSemanticCapability,
   type SemanticCapabilityDefinition,
@@ -26,7 +32,7 @@ import {
 } from './sensitive-material.js';
 
 export const PERSISTENT_REQUEST_PERMISSION_RULE_REJECTION_REASON =
-  'Persistent request_permission approvals support semantic capabilities, canonical Browser, scoped Bash(...), or exact Gantry admin tools; request a semantic capability for app/tool access.';
+  'Persistent request_permission approvals support only trusted projected semantic capabilities, canonical Browser, exact Gantry file/web tools, scoped RunCommand(...), or exact Gantry admin tools; use propose_capability for semantic app/tool access.';
 
 export function validatePersistentRequestPermissionRule(
   rule: string,
@@ -35,6 +41,7 @@ export function validatePersistentRequestPermissionRule(
       string,
       SemanticCapabilityDefinition
     >;
+    allowUnknownSemanticCapability?: boolean;
   } = {},
 ): { ok: true } | { ok: false; reason: string } {
   const trimmed = rule.trim();
@@ -48,21 +55,28 @@ export function validatePersistentRequestPermissionRule(
 
   const readableValidation = validateReadableAgentToolRule(trimmed);
   if (!readableValidation.ok) return readableValidation;
+  if (isGantryFacadeExactToolRule(trimmed)) return { ok: true };
 
   const scoped = parseReadableScopedToolRule(trimmed);
   if (scoped) {
-    if (scoped.toolName !== 'Bash') {
+    if (scoped.toolName !== RUN_COMMAND_TOOL_NAME) {
       return {
         ok: false,
         reason:
-          'Only Bash supports persistent scoped tool rules; use an exact tool name for other tools.',
+          'Only RunCommand supports persistent scoped tool rules; use an exact tool name for other tools.',
+      };
+    }
+    if (containsGeneratedRuntimeSkillPath(scoped.scope)) {
+      return {
+        ok: false,
+        reason: GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
       };
     }
     const parsed = parseBashCommand(scoped.scope);
     if (!parsed.ok) {
       return {
         ok: false,
-        reason: `Persistent Bash rule cannot be parsed safely (${parsed.reason}); use Allow once.`,
+        reason: `Persistent RunCommand rule cannot be parsed safely (${parsed.reason}); use Allow once.`,
       };
     }
     const destructiveRedirect = parsed.leaves
@@ -72,7 +86,7 @@ export function validatePersistentRequestPermissionRule(
       return {
         ok: false,
         reason:
-          'Persistent Bash rules cannot include destructive redirection; use Allow once.',
+          'Persistent RunCommand rules cannot include destructive redirection; use Allow once.',
       };
     }
     const nonDurableReason = parsed.leaves
@@ -89,7 +103,7 @@ export function validatePersistentRequestPermissionRule(
     if (secretReason) {
       return {
         ok: false,
-        reason: `Persistent Bash rules cannot include secret-like material (${secretReason}); use Allow once.`,
+        reason: `Persistent RunCommand rules cannot include secret-like material (${secretReason}); use Allow once.`,
       };
     }
     return { ok: true };
@@ -100,11 +114,11 @@ export function validatePersistentRequestPermissionRule(
     const definition =
       options.semanticCapabilityDefinitions?.[capabilityId] ??
       getBuiltinSemanticCapability(capabilityId);
-    if (definition?.credentialSource === 'local_cli') {
+    if (!definition) {
+      if (options.allowUnknownSemanticCapability) return { ok: true };
       return {
         ok: false,
-        reason:
-          'Local CLI capabilities are draft-only until runtime enforcement verifies executable hash, auth preflight, protected paths, and denied environment overrides.',
+        reason: `Unknown semantic capability ${capabilityId}. Review and register a trusted capability definition before granting it persistently.`,
       };
     }
     return { ok: true };
@@ -128,8 +142,16 @@ export function isPersistentRequestPermissionRuleAllowed(
 
 export function formatPersistentPermissionRulesForUser(
   rules: readonly string[],
+  options: {
+    semanticCapabilityDefinitions?: Record<
+      string,
+      SemanticCapabilityDefinition
+    >;
+  } = {},
 ): string {
-  return rules.map(formatPersistentPermissionRuleForUser).join(', ');
+  return rules
+    .map((rule) => formatPersistentPermissionRuleForUser(rule, options))
+    .join(', ');
 }
 
 export function formatPersistentPermissionRuleForEvent(rule: string): string {
@@ -140,12 +162,27 @@ export function persistentPermissionRuleAuditPreview(rule: string): string {
   return formatPersistentPermissionRuleForUser(rule);
 }
 
-function formatPersistentPermissionRuleForUser(rule: string): string {
+function formatPersistentPermissionRuleForUser(
+  rule: string,
+  options: {
+    semanticCapabilityDefinitions?: Record<
+      string,
+      SemanticCapabilityDefinition
+    >;
+  } = {},
+): string {
   const trimmed = rule.trim();
   const hash = shortRuleHash(trimmed);
   const scoped = parseReadableScopedToolRule(trimmed);
-  if (scoped?.toolName === 'Bash') {
-    return `scoped Bash rule [sha256:${hash}]`;
+  if (scoped?.toolName === RUN_COMMAND_TOOL_NAME) {
+    return `scoped RunCommand rule [sha256:${hash}]`;
+  }
+  const capabilityId = parseSemanticCapabilityRule(trimmed);
+  if (capabilityId) {
+    const definition =
+      options.semanticCapabilityDefinitions?.[capabilityId] ??
+      getBuiltinSemanticCapability(capabilityId);
+    if (definition) return `${definition.displayName} [sha256:${hash}]`;
   }
   return `${truncate(redactSensitiveText(trimmed), 160)} [sha256:${hash}]`;
 }

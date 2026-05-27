@@ -8,6 +8,7 @@ import type {
 } from '../domain/types.js';
 import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
 import { PermissionManagementService } from '../application/permissions/permission-management-service.js';
+import { recheckSetupPausedJobsAfterPermissionGrant } from '../application/jobs/job-permission-recovery.js';
 import {
   formatPersistentPermissionRuleForEvent,
   formatPersistentPermissionRulesForUser,
@@ -159,6 +160,9 @@ export async function processPermissionInteractionIpc(input: {
       decision.decisionClassification === 'user_permanent' &&
       (decision.updatedPermissions?.length ?? 0) > 0
     ) {
+      const persistentScopeRequest = persistentPermissionScopeRequest(
+        input.request,
+      );
       const updatedPermissions = decision.updatedPermissions ?? [];
       const toolRepository = input.deps.getToolRepository?.();
       const mirrorAgentToolRulesToSettings =
@@ -177,30 +181,58 @@ export async function processPermissionInteractionIpc(input: {
         toolRepository,
         mirrorAgentToolRulesToSettings,
         permissionRepository: input.deps.getPermissionRepository?.(),
+        semanticCapabilityDefinitions:
+          input.request.semanticCapabilityDefinitions,
         ipcDir: pathForGroupIpc(input.ipcBaseDir, input.sourceAgentFolder),
         runHandle: input.request.runHandle,
         requestId: input.request.requestId,
         actor: decision.decidedBy,
-        conversationId: input.request.targetJid,
-        threadId: input.request.threadId,
+        conversationId: persistentScopeRequest.targetJid,
+        threadId: persistentScopeRequest.threadId,
         runId: input.request.runId,
         jobId: input.request.jobId,
         reason: decision.reason,
       });
-      const persistedContext = permissionTelemetryContext(input.request, {
-        sourceAgentFolder: input.sourceAgentFolder,
-        decision: 'persisted',
-        persistedRules: permissionUpdateAllowedToolRules(
-          decision.updatedPermissions,
-        ).map(formatPersistentPermissionRuleForEvent),
-      });
+      const persistedContext = permissionTelemetryContext(
+        persistentScopeRequest,
+        {
+          sourceAgentFolder: input.sourceAgentFolder,
+          decision: 'persisted',
+          persistedRules: permissionUpdateAllowedToolRules(
+            decision.updatedPermissions,
+          ).map(formatPersistentPermissionRuleForEvent),
+        },
+      );
       input.logger.info?.(persistedContext, 'Permission persisted');
-      await publishPermissionRuntimeEvent(input.deps, input.request, {
+      await publishPermissionRuntimeEvent(input.deps, persistentScopeRequest, {
         eventType: RUNTIME_EVENT_TYPES.PERMISSION_PERSISTED,
         payload: persistedContext,
       });
+      const recovery = await recheckSetupPausedJobsAfterPermissionGrant({
+        appId: input.request.appId,
+        sourceAgentFolder: input.sourceAgentFolder,
+        conversationJid: input.request.targetJid,
+        jobId: input.request.jobId,
+        opsRepository: input.deps.opsRepository,
+        scheduler: {
+          requestSchedulerSync: input.deps.onSchedulerChanged,
+        },
+        toolRepository,
+        skillRepository: input.deps.getSkillRepository?.(),
+        mcpServerRepository: input.deps.getMcpServerRepository?.(),
+        capabilitySecretRepository:
+          input.deps.getCapabilitySecretRepository?.(),
+        credentialBroker: await input.deps.getCredentialBroker?.(),
+        getBrowserStatus: input.deps.getBrowserStatus,
+        publishRuntimeEvent: input.deps.publishRuntimeEvent,
+      });
       await sendPermissionOutcomeMessage(input.deps, input.request, {
-        text: `Always allowed: ${formatPersistentPermissionRulesForUser(permissionUpdateAllowedToolRules(decision.updatedPermissions))}.`,
+        text: formatPersistentPermissionOutcome({
+          rules: permissionUpdateAllowedToolRules(decision.updatedPermissions),
+          semanticCapabilityDefinitions:
+            input.request.semanticCapabilityDefinitions,
+          recovery,
+        }),
       });
     } else {
       await permissionService.recordDecision({
@@ -303,6 +335,51 @@ export async function processPermissionInteractionIpc(input: {
       input.claimedPath,
     );
   }
+}
+
+function persistentPermissionScopeRequest(
+  request: PermissionApprovalRequest,
+): PermissionApprovalRequest {
+  if (!request.threadId) return request;
+  const { threadId: _routingThreadId, ...parentConversationRequest } = request;
+  return parentConversationRequest;
+}
+
+function formatPersistentPermissionOutcome(input: {
+  rules: string[];
+  semanticCapabilityDefinitions?: PermissionApprovalRequest['semanticCapabilityDefinitions'];
+  recovery: Awaited<
+    ReturnType<typeof recheckSetupPausedJobsAfterPermissionGrant>
+  >;
+}): string {
+  const lines = [
+    `Always allowed: ${formatPersistentPermissionRulesForUser(input.rules, {
+      semanticCapabilityDefinitions: input.semanticCapabilityDefinitions,
+    })}.`,
+  ];
+  if (input.recovery.queued.length > 0) {
+    lines.push(
+      `Jobs queued after approval: ${input.recovery.queued
+        .map((job) => job.name || job.jobId)
+        .join(', ')}.`,
+    );
+  }
+  if (input.recovery.stillBlocked.length > 0) {
+    const blocker = input.recovery.stillBlocked[0];
+    lines.push(
+      `Still blocked: ${blocker.name || blocker.jobId}. Next action: ${
+        blocker.nextAction ?? 'review job setup'
+      }.`,
+    );
+  }
+  if (
+    input.recovery.checked === 0 &&
+    input.recovery.queued.length === 0 &&
+    input.recovery.stillBlocked.length === 0
+  ) {
+    lines.push('No paused setup jobs needed retry.');
+  }
+  return lines.join('\n');
 }
 
 export type PermissionInteractionIpcBatchItem = Parameters<

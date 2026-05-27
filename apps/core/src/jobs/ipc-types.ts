@@ -10,7 +10,6 @@ export interface TaskIpcData {
   runHandle?: string;
   prompt?: string;
   modelAlias?: string | null;
-  modelProfileId?: string | null;
   name?: string;
   scheduleType?: string;
   scheduleValue?: string;
@@ -37,9 +36,10 @@ export interface TaskIpcData {
       commandTemplate?: string;
       authPreflight?: string;
       protectedPaths?: string[];
+      networkHosts?: string[];
     };
   }>;
-  requiredTools?: string[];
+  toolAccessRequirements?: string[];
   requiredMcpServers?: string[];
   groupScope?: string;
   threadId?: string | null;

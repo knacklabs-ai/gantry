@@ -1,5 +1,8 @@
 import type { Job, JobRun } from '../../domain/types.js';
-import type { ToolCatalogRepository } from '../../domain/ports/repositories.js';
+import type {
+  SkillCatalogRepository,
+  ToolCatalogRepository,
+} from '../../domain/ports/repositories.js';
 import type { RuntimeJobRepository } from '../../domain/repositories/ops-repo.js';
 import type {
   JobExecutionContextInput,
@@ -39,10 +42,12 @@ export interface JobVisibilityMetadata {
   fullPrompt?: string;
   inheritedTools: string[];
   effectiveAllowedTools: string[];
-  requiredTools: string[];
+  capabilityRequirements: NonNullable<Job['capability_requirements']>;
+  toolAccessRequirements: string[];
   requiredMcpServers: string[];
   toolAccess: JobToolAccessView;
   setup: JobSetupMetadata;
+  recovery: JobRecoveryMetadata;
   health: JobHealthMetadata;
   recentRunErrors: Array<{
     runId: string;
@@ -93,10 +98,22 @@ export interface JobSetupMetadata {
   nextAction: string | null;
 }
 
+export interface JobRecoveryMetadata {
+  state: NonNullable<Job['recovery_intent']>['state'] | 'none';
+  kind: NonNullable<Job['recovery_intent']>['kind'] | null;
+  updatedAt: string | null;
+  attempts: number;
+  requirementType: string | null;
+  requirementId: string | null;
+  nextAction: string | null;
+  lastError: string | null;
+}
+
 export async function buildJobVisibilityMetadata(input: {
   job: Job;
   ops: Pick<RuntimeJobRepository, 'listJobRuns'>;
   toolRepository?: ToolCatalogRepository;
+  skillRepository?: SkillCatalogRepository;
   appId?: string;
   recentRunLimit?: number;
   nowMs?: number;
@@ -113,6 +130,7 @@ export async function buildJobVisibilityMetadata(input: {
     appId,
     agentId,
     toolRepository: input.toolRepository,
+    skillRepository: input.skillRepository,
   });
   const nowMs = input.nowMs ?? currentTimeMs();
   const staleness = schedulerJobStaleness(input.job, nowMs);
@@ -127,6 +145,7 @@ export async function buildJobVisibilityMetadata(input: {
     nowMs,
   });
   const setup = setupMetadataForJob(input.job);
+  const recovery = recoveryMetadataForJob(input.job);
   return {
     executionContext,
     notificationRoutes,
@@ -141,13 +160,15 @@ export async function buildJobVisibilityMetadata(input: {
     fullPrompt: input.job.prompt,
     inheritedTools: policy.inheritedTools,
     effectiveAllowedTools: policy.effectiveAllowedTools,
-    requiredTools: input.job.required_tools ?? [],
+    capabilityRequirements: input.job.capability_requirements ?? [],
+    toolAccessRequirements: input.job.tool_access_requirements ?? [],
     requiredMcpServers: input.job.required_mcp_servers ?? [],
     toolAccess: buildJobToolAccessView({
       inheritedAgentTools: policy.inheritedTools,
       effectiveAllowedTools: policy.effectiveAllowedTools,
     }),
     setup,
+    recovery,
     health,
     staleness,
     recentRunErrors: runs
@@ -165,6 +186,7 @@ export async function buildJobListVisibilityMetadata(input: {
   jobs: Job[];
   ops?: Pick<RuntimeJobRepository, 'listJobRuns'>;
   toolRepository?: ToolCatalogRepository;
+  skillRepository?: SkillCatalogRepository;
   appId?: string;
   nowMs?: number;
 }): Promise<Map<string, JobVisibilityMetadata>> {
@@ -177,6 +199,7 @@ export async function buildJobListVisibilityMetadata(input: {
     if (!promise) {
       promise = resolveAgentToolBindings({
         repository: input.toolRepository,
+        skillRepository: input.skillRepository,
         appId,
         agentId,
       });
@@ -212,13 +235,15 @@ export async function buildJobListVisibilityMetadata(input: {
           promptPreview: promptPreview(job.prompt),
           inheritedTools,
           effectiveAllowedTools,
-          requiredTools: job.required_tools ?? [],
+          capabilityRequirements: job.capability_requirements ?? [],
+          toolAccessRequirements: job.tool_access_requirements ?? [],
           requiredMcpServers: job.required_mcp_servers ?? [],
           toolAccess: buildJobToolAccessView({
             inheritedAgentTools: inheritedTools,
             effectiveAllowedTools,
           }),
           setup: setupMetadataForJob(job),
+          recovery: recoveryMetadataForJob(job),
           health: buildJobHealth({
             job,
             runs,
@@ -332,6 +357,20 @@ function setupMetadataForJob(job: Job): JobSetupMetadata {
       requirementId: blocker.requirementId,
     })),
     nextAction: blockers[0]?.nextAction ?? null,
+  };
+}
+
+function recoveryMetadataForJob(job: Job): JobRecoveryMetadata {
+  const recovery = job.recovery_intent;
+  return {
+    state: recovery?.state ?? 'none',
+    kind: recovery?.kind ?? null,
+    updatedAt: recovery?.updated_at ?? null,
+    attempts: recovery?.attempts ?? 0,
+    requirementType: recovery?.requirement_type ?? null,
+    requirementId: recovery?.requirement_id ?? null,
+    nextAction: recovery?.next_action ?? null,
+    lastError: recovery?.last_error ?? null,
   };
 }
 

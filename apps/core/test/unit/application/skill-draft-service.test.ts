@@ -210,6 +210,279 @@ describe('SkillDraftService', () => {
     expect(draft.description).toBe('Zip metadata');
   });
 
+  it('parses skill action permissions from the skill manifest', async () => {
+    const { service } = createService();
+
+    const draft = await service.importDraft({
+      appId: 'app:one' as never,
+      assets: [
+        {
+          path: 'SKILL.md',
+          content: Buffer.from('---\nname: linkedin-posting\n---\n# Skill'),
+        },
+        {
+          path: 'gantry.skill.json',
+          content: Buffer.from(
+            JSON.stringify({
+              actions: [
+                {
+                  id: 'publish',
+                  capabilityId: 'skill.linkedin-posting.publish',
+                  displayName: 'LinkedIn posting',
+                  risk: 'write',
+                  can: 'Publish a prepared LinkedIn post through the approved script.',
+                  cannot:
+                    'Read unrelated accounts or receive raw LinkedIn credentials.',
+                  requiredEnvVars: ['LINKEDIN_ACCESS_TOKEN'],
+                  commandTemplates: [
+                    'python3 ${skillRoot}/post.py --file /tmp/post.md',
+                  ],
+                },
+              ],
+            }),
+          ),
+          contentType: 'application/json',
+        },
+      ],
+    });
+
+    expect(draft.requiredEnvVars).toEqual(['LINKEDIN_ACCESS_TOKEN']);
+    expect(draft.actionPermissions).toEqual([
+      {
+        id: 'publish',
+        capabilityId: 'skill.linkedin-posting.publish',
+        displayName: 'LinkedIn posting',
+        risk: 'write',
+        can: 'Publish a prepared LinkedIn post through the approved script.',
+        cannot: 'Read unrelated accounts or receive raw LinkedIn credentials.',
+        requiredEnvVars: ['LINKEDIN_ACCESS_TOKEN'],
+        commandTemplates: ['skills/linkedin-posting/post.py *'],
+      },
+    ]);
+  });
+
+  it('rejects skill names that collide with Gantry materialized skills', async () => {
+    const { artifacts, service } = createService();
+
+    await expect(
+      service.importDraft({
+        appId: 'app:one' as never,
+        name: 'Gantry Admin',
+        assets: [asset],
+      }),
+    ).rejects.toThrow('reserved Gantry skill directory "gantry-admin"');
+    expect(artifacts.bundles.size).toBe(0);
+  });
+
+  it('rejects skill names that collide with SDK-native skills before storing drafts', async () => {
+    const { artifacts, service } = createService();
+
+    await expect(
+      service.importDraft({
+        appId: 'app:one' as never,
+        name: 'Commands',
+        assets: [asset],
+      }),
+    ).rejects.toThrow('reserved SDK-native skill name "commands"');
+    expect(artifacts.bundles.size).toBe(0);
+  });
+
+  it('rejects SKILL.md names that collide with SDK-native skills before storing drafts', async () => {
+    const { artifacts, service } = createService();
+
+    await expect(
+      service.importDraft({
+        appId: 'app:one' as never,
+        name: 'LinkedIn Posting',
+        assets: [
+          {
+            path: 'SKILL.md',
+            content: Buffer.from(
+              '---\nname: security-review\n---\n# Security Review',
+            ),
+            contentType: 'text/markdown',
+          },
+        ],
+      }),
+    ).rejects.toThrow('reserved SDK-native skill name "security-review"');
+    expect(artifacts.bundles.size).toBe(0);
+  });
+
+  it('rejects SKILL.md names that do not align with the Gantry skill name before storing drafts', async () => {
+    const { artifacts, service } = createService();
+
+    await expect(
+      service.importDraft({
+        appId: 'app:one' as never,
+        name: 'LinkedIn Posting',
+        assets: [
+          {
+            path: 'SKILL.md',
+            content: Buffer.from('---\nname: other-skill\n---\n# Other Skill'),
+            contentType: 'text/markdown',
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      'declares SDK skill name "other-skill" but materializes as "LinkedIn-Posting"',
+    );
+    expect(artifacts.bundles.size).toBe(0);
+  });
+
+  it('rejects approving existing drafts with reserved materialized names', async () => {
+    const { repo, service } = createService();
+    const draft: SkillCatalogItem = {
+      id: 'skill:reserved' as SkillId,
+      appId: 'app:one' as never,
+      name: 'Gantry Browser',
+      version: 'v1',
+      source: 'admin_uploaded',
+      status: 'draft',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      storage: {
+        storageType: 'local-filesystem',
+        storageRef: 'skills/reserved.json',
+        contentHash: 'sha256:reserved',
+        sizeBytes: 1,
+      },
+      createdAt: '2026-04-28T00:00:00.000Z' as never,
+      updatedAt: '2026-04-28T00:00:00.000Z' as never,
+    };
+    await repo.saveSkill(draft);
+
+    await expect(
+      service.approveDraft({
+        appId: 'app:one' as never,
+        skillId: draft.id,
+      }),
+    ).rejects.toThrow('reserved Gantry skill directory "gantry-browser"');
+  });
+
+  it('rejects approving existing drafts with SDK-native materialized names', async () => {
+    const { repo, service } = createService();
+    const draft: SkillCatalogItem = {
+      id: 'skill:reserved-native' as SkillId,
+      appId: 'app:one' as never,
+      name: 'Review',
+      version: 'v1',
+      source: 'admin_uploaded',
+      status: 'draft',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      storage: {
+        storageType: 'local-filesystem',
+        storageRef: 'skills/reserved-native.json',
+        contentHash: 'sha256:reserved-native',
+        sizeBytes: 1,
+      },
+      createdAt: '2026-04-28T00:00:00.000Z' as never,
+      updatedAt: '2026-04-28T00:00:00.000Z' as never,
+    };
+    await repo.saveSkill(draft);
+
+    await expect(
+      service.approveDraft({
+        appId: 'app:one' as never,
+        skillId: draft.id,
+      }),
+    ).rejects.toThrow('reserved SDK-native skill name "review"');
+  });
+
+  it('rejects approving existing drafts whose stored SKILL.md declares an SDK-native name', async () => {
+    const { artifacts, repo, service } = createService();
+    const draft: SkillCatalogItem = {
+      id: 'skill:stored-native' as SkillId,
+      appId: 'app:one' as never,
+      name: 'LinkedIn Posting',
+      version: 'v1',
+      source: 'admin_uploaded',
+      status: 'draft',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      storage: {
+        storageType: 'local-filesystem',
+        storageRef: 'skills/stored-native.json',
+        contentHash: 'sha256:stored-native',
+        sizeBytes: 1,
+      },
+      createdAt: '2026-04-28T00:00:00.000Z' as never,
+      updatedAt: '2026-04-28T00:00:00.000Z' as never,
+    };
+    artifacts.bundles.set('skills/stored-native.json', {
+      assets: [
+        {
+          path: 'SKILL.md',
+          content: Buffer.from('---\nname: loop\n---\n# Loop'),
+        },
+      ],
+    });
+    await repo.saveSkill(draft);
+
+    await expect(
+      service.approveDraft({
+        appId: 'app:one' as never,
+        skillId: draft.id,
+      }),
+    ).rejects.toThrow('reserved SDK-native skill name "loop"');
+  });
+
+  it('rejects unsafe skill action manifests', async () => {
+    const { service } = createService();
+    const importWithAction = (action: Record<string, unknown>) =>
+      service.importDraft({
+        appId: 'app:one' as never,
+        assets: [
+          {
+            path: 'SKILL.md',
+            content: Buffer.from('---\nname: linkedin-posting\n---\n# Skill'),
+          },
+          {
+            path: 'gantry.skill.json',
+            content: Buffer.from(JSON.stringify({ actions: [action] })),
+            contentType: 'application/json',
+          },
+        ],
+      });
+    const valid = {
+      id: 'publish',
+      capabilityId: 'skill.linkedin-posting.publish',
+      displayName: 'LinkedIn posting',
+      risk: 'write',
+      can: 'Publish a prepared LinkedIn post.',
+      cannot: 'Access unrelated credentials.',
+      requiredEnvVars: [],
+      commandTemplates: ['python3 ${skillRoot}/post.py --file /tmp/post.md'],
+    };
+
+    await expect(
+      importWithAction({ ...valid, displayName: '' }),
+    ).rejects.toThrow('displayName');
+    await expect(
+      importWithAction({
+        ...valid,
+        commandTemplates: ['python3 /tmp/post.py --file /tmp/post.md'],
+      }),
+    ).rejects.toThrow('skills/linkedin-posting');
+    await expect(
+      importWithAction({
+        ...valid,
+        commandTemplates: [
+          'REQUESTS_CA_BUNDLE=/tmp/ca.pem python3 ${skillRoot}/post.py --file /tmp/post.md',
+        ],
+      }),
+    ).rejects.toThrow('environment assignments');
+    await expect(
+      importWithAction({
+        ...valid,
+        commandTemplates: ['python3 ${skillRoot}/post.py --token secret'],
+      }),
+    ).rejects.toThrow('secret-like command parts');
+  });
+
   it('materializes only approved and bound local skills', async () => {
     const { service } = createService();
     const draft = await service.importDraft({
@@ -236,6 +509,62 @@ describe('SkillDraftService', () => {
     });
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe('agent-skill');
+  });
+
+  it('replaces older active bindings that materialize to the same skill directory', async () => {
+    const { repo, service } = createService();
+    const first = await service.importDraft({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      name: 'LinkedIn Posting',
+      assets: [asset],
+    });
+    const second = await service.importDraft({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      name: 'linkedin-posting',
+      assets: [
+        {
+          ...asset,
+          content: Buffer.from('# Durable skill v2'),
+        },
+      ],
+    });
+    await service.approveDraft({
+      appId: 'app:one' as never,
+      skillId: first.id,
+    });
+    await service.approveDraft({
+      appId: 'app:one' as never,
+      skillId: second.id,
+    });
+
+    await service.bindSkillToAgent({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      skillId: first.id,
+      now: '2026-05-01T00:00:00.000Z',
+    });
+    await service.bindSkillToAgent({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      skillId: second.id,
+      now: '2026-05-02T00:00:00.000Z',
+    });
+
+    expect(repo.bindings.get(`agent:one:${first.id}`)).toMatchObject({
+      status: 'disabled',
+      updatedAt: '2026-05-02T00:00:00.000Z',
+    });
+    expect(repo.bindings.get(`agent:one:${second.id}`)).toMatchObject({
+      status: 'active',
+    });
+    await expect(
+      service.resolveLocalSkillsForAgent({
+        appId: 'app:one' as never,
+        agentId: 'agent:one' as never,
+      }),
+    ).resolves.toMatchObject([{ id: second.id }]);
   });
 
   it('does not materialize rejected or disabled skills', async () => {

@@ -1,15 +1,15 @@
 import type { MaterializedMcpCapability } from './mcp-server-materialization.js';
 import { normalizeCapabilitySecretName } from '../../domain/capability-secrets/capability-secrets.js';
 import { hmacSha256Hex } from '../../shared/hmac-sha256.js';
-import { formatMissingGantrySecretsMessage } from '../../shared/user-visible-messages.js';
+import {
+  CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
+  formatMissingGantrySecretsMessage,
+} from '../../shared/user-visible-messages.js';
 
 export interface CallerIdentity {
   phone: string;
   email?: string;
 }
-
-export const CALLER_IDENTITY_UNAVAILABLE_MESSAGE =
-  'I can only check details linked to the phone number you are messaging from. The phone number, email, or order you asked about does not match that number.';
 
 export type CallerIdentityProjectionResult =
   | { ok: true; capabilities: MaterializedMcpCapability[] }
@@ -65,7 +65,7 @@ function callerIdentityProjectionFailure(
 ): CallerIdentityProjectionResult {
   return {
     ok: false,
-    error: CALLER_IDENTITY_UNAVAILABLE_MESSAGE,
+    error: CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
     internalError,
   };
 }

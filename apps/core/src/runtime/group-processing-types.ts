@@ -25,6 +25,7 @@ import type { RemoteMcpDnsValidationCache } from '../application/mcp/mcp-server-
 import type { SessionMemoryCollector } from '../domain/ports/session-memory-collector.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import type { GuardrailClassifier } from '../application/guardrails/types.js';
+import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
 
 export type GroupProcessingRepository = RuntimeAgentSessionRepository &
   RuntimeMessageRepository;
@@ -99,6 +100,7 @@ export interface GroupProcessingDeps {
       groupFolder?: string,
       stopAliasJids?: string | string[],
       threadId?: string | null,
+      options?: { requiredContinuationUserId?: string | null },
     ) => void;
     registerContinuationHandler?: (
       groupJid: string,
@@ -119,6 +121,7 @@ export interface GroupProcessingDeps {
     event: RuntimeEventPublishInput,
   ) => Promise<void> | void;
   guardrailClassifier?: GuardrailClassifier;
+  executionAdapter?: AgentExecutionAdapter;
   opsRepository?: GroupProcessingRepository;
   getRuntimeRepository?: () => GroupProcessingRepository;
 }

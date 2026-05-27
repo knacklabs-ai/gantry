@@ -1,5 +1,6 @@
 import type {
   PermissionApprovalDecision,
+  PermissionApprovalDecisionMode,
   PermissionApprovalUpdate,
 } from '../domain/types.js';
 import type { AppId } from '../domain/app/app.js';
@@ -10,6 +11,8 @@ import { permissionUpdateAllowedToolRules } from '../shared/permission-tool-rule
 import {
   isBrowserActionMcpToolRule,
   isProjectedBrowserMcpToolRule,
+  publicGantryToolNameForSdkTool,
+  RUN_COMMAND_TOOL_NAME,
   validateReadableAgentToolRule,
 } from '../shared/agent-tool-references.js';
 import { PermissionManagementService } from '../application/permissions/permission-management-service.js';
@@ -20,6 +23,7 @@ import {
 import {
   buildLocalCliSemanticCapability,
   getBuiltinSemanticCapability,
+  semanticCapabilityDefinitionFromToolInput,
   type SemanticCapabilityDefinition,
   validateSemanticCapabilityDefinition,
 } from '../shared/semantic-capabilities.js';
@@ -38,11 +42,11 @@ export interface RequestPermissionReview {
 export function requestPermissionQueuedMessage(
   review: RequestPermissionReview,
 ): string {
-  return `${formatApprovalRequestedMessage(review.displayName)} Choose Allow once, Allow 5 min, or Always allow.`;
+  return `${formatApprovalRequestedMessage(review.displayName)} Choose one of the options in the approval prompt.`;
 }
 
 export function requestPermissionDescription(): string {
-  return 'Only configured approvers can decide this request. Allow once covers this request, Allow 5 min is temporary, and Always allow covers matching future requests.';
+  return 'Only configured approvers can decide this setup request. The approval prompt shows whether access is temporary or can be recorded for matching future access.';
 }
 
 export function requestPermissionReviewEffect(
@@ -112,7 +116,7 @@ export async function persistRequestPermissionRules(input: {
     requestId: input.requestId,
     actor: input.actor,
     conversationId: input.conversationId,
-    threadId: input.threadId,
+    // Thread/topic ids route setup prompts; persistent grants bind to the parent conversation.
     runId: input.runId,
     jobId: input.jobId,
     reason: input.reason,
@@ -179,28 +183,30 @@ export function requestPermissionReviewSuggestions(
     ];
   }
   if (toolNames.length !== 1) return undefined;
-  const toolName = toolNames[0];
-  if (toolName.includes('(') || toolName.includes(')')) return undefined;
-  const ruleContent = canonicalRequestPermissionBashRule(
-    toolName,
+  const rawToolName = toolNames[0];
+  if (rawToolName.includes('(') || rawToolName.includes(')')) return undefined;
+  const publicToolName = isProjectedBrowserMcpToolRule(rawToolName)
+    ? 'Browser'
+    : publicGantryToolNameForSdkTool(rawToolName);
+  const ruleContent = canonicalRequestPermissionCommandRule(
+    publicToolName,
     strictRuleContent(toolInput.rule),
   );
   if (ruleContent === null) return undefined;
-  if (isBrowserActionMcpToolRule(toolName)) {
+  if (isBrowserActionMcpToolRule(rawToolName)) {
     return undefined;
   }
-  const publicToolRule = isProjectedBrowserMcpToolRule(toolName)
-    ? 'Browser'
-    : toolName === 'Bash' && ruleContent
-      ? `${toolName}(${ruleContent})`
-      : toolName;
+  const publicToolRule =
+    publicToolName === RUN_COMMAND_TOOL_NAME && ruleContent
+      ? `${publicToolName}(${ruleContent})`
+      : publicToolName;
   if (!validateReadableAgentToolRule(publicToolRule).ok) {
     return undefined;
   }
   if (!isPersistentRequestPermissionRuleAllowed(publicToolRule)) {
     return undefined;
   }
-  const [publicToolName, publicRuleContent] =
+  const [suggestedToolName, publicRuleContent] =
     splitReadableToolRule(publicToolRule);
   return [
     {
@@ -209,12 +215,21 @@ export function requestPermissionReviewSuggestions(
       destination: 'session',
       rules: [
         {
-          toolName: publicToolName,
+          toolName: suggestedToolName,
           ...(publicRuleContent ? { ruleContent: publicRuleContent } : {}),
         },
       ],
     },
   ];
+}
+
+export function requestPermissionSetupDecisionOptions(
+  toolInput: Record<string, unknown>,
+): PermissionApprovalDecisionMode[] {
+  const suggestions = requestPermissionReviewSuggestions(toolInput);
+  return permissionUpdateAllowedToolRules(suggestions).length > 0
+    ? ['allow_once', 'allow_persistent_rule', 'cancel']
+    : ['allow_once', 'cancel'];
 }
 
 export { formatPersistentPermissionRulesForUser };
@@ -243,6 +258,14 @@ export function semanticCapabilityDefinitionsForToolInput(
     maxLen: 160,
   });
   if (!capabilityId) return undefined;
+  if (capabilityId.startsWith('skill.')) return undefined;
+  const explicitDefinition = semanticCapabilityDefinitionFromToolInput(
+    toolInput,
+    capabilityId,
+  );
+  if (explicitDefinition?.credentialSource === 'local_cli') {
+    return { [explicitDefinition.capabilityId]: explicitDefinition };
+  }
   if (toolInput.credentialSource !== 'local_cli') return undefined;
   const commandTemplates = sanitizedStringList(
     Array.isArray(toolInput.commandTemplates)
@@ -269,7 +292,7 @@ export function semanticCapabilityDefinitionsForToolInput(
       'Review the proposed local CLI command templates and account context.',
     cannot:
       toTrimmedString(toolInput.cannot, { maxLen: 1000 }) ||
-      'Run CLI commands until runtime enforcement exists, receive raw tokens, or write credential stores.',
+      'Run commands outside the reviewed templates, receive raw tokens, or write credential stores.',
     executablePath:
       toTrimmedString(toolInput.executablePath, { maxLen: 2048 }) || '',
     executableVersion: toTrimmedString(toolInput.executableVersion, {
@@ -284,6 +307,13 @@ export function semanticCapabilityDefinitionsForToolInput(
     }),
     protectedPaths: sanitizedStringList(
       Array.isArray(toolInput.protectedPaths) ? toolInput.protectedPaths : [],
+    ),
+    networkHosts: sanitizedStringList(
+      Array.isArray(toolInput.networkHosts)
+        ? toolInput.networkHosts
+        : Array.isArray(toolInput.network_hosts)
+          ? toolInput.network_hosts
+          : [],
     ),
     deniedEnvPatterns: sanitizedStringList(
       Array.isArray(toolInput.deniedEnvPatterns)
@@ -302,11 +332,11 @@ function strictRuleContent(value: unknown): string | undefined | null {
   return trimmed.length <= 2048 ? trimmed : null;
 }
 
-function canonicalRequestPermissionBashRule(
+function canonicalRequestPermissionCommandRule(
   toolName: string,
   ruleContent: string | undefined | null,
 ): string | undefined | null {
-  if (toolName !== 'Bash' || !ruleContent) return ruleContent;
+  if (toolName !== RUN_COMMAND_TOOL_NAME || !ruleContent) return ruleContent;
   return normalizePersistentBashRuleContent(ruleContent);
 }
 

@@ -1,7 +1,7 @@
 # Memory And Dreaming
 
 Gantry memory is app-grade runtime state. Personal setup is just the default
-single-app case; SDK and channel usage use the same model.
+single-app case; SDK and channel usage use the same model boundary.
 
 ## Boundary Model
 
@@ -10,7 +10,7 @@ Every memory record has:
 - `appId`: the application or personal runtime namespace.
 - `agentId`: the agent/runtime owner for the memory.
 - one subject: `user`, `group`, `channel`, or `common`.
-- optional subject ids: `userId`, `groupId`, `channelId`, `threadId`.
+- optional subject ids: `userId`, `groupId`, `channelId`.
 
 Boundary names are provider-neutral:
 
@@ -20,8 +20,11 @@ Boundary names are provider-neutral:
 - `channelId` is the external conversation where the bot is present: Telegram
   private/group/supergroup chat, Slack channel/DM/MPIM, Microsoft Teams
   channel/group chat/personal chat, or an SDK conversation id.
-- `threadId` is the provider topic or reply boundary, such as Slack `thread_ts`,
-  Telegram forum topic id, or a Teams reply chain id.
+
+Provider topics and reply threads, such as Slack `thread_ts`, Telegram forum
+topic ids, and Teams reply chains, are routing/session metadata. They do not
+partition durable memory; memory belongs to the DM user or the whole
+group/channel conversation.
 
 `common` is app-level shared memory. It is visible by policy but write-restricted
 to admin/service flows. Agents cannot promote private user, group, or channel
@@ -38,7 +41,7 @@ channelId=<Telegram/Slack/Teams/app conversation id>
 
 This `appId=default` value is the runtime's internal default memory app id.
 SDK applications should pass stable external ids for `appId`, `agentId`,
-`userId`, `groupId`, `channelId`, and `threadId`. Two apps never share memory
+`userId`, `groupId`, and `channelId`. Two apps never share memory
 unless the host explicitly writes separate records into both apps.
 
 ## Storage
@@ -47,7 +50,7 @@ Postgres is the source of truth. The first shipped app-grade slice uses a
 flattened canonical `memory_items` schema for durable memory:
 
 - `memory_items` stores `app_id`, `agent_id`, `subject_type`, `subject_id`,
-  optional user/conversation/thread columns, the memory `kind` and `key`,
+  optional user/conversation columns, the memory `kind` and `key`,
   `value_json`, `source_ref_json`, confidence, status, and timestamps.
 - Active memory uniqueness is enforced directly on `memory_items` by
   `(app_id, agent_id, subject_type, subject_id, kind, key)` for active rows.
@@ -105,10 +108,45 @@ advisory lifecycle proposals, calls the configured consolidation model for
 active-item overlap proposals, and keeps every LLM output as untrusted JSON.
 Host validation is the only durable mutation path.
 
+Memory LLM tasks use provider-neutral catalog aliases from `settings.yaml`.
+Setup and `gantry model use-preset` apply preset-managed memory defaults:
+
+- Anthropic memory defaults: extractor `haiku`, dreaming `sonnet`,
+  consolidation `sonnet`.
+- OpenRouter memory defaults: extractor, dreaming, and consolidation all `kimi`.
+
+Operators inspect memory model aliases with `gantry model memory` and reapply
+preset-managed defaults with `gantry model reset memory` or
+`PATCH /v1/models/defaults` using `memory: null`. The extractor, dreaming, and
+consolidation paths read current validated runtime settings when the next call
+starts, so a provider/default change applies to new memory work without a
+runtime restart.
+
 Safe promotions and same-key updates can be applied by the host after
 validation. Retire, rewrite, contradiction, and merge proposals are stored in
 `memory_review_requests` as `pending_review` until a reviewer uses
 `memory_review_decision` with `approve`, `reject`, or `edit_approve`.
+`memory_review_pending` returns readable numbered changes, short evidence
+snippets, paging metadata, and a `page_context` that lets the agent submit a
+batch of decisions by item number. The page context is convenience data only:
+the host still verifies trusted subject scope, reviewer authority, review
+status, and target versions for every approved mutation.
+
+The agent-led v1 review flow is channel-neutral and works in plain Codex-hosted
+MCP and ACP/ACPX contexts without native buttons:
+
+1. A job notification keeps the pending count visible and tells the reviewer to
+   ask the agent to show pending memory reviews.
+2. The agent calls `memory_review_pending`, shows the numbered page as
+   reviewer-visible untrusted data, and asks for explicit numbered decisions.
+3. The reviewer replies with natural text such as `approve 1, reject 2`,
+   `edit 3 to ...`, or `show next`.
+4. The agent calls `memory_review_decision` only for those explicit decisions,
+   using the latest displayed `page_context`; it must never auto-approve a page
+   or obey instructions embedded in proposed values, reasons, or evidence.
+
+Dreaming job summaries surface pending review counts, including when a failed
+or timed-out run already created review rows.
 
 Every dream run writes durable audit rows in `memory_dream_runs` and
 `memory_dream_decisions`. Review-gated proposals additionally record proposal
@@ -151,21 +189,19 @@ sequenceDiagram
 Wired at:
 
 - System-job marker `MEMORY_DREAM_SYSTEM_PROMPT = '__system:memory_dream'` —
-  `apps/core/src/jobs/system-jobs.ts:23`.
+  `apps/core/src/jobs/system-jobs.ts`.
 - Per-folder registration gated on `memory.dreaming.enabled` and
   `memory.dreaming.cron` —
-  `apps/core/src/jobs/system-jobs.ts:37`-`apps/core/src/jobs/system-jobs.ts:106`.
+  `apps/core/src/jobs/system-jobs.ts`.
 - Maintenance-queue runner —
-  `apps/core/src/runtime/memory-dreaming-runner.ts:10`.
+  `apps/core/src/runtime/memory-dreaming-runner.ts`.
 - `triggerDreaming` —
-  `apps/core/src/memory/app-memory-service.ts:388`.
+  `apps/core/src/memory/app-memory-service.ts`.
 - Phase logic (`light`, `rem`, `deep`, `all`) —
-  `apps/core/src/memory/app-memory-dreaming.ts:104`,
-  `apps/core/src/memory/app-memory-dreaming.ts:144`,
-  `apps/core/src/memory/app-memory-dreaming.ts:165`.
+  `apps/core/src/memory/app-memory-dreaming.ts`.
 - SDK on-demand trigger — `client.memory.dreaming.trigger` and
   `client.memory.dreaming.status` at
-  `packages/sdk/src/index.ts:663` and `packages/sdk/src/index.ts:673`.
+  `packages/sdk/src/index.ts`.
 
 ## DM And Conversation Scope
 
@@ -174,15 +210,15 @@ The host owns the default memory scope:
 - Direct/private agent conversations default explicit and automatic memory saves
   to `user` memory.
 - Channel conversations, including Slack channels, Teams channels/chats,
-  Telegram groups, and Telegram topics, default explicit and automatic memory
-  saves to conversation memory.
+  Telegram groups, and Telegram forum topics, default explicit and automatic
+  memory saves to the parent conversation memory.
 - Explicit admin/service writes may still choose another scope, but normal agent
   memory tools and automatic boundary extraction use the source conversation
   default.
 
 The default-scope toggle is the `memoryDefaultScope: 'user' | 'group'` field
 on the `SessionMemoryCollector` port
-(`apps/core/src/domain/ports/session-memory-collector.ts:2`). The host
+(`apps/core/src/domain/ports/session-memory-collector.ts`). The host
 chooses the scope from the inbound chat jid and the bound provider:
 
 ```mermaid
@@ -201,7 +237,7 @@ vice versa: the rows differ in both `subjectType` and `subjectId`.
 
 Before each agent run, the host uses the current message or scheduled job prompt
 as a lexical query against visible memory for the current
-app/agent/user/group/channel/thread context. Matching memories are injected as a
+app/agent/user/group/channel context. Matching memories are injected as a
 bounded JSON block of untrusted data-only evidence. If no memory matches, no
 memory block is injected. The agent may call `memory_search` for more context,
 especially when the user asks to continue or resume. Memory text never grants
@@ -237,7 +273,7 @@ admin memory scope.
 | Control API | Changed | Memory save/search/list/patch/delete and dreaming routes operate over the app-bound memory service. |
 | SDK/contracts | Changed | Server-side SDK memory methods are the API-first management surface. |
 | CLI | Read-only/observable | `gantry memory-status`, `status`, and `doctor` report memory, embeddings, dreaming, and vector inactivity; they do not manage memory items. |
-| Gantry MCP tools/admin skill | Changed | Agent tools can search, save, request reviewed memory changes, list pending memory reviews, and apply review decisions through host IPC/MCP. |
+| Gantry MCP tools/admin skill | Changed | Agent tools can search, save, request `continuity_summary`, request reviewed memory changes, list pending memory reviews, and apply review decisions through host IPC/MCP. |
 | Channel/provider adapters | Unchanged by design | Channels only provide source identity and conversation scope; memory storage stays channel-neutral. |
 | Docs/prompts | Changed | Active docs must state flattened memory items, lexical retrieval, inactive vector retrieval, and no compact-summary replay. |
 | Audit/events | Changed | Evidence, recall, dream run, dream decision, review proposal, reviewer decision, and apply outcome rows remain audit surfaces for memory lifecycle decisions. |

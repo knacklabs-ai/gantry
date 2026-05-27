@@ -18,8 +18,17 @@ import type {
   ProviderConnectionId,
   ProviderId,
 } from '../../domain/provider/provider.js';
-import { replaceDesiredStateCapabilities } from './desired-state-capability-reconcile.js';
+import {
+  replaceDesiredStateCapabilities,
+  settingsCapabilityToToolReference,
+} from './desired-state-capability-reconcile.js';
 import { exportCurrentDesiredState } from './desired-state-current-export.js';
+import {
+  cleanupGeneratedRuntimeCapabilities,
+  cleanupGeneratedRuntimeCapabilitiesInSettings,
+  semanticCapabilityDefinitionsById,
+  skillActionDefinitionsForSkills,
+} from './generated-runtime-capability-cleanup.js';
 import {
   configuredConversationKind,
   jidForConfiguredConversation,
@@ -33,9 +42,16 @@ import {
   folderForAgentId,
   hasAnyCapability,
   loadMcpServersById,
-  loadSkillsById,
   memorySubjectForConfiguredBinding,
 } from './desired-state-service-helpers.js';
+import {
+  resolveConfiguredSkillReferences,
+  selectedSkillsFromResolvedSkillReferences,
+} from './desired-state-skill-references.js';
+import {
+  formatSkillMaterializationCollisionFragment,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 export {
   agentIdForFolder,
   classifySettingsChanges,
@@ -55,7 +71,7 @@ import type {
   SettingsReconcileResult,
 } from './desired-state-service-types.js';
 import type {
-  RuntimeConfiguredAgentCapabilities,
+  RuntimeConfiguredAgent,
   RuntimeConfiguredConversation,
   RuntimeProviderConnectionSettings,
   RuntimeSettings,
@@ -84,9 +100,20 @@ export class SettingsDesiredStateService {
       settings,
     });
   }
+
+  async cleanupGeneratedRuntimeCapabilities(settings: RuntimeSettings) {
+    return cleanupGeneratedRuntimeCapabilitiesInSettings({
+      settings,
+      repositories: this.deps.repositories,
+      appId: this.appId,
+    });
+  }
+
   async drift(
     settings: RuntimeSettings,
   ): Promise<SettingsDesiredStateDriftReport> {
+    settings = (await this.cleanupGeneratedRuntimeCapabilities(settings))
+      .settings;
     const groups = await this.deps.ops.getAllConversationRoutes();
     const configuredFolders = new Set(Object.keys(settings.agents));
     const configuredJids = new Set(
@@ -112,6 +139,17 @@ export class SettingsDesiredStateService {
   }
 
   async reconcile(settings: RuntimeSettings): Promise<SettingsReconcileResult> {
+    const cleanup = await cleanupGeneratedRuntimeCapabilitiesInSettings({
+      settings,
+      repositories: this.deps.repositories,
+      appId: this.appId,
+    });
+    settings = cleanup.settings;
+    const generatedCapabilityCleanupFolders = new Set([
+      ...cleanup.converted.map((item) => item.agentFolder),
+      ...cleanup.dropped.map((item) => item.agentFolder),
+    ]);
+
     const configuredReferenceErrors = [
       ...this.validateConfiguredGuardrails(settings),
       ...this.validateConfiguredMcpServers(settings),
@@ -179,9 +217,10 @@ export class SettingsDesiredStateService {
 
       if (
         settings.desiredState.authoritative ||
-        hasAnyCapability(agent.capabilities)
+        hasAnyCapability(agent) ||
+        generatedCapabilityCleanupFolders.has(folder)
       ) {
-        await this.replaceCapabilities(agentId, agent.capabilities, now);
+        await this.replaceCapabilities(agentId, agent, now);
         applied.push(`capabilities:${folder}`);
       } else {
         skipped.push(`capabilities:${folder}:not-authoritative-empty`);
@@ -253,9 +292,11 @@ export class SettingsDesiredStateService {
         await this.replaceCapabilities(
           agent.id,
           {
-            toolIds: [],
-            skillIds: [],
-            mcpServerIds: [],
+            name: agent.name,
+            folder,
+            bindings: {},
+            sources: { skills: [], mcpServers: [], tools: [] },
+            capabilities: [],
           },
           now,
         );
@@ -580,48 +621,81 @@ export class SettingsDesiredStateService {
     settings: RuntimeSettings,
   ): Promise<string[]> {
     const errors: string[] = [];
-    const skillIds = new Set<string>();
     const serverIds = new Set<string>();
     for (const agent of Object.values(settings.agents)) {
-      for (const skillId of agent.capabilities.skillIds) skillIds.add(skillId);
-      for (const serverId of agent.capabilities.mcpServerIds) {
-        serverIds.add(serverId);
+      for (const source of agent.sources.mcpServers) {
+        serverIds.add(source.id);
       }
     }
-    const [skills, servers] = await Promise.all([
-      loadSkillsById(this.deps.repositories.skills, [...skillIds]),
-      loadMcpServersById(this.deps.repositories.mcpServers, [...serverIds]),
-    ]);
+    const servers = await loadMcpServersById(
+      this.deps.repositories.mcpServers,
+      [...serverIds],
+    );
     for (const [folder, agent] of Object.entries(settings.agents)) {
-      for (const toolId of [...new Set(agent.capabilities.toolIds)]) {
+      const resolvedSkills = await resolveConfiguredSkillReferences({
+        repository: this.deps.repositories.skills,
+        appId: this.appId,
+        agentId: agentIdForFolder(folder),
+        references: agent.sources.skills.map((source) => source.id),
+      });
+      const [skillCollision] = skillMaterializationCollisions(
+        selectedSkillsFromResolvedSkillReferences(
+          agent.sources.skills.map((source) => source.id),
+          resolvedSkills,
+        ),
+      );
+      if (skillCollision) {
+        errors.push(
+          `agents.${folder}.sources.skills contains ${formatSkillMaterializationCollisionFragment(skillCollision)}`,
+        );
+      }
+      const skillActionDefinitionsForAgent = skillActionDefinitionsForSkills([
+        ...resolvedSkills.skills.values(),
+      ]);
+      const skillActionDefinitions = semanticCapabilityDefinitionsById(
+        skillActionDefinitionsForAgent,
+      );
+      const cleanedCapabilities = cleanupGeneratedRuntimeCapabilities({
+        capabilities: agent.capabilities,
+        skillActionDefinitions: skillActionDefinitionsForAgent,
+      }).capabilities;
+      for (const capability of [
+        ...new Set(cleanedCapabilities.map((item) => item.id)),
+      ]) {
+        const toolReference = settingsCapabilityToToolReference({
+          id: capability,
+          version: 'builtin',
+        });
         const resolved = await resolveAgentToolReference({
           repository: this.deps.repositories.tools,
           appId: this.appId,
-          reference: toolId,
+          reference: toolReference,
+          semanticCapabilityDefinitions: skillActionDefinitions,
         });
         if (resolved.error) {
           errors.push(
-            `agents.${folder}.capabilities.tool_ids contains unavailable tool ${toolId}: ${resolved.error}`,
+            `agents.${folder}.capabilities contains unavailable capability ${capability}: ${resolved.error}`,
           );
         }
       }
-      for (const skillId of [...new Set(agent.capabilities.skillIds)]) {
-        const skill = skills.get(skillId);
-        if (
-          !skill ||
-          skill.appId !== this.appId ||
-          skill.status !== 'approved'
-        ) {
+      for (const skillId of [
+        ...new Set(agent.sources.skills.map((source) => source.id)),
+      ]) {
+        const skill = resolvedSkills.skills.get(skillId);
+        const resolutionError = resolvedSkills.errors.get(skillId);
+        if (!skill || resolutionError) {
           errors.push(
-            `agents.${folder}.capabilities.skill_ids contains unavailable skill: ${skillId}`,
+            `agents.${folder}.sources.skills contains ${resolutionError ?? `unavailable skill: ${skillId}`}`,
           );
         } else if (!skill.storage) {
           errors.push(
-            `agents.${folder}.capabilities.skill_ids references skill without artifact storage: ${skillId}`,
+            `agents.${folder}.sources.skills references skill without artifact storage: ${skillId}`,
           );
         }
       }
-      for (const serverId of [...new Set(agent.capabilities.mcpServerIds)]) {
+      for (const serverId of [
+        ...new Set(agent.sources.mcpServers.map((source) => source.id)),
+      ]) {
         if (settings.mcpServers[serverId]) continue;
         const server = servers.get(serverId);
         if (
@@ -631,7 +705,7 @@ export class SettingsDesiredStateService {
           !server.latestApprovedVersionId
         ) {
           errors.push(
-            `agents.${folder}.capabilities.mcp_server_ids contains unavailable MCP server: ${serverId}`,
+            `agents.${folder}.sources.mcp_servers contains unavailable MCP server: ${serverId}`,
           );
         }
       }
@@ -641,13 +715,13 @@ export class SettingsDesiredStateService {
 
   private async replaceCapabilities(
     agentId: AgentId,
-    capabilities: RuntimeConfiguredAgentCapabilities,
+    agent: RuntimeConfiguredAgent,
     now: string,
   ): Promise<void> {
     await replaceDesiredStateCapabilities({
       appId: this.appId,
       agentId,
-      capabilities,
+      agent,
       repositories: this.deps.repositories,
       now,
     });

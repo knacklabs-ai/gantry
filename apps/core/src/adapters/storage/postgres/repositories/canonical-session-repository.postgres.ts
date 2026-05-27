@@ -11,12 +11,12 @@ import {
   threadIdFor,
 } from './canonical-graph-repository.postgres.js';
 import { assertSafeProviderSessionId } from '../../../../domain/sessions/provider-session-id.js';
+import { assertSafeExecutionProviderId } from '../../../../domain/sessions/execution-provider-id.js';
+import type { ExecutionProviderId } from '../../../../domain/sessions/sessions.js';
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
-
-const PROVIDER = 'anthropic';
 
 export function makeOwnedAgentSessionScopeKey(
   agentId: string,
@@ -69,6 +69,7 @@ export class PostgresCanonicalSessionRepository {
 
   async getAgentTurnContext(input: {
     groupFolder: string;
+    executionProviderId: ExecutionProviderId;
     chatJid: string;
     threadId?: string | null;
     scopeKey: string;
@@ -84,7 +85,9 @@ export class PostgresCanonicalSessionRepository {
     providerSessionProvider?: string;
     externalSessionId?: string;
   }> {
+    assertSafeExecutionProviderId(input.executionProviderId);
     const ensured = await this.ensureAgentSession(input);
+    const executionProviderId = input.executionProviderId;
     const [providerSession] = await this.db
       .select({
         id: pgSchema.providerSessionsPostgres.id,
@@ -98,7 +101,7 @@ export class PostgresCanonicalSessionRepository {
             pgSchema.providerSessionsPostgres.agentSessionId,
             ensured.agentSessionId,
           ),
-          eq(pgSchema.providerSessionsPostgres.provider, PROVIDER),
+          eq(pgSchema.providerSessionsPostgres.provider, executionProviderId),
           eq(pgSchema.providerSessionsPostgres.status, 'active'),
         ),
       )
@@ -279,6 +282,7 @@ export class PostgresCanonicalSessionRepository {
 
   async setProviderSession(input: {
     groupFolder: string;
+    executionProviderId: ExecutionProviderId;
     scopeKey: string;
     sessionId: string;
     chatJid?: string;
@@ -290,9 +294,11 @@ export class PostgresCanonicalSessionRepository {
     expectedAgentSessionResetAt?: string | null;
   }): Promise<boolean> {
     assertSafeProviderSessionId(input.sessionId);
+    assertSafeExecutionProviderId(input.executionProviderId);
     const {
       groupFolder: folder,
       scopeKey,
+      executionProviderId,
       sessionId,
       chatJid,
       threadId,
@@ -384,12 +390,12 @@ export class PostgresCanonicalSessionRepository {
           id: sessionId,
           appId: CANONICAL_APP_ID,
           agentSessionId,
-          provider: PROVIDER,
+          provider: executionProviderId,
           externalSessionId: sessionId,
           providerRefJson: jsonb({
             kind: 'provider_session',
-            value: `${PROVIDER}:${sessionId}`,
-            provider: PROVIDER,
+            value: `${executionProviderId}:${sessionId}`,
+            provider: executionProviderId,
             externalSessionId: sessionId,
           }),
           metadataJson: jsonb({
@@ -417,7 +423,7 @@ export class PostgresCanonicalSessionRepository {
         !existing ||
         existing.appId !== CANONICAL_APP_ID ||
         existing.agentSessionId !== agentSessionId ||
-        existing.provider !== PROVIDER ||
+        existing.provider !== executionProviderId ||
         existing.externalSessionId !== sessionId
       ) {
         throw new Error(
@@ -430,8 +436,8 @@ export class PostgresCanonicalSessionRepository {
           externalSessionId: sessionId,
           providerRefJson: jsonb({
             kind: 'provider_session',
-            value: `${PROVIDER}:${sessionId}`,
-            provider: PROVIDER,
+            value: `${executionProviderId}:${sessionId}`,
+            provider: executionProviderId,
             externalSessionId: sessionId,
           }),
           metadataJson: jsonb({
@@ -447,7 +453,7 @@ export class PostgresCanonicalSessionRepository {
           and(
             eq(pgSchema.providerSessionsPostgres.id, sessionId),
             eq(pgSchema.providerSessionsPostgres.appId, CANONICAL_APP_ID),
-            eq(pgSchema.providerSessionsPostgres.provider, PROVIDER),
+            eq(pgSchema.providerSessionsPostgres.provider, executionProviderId),
             eq(
               pgSchema.providerSessionsPostgres.agentSessionId,
               agentSessionId,
@@ -463,6 +469,7 @@ export class PostgresCanonicalSessionRepository {
               pgSchema.providerSessionsPostgres.agentSessionId,
               agentSessionId,
             ),
+            eq(pgSchema.providerSessionsPostgres.provider, executionProviderId),
             ne(pgSchema.providerSessionsPostgres.id, sessionId),
           ),
         );

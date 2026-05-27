@@ -13,8 +13,8 @@ import {
 } from './job-management-helpers.js';
 import {
   normalizeRequiredMcpServers,
-  normalizeRequiredTools,
-} from './job-required-tools.js';
+  normalizeToolAccessRequirements,
+} from './job-tool-access-requirements.js';
 import {
   capabilityRequirementToolRules,
   normalizeCapabilityRequirements,
@@ -57,7 +57,7 @@ export async function createManagedJob(
   });
   const modelAlias = resolveRequestedJobModel(
     input.modelAlias,
-    input.modelProfileId,
+    kind === 'recurring' ? 'recurring_job' : 'one_time_job',
   );
   const jobId = deps.schedulePlanner.createManualJobId();
   const sessionBoundContext = {
@@ -105,12 +105,14 @@ export async function createManagedJob(
       },
     ],
   );
-  const requiredTools = normalizeRequiredTools(input.requiredTools ?? []);
+  const toolAccessRequirements = normalizeToolAccessRequirements(
+    input.toolAccessRequirements ?? [],
+  );
   const capabilityRequirements = normalizeCapabilityRequirements(
     input.capabilityRequirements ?? [],
   );
-  const effectiveRequiredTools = normalizeRequiredTools([
-    ...requiredTools,
+  const effectiveToolAccessRequirements = normalizeToolAccessRequirements([
+    ...toolAccessRequirements,
     ...capabilityRequirementToolRules(capabilityRequirements),
   ]);
   const requiredMcpServers = normalizeRequiredMcpServers(
@@ -140,13 +142,14 @@ export async function createManagedJob(
     execution_context: executionContext,
     notification_routes: notificationRoutes,
     capability_requirements: capabilityRequirements,
-    required_tools: effectiveRequiredTools,
+    tool_access_requirements: effectiveToolAccessRequirements,
     required_mcp_servers: requiredMcpServers,
   };
   const readiness = await evaluateJobReadiness({
     job: jobInput,
     appId: session.appId,
     toolRepository: deps.toolRepository,
+    skillRepository: deps.skillRepository,
     mcpServerRepository: deps.mcpServerRepository,
     capabilitySecretRepository: deps.capabilitySecretRepository,
     credentialBroker: await deps.getCredentialBroker?.(),

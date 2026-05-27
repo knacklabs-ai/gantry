@@ -393,6 +393,76 @@
       "when": 1777187400000,
       "tag": "0056_jsonb_index_performance",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1777191000000,
+      "tag": "0057_agent_run_execution_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1777194600000,
+      "tag": "0058_anthropic_execution_provider_id_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1777198200000,
+      "tag": "0059_remove_provider_native_tool_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1777201800000,
+      "tag": "0060_agent_run_provider_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1777205400000,
+      "tag": "0061_jobs_tool_access_requirements_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1777209000000,
+      "tag": "0062_skill_action_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1777212600000,
+      "tag": "0063_agent_tool_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1777216200000,
+      "tag": "0064_llm_profile_response_family",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1777219800000,
+      "tag": "0065_llm_profile_model_alias_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1777223400000,
+      "tag": "0066_memory_conversation_scope_cutover",
+      "breakpoints": true
     }
   ]
 }

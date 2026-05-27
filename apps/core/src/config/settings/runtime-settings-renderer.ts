@@ -20,12 +20,14 @@ import {
   DEFAULT_OPENAI_DAILY_EMBED_LIMIT,
   DEFAULT_STORAGE_POSTGRES_SCHEMA,
   DEFAULT_STORAGE_POSTGRES_URL_ENV,
-  getMemoryModelProfileDefaults,
+  getPresetManagedMemoryDefaults,
 } from './runtime-settings-defaults.js';
 import type {
   RuntimeCredentialBrokerSettings,
   RuntimeAgentSettings,
   RuntimeBrowserSettings,
+  RuntimeConfiguredAgentCapability,
+  RuntimeConfiguredAgentSourceRef,
   RuntimeConfiguredAgent,
   RuntimeConfiguredBinding,
   RuntimeConfiguredConversation,
@@ -214,17 +216,8 @@ function renderConfiguredAgentsYaml(
         `      model: ${quoteYamlString(agent.guardrail.model)}`,
       );
     }
-    if (agent.capabilities.toolIds.length > 0) {
-      lines.push(`    tools: ${JSON.stringify(agent.capabilities.toolIds)}`);
-    }
-    if (agent.capabilities.skillIds.length > 0) {
-      lines.push(`    skills: ${JSON.stringify(agent.capabilities.skillIds)}`);
-    }
-    if (agent.capabilities.mcpServerIds.length > 0) {
-      lines.push(
-        `    mcp_servers: ${JSON.stringify(agent.capabilities.mcpServerIds)}`,
-      );
-    }
+    renderAgentSourcesYaml(lines, agent);
+    renderAgentCapabilitiesYaml(lines, agent.capabilities);
   }
   lines.push('');
 }
@@ -295,6 +288,58 @@ function renderMcpServersYaml(
     }
   }
   lines.push('');
+}
+
+function renderAgentSourcesYaml(
+  lines: string[],
+  agent: RuntimeConfiguredAgent,
+): void {
+  if (
+    agent.sources.skills.length === 0 &&
+    agent.sources.mcpServers.length === 0 &&
+    agent.sources.tools.length === 0
+  ) {
+    return;
+  }
+  lines.push('    sources:');
+  renderAgentSourceListYaml(lines, 'skills', agent.sources.skills);
+  renderAgentSourceListYaml(lines, 'mcp_servers', agent.sources.mcpServers);
+  renderAgentSourceListYaml(lines, 'tools', agent.sources.tools);
+}
+
+function renderAgentSourceListYaml(
+  lines: string[],
+  key: string,
+  sources: RuntimeConfiguredAgentSourceRef[],
+): void {
+  if (sources.length === 0) return;
+  lines.push(`      ${key}:`);
+  for (const source of sources) {
+    if (source.name !== undefined) {
+      lines.push(`        - name: ${quoteYamlString(source.name)}`);
+      lines.push(`          id: ${quoteYamlString(source.id)}`);
+    } else {
+      lines.push(`        - id: ${quoteYamlString(source.id)}`);
+    }
+    if (source.version !== undefined) {
+      lines.push(`          version: ${quoteYamlString(source.version)}`);
+    }
+    if (source.kind !== undefined) {
+      lines.push(`          kind: ${quoteYamlString(source.kind)}`);
+    }
+  }
+}
+
+function renderAgentCapabilitiesYaml(
+  lines: string[],
+  capabilities: RuntimeConfiguredAgentCapability[],
+): void {
+  if (capabilities.length === 0) return;
+  lines.push('    capabilities:');
+  for (const capability of capabilities) {
+    lines.push(`      - id: ${quoteYamlString(capability.id)}`);
+    lines.push(`        version: ${quoteYamlString(capability.version)}`);
+  }
 }
 
 function renderProviderConnectionsYaml(
@@ -485,7 +530,7 @@ function isDefaultCredentialBroker(
 }
 
 function isDefaultMemory(memory: RuntimeMemorySettings): boolean {
-  const models = getMemoryModelProfileDefaults('balanced');
+  const models = getPresetManagedMemoryDefaults();
   return (
     memory.enabled === true &&
     memory.embeddings.enabled === false &&

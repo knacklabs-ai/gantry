@@ -6,8 +6,11 @@ import {
 import { agentIdForJobGroupScope } from '../application/jobs/job-tool-policy.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
+import type { JobRecoveryIntentSource } from '../application/jobs/job-recovery-intent-service.js';
 import type { SchedulerEventAppSession } from './app-session-resolution.js';
+import { resolveExecutionContext } from './execution-context.js';
 import { notifySchedulerSetupRequired } from './execution-notifications.js';
+import { queueJobRecoveryTurn } from './recovery.js';
 import type { SchedulerDependencies } from './types.js';
 
 export async function pauseJobForSetupIfNeeded(input: {
@@ -17,6 +20,8 @@ export async function pauseJobForSetupIfNeeded(input: {
   runtimeAppId: string;
   appSession?: SchedulerEventAppSession;
   agentId?: string;
+  source?: JobRecoveryIntentSource;
+  runId?: string | null;
   publishRuntimeEvent: (event: RuntimeEventPublishInput) => Promise<unknown>;
 }): Promise<boolean> {
   const readiness = await evaluateJobReadiness({
@@ -25,6 +30,7 @@ export async function pauseJobForSetupIfNeeded(input: {
     agentId:
       input.agentId ?? agentIdForJobGroupScope(input.executionAgentFolder),
     toolRepository: input.deps.getToolRepository?.(),
+    skillRepository: input.deps.getSkillRepository?.(),
     mcpServerRepository: input.deps.getMcpServerRepository?.(),
     capabilitySecretRepository: input.deps.getCapabilitySecretRepository?.(),
     credentialBroker: await input.deps.getCredentialBroker?.(),
@@ -47,6 +53,8 @@ export async function pauseJobForSetupIfNeeded(input: {
     runtimeAppId: input.runtimeAppId,
     appSession: input.appSession,
     setupState,
+    source: input.source ?? 'preflight_setup',
+    runId: input.runId,
     publishRuntimeEvent: input.publishRuntimeEvent,
   });
   input.deps.onSchedulerChanged?.(input.currentJob.id);
@@ -59,6 +67,8 @@ export async function notifyJobSetupRequired(input: {
   runtimeAppId: string;
   appSession?: SchedulerEventAppSession;
   setupState: NonNullable<Job['setup_state']>;
+  source?: JobRecoveryIntentSource;
+  runId?: string | null;
   publishRuntimeEvent: (event: RuntimeEventPublishInput) => Promise<unknown>;
 }): Promise<boolean> {
   const notified = await notifySchedulerSetupRequired({
@@ -95,5 +105,21 @@ export async function notifyJobSetupRequired(input: {
     responseMode: input.appSession?.defaultResponseMode,
     webhookId: input.appSession?.defaultWebhookId,
   });
+  const execution = resolveExecutionContext(
+    input.currentJob,
+    input.deps.conversationRoutes(),
+  );
+  if (execution) {
+    await queueJobRecoveryTurn({
+      currentJob: input.currentJob,
+      deps: input.deps,
+      execution,
+      setupState: input.setupState,
+      source: input.source ?? 'preflight_setup',
+      runId: input.runId,
+      runtimeAppId: input.runtimeAppId,
+      publishRuntimeEvent: input.publishRuntimeEvent,
+    });
+  }
   return notified;
 }

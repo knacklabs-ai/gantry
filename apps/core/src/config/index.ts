@@ -8,11 +8,14 @@ import {
   runtimeEnvValue,
   runtimeEnvValueDynamic,
 } from './env/index.js';
-import { parseBooleanEnv } from './env/parse.js';
 import { getMemoryModelConfig } from './memory.js';
 import { getGantryHome } from '../shared/gantry-home.js';
 import { resolveRuntimeStorageConfig } from './settings/storage.js';
 import { ensureRuntimeSettings } from './settings/runtime-settings.js';
+import {
+  readRuntimeModelDefaults,
+  updateRuntimeModelDefaults,
+} from './settings/model-defaults.js';
 import { settingsFilePath } from './settings/runtime-home.js';
 import { DEFAULT_AGENT_NAME } from './settings/runtime-settings-defaults.js';
 import type { RuntimeSettings } from './settings/runtime-settings-types.js';
@@ -184,10 +187,6 @@ export const INTERAKT_BUSINESS_PHONE_NUMBER = envValue(
 );
 export const INTERAKT_BASE_URL = envValue('INTERAKT_BASE_URL');
 export const GANTRY_IPC_AUTH_SECRET = envValue('GANTRY_IPC_AUTH_SECRET');
-export const REMOTE_CONTROL_AUTO_ACCEPT = parseBooleanEnv(
-  envValue('REMOTE_CONTROL_AUTO_ACCEPT'),
-  false,
-);
 export const LOG_LEVEL = envValue('LOG_LEVEL') || 'info';
 export const HOST_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
@@ -345,6 +344,20 @@ export function getDefaultModelConfig(
     };
   }
   return { model: 'opus', source: 'system default' };
+}
+
+export function getRuntimeModelDefaults() {
+  return readRuntimeModelDefaults({
+    runtimeHome: GANTRY_HOME,
+    getDefaultModelConfig,
+  });
+}
+
+export function patchRuntimeModelDefaults(body: Record<string, unknown>) {
+  return updateRuntimeModelDefaults({
+    runtimeHome: GANTRY_HOME,
+    body,
+  });
 }
 export function getEffectiveModelConfig(
   groupModel?: string,

@@ -28,6 +28,9 @@ export type JobStatus = z.infer<typeof JobStatusSchema>;
 export const JobModelSourceSchema = z.union([
   z.literal('explicit'),
   z.literal('system default'),
+  z.literal('settings.yaml agents.<agent>.model'),
+  z.literal('settings.yaml agents.<agent>.one_time_job_default_model'),
+  z.literal('settings.yaml agents.<agent>.recurring_job_default_model'),
   z.literal('settings.yaml agent.default_model'),
   z.literal('settings.yaml agent.one_time_job_default_model'),
   z.literal('settings.yaml agent.recurring_job_default_model'),
@@ -35,15 +38,31 @@ export const JobModelSourceSchema = z.union([
 ]);
 export type JobModelSource = z.infer<typeof JobModelSourceSchema>;
 
-export const JobModelPreviewSchema = z.object({
-  displayName: z.string(),
-  provider: z.string(),
-  contextWindowTokens: z.number().int().nonnegative(),
-  maxOutputTokens: z.number().int().nonnegative(),
-  cachePolicy: z.string(),
-  modelProfileId: z.string(),
-});
+export const JobModelPreviewSchema = z
+  .object({
+    displayName: z.string(),
+    responseFamily: z.enum(['anthropic', 'openai']),
+    modelRoute: z
+      .object({
+        id: z.enum(['anthropic', 'openrouter']),
+        label: z.string(),
+      })
+      .strict(),
+    contextWindowTokens: z.number().int().nonnegative(),
+    maxOutputTokens: z.number().int().nonnegative(),
+    cachePolicy: z.string(),
+  })
+  .strict();
 export type JobModelPreview = z.infer<typeof JobModelPreviewSchema>;
+
+export const JobModelSelectionSchema = z
+  .object({
+    alias: z.string().nullable(),
+    source: z.string(),
+    explicit: z.boolean(),
+  })
+  .strict();
+export type JobModelSelection = z.infer<typeof JobModelSelectionSchema>;
 
 export const JobRuntimeContextPreviewSchema = z.object({
   executionContext: z
@@ -152,6 +171,34 @@ export const JobHealthSchema = z
   .strict();
 export type JobHealth = z.infer<typeof JobHealthSchema>;
 
+export const JobRecoveryMetadataSchema = z
+  .object({
+    state: z.enum([
+      'none',
+      'pending',
+      'running',
+      'completed',
+      'failed',
+      'suppressed',
+    ]),
+    kind: z
+      .enum([
+        'setup_required',
+        'missing_capability',
+        'permission_denied',
+        'permission_timeout',
+      ])
+      .nullable(),
+    updatedAt: IsoDateTimeSchema.nullable(),
+    attempts: z.number().int().nonnegative(),
+    requirementType: z.string().nullable(),
+    requirementId: z.string().nullable(),
+    nextAction: z.string().nullable(),
+    lastError: z.string().nullable(),
+  })
+  .strict();
+export type JobRecoveryMetadata = z.infer<typeof JobRecoveryMetadataSchema>;
+
 export const JobSetupSchema = z
   .object({
     state: z.enum([
@@ -191,8 +238,12 @@ export const JobToolAccessSchema = z
   .strict();
 export type JobToolAccess = z.infer<typeof JobToolAccessSchema>;
 
-export const JobRequiredToolsSchema = z.array(z.string().min(1)).default([]);
-export type JobRequiredTools = z.infer<typeof JobRequiredToolsSchema>;
+export const JobToolAccessRequirementsSchema = z
+  .array(z.string().min(1))
+  .default([]);
+export type JobToolAccessRequirements = z.infer<
+  typeof JobToolAccessRequirementsSchema
+>;
 
 export const JobRequiredMcpServersSchema = z
   .array(z.string().min(1))
@@ -209,6 +260,8 @@ export const JobCapabilityRequirementImplementationSchema = z
     ]),
     name: z.string().min(1).optional(),
     executablePath: z.string().min(1).optional(),
+    executableVersion: z.string().min(1).optional(),
+    executableHash: z.string().min(1).optional(),
     commandTemplate: z.string().min(1).optional(),
     authPreflight: z.string().min(1).optional(),
     protectedPaths: z.array(z.string().min(1)).optional(),
@@ -243,7 +296,7 @@ export const CreateJobRequestSchema = z
     executionContext: JobRequestExecutionContextSchema,
     notificationRoutes: z.array(JobNotificationRouteSchema).optional(),
     capabilityRequirements: z.array(JobCapabilityRequirementSchema).optional(),
-    requiredTools: z.array(z.string().min(1)).optional(),
+    toolAccessRequirements: z.array(z.string().min(1)).optional(),
     requiredMcpServers: z.array(z.string().min(1)).optional(),
     kind: z.enum(['manual', 'once', 'recurring']).optional(),
     runAt: IsoDateTimeSchema.optional(),
@@ -254,14 +307,9 @@ export const CreateJobRequestSchema = z
       })
       .optional(),
     modelAlias: z.string().optional(),
-    modelProfileId: z.string().optional(),
     dryRun: z.boolean().optional(),
   })
-  .strict()
-  .refine((value) => !(value.modelAlias && value.modelProfileId), {
-    message: 'Use either modelAlias or modelProfileId, not both.',
-    path: ['modelProfileId'],
-  });
+  .strict();
 export type CreateJobRequest = z.infer<typeof CreateJobRequestSchema>;
 
 export const UpdateJobRequestSchema = z
@@ -271,21 +319,12 @@ export const UpdateJobRequestSchema = z
     executionContext: JobRequestExecutionContextSchema.optional(),
     notificationRoutes: z.array(JobNotificationRouteSchema).optional(),
     capabilityRequirements: z.array(JobCapabilityRequirementSchema).optional(),
-    requiredTools: z.array(z.string().min(1)).optional(),
+    toolAccessRequirements: z.array(z.string().min(1)).optional(),
     requiredMcpServers: z.array(z.string().min(1)).optional(),
     status: z.enum(['active', 'paused']).optional(),
     modelAlias: z.string().nullable().optional(),
-    modelProfileId: z.string().nullable().optional(),
   })
-  .strict()
-  .refine(
-    (value) =>
-      value.modelAlias === undefined || value.modelProfileId === undefined,
-    {
-      message: 'Use either modelAlias or modelProfileId, not both.',
-      path: ['modelProfileId'],
-    },
-  );
+  .strict();
 export type UpdateJobRequest = z.infer<typeof UpdateJobRequestSchema>;
 
 export const JobResponseSchema = z
@@ -307,15 +346,16 @@ export const JobResponseSchema = z
     executionContext: JobExecutionContextSchema,
     notificationRoutes: z.array(JobNotificationRouteSchema),
     capabilityRequirements: z.array(JobCapabilityRequirementSchema),
-    requiredTools: z.array(z.string()),
+    toolAccessRequirements: z.array(z.string()),
     requiredMcpServers: z.array(z.string()),
     setup: JobSetupSchema.optional(),
     nextRun: IsoDateTimeSchema.nullable(),
     lastRun: IsoDateTimeSchema.nullable(),
     staleness: JobStalenessSchema.nullable().optional(),
     health: JobHealthSchema.optional(),
+    recovery: JobRecoveryMetadataSchema.optional(),
     modelAlias: z.string().nullable().optional(),
-    modelProfileId: z.string().nullable().optional(),
+    modelSelection: JobModelSelectionSchema.optional(),
     model: JobModelPreviewSchema.nullable().optional(),
     groupScope: z.string(),
     sessionId: z.string().nullable(),
@@ -334,6 +374,7 @@ export const CreateJobResponseSchema = z.object({
   setup: JobSetupSchema.optional(),
   modelAlias: z.string().nullable().optional(),
   modelSource: JobModelSourceSchema.optional(),
+  modelSelection: JobModelSelectionSchema.optional(),
   model: JobModelPreviewSchema.nullable().optional(),
   runtimeContext: JobRuntimeContextPreviewSchema.optional(),
 });
@@ -341,17 +382,56 @@ export type CreateJobResponse = z.infer<typeof CreateJobResponseSchema>;
 
 export const ModelRecordSchema = z.object({
   id: z.string(),
-  modelProfileId: z.string(),
   displayName: z.string(),
   aliases: z.array(z.string()),
   recommendedAlias: z.string(),
-  provider: z.string(),
+  responseFamily: z.enum(['anthropic', 'openai']),
+  executionProviderId: z.string(),
+  credentialProfileRef: z.string(),
+  modelRoute: z.object({
+    id: z.enum(['anthropic', 'openrouter']),
+    label: z.string(),
+    metadata: z
+      .object({
+        providerModelId: z.string(),
+      })
+      .strict(),
+  }),
+  capabilities: z
+    .object({
+      streaming: z.boolean(),
+      toolUse: z.boolean(),
+      mcpProjection: z.boolean(),
+      browserProjection: z.boolean(),
+      sandboxProjection: z.boolean(),
+      providerSessionResume: z.boolean(),
+      thinking: z.boolean(),
+      tokenAccounting: z.boolean(),
+      cacheAccounting: z.boolean(),
+      structuredOutput: z.boolean(),
+    })
+    .strict(),
+  supportedWorkloads: z.array(
+    z.enum([
+      'chat',
+      'one_time_job',
+      'recurring_job',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ]),
+  ),
   contextWindowTokens: z.number().int().nonnegative(),
   maxOutputTokens: z.number().int().nonnegative(),
   cacheMode: z.string(),
   cacheTokenFields: z.array(z.string()),
   supportsThinking: z.boolean(),
   supportsTools: z.boolean(),
+  source: z.object({
+    label: z.string(),
+    url: z.string(),
+    verifiedAt: z.string(),
+  }),
   experimental: z.boolean(),
 });
 export type ModelRecord = z.infer<typeof ModelRecordSchema>;
@@ -360,3 +440,104 @@ export const ListModelsResponseSchema = z.object({
   models: z.array(ModelRecordSchema),
 });
 export type ListModelsResponse = z.infer<typeof ListModelsResponseSchema>;
+
+export const ModelPresetSchema = z.enum(['anthropic', 'openrouter']);
+export type ModelPreset = z.infer<typeof ModelPresetSchema>;
+
+export const ModelWorkloadSchema = z.enum([
+  'chat',
+  'one_time_job',
+  'recurring_job',
+  'memory_extractor',
+  'memory_dreaming',
+  'memory_consolidation',
+]);
+export type ModelWorkload = z.infer<typeof ModelWorkloadSchema>;
+
+export const ModelDefaultSlotSchema = z.object({
+  configuredAlias: z.string().nullable(),
+  effectiveAlias: z.string().nullable(),
+  source: z.string(),
+  inherited: z.boolean(),
+  workload: ModelWorkloadSchema,
+  model: ModelRecordSchema.nullable(),
+});
+export type ModelDefaultSlot = z.infer<typeof ModelDefaultSlotSchema>;
+
+export const ModelDefaultsResponseSchema = z.object({
+  preset: z
+    .object({
+      id: ModelPresetSchema,
+      label: z.string(),
+    })
+    .nullable(),
+  chat: ModelDefaultSlotSchema,
+  jobs: z.object({
+    oneTime: ModelDefaultSlotSchema,
+    recurring: ModelDefaultSlotSchema,
+  }),
+  memory: z.object({
+    mode: z.literal('preset-managed'),
+    extractor: ModelDefaultSlotSchema,
+    dreaming: ModelDefaultSlotSchema,
+    consolidation: ModelDefaultSlotSchema,
+  }),
+  defaults: z.object({
+    chat: ModelDefaultSlotSchema,
+    oneTime: ModelDefaultSlotSchema,
+    recurring: ModelDefaultSlotSchema,
+    memoryExtractor: ModelDefaultSlotSchema,
+    memoryDreaming: ModelDefaultSlotSchema,
+    memoryConsolidation: ModelDefaultSlotSchema,
+  }),
+});
+export type ModelDefaultsResponse = z.infer<typeof ModelDefaultsResponseSchema>;
+
+export const ModelDefaultsPatchRequestSchema = z
+  .object({
+    preset: ModelPresetSchema.optional(),
+    chat: z.string().nullable().optional(),
+    jobs: z.union([z.string(), z.null()]).optional(),
+    oneTime: z.union([z.string(), z.null()]).optional(),
+    recurring: z.union([z.string(), z.null()]).optional(),
+    memory: z
+      .union([z.literal('reset'), z.literal('preset-managed'), z.null()])
+      .optional(),
+  })
+  .strict();
+export type ModelDefaultsPatchRequest = z.infer<
+  typeof ModelDefaultsPatchRequestSchema
+>;
+
+export const ModelPreviewTargetSchema = z.enum([
+  'chat',
+  'jobs',
+  'job',
+  'memory',
+]);
+export type ModelPreviewTarget = z.infer<typeof ModelPreviewTargetSchema>;
+
+export const ModelPreviewRequestSchema = z
+  .object({
+    target: ModelPreviewTargetSchema,
+    jobId: z.string().optional(),
+    conversationJid: z.string().optional(),
+    groupScope: z.string().optional(),
+    kind: z.enum(['one-time', 'recurring']).optional(),
+    task: z.enum(['extractor', 'dreaming', 'consolidation']).optional(),
+  })
+  .strict();
+export type ModelPreviewRequest = z.infer<typeof ModelPreviewRequestSchema>;
+
+export const ModelPreviewResponseSchema = z
+  .object({
+    target: ModelPreviewTargetSchema,
+    jobId: z.string().optional(),
+    scope: z.string().optional(),
+    kind: z.enum(['one-time', 'recurring']).optional(),
+    task: z.enum(['extractor', 'dreaming', 'consolidation']).optional(),
+    selection: ModelDefaultSlotSchema,
+    why: z.array(z.string()),
+  })
+  .strict();
+export type ModelPreviewResponse = z.infer<typeof ModelPreviewResponseSchema>;

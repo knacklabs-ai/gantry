@@ -1,4 +1,3 @@
-import type { ChannelAdapter } from '../../channels/channel-provider.js';
 import type { ConversationRoute, NewMessage } from '../../domain/types.js';
 import type {
   RuntimeChatMetadataRepository,
@@ -16,7 +15,6 @@ interface ChannelPersistenceHandlerDeps {
   app: RuntimeApp;
   resolved: ChannelWiringDeps;
   ops: () => ChannelPersistenceRepository;
-  findBoundChannel: (jid: string) => ChannelAdapter | undefined;
   persistenceQueue: AsyncTaskQueue;
 }
 
@@ -155,7 +153,6 @@ export function createChannelPersistenceHandlers({
   app,
   resolved,
   ops,
-  findBoundChannel,
   persistenceQueue,
 }: ChannelPersistenceHandlerDeps) {
   const chatIsGroup = new Map<string, boolean>();
@@ -191,7 +188,6 @@ export function createChannelPersistenceHandlers({
   return {
     ensureMessageRoute: ensureConfiguredConversationRoute,
     onMessage: async (chatJid: string, msg: NewMessage) => {
-      const trimmed = msg.content.trim();
       const canRoute = await ensureConfiguredConversationRoute(chatJid, msg);
       if (!canRoute) return;
       const groupsByChat = app.getConversationRoutes();
@@ -218,33 +214,6 @@ export function createChannelPersistenceHandlers({
           }
           return;
         }
-      }
-
-      const remoteControlCommand = resolved.asRemoteControlCommand(trimmed);
-      if (remoteControlCommand) {
-        const allowlistCfg = resolved.loadSenderControlAllowlist();
-        try {
-          await resolved.handleRemoteControlCommand(
-            remoteControlCommand,
-            chatJid,
-            msg,
-            (jid) => app.getConversationRoutes()[jid],
-            findBoundChannel,
-            (candidateMsg) =>
-              resolved.isSenderControlAllowed(
-                chatJid,
-                candidateMsg.sender,
-                allowlistCfg,
-                groupsByChat[chatJid]?.folder,
-              ),
-          );
-        } catch (err) {
-          resolved.logger.error(
-            { err, chatJid },
-            'Remote control command error',
-          );
-        }
-        return;
       }
 
       const persistMessage = async () => {

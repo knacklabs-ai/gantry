@@ -4,7 +4,7 @@ import {
   BUILTIN_AGENT_CAPABILITY_PROVIDERS,
   composeAgentCapabilities,
   type AgentCapabilityProvider,
-} from '@agent-runner-src/agent-capabilities.js';
+} from '@core/adapters/llm/anthropic-claude-agent/agent-capabilities.js';
 import {
   DEFAULT_GANTRY_MCP_TOOL_NAMES,
   gantryMcpFullToolName,
@@ -122,7 +122,17 @@ describe('agent capability composition', () => {
       expect(profile.allowedTools).not.toContain(tool);
     }
     expect(profile.allowedTools).toContain('mcp__gantry__continuity_summary');
+    expect(profile.allowedTools).not.toContain(
+      'mcp__gantry__memory_review_pending',
+    );
+    expect(profile.allowedTools).not.toContain(
+      'mcp__gantry__memory_review_decision',
+    );
     expect(selectedMemoryIpcActions([])).toContain('continuity_summary');
+    expect(selectedMemoryIpcActions([])).not.toContain('memory_review_pending');
+    expect(selectedMemoryIpcActions([])).not.toContain(
+      'memory_review_decision',
+    );
     for (const tool of UNAVAILABLE_DEFAULT_TOOLS) {
       expect(profile.availableTools).not.toContain(tool);
     }
@@ -144,6 +154,7 @@ describe('agent capability composition', () => {
         GANTRY_ADMIN_MCP_TOOLS_JSON: '[]',
         GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
         GANTRY_SELECTED_SKILLS_JSON: '[]',
+        GANTRY_SELECTED_SKILL_DISPLAYS_JSON: '[]',
         GANTRY_SELECTED_MCP_SERVERS_JSON: '[]',
         GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedGantryMcpToolNames([]),
@@ -352,25 +363,81 @@ describe('agent capability composition', () => {
     ]);
   });
 
-  it('keeps scoped Bash available but does not project it as SDK always-allowed', () => {
+  it('exposes memory review tools only for control-approver reviewers', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'tg:sales',
+      groupFolder: 'sales',
+      persona: 'sales',
+      memoryReviewerIsControlApprover: true,
+    });
+
+    expect(profile.allowedTools).toContain(
+      'mcp__gantry__memory_review_pending',
+    );
+    expect(profile.allowedTools).toContain(
+      'mcp__gantry__memory_review_decision',
+    );
+    expect(profile.allowedTools).not.toContain('mcp__gantry__memory_patch');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__memory_demote');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__procedure_patch');
+    expect(profile.mcpServers.gantry?.env).toMatchObject({
+      GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER: '1',
+    });
+
+    expect(
+      JSON.parse(
+        String(profile.mcpServers.gantry?.env?.GANTRY_MCP_TOOL_NAMES_JSON),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        'memory_review_pending',
+        'memory_review_decision',
+      ]),
+    );
+    expect(
+      JSON.parse(
+        String(profile.mcpServers.gantry?.env?.GANTRY_MEMORY_IPC_ACTIONS_JSON),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        'memory_review_pending',
+        'memory_review_decision',
+      ]),
+    );
+    expect(
+      selectedMemoryIpcActions([], {
+        memoryReviewerIsControlApprover: true,
+      }),
+    ).toEqual([
+      'memory_search',
+      'memory_save',
+      'continuity_summary',
+      'memory_review_pending',
+      'memory_review_decision',
+      'procedure_save',
+    ]);
+  });
+
+  it('keeps scoped RunCommand available but does not project it as SDK always-allowed', () => {
     const profile = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:team',
       groupFolder: 'telegram_team',
       configuredAllowedTools: [
-        'Bash(npm test *)',
+        'RunCommand(npm test *)',
         'ToolName(scope-pattern)',
-        'Bash(npm test',
+        'RunCommand(npm test',
         'Read(/repo/**)',
       ],
     });
 
     expect(profile.allowedTools).not.toContain('Bash');
-    expect(profile.allowedTools).not.toContain('Bash(npm test *)');
+    expect(profile.allowedTools).not.toContain('RunCommand(npm test *)');
     expect(profile.availableTools).toContain('Bash');
     expect(profile.allowedTools).not.toContain('ToolName(scope-pattern)');
     expect(profile.availableTools).not.toContain('ToolName');
-    expect(profile.allowedTools).not.toContain('Bash(npm test');
+    expect(profile.allowedTools).not.toContain('RunCommand(npm test');
     expect(
       profile.availableTools.filter((tool) => tool === 'Bash'),
     ).toHaveLength(1);
@@ -385,16 +452,16 @@ describe('agent capability composition', () => {
       persona: 'sales',
       isScheduledJob: true,
       configuredAllowedTools: [
-        'Read',
-        'Bash(/usr/local/bin/gog sheets append *)',
-        'Bash(python3 /Users/example/scripts/dedup-append-lead.py)',
+        'FileRead',
+        'RunCommand(/usr/local/bin/gog sheets append *)',
+        'RunCommand(python3 /Users/example/scripts/dedup-append-lead.py)',
       ],
     });
 
     expect(profile.allowedTools).toContain('Read');
     expect(profile.allowedTools).not.toContain('Bash');
     expect(profile.allowedTools).not.toContain(
-      'Bash(/usr/local/bin/gog sheets append *)',
+      'RunCommand(/usr/local/bin/gog sheets append *)',
     );
     expect(profile.availableTools).toEqual(
       expect.arrayContaining([
@@ -413,13 +480,20 @@ describe('agent capability composition', () => {
     expect(profile.availableTools).not.toContain('NotebookEdit');
   });
 
-  it('allows exact selected admin and native tools but filters unsupported wildcard rules for non-developer personas', () => {
+  it('projects selected Gantry facade tools but filters provider-native and unsupported wildcard rules for non-developer personas', () => {
     const profile = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:sales',
       groupFolder: 'sales',
       persona: 'sales',
       configuredAllowedTools: [
+        'AgentDelegation',
+        'WebSearch',
+        'WebRead',
+        'FileRead',
+        'FileSearch',
+        'FileWrite',
+        'FileEdit',
         'Agent',
         'Browser',
         'Bash',
@@ -442,6 +516,11 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).toContain('Agent');
     expect(profile.allowedTools).not.toContain('Browser');
     expect(profile.allowedTools).not.toContain('ToolName(scope-pattern)');
+    expect(profile.allowedTools).not.toContain('AgentDelegation');
+    expect(profile.allowedTools).not.toContain('FileRead');
+    expect(profile.allowedTools).not.toContain('FileSearch');
+    expect(profile.allowedTools).not.toContain('FileWrite');
+    expect(profile.allowedTools).not.toContain('FileEdit');
     expect(profile.allowedTools).toContain('mcp__gantry__service_restart');
     expect(profile.allowedTools).toContain(
       'mcp__gantry__settings_desired_state',
@@ -450,11 +529,12 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).toContain('Read');
     expect(profile.allowedTools).toContain('Glob');
     expect(profile.allowedTools).toContain('Grep');
-    expect(profile.allowedTools).toContain('LS');
     expect(profile.allowedTools).toContain('Write');
     expect(profile.allowedTools).toContain('Edit');
     expect(profile.allowedTools).toContain('MultiEdit');
-    expect(profile.allowedTools).toContain('NotebookEdit');
+    expect(profile.allowedTools).toContain('WebFetch');
+    expect(profile.allowedTools).not.toContain('LS');
+    expect(profile.allowedTools).not.toContain('NotebookEdit');
     expect(profile.allowedTools).not.toContain('mcp__gantry__*');
     expect(profile.allowedTools).not.toContain(
       'mcp__gantry__*(service_restart)',
@@ -465,6 +545,9 @@ describe('agent capability composition', () => {
     expect(profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILLS_JSON).toBe(
       JSON.stringify([]),
     );
+    expect(
+      profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+    ).toBe(JSON.stringify([]));
   });
 
   it('projects selected skills and MCP servers into capability_status environment', () => {
@@ -473,12 +556,16 @@ describe('agent capability composition', () => {
       chatJid: 'tg:sales',
       groupFolder: 'sales',
       selectedSkillIds: ['skill:release'],
+      selectedSkillDisplays: ['release (skill:release)'],
       selectedMcpServerIds: ['mcp:github'],
     });
 
     expect(profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILLS_JSON).toBe(
       JSON.stringify(['skill:release']),
     );
+    expect(
+      profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+    ).toBe(JSON.stringify(['release (skill:release)']));
     expect(
       profile.mcpServers.gantry?.env?.GANTRY_SELECTED_MCP_SERVERS_JSON,
     ).toBe(JSON.stringify(['mcp:github']));

@@ -41,7 +41,7 @@ Three statements. Conflict with any of them means the gap is not closed.
 | #   | Gap                                                                                     | Evidence                                                                                                                   | Severity    |
 | --- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | G1  | `DEFAULT_MEMORY_AGENT_ID` still live; subject not threaded from session                 | `apps/core/src/memory/app-memory-boundaries.ts:13,54`                                                                      | **blocker** |
-| G2  | Permission timeout not split; autonomous jobs still wait 300s on prompts no one answers | `apps/core/src/shared/permission-timeout.ts`, `apps/core/src/runner/claude/runtime-env.ts:27-35`                           | **blocker** |
+| G2  | Permission timeout not split; autonomous jobs still wait 300s on prompts no one answers | `apps/core/src/shared/permission-timeout.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/runtime-env.ts:27-35`                           | **blocker** |
 | G3  | Boot does not fail when an MCP tool is registered without a handler                     | obsolete memory ingestion tools were unregistered; scheduler handler parity still needs verification                       | **blocker** |
 | G4  | No `scheduler_cancel_run` and no watchdog reaping zombie `running` rows                 | parent plan A Phase 2                                                                                                      | high        |
 | G5  | Telegram chunker still markdown-unaware; long replies truncate silently                 | `apps/core/src/channels/telegram/channel-shared.ts:132-155`, partial-delivery surface                                      | high        |
@@ -84,7 +84,7 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 - Interactive denial message names the missing rule and points to the reviewed
   capability or narrow `request_permission` path. Persistent fallback remains
   limited to semantic capabilities, canonical `Browser`, exact Gantry admin
-  tools, or scoped Bash rules.
+  tools, exact Gantry file/web facades, or scoped `RunCommand(...)` rules.
 - Configurable via env, but defaults are the spec'd values.
 
 **Exit criteria:**
@@ -157,7 +157,7 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 **Scope:**
 
 - Add `formatOperatorError(err) → { summary, cause, recover }` in a focused shared error-formatting module. Unwraps `err.cause` chain; recover step required.
-- Replace inline error construction at the audited surfaces (Telegram delivery, MCP tool results, scheduler events, permission denials, credential broker errors at `agent-credential-service.ts:80-83`).
+- Replace inline error construction at the audited surfaces (Telegram delivery, MCP tool results, scheduler events, permission denials, credential broker errors in `agent-credential-service.ts`).
 - Lint rule or grep-based CI check: `new Error(\`` outside the helper triggers a warning in `apps/core/src/{runner,jobs,channels,application}`.
 
 **Exit criteria:**
@@ -207,7 +207,7 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 | ------------------------------------ | ------------------------------------------------------------------- | ---------------------- | ----- |
 | Default memory agent constant        | `apps/core/src/memory/app-memory-boundaries.ts`                     | 13, 54                 | 1     |
 | Permission timeout module            | `apps/core/src/shared/permission-timeout.ts`                        | (whole file)           | 2     |
-| Runtime env permission timeout       | `apps/core/src/runner/claude/runtime-env.ts`                        | 27–35                  | 2     |
+| Runtime env permission timeout       | `apps/core/src/adapters/llm/anthropic-claude-agent/runner/runtime-env.ts`                        | 27–35                  | 2     |
 | Memory tool registrations            | `apps/core/src/runner/mcp/tools/memory.ts`                          | 159–207                | 3     |
 | Scheduler tool handlers              | `apps/core/src/runner/mcp/tools/scheduler.ts`                       | 195–250                | 3, 4  |
 | Job execution cooperative timeout    | `apps/core/src/jobs/execution.ts`                                   | 100–223, 395           | 4     |
@@ -215,7 +215,7 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 | Telegram delivery (direct/streaming) | `apps/core/src/channels/telegram/channel-delivery.ts`               | 35–97, 99–212, 243–268 | 5     |
 | Partial delivery surface             | `apps/core/src/domain/messages/partial-delivery.ts`                 | 91–99                  | 5     |
 | Group streaming overflow             | `apps/core/src/channels/telegram/channel-state.ts`                  | 431–442                | 5     |
-| Permission denial message            | `apps/core/src/runner/claude/permission-callback.ts`                | 175–176                | 6     |
+| Permission denial message            | `apps/core/src/adapters/llm/anthropic-claude-agent/runner/permission-callback.ts`                | 175–176                | 6     |
 | Credential broker error wrap         | `apps/core/src/application/credentials/agent-credential-service.ts` | 80–83                  | 6, 7  |
 
 ## 7. Pre-merge checklist

@@ -3,26 +3,53 @@ import { describe, expect, it } from 'vitest';
 import { AgentCapabilityAdministrationService } from '@core/application/agents/agent-capability-administration-service.js';
 
 describe('AgentCapabilityAdministrationService', () => {
-  it('replaces tool, skill, and MCP selections as agent-owned capabilities', async () => {
+  it('replaces capabilities and sources through separate agent-owned views', async () => {
     const state = createState();
     const service = new AgentCapabilityAdministrationService(
       state.repositories,
       { now: () => '2026-05-01T00:00:00.000Z' },
     );
 
-    const result = await service.replaceCapabilities({
+    const capabilities = await service.replaceCapabilities({
       appId: 'app:one' as never,
       agentId: 'agent:one' as never,
-      selectedToolIds: ['tool:Browser' as never],
-      selectedSkillIds: ['skill:one' as never],
-      selectedMcpServerIds: ['mcp:one' as never],
+      capabilities: [{ id: 'browser.use', version: 'builtin' }],
+    });
+    const sources = await service.replaceSources({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      sources: {
+        skills: [
+          {
+            name: 'stale-display-name',
+            id: 'skill:one',
+            version: 'approved',
+          },
+        ],
+        mcpServers: [{ id: 'mcp:one', version: 'mcp-version:one' }],
+        tools: [{ id: 'browser', kind: 'builtin' }],
+      },
     });
 
-    expect(result).toMatchObject({
-      selectedToolIds: ['tool:Browser'],
-      selectedSkillIds: ['skill:one'],
-      selectedMcpServerIds: ['mcp:one'],
+    expect(capabilities).toMatchObject({
+      capabilities: [{ id: 'browser.use', version: 'builtin' }],
     });
+    expect(sources).toMatchObject({
+      sources: {
+        skills: [{ name: 'One', id: 'skill:one', version: 'approved' }],
+        mcpServers: [{ id: 'mcp:one', version: 'mcp-version:one' }],
+        tools: [{ id: 'browser', kind: 'builtin' }],
+      },
+    });
+    expect(state.toolSources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: 'browser',
+          kind: 'builtin',
+          status: 'active',
+        }),
+      ]),
+    );
     expect(state.toolBindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ toolId: 'tool:old', status: 'disabled' }),
@@ -47,7 +74,7 @@ describe('AgentCapabilityAdministrationService', () => {
     );
   });
 
-  it('rejects disabled or non-selectable catalog tools', async () => {
+  it('rejects unknown semantic capabilities', async () => {
     const state = createState();
     const service = new AgentCapabilityAdministrationService(
       state.repositories,
@@ -58,11 +85,172 @@ describe('AgentCapabilityAdministrationService', () => {
       service.replaceCapabilities({
         appId: 'app:one' as never,
         agentId: 'agent:one' as never,
-        selectedToolIds: ['tool:internal' as never],
-        selectedSkillIds: [],
-        selectedMcpServerIds: [],
+        capabilities: [{ id: 'internal.tool', version: 'builtin' }],
       }),
-    ).rejects.toThrow('Tool is not selectable');
+    ).rejects.toThrow('Unknown semantic capability internal.tool');
+  });
+
+  it('rejects selected skills that collide by materialized runtime directory', async () => {
+    const state = createState();
+    state.skills.set('skill:two', {
+      ...state.skills.get('skill:one')!,
+      id: 'skill:two',
+      name: 'one',
+    });
+    const service = new AgentCapabilityAdministrationService(
+      state.repositories,
+      { now: () => '2026-05-01T00:00:00.000Z' },
+    );
+
+    await expect(
+      service.replaceSources({
+        appId: 'app:one' as never,
+        agentId: 'agent:one' as never,
+        sources: {
+          skills: [
+            { id: 'skill:one', version: 'approved' },
+            { id: 'skill:two', version: 'approved' },
+          ],
+          mcpServers: [],
+          tools: [],
+        },
+      }),
+    ).rejects.toThrow(
+      'Selected skills that materialize to the same runtime directory "one": skill:one, skill:two. Keep only one exact skill id.',
+    );
+  });
+
+  it('stores tool sources without granting tool authority', async () => {
+    const state = createState();
+    const service = new AgentCapabilityAdministrationService(
+      state.repositories,
+      { now: () => '2026-05-01T00:00:00.000Z' },
+    );
+
+    const response = await service.replaceSources({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      sources: {
+        skills: [],
+        mcpServers: [],
+        tools: [
+          { id: 'browser', kind: 'builtin' },
+          { id: 'gog', kind: 'local_cli', version: 'v0.9.0' },
+        ],
+      },
+    });
+
+    expect(response.sources.tools).toEqual([
+      { id: 'browser', kind: 'builtin' },
+      { id: 'gog', kind: 'local_cli', version: 'v0.9.0' },
+    ]);
+
+    expect(state.toolBindings).toEqual([
+      expect.objectContaining({ toolId: 'tool:old', status: 'active' }),
+    ]);
+    expect(state.toolSources).toEqual([
+      expect.objectContaining({
+        sourceId: 'browser',
+        kind: 'builtin',
+        status: 'active',
+      }),
+      expect.objectContaining({
+        sourceId: 'gog',
+        kind: 'local_cli',
+        version: 'v0.9.0',
+        status: 'active',
+      }),
+    ]);
+  });
+
+  it('reports old generated skill command grants as selected skill action capabilities', async () => {
+    const state = createState();
+    state.tools.set('tool:generated-skill-command', {
+      id: 'tool:generated-skill-command',
+      appId: 'app:one',
+      name: 'RunCommand(/tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+      kind: 'host',
+      provider: 'gantry',
+      displayName: 'Generated skill command',
+      category: 'admin',
+      risk: 'high',
+      selectable: true,
+      status: 'active',
+      adapterRef: 'permission/request_permission',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      updatedAt: '2026-04-30T00:00:00.000Z',
+    });
+    state.skills.set('skill:linkedin-posting', {
+      id: 'skill:linkedin-posting',
+      appId: 'app:one',
+      name: 'linkedin-posting',
+      version: '1',
+      source: 'admin_uploaded',
+      status: 'approved',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      actionPermissions: [
+        {
+          id: 'publish',
+          capabilityId: 'skill.linkedin-posting.publish',
+          displayName: 'LinkedIn posting',
+          risk: 'write',
+          can: 'Publish a prepared LinkedIn post through the approved script.',
+          cannot:
+            'Use unrelated skills, credentials, settings, or broader commands.',
+          requiredEnvVars: [],
+          commandTemplates: ['skills/linkedin-posting/post.py *'],
+        },
+      ],
+      storage: {
+        storageType: 'local-filesystem',
+        storageRef: 'skills/linkedin-posting',
+        contentHash: 'sha256:linkedin',
+        sizeBytes: 1,
+      },
+      createdAt: '2026-04-30T00:00:00.000Z',
+      updatedAt: '2026-04-30T00:00:00.000Z',
+    });
+    state.toolBindings.push({
+      id: 'agent-tool-binding:generated-skill-command',
+      appId: 'app:one',
+      agentId: 'agent:one',
+      toolId: 'tool:generated-skill-command',
+      status: 'active',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      updatedAt: '2026-04-30T00:00:00.000Z',
+    });
+    state.skillBindings.push({
+      id: 'agent-skill-binding:linkedin-posting',
+      appId: 'app:one',
+      agentId: 'agent:one',
+      skillId: 'skill:linkedin-posting',
+      status: 'active',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      updatedAt: '2026-04-30T00:00:00.000Z',
+    });
+    const service = new AgentCapabilityAdministrationService(
+      state.repositories,
+      { now: () => '2026-05-01T00:00:00.000Z' },
+    );
+
+    const response = await service.getCapabilities({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+    });
+
+    expect(response.capabilities).toContainEqual({
+      id: 'skill.linkedin-posting.publish',
+      version: 'builtin',
+    });
+    expect(response.capabilities).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.stringContaining('.llm-runtime'),
+        }),
+      ]),
+    );
   });
 
   it('rejects selectable catalog rows whose names are invalid durable tool rules', async () => {
@@ -76,11 +264,9 @@ describe('AgentCapabilityAdministrationService', () => {
       service.replaceCapabilities({
         appId: 'app:one' as never,
         agentId: 'agent:one' as never,
-        selectedToolIds: ['tool:BashWildcard' as never],
-        selectedSkillIds: [],
-        selectedMcpServerIds: [],
+        capabilities: [{ id: 'RunCommand(*)', version: 'builtin' }],
       }),
-    ).rejects.toThrow('Persistent Bash scope is too broad');
+    ).rejects.toThrow('Persistent RunCommand scope is too broad');
 
     expect(state.toolBindings).not.toEqual(
       expect.arrayContaining([
@@ -137,7 +323,7 @@ function createState() {
       {
         id: 'tool:BashWildcard',
         appId: 'app:one',
-        name: 'Bash(*)',
+        name: 'RunCommand(*)',
         kind: 'sdk',
         provider: 'claude',
         displayName: 'Bash wildcard',
@@ -179,9 +365,29 @@ function createState() {
         status: 'approved',
         createdSource: 'admin',
         riskClass: 'medium',
-        latestApprovedVersionId: 'mcp-version:one',
+        latestApprovedVersionId: 'mcp-version:two',
         createdAt: now,
         updatedAt: now,
+      },
+    ],
+  ]);
+  const mcpVersions = new Map<string, any>([
+    [
+      'mcp-version:one',
+      {
+        id: 'mcp-version:one',
+        appId: 'app:one',
+        serverId: 'mcp:one',
+        version: 1,
+      },
+    ],
+    [
+      'mcp-version:two',
+      {
+        id: 'mcp-version:two',
+        appId: 'app:one',
+        serverId: 'mcp:one',
+        version: 2,
       },
     ],
   ]);
@@ -196,6 +402,7 @@ function createState() {
       updatedAt: now,
     },
   ];
+  const toolSources: any[] = [];
   const skillBindings: any[] = [
     {
       id: 'agent-skill-binding:agent:one:skill:old',
@@ -222,7 +429,10 @@ function createState() {
     },
   ];
   return {
+    tools,
+    skills,
     toolBindings,
+    toolSources,
     skillBindings,
     mcpBindings,
     repositories: {
@@ -236,6 +446,16 @@ function createState() {
           updatedAt: now,
         }),
         replaceAgentCapabilityBindings: async (input: any) => {
+          for (const binding of toolBindings) {
+            if (
+              !input.toolBindings.some(
+                (next: any) => next.toolId === binding.toolId,
+              )
+            ) {
+              binding.status = 'disabled';
+              binding.updatedAt = input.updatedAt;
+            }
+          }
           for (const binding of input.toolBindings) {
             const index = toolBindings.findIndex(
               (item) => item.id === binding.id,
@@ -243,12 +463,32 @@ function createState() {
             if (index >= 0) toolBindings[index] = binding;
             else toolBindings.push(binding);
           }
+          for (const binding of skillBindings) {
+            if (
+              !input.skillBindings.some(
+                (next: any) => next.skillId === binding.skillId,
+              )
+            ) {
+              binding.status = 'disabled';
+              binding.updatedAt = input.updatedAt;
+            }
+          }
           for (const binding of input.skillBindings) {
             const index = skillBindings.findIndex(
               (item) => item.id === binding.id,
             );
             if (index >= 0) skillBindings[index] = binding;
             else skillBindings.push(binding);
+          }
+          for (const binding of mcpBindings) {
+            if (
+              !input.mcpBindings.some(
+                (next: any) => next.serverId === binding.serverId,
+              )
+            ) {
+              binding.status = 'disabled';
+              binding.updatedAt = input.updatedAt;
+            }
           }
           for (const binding of input.mcpBindings) {
             const index = mcpBindings.findIndex(
@@ -263,6 +503,29 @@ function createState() {
         getTool: async (id: string) => tools.get(id) ?? null,
         listTools: async () => Array.from(tools.values()),
         listAgentToolBindings: async () => toolBindings,
+        listAgentToolSources: async () => toolSources,
+        replaceAgentToolSources: async (input: any) => {
+          for (const source of toolSources) {
+            if (
+              !input.sources.some(
+                (next: any) =>
+                  next.sourceId === source.sourceId &&
+                  next.kind === source.kind &&
+                  next.version === source.version,
+              )
+            ) {
+              source.status = 'disabled';
+              source.updatedAt = input.updatedAt;
+            }
+          }
+          for (const source of input.sources) {
+            const index = toolSources.findIndex(
+              (item) => item.id === source.id,
+            );
+            if (index >= 0) toolSources[index] = source;
+            else toolSources.push(source);
+          }
+        },
         saveAgentToolBinding: async (binding: any) => {
           const index = toolBindings.findIndex(
             (item) => item.id === binding.id,
@@ -301,6 +564,7 @@ function createState() {
       },
       mcpServers: {
         getServer: async (id: string) => mcpServers.get(id) ?? null,
+        getVersion: async (id: string) => mcpVersions.get(id) ?? null,
         listServers: async () => Array.from(mcpServers.values()),
         listAgentBindings: async () => mcpBindings,
         saveAgentBinding: async (binding: any) => {

@@ -25,6 +25,7 @@ export async function evaluateManagedJobReadiness(input: {
     }),
     agentId: input.agentId,
     toolRepository: input.deps.toolRepository,
+    skillRepository: input.deps.skillRepository,
     mcpServerRepository: input.deps.mcpServerRepository,
     capabilitySecretRepository: input.deps.capabilitySecretRepository,
     credentialBroker: await input.deps.getCredentialBroker?.(),
@@ -48,6 +49,7 @@ export function applyJobReadinessToUpdates(
     updates.next_run = null;
     return;
   }
+  updates.recovery_intent = null;
   if (options.clearPauseWhenActive && options.mergedStatus === 'active') {
     updates.pause_reason = null;
   }

@@ -78,9 +78,6 @@ describe('runStartup', () => {
         order.push('load-settings');
         return runtimeSettings;
       }),
-      restoreRemoteControl: vi.fn(() => {
-        order.push('restore-remote-control');
-      }),
     });
 
     expect(order).toEqual([
@@ -90,7 +87,6 @@ describe('runStartup', () => {
       'log-db-init',
       'load-state',
       'ensure-credentials',
-      'restore-remote-control',
     ]);
     expect(result.runtimeSettings).toBe(runtimeSettings);
   });
@@ -118,7 +114,6 @@ describe('runStartup', () => {
             memory: {},
           }) as any,
       ),
-      restoreRemoteControl: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn() },
     });
 
@@ -185,7 +180,6 @@ describe('runStartup', () => {
             memory: {},
           }) as any,
       ),
-      restoreRemoteControl: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn() },
     });
 
@@ -200,7 +194,7 @@ describe('runStartup', () => {
     );
   });
 
-  it('waits for credential bindings before restoring remote control', async () => {
+  it('waits for credential bindings before completing startup', async () => {
     const order: string[] = [];
     let releaseBinding!: () => void;
     const bindingStarted = new Promise<void>((resolve) => {
@@ -233,9 +227,6 @@ describe('runStartup', () => {
               memory: {},
             }) as any,
         ),
-        restoreRemoteControl: vi.fn(() => {
-          order.push('restore-remote-control');
-        }),
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -254,7 +245,6 @@ describe('runStartup', () => {
         'load-state',
         'ensure-credentials-start',
         'ensure-credentials-done',
-        'restore-remote-control',
         'startup-done',
       ]);
     });
@@ -291,9 +281,6 @@ describe('runStartup', () => {
               memory: {},
             }) as any,
         ),
-        restoreRemoteControl: vi.fn(() => {
-          order.push('restore-remote-control');
-        }),
         logger: {
           info: vi.fn(),
           warn,
@@ -303,11 +290,7 @@ describe('runStartup', () => {
       await vi.advanceTimersByTimeAsync(3_000);
       await startup;
 
-      expect(order).toEqual([
-        'load-state',
-        'ensure-credentials-start',
-        'restore-remote-control',
-      ]);
+      expect(order).toEqual(['load-state', 'ensure-credentials-start']);
       expect(warn).toHaveBeenCalledWith(
         { timeoutMs: 3_000 },
         expect.stringContaining('Credential broker binding did not finish'),
@@ -330,7 +313,6 @@ describe('runStartup', () => {
             memory: {},
           }) as any,
       ),
-      restoreRemoteControl: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn() },
     });
 

@@ -30,7 +30,7 @@ describe('CanonicalJobOpsService', () => {
           label: 'Primary',
         },
       ],
-      required_tools: ['Browser'],
+      tool_access_requirements: ['Browser'],
       group_scope: '',
     });
 
@@ -52,7 +52,7 @@ describe('CanonicalJobOpsService', () => {
         label: 'Primary',
       },
     ]);
-    expect(target.requiredTools).toEqual(['Browser']);
+    expect(target.toolAccessRequirements).toEqual(['Browser']);
   });
 
   it('merges canonical session_id into executionContext when target sessionId is missing', async () => {
@@ -120,7 +120,7 @@ describe('CanonicalJobOpsService', () => {
               label: 'Primary',
             },
           ],
-          requiredTools: ['Browser'],
+          toolAccessRequirements: ['Browser'],
         }),
         silent: false,
         timeoutMs: 300000,
@@ -153,7 +153,62 @@ describe('CanonicalJobOpsService', () => {
           label: 'Primary',
         },
       ],
-      required_tools: ['Browser'],
+      tool_access_requirements: ['Browser'],
+    });
+  });
+
+  it('round-trips job recovery intent through target metadata', async () => {
+    const repository = {
+      findJobById: vi.fn(async () => null),
+      upsertJob: vi.fn(async () => undefined),
+    } as unknown as PostgresCanonicalJobRepository;
+    const service = new CanonicalJobOpsService(repository);
+
+    await service.upsertJob({
+      id: 'job-1',
+      name: 'Job',
+      prompt: 'Run',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      execution_context: {
+        conversationJid: 'tg:1',
+        threadId: null,
+        groupScope: 'agent_one',
+      },
+      notification_routes: [
+        {
+          conversationJid: 'tg:1',
+          threadId: null,
+          label: 'Primary',
+        },
+      ],
+      group_scope: 'agent_one',
+      recovery_intent: {
+        kind: 'permission_denied',
+        state: 'pending',
+        dedupe_key: 'dedupe-1',
+        created_at: '2026-04-24T00:00:00.000Z',
+        updated_at: '2026-04-24T00:00:01.000Z',
+        source_run_id: 'run-1',
+        setup_fingerprint: 'fingerprint-1',
+        requirement_type: 'tool',
+        requirement_id: 'RunCommand',
+        next_action: 'request_permission {"toolName":"RunCommand"}',
+        attempts: 0,
+        last_error: null,
+      },
+    });
+
+    const stored = vi.mocked(repository.upsertJob).mock.calls[0]?.[0] as {
+      targetJson: string;
+    };
+    expect(JSON.parse(stored.targetJson)).toMatchObject({
+      recoveryIntent: {
+        kind: 'permission_denied',
+        state: 'pending',
+        dedupe_key: 'dedupe-1',
+        requirement_id: 'RunCommand',
+      },
     });
   });
 
@@ -203,6 +258,44 @@ describe('CanonicalJobOpsService', () => {
     expect(input.resultSummary).not.toContain('json-token');
     expect(input.errorSummary).not.toContain('claude-session-inline');
     expect(input.errorSummary).not.toContain('error-token');
+  });
+
+  it('rejects unsafe execution provider ids before inserting run history', async () => {
+    const repository = {
+      insertRun: vi.fn(async () => true),
+      claimDueRunStart: vi.fn(async () => true),
+    } as unknown as PostgresCanonicalJobRepository;
+    const service = new CanonicalJobOpsService(repository);
+
+    await expect(
+      service.createJobRun({
+        run_id: 'run-1',
+        job_id: 'job-1',
+        execution_provider_id: '../bad-provider' as never,
+        scheduled_for: '2026-04-24T00:00:00.000Z',
+        started_at: '2026-04-24T00:00:00.000Z',
+        ended_at: null,
+        status: 'running',
+        result_summary: null,
+        error_summary: null,
+        retry_count: 0,
+        notified_at: null,
+      }),
+    ).rejects.toThrow(/Invalid execution provider id/);
+    expect(repository.insertRun).not.toHaveBeenCalled();
+
+    await expect(
+      service.claimDueJobRunStart({
+        jobId: 'job-1',
+        runId: 'run-1',
+        executionProviderId: '../bad-provider' as never,
+        scheduledFor: '2026-04-24T00:00:00.000Z',
+        startedAt: '2026-04-24T00:00:00.000Z',
+        retryCount: 0,
+        leaseExpiresAt: '2026-04-24T00:05:00.000Z',
+      }),
+    ).rejects.toThrow(/Invalid execution provider id/);
+    expect(repository.claimDueRunStart).not.toHaveBeenCalled();
   });
 
   it('passes app ownership filters to repository run and event queries', async () => {
@@ -364,7 +457,7 @@ describe('CanonicalJobOpsService', () => {
           label: 'Primary',
         },
       ],
-      required_tools: ['Browser'],
+      tool_access_requirements: ['Browser'],
       required_mcp_servers: ['mcp:company-crm'],
       capability_requirements: [
         {
@@ -401,7 +494,7 @@ describe('CanonicalJobOpsService', () => {
         },
       },
     ]);
-    expect(target.requiredTools).toContain('Browser');
+    expect(target.toolAccessRequirements).toContain('Browser');
     expect(target.requiredMcpServers).toContain('mcp:company-crm');
   });
 
@@ -429,7 +522,7 @@ describe('CanonicalJobOpsService', () => {
               label: 'Primary',
             },
           ],
-          requiredTools: ['Browser'],
+          toolAccessRequirements: ['Browser'],
           requiredMcpServers: ['mcp:company-crm'],
           capabilityRequirements: [
             {
@@ -461,7 +554,7 @@ describe('CanonicalJobOpsService', () => {
     const service = new CanonicalJobOpsService(repository);
 
     await expect(service.getJobById('job-1')).resolves.toMatchObject({
-      required_tools: ['Browser'],
+      tool_access_requirements: ['Browser'],
       required_mcp_servers: ['mcp:company-crm'],
       capability_requirements: [
         {

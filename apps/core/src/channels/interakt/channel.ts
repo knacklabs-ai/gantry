@@ -7,6 +7,7 @@ import type {
   OnInboundMessage,
 } from '../../domain/types.js';
 import { logger } from '../../infrastructure/logging/logger.js';
+import { CUSTOMER_IDENTITY_MISMATCH_MESSAGE } from '../../shared/user-visible-messages.js';
 
 import { InteraktApi } from './interakt-api.js';
 import {
@@ -24,8 +25,6 @@ import {
 // not implement templates, so we surface a typed delivery error and let
 // channel-wiring record it.
 const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
-const CUSTOMER_IDENTITY_MISMATCH_MESSAGE =
-  'I can only check details linked to the phone number you are messaging from. The phone number, email, or order you asked about does not match that number.';
 const CUSTOMER_VISIBLE_INTERNAL_LEAK_PATTERNS = [
   /\bprivacy[ _-]?guard\b/i,
   /\bsigned channel\b/i,

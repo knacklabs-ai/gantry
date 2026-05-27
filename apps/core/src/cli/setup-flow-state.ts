@@ -12,8 +12,12 @@ import {
   loadRuntimeSettingsFromPath,
 } from '../config/settings/runtime-settings.js';
 import {
+  DEFAULT_MODEL_PRESET_ID,
   DEFAULT_SETUP_MODEL_ALIAS,
+  isModelPresetId,
+  resolveModelSelectionForWorkload,
   resolveModelAlias,
+  type ModelPresetId,
 } from '../shared/model-catalog.js';
 import { writeOnboardingState } from './onboarding-state.js';
 import type { OnboardingState, OnboardingStep } from './onboarding-state.js';
@@ -52,6 +56,7 @@ export interface SetupDraft {
   credentialMode: HostCredentialMode;
   onecliUrl: string;
   agentName: string;
+  modelPreset: ModelPresetId;
   selectedModel: string;
   telegramBotToken: string;
   telegramChatJid: string;
@@ -123,6 +128,7 @@ export function updateStateData(
     credentialMode: draft.credentialMode,
     onecliUrl: draft.onecliUrl || undefined,
     agentName: draft.agentName,
+    modelPreset: draft.modelPreset,
     selectedModel: draft.selectedModel || undefined,
     memoryEnabled: draft.memoryEnabled,
     embeddingsEnabled: draft.embeddingsEnabled,
@@ -157,6 +163,9 @@ export function updateDraftFromState(
   );
   draft.onecliUrl = state.data.onecliUrl || draft.onecliUrl;
   draft.agentName = state.data.agentName || draft.agentName;
+  draft.modelPreset = isModelPresetId(state.data.modelPreset)
+    ? state.data.modelPreset
+    : draft.modelPreset;
   draft.selectedModel =
     resolveModelAlias(state.data.selectedModel) || draft.selectedModel;
   draft.memoryEnabled = state.data.memoryEnabled ?? draft.memoryEnabled;
@@ -202,6 +211,14 @@ export function restoreDraft(
   const defaultDreamingEnabled = hasConfiguredProvider
     ? settings.memory.dreaming.enabled
     : true;
+  const stateModelPreset = state?.data.modelPreset;
+  const resolvedSettingsModel = resolveModelSelectionForWorkload(
+    settings.agent.defaultModel,
+    'chat',
+  );
+  const settingsModelPreset = resolvedSettingsModel.ok
+    ? resolvedSettingsModel.entry.modelRoute.id
+    : DEFAULT_MODEL_PRESET_ID;
   const postgresUrlEnv =
     settings.storage.postgres.urlEnv || 'GANTRY_DATABASE_URL';
   const postgresDatabaseUrl =
@@ -232,6 +249,9 @@ export function restoreDraft(
     onecliUrl: settings.credentialBroker.onecli.url || '',
     agentName:
       state?.data.agentName || settings.agent.name || DEFAULT_AGENT_CLI_NAME,
+    modelPreset: isModelPresetId(stateModelPreset)
+      ? stateModelPreset
+      : settingsModelPreset,
     selectedModel:
       resolveModelAlias(
         state?.data.selectedModel || settings.agent.defaultModel,

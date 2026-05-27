@@ -111,7 +111,7 @@ describe('job visibility metadata', () => {
     const listAgentToolBindings = vi.fn(async () => [
       {
         status: 'active',
-        toolId: 'tool:Read',
+        toolId: 'tool:Browser',
       },
     ]);
     const metadata = await buildJobVisibilityMetadata({
@@ -124,7 +124,7 @@ describe('job visibility metadata', () => {
       } as unknown as RuntimeJobRepository,
       toolRepository: {
         listAgentToolBindings,
-        getTool: vi.fn(async () => ({ name: 'Read' })),
+        getTool: vi.fn(async () => ({ name: 'Browser' })),
       } as never,
       nowMs: Date.parse('2026-04-24T09:10:00.000Z'),
     });
@@ -133,8 +133,8 @@ describe('job visibility metadata', () => {
       appId: 'app-one',
       agentId: 'agent:tg:team',
     });
-    expect(metadata.toolAccess.inheritedAgentTools).toEqual(['Read']);
-    expect(metadata.toolAccess.effectiveAllowedTools).toEqual(['Read']);
+    expect(metadata.toolAccess.inheritedAgentTools).toEqual(['Browser']);
+    expect(metadata.toolAccess.effectiveAllowedTools).toEqual(['Browser']);
   });
 
   it('shows projected browser tools when the canonical Browser capability is inherited', async () => {
@@ -233,6 +233,42 @@ describe('job visibility metadata', () => {
       latestSummary: 'Scheduler run lease expired before completion.',
       nextAction:
         'Rerun with a longer job timeout if this work is expected to take more time.',
+    });
+  });
+
+  it('exposes current agent recovery state for blocked jobs', async () => {
+    const metadata = await buildJobVisibilityMetadata({
+      job: makeJob({
+        recovery_intent: {
+          kind: 'permission_denied',
+          state: 'running',
+          dedupe_key: 'dedupe-1',
+          created_at: '2026-04-24T09:00:00.000Z',
+          updated_at: '2026-04-24T09:01:00.000Z',
+          source_run_id: 'run-1',
+          setup_fingerprint: 'fingerprint-1',
+          requirement_type: 'tool',
+          requirement_id: 'RunCommand',
+          next_action: 'request_permission {"toolName":"RunCommand"}',
+          attempts: 1,
+          last_error: null,
+        },
+      }),
+      ops: {
+        listJobRuns: vi.fn(async () => []),
+      } as unknown as RuntimeJobRepository,
+      nowMs: Date.parse('2026-04-24T09:10:00.000Z'),
+    });
+
+    expect(metadata.recovery).toEqual({
+      state: 'running',
+      kind: 'permission_denied',
+      updatedAt: '2026-04-24T09:01:00.000Z',
+      attempts: 1,
+      requirementType: 'tool',
+      requirementId: 'RunCommand',
+      nextAction: 'request_permission {"toolName":"RunCommand"}',
+      lastError: null,
     });
   });
 

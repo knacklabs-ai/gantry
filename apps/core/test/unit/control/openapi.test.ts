@@ -39,7 +39,10 @@ const expectedControlRoutes = [
   'GET /v1/agents/{agentId}/skills',
   'DELETE /v1/agents/{agentId}/skills/{skillId}',
   'PUT /v1/agents/{agentId}/skills/{skillId}',
-  'GET /v1/capability-catalog',
+  'GET /v1/agents/{agentId}/sources',
+  'PUT /v1/agents/{agentId}/sources',
+  'GET /v1/capabilities',
+  'GET /v1/capabilities/{capabilityId}',
   'GET /v1/conversations',
   'GET /v1/conversations/{conversationId}',
   'GET /v1/conversations/{conversationId}/approvers',
@@ -48,6 +51,7 @@ const expectedControlRoutes = [
   'GET /v1/conversations/{conversationId}/threads',
   'GET /v1/doctor',
   'GET /v1/health',
+  'GET /v1/inventory',
   'GET /v1/ingresses',
   'POST /v1/ingresses',
   'DELETE /v1/ingresses/{ingressId}',
@@ -80,6 +84,9 @@ const expectedControlRoutes = [
   'POST /v1/memory/dreaming/trigger',
   'POST /v1/memory/search',
   'GET /v1/models',
+  'GET /v1/models/defaults',
+  'PATCH /v1/models/defaults',
+  'POST /v1/models/preview',
   'GET /v1/provider-connections',
   'POST /v1/provider-connections',
   'DELETE /v1/provider-connections/{providerConnectionId}',
@@ -176,6 +183,53 @@ function mockContext(): ControlRouteContext {
     getRuntimeSettings: () =>
       ({}) as ReturnType<ControlRouteContext['getRuntimeSettings']>,
     getDefaultModelConfig: () => ({ source: 'test' }),
+    getModelDefaults: () => ({
+      defaults: {
+        chat: {
+          configuredAlias: null,
+          effectiveAlias: null,
+          source: 'test',
+          workload: 'chat',
+          modelEntry: null,
+        },
+        oneTime: {
+          configuredAlias: null,
+          effectiveAlias: null,
+          source: 'test',
+          workload: 'one_time_job',
+          modelEntry: null,
+        },
+        recurring: {
+          configuredAlias: null,
+          effectiveAlias: null,
+          source: 'test',
+          workload: 'recurring_job',
+          modelEntry: null,
+        },
+        memoryExtractor: {
+          configuredAlias: null,
+          effectiveAlias: null,
+          source: 'test',
+          workload: 'memory_extractor',
+          modelEntry: null,
+        },
+        memoryDreaming: {
+          configuredAlias: null,
+          effectiveAlias: null,
+          source: 'test',
+          workload: 'memory_dreaming',
+          modelEntry: null,
+        },
+        memoryConsolidation: {
+          configuredAlias: null,
+          effectiveAlias: null,
+          source: 'test',
+          workload: 'memory_consolidation',
+          modelEntry: null,
+        },
+      },
+    }),
+    patchModelDefaults: () => ({ ok: true }),
     syncSettingsFromProjection: async () => undefined,
   };
 }
@@ -246,6 +300,76 @@ describe('control OpenAPI documentation', () => {
     expect(spec.components.schemas.JobCreateRequest).toMatchObject({
       required: ['name', 'prompt', 'executionContext'],
     });
+    expect(spec.components.schemas.Model).toMatchObject({
+      properties: expect.objectContaining({
+        responseFamily: { type: 'string', enum: ['anthropic', 'openai'] },
+        executionProviderId: { type: 'string' },
+        credentialProfileRef: { type: 'string' },
+        modelRoute: expect.objectContaining({
+          type: 'object',
+          properties: expect.objectContaining({
+            id: { type: 'string', enum: ['anthropic', 'openrouter'] },
+            label: { type: 'string' },
+            metadata: expect.objectContaining({
+              type: 'object',
+              required: ['providerModelId'],
+              additionalProperties: false,
+            }),
+          }),
+        }),
+        capabilities: expect.objectContaining({ type: 'object' }),
+        supportedWorkloads: expect.any(Object),
+        cacheMode: { type: 'string' },
+        cacheTokenFields: expect.any(Object),
+      }),
+    });
+    expect(
+      spec.paths['/v1/models/defaults']?.patch.requestBody.content[
+        'application/json'
+      ].schema,
+    ).toEqual({ $ref: '#/components/schemas/ModelDefaultsPatchRequest' });
+    expect(
+      spec.components.schemas.ModelDefaultsPatchRequest.properties,
+    ).not.toHaveProperty('providerPreset');
+    expect(
+      spec.components.schemas.ModelDefaultsPatchRequest.properties.memory,
+    ).toMatchObject({
+      oneOf: [
+        { type: 'string', enum: ['reset', 'preset-managed'] },
+        { type: 'null' },
+      ],
+    });
+    expect(spec.paths['/v1/models/preview']?.post).toMatchObject({
+      'x-gantry-required-scopes': ['sessions:read', 'jobs:read'],
+    });
+    expect(
+      spec.paths['/v1/capabilities']?.get.responses['200'].content[
+        'application/json'
+      ].schema,
+    ).toEqual({ $ref: '#/components/schemas/CapabilityListResponse' });
+    expect(
+      spec.paths['/v1/capabilities/{capabilityId}']?.get.responses['200']
+        .content['application/json'].schema,
+    ).toEqual({ $ref: '#/components/schemas/CapabilityManifest' });
+    expect(spec.components.schemas.AgentSources.properties.tools.items).toEqual(
+      { $ref: '#/components/schemas/AgentToolSourceSelection' },
+    );
+    expect(
+      spec.components.schemas.AgentSourceSelection.properties,
+    ).toMatchObject({
+      name: { type: 'string' },
+      id: { type: 'string' },
+    });
+    expect(
+      spec.components.schemas.AgentSourceSelection.properties,
+    ).not.toHaveProperty('kind');
+    expect(
+      spec.components.schemas.JobCreateRequest.properties.capabilityRequirements
+        .items.properties.implementation.properties,
+    ).toMatchObject({
+      executableVersion: { type: 'string' },
+      executableHash: { type: 'string' },
+    });
     expect(
       spec.paths['/v1/agents']?.post.requestBody.content['application/json']
         .schema,
@@ -283,6 +407,25 @@ describe('control OpenAPI documentation', () => {
     expect(spec.paths['/v1/jobs/{jobId}/trigger'].post.operationId).toBe(
       'triggerJob',
     );
+  });
+
+  it('returns gone for the removed capability-catalog route', async () => {
+    const res = responseRecorder();
+
+    const handled = await handleCapabilityCatalogRoutes(
+      request('GET'),
+      res,
+      mockContext(),
+      '/v1/capability-catalog',
+    );
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(410);
+    expect(JSON.parse(res.body)).toMatchObject({
+      error: {
+        code: 'GONE',
+      },
+    });
   });
 
   it('serves Swagger UI for interactive API exploration', async () => {

@@ -33,6 +33,21 @@
   but nested provider/session `agent-run:*` rows must not copy that `jobId`.
   Keep job-scoped run lists and health metadata tied to the scheduler lifecycle
   run row only.
+- Run-history schema fields for execution providers are incomplete unless the
+  runtime path that learns the provider run/session handle writes them through
+  the canonical ops repository. Do not add `agent_runs` columns with only direct
+  repository round-trip tests; cover live or scheduler call paths too.
+- Execution provider id cutovers must update every persisted continuity surface
+  in the same migration: `agent_runs.execution_provider_id`,
+  `provider_sessions.provider`, and `provider_sessions.provider_ref_json`.
+  Leaving provider session rows on the old id breaks live SDK resume even when
+  canonical `AgentSession` rows still exist.
+- `llm_profiles.response_family` stores the canonical API shape (`anthropic` or
+  `openai`), not the route/provider adapter. Store OpenRouter-style details in
+  route metadata or run execution-provider columns, never as a response family.
+- Shared Postgres schema files must not carry provider-specific default values.
+  Runtime insertion paths should pass the resolved execution provider id
+  explicitly, while historical migrations may backfill concrete old values.
 - Conversation route projection must preserve the canonical conversation kind:
   `direct`/`dm` rows return runtime `conversationKind: "dm"` and group/channel
   rows return `conversationKind: "channel"`. Do not infer DM-vs-group memory
@@ -41,3 +56,13 @@
   partially updated belong in native `jsonb`. Pass objects/arrays to Drizzle
   `jsonb` columns, keep canonical route/lease/audit/join fields typed, and do
   not add `::jsonb` casts around columns that are already `jsonb`.
+- Interrupted scheduler lease release must be scoped by the matching
+  `agent_runs.lease_owner`; stale time-based release may reclaim expired leases,
+  but restart cleanup must not release another worker's active run.
+- `tool_catalog` is Gantry durable capability state, not a provider SDK tool
+  manifest. Seed only Gantry-owned facade names such as `WebSearch`,
+  `WebRead`, `FileSearch`, `FileRead`, `FileEdit`, `FileWrite`, and
+  `AgentDelegation`, plus scoped `RunCommand(...)` permission rows. Do not seed
+  provider-native rows such as `Read`, `Write`, `Bash`, `Agent`, `Glob`,
+  `Grep`, or `WebFetch`; those belong inside execution adapter per-run harness
+  projections.

@@ -4,12 +4,15 @@ const permissionMock = vi.hoisted(() => ({
   requestPermissionApproval: vi.fn(),
 }));
 
-vi.mock('@core/runner/claude/permission-callback.js', () => ({
-  requestPermissionApproval: permissionMock.requestPermissionApproval,
-}));
+vi.mock(
+  '@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js',
+  () => ({
+    requestPermissionApproval: permissionMock.requestPermissionApproval,
+  }),
+);
 
 const { createCanUseToolCallback } =
-  await import('@core/runner/claude/tool-permission-gate.js');
+  await import('@core/adapters/llm/anthropic-claude-agent/runner/tool-permission-gate.js');
 
 function makePermissionOptions(overrides: Record<string, unknown> = {}) {
   return {
@@ -59,10 +62,20 @@ function makeCallback(
   });
 }
 
+function combinedConsoleOutput(): string {
+  return [
+    ...vi.mocked(console.log).mock.calls,
+    ...vi.mocked(console.error).mock.calls,
+  ]
+    .map((call) => String(call[0]))
+    .join('');
+}
+
 describe('createCanUseToolCallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -186,10 +199,7 @@ describe('createCanUseToolCallback', () => {
         ),
       }),
     );
-    const output = vi
-      .mocked(console.log)
-      .mock.calls.map((call) => String(call[0]))
-      .join('');
+    const output = combinedConsoleOutput();
     expect(output).toContain('permission.yolo_denylist_hit');
     expect(output).toContain('"matchedPattern":"rm -rf /"');
     expect(output).toContain('"principal":"agent:test"');
@@ -219,6 +229,53 @@ describe('createCanUseToolCallback', () => {
 
     expect(first.behavior).toBe('allow');
     expect(second.behavior).toBe('allow');
+    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes timed-grant prompts to the active thread while scoping grants to the conversation', async () => {
+    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
+      approved: true,
+      mode: 'allow_timed_grant',
+      timedGrantExpiresAtMs: Date.now() + 60_000,
+      updatedPermissions: undefined,
+      decidedBy: 'user',
+    });
+
+    const canUseTool = makeCallback({
+      agentInput: {
+        runMode: 'normal',
+        isScheduledJob: false,
+        appId: 'default',
+        agentId: 'agent:test',
+        runId: 'run-1',
+        jobId: undefined,
+        chatJid: 'tg:test',
+        threadId: 'topic-7',
+        allowedTools: [],
+        yoloMode: {
+          enabled: true,
+          denylist: [],
+          denylistPaths: [],
+        },
+      } as never,
+    });
+    await canUseTool(
+      'Bash',
+      { command: 'npm test' },
+      makePermissionOptions() as never,
+    );
+    await canUseTool(
+      'Read',
+      { file_path: 'package.json' },
+      makePermissionOptions() as never,
+    );
+
+    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'topic-7' }),
+    );
+    const output = combinedConsoleOutput();
+    expect(output).toContain('conversationJid=tg:test');
+    expect(output).not.toContain('threadId=topic-7');
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
   });
 
@@ -387,7 +444,7 @@ describe('createCanUseToolCallback', () => {
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(2);
   });
 
-  it('suppresses parentless SandboxNetworkAccess after an allow-once approved Bash tool call', async () => {
+  it('denies parentless SandboxNetworkAccess after an allow-once approved Bash tool call', async () => {
     permissionMock.requestPermissionApproval.mockResolvedValueOnce({
       approved: true,
       mode: 'allow_once',
@@ -414,9 +471,49 @@ describe('createCanUseToolCallback', () => {
     );
 
     expect(bash.behavior).toBe('allow');
+    expect(network).toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        message: expect.stringContaining('without a parent tool-use id'),
+      }),
+    );
+    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses SandboxNetworkAccess only when it carries the approved parent tool-use id', async () => {
+    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
+      approved: true,
+      mode: 'allow_once',
+      updatedPermissions: undefined,
+      decidedBy: 'user',
+    });
+
+    const canUseTool = makeCallback();
+    const bash = await canUseTool(
+      'Bash',
+      { command: 'npm install' },
+      makePermissionOptions({
+        toolUseID: 'toolu_bash_1',
+        agentID: 'subagent-a',
+      }) as never,
+    );
+    const network = await canUseTool(
+      'SandboxNetworkAccess',
+      { host: 'registry.npmjs.org', parentToolUseID: 'toolu_bash_1' },
+      makePermissionOptions({
+        toolUseID: 'toolu_network_1',
+        parentToolUseID: 'toolu_bash_1',
+        agentID: 'subagent-a',
+      }) as never,
+    );
+
+    expect(bash.behavior).toBe('allow');
     expect(network).toEqual({
       behavior: 'allow',
-      updatedInput: { host: 'registry.npmjs.org' },
+      updatedInput: {
+        host: 'registry.npmjs.org',
+        parentToolUseID: 'toolu_bash_1',
+      },
     });
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
   });
@@ -451,10 +548,74 @@ describe('createCanUseToolCallback', () => {
     expect(network).toEqual(
       expect.objectContaining({
         behavior: 'deny',
-        message: expect.stringContaining('before any tool call was allowed'),
+        message: expect.stringContaining('without a parent tool-use id'),
       }),
     );
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses parentless scheduled SandboxNetworkAccess for reviewed local CLI command bindings', async () => {
+    const canUseTool = makeCallback({
+      agentInput: {
+        runMode: 'normal',
+        isScheduledJob: true,
+        appId: 'default',
+        agentId: 'agent:test',
+        runId: 'run-1',
+        jobId: 'job-1',
+        chatJid: 'tg:test',
+        threadId: undefined,
+        runtimeAccess: [
+          {
+            selectedCapabilityId: 'gog.sheets.get',
+            sourceType: 'local_cli',
+            auditLabel: 'Gog Sheets get',
+            commandRules: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
+            credentialDirs: [],
+            networkBindings: [
+              {
+                commandRules: [
+                  'RunCommand(/opt/homebrew/bin/gog sheets get *)',
+                ],
+                hosts: ['oauth2.googleapis.com'],
+              },
+            ],
+          },
+        ],
+        allowedTools: ['RunCommand(/opt/homebrew/bin/gog sheets get *)'],
+        yoloMode: {
+          enabled: true,
+          denylist: [],
+          denylistPaths: [],
+        },
+      } as never,
+    });
+    const bash = await canUseTool(
+      'Bash',
+      {
+        command:
+          '/opt/homebrew/bin/gog sheets get 12s6uzwLDLV-DVcTH6XBa5vV3FZJUo04fLm0npfgACb4 "Bot Recommendation!A1:Z1" --json --account ravi@knacklabs.ai',
+      },
+      makePermissionOptions({
+        toolUseID: 'toolu_bash_1',
+        agentID: 'agent:test',
+      }) as never,
+    );
+    const network = await canUseTool(
+      'SandboxNetworkAccess',
+      { host: 'oauth2.googleapis.com' },
+      makePermissionOptions({
+        toolUseID: 'toolu_network_1',
+        agentID: 'agent:test',
+      }) as never,
+    );
+
+    expect(bash.behavior).toBe('allow');
+    expect(network).toEqual({
+      behavior: 'allow',
+      updatedInput: { host: 'oauth2.googleapis.com' },
+    });
+    expect(permissionMock.requestPermissionApproval).not.toHaveBeenCalled();
   });
 
   it('passes the runner conversation as the interactive permission target', async () => {
@@ -599,7 +760,7 @@ describe('createCanUseToolCallback', () => {
     );
   });
 
-  it('omits timed grants from autonomous job prompts without persistent suggestions', async () => {
+  it('omits timed grants from autonomous job prompts with persistent facade suggestions', async () => {
     permissionMock.requestPermissionApproval.mockResolvedValueOnce({
       approved: true,
       mode: 'allow_once',
@@ -630,7 +791,7 @@ describe('createCanUseToolCallback', () => {
 
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledWith(
       expect.objectContaining({
-        decisionOptions: ['allow_once', 'cancel'],
+        decisionOptions: ['allow_once', 'allow_persistent_rule', 'cancel'],
       }),
     );
   });
@@ -646,7 +807,9 @@ describe('createCanUseToolCallback', () => {
         jobId: 'job-1',
         chatJid: 'tg:test',
         threadId: undefined,
-        allowedTools: ['Bash(/Users/example/runtime/scripts/append-lead.py *)'],
+        allowedTools: [
+          'RunCommand(/Users/example/runtime/scripts/append-lead.py *)',
+        ],
       } as never,
     });
 

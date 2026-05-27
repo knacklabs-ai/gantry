@@ -1,3 +1,6 @@
+export const CUSTOMER_IDENTITY_MISMATCH_MESSAGE =
+  'I can only check details linked to the phone number you are messaging from. The phone number, email, or order you asked about does not match that number.';
+
 export function formatAvailableNowMessage(input: {
   action: string;
   noun: string;

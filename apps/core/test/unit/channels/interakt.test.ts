@@ -20,6 +20,7 @@ import {
   InteraktRateLimitError,
 } from '@core/channels/interakt/interakt-api.js';
 import { formatOutboundForChannel } from '@core/messaging/router.js';
+import { CUSTOMER_IDENTITY_MISMATCH_MESSAGE } from '@core/shared/user-visible-messages.js';
 
 vi.mock('@core/infrastructure/logging/logger.js', () => ({
   logger: {
@@ -292,8 +293,7 @@ describe('InteraktChannel outbound', () => {
 
     expect(mock.calls[0]!.body).toMatchObject({
       data: {
-        message:
-          'I can only check details linked to the phone number you are messaging from. The phone number, email, or order you asked about does not match that number.',
+        message: CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
       },
     });
     expect(

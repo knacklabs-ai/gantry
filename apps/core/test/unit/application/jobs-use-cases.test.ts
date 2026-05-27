@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { JobManagementService } from '@core/application/jobs/job-management-service.js';
+import { recheckSetupPausedJobsAfterPermissionGrant } from '@core/application/jobs/job-permission-recovery.js';
 import { isVisibleJob } from '@core/application/jobs/job-list-filters.js';
 import {
   assertSchedulerJobAccess,
@@ -162,7 +163,7 @@ describe('job application use cases', () => {
       name: 'Browser summary',
       prompt: 'Summarize a web page',
       sessionId: 'session-app-one',
-      requiredTools: ['Browser'],
+      toolAccessRequirements: ['Browser'],
       kind: 'recurring',
       schedule: { type: 'interval', value: '60000' },
     });
@@ -172,7 +173,7 @@ describe('job application use cases', () => {
         status: 'paused',
         pause_reason: 'Setup required',
         next_run: null,
-        required_tools: ['Browser'],
+        tool_access_requirements: ['Browser'],
         setup_state: expect.objectContaining({
           state: 'missing_capability',
         }),
@@ -195,7 +196,183 @@ describe('job application use cases', () => {
     );
   });
 
-  it('derives semantic required tools from job capability requirements', async () => {
+  it('rechecks setup-paused jobs after persistent permission approval and queues ready jobs', async () => {
+    let job = makeJob({
+      id: 'job-browser',
+      name: 'Browser job',
+      group_scope: 'team',
+      status: 'paused',
+      pause_reason: 'Setup required',
+      next_run: null,
+      tool_access_requirements: ['Browser'],
+      execution_context: {
+        conversationJid: 'tg:team',
+        threadId: null,
+        groupScope: 'team',
+      },
+      setup_state: {
+        state: 'missing_capability',
+        checked_at: '2026-05-14T00:00:00.000Z',
+        fingerprint: 'old',
+        blockers: [
+          {
+            state: 'missing_capability',
+            requirementType: 'browser',
+            requirementId: 'Browser',
+            message: 'This job needs Browser access before it can run.',
+            nextAction: 'request_permission { "toolName": "Browser" }',
+          },
+        ],
+      },
+    });
+    const updateJob = vi.fn(async (_id: string, updates: Partial<Job>) => {
+      job = { ...job, ...updates };
+    });
+    const scheduler = { requestSchedulerSync: vi.fn() };
+
+    const result = await recheckSetupPausedJobsAfterPermissionGrant({
+      appId: 'default',
+      sourceAgentFolder: 'team',
+      conversationJid: 'tg:team',
+      opsRepository: {
+        listJobs: vi.fn(async () => [job]),
+        getJobById: vi.fn(),
+        updateJob,
+      } as unknown as RuntimeJobRepository,
+      scheduler,
+      toolRepository: {
+        listAgentToolBindings: vi.fn(async () => [
+          { status: 'active', toolId: 'tool:Browser' },
+        ]),
+        getTool: vi.fn(async () => ({
+          appId: 'default',
+          name: 'Browser',
+        })),
+      } as never,
+      getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+      publishRuntimeEvent: vi.fn(async () => undefined),
+      clock: { now: () => '2026-05-14T00:05:00.000Z' },
+    });
+
+    expect(result).toEqual({
+      checked: 1,
+      queued: [{ jobId: 'job-browser', name: 'Browser job', state: 'queued' }],
+      stillBlocked: [],
+    });
+    expect(updateJob).toHaveBeenCalledWith(
+      'job-browser',
+      expect.objectContaining({
+        status: 'active',
+        pause_reason: null,
+        next_run: '2026-05-14T00:05:00.000Z',
+        setup_state: expect.objectContaining({ state: 'ready' }),
+      }),
+    );
+    expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-browser');
+  });
+
+  it('does not requeue a direct job id outside the permission grant scope', async () => {
+    const foreignJob = makeJob({
+      id: 'job-foreign',
+      name: 'Foreign job',
+      group_scope: 'other-team',
+      status: 'paused',
+      pause_reason: 'Setup required',
+      execution_context: {
+        conversationJid: 'tg:other',
+        threadId: null,
+        groupScope: 'other-team',
+      },
+      setup_state: {
+        state: 'missing_capability',
+        checked_at: '2026-05-14T00:00:00.000Z',
+        fingerprint: 'old',
+        blockers: [],
+      },
+    });
+    const updateJob = vi.fn();
+    const scheduler = { requestSchedulerSync: vi.fn() };
+
+    const result = await recheckSetupPausedJobsAfterPermissionGrant({
+      appId: 'default',
+      sourceAgentFolder: 'team',
+      conversationJid: 'tg:team',
+      jobId: 'job-foreign',
+      opsRepository: {
+        listJobs: vi.fn(),
+        getJobById: vi.fn(async () => foreignJob),
+        updateJob,
+      } as unknown as RuntimeJobRepository,
+      scheduler,
+      clock: { now: () => '2026-05-14T00:05:00.000Z' },
+    });
+
+    expect(result).toEqual({ checked: 0, queued: [], stillBlocked: [] });
+    expect(updateJob).not.toHaveBeenCalled();
+    expect(scheduler.requestSchedulerSync).not.toHaveBeenCalled();
+  });
+
+  it('does not clear a running recovery intent while rechecking permissions', async () => {
+    const job = makeJob({
+      id: 'job-recovering',
+      name: 'Recovering job',
+      group_scope: 'team',
+      status: 'paused',
+      pause_reason: 'Setup required',
+      execution_context: {
+        conversationJid: 'tg:team',
+        threadId: null,
+        groupScope: 'team',
+      },
+      setup_state: {
+        state: 'missing_capability',
+        checked_at: '2026-05-14T00:00:00.000Z',
+        fingerprint: 'old',
+        blockers: [],
+      },
+      recovery_intent: {
+        state: 'running',
+        kind: 'missing_capability',
+        requirement_type: 'browser',
+        requirement_id: 'Browser',
+        dedupe_key: 'setup:browser:Browser',
+        attempts: 1,
+        source_run_id: 'run-1',
+        created_at: '2026-05-14T00:00:00.000Z',
+        updated_at: '2026-05-14T00:01:00.000Z',
+        last_error: null,
+      },
+    });
+    const updateJob = vi.fn();
+
+    const result = await recheckSetupPausedJobsAfterPermissionGrant({
+      appId: 'default',
+      sourceAgentFolder: 'team',
+      conversationJid: 'tg:team',
+      opsRepository: {
+        listJobs: vi.fn(async () => [job]),
+        getJobById: vi.fn(),
+        updateJob,
+      } as unknown as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      clock: { now: () => '2026-05-14T00:05:00.000Z' },
+    });
+
+    expect(result).toMatchObject({
+      checked: 1,
+      queued: [],
+      stillBlocked: [
+        {
+          jobId: 'job-recovering',
+          state: 'still_blocked',
+          nextAction: 'Recovery is already running for this job.',
+        },
+      ],
+    });
+    expect(updateJob).not.toHaveBeenCalled();
+  });
+
+  it('derives semantic tool access requirements from job capability requirements', async () => {
     const upsertJob = vi.fn(async () => ({ created: true }));
     const runtimeEvents = { publish: vi.fn(async () => undefined) };
     const service = new JobManagementService({
@@ -227,6 +404,8 @@ describe('job application use cases', () => {
             kind: 'local_cli',
             name: 'gog',
             executablePath: '/usr/local/bin/gog',
+            executableVersion: 'v0.9.0',
+            executableHash: 'sha256:abc123',
             commandTemplate: '/usr/local/bin/gog sheets append *',
           },
         },
@@ -246,7 +425,7 @@ describe('job application use cases', () => {
             reason: 'Write lead rows after each run',
           }),
         ],
-        required_tools: ['capability:google.sheets.write'],
+        tool_access_requirements: ['capability:google.sheets.write'],
         setup_state: expect.objectContaining({
           state: 'draft_only',
           blockers: expect.arrayContaining([
@@ -254,7 +433,7 @@ describe('job application use cases', () => {
               state: 'draft_only',
               requirementType: 'local_cli',
               requirementId: 'google.sheets.write',
-              nextAction: expect.stringContaining('request_permission'),
+              nextAction: expect.stringContaining('propose_capability'),
             }),
           ]),
         }),
@@ -293,6 +472,8 @@ describe('job application use cases', () => {
               kind: 'local_cli',
               name: 'gog',
               executablePath: '/usr/local/bin/gog',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
               commandTemplate: 'gog sheets append *',
             },
           },
@@ -309,7 +490,7 @@ describe('job application use cases', () => {
     const runtimeEvents = { publish: vi.fn(async () => undefined) };
     const job = makeJob({
       id: 'job-1',
-      required_tools: ['Browser', 'capability:acme.old.read'],
+      tool_access_requirements: ['Browser', 'capability:acme.old.read'],
       capability_requirements: [
         {
           capabilityId: 'acme.old.read',
@@ -318,6 +499,8 @@ describe('job application use cases', () => {
             kind: 'local_cli',
             name: 'old-cli',
             executablePath: '/usr/local/bin/old-cli',
+            executableVersion: 'v0.8.0',
+            executableHash: 'sha256:old123',
             commandTemplate: '/usr/local/bin/old-cli read *',
           },
         },
@@ -362,6 +545,8 @@ describe('job application use cases', () => {
               kind: 'local_cli',
               name: 'gog',
               executablePath: '/usr/local/bin/gog',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
               commandTemplate: '/usr/local/bin/gog sheets append --dry-run',
             },
           },
@@ -380,11 +565,13 @@ describe('job application use cases', () => {
               kind: 'local_cli',
               name: 'gog',
               executablePath: '/usr/local/bin/gog',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
               commandTemplate: '/usr/local/bin/gog sheets append --dry-run',
             },
           },
         ],
-        required_tools: ['Browser', 'capability:google.sheets.write'],
+        tool_access_requirements: ['Browser', 'capability:google.sheets.write'],
         status: 'paused',
         pause_reason: 'Setup required',
       }),
@@ -392,10 +579,10 @@ describe('job application use cases', () => {
     expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-1');
   });
 
-  it('preserves capability-derived tool rules when only required tools are updated', async () => {
+  it('preserves capability-derived tool rules when only tool access requirements are updated', async () => {
     const job = makeJob({
       id: 'job-1',
-      required_tools: ['capability:google.sheets.write'],
+      tool_access_requirements: ['capability:google.sheets.write'],
       capability_requirements: [
         {
           capabilityId: 'google.sheets.write',
@@ -419,14 +606,14 @@ describe('job application use cases', () => {
       appId: 'app-one',
       jobId: 'job-1',
       patch: {
-        requiredTools: ['Browser'],
+        toolAccessRequirements: ['Browser'],
       },
     });
 
     expect(ops.updateJob).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({
-        required_tools: ['Browser', 'capability:google.sheets.write'],
+        tool_access_requirements: ['Browser', 'capability:google.sheets.write'],
       }),
     );
   });
@@ -473,6 +660,112 @@ describe('job application use cases', () => {
     expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-1');
   });
 
+  it('lets owner API retarget default runtime job notifications within the same conversation', async () => {
+    const ops = makeOps(
+      makeJob({
+        session_id: null,
+        group_scope: 'main_agent',
+        execution_context: {
+          conversationJid: 'tg:-1003986348737',
+          threadId: null,
+          groupScope: 'main_agent',
+          sessionId: null,
+        },
+        notification_routes: [
+          {
+            conversationJid: 'tg:-1003986348737',
+            threadId: null,
+            label: 'primary',
+          },
+        ],
+      }),
+    );
+    const scheduler = { requestSchedulerSync: vi.fn() };
+    const service = new JobManagementService({
+      ops: ops as RuntimeJobRepository,
+      scheduler,
+      schedulePlanner: runtimeJobSchedulePlanner,
+      clock: { now: () => '2026-04-24T01:00:00.000Z' },
+    });
+
+    await service.updateJob({
+      appId: 'default',
+      jobId: 'job-1',
+      patch: {
+        notificationRoutes: [
+          {
+            conversationJid: 'tg:-1003986348737',
+            threadId: '1',
+            label: 'primary',
+          },
+        ],
+      },
+    });
+
+    expect(ops.updateJob).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        notification_routes: [
+          {
+            conversationJid: 'tg:-1003986348737',
+            threadId: '1',
+            label: 'primary',
+          },
+        ],
+      }),
+    );
+    expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-1');
+  });
+
+  it('rejects owner API retargeting default runtime jobs across conversations without approval', async () => {
+    const ops = makeOps(
+      makeJob({
+        session_id: null,
+        group_scope: 'main_agent',
+        execution_context: {
+          conversationJid: 'tg:-1003986348737',
+          threadId: null,
+          groupScope: 'main_agent',
+          sessionId: null,
+        },
+        notification_routes: [
+          {
+            conversationJid: 'tg:-1003986348737',
+            threadId: null,
+            label: 'primary',
+          },
+        ],
+      }),
+    );
+    const service = new JobManagementService({
+      ops: ops as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+      clock: { now: () => '2026-04-24T01:00:00.000Z' },
+    });
+
+    await expect(
+      service.updateJob({
+        appId: 'default',
+        jobId: 'job-1',
+        patch: {
+          notificationRoutes: [
+            {
+              conversationJid: 'tg:other',
+              threadId: null,
+              label: 'primary',
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message:
+        'Cannot authorize notification route changes without authenticated job context.',
+    });
+    expect(ops.updateJob).not.toHaveBeenCalled();
+  });
+
   it('validates job model updates through catalog aliases', async () => {
     const ops = makeOps(makeJob());
     const scheduler = { requestSchedulerSync: vi.fn() };
@@ -492,7 +785,7 @@ describe('job application use cases', () => {
 
     expect(ops.updateJob).toHaveBeenCalledWith(
       'job-1',
-      expect.objectContaining({ model: 'kimi' }),
+      expect.objectContaining({ model: 'kimi-2.6' }),
     );
 
     await expect(
@@ -593,7 +886,7 @@ describe('job application use cases', () => {
         },
       },
       jobId: 'job-1',
-      patch: { status: 'active', requiredTools: ['Browser'] },
+      patch: { status: 'active', toolAccessRequirements: ['Browser'] },
     });
 
     expect(toolRepository.listAgentToolBindings).toHaveBeenCalledWith(
@@ -1282,7 +1575,7 @@ describe('job application use cases', () => {
     expect(ops.upsertJob).not.toHaveBeenCalled();
   });
 
-  it('rejects ambiguous IPC scheduler model selectors', async () => {
+  it('rejects raw provider IDs for IPC scheduler model selectors', async () => {
     const ops = {
       getJobById: vi.fn(),
       upsertJob: vi.fn(),
@@ -1301,16 +1594,16 @@ describe('job application use cases', () => {
           conversationBindings: {},
           sourceAgentFolderJids: ['tg:team'],
         },
-        name: 'Ambiguous model',
+        name: 'Raw model',
         prompt: 'Run',
-        modelAlias: 'kimi',
-        modelProfileId: 'openrouter:kimi-k2.6',
+        modelAlias: 'moonshotai/kimi-k2.6',
         scheduleType: 'once',
         scheduleValue: '2026-05-01T12:00:00.000Z',
       }),
     ).rejects.toMatchObject({
       code: 'INVALID_REQUEST',
-      message: 'Use either modelAlias or modelProfileId, not both.',
+      message:
+        'Provider model ID "moonshotai/kimi-k2.6" is not accepted here. Use a model alias from /models.',
     });
     expect(ops.upsertJob).not.toHaveBeenCalled();
   });
@@ -2124,6 +2417,102 @@ describe('job application use cases', () => {
         }),
       }),
     );
+  });
+
+  it('queues scheduler_run_now for setup-paused jobs once readiness passes', async () => {
+    const control = {
+      createJobTrigger: vi.fn(async () => ({ triggerId: 'trigger-1' })),
+      markTriggerCompleted: vi.fn(),
+      getAppSessionById: vi.fn(async () => ({
+        sessionId: 'session-1',
+        appId: 'app-one',
+        conversationJid: 'app:app-one:conv-1',
+        workspaceKey: 'app-one-workspace',
+        defaultResponseMode: 'sse',
+        defaultWebhookId: null,
+      })),
+    };
+    const triggerQueue = {
+      isReady: vi.fn(() => true),
+      enqueue: vi.fn(async () => undefined),
+    };
+    const scheduler = { requestSchedulerSync: vi.fn() };
+    const ops = makeOps(
+      makeJob({
+        id: 'job-1',
+        group_scope: 'team',
+        session_id: 'session-1',
+        schedule_type: 'cron',
+        schedule_value: '0 9 * * *',
+        status: 'paused',
+        pause_reason: 'Setup required',
+        tool_access_requirements: ['Browser'],
+        setup_state: {
+          state: 'missing_capability',
+          checked_at: '2026-05-14T00:00:00.000Z',
+          fingerprint: 'old',
+          blockers: [
+            {
+              state: 'missing_capability',
+              requirementType: 'browser',
+              requirementId: 'Browser',
+              message: 'This job needs Browser access before it can run.',
+              nextAction: 'request_permission { "toolName": "Browser" }',
+            },
+          ],
+        },
+      }),
+    );
+    const service = new JobManagementService({
+      ops: ops as RuntimeJobRepository,
+      scheduler,
+      schedulePlanner: runtimeJobSchedulePlanner,
+      control: control as never,
+      runtimeEvents: { publish: vi.fn() },
+      triggerQueue,
+      toolRepository: {
+        listAgentToolBindings: vi.fn(async () => [
+          { status: 'active', toolId: 'tool:Browser' },
+        ]),
+        getTool: vi.fn(async () => ({
+          appId: 'app-one',
+          name: 'Browser',
+        })),
+      } as never,
+      getBrowserStatus: vi.fn(async () => ({ hasState: true })),
+    });
+
+    await expect(
+      service.runJobNowFromMcp({
+        jobId: 'job-1',
+        runId: 'run-1',
+        access: {
+          sourceAgentFolder: 'team',
+          originConversationJid: 'tg:team',
+          conversationBindings: {
+            'tg:team': { folder: 'team' },
+          },
+          sourceAgentFolderJids: ['tg:team'],
+        },
+      }),
+    ).resolves.toEqual({
+      runId: 'run-1',
+      queued: true,
+      triggerId: 'trigger-1',
+    });
+
+    expect(ops.updateJob).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'active',
+        pause_reason: null,
+        setup_state: expect.objectContaining({ state: 'ready' }),
+      }),
+    );
+    expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-1');
+    expect(triggerQueue.enqueue).toHaveBeenCalledWith('job-1', 'trigger-1', {
+      runId: 'run-1',
+    });
   });
 
   it('queues scheduler_run_now without runtime event projection for channel-only jobs', async () => {

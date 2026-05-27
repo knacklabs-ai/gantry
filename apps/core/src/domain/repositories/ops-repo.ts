@@ -7,6 +7,7 @@ import type {
   ConversationRoute,
 } from './domain-types.js';
 import type { RuntimeEventType } from '../events/runtime-event-types.js';
+import type { ExecutionProviderId } from '../sessions/sessions.js';
 
 export interface JobUpsertInput {
   id: string;
@@ -37,9 +38,10 @@ export interface JobUpsertInput {
   execution_context?: Job['execution_context'];
   notification_routes?: Job['notification_routes'];
   capability_requirements?: Job['capability_requirements'];
-  required_tools?: string[];
+  tool_access_requirements?: string[];
   required_mcp_servers?: string[];
   setup_state?: Job['setup_state'];
+  recovery_intent?: Job['recovery_intent'];
 }
 
 export interface JobListFilters {
@@ -152,12 +154,21 @@ export interface RuntimeJobRepository {
   claimDueJobRunStart(input: {
     jobId: string;
     runId: string;
+    executionProviderId: ExecutionProviderId;
+    workerId?: string | null;
+    leaseOwner?: string | null;
     scheduledFor: string;
     startedAt: string;
     retryCount: number;
     leaseExpiresAt: string;
     requireNextRun?: boolean;
   }): Promise<boolean>;
+  updateAgentRunProviderMetadata?(input: {
+    runId: string;
+    runIds?: string[];
+    providerRunId?: string | null;
+    providerSessionId?: string | null;
+  }): Promise<void>;
   releaseStaleJobLeases(nowIso?: string): Promise<ReleasedStaleJobLease[]>;
   releaseInterruptedJobLeases?(
     nowIso?: string,
@@ -199,6 +210,7 @@ export interface RuntimeRouterStateRepository {
 export interface RuntimeAgentSessionRepository {
   getAgentTurnContext?(input: {
     agentFolder: string;
+    executionProviderId: ExecutionProviderId;
     conversationJid: string;
     threadId?: string | null;
     conversationKind?: 'dm' | 'channel';
@@ -219,8 +231,9 @@ export interface RuntimeAgentSessionRepository {
   setSession(
     agentFolder: string,
     sessionId: string,
-    threadId?: string | null,
-    metadata?: {
+    threadId: string | null | undefined,
+    metadata: {
+      executionProviderId: ExecutionProviderId;
       conversationJid?: string;
       conversationKind?: 'dm' | 'channel';
       memoryUserId?: string;
@@ -237,8 +250,16 @@ export interface RuntimeAgentSessionRepository {
   }): Promise<void>;
   createSessionAgentRun?(input: {
     agentSessionId: string;
+    executionProviderId: ExecutionProviderId;
+    providerSessionId?: string | null;
     cause: 'message' | 'job' | 'control' | 'manual';
   }): Promise<string | undefined>;
+  updateAgentRunProviderMetadata?(input: {
+    runId: string;
+    runIds?: string[];
+    providerRunId?: string | null;
+    providerSessionId?: string | null;
+  }): Promise<void>;
   completeSessionAgentRun?(input: {
     runId: string;
     status: 'completed' | 'failed' | 'canceled';

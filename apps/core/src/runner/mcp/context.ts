@@ -73,6 +73,9 @@ export const configuredAllowedTools = parseConfiguredAllowedTools(
 export const selectedSkillIds = parseJsonStringArray(
   process.env.GANTRY_SELECTED_SKILLS_JSON,
 );
+export const selectedSkillDisplays = parseJsonStringArray(
+  process.env.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+);
 export const selectedMcpServerIds = parseJsonStringArray(
   process.env.GANTRY_SELECTED_MCP_SERVERS_JSON,
 );
@@ -133,6 +136,8 @@ function parseEnabledAdminMcpTools(
 
 export function capabilityStatusText(): string {
   const currentAdminTools = currentEnabledAdminMcpTools();
+  const selectedSkillStatusItems =
+    selectedSkillDisplays.length > 0 ? selectedSkillDisplays : selectedSkillIds;
   const availableToolNames = [...enabledGantryMcpTools].filter(
     (toolName) => !isAdminMcpToolName(toolName),
   );
@@ -152,8 +157,7 @@ export function capabilityStatusText(): string {
     '',
     'Semantic capability tools:',
     '- capability_search: find built-in capabilities such as google.sheets.write',
-    '- request_capability: request a named semantic capability for this agent',
-    '- propose_local_cli_capability: review a user-defined authenticated local CLI capability draft; it is not runnable Bash authority until runtime enforcement exists',
+    '- propose_capability: request an approved semantic capability or propose a reviewed local_cli capability with pinned executable details',
     '- manage_capability: view/change/revoke/test/audit guidance for selected capabilities',
     '',
     'Scheduler monitoring:',
@@ -166,11 +170,7 @@ export function capabilityStatusText(): string {
       if (currentAdminTools.has(toolName)) {
         return `- available: ${fullName}`;
       }
-      return [
-        `- requestable: ${fullName}`,
-        `  tool_id: tool:${fullName}`,
-        `  request_permission: permissionKind=tool toolName=${fullName} temporaryOnly=false reason="<why this agent needs ${toolName}>"`,
-      ].join('\n');
+      return `- requestable: ${fullName} (ask a configured approver to approve this capability)`;
     }),
     '',
     'Memory IPC actions available in this run:',
@@ -180,11 +180,11 @@ export function capabilityStatusText(): string {
       .map((action) => `- available: ${action}`),
     '',
     'Installed skills ready for this agent:',
-    ...(selectedSkillIds.length > 0
-      ? selectedSkillIds
+    ...(selectedSkillStatusItems.length > 0
+      ? selectedSkillStatusItems
           .slice()
           .sort()
-          .map((skillId) => `- ready: ${skillId}`)
+          .map((skill) => `- ready: ${skill}`)
       : ['- none installed yet']),
     '',
     'Connected MCP services ready for this agent:',
@@ -199,8 +199,6 @@ export function capabilityStatusText(): string {
     ...(requestableBrowserTools.length > 0
       ? requestableBrowserTools.flatMap((tool) => [
           `- requestable: ${tool.tool}`,
-          `  tool_id: ${tool.toolId}`,
-          `  request_permission: ${tool.requestPermission}`,
           `  note: ${tool.note}`,
         ])
       : [

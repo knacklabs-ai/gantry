@@ -71,6 +71,7 @@ function statusLabel(
 ): string {
   if (denial) return 'Needs permission';
   if (status === 'completed') {
+    if (hasPendingMemoryReviewSummary(summary)) return 'Needs memory review';
     return hasReportableSummary(summary) ? 'Completed' : 'Completed, no report';
   }
   if (status === 'timeout' && isRestartInterruptedRun(summary)) {
@@ -90,8 +91,6 @@ function compactSummary(summary: string, max = 180): string {
 function humanizeSummary(summary: string): string {
   const trimmed = stripDiagnosticSuffix(summary).trim();
   if (!trimmed) return '';
-  const browserAssertionOutcome = humanizeBrowserAssertionFailure(trimmed);
-  if (browserAssertionOutcome) return browserAssertionOutcome;
   const jsonOutcome = humanizeJsonSummary(trimmed);
   if (jsonOutcome) return jsonOutcome;
   return trimmed
@@ -107,16 +106,6 @@ function humanizeSummary(summary: string): string {
 
 function stripDiagnosticSuffix(summary: string): string {
   return summary.replace(/\nDiagnostics:[\s\S]*$/i, '');
-}
-
-function humanizeBrowserAssertionFailure(summary: string): string | null {
-  if (
-    /Required tool assertion Browser was not satisfied/i.test(summary) ||
-    /Browser was available but not used/i.test(summary)
-  ) {
-    return 'Browser access was available, but this job did not use the browser.';
-  }
-  return null;
 }
 
 function humanizeJsonSummary(summary: string): string | null {
@@ -203,14 +192,14 @@ function notificationAction(
     }
     return 'Approve the missing access, then retry the job.';
   }
+  if (hasPendingMemoryReviewSummary(summary)) {
+    return 'Ask the agent to show pending memory reviews, then approve, reject, or edit by number.';
+  }
   if (status === 'timeout' && isRestartInterruptedRun(summary)) {
     return 'Rerun the job when ready. If this repeats without restarts, increase the job timeout.';
   }
   if (status === 'timeout') {
     return 'Rerun with a longer job timeout if this work is expected to take more time.';
-  }
-  if (humanizeBrowserAssertionFailure(summary)) {
-    return 'Update the job so it uses the browser during the run, or remove Browser from required tools if browser use is optional.';
   }
   if (status === 'dead_lettered') {
     return pauseReason
@@ -222,6 +211,15 @@ function notificationAction(
 
 function isRestartInterruptedRun(summary: string): boolean {
   return /runtime restarted|gantry restarted/i.test(summary);
+}
+
+function hasPendingMemoryReviewSummary(summary: string): boolean {
+  return (
+    /\b\d+\s+sent to review\b/i.test(summary) ||
+    /\b\d+\s+(?:pending\s+)?memory reviews?\s+(?:are\s+)?(?:waiting|pending|needs? review)\b/i.test(
+      summary,
+    )
+  );
 }
 
 function nextRunLabel(

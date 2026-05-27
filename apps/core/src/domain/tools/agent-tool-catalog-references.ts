@@ -8,8 +8,13 @@ import {
 import {
   persistentPermissionToolId,
   parseReadableScopedToolRule,
+  RUN_COMMAND_TOOL_NAME,
   validateReadableAgentToolRule,
 } from '../../shared/agent-tool-references.js';
+import {
+  containsGeneratedRuntimeSkillPath,
+  GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
+} from '../../shared/generated-runtime-paths.js';
 import {
   getBuiltinSemanticCapability,
   semanticCapabilityInputSchema,
@@ -78,9 +83,9 @@ export async function ensureAgentToolCatalogItem(input: {
     });
   }
   const scoped = parseReadableScopedToolRule(allowedRule);
-  if (!scoped || scoped.toolName !== 'Bash') {
+  if (!scoped || scoped.toolName !== RUN_COMMAND_TOOL_NAME) {
     throw new Error(
-      `Unknown tool capability ${allowedRule}. Select a catalog tool, semantic capability, or scoped Bash(...) rule.`,
+      `Unknown tool capability ${allowedRule}. Select a catalog tool, semantic capability, or scoped RunCommand(...) rule.`,
     );
   }
   const item: ToolCatalogItem = {
@@ -147,14 +152,18 @@ export async function resolveAgentToolReference(input: {
   repository: ToolCatalogRepository;
   appId: AppId;
   reference: string;
+  semanticCapabilityDefinitions?: Record<string, SemanticCapabilityDefinition>;
 }): Promise<{ tool?: ToolCatalogItem; error?: string }> {
   const reference = input.reference.trim();
   if (!reference) return { error: 'Tool rule cannot be empty.' };
   if (reference.startsWith('tool:')) {
     return {
       error:
-        'Tool rule must be readable; use a tool name or scoped Bash rule, not an internal tool ID.',
+        'Tool rule must be readable; use a tool name or scoped RunCommand rule, not an internal tool ID.',
     };
+  }
+  if (containsGeneratedRuntimeSkillPath(reference)) {
+    return { error: GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON };
   }
 
   const activeTools = await input.repository.listTools({
@@ -179,13 +188,18 @@ export async function resolveAgentToolReference(input: {
   if (!validation.ok) return { error: validation.reason };
   const semanticCapabilityId = parseSemanticCapabilityRule(reference);
   if (semanticCapabilityId) {
-    if (getBuiltinSemanticCapability(semanticCapabilityId)) return {};
+    if (
+      getBuiltinSemanticCapability(semanticCapabilityId) ||
+      input.semanticCapabilityDefinitions?.[semanticCapabilityId]
+    ) {
+      return {};
+    }
     return {
       error: `Unknown semantic capability ${semanticCapabilityId}. Review and register a user-defined capability before selecting it.`,
     };
   }
   const scoped = parseReadableScopedToolRule(reference);
-  if (scoped?.toolName === 'Bash') return {};
+  if (scoped?.toolName === RUN_COMMAND_TOOL_NAME) return {};
   if (reference.startsWith('mcp__')) {
     return {
       error:
@@ -193,7 +207,7 @@ export async function resolveAgentToolReference(input: {
     };
   }
   return {
-    error: `Unknown tool capability ${reference}. Select a catalog tool, semantic capability, or scoped Bash(...) rule.`,
+    error: `Unknown tool capability ${reference}. Select a catalog tool, semantic capability, or scoped RunCommand(...) rule.`,
   };
 }
 

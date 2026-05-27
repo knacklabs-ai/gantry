@@ -10,9 +10,10 @@ import { isValidGroupFolder } from '../../platform/group-folder-rules.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import { ensureRuntimeLayout, settingsFilePath } from './runtime-home.js';
 import {
-  applyMemoryModelProfile,
+  applyModelPreset,
+  applyPresetManagedMemoryDefaults,
   createDefaultRuntimeSettings,
-  getMemoryModelProfileDefaults,
+  getPresetManagedMemoryDefaults,
 } from './runtime-settings-defaults.js';
 import { parseRuntimeSettings } from './runtime-settings-parser.js';
 import { renderRuntimeSettingsYaml } from './runtime-settings-renderer.js';
@@ -25,11 +26,19 @@ import {
   validateLoadedRuntimeSettings,
 } from './runtime-settings-validation.js';
 import type {
-  MemoryModelProfile,
   RuntimeSettings,
   RuntimeSettingsValidationResult,
 } from './runtime-settings-types.js';
 import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
+import {
+  containsGeneratedRuntimeSkillPath,
+  GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
+} from '../../shared/generated-runtime-paths.js';
+import {
+  cleanupGeneratedRuntimeCapabilities,
+  settingsCapabilityIdToToolRule,
+  toolRuleToSettingsCapability,
+} from './generated-runtime-capability-cleanup.js';
 import { nowIso, nowMs as currentTimeMs } from '../../shared/time/datetime.js';
 
 const DEFAULT_PROVIDER_CONNECTION_IDS: Record<string, string> = {
@@ -56,7 +65,6 @@ const DEFAULT_RUNTIME_SECRET_REFS: Record<string, Record<string, string>> = {
 
 export type {
   EmbeddingProviderName,
-  MemoryModelProfile,
   MemoryModelTask,
   RuntimeMemoryLlmModels,
   RuntimeMemorySettings,
@@ -69,9 +77,10 @@ export type {
 } from './runtime-settings-types.js';
 
 export {
-  applyMemoryModelProfile,
+  applyModelPreset,
+  applyPresetManagedMemoryDefaults,
   createDefaultRuntimeSettings,
-  getMemoryModelProfileDefaults,
+  getPresetManagedMemoryDefaults,
   parseRuntimeSettings,
   readRuntimeMemorySettingsSnapshot,
   readRuntimeStorageSettingsSnapshot,
@@ -103,9 +112,23 @@ export function mirrorAgentToolRulesToRuntimeSettings(input: {
   runtimeHome: string;
   agentFolder: string;
   rules: readonly string[];
+  mode?: 'add' | 'remove';
 }): void {
   const settings = loadRuntimeSettings(input.runtimeHome);
-  addAgentToolRulesToRuntimeSettings(settings, input.agentFolder, input.rules);
+  if (input.mode === 'remove') {
+    removeAgentToolRulesFromRuntimeSettings(
+      settings,
+      input.agentFolder,
+      input.rules,
+    );
+  } else {
+    addAgentToolRulesToRuntimeSettings(
+      settings,
+      input.agentFolder,
+      input.rules,
+    );
+  }
+  dropGeneratedRuntimeCapabilities(settings);
   saveRuntimeSettings(input.runtimeHome, settings);
 }
 
@@ -122,20 +145,73 @@ export function addAgentToolRulesToRuntimeSettings(
     );
   }
   const next = new Set<string>();
-  for (const existingRule of agent.capabilities.toolIds) {
-    const readable = existingRule.trim();
+  for (const existing of agent.capabilities) {
+    const readable = capabilityToToolRule(existing.id);
     if (!readable) continue;
-    const validation = validateReadableAgentToolRule(readable);
-    if (!validation.ok) throw new Error(validation.reason);
+    if (!containsGeneratedRuntimeSkillPath(readable)) {
+      validateSettingsAgentToolRule(readable);
+    }
     next.add(readable);
   }
   for (const rule of rules) {
     const readable = rule.trim();
-    const validation = validateReadableAgentToolRule(readable);
-    if (!validation.ok) throw new Error(validation.reason);
+    if (!containsGeneratedRuntimeSkillPath(readable)) {
+      validateSettingsAgentToolRule(readable);
+    }
     if (readable) next.add(readable);
   }
-  agent.capabilities.toolIds = [...next];
+  agent.capabilities = [...next].map((rule) =>
+    toolRuleToSettingsCapability(rule),
+  );
+}
+
+export function removeAgentToolRulesFromRuntimeSettings(
+  settings: RuntimeSettings,
+  agentFolder: string,
+  rules: readonly string[],
+): void {
+  const folder = agentFolder.trim();
+  const agent = settings.agents[folder];
+  if (!agent) {
+    throw new Error(
+      `Cannot mirror persistent tool rule removal for missing settings agent: ${folder || '(empty)'}`,
+    );
+  }
+  const remove = new Set<string>();
+  for (const rule of rules) {
+    const readable = rule.trim();
+    if (!containsGeneratedRuntimeSkillPath(readable)) {
+      validateSettingsAgentToolRule(readable);
+    }
+    if (readable) remove.add(readable);
+  }
+  agent.capabilities = agent.capabilities.filter((capability) => {
+    const readable = capabilityToToolRule(capability.id);
+    if (!readable) return false;
+    if (containsGeneratedRuntimeSkillPath(readable)) return false;
+    validateSettingsAgentToolRule(readable);
+    return !remove.has(readable);
+  });
+}
+
+export function capabilityToToolRule(capabilityId: string): string {
+  return settingsCapabilityIdToToolRule(capabilityId);
+}
+
+function validateSettingsAgentToolRule(readable: string): void {
+  const validation = validateReadableAgentToolRule(readable);
+  if (!validation.ok) throw new Error(validation.reason);
+  if (containsGeneratedRuntimeSkillPath(readable)) {
+    throw new Error(GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON);
+  }
+}
+
+function dropGeneratedRuntimeCapabilities(settings: RuntimeSettings): void {
+  for (const agent of Object.values(settings.agents)) {
+    agent.capabilities = cleanupGeneratedRuntimeCapabilities({
+      capabilities: agent.capabilities,
+    }).capabilities;
+  }
 }
 
 function writeSettingsYamlAtomic(filePath: string, content: string): void {
@@ -248,11 +324,8 @@ export function ensureConfiguredConversationBinding(
     folder,
     persona: input.persona ?? 'developer',
     bindings: {},
-    capabilities: {
-      toolIds: [],
-      skillIds: [],
-      mcpServerIds: [],
-    },
+    sources: { skills: [], mcpServers: [], tools: [] },
+    capabilities: [],
   };
 
   const externalId = stripProviderPrefix(input.jid, provider.id);
@@ -401,5 +474,3 @@ export function validateRuntimeSettings(
     return runtimeSettingsValidationError(runtimeHome, err);
   }
 }
-
-export type { MemoryModelProfile as RuntimeSettingsMemoryModelProfile };

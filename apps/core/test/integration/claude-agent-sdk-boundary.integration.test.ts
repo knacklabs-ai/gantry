@@ -8,7 +8,12 @@ import {
   selectedMemoryIpcActions,
   selectedGantryMcpToolNames,
 } from '@agent-runner-src/gantry-mcp-tool-surface.js';
-import type { AgentRunnerInput } from '@core/runner/claude/types.js';
+import {
+  GANTRY_CLAUDE_SDK_SKILLS_ENV,
+  SDK_NATIVE_SKILL_DISABLE_ENV,
+  SDK_NATIVE_SKILL_OVERRIDES,
+} from '@core/adapters/llm/anthropic-claude-agent/native-sdk-skills.js';
+import type { AgentRunnerInput } from '@core/adapters/llm/anthropic-claude-agent/runner/types.js';
 
 const sdkState = vi.hoisted(() => ({
   mode: 'success' as
@@ -21,7 +26,10 @@ const sdkState = vi.hoisted(() => ({
     | 'agent-model-denial'
     | 'agent-input-field-denial'
     | 'subagent-attribution'
-    | 'partial-output',
+    | 'partial-output'
+    | 'auth-result-text'
+    | 'billing-result-error'
+    | 'success-result-empty-error-flag',
   calls: [] as Array<{
     options: Record<string, any>;
     streamMessages: unknown[];
@@ -181,6 +189,36 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       return;
     }
 
+    if (sdkState.mode === 'auth-result-text') {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'Invalid API key · Fix external API key',
+      };
+      return;
+    }
+
+    if (sdkState.mode === 'billing-result-error') {
+      yield {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        errors: ['Credit balance is too low for this request'],
+      };
+      return;
+    }
+
+    if (sdkState.mode === 'success-result-empty-error-flag') {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'ok',
+      };
+      return;
+    }
+
     yield { type: 'result', subtype: 'success', result: 'ok' };
   },
 }));
@@ -232,6 +270,10 @@ function prepareRuntimeEnv(): {
   vi.stubEnv('ANTHROPIC_API_KEY', 'raw-provider-key');
   vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'raw-oauth-token');
   vi.stubEnv('CLAUDE_CONFIG_DIR', path.join(root, 'claude-config'));
+  vi.stubEnv(
+    GANTRY_CLAUDE_SDK_SKILLS_ENV,
+    JSON.stringify(['gantry-admin', 'gantry-browser', 'linkedin-posting']),
+  );
   return {
     root,
     mcpServerPath: path.join(root, 'mcp', 'stdio.js'),
@@ -253,7 +295,7 @@ function runnerInput(
 
 async function importRunQuery() {
   vi.resetModules();
-  return await import('@core/runner/claude/query-loop.js');
+  return await import('@core/adapters/llm/anthropic-claude-agent/runner/query-loop.js');
 }
 
 afterEach(() => {
@@ -320,6 +362,7 @@ describe('Claude Agent SDK boundary integration', () => {
       cwd: path.join(env.root, 'workspace', 'group'),
       permissionMode: 'default',
       settingSources: ['user'],
+      skills: ['gantry-admin', 'gantry-browser', 'linkedin-posting'],
       includePartialMessages: true,
     });
     expect(call?.options.allowedTools).toEqual(
@@ -337,6 +380,7 @@ describe('Claude Agent SDK boundary integration', () => {
         'mcp__gantry__mcp_list_tools',
         'mcp__gantry__mcp_call_tool',
         'Agent',
+        'Skill',
       ]),
     );
     expect(call?.options.tools).toEqual(
@@ -392,6 +436,10 @@ describe('Claude Agent SDK boundary integration', () => {
       ]),
     );
     expect(call?.options.agents).toBeUndefined();
+    expect(call?.options.settings.skillOverrides).toEqual(
+      SDK_NATIVE_SKILL_OVERRIDES,
+    );
+    expect(call?.options.settings.autoMemoryEnabled).toBe(false);
     expect(call?.options.mcpServers.gantry).toEqual({
       command: 'node',
       args: [env.mcpServerPath],
@@ -406,6 +454,7 @@ describe('Claude Agent SDK boundary integration', () => {
         GANTRY_ADMIN_MCP_TOOLS_JSON: '[]',
         GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
         GANTRY_SELECTED_SKILLS_JSON: '[]',
+        GANTRY_SELECTED_SKILL_DISPLAYS_JSON: '[]',
         GANTRY_SELECTED_MCP_SERVERS_JSON: '[]',
         GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedGantryMcpToolNames([]),
@@ -424,6 +473,7 @@ describe('Claude Agent SDK boundary integration', () => {
     });
     expect(call?.options.env).toEqual({
       CLAUDE_CONFIG_DIR: path.join(env.root, 'claude-config'),
+      ...SDK_NATIVE_SKILL_DISABLE_ENV,
     });
     expect(call?.options.env).not.toHaveProperty(
       'GANTRY_MEMORY_IPC_ACTIONS_JSON',
@@ -507,6 +557,32 @@ describe('Claude Agent SDK boundary integration', () => {
       sdkState.calls[0]?.options.mcpServers.gantry?.env
         ?.GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER,
     ).toBe('1');
+    expect(
+      sdkState.calls[0]?.options.mcpServers.gantry?.env
+        ?.GANTRY_MCP_TOOL_NAMES_JSON,
+    ).toBe(
+      JSON.stringify(
+        selectedGantryMcpToolNames([], {
+          memoryReviewerIsControlApprover: true,
+        }),
+      ),
+    );
+    expect(
+      sdkState.calls[0]?.options.mcpServers.gantry?.env
+        ?.GANTRY_MEMORY_IPC_ACTIONS_JSON,
+    ).toBe(
+      JSON.stringify(
+        selectedMemoryIpcActions([], {
+          memoryReviewerIsControlApprover: true,
+        }),
+      ),
+    );
+    expect(sdkState.calls[0]?.options.allowedTools).toEqual(
+      expect.arrayContaining([
+        'mcp__gantry__memory_review_pending',
+        'mcp__gantry__memory_review_decision',
+      ]),
+    );
   });
 
   it('fails closed when Claude init omits the required Gantry MCP server', async () => {
@@ -543,6 +619,73 @@ describe('Claude Agent SDK boundary integration', () => {
         undefined,
       ),
     ).rejects.toThrow(/Required Gantry MCP server status is missing/);
+  });
+
+  it('promotes SDK success-result API key failures to runner errors', async () => {
+    const env = prepareRuntimeEnv();
+    sdkState.mode = 'auth-result-text';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { runQuery } = await importRunQuery();
+
+    await expect(
+      runQuery(
+        'hello',
+        env.mcpServerPath,
+        runnerInput(),
+        {},
+        undefined,
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow('Invalid API key');
+
+    const visibleResults = logSpy.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as { result: string | null })
+      .map((output) => output.result);
+    logSpy.mockRestore();
+    expect(visibleResults).not.toContain(
+      'Invalid API key · Fix external API key',
+    );
+  });
+
+  it('promotes SDK billing result errors to runner errors', async () => {
+    const env = prepareRuntimeEnv();
+    sdkState.mode = 'billing-result-error';
+    const { runQuery } = await importRunQuery();
+
+    await expect(
+      runQuery(
+        'hello',
+        env.mcpServerPath,
+        runnerInput(),
+        {},
+        undefined,
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow('Credit balance is too low');
+  });
+
+  it('does not fail success results that only carry an empty SDK error flag', async () => {
+    const env = prepareRuntimeEnv();
+    sdkState.mode = 'success-result-empty-error-flag';
+    const { runQuery } = await importRunQuery();
+
+    await expect(
+      runQuery(
+        'hello',
+        env.mcpServerPath,
+        runnerInput(),
+        {},
+        undefined,
+        undefined,
+        undefined,
+      ),
+    ).resolves.toMatchObject({
+      closedDuringQuery: false,
+    });
   });
 
   it('pipes active IPC follow-up input into the same Claude SDK stream', async () => {

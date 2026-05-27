@@ -419,6 +419,158 @@ describe('Postgres migration journal', () => {
     expect(schema).toContain('table.updatedAt.desc()');
   });
 
+  it('registers execution provider id run backfill and provider session cutover', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const runBackfill = journal.entries.find(
+      (entry) => entry.tag === '0057_agent_run_execution_provider',
+    );
+    expect(runBackfill).toMatchObject({ idx: 57 });
+    const providerCutover = journal.entries.find(
+      (entry) => entry.tag === '0058_anthropic_execution_provider_id_cutover',
+    );
+    expect(providerCutover).toMatchObject({ idx: 58 });
+
+    const runMigration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0057_agent_run_execution_provider.sql',
+      ),
+      'utf8',
+    );
+    expect(runMigration).toContain('UPDATE agent_runs');
+    expect(runMigration).toContain(
+      "execution_provider_id = 'anthropic:claude-agent-sdk'",
+    );
+    expect(runMigration).toContain('agent_runs_execution_provider_id_safe');
+    expect(runMigration).toContain(
+      'ADD COLUMN IF NOT EXISTS execution_provider_id text',
+    );
+    expect(runMigration).toContain("execution_provider_id !~ '^unconfigured:'");
+    expect(runMigration).not.toContain('SET DEFAULT');
+
+    const providerMigration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0058_anthropic_execution_provider_id_cutover.sql',
+      ),
+      'utf8',
+    );
+    expect(providerMigration).not.toContain('UPDATE agent_runs');
+    expect(providerMigration).toContain('UPDATE provider_sessions');
+    expect(providerMigration).toContain(
+      "provider = 'anthropic:claude-agent-sdk'",
+    );
+    expect(providerMigration).toContain(
+      'provider_ref_json = jsonb_build_object',
+    );
+    expect(providerMigration).toContain("'anthropic:claude-agent-sdk:' ||");
+    expect(providerMigration).toContain(
+      "'provider', 'anthropic:claude-agent-sdk'",
+    );
+    expect(providerMigration).toContain("'anthropic-claude-agent-sdk'");
+    expect(providerMigration).toContain(
+      "provider IN ('anthropic', 'anthropic-claude-agent-sdk')",
+    );
+    expect(providerMigration).toContain(
+      "external_session_id !~ '^anthropic:claude-agent-sdk:'",
+    );
+    expect(providerMigration).toContain('FOR UPDATE SKIP LOCKED');
+    expect(providerMigration).not.toContain('updated_at = now()');
+    expect(providerMigration).toContain(
+      "provider_ref_json->>'provider' IN ('anthropic', 'anthropic-claude-agent-sdk')",
+    );
+  });
+
+  it('registers LLM profile response family cutover with audit snapshot and validated constraint', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const responseFamilyCutover = journal.entries.find(
+      (entry) => entry.tag === '0064_llm_profile_response_family',
+    );
+    expect(responseFamilyCutover).toMatchObject({ idx: 64 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0064_llm_profile_response_family.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain('RENAME COLUMN provider TO response_family');
+    expect(migration).toContain('ADD COLUMN response_family text NOT NULL');
+    expect(migration).toContain('ALTER COLUMN response_family SET DEFAULT');
+    expect(migration).toContain('ALTER COLUMN response_family SET NOT NULL');
+    expect(migration).toContain('llm_profiles_response_family_legacy');
+    expect(migration).toContain("WHEN response_family = 'openai'");
+    expect(migration).toContain(
+      'ADD CONSTRAINT llm_profiles_response_family_valid',
+    );
+    expect(migration).toContain('NOT VALID');
+    expect(migration).toContain(
+      'VALIDATE CONSTRAINT llm_profiles_response_family_valid',
+    );
+    expect(migration).not.toContain("SET model_alias = 'opus'");
+  });
+
+  it('registers LLM profile model alias cutover separately with audit snapshot', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const modelAliasCutover = journal.entries.find(
+      (entry) => entry.tag === '0065_llm_profile_model_alias_cutover',
+    );
+    expect(modelAliasCutover).toMatchObject({ idx: 65 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0065_llm_profile_model_alias_cutover.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain('llm_profiles_model_alias_legacy');
+    expect(migration).toContain(
+      "model_alias IN ('default', 'runtime-default')",
+    );
+    expect(migration).toContain("SET model_alias = 'opus'");
+  });
+
+  it('registers memory conversation-scope cutover migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const memoryScopeCutover = journal.entries.find(
+      (entry) => entry.tag === '0066_memory_conversation_scope_cutover',
+    );
+    expect(memoryScopeCutover).toMatchObject({ idx: 66 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0066_memory_conversation_scope_cutover.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain('SET thread_id = NULL');
+    expect(migration).toContain(
+      'DROP INDEX IF EXISTS memory_items_active_unique',
+    );
+    expect(migration).toContain(
+      'CREATE UNIQUE INDEX IF NOT EXISTS memory_items_active_unique',
+    );
+    expect(migration).not.toContain("COALESCE(thread_id, '')");
+  });
+
   it('registers message attachment message lookup index migration and schema', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
@@ -666,6 +818,91 @@ describe('Postgres migration journal', () => {
     expect(repository).toContain('configVersionId: binding.configVersionId');
   });
 
+  it('registers skill action permissions storage and repository mapping', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0062_skill_action_permissions.sql',
+      ),
+      'utf8',
+    );
+    const schema = fs.readFileSync(
+      path.resolve('apps/core/src/adapters/storage/postgres/schema/skills.ts'),
+      'utf8',
+    );
+    const repository = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/repositories/skill-repository.postgres.ts',
+      ),
+      'utf8',
+    );
+
+    expect(
+      journal.entries.find(
+        (entry) => entry.tag === '0062_skill_action_permissions',
+      ),
+    ).toMatchObject({ idx: 62 });
+    expect(migration).toContain(
+      'ADD COLUMN IF NOT EXISTS action_permissions_json',
+    );
+    expect(schema).toContain('actionPermissionsJson');
+    expect(migration).toContain('action_permissions_json jsonb');
+    expect(migration).toContain('TYPE jsonb');
+    expect(migration).toContain("SET DEFAULT '[]'::jsonb");
+    expect(migration).toContain('SET NOT NULL');
+    expect(schema).toContain("jsonb('action_permissions_json')");
+    expect(repository).toContain(
+      'actionPermissionsJson: item.actionPermissions ?? []',
+    );
+    expect(repository).toContain(
+      'actionPermissions: parseJsonArray(row.actionPermissionsJson)',
+    );
+  });
+
+  it('registers agent tool source attachment storage and repository mapping', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0063_agent_tool_sources.sql',
+      ),
+      'utf8',
+    );
+    const schema = fs.readFileSync(
+      path.resolve('apps/core/src/adapters/storage/postgres/schema/tools.ts'),
+      'utf8',
+    );
+    const repository = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/repositories/tool-repository.postgres.ts',
+      ),
+      'utf8',
+    );
+
+    expect(
+      journal.entries.find((entry) => entry.tag === '0063_agent_tool_sources'),
+    ).toMatchObject({ idx: 63 });
+    expect(migration).toContain(
+      'CREATE TABLE IF NOT EXISTS agent_tool_sources',
+    );
+    expect(migration).toContain('version text NOT NULL');
+    expect(migration).toContain(
+      'ON agent_tool_sources(app_id, agent_id, source_id, kind, version)',
+    );
+    expect(schema).toContain('agentToolSourcesPostgres');
+    expect(repository).toContain('replaceAgentToolSources');
+    expect(repository).toContain('listAgentToolSourcesForAgents');
+  });
+
   it('registers outbound delivery fingerprint hash normalization migration', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
@@ -701,5 +938,90 @@ describe('Postgres migration journal', () => {
     expect(migration0037).toContain(
       "digest(idempotency_fingerprint, 'sha256')",
     );
+  });
+
+  it('registers provider-native tool catalog cleanup migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const cleanup = journal.entries.find(
+      (entry) => entry.tag === '0059_remove_provider_native_tool_catalog',
+    );
+    expect(cleanup).toMatchObject({ idx: 59 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0059_remove_provider_native_tool_catalog.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(`kind = '${['anthropic', 'sdk'].join('_')}'`);
+    expect(migration).toContain(`provider = 'anth${'ropic'}'`);
+    expect(migration).toContain("adapter_ref = 'builtin:WebSearch'");
+    expect(migration).toContain("name <> 'WebSearch'");
+    expect(migration).toContain("'tool:Read'");
+    expect(migration).toContain('BEGIN;');
+    expect(migration).toContain(
+      'CREATE TEMP TABLE provider_native_tool_cleanup_ids',
+    );
+    expect(migration).toContain('tool:removed-provider-native-sdk:');
+    expect(migration).toContain('UPDATE permission_decisions');
+    expect(migration).toContain('DELETE FROM agent_tool_bindings');
+    expect(migration).toContain('DELETE FROM tool_catalog');
+    expect(migration).toContain('COMMIT;');
+  });
+
+  it('registers agent run provider index migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const providerIndexes = journal.entries.find(
+      (entry) => entry.tag === '0060_agent_run_provider_indexes',
+    );
+    expect(providerIndexes).toMatchObject({ idx: 60 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0060_agent_run_provider_indexes.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(
+      'DROP INDEX IF EXISTS idx_agent_runs_execution_provider',
+    );
+    expect(migration).toContain('idx_agent_runs_provider_session');
+    expect(migration).toContain('idx_agent_runs_lease_claim');
+    expect(migration).toContain("WHERE status = 'running'");
+    expect(migration).toContain('idx_provider_sessions_agent_provider');
+  });
+
+  it('registers job tool access requirements cutover migration', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const cutover = journal.entries.find(
+      (entry) => entry.tag === '0061_jobs_tool_access_requirements_cutover',
+    );
+    expect(cutover).toMatchObject({ idx: 61 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0061_jobs_tool_access_requirements_cutover.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain("target_json ? 'requiredTools'");
+    expect(migration).toContain("target_json ? 'toolAccessRequirements'");
+    expect(migration).toContain("target_json - 'requiredTools'");
+    expect(migration).toContain("'{toolAccessRequirements}'");
   });
 });

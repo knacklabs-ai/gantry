@@ -25,6 +25,7 @@ import {
   requestPermissionQueuedMessage,
   requestPermissionReviewEffect,
   requestPermissionReviewSuggestions,
+  requestPermissionSetupDecisionOptions,
   validateRequestPermissionSemanticCapability,
 } from './request-permission-review.js';
 import {
@@ -42,6 +43,7 @@ import {
   isBrowserActionMcpToolRule,
   isProjectedBrowserMcpToolRule,
 } from '../shared/agent-tool-references.js';
+import { PermissionManagementService } from '../application/permissions/permission-management-service.js';
 import {
   formatApprovalRequestedMessage,
   formatNotApprovedMessage,
@@ -122,6 +124,7 @@ const registerAgentHandler: TaskHandler = async (context) => {
     targetJid: requestedTargetJid,
     threadId: data.authThreadId,
     decisionPolicy: 'same_channel',
+    decisionOptions: ['allow_once', 'cancel'],
     toolName: 'register_agent',
     displayName: `Register agent: ${data.name}`,
     title: 'Approve agent registration',
@@ -314,13 +317,39 @@ const mcpCallToolHandler: TaskHandler = async (context) => {
       callerIdentityJid: requestedTargetJid,
       deps,
     });
-    const result = await proxy.callTool({
-      appId: data.appId as never,
-      agentId: memoryAgentIdForGroupFolder(sourceAgentFolder) as never,
-      serverName,
-      toolName,
-      arguments: args,
-    });
+    const startedAt = Date.now();
+    let result: unknown;
+    try {
+      result = await proxy.callTool({
+        appId: data.appId as never,
+        agentId: memoryAgentIdForGroupFolder(sourceAgentFolder) as never,
+        serverName,
+        toolName,
+        arguments: args,
+      });
+    } catch (err) {
+      logger.warn(
+        {
+          serverName,
+          toolName,
+          arguments: args,
+          durationMs: Date.now() - startedAt,
+          err,
+        },
+        'MCP tool call failed',
+      );
+      throw err;
+    }
+    logger.info(
+      {
+        serverName,
+        toolName,
+        arguments: args,
+        durationMs: Date.now() - startedAt,
+        response: result,
+      },
+      'MCP tool call response',
+    );
     acceptData(`MCP tool ${serverName}.${toolName} completed.`, result);
   } catch (err) {
     reject(
@@ -361,7 +390,48 @@ const requestOnlyCapabilityHandler: TaskHandler = async (context) => {
 };
 
 // prettier-ignore
-export const adminTaskHandlers: Record<string, TaskHandler> = { refresh_groups: refreshGroupsHandler, register_agent: registerAgentHandler, service_restart: serviceRestartHandler, settings_desired_state: settingsDesiredStateHandler, request_settings_update: requestSettingsUpdateHandler, request_skill_install: requestSkillInstallHandler, request_skill_dependency_install: requestOnlyCapabilityHandler, request_permission: requestOnlyCapabilityHandler, request_skill_proposal: requestSkillDraftHandler, request_mcp_server: requestMcpServerHandler, mcp_list_tools: mcpListToolsHandler, mcp_call_tool: mcpCallToolHandler };
+const adminPermissionRevokeHandler: TaskHandler = async (context) => {
+  const { data, deps, sourceAgentFolder, sourceAgentFolderJids } = context;
+  const { acceptData, reject } = createContextTaskResponder(context);
+  if (!data.appId) { reject('Permission revoke requires signed app scope.', 'forbidden'); return; }
+  if (!(await sourceAgentHasAdminToolCapability(context, 'admin_permission_revoke'))) { logger.warn({ sourceAgentFolder }, 'Unauthorized admin_permission_revoke attempt blocked'); reject(adminCapabilityRequiredMessage('admin_permission_revoke'), 'missing_capability'); return; }
+  const requestedTargetJid = validateSameChannelApprovalTarget({ data, sourceAgentFolderJids, requestKind: 'Permission revoke', reject });
+  if (!requestedTargetJid) return;
+  const payload = data.payload || {};
+  const toolName = toTrimmedString(payload.toolName ?? payload.tool_name, { maxLen: 512 });
+  const toolId = toTrimmedString(payload.toolId ?? payload.tool_id, { maxLen: 512 });
+  const reason = toTrimmedString(payload.reason, { maxLen: 2000 });
+  if (!toolName && !toolId) { reject('admin_permission_revoke requires tool_name or tool_id.', 'invalid_request'); return; }
+  if (!reason) { reject('admin_permission_revoke requires reason.', 'invalid_request'); return; }
+  const toolRepository = deps.getToolRepository?.();
+  const mirrorAgentToolRulesToSettings = deps.mirrorAgentToolRulesToSettings;
+  if (!toolRepository || !mirrorAgentToolRulesToSettings) { reject('Permission revoke requires tool repository and settings mirror.', 'preflight_failed'); return; }
+  try {
+    const revoked = await new PermissionManagementService().revokePersistentToolRuleGrant({
+      appId: data.appId as never,
+      agentId: memoryAgentIdForGroupFolder(sourceAgentFolder) as never,
+      sourceAgentFolder,
+      toolRepository,
+      mirrorAgentToolRulesToSettings,
+      permissionRepository: deps.getPermissionRepository?.(),
+      ipcDir: context.ipcBaseDir ? path.join(context.ipcBaseDir, sourceAgentFolder) : undefined,
+      runHandle: data.runHandle,
+      requestId: data.taskId ? `admin-permission-revoke:${data.taskId}` : undefined,
+      actor: `agent:${sourceAgentFolder}`,
+      conversationId: requestedTargetJid,
+      threadId: data.authThreadId,
+      reason,
+      toolName,
+      toolId,
+    });
+    acceptData(`Revoked ${revoked.revokedRule} for this agent. settings.yaml and live-run approval state were updated.`, { revokedRule: revoked.revokedRule, toolId: revoked.toolId }, 'permission_revoked');
+  } catch (err) {
+    reject(err instanceof Error ? err.message : 'Permission revoke failed.', 'permission_revoke_failed');
+  }
+};
+
+// prettier-ignore
+export const adminTaskHandlers: Record<string, TaskHandler> = { refresh_groups: refreshGroupsHandler, register_agent: registerAgentHandler, service_restart: serviceRestartHandler, settings_desired_state: settingsDesiredStateHandler, request_settings_update: requestSettingsUpdateHandler, admin_permission_revoke: adminPermissionRevokeHandler, request_skill_install: requestSkillInstallHandler, request_skill_dependency_install: requestOnlyCapabilityHandler, request_permission: requestOnlyCapabilityHandler, request_skill_proposal: requestSkillDraftHandler, request_mcp_server: requestMcpServerHandler, mcp_list_tools: mcpListToolsHandler, mcp_call_tool: mcpCallToolHandler };
 
 // prettier-ignore
 function validateSameChannelApprovalTarget(input: { data: Parameters<TaskHandler>[0]['data']; sourceAgentFolderJids: string[]; requestKind: string; reject: (error: string, code?: string, details?: string[]) => void }): string | null {
@@ -396,6 +466,17 @@ function parseRequestOnlyCapabilityReview(toolName: RequestOnlyCapabilityToolNam
   }
   if (toolName === 'request_skill_dependency_install' && !['npm', 'brew', 'go', 'uv', 'download'].includes(String(toolInput.ecosystem))) return { ok: false, error: 'ecosystem must be npm, brew, go, uv, or download.' };
   if (toolName === 'request_permission') {
+    const capabilityId = toTrimmedString(payload.capabilityId, { maxLen: 160 });
+    const toolNames = sanitizedStringList([
+      payload.toolName,
+      ...(Array.isArray(payload.toolNames) ? payload.toolNames : []),
+    ]);
+    if (capabilityId && toolNames.length === 0 && payload.capabilityRequestSource !== 'propose_capability') {
+      return {
+        ok: false,
+        error: 'Capability requests must use propose_capability, not request_permission.',
+      };
+    }
     const semanticError = validateRequestPermissionSemanticCapability(toolInput);
     if (semanticError) return { ok: false, error: semanticError };
   }
@@ -513,6 +594,9 @@ function startRequestOnlyCapabilityReview(input: { deps: Parameters<TaskHandler>
         ...(input.review.toolName === 'request_permission'
           ? {
               suggestions: requestPermissionReviewSuggestions(
+                input.review.toolInput,
+              ),
+              decisionOptions: requestPermissionSetupDecisionOptions(
                 input.review.toolInput,
               ),
             }
@@ -690,6 +774,7 @@ async function completeMcpPermissionReview(
     targetJid: input.targetJid,
     threadId: input.threadId,
     decisionPolicy: 'same_channel',
+    decisionOptions: ['allow_once', 'cancel'],
     toolName: 'request_mcp_server',
     displayName: `MCP server: ${input.server.name}`,
     title: 'Approve MCP server for this agent',
@@ -808,6 +893,8 @@ async function createMcpProxyForSourceGroup(input: {
       storage.repositories.capabilitySecrets,
   });
   return new McpToolProxy(storage.repositories.mcpServers, {
+    tools: storage.repositories.tools,
+    skills: storage.repositories.skills,
     credentialEnv,
     callerIdentityJid: input.callerIdentityJid,
     lookupHostname: input.deps.mcpHostnameLookup,

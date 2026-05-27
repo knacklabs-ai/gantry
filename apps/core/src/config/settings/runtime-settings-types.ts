@@ -62,7 +62,6 @@ export interface RuntimeConfiguredMcpServer {
 }
 
 export type EmbeddingProviderName = string;
-export type MemoryModelProfile = 'cheap' | 'balanced' | 'quality';
 export type MemoryModelTask = 'extractor' | 'dreaming' | 'consolidation';
 
 export interface RuntimeMemoryLlmModels {
@@ -133,14 +132,26 @@ export interface RuntimeConfiguredBinding {
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
-  memoryScope: 'conversation' | 'thread' | 'user' | 'agent';
+  memoryScope: 'conversation' | 'user' | 'agent';
   model?: string;
 }
 
-export interface RuntimeConfiguredAgentCapabilities {
-  toolIds: string[];
-  skillIds: string[];
-  mcpServerIds: string[];
+export interface RuntimeConfiguredAgentSourceRef {
+  name?: string;
+  id: string;
+  version?: string;
+  kind?: 'builtin' | 'skill' | 'mcp' | 'adapter' | 'local_cli';
+}
+
+export interface RuntimeConfiguredAgentSources {
+  skills: RuntimeConfiguredAgentSourceRef[];
+  mcpServers: RuntimeConfiguredAgentSourceRef[];
+  tools: RuntimeConfiguredAgentSourceRef[];
+}
+
+export interface RuntimeConfiguredAgentCapability {
+  id: string;
+  version: string;
 }
 
 export type RuntimeConfiguredAgentGuardrail = GuardrailConfig;
@@ -154,7 +165,8 @@ export interface RuntimeConfiguredAgent {
   recurringJobDefaultModel?: string;
   guardrail?: RuntimeConfiguredAgentGuardrail;
   bindings: Record<string, RuntimeConfiguredAgentBinding>;
-  capabilities: RuntimeConfiguredAgentCapabilities;
+  sources: RuntimeConfiguredAgentSources;
+  capabilities: RuntimeConfiguredAgentCapability[];
 }
 
 export interface RuntimeDesiredStateSettings {

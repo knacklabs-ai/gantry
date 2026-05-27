@@ -215,7 +215,9 @@ export async function runConfigStep(draft: SetupDraft): Promise<FlowAction> {
       `Postgres schema: ${draft.postgresSchema}`,
       `Channel: ${channelLabel}`,
       `Credential mode: ${draft.credentialMode}`,
+      `Model preset: ${draft.modelPreset}`,
       `Main model: ${draft.selectedModel}`,
+      'Memory models: preset-managed',
       ...(draft.primaryProvider === 'slack'
         ? [`Slack approvers: ${draft.slackPermissionApproverIds}`]
         : [`Telegram approvers: ${draft.telegramPermissionApproverIds}`]),
@@ -257,7 +259,8 @@ export async function runConfigStep(draft: SetupDraft): Promise<FlowAction> {
       postgresSchema: draft.postgresSchema || undefined,
       onecliPostgresSchema: draft.onecliPostgresSchema || undefined,
       primaryProvider: draft.primaryProvider,
-      anthropicModel: draft.selectedModel || undefined,
+      modelPreset: draft.modelPreset,
+      modelAlias: draft.selectedModel || undefined,
       telegramBotToken: draft.telegramBotToken,
       telegramPermissionApproverIds: draft.telegramPermissionApproverIds,
       slackBotToken: draft.slackBotToken,

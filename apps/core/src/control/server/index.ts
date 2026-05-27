@@ -8,7 +8,10 @@ import {
   GANTRY_HOME,
   getControlEnvValue,
   getDefaultModelConfig,
+  getRuntimeSettingsForConfig,
+  getRuntimeModelDefaults,
   getPublicRuntimeSettings,
+  patchRuntimeModelDefaults,
   syncRuntimeSettingsFromProjection,
 } from '../../config/index.js';
 import { logger } from '../../infrastructure/logging/logger.js';
@@ -17,6 +20,7 @@ import {
   getRuntimeRepositories,
   getRuntimeStorage,
 } from '../../adapters/storage/postgres/runtime-store.js';
+import { preflightModelPreset } from '../../adapters/llm/model-preset-preflight.js';
 import type { AppId } from '../../domain/app/app.js';
 import { canAccessApp, makeAppGroup } from './app-identity.js';
 import {
@@ -193,6 +197,7 @@ export function startControlServer(input: {
   let webhookFlushInFlight = false;
   const ctx: ControlRouteContext = {
     app: input.app,
+    runtimeHome: GANTRY_HOME,
     keys,
     socketPath,
     port,
@@ -203,6 +208,14 @@ export function startControlServer(input: {
     triggerRateLimiter: createRateLimiter(),
     getRuntimeSettings: () => getPublicRuntimeSettings(),
     getDefaultModelConfig,
+    getModelDefaults: getRuntimeModelDefaults,
+    patchModelDefaults: patchRuntimeModelDefaults,
+    preflightModelPreset: (preset) =>
+      preflightModelPreset({
+        runtimeHome: GANTRY_HOME,
+        preset,
+        settings: getRuntimeSettingsForConfig(),
+      }),
     getBrowserStatus: input.getBrowserStatus,
     syncSettingsFromProjection: (appId: AppId) =>
       syncRuntimeSettingsFromProjection({

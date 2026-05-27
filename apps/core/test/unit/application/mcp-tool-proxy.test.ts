@@ -6,6 +6,7 @@ import {
   projectMcpProxyCallerIdentity,
 } from '@core/application/mcp/mcp-tool-proxy.js';
 import type { MaterializedMcpCapability } from '@core/application/mcp/mcp-server-service.js';
+import { CUSTOMER_IDENTITY_MISMATCH_MESSAGE } from '@core/shared/user-visible-messages.js';
 
 const TEST_SECRET = 'test_secret_thirty_two_bytes_long_xx';
 
@@ -113,8 +114,7 @@ describe('projectMcpProxyCallerIdentity', () => {
       });
     } catch (err) {
       expect(err).toMatchObject({
-        message:
-          'I can only check details linked to the phone number you are messaging from. The phone number, email, or order you asked about does not match that number.',
+        message: CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
       });
       expect(err instanceof ApplicationError ? err.details : []).toEqual([
         expect.stringContaining('wa: conversation identity'),

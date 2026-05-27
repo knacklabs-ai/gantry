@@ -3,7 +3,10 @@ import fs from 'fs';
 import { guardrailPolicySettingsValidator } from '../application/guardrails/policy-registry.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import type { RuntimeApp } from '../app/bootstrap/runtime-app.js';
-import { loadRuntimeSettings } from '../config/settings/runtime-settings.js';
+import {
+  loadRuntimeSettings,
+  saveRuntimeSettings,
+} from '../config/settings/runtime-settings.js';
 import { validateLoadedRuntimeSettings } from '../config/settings/runtime-settings-validation.js';
 import { settingsFilePath } from '../config/settings/runtime-home.js';
 import {
@@ -12,7 +15,6 @@ import {
   type SettingsDesiredStateRepositories,
   type SettingsDesiredStateOps,
 } from '../config/settings/desired-state-service.js';
-import type { RuntimeSettings } from '../config/settings/runtime-settings-types.js';
 import { invalidateSenderAllowlistCache } from '../platform/sender-allowlist.js';
 
 export interface SettingsReloadWatcherOptions {
@@ -31,7 +33,7 @@ export function startSettingsReloadWatcher(
   options: SettingsReloadWatcherOptions,
 ): SettingsReloadWatcher {
   const filePath = settingsFilePath(options.runtimeHome);
-  let lastGoodSettings: RuntimeSettings | undefined;
+  let lastGoodSettings: ReturnType<typeof loadRuntimeSettings> | undefined;
   let reloadInFlight: Promise<void> | undefined;
   let reloadQueued = false;
 
@@ -50,7 +52,7 @@ export function startSettingsReloadWatcher(
       return reloadInFlight;
     }
     reloadInFlight = (async () => {
-      let settings: RuntimeSettings;
+      let settings: ReturnType<typeof loadRuntimeSettings>;
       try {
         settings = loadRuntimeSettings(options.runtimeHome);
       } catch (err) {
@@ -61,6 +63,18 @@ export function startSettingsReloadWatcher(
         return;
       }
 
+      const service = new SettingsDesiredStateService({
+        ops: options.ops,
+        repositories: options.repositories,
+        guardrailPolicies: guardrailPolicySettingsValidator(),
+      });
+      const loadedSettings = settings;
+      const cleanup =
+        await service.cleanupGeneratedRuntimeCapabilities(settings);
+      settings = cleanup.settings;
+      if (cleanup.changed) {
+        saveRuntimeSettings(options.runtimeHome, settings);
+      }
       const validation = validateLoadedRuntimeSettings(
         options.runtimeHome,
         settings,
@@ -72,13 +86,9 @@ export function startSettingsReloadWatcher(
         );
         return;
       }
-
-      const service = new SettingsDesiredStateService({
-        ops: options.ops,
-        repositories: options.repositories,
-        guardrailPolicies: guardrailPolicySettingsValidator(),
-      });
-      const reconcile = await service.reconcile(settings);
+      const reconcile = await service.reconcile(
+        cleanup.changed ? loadedSettings : settings,
+      );
       if (reconcile.invalidReferences.length > 0) {
         logger.warn(
           { filePath, invalidReferences: reconcile.invalidReferences },

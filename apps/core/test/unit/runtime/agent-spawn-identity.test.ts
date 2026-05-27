@@ -3,12 +3,12 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
-  CALLER_IDENTITY_UNAVAILABLE_MESSAGE,
   deriveCallerIdentityFromJid,
   injectIdentityHeaderIntoMcpCapability,
   projectCallerIdentityHeaders,
 } from '@core/application/mcp/mcp-caller-identity.js';
 import type { MaterializedMcpCapability } from '@core/application/mcp/mcp-server-materialization.js';
+import { CUSTOMER_IDENTITY_MISMATCH_MESSAGE } from '@core/shared/user-visible-messages.js';
 
 const TEST_SECRET = 'test_secret_thirty_two_bytes_long_xx';
 
@@ -203,7 +203,7 @@ describe('projectCallerIdentityHeaders', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: CALLER_IDENTITY_UNAVAILABLE_MESSAGE,
+      error: CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
       internalError: expect.stringContaining('CUSTOMER_API_IDENTITY_SECRET'),
     });
   });
@@ -217,7 +217,7 @@ describe('projectCallerIdentityHeaders', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: CALLER_IDENTITY_UNAVAILABLE_MESSAGE,
+      error: CUSTOMER_IDENTITY_MISMATCH_MESSAGE,
       internalError: expect.stringContaining('wa: conversation identity'),
     });
   });

@@ -25,6 +25,28 @@ are case-insensitive and punctuation-insensitive. Raw provider IDs such as
 `claude-opus-4-7` and `moonshotai/kimi-k2.6` are rejected at user/API/job/MCP
 boundaries unless registered as catalog aliases.
 
+Catalog entries declare workload eligibility for chat, one-time jobs,
+recurring jobs, memory extraction, memory dreaming, and memory consolidation.
+A cataloged alias can still be rejected when it is not eligible for the
+requested workload. `/v1/models` exposes aliases, response family, diagnostic
+model route metadata, execution provider id, credential profile reference,
+capability descriptors, and supported workloads without exposing raw credential
+details or treating provider model IDs as selectors.
+
+Vocabulary:
+
+- `modelAlias`: the normal user-facing selector.
+- `responseFamily`: the canonical API shape, currently `anthropic` plus
+  schema-only `openai`.
+- `modelRoute`: diagnostic/source metadata such as Anthropic or OpenRouter,
+  including metadata-only provider model IDs.
+- `executionProviderId`: the adapter projection id resolved by the runtime.
+- `credentialProfileRef`: the model-access credential profile, currently
+  `gantry-model-access`.
+- `capabilities`: observable support/readiness descriptors for streaming, tool
+  use, MCP/browser/sandbox projection, session resume, thinking controls,
+  token/cache accounting, and structured output.
+
 Interactive model precedence is:
 
 1. session `/model` override
@@ -33,15 +55,40 @@ Interactive model precedence is:
 
 Job model precedence is:
 
-1. explicit job `modelAlias` or `modelProfileId`
+1. explicit job `modelAlias`
 2. job-kind default (`agent.one_time_job_default_model` or
    `agent.recurring_job_default_model`)
 3. agent interactive default
 4. system default `opus`
 
+Memory model precedence is runtime-owned and settings-backed:
+
+1. memory task default in `memory.llm.models`
+2. preset-managed defaults for the current model route
+3. system memory defaults
+
+Model presets are:
+
+- `anthropic`: chat `opus`; one-time and recurring jobs inherit chat; memory
+  defaults use extractor `haiku`, dreaming `sonnet`, consolidation `sonnet`.
+- `openrouter`: chat uses `kimi`; jobs inherit chat; extractor, dreaming, and
+  consolidation use `kimi`.
+
+`gantry setup`, `gantry model use-preset`, `gantry model set chat`,
+`gantry model set jobs`, `gantry model reset`, and `PATCH /v1/models/defaults`
+all write `settings.yaml`. Postgres projections are not the source of truth for
+model defaults. Memory extraction, dreaming, and consolidation read the current
+validated settings at call time so new runs pick up model changes without a
+service restart.
+
+Catalog entries expose `responseFamily` as the canonical API shape, currently
+`anthropic` with `openai` reserved for schema-only future support. OpenRouter is
+route metadata on Anthropic-family aliases, not a core response family or
+execution provider selector.
+
 Provider SDK response usage is normalized into input tokens, output tokens,
 cache read tokens, cache write tokens, cache provider/status, and estimated
-cost when known. Job lifecycle events include the resolved catalog profile ID,
+cost when known. Job lifecycle events include the resolved catalog entry ID,
 alias, model source, cache policy, and token usage when the provider reports it.
 
 OpenRouter remains an Anthropic SDK adapter projection, not a core runtime
@@ -55,8 +102,10 @@ prompt-cache token fields are normalized.
 
 - `/models`, `/model`, `/status`, CLI model commands, API/SDK job creation, and
   MCP scheduler tools share the same resolver.
-- Provider slugs stay out of normal UX and are visible only as catalog/admin
-  implementation details.
+- CLI onboarding asks for a preset first, then shows catalog-generated aliases
+  for that route. Memory defaults remain preset-managed.
+- Raw provider model IDs stay out of normal UX and are visible only under
+  diagnostic route metadata.
 - New providers require catalog entries and adapter projection rules before they
   can be selected.
 - Raw provider credentials remain wrong-lane config and must not be accepted
