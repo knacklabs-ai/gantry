@@ -56,7 +56,9 @@ async function startWebhookRouteServer(): Promise<{
 
 describe('Interakt webhook route', () => {
   let channel: InteraktChannel | undefined;
-  let routeServer: Awaited<ReturnType<typeof startWebhookRouteServer>> | undefined;
+  let routeServer:
+    | Awaited<ReturnType<typeof startWebhookRouteServer>>
+    | undefined;
 
   afterEach(async () => {
     await channel?.disconnect();
@@ -127,12 +129,14 @@ describe('Interakt webhook route', () => {
   });
 
   it('routes signed customer messages through the BSS guardrail before agent work', async () => {
-    const outboundFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(init?.body).toBeDefined();
-      return new Response(JSON.stringify({ result: true, id: 'reply-1' }), {
-        status: 200,
-      });
-    }) as unknown as typeof fetch;
+    const outboundFetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.body).toBeDefined();
+        return new Response(JSON.stringify({ result: true, id: 'reply-1' }), {
+          status: 200,
+        });
+      },
+    ) as unknown as typeof fetch;
     const fakeAgentPath = vi.fn();
     const setCursor = vi.fn();
     const saveState = vi.fn(async () => undefined);
@@ -215,7 +219,10 @@ describe('Interakt webhook route', () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     await vi.waitFor(() => expect(outboundFetch).toHaveBeenCalledTimes(1));
     expect(fakeAgentPath).not.toHaveBeenCalled();
-    expect(setCursor).toHaveBeenCalledWith('wa:917000000001', expect.any(String));
+    expect(setCursor).toHaveBeenCalledWith(
+      'wa:917000000001',
+      expect.any(String),
+    );
     expect(saveState).toHaveBeenCalledTimes(1);
     const [, init] = outboundFetch.mock.calls[0]!;
     expect(JSON.parse(String(init?.body))).toMatchObject({

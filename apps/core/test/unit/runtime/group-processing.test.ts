@@ -482,7 +482,10 @@ describe('createGroupProcessor', () => {
   // =======================================================================
 
   describe('agent guardrails', () => {
-    const guardrail = { policy: 'bss_customer_support' as const, model: 'haiku' };
+    const guardrail = {
+      policy: 'bss_customer_support' as const,
+      model: 'haiku',
+    };
 
     it('rejects out-of-scope messages before typing or agent spawn', async () => {
       const group = makeGroup({

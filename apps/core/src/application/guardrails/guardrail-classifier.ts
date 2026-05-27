@@ -1,7 +1,4 @@
-import type {
-  GuardrailClassifier,
-  GuardrailClassifierInput,
-} from './types.js';
+import type { GuardrailClassifier, GuardrailClassifierInput } from './types.js';
 import { resolveModelSelection } from '../../shared/model-catalog.js';
 
 export type GuardrailLlmQuery = (input: {
@@ -17,7 +14,9 @@ export const createGuardrailClassifier = (options: {
   return async (input: GuardrailClassifierInput): Promise<unknown> => {
     const resolved = resolveModelSelection(input.model);
     if (!resolved.ok) {
-      throw new Error(`Invalid guardrail classifier model: ${resolved.message}`);
+      throw new Error(
+        `Invalid guardrail classifier model: ${resolved.message}`,
+      );
     }
     const text = await options.query({
       model: resolved.runnerModel,

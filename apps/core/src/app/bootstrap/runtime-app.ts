@@ -109,12 +109,8 @@ export interface RuntimeApp {
   // Configured agents from settings.yaml's agents: block, indexed by folder.
   // Used by the routing layer to synthesize routes for a provider's
   // default_agent (we need the agent's display name + folder).
-  setAgentsSettings: (
-    agents: Record<string, RuntimeConfiguredAgent>,
-  ) => void;
-  getAgentSettings: (
-    folder: string,
-  ) => RuntimeConfiguredAgent | undefined;
+  setAgentsSettings: (agents: Record<string, RuntimeConfiguredAgent>) => void;
+  getAgentSettings: (folder: string) => RuntimeConfiguredAgent | undefined;
 }
 
 export interface RuntimeAppOptions {

@@ -152,10 +152,7 @@ describe('BSS customer support guardrail', () => {
       reason: 'unknown_policy',
     });
     expect(
-      customerVisibleGuardrailResponse(
-        unknownPolicyConfig,
-        'scope_rejection',
-      ),
+      customerVisibleGuardrailResponse(unknownPolicyConfig, 'scope_rejection'),
     ).not.toMatch(/\b(?:mcp|admin|privacy guard|classifier|guardrail|tool)\b/i);
   });
 

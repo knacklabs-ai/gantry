@@ -20,10 +20,7 @@ export async function handlePreAgentGuardrail(input: {
   latestMessage: NewMessage;
   queueJid: string;
   guardrailClassifier?: GuardrailClassifier;
-  sendMessage: (
-    text: string,
-    options?: MessageSendOptions,
-  ) => Promise<void>;
+  sendMessage: (text: string, options?: MessageSendOptions) => Promise<void>;
   buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
   setCursor: GroupProcessingDeps['setCursor'];
   saveState: GroupProcessingDeps['saveState'];

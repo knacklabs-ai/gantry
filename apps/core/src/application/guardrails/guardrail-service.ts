@@ -84,7 +84,9 @@ function invalidClassifierDecision(): GuardrailDecision {
   };
 }
 
-function isGuardrailResponseKind(value: unknown): value is GuardrailResponseKind {
+function isGuardrailResponseKind(
+  value: unknown,
+): value is GuardrailResponseKind {
   return (
     value === 'greeting' ||
     value === 'scope_rejection' ||

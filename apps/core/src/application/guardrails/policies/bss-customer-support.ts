@@ -1,7 +1,4 @@
-import type {
-  GuardrailPolicy,
-  GuardrailResponseKind,
-} from '../types.js';
+import type { GuardrailPolicy, GuardrailResponseKind } from '../types.js';
 
 const BSS_GUARDRAIL_PROMPT = [
   'Classify the latest customer message for a Bombay Sweet Shop support agent.',
@@ -66,8 +63,10 @@ export const bssCustomerSupportPolicy: GuardrailPolicy = {
 };
 
 function latestCustomerText(messages: readonly string[]): string {
-  return [...messages]
-    .reverse()
-    .map((message) => message.trim())
-    .find((message) => message.length > 0) ?? '';
+  return (
+    [...messages]
+      .reverse()
+      .map((message) => message.trim())
+      .find((message) => message.length > 0) ?? ''
+  );
 }

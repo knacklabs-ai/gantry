@@ -113,15 +113,12 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     );
     let streamGeneration = (streamingGenerationCounter += 1);
     let progressGeneration = streamGeneration;
-    const {
-      buildMessageOptions,
-      buildStreamingOptions,
-      buildProgressOptions,
-    } = createThreadOptionBuilders({
-      activeThreadId,
-      getStreamGeneration: () => streamGeneration,
-      getProgressGeneration: () => progressGeneration,
-    });
+    const { buildMessageOptions, buildStreamingOptions, buildProgressOptions } =
+      createThreadOptionBuilders({
+        activeThreadId,
+        getStreamGeneration: () => streamGeneration,
+        getProgressGeneration: () => progressGeneration,
+      });
     const sendMessageToChannel = async (
       text: string,
       options?: MessageSendOptions,

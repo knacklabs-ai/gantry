@@ -2,9 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockRunClaudeQuery = vi.fn();
 
-const { createGuardrailClassifier } = await import(
-  '@core/application/guardrails/guardrail-classifier.js'
-);
+const { createGuardrailClassifier } =
+  await import('@core/application/guardrails/guardrail-classifier.js');
 
 describe('Guardrail classifier', () => {
   beforeEach(() => {
