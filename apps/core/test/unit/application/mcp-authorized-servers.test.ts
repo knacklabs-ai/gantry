@@ -29,7 +29,10 @@ describe('authorizedMcpServerIdsForAgent', () => {
           { serverId: 'mcp:other', status: 'active' },
         ],
         servers: [
-          ['mcp:github', { id: 'mcp:github', appId: 'default', name: 'github' }],
+          [
+            'mcp:github',
+            { id: 'mcp:github', appId: 'default', name: 'github' },
+          ],
           ['mcp:slack', { id: 'mcp:slack', appId: 'default', name: 'slack' }],
           ['mcp:other', { id: 'mcp:other', appId: 'other-app', name: 'other' }],
         ],

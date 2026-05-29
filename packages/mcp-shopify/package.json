@@ -25,8 +25,7 @@
     "dev": "node --enable-source-maps --import tsx src/index.ts",
     "watch": "node --watch --watch-path=./src --enable-source-maps --import tsx src/index.ts",
     "debug": "node --enable-source-maps --inspect=127.0.0.1:9229 --import tsx src/index.ts",
-    "debug-brk": "node --enable-source-maps --inspect-brk=127.0.0.1:9229 --import tsx src/index.ts",
-    "debug-watch": "node --watch --watch-path=./src --enable-source-maps --inspect=127.0.0.1:9229 --import tsx src/index.ts"
+    "debug-watch": "node --env-file=/Users/caw-d/gantry/.env --watch --watch-path=./src --enable-source-maps --inspect=127.0.0.1:9229 --import tsx src/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

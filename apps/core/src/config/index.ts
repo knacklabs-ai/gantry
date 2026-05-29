@@ -24,7 +24,7 @@ import { resolvePermissionApprovalTimeoutMs } from '../shared/permission-timeout
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 export * from './memory.js';
 export { syncRuntimeSettingsFromProjection } from './settings/restart-sync.js';
-export const POLL_INTERVAL = 2000;
+export const POLL_INTERVAL = 500;
 export type ControlEnvKey =
   | 'GANTRY_CONTROL_API_KEYS_JSON'
   | 'GANTRY_CONTROL_HOST'
