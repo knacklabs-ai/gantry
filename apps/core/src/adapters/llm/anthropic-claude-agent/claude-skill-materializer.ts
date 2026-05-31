@@ -15,7 +15,7 @@ import { isClaudeNativeReservedSkillName } from './native-sdk-skills.js';
 export interface ClaudeSkillSourceItem {
   id: string;
   name: string;
-  sourceType?: 'bundled' | 'artifact' | 'runtime';
+  sourceType?: 'bundled' | 'agent' | 'artifact' | 'runtime';
   sourceDir?: string;
   assets?: Array<{ path: string; content: Uint8Array }>;
   version?: string;
@@ -31,10 +31,7 @@ export interface SkillSource {
   }): Promise<ClaudeSkillSourceItem[]>;
 }
 
-export const GANTRY_BUNDLED_CLAUDE_SKILL_IDS = [
-  'boondi-kb',
-  'gantry-admin',
-] as const;
+export const GANTRY_BUNDLED_CLAUDE_SKILL_IDS = ['gantry-admin'] as const;
 
 export class BundledClaudeSkillSource implements SkillSource {
   constructor(private readonly packageRoot: string) {}
@@ -63,6 +60,75 @@ export class BundledClaudeSkillSource implements SkillSource {
         },
       ];
     });
+  }
+}
+
+/**
+ * Skills an agent bundles from its OWN runtime folder (`<agentDir>/skills/<id>/`),
+ * rather than from Gantry core. This is the skill-materialization analog of the
+ * agent-owned guardrail plugin and `MEMORY_EXTRACTION.md`: the framework provides
+ * the mechanism, the runtime agent owns the content (see
+ * `platform/agent-content.ts`). An agent's domain-specific knowledge-base skill
+ * lives here instead of being hardcoded into core's bundled-skill list.
+ *
+ * `agentDir` is the agent's runtime group dir (`<GANTRY_HOME>/agents/<folder>`),
+ * which core reads to materialize; the agent process itself is denied read/write
+ * to `<agentDir>/skills` (see `workspaceProtectedPaths`), so it can't tamper.
+ *
+ * Opt-in by declaration: a `skills/<id>/SKILL.md` on disk is materialized ONLY
+ * when the agent's settings.yaml declares the id under `plugins.skills`
+ * (passed as `activatedSkillIds`). A skill folder that is present but undeclared
+ * is inert — this keeps the framework generic, so an agent can keep many
+ * candidate skills on disk and switch them on/off purely via configuration.
+ * Beyond that gate it mirrors `BundledClaudeSkillSource` (same `enabled`
+ * formula, same `SKILL.md` presence gate, no `isDirectory()` filter so a
+ * symlinked skill dir still resolves), and the shared `materializeClaudeSkills`
+ * pipeline applies the same reserved-name / collision / frontmatter validation.
+ */
+export class AgentBundledClaudeSkillSource implements SkillSource {
+  /**
+   * @param agentDir the agent's runtime group dir.
+   * @param activatedSkillIds folder skill ids the agent's settings.yaml declares
+   *   under `plugins.skills`. Defaults to none: a caller that passes no
+   *   declaration activates no folder skills.
+   */
+  constructor(
+    private readonly agentDir: string,
+    private readonly activatedSkillIds: readonly string[] = [],
+  ) {}
+
+  async listSkills(input?: {
+    enabledSkillIds?: string[];
+  }): Promise<ClaudeSkillSourceItem[]> {
+    const skillsRoot = path.join(this.agentDir, 'skills');
+    if (!fs.existsSync(skillsRoot)) return [];
+    const activated = new Set(this.activatedSkillIds);
+    const enabled = input?.enabledSkillIds
+      ? new Set(input.enabledSkillIds)
+      : undefined;
+
+    return fs
+      .readdirSync(skillsRoot)
+      .sort()
+      .flatMap((skillId) => {
+        const sourceDir = path.join(skillsRoot, skillId);
+        if (!fs.existsSync(path.join(sourceDir, 'SKILL.md'))) {
+          return [];
+        }
+        // Opt-in gate: only ids the agent's settings.yaml declared are active.
+        if (!activated.has(skillId)) {
+          return [];
+        }
+        return [
+          {
+            id: skillId,
+            name: skillId,
+            sourceType: 'agent',
+            sourceDir,
+            enabled: !enabled || enabled.has(skillId),
+          },
+        ];
+      });
   }
 }
 

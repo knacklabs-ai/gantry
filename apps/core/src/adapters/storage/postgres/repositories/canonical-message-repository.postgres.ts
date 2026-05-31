@@ -276,6 +276,62 @@ export class PostgresCanonicalMessageRepository {
       .limit(input.limit ?? 200);
   }
 
+  // Most recent N messages in BOTH directions (no inbound-only filter), newest
+  // first — the caller reverses to chronological order. Unlike
+  // listInboundMessages this includes assistant/bot replies, so a pre-agent
+  // guardrail can see what the customer is replying to.
+  async listRecentMessages(input: {
+    jid: string;
+    threadId?: string | null;
+    hasThreadFilter?: boolean;
+    limit?: number;
+  }): Promise<CanonicalOpsMessageRow[]> {
+    const conversationId = conversationIdForJid(input.jid);
+    const threadId = input.threadId?.trim() || null;
+    const m = pgSchema.messagesPostgres;
+    const p = pgSchema.messagePartsPostgres;
+    const firstPart = this.db
+      .select({ payloadJson: p.payloadJson })
+      .from(p)
+      .where(eq(p.messageId, m.id))
+      .orderBy(
+        sql`CASE WHEN ${p.kind} = 'text' THEN 0 ELSE 1 END`,
+        asc(p.ordinal),
+      )
+      .limit(1)
+      .as('first_part');
+    const canonicalThreadId = threadId
+      ? threadIdFor(input.jid, threadId)
+      : null;
+    const threadFilter = input.hasThreadFilter
+      ? canonicalThreadId
+        ? eq(m.threadId, canonicalThreadId)
+        : isNull(m.threadId)
+      : undefined;
+    return this.db
+      .select({
+        id: m.id,
+        conversation_id: m.conversationId,
+        thread_id: m.threadId,
+        external_ref_json: sql<string | null>`${m.externalRefJson}::text`,
+        direction: m.direction,
+        sender_user_id: m.senderUserId,
+        sender_display_name: m.senderDisplayName,
+        trust: m.trust,
+        created_at: m.createdAt,
+        received_at: m.receivedAt,
+        delivery_status: m.deliveryStatus,
+        delivered_at: m.deliveredAt,
+        delivery_error: m.deliveryError,
+        payload_json: sql<string | null>`${firstPart.payloadJson}::text`,
+      })
+      .from(m)
+      .leftJoinLateral(firstPart, sql`true`)
+      .where(and(eq(m.conversationId, conversationId), threadFilter))
+      .orderBy(desc(m.createdAt), desc(m.id))
+      .limit(input.limit ?? 12);
+  }
+
   async listThreadIds(chatJid: string): Promise<Array<string | null>> {
     const m = pgSchema.messagesPostgres;
     const rows = await this.db

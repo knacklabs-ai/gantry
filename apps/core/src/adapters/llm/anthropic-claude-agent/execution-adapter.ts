@@ -22,6 +22,7 @@ import {
 import { isOpenRouterModelRoute } from '../../../shared/model-catalog.js';
 import { validateModelCredentialProjectionForEntry } from './model-provider-credential-validation.js';
 import {
+  AgentBundledClaudeSkillSource,
   ArtifactClaudeSkillSource,
   BundledClaudeSkillSource,
   CompositeSkillSource,
@@ -232,6 +233,12 @@ export class AnthropicClaudeAgentExecutionAdapter implements AgentExecutionAdapt
   ): SkillSource[] {
     const skillSources: SkillSource[] = [
       new BundledClaudeSkillSource(packageRoot),
+      // Folder skills are opt-in: only ids the agent's settings.yaml declares
+      // under `plugins.skills` are materialized (undeclared folders stay inert).
+      new AgentBundledClaudeSkillSource(
+        input.groupDir,
+        input.group.agentConfig?.plugins?.skills ?? [],
+      ),
     ];
     if (input.browserIpcEnabled) {
       skillSources.push(new RuntimeInstalledGantryBrowserSkillSource());

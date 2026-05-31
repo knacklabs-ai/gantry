@@ -43,6 +43,26 @@ vi.mock('@core/infrastructure/logging/logger.js', () => ({
   },
 }));
 
+// The guardrail policy is an agent-owned plugin loaded from the runtime folder.
+// These tests exercise group-processing's INTEGRATION with the guardrail (not
+// the loader, which has its own test), so resolve the real Boondi plugin
+// directly rather than staging a file under the mocked config's AGENTS_DIR.
+vi.mock('@core/application/guardrails/policy-registry.js', async () => {
+  const actual = await vi.importActual<
+    typeof import('@core/application/guardrails/policy-registry.js')
+  >('@core/application/guardrails/policy-registry.js');
+  const boondiPolicy = (
+    await import('../../../../../agents/boondi_support/guardrails/guardrail.ts')
+  ).default;
+  return {
+    ...actual,
+    resolveGuardrailPolicy: vi.fn(async () => ({
+      policy: boondiPolicy,
+      source: 'plugin' as const,
+    })),
+  };
+});
+
 const mockRunDreamingSweep = vi.fn();
 const mockGetMemoryStatus = vi.fn();
 const mockSaveProcedure = vi.fn();
@@ -487,15 +507,14 @@ describe('createGroupProcessor', () => {
   // =======================================================================
 
   describe('agent guardrails', () => {
-    const guardrail = {
-      policy: 'bss_customer_support' as const,
-      model: 'haiku',
+    const plugins = {
+      guardrail: { file: 'guardrail.ts', model: 'haiku' },
     };
 
     it('rejects out-of-scope messages before typing or agent spawn', async () => {
       const group = makeGroup({
         requiresTrigger: false,
-        agentConfig: { guardrail },
+        agentConfig: { plugins },
       });
       const messages = [makeMessage({ content: 'What is the weather?' })];
       const { deps, channel } = setupHappyPath({ group, messages });
@@ -523,7 +542,7 @@ describe('createGroupProcessor', () => {
     it('answers greetings directly before agent spawn', async () => {
       const group = makeGroup({
         requiresTrigger: false,
-        agentConfig: { guardrail },
+        agentConfig: { plugins },
       });
       const messages = [makeMessage({ content: 'Hey' })];
       const { deps, channel } = setupHappyPath({ group, messages });
@@ -543,7 +562,7 @@ describe('createGroupProcessor', () => {
     it('allows BSS support messages through the existing runner path', async () => {
       const group = makeGroup({
         requiresTrigger: false,
-        agentConfig: { guardrail },
+        agentConfig: { plugins },
       });
       const messages = [makeMessage({ content: 'What was my last order?' })];
       const { deps, channel } = setupHappyPath({ group, messages });
@@ -560,7 +579,7 @@ describe('createGroupProcessor', () => {
     it('classifies ambiguous messages once without spawning tools first', async () => {
       const group = makeGroup({
         requiresTrigger: false,
-        agentConfig: { guardrail },
+        agentConfig: { plugins },
       });
       const messages = [makeMessage({ content: 'Can you help me?' })];
       const classifier = vi.fn().mockResolvedValue({

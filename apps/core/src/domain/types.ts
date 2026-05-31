@@ -27,8 +27,46 @@ export interface AllowedRoot {
 }
 
 export interface GuardrailConfig {
-  policy: string;
+  /**
+   * Exact guardrail plugin file in the agent's runtime folder (e.g.
+   * `"guardrail.ts"`). The agent may keep several candidate guardrail files on
+   * disk; only the one named here is loaded and run. The extension is optional
+   * — the loader resolves `.ts` (dev) then `.js` (prod) from the base name.
+   */
+  file: string;
+  /** Model alias for the guardrail's LLM-classifier stage. */
   model: string;
+}
+
+/**
+ * Declares WHICH agent-owned plugins (files that physically live in the agent's
+ * runtime folder, `<AGENTS_DIR>/<folder>/`) are ACTIVATED for this agent.
+ *
+ * The contract is opt-in: a plugin file present in the folder does NOTHING
+ * unless it is named here. This keeps Gantry core generic — the framework only
+ * loads agent-specific behaviour the agent's settings.yaml explicitly declares,
+ * so an agent can keep many candidate plugins on disk and switch them on/off
+ * purely via configuration (no code or file moves).
+ */
+export interface AgentPluginsConfig {
+  /**
+   * The guardrail plugin: the exact guardrail file to activate plus the model
+   * its classifier stage uses. Omit to run no guardrail (messages reach the
+   * agent directly).
+   */
+  guardrail?: GuardrailConfig;
+  /**
+   * Filename (relative to the agent folder) of the memory-extraction system
+   * prompt. When omitted, the generic in-core extraction prompt is used; a
+   * `MEMORY_EXTRACTION.md` left in the folder but not named here is ignored.
+   */
+  memoryExtraction?: string;
+  /**
+   * Folder-bundled skill ids to activate (each a directory under
+   * `<folder>/skills/<id>/` containing `SKILL.md`). Only listed ids are
+   * materialized for the agent; undeclared skill folders are inert.
+   */
+  skills?: string[];
 }
 
 export interface AgentConfig {
@@ -37,7 +75,7 @@ export interface AgentConfig {
   model?: string; // Optional model alias/full name for this group
   thinking?: ThinkingOverride; // Optional thinking override for this group
   timeout?: number; // Default: 300000 (5 minutes)
-  guardrail?: GuardrailConfig;
+  plugins?: AgentPluginsConfig;
 }
 
 export interface ConversationRoute {

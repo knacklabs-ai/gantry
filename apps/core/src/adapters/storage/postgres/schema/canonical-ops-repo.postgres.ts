@@ -161,6 +161,14 @@ export class PostgresRuntimeRepositoryBundle
     return this.messages.getMessagesSince(chatJid, sinceCursor, limit, options);
   }
 
+  async getRecentMessages(
+    chatJid: string,
+    limit: number = 12,
+    options: { threadId?: string | null } = {},
+  ): Promise<NewMessage[]> {
+    return this.messages.getRecentMessages(chatJid, limit, options);
+  }
+
   async getMessageThreadIds(chatJid: string): Promise<Array<string | null>> {
     return this.messages.getMessageThreadIds(chatJid);
   }

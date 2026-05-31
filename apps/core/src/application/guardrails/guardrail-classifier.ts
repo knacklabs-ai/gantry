@@ -25,6 +25,12 @@ export const createGuardrailClassifier = (options: {
       prompt: JSON.stringify(
         {
           policy: input.policy,
+          // Recent prior turns (oldest→newest), role-tagged, so the classifier
+          // can judge the latest message in conversation context. Omitted when
+          // empty so a cold first turn is serialized exactly as before.
+          ...(input.context && input.context.length > 0
+            ? { conversation: input.context }
+            : {}),
           messages: input.messages,
         },
         null,

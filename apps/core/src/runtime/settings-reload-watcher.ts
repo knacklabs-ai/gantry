@@ -1,6 +1,5 @@
 import fs from 'fs';
 
-import { guardrailPolicySettingsValidator } from '../application/guardrails/policy-registry.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import type { RuntimeApp } from '../app/bootstrap/runtime-app.js';
 import {
@@ -66,7 +65,6 @@ export function startSettingsReloadWatcher(
       const service = new SettingsDesiredStateService({
         ops: options.ops,
         repositories: options.repositories,
-        guardrailPolicies: guardrailPolicySettingsValidator(),
       });
       const loadedSettings = settings;
       const cleanup =

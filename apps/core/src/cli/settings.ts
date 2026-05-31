@@ -5,7 +5,6 @@ import {
   getRuntimeStorage,
   initializeRuntimeStorage,
 } from '../adapters/storage/postgres/runtime-store.js';
-import { guardrailPolicySettingsValidator } from '../application/guardrails/policy-registry.js';
 import { SettingsDesiredStateService } from '../config/settings/desired-state-service.js';
 import {
   loadRuntimeSettings,
@@ -38,7 +37,6 @@ export async function runSettingsCommand(
     const service = new SettingsDesiredStateService({
       ops: storage.ops,
       repositories: storage.repositories,
-      guardrailPolicies: guardrailPolicySettingsValidator(),
     });
     const settings = loadRuntimeSettings(runtimeHome);
 

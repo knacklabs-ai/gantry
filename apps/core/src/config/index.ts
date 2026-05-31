@@ -18,7 +18,10 @@ import {
 } from './settings/model-defaults.js';
 import { settingsFilePath } from './settings/runtime-home.js';
 import { DEFAULT_AGENT_NAME } from './settings/runtime-settings-defaults.js';
-import type { RuntimeSettings } from './settings/runtime-settings-types.js';
+import type {
+  RuntimeConfiguredAgentPlugins,
+  RuntimeSettings,
+} from './settings/runtime-settings-types.js';
 import { isValidTimezone } from '../shared/timezone.js';
 import { resolvePermissionApprovalTimeoutMs } from '../shared/permission-timeout.js';
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
@@ -88,6 +91,22 @@ export function getConfiguredAgentName(): string {
     );
   } catch {
     return DEFAULT_AGENT_NAME;
+  }
+}
+/**
+ * Plugin declarations for a configured agent FOLDER (the `agents.<folder>.plugins`
+ * block), or undefined when the agent or block is absent. This is how
+ * runtime-only code (e.g. memory boundary extraction) discovers which
+ * agent-owned folder plugins the operator opted into without holding a route.
+ */
+export function getConfiguredAgentPluginsForFolder(
+  folder: string,
+): RuntimeConfiguredAgentPlugins | undefined {
+  try {
+    return getRuntimeSettingsForConfig().agents[folder]?.plugins;
+    // eslint-disable-next-line no-catch-all/no-catch-all -- Unreadable/invalid settings means "no declared plugins"; callers fall back to generic behaviour rather than failing the boundary operation.
+  } catch {
+    return undefined;
   }
 }
 export const ASSISTANT_NAME = getConfiguredAgentName();

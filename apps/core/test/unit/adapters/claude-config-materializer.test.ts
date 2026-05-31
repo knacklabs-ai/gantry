@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { materializeClaudeRuntime } from '@core/adapters/llm/anthropic-claude-agent/claude-config-materializer.js';
 import {
+  AgentBundledClaudeSkillSource,
   ArtifactClaudeSkillSource,
   BundledClaudeSkillSource,
   GANTRY_BUNDLED_CLAUDE_SKILL_IDS,
@@ -551,5 +552,126 @@ description: mismatch
       fs.existsSync(path.join(skillsDir, 'valid-skill', 'secret-link.txt')),
     ).toBe(false);
     expect(fs.existsSync(path.join(skillsDir, 'invalid-skill'))).toBe(false);
+  });
+});
+
+describe('AgentBundledClaudeSkillSource', () => {
+  let tempRoot = '';
+  let agentDir = '';
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-agent-skills-'));
+    // Mirrors the runtime: groupDir === <GANTRY_HOME>/agents/<folder>.
+    agentDir = path.join(tempRoot, 'agents', 'boondi_support');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  function writeAgentSkill(skillId: string): void {
+    const dir = path.join(agentDir, 'skills', skillId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'SKILL.md'),
+      `---\nname: ${skillId}\n---\n# ${skillId}`,
+    );
+  }
+
+  it('activates only the agent-owned skills declared in plugins.skills (opt-in)', async () => {
+    writeAgentSkill('agent-kb');
+    writeAgentSkill('second-kb');
+
+    // Both folders exist on disk; both are declared, so both are listed.
+    const skills = await new AgentBundledClaudeSkillSource(agentDir, [
+      'agent-kb',
+      'second-kb',
+    ]).listSkills();
+
+    // Sorted by id for determinism; sourceType marks agent provenance.
+    expect(skills).toEqual([
+      {
+        id: 'agent-kb',
+        name: 'agent-kb',
+        sourceType: 'agent',
+        sourceDir: path.join(agentDir, 'skills', 'agent-kb'),
+        enabled: true,
+      },
+      {
+        id: 'second-kb',
+        name: 'second-kb',
+        sourceType: 'agent',
+        sourceDir: path.join(agentDir, 'skills', 'second-kb'),
+        enabled: true,
+      },
+    ]);
+  });
+
+  it('leaves undeclared folder skills inert (folder presence alone does nothing)', async () => {
+    writeAgentSkill('agent-kb');
+    writeAgentSkill('second-kb');
+
+    // Only agent-kb is declared; second-kb sits on disk but must stay inert.
+    const declared = await new AgentBundledClaudeSkillSource(agentDir, [
+      'agent-kb',
+    ]).listSkills();
+    expect(declared.map((skill) => skill.id)).toEqual(['agent-kb']);
+
+    // No declaration at all => no folder skills are activated.
+    const none = await new AgentBundledClaudeSkillSource(agentDir).listSkills();
+    expect(none).toEqual([]);
+  });
+
+  it('returns [] when the agent ships no skills/ directory', async () => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    expect(
+      await new AgentBundledClaudeSkillSource(agentDir, [
+        'agent-kb',
+      ]).listSkills(),
+    ).toEqual([]);
+  });
+
+  it('ignores entries without a SKILL.md (stray dirs/files)', async () => {
+    writeAgentSkill('agent-kb');
+    fs.mkdirSync(path.join(agentDir, 'skills', 'notes'), { recursive: true });
+    fs.writeFileSync(path.join(agentDir, 'skills', 'README.txt'), 'hi');
+
+    const skills = await new AgentBundledClaudeSkillSource(agentDir, [
+      'agent-kb',
+      'notes',
+    ]).listSkills();
+    expect(skills.map((skill) => skill.id)).toEqual(['agent-kb']);
+  });
+
+  it('marks declared skills outside enabledSkillIds as disabled (mirrors BundledClaudeSkillSource)', async () => {
+    writeAgentSkill('agent-kb');
+    writeAgentSkill('second-kb');
+
+    const skills = await new AgentBundledClaudeSkillSource(agentDir, [
+      'agent-kb',
+      'second-kb',
+    ]).listSkills({
+      enabledSkillIds: ['agent-kb'],
+    });
+
+    expect(skills.find((skill) => skill.id === 'agent-kb')?.enabled).toBe(true);
+    expect(skills.find((skill) => skill.id === 'second-kb')?.enabled).toBe(
+      false,
+    );
+  });
+
+  it('materializes declared agent-owned skills through the shared pipeline', async () => {
+    writeAgentSkill('agent-kb');
+    const skillsDir = path.join(tempRoot, 'run', 'claude', 'skills');
+
+    const materialized = await materializeClaudeSkills({
+      skillsDir,
+      skillSource: new AgentBundledClaudeSkillSource(agentDir, ['agent-kb']),
+    });
+
+    expect(materialized.map((skill) => skill.id)).toEqual(['agent-kb']);
+    expect(fs.existsSync(path.join(skillsDir, 'agent-kb', 'SKILL.md'))).toBe(
+      true,
+    );
   });
 });

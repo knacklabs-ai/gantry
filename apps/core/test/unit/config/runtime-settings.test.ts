@@ -105,43 +105,45 @@ agents:
     expect(renderRuntimeSettingsYaml(parsed)).toContain('mcp_servers:');
   });
 
-  it('renders and parses configured agent guardrail policy', () => {
+  it('renders and parses the configured agent guardrail plugin (file + model)', () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.boondi_support = {
       name: 'Boondi',
       folder: 'boondi_support',
-      guardrail: {
-        policy: 'bss_customer_support',
-        model: 'haiku',
+      plugins: {
+        guardrail: { file: 'guardrail.ts', model: 'haiku' },
       },
       bindings: {},
-      capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
+      sources: { skills: [], mcpServers: [], tools: [] },
+      capabilities: [],
     };
 
     const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('plugins:');
     expect(yaml).toContain('guardrail:');
-    expect(yaml).toContain('policy: bss_customer_support');
+    expect(yaml).toContain('file: guardrail.ts');
     expect(yaml).toContain('model: haiku');
 
     const parsed = parseRuntimeSettings(yaml);
-    expect(parsed.agents.boondi_support.guardrail).toEqual({
-      policy: 'bss_customer_support',
+    expect(parsed.agents.boondi_support.plugins?.guardrail).toEqual({
+      file: 'guardrail.ts',
       model: 'haiku',
     });
   });
 
-  it('parses configured agent guardrail policies for registry validation', () => {
+  it('parses the configured agent guardrail plugin from YAML', () => {
     const parsed = parseRuntimeSettings(`
 agents:
   boondi_support:
     name: Boondi
-    guardrail:
-      policy: general_support
-      model: haiku
+    plugins:
+      guardrail:
+        file: guardrail.ts
+        model: haiku
 `);
 
-    expect(parsed.agents.boondi_support?.guardrail).toEqual({
-      policy: 'general_support',
+    expect(parsed.agents.boondi_support?.plugins?.guardrail).toEqual({
+      file: 'guardrail.ts',
       model: 'haiku',
     });
   });
@@ -152,12 +154,13 @@ agents:
 agents:
   boondi_support:
     name: Boondi
-    guardrail:
-      policy: bss_customer_support
-      model: claude-haiku-4-5-20251001
+    plugins:
+      guardrail:
+        file: guardrail.ts
+        model: claude-haiku-4-5-20251001
 `),
     ).toThrow(
-      'agents.boondi_support.guardrail.model is invalid: Provider model ID "claude-haiku-4-5-20251001" is not accepted here. Use a model alias from /models.',
+      'agents.boondi_support.plugins.guardrail.model is invalid: Provider model ID "claude-haiku-4-5-20251001" is not accepted here. Use a model alias from /models.',
     );
   });
 

@@ -104,13 +104,15 @@ async function ensureInteraktDirectRoute(input: {
       return false;
     }
     // Mirror desired-state-service.ts's agentConfig shape so per-customer
-    // routes synthesized via default_agent get the agent's runtime config.
+    // routes synthesized via default_agent get the agent's runtime config
+    // (declared plugins — guardrail, extraction prompt, skills — included, so
+    // the gates fire here too).
     const agentConfig =
-      agent.model || agent.persona || agent.guardrail
+      agent.model || agent.persona || agent.plugins
         ? {
             model: agent.model,
             persona: agent.persona,
-            guardrail: agent.guardrail,
+            plugins: agent.plugins,
           }
         : undefined;
     const synthesized: ConversationRoute = {

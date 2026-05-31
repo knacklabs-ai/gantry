@@ -1,6 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { collectDurableMemoryFromRepositories } from '@core/memory/boundary-extraction-core.js';
+import { getConfiguredAgentPluginsForFolder } from '@core/config/index.js';
+
+// The agent-owned extraction prompt is OPT-IN: it is used only when the agent's
+// settings.yaml declares it under `plugins.memory_extraction`. Mock the settings
+// accessor so these unit tests control the declaration without standing up a
+// full settings.yaml; all other config exports are preserved.
+vi.mock('@core/config/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/config/index.js')>();
+  return {
+    ...actual,
+    getConfiguredAgentPluginsForFolder: vi.fn(() => undefined),
+  };
+});
 
 describe('collectDurableMemoryFromRepositories', () => {
   function makeRepositories() {
@@ -647,5 +662,91 @@ describe('collectDurableMemoryFromRepositories', () => {
     expect(serializedPayload).not.toContain(secretToken);
     expect(serializedPayload).not.toContain(rawToolResultBody);
     expect(serializedPayload).not.toContain('raw-tool-result-body');
+  });
+
+  describe('agent-owned extraction prompt (opt-in via plugins.memory_extraction)', () => {
+    // session.agentId is 'agent:kai' → folder 'kai' under <GANTRY_HOME>/agents.
+    const agentDir = path.join(
+      process.env.GANTRY_HOME as string,
+      'agents',
+      'kai',
+    );
+
+    afterEach(() => {
+      fs.rmSync(agentDir, { recursive: true, force: true });
+      vi.mocked(getConfiguredAgentPluginsForFolder).mockReturnValue(undefined);
+    });
+
+    it('passes the declared extraction prompt to the extractor when present', async () => {
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(agentDir, 'MEMORY_EXTRACTION.md'),
+        'AGENT CUSTOM EXTRACTION PROMPT',
+        'utf8',
+      );
+      // The agent declares the prompt in settings.yaml → it is loaded.
+      vi.mocked(getConfiguredAgentPluginsForFolder).mockReturnValue({
+        memoryExtraction: 'MEMORY_EXTRACTION.md',
+      });
+      const { repositories } = makeRepositories();
+      const extractFacts = vi.fn().mockReturnValue([]);
+
+      await collectDurableMemoryFromRepositories({
+        agentSessionId: 'agent-session:1',
+        trigger: 'session-end',
+        repositories,
+        defaultScope: 'user',
+        extractFacts,
+      });
+
+      expect(extractFacts).toHaveBeenCalledTimes(1);
+      expect(extractFacts.mock.calls[0][0]).toMatchObject({
+        extractionSystemPrompt: 'AGENT CUSTOM EXTRACTION PROMPT',
+      });
+    });
+
+    it('leaves the prompt inert when the file is present but NOT declared in settings', async () => {
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(agentDir, 'MEMORY_EXTRACTION.md'),
+        'AGENT CUSTOM EXTRACTION PROMPT',
+        'utf8',
+      );
+      // No declaration (accessor returns undefined) → the on-disk file is ignored
+      // and the extractor falls back to the generic in-core default.
+      const { repositories } = makeRepositories();
+      const extractFacts = vi.fn().mockReturnValue([]);
+
+      await collectDurableMemoryFromRepositories({
+        agentSessionId: 'agent-session:1',
+        trigger: 'session-end',
+        repositories,
+        defaultScope: 'user',
+        extractFacts,
+      });
+
+      expect(extractFacts).toHaveBeenCalledTimes(1);
+      expect(
+        extractFacts.mock.calls[0][0].extractionSystemPrompt,
+      ).toBeUndefined();
+    });
+
+    it('omits extractionSystemPrompt when the agent declares nothing (generic default)', async () => {
+      const { repositories } = makeRepositories();
+      const extractFacts = vi.fn().mockReturnValue([]);
+
+      await collectDurableMemoryFromRepositories({
+        agentSessionId: 'agent-session:1',
+        trigger: 'session-end',
+        repositories,
+        defaultScope: 'user',
+        extractFacts,
+      });
+
+      expect(extractFacts).toHaveBeenCalledTimes(1);
+      expect(
+        extractFacts.mock.calls[0][0].extractionSystemPrompt,
+      ).toBeUndefined();
+    });
   });
 });

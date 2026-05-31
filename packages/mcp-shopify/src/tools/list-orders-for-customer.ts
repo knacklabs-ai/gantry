@@ -66,7 +66,7 @@ export function registerListOrdersForCustomer(
 ): void {
   server.tool(
     'list_orders_for_customer',
-    'List recent Shopify orders for the verified caller (matched by phone/email). Defaults to OPEN orders, sorted newest first.',
+    "List recent Shopify orders for the verified caller (matched by phone/email). Defaults to ALL statuses (open + fulfilled/closed), sorted newest first, so the first result is the customer's true most recent order. Pass statusFilter: 'OPEN' to see only unfulfilled orders.",
     inputSchema,
     async (args) => {
       try {
@@ -90,7 +90,12 @@ export function registerListOrdersForCustomer(
             )
           : null;
 
-        const filter = args.statusFilter ?? 'OPEN';
+        // Default to ALL statuses: a customer asking for their "most recent /
+        // last order" means newest overall, including already-fulfilled orders.
+        // Defaulting to OPEN here would report the most recent UNFULFILLED order
+        // and miss a newer delivered one. Callers wanting only open orders pass
+        // statusFilter: 'OPEN' explicitly.
+        const filter = args.statusFilter ?? 'ANY';
         const limit = args.limit ?? 10;
         const customerToken =
           ownership?.resolvedId.split('/').pop() ??

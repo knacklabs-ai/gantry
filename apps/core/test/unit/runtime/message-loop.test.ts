@@ -964,7 +964,9 @@ describe('continuation-path guardrail', () => {
     trigger: '@Andy',
     added_at: '2024-01-01T00:00:00.000Z',
     requiresTrigger: false,
-    agentConfig: { guardrail: { policy: 'boondi', model: 'test-model' } },
+    agentConfig: {
+      plugins: { guardrail: { file: 'guardrail.ts', model: 'test-model' } },
+    },
   } as unknown as ConversationRoute;
 
   const inboundMsg = {

@@ -17,6 +17,9 @@ import type {
   MemoryExtractionResult,
 } from './extractor-types.js';
 import { nowIso } from '../shared/time/datetime.js';
+import { readAgentRuntimeFile } from '../platform/agent-content.js';
+import { folderForAgentId } from '../config/settings/desired-state-service-helpers.js';
+import { getConfiguredAgentPluginsForFolder } from '../config/index.js';
 import { resolveScopedMemorySubject } from './app-memory-subject-resolver.js';
 import { sanitizeOutboundLlmText } from '../shared/sensitive-material.js';
 import {
@@ -147,6 +150,22 @@ export async function collectDurableMemoryFromRepositories(input: {
   const turns = promptPayload.turns;
   if (turns.length === 0) return { saved: 0 };
 
+  // Agent-owned extraction prompt: used ONLY when the agent's settings.yaml
+  // declares it (`agents.<folder>.plugins.memory_extraction: <file>`). The named
+  // file is read from the agent's runtime folder; if the agent declares nothing
+  // — or the declared file is missing — the extractor falls back to the generic
+  // in-core default. A `MEMORY_EXTRACTION.md` left in the folder but not declared
+  // is intentionally inert. Runtime-only resolution; no domain content in core.
+  const extractionFolder = folderForAgentId(session.agentId);
+  const declaredExtractionFile = extractionFolder
+    ? getConfiguredAgentPluginsForFolder(extractionFolder)?.memoryExtraction
+    : undefined;
+  const extractionSystemPrompt =
+    extractionFolder && declaredExtractionFile
+      ? (readAgentRuntimeFile(extractionFolder, declaredExtractionFile) ??
+        undefined)
+      : undefined;
+
   input.signal?.throwIfAborted();
   const extractionTimeoutMs = Math.max(
     1,
@@ -163,6 +182,7 @@ export async function collectDurableMemoryFromRepositories(input: {
             retrievedItems: promptPayload.retrievedItems,
             signal,
             timeoutMs: extractionTimeoutMs,
+            ...(extractionSystemPrompt ? { extractionSystemPrompt } : {}),
           }),
         ),
       {

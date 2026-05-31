@@ -1,6 +1,9 @@
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import type { AppId } from '../../domain/app/app.js';
-import type { GuardrailConfig } from '../../domain/types.js';
+import type {
+  AgentPluginsConfig,
+  GuardrailConfig,
+} from '../../domain/types.js';
 import type {
   AgentRepository,
   ConversationRepository,
@@ -22,6 +25,7 @@ export interface StoredAgentBinding {
     model?: string;
     persona?: AgentPersona;
     guardrail?: GuardrailConfig;
+    plugins?: AgentPluginsConfig;
   };
   // Marks this binding as a clone-source template for inbound messages whose
   // external id has no specific route yet. Mirrored from settings.yaml
@@ -59,10 +63,6 @@ export interface SettingsDesiredStateServiceDeps {
   appId?: AppId;
   ops: SettingsDesiredStateOps;
   repositories: SettingsDesiredStateRepositories;
-  guardrailPolicies?: {
-    isRegistered(policyId: string): boolean;
-    registeredIds(): readonly string[];
-  };
   clock?: { now(): string };
 }
 

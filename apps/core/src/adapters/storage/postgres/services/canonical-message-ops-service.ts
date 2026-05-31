@@ -76,6 +76,26 @@ export class CanonicalMessageOpsService {
     return rows.map((row) => this.mapMessage(row)).slice(0, limit);
   }
 
+  async getRecentMessages(
+    chatJid: string,
+    limit: number = 12,
+    options: { threadId?: string | null } = {},
+  ): Promise<NewMessage[]> {
+    const hasThreadFilter = Object.prototype.hasOwnProperty.call(
+      options,
+      'threadId',
+    );
+    const rows = await this.repository.listRecentMessages({
+      jid: chatJid,
+      threadId: options.threadId ?? null,
+      hasThreadFilter,
+      limit,
+    });
+    // listRecentMessages returns newest-first; reverse to chronological order
+    // (oldest→newest) so the guardrail reads context in conversation order.
+    return rows.reverse().map((row) => this.mapMessage(row));
+  }
+
   async getMessageThreadIds(chatJid: string): Promise<Array<string | null>> {
     return this.repository.listThreadIds(chatJid);
   }

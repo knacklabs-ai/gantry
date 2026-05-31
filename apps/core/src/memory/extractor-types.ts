@@ -8,6 +8,12 @@ export interface ArcExtractionInput {
   onUsage?: (usage: MemoryExtractorUsage) => void;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * Agent-supplied extraction system prompt (from the agent's runtime
+   * `MEMORY_EXTRACTION.md`). When omitted, the generic in-core default
+   * (`MEMORY_EXTRACTION_SYSTEM_PROMPT`) is used.
+   */
+  extractionSystemPrompt?: string;
 }
 
 export interface MemoryExtractorUsage {

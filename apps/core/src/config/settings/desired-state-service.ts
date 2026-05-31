@@ -131,7 +131,6 @@ export class SettingsDesiredStateService {
         .filter((jid) => !configuredJids.has(jid))
         .sort(),
       invalidReferences: [
-        ...this.validateConfiguredGuardrails(settings),
         ...this.validateConfiguredMcpServers(settings),
         ...(await this.validateCapabilityReferences(settings)),
       ],
@@ -151,7 +150,6 @@ export class SettingsDesiredStateService {
     ]);
 
     const configuredReferenceErrors = [
-      ...this.validateConfiguredGuardrails(settings),
       ...this.validateConfiguredMcpServers(settings),
     ];
     if (configuredReferenceErrors.length > 0) {
@@ -203,11 +201,11 @@ export class SettingsDesiredStateService {
               ? 'dm'
               : 'channel',
           agentConfig:
-            binding.model || agent.persona || agent.guardrail
+            binding.model || agent.persona || agent.plugins
               ? {
                   model: binding.model,
                   persona: agent.persona,
-                  guardrail: agent.guardrail,
+                  plugins: agent.plugins,
                 }
               : undefined,
           isTemplate: conversation?.isTemplate,
@@ -599,22 +597,6 @@ export class SettingsDesiredStateService {
       await this.deps.repositories.mcpServers.saveVersion(version);
       applied.push(`mcp_server:${server.name}`);
     }
-  }
-
-  private validateConfiguredGuardrails(settings: RuntimeSettings): string[] {
-    const validator = this.deps.guardrailPolicies;
-    if (!validator) return [];
-    const supported = validator.registeredIds().join(', ') || '(none)';
-    const errors: string[] = [];
-    for (const [folder, agent] of Object.entries(settings.agents)) {
-      const policy = agent.guardrail?.policy;
-      if (policy && !validator.isRegistered(policy)) {
-        errors.push(
-          `agents.${folder}.guardrail.policy is invalid: supported policies are ${supported}`,
-        );
-      }
-    }
-    return errors;
   }
 
   async validateCapabilityReferences(

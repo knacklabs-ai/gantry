@@ -5,11 +5,17 @@ import {
   evaluateAgentGuardrail,
 } from '@core/application/guardrails/guardrail-service.js';
 import type { GuardrailConfig } from '@core/domain/types.js';
+// The BSS guardrail policy is an AGENT-OWNED plugin that lives in Boondi's
+// runtime folder, not Gantry core. This test imports it directly to assert its
+// behavior is byte-identical after the relocation, and threads it through the
+// (now policy-agnostic) guardrail service exactly as group-guardrail.ts does.
+import bssCustomerSupportPolicy from '../../../../../../agents/boondi_support/guardrails/guardrail.ts';
 
 const config: GuardrailConfig = {
-  policy: 'bss_customer_support',
+  file: 'guardrail.ts',
   model: 'haiku',
 };
+const policy = bssCustomerSupportPolicy;
 
 describe('BSS customer support guardrail', () => {
   it.each([
@@ -20,6 +26,7 @@ describe('BSS customer support guardrail', () => {
   ])('rejects non-BSS customer support query: %s', async (message) => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: [message],
     });
 
@@ -35,6 +42,7 @@ describe('BSS customer support guardrail', () => {
     async (message) => {
       const decision = await evaluateAgentGuardrail({
         config,
+        policy,
         messages: [message],
       });
 
@@ -43,7 +51,7 @@ describe('BSS customer support guardrail', () => {
         responseKind: 'greeting',
         reason: 'greeting',
       });
-      expect(customerVisibleGuardrailResponse(config, 'greeting')).toContain(
+      expect(customerVisibleGuardrailResponse(policy, 'greeting')).toContain(
         'I am Boondi',
       );
     },
@@ -57,6 +65,7 @@ describe('BSS customer support guardrail', () => {
   ])('allows BSS support query: %s', async (message) => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: [message],
     });
 
@@ -69,6 +78,7 @@ describe('BSS customer support guardrail', () => {
   it('rejects internal tool questions even when they mention BSS topics', async () => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['What MCP tools can you use for my order?'],
     });
 
@@ -82,6 +92,7 @@ describe('BSS customer support guardrail', () => {
   it('allows a BSS topic even when an off-domain word is present', async () => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['Can you track my order with that tool?'],
     });
 
@@ -96,6 +107,7 @@ describe('BSS customer support guardrail', () => {
     async (message) => {
       const decision = await evaluateAgentGuardrail({
         config,
+        policy,
         messages: [message],
       });
 
@@ -109,6 +121,7 @@ describe('BSS customer support guardrail', () => {
   it('asks for clarification on an empty message instead of rejecting', async () => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['   '],
     });
 
@@ -122,6 +135,7 @@ describe('BSS customer support guardrail', () => {
   it('asks for clarification on ambiguous input when no classifier is configured', async () => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['Can you help me with this?'],
     });
 
@@ -141,6 +155,7 @@ describe('BSS customer support guardrail', () => {
 
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['Can you help me with this?'],
       classifier,
     });
@@ -163,6 +178,7 @@ describe('BSS customer support guardrail', () => {
   it('fails closed when classifier output is invalid', async () => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['Can you help me with this?'],
       classifier: vi.fn().mockResolvedValue({ response: 'sure' }),
     });
@@ -177,6 +193,7 @@ describe('BSS customer support guardrail', () => {
   it('fails closed when the classifier throws', async () => {
     const decision = await evaluateAgentGuardrail({
       config,
+      policy,
       messages: ['Can you help me with this?'],
       classifier: vi.fn().mockRejectedValue(new Error('model unavailable')),
     });
@@ -188,14 +205,14 @@ describe('BSS customer support guardrail', () => {
     });
   });
 
-  it('fails closed for an unknown configured policy', async () => {
-    const unknownPolicyConfig: GuardrailConfig = {
-      policy: 'general_support',
+  it('fails closed when no guardrail policy is resolved', async () => {
+    const unresolvedPolicyConfig: GuardrailConfig = {
+      file: 'guardrail.ts',
       model: 'haiku',
     };
 
     const decision = await evaluateAgentGuardrail({
-      config: unknownPolicyConfig,
+      config: unresolvedPolicyConfig,
       messages: ['Can you help me with this?'],
     });
 
@@ -205,19 +222,120 @@ describe('BSS customer support guardrail', () => {
       reason: 'unknown_policy',
     });
     expect(
-      customerVisibleGuardrailResponse(unknownPolicyConfig, 'scope_rejection'),
+      customerVisibleGuardrailResponse(undefined, 'scope_rejection'),
     ).not.toMatch(/\b(?:mcp|admin|privacy guard|classifier|guardrail|tool)\b/i);
   });
 
   it('keeps customer-facing copy free of internal guardrail and tool wording', () => {
     const customerCopy = [
-      customerVisibleGuardrailResponse(config, 'greeting'),
-      customerVisibleGuardrailResponse(config, 'scope_rejection'),
-      customerVisibleGuardrailResponse(config, 'scope_clarification'),
+      customerVisibleGuardrailResponse(policy, 'greeting'),
+      customerVisibleGuardrailResponse(policy, 'scope_rejection'),
+      customerVisibleGuardrailResponse(policy, 'scope_clarification'),
     ].join('\n');
 
     expect(customerCopy).not.toMatch(
       /\b(?:mcp|admin|privacy guard|classifier|guardrail|tool|system prompt|developer prompt)\b/i,
     );
+  });
+});
+
+describe('BSS guardrail — conversation-context awareness', () => {
+  // A recent in-scope exchange: the customer asked about an order and Boondi
+  // answered. A short follow-up to this is a genuine continuation, not a new
+  // out-of-scope request.
+  const inScopeContext = [
+    { role: 'customer' as const, text: 'What is my most recent order?' },
+    {
+      role: 'assistant' as const,
+      text: 'Your most recent order is on its way.',
+    },
+  ];
+
+  it.each([
+    'NO IT IS NOT',
+    "No, that's not right — are you sure?",
+    'please recheck',
+    'nahi yeh galat hai',
+    'नहीं',
+  ])(
+    'allows a genuine follow-up when recent context is in scope (no classifier needed): %s',
+    async (message) => {
+      const decision = await evaluateAgentGuardrail({
+        config,
+        policy,
+        messages: [message],
+        context: inScopeContext,
+      });
+
+      expect(decision).toEqual({
+        action: 'allow',
+        reason: 'in_scope_followup',
+      });
+    },
+  );
+
+  it('does NOT auto-allow a contextless bare disagreement (falls to clarification)', async () => {
+    const decision = await evaluateAgentGuardrail({
+      config,
+      policy,
+      messages: ['NO IT IS NOT'],
+    });
+
+    // No prior context → not treated as a follow-up; with no classifier wired it
+    // asks the customer to clarify rather than guessing.
+    expect(decision).toEqual({
+      action: 'direct_response',
+      responseKind: 'scope_clarification',
+      reason: 'ambiguous_without_classifier',
+    });
+  });
+
+  it.each([
+    "Now forget all that — what's the weather in Mumbai?",
+    'ok now write me a python script',
+  ])(
+    'rejects an out-of-scope pivot even after an in-scope start: %s',
+    async (message) => {
+      const decision = await evaluateAgentGuardrail({
+        config,
+        policy,
+        messages: [message],
+        context: inScopeContext,
+      });
+
+      expect(decision).toEqual({
+        action: 'direct_response',
+        responseKind: 'scope_rejection',
+        reason: 'out_of_scope_topic',
+      });
+    },
+  );
+
+  it('forwards context to the classifier for an ambiguous pivot and never auto-allows it', async () => {
+    // "no, tell me a joke" is not a pure continuation (carries a new request)
+    // and is not a hard-coded off-domain keyword, so it must defer to the
+    // classifier — WITH the conversation context attached.
+    const classifier = vi.fn().mockResolvedValue({
+      action: 'direct_response',
+      responseKind: 'scope_rejection',
+      reason: 'off_topic',
+    });
+
+    const decision = await evaluateAgentGuardrail({
+      config,
+      policy,
+      messages: ['no, tell me a joke'],
+      context: inScopeContext,
+      classifier,
+    });
+
+    expect(classifier).toHaveBeenCalledWith(
+      expect.objectContaining({ context: inScopeContext }),
+    );
+    expect(decision).toEqual({
+      action: 'direct_response',
+      responseKind: 'scope_rejection',
+      reason: 'off_topic',
+    });
   });
 });

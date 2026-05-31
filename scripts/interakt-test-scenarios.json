@@ -1,7 +1,7 @@
 {
   "realFrom": "919654405340",
   "testNumber": "918097288633",
-  "_note": "Chat-text matrix. realFrom is the operator's WhatsApp number (sends come from here). With test-mode scoped to GANTRY_TEST_OPERATOR_PHONE=realFrom, the signed Shopify identity for these turns is testNumber, so 'your own number' == testNumber and any other number is a mismatch. expect fields: { guardrail: greeting|scope_rejection|scope_clarification, mcp: true, allow: true, deny: true }. Scenarios with no expect are exploratory (reported, never fail). Multi-turn scenarios keep one session (reset only before turn 1).",
+  "_note": "Chat-text matrix. realFrom is the operator's WhatsApp number (sends come from here). With test-mode scoped to GANTRY_TEST_OPERATOR_PHONE=realFrom, the signed Shopify identity for these turns is testNumber, so 'your own number' == testNumber and any other number is a mismatch. expect fields: { guardrail: greeting|scope_rejection|scope_clarification, mcp: true, allow: true, deny: true, replyLang: english|hindi|hinglish }. replyLang asserts language-mirroring: the assistant must reply in the same language the customer used (English->English, Hindi[Devanagari]->Hindi, Hinglish[romanized]->Hinglish). Scenarios with no expect are exploratory (reported, never fail). Multi-turn scenarios keep one session (reset only before turn 1).",
   "scenarios": [
     {
       "name": "greeting-hi",
@@ -113,6 +113,31 @@
     {
       "name": "gratitude-closing",
       "turns": ["Perfect, thank you so much — that's all I needed!"]
+    },
+    {
+      "name": "lang-english-mirror",
+      "turns": ["Do you sell kaju katli, and what does it cost?"],
+      "expect": { "replyLang": "english" }
+    },
+    {
+      "name": "lang-hindi-mirror",
+      "turns": ["क्या आपके पास काजू कतली है? इसकी कीमत क्या है?"],
+      "expect": { "replyLang": "hindi" }
+    },
+    {
+      "name": "lang-hinglish-mirror",
+      "turns": ["kaju katli milti hai kya, aur iska daam kitna hai?"],
+      "expect": { "replyLang": "hinglish" }
+    },
+    {
+      "name": "lang-hindi-order-mirror",
+      "turns": ["मेरा पिछला ऑर्डर कहाँ है? क्या वह भेज दिया गया है?"],
+      "expect": { "replyLang": "hindi" }
+    },
+    {
+      "name": "lang-hinglish-order-mirror",
+      "turns": ["mera last order kahan hai, abhi tak ship hua ki nahi?"],
+      "expect": { "replyLang": "hinglish" }
     }
   ]
 }

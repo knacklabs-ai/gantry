@@ -63,6 +63,55 @@ describe('list_orders_for_customer', () => {
     harness.tokenManager.stop();
   });
 
+  it('defaults to ALL statuses (status:any) so the newest overall order wins', async () => {
+    const mock = buildMockFetch({
+      graphqlResponses: [
+        graphqlOk(customersEdges([BUSY_CUSTOMER])),
+        graphqlOk(
+          ordersEdges([
+            {
+              name: 'BSS-OPEN-OLD',
+              customer: BUSY_CUSTOMER,
+              createdAt: '2025-06-13T08:00:00Z',
+            },
+            {
+              name: 'BSS-FULFILLED-NEW',
+              customer: BUSY_CUSTOMER,
+              createdAt: '2026-05-28T08:00:00Z',
+            },
+          ]),
+        ),
+      ],
+    });
+    const harness = buildToolHarness(mock.fetch, {
+      requireVerifiedIdentity: true,
+    });
+    const result = await runWithIdentity(VERIFIED_BUSY_CUSTOMER, () =>
+      harness.call<{ orders: Array<{ name: string }> }>(
+        'list_orders_for_customer',
+        {
+          customerId: BUSY_CUSTOMER.id,
+          callerPhone: BUSY_CUSTOMER.phone,
+          // No statusFilter → exercise the default.
+        },
+      ),
+    );
+    expect(result.error).toBeUndefined();
+    // The orders query must ask for all statuses, not just open ones.
+    const orderCall = mock.calls.find((c) => {
+      const vars = (c.body as { variables?: { query?: string } })?.variables;
+      return typeof vars?.query === 'string' && vars.query.includes('status:');
+    });
+    expect(orderCall).toBeDefined();
+    const sentQuery = (orderCall!.body as { variables: { query: string } })
+      .variables.query;
+    expect(sentQuery).toContain('status:any');
+    expect(sentQuery).not.toContain('status:open');
+    // Newest overall order (a fulfilled one) is returned first.
+    expect(result.data?.orders[0]?.name).toBe('#BSS-FULFILLED-NEW');
+    harness.tokenManager.stop();
+  });
+
   it('rejects when customerId does not belong to the verified caller', async () => {
     const mock = buildMockFetch({
       graphqlResponses: [graphqlOk(customersEdges([BUSY_CUSTOMER]))],

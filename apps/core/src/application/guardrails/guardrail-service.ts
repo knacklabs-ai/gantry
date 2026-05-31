@@ -1,8 +1,7 @@
-import type { GuardrailConfig } from '../../domain/types.js';
-import { getGuardrailPolicy } from './policy-registry.js';
 import type {
   EvaluateAgentGuardrailInput,
   GuardrailDecision,
+  GuardrailPolicy,
   GuardrailResponseKind,
 } from './types.js';
 
@@ -10,7 +9,7 @@ export async function evaluateAgentGuardrail(
   input: EvaluateAgentGuardrailInput,
 ): Promise<GuardrailDecision> {
   if (!input.config) return { action: 'allow', reason: 'no_guardrail' };
-  const policy = getGuardrailPolicy(input.config.policy);
+  const policy = input.policy;
   if (!policy) {
     return {
       action: 'direct_response',
@@ -18,7 +17,10 @@ export async function evaluateAgentGuardrail(
       reason: 'unknown_policy',
     };
   }
-  const deterministic = policy.evaluateDeterministic(input.messages);
+  const deterministic = policy.evaluateDeterministic(
+    input.messages,
+    input.context,
+  );
   if (deterministic) return deterministic;
   if (!input.classifier) {
     // No classifier to disambiguate: ask the customer to clarify rather than
@@ -36,6 +38,7 @@ export async function evaluateAgentGuardrail(
       model: input.config.model,
       messages: input.messages,
       prompt: policy.prompt,
+      context: input.context,
     });
     return parseClassifierDecision(decision);
     // eslint-disable-next-line no-catch-all/no-catch-all -- Guardrails fail closed on any classifier/provider error.
@@ -49,11 +52,11 @@ export async function evaluateAgentGuardrail(
 }
 
 export function customerVisibleGuardrailResponse(
-  config: GuardrailConfig,
+  policy: GuardrailPolicy | undefined,
   kind: GuardrailResponseKind,
 ): string {
   return (
-    getGuardrailPolicy(config.policy)?.directResponse(kind) ??
+    policy?.directResponse(kind) ??
     'I can only help with the configured support scope.'
   );
 }

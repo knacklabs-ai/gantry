@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { parseAgentPersona } from '../../shared/agent-persona.js';
 import {
   resolveModelSelection,
@@ -8,6 +10,7 @@ import type {
   RuntimeConfiguredAgentBinding,
   RuntimeConfiguredAgentCapability,
   RuntimeConfiguredAgentGuardrail,
+  RuntimeConfiguredAgentPlugins,
   RuntimeConfiguredAgentSourceRef,
   RuntimeConfiguredAgentSources,
   RuntimeDesiredStateSettings,
@@ -157,19 +160,100 @@ function parseConfiguredAgentGuardrail(
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'policy' && key !== 'model') {
+    if (key !== 'file' && key !== 'model') {
       throw new Error(
-        `${pathPrefix}.${key} is not supported. Configure policy or model.`,
+        `${pathPrefix}.${key} is not supported. Configure file or model.`,
       );
     }
   }
-  const policy = parseStringValue(map.policy, `${pathPrefix}.policy`);
+  const file = parsePluginRelativePath(map.file, `${pathPrefix}.file`);
   const model = parseStringValue(map.model, `${pathPrefix}.model`);
   const resolved = resolveModelSelection(model);
   if (!resolved.ok) {
     throw new Error(`${pathPrefix}.model is invalid: ${resolved.message}`);
   }
-  return { policy, model };
+  return { file, model };
+}
+
+// A skill id is a single folder name under `skills/` — keep it a plain segment.
+function parsePluginPathSegment(raw: unknown, pathPrefix: string): string {
+  const value = parseStringValue(raw, pathPrefix);
+  if (
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes('..') ||
+    path.isAbsolute(value)
+  ) {
+    throw new Error(
+      `${pathPrefix} must be a plain name inside the agent folder (no "/", "\\", or "..")`,
+    );
+  }
+  return value;
+}
+
+// A guardrail/extraction reference may live in a sub-folder of the agent dir
+// (e.g. "guardrails/guardrail.ts"). Forward-slash sub-paths are allowed, but
+// never an absolute path, a backslash, or a segment that climbs out of the
+// folder. (The folder itself is already path-escape validated, and the loader
+// re-checks containment at read time as defense in depth.)
+function parsePluginRelativePath(raw: unknown, pathPrefix: string): string {
+  const value = parseStringValue(raw, pathPrefix);
+  if (value.includes('\\') || path.isAbsolute(value)) {
+    throw new Error(
+      `${pathPrefix} must be a relative path inside the agent folder (no backslashes or absolute paths)`,
+    );
+  }
+  if (
+    value.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')
+  ) {
+    throw new Error(
+      `${pathPrefix} must be a relative path inside the agent folder (no empty, "." or ".." segments)`,
+    );
+  }
+  return value;
+}
+
+function parseConfiguredAgentPlugins(
+  raw: unknown,
+  pathPrefix: string,
+): RuntimeConfiguredAgentPlugins | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${pathPrefix} must be a mapping`);
+  }
+  const map = raw as Record<string, unknown>;
+  for (const key of Object.keys(map)) {
+    if (
+      key !== 'guardrail' &&
+      key !== 'memory_extraction' &&
+      key !== 'skills'
+    ) {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure guardrail, memory_extraction, or skills.`,
+      );
+    }
+  }
+  const plugins: RuntimeConfiguredAgentPlugins = {};
+  const guardrail = parseConfiguredAgentGuardrail(
+    map.guardrail,
+    `${pathPrefix}.guardrail`,
+  );
+  if (guardrail) plugins.guardrail = guardrail;
+  if (map.memory_extraction !== undefined) {
+    plugins.memoryExtraction = parsePluginRelativePath(
+      map.memory_extraction,
+      `${pathPrefix}.memory_extraction`,
+    );
+  }
+  if (map.skills !== undefined) {
+    if (!Array.isArray(map.skills)) {
+      throw new Error(`${pathPrefix}.skills must be an array of skill ids`);
+    }
+    plugins.skills = map.skills.map((item, index) =>
+      parsePluginPathSegment(item, `${pathPrefix}.skills[${index}]`),
+    );
+  }
+  return plugins;
 }
 
 function parseConfiguredAgentCapabilities(
@@ -375,14 +459,14 @@ export function parseConfiguredAgents(
         key !== 'model' &&
         key !== 'one_time_job_default_model' &&
         key !== 'recurring_job_default_model' &&
-        key !== 'guardrail' &&
+        key !== 'plugins' &&
         key !== 'bindings' &&
         key !== 'sources' &&
         key !== 'capabilities'
       ) {
         if (legacyGrantKey(key)) rejectLegacyAgentGrantField(pathPrefix, key);
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, guardrail, bindings, sources, or capabilities.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, plugins (guardrail/memory_extraction/skills), bindings, sources, or capabilities.`,
         );
       }
     }
@@ -445,9 +529,9 @@ export function parseConfiguredAgents(
       model,
       oneTimeJobDefaultModel,
       recurringJobDefaultModel,
-      guardrail: parseConfiguredAgentGuardrail(
-        map.guardrail,
-        `${pathPrefix}.guardrail`,
+      plugins: parseConfiguredAgentPlugins(
+        map.plugins,
+        `${pathPrefix}.plugins`,
       ),
       bindings: parseConfiguredAgentBindings(
         map.bindings,

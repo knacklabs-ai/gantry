@@ -209,13 +209,7 @@ function renderConfiguredAgentsYaml(
         `    recurring_job_default_model: ${quoteYamlString(agent.recurringJobDefaultModel)}`,
       );
     }
-    if (agent.guardrail) {
-      lines.push(
-        '    guardrail:',
-        `      policy: ${quoteYamlString(agent.guardrail.policy)}`,
-        `      model: ${quoteYamlString(agent.guardrail.model)}`,
-      );
-    }
+    renderAgentPluginsYaml(lines, agent);
     renderAgentSourcesYaml(lines, agent);
     renderAgentCapabilitiesYaml(lines, agent.capabilities);
   }
@@ -305,6 +299,39 @@ function renderAgentSourcesYaml(
   renderAgentSourceListYaml(lines, 'skills', agent.sources.skills);
   renderAgentSourceListYaml(lines, 'mcp_servers', agent.sources.mcpServers);
   renderAgentSourceListYaml(lines, 'tools', agent.sources.tools);
+}
+
+function renderAgentPluginsYaml(
+  lines: string[],
+  agent: RuntimeConfiguredAgent,
+): void {
+  const plugins = agent.plugins;
+  if (!plugins) return;
+  const guardrail = plugins.guardrail;
+  const hasExtraction =
+    typeof plugins.memoryExtraction === 'string' &&
+    plugins.memoryExtraction.length > 0;
+  const skills = plugins.skills ?? [];
+  if (!guardrail && !hasExtraction && skills.length === 0) return;
+  lines.push('    plugins:');
+  if (guardrail) {
+    lines.push(
+      '      guardrail:',
+      `        file: ${quoteYamlString(guardrail.file)}`,
+      `        model: ${quoteYamlString(guardrail.model)}`,
+    );
+  }
+  if (hasExtraction) {
+    lines.push(
+      `      memory_extraction: ${quoteYamlString(plugins.memoryExtraction as string)}`,
+    );
+  }
+  if (skills.length > 0) {
+    lines.push('      skills:');
+    for (const skillId of skills) {
+      lines.push(`        - ${quoteYamlString(skillId)}`);
+    }
+  }
 }
 
 function renderAgentSourceListYaml(

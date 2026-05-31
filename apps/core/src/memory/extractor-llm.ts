@@ -303,17 +303,17 @@ function buildPromptParts(input: ArcExtractionInput): {
     'Now extract from this session arc and return strict JSON array only:',
     JSON.stringify(payload, null, 2),
   ].join('\n');
+  // Agent-supplied prompt (runtime MEMORY_EXTRACTION.md) wins; else the generic
+  // in-core default. The few-shots stay generic and structural in both cases.
+  const systemPrompt =
+    input.extractionSystemPrompt ?? MEMORY_EXTRACTION_SYSTEM_PROMPT;
   return {
-    systemPrompt: MEMORY_EXTRACTION_SYSTEM_PROMPT,
+    systemPrompt,
     staticUserBlock,
     dynamicUserBlock,
-    plainPrompt: [
-      MEMORY_EXTRACTION_SYSTEM_PROMPT,
-      '',
-      staticUserBlock,
-      '',
-      dynamicUserBlock,
-    ].join('\n'),
+    plainPrompt: [systemPrompt, '', staticUserBlock, '', dynamicUserBlock].join(
+      '\n',
+    ),
   };
 }
 

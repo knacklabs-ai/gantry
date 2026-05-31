@@ -1,12 +1,37 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { InteraktApi } from '@core/channels/interakt/interakt-api.js';
 import { InteraktChannel } from '@core/channels/interakt/channel.js';
 import { handleInteraktWebhookRoutes } from '@core/control/server/routes/interakt-webhook.js';
 import type { ConversationRoute, NewMessage } from '@core/domain/types.js';
 import { handlePreAgentGuardrail } from '@core/runtime/group-guardrail.js';
+
+// The guardrail policy is an agent-owned plugin loaded by the exact file named
+// in settings (`plugins.guardrail.file`), from the agent's runtime folder. Stage
+// Boondi's real plugin into this test's temp runtime under guardrails/ so the
+// live guardrail path resolves it exactly as production does — proving the
+// deterministic layer + copy end-to-end.
+beforeAll(() => {
+  const repoPluginPath = path.resolve(
+    __dirname,
+    '../../../../../agents/boondi_support/guardrails/guardrail.ts',
+  );
+  const runtimeGuardrailDir = path.join(
+    process.env.GANTRY_HOME as string,
+    'agents',
+    'boondi_support',
+    'guardrails',
+  );
+  fs.mkdirSync(runtimeGuardrailDir, { recursive: true });
+  fs.copyFileSync(
+    repoPluginPath,
+    path.join(runtimeGuardrailDir, 'guardrail.ts'),
+  );
+});
 
 vi.mock('@core/infrastructure/logging/logger.js', () => ({
   logger: {
@@ -148,9 +173,11 @@ describe('Interakt webhook route', () => {
       requiresTrigger: false,
       conversationKind: 'dm',
       agentConfig: {
-        guardrail: {
-          policy: 'bss_customer_support',
-          model: 'haiku',
+        plugins: {
+          guardrail: {
+            file: 'guardrails/guardrail.ts',
+            model: 'haiku',
+          },
         },
       },
     };

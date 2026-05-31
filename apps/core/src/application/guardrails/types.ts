@@ -13,11 +13,23 @@ export type GuardrailDecision =
       reason: string;
     };
 
+/**
+ * A prior turn of the conversation, role-tagged, supplied to the guardrail so a
+ * policy can tell a genuine in-scope follow-up ("no it isn't", "are you sure?")
+ * from an out-of-scope pivot. `messages` remains the NEW turn(s) being judged;
+ * `context` is the recent history that precedes them (oldest→newest).
+ */
+export interface GuardrailContextMessage {
+  role: 'customer' | 'assistant';
+  text: string;
+}
+
 export interface GuardrailClassifierInput {
   policy: string;
   model: string;
   messages: readonly string[];
   prompt: string;
+  context?: readonly GuardrailContextMessage[];
 }
 
 export type GuardrailClassifier = (
@@ -28,11 +40,31 @@ export interface EvaluateAgentGuardrailInput {
   config?: GuardrailConfig;
   messages: readonly string[];
   classifier?: GuardrailClassifier;
+  /**
+   * The resolved guardrail policy (agent plugin or generic fallback), supplied
+   * by the caller which knows the agent folder. Absent → treated as an unknown
+   * policy (fail closed with scope_rejection).
+   */
+  policy?: GuardrailPolicy;
+  /**
+   * Recent conversation turns preceding `messages` (oldest→newest), so the
+   * policy can disambiguate context-dependent follow-ups. Optional — when
+   * absent the policy behaves as a stateless per-turn screen.
+   */
+  context?: readonly GuardrailContextMessage[];
 }
 
 export interface GuardrailPolicy {
   id: string;
   prompt: string;
-  evaluateDeterministic(messages: readonly string[]): GuardrailDecision | null;
+  /**
+   * Cheap, deterministic pre-classifier. `context` (recent prior turns) is
+   * optional so existing policies that ignore it remain valid; context-aware
+   * policies may use it to allow genuine follow-ups without an LLM call.
+   */
+  evaluateDeterministic(
+    messages: readonly string[],
+    context?: readonly GuardrailContextMessage[],
+  ): GuardrailDecision | null;
   directResponse(kind: GuardrailResponseKind): string;
 }

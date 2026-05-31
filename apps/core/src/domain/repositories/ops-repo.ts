@@ -140,6 +140,18 @@ export interface RuntimeMessageRepository {
   getLastBotMessageTimestamp(
     conversationJid: string,
   ): Promise<string | undefined>;
+  /**
+   * Recent conversation messages in BOTH directions (customer + assistant),
+   * chronological (oldest→newest). Optional: implementations that cannot read
+   * outbound history may omit it, and callers must degrade gracefully (no
+   * context). Used to give a pre-agent guardrail enough context to tell a
+   * genuine in-scope follow-up from an out-of-scope pivot.
+   */
+  getRecentMessages?(
+    conversationJid: string,
+    limit?: number,
+    options?: { threadId?: string | null },
+  ): Promise<NewMessage[]>;
 }
 
 export interface RuntimeJobRepository {

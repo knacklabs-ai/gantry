@@ -18,6 +18,7 @@ import {
 import type { RuntimeMessageRepository } from '../domain/repositories/ops-repo.js';
 import { formatMessages } from '../messaging/router.js';
 import { handlePreAgentGuardrail } from './group-guardrail.js';
+import { loadGuardrailContext } from './guardrail-context.js';
 import type { GuardrailClassifier } from '../application/guardrails/types.js';
 import {
   isSenderControlAllowed,
@@ -246,11 +247,18 @@ export async function runMessagePollingTick(
           if (deps.sendChannelMessage) {
             const sendChannelMessage = deps.sendChannelMessage;
             const latestMessage = messagesToSend[messagesToSend.length - 1];
+            const guardrailContext = await loadGuardrailContext({
+              repository: opsRepository,
+              chatJid,
+              threadId: threadId ?? null,
+              excludeMessageIds: new Set(messagesToSend.map((m) => m.id)),
+            });
             const guardrailBlocked = await handlePreAgentGuardrail({
               group,
               messages: messagesToSend,
               latestMessage,
               queueJid,
+              recentContext: guardrailContext,
               guardrailClassifier: deps.guardrailClassifier,
               sendMessage: (text: string, options?: MessageSendOptions) =>
                 sendChannelMessage(chatJid, text, options),
@@ -271,11 +279,11 @@ export async function runMessagePollingTick(
 
           const formatted = formatMessages(messagesToSend, TIMEZONE);
           const senderUserIds = resolveNonSelfSenderIds(messagesToSend);
-          const a = !deps.queue.sendMessage(queueJid, formatted, {
+          const sent = deps.queue.sendMessage(queueJid, formatted, {
             threadId,
             senderUserIds,
           });
-          if (a) {
+          if (!sent) {
             shouldEnqueueMessageCheck = true;
             break;
           }

@@ -63,6 +63,7 @@ import {
 import { createProgressChannelSender } from './group-progress-channel-sender.js';
 import { createGroupAgentRunner } from './group-agent-runner.js';
 import { handlePreAgentGuardrail } from './group-guardrail.js';
+import { loadGuardrailContext } from './guardrail-context.js';
 import { createThreadOptionBuilders } from './group-thread-options.js';
 import { buildMemoryRecallQueryFromMessages } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
@@ -265,12 +266,20 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     )
       return true;
 
+    const guardrailContext = await loadGuardrailContext({
+      repository: ops(),
+      chatJid,
+      threadId: activeThreadId ?? null,
+      excludeMessageIds: new Set(missedMessages.map((m) => m.id)),
+    });
+
     if (
       await handlePreAgentGuardrail({
         group,
         messages: missedMessages,
         latestMessage,
         queueJid,
+        recentContext: guardrailContext,
         guardrailClassifier: deps.guardrailClassifier,
         sendMessage: sendMessageToChannel,
         buildMessageOptions,

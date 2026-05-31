@@ -120,7 +120,24 @@ const replyRefusesAccess = (text) =>
     text,
   );
 
-function evaluate(events, scenario, cfg) {
+// Reply-language detection for the language-mirroring requirement
+// (English->English, Hindi->Hindi, Hinglish->Hinglish):
+//   * any Devanagari character  => "hindi" (the reply is written in Hindi script)
+//   * else Latin script with >=2 romanized-Hindi markers => "hinglish"
+//   * else => "english"
+// Heuristic, but robust for BSS-style replies: English replies carry none of
+// these markers, Devanagari is unambiguous, and Hinglish replies are dense with
+// romanized Hindi function words.
+const HINGLISH_MARKER_RE =
+  /\b(aap|aapka|aapki|aapko|hai|hain|kya|kyun|kyon|nahi|nahin|mera|meri|mujhe|kaise|kaisa|kaisi|chahiye|karna|karein|karo|kijiye|kijiyega|dhanyavaad|namaste|shukriya|theek|thik|achha|acha|accha|haan|kitna|kitni|kitne|daam|paisa|paise|abhi|thoda|thodi|bahut|raha|rahi|rahe|hoon|milega|milegi|milenge|bata|batao|bataiye|samajh|wapas|jaldi|kripya|krpya)\b/gi;
+function detectReplyLanguage(text) {
+  if (!text || !text.trim()) return 'none';
+  if (/[ऀ-ॿ]/.test(text)) return 'hindi';
+  const markers = text.match(HINGLISH_MARKER_RE) || [];
+  return markers.length >= 2 ? 'hinglish' : 'english';
+}
+
+function evaluate(events, expect, cfg) {
   const by = (f) => events.filter((e) => e.flow === f);
   const guardrail = events.find((e) => e.flow === 'guardrail');
   const mcpReq = by('mcp.request');
@@ -128,8 +145,14 @@ function evaluate(events, scenario, cfg) {
   const mcpResp = by('mcp.response');
   const outbound = by('outbound');
   const llmOut = events.find((e) => e.flow === 'llm.output');
-  const exp = scenario.expect || {};
+  const exp = expect || {};
   const failures = [];
+  // The reply this turn-set produced (LLM output preferred; a canned guardrail
+  // reply falls back to outbound), and the language it is written in.
+  const replyText = [llmOut?.reply, ...outbound.map((o) => o.reply)]
+    .filter((t) => typeof t === 'string' && t.trim())
+    .join('\n');
+  const replyLang = detectReplyLanguage(replyText);
   // Privacy denials seen at the MCP layer this turn (thrown OR isError result).
   const mcpPrivacyDenies = [
     ...mcpErr.filter((e) => PRIVACY_DENY_RE.test(e.error || '')),
@@ -140,6 +163,18 @@ function evaluate(events, scenario, cfg) {
     failures.push(
       `expected guardrail "${exp.guardrail}", got "${guardrail?.guardrailDecision ?? 'none'}"`,
     );
+  }
+  // The follow-up must REACH the agent: no guardrail direct-response (a
+  // guardrailDecision is only logged when the guardrail short-circuits).
+  if (exp.noGuardrailBlock) {
+    const blocked = events.find(
+      (e) => e.flow === 'guardrail' && e.guardrailDecision,
+    );
+    if (blocked) {
+      failures.push(
+        `expected the turn to reach the agent, but the guardrail blocked it (${blocked.guardrailDecision}: ${blocked.guardrailReason ?? ''})`,
+      );
+    }
   }
   if (exp.mcp && mcpReq.length === 0) failures.push('expected an MCP call, none seen');
   if (exp.allow && mcpErr.length > 0) {
@@ -161,6 +196,13 @@ function evaluate(events, scenario, cfg) {
       failures.push('expected a privacy DENY, none seen (no MCP privacy guard, no refusal in reply)');
     }
   }
+  // Language-mirroring requirement: the assistant must reply in the SAME language
+  // the customer used — English->English, Hindi->Hindi, Hinglish->Hinglish.
+  if (exp.replyLang && replyLang !== exp.replyLang) {
+    failures.push(
+      `expected reply language "${exp.replyLang}", got "${replyLang}"`,
+    );
+  }
   // SAFETY invariant: every outbound delivery targets the REAL number. The reply
   // must never be routed to the test number, regardless of identity override.
   for (const o of outbound) {
@@ -168,30 +210,58 @@ function evaluate(events, scenario, cfg) {
       failures.push(`SAFETY: outbound jid "${o.jid}" is not wa:${cfg.realFrom}`);
     }
   }
-  return { guardrail, mcpReq, mcpErr, mcpResp, mcpPrivacyDenies, outbound, llmOut, failures };
+  return {
+    guardrail,
+    mcpReq,
+    mcpErr,
+    mcpResp,
+    mcpPrivacyDenies,
+    outbound,
+    llmOut,
+    replyLang,
+    failures,
+  };
 }
 
-function printReport(scenario, turnsEvents, cfg) {
-  const all = turnsEvents.flat();
-  const r = evaluate(all, scenario, cfg);
-  const ok = r.failures.length === 0;
-  console.log(`\n${ok ? 'PASS' : 'FAIL'}  ${scenario.name}`);
-  console.log(`  turns: ${scenario.turns.map((t) => JSON.stringify(t)).join(' , ')}`);
-  if (r.guardrail) {
-    console.log(`  guardrail: ${r.guardrail.guardrailDecision ?? 'allow'} (${r.guardrail.guardrailReason ?? ''})`);
-  }
-  for (const q of r.mcpReq) {
-    console.log(`  mcp.request: ${q.toolName} identity=${q.callerIdentityJid ?? '?'} args=${JSON.stringify(q.arguments)}`);
-  }
-  for (const e of r.mcpErr) console.log(`  mcp.error: ${e.error}`);
-  for (const e of r.mcpPrivacyDenies) {
-    if (e.flow === 'mcp.response') {
-      console.log(`  mcp.deny: ${e.toolName} -> ${truncate(responseText(e), 160)}`);
+function printReport(scenario, turns, turnsEvents, cfg) {
+  const failures = [];
+  // Scenario-level expectations evaluated across the whole flow (back-compat
+  // for single-turn scenarios and any aggregate expect).
+  const scenarioR = evaluate(turnsEvents.flat(), scenario.expect, cfg);
+  failures.push(...scenarioR.failures);
+  // Per-turn expectations: object turns ({ text, expect }) are judged against
+  // just that turn's events, so a multi-turn flow can assert "turn 2 reached
+  // the agent" or "turn 2 was rejected" independently.
+  turns.forEach((turn, i) => {
+    if (!turn.expect) return;
+    const tr = evaluate(turnsEvents[i] || [], turn.expect, cfg);
+    for (const f of tr.failures) {
+      failures.push(`turn ${i + 1} (${JSON.stringify(turn.text)}): ${f}`);
     }
-  }
-  if (r.llmOut) console.log(`  reply: ${truncate(r.llmOut.reply, 280)}`);
-  else if (r.outbound[0]) console.log(`  reply(outbound): ${truncate(r.outbound[0].reply, 280)}`);
-  if (!ok) for (const f of r.failures) console.log(`  -> ${f}`);
+  });
+  const ok = failures.length === 0;
+  console.log(`\n${ok ? 'PASS' : 'FAIL'}  ${scenario.name}`);
+  // Per-turn trace so the natural conversation flow is readable at a glance.
+  turns.forEach((turn, i) => {
+    const tr = evaluate(turnsEvents[i] || [], null, cfg);
+    const g = tr.guardrail;
+    const gline = g
+      ? g.guardrailDecision
+        ? `BLOCK:${g.guardrailDecision}`
+        : `allow(${g.guardrailReason ?? ''})`
+      : 'allow';
+    const tools = tr.mcpReq.map((q) => q.toolName).join(',') || '-';
+    const denies = tr.mcpPrivacyDenies.length
+      ? ` deny:${tr.mcpPrivacyDenies.length}`
+      : '';
+    const reply = tr.llmOut?.reply ?? tr.outbound[0]?.reply ?? '';
+    console.log(`  [${i + 1}] ${JSON.stringify(turn.text)}`);
+    console.log(
+      `      guardrail=${gline} mcp=${tools}${denies} lang=${tr.replyLang}`,
+    );
+    if (reply) console.log(`      reply: ${truncate(reply, 220)}`);
+  });
+  if (!ok) for (const f of failures) console.log(`  -> ${f}`);
   return ok;
 }
 
@@ -213,19 +283,27 @@ async function main() {
       await sleep(RESET_WAIT_MS);
     }
     const chatJid = `wa:${realFrom}`;
+    // A turn is a plain string or { text, expect } for per-turn assertions.
+    const turns = scenario.turns.map((t) =>
+      typeof t === 'string' ? { text: t } : t,
+    );
     const turnsEvents = [];
-    for (const text of scenario.turns) {
+    let aborted = false;
+    for (const turn of turns) {
       const offset = logSize();
-      const sent = await sendWebhook({ text, from: realFrom });
+      const sent = await sendWebhook({ text: turn.text, from: realFrom });
       if (!sent.ok) {
         console.log(`\nFAIL  ${scenario.name}\n  -> webhook rejected (HTTP ${sent.status}): ${sent.response}`);
-        turnsEvents.length = 0;
+        aborted = true;
         break;
       }
       turnsEvents.push(await waitForTurn(offset, chatJid));
     }
-    if (printReport(scenario, turnsEvents, { ...cfg, realFrom })) passed += 1;
-    else failed += 1;
+    if (!aborted && printReport(scenario, turns, turnsEvents, { ...cfg, realFrom })) {
+      passed += 1;
+    } else {
+      failed += 1;
+    }
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);
