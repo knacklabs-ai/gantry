@@ -26,9 +26,9 @@ const expectedControlRoutes = [
   'POST /v1/agents',
   'GET /v1/agents/{agentId}',
   'PATCH /v1/agents/{agentId}',
+  'GET /v1/agents/{agentId}/access',
+  'PUT /v1/agents/{agentId}/access',
   'GET /v1/agents/{agentId}/admin',
-  'GET /v1/agents/{agentId}/capabilities',
-  'PUT /v1/agents/{agentId}/capabilities',
   'GET /v1/agents/{agentId}/conversation-bindings',
   'DELETE /v1/agents/{agentId}/conversation-bindings/{conversationId}',
   'PATCH /v1/agents/{agentId}/conversation-bindings/{conversationId}',
@@ -40,8 +40,6 @@ const expectedControlRoutes = [
   'GET /v1/agents/{agentId}/skills',
   'DELETE /v1/agents/{agentId}/skills/{skillId}',
   'PUT /v1/agents/{agentId}/skills/{skillId}',
-  'GET /v1/agents/{agentId}/sources',
-  'PUT /v1/agents/{agentId}/sources',
   'GET /v1/capabilities',
   'GET /v1/capabilities/{capabilityId}',
   'GET /v1/conversations',
@@ -417,8 +415,8 @@ describe('control OpenAPI documentation', () => {
       spec.components.schemas.AgentSourceSelection.properties,
     ).not.toHaveProperty('kind');
     expect(
-      spec.components.schemas.JobCreateRequest.properties.capabilityRequirements
-        .items.properties.implementation.properties,
+      spec.components.schemas.JobCreateRequest.properties.accessRequirements
+        .items.properties.target.oneOf[1].properties.implementation.properties,
     ).toMatchObject({
       executableVersion: { type: 'string' },
       executableHash: { type: 'string' },

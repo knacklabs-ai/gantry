@@ -221,9 +221,7 @@ procedure_save          file
 mcp_list_tools          mcp_call_tool
 request_skill_install   request_skill_proposal
 request_skill_dependency_install
-request_mcp_server      request_permission
-capability_status       capability_search
-propose_capability      manage_capability
+request_mcp_server      request_access
 ```
 
 The canonical `Browser` capability is gated separately and projects to
@@ -237,10 +235,10 @@ Selected-capability admin agents add six additional admin tools
 (`apps/core/src/shared/admin-mcp-tools.ts`): `settings_desired_state`,
 `request_settings_update`, `admin_permission_list`,
 `admin_permission_revoke`, `service_restart`, and `register_agent`. Agents use
-`capability_status` to inspect missing admin capabilities,
-`propose_capability` for durable semantic capability changes, and
-`request_permission` only for one-off exact fallback access or provider
-capability review.
+the Agent Access summary to inspect missing admin capabilities,
+`request_access target.kind=capability` for reviewed semantic capability
+changes, and `request_access target.kind=run_command` only for scoped command
+fallback access.
 
 ### Subagents
 
@@ -420,7 +418,7 @@ sequenceDiagram
   participant Surface as "Channel adapter<br/>InteractionDescriptor"
   participant Approver as "conversation approver / Conversation approver"
 
-  Agent->>Mcp: request_permission / request_skill_install /<br/>request_mcp_server / request_settings_update / ...
+  Agent->>Mcp: request_access / request_skill_install /<br/>request_mcp_server / request_settings_update / ...
   Mcp->>Ipc: writeIpcFile(TASKS_DIR, signed task)
   Host->>Ipc: read + verify signature, validate origin
   Host->>Surface: render InteractionDescriptor in source conversation

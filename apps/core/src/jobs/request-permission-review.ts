@@ -325,8 +325,8 @@ export function validateRequestPermissionCapabilityProposal(input: {
   toolInput: Record<string, unknown>;
 }): string | undefined {
   if (!input.capabilityId || input.toolNames.length > 0) return undefined;
-  if (input.capabilityRequestSource !== 'propose_capability') {
-    return 'Capability requests must use propose_capability, not request_permission.';
+  if (input.capabilityRequestSource !== 'request_access') {
+    return 'Capability access must use request_access target.kind=capability, not direct request_permission.';
   }
   const definitions = semanticCapabilityDefinitionsForToolInput(
     input.toolInput,

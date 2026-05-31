@@ -599,7 +599,7 @@ export async function runModelCommand(
             target: 'chat',
             ...(alias.includes(':')
               ? { conversationJid: alias }
-              : { groupScope: alias }),
+              : { workspaceKey: alias }),
           },
         })) as ModelPreviewResponse;
         console.log(formatPreviewWhy(preview));

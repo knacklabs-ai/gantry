@@ -18,7 +18,7 @@ class RuntimeTruthScriptTests(unittest.TestCase):
         "request_skill_proposal",
         "request_skill_dependency_install",
         "request_mcp_server",
-        "request_permission",
+        "request_access",
     ]
 
     def test_runtime_truth_script_passes_for_repo(self) -> None:

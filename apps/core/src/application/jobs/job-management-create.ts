@@ -11,14 +11,7 @@ import {
   requireJobNotificationRouteApproval,
   routesBeyondAuthenticatedContext,
 } from './job-management-helpers.js';
-import {
-  normalizeRequiredMcpServers,
-  normalizeToolAccessRequirements,
-} from './job-tool-access-requirements.js';
-import {
-  capabilityRequirementToolRules,
-  normalizeCapabilityRequirements,
-} from './job-capability-requirements.js';
+import { normalizeAccessRequirements } from './job-access-requirements.js';
 import {
   evaluateJobReadiness,
   SETUP_REQUIRED_PAUSE_REASON,
@@ -105,18 +98,8 @@ export async function createManagedJob(
       },
     ],
   );
-  const toolAccessRequirements = normalizeToolAccessRequirements(
-    input.toolAccessRequirements ?? [],
-  );
-  const capabilityRequirements = normalizeCapabilityRequirements(
-    input.capabilityRequirements ?? [],
-  );
-  const effectiveToolAccessRequirements = normalizeToolAccessRequirements([
-    ...toolAccessRequirements,
-    ...capabilityRequirementToolRules(capabilityRequirements),
-  ]);
-  const requiredMcpServers = normalizeRequiredMcpServers(
-    input.requiredMcpServers ?? [],
+  const accessRequirements = normalizeAccessRequirements(
+    input.accessRequirements ?? [],
   );
   const authenticatedContext = {
     ...sessionBoundContext,
@@ -141,9 +124,7 @@ export async function createManagedJob(
     next_run: schedule.nextRun,
     execution_context: executionContext,
     notification_routes: notificationRoutes,
-    capability_requirements: capabilityRequirements,
-    tool_access_requirements: effectiveToolAccessRequirements,
-    required_mcp_servers: requiredMcpServers,
+    access_requirements: accessRequirements,
   };
   const readiness = await evaluateJobReadiness({
     job: jobInput,

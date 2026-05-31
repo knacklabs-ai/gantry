@@ -1387,9 +1387,9 @@ conversations:
 
     expect(yaml).toContain(
       [
-        '      skills:',
-        '        - name: linkedin-posting',
-        '          id: "skill:3014949c-a616-4b2c-80e7-0bc61bb31e85"',
+        '        skills:',
+        '          - name: linkedin-posting',
+        '            id: "skill:3014949c-a616-4b2c-80e7-0bc61bb31e85"',
       ].join('\n'),
     );
     expect(yaml).toContain('company-handbook');

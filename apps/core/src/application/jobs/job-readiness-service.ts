@@ -1,5 +1,6 @@
 import type {
   Job,
+  JobCapabilityRequirement,
   JobSetupBlocker,
   JobSetupState,
 } from '../../domain/types.js';
@@ -24,6 +25,7 @@ import {
   normalizeToolAccessRequirements,
   toolAccessRequirementRecoveryAction,
 } from './job-tool-access-requirements.js';
+import { splitAccessRequirements } from './job-access-requirements.js';
 import {
   isCanonicalBrowserCapabilityRule,
   isProjectedBrowserMcpToolRule,
@@ -76,9 +78,7 @@ export interface JobReadinessInput extends JobReadinessDeps {
     Job,
     | 'id'
     | 'group_scope'
-    | 'tool_access_requirements'
-    | 'required_mcp_servers'
-    | 'capability_requirements'
+    | 'access_requirements'
     | 'execution_context'
     | 'notification_routes'
     | 'setup_state'
@@ -100,6 +100,11 @@ export async function evaluateJobReadiness(
   const agentId =
     input.agentId ?? agentIdForJobGroupScope(input.job.group_scope);
   const blockers: JobSetupBlocker[] = [];
+  const {
+    toolAccessRequirements: jobToolAccessRequirements,
+    capabilityRequirements: jobCapabilityRequirements,
+    requiredMcpServers: jobRequiredMcpServers,
+  } = splitAccessRequirements(input.job.access_requirements);
 
   let policy: JobToolPolicyResolution;
   let policyResolutionError: string | null = null;
@@ -126,21 +131,21 @@ export async function evaluateJobReadiness(
   const toolPreflight = policyResolutionError
     ? {
         toolAccessRequirements: normalizeToolAccessRequirements(
-          input.job.tool_access_requirements ?? [],
+          jobToolAccessRequirements,
         ),
         missingTools: [],
       }
     : evaluateToolAccessRequirements({
-        toolAccessRequirements: input.job.tool_access_requirements,
+        toolAccessRequirements: jobToolAccessRequirements,
         effectiveAllowedTools: policy.effectiveAllowedTools,
       });
   const draftOnlyRequirementRules = new Set(
-    (input.job.capability_requirements ?? [])
+    jobCapabilityRequirements
       .filter((requirement) => requirement.implementation?.kind === 'local_cli')
       .map((requirement) => semanticCapabilityRule(requirement.capabilityId)),
   );
   const localCliRequirementCapabilities = new Set(
-    (input.job.capability_requirements ?? [])
+    jobCapabilityRequirements
       .filter((requirement) => requirement.implementation?.kind === 'local_cli')
       .map((requirement) => requirement.capabilityId),
   );
@@ -162,7 +167,7 @@ export async function evaluateJobReadiness(
     }
     blockers.push(missingToolBlocker(missingTool));
   }
-  for (const requirement of input.job.capability_requirements ?? []) {
+  for (const requirement of jobCapabilityRequirements) {
     const blocker = capabilityRequirementBlocker({
       requirement,
       effectiveAllowedTools: policy.effectiveAllowedTools,
@@ -199,7 +204,7 @@ export async function evaluateJobReadiness(
 
   blockers.push(
     ...(await mcpReadinessBlockers({
-      job: input.job,
+      requiredMcpServers: jobRequiredMcpServers,
       appId,
       agentId,
       repository: input.mcpServerRepository,
@@ -221,7 +226,7 @@ export async function evaluateJobReadiness(
 }
 
 function capabilityRequirementBlocker(input: {
-  requirement: NonNullable<Job['capability_requirements']>[number];
+  requirement: JobCapabilityRequirement;
   effectiveAllowedTools: readonly string[];
 }): JobSetupBlocker | null {
   const { requirement } = input;
@@ -393,7 +398,7 @@ function unreviewedSemanticCapabilityBlocker(
     message:
       'This job references a capability that is not reviewed in the capability catalog.',
     nextAction:
-      'Refresh attached source inventory, then update the job to a reviewed source-neutral capability from capability_search.',
+      'Refresh attached source inventory, then update the job to a reviewed source-neutral capability (request it with request_access target.kind=capability).',
   };
 }
 
@@ -447,7 +452,7 @@ async function semanticCapabilityCredentialBlocker(input: {
       message:
         'Semantic capability is not registered in the capability catalog.',
       nextAction:
-        'Refresh attached source inventory, then update the job to a reviewed source-neutral capability from capability_search.',
+        'Refresh attached source inventory, then update the job to a reviewed source-neutral capability (request it with request_access target.kind=capability).',
     };
   }
   if (capability.credentialSource === 'local_cli') return null;
@@ -485,13 +490,13 @@ async function catalogSemanticCapabilityDefinition(input: {
 }
 
 async function mcpReadinessBlockers(input: {
-  job: JobReadinessInput['job'];
+  requiredMcpServers: readonly string[];
   appId: string;
   agentId: string;
   repository?: McpServerRepository;
   secrets?: CapabilitySecretRepository;
 }): Promise<JobSetupBlocker[]> {
-  const required = input.job.required_mcp_servers ?? [];
+  const required = input.requiredMcpServers;
   if (required.length === 0) return [];
   if (!input.repository) {
     return required.map((requirement) => ({
@@ -571,7 +576,7 @@ function mcpCredentialBlocker(
     requirementType: 'mcp_server',
     requirementId: serverName,
     message: formatMissingGantrySecretsMessage(secretNames),
-    nextAction: `Set ${secretNames.map((name) => `gantry credentials capability set ${name}`).join(' and ')}, then resume or recheck the job.`,
+    nextAction: `Set ${secretNames.map((name) => `gantry credentials access set ${name}`).join(' and ')}, then resume or recheck the job.`,
   };
 }
 

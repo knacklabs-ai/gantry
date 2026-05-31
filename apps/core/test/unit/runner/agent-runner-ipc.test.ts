@@ -2462,7 +2462,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'scheduled jobs request missing tool approval before denying current run',
+    'scheduled jobs deny unsupported exact tool grants without permission prompts',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -2485,19 +2485,15 @@ describe('agent-runner IPC lifecycle', () => {
       expect(call?.permissionDecision).toEqual(
         expect.objectContaining({
           behavior: 'deny',
-          interrupt: true,
-          decisionClassification: 'user_reject',
+          interrupt: false,
         }),
       );
       expect(String(call?.permissionDecision?.message)).toContain(
-        'Unattended jobs do not wait for approval during the active tool call',
-      );
-      expect(String(call?.permissionDecision?.message)).toContain(
-        'request_permission { "permissionKind": "tool", "toolName": "WebSearch", "temporaryOnly": false, "reason": "This autonomous run needs WebSearch access." }',
+        'Use a reviewed semantic capability from the Agent Access summary for WebSearch',
       );
       expect(
         fs.existsSync(path.join(fixture.ipcDir, 'permission-requests')),
-      ).toBe(true);
+      ).toBe(false);
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );

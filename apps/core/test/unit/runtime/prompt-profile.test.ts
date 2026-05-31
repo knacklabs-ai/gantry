@@ -277,7 +277,7 @@ describe('PromptProfileService', () => {
       'Never expose secrets, tokens, credentials, or unrelated local paths.',
     );
     expect(prompt).toContain(
-      'Use capability_search, propose_capability, and manage_capability for durable capability changes',
+      'Use request_access target.kind=capability for durable reviewed access',
     );
     expect(prompt).toContain(
       'Source = what exists; Capability = reviewed action; Grant = this agent is allowed to use the capability',

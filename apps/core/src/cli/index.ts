@@ -49,7 +49,7 @@ function usage(): string {
     '  gantry local setup|start|stop|status|logs|doctor',
     '  gantry provider list|connect|doctor',
     '  gantry conversation info|approvers  # direct/private and group/channel permission approvers',
-    '  gantry agent list|info|add|remove|trigger|policy',
+    '  gantry agent list|info|add|remove|trigger|policy|access',
     '  gantry browser profiles|status',
     '  gantry jobs list|show|resume|trigger|set-route|events [--full|--json]',
     '  gantry model status|list|set|reset|why|use-preset|doctor',

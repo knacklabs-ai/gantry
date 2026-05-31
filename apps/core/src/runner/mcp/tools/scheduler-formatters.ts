@@ -2,11 +2,13 @@ import {
   jobSetupBlockerFromUnknown,
   setupActionLabel,
   setupActionLabelFromNextAction,
+  setupReadinessLabel,
 } from '../../../shared/job-setup-labels.js';
 import {
   deliveryLabel as providerDeliveryLabel,
   ownerLabel as providerOwnerLabel,
 } from '../../../channels/provider-delivery-labels.js';
+import { semanticCapabilityRule } from '../../../shared/semantic-capability-ids.js';
 
 export function schedulerJobSummary(job: unknown): string {
   const record =
@@ -33,20 +35,19 @@ export function schedulerJobSummary(job: unknown): string {
   const staleness =
     typeof visibility.staleness === 'string' ? visibility.staleness : 'none';
   const toolAccess = toolAccessRecord(visibility.toolAccess);
+  const recordAccess = Array.isArray(record.access_requirements)
+    ? splitRecordAccessRequirements(record.access_requirements)
+    : undefined;
   const toolAccessRequirements = stringArray(
-    Array.isArray(record.tool_access_requirements)
-      ? record.tool_access_requirements
-      : visibility.toolAccessRequirements,
+    recordAccess ? recordAccess.toolRules : visibility.toolAccessRequirements,
   );
   const capabilityRequirements = capabilityRequirementLabels(
-    Array.isArray(record.capability_requirements)
-      ? record.capability_requirements
+    recordAccess
+      ? recordAccess.capabilities
       : visibility.capabilityRequirements,
   );
   const requiredMcpServers = stringArray(
-    Array.isArray(record.required_mcp_servers)
-      ? record.required_mcp_servers
-      : visibility.requiredMcpServers,
+    recordAccess ? recordAccess.mcpServers : visibility.requiredMcpServers,
   );
   const health =
     typeof visibility.health === 'object' && visibility.health !== null
@@ -145,12 +146,6 @@ function preferredDeliveryLabel(input: {
     : inferred;
 }
 
-function setupReadinessLabel(state: string | undefined): string {
-  if (state === 'ready' || !state) return 'Ready';
-  if (state === 'missing_capability') return 'Needs approval';
-  return 'Needs setup';
-}
-
 function setupActionSummary(setup: Record<string, any>): string {
   const blockers = Array.isArray(setup.blockers) ? setup.blockers : [];
   const blocker = jobSetupBlockerFromUnknown(blockers[0]);
@@ -178,20 +173,19 @@ export function schedulerJobsSummary(jobs: unknown[]): string {
         ? (visibility.executionContext as Record<string, any>)
         : {};
     const toolAccess = toolAccessRecord(visibility.toolAccess);
+    const recordAccess = Array.isArray(record.access_requirements)
+      ? splitRecordAccessRequirements(record.access_requirements)
+      : undefined;
     const toolAccessRequirements = stringArray(
-      Array.isArray(record.tool_access_requirements)
-        ? record.tool_access_requirements
-        : visibility.toolAccessRequirements,
+      recordAccess ? recordAccess.toolRules : visibility.toolAccessRequirements,
     );
     const capabilityRequirements = capabilityRequirementLabels(
-      Array.isArray(record.capability_requirements)
-        ? record.capability_requirements
+      recordAccess
+        ? recordAccess.capabilities
         : visibility.capabilityRequirements,
     );
     const requiredMcpServers = stringArray(
-      Array.isArray(record.required_mcp_servers)
-        ? record.required_mcp_servers
-        : visibility.requiredMcpServers,
+      recordAccess ? recordAccess.mcpServers : visibility.requiredMcpServers,
     );
     const health =
       typeof visibility.health === 'object' && visibility.health !== null
@@ -317,6 +311,42 @@ function capabilityRequirementLabels(value: unknown): string[] {
         : capabilityId;
     })
     .filter((item): item is string => Boolean(item));
+}
+
+function splitRecordAccessRequirements(value: readonly unknown[]): {
+  toolRules: string[];
+  capabilities: Array<Record<string, unknown>>;
+  mcpServers: string[];
+} {
+  const toolRules: string[] = [];
+  const capabilities: Array<Record<string, unknown>> = [];
+  const mcpServers: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue;
+    const target = (item as Record<string, unknown>).target;
+    if (typeof target !== 'object' || target === null) continue;
+    const record = target as Record<string, unknown>;
+    if (record.kind === 'tool_rule' && typeof record.rule === 'string') {
+      toolRules.push(record.rule);
+    } else if (
+      record.kind === 'capability' &&
+      typeof record.capabilityId === 'string'
+    ) {
+      // Mirror the runtime split: capability targets also derive a
+      // capability:<id> tool rule.
+      toolRules.push(semanticCapabilityRule(String(record.capabilityId)));
+      capabilities.push({
+        capabilityId: record.capabilityId,
+        implementation: record.implementation,
+      });
+    } else if (
+      record.kind === 'mcp_server' &&
+      typeof record.server === 'string'
+    ) {
+      mcpServers.push(record.server);
+    }
+  }
+  return { toolRules, capabilities, mcpServers };
 }
 
 function formatTools(values: readonly string[]): string {

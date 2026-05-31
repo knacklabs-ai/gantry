@@ -44,14 +44,7 @@ import { requireJobControl, requireRuntimeEvents, requireTriggerQueue } from './
 import { runSchedulerJobNowFromMcp } from './job-management-run-now.js';
 // prettier-ignore
 import { listManagedDeadLetterRuns, listManagedJobEvents, listManagedJobRuns } from './job-management-read-queries.js';
-import {
-  normalizeRequiredMcpServers,
-  normalizeToolAccessRequirements,
-} from './job-tool-access-requirements.js';
-import {
-  capabilityRequirementToolRules,
-  normalizeCapabilityRequirements,
-} from './job-capability-requirements.js';
+import { normalizeAccessRequirements } from './job-access-requirements.js';
 import {
   applyJobReadinessToUpdates,
   evaluateManagedJobReadiness,
@@ -169,18 +162,8 @@ export class JobManagementService {
               },
             ]),
     );
-    const toolAccessRequirements = normalizeToolAccessRequirements(
-      input.toolAccessRequirements ?? [],
-    );
-    const capabilityRequirements = normalizeCapabilityRequirements(
-      input.capabilityRequirements ?? [],
-    );
-    const effectiveToolAccessRequirements = normalizeToolAccessRequirements([
-      ...toolAccessRequirements,
-      ...capabilityRequirementToolRules(capabilityRequirements),
-    ]);
-    const requiredMcpServers = normalizeRequiredMcpServers(
-      input.requiredMcpServers ?? [],
+    const accessRequirements = normalizeAccessRequirements(
+      input.accessRequirements ?? [],
     );
 
     const { canonicalSession } = await resolveCanonicalAppSessionForOrigin({
@@ -229,9 +212,7 @@ export class JobManagementService {
       max_consecutive_failures: input.maxConsecutiveFailures,
       execution_context: storedExecutionContext,
       notification_routes: requestedNotificationRoutes,
-      capability_requirements: capabilityRequirements,
-      tool_access_requirements: effectiveToolAccessRequirements,
-      required_mcp_servers: requiredMcpServers,
+      access_requirements: accessRequirements,
     };
     const readiness = await evaluateManagedJobReadiness({
       deps: this.deps,

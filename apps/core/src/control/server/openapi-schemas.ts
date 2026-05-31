@@ -166,12 +166,28 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       sources: { $ref: '#/components/schemas/AgentSources' },
     },
   },
-  AgentSourcesResponse: {
+  AgentAccessRequest: {
     type: 'object',
-    required: ['agentId', 'sources', 'updatedAt'],
+    required: ['sources'],
+    properties: {
+      sources: { $ref: '#/components/schemas/AgentSources' },
+      selections: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/CapabilitySelection' },
+      },
+    },
+  },
+  AgentAccessResponse: {
+    type: 'object',
+    required: ['agentId', 'sources', 'selections', 'toolAccess', 'updatedAt'],
     properties: {
       agentId: { type: 'string' },
       sources: { $ref: '#/components/schemas/AgentSources' },
+      selections: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/CapabilitySelection' },
+      },
+      toolAccess: metadata,
       updatedAt: isoDateTime,
     },
   },
@@ -506,10 +522,10 @@ export const openApiSchemas: Record<string, JsonSchema> = {
         description:
           'Optional chat preview scope for session /model overrides.',
       },
-      groupScope: {
+      workspaceKey: {
         type: 'string',
         description:
-          'Optional group folder/name preview scope for session /model overrides.',
+          'Optional workspace key preview scope for session /model overrides.',
       },
       kind: { type: 'string', enum: ['one-time', 'recurring'] },
       task: {

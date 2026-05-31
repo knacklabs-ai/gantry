@@ -4,7 +4,7 @@ export const REQUEST_TOOL_ENABLE_SCOPE_GUIDANCE = [
   'Capability = reviewed action.',
   'Grant = agent allowed capability.',
   'Job = requirement only.',
-  'Use capability_search first. If a reviewed capability exists, use propose_capability. If the source is missing, request the source install/connect/attach path. If the source exists but the action is unreviewed, refresh source inventory and request review. Use request_permission only for exact one-off access, Browser, exact Gantry admin tools, provider/channel permissions, or scoped RunCommand fallback when no reviewed capability fits.',
+  'Use request_access with target.kind=capability when a reviewed capability exists. If the source is missing, request the source install/connect/attach path. If the source exists but the action is unreviewed, refresh source inventory and request review. Use request_access target.kind=run_command only for scoped command fallback when no reviewed capability fits.',
 ].join(' ');
 
 export const SOURCE_INVENTORY_AUTHORITY_GUIDANCE =
@@ -18,7 +18,7 @@ export const NO_REVIEWED_CAPABILITY_GUIDANCE = [
   'Next action:',
   '- If the source is missing, request source install/connect/attach with request_skill_install, request_mcp_server, or an admin-reviewed local CLI source setup.',
   '- If the source exists but the action is unreviewed, refresh source inventory and request a capability review; do not treat CLI help, MCP tools, or skill text as durable authority.',
-  '- If the user needs one immediate action, request exact one-off access with request_permission.',
+  '- If the user needs one immediate command action, request exact scoped command access with request_access (target.kind=run_command, temporaryOnly=true).',
 ].join('\n');
 
 export function renderDefaultCapabilityRules(options?: {
@@ -28,7 +28,7 @@ export function renderDefaultCapabilityRules(options?: {
     'Capability rules:',
     '- Use send_message for progress updates and ask_user_question for structured choices.',
     `- ${SOURCE_INVENTORY_AUTHORITY_GUIDANCE}`,
-    '- Use capability_search, propose_capability, and manage_capability for durable capability changes; request_permission is only a one-off or exact fallback access request.',
+    '- Use request_access target.kind=capability for durable reviewed access; request_access target.kind=run_command is the only raw fallback and must be scoped, with temporaryOnly=true for transient needs.',
     '- For skills, Bash may be used for narrow prep such as inspecting, copying, unzipping, or constructing files, but durable install/selection must go through request_skill_install with staged files when available or an exact installer argv for catalog/local/URL/CLI installs.',
     `- ${UNREVIEWED_DISCOVERY_GUIDANCE}`,
     '- Declare requiredEnvVars for secrets the installed skill needs at runtime; they are projected later from Gantry Credentials and are not generic installer env.',

@@ -20,6 +20,7 @@ import {
   normalizeDefaultAgentName,
 } from './main-agent.js';
 import { RuntimeGroupDb } from './runtime-group-db.js';
+import { runAccess } from './group-access.js';
 import { verifyTelegramChatAccess } from './telegram.js';
 import {
   parseGroupAddArgs,
@@ -809,6 +810,8 @@ export async function runAgentCommand(
       return runPolicyDefault(runtimeHome, rest);
     case 'policy-show':
       return runPolicyShow(runtimeHome, rest);
+    case 'access':
+      return runAccess(runtimeHome, rest);
     default:
       p.log.error(`Unknown agent command: ${subcommand}`);
       console.log(usage());

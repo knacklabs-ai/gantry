@@ -163,52 +163,63 @@ describe('scheduler MCP tools', () => {
     expect(
       schemas
         .get('scheduler_upsert_job')
-        ?.tool_access_requirements.safeParse(['Browser']).success,
+        ?.access_requirements.safeParse([
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ]).success,
     ).toBe(true);
     expect(
-      schemas.get('scheduler_upsert_job')?.capability_requirements.safeParse([
+      schemas.get('scheduler_upsert_job')?.access_requirements.safeParse([
         {
-          capability_id: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executable_path: '/usr/local/bin/acme',
-            executable_version: 'v0.9.0',
-            executable_hash: 'sha256:abc123',
-            command_template: '/usr/local/bin/acme records append *',
-            auth_preflight: '/usr/local/bin/acme auth status',
-            protected_paths: ['~/.config/acme/*'],
+          target: {
+            kind: 'capability',
+            capability_id: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executable_path: '/usr/local/bin/acme',
+              executable_version: 'v0.9.0',
+              executable_hash: 'sha256:abc123',
+              command_template: '/usr/local/bin/acme records append *',
+              auth_preflight: '/usr/local/bin/acme auth status',
+              protected_paths: ['~/.config/acme/*'],
+            },
           },
+          reason: 'Write lead rows after each run',
         },
       ]).success,
     ).toBe(true);
     expect(
-      schemas.get('scheduler_upsert_job')?.capability_requirements.safeParse([
+      schemas.get('scheduler_upsert_job')?.access_requirements.safeParse([
         {
-          capability_id: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executable_path: '/usr/local/bin/acme',
-            command_template: 'acme records append *',
+          target: {
+            kind: 'capability',
+            capability_id: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executable_path: '/usr/local/bin/acme',
+              command_template: 'acme records append *',
+            },
           },
+          reason: 'Write lead rows after each run',
         },
       ]).success,
     ).toBe(false);
     expect(
-      schemas.get('scheduler_upsert_job')?.capability_requirements.safeParse([
+      schemas.get('scheduler_upsert_job')?.access_requirements.safeParse([
         {
-          capability_id: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executable_path: '/usr/local/bin/acme',
-            command_template: '/usr/local/bin/acme records append *',
-            auth_preflight: 'acme auth status',
+          target: {
+            kind: 'capability',
+            capability_id: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executable_path: '/usr/local/bin/acme',
+              command_template: '/usr/local/bin/acme records append *',
+              auth_preflight: 'acme auth status',
+            },
           },
+          reason: 'Write lead rows after each run',
         },
       ]).success,
     ).toBe(false);
@@ -220,23 +231,28 @@ describe('scheduler MCP tools', () => {
     expect(
       schemas
         .get('scheduler_update_job')
-        ?.tool_access_requirements.safeParse(['Browser']).success,
+        ?.access_requirements.safeParse([
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ]).success,
     ).toBe(true);
     expect(
-      schemas.get('scheduler_update_job')?.capability_requirements.safeParse([
+      schemas.get('scheduler_update_job')?.access_requirements.safeParse([
         {
-          capability_id: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executable_path: '/usr/local/bin/acme',
-            executable_version: 'v0.9.0',
-            executable_hash: 'sha256:abc123',
-            command_template: '/usr/local/bin/acme records append *',
-            auth_preflight: '/usr/local/bin/acme auth status',
-            protected_paths: ['~/.config/acme/*'],
+          target: {
+            kind: 'capability',
+            capability_id: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executable_path: '/usr/local/bin/acme',
+              executable_version: 'v0.9.0',
+              executable_hash: 'sha256:abc123',
+              command_template: '/usr/local/bin/acme records append *',
+              auth_preflight: '/usr/local/bin/acme auth status',
+              protected_paths: ['~/.config/acme/*'],
+            },
           },
+          reason: 'Write lead rows after each run',
         },
       ]).success,
     ).toBe(true);
@@ -280,18 +296,21 @@ describe('scheduler MCP tools', () => {
         thread_id: null,
         group_scope: 'team',
       },
-      capability_requirements: [
+      access_requirements: [
         {
-          capability_id: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executable_path: '/usr/local/bin/acme',
-            executable_version: 'v0.9.0',
-            executable_hash: 'sha256:abc123',
-            command_template: '/usr/local/bin/acme records append *',
+          target: {
+            kind: 'capability',
+            capability_id: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executable_path: '/usr/local/bin/acme',
+              executable_version: 'v0.9.0',
+              executable_hash: 'sha256:abc123',
+              command_template: '/usr/local/bin/acme records append *',
+            },
           },
+          reason: 'Write lead rows after each run',
         },
       ],
     });
@@ -307,18 +326,21 @@ describe('scheduler MCP tools', () => {
           threadId: null,
           groupScope: 'team',
         },
-        capabilityRequirements: [
+        accessRequirements: [
           {
-            capabilityId: 'acme.records.append',
-            reason: 'Write lead rows after each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'acme',
-              executablePath: '/usr/local/bin/acme',
-              executableVersion: 'v0.9.0',
-              executableHash: 'sha256:abc123',
-              commandTemplate: '/usr/local/bin/acme records append *',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                executableVersion: 'v0.9.0',
+                executableHash: 'sha256:abc123',
+                commandTemplate: '/usr/local/bin/acme records append *',
+              },
             },
+            reason: 'Write lead rows after each run',
           },
         ],
       }),
@@ -418,21 +440,24 @@ describe('scheduler MCP tools', () => {
       schedule_type: 'once',
       schedule_value: '2026-05-04T00:00:00.000Z',
       target: 'here',
-      capability_requirements: [
+      access_requirements: [
         {
-          capability_id: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executable_path: '/usr/local/bin/acme',
-            executable_version: 'v0.9.0',
-            executable_hash: 'sha256:abc123',
-            command_template: '/usr/local/bin/acme records append *',
+          target: {
+            kind: 'capability',
+            capability_id: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executable_path: '/usr/local/bin/acme',
+              executable_version: 'v0.9.0',
+              executable_hash: 'sha256:abc123',
+              command_template: '/usr/local/bin/acme records append *',
+            },
           },
+          reason: 'Write lead rows after each run',
         },
+        { target: { kind: 'tool_rule', rule: 'Browser' } },
       ],
-      tool_access_requirements: ['Browser'],
     });
 
     expect(response.isError).not.toBe(true);
@@ -507,7 +532,7 @@ describe('scheduler MCP tools', () => {
           label: 'primary',
         },
       ],
-      toolAccessRequirements: ['Browser'],
+      accessRequirements: [{ target: { kind: 'tool_rule', rule: 'Browser' } }],
       createdBy: 'agent',
     });
     const response = await tools.get('scheduler_upsert_job')!({
@@ -516,7 +541,7 @@ describe('scheduler MCP tools', () => {
       schedule_type: 'once',
       schedule_value: '2026-05-04T00:00:00.000Z',
       target: 'here',
-      tool_access_requirements: ['Browser'],
+      access_requirements: [{ target: { kind: 'tool_rule', rule: 'Browser' } }],
       confirm: true,
       confirmation_token: confirmationToken,
     });
@@ -540,7 +565,9 @@ describe('scheduler MCP tools', () => {
             label: 'primary',
           },
         ],
-        toolAccessRequirements: ['Browser'],
+        accessRequirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
       }),
     );
   });
@@ -622,7 +649,7 @@ describe('scheduler MCP tools', () => {
 
     expect(response.isError).toBe(true);
     expect(response.content[0].text).toContain(
-      'required_tools is no longer accepted. Use tool_access_requirements',
+      'required_tools is no longer accepted. Use access_requirements',
     );
     expect(writeIpcFile).not.toHaveBeenCalled();
   });
@@ -673,7 +700,8 @@ describe('scheduler MCP tools', () => {
           health: {
             state: 'needs_permission',
             latestRunStatus: 'dead_lettered',
-            nextAction: 'request_permission { "toolName": "Browser" }',
+            nextAction:
+              'request_access { "target": { "kind": "capability", "id": "browser.use" } }',
           },
           recentRunErrors: [],
         },
@@ -717,7 +745,9 @@ describe('scheduler MCP tools', () => {
         {
           id: 'job-2',
           name: 'Use browser when needed',
-          tool_access_requirements: ['Browser'],
+          access_requirements: [
+            { target: { kind: 'tool_rule', rule: 'Browser' } },
+          ],
           visibility: {
             executionContext: { conversationJid: 'tg:team' },
             toolAccess: {

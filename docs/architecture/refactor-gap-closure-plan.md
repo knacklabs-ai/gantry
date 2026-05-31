@@ -81,10 +81,12 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 
 - `apps/core/src/shared/permission-timeout.ts` exposes `getPermissionTimeoutMs(context: 'interactive' | 'autonomous')`. Interactive defaults 15000ms; autonomous defaults 0ms.
 - Autonomous-context callers (job runner) skip the IPC entirely on 0ms — fall through to the merged capability allowlist. No prompt fires.
-- Interactive denial message names the missing rule and points to the reviewed
-  capability or narrow `request_permission` path. Persistent fallback remains
-  limited to semantic capabilities, canonical `Browser`, exact Gantry admin
-  tools, exact Gantry file/web facades, or scoped `RunCommand(...)` rules.
+- Interactive denial message names the missing rule and points to
+  `request_access target.kind=capability` or the narrow
+  `request_access target.kind=run_command` fallback. Persistent fallback
+  remains limited to semantic capabilities, canonical `browser.use`, exact
+  Gantry admin tools, exact Gantry file/web facades, or scoped
+  `RunCommand(...)` rules.
 - Configurable via env, but defaults are the spec'd values.
 
 **Exit criteria:**

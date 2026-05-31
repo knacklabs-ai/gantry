@@ -16,7 +16,8 @@ const setupState: JobSetupState = {
       requirementType: 'browser',
       requirementId: 'Browser',
       message: 'This job needs Browser access before it can run.',
-      nextAction: 'request_permission { "toolName": "Browser" }',
+      nextAction:
+        'request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
     },
   ],
 };

@@ -34,6 +34,8 @@ export function usage(): string {
     '  gantry agent policy <jid|folder> --clear',
     `  gantry agent policy-default --channel ${channels} --allow <"*"|id1,id2> [--mode trigger|drop]`,
     `  gantry agent policy-show [--channel ${channels}]`,
+    '  gantry agent access show <jid|folder>',
+    '  gantry agent access apply <jid|folder> --file <path|->',
   ].join('\n');
 }
 

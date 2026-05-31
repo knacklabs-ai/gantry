@@ -138,7 +138,7 @@ function assertNoDisallowedTaskFields(raw: Record<string, unknown>): void {
   }
   if (fields.includes('tool_access_requirements')) {
     throw new Error(
-      'Unsupported IPC task field: tool_access_requirements. Use camelCase toolAccessRequirements.',
+      'Unsupported IPC task field: tool_access_requirements. Use camelCase accessRequirements.',
     );
   }
   throw new Error(
@@ -156,7 +156,7 @@ function assertNoUnsupportedSchedulerJobTaskFields(
   if (fields.length === 0) return;
   if (fields.includes('requiredTools') || fields.includes('required_tools')) {
     throw new Error(
-      'Unsupported scheduler job field: requiredTools. Use toolAccessRequirements for access preflight checks.',
+      'Unsupported scheduler job field: requiredTools. Use accessRequirements for access preflight checks.',
     );
   }
   throw new Error(
@@ -261,155 +261,103 @@ function toOptionalNotificationRoutes(value: unknown):
   return routes;
 }
 
-function toOptionalCapabilityRequirements(value: unknown):
-  | Array<{
-      capabilityId: string;
-      reason: string;
-      implementation?: {
-        kind: 'configured_access' | 'local_cli' | 'mcp_server' | 'builtin_tool';
-        name?: string;
-        executablePath?: string;
-        executableVersion?: string;
-        executableHash?: string;
-        commandTemplate?: string;
-        authPreflight?: string;
-        protectedPaths?: string[];
-        networkHosts?: string[];
-      };
-    }>
-  | undefined {
+function toOptionalAccessRequirements(
+  value: unknown,
+): import('../domain/types.js').JobAccessRequirement[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) return undefined;
-  const requirements: Array<{
-    capabilityId: string;
-    reason: string;
-    implementation?: {
-      kind: 'configured_access' | 'local_cli' | 'mcp_server' | 'builtin_tool';
-      name?: string;
-      executablePath?: string;
-      executableVersion?: string;
-      executableHash?: string;
-      commandTemplate?: string;
-      authPreflight?: string;
-      protectedPaths?: string[];
-      networkHosts?: string[];
-    };
-  }> = [];
-  const seen = new Set<string>();
-  for (const item of value) {
+  const out: import('../domain/types.js').JobAccessRequirement[] = [];
+  for (const item of value.slice(0, 100)) {
     if (!isPlainObject(item)) continue;
     const record = item as Record<string, unknown>;
-    const capabilityId = toTrimmedString(record.capabilityId, {
-      maxLen: 120,
-    });
-    const reason = toTrimmedString(record.reason, {
-      maxLen: 255,
-    });
-    if (!capabilityId || !reason) continue;
-    const requirement: {
-      capabilityId: string;
-      reason: string;
-      implementation?: {
-        kind: 'configured_access' | 'local_cli' | 'mcp_server' | 'builtin_tool';
-        name?: string;
-        executablePath?: string;
-        executableVersion?: string;
-        executableHash?: string;
-        commandTemplate?: string;
-        authPreflight?: string;
-        protectedPaths?: string[];
-        networkHosts?: string[];
-      };
-    } = {
-      capabilityId,
-      reason,
-    };
-    const rawImplementation = record.implementation;
-    if (isPlainObject(rawImplementation)) {
-      const implementationRecord = rawImplementation as Record<string, unknown>;
-      const kind =
-        (toTrimmedString(implementationRecord.kind, {
-          maxLen: 40,
-        }) as
-          | 'configured_access'
-          | 'local_cli'
-          | 'mcp_server'
-          | 'builtin_tool'
-          | undefined) ?? undefined;
-      if (
-        kind !== 'configured_access' &&
-        kind !== 'local_cli' &&
-        kind !== 'mcp_server' &&
-        kind !== 'builtin_tool'
-      ) {
-        requirements.push({ capabilityId, reason, implementation: undefined });
-        continue;
-      }
-      const implementation: {
-        kind: 'configured_access' | 'local_cli' | 'mcp_server' | 'builtin_tool';
-        name?: string;
-        executablePath?: string;
-        executableVersion?: string;
-        executableHash?: string;
-        commandTemplate?: string;
-        authPreflight?: string;
-        protectedPaths?: string[];
-        networkHosts?: string[];
-      } = { kind };
-      const name = toTrimmedString(implementationRecord.name, {
+    if (!isPlainObject(record.target)) continue;
+    const target = record.target as Record<string, unknown>;
+    const kind = toTrimmedString(target.kind, { maxLen: 40 });
+    const reason = toTrimmedString(record.reason, { maxLen: 255 });
+    const withReason = <T extends { target: unknown }>(value: T) =>
+      reason ? { ...value, reason } : value;
+    if (kind === 'tool_rule') {
+      const rule = toTrimmedString(target.rule, { maxLen: 255 });
+      if (!rule) continue;
+      out.push(withReason({ target: { kind: 'tool_rule', rule } }));
+    } else if (kind === 'mcp_server') {
+      const server = toTrimmedString(target.server, { maxLen: 255 });
+      if (!server) continue;
+      out.push(withReason({ target: { kind: 'mcp_server', server } }));
+    } else if (kind === 'capability') {
+      const capabilityId = toTrimmedString(target.capabilityId, {
         maxLen: 120,
       });
-      const executablePath = toTrimmedString(
-        implementationRecord.executablePath,
-        { maxLen: 255 },
+      if (!capabilityId) continue;
+      const implementation = toOptionalCapabilityImplementation(
+        target.implementation,
       );
-      const executableVersion = toTrimmedString(
-        implementationRecord.executableVersion,
-        { maxLen: 255 },
+      out.push(
+        withReason({
+          target: {
+            kind: 'capability',
+            capabilityId,
+            ...(implementation ? { implementation } : {}),
+          },
+        }),
       );
-      const executableHash = toTrimmedString(
-        implementationRecord.executableHash,
-        { maxLen: 255 },
-      );
-      const commandTemplate = toTrimmedString(
-        implementationRecord.commandTemplate,
-        { maxLen: 1024 },
-      );
-      const authPreflight = toTrimmedString(
-        implementationRecord.authPreflight,
-        { maxLen: 1024 },
-      );
-      const protectedPaths = toOptionalStringArray(
-        implementationRecord.protectedPaths,
-        100,
-        255,
-      );
-      const networkHosts = toOptionalStringArray(
-        implementationRecord.networkHosts,
-        100,
-        255,
-      );
-      if (name) implementation.name = name;
-      if (executablePath) implementation.executablePath = executablePath;
-      if (executableVersion)
-        implementation.executableVersion = executableVersion;
-      if (executableHash) implementation.executableHash = executableHash;
-      if (commandTemplate) implementation.commandTemplate = commandTemplate;
-      if (authPreflight) implementation.authPreflight = authPreflight;
-      if (protectedPaths && protectedPaths.length > 0)
-        implementation.protectedPaths = protectedPaths;
-      if (networkHosts && networkHosts.length > 0)
-        implementation.networkHosts = networkHosts;
-      requirement.implementation = implementation;
     }
-    const key = `${requirement.capabilityId}\u0000${
-      requirement.implementation?.kind ?? ''
-    }\u0000${requirement.implementation?.name ?? ''}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    requirements.push(requirement);
   }
-  return requirements;
+  return out;
+}
+
+type IpcCapabilityImplementation = {
+  kind: 'configured_access' | 'local_cli' | 'mcp_server' | 'builtin_tool';
+  name?: string;
+  executablePath?: string;
+  executableVersion?: string;
+  executableHash?: string;
+  commandTemplate?: string;
+  authPreflight?: string;
+  protectedPaths?: string[];
+  networkHosts?: string[];
+};
+
+function toOptionalCapabilityImplementation(
+  value: unknown,
+): IpcCapabilityImplementation | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const kind = toTrimmedString(record.kind, { maxLen: 40 });
+  if (
+    kind !== 'configured_access' &&
+    kind !== 'local_cli' &&
+    kind !== 'mcp_server' &&
+    kind !== 'builtin_tool'
+  ) {
+    return undefined;
+  }
+  const implementation: IpcCapabilityImplementation = { kind };
+  const name = toTrimmedString(record.name, { maxLen: 120 });
+  if (name) implementation.name = name;
+  const executablePath = toTrimmedString(record.executablePath, {
+    maxLen: 255,
+  });
+  if (executablePath) implementation.executablePath = executablePath;
+  const executableVersion = toTrimmedString(record.executableVersion, {
+    maxLen: 120,
+  });
+  if (executableVersion) implementation.executableVersion = executableVersion;
+  const executableHash = toTrimmedString(record.executableHash, {
+    maxLen: 200,
+  });
+  if (executableHash) implementation.executableHash = executableHash;
+  const commandTemplate = toTrimmedString(record.commandTemplate, {
+    maxLen: 400,
+  });
+  if (commandTemplate) implementation.commandTemplate = commandTemplate;
+  const authPreflight = toTrimmedString(record.authPreflight, { maxLen: 400 });
+  if (authPreflight) implementation.authPreflight = authPreflight;
+  const protectedPaths = toOptionalStringArray(record.protectedPaths, 50, 255);
+  if (protectedPaths) implementation.protectedPaths = protectedPaths;
+  const networkHosts = toOptionalStringArray(record.networkHosts, 50, 255);
+  if (networkHosts) implementation.networkHosts = networkHosts;
+  return implementation;
 }
 
 function parseAgentConfigPayload(
@@ -471,18 +419,8 @@ export function parseTaskIpcData(
   const notificationRoutes = toOptionalNotificationRoutes(
     raw.notificationRoutes,
   );
-  const toolAccessRequirements = toOptionalStringArray(
-    raw.toolAccessRequirements,
-    100,
-    255,
-  );
-  const capabilityRequirements = toOptionalCapabilityRequirements(
-    raw.capabilityRequirements,
-  );
-  const requiredMcpServers = toOptionalStringArray(
-    raw.requiredMcpServers,
-    100,
-    255,
+  const accessRequirements = toOptionalAccessRequirements(
+    raw.accessRequirements,
   );
   const groupScope = toTrimmedString(raw.groupScope, { maxLen: 128 });
   const silent = toOptionalBoolean(raw.silent);
@@ -549,13 +487,8 @@ export function parseTaskIpcData(
       }
     ).notificationRoutes = notificationRoutes;
   }
-  if (toolAccessRequirements !== undefined)
-    parsed.toolAccessRequirements = toolAccessRequirements;
-  if (capabilityRequirements !== undefined)
-    parsed.capabilityRequirements = capabilityRequirements;
-  if (requiredMcpServers !== undefined) {
-    parsed.requiredMcpServers = requiredMcpServers;
-  }
+  if (accessRequirements !== undefined)
+    parsed.accessRequirements = accessRequirements;
   if (groupScope) parsed.groupScope = groupScope;
   if (threadBinding.authThreadId) {
     parsed.authThreadId = threadBinding.authThreadId;

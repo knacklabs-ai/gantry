@@ -1,4 +1,9 @@
-import type { Job, JobRun } from '../../domain/types.js';
+import type {
+  Job,
+  JobCapabilityRequirement,
+  JobRun,
+} from '../../domain/types.js';
+import { splitAccessRequirements } from './job-access-requirements.js';
 import type {
   SkillCatalogRepository,
   ToolCatalogRepository,
@@ -30,6 +35,7 @@ import {
 import {
   setupActionLabel,
   setupActionLabelFromNextAction,
+  setupReadinessLabel,
 } from '../../shared/job-setup-labels.js';
 
 export interface JobVisibilityMetadata {
@@ -50,7 +56,7 @@ export interface JobVisibilityMetadata {
   fullPrompt?: string;
   inheritedTools: string[];
   effectiveAllowedTools: string[];
-  capabilityRequirements: NonNullable<Job['capability_requirements']>;
+  capabilityRequirements: JobCapabilityRequirement[];
   toolAccessRequirements: string[];
   requiredMcpServers: string[];
   toolAccess: JobToolAccessView;
@@ -174,9 +180,7 @@ export async function buildJobVisibilityMetadata(input: {
     fullPrompt: input.job.prompt,
     inheritedTools: policy.inheritedTools,
     effectiveAllowedTools: policy.effectiveAllowedTools,
-    capabilityRequirements: input.job.capability_requirements ?? [],
-    toolAccessRequirements: input.job.tool_access_requirements ?? [],
-    requiredMcpServers: input.job.required_mcp_servers ?? [],
+    ...splitAccessRequirements(input.job.access_requirements),
     toolAccess: buildJobToolAccessView({
       inheritedAgentTools: policy.inheritedTools,
       effectiveAllowedTools: policy.effectiveAllowedTools,
@@ -263,9 +267,7 @@ export async function buildJobListVisibilityMetadata(input: {
           promptPreview: promptPreview(job.prompt),
           inheritedTools,
           effectiveAllowedTools,
-          capabilityRequirements: job.capability_requirements ?? [],
-          toolAccessRequirements: job.tool_access_requirements ?? [],
-          requiredMcpServers: job.required_mcp_servers ?? [],
+          ...splitAccessRequirements(job.access_requirements),
           toolAccess: buildJobToolAccessView({
             inheritedAgentTools: inheritedTools,
             effectiveAllowedTools,
@@ -420,12 +422,6 @@ function genericConversationDeliveryLabel(
 
 // "Needs approval" only fits capability/permission grants; broker, credential,
 // and browser-login blockers are not approvals, so they read as "Needs setup".
-function setupReadinessLabel(state: string | undefined): string {
-  if (state === 'ready' || !state) return 'Ready';
-  if (state === 'missing_capability') return 'Needs approval';
-  return 'Needs setup';
-}
-
 function setupMetadataForJob(job: Job): JobSetupMetadata {
   const setup = job.setup_state;
   const blockers = setup?.blockers ?? [];

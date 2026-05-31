@@ -17,11 +17,11 @@ interface JobRecord {
   name: string;
   kind: string;
   status: string;
-  groupScope: string;
+  workspaceKey: string;
   threadId?: string | null;
   executionContext?: {
     conversationJid?: string;
-    groupScope?: string;
+    workspaceKey?: string;
     threadId?: string | null;
     sessionId?: string | null;
   };
@@ -67,16 +67,17 @@ interface JobRecord {
     errorSummary: string;
     endedAt: string | null;
   }>;
-  capabilityRequirements?: Array<{
-    capabilityId?: string;
+  accessRequirements?: Array<{
+    target:
+      | { kind: 'tool_rule'; rule: string }
+      | {
+          kind: 'capability';
+          capabilityId: string;
+          implementation?: { kind?: string; name?: string };
+        }
+      | { kind: 'mcp_server'; server: string };
     reason?: string;
-    implementation?: {
-      kind?: string;
-      name?: string;
-    };
   }>;
-  toolAccessRequirements?: string[];
-  requiredMcpServers?: string[];
 }
 
 interface JobEventRecord {
@@ -122,8 +123,8 @@ async function listJobs(runtimeHome: string, args: string[]): Promise<number> {
     if (arg === '--agent' && next) {
       params.set('agentId', next);
       index += 1;
-    } else if (arg === '--group' && next) {
-      params.set('groupScope', next);
+    } else if (arg === '--workspace' && next) {
+      params.set('workspaceKey', next);
       index += 1;
     } else if (arg === '--conversation' && next) {
       params.set('conversationJid', next);
@@ -207,7 +208,7 @@ async function setJobRoute(
   const parsed = parseSetRouteArgs(args);
   if (!parsed) {
     p.log.error(
-      'Usage: gantry jobs set-route <job_id> --conversation <jid> --thread <id|null> [--label <label>] [--group <group_scope>]',
+      'Usage: gantry jobs set-route <job_id> --conversation <jid> --thread <id|null> [--label <label>] [--workspace <workspace_key>]',
     );
     return 1;
   }
@@ -222,10 +223,10 @@ async function setJobRoute(
           executionContext: {
             conversationJid: parsed.conversationJid,
             threadId: parsed.threadId,
-            groupScope:
-              parsed.groupScope ??
-              current.executionContext?.groupScope ??
-              current.groupScope,
+            workspaceKey:
+              parsed.workspaceKey ??
+              current.executionContext?.workspaceKey ??
+              current.workspaceKey,
             sessionId,
           },
         }
@@ -304,14 +305,10 @@ function formatJobTable(jobs: JobRecord[]): string {
       : job.recovery?.state && job.recovery.state !== 'none'
         ? `recovery:${job.recovery.state}`
         : (job.health?.state ?? job.status),
-    job.groupScope,
+    job.workspaceKey,
     jobThreadId(job) ?? '',
     job.nextRun ?? '',
-    compactToolList([
-      ...formatCapabilityRequirements(job.capabilityRequirements),
-      ...(job.toolAccessRequirements ?? []),
-      ...(job.requiredMcpServers ?? []).map((server) => `mcp:${server}`),
-    ]),
+    compactToolList(formatAccessRequirements(job.accessRequirements)),
     compactToolList(job.toolAccess.effectiveAllowedTools),
     job.name,
   ]);
@@ -319,7 +316,7 @@ function formatJobTable(jobs: JobRecord[]): string {
     'ID',
     'Kind',
     'Status',
-    'Group',
+    'Workspace',
     'Thread',
     'Next run',
     'Required',
@@ -348,15 +345,13 @@ function formatJobDetail(job: JobRecord): string {
     `Health: ${job.health?.state ?? job.status}`,
     `Setup: ${job.setup?.state ?? 'ready'}`,
     `Recovery: ${formatJobRecovery(job.recovery)}`,
-    `Group: ${job.groupScope}`,
+    `Workspace: ${job.workspaceKey}`,
     `Thread: ${jobThreadId(job) ?? '(none)'}`,
     `Notifications: ${formatJobRoutes(job)}`,
     `Next Run: ${job.nextRun ?? '(none)'}`,
     `Last Run: ${job.lastRun ?? '(none)'}`,
     `Model: ${job.modelAlias ?? '(default)'}`,
-    `Capability Requirements: ${formatToolAccessRequirements(formatCapabilityRequirements(job.capabilityRequirements))}`,
-    `Tool Access Requirements: ${formatToolAccessRequirements(job.toolAccessRequirements)}`,
-    `Required MCP Servers: ${formatToolAccessRequirements(job.requiredMcpServers)}`,
+    `Access Requirements: ${formatAccessRequirementList(formatAccessRequirements(job.accessRequirements))}`,
     '',
     formatJobToolAccess(job.toolAccess),
   ];
@@ -463,12 +458,12 @@ function parseSetRouteArgs(args: string[]): {
   conversationJid: string;
   threadId: string | null;
   label: string;
-  groupScope?: string;
+  workspaceKey?: string;
 } | null {
   let conversationJid = '';
   let threadId: string | null | undefined;
   let label = 'primary';
-  let groupScope: string | undefined;
+  let workspaceKey: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const next = args[index + 1];
@@ -482,13 +477,13 @@ function parseSetRouteArgs(args: string[]): {
     } else if (arg === '--label' && next) {
       label = next.trim() || label;
       index += 1;
-    } else if (arg === '--group' && next) {
-      groupScope = next.trim() || undefined;
+    } else if (arg === '--workspace' && next) {
+      workspaceKey = next.trim() || undefined;
       index += 1;
     }
   }
   if (!conversationJid || threadId === undefined) return null;
-  return { conversationJid, threadId, label, groupScope };
+  return { conversationJid, threadId, label, workspaceKey };
 }
 
 function formatEventPayload(
@@ -503,23 +498,26 @@ function formatEventPayload(
     : singleLine;
 }
 
-function formatToolAccessRequirements(
-  toolAccessRequirements: string[] | undefined,
+function formatAccessRequirementList(
+  accessRequirements: string[] | undefined,
 ): string {
-  return toolAccessRequirements && toolAccessRequirements.length > 0
-    ? toolAccessRequirements.join(', ')
+  return accessRequirements && accessRequirements.length > 0
+    ? accessRequirements.join(', ')
     : '(none)';
 }
 
-function formatCapabilityRequirements(
-  capabilityRequirements: JobRecord['capabilityRequirements'],
+function formatAccessRequirements(
+  accessRequirements: JobRecord['accessRequirements'],
 ): string[] {
-  return (capabilityRequirements ?? [])
+  return (accessRequirements ?? [])
     .map((requirement) => {
-      const capabilityId = requirement.capabilityId?.trim();
+      const target = requirement.target;
+      if (target.kind === 'tool_rule') return target.rule;
+      if (target.kind === 'mcp_server') return `mcp:${target.server}`;
+      const capabilityId = target.capabilityId?.trim();
       if (!capabilityId) return undefined;
-      const implementation = requirement.implementation;
-      const implementationLabel = implementation?.name || implementation?.kind;
+      const implementationLabel =
+        target.implementation?.name || target.implementation?.kind;
       return implementationLabel
         ? `${capabilityId} via ${implementationLabel}`
         : capabilityId;

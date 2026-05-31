@@ -1,4 +1,4 @@
-import { ConversationRoute } from '../domain/types.js';
+import { ConversationRoute, JobAccessRequirement } from '../domain/types.js';
 import { IpcDeps } from '../runtime/ipc-domain-types.js';
 
 export interface TaskIpcData {
@@ -26,23 +26,7 @@ export interface TaskIpcData {
     threadId: string | null;
     label: string;
   }>;
-  capabilityRequirements?: Array<{
-    capabilityId: string;
-    reason: string;
-    implementation?: {
-      kind: 'configured_access' | 'local_cli' | 'mcp_server' | 'builtin_tool';
-      name?: string;
-      executablePath?: string;
-      executableVersion?: string;
-      executableHash?: string;
-      commandTemplate?: string;
-      authPreflight?: string;
-      protectedPaths?: string[];
-      networkHosts?: string[];
-    };
-  }>;
-  toolAccessRequirements?: string[];
-  requiredMcpServers?: string[];
+  accessRequirements?: JobAccessRequirement[];
   groupScope?: string;
   threadId?: string | null;
   createdBy?: 'agent' | 'human';

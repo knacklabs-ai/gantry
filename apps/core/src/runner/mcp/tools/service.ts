@@ -20,14 +20,13 @@ import {
   formatMcpListToolsResponse,
   formatSkillProposalResponse,
 } from './service-formatters.js';
-import { registerSemanticCapabilityTools } from './capabilities.js';
+import { registerAccessRequestTool } from './capabilities.js';
 import { registerAdminPermissionTools } from './admin-permissions.js';
 import { registerSettingsTools } from './settings.js';
 import { makeIpcId } from '../ipc-ids.js';
 import type { AdminMcpToolName } from '../../../shared/admin-mcp-tools.js';
 import { humanizeTechnicalIdentifier } from '../../../shared/user-visible-messages.js';
 import {
-  REQUEST_TOOL_ENABLE_SCOPE_GUIDANCE,
   SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
   UNREVIEWED_DISCOVERY_GUIDANCE,
 } from '../../../shared/capability-guidance.js';
@@ -42,15 +41,6 @@ export function registerServiceTools(server: McpServer): void {
   registerAdminPermissionTools(server, {
     isAdminToolEnabled: isAdminMcpToolEnabled,
   });
-
-  server.tool(
-    'capability_status',
-    'Show selected Gantry capabilities, attached skills/MCP services, and high-level requestable capabilities for this agent.',
-    {},
-    async () => ({
-      content: [{ type: 'text' as const, text: capabilityStatusText() }],
-    }),
-  );
 
   server.tool(
     'request_skill_install',
@@ -165,115 +155,7 @@ export function registerServiceTools(server: McpServer): void {
         },
       ),
   );
-  server.tool(
-    'request_permission',
-    [
-      'Request one reviewed transient or fallback permission for the current agent.',
-      'Do not use this for durable capability grants or capability proposals; use capability_search/propose_capability so users approve reviewed capabilities.',
-      'Use this directly for one-off exact tool access, provider/channel permissions, internal Browser requests, or scoped RunCommand fallback rules such as RunCommand(npm test *) when no reviewed semantic capability fits.',
-      'Use request_skill_install/request_skill_proposal for skill sources and request_mcp_server for third-party MCP sources.',
-      REQUEST_TOOL_ENABLE_SCOPE_GUIDANCE,
-    ].join(' '),
-    {
-      permissionKind: z
-        .enum(['tool', 'provider_capability'])
-        .optional()
-        .describe(
-          'Use tool for SDK/host/browser/scheduler/memory/service/MCP tool access; use provider_capability for Slack/Teams/Telegram provider capabilities.',
-        ),
-      toolName: z
-        .string()
-        .optional()
-        .describe(
-          'Single public fallback tool name to enable. Use RunCommand only with a rule; use exact Gantry names such as FileEdit, FileWrite, WebRead, AgentDelegation, Browser, scheduler_create_job, or an MCP tool name for non-command tools.',
-        ),
-      toolNames: z
-        .array(z.string())
-        .optional()
-        .describe(
-          'Exact tool names to enable. Use multiple names only when the request truly needs them together.',
-        ),
-      rule: z
-        .string()
-        .optional()
-        .describe(
-          'Required scoped command pattern for persistent Bash approvals, such as npm test * or git status. For non-Bash tools this is reviewer context only and is not persisted.',
-        ),
-      temporaryOnly: z
-        .boolean()
-        .optional()
-        .describe(
-          'Set true when the permission is needed only for the current action or an exploratory one-off. Leave false/omitted only for semantic capabilities, Browser, exact Gantry admin tools, or persistent scoped RunCommand rules that are genuinely useful for future turns.',
-        ),
-      broadAccess: z
-        .boolean()
-        .optional()
-        .describe(
-          'Optional reviewer signal that the requested exact tool is broad. Explain the need in reason.',
-        ),
-      toolCategory: z
-        .string()
-        .optional()
-        .describe(
-          'Optional category such as sdk, host, browser, scheduler, memory, or service',
-        ),
-      riskClass: z
-        .enum(['low', 'medium', 'high', 'critical'])
-        .optional()
-        .describe(
-          'Requested risk classification. Broad shell, edit/write, network, credential, service, or wildcard MCP access should be high or critical.',
-        ),
-      permissionPolicy: z
-        .string()
-        .optional()
-        .describe(
-          'Optional requested permission policy such as "ask once" or "persistent".',
-        ),
-      sandboxProfile: z
-        .string()
-        .optional()
-        .describe('Optional requested sandbox profile'),
-      reason: z.string().describe('Why this exact tool capability is needed.'),
-      channelTool: z
-        .string()
-        .optional()
-        .describe(
-          'Provider-native capability name, such as slack_file_access. Use only with permissionKind=provider_capability.',
-        ),
-      providerId: z
-        .string()
-        .optional()
-        .describe('Optional provider such as slack, telegram, or teams'),
-      requiredScopes: z
-        .array(z.string())
-        .optional()
-        .describe('Provider scopes or permissions needed by this capability'),
-      affectedConversations: z
-        .array(z.string())
-        .optional()
-        .describe('Conversation ids or names affected by this capability'),
-    },
-    async (args) =>
-      submitCapabilityReviewTask('request_permission', 'Permission', {
-        permissionKind: args.permissionKind,
-        toolName: args.toolName,
-        toolNames: args.toolNames ?? [],
-        rule: args.rule,
-        temporaryOnly: args.temporaryOnly,
-        broadAccess: args.broadAccess,
-        toolCategory: args.toolCategory,
-        riskClass: args.riskClass,
-        permissionPolicy: args.permissionPolicy,
-        sandboxProfile: args.sandboxProfile,
-        channelTool: args.channelTool,
-        providerId: args.providerId,
-        requiredScopes: args.requiredScopes ?? [],
-        affectedConversations: args.affectedConversations ?? [],
-        reason: args.reason,
-      }),
-  );
-
-  registerSemanticCapabilityTools(server, submitCapabilityReviewTask, {
+  registerAccessRequestTool(server, submitCapabilityReviewTask, {
     listCapabilities: () => availableSemanticCapabilities,
   });
 

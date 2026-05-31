@@ -76,7 +76,7 @@ describe('request permission review helpers', () => {
     ).toBeUndefined();
     expect(
       requestPermissionReviewSuggestions({
-        permissionKind: 'provider_capability',
+        permissionKind: 'provider',
         toolName: 'Bash',
       }),
     ).toBeUndefined();
@@ -1085,7 +1085,7 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Persistent request_permission approvals support');
+    ).rejects.toThrow('Persistent access approvals support');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 

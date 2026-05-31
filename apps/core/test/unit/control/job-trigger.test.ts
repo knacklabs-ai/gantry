@@ -504,7 +504,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -523,7 +523,7 @@ describe('control job trigger', () => {
         runtimeContext: {
           executionContext: {
             conversationJid: 'chat-1',
-            groupScope: 'app-folder',
+            workspaceKey: 'app-folder',
             threadId: null,
             sessionId: 'session-1',
           },
@@ -602,7 +602,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -673,11 +673,13 @@ describe('control job trigger', () => {
           body: JSON.stringify({
             name: 'Browser Job',
             prompt: 'Open the site',
-            toolAccessRequirements: ['Browser'],
+            accessRequirements: [
+              { target: { kind: 'tool_rule', rule: 'Browser' } },
+            ],
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -688,7 +690,9 @@ describe('control job trigger', () => {
       expect(browserMocks.getBrowserStatus).not.toHaveBeenCalled();
       expect(opsRepo.upsertJob).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool_access_requirements: ['Browser'],
+          access_requirements: [
+            { target: { kind: 'tool_rule', rule: 'Browser' } },
+          ],
           status: 'active',
           setup_state: expect.objectContaining({ state: 'ready' }),
         }),
@@ -735,24 +739,27 @@ describe('control job trigger', () => {
           body: JSON.stringify({
             name: 'Lead Sync',
             prompt: 'Append leads to Acme Records',
-            capabilityRequirements: [
+            accessRequirements: [
               {
-                capabilityId: 'acme.records.append',
-                reason: 'Write lead rows after each run',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'acme',
-                  executablePath: '/usr/local/bin/acme',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate: '/usr/local/bin/acme records append *',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate: '/usr/local/bin/acme records append *',
+                  },
                 },
+                reason: 'Write lead rows after each run',
               },
             ],
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -762,13 +769,15 @@ describe('control job trigger', () => {
       expect(response.status).toBe(201);
       expect(opsRepo.upsertJob).toHaveBeenCalledWith(
         expect.objectContaining({
-          capability_requirements: [
+          access_requirements: [
             expect.objectContaining({
-              capabilityId: 'acme.records.append',
-              implementation: expect.objectContaining({ name: 'acme' }),
+              target: expect.objectContaining({
+                kind: 'capability',
+                capabilityId: 'acme.records.append',
+                implementation: expect.objectContaining({ name: 'acme' }),
+              }),
             }),
           ],
-          tool_access_requirements: ['capability:acme.records.append'],
           status: 'paused',
           setup_state: expect.objectContaining({ state: 'missing_capability' }),
         }),
@@ -818,7 +827,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             modelAlias: 'haiku',
@@ -836,7 +845,7 @@ describe('control job trigger', () => {
         runtimeContext: {
           executionContext: {
             conversationJid: 'chat-1',
-            groupScope: 'app-folder',
+            workspaceKey: 'app-folder',
             threadId: null,
             sessionId: 'session-1',
           },
@@ -887,11 +896,13 @@ describe('control job trigger', () => {
           body: JSON.stringify({
             name: 'Browser Preview',
             prompt: 'Preview browser work',
-            toolAccessRequirements: ['Browser'],
+            accessRequirements: [
+              { target: { kind: 'tool_rule', rule: 'Browser' } },
+            ],
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             dryRun: true,
@@ -951,7 +962,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             model: 'claude-opus-4-7',
@@ -1000,7 +1011,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
             },
           }),
         },
@@ -1184,7 +1195,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: 'thread-1',
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             status: 'paused',
@@ -1247,18 +1258,21 @@ describe('control job trigger', () => {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            capabilityRequirements: [
+            accessRequirements: [
               {
-                capabilityId: 'acme.records.append',
-                reason: 'Write lead rows after each run',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'acme',
-                  executablePath: '/usr/local/bin/acme',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate: '/usr/local/bin/acme records append *',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate: '/usr/local/bin/acme records append *',
+                  },
                 },
+                reason: 'Write lead rows after each run',
               },
             ],
           }),
@@ -1269,13 +1283,15 @@ describe('control job trigger', () => {
       expect(opsRepo.updateJob).toHaveBeenCalledWith(
         'job-1',
         expect.objectContaining({
-          capability_requirements: [
+          access_requirements: [
             expect.objectContaining({
-              capabilityId: 'acme.records.append',
-              implementation: expect.objectContaining({ name: 'acme' }),
+              target: expect.objectContaining({
+                kind: 'capability',
+                capabilityId: 'acme.records.append',
+                implementation: expect.objectContaining({ name: 'acme' }),
+              }),
             }),
           ],
-          tool_access_requirements: ['capability:acme.records.append'],
           status: 'paused',
           setup_state: expect.objectContaining({ state: 'missing_capability' }),
         }),
@@ -1325,7 +1341,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-2',
               threadId: null,
-              groupScope: 'other-folder',
+              workspaceKey: 'other-folder',
               sessionId: 'session-app-two',
             },
           }),
@@ -1456,7 +1472,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),

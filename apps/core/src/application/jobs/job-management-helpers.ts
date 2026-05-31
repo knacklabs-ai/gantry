@@ -301,14 +301,8 @@ export function buildJobUpdates(
     );
     updates.notification_routes = notificationRoutes;
   }
-  if (patch.toolAccessRequirements !== undefined) {
-    updates.tool_access_requirements = patch.toolAccessRequirements;
-  }
-  if (patch.capabilityRequirements !== undefined) {
-    updates.capability_requirements = patch.capabilityRequirements;
-  }
-  if (patch.requiredMcpServers !== undefined) {
-    updates.required_mcp_servers = patch.requiredMcpServers;
+  if (patch.accessRequirements !== undefined) {
+    updates.access_requirements = patch.accessRequirements;
   }
   if (patch.silent !== undefined) updates.silent = patch.silent;
   if (patch.cleanupAfterMs !== undefined)

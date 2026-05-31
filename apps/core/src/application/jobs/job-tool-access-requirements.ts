@@ -240,36 +240,30 @@ function dedupePreservingOrder(values: readonly string[]): string[] {
 export function toolAccessRequirementRecoveryAction(toolName: string): string {
   const scoped = parseReadableScopedToolRule(toolName);
   if (scoped?.toolName === RUN_COMMAND_TOOL_NAME) {
-    return `request_permission ${JSON.stringify({
-      permissionKind: 'tool',
-      toolName: RUN_COMMAND_TOOL_NAME,
-      rule: scoped.scope,
+    return `request_access ${JSON.stringify({
+      target: { kind: 'run_command', argvPattern: scoped.scope },
       temporaryOnly: false,
       reason: `This autonomous run requires ${toolName} access.`,
     })}`;
   }
   if (isCanonicalBrowserCapabilityRule(toolName)) {
-    return `request_permission ${JSON.stringify({
-      permissionKind: 'tool',
-      toolName: 'Browser',
-      toolCategory: 'browser',
+    return `request_access ${JSON.stringify({
+      target: { kind: 'capability', id: 'browser.use' },
       temporaryOnly: false,
       reason: 'This autonomous run requires Browser access.',
     })}`;
   }
   const semanticCapabilityId = parseSemanticCapabilityRule(toolName);
   if (semanticCapabilityId) {
-    return `propose_capability ${JSON.stringify({
-      capabilityId: semanticCapabilityId,
+    return `request_access ${JSON.stringify({
+      target: { kind: 'capability', id: semanticCapabilityId },
       reason: `This autonomous run requires ${toolName} access.`,
     })}`;
   }
-  return `request_permission ${JSON.stringify({
-    permissionKind: 'tool',
-    toolName,
-    temporaryOnly: false,
-    reason: `This autonomous run requires ${toolName} access.`,
-  })}`;
+  return [
+    'Update the job to require a reviewed semantic capability.',
+    'Use request_access target.kind=run_command only for scoped command fallback access.',
+  ].join(' ');
 }
 
 export function missingToolAccessRequirementError(toolName: string): string {

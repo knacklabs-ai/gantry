@@ -217,6 +217,40 @@ describe('jobs/delivery', () => {
     });
   });
 
+  it('sends notifications to saved notification routes instead of execution context', async () => {
+    const job = makeJob({
+      execution_context: {
+        conversationJid: 'tg:team',
+        threadId: 'trigger-topic',
+        groupScope: 'team',
+      },
+      notification_routes: [
+        {
+          conversationJid: 'tg:team',
+          threadId: 'job-topic',
+          label: 'primary',
+        },
+      ],
+    });
+    const send = vi
+      .fn<(...args: [string, string, { threadId: string }?]) => Promise<void>>()
+      .mockResolvedValue(undefined);
+
+    const delivered = await sendJobNotification({
+      job,
+      text: 'done',
+      phase: 'summary',
+      runId: 'run-1',
+      sendMessage: send as any,
+    });
+
+    expect(delivered).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('tg:team', 'done', {
+      threadId: 'job-topic',
+    });
+  });
+
   it('suppresses user-facing notifications for silent jobs', async () => {
     const job = makeJob({
       silent: true,

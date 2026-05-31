@@ -35,7 +35,7 @@ vi.mock('@core/config/index.js', () => ({
   GANTRY_IPC_AUTH_SECRET: 'test-ipc-secret',
   getEffectiveModelConfig: vi.fn((groupModel?: string) =>
     groupModel
-      ? { model: groupModel, source: 'group.agentConfig.model' }
+      ? { model: groupModel, source: 'conversation.agentConfig.model' }
       : { source: 'unset' },
   ),
   getRuntimeSettingsForConfig: vi.fn(() => ({
@@ -974,7 +974,7 @@ describe('agent-spawn timeout behavior', () => {
   it('passes effective model to process env when configured', async () => {
     vi.mocked(getEffectiveModelConfig).mockReturnValue({
       model: 'opus',
-      source: 'group.agentConfig.model' as const,
+      source: 'conversation.agentConfig.model' as const,
     });
     const groupWithModel: ConversationRoute = {
       ...testGroup,
@@ -1005,7 +1005,7 @@ describe('agent-spawn timeout behavior', () => {
   it('prefers job-level model override over group model', async () => {
     vi.mocked(getEffectiveModelConfig).mockReturnValue({
       model: 'opus',
-      source: 'group.agentConfig.model' as const,
+      source: 'conversation.agentConfig.model' as const,
     });
     const groupWithModel: ConversationRoute = {
       ...testGroup,

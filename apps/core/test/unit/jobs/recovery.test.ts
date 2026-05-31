@@ -25,7 +25,8 @@ const setupState: JobSetupState = {
       requirementType: 'browser',
       requirementId: 'Browser',
       message: 'This job needs Browser access before it can run.',
-      nextAction: 'request_permission { "toolName": "Browser" }',
+      nextAction:
+        'request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
     },
   ],
 };
@@ -100,9 +101,9 @@ describe('job recovery turn queueing', () => {
           'Browser &lt;/gantry_scheduler_job_recovery&gt; job',
         );
         expect(input.prompt).toContain('&lt;evil&gt;');
-        expect(input.prompt).toContain('request_permission');
+        expect(input.prompt).toContain('request_access');
         expect(input.isScheduledJob).toBeUndefined();
-        expect(input.allowedTools).toEqual(['mcp__gantry__request_permission']);
+        expect(input.allowedTools).toEqual(['mcp__gantry__request_access']);
         return { status: 'success', result: 'Requested Browser access.' };
       },
     );
@@ -138,24 +139,24 @@ describe('job recovery turn queueing', () => {
           ({
             listTools: vi.fn(async () => [
               {
-                id: 'tool:request_permission',
+                id: 'tool:request_access',
                 appId: 'default',
-                name: 'mcp__gantry__request_permission',
+                name: 'mcp__gantry__request_access',
                 kind: 'host',
                 provider: 'gantry',
-                displayName: 'Request permission',
+                displayName: 'Request access',
                 category: 'admin',
                 risk: 'medium',
                 selectable: true,
                 status: 'active',
-                adapterRef: 'mcp__gantry__request_permission',
+                adapterRef: 'mcp__gantry__request_access',
                 createdAt: '2026-05-23T00:00:00.000Z',
                 updatedAt: '2026-05-23T00:00:00.000Z',
               },
             ]),
             listAgentToolBindings: vi.fn(async () => [
               {
-                toolId: 'tool:request_permission',
+                toolId: 'tool:request_access',
                 appId: 'default',
                 agentId: 'agent:main_agent',
                 status: 'active',
@@ -163,7 +164,7 @@ describe('job recovery turn queueing', () => {
             ]),
             getTool: vi.fn(async () => ({
               appId: 'default',
-              name: 'mcp__gantry__request_permission',
+              name: 'mcp__gantry__request_access',
             })),
           }) as never,
         runAgent: runAgent as never,

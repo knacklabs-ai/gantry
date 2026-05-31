@@ -1184,7 +1184,7 @@ describe('control server runtime hardening', () => {
         scope: 'app:app-one:session-1',
         selection: {
           effectiveAlias: 'sonnet',
-          source: 'group.agentConfig.model',
+          source: 'conversation.agentConfig.model',
           inherited: false,
           model: {
             displayName: 'Sonnet 4.6',

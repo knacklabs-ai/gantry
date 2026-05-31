@@ -582,25 +582,6 @@ describe('skill registry integration flow', () => {
         effect: 'review_only_no_permission_change',
       },
     ],
-    [
-      'request_permission',
-      {
-        permissionKind: 'provider_capability',
-        channelTool: 'slack_file_access',
-        providerId: 'slack',
-        requiredScopes: ['files:read'],
-        affectedConversations: ['C123'],
-        reason: 'Read files shared in the active channel.',
-      },
-      {
-        permissionKind: 'provider_capability',
-        channelTool: 'slack_file_access',
-        providerId: 'slack',
-        requiredScopes: ['files:read'],
-        affectedConversations: ['C123'],
-        effect: 'review_only_no_permission_change',
-      },
-    ],
   ])(
     'routes %s through same-channel permission review without binding',
     async (type, payload, expectedToolInput) => {
@@ -974,7 +955,7 @@ describe('skill registry integration flow', () => {
     expect(
       sendMessage.mock.calls.some((call) =>
         String(call[1]).includes(
-          'gantry credentials capability set LINKEDIN_ACCESS_TOKEN',
+          'gantry credentials access set LINKEDIN_ACCESS_TOKEN',
         ),
       ),
     ).toBe(true);
@@ -1142,7 +1123,7 @@ describe('skill registry integration flow', () => {
         authThreadId: 'thread-origin',
         payload: {
           permissionKind: 'tool',
-          capabilityRequestSource: 'propose_capability',
+          capabilityRequestSource: 'request_access',
           capabilityId: 'acme.records.append',
           capabilityDisplayName: 'Acme records append',
           accountLabel: 'Configured Google access',
@@ -1353,15 +1334,14 @@ describe('skill registry integration flow', () => {
 
     await processTaskIpc(
       {
-        type: 'request_permission',
+        type: 'request_skill_dependency_install',
         appId: 'default',
-        taskId: 'request-permission-forum-shopping-test',
+        taskId: 'request-skill-dependency-forum-shopping-test',
         chatJid: 'chat-origin',
         targetJid: 'chat-admin-dm',
         payload: {
-          permissionKind: 'provider_capability',
-          channelTool: 'slack_file_access',
-          providerId: 'slack',
+          ecosystem: 'npm',
+          packages: ['tsx'],
           reason: 'Try routing review to another bound chat.',
         },
       },

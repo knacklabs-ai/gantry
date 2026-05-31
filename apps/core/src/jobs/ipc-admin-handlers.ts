@@ -791,9 +791,7 @@ async function completeMcpPermissionReview(
     availableToolNames: input.requestedToolPatterns,
     currentSessionUsage: {
       listToolsTool: 'mcp__gantry__mcp_list_tools',
-      capabilitySearchTool: 'mcp__gantry__capability_search',
-      proposeCapabilityTool: 'mcp__gantry__propose_capability',
-      oneOffFallbackTool: 'mcp__gantry__request_permission',
+      requestAccessTool: 'mcp__gantry__request_access',
       serverName: input.server.name,
     },
   };

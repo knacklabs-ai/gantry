@@ -187,10 +187,7 @@ Use these Gantry tools for capability work:
 | `request_skill_proposal`           | Agent-created or modified skill file bundles for review.                                                                                        |
 | `request_skill_dependency_install` | npm, brew, go, uv, or download dependencies required by a skill; never run those commands directly.                                             |
 | `request_mcp_server`               | Third-party MCP source requests with transport, origin, tool patterns, credentials, and reason.                                                  |
-| `capability_search`                | Find reviewed capabilities such as `acme.records.append` before asking for raw tool access.                                                     |
-| `propose_capability`               | Request an approved semantic capability by id, or propose a reviewed `local_cli` capability with pinned executable, preflight, and protected paths. |
-| `manage_capability`                | View, revoke, change, test, or inspect audit history for semantic capabilities.                                                                 |
-| `request_permission`               | One-off exact tool access, scoped Bash fallback, and internal/provider permission requests when no semantic capability fits.                    |
+| `request_access`                   | One agent access tool. Targets: `capability` (reviewed semantic capability by id), `run_command` (scoped command fallback), `tool` (exact tool such as Browser/FileEdit/MCP tool), `provider_capability` (Slack/Teams/Telegram), or `propose` (new reviewed `local_cli` capability with pinned executable, preflight, and protected paths). |
 | `service_restart`                  | Main/admin agent only, after approved config or capability changes when host restart is needed.                                                 |
 | `register_agent`                   | Main/admin agent only, for binding a new channel conversation to an agent.                                                                      |
 
@@ -205,13 +202,15 @@ Permission selection:
   answer, multi-select when multiple answers are valid, and include concise
   option descriptions so Slack, Telegram, Teams, and Web/API can render native
   controls.
-- Use `request_permission` when a low-level one-off or fallback permission is
-  needed for provider-neutral tools or provider/channel capabilities such as
-  `Bash`, `Write`, `Edit`, the canonical `Browser` tool, scheduler tools,
-  memory tools, service tools, Slack file reads, Telegram file downloads, Teams
-  proactive messages, Teams card updates, or Web/API file browser access.
-- For app/tool workflows such as records, publishing, repository checks, or business CLIs, call
-  `capability_search` first, then `propose_capability` so the user approves a
+- Use `request_access` with `target.kind=tool`/`run_command`/`provider_capability`
+  when a low-level one-off or fallback permission is needed for provider-neutral
+  tools or provider/channel capabilities such as `Bash`, `Write`, `Edit`, the
+  canonical `Browser` tool, scheduler tools, memory tools, service tools, Slack
+  file reads, Telegram file downloads, Teams proactive messages, Teams card
+  updates, or Web/API file browser access.
+- For app/tool workflows such as records, publishing, repository checks, or
+  business CLIs, use `request_access` with `target.kind=capability` (or
+  `target.kind=propose` for a new reviewed `local_cli`) so the user approves a
   semantic capability instead of a raw command.
 - Permission prompts offer `Allow once`, `Always allow for this agent` for
   semantic capabilities, `Always allow Browser`,
@@ -495,7 +494,7 @@ Capability requests:
 - `mcp__gantry__request_skill_proposal`
 - `mcp__gantry__request_skill_dependency_install`
 - `mcp__gantry__request_mcp_server`
-- `mcp__gantry__request_permission`
+- `mcp__gantry__request_access`
 
 Service and agents:
 

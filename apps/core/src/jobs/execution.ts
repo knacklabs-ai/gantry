@@ -9,6 +9,7 @@ import {
   getRuntimeEventExchange,
 } from '../adapters/storage/postgres/runtime-store.js';
 import { DEFAULT_JOB_RUNTIME_APP_ID } from '../application/jobs/job-access.js';
+import { splitAccessRequirements } from '../application/jobs/job-access-requirements.js';
 import * as jobToolPolicy from '../application/jobs/job-tool-policy.js';
 import { SETUP_REQUIRED_PAUSE_REASON } from '../application/jobs/job-readiness-service.js';
 import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
@@ -340,7 +341,9 @@ export async function runJob(
           );
           const toolAccessRequirementPreflight =
             await assertToolAccessRequirementsReadyForRun({
-              toolAccessRequirements: currentJob.tool_access_requirements ?? [],
+              toolAccessRequirements: splitAccessRequirements(
+                currentJob.access_requirements,
+              ).toolAccessRequirements,
               effectiveAllowedTools: toolPolicy.effectiveAllowedTools,
               emitJobEvent,
             });
@@ -583,9 +586,7 @@ export async function runJob(
         error_summary: safeErrorSummary ? safeErrorSummary.slice(0, 500) : null,
         denied_tool: toolDenial.toolName,
         recovery_action: toolDenial.recoveryAction ?? null,
-        recovery_kind: toolDenial.recoveryAction?.startsWith(
-          'request_permission',
-        )
+        recovery_kind: toolDenial.recoveryAction?.startsWith('request_access')
           ? 'persistent_capability'
           : 'job_policy',
       });

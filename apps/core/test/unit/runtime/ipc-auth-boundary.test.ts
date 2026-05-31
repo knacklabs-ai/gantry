@@ -269,7 +269,7 @@ describe('validateIpcAuthRequest', () => {
     );
 
     expect(() => parseTaskIpcData(payload, 'team')).toThrow(
-      /requiredTools.*Use toolAccessRequirements/,
+      /requiredTools.*Use accessRequirements/,
     );
   });
 
@@ -315,14 +315,18 @@ describe('validateIpcAuthRequest', () => {
       prompt: 'Run',
       scheduleType: 'interval',
       scheduleValue: '60000',
-      toolAccessRequirements: ['Browser'],
-      requiredMcpServers: ['mcp:company-crm'],
+      accessRequirements: [
+        { target: { kind: 'tool_rule', rule: 'Browser' } },
+        { target: { kind: 'mcp_server', server: 'mcp:company-crm' } },
+      ],
     });
 
     expect(parseTaskIpcData(payload, 'team')).toMatchObject({
       type: 'scheduler_upsert_job',
-      toolAccessRequirements: ['Browser'],
-      requiredMcpServers: ['mcp:company-crm'],
+      accessRequirements: [
+        { target: { kind: 'tool_rule', rule: 'Browser' } },
+        { target: { kind: 'mcp_server', server: 'mcp:company-crm' } },
+      ],
     });
   });
 
@@ -337,40 +341,46 @@ describe('validateIpcAuthRequest', () => {
       prompt: 'Run',
       scheduleType: 'interval',
       scheduleValue: '60000',
-      capabilityRequirements: [
+      accessRequirements: [
         {
-          capabilityId: 'acme.records.append',
-          reason: 'Need spreadsheet',
-          implementation: {
-            kind: 'local_cli',
-            name: 'Sheets CLI',
-            executablePath: '/usr/local/bin/sheet-write',
-            executableVersion: 'v0.9.0',
-            executableHash: 'sha256:abc123',
-            commandTemplate: 'sheet-write',
-            protectedPaths: ['/tmp'],
-            networkHosts: ['sheets.example.test'],
+          target: {
+            kind: 'capability',
+            capabilityId: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'Sheets CLI',
+              executablePath: '/usr/local/bin/sheet-write',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
+              commandTemplate: 'sheet-write',
+              protectedPaths: ['/tmp'],
+              networkHosts: ['sheets.example.test'],
+            },
           },
+          reason: 'Need spreadsheet',
         },
       ],
     });
 
     expect(parseTaskIpcData(payload, 'team')).toMatchObject({
       type: 'scheduler_upsert_job',
-      capabilityRequirements: [
+      accessRequirements: [
         {
-          capabilityId: 'acme.records.append',
-          reason: 'Need spreadsheet',
-          implementation: {
-            kind: 'local_cli',
-            name: 'Sheets CLI',
-            executablePath: '/usr/local/bin/sheet-write',
-            executableVersion: 'v0.9.0',
-            executableHash: 'sha256:abc123',
-            commandTemplate: 'sheet-write',
-            protectedPaths: ['/tmp'],
-            networkHosts: ['sheets.example.test'],
+          target: {
+            kind: 'capability',
+            capabilityId: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'Sheets CLI',
+              executablePath: '/usr/local/bin/sheet-write',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
+              commandTemplate: 'sheet-write',
+              protectedPaths: ['/tmp'],
+              networkHosts: ['sheets.example.test'],
+            },
           },
+          reason: 'Need spreadsheet',
         },
       ],
     });

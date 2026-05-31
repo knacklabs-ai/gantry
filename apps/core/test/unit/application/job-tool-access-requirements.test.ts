@@ -151,10 +151,10 @@ describe('job tool access requirements', () => {
       'RunCommand(acme records append *)',
     );
 
-    expect(action).toContain('"toolName":"RunCommand"');
-    expect(action).toContain('"rule":"acme records append *"');
+    expect(action).toContain('"kind":"run_command"');
+    expect(action).toContain('"argvPattern":"acme records append *"');
     expect(action).not.toContain(
-      '"toolName":"RunCommand(acme records append *)"',
+      '"argvPattern":"RunCommand(acme records append *)"',
     );
   });
 });

@@ -237,7 +237,7 @@ export type DefaultModelSource =
   | 'settings.yaml agent.default_model'
   | 'system default';
 export type EffectiveModelSource =
-  | 'group.agentConfig.model'
+  | 'conversation.agentConfig.model'
   | 'job.model'
   | 'settings.yaml agent.one_time_job_default_model'
   | 'settings.yaml agent.recurring_job_default_model'
@@ -341,7 +341,7 @@ export function getEffectiveModelConfig(
   if (normalizedGroupModel) {
     return {
       model: normalizedGroupModel,
-      source: 'group.agentConfig.model',
+      source: 'conversation.agentConfig.model',
     };
   }
   return getDefaultModelConfig(kind, agentFolder);

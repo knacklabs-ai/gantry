@@ -132,14 +132,13 @@ export const AgentSourcesRequestSchema = z
   .strict();
 export type AgentSourcesRequest = z.infer<typeof AgentSourcesRequestSchema>;
 
-export const AgentCapabilitiesRequestSchema = z
+export const AgentAccessRequestSchema = z
   .object({
-    capabilities: z.array(AgentCapabilitySelectionSchema),
+    sources: AgentSourcesRequestSchema.shape.sources,
+    selections: z.array(AgentCapabilitySelectionSchema).default([]),
   })
   .strict();
-export type AgentCapabilitiesRequest = z.infer<
-  typeof AgentCapabilitiesRequestSchema
->;
+export type AgentAccessRequest = z.infer<typeof AgentAccessRequestSchema>;
 
 export const AgentToolAccessSchema = z
   .object({
@@ -170,6 +169,17 @@ export const AgentCapabilitiesResponseSchema = z
 export type AgentCapabilitiesResponse = z.infer<
   typeof AgentCapabilitiesResponseSchema
 >;
+
+export const AgentAccessResponseSchema = z
+  .object({
+    agentId: z.string(),
+    sources: AgentSourcesRequestSchema.shape.sources,
+    selections: z.array(AgentCapabilitySelectionSchema),
+    toolAccess: AgentToolAccessSchema,
+    updatedAt: IsoDateTimeSchema,
+  })
+  .strict();
+export type AgentAccessResponse = z.infer<typeof AgentAccessResponseSchema>;
 
 export const AgentAdminBoundConversationSchema = z.object({
   conversationId: z.string(),

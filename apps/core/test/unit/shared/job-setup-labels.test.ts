@@ -10,10 +10,10 @@ describe('job setup labels', () => {
         requirementType: 'semantic_capability',
         requirementId: 'acme.records.append',
         nextAction:
-          'Refresh attached source inventory, then update the job to a reviewed source-neutral capability from capability_search.',
+          'Refresh attached source inventory, then update the job to a reviewed source-neutral capability (request it with request_access target.kind=capability).',
       }),
     ).toBe(
-      'Refresh attached source inventory, then update the job to a reviewed source-neutral capability from capability_search.',
+      'Refresh attached source inventory, then update the job to a reviewed source-neutral capability (request it with request_access target.kind=capability).',
     );
   });
 
@@ -24,7 +24,7 @@ describe('job setup labels', () => {
         requirementType: 'semantic_capability',
         requirementId: 'acme.records.append',
         nextAction:
-          'propose_capability {"capabilityId":"acme.records.append","reason":"Append reviewed records."}',
+          'request_access {"target":{"kind":"capability","id":"acme.records.append"},"reason":"Append reviewed records."}',
       }),
     ).toBe('Approve Acme Records Append, then resume the job.');
   });

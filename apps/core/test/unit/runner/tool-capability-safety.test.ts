@@ -14,7 +14,7 @@ describe('tool capability safety', () => {
     expect(profile.allowedTools).toContain(
       'mcp__gantry__request_skill_install',
     );
-    expect(profile.allowedTools).toContain('mcp__gantry__request_permission');
+    expect(profile.allowedTools).toContain('mcp__gantry__request_access');
     expect(profile.allowedTools).not.toContain(
       'mcp__gantry__request_settings_update',
     );

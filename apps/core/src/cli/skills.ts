@@ -116,24 +116,32 @@ async function installSkill(
   });
   const capabilityIds = skillActionCapabilityIds(skill);
   if (capabilityIds.length > 0) {
+    // Read-modify-write the full access document: the access PUT replaces
+    // sources and selections together, so preserve existing sources (the
+    // skill source was attached above) while adding the new selections.
     const current = await controlApiRequest(runtimeHome, {
       method: 'GET',
-      path: `/v1/agents/${encodedAgentId}/capabilities`,
+      path: `/v1/agents/${encodedAgentId}/access`,
     });
     const existing = Array.isArray(
-      isRecord(current) ? current.capabilities : undefined,
+      isRecord(current) ? current.selections : undefined,
     )
       ? (
           current as {
-            capabilities: Array<{ id?: unknown; version?: unknown }>;
+            selections: Array<{ id?: unknown; version?: unknown }>;
           }
-        ).capabilities
+        ).selections
       : [];
+    const sources =
+      isRecord(current) && isRecord(current.sources)
+        ? current.sources
+        : { skills: [], mcpServers: [], tools: [] };
     await controlApiRequest(runtimeHome, {
       method: 'PUT',
-      path: `/v1/agents/${encodedAgentId}/capabilities`,
+      path: `/v1/agents/${encodedAgentId}/access`,
       body: {
-        capabilities: uniqueCapabilities([
+        sources,
+        selections: uniqueCapabilities([
           ...existing.map((capability) => ({
             id: String(capability.id ?? ''),
             version: String(capability.version ?? 'builtin'),

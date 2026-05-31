@@ -262,7 +262,7 @@ describe('jobs/execution-notifications', () => {
       runShortId: 1,
       runStatus: 'failed',
       summary:
-        'Missing tool access requirement before run. Tool not on autonomous run allowlist: Browser. Recovery: request_permission {"toolName":"Browser"}\nDiagnostics: lastTool=SandboxNetworkAccess; pendingPermissions=0 (none); totalToolCalls=20; browserActivity=0;',
+        'Missing tool access requirement before run. Tool not on autonomous run allowlist: Browser. Recovery: request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}\nDiagnostics: lastTool=SandboxNetworkAccess; pendingPermissions=0 (none); totalToolCalls=20; browserActivity=0;',
       nextRun: '2026-05-17T05:49:52.673Z',
       retryCount: 1,
       pauseReason: null,
@@ -329,7 +329,7 @@ describe('jobs/execution-notifications', () => {
       runId: 'run-1',
       runStatus: 'dead_lettered',
       summary:
-        'Tool not on autonomous run allowlist: mcp__gantry__browser_act. Recovery: request_permission { "toolName": "Browser" }',
+        'Tool not on autonomous run allowlist: mcp__gantry__browser_act. Recovery: request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
       nextRun: null,
       retryCount: 1,
       pauseReason: 'Needs permission: mcp__gantry__browser_act',
@@ -365,7 +365,7 @@ describe('jobs/execution-notifications', () => {
       runId: 'run-1',
       runStatus: 'failed',
       summary:
-        'Permission denied for Bash. Tool not on autonomous run allowlist: RunCommand. Recovery: request_permission { "toolName": "RunCommand", "rule": "npm test *" }',
+        'Permission denied for Bash. Tool not on autonomous run allowlist: RunCommand. Recovery: request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This autonomous run requires RunCommand(npm test *) access."}',
       nextRun: null,
       retryCount: 1,
       pauseReason: 'Setup required',
@@ -391,7 +391,7 @@ describe('jobs/execution-notifications', () => {
           message:
             'Acme records append using acme needs reviewed local CLI access before this job can run autonomously.',
           nextAction:
-            'propose_capability {"capabilityId":"acme.records.append","source":"local_cli","executablePath":"/usr/local/bin/acme","executableVersion":"v0.9.0","executableHash":"sha256:abc123"}',
+            'request_access {"target":{"kind":"capability","id":"acme.records.append"},"reason":"Approve reviewed Acme records access."}',
         },
       ],
     };

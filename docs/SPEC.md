@@ -339,7 +339,7 @@ Additional mounts appear under `/workspace/extra/` in the runtime workspace.
 
 Interactive model precedence is:
 
-1. `group.agentConfig.model`
+1. `conversation.agentConfig.model`
 2. `agent.default_model` in `settings.yaml`
 3. system default `opus`
 
@@ -727,9 +727,9 @@ Postgres state and are never written to `settings.yaml`.
 2. **Agent Capabilities**: Scheduled jobs inherit the selected target agent's
    selected capabilities plus attached sources. They do not carry job-specific
    capability grants, raw tool grants, or receive all tools by default.
-   Job `capabilityRequirements`, `toolAccessRequirements`, and
-   `requiredMcpServers` are readiness assertions that pause the job until the
-   target agent has the required capability, tool facade, or MCP source.
+   Job `accessRequirements` are readiness assertions that pause the job until
+   the target agent has the required capability, scoped command fallback, or MCP
+   source.
 3. **Optional Messaging**: Jobs can send messages to their configured conversation or thread/topic route using the `send_message` tool, or complete silently
 4. **Admin Privileges**: Admin-wide job management belongs to the Control API
    and local/admin CLI surfaces. Normal agent-facing scheduler MCP tools stay

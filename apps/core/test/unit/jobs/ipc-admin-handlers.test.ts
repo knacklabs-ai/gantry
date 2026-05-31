@@ -139,7 +139,7 @@ describe('admin IPC handlers', () => {
     expect(requestPermissionApproval).not.toHaveBeenCalled();
   });
 
-  it('rejects direct request_permission semantic capability requests outside propose_capability', async () => {
+  it('rejects direct request_permission semantic capability requests outside request_access', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-admin-ipc-'),
     );
@@ -176,7 +176,7 @@ describe('admin IPC handlers', () => {
       ok: false,
       code: 'invalid_request',
       error:
-        'Capability requests must use propose_capability, not request_permission.',
+        'Capability access must use request_access target.kind=capability, not direct request_permission.',
     });
     expect(requestPermissionApproval).not.toHaveBeenCalled();
   });
@@ -199,7 +199,7 @@ describe('admin IPC handlers', () => {
         chatJid: 'sl:C123',
         payload: {
           permissionKind: 'tool',
-          capabilityRequestSource: 'propose_capability',
+          capabilityRequestSource: 'request_access',
           capabilityId: 'acme.records.append',
           temporaryOnly: false,
           reason: 'write leads',
@@ -379,7 +379,7 @@ describe('admin IPC handlers', () => {
         jobId: 'job-1',
         payload: {
           permissionKind: 'tool',
-          capabilityRequestSource: 'propose_capability',
+          capabilityRequestSource: 'request_access',
           capabilityId: 'acme.records.append',
           capabilityDisplayName: 'Acme records append',
           semanticCapabilityDefinition: {
@@ -403,19 +403,22 @@ describe('admin IPC handlers', () => {
         requestPermissionApproval,
         opsRepository: {
           getJobById: vi.fn(async () => ({
-            capability_requirements: [
+            access_requirements: [
               {
-                capabilityId: 'acme.records.append',
-                reason: 'write leads',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'acme',
-                  executablePath: '/usr/local/bin/acme',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate:
-                    '/usr/local/bin/acme records append <sheet_id> ...',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate:
+                      '/usr/local/bin/acme records append <sheet_id> ...',
+                  },
                 },
+                reason: 'write leads',
               },
             ],
           })),
@@ -465,19 +468,22 @@ describe('admin IPC handlers', () => {
         requestPermissionApproval,
         opsRepository: {
           getJobById: vi.fn(async () => ({
-            capability_requirements: [
+            access_requirements: [
               {
-                capabilityId: 'acme.records.append',
-                reason: 'write leads',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'acme',
-                  executablePath: '/usr/local/bin/acme',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate:
-                    '/usr/local/bin/acme records append <sheet_id> ...',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate:
+                      '/usr/local/bin/acme records append <sheet_id> ...',
+                  },
                 },
+                reason: 'write leads',
               },
             ],
           })),
@@ -528,19 +534,22 @@ describe('admin IPC handlers', () => {
         requestPermissionApproval,
         opsRepository: {
           getJobById: vi.fn(async () => ({
-            capability_requirements: [
+            access_requirements: [
               {
-                capabilityId: 'acme.records.append',
-                reason: 'write leads',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'acme',
-                  executablePath: '/usr/local/bin/acme',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate:
-                    '/usr/local/bin/acme records append <sheet_id> ...',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate:
+                      '/usr/local/bin/acme records append <sheet_id> ...',
+                  },
                 },
+                reason: 'write leads',
               },
             ],
           })),
@@ -581,7 +590,7 @@ describe('admin IPC handlers', () => {
         jobId: 'job-1',
         payload: {
           permissionKind: 'tool',
-          capabilityRequestSource: 'propose_capability',
+          capabilityRequestSource: 'request_access',
           capabilityId: 'acme.records.append',
           capabilityDisplayName: 'Acme records append using acme',
           credentialSource: 'local_cli',
@@ -598,19 +607,22 @@ describe('admin IPC handlers', () => {
         requestPermissionApproval,
         opsRepository: {
           getJobById: vi.fn(async () => ({
-            capability_requirements: [
+            access_requirements: [
               {
-                capabilityId: 'acme.records.append',
-                reason: 'write leads',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'acme',
-                  executablePath: '/usr/local/bin/acme',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate:
-                    '/usr/local/bin/acme records append <sheet_id> ...',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate:
+                      '/usr/local/bin/acme records append <sheet_id> ...',
+                  },
                 },
+                reason: 'write leads',
               },
             ],
           })),

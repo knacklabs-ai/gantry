@@ -89,7 +89,7 @@ describe('ToolExecutionPolicyService', () => {
         reason: expect.stringContaining(
           'Tool not on autonomous run allowlist: mcp__gantry__browser_act.',
         ),
-        recoveryAction: expect.stringContaining('"toolName": "Browser"'),
+        recoveryAction: expect.stringContaining('"id": "browser.use"'),
       }),
     );
     expect(
@@ -98,7 +98,7 @@ describe('ToolExecutionPolicyService', () => {
     ).not.toContain('scheduler_grant_tool');
   });
 
-  it('recovers admin tool denials through request_permission', () => {
+  it('recovers admin tool denials through reviewed capability guidance', () => {
     const request = classifier.classify({
       origin: 'mcp',
       toolName: 'mcp__gantry__service_restart',
@@ -112,13 +112,13 @@ describe('ToolExecutionPolicyService', () => {
     ).toEqual(
       expect.objectContaining({
         status: 'deny',
-        recoveryAction: expect.stringContaining('request_permission'),
+        recoveryAction: expect.stringContaining('reviewed admin capability'),
       }),
     );
     expect(
       policy.evaluate({ request, autonomousAllowedToolRules: [] })
         .recoveryAction,
-    ).toContain('"toolName": "mcp__gantry__service_restart"');
+    ).toContain('exact tool grants are not accepted');
   });
 
   it('denies protected capability file targets through canonical policy', () => {
@@ -388,7 +388,7 @@ describe('ToolExecutionPolicyService', () => {
           'Tool not on autonomous run allowlist: RunCommand.',
         ),
         recoveryAction:
-          'request_permission { "permissionKind": "tool", "toolName": "RunCommand", "rule": "npm test", "temporaryOnly": false, "reason": "This autonomous run needs scoped command access." }',
+          'request_access { "target": { "kind": "run_command", "argvPattern": "npm test" }, "temporaryOnly": false, "reason": "This autonomous run needs scoped command access." }',
       }),
     );
     expect(result.recoveryAction).not.toContain('scheduler_grant_tool');

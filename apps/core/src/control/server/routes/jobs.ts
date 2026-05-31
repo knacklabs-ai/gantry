@@ -97,7 +97,11 @@ function formatJobRequestIssue(issue: ZodIssue): string {
       (key) => key === 'requiredTools' || key === 'required_tools',
     );
     if (oldToolField) {
-      return `${oldToolField} is no longer accepted. Use toolAccessRequirements for access preflight checks.`;
+      return `${oldToolField} is no longer accepted. Use accessRequirements for access preflight checks.`;
+    }
+    const oldWorkspaceField = issue.keys.find((key) => key === 'groupScope');
+    if (oldWorkspaceField) {
+      return `${oldWorkspaceField} is no longer accepted. Use workspaceKey.`;
     }
     return `Unsupported job request field "${issue.keys[0]}".`;
   }
@@ -212,7 +216,7 @@ async function runtimeContextPreviewFor(input: {
   executionContext: {
     conversationJid: string;
     threadId: string | null;
-    groupScope: string;
+    workspaceKey: string;
     sessionId?: string | null;
   };
   notificationRoutes: Array<{
@@ -227,7 +231,7 @@ async function runtimeContextPreviewFor(input: {
     executionContext: {
       conversationJid: input.executionContext.conversationJid,
       threadId: input.executionContext.threadId,
-      groupScope: input.executionContext.groupScope,
+      workspaceKey: input.executionContext.workspaceKey,
       ...(input.executionContext.sessionId !== undefined
         ? { sessionId: input.executionContext.sessionId }
         : {}),
@@ -238,8 +242,8 @@ async function runtimeContextPreviewFor(input: {
       conversationKind: group?.conversationKind,
     }),
     browserProfileName: resolveConversationBrowserProfile({
-      agentId: group?.folder ?? input.executionContext.groupScope,
-      workspaceKey: input.executionContext.groupScope,
+      agentId: group?.folder ?? input.executionContext.workspaceKey,
+      workspaceKey: input.executionContext.workspaceKey,
       conversationId: input.executionContext.conversationJid,
     }),
     persona: group?.agentConfig?.persona ?? 'developer',
@@ -258,6 +262,20 @@ function parsePositiveInt(value: string | null): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function requestExecutionContextToInternal(input: {
+  conversationJid: string;
+  threadId: string | null;
+  workspaceKey: string;
+  sessionId?: string | null;
+}) {
+  return {
+    conversationJid: input.conversationJid,
+    threadId: input.threadId,
+    groupScope: input.workspaceKey,
+    sessionId: input.sessionId,
+  };
 }
 
 export async function handleJobRoutes(
@@ -281,18 +299,19 @@ export async function handleJobRoutes(
         modelAlias: body.modelAlias,
         kind,
         getDefaultModelConfig: ctx.getDefaultModelConfig,
-        agentFolder: body.executionContext.groupScope,
+        agentFolder: body.executionContext.workspaceKey,
       });
+      const executionContext = requestExecutionContextToInternal(
+        body.executionContext,
+      );
       const created = await createJobManagementService(ctx).createJob({
         appId: auth.appId,
         name: String(body.name || ''),
         prompt: String(body.prompt || ''),
         sessionId: body.executionContext.sessionId,
-        executionContext: body.executionContext,
+        executionContext,
         notificationRoutes: body.notificationRoutes,
-        capabilityRequirements: body.capabilityRequirements,
-        toolAccessRequirements: body.toolAccessRequirements,
-        requiredMcpServers: body.requiredMcpServers,
+        accessRequirements: body.accessRequirements,
         kind,
         runAt: typeof body.runAt === 'string' ? body.runAt : undefined,
         schedule: (body.schedule || {}) as { type?: unknown; value?: unknown },
@@ -304,7 +323,7 @@ export async function handleJobRoutes(
       const runtimePreviewExecutionContext = {
         conversationJid: created.runtimeContext.conversationJid,
         threadId: created.runtimeContext.threadId,
-        groupScope: created.runtimeContext.groupScope,
+        workspaceKey: created.runtimeContext.groupScope,
         sessionId: created.runtimeContext.sessionId,
       };
       const runtimePreviewNotificationRoutes =
@@ -370,7 +389,7 @@ export async function handleJobRoutes(
     const { jobs: visibleJobs } = await service.listJobs({
       appId: auth.appId,
       statuses: url.searchParams.getAll('status'),
-      groupScope: url.searchParams.get('groupScope') || undefined,
+      groupScope: url.searchParams.get('workspaceKey') || undefined,
       agentId: url.searchParams.get('agentId') || undefined,
       kind: parseJobKind(url.searchParams.get('kind')),
       conversationJid: url.searchParams.get('conversationJid') || undefined,
@@ -504,21 +523,17 @@ export async function handleJobRoutes(
           ...(typeof body.prompt === 'string' ? { prompt: body.prompt } : {}),
           ...(body.executionContext !== undefined
             ? {
-                executionContext: body.executionContext,
+                executionContext: requestExecutionContextToInternal(
+                  body.executionContext,
+                ),
               }
             : {}),
           ...(requestedModel.specified ? { model: requestedModel.model } : {}),
           ...(Array.isArray(body.notificationRoutes)
             ? { notificationRoutes: body.notificationRoutes }
             : {}),
-          ...(Array.isArray(body.capabilityRequirements)
-            ? { capabilityRequirements: body.capabilityRequirements }
-            : {}),
-          ...(Array.isArray(body.toolAccessRequirements)
-            ? { toolAccessRequirements: body.toolAccessRequirements }
-            : {}),
-          ...(Array.isArray(body.requiredMcpServers)
-            ? { requiredMcpServers: body.requiredMcpServers }
+          ...(Array.isArray(body.accessRequirements)
+            ? { accessRequirements: body.accessRequirements }
             : {}),
           ...(body.status === 'active' || body.status === 'paused'
             ? { status: body.status }

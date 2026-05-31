@@ -27,7 +27,7 @@ import {
 } from './sensitive-material.js';
 
 export const PERSISTENT_REQUEST_PERMISSION_RULE_REJECTION_REASON =
-  'Persistent request_permission approvals support only trusted projected semantic capabilities, canonical Browser, exact Gantry file/web tools, scoped RunCommand(...), or exact Gantry admin tools; use propose_capability for semantic app/tool access.';
+  'Persistent access approvals support only trusted projected semantic capabilities, canonical Browser, exact Gantry file/web tools, scoped RunCommand(...), or exact Gantry admin tools; use request_access with target.kind=capability for reviewed semantic app/tool access.';
 
 export function validatePersistentRequestPermissionRule(
   rule: string,

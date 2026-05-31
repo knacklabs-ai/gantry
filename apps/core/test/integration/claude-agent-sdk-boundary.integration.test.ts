@@ -376,7 +376,7 @@ describe('Claude Agent SDK boundary integration', () => {
         'mcp__gantry__request_skill_proposal',
         'mcp__gantry__request_skill_dependency_install',
         'mcp__gantry__request_mcp_server',
-        'mcp__gantry__request_permission',
+        'mcp__gantry__request_access',
         'mcp__gantry__mcp_list_tools',
         'mcp__gantry__mcp_call_tool',
         'Agent',

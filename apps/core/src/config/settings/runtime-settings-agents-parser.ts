@@ -157,14 +157,47 @@ function parseConfiguredAgentSources(
   };
 }
 
-function parseConfiguredAgentCapabilities(
+function parseConfiguredAgentAccess(
+  raw: unknown,
+  pathPrefix: string,
+): {
+  sources: RuntimeConfiguredAgentSources;
+  capabilities: RuntimeConfiguredAgentCapability[];
+} {
+  if (raw === undefined) {
+    return {
+      sources: { skills: [], mcpServers: [], tools: [] },
+      capabilities: [],
+    };
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${pathPrefix} must be a mapping`);
+  }
+  const map = raw as Record<string, unknown>;
+  for (const key of Object.keys(map)) {
+    if (key !== 'sources' && key !== 'selections') {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure sources or selections.`,
+      );
+    }
+  }
+  return {
+    sources: parseConfiguredAgentSources(map.sources, `${pathPrefix}.sources`),
+    capabilities: parseConfiguredAgentSelections(
+      map.selections,
+      `${pathPrefix}.selections`,
+    ),
+  };
+}
+
+function parseConfiguredAgentSelections(
   raw: unknown,
   pathPrefix: string,
 ): RuntimeConfiguredAgentCapability[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) {
     throw new Error(
-      `${pathPrefix} must be an array of selected capability entries`,
+      `${pathPrefix} must be an array of selected access entries`,
     );
   }
   return raw.map((item, index) => {
@@ -332,11 +365,10 @@ export function parseConfiguredAgents(
         key !== 'one_time_job_default_model' &&
         key !== 'recurring_job_default_model' &&
         key !== 'bindings' &&
-        key !== 'sources' &&
-        key !== 'capabilities'
+        key !== 'access'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, bindings, sources, or capabilities.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, bindings, or access.`,
         );
       }
     }
@@ -410,14 +442,7 @@ export function parseConfiguredAgents(
           model,
         },
       ),
-      sources: parseConfiguredAgentSources(
-        map.sources,
-        `${pathPrefix}.sources`,
-      ),
-      capabilities: parseConfiguredAgentCapabilities(
-        map.capabilities,
-        `${pathPrefix}.capabilities`,
-      ),
+      ...parseConfiguredAgentAccess(map.access, `${pathPrefix}.access`),
     };
   }
   const seenJids = new Map<string, string>();

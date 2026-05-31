@@ -163,7 +163,7 @@ describe('job application use cases', () => {
       name: 'Browser summary',
       prompt: 'Summarize a web page',
       sessionId: 'session-app-one',
-      toolAccessRequirements: ['Browser'],
+      accessRequirements: [{ target: { kind: 'tool_rule', rule: 'Browser' } }],
       kind: 'recurring',
       schedule: { type: 'interval', value: '60000' },
     });
@@ -173,7 +173,9 @@ describe('job application use cases', () => {
         status: 'paused',
         pause_reason: 'Setup required',
         next_run: null,
-        tool_access_requirements: ['Browser'],
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
         setup_state: expect.objectContaining({
           state: 'missing_capability',
         }),
@@ -204,7 +206,7 @@ describe('job application use cases', () => {
       status: 'paused',
       pause_reason: 'Setup required',
       next_run: null,
-      tool_access_requirements: ['Browser'],
+      access_requirements: [{ target: { kind: 'tool_rule', rule: 'Browser' } }],
       execution_context: {
         conversationJid: 'tg:team',
         threadId: null,
@@ -220,7 +222,8 @@ describe('job application use cases', () => {
             requirementType: 'browser',
             requirementId: 'Browser',
             message: 'This job needs Browser access before it can run.',
-            nextAction: 'request_permission { "toolName": "Browser" }',
+            nextAction:
+              'request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
           },
         ],
       },
@@ -396,18 +399,21 @@ describe('job application use cases', () => {
       name: 'Lead sync',
       prompt: 'Append new leads to Acme Records',
       sessionId: 'session-app-one',
-      capabilityRequirements: [
+      accessRequirements: [
         {
-          capabilityId: 'acme.records.append',
-          reason: 'Write lead rows after each run',
-          implementation: {
-            kind: 'local_cli',
-            name: 'acme',
-            executablePath: '/usr/local/bin/acme',
-            executableVersion: 'v0.9.0',
-            executableHash: 'sha256:abc123',
-            commandTemplate: '/usr/local/bin/acme records append *',
+          target: {
+            kind: 'capability',
+            capabilityId: 'acme.records.append',
+            implementation: {
+              kind: 'local_cli',
+              name: 'acme',
+              executablePath: '/usr/local/bin/acme',
+              executableVersion: 'v0.9.0',
+              executableHash: 'sha256:abc123',
+              commandTemplate: '/usr/local/bin/acme records append *',
+            },
           },
+          reason: 'Write lead rows after each run',
         },
       ],
       kind: 'recurring',
@@ -419,13 +425,15 @@ describe('job application use cases', () => {
         status: 'paused',
         pause_reason: 'Setup required',
         next_run: null,
-        capability_requirements: [
+        access_requirements: [
           expect.objectContaining({
-            capabilityId: 'acme.records.append',
+            target: expect.objectContaining({
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+            }),
             reason: 'Write lead rows after each run',
           }),
         ],
-        tool_access_requirements: ['capability:acme.records.append'],
         setup_state: expect.objectContaining({
           state: 'missing_capability',
           blockers: expect.arrayContaining([
@@ -433,7 +441,7 @@ describe('job application use cases', () => {
               state: 'missing_capability',
               requirementType: 'local_cli',
               requirementId: 'acme.records.append',
-              nextAction: expect.stringContaining('propose_capability'),
+              nextAction: expect.stringContaining('request_access'),
             }),
           ]),
         }),
@@ -464,23 +472,26 @@ describe('job application use cases', () => {
         name: 'Lead sync',
         prompt: 'Append new leads to Acme Records',
         sessionId: 'session-app-one',
-        capabilityRequirements: [
+        accessRequirements: [
           {
-            capabilityId: 'acme.records.append',
-            reason: 'Write lead rows after each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'acme',
-              executablePath: '/usr/local/bin/acme',
-              executableVersion: 'v0.9.0',
-              executableHash: 'sha256:abc123',
-              commandTemplate: 'acme records append *',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                executableVersion: 'v0.9.0',
+                executableHash: 'sha256:abc123',
+                commandTemplate: 'acme records append *',
+              },
             },
+            reason: 'Write lead rows after each run',
           },
         ],
       }),
     ).rejects.toThrow(
-      'capabilityRequirements local_cli implementation.commandTemplate must start with the exact executablePath.',
+      'accessRequirements capability local_cli implementation.commandTemplate must start with the exact executablePath.',
     );
     expect(upsertJob).not.toHaveBeenCalled();
     expect(scheduler.requestSchedulerSync).not.toHaveBeenCalled();
@@ -490,20 +501,23 @@ describe('job application use cases', () => {
     const runtimeEvents = { publish: vi.fn(async () => undefined) };
     const job = makeJob({
       id: 'job-1',
-      tool_access_requirements: ['Browser', 'capability:acme.old.read'],
-      capability_requirements: [
+      access_requirements: [
         {
-          capabilityId: 'acme.old.read',
-          reason: 'Old reviewed CLI requirement',
-          implementation: {
-            kind: 'local_cli',
-            name: 'old-cli',
-            executablePath: '/usr/local/bin/old-cli',
-            executableVersion: 'v0.8.0',
-            executableHash: 'sha256:old123',
-            commandTemplate: '/usr/local/bin/old-cli read *',
+          target: {
+            kind: 'capability',
+            capabilityId: 'acme.old.read',
+            implementation: {
+              kind: 'local_cli',
+              name: 'old-cli',
+              executablePath: '/usr/local/bin/old-cli',
+              executableVersion: 'v0.8.0',
+              executableHash: 'sha256:old123',
+              commandTemplate: '/usr/local/bin/old-cli read *',
+            },
           },
+          reason: 'Old reviewed CLI requirement',
         },
+        { target: { kind: 'tool_rule', rule: 'Browser' } },
       ],
       execution_context: {
         conversationJid: 'app:app-one:conversation',
@@ -537,18 +551,21 @@ describe('job application use cases', () => {
       appId: 'app-one',
       jobId: 'job-1',
       patch: {
-        capabilityRequirements: [
+        accessRequirements: [
           {
-            capabilityId: 'acme.records.append',
-            reason: 'Need reviewed CLI before each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'acme',
-              executablePath: '/usr/local/bin/acme',
-              executableVersion: 'v0.9.0',
-              executableHash: 'sha256:abc123',
-              commandTemplate: '/usr/local/bin/acme records append --dry-run',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                executableVersion: 'v0.9.0',
+                executableHash: 'sha256:abc123',
+                commandTemplate: '/usr/local/bin/acme records append --dry-run',
+              },
             },
+            reason: 'Need reviewed CLI before each run',
           },
         ],
       },
@@ -557,21 +574,23 @@ describe('job application use cases', () => {
     expect(ops.updateJob).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({
-        capability_requirements: [
+        access_requirements: [
           {
-            capabilityId: 'acme.records.append',
-            reason: 'Need reviewed CLI before each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'acme',
-              executablePath: '/usr/local/bin/acme',
-              executableVersion: 'v0.9.0',
-              executableHash: 'sha256:abc123',
-              commandTemplate: '/usr/local/bin/acme records append --dry-run',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                executableVersion: 'v0.9.0',
+                executableHash: 'sha256:abc123',
+                commandTemplate: '/usr/local/bin/acme records append --dry-run',
+              },
             },
+            reason: 'Need reviewed CLI before each run',
           },
         ],
-        tool_access_requirements: ['Browser', 'capability:acme.records.append'],
         status: 'paused',
         pause_reason: 'Setup required',
       }),
@@ -579,13 +598,12 @@ describe('job application use cases', () => {
     expect(scheduler.requestSchedulerSync).toHaveBeenCalledWith('job-1');
   });
 
-  it('preserves capability-derived tool rules when only tool access requirements are updated', async () => {
+  it('replaces the full access document on update', async () => {
     const job = makeJob({
       id: 'job-1',
-      tool_access_requirements: ['capability:acme.records.append'],
-      capability_requirements: [
+      access_requirements: [
         {
-          capabilityId: 'acme.records.append',
+          target: { kind: 'capability', capabilityId: 'acme.records.append' },
           reason: 'Write lead rows after each run',
         },
       ],
@@ -606,14 +624,26 @@ describe('job application use cases', () => {
       appId: 'app-one',
       jobId: 'job-1',
       patch: {
-        toolAccessRequirements: ['Browser'],
+        accessRequirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+          {
+            target: { kind: 'capability', capabilityId: 'acme.records.append' },
+            reason: 'Write lead rows after each run',
+          },
+        ],
       },
     });
 
     expect(ops.updateJob).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({
-        tool_access_requirements: ['Browser', 'capability:acme.records.append'],
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+          {
+            target: { kind: 'capability', capabilityId: 'acme.records.append' },
+            reason: 'Write lead rows after each run',
+          },
+        ],
       }),
     );
   });
@@ -625,7 +655,6 @@ describe('job application use cases', () => {
       ops: ops as RuntimeJobRepository,
       scheduler,
       schedulePlanner: runtimeJobSchedulePlanner,
-      control: makeAppOneControl(),
       control: makeAppOneControl(),
       clock: { now: () => '2026-04-24T01:00:00.000Z' },
     });
@@ -886,7 +915,12 @@ describe('job application use cases', () => {
         },
       },
       jobId: 'job-1',
-      patch: { status: 'active', toolAccessRequirements: ['Browser'] },
+      patch: {
+        status: 'active',
+        accessRequirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
+      },
     });
 
     expect(toolRepository.listAgentToolBindings).toHaveBeenCalledWith(
@@ -981,7 +1015,6 @@ describe('job application use cases', () => {
       ops: ops as RuntimeJobRepository,
       scheduler: { requestSchedulerSync: vi.fn() },
       schedulePlanner: runtimeJobSchedulePlanner,
-      control: makeAppOneControl(),
       control: makeAppOneControl(),
       clock: { now: () => '2026-04-24T01:00:00.000Z' },
     });
@@ -2525,7 +2558,9 @@ describe('job application use cases', () => {
         schedule_value: '0 9 * * *',
         status: 'paused',
         pause_reason: 'Setup required',
-        tool_access_requirements: ['Browser'],
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
         setup_state: {
           state: 'missing_capability',
           checked_at: '2026-05-14T00:00:00.000Z',
@@ -2536,7 +2571,8 @@ describe('job application use cases', () => {
               requirementType: 'browser',
               requirementId: 'Browser',
               message: 'This job needs Browser access before it can run.',
-              nextAction: 'request_permission { "toolName": "Browser" }',
+              nextAction:
+                'request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
             },
           ],
         },
@@ -2643,6 +2679,169 @@ describe('job application use cases', () => {
       runId: 'run-1',
     });
     expect(runtimeEvents.publish).not.toHaveBeenCalled();
+  });
+
+  it('queues scheduler_run_now from a different topic in the same conversation', async () => {
+    const control = {
+      createJobTrigger: vi.fn(async () => ({ triggerId: 'trigger-1' })),
+      markTriggerCompleted: vi.fn(),
+      getAppSessionById: vi.fn(async () => undefined),
+    };
+    const triggerQueue = {
+      isReady: vi.fn(() => true),
+      enqueue: vi.fn(async () => undefined),
+    };
+    const service = new JobManagementService({
+      ops: makeOps(
+        makeJob({
+          id: 'job-1',
+          group_scope: 'team',
+          session_id: null,
+          execution_context: {
+            conversationJid: 'tg:team',
+            threadId: 'topic-1',
+            groupScope: 'team',
+          },
+          notification_routes: [
+            {
+              conversationJid: 'tg:team',
+              threadId: 'topic-1',
+              label: 'primary',
+            },
+          ],
+        }),
+      ) as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+      control: control as never,
+      runtimeEvents: { publish: vi.fn() },
+      triggerQueue,
+    });
+
+    // Caller is in a different topic (topic-2) of the same Telegram group.
+    await expect(
+      service.runJobNowFromMcp({
+        jobId: 'job-1',
+        runId: 'run-1',
+        access: {
+          sourceAgentFolder: 'team',
+          originConversationJid: 'tg:team',
+          conversationBindings: {
+            'tg:team': { folder: 'team' },
+          },
+          sourceAgentFolderJids: ['tg:team'],
+          authThreadId: 'topic-2',
+        },
+      }),
+    ).resolves.toEqual({
+      runId: 'run-1',
+      queued: true,
+      triggerId: 'trigger-1',
+    });
+
+    expect(triggerQueue.enqueue).toHaveBeenCalledWith('job-1', 'trigger-1', {
+      runId: 'run-1',
+    });
+  });
+
+  it('rejects scheduler_run_now from a different group', async () => {
+    const control = {
+      createJobTrigger: vi.fn(),
+      markTriggerCompleted: vi.fn(),
+      getAppSessionById: vi.fn(),
+    };
+    const triggerQueue = {
+      isReady: vi.fn(() => true),
+      enqueue: vi.fn(),
+    };
+    const service = new JobManagementService({
+      ops: makeOps(
+        makeJob({
+          id: 'job-1',
+          group_scope: 'team',
+          session_id: null,
+          execution_context: {
+            conversationJid: 'tg:team',
+            threadId: 'topic-1',
+            groupScope: 'team',
+          },
+        }),
+      ) as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+      control: control as never,
+      runtimeEvents: { publish: vi.fn() },
+      triggerQueue,
+    });
+
+    await expect(
+      service.runJobNowFromMcp({
+        jobId: 'job-1',
+        runId: 'run-1',
+        access: {
+          sourceAgentFolder: 'other',
+          originConversationJid: 'tg:other',
+          conversationBindings: {
+            'tg:other': { folder: 'other' },
+          },
+          sourceAgentFolderJids: ['tg:other'],
+          authThreadId: 'topic-9',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(control.createJobTrigger).not.toHaveBeenCalled();
+    expect(triggerQueue.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('rejects scheduler_run_now when group scope differs even in the same conversation', async () => {
+    const control = {
+      createJobTrigger: vi.fn(),
+      markTriggerCompleted: vi.fn(),
+      getAppSessionById: vi.fn(),
+    };
+    const triggerQueue = {
+      isReady: vi.fn(() => true),
+      enqueue: vi.fn(),
+    };
+    const service = new JobManagementService({
+      ops: makeOps(
+        makeJob({
+          id: 'job-1',
+          group_scope: 'team',
+          session_id: null,
+          execution_context: {
+            conversationJid: 'tg:team',
+            threadId: 'topic-1',
+            groupScope: 'team',
+          },
+        }),
+      ) as RuntimeJobRepository,
+      scheduler: { requestSchedulerSync: vi.fn() },
+      schedulePlanner: runtimeJobSchedulePlanner,
+      control: control as never,
+      runtimeEvents: { publish: vi.fn() },
+      triggerQueue,
+    });
+
+    await expect(
+      service.runJobNowFromMcp({
+        jobId: 'job-1',
+        runId: 'run-1',
+        access: {
+          sourceAgentFolder: 'other',
+          originConversationJid: 'tg:team',
+          conversationBindings: {
+            'tg:team': { folder: 'other' },
+          },
+          sourceAgentFolderJids: ['tg:team'],
+          authThreadId: 'topic-1',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(control.createJobTrigger).not.toHaveBeenCalled();
+    expect(triggerQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it('rejects scheduler_run_now for inactive jobs before enqueueing', async () => {
