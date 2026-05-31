@@ -13,6 +13,7 @@ import {
   normalizeCapabilitySecretName,
 } from '../../../../domain/capability-secrets/capability-secrets.js';
 import { nowIso } from '../../../../shared/time/datetime.js';
+import { logger } from '../../../../infrastructure/logging/logger.js';
 import * as pgSchema from '../schema/schema.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
 import {
@@ -59,6 +60,13 @@ export class PostgresCapabilitySecretRepository implements CapabilitySecretRepos
       };
     } catch (error) {
       if (error instanceof CredentialSecretCryptoIntegrityError) {
+        // Wrong encryption key or tampered ciphertext — not the same as an
+        // absent secret. Surface it so a botched key rotation is debuggable
+        // instead of looking like "needs setup", but still degrade gracefully.
+        logger.error(
+          { err: error, appId: input.appId, name },
+          'Capability secret failed integrity check; treating as unavailable',
+        );
         return null;
       }
       throw error;
