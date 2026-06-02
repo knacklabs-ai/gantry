@@ -20,13 +20,15 @@ import { resolveMcpCredentialEnvForAgent } from '../application/capability-secre
 import {
   isPermanentPermissionDecision,
   formatDurableAccessRulesForUser,
+  pendingAccessTargetSummary,
   persistRequestPermissionRules,
   requestPermissionDescription,
+  requestPermissionOnceLiveRules,
   requestPermissionQueuedMessage,
   requestPermissionReviewEffect,
   requestPermissionReviewSuggestions,
   requestPermissionSetupDecisionOptions,
-  requestPermissionTransientLiveRules,
+  resolveTrustedSemanticCapabilityDefinitions,
   validateRequestPermissionCapabilityProposal,
   validateRequestPermissionSemanticCapability,
 } from './request-permission-review.js';
@@ -588,17 +590,6 @@ function capabilityDisplayValue(payload: Record<string, unknown>, spec: (typeof 
   }
   return spec.kind;
 }
-
-// prettier-ignore
-function pendingAccessTargetSummary(review: RequestOnlyCapabilityReview): Record<string, string> {
-  const summary: Record<string, string> = { requestTool: review.toolName, requestKind: review.requestKind };
-  const effect = toTrimmedString(review.toolInput.effect, { maxLen: 120 });
-  if (effect) summary.effect = effect;
-  const activation = toTrimmedString(review.toolInput.activation, { maxLen: 120 });
-  if (activation) summary.activation = activation;
-  return summary;
-}
-
 // prettier-ignore
 function startRequestOnlyCapabilityReview(input: { deps: Parameters<TaskHandler>[0]['deps']; appId: import('../domain/app/app.js').AppId; agentId: import('../domain/agent/agent.js').AgentId; sourceAgentFolder: string; targetJid: string; threadId?: string; ipcDir?: string; runHandle?: string; review: RequestOnlyCapabilityReview; pendingKey?: string }): void {
   void (async () => {
@@ -616,6 +607,12 @@ function startRequestOnlyCapabilityReview(input: { deps: Parameters<TaskHandler>
       } catch (err) {
         logger.warn({ err, requestId }, 'Failed to record pending access request');
       }
+      const semanticCapabilityDefinitions =
+        await resolveTrustedSemanticCapabilityDefinitions({
+          deps: input.deps,
+          appId: input.appId,
+          agentId: input.agentId,
+        });
       const decision = await input.deps.requestPermissionApproval({
         requestId,
         appId: input.appId,
@@ -630,6 +627,7 @@ function startRequestOnlyCapabilityReview(input: { deps: Parameters<TaskHandler>
         description: input.review.toolName === 'request_permission' ? requestPermissionDescription() : 'Only configured approvers can decide this request. Approval records the admin decision; setup may still require a host admin.',
         decisionReason: input.review.reason,
         toolInput: input.review.toolInput,
+        ...(semanticCapabilityDefinitions ? { semanticCapabilityDefinitions } : {}),
         ...(semanticCapabilityInteraction(input.review, requestId)
           ? { interaction: semanticCapabilityInteraction(input.review, requestId) }
           : {}),
@@ -637,9 +635,11 @@ function startRequestOnlyCapabilityReview(input: { deps: Parameters<TaskHandler>
           ? {
               suggestions: requestPermissionReviewSuggestions(
                 input.review.toolInput,
+                { semanticCapabilityDefinitions },
               ),
               decisionOptions: requestPermissionSetupDecisionOptions(
                 input.review.toolInput,
+                { semanticCapabilityDefinitions },
               ),
             }
           : {}),
@@ -648,9 +648,9 @@ function startRequestOnlyCapabilityReview(input: { deps: Parameters<TaskHandler>
       let persistedRules: string[] = [];
       let liveRules: string[] = [];
       if (input.review.toolName === 'request_permission' && isPermanentPermissionDecision(decision)) {
-        persistedRules = await persistRequestPermissionRules({ deps: input.deps, appId: input.appId, agentId: input.agentId, sourceAgentFolder: input.sourceAgentFolder, ipcDir: input.ipcDir, runHandle: input.runHandle, requestId, updates: decision.updatedPermissions ?? [], toolInput: input.review.toolInput, actor: decision.decidedBy, conversationId: input.targetJid, threadId: input.threadId, reason: decision.reason });
+        persistedRules = await persistRequestPermissionRules({ deps: input.deps, appId: input.appId, agentId: input.agentId, sourceAgentFolder: input.sourceAgentFolder, ipcDir: input.ipcDir, runHandle: input.runHandle, requestId, updates: decision.updatedPermissions ?? [], toolInput: input.review.toolInput, semanticCapabilityDefinitions, actor: decision.decidedBy, conversationId: input.targetJid, threadId: input.threadId, reason: decision.reason });
       }
-      const transientRules = input.review.toolName === 'request_permission' && decision.approved && decision.decidedBy && decision.mode === 'allow_once' ? requestPermissionTransientLiveRules(input.review.toolInput) : [];
+      const transientRules = input.review.toolName === 'request_permission' && decision.approved && decision.decidedBy && decision.mode === 'allow_once' ? requestPermissionOnceLiveRules(input.review.toolInput, semanticCapabilityDefinitions) : [];
       if (transientRules.length > 0) liveRules = appendLiveToolRules({ ipcDir: input.ipcDir, runHandle: input.runHandle, rules: transientRules });
       try {
         await getRuntimeStorage().repositories.pendingAccessRequests.markResolved({

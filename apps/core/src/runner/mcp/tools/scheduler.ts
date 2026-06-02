@@ -8,6 +8,7 @@ import {
   schedulerEventsSummary,
   schedulerJobSummary,
   schedulerJobsSummary,
+  schedulerNotificationTargetsSummary,
 } from './scheduler-formatters.js';
 import {
   formatSchedulerJobPlan,
@@ -414,11 +415,8 @@ export function registerSchedulerTools(server: McpServer): void {
       if (error) return error;
       const targets = dataRecord(response!).targets;
       const result = Array.isArray(targets) ? targets : [];
-      return {
-        content: [
-          { type: 'text' as const, text: schedulerEventsSummary(result) },
-        ],
-      };
+      const text = schedulerNotificationTargetsSummary(result);
+      return { content: [{ type: 'text' as const, text }] };
     },
   );
   server.tool(

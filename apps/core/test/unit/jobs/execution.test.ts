@@ -711,7 +711,10 @@ describe('jobs/execution', () => {
     const deadLetterUpdate = vi
       .mocked(opsRepository.updateJob)
       .mock.calls.find(([, update]) => update?.status === 'dead_lettered')?.[1];
-    expect(deadLetterUpdate?.pause_reason).toContain('[REDACTED]');
+    // Pause reason is now generic + actionable — the raw error is NOT embedded
+    // (it lives on the run record, asserted above). This is the stronger
+    // non-leak guarantee: no error text at all, not just a redacted one.
+    expect(deadLetterUpdate?.pause_reason).toContain('Fix the blocker');
     expect(deadLetterUpdate?.pause_reason).not.toContain(
       'provider-session:raw-error',
     );
@@ -747,7 +750,7 @@ describe('jobs/execution', () => {
     );
     expect(lifecycleFailureEvent?.payload?.summary).not.toContain('json-error');
     expect(lifecycleFailureEvent?.payload?.pause_reason).toContain(
-      '[REDACTED]',
+      'Fix the blocker',
     );
     expect(lifecycleFailureEvent?.payload?.pause_reason).not.toContain(
       'provider-session:raw-error',

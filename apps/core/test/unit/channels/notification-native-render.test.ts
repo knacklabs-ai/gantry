@@ -35,6 +35,107 @@ describe('buildPermissionPromptParts', () => {
     expect(parts.replyInMinutes).toBe(1);
   });
 
+  it('omits the body for a tool that takes no arguments (no empty Input block)', () => {
+    const parts = buildPermissionPromptParts(
+      {
+        requestId: 'permission_1',
+        sourceAgentFolder: 'main_agent',
+        toolName: 'mcp__gantry__guided_action_preview',
+        toolInput: {},
+      },
+      60_000,
+    );
+    expect(parts.bodyLines).toEqual([]);
+    const html = renderPermissionPromptHtml(parts);
+    expect(html).not.toContain('Input:');
+    expect(html).not.toContain('{}');
+  });
+
+  it('renders admin request tools as clean fields, not a raw JSON dump', () => {
+    const skill = buildPermissionPromptParts(
+      {
+        requestId: 'r',
+        sourceAgentFolder: 'main_agent',
+        toolName: 'request_skill_install',
+        displayName: 'Skill: linkedin-posting',
+        toolInput: {
+          skillId: 'skill:564c',
+          name: 'linkedin-posting',
+          description: 'Publish posts to LinkedIn',
+          requiredEnvVars: ['LINKEDIN_ACCESS_TOKEN'],
+          files: [{ path: 'a' }, { path: 'b' }],
+          totalSizeBytes: 4600,
+          skillMarkdownPreview: {
+            path: '/tmp/staged/SKILL.md',
+            content:
+              '# LinkedIn Posting\n\nUse this skill to publish approved LinkedIn posts.',
+            truncated: false,
+          },
+        },
+      },
+      60_000,
+    );
+    expect(skill.bodyLines).toContain('Description: Publish posts to LinkedIn');
+    expect(skill.bodyLines).toContain('Files: 2 (4.5 KB)');
+    expect(skill.bodyLines).toContain('Requires env: LINKEDIN_ACCESS_TOKEN');
+    expect(skill.bodyLines).toContain('SKILL.md preview:');
+    expect(skill.bodyLines).toContain(
+      '# LinkedIn Posting\n\nUse this skill to publish approved LinkedIn posts.',
+    );
+    // No raw JSON / internal ids leaked.
+    expect(skill.bodyLines.join('\n')).not.toContain('skillId');
+    expect(skill.bodyLines.join('\n')).not.toContain('/tmp/staged');
+    expect(skill.bodyLines.join('\n')).not.toContain('```json');
+
+    const mcp = buildPermissionPromptParts(
+      {
+        requestId: 'r',
+        sourceAgentFolder: 'main_agent',
+        toolName: 'request_mcp_server',
+        displayName: 'MCP server: linear',
+        toolInput: {
+          name: 'linear',
+          transport: 'stdio_template',
+          sandboxProfileId: 'sp-1',
+          origin: 'npx -y @linear/mcp',
+          requestedToolPatterns: ['linear_*'],
+          credentialNeeds: ['LINEAR_API_KEY'],
+        },
+      },
+      60_000,
+    );
+    expect(mcp.bodyLines).toContain('Install: npx -y @linear/mcp');
+    expect(mcp.bodyLines).toContain('Needs credentials: LINEAR_API_KEY');
+    expect(mcp.bodyLines.join('\n')).not.toContain('sandboxProfileId');
+    expect(mcp.bodyLines.join('\n')).not.toContain('stdio_template');
+  });
+
+  it('drops internal plumbing ids from the generic fallback for unknown tools', () => {
+    const parts = buildPermissionPromptParts(
+      {
+        requestId: 'permission_1',
+        sourceAgentFolder: 'main_agent',
+        toolName: 'mcp__third_party__do_thing',
+        toolInput: {
+          label: 'deploy',
+          chatJid: 'tg:-100team',
+          ipcDir: '/var/run/gantry/ipc',
+          runHandle: 'rh-9',
+          sandboxProfileId: 'sp-1',
+          agentId: 'agent:team',
+        },
+      },
+      60_000,
+    );
+    const body = parts.bodyLines.join('\n');
+    expect(body).toContain('Label: deploy');
+    expect(body).not.toContain('tg:-100team');
+    expect(body).not.toContain('/var/run/gantry/ipc');
+    expect(body).not.toContain('rh-9');
+    expect(body).not.toContain('sp-1');
+    expect(body).not.toContain('agent:team');
+  });
+
   it('adds a parent-conversation note for thread-routed requests', () => {
     const parts = buildPermissionPromptParts(
       { ...commandRequest, targetJid: 'tg:-100team', threadId: '42' },
@@ -85,6 +186,16 @@ describe('buildPermissionPromptParts', () => {
 describe('Telegram HTML rendering', () => {
   it('escapes only &, <, >', () => {
     expect(escapeTelegramHtml('a & b < c > d')).toBe('a &amp; b &lt; c &gt; d');
+  });
+
+  it('converts inline `code` spans to <code> and escapes their content', () => {
+    expect(renderBodyLinesHtml(['Run `npm <test> & lint` now'])).toBe(
+      'Run <code>npm &lt;test&gt; &amp; lint</code> now',
+    );
+    // Backticks that would inject a tag are neutralized.
+    expect(renderBodyLinesHtml(['`</code><b>x`'])).toBe(
+      '<code>&lt;/code&gt;&lt;b&gt;x</code>',
+    );
   });
 
   it('renders fenced regions as <pre> and escapes their content', () => {

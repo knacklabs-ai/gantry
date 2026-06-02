@@ -50,6 +50,29 @@ const acmeAdapterCapability: SemanticCapabilityDefinition = {
   ],
 };
 
+const skillPublishCapability: SemanticCapabilityDefinition = {
+  capabilityId: 'skill.publisher.publish',
+  displayName: 'Publisher publish',
+  category: 'Publisher',
+  risk: 'write',
+  can: 'Publish prepared content through the selected skill.',
+  cannot: 'Use unrelated skills or credentials.',
+  credentialSource: 'skill_secret',
+  implementationBindings: [
+    {
+      kind: 'tool_rule',
+      rule: 'RunCommand(skills/publisher/publish.py *)',
+    },
+  ],
+  preflight: { kind: 'none' },
+  source: {
+    kind: 'skill_action',
+    skillId: 'skill:publisher',
+    skillName: 'publisher',
+    actionId: 'publish',
+  },
+};
+
 function depsWith(repository: unknown) {
   return {
     getToolRepository: () => repository as never,
@@ -802,12 +825,37 @@ describe('request permission review helpers', () => {
       }),
     ).toBeUndefined();
     expect(
-      requestPermissionReviewSuggestions({
-        permissionKind: 'tool',
-        capabilityRequestSource: 'request_access',
-        capabilityId: 'acme.invoices.read',
-        temporaryOnly: false,
-      }),
+      requestPermissionReviewSuggestions(
+        {
+          permissionKind: 'tool',
+          capabilityRequestSource: 'request_access',
+          capabilityId: 'acme.invoices.read',
+          temporaryOnly: false,
+        },
+        {
+          semanticCapabilityDefinitions: {
+            'acme.records.append': acmeAppendCapability,
+          },
+        },
+      ),
+    ).toBeUndefined();
+    expect(
+      requestPermissionReviewSuggestions(
+        {
+          permissionKind: 'tool',
+          capabilityRequestSource: 'request_access',
+          capabilityId: 'acme.invoices.read',
+          temporaryOnly: false,
+        },
+        {
+          semanticCapabilityDefinitions: {
+            'acme.invoices.read': {
+              ...acmeAppendCapability,
+              capabilityId: 'acme.invoices.read',
+            },
+          },
+        },
+      ),
     ).toEqual([
       {
         type: 'addRules',
@@ -816,6 +864,47 @@ describe('request permission review helpers', () => {
         rules: [{ toolName: 'capability:acme.invoices.read' }],
       },
     ]);
+  });
+
+  it('persists host-supplied selected skill capability definitions', async () => {
+    const repository = {
+      getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
+      listAgentToolBindings: vi.fn(async () => []),
+      saveTool: vi.fn(async () => undefined),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+    };
+
+    const persisted = await persistRequestPermissionRules({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      deps: depsWith(repository),
+      sourceAgentFolder: 'main_agent',
+      semanticCapabilityDefinitions: {
+        'skill.publisher.publish': skillPublishCapability,
+      },
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'capability:skill.publisher.publish' }],
+        },
+      ],
+    });
+
+    expect(persisted).toEqual(['capability:skill.publisher.publish']);
+    expect(repository.saveTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:capability:skill.publisher.publish',
+        name: 'capability:skill.publisher.publish',
+      }),
+    );
+    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolId: 'tool:capability:skill.publisher.publish',
+      }),
+    );
   });
 
   it('rejects unknown semantic capability persistent approval updates without trusted definitions', async () => {

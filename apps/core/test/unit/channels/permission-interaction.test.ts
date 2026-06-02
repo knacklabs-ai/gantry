@@ -838,7 +838,7 @@ describe('permission interaction', () => {
     expect(webFetch).toContain('Prompt: Summarize the setup section.');
   });
 
-  it('renders unknown non-command input as pretty JSON with head and tail content', () => {
+  it('renders unknown tool input as clean key/value lines (not a JSON dump), nested objects omitted', () => {
     const longValue = `lookup ${'x'.repeat(650)} tail`;
     const text = formatPermissionPromptText(
       {
@@ -850,10 +850,12 @@ describe('permission interaction', () => {
       60_000,
     );
 
-    expect(text).toContain('```json');
-    expect(text).toContain('lookup ');
+    expect(text).toContain('Query: lookup ');
     expect(text).toContain('tail');
-    expect(text).toContain('…');
+    expect(text).toContain('…'); // head/tail truncation of the long value
+    expect(text).not.toContain('```json');
+    // Nested objects are omitted from the prompt body.
+    expect(text).not.toContain('nested');
   });
 
   it('renders any command-shaped permission input without a JSON dump', () => {
@@ -1072,13 +1074,13 @@ describe('permission interaction', () => {
     expect(text.length).toBeLessThanOrEqual(2_800);
     expect(text).not.toContain('Reason:');
     expect(text).not.toContain('Details:');
-    expect(text).toContain('"cookie": "[hidden]"');
-    expect(text).toContain('"safe": "visible"');
-    expect(text).toContain('"__omitted_keys": "more"');
+    expect(text).toContain('Cookie: [hidden]'); // sensitive key hidden
+    expect(text).toContain('Safe: visible');
+    expect(text).toContain('…'); // field cap / value truncation marker
     expect(text).not.toContain('REDACTED');
     expect(text).not.toContain('session-cookie-value');
     expect(text).not.toContain('top-secret-value');
-    expect(text).not.toContain('extra_99');
+    expect(text).not.toContain('extra_99'); // capped at PERMISSION_JSON_MAX_KEYS
   });
 
   it('rejects oversized persistent suggestion rule sets', () => {

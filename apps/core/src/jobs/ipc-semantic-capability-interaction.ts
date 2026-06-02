@@ -41,10 +41,12 @@ export function semanticCapabilityInteraction(
 function semanticCapabilityInteractionDetails(
   toolInput: Record<string, unknown>,
 ) {
+  // Note: `capabilityId` is intentionally omitted (internal dotted id, redundant
+  // with the title display name), and `accountLabel` is omitted here because the
+  // prompt renderer already shows the Account line from toolInput.accountLabel —
+  // listing it again here duplicated it.
   return [
-    detailFromToolInput(toolInput, 'Capability', 'capabilityId', 160),
     detailFromToolInput(toolInput, 'Risk', 'risk', 80),
-    detailFromToolInput(toolInput, 'Account', 'accountLabel', 200),
     detailFromToolInput(toolInput, 'Allows', 'can', 1000),
     detailFromToolInput(toolInput, 'Does not allow', 'cannot', 1000),
   ].filter((detail): detail is { label: string; value: string } =>

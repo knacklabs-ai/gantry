@@ -15,12 +15,19 @@ import {
   RUN_COMMAND_TOOL_NAME,
   validateReadableAgentToolRule,
 } from '../shared/agent-tool-references.js';
-import { PermissionManagementService } from '../application/permissions/permission-management-service.js';
+import {
+  PermissionManagementService,
+  semanticCapabilityDefinitionsFromToolCatalog,
+} from '../application/permissions/permission-management-service.js';
+import { skillActionDefinitionsForAgent } from '../application/agents/agent-capability-skill-actions.js';
 import {
   formatDurableAccessRulesForUser,
   isDurableAccessRuleAllowed,
 } from '../shared/durable-access-policy.js';
-import { type SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
+import {
+  expandSemanticCapabilityPermissionRules,
+  type SemanticCapabilityDefinition,
+} from '../shared/semantic-capabilities.js';
 import { normalizePersistentBashRuleContent } from '../shared/bash-command-parser.js';
 import {
   isValidSemanticCapabilityId,
@@ -31,6 +38,10 @@ import { formatApprovalRequestedMessage } from '../shared/user-visible-messages.
 export interface RequestPermissionReview {
   toolName: 'request_permission';
   displayName: string;
+}
+
+interface RequestPermissionReviewOptions {
+  semanticCapabilityDefinitions?: Record<string, SemanticCapabilityDefinition>;
 }
 
 export function requestPermissionQueuedMessage(
@@ -50,6 +61,24 @@ export function requestPermissionReviewEffect(
   return requestPermissionReviewSuggestions(toolInput)
     ? 'persistent_rule_when_always_allowed'
     : fallback;
+}
+
+export function pendingAccessTargetSummary(review: {
+  toolName: string;
+  requestKind: string;
+  toolInput: Record<string, unknown>;
+}): Record<string, string> {
+  const summary: Record<string, string> = {
+    requestTool: review.toolName,
+    requestKind: review.requestKind,
+  };
+  const effect = toTrimmedString(review.toolInput.effect, { maxLen: 120 });
+  if (effect) summary.effect = effect;
+  const activation = toTrimmedString(review.toolInput.activation, {
+    maxLen: 120,
+  });
+  if (activation) summary.activation = activation;
+  return summary;
 }
 
 export async function persistRequestPermissionRules(input: {
@@ -73,6 +102,7 @@ export async function persistRequestPermissionRules(input: {
   runId?: string;
   jobId?: string;
   reason?: string;
+  semanticCapabilityDefinitions?: Record<string, SemanticCapabilityDefinition>;
 }): Promise<string[]> {
   const allowedRules = permissionUpdateAllowedToolRules(input.updates);
   if (allowedRules.length === 0) return [];
@@ -102,9 +132,11 @@ export async function persistRequestPermissionRules(input: {
     toolRepository: repository,
     mirrorAgentToolRulesToSettings,
     permissionRepository: input.deps.getPermissionRepository?.(),
-    semanticCapabilityDefinitions: input.toolInput
-      ? semanticCapabilityDefinitionsForToolInput(input.toolInput)
-      : undefined,
+    semanticCapabilityDefinitions:
+      input.semanticCapabilityDefinitions ??
+      (input.toolInput
+        ? semanticCapabilityDefinitionsForToolInput(input.toolInput)
+        : undefined),
     ipcDir: input.ipcDir,
     runHandle: input.runHandle,
     requestId: input.requestId,
@@ -130,6 +162,7 @@ export function isPermanentPermissionDecision(
 
 export function requestPermissionReviewSuggestions(
   toolInput: Record<string, unknown>,
+  options: RequestPermissionReviewOptions = {},
 ): PermissionApprovalUpdate[] | undefined {
   if (toolInput.temporaryOnly === true) return undefined;
   if (toolInput.permissionKind && toolInput.permissionKind !== 'tool') {
@@ -148,6 +181,14 @@ export function requestPermissionReviewSuggestions(
     if (toolInput.capabilityRequestSource !== 'request_access')
       return undefined;
     const publicToolRule = semanticCapabilityRule(capabilityId);
+    if (
+      options.semanticCapabilityDefinitions &&
+      !isDurableAccessRuleAllowed(publicToolRule, {
+        semanticCapabilityDefinitions: options.semanticCapabilityDefinitions,
+      })
+    ) {
+      return undefined;
+    }
     const [publicToolName, publicRuleContent] =
       splitReadableToolRule(publicToolRule);
     return [
@@ -229,10 +270,54 @@ export function requestPermissionTransientLiveRules(
   return validateReadableAgentToolRule(rule).ok ? [rule] : [];
 }
 
+export async function resolveTrustedSemanticCapabilityDefinitions(input: {
+  deps: Pick<IpcDeps, 'getToolRepository' | 'getSkillRepository'>;
+  appId: AppId;
+  agentId: AgentId;
+}): Promise<Record<string, SemanticCapabilityDefinition> | undefined> {
+  const definitions: Record<string, SemanticCapabilityDefinition> = {};
+  const toolRepository = input.deps.getToolRepository?.();
+  if (toolRepository && typeof toolRepository.listTools === 'function') {
+    const activeTools = await toolRepository.listTools({
+      appId: input.appId,
+      statuses: ['active'],
+    });
+    const catalog = semanticCapabilityDefinitionsFromToolCatalog(activeTools);
+    if (catalog) Object.assign(definitions, catalog);
+  }
+  const skillRepository = input.deps.getSkillRepository?.();
+  if (skillRepository) {
+    Object.assign(
+      definitions,
+      await skillActionDefinitionsForAgent({
+        appId: input.appId,
+        agentId: input.agentId,
+        skillRepository,
+      }),
+    );
+  }
+  return Object.keys(definitions).length > 0 ? definitions : undefined;
+}
+
+export function requestPermissionOnceLiveRules(
+  toolInput: Record<string, unknown>,
+  definitions: Record<string, SemanticCapabilityDefinition> | undefined,
+): string[] {
+  const capabilityId = toTrimmedString(toolInput.capabilityId, { maxLen: 160 });
+  if (capabilityId && definitions?.[capabilityId]) {
+    return expandSemanticCapabilityPermissionRules({
+      rules: [semanticCapabilityRule(capabilityId)],
+      definitions,
+    });
+  }
+  return requestPermissionTransientLiveRules(toolInput);
+}
+
 export function requestPermissionSetupDecisionOptions(
   toolInput: Record<string, unknown>,
+  options: RequestPermissionReviewOptions = {},
 ): PermissionApprovalDecisionMode[] {
-  const suggestions = requestPermissionReviewSuggestions(toolInput);
+  const suggestions = requestPermissionReviewSuggestions(toolInput, options);
   return permissionUpdateAllowedToolRules(suggestions).length > 0
     ? ['allow_once', 'allow_persistent_rule', 'cancel']
     : ['allow_once', 'cancel'];

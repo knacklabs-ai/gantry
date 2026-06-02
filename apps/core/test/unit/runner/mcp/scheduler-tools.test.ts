@@ -445,7 +445,6 @@ describe('scheduler MCP tools', () => {
     });
 
     expect(response.content[0].text).toContain('Scheduler events (0)');
-    expect(response.content[0].text).toContain('[]');
     expect(writeIpcFile).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -773,6 +772,7 @@ describe('scheduler MCP tools', () => {
       schedulerJobSummary({
         id: 'job-1',
         name: 'Follow up',
+        prompt: 'Send a short customer follow-up every morning.',
         schedule_type: 'once',
         status: 'active',
         visibility: {
@@ -781,6 +781,19 @@ describe('scheduler MCP tools', () => {
         },
       }),
     ).toContain('Tool access: missing canonical toolAccess');
+    expect(
+      schedulerJobSummary({
+        id: 'job-1',
+        name: 'Follow up',
+        prompt: 'Send a short customer follow-up every morning.',
+        schedule_type: 'once',
+        status: 'active',
+        visibility: {
+          target: { agentId: 'agent:main', conversationJids: ['tg:team'] },
+          recentRunErrors: [],
+        },
+      }),
+    ).toContain('Prompt: Send a short customer follow-up every morning.');
     expect(
       schedulerJobsSummary([
         {
@@ -813,6 +826,38 @@ describe('scheduler MCP tools', () => {
         },
       }),
     ).toContain('Access requirements: tools Browser');
+  });
+
+  it('renders notification targets with shortcut and routing values', async () => {
+    const { schedulerNotificationTargetsSummary } =
+      await import('../../../../src/runner/mcp/tools/scheduler-formatters.js');
+
+    const summary = schedulerNotificationTargetsSummary([
+      {
+        shortcut: 'here',
+        label: 'Current conversation',
+        executionContext: {
+          conversationJid: 'tg:team',
+          threadId: null,
+          workspaceKey: 'team',
+        },
+        notificationRoutes: [
+          {
+            conversationJid: 'tg:team',
+            threadId: null,
+            label: 'primary',
+          },
+        ],
+      },
+    ]);
+
+    expect(summary).toContain('Scheduler notification targets (1)');
+    expect(summary).toContain('- here | Current conversation');
+    expect(summary).toContain(
+      'execution_context conversation_jid=tg:team thread_id=none workspace_key=team',
+    );
+    expect(summary).toContain('notification_routes 1 (primary:tg:team:none)');
+    expect(summary).not.toContain('Scheduler events');
   });
 
   it('renders compact scheduler job list rows in workspace/access language', async () => {

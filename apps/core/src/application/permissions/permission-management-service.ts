@@ -130,7 +130,10 @@ export class PermissionManagementService {
       requestDefinitions: input.semanticCapabilityDefinitions,
     });
     const trustedSemanticCapabilityDefinitions =
-      catalogSemanticCapabilityDefinitions;
+      mergeSemanticCapabilityDefinitions(
+        input.semanticCapabilityDefinitions,
+        catalogSemanticCapabilityDefinitions,
+      );
     const allowedRules = canonicalPersistentPermissionRules(
       permissionUpdateAllowedToolRules(input.updates),
       trustedSemanticCapabilityDefinitions,
@@ -490,7 +493,7 @@ function canonicalPersistentPermissionRules(
   ];
 }
 
-function semanticCapabilityDefinitionsFromToolCatalog(
+export function semanticCapabilityDefinitionsFromToolCatalog(
   tools: readonly ToolCatalogItem[],
 ): Record<string, SemanticCapabilityDefinition> | undefined {
   const definitions: Record<string, SemanticCapabilityDefinition> = {};
@@ -525,6 +528,17 @@ function assertNoRequestCapabilityDefinitionConflicts(input: {
       `Semantic capability ${capabilityId} does not match the active catalog definition.`,
     );
   }
+}
+
+function mergeSemanticCapabilityDefinitions(
+  requestDefinitions?: Record<string, SemanticCapabilityDefinition>,
+  catalogDefinitions?: Record<string, SemanticCapabilityDefinition>,
+): Record<string, SemanticCapabilityDefinition> | undefined {
+  const merged = {
+    ...(requestDefinitions ?? {}),
+    ...(catalogDefinitions ?? {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 function persistentPermissionRuleAuditPreviewForRules(

@@ -9,6 +9,8 @@ import {
   ownerLabel as providerOwnerLabel,
 } from '../../../channels/provider-delivery-labels.js';
 import { semanticCapabilityRule } from '../../../shared/semantic-capability-ids.js';
+import { formatDurableAccessRulesForUser } from '../../../shared/durable-access-policy.js';
+import { redactSensitiveText } from '../../../shared/sensitive-material.js';
 
 export function schedulerJobSummary(job: unknown): string {
   const record =
@@ -34,7 +36,12 @@ export function schedulerJobSummary(job: unknown): string {
     : 0;
   const staleness =
     typeof visibility.staleness === 'string' ? visibility.staleness : 'none';
-  const toolAccess = toolAccessRecord(visibility.toolAccess);
+  const prompt = promptSummary(record, visibility);
+  // Surface a missing-canonical-toolAccess diagnostic, but never dump the raw
+  // inherited/effective/projected tool-id lists (those leak internal tool ids).
+  const toolAccessMissing = !(
+    typeof visibility.toolAccess === 'object' && visibility.toolAccess !== null
+  );
   const recordAccess = Array.isArray(record.access_requirements)
     ? splitRecordAccessRequirements(record.access_requirements)
     : undefined;
@@ -61,9 +68,6 @@ export function schedulerJobSummary(job: unknown): string {
     typeof visibility.recovery === 'object' && visibility.recovery !== null
       ? (visibility.recovery as Record<string, any>)
       : {};
-  const toolAccessLine = toolAccess.present
-    ? `Tool access: inherited ${formatTools(toolAccess.inheritedAgentTools)}; effective ${formatTools(toolAccess.effectiveAllowedTools)}; projected ${formatTools(toolAccess.projectedRuntimeTools)}`
-    : 'Tool access: missing canonical toolAccess';
   const nextAction =
     typeof health.nextAction === 'string' && health.nextAction.trim()
       ? setupActionLabelFromNextAction(health.nextAction, 'none')
@@ -104,8 +108,7 @@ export function schedulerJobSummary(job: unknown): string {
     `Next action: ${nextActionLabelText}`,
     `Health: ${String(health.state ?? 'unknown')} | latest ${String(health.latestRunStatus ?? 'none')} | action ${nextAction}`,
     `Recovery: ${recoverySummary(recovery)}`,
-    `Target: ${String(target.agentId ?? record.workspace_key ?? 'unknown')} in ${String(target.conversationJids?.[0] ?? 'no conversation')}`,
-    `Execution context: ${String(executionContext.conversationJid ?? 'unknown')} | thread ${String(executionContext.threadId ?? 'none')} | workspace ${String(executionContext.workspaceKey ?? record.workspace_key ?? 'unknown')}`,
+    ...(prompt ? [`Prompt: ${prompt}`] : []),
     `Notification routes: ${notificationRoutes.length}`,
     `Kind/status: ${String(record.schedule_type ?? 'unknown')} / ${String(record.status ?? 'unknown')}`,
     `Next/last run: ${String(record.next_run ?? 'none')} / ${String(record.last_run ?? 'none')}`,
@@ -115,12 +118,19 @@ export function schedulerJobSummary(job: unknown): string {
       toolAccessRequirements,
       requiredMcpServers,
     })}`,
-    toolAccessLine,
+    ...(toolAccessMissing ? ['Tool access: missing canonical toolAccess'] : []),
     `Recent run errors: ${recentErrors}`,
-    '',
-    'Structured JSON:',
-    JSON.stringify(record, null, 2),
   ].join('\n');
+}
+
+function promptSummary(
+  record: Record<string, any>,
+  visibility: Record<string, any>,
+): string | undefined {
+  return compactText(
+    visibility.fullPrompt ?? record.prompt ?? visibility.promptPreview,
+    600,
+  );
 }
 
 function preferredOwnerLabel(input: {
@@ -200,13 +210,7 @@ export function schedulerJobsSummary(jobs: unknown[]): string {
     const agent = String(target.agentId ?? record.agent_id ?? 'unknown');
     return `- ${String(record.id ?? 'unknown')} | ${String(record.name ?? '')} | ${setupLabel} | Workspace: ${workspaceKey} | Agent: ${agent} | Next: ${nextAction}`;
   });
-  return [
-    `Scheduler jobs (${jobs.length})`,
-    ...lines,
-    '',
-    'Structured JSON:',
-    JSON.stringify(jobs, null, 2),
-  ].join('\n');
+  return [`Scheduler jobs (${jobs.length})`, ...lines].join('\n');
 }
 
 function recoverySummary(recovery: Record<string, any>): string {
@@ -243,32 +247,61 @@ export function schedulerEventsSummary(events: unknown[]): string {
         : '';
     return `- ${String(record.id ?? 'unknown')} | ${String(record.event_type ?? '')} | run ${String(record.run_id ?? 'none')} | ${diagnostic || 'event'}${browserCount}${error}`;
   });
-  return [
-    `Scheduler events (${events.length})`,
-    ...lines,
-    '',
-    'Structured JSON:',
-    JSON.stringify(events, null, 2),
-  ].join('\n');
+  return [`Scheduler events (${events.length})`, ...lines].join('\n');
 }
 
-function toolAccessRecord(value: unknown): {
-  present: boolean;
-  inheritedAgentTools: string[];
-  effectiveAllowedTools: string[];
-  projectedRuntimeTools: string[];
-} {
-  const present = typeof value === 'object' && value !== null;
-  const record =
-    typeof value === 'object' && value !== null
-      ? (value as Record<string, unknown>)
-      : {};
-  return {
-    present,
-    inheritedAgentTools: stringArray(record.inheritedAgentTools),
-    effectiveAllowedTools: stringArray(record.effectiveAllowedTools),
-    projectedRuntimeTools: stringArray(record.projectedRuntimeTools),
-  };
+export function schedulerNotificationTargetsSummary(
+  targets: unknown[],
+): string {
+  const lines = targets.map((target) => {
+    const record =
+      typeof target === 'object' && target !== null
+        ? (target as Record<string, any>)
+        : {};
+    const executionContext =
+      typeof record.executionContext === 'object' &&
+      record.executionContext !== null
+        ? (record.executionContext as Record<string, any>)
+        : {};
+    const notificationRoutes = Array.isArray(record.notificationRoutes)
+      ? record.notificationRoutes
+      : [];
+    const routeSummary = notificationRoutes
+      .map((route) =>
+        typeof route === 'object' && route !== null
+          ? routeLabel(route as Record<string, any>)
+          : undefined,
+      )
+      .filter((route): route is string => Boolean(route))
+      .join(', ');
+    return [
+      `- ${String(record.shortcut ?? 'unknown')}`,
+      compactText(record.label, 120) ?? 'unnamed target',
+      `execution_context ${executionContextSummary(executionContext)}`,
+      `notification_routes ${notificationRoutes.length}${routeSummary ? ` (${routeSummary})` : ''}`,
+    ].join(' | ');
+  });
+  return [`Scheduler notification targets (${targets.length})`, ...lines].join(
+    '\n',
+  );
+}
+
+function executionContextSummary(context: Record<string, any>): string {
+  return [
+    `conversation_jid=${String(context.conversationJid ?? 'unknown')}`,
+    `thread_id=${context.threadId === null || context.threadId === undefined ? 'none' : String(context.threadId)}`,
+    `workspace_key=${String(context.workspaceKey ?? 'unknown')}`,
+  ].join(' ');
+}
+
+function routeLabel(route: Record<string, any>): string {
+  return [
+    compactText(route.label, 80) ?? 'route',
+    String(route.conversationJid ?? 'unknown'),
+    route.threadId === null || route.threadId === undefined
+      ? 'none'
+      : String(route.threadId),
+  ].join(':');
 }
 
 function stringArray(value: unknown): string[] {
@@ -343,6 +376,13 @@ function formatTools(values: readonly string[]): string {
   return values.length > 0 ? values.join(', ') : '(none)';
 }
 
+function compactText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = redactSensitiveText(value).replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+}
+
 function formatAccessRequirementSummary(input: {
   capabilityRequirements: readonly string[];
   toolAccessRequirements: readonly string[];
@@ -353,7 +393,7 @@ function formatAccessRequirementSummary(input: {
       ? `capabilities ${formatTools(input.capabilityRequirements)}`
       : undefined,
     input.toolAccessRequirements.length
-      ? `tools ${formatTools(input.toolAccessRequirements)}`
+      ? `tools ${formatDurableAccessRulesForUser(input.toolAccessRequirements)}`
       : undefined,
     input.requiredMcpServers.length
       ? `MCP servers ${formatTools(input.requiredMcpServers)}`

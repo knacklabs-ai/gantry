@@ -20,6 +20,23 @@ export function escapeTelegramHtml(input: string): string {
 const CODE_FENCES = new Set(['```', '```diff', '```json']);
 
 /**
+ * Escape a non-fenced line for Telegram HTML, converting inline `code` spans
+ * into <code> (otherwise the backticks render literally). Each segment is
+ * HTML-escaped; backtick-delimited spans become <code>…</code>.
+ */
+function escapeInlineWithCode(line: string): string {
+  if (!line.includes('`')) return escapeTelegramHtml(line);
+  return line
+    .split(/(`[^`]+`)/)
+    .map((segment) =>
+      segment.length >= 2 && segment.startsWith('`') && segment.endsWith('`')
+        ? `<code>${escapeTelegramHtml(segment.slice(1, -1))}</code>`
+        : escapeTelegramHtml(segment),
+    )
+    .join('');
+}
+
+/**
  * Render permission body lines (which may contain ``` fenced code regions, the
  * convention emitted by formatPermissionToolInputLines) into Telegram HTML:
  * fenced regions become <pre> blocks; every other line is HTML-escaped.
@@ -41,7 +58,7 @@ export function renderBodyLinesHtml(lines: string[]): string {
       code.push(line);
       continue;
     }
-    out.push(escapeTelegramHtml(line));
+    out.push(escapeInlineWithCode(line));
   }
   if (code !== null) {
     // Unterminated fence: render what we collected rather than dropping it.

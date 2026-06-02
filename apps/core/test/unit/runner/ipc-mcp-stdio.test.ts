@@ -1188,7 +1188,9 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
-    expect(record.result.content[0].text).toContain('"id": "job-1"');
+    // Rendered as a clean job-list row (no raw JSON dump).
+    expect(record.result.content[0].text).toContain('Scheduler jobs (1)');
+    expect(record.result.content[0].text).toContain('job-1');
 
     const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
     const task = JSON.parse(

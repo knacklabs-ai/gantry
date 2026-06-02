@@ -10,6 +10,7 @@ import {
   formatMemoryReviewDecisionResponse,
   formatMemoryReviewPendingResponse,
   formatMemoryToolResponse,
+  formatMemoryWriteResponse,
 } from '../formatting.js';
 import { requestMemoryAction } from '../ipc.js';
 import {
@@ -43,6 +44,9 @@ async function memoryToolResult(
   label: string,
   action: MemoryIpcAction,
   args: Record<string, unknown>,
+  format: (response: { provider?: string; data?: unknown }) => string = (
+    response,
+  ) => formatMemoryToolResponse(response),
 ) {
   const response = await requestMemoryAction(action, args);
   if (!response.ok) {
@@ -57,9 +61,7 @@ async function memoryToolResult(
     };
   }
   return {
-    content: [
-      { type: 'text' as const, text: formatMemoryToolResponse(response) },
-    ],
+    content: [{ type: 'text' as const, text: format(response) }],
   };
 }
 
@@ -142,7 +144,10 @@ export function registerMemoryTools(server: McpServer): void {
       }
       return {
         content: [
-          { type: 'text' as const, text: formatMemoryToolResponse(response) },
+          {
+            type: 'text' as const,
+            text: formatMemoryWriteResponse('memory_save', response),
+          },
         ],
       };
     },
@@ -173,7 +178,10 @@ export function registerMemoryTools(server: McpServer): void {
       }
       return {
         content: [
-          { type: 'text' as const, text: formatMemoryToolResponse(response) },
+          {
+            type: 'text' as const,
+            text: formatMemoryWriteResponse('memory_patch', response),
+          },
         ],
       };
     },
@@ -187,7 +195,10 @@ export function registerMemoryTools(server: McpServer): void {
       expected_version: z.number().int().min(1).optional(),
       reason: z.string().optional(),
     },
-    async (args) => memoryToolResult('Memory demote', 'memory_demote', args),
+    async (args) =>
+      memoryToolResult('Memory demote', 'memory_demote', args, (response) =>
+        formatMemoryWriteResponse('memory_demote', response),
+      ),
   );
 
   server.tool(
@@ -228,7 +239,10 @@ export function registerMemoryTools(server: McpServer): void {
       }
       return {
         content: [
-          { type: 'text' as const, text: formatMemoryToolResponse(response) },
+          {
+            type: 'text' as const,
+            text: formatMemoryWriteResponse('procedure_save', response),
+          },
         ],
       };
     },
@@ -260,7 +274,10 @@ export function registerMemoryTools(server: McpServer): void {
       }
       return {
         content: [
-          { type: 'text' as const, text: formatMemoryToolResponse(response) },
+          {
+            type: 'text' as const,
+            text: formatMemoryWriteResponse('procedure_patch', response),
+          },
         ],
       };
     },
@@ -285,7 +302,10 @@ export function registerMemoryTools(server: McpServer): void {
       }
       return {
         content: [
-          { type: 'text' as const, text: formatMemoryToolResponse(response) },
+          {
+            type: 'text' as const,
+            text: formatMemoryWriteResponse('memory_consolidate', response),
+          },
         ],
       };
     },
@@ -310,7 +330,10 @@ export function registerMemoryTools(server: McpServer): void {
       }
       return {
         content: [
-          { type: 'text' as const, text: formatMemoryToolResponse(response) },
+          {
+            type: 'text' as const,
+            text: formatMemoryWriteResponse('memory_dream', response),
+          },
         ],
       };
     },

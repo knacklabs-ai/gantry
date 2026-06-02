@@ -319,6 +319,21 @@ describe('admin IPC handlers', () => {
         toolInput: expect.objectContaining({
           capabilityId: 'skill.publisher.publish',
         }),
+        // Guards the "Always Allow" fix: the trusted capability definition must
+        // be attached so decisionForMode can validate the capability:<id> rule
+        // (without it, persistent approval was rejected as "unknown capability").
+        semanticCapabilityDefinitions: expect.objectContaining({
+          'skill.publisher.publish': expect.objectContaining({
+            capabilityId: 'skill.publisher.publish',
+          }),
+        }),
+        suggestions: [
+          expect.objectContaining({
+            type: 'addRules',
+            rules: [{ toolName: 'capability:skill.publisher.publish' }],
+          }),
+        ],
+        decisionOptions: ['allow_once', 'allow_persistent_rule', 'cancel'],
       }),
     );
   });
