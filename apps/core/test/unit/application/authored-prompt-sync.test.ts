@@ -22,19 +22,31 @@ const base = {
 
 it('syncs both files when present and non-empty', async () => {
   const service = fakeService();
-  const read: AuthoredFileReader = (name) => ({ exists: true, content: `# ${name}` });
+  const read: AuthoredFileReader = (name) => ({
+    exists: true,
+    content: `# ${name}`,
+  });
 
-  const results = await syncAuthoredPromptFiles({ ...base, service: service as never, read });
+  const results = await syncAuthoredPromptFiles({
+    ...base,
+    service: service as never,
+    read,
+  });
 
   expect(service.syncAuthoredArtifact).toHaveBeenCalledTimes(2);
   expect(service.ensureAgentDefaults).not.toHaveBeenCalled();
-  expect(results.map((r) => r.virtualPath)).toEqual(['team/SOUL.md', 'team/CLAUDE.md']);
+  expect(results.map((r) => r.virtualPath)).toEqual([
+    'team/SOUL.md',
+    'team/CLAUDE.md',
+  ]);
 });
 
 it('throws and writes nothing when a file is present but empty', async () => {
   const service = fakeService();
   const read: AuthoredFileReader = (name) =>
-    name === 'SOUL.md' ? { exists: true, content: '   \n\t' } : { exists: true, content: 'x' };
+    name === 'SOUL.md'
+      ? { exists: true, content: '   \n\t' }
+      : { exists: true, content: 'x' };
 
   await expect(
     syncAuthoredPromptFiles({ ...base, service: service as never, read }),
@@ -61,7 +73,9 @@ it('throws and writes nothing even when the valid file is read before the empty 
 it('falls back to generic defaults when a file is absent', async () => {
   const service = fakeService();
   const read: AuthoredFileReader = (name) =>
-    name === 'SOUL.md' ? { exists: true, content: '# Soul' } : { exists: false, content: '' };
+    name === 'SOUL.md'
+      ? { exists: true, content: '# Soul' }
+      : { exists: false, content: '' };
 
   await syncAuthoredPromptFiles({ ...base, service: service as never, read });
 

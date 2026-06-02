@@ -80,7 +80,10 @@ export async function syncAuthoredPromptFiles(input: {
   }));
   for (const { target, snapshot } of snapshots) {
     if (snapshot.exists && snapshot.content.trim().length === 0) {
-      throw new EmptyAuthoredPromptFileError(input.agentFolder, target.fileName);
+      throw new EmptyAuthoredPromptFileError(
+        input.agentFolder,
+        target.fileName,
+      );
     }
   }
 

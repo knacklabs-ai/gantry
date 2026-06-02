@@ -15,8 +15,7 @@ const tmpRoot = vi.hoisted(() => {
 });
 
 vi.mock('@core/config/index.js', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@core/config/index.js')>();
+  const actual = await importOriginal<typeof import('@core/config/index.js')>();
   return { ...actual, AGENTS_DIR: tmpRoot };
 });
 

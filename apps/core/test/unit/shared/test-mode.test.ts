@@ -44,7 +44,8 @@ describe('test-mode scoping', () => {
   });
 
   it('normalizes decorated entries to digits and drops blanks', () => {
-    process.env.GANTRY_TEST_OPERATOR_PHONE = ' wa:919654405340 , , 91-965-4405341 ';
+    process.env.GANTRY_TEST_OPERATOR_PHONE =
+      ' wa:919654405340 , , 91-965-4405341 ';
     expect(testOperatorPhones()).toEqual(
       new Set(['919654405340', '919654405341']),
     );

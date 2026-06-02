@@ -288,9 +288,7 @@ function parseConfiguredAgentThinking(
       effort !== 'high' &&
       effort !== 'max'
     ) {
-      throw new Error(
-        `${pathPrefix}.effort must be low, medium, high, or max`,
-      );
+      throw new Error(`${pathPrefix}.effort must be low, medium, high, or max`);
     }
     thinking.effort = effort;
   }
