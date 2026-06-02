@@ -10,6 +10,7 @@ import {
   isValidSemanticCapabilityId,
   semanticCapabilityIdValidationReason,
 } from '../../shared/semantic-capability-ids.js';
+import { parseDeclaredNetworkHost } from '../../shared/network-host-declaration.js';
 import type {
   SemanticCapabilityDefinition,
   SemanticCapabilityRisk,
@@ -30,6 +31,7 @@ export interface SkillActionPermission {
   cannot: string;
   requiredEnvVars: string[];
   commandTemplates: string[];
+  networkHosts: string[];
 }
 
 export interface SkillActionSourceMetadata {
@@ -120,6 +122,9 @@ export function skillActionSemanticCapability(input: {
     })),
     preflight: { kind: 'none' },
     sandboxProfile: { network: 'required', filesystem: 'workspace_write' },
+    networkHosts: input.action.networkHosts?.length
+      ? [...input.action.networkHosts]
+      : undefined,
     redactionPolicy:
       input.action.requiredEnvVars.length > 0
         ? { env: input.action.requiredEnvVars }
@@ -210,6 +215,9 @@ function parseSkillActionPermission(
     optional: true,
   }).map(normalizeCapabilitySecretName);
   for (const envVar of requiredEnvVars) assertValidCapabilitySecretName(envVar);
+  const networkHosts = stringArray(raw.networkHosts, 'networkHosts', {
+    optional: true,
+  }).map((host) => normalizeSkillActionNetworkHost(host, capabilityId));
   return {
     id,
     capabilityId,
@@ -219,7 +227,26 @@ function parseSkillActionPermission(
     cannot,
     requiredEnvVars: [...new Set(requiredEnvVars)],
     commandTemplates: [...new Set(commandTemplates)],
+    networkHosts: [...new Set(networkHosts)],
   };
+}
+
+/**
+ * Validate a declared `host` or `host:port` skill-action network target via the
+ * shared declared-network-host parser. Skill action network authority is exact
+ * so an approved action can only reach the hosts a reviewer actually saw.
+ */
+function normalizeSkillActionNetworkHost(
+  value: string,
+  capabilityId: string,
+): string {
+  const result = parseDeclaredNetworkHost(value);
+  if (!result.ok) {
+    throw new Error(
+      `Skill action ${capabilityId} networkHosts ${result.reason}`,
+    );
+  }
+  return result.host;
 }
 
 function normalizeSkillActionCommandTemplate(

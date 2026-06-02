@@ -615,11 +615,13 @@ describe('agent capability composition', () => {
         'mcp__browser' + '_' + 'backend' + '__*',
         'mcp__gantry__service_restart',
         'mcp__github__search_repositories',
+        'mcp__github__issues.create',
         'mcp__github__*',
         'mcp__linear__search',
       ],
       externalMcpAlwaysAllowedTools: [
         'mcp__github__search_repositories',
+        'mcp__github__issues.create',
         'mcp__gantry__service_restart',
       ],
     });
@@ -636,6 +638,7 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).toEqual([
       ...DEVELOPER_ALLOWED_TOOLS,
       'mcp__github__search_repositories',
+      'mcp__github__issues.create',
       'mcp__github__*',
     ]);
     expect(profile.allowedTools).not.toContain('Bash');
@@ -648,6 +651,7 @@ describe('agent capability composition', () => {
     expect(profile.availableTools).toEqual(DEVELOPER_AVAILABLE_TOOLS);
     expect(profile.alwaysAllowedTools).toEqual([
       'mcp__github__search_repositories',
+      'mcp__github__issues.create',
     ]);
   });
 

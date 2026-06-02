@@ -11,8 +11,10 @@ import { isStorageUnavailableError } from '../adapters/storage/postgres/runtime-
 import {
   buildControlPlaneReadModelFromSettings,
   formatControlPlaneStatus,
+  type ControlPlaneReadModel,
   type ControlPlaneMemoryStatus,
 } from '../application/control-plane/control-plane-read-model.js';
+import { buildControlPlaneReadModelFromRepositories } from '../application/control-plane/control-plane-storage-model.js';
 import type { AppId } from '../domain/app/app.js';
 
 export interface RuntimeStatusSummary {
@@ -31,6 +33,7 @@ export interface RuntimeStatusSummary {
   modelCredentialReady: boolean;
   memoryStatus: ControlPlaneMemoryStatus;
   settings: ReturnType<typeof ensureRuntimeSettings>;
+  readModel?: ControlPlaneReadModel;
 }
 
 export async function collectRuntimeStatus(
@@ -89,6 +92,14 @@ export async function collectRuntimeStatus(
       memoryHealth.memoryCheck.status,
     ),
     settings,
+    ...(!storageUnavailable(doctor)
+      ? {
+          readModel: await readControlPlaneModelFromStorage(
+            runtimeHome,
+            settings,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -126,7 +137,43 @@ async function countPendingAccessApprovals(
   }
 }
 
+async function readControlPlaneModelFromStorage(
+  runtimeHome: string,
+  settings: ReturnType<typeof ensureRuntimeSettings>,
+): Promise<ControlPlaneReadModel | undefined> {
+  process.env.GANTRY_HOME = runtimeHome;
+  try {
+    const { createStorageRuntime } =
+      await import('../adapters/storage/postgres/factory.js');
+    const storage = createStorageRuntime();
+    try {
+      return await buildControlPlaneReadModelFromRepositories({
+        appId: 'default' as AppId,
+        settings,
+        jobsRepository: storage.ops,
+        jobControlRepository: storage.control,
+        modelCredentialsRepository: storage.repositories.modelCredentials,
+        pendingAccessRequestsRepository:
+          storage.repositories.pendingAccessRequests,
+      });
+    } finally {
+      await storage.runtimeEventNotifier.close().catch(() => undefined);
+      await storage.service.close().catch(() => undefined);
+    }
+  } catch (err) {
+    if (!isStorageUnavailableError(err)) {
+      console.warn(
+        `Storage degraded: ${err instanceof Error ? err.message : String(err)}. Jobs and access may be undercounted.`,
+      );
+    }
+    return undefined;
+  }
+}
+
 export function formatRuntimeStatus(summary: RuntimeStatusSummary): string {
+  if (summary.readModel) {
+    return formatControlPlaneStatus(summary.readModel, summary.service);
+  }
   return formatControlPlaneStatus(
     buildControlPlaneReadModelFromSettings({
       settings: summary.settings,

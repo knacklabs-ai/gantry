@@ -1672,7 +1672,7 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('request the MCP server capability');
+    ).rejects.toThrow('request a reviewed semantic capability');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 

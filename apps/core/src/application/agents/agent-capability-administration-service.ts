@@ -60,6 +60,7 @@ import {
   type ReadableToolSource,
 } from './agent-source-views.js';
 import { replaceAgentAccessDocument } from './agent-access-document-replacement.js';
+import { nextMcpSourceBindings } from './agent-mcp-source-bindings.js';
 
 export interface CapabilityCatalogView {
   tools: ToolCatalogItem[];
@@ -71,7 +72,7 @@ export interface AgentCapabilitiesView {
   agentId: AgentId;
   sources: {
     skills: ReadableSkillSource[];
-    mcpServers: Array<{ id: string }>;
+    mcpServers: Array<{ id: string; tools?: string[] }>;
     tools: ReadableToolSource[];
   };
   capabilities: Array<{ id: string; version: string }>;
@@ -181,6 +182,9 @@ export class AgentCapabilityAdministrationService {
           .filter((binding) => binding.status === 'active')
           .map((binding) => ({
             id: String(binding.serverId),
+            ...(binding.allowedToolPatterns?.length
+              ? { tools: [...binding.allowedToolPatterns] }
+              : {}),
           })),
         tools: readableToolSources(toolSources),
       },
@@ -325,6 +329,9 @@ export class AgentCapabilityAdministrationService {
           .filter((binding) => binding.status === 'active')
           .map((binding) => ({
             id: String(binding.serverId),
+            ...(binding.allowedToolPatterns?.length
+              ? { tools: [...binding.allowedToolPatterns] }
+              : {}),
           })),
         tools: readableToolSources(toolSources),
       },
@@ -416,7 +423,10 @@ export class AgentCapabilityAdministrationService {
       input.appId,
       sourceSkillIds,
     );
-    await this.requireActiveMcpServers(input.appId, sourceMcpServerIds);
+    const mcpServerMap = await this.requireActiveMcpServers(
+      input.appId,
+      sourceMcpServerIds,
+    );
     assertUniqueSkillMaterializationKeys(sourceSkillIds, skillMap);
     const [toolBindings, skillBindings, mcpBindings] = await Promise.all([
       this.repositories.tools.listAgentToolBindings(input),
@@ -445,27 +455,14 @@ export class AgentCapabilityAdministrationService {
         };
       },
     );
-    const mcpBindingMap = new Map(
-      mcpBindings.map((binding) => [binding.serverId, binding]),
-    );
-    const nextMcpBindings: AgentMcpServerBinding[] = sourceMcpServerIds.map(
-      (serverId) => {
-        const existing = mcpBindingMap.get(serverId);
-        return {
-          id: `agent-mcp-binding:${input.agentId}:${serverId}` as AgentMcpServerBinding['id'],
-          appId: input.appId,
-          agentId: input.agentId,
-          serverId,
-          status: 'active' as const,
-          required: existing?.required ?? false,
-          permissionPolicyIds: existing?.permissionPolicyIds ?? [],
-          conversationId: existing?.conversationId,
-          threadId: existing?.threadId,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
-        };
-      },
-    );
+    const nextMcpBindings: AgentMcpServerBinding[] = nextMcpSourceBindings({
+      appId: input.appId,
+      agentId: input.agentId,
+      sources: input.sources.mcpServers,
+      servers: mcpServerMap,
+      existingBindings: mcpBindings,
+      now,
+    });
     await this.repositories.agents.replaceAgentCapabilityBindings({
       appId: input.appId,
       agentId: input.agentId,

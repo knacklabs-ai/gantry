@@ -100,14 +100,16 @@ describe('buildPermissionPromptParts', () => {
           origin: 'npx -y @linear/mcp',
           requestedToolPatterns: ['linear_*'],
           credentialNeeds: ['LINEAR_API_KEY'],
+          networkHosts: ['api.linear.app:443'],
         },
       },
       60_000,
     );
+    expect(mcp.bodyLines).toContain('Transport: stdio_template');
     expect(mcp.bodyLines).toContain('Install: npx -y @linear/mcp');
     expect(mcp.bodyLines).toContain('Needs credentials: LINEAR_API_KEY');
+    expect(mcp.bodyLines).toContain('Network: api.linear.app:443');
     expect(mcp.bodyLines.join('\n')).not.toContain('sandboxProfileId');
-    expect(mcp.bodyLines.join('\n')).not.toContain('stdio_template');
   });
 
   it('drops internal plumbing ids from the generic fallback for unknown tools', () => {

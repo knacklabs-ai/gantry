@@ -294,6 +294,166 @@ describe('SettingsDesiredStateService', () => {
     );
   });
 
+  it('reconciles configured MCP source tool scope only within reviewed server tools', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [],
+        mcpServers: [{ id: 'mcp:github', tools: ['read_*'] }],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const repositories = makeRepositories({
+      mcpServers: {
+        ...makeRepositories().mcpServers,
+        getServer: vi.fn(async (id: string) =>
+          id === 'mcp:github'
+            ? {
+                id,
+                appId: 'default',
+                status: 'active',
+                name: 'github',
+                createdSource: 'admin',
+                riskClass: 'medium',
+                transport: 'stdio_template',
+                config: { transport: 'stdio_template', templateId: 'github' },
+                allowedToolPatterns: ['read_*', 'write_*'],
+                autoApproveToolPatterns: [],
+                credentialRefs: [],
+              }
+            : null,
+        ),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    await service.reconcile(settings);
+
+    expect(
+      repositories.agents.replaceAgentCapabilityBindings,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpBindings: [
+          expect.objectContaining({
+            serverId: 'mcp:github',
+            allowedToolPatterns: ['read_*'],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('reconciles MCP source scopes against auto-approved tools when allowed tools are empty', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [],
+        mcpServers: [{ id: 'mcp:github', tools: ['search'] }],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const repositories = makeRepositories({
+      mcpServers: {
+        ...makeRepositories().mcpServers,
+        getServer: vi.fn(async (id: string) =>
+          id === 'mcp:github'
+            ? {
+                id,
+                appId: 'default',
+                status: 'active',
+                name: 'github',
+                createdSource: 'admin',
+                riskClass: 'medium',
+                transport: 'stdio_template',
+                config: { transport: 'stdio_template', templateId: 'github' },
+                allowedToolPatterns: [],
+                autoApproveToolPatterns: ['search'],
+                credentialRefs: [],
+              }
+            : null,
+        ),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    await service.reconcile(settings);
+
+    expect(
+      repositories.agents.replaceAgentCapabilityBindings,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpBindings: [
+          expect.objectContaining({
+            serverId: 'mcp:github',
+            allowedToolPatterns: ['search'],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('rejects configured MCP source tool scope wider than reviewed server tools', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [],
+        mcpServers: [{ id: 'mcp:github', tools: ['delete_*'] }],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const repositories = makeRepositories({
+      mcpServers: {
+        ...makeRepositories().mcpServers,
+        getServer: vi.fn(async (id: string) =>
+          id === 'mcp:github'
+            ? {
+                id,
+                appId: 'default',
+                status: 'active',
+                name: 'github',
+                createdSource: 'admin',
+                riskClass: 'medium',
+                transport: 'stdio_template',
+                config: { transport: 'stdio_template', templateId: 'github' },
+                allowedToolPatterns: ['read_*'],
+                autoApproveToolPatterns: [],
+                credentialRefs: [],
+              }
+            : null,
+        ),
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    await expect(service.reconcile(settings)).rejects.toThrow(
+      'MCP tool scope delete_* is not within the reviewed tools for github.',
+    );
+    expect(
+      repositories.agents.replaceAgentCapabilityBindings,
+    ).not.toHaveBeenCalled();
+  });
+
   it('reconciles tool sources separately from capability authority', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.main_agent = {

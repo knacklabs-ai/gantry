@@ -82,4 +82,69 @@ describe('buildControlPlaneReadModelFromRepositories model credential readiness'
     // readiness must still flag the missing anthropic credential.
     expect(model.nextAction.kind).toBe('missing_model_credential');
   });
+
+  it('counts default runtime jobs through the same host-owned scope as job listing', async () => {
+    const jobs = [
+      {
+        id: 'host-owned',
+        status: 'active',
+        workspace_key: 'main_agent',
+        session_id: null,
+        execution_context: { conversationJid: 'tg:main' },
+      },
+      {
+        id: 'default-session',
+        status: 'paused',
+        workspace_key: 'main_agent',
+        session_id: 'session-default',
+        execution_context: { conversationJid: 'tg:default' },
+      },
+      {
+        id: 'other-app',
+        status: 'active',
+        workspace_key: 'other_agent',
+        session_id: 'session-other',
+        execution_context: { conversationJid: 'tg:other' },
+      },
+    ];
+    const filters: unknown[] = [];
+    const model = await buildControlPlaneReadModelFromRepositories({
+      appId: APP_ID,
+      settings: settings(),
+      ...repos([{ providerId: 'anthropic', status: 'active' }]),
+      jobsRepository: {
+        listJobs: async (input) => {
+          filters.push(input);
+          return jobs as unknown as Awaited<
+            ReturnType<BuilderInput['jobsRepository']['listJobs']>
+          >;
+        },
+      },
+      jobControlRepository: {
+        getAppSessionsByIds: async () => [
+          {
+            sessionId: 'session-default',
+            appId: 'default',
+            conversationJid: 'tg:default',
+            workspaceKey: 'main_agent',
+            defaultResponseMode: 'none',
+            defaultWebhookId: null,
+          },
+          {
+            sessionId: 'session-other',
+            appId: 'other',
+            conversationJid: 'tg:other',
+            workspaceKey: 'other_agent',
+            defaultResponseMode: 'none',
+            defaultWebhookId: null,
+          },
+        ],
+        getAppSessionByChatJid: async () => undefined,
+        getAppSessionsByChatJids: async () => [],
+      },
+    });
+
+    expect(filters).toEqual([{}]);
+    expect(model.jobs).toEqual({ ready: 1, needsAction: 1, blocked: 0 });
+  });
 });

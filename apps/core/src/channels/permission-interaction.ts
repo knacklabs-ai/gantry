@@ -252,6 +252,8 @@ export function buildPermissionPromptParts(
     if (definition?.risk) {
       bodyLines.push(`Risk: ${humanizeIdentifier(definition.risk)}`);
     }
+    const networkLine = semanticCapabilityNetworkLine(definition);
+    if (networkLine) bodyLines.push(networkLine);
     return {
       title: `Allow ${capabilityName}?`,
       bodyLines,
@@ -390,9 +392,25 @@ function formatSemanticPermissionPrompt(
   if (definition?.risk) {
     lines.push(`Risk: ${humanizeIdentifier(definition.risk)}`);
   }
+  const networkLine = semanticCapabilityNetworkLine(definition);
+  if (networkLine) lines.push(networkLine);
   lines.push('', ...formatPermissionContextLines(request));
   lines.push(`Reply in ${timeoutMinutes}m`);
   return limitPermissionMessage(lines.join('\n'));
+}
+
+function semanticCapabilityNetworkLine(
+  definition: SemanticCapabilityDefinition | undefined,
+): string | undefined {
+  const hosts = [
+    ...new Set(
+      (definition?.networkHosts ?? [])
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (hosts.length === 0) return undefined;
+  return `Network: ${sanitizePermissionText(hosts.join(', '), 200, 100)}`;
 }
 
 function formatInteractionDetailLine(

@@ -141,6 +141,16 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       version: { oneOf: [{ type: 'string' }, { type: 'number' }] },
     },
   },
+  AgentMcpSourceSelection: {
+    type: 'object',
+    required: ['id'],
+    properties: {
+      name: { type: 'string' },
+      id: { type: 'string' },
+      version: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+      tools: { type: 'array', items: { type: 'string' } },
+    },
+  },
   AgentSources: {
     type: 'object',
     required: ['skills', 'mcpServers', 'tools'],
@@ -151,7 +161,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       },
       mcpServers: {
         type: 'array',
-        items: { $ref: '#/components/schemas/AgentSourceSelection' },
+        items: { $ref: '#/components/schemas/AgentMcpSourceSelection' },
       },
       tools: {
         type: 'array',

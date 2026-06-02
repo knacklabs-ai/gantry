@@ -2,7 +2,6 @@ import { ApplicationError } from '../common/application-error.js';
 import type { AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
 import type {
-  AgentMcpServerBinding,
   McpServerDefinition,
   McpServerId,
 } from '../../domain/mcp/mcp-servers.js';
@@ -32,6 +31,7 @@ import { isGantryFacadeExactToolRule } from '../../shared/agent-tool-references.
 import { validateDurableAccessRule } from '../../shared/durable-access-policy.js';
 import { isAdminMcpToolFullName } from '../../shared/admin-mcp-tools.js';
 import type { SemanticCapabilityDefinition } from '../../shared/semantic-capabilities.js';
+import { nextMcpSourceBindings } from './agent-mcp-source-bindings.js';
 import {
   canonicalToolReferenceForView,
   skillActionDefinitionsForBindings,
@@ -90,7 +90,10 @@ export async function replaceAgentAccessDocument(input: {
     input.appId,
     sourceSkillIds,
   );
-  await input.requireActiveMcpServers(input.appId, sourceMcpServerIds);
+  const mcpServerMap = await input.requireActiveMcpServers(
+    input.appId,
+    sourceMcpServerIds,
+  );
   assertUniqueSkillMaterializationKeys(sourceSkillIds, skillMap);
 
   const [toolBindings, skillBindings, mcpBindings] = await Promise.all([
@@ -112,7 +115,8 @@ export async function replaceAgentAccessDocument(input: {
   const nextMcpBindings = nextMcpSourceBindings({
     appId: input.appId,
     agentId: input.agentId,
-    serverIds: sourceMcpServerIds,
+    sources: input.sources.mcpServers,
+    servers: mcpServerMap,
     existingBindings: mcpBindings,
     now: input.now,
   });
@@ -216,34 +220,6 @@ function nextSkillSourceBindings(input: {
       skillId,
       configVersionId: existing?.configVersionId,
       status: 'active' as const,
-      createdAt: existing?.createdAt ?? input.now,
-      updatedAt: input.now,
-    };
-  });
-}
-
-function nextMcpSourceBindings(input: {
-  appId: AppId;
-  agentId: AgentId;
-  serverIds: McpServerId[];
-  existingBindings: AgentMcpServerBinding[];
-  now: string;
-}): AgentMcpServerBinding[] {
-  const existingByServerId = new Map(
-    input.existingBindings.map((binding) => [binding.serverId, binding]),
-  );
-  return input.serverIds.map((serverId) => {
-    const existing = existingByServerId.get(serverId);
-    return {
-      id: `agent-mcp-binding:${input.agentId}:${serverId}` as AgentMcpServerBinding['id'],
-      appId: input.appId,
-      agentId: input.agentId,
-      serverId,
-      status: 'active' as const,
-      required: existing?.required ?? false,
-      permissionPolicyIds: existing?.permissionPolicyIds ?? [],
-      conversationId: existing?.conversationId,
-      threadId: existing?.threadId,
       createdAt: existing?.createdAt ?? input.now,
       updatedAt: input.now,
     };

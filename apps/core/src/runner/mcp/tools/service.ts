@@ -189,6 +189,12 @@ export function registerServiceTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe('Credential reference names the admin should review'),
+      networkHosts: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Outbound hosts the server may reach, as exact host or host:port (no URLs, wildcards, or private/localhost targets)',
+        ),
       reason: z.string().describe('Why this capability is needed'),
       docsUrl: z.string().optional().describe('Optional documentation URL'),
     },
@@ -220,6 +226,7 @@ export function registerServiceTools(server: McpServer): void {
           sandboxProfileId: args.sandboxProfileId,
           requestedToolPatterns: args.requestedToolPatterns ?? [],
           credentialNeeds: args.credentialNeeds ?? [],
+          networkHosts: args.networkHosts ?? [],
           reason: args.reason,
           docsUrl: args.docsUrl,
         },
@@ -327,6 +334,7 @@ export function registerServiceTools(server: McpServer): void {
       writeIpcFile(TASKS_DIR, {
         type: 'mcp_call_tool',
         taskId,
+        runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
         targetJid: chatJid,
         chatJid,
         authThreadId: threadId,

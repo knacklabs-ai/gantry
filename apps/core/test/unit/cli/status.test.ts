@@ -130,4 +130,41 @@ describe('status command formatting', () => {
       'Next action: Run `gantry agent add <chat-jid>` to bind an agent to a conversation.',
     );
   });
+
+  it('uses repository-backed current runtime counts when available', () => {
+    const settings = createDefaultRuntimeSettings();
+    const output = formatRuntimeStatus({
+      doctor: {
+        ok: true,
+        warnings: 0,
+        blockingFailures: 0,
+        checks: [],
+      },
+      service: {
+        kind: 'background',
+        status: 'running(pid:12345)',
+      },
+      channels: [],
+      accessNeedsApprovalCount: 0,
+      modelCredentialReady: true,
+      memoryStatus: 'Ready',
+      settings,
+      readModel: {
+        title: 'Gantry',
+        runtime: 'Ready',
+        workspaceKey: 'default',
+        agents: { ready: 1, total: 1 },
+        conversations: { ready: 2, total: 2 },
+        jobs: { ready: 4, needsAction: 1, blocked: 0 },
+        access: { approved: 9, needsApproval: 0 },
+        memory: 'Ready',
+        providers: { ready: 1, needsConnection: 0, blocked: 0 },
+        nextAction: { kind: 'none', label: 'none' },
+        agentDetails: [],
+      },
+    } satisfies RuntimeStatusSummary);
+
+    expect(output).toContain('Jobs: 4/1/0');
+    expect(output).toContain('Access: 9/0');
+  });
 });

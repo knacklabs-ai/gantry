@@ -320,9 +320,11 @@ function formatKnownToolInputFields(
     }
   }
   if (toolName === 'request_mcp_server') {
+    add('Transport', input.transport, 40);
     add('Install', input.origin, 200);
     addList('Tools', input.requestedToolPatterns);
     addList('Needs credentials', input.credentialNeeds);
+    addList('Network', input.networkHosts);
   }
   if (toolName === 'register_agent') {
     if (typeof input.trigger === 'string' && input.trigger.trim()) {

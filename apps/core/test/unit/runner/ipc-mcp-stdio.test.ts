@@ -170,6 +170,10 @@ function createMcpFixture(): {
     path.join(sharedDir, 'neutral-ca-trust-env.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/network-host-declaration.ts'),
+    path.join(sharedDir, 'network-host-declaration.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/semantic-capabilities.ts'),
     path.join(sharedDir, 'semantic-capabilities.ts'),
   );
@@ -661,6 +665,35 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     expect(record.result.content[0].text).toContain(
       'Scheduler task confirmed.',
     );
+  });
+
+  it('includes the current run handle on proxied MCP tool calls', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(fixture, 'mcp_call_tool', {
+      serverName: 'github',
+      toolName: 'create_issue',
+      arguments: { title: 'Bug' },
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task).toMatchObject({
+      type: 'mcp_call_tool',
+      runHandle: 'mcp-test-run',
+      payload: {
+        serverName: 'github',
+        toolName: 'create_issue',
+        arguments: { title: 'Bug' },
+      },
+    });
   });
 
   it('keeps default first-party MCP tools registered despite stale runner projection', async () => {

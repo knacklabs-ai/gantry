@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildPermissionPromptParts,
   decisionForMode,
   firstPersistentRule,
   formatPermissionPromptText,
@@ -368,6 +369,54 @@ describe('permission interaction', () => {
       decidedBy: 'ravi',
     });
     expect(receipt).toContain('✅ Always allowed · LinkedIn posting (by ravi)');
+  });
+
+  it('shows declared skill action network hosts in the permission prompt', () => {
+    const request = {
+      requestId: 'permission_net',
+      sourceAgentFolder: 'Main Agent',
+      jobId: 'linkedin-job-1',
+      toolName: 'Bash',
+      toolInput: {
+        command: 'python3 skills/linkedin-posting/post.py --file /tmp/post.md',
+      },
+      suggestions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'capability:skill.linkedin-posting.publish' }],
+        },
+      ],
+      semanticCapabilityDefinitions: {
+        'skill.linkedin-posting.publish': {
+          capabilityId: 'skill.linkedin-posting.publish',
+          displayName: 'LinkedIn Posting publish',
+          category: 'linkedin-posting',
+          risk: 'write',
+          can: 'Publish a prepared LinkedIn post.',
+          cannot: 'Read unrelated credentials.',
+          credentialSource: 'skill_secret',
+          implementationBindings: [
+            {
+              kind: 'tool_rule',
+              rule: 'RunCommand(skills/linkedin-posting/post.py *)',
+            },
+          ],
+          networkHosts: ['api.linkedin.com:443', 'www.linkedin.com:443'],
+          preflight: { kind: 'none' },
+        },
+      },
+    } satisfies PermissionApprovalRequest;
+
+    const text = formatPermissionPromptText(request, 60_000);
+    expect(text).toContain(
+      'Network: api.linkedin.com:443, www.linkedin.com:443',
+    );
+
+    const parts = buildPermissionPromptParts(request, 60_000);
+    expect(parts.bodyLines).toContain(
+      'Network: api.linkedin.com:443, www.linkedin.com:443',
+    );
   });
 
   it('renders the full provider-neutral semantic field set every channel shares', () => {

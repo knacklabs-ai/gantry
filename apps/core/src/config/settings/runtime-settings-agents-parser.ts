@@ -62,6 +62,7 @@ function parseConfiguredAgentSourceRef(
     allowVersion?: boolean;
     requireVersion?: boolean;
     requireKind?: boolean;
+    allowTools?: boolean;
   },
 ): RuntimeConfiguredAgentSourceRef {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -69,8 +70,15 @@ function parseConfiguredAgentSourceRef(
   }
   const map = raw as Record<string, unknown>;
   const allowVersion = options.allowVersion ?? true;
+  const allowTools = options.allowTools ?? false;
   for (const key of Object.keys(map)) {
-    if (key !== 'name' && key !== 'id' && key !== 'version' && key !== 'kind') {
+    if (
+      key !== 'name' &&
+      key !== 'id' &&
+      key !== 'version' &&
+      key !== 'kind' &&
+      key !== 'tools'
+    ) {
       throw new Error(
         `${pathPrefix}.${key} is not supported. Configure name, id, version, or kind.`,
       );
@@ -78,6 +86,11 @@ function parseConfiguredAgentSourceRef(
     if (key === 'version' && !allowVersion) {
       throw new Error(
         `${pathPrefix}.version is not supported. Configure id only.`,
+      );
+    }
+    if (key === 'tools' && !allowTools) {
+      throw new Error(
+        `${pathPrefix}.tools is only supported for mcp_servers sources.`,
       );
     }
   }
@@ -105,6 +118,19 @@ function parseConfiguredAgentSourceRef(
     }
     source.kind = kind;
   }
+  if (allowTools && map.tools !== undefined) {
+    if (!Array.isArray(map.tools)) {
+      throw new Error(`${pathPrefix}.tools must be an array`);
+    }
+    const tools = [
+      ...new Set(
+        map.tools.map((value, index) =>
+          parseStringValue(value, `${pathPrefix}.tools[${index}]`).trim(),
+        ),
+      ),
+    ].filter(Boolean);
+    if (tools.length > 0) source.tools = tools;
+  }
   return source;
 }
 
@@ -115,6 +141,7 @@ function parseConfiguredAgentSourceArray(
     allowVersion?: boolean;
     requireVersion?: boolean;
     requireKind?: boolean;
+    allowTools?: boolean;
   },
 ): RuntimeConfiguredAgentSourceRef[] {
   if (raw === undefined) return [];
@@ -149,7 +176,7 @@ function parseConfiguredAgentSources(
     mcpServers: parseConfiguredAgentSourceArray(
       map.mcp_servers,
       `${pathPrefix}.mcp_servers`,
-      { allowVersion: false },
+      { allowVersion: false, allowTools: true },
     ),
     tools: parseConfiguredAgentSourceArray(map.tools, `${pathPrefix}.tools`, {
       requireKind: true,

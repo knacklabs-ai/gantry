@@ -10,9 +10,10 @@ afterEach(() => {
   vi.doUnmock('@clack/prompts');
 });
 
-function mockClack() {
+function mockClack(note?: ReturnType<typeof vi.fn>) {
   vi.doMock('@clack/prompts', () => ({
     log: { error: vi.fn(), info: vi.fn(), success: vi.fn(), warn: vi.fn() },
+    note: note ?? vi.fn(),
   }));
 }
 
@@ -45,6 +46,44 @@ describe('agent access CLI (runAccess)', () => {
     );
   });
 
+  it('renders one unified view of skills, MCP op scope, and permissions', async () => {
+    const note = vi.fn();
+    mockClack(note);
+    const controlApiRequest = vi.fn(async () => ({
+      agentId: 'agent:a1',
+      sources: {
+        skills: [{ id: 'skill:linkedin', name: 'linkedin-posting' }],
+        mcpServers: [{ id: 'github', tools: ['read_*'] }, { id: 'linear' }],
+        tools: [],
+      },
+      selections: [{ id: 'browser.use', version: 'builtin' }],
+    }));
+    vi.doMock('@core/cli/control-api.js', () => ({ controlApiRequest }));
+    const { runAccess } = await import('@core/cli/group-access.js');
+    expect(await runAccess('/tmp/gantry-access-test', ['show', 'a1'])).toBe(0);
+    const rendered = String(note.mock.calls[0]?.[0] ?? '');
+    expect(rendered).toContain('linkedin-posting');
+    expect(rendered).toContain('github  [read_*]');
+    expect(rendered).toContain('linear  [all reviewed tools]');
+    expect(rendered).toContain('browser.use@builtin');
+  });
+
+  it('emits raw JSON for show --json', async () => {
+    mockClack();
+    const controlApiRequest = vi.fn(async () => ({
+      agentId: 'agent:a1',
+      sources: { skills: [], mcpServers: [], tools: [] },
+      selections: [],
+    }));
+    vi.doMock('@core/cli/control-api.js', () => ({ controlApiRequest }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const { runAccess } = await import('@core/cli/group-access.js');
+    expect(
+      await runAccess('/tmp/gantry-access-test', ['show', 'a1', '--json']),
+    ).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('"agentId"'));
+  });
+
   it('apply PUTs only the writable {sources, selections} subset', async () => {
     mockClack();
     const controlApiRequest = vi.fn(async () => ({ ok: true }));
@@ -60,7 +99,11 @@ describe('agent access CLI (runAccess)', () => {
         agentId: 'agent:a1',
         updatedAt: '2026-05-31T00:00:00.000Z',
         toolAccess: { configuredTools: [] },
-        sources: { skills: [], mcpServers: [], tools: [] },
+        sources: {
+          skills: [],
+          mcpServers: [{ id: 'mcp:github', tools: ['read_*'] }],
+          tools: [],
+        },
         selections: [{ id: 'browser.use', version: 'builtin' }],
       }),
     );
@@ -79,7 +122,11 @@ describe('agent access CLI (runAccess)', () => {
         method: 'PUT',
         path: '/v1/agents/agent%3Aa1/access',
         body: {
-          sources: { skills: [], mcpServers: [], tools: [] },
+          sources: {
+            skills: [],
+            mcpServers: [{ id: 'mcp:github', tools: ['read_*'] }],
+            tools: [],
+          },
           selections: [{ id: 'browser.use', version: 'builtin' }],
         },
       }),

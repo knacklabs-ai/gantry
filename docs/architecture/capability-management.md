@@ -42,6 +42,7 @@ agents:
           id: 'skill:266c421f-a072-44f7-9cb0-43c52eba8ad9'
       mcp_servers:
         - id: linkedin
+          tools: [read_*]
       tools:
         - id: browser
           kind: builtin
@@ -107,11 +108,34 @@ Example:
       "can": "Publish prepared content through the approved skill action.",
       "cannot": "Read unrelated accounts or receive raw credentials.",
       "requiredEnvVars": ["PUBLISHER_ACCESS_TOKEN"],
-      "commandTemplates": ["python3 ${skillRoot}/publish.py --file /tmp/content.md"]
+      "commandTemplates": ["python3 ${skillRoot}/publish.py --file /tmp/content.md"],
+      "networkHosts": ["api.publisher.com:443", "www.publisher.com:443"]
     }
   ]
 }
 ```
+
+Optional `networkHosts` declare the exact outbound hosts the action command may
+reach. Each entry is an exact `host` or `host:port`; the manifest parser rejects
+URLs, schemes, paths, credentials, wildcards, invalid ports, and
+localhost/private/loopback targets, then lowercases, strips trailing dots, and
+dedupes. Host authority follows the same boundary as credentials: declared hosts
+are inventory only at install time and become effective run-scoped network
+authority just for the matching action command after the action capability is
+selected. The selected capability projects a command-bound network binding
+(matching command rule plus declared hosts) into the run; the SDK sandbox
+network gate suppresses the duplicate network prompt for a declared host reached
+by that command and fails closed for any undeclared host:
+
+```text
+Network access denied: this skill action did not declare <host>:<port>.
+Update and re-approve the skill action.
+```
+
+The global `permissions.egress.denylist` is always stronger: a denylisted host
+is blocked even when a selected action declares it. Review and prompt surfaces
+show the declared hosts as a `Network:` line beside the reviewed action display
+name.
 
 Runtime normalizes `${skillRoot}` to the stable readable skill directory,
 for example `skills/publisher`, rejects generated runtime paths such as
@@ -176,6 +200,58 @@ credential directories as readable SDK additional directories, keeps those
 directories write-denied, and records command-bound network host bindings for
 scheduled-job SDK network prompt correlation.
 
+## Third-Party MCP Network Hosts
+
+Third-party MCP server definitions carry reviewed `networkHosts` alongside
+`allowedToolPatterns` and `credentialRefs`. Connecting an MCP source is
+inventory only: declared hosts plus approved tool patterns define what the
+server may reach. Declared hosts use the same exact `host`/`host:port` parser as
+skill actions (no URLs, schemes, paths, credentials, wildcards, invalid ports,
+or localhost/private targets). This applies to third-party MCP servers only, not
+Gantry's built-in MCP tools.
+
+- Remote `http`/`sse` servers execute through the MCP proxy over a **DNS-pinned
+  transport**: the hostname is resolved once, validated to be public-routable,
+  and the connection is pinned to that address while TLS SNI and certificate
+  validation stay bound to the hostname (no DNS-rebinding window). The configured
+  URL host is the only host Gantry can locally enforce, so it is always part of
+  the declaration (added automatically when omitted). The proxy validates the
+  connection host against the declared hosts and the global
+  `permissions.egress.denylist` at connection establishment, reusing the shared
+  egress denylist policy, and rejects redirects. An undeclared host fails closed:
+
+  ```text
+  Network access denied: MCP server <name> did not declare <host>:<port> for the
+  approved tool access. Update and re-approve the MCP server or capability.
+  ```
+
+  Remote servers may still make their own downstream calls that are outside
+  local sandbox visibility; the review UX states this.
+- `stdio_template` servers carry the declared hosts as reviewed inventory into
+  the materialized capability, but current-session stdio execution remains
+  **fail-closed**: Gantry has no OS-level sandbox to spawn an arbitrary
+  `node`/`npx` MCP subprocess safely, so the proxy refuses stdio execution rather
+  than run it unsandboxed. When a sandboxed stdio runtime exists, the declared
+  hosts become that server's run-scoped network authority. This is a deliberate
+  security boundary, not a missing wire-up.
+
+The global `permissions.egress.denylist` always wins over MCP declarations.
+`request_mcp_server` review, `gantry mcp list`/`show`, and the MCP definition API
+expose the declared hosts for review.
+
+### Per-agent MCP tool scope
+
+MCP operations are granular like skill actions: adding an MCP server to an agent
+does not grant every tool. Each agent binding carries an optional
+`allowedToolPatterns` subset of the server definition's reviewed patterns, so the
+same server can be read-only for one agent and read+write for another without
+duplicating the definition. An empty subset inherits the definition's full set; a
+binding can only narrow, never widen beyond what was reviewed. The scope is the
+durable truth in `settings.yaml` under the agent's `mcp_servers` source ref
+(`tools: [read_*]`), reconciled into the Postgres binding and intersected at
+materialization so the proxy only exposes the agent's allowed operations. Set it
+with `gantry mcp connect --agent-tool <pattern>` or the agent access API.
+
 ## Administration Model
 
 The deterministic ownership rule is:
@@ -218,6 +294,14 @@ API, CLI, and MCP are adapters over the same application services:
   interactions. They create reviewable requests rendered through
   `InteractionDescriptor`.
 
+The single agent-wide view of what an agent can do is
+`GET /v1/agents/{id}/access` (and `gantry agent access show <agent>`): one place
+listing the agent's skills, MCP servers with their per-agent operation scope,
+attached tools, and selected capabilities. It is keyed by the agent and reflects
+authority used in every conversation the agent is added to — direct/private (DM)
+and group/channel alike — not a per-conversation list. `--json` emits the
+writable `{sources, selections}` document for `gantry agent access apply`.
+
 Skills, MCP servers, and tools are central catalog objects. Skill names are
 display labels and unique-alias conveniences only. Durable settings and API
 source selections show the readable name beside the exact `skill:<id>` catalog
@@ -245,7 +329,7 @@ or removed rather than edited in place.
 | `admin_permission_list`            | Selected-capability inventory of current-agent persistent Gantry MCP grants.                                                                                                                                 | Cross-agent grant discovery, raw secret inspection, or broad admin wildcard discovery.                          |
 | `admin_permission_revoke`          | Selected-capability revocation of one current-agent persistent Gantry MCP grant.                                                                                                                             | Revoking grants for another agent or bypassing review for new grants.                                           |
 | `mcp_list_tools`                   | Lists connected third-party MCP tools through the Gantry proxy.                                                                                                                                              | Discovering unconnected servers or treating third-party tool names as durable Gantry authority.                 |
-| `mcp_call_tool`                    | Calls connected third-party MCP tools through the Gantry proxy and selected MCP bindings.                                                                                                                    | Direct MCP server execution, raw `.mcp.json` edits, or unconnected tools.                                       |
+| `mcp_call_tool`                    | Calls connected third-party MCP tools through the Gantry proxy when reviewed current-run capability access covers the exact action.                                                                            | Direct MCP server execution, raw `.mcp.json` edits, raw third-party MCP tool grants, or unconnected tools.      |
 | `service_restart`                  | Selected-capability restart after approved config or capability changes that require host restart.                                                                                                           | Restarting to activate unapproved changes.                                                                      |
 | `register_agent`                   | Selected-capability binding of a new channel conversation to an agent.                                                                                                                                       | Letting an unselected agent bind arbitrary chats.                                                               |
 
@@ -326,7 +410,7 @@ uses the same reviewed request tools as interactive agents:
 ```text
 request_access { "target": { "kind": "capability", "id": "acme.records.append" }, "reason": "This scheduled job writes reviewed records." }
 request_access { "target": { "kind": "run_command", "argvPattern": "npm test *" }, "temporaryOnly": false, "reason": "This autonomous run needs scoped command access." }
-request_mcp_server { "name": "github", "transport": "stdio_template", "templateId": "npx-package", "args": ["@modelcontextprotocol/server-github"], "sandboxProfileId": "mcp-stdio", "reason": "This autonomous run needs the github MCP server capability." }
+request_mcp_server { "name": "github", "transport": "stdio_template", "templateId": "npx-package", "args": ["@modelcontextprotocol/server-github"], "sandboxProfileId": "mcp-stdio", "reason": "This autonomous run needs the github MCP source connected before reviewed action capabilities can be requested." }
 ```
 
 Approved requests update the target agent's durable selected capabilities or

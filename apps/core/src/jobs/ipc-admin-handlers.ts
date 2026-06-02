@@ -8,8 +8,10 @@ import {
 } from '../adapters/storage/postgres/runtime-store.js';
 import {
   GANTRY_HOME,
+  getRuntimeSettingsForConfig,
   syncRuntimeSettingsFromProjection,
 } from '../config/index.js';
+import { parseDeclaredNetworkHost } from '../shared/network-host-declaration.js';
 import { nowIso } from '../shared/time/datetime.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { isValidWorkspaceFolder } from '../platform/workspace-folder.js';
@@ -66,7 +68,10 @@ import {
   headerNameForCredentialNeed,
 } from './ipc-mcp-server-request-credentials.js';
 import { semanticCapabilityInteraction } from './ipc-semantic-capability-interaction.js';
-import { appendLiveToolRules } from '../shared/live-tool-rules.js';
+import {
+  appendLiveToolRules,
+  readLiveToolRules,
+} from '../shared/live-tool-rules.js';
 import {
   formatRequestAccessPersistentGrantMessage,
   recheckPausedSetupJobsAfterRequestAccessGrant,
@@ -216,6 +221,19 @@ const requestMcpServerHandler: TaskHandler = async (context) => {
         return Boolean(parsed && headerNameForCredentialNeed(parsed));
       })
     : [];
+  const networkHosts: string[] = [];
+  if (Array.isArray(payload.networkHosts)) {
+    for (const item of payload.networkHosts) {
+      const raw = toTrimmedString(item, { maxLen: 160 });
+      if (!raw) continue;
+      const result = parseDeclaredNetworkHost(raw);
+      if (!result.ok) {
+        reject(`MCP server networkHosts ${result.reason}`, 'invalid_request');
+        return;
+      }
+      if (!networkHosts.includes(result.host)) networkHosts.push(result.host);
+    }
+  }
   const storage = getRuntimeStorage();
   // prettier-ignore
   const service = new McpServerService(storage.repositories.mcpServers, undefined, { lookupHostname: deps.mcpHostnameLookup });
@@ -247,6 +265,7 @@ const requestMcpServerHandler: TaskHandler = async (context) => {
       requestedToolPatterns,
       credentialRefs,
       credentialNeeds,
+      networkHosts,
       reason,
     });
   } catch (err) {
@@ -278,6 +297,10 @@ const mcpListToolsHandler: TaskHandler = async (context) => {
       appId: data.appId as never,
       agentId: memoryAgentIdForWorkspaceFolder(sourceAgentFolder) as never,
       deps,
+      ipcDir: context.ipcBaseDir
+        ? path.join(context.ipcBaseDir, sourceAgentFolder)
+        : undefined,
+      runHandle: data.runHandle,
     });
     const result = await proxy.listTools({
       appId: data.appId as never,
@@ -328,6 +351,10 @@ const mcpCallToolHandler: TaskHandler = async (context) => {
       appId: data.appId as never,
       agentId: memoryAgentIdForWorkspaceFolder(sourceAgentFolder) as never,
       deps,
+      ipcDir: context.ipcBaseDir
+        ? path.join(context.ipcBaseDir, sourceAgentFolder)
+        : undefined,
+      runHandle: data.runHandle,
     });
     const result = await proxy.callTool({
       appId: data.appId as never,
@@ -710,7 +737,7 @@ function hasAgentSuppliedCapabilityDefinition(
 }
 
 // prettier-ignore
-function startMcpPermissionReview(input: { deps: Parameters<TaskHandler>[0]['deps']; responder: Pick<ReturnType<typeof createTaskResponder>, 'acceptData' | 'reject'>; service: McpServerService; appId: import('../domain/app/app.js').AppId; agentId: import('../domain/agent/agent.js').AgentId; sourceAgentFolder: string; targetJid: string; threadId?: string; server: { name: string }; transport: string; sandboxProfileId?: string; transportConfig: import('../domain/mcp/mcp-servers.js').McpServerTransportConfig; origin: string; requestedToolPatterns: string[]; credentialRefs: import('../domain/mcp/mcp-servers.js').McpCredentialRef[]; credentialNeeds: string[]; reason: string }): void {
+function startMcpPermissionReview(input: { deps: Parameters<TaskHandler>[0]['deps']; responder: Pick<ReturnType<typeof createTaskResponder>, 'acceptData' | 'reject'>; service: McpServerService; appId: import('../domain/app/app.js').AppId; agentId: import('../domain/agent/agent.js').AgentId; sourceAgentFolder: string; targetJid: string; threadId?: string; server: { name: string }; transport: string; sandboxProfileId?: string; transportConfig: import('../domain/mcp/mcp-servers.js').McpServerTransportConfig; origin: string; requestedToolPatterns: string[]; credentialRefs: import('../domain/mcp/mcp-servers.js').McpCredentialRef[]; credentialNeeds: string[]; networkHosts: string[]; reason: string }): void {
   void completeMcpPermissionReview(input).catch((err) => {
     logger.error(
       { err, serverName: input.server.name, sourceAgentFolder: input.sourceAgentFolder },
@@ -748,6 +775,7 @@ async function completeMcpPermissionReview(
       origin: input.origin,
       requestedToolPatterns: input.requestedToolPatterns,
       credentialNeeds: input.credentialNeeds,
+      networkHosts: input.networkHosts,
       activation: 'source_inventory_only',
     },
   });
@@ -772,6 +800,7 @@ async function completeMcpPermissionReview(
       transportConfig: input.transportConfig,
       allowedToolPatterns: input.requestedToolPatterns,
       credentialRefs: input.credentialRefs,
+      networkHosts: input.networkHosts,
       sandboxProfileId: input.sandboxProfileId,
       riskClass: 'medium',
     });
@@ -842,6 +871,8 @@ async function createMcpProxyForSourceGroup(input: {
   appId: import('../domain/app/app.js').AppId;
   agentId: import('../domain/agent/agent.js').AgentId;
   deps: Parameters<TaskHandler>[0]['deps'];
+  ipcDir?: string;
+  runHandle?: string;
 }): Promise<McpToolProxy> {
   const storage = getRuntimeStorage();
   const credentialEnv = await resolveMcpCredentialEnvForAgent({
@@ -856,7 +887,12 @@ async function createMcpProxyForSourceGroup(input: {
     tools: storage.repositories.tools,
     skills: storage.repositories.skills,
     credentialEnv,
+    liveToolRules: readLiveToolRules({
+      ipcDir: input.ipcDir,
+      runHandle: input.runHandle,
+    }),
     lookupHostname: input.deps.mcpHostnameLookup,
+    egressDenylist: getRuntimeSettingsForConfig().permissions.egress.denylist,
   });
 }
 

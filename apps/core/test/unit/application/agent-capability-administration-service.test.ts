@@ -113,6 +113,38 @@ describe('AgentCapabilityAdministrationService', () => {
     ]);
   });
 
+  it('round-trips scoped MCP source tools through the full access document', async () => {
+    const state = createState();
+    const service = new AgentCapabilityAdministrationService(
+      state.repositories,
+      { now: () => '2026-05-01T00:00:00.000Z' },
+    );
+
+    const response = await service.replaceAccessDocument({
+      appId: 'app:one' as never,
+      agentId: 'agent:one' as never,
+      sources: {
+        skills: [],
+        mcpServers: [{ id: 'mcp:one', tools: ['read_*'] }],
+        tools: [],
+      },
+      capabilities: [],
+    });
+
+    expect(response.sources.mcpServers).toEqual([
+      { id: 'mcp:one', tools: ['read_*'] },
+    ]);
+    expect(state.mcpBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serverId: 'mcp:one',
+          status: 'active',
+          allowedToolPatterns: ['read_*'],
+        }),
+      ]),
+    );
+  });
+
   it('rejects invalid full access selections before writing requested sources', async () => {
     const state = createState();
     const service = new AgentCapabilityAdministrationService(
@@ -535,7 +567,7 @@ function createState() {
         riskClass: 'medium',
         transport: 'stdio_template',
         config: { transport: 'stdio_template', templateId: 'node-script' },
-        allowedToolPatterns: [],
+        allowedToolPatterns: ['read_*', 'write_*'],
         autoApproveToolPatterns: [],
         credentialRefs: [],
         createdAt: now,

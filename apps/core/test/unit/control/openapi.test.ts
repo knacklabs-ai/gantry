@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
+import { AgentAccessRequestSchema } from '@gantry/contracts';
 
 import { requiredModelCredentialProviders } from '@core/application/model-resolution/required-model-credential-providers.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
@@ -282,6 +283,19 @@ async function isRecognizedByRuntime(method: string, pathname: string) {
 describe('control OpenAPI documentation', () => {
   it('keeps the OpenAPI route inventory in sync with the control API surface', () => {
     expect(documentedRoutes()).toEqual(expectedControlRoutes);
+  });
+
+  it('accepts MCP source operation scopes in agent access documents', () => {
+    expect(
+      AgentAccessRequestSchema.safeParse({
+        sources: {
+          skills: [{ id: 'skill:one' }],
+          mcpServers: [{ id: 'mcp:github', tools: ['read_*'] }],
+          tools: [],
+        },
+        selections: [],
+      }).success,
+    ).toBe(true);
   });
 
   it('serves the unified status read model from the system route', async () => {

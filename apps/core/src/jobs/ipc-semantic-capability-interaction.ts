@@ -49,9 +49,25 @@ function semanticCapabilityInteractionDetails(
     detailFromToolInput(toolInput, 'Risk', 'risk', 80),
     detailFromToolInput(toolInput, 'Allows', 'can', 1000),
     detailFromToolInput(toolInput, 'Does not allow', 'cannot', 1000),
+    networkHostsDetail(toolInput.networkHosts),
   ].filter((detail): detail is { label: string; value: string } =>
     Boolean(detail),
   );
+}
+
+function networkHostsDetail(
+  value: unknown,
+): { label: string; value: string } | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const hosts = [
+    ...new Set(
+      value
+        .map((host) => toTrimmedString(host, { maxLen: 120 }))
+        .filter((host): host is string => Boolean(host)),
+    ),
+  ];
+  if (hosts.length === 0) return undefined;
+  return { label: 'Network', value: hosts.join(', ') };
 }
 
 function detailFromToolInput(

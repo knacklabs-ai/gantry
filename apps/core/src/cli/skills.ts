@@ -266,7 +266,36 @@ function formatSkill(input: unknown): string {
   const id = String(input.id ?? '');
   const name = String(input.name ?? id);
   const status = String(input.status ?? 'installed');
-  return `- ${name} (${id}) [${status}]`;
+  const lines = [
+    `- ${name} (${id}) [${status}]`,
+    ...formatSkillActionLines(input),
+  ];
+  return lines.join('\n');
+}
+
+function formatSkillActionLines(skill: Record<string, unknown>): string[] {
+  const actions = skill.actionPermissions;
+  if (!Array.isArray(actions)) return [];
+  const lines: string[] = [];
+  for (const action of actions) {
+    if (!isRecord(action)) continue;
+    const displayName = String(action.displayName ?? action.capabilityId ?? '');
+    if (!displayName) continue;
+    lines.push(`    • ${displayName}`);
+    const hosts = Array.isArray(action.networkHosts)
+      ? [
+          ...new Set(
+            action.networkHosts
+              .map((host) => String(host ?? '').trim())
+              .filter(Boolean),
+          ),
+        ]
+      : [];
+    if (hosts.length > 0) {
+      lines.push(`      Network: ${hosts.join(', ')}`);
+    }
+  }
+  return lines;
 }
 
 function normalizeAgentId(value: string): string {

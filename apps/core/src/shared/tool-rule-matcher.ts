@@ -23,7 +23,7 @@ import {
 import { canonicalizeGeneratedRuntimeSkillPaths } from './generated-runtime-paths.js';
 
 const MCP_WILDCARD_RE = /^mcp__([A-Za-z0-9_-]+)__\*$/;
-const MCP_EXACT_RE = /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/;
+const MCP_EXACT_RE = /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_.-]+$/;
 const SAFE_SCRIPT_INTERPRETERS = new Set(['python', 'python3']);
 
 interface ScopedToolSpec {

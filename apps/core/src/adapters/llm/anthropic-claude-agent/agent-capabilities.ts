@@ -258,7 +258,7 @@ function isPublicExternalMcpServerConfig(
 }
 
 const PUBLIC_EXTERNAL_MCP_TOOL_RULE_RE =
-  /^mcp__[A-Za-z0-9_-]+__(?:[A-Za-z0-9_-]+|\*)$/;
+  /^mcp__[A-Za-z0-9_-]+__(?:[A-Za-z0-9_.-]+|\*)$/;
 
 export function isPublicExternalMcpToolRule(toolRule: string): boolean {
   const value = toolRule.trim();

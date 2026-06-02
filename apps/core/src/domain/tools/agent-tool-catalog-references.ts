@@ -210,7 +210,7 @@ export async function resolveAgentToolReference(input: {
   if (reference.startsWith('mcp__')) {
     return {
       error:
-        'Third-party MCP tool names are not selected directly; request and bind the MCP server capability.',
+        'Third-party MCP tool names are not selected directly; connect the MCP source and request a reviewed semantic capability for the exact action.',
     };
   }
   return {

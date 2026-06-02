@@ -215,6 +215,7 @@ export class PostgresAgentRepository implements AgentRepository {
           status: binding.status,
           required: binding.required,
           permissionPolicyIdsJson: JSON.stringify(binding.permissionPolicyIds),
+          allowedToolPatternsJson: JSON.stringify(binding.allowedToolPatterns),
           conversationId: binding.conversationId ?? null,
           threadId: binding.threadId ?? null,
           createdAt: binding.createdAt,
@@ -227,6 +228,9 @@ export class PostgresAgentRepository implements AgentRepository {
             required: binding.required,
             permissionPolicyIdsJson: JSON.stringify(
               binding.permissionPolicyIds,
+            ),
+            allowedToolPatternsJson: JSON.stringify(
+              binding.allowedToolPatterns,
             ),
             conversationId: binding.conversationId ?? null,
             threadId: binding.threadId ?? null,

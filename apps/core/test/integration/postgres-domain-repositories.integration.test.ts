@@ -466,6 +466,24 @@ maybeDescribe('Postgres domain repositories', () => {
 
   it('replaces agent access bindings and tool sources in one repository call', async () => {
     const updatedAt = '2026-05-02T00:01:00.000Z';
+    const mcpServerId = 'mcp:repo-test' as never;
+
+    await repositories.mcpServers.saveServer({
+      id: mcpServerId,
+      appId,
+      name: 'repo-test',
+      status: 'active',
+      createdSource: 'admin',
+      riskClass: 'medium',
+      transport: 'stdio_template',
+      config: { transport: 'stdio_template', templateId: 'node-script' },
+      allowedToolPatterns: ['read_*', 'write_*'],
+      autoApproveToolPatterns: [],
+      credentialRefs: [],
+      networkHosts: [],
+      createdAt: updatedAt,
+      updatedAt,
+    });
 
     await repositories.agents.replaceAgentAccess({
       appId,
@@ -482,7 +500,20 @@ maybeDescribe('Postgres domain repositories', () => {
         },
       ],
       skillBindings: [],
-      mcpBindings: [],
+      mcpBindings: [
+        {
+          id: `agent-mcp-binding:${agentId}:${mcpServerId}` as never,
+          appId,
+          agentId,
+          serverId: mcpServerId,
+          status: 'active',
+          required: false,
+          permissionPolicyIds: [],
+          allowedToolPatterns: ['read_*'],
+          createdAt: updatedAt,
+          updatedAt,
+        },
+      ],
       toolSources: [
         {
           id: `agent-tool-source:${agentId}:builtin:browser:builtin` as never,
@@ -515,6 +546,16 @@ maybeDescribe('Postgres domain repositories', () => {
         status: 'active',
       }),
     ]);
+    await expect(
+      repositories.mcpServers.listAgentBindings({ appId, agentId }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serverId: mcpServerId,
+          allowedToolPatterns: ['read_*'],
+        }),
+      ]),
+    );
   });
 
   it('inserts messages idempotently by provider redelivery key', async () => {

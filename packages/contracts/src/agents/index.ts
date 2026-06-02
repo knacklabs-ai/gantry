@@ -100,10 +100,28 @@ export const AgentSourceSelectionSchema = z
   .object({
     name: z.string().trim().min(1).optional(),
     id: z.string().min(1),
-    version: z.union([z.string().min(1), z.number()]).transform(String),
+    version: z
+      .union([z.string().min(1), z.number()])
+      .transform(String)
+      .optional(),
   })
   .strict();
 export type AgentSourceSelection = z.infer<typeof AgentSourceSelectionSchema>;
+
+export const AgentMcpSourceSelectionSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    id: z.string().min(1),
+    version: z
+      .union([z.string().min(1), z.number()])
+      .transform(String)
+      .optional(),
+    tools: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type AgentMcpSourceSelection = z.infer<
+  typeof AgentMcpSourceSelectionSchema
+>;
 
 export const AgentToolSourceSelectionSchema = z
   .object({
@@ -124,7 +142,7 @@ export const AgentSourcesRequestSchema = z
     sources: z
       .object({
         skills: z.array(AgentSourceSelectionSchema).default([]),
-        mcpServers: z.array(AgentSourceSelectionSchema).default([]),
+        mcpServers: z.array(AgentMcpSourceSelectionSchema).default([]),
         tools: z.array(AgentToolSourceSelectionSchema).default([]),
       })
       .strict(),

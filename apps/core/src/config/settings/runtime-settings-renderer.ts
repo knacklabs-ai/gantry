@@ -271,6 +271,12 @@ function renderAgentSourceListYaml(
     if (source.kind !== undefined) {
       lines.push(`            kind: ${quoteYamlString(source.kind)}`);
     }
+    if (source.tools !== undefined && source.tools.length > 0) {
+      lines.push(`            tools:`);
+      for (const tool of source.tools) {
+        lines.push(`              - ${quoteYamlString(tool)}`);
+      }
+    }
   }
 }
 

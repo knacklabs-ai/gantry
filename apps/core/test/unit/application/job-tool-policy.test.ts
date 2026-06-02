@@ -142,7 +142,7 @@ describe('job tool policy', () => {
         agentId: 'agent:team',
         toolRepository: toolRepositoryFor(['mcp__github__*']),
       }),
-    ).rejects.toThrowError(/request the MCP server capability/);
+    ).rejects.toThrowError(/request a reviewed semantic capability/);
   });
 
   it('rejects stale inherited exact third-party MCP tool rules from agent tool bindings', async () => {

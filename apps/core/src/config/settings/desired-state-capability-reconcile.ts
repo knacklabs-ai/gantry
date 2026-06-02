@@ -23,6 +23,10 @@ import {
   skillActionDefinitionsForSkills,
 } from './configured-capability-normalization.js';
 import type { SemanticCapabilityDefinition } from '../../shared/semantic-capabilities.js';
+import {
+  normalizeMcpToolScope,
+  reviewedMcpToolPatterns,
+} from '../../shared/mcp-tool-scope.js';
 
 export async function replaceDesiredStateCapabilities(input: {
   appId: AppId;
@@ -59,7 +63,7 @@ export async function replaceDesiredStateCapabilities(input: {
   const skillActionDefinitions = skillActionDefinitionsForSkills([
     ...resolvedSkills.skills.values(),
   ]);
-  await assertConfiguredMcpSources(input);
+  const mcpBindings = await configuredMcpSourceBindings(input);
   const toolIds = await toolIdsForReplacement({
     ...input,
     skillActionDefinitions,
@@ -85,21 +89,7 @@ export async function replaceDesiredStateCapabilities(input: {
       createdAt: input.now,
       updatedAt: input.now,
     })),
-    mcpBindings: input.agent.sources.mcpServers
-      .map((source) => source.id as McpServerId)
-      .map((serverId) => {
-        return {
-          id: `agent-mcp-binding:${input.agentId}:${serverId}` as never,
-          appId: input.appId,
-          agentId: input.agentId,
-          serverId: serverId as never,
-          status: 'active' as const,
-          required: false,
-          permissionPolicyIds: [],
-          createdAt: input.now,
-          updatedAt: input.now,
-        };
-      }),
+    mcpBindings,
     updatedAt: input.now,
   });
   await replaceAgentToolSources(input);
@@ -204,28 +194,43 @@ async function catalogSemanticCapabilityDefinitions(input: {
   return semanticCapabilityDefinitionsFromCatalogTools(tools);
 }
 
-async function assertConfiguredMcpSources(input: {
+async function configuredMcpSourceBindings(input: {
   appId: AppId;
+  agentId: AgentId;
   agent: RuntimeConfiguredAgent;
   repositories: SettingsDesiredStateRepositories;
-}): Promise<void> {
-  await Promise.all(
-    [...new Set(input.agent.sources.mcpServers.map((source) => source.id))].map(
-      async (serverId) => {
-        const server = await input.repositories.mcpServers.getServer(
-          serverId as never,
+  now: string;
+}) {
+  return Promise.all(
+    input.agent.sources.mcpServers.map(async (source) => {
+      const serverId = source.id as McpServerId;
+      const server = await input.repositories.mcpServers.getServer(serverId);
+      if (
+        !server ||
+        server.appId !== input.appId ||
+        server.status !== 'active'
+      ) {
+        throw new Error(
+          `MCP server ${source.id} is not active for that source.`,
         );
-        if (
-          !server ||
-          server.appId !== input.appId ||
-          server.status !== 'active'
-        ) {
-          throw new Error(
-            `MCP server ${serverId} is not active for that source.`,
-          );
-        }
-      },
-    ),
+      }
+      return {
+        id: `agent-mcp-binding:${input.agentId}:${serverId}` as never,
+        appId: input.appId,
+        agentId: input.agentId,
+        serverId,
+        status: 'active' as const,
+        required: false,
+        permissionPolicyIds: [],
+        allowedToolPatterns: normalizeMcpToolScope({
+          serverName: server.name,
+          requested: source.tools,
+          definitionPatterns: reviewedMcpToolPatterns(server),
+        }),
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+    }),
   );
 }
 

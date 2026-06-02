@@ -5,6 +5,10 @@ import path from 'node:path';
 import type { RuntimeApp } from '../../app/bootstrap/runtime-app.js';
 import type { JobManagementServiceDeps } from '../../application/jobs/job-management-types.js';
 import {
+  DEFAULT_JOB_RUNTIME_APP_ID,
+  filterJobsByCanonicalAppSession,
+} from '../../application/jobs/job-access.js';
+import {
   GANTRY_HOME,
   configureDesiredSettingsStorageProvider,
   getControlEnvValue,
@@ -239,8 +243,16 @@ export function startControlServer(input: {
       getRuntimeStorage().repositories.pendingAccessRequests.countPendingAccessRequests(
         { appId },
       ),
-    listControlPlaneJobs: async (appId: AppId) =>
-      getRuntimeRepositories().listJobs({ appId }),
+    listControlPlaneJobs: async (appId: AppId) => {
+      const jobs = await getRuntimeRepositories().listJobs({
+        ...(appId === DEFAULT_JOB_RUNTIME_APP_ID ? {} : { appId }),
+      });
+      return filterJobsByCanonicalAppSession({
+        control: getRuntimeStorage().control,
+        jobs,
+        appId,
+      });
+    },
     sendConversationIngressProjection: input.sendConversationIngressProjection,
     getBrowserStatus: input.getBrowserStatus,
     syncSettingsFromProjection: (appId: AppId) =>

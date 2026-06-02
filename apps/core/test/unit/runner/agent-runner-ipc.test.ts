@@ -179,6 +179,10 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'neutral-ca-trust-env.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/network-host-declaration.ts'),
+    path.join(sharedDir, 'network-host-declaration.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/object.ts'),
     path.join(sharedDir, 'object.ts'),
   );

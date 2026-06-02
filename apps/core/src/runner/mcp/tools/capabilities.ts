@@ -115,6 +115,9 @@ export function registerAccessRequestTool(
               cannot: approved.cannot,
               credentialSource: approved.credentialSource,
               risk: approved.risk,
+              ...(approved.networkHosts?.length
+                ? { networkHosts: approved.networkHosts }
+                : {}),
               temporaryOnly: args.temporaryOnly ?? false,
               broadAccess: args.broadAccess,
               riskClass: args.riskClass,

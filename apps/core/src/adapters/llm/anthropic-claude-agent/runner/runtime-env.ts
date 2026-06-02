@@ -159,7 +159,10 @@ export function buildSdkEnv(
   copyPlaceholderEnv(sdkEnv, ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']);
   copyEnv(sdkEnv, ['NO_PROXY', 'no_proxy']);
   stripNonModelProxyEnv(sdkEnv);
-  applyAgentEgressNoProxyEnv(sdkEnv);
+  applyAgentEgressNoProxyEnv(sdkEnv, {
+    externalBypass:
+      process.env.GANTRY_EGRESS_RESTRICT_EXTERNAL_NO_PROXY !== '1',
+  });
   delete sdkEnv.GANTRY_IPC_AUTH_TOKEN;
   delete sdkEnv.GANTRY_IPC_RESPONSE_VERIFY_KEY;
   delete sdkEnv.GANTRY_IPC_RESPONSE_KEY_ID;
