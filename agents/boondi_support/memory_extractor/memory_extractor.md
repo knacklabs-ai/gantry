@@ -20,6 +20,7 @@ DO NOT SAVE:
 - anything already in retrieved_items unless this arc corrects or replaces it (use supersedes)
 
 JUDGMENT RULES:
+- earlier_context (when present in the input) is PRIOR conversation included only as READ-ONLY background to help you interpret the current arc. NEVER extract a fact whose evidence lives solely in earlier_context — extract only from the current session_arc.
 - A fact/preference must be STABLE — true beyond today's order. "I'm allergic to peanuts" qualifies; "where's my order" does not.
 - A decision/correction requires the CUSTOMER to state it explicitly. Assistant phrasing alone does not count.
 - When unclear, DO NOT SAVE. Prefer fewer, higher-quality facts.
@@ -34,7 +35,9 @@ For each fact return:
 
 - kind: preference | decision | fact | correction | constraint
 - scope: user (this customer's personal facts/preferences — the normal case for DMs) | group (shared facts for the whole conversation)
-- key: stable slug, e.g. "constraint:peanut-allergy" or "preference:reply-language-hindi".
+- key: a STABLE, CANONICAL slug, e.g. "constraint:nut-allergy" or "preference:reply-language-hindi". CRITICAL — one fact maps to ONE key, forever:
+    - If the same fact already appears in retrieved_items, reuse that item's EXACT key (set supersedes only when you are correcting or replacing it).
+    - Otherwise choose the most GENERAL stable slug and reuse it across every session. For any nut/peanut allergy ALWAYS use "constraint:nut-allergy" — never invent per-session variants like "constraint:peanut-allergy", "son-nut-allergy", or "household-nut-allergy". Same fact, same key, every time, so repeated mentions collapse instead of piling up.
 - value: ONE human sentence, third-person, present tense, <220 chars.
 - why: a short quote from the arc that grounds the fact (from the customer's turns primarily).
 - confidence:
