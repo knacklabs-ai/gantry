@@ -150,7 +150,7 @@ export async function collectDurableMemoryFromRepositories(input: {
   // grounding only (never extracted). On first run (no cursor) we bootstrap from
   // the recent tail. The cursor is advanced AFTER a successful digest write.
   const NEW_LIMIT = 80;
-  const CONTEXT_TURNS = 5;
+  const CONTEXT_TURNS = 8;
   const cursor = await input.repositories.extractionCursor.getCursor({
     appId: session.appId,
     agentId: session.agentId,
@@ -294,11 +294,24 @@ export async function collectDurableMemoryFromRepositories(input: {
   );
   input.signal?.throwIfAborted();
   const facts = extraction.facts;
+  // The read-watermark scopes EXTRACTION only (process each turn once, so the
+  // same evidence is never re-derived). The digest is a short-term-continuity
+  // summary — the 3 most recent digests are hydrated into a new session BEFORE
+  // nightly dreaming populates memory_items — so it must keep reflecting the
+  // RECENT CONVERSATION, not just the narrow new-since-cursor window. The recent
+  // conversation is the read-only grounding turns (just before the cursor)
+  // followed by the new turns (after the cursor): together they span the
+  // extraction boundary and reliably cover buildDigestText's last-8 tail. On the
+  // bootstrap/null-cursor path contextTurns is empty and `turns` is already the
+  // recent-80 window, so the digest stays broad there too. The digest is a text
+  // summary, never evidence, so the duplicate-evidence fix is unaffected.
+  const digestTurns =
+    contextTurns.length > 0 ? [...contextTurns, ...turns] : turns;
   const now = (input.nowIso ?? (() => nowIso()))();
   const digestId = `msd_${randomUUID().replace(/-/g, '')}`;
   const digestText = buildDigestText(
     input.trigger,
-    turns,
+    digestTurns,
     facts,
     extraction.generatedMemory,
   );
@@ -308,7 +321,7 @@ export async function collectDurableMemoryFromRepositories(input: {
     agentSessionId: session.id,
     trigger: input.trigger,
     digest: digestText,
-    messageCount: turns.length,
+    messageCount: digestTurns.length,
     extractedFactCount: facts.length,
     metadata: {
       ...scopedDigestMetadataForSession(session),

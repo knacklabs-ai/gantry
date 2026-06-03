@@ -492,6 +492,88 @@ describe('LlmMemoryExtractionProvider', () => {
     );
   });
 
+  it('drops facts grounded only in context turns and keeps arc-grounded facts', async () => {
+    // Safety invariant: contextTurns are read-only grounding background and must
+    // NEVER enter the extraction grounding corpus. A fact whose `why` is quoted
+    // only from a context turn must be rejected; a fact whose `why` is quoted
+    // from the session arc must be kept. This proves context cannot ground a
+    // fact (no-leak), and complementarily that the prompt renders the context
+    // under `earlier_context` while the arc-only `session_arc` excludes it.
+    configureMemoryQueryMock();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify([
+                {
+                  scope: 'user',
+                  kind: 'constraint',
+                  key: 'allergy:peanuts',
+                  value: 'Allergic to peanuts.',
+                  why: 'I am allergic to peanuts',
+                  confidence: 0.95,
+                },
+                {
+                  scope: 'user',
+                  kind: 'preference',
+                  key: 'fruit:mangoes',
+                  value: 'Loves Alphonso mangoes.',
+                  why: 'I love Alphonso mangoes',
+                  confidence: 0.95,
+                },
+              ]),
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = await createProvider();
+    const facts = await provider.extractFacts({
+      turns: [{ role: 'user', text: 'I love Alphonso mangoes' }],
+      contextTurns: [{ role: 'user', text: 'I am allergic to peanuts' }],
+      trigger: 'session-end',
+      userId: '7000000002',
+      retrievedItems: [],
+    });
+
+    // The context-grounded (peanuts) fact is dropped because its `why` is not in
+    // the session_arc grounding corpus; only the arc-grounded (mangoes) fact
+    // survives.
+    expect(facts).toEqual([
+      {
+        scope: 'user',
+        kind: 'preference',
+        key: 'fruit:mangoes',
+        value: 'Loves Alphonso mangoes.',
+        why: 'I love Alphonso mangoes',
+        confidence: 0.95,
+        user_id: '7000000002',
+      },
+    ]);
+    expect(facts.some((fact) => fact.key === 'allergy:peanuts')).toBe(false);
+
+    // Complementary prompt assertion: in the real arc payload (the dynamic user
+    // block — the static block holds only generic few-shots), the context text
+    // is rendered under `earlier_context`, and the `session_arc` array that
+    // follows does NOT contain the context text.
+    const queryArg = memoryQueryMock.mock.calls[0]?.[0] as
+      | { userBlocks?: Array<{ text?: string }> }
+      | undefined;
+    const arcPayload = queryArg?.userBlocks?.at(-1)?.text || '';
+    const earlierIndex = arcPayload.indexOf('"earlier_context"');
+    const arcIndex = arcPayload.indexOf('"session_arc"');
+    expect(earlierIndex).toBeGreaterThan(-1);
+    expect(arcIndex).toBeGreaterThan(earlierIndex);
+    expect(arcPayload.slice(0, arcIndex)).toContain('I am allergic to peanuts');
+    expect(arcPayload.slice(arcIndex)).not.toContain(
+      'I am allergic to peanuts',
+    );
+  });
+
   it('skips extraction when the memory LLM client is unavailable', async () => {
     writeCredentialSettings('none');
     memoryIsConfiguredMock.mockReturnValue(false);
