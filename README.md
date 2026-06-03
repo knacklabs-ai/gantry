@@ -404,7 +404,7 @@ Background dreaming cycles turn raw conversational evidence into curated, high-c
 2. **REM** — cross-checks candidates against existing memory and flags contradictions. If the user said X yesterday and not-X today, the conflict is surfaced rather than silently overwritten.
 3. **Deep Sleep** — high-confidence candidates promoted to durable memory. Low-confidence or contradicted candidates held back. Duplicates merged. Obsolete facts retired. Destructive changes are policy-gated.
 
-Embedding work runs only during dreaming promotion/update passes. Runtime recall and context injection continue to use active memory items through lexical search and keyword fallback until memory item embedding indexing/querying is fully implemented.
+Embedding work runs during dreaming promotion/update passes and the resumable embedding backfill. Runtime recall and context injection use active memory items through full-text (lexical plus keyword) search by default; semantic recall is layered in as an optional enhancement only when embeddings are enabled and indexed, and falls back to full-text if a query embedding is unavailable, paused, or over its live deadline.
 
 ### Memory Boundaries
 

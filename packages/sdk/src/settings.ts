@@ -29,6 +29,7 @@ export type RuntimeSettingsResponse = {
           | 'marketing'
           | 'operations'
           | 'research';
+        relationshipMode?: 'personal' | 'organization';
         model?: string;
         oneTimeJobDefaultModel?: string;
         recurringJobDefaultModel?: string;

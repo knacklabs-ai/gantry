@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-import { AgentPersonaSchema } from '../agents/index.js';
+import {
+  AgentPersonaSchema,
+  AgentRelationshipModeSchema,
+} from '../agents/index.js';
 
 const EgressDenylistPatternSchema = z
   .string()
@@ -58,6 +61,7 @@ export const RuntimeSettingsConfiguredAgentSchema = z
     name: z.string().trim().min(1),
     folder: z.string().trim().min(1),
     persona: AgentPersonaSchema.optional(),
+    relationshipMode: AgentRelationshipModeSchema.optional(),
     model: z.string().optional(),
     oneTimeJobDefaultModel: z.string().optional(),
     recurringJobDefaultModel: z.string().optional(),

@@ -651,6 +651,7 @@ conversations:
       name: 'Default Agent',
       folder: 'main_agent',
       persona: 'generalist',
+      relationshipMode: 'organization',
       model: 'sonnet',
       oneTimeJobDefaultModel: 'haiku',
       recurringJobDefaultModel: 'opus',
@@ -690,8 +691,12 @@ conversations:
 
     expect(parsed.desiredState.authoritative).toBe(true);
     expect(parsed.agents.main_agent.persona).toBe('generalist');
+    expect(parsed.agents.main_agent.relationshipMode).toBe('organization');
     expect(renderRuntimeSettingsYaml(parsed)).toContain(
       '    persona: generalist',
+    );
+    expect(renderRuntimeSettingsYaml(parsed)).toContain(
+      '    relationship_mode: organization',
     );
     expect(parsed.agents.main_agent.bindings.main_dm).toMatchObject({
       jid: 'tg:100',

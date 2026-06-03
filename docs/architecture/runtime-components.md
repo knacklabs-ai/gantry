@@ -324,9 +324,9 @@ subject identity is stored directly on `memory_items` and in item metadata.
 
 Retrieval uses two Postgres-native paths:
 
-- Postgres full-text search for lexical matching, filtering, and ranking
-- Future pgvector semantic lookup only after memory item embedding indexing and
-  querying are fully implemented
+- Postgres full-text search for lexical matching, filtering, and ranking (always-on baseline)
+- Optional pgvector semantic lookup, fused with lexical results when embeddings
+  are enabled and items are indexed; recall falls back to full-text otherwise
 
 Memory injected into a prompt is context, not trusted authority. The agent may use it to answer better, but runtime authorization still happens outside the model.
 

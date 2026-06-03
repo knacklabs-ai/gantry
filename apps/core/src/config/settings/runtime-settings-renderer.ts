@@ -205,6 +205,11 @@ function renderConfiguredAgentsYaml(
     if (agent.persona && agent.persona !== 'developer') {
       lines.push(`    persona: ${quoteYamlString(agent.persona)}`);
     }
+    if (agent.relationshipMode && agent.relationshipMode !== 'personal') {
+      lines.push(
+        `    relationship_mode: ${quoteYamlString(agent.relationshipMode)}`,
+      );
+    }
     if (agent.model) {
       lines.push(`    model: ${quoteYamlString(agent.model)}`);
     }

@@ -1,4 +1,5 @@
 import type {
+  InteractionFile,
   PermissionApprovalDecision,
   PermissionApprovalDecisionMode,
   PermissionApprovalRequest,
@@ -25,6 +26,7 @@ import {
   firstPersistentRule,
   PERSISTENT_RULE_APPROVAL_MAX_RULES,
 } from './permission-decision.js';
+import { escapeMarkdownFenceDelimiters } from './permission-fenced-content.js';
 import { formatPermissionToolInputLines } from './permission-tool-input-format.js';
 
 export {
@@ -239,6 +241,9 @@ export function buildPermissionPromptParts(
         ),
       );
     }
+    if (interaction.files?.length) {
+      bodyLines.push(...formatInteractionFileLines(interaction.files));
+    }
     return { title, bodyLines, contextLines, replyInMinutes };
   }
   const rule = firstPersistentRule(request);
@@ -308,9 +313,12 @@ function sanitizePermissionCommandText(
   return headTailTruncate(redactSensitiveText(input), head, tail);
 }
 
-function limitPermissionMessage(input: string): string {
-  if (input.length <= PERMISSION_MESSAGE_BUDGET) return input;
-  return `${input.slice(0, PERMISSION_MESSAGE_BUDGET - 44)}\n\n[additional permission details omitted]`;
+function limitPermissionMessage(
+  input: string,
+  budget = PERMISSION_MESSAGE_BUDGET,
+): string {
+  if (input.length <= budget) return input;
+  return `${input.slice(0, budget - 44)}\n\n[additional permission details omitted]`;
 }
 
 function formatPermissionContextLines(
@@ -375,9 +383,17 @@ function formatInteractionPermissionPrompt(
       ),
     );
   }
+  if (interaction.files?.length) {
+    lines.push('', ...formatInteractionFileLines(interaction.files));
+  }
   lines.push('', ...formatPermissionContextLines(request));
   lines.push(`Reply in ${timeoutMinutes}m`);
-  return limitPermissionMessage(lines.join('\n'));
+  return limitPermissionMessage(
+    lines.join('\n'),
+    interaction.files?.some((file) => file.preview && !file.truncated)
+      ? 6000
+      : undefined,
+  );
 }
 
 function formatSemanticPermissionPrompt(
@@ -426,6 +442,47 @@ function formatInteractionDetailLine(
 ): string {
   const text = sanitizePermissionText(value, 200, 100);
   return `${label}: ${mono ? '`' : ''}${text}${mono ? '`' : ''}`;
+}
+
+function formatInteractionFileLines(files: InteractionFile[]): string[] {
+  const lines: string[] = [];
+  files.slice(0, 3).forEach((file, index) => {
+    const path = sanitizePermissionText(file.path, 160, 60);
+    const details = [
+      typeof file.sizeBytes === 'number'
+        ? formatApproxBytes(file.sizeBytes)
+        : null,
+      file.contentHash ? `sha256 ${file.contentHash.slice(0, 16)}` : null,
+    ].filter(Boolean);
+    lines.push(
+      `Review file${files.length > 1 ? ` ${index + 1}` : ''}: ${path}${
+        details.length > 0 ? ` (${details.join(', ')})` : ''
+      }`,
+    );
+    if (file.preview && !file.truncated) {
+      lines.push(
+        'Full content:',
+        '```markdown',
+        escapeMarkdownFenceDelimiters(
+          sanitizePermissionText(file.preview, file.preview.length, 0),
+        ),
+        '```',
+      );
+    } else if (file.preview) {
+      lines.push(
+        'Preview is truncated; review the full artifact before allowing.',
+      );
+    }
+  });
+  if (files.length > 3) lines.push(`+${files.length - 3} more review files`);
+  return lines;
+}
+
+function formatApproxBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} bytes`;
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function requestHasThreadRoute(

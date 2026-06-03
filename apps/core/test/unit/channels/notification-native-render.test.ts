@@ -116,6 +116,35 @@ describe('buildPermissionPromptParts', () => {
     expect(mcp.bodyLines.join('\n')).not.toContain('sandboxProfileId');
   });
 
+  it('splits long Slack permission bodies instead of truncating review text', () => {
+    const blocks = buildPermissionPromptContentBlocks({
+      title: 'Allow profile update?',
+      bodyLines: ['Full content:', '```markdown', 'x'.repeat(3500), '```'],
+      contextLines: ['Agent: Main Agent'],
+      replyInMinutes: 1,
+    });
+
+    const sectionTexts = blocks
+      .filter((block) => block.type === 'section')
+      .map((block) => (block.text as { text: string }).text);
+    expect(sectionTexts).toHaveLength(3);
+    expect(sectionTexts[0]).toBe('Full content:');
+    expect(
+      sectionTexts
+        .slice(1)
+        .map((text) => text.replace(/^```markdown\n/, '').replace(/\n```$/, ''))
+        .join(''),
+    ).toBe('x'.repeat(3500));
+    for (const text of sectionTexts) {
+      expect(text.length).toBeLessThanOrEqual(3000);
+      expect(text).not.toContain('...');
+    }
+    expect(sectionTexts[1]?.startsWith('```markdown\n')).toBe(true);
+    expect(sectionTexts[1]?.endsWith('\n```')).toBe(true);
+    expect(sectionTexts[2]?.startsWith('```markdown\n')).toBe(true);
+    expect(sectionTexts[2]?.endsWith('\n```')).toBe(true);
+  });
+
   it('drops internal plumbing ids from the generic fallback for unknown tools', () => {
     const parts = buildPermissionPromptParts(
       {
@@ -212,6 +241,17 @@ describe('Telegram HTML rendering', () => {
       '```',
     ]);
     expect(html).toContain('<pre>echo "&lt;a&gt; &amp;&amp; &lt;/b&gt;"</pre>');
+  });
+
+  it('renders markdown fences used by profile review evidence as <pre>', () => {
+    const html = renderBodyLinesHtml([
+      'Full content:',
+      '```markdown',
+      '# Agent\nUse <safe> text.',
+      '```',
+    ]);
+    expect(html).toContain('<pre># Agent\nUse &lt;safe&gt; text.</pre>');
+    expect(html).not.toContain('```markdown');
   });
 
   it('wraps the prompt title and never leaks raw code fences', () => {

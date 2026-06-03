@@ -72,6 +72,11 @@ gantry agent edit <agentId> [--name <name>] [--disabled|--active]
 gantry agent capabilities <agentId> --tools <ids> --skills <ids> --mcp <ids>
 gantry agent dm-access <agentId> --provider <provider> --allow <userId,userId> --admin <userId>
 gantry agent audit <agentId>
+gantry agent profile list <agentId>
+gantry agent profile read <agentId> <soul|agents>
+gantry agent profile set <agentId> <soul|agents> --file <path|-> [--expect-version N]
+gantry agent profile import <agentId> <soul|agents>
+gantry agent profile export <agentId> [<soul|agents>]
 
 gantry channel onboard <slack|teams|telegram> --external-id <id> --title <name>
 gantry channel list
@@ -555,6 +560,11 @@ Capability requests:
 - `mcp__gantry__request_skill_dependency_install`
 - `mcp__gantry__request_mcp_server`
 - `mcp__gantry__request_access`
+
+Agent profile (own SOUL.md / AGENTS.md):
+
+- `mcp__gantry__agent_profile_read`
+- `mcp__gantry__request_agent_profile_update`
 
 Service and agents:
 

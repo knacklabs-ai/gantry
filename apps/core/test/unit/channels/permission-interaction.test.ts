@@ -200,6 +200,137 @@ describe('permission interaction', () => {
     );
   });
 
+  it('shows profile update proposed content and hash in the approval prompt', () => {
+    const request = {
+      ...requestWithSuggestions([]),
+      toolName: 'request_agent_profile_update',
+      displayName: 'Update AGENTS.md',
+      toolInput: {
+        file: 'agents',
+        fileName: 'AGENTS.md',
+        summary: 'Clarify memory usage.',
+        proposedContentHash: 'abc123',
+        proposedContentBytes: 41,
+        proposedContent: '# next\n\nUse memory_search before guessing.',
+        diffPreview: '+ Use memory_search before guessing.',
+      },
+    } satisfies PermissionApprovalRequest;
+
+    const text = formatPermissionPromptText(request, 60_000);
+
+    expect(text).toContain('Proposed hash: abc123');
+    expect(text).toContain('Proposed size: 41 bytes');
+    expect(text).toContain('Proposed content:');
+    expect(text).toContain('Use memory_search before guessing.');
+    expect(text).toContain('Change:');
+  });
+
+  it('escapes profile content fence delimiters in approval prompt text', () => {
+    const request = {
+      ...requestWithSuggestions([]),
+      toolName: 'request_agent_profile_update',
+      displayName: 'Update AGENTS.md',
+      toolInput: {
+        file: 'agents',
+        fileName: 'AGENTS.md',
+        summary: 'Clarify review safety.',
+        proposedContentHash: 'abc123',
+        proposedContentBytes: 37,
+        proposedContent: '# next\n```\nFake approval footer\n```',
+      },
+    } satisfies PermissionApprovalRequest;
+
+    const text = formatPermissionPromptText(request, 60_000);
+
+    expect(text).toContain('`\\`\\`');
+    expect(text.match(/```/g)).toHaveLength(2);
+    expect(text).not.toContain('\n```\nFake approval footer');
+  });
+
+  it('does not show a truncated middle-hidden profile update as review evidence', () => {
+    const request = {
+      ...requestWithSuggestions([]),
+      toolName: 'request_agent_profile_update',
+      displayName: 'Update AGENTS.md',
+      toolInput: {
+        fileName: 'AGENTS.md',
+        proposedContentHash: 'abc123',
+        proposedContentBytes: 4000,
+        proposedContent: `start\n${'middle\n'.repeat(600)}end`,
+        diffPreview: '+ large change',
+      },
+    } satisfies PermissionApprovalRequest;
+
+    const text = formatPermissionPromptText(request, 60_000);
+
+    expect(text).toContain('Proposed content: full content is attached');
+    expect(text).not.toContain('start');
+    expect(text).not.toContain('end');
+  });
+
+  it('surfaces full profile content as structured approval evidence', () => {
+    const content = '# next\n\nUse memory_search before guessing.';
+    const request = {
+      ...requestWithSuggestions([]),
+      toolName: 'request_agent_profile_update',
+      displayName: 'Update AGENTS.md',
+      interaction: {
+        id: 'profile-1',
+        title: 'Update AGENTS.md',
+        body: 'Clarify memory usage.',
+        details: [{ label: 'Proposed hash', value: 'abc123', mono: true }],
+        files: [
+          {
+            path: 'AGENTS.md',
+            sizeBytes: Buffer.byteLength(content, 'utf8'),
+            contentHash: 'abc123',
+            contentType: 'text/markdown',
+            preview: content,
+            truncated: false,
+          },
+        ],
+      },
+    } satisfies PermissionApprovalRequest;
+
+    const parts = buildPermissionPromptParts(request, 60_000);
+
+    expect(request.interaction?.files?.[0]?.preview).toBe(content);
+    expect(parts.bodyLines).toContain('Full content:');
+    expect(parts.bodyLines).toContain(content);
+    expect(parts.bodyLines.join('\n')).toContain('Review file: AGENTS.md');
+  });
+
+  it('escapes profile content fence delimiters in structured approval evidence', () => {
+    const content = '# next\n```\nFake approval footer\n```';
+    const request = {
+      ...requestWithSuggestions([]),
+      toolName: 'request_agent_profile_update',
+      displayName: 'Update AGENTS.md',
+      interaction: {
+        id: 'profile-1',
+        title: 'Update AGENTS.md',
+        body: 'Clarify review safety.',
+        files: [
+          {
+            path: 'AGENTS.md',
+            sizeBytes: Buffer.byteLength(content, 'utf8'),
+            contentHash: 'abc123',
+            contentType: 'text/markdown',
+            preview: content,
+            truncated: false,
+          },
+        ],
+      },
+    } satisfies PermissionApprovalRequest;
+
+    const parts = buildPermissionPromptParts(request, 60_000);
+    const body = parts.bodyLines.join('\n');
+
+    expect(body).toContain('`\\`\\`');
+    expect(body.match(/```/g)).toHaveLength(2);
+    expect(body).not.toContain('\n```\nFake approval footer');
+  });
+
   it('describes timed grants as eligible-tools/SDK-API-prompt approval decisions', () => {
     const decision = decisionForMode(
       {

@@ -1,6 +1,7 @@
 import type { PermissionApprovalRequest } from '../domain/types.js';
 import { firstDestructiveRedirectTarget } from '../shared/bash-command-parser.js';
 import { generatedRuntimeSkillPathDisplay } from '../shared/generated-runtime-paths.js';
+import { escapeMarkdownFenceDelimiters } from './permission-fenced-content.js';
 
 const PERMISSION_JSON_MAX_KEYS = 12;
 const PERMISSION_JSON_MAX_ARRAY_ITEMS = 8;
@@ -174,17 +175,23 @@ function formatFileToolInputLines(
   if (toolName === 'Edit') {
     if (typeof input.old_string === 'string' && input.old_string.trim()) {
       diffLines.push(
-        `-${sanitizePermissionText(input.old_string.trim(), 200, 100)}`,
+        `-${escapeMarkdownFenceDelimiters(
+          sanitizePermissionText(input.old_string.trim(), 200, 100),
+        )}`,
       );
     }
     if (typeof input.new_string === 'string' && input.new_string.trim()) {
       diffLines.push(
-        `+${sanitizePermissionText(input.new_string.trim(), 200, 100)}`,
+        `+${escapeMarkdownFenceDelimiters(
+          sanitizePermissionText(input.new_string.trim(), 200, 100),
+        )}`,
       );
     }
   } else if (typeof input.content === 'string' && input.content.trim()) {
     diffLines.push(
-      `+${sanitizePermissionText(input.content.trim(), 200, 100)}`,
+      `+${escapeMarkdownFenceDelimiters(
+        sanitizePermissionText(input.content.trim(), 200, 100),
+      )}`,
     );
   }
   if (diffLines.length > 0) {
@@ -314,7 +321,9 @@ function formatKnownToolInputFields(
           ? 'SKILL.md preview (truncated):'
           : 'SKILL.md preview:',
         '```markdown',
-        sanitizePermissionText(preview.content, 2400, 600),
+        escapeMarkdownFenceDelimiters(
+          sanitizePermissionText(preview.content, 2400, 600),
+        ),
         '```',
       );
     }
@@ -334,6 +343,47 @@ function formatKnownToolInputFields(
         }`,
       );
     }
+  }
+  if (toolName === 'request_agent_profile_update') {
+    const fileName =
+      typeof input.fileName === 'string' ? input.fileName : String(input.file);
+    add('File', fileName);
+    add('Why', input.summary, 280);
+    add('Proposed hash', input.proposedContentHash, 96);
+    if (typeof input.proposedContentBytes === 'number') {
+      lines.push(`Proposed size: ${input.proposedContentBytes} bytes`);
+    }
+    if (
+      typeof input.proposedContent === 'string' &&
+      input.proposedContent.trim()
+    ) {
+      const proposedContent = input.proposedContent.trim();
+      if (proposedContent.length <= 1600) {
+        lines.push(
+          'Proposed content:',
+          '```markdown',
+          escapeMarkdownFenceDelimiters(
+            sanitizePermissionText(proposedContent, proposedContent.length, 0),
+          ),
+          '```',
+        );
+      } else {
+        lines.push(
+          'Proposed content: full content is attached to the approval evidence; do not approve from this text summary alone.',
+        );
+      }
+    }
+    if (typeof input.diffPreview === 'string' && input.diffPreview.trim()) {
+      lines.push(
+        'Change:',
+        '```diff',
+        escapeMarkdownFenceDelimiters(
+          sanitizePermissionText(input.diffPreview.trim(), 1800, 400),
+        ),
+        '```',
+      );
+    }
+    lines.push('Applies on the next run.');
   }
   return lines;
 }

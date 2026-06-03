@@ -211,6 +211,7 @@ export async function exportCurrentDesiredState(input: {
       name: agent.name,
       folder,
       persona: existing?.persona ?? 'developer',
+      relationshipMode: existing?.relationshipMode ?? 'personal',
       model: existing?.model,
       oneTimeJobDefaultModel: existing?.oneTimeJobDefaultModel,
       recurringJobDefaultModel: existing?.recurringJobDefaultModel,
@@ -391,6 +392,10 @@ export async function exportCurrentDesiredState(input: {
       name: existing?.name ?? group.name,
       folder,
       persona: existing?.persona ?? group.agentConfig?.persona ?? 'developer',
+      relationshipMode:
+        existing?.relationshipMode ??
+        group.agentConfig?.relationshipMode ??
+        'personal',
       model: existing?.model ?? group.agentConfig?.model,
       oneTimeJobDefaultModel: existing?.oneTimeJobDefaultModel,
       recurringJobDefaultModel: existing?.recurringJobDefaultModel,
