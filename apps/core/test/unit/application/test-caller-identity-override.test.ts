@@ -27,16 +27,15 @@ describe('applyTestCallerIdentityOverride', () => {
     expect(applyTestCallerIdentityOverride('app:default')).toBe('app:default');
   });
 
-  it('only remaps the operator conversation when an operator is configured', () => {
+  it('is independent of GANTRY_TEST_OPERATOR_PHONE (not scoped to the operator)', () => {
     process.env.GANTRY_TEST_CALLER_IDENTITY_PHONE = '918097288633';
     process.env.GANTRY_TEST_OPERATOR_PHONE = '919654405340';
-    // Operator's own conversation is remapped to the test customer.
+    // Decoupled: the swap applies to EVERY conversation, not just the operator's.
     expect(applyTestCallerIdentityOverride('wa:919654405340')).toBe(
       'wa:918097288633',
     );
-    // A real customer on a different number keeps their own identity.
     expect(applyTestCallerIdentityOverride('wa:919999999999')).toBe(
-      'wa:919999999999',
+      'wa:918097288633',
     );
   });
 });

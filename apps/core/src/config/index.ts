@@ -19,6 +19,7 @@ import {
 import { settingsFilePath } from './settings/runtime-home.js';
 import { DEFAULT_AGENT_NAME } from './settings/runtime-settings-defaults.js';
 import type {
+  RuntimeConfiguredAgentMemory,
   RuntimeConfiguredAgentPlugins,
   RuntimeSettings,
 } from './settings/runtime-settings-types.js';
@@ -105,6 +106,21 @@ export function getConfiguredAgentPluginsForFolder(
   try {
     return getRuntimeSettingsForConfig().agents[folder]?.plugins;
     // eslint-disable-next-line no-catch-all/no-catch-all -- Unreadable/invalid settings means "no declared plugins"; callers fall back to generic behaviour rather than failing the boundary operation.
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * Memory tuning for a configured agent FOLDER (the `agents.<folder>.memory`
+ * block), or undefined when absent. Used by the idle-session sweeper to discover
+ * which agents opted into idle-triggered extraction and after how many minutes.
+ */
+export function getConfiguredAgentMemoryForFolder(
+  folder: string,
+): RuntimeConfiguredAgentMemory | undefined {
+  try {
+    return getRuntimeSettingsForConfig().agents[folder]?.memory;
+    // eslint-disable-next-line no-catch-all/no-catch-all -- Unreadable/invalid settings means "no declared memory tuning"; callers fall back to default (no idle extraction).
   } catch {
     return undefined;
   }

@@ -4,6 +4,7 @@ import type {
 } from './memory-snapshot.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import type {
+  AgentMemoryConfig,
   AgentPluginsConfig,
   GuardrailConfig,
   ThinkingOverride,
@@ -162,6 +163,8 @@ export type RuntimeConfiguredAgentGuardrail = GuardrailConfig;
 
 export type RuntimeConfiguredAgentPlugins = AgentPluginsConfig;
 
+export type RuntimeConfiguredAgentMemory = AgentMemoryConfig;
+
 export interface RuntimeConfiguredAgent {
   name: string;
   folder: string;
@@ -171,6 +174,7 @@ export interface RuntimeConfiguredAgent {
   recurringJobDefaultModel?: string;
   thinking?: ThinkingOverride;
   plugins?: RuntimeConfiguredAgentPlugins;
+  memory?: RuntimeConfiguredAgentMemory;
   bindings: Record<string, RuntimeConfiguredAgentBinding>;
   sources: RuntimeConfiguredAgentSources;
   capabilities: RuntimeConfiguredAgentCapability[];

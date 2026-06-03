@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { execFileSync } from 'child_process';
 
 import { nowIso, nowMs } from '../shared/time/datetime.js';
 import { logger } from '../infrastructure/logging/logger.js';
@@ -125,6 +126,46 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// Best-effort wall-clock start time (ms since epoch) of a live PID, via `ps`.
+// macOS `ps` has no `etimes`, so we parse `lstart` (e.g. "Wed Jun  3 16:38:23
+// 2026", local time — Date.parse handles it). Returns undefined when it cannot
+// be determined; callers then fall back to the conservative "assume the holder
+// is alive" behaviour.
+function processStartTimeMs(pid: number): number | undefined {
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf-8',
+      timeout: 2000,
+    }).trim();
+    if (!out) return undefined;
+    const parsed = Date.parse(out);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+// Detects PID recycling: a live PID that started materially LATER than the
+// lock's recorded startedAt cannot be the original holder — that process died
+// and the OS reassigned its PID to an unrelated one (e.g. a system daemon, which
+// is exactly how a crashed Gantry can leave the IPC watcher wedged forever). The
+// lock writer records startedAt right after its own process start, so a genuine
+// holder's actual start time is at/just-before startedAt; only a recycled PID
+// starts well after it. Conservative: returns false whenever it cannot prove
+// recycling (no startedAt, unparseable, or `ps` unavailable).
+const PID_RECYCLE_SKEW_MS = 60_000;
+function isRecycledPid(
+  pid: number,
+  recordedStartedAt: string | undefined,
+): boolean {
+  if (!recordedStartedAt) return false;
+  const recordedMs = Date.parse(recordedStartedAt);
+  if (Number.isNaN(recordedMs)) return false;
+  const actualMs = processStartTimeMs(pid);
+  if (actualMs === undefined) return false;
+  return actualMs - recordedMs > PID_RECYCLE_SKEW_MS;
+}
+
 export function recoverStaleIpcRootLock(
   lockPath: string,
 ): IpcRootLockDetails & { recovered: boolean; recoveryReason?: string } {
@@ -139,10 +180,17 @@ export function recoverStaleIpcRootLock(
   if (details.pid === process.pid) {
     return { ...details, recovered: false, recoveryReason: 'same_process' };
   }
+  let recoveryReason: string;
   if (isProcessAlive(details.pid)) {
-    return { ...details, recovered: false, recoveryReason: 'pid_alive' };
+    // A live PID alone is not proof the original holder survives — guard against
+    // PID recycling, or a crashed runtime's lock blocks the IPC watcher forever.
+    if (!isRecycledPid(details.pid, details.startedAt)) {
+      return { ...details, recovered: false, recoveryReason: 'pid_alive' };
+    }
+    recoveryReason = 'pid_recycled';
+  } else {
+    recoveryReason = 'pid_not_running';
   }
-  const recoveryReason = 'pid_not_running';
   try {
     fs.rmSync(lockPath, { force: true });
     return { ...details, recovered: true, recoveryReason };

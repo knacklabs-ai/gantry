@@ -1,16 +1,14 @@
-// DEV/TESTING ONLY. Scopes test behaviour (the Shopify caller-identity override
-// and outbound dry-run) to a configured set of operator conversations, so those
-// flags are safe to enable on a server that also receives real traffic: only the
-// configured operator number(s) are affected; every other caller behaves normally.
+// DEV/TESTING ONLY. GANTRY_TEST_OPERATOR_PHONE configures the test operator's own
+// number. When set it does two things (both no-ops when unset, i.e. production):
+//   1. Outbound redirect: every reply is rerouted to the operator number so a
+//      test can never reach a real customer (see channel-wiring sendMessage).
+//   2. Session-command allowance: the operator may run /new etc. without being a
+//      production approver (see isTestOperatorJid).
 //
-// Set GANTRY_TEST_OPERATOR_PHONE (in $GANTRY_HOME/.env or the process env) to the
-// operator's digits (e.g. 919654405340). A comma/whitespace-separated LIST
-// configures several operator conversations at once
-// (e.g. "919654405340,919654405341"), which lets the scenario harness drive
-// multiple isolated lanes in parallel — each lane is its own conversation but all
-// share the test caller identity and outbound dry-run. If it is unset, test mode
-// is UNSCOPED (applies to all callers) — only do that on a fully isolated dev
-// instance.
+// Set it (in $GANTRY_HOME/.env or the process env) to the operator's digits
+// (e.g. 919654405340). A comma/whitespace-separated LIST configures several
+// operator numbers (e.g. "919654405340,919654405341") for parallel test lanes;
+// the FIRST entry is the outbound redirect target.
 //
 // `shared` may not import `config`, so this reads process.env (the value is
 // hydrated from .env at startup; see app/index.ts -> hydrateDynamicRuntimeEnv).
@@ -46,20 +44,12 @@ export function testOperatorPhone(): string | undefined {
   return configuredOperatorPhones()[0];
 }
 
-export function jidInTestScope(jid: string): boolean {
-  const operators = testOperatorPhones();
-  // Unset => unscoped (applies to all). Otherwise the JID must be one of the
-  // configured operator conversations.
-  if (operators.size === 0) return true;
-  return operators.has(jidDigits(jid));
-}
-
 // DEV/TESTING ONLY. True only when GANTRY_TEST_OPERATOR_PHONE is set AND `jid`
 // is one of the configured operator conversations. Lets a test operator reset
 // their own session (/new) and run other session commands without being a
 // production control approver — so the scenario harness can isolate each run
-// (including one lane per operator number). Unlike jidInTestScope, this is
-// STRICT: with the operator unset it always returns false, so it is a hard no-op
+// (including one lane per operator number). It is STRICT: with the operator
+// unset it always returns false, so it is a hard no-op
 // in production (where the flag is never set).
 export function isTestOperatorJid(jid: string): boolean {
   const operators = testOperatorPhones();

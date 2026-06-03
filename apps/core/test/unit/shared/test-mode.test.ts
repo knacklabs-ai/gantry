@@ -2,45 +2,29 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   isTestOperatorJid,
-  jidInTestScope,
   testOperatorPhone,
   testOperatorPhones,
 } from '@core/shared/test-mode.js';
 
-describe('test-mode scoping', () => {
+describe('test-mode operator phones', () => {
   afterEach(() => {
     delete process.env.GANTRY_TEST_OPERATOR_PHONE;
   });
 
-  it('is unscoped (applies to all) when no operator is configured', () => {
+  it('is empty when no operator is configured', () => {
     delete process.env.GANTRY_TEST_OPERATOR_PHONE;
     expect(testOperatorPhone()).toBeUndefined();
     expect(testOperatorPhones().size).toBe(0);
-    expect(jidInTestScope('wa:919654405340')).toBe(true);
-    expect(jidInTestScope('wa:919999999999')).toBe(true);
   });
 
-  it('matches only the operator conversation when configured', () => {
-    process.env.GANTRY_TEST_OPERATOR_PHONE = '919654405340';
-    expect(jidInTestScope('wa:919654405340')).toBe(true);
-    expect(jidInTestScope('wa:919999999999')).toBe(false);
-    expect(jidInTestScope('tg:919654405340')).toBe(true);
-  });
-
-  it('accepts a comma/space-separated SET of operator phones (parallel lanes)', () => {
-    // A pool of distinct lane numbers — each its own conversation, all in scope
-    // so they share the test caller identity and outbound dry-run.
+  it('parses a comma/space-separated SET of operator phones (parallel lanes)', () => {
     process.env.GANTRY_TEST_OPERATOR_PHONE =
       '919654405340, 919654405341 919654405342';
     expect(testOperatorPhones()).toEqual(
       new Set(['919654405340', '919654405341', '919654405342']),
     );
-    // First entry remains the back-compat single value.
+    // First entry is the back-compat single value (the outbound redirect target).
     expect(testOperatorPhone()).toBe('919654405340');
-    for (const p of ['919654405340', '919654405341', '919654405342']) {
-      expect(jidInTestScope(`wa:${p}`)).toBe(true);
-    }
-    expect(jidInTestScope('wa:919999999999')).toBe(false);
   });
 
   it('normalizes decorated entries to digits and drops blanks', () => {
@@ -59,8 +43,8 @@ describe('isTestOperatorJid (session-command allowance)', () => {
 
   it('is strict: false for every jid when no operator is configured', () => {
     delete process.env.GANTRY_TEST_OPERATOR_PHONE;
-    // Unlike jidInTestScope, this must NOT default to allow — it gates session
-    // commands, so production (operator unset) must be a hard no-op.
+    // This must NOT default to allow — it gates session commands, so production
+    // (operator unset) must be a hard no-op.
     expect(isTestOperatorJid('wa:919654405340')).toBe(false);
     expect(isTestOperatorJid('wa:919999999999')).toBe(false);
   });

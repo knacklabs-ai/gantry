@@ -69,6 +69,17 @@ export interface AgentPluginsConfig {
   skills?: string[];
 }
 
+/**
+ * Per-agent memory tuning (the `agents.<folder>.memory` block). Opt-in: omit the
+ * whole block to keep default behaviour (durable memory captured only at /new,
+ * compact, or job boundaries). Presence of `idleEndMinutes` additionally enables
+ * idle-triggered extraction — when a customer goes quiet for that many minutes the
+ * runtime treats the chat as ended and extracts durable memory in the background.
+ */
+export interface AgentMemoryConfig {
+  idleEndMinutes?: number;
+}
+
 export interface AgentConfig {
   additionalMounts?: AdditionalMount[];
   persona?: import('../shared/agent-persona.js').AgentPersona;
@@ -76,6 +87,7 @@ export interface AgentConfig {
   thinking?: ThinkingOverride; // Optional thinking override for this group
   timeout?: number; // Default: 300000 (5 minutes)
   plugins?: AgentPluginsConfig;
+  memory?: AgentMemoryConfig;
 }
 
 export interface ConversationRoute {

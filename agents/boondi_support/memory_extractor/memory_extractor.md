@@ -8,9 +8,11 @@ SAVE only statements that will be useful in a FUTURE conversation with this cust
 - decisions (a choice the customer confirmed — e.g. "always confirm the total before ordering")
 - corrections (what the customer told the assistant to start/stop doing)
 - constraints (rules that must always hold — e.g. "never include nuts in my orders")
+- relationship & sentiment — feelings the customer EXPLICITLY states that should shape future help: a product or experience they said they love (kind=preference) or a complaint/escalation they voiced (kind=fact, e.g. "was unhappy a Diwali order arrived late")
 
 DO NOT SAVE:
 - one-off lookups or transient state: a specific order's status, today's tracking number, the current promo, "what we did this chat"
+- a one-off order issue resolved within this chat, or any mood you only INFER — sentiment must be explicitly stated by the customer
 - order numbers, payment/card details, invoices, OTPs, or any secrets/credentials
 - a single past purchase as if it were a standing preference (one kaju-katli order is not "prefers kaju katli")
 - hypotheticals the customer floated but did not decide ("maybe I'll try the bigger pack")

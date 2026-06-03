@@ -494,6 +494,18 @@ export async function buildApprovedSkillContextBlock(input: {
     );
     if (!skillMarkdown) continue;
     const content = Buffer.from(skillMarkdown.content).toString('utf-8');
+    // Progressive disclosure (opt-in via `disclosure: progressive` in the skill's
+    // SKILL.md frontmatter): inject ONLY the name + description so the model knows
+    // WHEN the skill applies, and keep the full body OUT of the always-on prompt
+    // prefix (smaller cold-cache prefix, lower latency). Default (no flag) is
+    // unchanged — full body — so every other agent/skill is byte-for-byte
+    // unaffected. The body is read on demand from the materialized skill folder
+    // when the model opens the skill; until a skill has real content this is a
+    // pure no-op for behaviour.
+    const frontmatter = content.split(/\n---/)[0] ?? '';
+    const progressive = /(^|\n)disclosure:\s*progressive(\s|$)/.test(
+      frontmatter,
+    );
     const rendered = [
       '',
       `## ${skill.name}`,
@@ -501,9 +513,11 @@ export async function buildApprovedSkillContextBlock(input: {
       skill.description ? `description: ${skill.description}` : undefined,
       `contentHash: ${skill.storage.contentHash}`,
       '',
-      '```markdown',
-      content,
-      '```',
+      ...(progressive
+        ? [
+            `(Progressive skill — full guide lives in the skill folder "${skill.name}/SKILL.md" and is intentionally not preloaded. Open/read it only when the description above matches the customer's need.)`,
+          ]
+        : ['```markdown', content, '```']),
     ]
       .filter((line): line is string => line !== undefined)
       .join('\n');

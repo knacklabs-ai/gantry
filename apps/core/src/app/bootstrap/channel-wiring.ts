@@ -34,7 +34,7 @@ import {
 } from '../../application/customer-output/customer-safe-output.js';
 import { CUSTOMER_VISIBLE_DECLINE_MESSAGE } from '../../shared/user-visible-messages.js';
 import { flowLog } from '../../shared/flow-log.js';
-import { jidInTestScope } from '../../shared/test-mode.js';
+import { testOperatorPhone } from '../../shared/test-mode.js';
 import {
   getRuntimeStorage,
   getRuntimeRepositories,
@@ -334,16 +334,35 @@ export function createChannelWiring(
       replyChars: formatted.length,
       reply: formatted,
     });
-    // Dry-run (dev/testing): compute + log the reply but skip the real provider
-    // send (and the durability/persistence machinery below). Scoped to the test
-    // operator so real customers still get real replies; returns a synthetic
-    // delivery so the rest of the turn proceeds as if delivered.
-    if (process.env.GANTRY_OUTBOUND_DRYRUN === '1' && jidInTestScope(jid)) {
+    // ⚠️ SAFETY: when an LLM/agent is testing, ALWAYS keep
+    // GANTRY_OUTBOUND_DRYRUN=1 so the test reply never reaches a real WhatsApp
+    // user. GANTRY_OUTBOUND_DRYRUN=1 → reply is logged here, not sent to the
+    // provider. GANTRY_OUTBOUND_DRYRUN=0 (or unset) → reply is sent for real.
+    if (process.env.GANTRY_OUTBOUND_DRYRUN === '1') {
       resolved.logger.info(
         { jid },
         'Outbound dry-run: reply logged, not sent to provider',
       );
       return { externalMessageId: `dryrun:${randomUUID()}` };
+    }
+    // DEV/TEST: when GANTRY_TEST_OPERATOR_PHONE is set, redirect EVERY real send
+    // to the operator's own number so nothing can reach a real customer while
+    // testing. Reassigning `jid` here points the WHOLE delivery pipeline below
+    // (persistence, durable attempt, provider send, retry-tail recovery) at the
+    // operator number, so even a retry can never leak to the original recipient.
+    // The DRYRUN=1 kill-switch above is checked first, so this only applies when
+    // actually sending. Unset in production => no-op.
+    const operatorPhone = testOperatorPhone();
+    const jidColonIdx = jid.indexOf(':');
+    if (operatorPhone && jidColonIdx >= 0) {
+      const operatorJid = `${jid.slice(0, jidColonIdx + 1)}${operatorPhone}`;
+      if (operatorJid !== jid) {
+        resolved.logger.info(
+          { originalJid: jid, operatorJid },
+          'Test operator redirect: rerouting outbound to GANTRY_TEST_OPERATOR_PHONE',
+        );
+        jid = operatorJid;
+      }
     }
     const provider = providerForJid(jid)?.id ?? channel.name;
     const now = nowIso();

@@ -210,6 +210,7 @@ function renderConfiguredAgentsYaml(
       );
     }
     renderAgentPluginsYaml(lines, agent);
+    renderAgentMemoryYaml(lines, agent);
     renderAgentSourcesYaml(lines, agent);
     renderAgentCapabilitiesYaml(lines, agent.capabilities);
   }
@@ -332,6 +333,15 @@ function renderAgentPluginsYaml(
       lines.push(`        - ${quoteYamlString(skillId)}`);
     }
   }
+}
+
+function renderAgentMemoryYaml(
+  lines: string[],
+  agent: RuntimeConfiguredAgent,
+): void {
+  const memory = agent.memory;
+  if (!memory || typeof memory.idleEndMinutes !== 'number') return;
+  lines.push('    memory:', `      idle_end_minutes: ${memory.idleEndMinutes}`);
 }
 
 function renderAgentSourceListYaml(

@@ -2,6 +2,10 @@
 name: boondi-kb
 description: Bombay Sweet Shop knowledge base — return policy, store info, allergens, active discount codes, seasonal catalogue notes. Use whenever a customer asks a policy or store-info question, or when recommending products by occasion or dietary need.
 user_invocable: false
+# Progressive disclosure intentionally OFF while the KB body is small: it is
+# inlined for lower latency on common KB turns (returns, allergens, hours, codes).
+# Re-enable by adding the line `disclosure: progressive` below, once BSS fills the
+# catalogue and the body grows large. Format reference: ../skill.example.md
 ---
 
 # Bombay Sweet Shop — Customer Care Knowledge Base
@@ -16,9 +20,9 @@ content from BSS before going live.
 
 - Return window: [number of days]
 - Perishable exceptions: [e.g. mithai categories with shorter window]
-- Damaged or wrong items: escalate to human team within 5 minutes (chat) or
-  60 seconds (voice). Boondi never approves refunds — only escalates with full
-  Shopify context.
+- Damaged/wrong items, refunds, replacements: escalation + who-decides rules
+  live in SOUL.md §10 (Boondi flags, never approves). KB holds only the factual
+  windows below — not the behaviour.
 - Refund timing: [number of days after approval]
 
 ## Store locations & hours
@@ -30,8 +34,8 @@ content from BSS before going live.
 
 ## Allergens (per product category)
 
-Use this when an Anxious Detail-Seeker asks. If the question is clinically
-specific (e.g. cross-contamination, severe allergy), escalate to a human.
+Use this for factual allergen lookups. (When/whether to escalate a clinical or
+severe-allergy question to a human lives in SOUL.md §10 — not here.)
 
 - Kaju Katli — contains tree nuts (cashew).
 - Motichoor Ladoo — contains dairy (ghee); typically gluten-free.
@@ -52,7 +56,7 @@ placeholders, not live codes.]**
 ## Seasonal catalogue notes
 
 - Diwali — hampers, gift boxes, corporate options.
-- Wedding — favour boxes, bulk discounts (B2C self-serve up to 24 pieces; 25+ goes to the gifting team).
+- Wedding — favour boxes, bulk discounts.
 - [Other festivals.]
 
 ## Currency

@@ -18,6 +18,7 @@ import { writeGroupsSnapshot } from '../../runtime/agent-spawn.js';
 import { startIpcWatcher, type IpcDeps } from '../../runtime/ipc.js';
 // prettier-ignore
 import { recoverPendingMessages, startMessagePollingLoop } from '../../runtime/message-loop.js';
+import { createIdleSessionSweeper } from '../../runtime/idle-session-sweep.js';
 // prettier-ignore
 import { requestSchedulerSync, startSchedulerLoop } from '../../jobs/scheduler.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -703,6 +704,9 @@ export async function startRuntimeServices(
       queue: app.queue,
       handleActiveControlCommand,
       opsRepository: resolved.opsRepository,
+      runIdleSweep: createIdleSessionSweeper({
+        collectSessionMemory: resolved.collectSessionMemory,
+      }),
     })
     .catch((err) => {
       resolved.logger.fatal({ err }, 'Message loop crashed unexpectedly');

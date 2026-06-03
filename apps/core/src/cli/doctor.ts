@@ -27,6 +27,7 @@ import {
 } from '../config/settings/runtime-settings.js';
 import { validateTelegramBotToken } from './telegram.js';
 import { inspectMemoryHealth } from './memory-health.js';
+import { readAgentRuntimeFile } from '../platform/agent-content.js';
 import { validatePostgresConnectionUrl } from '../adapters/storage/postgres/url.js';
 import { inspectRuntimeStorageReadiness } from '../adapters/storage/postgres/storage-readiness.js';
 import {
@@ -427,6 +428,46 @@ export function runDoctor(
     message: `${memoryHealth.embeddingProvider} (source: ${memoryHealth.embeddingProviderSource}): ${memoryHealth.embeddingCheck.message}`,
     nextAction: memoryHealth.embeddingCheck.nextAction,
   });
+  if (settings) {
+    for (const [folder, agent] of Object.entries(settings.agents)) {
+      const idleMinutes = agent.memory?.idleEndMinutes;
+      const idleEnabled = typeof idleMinutes === 'number';
+      add(checks, {
+        id: `agent:${folder}:memory_idle`,
+        title: `Memory Idle Extraction (${folder})`,
+        status: 'pass',
+        message: idleEnabled
+          ? `Idle memory extraction is ON (after ${idleMinutes} min of silence).`
+          : 'Idle memory extraction is not enabled (set memory.idle_end_minutes to turn it on).',
+      });
+      const declaredExtractor = agent.plugins?.memoryExtraction;
+      if (!declaredExtractor) continue;
+      if (readAgentRuntimeFile(folder, declaredExtractor) === null) {
+        add(checks, {
+          id: `agent:${folder}:memory_extraction`,
+          title: `Memory Extractor (${folder})`,
+          status: 'fail',
+          message: `Declared memory_extraction file "${declaredExtractor}" was not found in the agent folder.`,
+          nextAction: `Add ${declaredExtractor} to the ${folder} agent folder, or remove the plugins.memory_extraction declaration.`,
+        });
+      } else if (!idleEnabled) {
+        add(checks, {
+          id: `agent:${folder}:memory_extraction`,
+          title: `Memory Extractor (${folder})`,
+          status: 'warn',
+          message: `Custom extractor "${declaredExtractor}" is configured, but no idle trigger is set — durable memory is only captured on /new, compaction, or jobs, which customer-facing chats rarely hit.`,
+          nextAction: `Set agents.${folder}.memory.idle_end_minutes so memory is captured when customers go quiet.`,
+        });
+      } else {
+        add(checks, {
+          id: `agent:${folder}:memory_extraction`,
+          title: `Memory Extractor (${folder})`,
+          status: 'pass',
+          message: `Custom extractor "${declaredExtractor}" is configured with idle extraction.`,
+        });
+      }
+    }
+  }
   let modelAccessStatus: DoctorStatus = 'pass';
   let modelAccessMessage = `Model Access is managed by ${credentialMode} credential mode.`;
   let modelAccessNextAction: string | undefined;

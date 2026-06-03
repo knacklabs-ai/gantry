@@ -31,6 +31,7 @@ interface ParsedArgs {
   command: string[];
   runtimeHomeArg?: string;
   help: boolean;
+  json: boolean;
 }
 
 function usage(): string {
@@ -69,11 +70,16 @@ function parseArgs(argv: string[]): ParsedArgs {
   const command: string[] = [];
   let runtimeHomeArg: string | undefined;
   let help = false;
+  let json = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '-h' || arg === '--help') {
       help = true;
+      continue;
+    }
+    if (arg === '--json') {
+      json = true;
       continue;
     }
     if (arg === '--runtime-home') {
@@ -88,17 +94,22 @@ function parseArgs(argv: string[]): ParsedArgs {
     command.push(arg);
   }
 
-  return { command, runtimeHomeArg, help };
+  return { command, runtimeHomeArg, help, json };
 }
 
 async function runDoctorCommand(
   importMetaUrl: string,
   runtimeHome: string,
+  json = false,
 ): Promise<number> {
   const { formatDoctorReport, runDoctorWithNetwork } =
     await import('./doctor.js');
   const report = await runDoctorWithNetwork(importMetaUrl, runtimeHome);
-  p.note(formatDoctorReport(report), 'Doctor');
+  if (json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    p.note(formatDoctorReport(report), 'Doctor');
+  }
   return report.ok ? 0 : 1;
 }
 
@@ -414,7 +425,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   if (command === 'doctor') {
-    return runDoctorCommand(import.meta.url, runtimeHome);
+    return runDoctorCommand(import.meta.url, runtimeHome, parsed.json);
   }
 
   if (command === 'status') {

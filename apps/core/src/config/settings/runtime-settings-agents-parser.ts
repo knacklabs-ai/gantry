@@ -11,6 +11,7 @@ import type {
   RuntimeConfiguredAgentBinding,
   RuntimeConfiguredAgentCapability,
   RuntimeConfiguredAgentGuardrail,
+  RuntimeConfiguredAgentMemory,
   RuntimeConfiguredAgentPlugins,
   RuntimeConfiguredAgentSourceRef,
   RuntimeConfiguredAgentSources,
@@ -255,6 +256,40 @@ function parseConfiguredAgentPlugins(
     );
   }
   return plugins;
+}
+
+function parseConfiguredAgentMemory(
+  raw: unknown,
+  pathPrefix: string,
+): RuntimeConfiguredAgentMemory | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${pathPrefix} must be a mapping`);
+  }
+  const map = raw as Record<string, unknown>;
+  for (const key of Object.keys(map)) {
+    if (key !== 'idle_end_minutes') {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure idle_end_minutes.`,
+      );
+    }
+  }
+  const memory: RuntimeConfiguredAgentMemory = {};
+  if (map.idle_end_minutes !== undefined) {
+    const value = map.idle_end_minutes;
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > 1440
+    ) {
+      throw new Error(
+        `${pathPrefix}.idle_end_minutes must be an integer between 1 and 1440 (minutes).`,
+      );
+    }
+    memory.idleEndMinutes = value;
+  }
+  return Object.keys(memory).length > 0 ? memory : undefined;
 }
 
 function parseConfiguredAgentThinking(
@@ -510,13 +545,14 @@ export function parseConfiguredAgents(
         key !== 'recurring_job_default_model' &&
         key !== 'thinking' &&
         key !== 'plugins' &&
+        key !== 'memory' &&
         key !== 'bindings' &&
         key !== 'sources' &&
         key !== 'capabilities'
       ) {
         if (legacyGrantKey(key)) rejectLegacyAgentGrantField(pathPrefix, key);
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, thinking, plugins (guardrail/memory_extraction/skills), bindings, sources, or capabilities.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, thinking, plugins (guardrail/memory_extraction/skills), memory (idle_end_minutes), bindings, sources, or capabilities.`,
         );
       }
     }
@@ -587,6 +623,7 @@ export function parseConfiguredAgents(
         map.plugins,
         `${pathPrefix}.plugins`,
       ),
+      memory: parseConfiguredAgentMemory(map.memory, `${pathPrefix}.memory`),
       bindings: parseConfiguredAgentBindings(
         map.bindings,
         `${pathPrefix}.bindings`,
