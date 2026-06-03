@@ -161,6 +161,7 @@ const OPERATING_GUIDANCE_BLOCK = [
   '- Skill installs and proposals are returned as immediate skill context after host review and are also materialized for later runs, but risky skill actions still require reviewed allowed capabilities.',
   '- Approved third-party MCP sources are inspected through mcp_list_tools and used through mcp_call_tool only when reviewed current-run access covers that action; do not call direct third-party mcp__server__tool names.',
   '- If capability_status shows an MCP source as ready or a reviewed MCP capability is already selected for this run, do not request the same capability again; inspect the source with mcp_list_tools and call approved actions with mcp_call_tool.',
+  '- When a reviewed MCP source is ready for a task, do not use Bash, RunCommand, shell, curl, node, npm, file tools, or browser automation to inspect or call that service. Use mcp_list_tools and mcp_call_tool; if the proxy returns an error, report that error and ask for the missing setup.',
   '',
   '## Communication',
   '- Lead with the answer.',

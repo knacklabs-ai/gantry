@@ -302,7 +302,7 @@ export function capabilityStatusText(): string {
     ...(attachedMcpSourceIds.length > 0
       ? [
           `Attached MCP source ids: ${attachedMcpSourceIds.slice().sort().join(', ')}`,
-          'MCP source rule: ready sources are already attached. Inspect them with mcp_list_tools and call approved actions through mcp_call_tool. Do not request the same MCP capability again unless the proxy response says access is missing.',
+          'MCP source rule: ready sources are already attached. Inspect them with mcp_list_tools and call approved actions through mcp_call_tool. Do not request the same MCP capability again unless the proxy response says access is missing. Do not use Bash, RunCommand, curl, node, browser automation, or file tools to call or inspect ready MCP sources.',
         ]
       : []),
     '',

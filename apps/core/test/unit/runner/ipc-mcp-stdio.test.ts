@@ -590,6 +590,9 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
       'Do not request the same MCP capability again',
     );
     expect(record.result.content[0].text).toContain(
+      'Do not use Bash, RunCommand, curl, node, browser automation, or file tools',
+    );
+    expect(record.result.content[0].text).toContain(
       'Attached MCP source ids: mcp:github',
     );
   });

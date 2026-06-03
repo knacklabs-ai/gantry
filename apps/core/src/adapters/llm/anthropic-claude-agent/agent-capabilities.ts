@@ -138,12 +138,12 @@ const sdkToolsProvider: AgentCapabilityProvider = {
   id: 'sdk-tools',
   provide: (ctx) => {
     const persona = resolveAgentPersona(ctx.persona);
-    const baseAvailableTools = ctx.isScheduledJob
-      ? [
-          ...(persona === 'developer' ? DEVELOPER_NATIVE_SDK_TOOLS : []),
-          ...SAFE_NATIVE_SDK_TOOLS,
-        ]
-      : AVAILABLE_NATIVE_SDK_TOOLS;
+    const baseAvailableTools =
+      persona === 'developer'
+        ? ctx.isScheduledJob
+          ? [...DEVELOPER_NATIVE_SDK_TOOLS, ...SAFE_NATIVE_SDK_TOOLS]
+          : AVAILABLE_NATIVE_SDK_TOOLS
+        : SAFE_NATIVE_SDK_TOOLS;
     return {
       allowedTools:
         persona === 'developer'

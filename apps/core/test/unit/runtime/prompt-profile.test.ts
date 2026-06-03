@@ -288,6 +288,9 @@ describe('PromptProfileService', () => {
     expect(prompt).toContain(
       'If capability_status shows an MCP source as ready or a reviewed MCP capability is already selected for this run, do not request the same capability again',
     );
+    expect(prompt).toContain(
+      'When a reviewed MCP source is ready for a task, do not use Bash, RunCommand, shell, curl, node, npm, file tools, or browser automation',
+    );
     expect(prompt).not.toContain('[[SHARED_CONTEXT]]');
   });
 

@@ -53,6 +53,15 @@ const DANGEROUS_DEFAULT_TOOLS = [
 ] as const;
 
 const UNAVAILABLE_DEFAULT_TOOLS = [
+  'Read',
+  'Glob',
+  'Grep',
+  'Bash',
+  'Write',
+  'Edit',
+  'LS',
+  'MultiEdit',
+  'NotebookEdit',
   'Browser',
   'Config',
   'AskUserQuestion',
@@ -66,6 +75,14 @@ const UNAVAILABLE_DEFAULT_TOOLS = [
 ] as const;
 
 const DEFAULT_AVAILABLE_TOOLS = [
+  'Agent',
+  'WebSearch',
+  'WebFetch',
+  'ToolSearch',
+  'Skill',
+] as const;
+
+const DEVELOPER_AVAILABLE_TOOLS = [
   'Read',
   'Glob',
   'Grep',
@@ -81,8 +98,6 @@ const DEFAULT_AVAILABLE_TOOLS = [
   'ToolSearch',
   'Skill',
 ] as const;
-
-const DEVELOPER_AVAILABLE_TOOLS = [...DEFAULT_AVAILABLE_TOOLS] as const;
 
 describe('agent capability composition', () => {
   it('uses exact safe defaults and gantry MCP server wiring', () => {
@@ -475,6 +490,8 @@ describe('agent capability composition', () => {
         'Bash',
       ]),
     );
+    expect(profile.availableTools).not.toContain('Glob');
+    expect(profile.availableTools).not.toContain('Grep');
     expect(profile.availableTools).not.toContain('Write');
     expect(profile.availableTools).not.toContain('Edit');
     expect(profile.availableTools).not.toContain('MultiEdit');
