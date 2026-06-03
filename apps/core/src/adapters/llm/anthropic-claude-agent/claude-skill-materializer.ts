@@ -30,21 +30,21 @@ export interface SkillSource {
   }): Promise<ClaudeSkillSourceItem[]>;
 }
 
-export const GANTRY_BUNDLED_CLAUDE_SKILL_IDS = ['gantry-admin'] as const;
+export const GANTRY_BUNDLED_SKILL_IDS = ['gantry-admin'] as const;
 
-export class BundledClaudeSkillSource implements SkillSource {
+export class BundledGantrySkillSource implements SkillSource {
   constructor(private readonly packageRoot: string) {}
 
   async listSkills(input?: {
     enabledSkillIds?: string[];
   }): Promise<ClaudeSkillSourceItem[]> {
-    const skillsRoot = path.join(this.packageRoot, '.claude', 'skills');
+    const skillsRoot = path.join(this.packageRoot, '.agents', 'skills');
     if (!fs.existsSync(skillsRoot)) return [];
     const enabled = input?.enabledSkillIds
       ? new Set(input.enabledSkillIds)
       : undefined;
 
-    return GANTRY_BUNDLED_CLAUDE_SKILL_IDS.flatMap((skillId) => {
+    return GANTRY_BUNDLED_SKILL_IDS.flatMap((skillId) => {
       const sourceDir = path.join(skillsRoot, skillId);
       if (!fs.existsSync(path.join(sourceDir, 'SKILL.md'))) {
         return [];
@@ -120,7 +120,7 @@ Gantry owns the persistent browser lifecycle and gives each agent conversation i
 - Close the browser with \`browser_close\` after scheduled jobs or other unattended browser work completes.
 - The Browser capability exposes only the Gantry gateway. Do not request private browser backends or alternate automation tools.
 - Gantry launches the backing browser lazily when an action needs it; \`browser_status\` is read-only and does not launch Chrome.
-- Do not install browser skills or edit user \`.claude/skills\` paths.
+- Do not install browser skills or edit user skill package paths.
 
 If a site requires login, launch the headed browser and ask the user to complete authentication in that persistent profile. Do not scrape credentials or bypass normal site authentication.
 `;

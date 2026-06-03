@@ -169,15 +169,16 @@ Runtime memory:
   output and JSONL transcripts are not Gantry session state.
 
 Runtime Claude settings and skills are generated into a temporary per-run
-`CLAUDE_CONFIG_DIR`. Runtime-home `.claude/skills` is not the skill source of
-truth. Do not install separate global Claude hooks for Gantry memory. Generated
-runtime settings do not install memory hooks.
+`CLAUDE_CONFIG_DIR`. Runtime-home provider skill folders are not the skill
+source of truth. Do not install separate global Claude hooks for Gantry memory.
+Generated runtime settings do not install memory hooks.
 
 Capability changes are never direct edits. Agents must not run dependency
-install commands, edit `.claude/skills`, edit `.mcp.json`, edit `settings.yaml`,
-edit Claude permission settings, or mutate generated runtime config. Every
-capability change goes through request, review, approval or denial, durable
-audit, and a new config version. Tool permission approval can also resume the
+install commands, edit provider skill folders, edit `.mcp.json`, edit
+`settings.yaml`, edit provider permission settings, or mutate generated runtime
+config. Every capability change goes through request, review, approval or
+denial, durable audit, and a new config version. Tool permission approval can
+also resume the
 blocked active tool call: `Allow once` is current-run only, while `Always allow`
 updates the target agent capability binding, mirrors `settings.yaml`, and
 applies to future runs too.
@@ -619,7 +620,7 @@ profile. DM sessions, channel/group conversations, and jobs created from them
 use separate profiles by default. The runtime installs `gantry-browser` into the
 generated per-run Claude config and exposes Gantry-owned browser gateway tools
 only when the canonical `Browser` capability is selected. Do not ask the user to
-install browser skills or edit `.claude/skills` manually.
+install browser skills or edit provider skill folders manually.
 
 ## Scheduler Usage
 

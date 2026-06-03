@@ -5,11 +5,21 @@ export { NEUTRAL_CA_TRUST_ENV_KEYS };
 type BashCommandKey = 'command' | 'cmd';
 
 const GO_DNS_RESOLVER_ENV = 'GODEBUG=netdns=go';
+const TOOL_NETWORK_COMMAND_ENV_KEYS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'NODE_USE_ENV_PROXY',
+  'NO_PROXY',
+  'no_proxy',
+  ...NEUTRAL_CA_TRUST_ENV_KEYS,
+] as const;
 
 export function applyBashTrustEnv(
   toolName: string,
   input: Record<string, unknown>,
-  sdkEnv: Record<string, string | undefined>,
+  toolNetworkEnv: Record<string, string | undefined>,
 ): Record<string, unknown> {
   if (toolName !== 'Bash') return input;
 
@@ -19,7 +29,7 @@ export function applyBashTrustEnv(
   const command = input[commandKey];
   if (typeof command !== 'string' || !command.trim()) return input;
 
-  const prefix = bashTrustEnvPrefix(sdkEnv.NODE_EXTRA_CA_CERTS?.trim());
+  const prefix = bashTrustEnvPrefix(toolNetworkEnv);
   if (command.startsWith(`${prefix} `)) return input;
 
   return {
@@ -34,13 +44,14 @@ function bashCommandKey(input: Record<string, unknown>): BashCommandKey | null {
   return null;
 }
 
-function bashTrustEnvPrefix(caPath: string | undefined): string {
+function bashTrustEnvPrefix(
+  toolNetworkEnv: Record<string, string | undefined>,
+): string {
   const entries = [GO_DNS_RESOLVER_ENV];
-  if (caPath) {
-    const quotedCaPath = shellSingleQuote(caPath);
-    entries.push(
-      ...NEUTRAL_CA_TRUST_ENV_KEYS.map((key) => `${key}=${quotedCaPath}`),
-    );
+  for (const key of TOOL_NETWORK_COMMAND_ENV_KEYS) {
+    const value = toolNetworkEnv[key]?.trim();
+    if (!value) continue;
+    entries.push(`${key}=${shellSingleQuote(value)}`);
   }
   return entries.join(' ');
 }

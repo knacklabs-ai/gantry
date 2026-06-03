@@ -827,12 +827,15 @@ describe('agent-runner IPC lifecycle', () => {
         baseInput({
           modelCredentialEnv: {
             ANTHROPIC_BASE_URL: 'https://broker.local/anthropic',
+            NODE_EXTRA_CA_CERTS: '/tmp/model_gateway-ca.pem',
+          },
+          toolNetworkEnv: {
             HTTP_PROXY: 'http://127.0.0.1:18080/',
             HTTPS_PROXY: 'http://127.0.0.1:18080/',
             http_proxy: 'http://127.0.0.1:18080/',
             https_proxy: 'http://127.0.0.1:18080/',
             NODE_USE_ENV_PROXY: '1',
-            NODE_EXTRA_CA_CERTS: '/tmp/model_gateway-ca.pem',
+            REQUESTS_CA_BUNDLE: '/tmp/model_gateway-ca.pem',
           },
         }),
         {
@@ -858,11 +861,11 @@ describe('agent-runner IPC lifecycle', () => {
       expect(sdkEnv.ANTHROPIC_BASE_URL).toBe('https://broker.local/anthropic');
       expect(sdkEnv.ANTHROPIC_API_KEY).toBeUndefined();
       expect(sdkEnv.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-      expect(sdkEnv.HTTP_PROXY).toBe('http://127.0.0.1:18080/');
-      expect(sdkEnv.HTTPS_PROXY).toBe('http://127.0.0.1:18080/');
-      expect(sdkEnv.http_proxy).toBe('http://127.0.0.1:18080/');
-      expect(sdkEnv.https_proxy).toBe('http://127.0.0.1:18080/');
-      expect(sdkEnv.NODE_USE_ENV_PROXY).toBe('1');
+      expect(sdkEnv.HTTP_PROXY).toBeUndefined();
+      expect(sdkEnv.HTTPS_PROXY).toBeUndefined();
+      expect(sdkEnv.http_proxy).toBeUndefined();
+      expect(sdkEnv.https_proxy).toBeUndefined();
+      expect(sdkEnv.NODE_USE_ENV_PROXY).toBeUndefined();
       expect(sdkEnv.GIT_HTTP_PROXY_AUTHMETHOD).toBeUndefined();
       expect(sdkEnv.NODE_EXTRA_CA_CERTS).toBe('/tmp/model_gateway-ca.pem');
       expect(sdkEnv.SSL_CERT_FILE).toBe('/tmp/model_gateway-ca.pem');
@@ -902,7 +905,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'rejects model proxy env that bypasses the Gantry egress gateway',
+    'rejects proxy env in the model credential lane',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -922,7 +925,7 @@ describe('agent-runner IPC lifecycle', () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain(
-        'modelCredentialEnv.HTTP_PROXY must match GANTRY_EGRESS_PROXY_URL.',
+        'modelCredentialEnv.HTTP_PROXY is not supported.',
       );
       expect(fs.existsSync(fixture.recordPath)).toBe(false);
     },
@@ -2123,7 +2126,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'adds neutral CA trust aliases to allowed Bash tool calls',
+    'adds tool network env to allowed Bash tool calls',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -2133,8 +2136,15 @@ describe('agent-runner IPC lifecycle', () => {
           isScheduledJob: true,
           jobId: 'job-1',
           allowedTools: ['RunCommand(acme records *)'],
-          modelCredentialEnv: {
-            NODE_EXTRA_CA_CERTS: '/tmp/model_gateway-ca.pem',
+          toolNetworkEnv: {
+            HTTP_PROXY: 'http://127.0.0.1:18080/',
+            HTTPS_PROXY: 'http://127.0.0.1:18080/',
+            http_proxy: 'http://127.0.0.1:18080/',
+            https_proxy: 'http://127.0.0.1:18080/',
+            NODE_USE_ENV_PROXY: '1',
+            NO_PROXY: '127.0.0.1,localhost,::1',
+            no_proxy: '127.0.0.1,localhost,::1',
+            REQUESTS_CA_BUNDLE: '/tmp/model_gateway-ca.pem',
           },
         }),
         {
@@ -2145,14 +2155,14 @@ describe('agent-runner IPC lifecycle', () => {
 
       const trustPrefix = [
         'GODEBUG=netdns=go',
-        "SSL_CERT_FILE='/tmp/model_gateway-ca.pem'",
+        "HTTP_PROXY='http://127.0.0.1:18080/'",
+        "HTTPS_PROXY='http://127.0.0.1:18080/'",
+        "http_proxy='http://127.0.0.1:18080/'",
+        "https_proxy='http://127.0.0.1:18080/'",
+        "NODE_USE_ENV_PROXY='1'",
+        "NO_PROXY='127.0.0.1,localhost,::1'",
+        "no_proxy='127.0.0.1,localhost,::1'",
         "REQUESTS_CA_BUNDLE='/tmp/model_gateway-ca.pem'",
-        "CURL_CA_BUNDLE='/tmp/model_gateway-ca.pem'",
-        "GIT_SSL_CAINFO='/tmp/model_gateway-ca.pem'",
-        "PIP_CERT='/tmp/model_gateway-ca.pem'",
-        "AWS_CA_BUNDLE='/tmp/model_gateway-ca.pem'",
-        "CARGO_HTTP_CAINFO='/tmp/model_gateway-ca.pem'",
-        "DENO_CERT='/tmp/model_gateway-ca.pem'",
       ].join(' ');
 
       expect(result.exitCode).toBe(0);

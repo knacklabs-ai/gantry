@@ -34,7 +34,7 @@
     "docker-compose.yml",
     "ops/postgres/init/",
     "!**/*.map",
-    ".claude/skills/*/SKILL.md"
+    ".agents/skills/*/SKILL.md"
   ],
   "workspaces": [
     "packages/contracts",

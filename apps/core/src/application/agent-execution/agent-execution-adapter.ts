@@ -108,6 +108,7 @@ export interface PreparedAgentExecution {
   runnerArgs: string[];
   runnerInputPatch?: {
     modelCredentialEnv?: Record<string, string>;
+    toolNetworkEnv?: Record<string, string>;
     semanticCapabilities?: SemanticCapabilityDefinition[];
   };
   env: NodeJS.ProcessEnv;

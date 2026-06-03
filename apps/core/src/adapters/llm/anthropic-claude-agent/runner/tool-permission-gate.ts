@@ -238,7 +238,11 @@ export function createCanUseToolCallback(
     }
 
     const trustInput = () =>
-      applyBashTrustEnv(toolName, toolInput, input.sdkEnv);
+      applyBashTrustEnv(
+        toolName,
+        toolInput,
+        input.agentInput.toolNetworkEnv ?? {},
+      );
     const timedGrantPrincipal =
       input.agentInput.agentId || input.workspaceFolder;
     const sdkApprovalPrincipal =
@@ -524,7 +528,7 @@ export function createCanUseToolCallback(
         );
         return {
           behavior: 'allow' as const,
-          updatedInput: applyBashTrustEnv(toolName, toolInput, input.sdkEnv),
+          updatedInput: trustInput(),
           ...(persistentUpdates && persistentUpdates.length > 0
             ? { updatedPermissions: persistentUpdates as never }
             : {}),
@@ -664,7 +668,7 @@ export function createCanUseToolCallback(
       );
       return {
         behavior: 'allow' as const,
-        updatedInput: applyBashTrustEnv(toolName, toolInput, input.sdkEnv),
+        updatedInput: trustInput(),
         ...(persistentUpdates && persistentUpdates.length > 0
           ? { updatedPermissions: persistentUpdates as never }
           : {}),

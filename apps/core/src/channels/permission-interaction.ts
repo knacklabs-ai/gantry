@@ -130,10 +130,15 @@ export function permissionButtonLabel(
 export function formatPermissionPromptText(
   request: PermissionApprovalRequest,
   timeoutMs: number,
+  options: { budget?: number } = {},
 ): string {
   const timeoutMinutes = Math.max(1, Math.round(timeoutMs / 60000));
   if (request.interaction) {
-    return formatInteractionPermissionPrompt(request, timeoutMinutes);
+    return formatInteractionPermissionPrompt(
+      request,
+      timeoutMinutes,
+      options.budget,
+    );
   }
   const rule = firstPersistentRule(request);
   const capabilityName = semanticCapabilityName(request, rule);
@@ -295,11 +300,7 @@ function sanitizePermissionText(
   tail: number,
 ): string {
   const result = sanitizeOutboundLlmText(input);
-  if (
-    result.redacted ||
-    result.blocked ||
-    /\[REDACTED_(?:SECRET|POTENTIALLY_SENSITIVE)\]/.test(result.text)
-  ) {
+  if (result.blocked) {
     return 'Sensitive detail hidden.';
   }
   return headTailTruncate(result.text, head, tail);
@@ -361,6 +362,7 @@ function formatAgentDisplayName(sourceAgentFolder: string): string {
 function formatInteractionPermissionPrompt(
   request: PermissionApprovalRequest,
   timeoutMinutes: number,
+  budget?: number,
 ): string {
   const interaction = request.interaction!;
   const rule = firstPersistentRule(request);
@@ -390,9 +392,10 @@ function formatInteractionPermissionPrompt(
   lines.push(`Reply in ${timeoutMinutes}m`);
   return limitPermissionMessage(
     lines.join('\n'),
-    interaction.files?.some((file) => file.preview && !file.truncated)
-      ? 6000
-      : undefined,
+    budget ??
+      (interaction.files?.some((file) => file.preview && !file.truncated)
+        ? 6000
+        : undefined),
   );
 }
 

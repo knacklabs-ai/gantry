@@ -236,6 +236,36 @@ function skillMarkdownPreviewContent(input: Record<string, unknown>): {
   };
 }
 
+function skillReviewFileLines(
+  input: Record<string, unknown>,
+  sanitizePermissionText: PermissionTextSanitizer,
+): string[] {
+  if (!Array.isArray(input.files) || input.files.length === 0) return [];
+  const lines: string[] = ['Review files:'];
+  for (const file of input.files.slice(0, 5)) {
+    if (!file || typeof file !== 'object') continue;
+    const record = file as Record<string, unknown>;
+    const path =
+      typeof record.path === 'string'
+        ? sanitizePermissionText(record.path, 160, 60)
+        : 'unknown';
+    const details: string[] = [];
+    if (typeof record.sizeBytes === 'number') {
+      details.push(formatApproxBytes(record.sizeBytes));
+    }
+    if (typeof record.contentHash === 'string' && record.contentHash.trim()) {
+      details.push(sanitizePermissionText(record.contentHash.trim(), 80, 16));
+    }
+    lines.push(
+      `- ${path}${details.length > 0 ? ` (${details.join(', ')})` : ''}`,
+    );
+  }
+  if (input.files.length > 5) {
+    lines.push(`+${input.files.length - 5} more files`);
+  }
+  return lines;
+}
+
 function formatKnownToolInputFields(
   toolName: string,
   input: Record<string, unknown>,
@@ -312,6 +342,7 @@ function formatKnownToolInputFields(
           ? ` (${formatApproxBytes(input.totalSizeBytes)})`
           : '';
       lines.push(`Files: ${input.files.length}${size}`);
+      lines.push(...skillReviewFileLines(input, sanitizePermissionText));
     }
     addList('Requires env', input.requiredEnvVars);
     const preview = skillMarkdownPreviewContent(input);

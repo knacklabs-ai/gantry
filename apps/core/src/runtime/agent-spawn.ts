@@ -46,6 +46,7 @@ import {
 } from '../application/agents/prompt-profile-service.js';
 import { executeRunnerProcess } from './agent-spawn-process.js';
 import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
+import { buildToolNetworkEnv } from '../shared/tool-network-env.js';
 import {
   closeEgressGateway,
   ensureEgressGateway,
@@ -77,8 +78,10 @@ import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 import { formatGeneratedRuntimePathPermissionError } from './generated-runtime-path-error.js';
 import { resolveAgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import { writeRunnerMcpConfigFile } from './agent-spawn-mcp-config.js';
+import { withStdioMcpEgressEnv } from './agent-spawn-mcp-egress-env.js';
 type RunnerAgentInput = AgentInput & {
   modelCredentialEnv?: Record<string, string>;
+  toolNetworkEnv?: Record<string, string>;
 };
 
 const PROTECTED_FILESYSTEM_PATHS_ENV = 'GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON';
@@ -230,34 +233,6 @@ function modelProviderNetworkHostsFromModelEntry(
   } catch {
     return [];
   }
-}
-
-function withStdioMcpEgressEnv(
-  capabilities: readonly MaterializedMcpCapability[],
-  env: NodeJS.ProcessEnv,
-): MaterializedMcpCapability[] {
-  return capabilities.map((capability) => {
-    if (capability.config.type !== 'stdio') return capability;
-    const proxyEnv = {
-      HTTP_PROXY: env.GANTRY_EGRESS_PROXY_URL ?? '',
-      HTTPS_PROXY: env.GANTRY_EGRESS_PROXY_URL ?? '',
-      http_proxy: env.GANTRY_EGRESS_PROXY_URL ?? '',
-      https_proxy: env.GANTRY_EGRESS_PROXY_URL ?? '',
-      NODE_USE_ENV_PROXY: '1',
-      NO_PROXY: env.NO_PROXY ?? '',
-      no_proxy: env.no_proxy ?? '',
-    };
-    return {
-      ...capability,
-      config: {
-        ...capability.config,
-        env: {
-          ...(capability.config.env ?? {}),
-          ...proxyEnv,
-        },
-      },
-    };
-  });
 }
 
 function attachMcpSourceNetworkHosts(
@@ -683,13 +658,21 @@ export async function spawnAgent(
         : {}),
     });
     const runnerInputPatch = preparedExecution.runnerInputPatch ?? {};
-    runnerInputPatch.modelCredentialEnv ??= {};
-    runnerInputPatch.modelCredentialEnv.HTTP_PROXY = egressGateway.proxyUrl;
-    runnerInputPatch.modelCredentialEnv.HTTPS_PROXY = egressGateway.proxyUrl;
-    runnerInputPatch.modelCredentialEnv.http_proxy = egressGateway.proxyUrl;
-    runnerInputPatch.modelCredentialEnv.https_proxy = egressGateway.proxyUrl;
-    runnerInputPatch.modelCredentialEnv.NODE_USE_ENV_PROXY = '1';
     runnerInput.modelCredentialEnv = runnerInputPatch.modelCredentialEnv;
+    const toolNetworkEnv =
+      runnerInputPatch.toolNetworkEnv ??
+      buildToolNetworkEnv({
+        proxyUrl: egressGateway.proxyUrl,
+        caBundlePath:
+          runnerInputPatch.modelCredentialEnv?.NODE_EXTRA_CA_CERTS ??
+          hostCredentials.env.NODE_EXTRA_CA_CERTS,
+        noProxy: {
+          NO_PROXY: process.env.NO_PROXY,
+          no_proxy: process.env.no_proxy,
+        },
+      });
+    runnerInputPatch.toolNetworkEnv = toolNetworkEnv;
+    runnerInput.toolNetworkEnv = toolNetworkEnv;
     if (runnerInputPatch.semanticCapabilities) {
       runnerInput.semanticCapabilities = runnerInputPatch.semanticCapabilities;
     }
@@ -809,7 +792,7 @@ export async function spawnAgent(
       allMcpCapabilities.length > 0
         ? writeRunnerMcpConfigFile(
             hostRuntime.workspaceIpcDir,
-            withStdioMcpEgressEnv(allMcpCapabilities, env),
+            withStdioMcpEgressEnv(allMcpCapabilities, toolNetworkEnv),
           )
         : undefined;
     if (mcpConfigPath) {

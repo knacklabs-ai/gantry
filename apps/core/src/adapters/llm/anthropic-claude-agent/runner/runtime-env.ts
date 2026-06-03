@@ -62,20 +62,8 @@ const MODEL_CREDENTIAL_ENV_KEYS = new Set([
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'NODE_USE_ENV_PROXY',
   'NODE_EXTRA_CA_CERTS',
 ]);
-
-const MODEL_PROXY_ENV_KEYS = [
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'http_proxy',
-  'https_proxy',
-] as const;
 function readModelCredentialEnv(
   source: Record<string, unknown> | undefined,
 ): Record<string, string | undefined> {
@@ -93,26 +81,7 @@ function readModelCredentialEnv(
       throw new Error(`modelCredentialEnv.${key} must be a string.`);
     }
   }
-  validateModelProxyEnv(env);
   return env;
-}
-
-function validateModelProxyEnv(env: Record<string, string | undefined>): void {
-  const expectedProxy = process.env.GANTRY_EGRESS_PROXY_URL?.trim() || '';
-  for (const key of MODEL_PROXY_ENV_KEYS) {
-    const value = env[key];
-    if (!value) continue;
-    if (!expectedProxy) {
-      throw new Error(
-        `modelCredentialEnv.${key} requires GANTRY_EGRESS_PROXY_URL.`,
-      );
-    }
-    if (value !== expectedProxy) {
-      throw new Error(
-        `modelCredentialEnv.${key} must match GANTRY_EGRESS_PROXY_URL.`,
-      );
-    }
-  }
 }
 
 function stripNonModelProxyEnv(

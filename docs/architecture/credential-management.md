@@ -281,12 +281,12 @@ Bash tools, MCP stdio subprocesses, browser tools, and skills do not receive
 model provider keys.
 
 `NO_PROXY` and `no_proxy` are compatibility hints for cooperative tools, not an
-authorization boundary. They keep common developer tools such as `gh`, `git`,
-`curl`, Go, Python, and Node from routing trusted developer-platform traffic
-through model credential transport when those tools honor proxy environment
-variables. A malicious or vulnerable tool can ignore those variables, so
-protection still comes from capability selection, permission policy, sandbox
-policy, and audit.
+authorization boundary. Approved tool subprocesses receive egress proxy and
+neutral trust settings through provider-neutral `toolNetworkEnv`; model gateway
+credentials stay in `modelCredentialEnv`. A malicious or vulnerable tool can
+ignore environment variables, so protection still comes from capability
+selection, permission policy, sandbox policy, egress denylist/private-network
+checks, and audit.
 
 The runtime calls the application credential service and receives a generic
 `AgentCredentialInjection`; it does not read provider keys directly.
@@ -299,7 +299,11 @@ skills do not receive model provider tokens. Host-owned scheduler scripts are
 not supported.
 
 The SDK process receives sandbox policy and model credentials as separate
-adapter projections. Protected filesystem paths are passed through
+adapter projections. Approved tool calls receive a separate `toolNetworkEnv`
+projection for the Gantry loopback egress proxy and neutral TLS aliases; future
+execution adapters such as Deep Agents must consume that same neutral contract
+instead of reusing model credentials for tool egress. Protected filesystem paths
+are passed through
 `GANTRY_PROTECTED_FILESYSTEM_DENY_READ_PATHS_JSON` and
 `GANTRY_PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_JSON` and become Claude SDK
 `sandbox.filesystem.denyRead` and `sandbox.filesystem.denyWrite` entries;

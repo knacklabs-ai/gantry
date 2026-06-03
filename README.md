@@ -297,7 +297,7 @@ Notes:
 
 ### Capability Management
 
-Skills, MCP servers, SDK tools, host tools, browser tools, local CLIs, and channel-native tools are approved agent capabilities. Normal agent guidance is action-first: use an available action, request the reviewed capability when the action is missing, and request source setup only when the underlying source is not connected. Agents must not run dependency install commands, edit `.claude/skills`, edit `.mcp.json`, edit settings, or mutate generated Claude config directly. Gantry keeps the source-specific tools below as reviewed setup/proxy surfaces, not as durable authority by themselves:
+Skills, MCP servers, SDK tools, host tools, browser tools, local CLIs, and channel-native tools are approved agent capabilities. Normal agent guidance is action-first: use an available action, request the reviewed capability when the action is missing, and request source setup only when the underlying source is not connected. Agents must not run dependency install commands, edit provider skill folders, edit `.mcp.json`, edit settings, or mutate generated provider config directly. Gantry keeps the source-specific tools below as reviewed setup/proxy surfaces, not as durable authority by themselves:
 
 - `send_message`
 - `ask_user_question`
@@ -501,7 +501,7 @@ npm run test:e2e
 
 ## Shipped Chat Surfaces
 
-Gantry ships host-managed chat commands and in-house skill surfaces. Skills are bundled into the npm package or installed as reviewed skill zips. Runtime copies installed skills into a temporary per-run Claude config directory; runtime-home `.claude/skills` is not the durable source of truth.
+Gantry ships host-managed chat commands and in-house skill surfaces. Skills are bundled into the npm package under `.agents/skills` or installed as reviewed skill zips. Runtime copies installed skills into a temporary per-run provider config directory; runtime-home provider skill folders are not the durable source of truth.
 
 | Surface        | Purpose                                                               |
 | -------------- | --------------------------------------------------------------------- |

@@ -2541,7 +2541,8 @@ describe('TelegramChannel', () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
-      const proposed = 'x'.repeat(3400);
+      const tail = 'review-tail-after-shared-budget';
+      const proposed = `${'x'.repeat(7000)}${tail}`;
 
       const decisionPromise = channel.requestPermissionApproval(
         'tg:100200300',
@@ -2583,7 +2584,7 @@ describe('TelegramChannel', () => {
         expect(call[2]).not.toHaveProperty('reply_markup');
         expect(call[2]).not.toHaveProperty('parse_mode');
       }
-      expect(reviewCalls.map((call) => call[1]).join('')).toContain(proposed);
+      expect(reviewCalls.map((call) => call[1]).join('')).toContain(tail);
       expect(finalCall?.[1]).toContain(
         'Review the approval details above before choosing.',
       );

@@ -190,6 +190,7 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
     const promptText = formatPermissionPromptText(
       input.request,
       input.timeoutMs,
+      { budget: Number.POSITIVE_INFINITY },
     );
     for (const chunk of splitTelegramTextByCodeUnits(
       promptText,

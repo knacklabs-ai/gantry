@@ -529,13 +529,8 @@ export async function startRuntimeServices(
               'Outbound delivery canonical destination resolves to an unknown provider JID prefix.',
           } as const;
         }
-        const resolvedProviderIdForComparison =
-          destination.providerId === 'control-http' &&
-          destinationJid.startsWith('app:')
-            ? 'app'
-            : String(destination.providerId);
         if (
-          destinationDescriptor.providerId !== resolvedProviderIdForComparison
+          destinationDescriptor.providerId !== String(destination.providerId)
         ) {
           return {
             status: 'failed',

@@ -269,11 +269,6 @@ function projectTestModelCredentialEnv(source: Record<string, string>) {
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
-    'HTTP_PROXY',
-    'HTTPS_PROXY',
-    'http_proxy',
-    'https_proxy',
-    'NODE_USE_ENV_PROXY',
     'NODE_EXTRA_CA_CERTS',
   ]);
   return Object.fromEntries(
@@ -622,7 +617,6 @@ describe('agent-spawn timeout behavior', () => {
         `${input.groupDir}/.claude/settings.json`,
         `${input.groupDir}/.claude/skills`,
         `${input.groupDir}/skills`,
-        `${input.packageRoot}/.claude/skills`,
         `${input.packageRoot}/.codex/skills`,
         `${input.packageRoot}/.agents/skills`,
         ...(input.managedSkillArtifactRoots ?? []),
@@ -634,7 +628,6 @@ describe('agent-spawn timeout behavior', () => {
         `${input.groupDir}/.claude/settings.json`,
         `${input.groupDir}/.claude/skills`,
         `${input.groupDir}/skills`,
-        `${input.packageRoot}/.claude/skills`,
         `${input.packageRoot}/.codex/skills`,
         `${input.packageRoot}/.agents/skills`,
         ...(input.managedSkillArtifactRoots ?? []),
@@ -646,7 +639,6 @@ describe('agent-spawn timeout behavior', () => {
         `${input.groupDir}/.claude/settings.json`,
         `${input.groupDir}/.claude/skills`,
         `${input.groupDir}/skills`,
-        `${input.packageRoot}/.claude/skills`,
         `${input.packageRoot}/.codex/skills`,
         `${input.packageRoot}/.agents/skills`,
         ...(input.managedSkillArtifactRoots ?? []),
@@ -1338,7 +1330,7 @@ describe('agent-spawn timeout behavior', () => {
     }
   });
 
-  it('keeps broker proxy credentials out of the general runner env', async () => {
+  it('keeps broker proxy credentials out of model env and projects safe tool network env', async () => {
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
       env: {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/anthropic',
@@ -1379,13 +1371,32 @@ describe('agent-spawn timeout behavior', () => {
     expect(runnerInput.modelCredentialEnv).toMatchObject({
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/anthropic',
       ANTHROPIC_API_KEY: 'gtw_proxy',
+      NODE_EXTRA_CA_CERTS: '/tmp/model_gateway-ca.pem',
+    });
+    expect(runnerInput.modelCredentialEnv.HTTP_PROXY).toBeUndefined();
+    expect(runnerInput.modelCredentialEnv.HTTPS_PROXY).toBeUndefined();
+    expect(runnerInput.modelCredentialEnv.http_proxy).toBeUndefined();
+    expect(runnerInput.modelCredentialEnv.https_proxy).toBeUndefined();
+    expect(runnerInput.modelCredentialEnv.NODE_USE_ENV_PROXY).toBeUndefined();
+    expect(runnerInput.toolNetworkEnv).toMatchObject({
       HTTP_PROXY: 'http://127.0.0.1:18080/',
       HTTPS_PROXY: 'http://127.0.0.1:18080/',
       http_proxy: 'http://127.0.0.1:18080/',
       https_proxy: 'http://127.0.0.1:18080/',
       NODE_USE_ENV_PROXY: '1',
-      NODE_EXTRA_CA_CERTS: '/tmp/model_gateway-ca.pem',
+      SSL_CERT_FILE: '/tmp/model_gateway-ca.pem',
+      REQUESTS_CA_BUNDLE: '/tmp/model_gateway-ca.pem',
+      CURL_CA_BUNDLE: '/tmp/model_gateway-ca.pem',
+      GIT_SSL_CAINFO: '/tmp/model_gateway-ca.pem',
+      PIP_CERT: '/tmp/model_gateway-ca.pem',
+      AWS_CA_BUNDLE: '/tmp/model_gateway-ca.pem',
+      CARGO_HTTP_CAINFO: '/tmp/model_gateway-ca.pem',
+      DENO_CERT: '/tmp/model_gateway-ca.pem',
     });
+    expect(runnerInput.toolNetworkEnv.NO_PROXY.split(',')).toEqual(
+      expect.arrayContaining(['127.0.0.1', 'localhost', '::1']),
+    );
+    expect(runnerInput.toolNetworkEnv.HTTP_PROXY).not.toContain('aoc_');
     expect(mockEnsureEgressGateway).toHaveBeenCalledWith(
       expect.objectContaining({
         upstreamProxy: {
@@ -2373,7 +2384,6 @@ describe('agent-spawn timeout behavior', () => {
         '/tmp/gantry-test-data/agents/test-group/.claude/settings.json',
         '/tmp/gantry-test-data/agents/test-group/.claude/skills',
         '/tmp/gantry-test-data/agents/test-group/skills',
-        '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.claude/skills',
         '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.codex/skills',
         '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.agents/skills',
         '/tmp/gantry-test-data/artifacts/skills',
@@ -2388,7 +2398,6 @@ describe('agent-spawn timeout behavior', () => {
         '/tmp/gantry-test-data/agents/test-group/.claude/settings.json',
         '/tmp/gantry-test-data/agents/test-group/.claude/skills',
         '/tmp/gantry-test-data/agents/test-group/skills',
-        '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.claude/skills',
         '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.codex/skills',
         '/tmp/gantry-home/dist/adapters/llm/anthropic-claude-agent/runner/.agents/skills',
         '/tmp/gantry-test-data/artifacts/skills',

@@ -138,7 +138,9 @@ export async function exportCurrentDesiredState(input: {
   );
 
   for (const connection of storedProviderConnections.filter(
-    (connection) => connection.status === 'active',
+    (connection) =>
+      connection.status === 'active' &&
+      !isInternalAppControlProviderConnection(connection),
   )) {
     const providerId = connection.providerId as string;
     const connectionId = connection.id as string;
@@ -431,6 +433,13 @@ export async function exportCurrentDesiredState(input: {
     bindings,
     agents,
   };
+}
+
+function isInternalAppControlProviderConnection(
+  connection: ProviderConnection,
+): boolean {
+  const providerId = String(connection.providerId);
+  return providerId === 'app' || providerId === 'control-http';
 }
 
 function runtimeSecretRefsForConnection(
