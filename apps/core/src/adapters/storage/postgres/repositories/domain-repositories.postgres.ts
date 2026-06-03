@@ -6,6 +6,8 @@ import {
   gt,
   inArray,
   isNull,
+  lt,
+  lte,
   or,
   sql,
   type SQL,
@@ -1279,6 +1281,105 @@ export class PostgresMessageRepository implements MessageRepository {
       attachmentsByMessageId.set(attachment.messageId, existing);
     }
     return orderedRows.map((row) =>
+      this.messageFromRows(
+        row,
+        partsByMessageId.get(row.id) ?? [],
+        attachmentsByMessageId.get(row.id) ?? [],
+      ),
+    );
+  }
+  async getMessagesSince(input: {
+    conversationId: Conversation['id'];
+    threadId?: ConversationThread['id'];
+    since: string;
+    sinceId: string;
+    limit?: number;
+  }): Promise<Message[]> {
+    const m = pgSchema.messagesPostgres;
+    const limit = Math.max(1, Math.min(input.limit ?? 80, 500));
+    const rows = await this.db
+      .select()
+      .from(m)
+      .where(
+        and(
+          eq(m.conversationId, input.conversationId),
+          input.threadId ? eq(m.threadId, input.threadId) : undefined,
+          or(
+            gt(m.createdAt, input.since),
+            and(eq(m.createdAt, input.since), gt(m.id, input.sinceId)),
+          ),
+        ),
+      )
+      .orderBy(asc(m.createdAt), asc(m.id))
+      .limit(limit);
+    return this.assembleMessages(rows);
+  }
+  async getMessagesBefore(input: {
+    conversationId: Conversation['id'];
+    threadId?: ConversationThread['id'];
+    before: string;
+    beforeId: string;
+    limit: number;
+  }): Promise<Message[]> {
+    const m = pgSchema.messagesPostgres;
+    const limit = Math.max(1, Math.min(input.limit, 500));
+    const rows = await this.db
+      .select()
+      .from(m)
+      .where(
+        and(
+          eq(m.conversationId, input.conversationId),
+          input.threadId ? eq(m.threadId, input.threadId) : undefined,
+          or(
+            lt(m.createdAt, input.before),
+            and(eq(m.createdAt, input.before), lte(m.id, input.beforeId)),
+          ),
+        ),
+      )
+      .orderBy(desc(m.createdAt), desc(m.id))
+      .limit(limit);
+    return this.assembleMessages(rows.reverse());
+  }
+  private async assembleMessages(
+    rows: Array<typeof pgSchema.messagesPostgres.$inferSelect>,
+  ): Promise<Message[]> {
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => row.id);
+    const parts = await this.db
+      .select()
+      .from(pgSchema.messagePartsPostgres)
+      .where(inArray(pgSchema.messagePartsPostgres.messageId, ids))
+      .orderBy(
+        asc(pgSchema.messagePartsPostgres.messageId),
+        asc(pgSchema.messagePartsPostgres.ordinal),
+      );
+    const attachments = await this.db
+      .select()
+      .from(pgSchema.messageAttachmentsPostgres)
+      .where(inArray(pgSchema.messageAttachmentsPostgres.messageId, ids))
+      .orderBy(
+        asc(pgSchema.messageAttachmentsPostgres.messageId),
+        asc(pgSchema.messageAttachmentsPostgres.id),
+      );
+    const partsByMessageId = new Map<
+      string,
+      Array<typeof pgSchema.messagePartsPostgres.$inferSelect>
+    >();
+    for (const part of parts) {
+      const existing = partsByMessageId.get(part.messageId) ?? [];
+      existing.push(part);
+      partsByMessageId.set(part.messageId, existing);
+    }
+    const attachmentsByMessageId = new Map<
+      string,
+      Array<typeof pgSchema.messageAttachmentsPostgres.$inferSelect>
+    >();
+    for (const attachment of attachments) {
+      const existing = attachmentsByMessageId.get(attachment.messageId) ?? [];
+      existing.push(attachment);
+      attachmentsByMessageId.set(attachment.messageId, existing);
+    }
+    return rows.map((row) =>
       this.messageFromRows(
         row,
         partsByMessageId.get(row.id) ?? [],

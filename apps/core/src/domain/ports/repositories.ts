@@ -236,6 +236,22 @@ export interface MessageRepository {
     after?: string;
     limit?: number;
   }): Promise<Message[]>;
+  /** Messages strictly AFTER (since, sinceId), oldest→newest, capped at limit. */
+  getMessagesSince(input: {
+    conversationId: ConversationId;
+    threadId?: ConversationThreadId;
+    since: string;     // ISO created_at cursor
+    sinceId: string;   // tie-break on equal created_at
+    limit?: number;
+  }): Promise<Message[]>;
+  /** The last `limit` messages AT/BEFORE (before, beforeId), returned oldest→newest. */
+  getMessagesBefore(input: {
+    conversationId: ConversationId;
+    threadId?: ConversationThreadId;
+    before: string;
+    beforeId: string;
+    limit: number;
+  }): Promise<Message[]>;
 }
 
 export interface AgentSessionRepository {
