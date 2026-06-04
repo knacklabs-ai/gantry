@@ -38,6 +38,8 @@ maybeDescribe(
     // For scenario B: inbound at T1 AND T3, cursor covers through T2 (< T3 → new input)
     // For scenario C: no cursor row → always eligible
 
+    let candidateIds: string[];
+
     beforeAll(async () => {
       runtime = await createPostgresIntegrationRuntime({
         schemaPrefix: 'idle_sweep_cursor',
@@ -153,27 +155,29 @@ maybeDescribe(
       });
 
       // C: no cursor row → eligible
+
+      // Run the candidate query once so all three it() blocks can share results
+      const FAR_FUTURE = '2999-01-01T00:00:00.000Z';
+      const result = await runtime.service.pool.query<{
+        agent_session_id: string;
+      }>(IDLE_CANDIDATES_SQL, [[AGENT_ID], FAR_FUTURE, 50]);
+      candidateIds = result.rows.map((r) => r.agent_session_id);
     }, 60_000);
 
     afterAll(async () => {
       await runtime.cleanup();
     });
 
-    it('selects only the sessions with unextracted inbound messages (B and C), and excludes the covered session (A)', async () => {
-      // Pass a far-future cutoff so every session appears idle
-      const FAR_FUTURE = '2999-01-01T00:00:00.000Z';
-      const result = await runtime.service.pool.query<{
-        agent_session_id: string;
-      }>(IDLE_CANDIDATES_SQL, [[AGENT_ID], FAR_FUTURE, 50]);
+    it('excludes session A (cursor covers all inbound)', () => {
+      expect(candidateIds).not.toContain(SESSION_A);
+    });
 
-      const ids = result.rows.map((r) => r.agent_session_id);
+    it('includes session B (new inbound after the cursor)', () => {
+      expect(candidateIds).toContain(SESSION_B);
+    });
 
-      // B and C must be selected
-      expect(ids).toContain(SESSION_B);
-      expect(ids).toContain(SESSION_C);
-
-      // A must NOT be selected (cursor covers all its inbound messages)
-      expect(ids).not.toContain(SESSION_A);
+    it('includes session C (never extracted → no cursor → eligible)', () => {
+      expect(candidateIds).toContain(SESSION_C);
     });
   },
 );

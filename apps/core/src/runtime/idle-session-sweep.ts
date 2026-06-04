@@ -89,11 +89,12 @@ export const IDLE_CANDIDATES_SQL = `
       AND m.direction = 'inbound'
   ) inb ON TRUE
   LEFT JOIN LATERAL (
-    SELECT c.covered_through_at AS covered_through_at
+    SELECT c.covered_through_at
     FROM memory_extraction_cursor c
     WHERE c.conversation_id = s.conversation_id
       AND c.thread_id IS NOT DISTINCT FROM s.thread_id
       AND c.agent_id = s.agent_id
+      AND c.app_id = s.app_id
     LIMIT 1
   ) cur ON TRUE
   WHERE s.status = 'active'
