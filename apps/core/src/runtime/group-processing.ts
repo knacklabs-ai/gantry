@@ -740,6 +740,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         queueJid,
         previousCursor,
         deps,
+        isShuttingDown: deps.queue.isShuttingDown,
         logger,
       });
     } else {

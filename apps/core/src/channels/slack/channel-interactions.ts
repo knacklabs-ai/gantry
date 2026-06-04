@@ -20,6 +20,7 @@ import {
 } from './text-limits.js';
 import { nowIso } from '../../shared/time/datetime.js';
 import { SLACK_PERMISSION_DECISION_ACTION_IDS } from './permission-action-id.js';
+import { slackThreadTsFromThreadId } from './thread-ts.js';
 const SLACK_RETRY_DELAY_FALLBACK_MS = 1000;
 const SLACK_RETRY_DELAY_MAX_MS = 5000;
 const SCHEDULER_MESSAGE_ACTION_KINDS = new Set<MessageActionAffordanceKind>([
@@ -132,10 +133,11 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     text: string,
   ): Promise<string | undefined> {
     if (!this.app) return undefined;
+    const threadTs = slackThreadTsFromThreadId(threadId);
     try {
       const result = (await this.app.client.apiCall('chat.startStream', {
         channel: channelId,
-        ...(threadId ? { thread_ts: threadId } : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
         markdown_text: text,
       })) as { ok?: boolean; ts?: string; stream_ts?: string };
       if (!result.ok) return undefined;
