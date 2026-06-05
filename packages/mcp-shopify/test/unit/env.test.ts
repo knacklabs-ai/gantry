@@ -77,7 +77,7 @@ describe('loadEnv — SHOPIFY_ENV switch', () => {
     const env = loadEnv({
       ...DEV_VARS,
       SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY: 'true',
-      SHOPIFY_MCP_IDENTITY_SECRET: 'test-secret',
+      MCP_IDENTITY_SECRET: 'test-secret',
     } as NodeJS.ProcessEnv);
     expect(env.identity.mode).toBe('required');
     expect(env.requireVerifiedIdentity).toBe(true);

@@ -668,6 +668,51 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
+  it('preserves targetJid so the question routes to the asking conversation', () => {
+    // Regression for the cross-conversation bleed: ask_user_question must carry
+    // its conversation jid. Without it the host falls back to a first-match-by-
+    // folder lookup, so under many concurrent customers of one agent the question
+    // could be delivered to the WRONG customer. The writer stamps targetJid; the
+    // parser must preserve it (it previously dropped the field on the floor).
+    const run = createIpcAuthEnvelope('main_agent', undefined, {
+      appId: 'app:telegram',
+      agentId: 'agent:main',
+    });
+    const payload = {
+      requestId: 'userq-1234567890-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      sourceAgentFolder: 'main_agent',
+      targetJid: 'wa:919900020006',
+      questions: [
+        {
+          header: 'Pick',
+          question: 'Which delivery date works?',
+          options: [
+            { label: 'Oct 15', description: 'mid month' },
+            { label: 'Oct 20', description: 'later' },
+          ],
+          multiSelect: false,
+        },
+      ],
+      context: {
+        appId: 'app:telegram',
+        agentId: 'agent:main',
+        responseKeyId: run.responseKeyId,
+      },
+    };
+
+    const parsed = parseUserQuestionIpcRequest(
+      {
+        ...payload,
+        signature: signIpcRequestPayload(run.authToken, payload),
+      },
+      'main_agent',
+    );
+
+    expect(parsed.targetJid).toBe('wa:919900020006');
+  });
+
   it('revokes response signing keys only for the matching run scope', () => {
     const run = createIpcAuthEnvelope('team', 'thread-1');
 

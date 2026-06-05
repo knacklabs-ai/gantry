@@ -12,6 +12,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendWebhook } from './interakt-test-send.mjs';
+import { evaluateCrm } from './lib/crm-assert.mjs';
+import { mirrorOutbound } from './lib/outbound-mirror.mjs';
+
+// Capture-suite wiring (inert for the Shopify suite, which sets none of these):
+// MIRROR persists each real reply under the persona conversation (dry-run skips
+// Gantry's own outbound persistence); DB_CONN is the shared Postgres the connector
+// and dashboard both read.
+const MIRROR = process.env.MIRROR_OUTBOUND === '1';
+const DB_CONN = process.env.BOONDI_CRM_DATABASE_URL || process.env.DATABASE_URL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOG = process.env.GANTRY_DEV_LOG || '/tmp/gantry-dev.log';
@@ -88,6 +97,16 @@ function parseFlowEvents(text, chatJid) {
       obj = JSON.parse(line.slice(brace));
     } catch {
       continue;
+    }
+    // LOG_FORMAT=json nests the flow fields under `context`; lift them so the
+    // rest of the parser sees a flat event regardless of sink format.
+    if (
+      obj &&
+      typeof obj.flow !== 'string' &&
+      obj.context &&
+      typeof obj.context.flow === 'string'
+    ) {
+      obj = obj.context;
     }
     if (!obj || typeof obj.flow !== 'string') continue;
     const eventJid = obj.jid ?? obj.chatJid;
@@ -358,6 +377,9 @@ function evaluate(events, expect, cfg) {
       failures.push(`SAFETY: outbound jid "${o.jid}" is not wa:${cfg.realFrom}`);
     }
   }
+  // CRM capture assertions (crm / crmNone) over this turn's boondi-crm events.
+  // Inert unless the expectation sets them (the Shopify suite never does).
+  failures.push(...evaluateCrm(events, exp));
   return {
     guardrail,
     mcpReq,
@@ -399,6 +421,11 @@ function printReport(scenario, turns, turnsEvents, cfg) {
         : `allow(${g.guardrailReason ?? ''})`
       : 'allow';
     const tools = tr.mcpReq.map((q) => q.toolName).join(',') || '-';
+    const caps =
+      tr.mcpReq
+        .filter((q) => q.serverName === 'boondi-crm')
+        .map((q) => q.toolName)
+        .join(',') || '-';
     const denies = tr.mcpPrivacyDenies.length
       ? ` deny:${tr.mcpPrivacyDenies.length}`
       : '';
@@ -409,7 +436,7 @@ function printReport(scenario, turns, turnsEvents, cfg) {
       '';
     console.log(`  [${i + 1}] ${JSON.stringify(turn.text)}`);
     console.log(
-      `      guardrail=${gline} mcp=${tools}${denies} lang=${tr.replyLang}`,
+      `      guardrail=${gline} mcp=${tools}${denies} crm=${caps} lang=${tr.replyLang}`,
     );
     if (reply) console.log(`      reply: ${truncate(reply, 220)}`);
   });
@@ -442,10 +469,13 @@ function resolveLanePhones(cfg, realFrom) {
 // lane's chatJid). Returns the raw material for printReport; never prints, so the
 // caller can render reports in a stable order after concurrent lanes finish.
 async function runScenario(scenario, lanePhone, cfg) {
-  const chatJid = `wa:${lanePhone}`;
+  // A scenario may pin its own persona phone (capture suite) so it is its own
+  // dashboard conversation; otherwise it uses the round-robin lane number.
+  const lane = scenario.phone || lanePhone;
+  const chatJid = `wa:${lane}`;
   if (scenario.reset !== false) {
     const resetOffset = logSize();
-    await sendWebhook({ text: '/new', from: lanePhone });
+    await sendWebhook({ text: '/new', from: lane });
     // The reset reply confirms the old session was torn down and a fresh one is
     // ready — that is the readiness signal for turn 1; no extra quiescence needed.
     await waitForReset(resetOffset, chatJid);
@@ -459,7 +489,7 @@ async function runScenario(scenario, lanePhone, cfg) {
   for (let ti = 0; ti < turns.length; ti += 1) {
     const turn = turns[ti];
     const offset = logSize();
-    const sent = await sendWebhook({ text: turn.text, from: lanePhone });
+    const sent = await sendWebhook({ text: turn.text, from: lane });
     if (!sent.ok) {
       aborted = `webhook rejected (HTTP ${sent.status}): ${sent.response}`;
       break;
@@ -467,6 +497,20 @@ async function runScenario(scenario, lanePhone, cfg) {
     const tStart = Date.now();
     const ev = await waitForTurn(offset, chatJid);
     turnsEvents.push(ev);
+    // Under DRYRUN the runtime skips outbound persistence; mirror the REAL reply
+    // into the persona conversation so the dashboard shows both sides.
+    if (MIRROR && DB_CONN) {
+      const out = ev.find(
+        (e) => e.flow === 'outbound' && !RESET_REPLY_RE.test(e.reply || ''),
+      );
+      if (out?.reply) {
+        try {
+          await mirrorOutbound({ connectionString: DB_CONN, phone: lane, reply: out.reply });
+        } catch (err) {
+          console.error(`    [mirror] ${scenario.name}: ${err.message}`);
+        }
+      }
+    }
     if (process.env.E2E_DIAG === '1') {
       const c = (f) => ev.filter((e) => e.flow === f).length;
       const out = ev.find(
@@ -485,6 +529,17 @@ async function runScenario(scenario, lanePhone, cfg) {
     // message isn't dropped by the still-active session.
     if (ti < turns.length - 1) await waitForQuiescence(offset, chatJid);
   }
+  // Tear down this scenario's warm agent session so its child runner exits and
+  // frees a host slot before the worker starts the next (different-phone) scenario.
+  // With per-scenario phones the next scenario's START /new resets a DIFFERENT
+  // phone, so without this THIS phone's warm session lingers; they accumulate until
+  // the host's child-runner pool wedges (only /new closes a session). This mirrors
+  // how the phone-reusing Shopify suite frees each session implicitly.
+  if (scenario.reset !== false) {
+    const teardownOffset = logSize();
+    await sendWebhook({ text: '/new', from: lane });
+    await waitForReset(teardownOffset, chatJid);
+  }
   // The SAFETY invariant in evaluate() checks outbound jid against realFrom; for a
   // lane that is the lane's own number, so override realFrom per lane.
   return {
@@ -492,7 +547,7 @@ async function runScenario(scenario, lanePhone, cfg) {
     turns,
     turnsEvents,
     aborted,
-    cfgLane: { ...cfg, realFrom: lanePhone },
+    cfgLane: { ...cfg, realFrom: lane },
   };
 }
 

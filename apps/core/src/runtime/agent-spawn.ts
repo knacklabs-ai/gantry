@@ -13,6 +13,7 @@ import {
   getRuntimeSettingsForConfig,
   getEffectiveModelConfig,
 } from '../config/index.js';
+import { runtimeEnvValueDynamic } from '../config/env/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { ConversationRoute } from '../domain/types.js';
 import { MODEL_RUNTIME_CREDENTIAL_IDENTIFIER } from '../domain/models/credentials.js';
@@ -424,7 +425,11 @@ export async function spawnAgent(
   try {
     const command = process.execPath;
     const args = preparedExecution.runnerArgs;
-    const ipcInputDir = getContinuationInputDir(group.folder, input.threadId);
+    const ipcInputDir = getContinuationInputDir(
+      group.folder,
+      input.chatJid,
+      input.threadId,
+    );
     const runnerAppId = input.appId || DEFAULT_RUNNER_APP_ID;
     const mcpServerPath = path.join(
       hostRuntime.runnerDistDir,
@@ -444,6 +449,11 @@ export async function spawnAgent(
             serverIds: selectedMcpServerIds as never,
             mcpServers: options.mcpServerRepository,
             secrets: options.capabilitySecretRepository,
+            // http/sse connectors read their shared signing secret from the
+            // runtime $GANTRY_HOME/.env (core does not hydrate it into
+            // process.env); a missing one is logged loudly, not swallowed.
+            readRuntimeEnv: runtimeEnvValueDynamic,
+            logger,
           })
         : {};
     const allMcpCapabilities: MaterializedMcpCapability[] =

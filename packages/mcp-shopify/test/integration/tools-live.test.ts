@@ -3,9 +3,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TokenManager } from '../../src/auth/token-manager.js';
 import { ShopifyClient } from '../../src/shopify/client.js';
 import { registerAllTools } from '../../src/tools/index.js';
-import { loadDotenvUpwards } from '../../src/dotenv-load.js';
+import { loadRuntimeEnv } from '../../src/dotenv-load.js';
 
-loadDotenvUpwards();
+loadRuntimeEnv();
 
 const LIVE = process.env.SHOPIFY_LIVE === '1';
 const SHOP = process.env.SHOPIFY_DEV_SHOP_DOMAIN ?? '';

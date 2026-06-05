@@ -7,9 +7,9 @@ import {
 } from '../../src/identity/identity-header.js';
 import { startHttpServer, type RunningHttpServer } from '../../src/server.js';
 import { createLogger } from '../../src/logger.js';
-import { loadDotenvUpwards } from '../../src/dotenv-load.js';
+import { loadRuntimeEnv } from '../../src/dotenv-load.js';
 
-loadDotenvUpwards();
+loadRuntimeEnv();
 
 const LIVE = process.env.SHOPIFY_LIVE === '1';
 const SHOP = process.env.SHOPIFY_DEV_SHOP_DOMAIN ?? '';

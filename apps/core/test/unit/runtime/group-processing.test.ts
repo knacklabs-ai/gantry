@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { ChildProcess } from 'child_process';
 import type { NewMessage, ConversationRoute } from '@core/domain/types.js';
+import { MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS } from '@core/shared/memory-dreaming-timeout.js';
 import {
   decodeGroupMessageCursor,
   encodeGroupMessageCursor,
@@ -2396,8 +2397,8 @@ describe('createGroupProcessor', () => {
           trigger: 'precompact',
           defaultScope: 'group',
           signal: expect.any(AbortSignal),
-          timeoutMs: 30_000,
-          statementTimeoutMs: 30_000,
+          timeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
+          statementTimeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
         }),
       );
       expect(deps.queue.notifyIdle).not.toHaveBeenCalled();
@@ -4084,8 +4085,8 @@ describe('createGroupProcessor', () => {
           trigger: 'precompact',
           defaultScope: 'group',
           signal: expect.any(AbortSignal),
-          timeoutMs: 30_000,
-          statementTimeoutMs: 30_000,
+          timeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
+          statementTimeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
         }),
       );
     });

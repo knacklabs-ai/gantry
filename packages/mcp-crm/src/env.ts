@@ -1,6 +1,6 @@
 // Environment for the boondi-crm MCP server. Mirrors mcp-shopify/src/env.ts in
 // shape (typed config, fail-fast on missing required values). The identity
-// SECRET is shared with the runtime (SHOPIFY_MCP_IDENTITY_SECRET) so the signed
+// SECRET is shared with the runtime (MCP_IDENTITY_SECRET) so the signed
 // X-Caller-Identity verifies here exactly as it does for Shopify; everything
 // else is boondi-crm-specific (its own port, DB url, reconciler cadence).
 
@@ -12,7 +12,10 @@ export type IdentityConfig =
 export interface BoondiCrmEnv {
   port: number;
   databaseUrl: string;
+  // The CRM's OWN schema (owns its tables end-to-end).
   dbSchema: string;
+  // Gantry's schema, read-only, for the reconciler's transcript reads.
+  gantrySchema: string;
   identity: IdentityConfig;
   requireVerifiedIdentity: boolean;
   identityMaxAgeSec: number;
@@ -41,6 +44,22 @@ type LogLevel = BoondiCrmEnv['logLevel'];
 function required(name: string, value: string | undefined): string {
   if (!value || value.trim() === '') {
     throw new Error(`Missing required env var: ${name}`);
+  }
+  return value;
+}
+
+const SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*$/i;
+
+// Schema names are interpolated into SQL (search_path + qualified gantry reads),
+// so validate them — never trust a raw env value into a query.
+function parseSchema(
+  name: string,
+  raw: string | undefined,
+  fallback: string,
+): string {
+  const value = raw?.trim() || fallback;
+  if (!SCHEMA_PATTERN.test(value)) {
+    throw new Error(`Invalid ${name}: ${value}`);
   }
   return value;
 }
@@ -84,22 +103,22 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
 }
 
 function parseIdentity(source: NodeJS.ProcessEnv): IdentityConfig {
-  // The signing secret is the runtime's identity key (shared with mcp-shopify).
-  const secret = source.SHOPIFY_MCP_IDENTITY_SECRET?.trim() ?? '';
+  // The signing secret is the runtime's identity key (shared across all MCPs).
+  const secret = source.MCP_IDENTITY_SECRET?.trim() ?? '';
   const require = parseBool(
     source.BOONDI_CRM_REQUIRE_VERIFIED_IDENTITY,
     true,
   );
   const maxAgeSec = parsePositiveInt(
-    'BOONDI_CRM_IDENTITY_MAX_AGE_SEC',
-    source.BOONDI_CRM_IDENTITY_MAX_AGE_SEC,
+    'MCP_IDENTITY_MAX_AGE_SEC',
+    source.MCP_IDENTITY_MAX_AGE_SEC,
     120,
   );
 
   if (require) {
     if (!secret) {
       throw new Error(
-        'BOONDI_CRM_REQUIRE_VERIFIED_IDENTITY=true requires SHOPIFY_MCP_IDENTITY_SECRET to be set',
+        'BOONDI_CRM_REQUIRE_VERIFIED_IDENTITY=true requires MCP_IDENTITY_SECRET to be set',
       );
     }
     return { mode: 'required', secret, maxAgeSec };
@@ -112,11 +131,22 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BoondiCrmEnv {
   const identity = parseIdentity(source);
   return {
     port: parsePort(source.BOONDI_CRM_MCP_PORT, 8082),
+    // The CRM is a different identity end-to-end: it requires its OWN connection,
+    // no silent fallback to Gantry's. Missing it is a hard, clear startup error.
     databaseUrl: required(
       'BOONDI_CRM_DATABASE_URL',
-      source.BOONDI_CRM_DATABASE_URL ?? source.GANTRY_DATABASE_URL,
+      source.BOONDI_CRM_DATABASE_URL,
     ),
-    dbSchema: source.BOONDI_CRM_DB_SCHEMA?.trim() || 'gantry',
+    dbSchema: parseSchema(
+      'BOONDI_CRM_DB_SCHEMA',
+      source.BOONDI_CRM_DB_SCHEMA,
+      'boondi_crm',
+    ),
+    gantrySchema: parseSchema(
+      'BOONDI_CRM_GANTRY_SCHEMA',
+      source.BOONDI_CRM_GANTRY_SCHEMA,
+      'gantry',
+    ),
     identity,
     requireVerifiedIdentity: identity.mode === 'required',
     identityMaxAgeSec: identity.mode === 'disabled' ? 120 : identity.maxAgeSec,

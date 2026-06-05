@@ -62,7 +62,7 @@ mcp_servers:
     caller_identity:
       mode: required
       header_name: X-Caller-Identity
-      signing_ref: SHOPIFY_MCP_IDENTITY_SECRET
+      signing_ref: MCP_IDENTITY_SECRET
       source:
         kind: conversation_jid_phone
         jid_prefix: "wa:"
@@ -88,7 +88,7 @@ agents:
         url: 'http://127.0.0.1:8081/mcp',
         callerIdentity: {
           headerName: 'X-Caller-Identity',
-          signingRef: 'SHOPIFY_MCP_IDENTITY_SECRET',
+          signingRef: 'MCP_IDENTITY_SECRET',
           source: { jidPrefix: 'wa:' },
         },
       },
@@ -106,6 +106,34 @@ agents:
       { id: 'mcp:shopify-api', version: 'mcp-version:shopify-api' },
     ]);
     expect(renderRuntimeSettingsYaml(parsed)).toContain('mcp_servers:');
+  });
+
+  it('parses an http MCP connector with no credential_refs to an empty list', () => {
+    const parsed = parseRuntimeSettings(`
+mcp_servers:
+  "mcp:boondi-crm":
+    name: boondi-crm
+    transport: http
+    url: http://127.0.0.1:8082/mcp
+    caller_identity:
+      mode: required
+      header_name: X-Caller-Identity
+      signing_ref: MCP_IDENTITY_SECRET
+      source:
+        kind: conversation_jid_phone
+        jid_prefix: "wa:"
+    risk_class: medium
+    allowed_tool_patterns: ["record_*"]
+    auto_approve_tool_patterns: ["record_*"]
+`);
+
+    expect(parsed.mcpServers['mcp:boondi-crm']).toMatchObject({
+      name: 'boondi-crm',
+      config: { transport: 'http', url: 'http://127.0.0.1:8082/mcp' },
+      credentialRefs: [],
+    });
+    // Cleanup safety: the connector still round-trips through the renderer.
+    expect(renderRuntimeSettingsYaml(parsed)).toContain('mcp:boondi-crm');
   });
 
   it('renders and parses the configured agent guardrail plugin (file + model)', () => {
@@ -508,6 +536,54 @@ agents:
     expect(parsed.memory.llm.extractorMaxFacts).toBe(5);
     expect(parsed.memory.llm.extractorMinConfidence).toBe(0.75);
     expect(parsed.memory.maintenance.maxPending).toBe(250);
+  });
+
+  const memoryYaml = (extra = '') => `memory:
+  enabled: true
+  embeddings:
+    enabled: false
+    provider: disabled
+    model: text-embedding-3-large
+    daily_limit: 500
+    batch_size: 16
+  dreaming:
+    enabled: false
+    cron: "15 3 * * *"
+    embeddings:
+      enabled: false
+      provider: disabled
+      model: text-embedding-3-large
+  llm:
+    extractor_max_facts: 8
+    extractor_min_confidence: 0.6
+    models:
+      extractor: haiku
+      dreaming: sonnet
+      consolidation: sonnet
+  maintenance:
+    max_pending: 5000
+${extra}`;
+
+  it('parses idle sweep concurrency and extraction timeout', () => {
+    const parsed = parseRuntimeSettings(
+      memoryYaml(
+        '  idle_sweep_concurrency: 5\n  idle_sweep_extraction_timeout_ms: 60000\n',
+      ),
+    );
+    expect(parsed.memory.idleSweepConcurrency).toBe(5);
+    expect(parsed.memory.idleSweepExtractionTimeoutMs).toBe(60000);
+  });
+
+  it('defaults idle sweep concurrency to 3 and extraction timeout to 45000', () => {
+    const parsed = parseRuntimeSettings(memoryYaml());
+    expect(parsed.memory.idleSweepConcurrency).toBe(3);
+    expect(parsed.memory.idleSweepExtractionTimeoutMs).toBe(45000);
+  });
+
+  it('rejects a non-positive idle_sweep_concurrency', () => {
+    expect(() =>
+      parseRuntimeSettings(memoryYaml('  idle_sweep_concurrency: 0\n')),
+    ).toThrow(/idle_sweep_concurrency/);
   });
 
   it('keeps explicit verbose provider connections over compact defaults', () => {

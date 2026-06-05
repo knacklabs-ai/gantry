@@ -1,19 +1,16 @@
-// Applies boondi-crm's own SQL migrations to the configured schema. Run with:
+// Applies boondi-crm's own SQL migrations to the configured schema on demand:
 //   npm run migrate   (from packages/mcp-crm)
-// Migrations are idempotent (IF NOT EXISTS / harmless GRANTs), so re-running is
-// safe. Kept separate from Gantry core's migration runner to preserve the
-// neutral-engine boundary (this table is Boondi-owned).
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import pg from 'pg';
-import { loadDotenvUpwards } from '../src/dotenv-load.js';
+// The server also runs these automatically on boot (src/index.ts); this script
+// is for running them standalone (CI, manual ops). The actual runner lives in
+// src/db/migrate.ts so both paths share one idempotent implementation.
+import { applyMigrations } from '../src/db/migrate.js';
+import { loadRuntimeEnv } from '../src/dotenv-load.js';
 
-loadDotenvUpwards(path.dirname(fileURLToPath(import.meta.url)));
+loadRuntimeEnv();
 
 const databaseUrl =
   process.env.BOONDI_CRM_DATABASE_URL ?? process.env.GANTRY_DATABASE_URL;
-const schema = (process.env.BOONDI_CRM_DB_SCHEMA ?? 'gantry').trim() || 'gantry';
+const schema = process.env.BOONDI_CRM_DB_SCHEMA ?? 'gantry';
 
 if (!databaseUrl) {
   process.stderr.write(
@@ -21,33 +18,13 @@ if (!databaseUrl) {
   );
   process.exit(1);
 }
-if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) {
-  process.stderr.write(`Refusing unsafe schema name: ${schema}\n`);
-  process.exit(1);
-}
 
-const migrationsDir = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'migrations',
-);
-const files = fs
-  .readdirSync(migrationsDir)
-  .filter((f) => f.endsWith('.sql'))
-  .sort();
-
-const client = new pg.Client({ connectionString: databaseUrl });
-await client.connect();
 try {
-  await client.query(`SET search_path TO ${schema}`);
-  for (const file of files) {
-    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-    process.stdout.write(`applying ${file} ...\n`);
-    await client.query(sql);
-  }
+  const { applied } = await applyMigrations({ databaseUrl, schema });
   process.stdout.write(
-    `boondi-crm: applied ${files.length} migration(s) to schema "${schema}"\n`,
+    `boondi-crm: applied ${applied.length} migration(s) to schema "${schema.trim() || 'gantry'}"\n`,
   );
-} finally {
-  await client.end();
+} catch (err) {
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
 }

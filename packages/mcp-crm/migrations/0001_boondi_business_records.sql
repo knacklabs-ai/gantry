@@ -3,11 +3,13 @@
 -- Owned by the boondi-crm connector, NOT by Gantry core: this migration lives
 -- in packages/mcp-crm/migrations and is applied by boondi-crm's own migrate
 -- script, so Gantry's core schema/migrations stay free of Boondi tables.
--- Created in the same Postgres schema (default: gantry) the runtime and the
--- read-only boondi-admin both use, so the dashboard can SELECT it directly.
+-- Created in the CRM's OWN schema (BOONDI_CRM_DB_SCHEMA, default boondi_crm), which
+-- the connector owns end-to-end. The read-only boondi-admin dashboard SELECTs it
+-- explicitly as boondi_crm.boondi_business_records.
 --
--- The migrate script runs this with search_path set to BOONDI_CRM_DB_SCHEMA,
--- so table names are intentionally unqualified. Idempotent (IF NOT EXISTS).
+-- The migrate script runs this with search_path set to BOONDI_CRM_DB_SCHEMA, so
+-- table names are intentionally unqualified. Idempotent (IF NOT EXISTS). Roles +
+-- grants are operator-managed (see docs/runbooks/boondi-crm-role.sql), NOT here.
 
 CREATE TABLE IF NOT EXISTS boondi_business_records (
   id                   text PRIMARY KEY,
@@ -63,7 +65,6 @@ CREATE TABLE IF NOT EXISTS boondi_reconcile_cursor (
   checked_at        timestamptz NOT NULL DEFAULT now()
 );
 
--- Same role (gantry_app) the runtime and boondi-admin use; GRANT is explicit
--- and harmless if it already owns the objects.
-GRANT SELECT, INSERT, UPDATE, DELETE ON boondi_business_records TO gantry_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON boondi_reconcile_cursor TO gantry_app;
+-- Grants are operator-managed (the CRM role owns this schema; the dashboard role
+-- gets SELECT). See docs/runbooks/boondi-crm-role.sql. Intentionally none here, so
+-- the migration never assumes a specific role name exists.

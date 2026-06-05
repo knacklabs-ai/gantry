@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 // mcp-shopify so boondi-crm trusts the SAME signed identity the runtime emits
 // (apps/core/src/runtime/agent-spawn-identity.ts) — the verified phone is the
 // only customer id the CRM tools trust. Identical signing => one shared secret
-// (SHOPIFY_MCP_IDENTITY_SECRET) verifies both connectors.
+// (MCP_IDENTITY_SECRET) verifies both connectors.
 export const IDENTITY_HEADER_NAME = 'x-caller-identity';
 
 export interface VerifiedIdentity {

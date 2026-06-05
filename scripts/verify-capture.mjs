@@ -11,6 +11,10 @@ const OUT = process.argv[3] || 'artifacts/boondi-capture-report.md';
 const DASH = process.env.DASHBOARD_URL || 'http://127.0.0.1:3000';
 const CONN = process.env.BOONDI_CRM_DATABASE_URL || process.env.DATABASE_URL;
 const SCHEMA = process.env.BOONDI_CRM_DB_SCHEMA || 'gantry';
+// The reconciler-backstop scenario's record is reconstructed by the durable
+// reconciler, which is OFF during the agent-path loop. Assert it only once the
+// reconciler phase has run; otherwise it would always false-fail (no reconciler row yet).
+const RECONCILER_PHASE = process.env.RECONCILER_PHASE === '1';
 
 const cfg = JSON.parse(fs.readFileSync(SCEN, 'utf8'));
 const client = new Client({ connectionString: CONN });
@@ -28,12 +32,25 @@ const getJson = async (u) => {
 const lines = [`# Boondi capture verification — ${new Date().toISOString()}`, ''];
 let pass = 0;
 let fail = 0;
+let pending = 0;
 
 for (const s of cfg.scenarios) {
   const phone = s.phone;
   const convId = `conversation:wa:${phone}`;
   const exp = s.expectRecord || {};
   const failures = [];
+
+  // Reconciler-backstop: reconstructed by the durable reconciler (OFF in the
+  // agent-path run). Asserted only with RECONCILER_PHASE=1 (after Phase 4).
+  if (s.reconciler && !RECONCILER_PHASE) {
+    lines.push(`## ⏳ ${s.name}  (${phone})`);
+    lines.push(
+      '- reconciler-backstop: reconstructed by the durable reconciler (OFF in the agent-path run); asserted only with RECONCILER_PHASE=1.',
+    );
+    lines.push('');
+    pending += 1;
+    continue;
+  }
 
   const rec = (
     await client.query(
@@ -48,7 +65,18 @@ for (const s of cfg.scenarios) {
   } else if (!rec) {
     failures.push('expected a record, none found');
   } else {
-    if (exp.status && rec.status !== exp.status) failures.push(`status expected ${exp.status}, got ${rec.status}`);
+    if (exp.status) {
+      // The dashboard's Queries tab shows BOTH query and qualifying, so a "query"
+      // expectation (a soft capture, not a lead) is satisfied by either.
+      const statusOk =
+        exp.status === 'query'
+          ? rec.status === 'query' || rec.status === 'qualifying'
+          : rec.status === exp.status;
+      if (!statusOk)
+        failures.push(
+          `status expected ${exp.status}${exp.status === 'query' ? ' (or qualifying)' : ''}, got ${rec.status}`,
+        );
+    }
     if (exp.intentCategory && rec.intent_category !== exp.intentCategory)
       failures.push(`intent expected ${exp.intentCategory}, got ${rec.intent_category}`);
     if (exp.buyerType && rec.buyer_type !== exp.buyerType) failures.push(`buyerType expected ${exp.buyerType}, got ${rec.buyer_type}`);
@@ -71,7 +99,10 @@ for (const s of cfg.scenarios) {
 
   const apiRecords = await getJson(`${DASH}/api/records`);
   const inDash = Array.isArray(apiRecords.records) && apiRecords.records.some((r) => r.phone === phone);
-  if (!exp.absent && !inDash) failures.push('record not visible via dashboard /api/records');
+  if (!exp.absent && !inDash)
+    failures.push(
+      `record not visible via dashboard /api/records${apiRecords.__error ? ` (fetch error: ${apiRecords.__error})` : ''}`,
+    );
   const apiMsgs = await getJson(`${DASH}/api/messages?conversationId=${encodeURIComponent(convId)}`);
   const dashInbound = (apiMsgs.messages || []).some((m) => m.direction === 'inbound');
   const dashOutbound = (apiMsgs.messages || []).some((m) => m.direction === 'outbound');
@@ -92,7 +123,10 @@ for (const s of cfg.scenarios) {
 }
 
 await client.end();
-lines.unshift(`**${pass} passed, ${fail} failed**`, '');
+lines.unshift(
+  `**${pass} passed, ${fail} failed${pending ? `, ${pending} pending (reconciler phase)` : ''}**`,
+  '',
+);
 fs.mkdirSync('artifacts', { recursive: true });
 fs.writeFileSync(OUT, lines.join('\n'));
 console.log(lines.join('\n'));

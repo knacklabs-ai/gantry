@@ -575,9 +575,15 @@ export function parseUserQuestionIpcRequest(
     },
   );
 
+  // The asking conversation's jid. The host routes the question to this jid; if it
+  // is absent it falls back to a first-match-by-folder lookup, which under multiple
+  // concurrent customers of one agent would deliver the question to the WRONG one.
+  const targetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
+
   return {
     requestId,
     sourceAgentFolder,
+    ...(targetJid ? { targetJid } : {}),
     ...(threadId ? { threadId } : {}),
     ...(responseKeyId ? { responseKeyId } : {}),
     questions,

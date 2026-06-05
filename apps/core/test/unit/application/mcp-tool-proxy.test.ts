@@ -18,7 +18,7 @@ function httpCap(
     callerIdentity: {
       mode: 'required',
       headerName: 'X-Caller-Identity',
-      signingRef: 'SHOPIFY_MCP_IDENTITY_SECRET',
+      signingRef: 'MCP_IDENTITY_SECRET',
       source: { kind: 'conversation_jid_phone', jidPrefix: 'wa:' },
     },
     config: { type: 'http', url: 'http://127.0.0.1:8081/mcp' },
@@ -75,7 +75,7 @@ describe('projectMcpProxyCallerIdentity', () => {
     const [capability] = projectMcpProxyCallerIdentity({
       capabilities: [httpCap()],
       callerIdentityJid: 'wa:919654405340',
-      credentialEnv: { SHOPIFY_MCP_IDENTITY_SECRET: TEST_SECRET },
+      credentialEnv: { MCP_IDENTITY_SECRET: TEST_SECRET },
     });
 
     expect(capability?.config.type).toBe('http');
@@ -102,7 +102,7 @@ describe('projectMcpProxyCallerIdentity', () => {
       projectMcpProxyCallerIdentity({
         capabilities: [httpCap()],
         callerIdentityJid: 'tg:-123',
-        credentialEnv: { SHOPIFY_MCP_IDENTITY_SECRET: TEST_SECRET },
+        credentialEnv: { MCP_IDENTITY_SECRET: TEST_SECRET },
       }),
     ).toThrow(ApplicationError);
 
@@ -110,7 +110,7 @@ describe('projectMcpProxyCallerIdentity', () => {
       projectMcpProxyCallerIdentity({
         capabilities: [httpCap()],
         callerIdentityJid: 'tg:-123',
-        credentialEnv: { SHOPIFY_MCP_IDENTITY_SECRET: TEST_SECRET },
+        credentialEnv: { MCP_IDENTITY_SECRET: TEST_SECRET },
       });
     } catch (err) {
       expect(err).toMatchObject({

@@ -1,4 +1,4 @@
-import { loadDotenvUpwards } from './dotenv-load.js';
+import { loadRuntimeEnv } from './dotenv-load.js';
 import { loadEnv } from './env.js';
 import { createLogger } from './logger.js';
 import { startHttpServer } from './server.js';
@@ -10,7 +10,7 @@ export { verifyIdentity, normalizePhone, normalizeEmail } from './privacy/guard.
 export { withExponentialBackoff } from './retry.js';
 export { buildMcpServer, startHttpServer } from './server.js';
 export { loadEnv } from './env.js';
-export { loadDotenvUpwards } from './dotenv-load.js';
+export { loadRuntimeEnv } from './dotenv-load.js';
 export {
   IDENTITY_HEADER_NAME,
   computeIdentitySignature,
@@ -37,7 +37,7 @@ const isEntry =
     process.argv[1].endsWith('packages/mcp-shopify/src/index.ts'));
 
 if (isEntry) {
-  loadDotenvUpwards();
+  loadRuntimeEnv();
   const env = loadEnv();
   const logger = createLogger({
     level: env.logLevel as 'debug' | 'info' | 'warn' | 'error' | 'fatal',

@@ -101,6 +101,11 @@ export interface RuntimeMemorySettings {
   maintenance: {
     maxPending: number;
   };
+  // Idle-session memory sweep tuning. concurrency = how many of the per-pass batch
+  // are extracted in parallel (background work shares the model rate budget with
+  // live replies, so keep this low). extractionTimeoutMs = per-extraction deadline.
+  idleSweepConcurrency: number;
+  idleSweepExtractionTimeoutMs: number;
 }
 
 export interface RuntimeStorageSettings {

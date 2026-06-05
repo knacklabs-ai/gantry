@@ -95,19 +95,19 @@ function parseLogLevel(raw: string | undefined): LogLevel {
 }
 
 function parseIdentity(source: NodeJS.ProcessEnv): IdentityConfig {
-  const secret = source.SHOPIFY_MCP_IDENTITY_SECRET?.trim() ?? '';
+  const secret = source.MCP_IDENTITY_SECRET?.trim() ?? '';
   const require =
     (source.SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY ?? '').toLowerCase() === 'true';
   const maxAgeSec = parsePositiveInt(
-    'SHOPIFY_MCP_IDENTITY_MAX_AGE_SEC',
-    source.SHOPIFY_MCP_IDENTITY_MAX_AGE_SEC,
-    60,
+    'MCP_IDENTITY_MAX_AGE_SEC',
+    source.MCP_IDENTITY_MAX_AGE_SEC,
+    120,
   );
 
   if (require) {
     if (!secret) {
       throw new Error(
-        'SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY=true requires SHOPIFY_MCP_IDENTITY_SECRET to be set',
+        'SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY=true requires MCP_IDENTITY_SECRET to be set',
       );
     }
     return { mode: 'required', secret, maxAgeSec };
@@ -174,7 +174,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): ShopifyMcpEnv 
     identitySecret: identity.mode === 'disabled' ? undefined : identity.secret,
     requireVerifiedIdentity: identity.mode === 'required',
     identityMaxAgeSec:
-      identity.mode === 'disabled' ? 60 : identity.maxAgeSec,
+      identity.mode === 'disabled' ? 120 : identity.maxAgeSec,
     identityCacheTtlMs: parseNonNegativeInt(
       'SHOPIFY_MCP_IDENTITY_CACHE_TTL_MS',
       source.SHOPIFY_MCP_IDENTITY_CACHE_TTL_MS,

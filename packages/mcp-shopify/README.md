@@ -63,12 +63,12 @@ X-Caller-Identity: phone:<E.164>;email:<addr>;ts:<unix-secs>;sig:<hex-hmac>
 ```
 
 - `phone` and/or `email` — at least one must be supplied
-- `ts` — Unix timestamp in seconds, must be within `SHOPIFY_MCP_IDENTITY_MAX_AGE_SEC` of server time (default 60s, blocks replay)
+- `ts` — Unix timestamp in seconds, must be within `MCP_IDENTITY_MAX_AGE_SEC` of server time (default 120s, blocks replay)
 - `sig` — HMAC-SHA256, hex-encoded, computed over the canonical string:
   ```
   phone=<value-or-empty>|email=<lowercased-value-or-empty>|ts=<value>
   ```
-  using `SHOPIFY_MCP_IDENTITY_SECRET` as the key.
+  using `MCP_IDENTITY_SECRET` as the key.
 
 Reference implementation (TypeScript):
 
@@ -78,7 +78,7 @@ import { computeIdentitySignature } from '@gantry/mcp-shopify';
 const ts = Math.floor(Date.now() / 1000);
 const sig = computeIdentitySignature(
   { phone: '+919876543210', ts },
-  process.env.SHOPIFY_MCP_IDENTITY_SECRET!,
+  process.env.MCP_IDENTITY_SECRET!,
 );
 fetch('http://127.0.0.1:8081/mcp', {
   method: 'POST',
@@ -113,20 +113,20 @@ ever appearing in tool arguments.
 
 ```
 # Required when the channel adapter is wired up.
-SHOPIFY_MCP_IDENTITY_SECRET=<shared with the Gantry MCP callerIdentity secret>
+MCP_IDENTITY_SECRET=<shared with the Gantry MCP callerIdentity secret>
 
 # Set true once the channel adapter is sending the header consistently.
 # Default false so CLI / Inspector / tests keep working.
 SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY=false
 
-# Replay window. Default 60s.
-SHOPIFY_MCP_IDENTITY_MAX_AGE_SEC=60
+# Replay window. Default 120s.
+MCP_IDENTITY_MAX_AGE_SEC=120
 ```
 
 ### Operational checklist for production
 
 - [ ] Bind MCP to a private interface (already does — `127.0.0.1`).
-- [ ] Generate a 32+ byte random `SHOPIFY_MCP_IDENTITY_SECRET`, store the same value as a Gantry capability secret referenced by the Shopify MCP server's `callerIdentity.signingRef`, and never log it.
+- [ ] Generate a 32+ byte random `MCP_IDENTITY_SECRET`, store the same value as a Gantry capability secret referenced by the Shopify MCP server's `callerIdentity.signingRef`, and never log it.
 - [ ] Channel adapter HMAC-verifies the upstream channel (Interakt webhook etc.) **before** signing the identity header for downstream MCP calls. The identity is only as strong as that upstream verification.
 - [ ] Set `SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY=true` only after the channel adapter is reliably attaching the header.
 - [ ] If Gantry and MCP run on different hosts, terminate TLS at the load balancer / service mesh — don't carry plain HTTP across hosts.
@@ -158,7 +158,7 @@ mcp_servers:
     callerIdentity:
       mode: required
       headerName: X-Caller-Identity
-      signingRef: SHOPIFY_MCP_IDENTITY_SECRET
+      signingRef: MCP_IDENTITY_SECRET
       source:
         kind: conversation_jid_phone
         jidPrefix: 'wa:'

@@ -38,8 +38,17 @@ export function materializeMcpRecord(
   credentialEnv: Record<string, string>,
 ): MaterializedMcpCapability {
   const config = record.version.config;
+  // http/sse connectors are external processes core does not spawn, so it never
+  // injects env into them — env-targeted credential refs (the connector's own
+  // .env) must not be required here; only header refs are actually used. Servers
+  // core spawns (stdio_template) still need all refs injected.
+  const isRemoteTransport =
+    config.transport === 'http' || config.transport === 'sse';
+  const credentialRefsToResolve = isRemoteTransport
+    ? record.version.credentialRefs.filter((ref) => ref.target === 'header')
+    : record.version.credentialRefs;
   const credentialValues = resolveCredentialValues(
-    record.version.credentialRefs,
+    credentialRefsToResolve,
     credentialEnv,
   );
   const allowedToolPatterns =

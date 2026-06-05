@@ -88,6 +88,34 @@ describe('materializeMcpRecord (loopback http/sse projection)', () => {
     ).toEqual({ Authorization: 'Bearer xyz' });
   });
 
+  it('ignores env-targeted credentialRefs for loopback http (connector owns its env)', () => {
+    const record = buildHttpRecord('http://127.0.0.1:8082/mcp', {
+      credentialRefs: [
+        {
+          name: 'BOONDI_CRM_DATABASE_URL',
+          target: 'env',
+          key: 'BOONDI_CRM_DATABASE_URL',
+        },
+      ],
+    } as never);
+    // The value is NOT in the resolved store env — an http connector reads its
+    // own DB url from its own .env, so core must not require it here.
+    const cap = materializeMcpRecord(record, {});
+    expect(cap.config).toEqual({
+      type: 'http',
+      url: 'http://127.0.0.1:8082/mcp',
+    });
+  });
+
+  it('still requires header-targeted credentialRefs for loopback http', () => {
+    const record = buildHttpRecord('http://127.0.0.1:8082/mcp', {
+      credentialRefs: [
+        { name: 'MCP_AUTH', target: 'header', key: 'Authorization' },
+      ],
+    } as never);
+    expect(() => materializeMcpRecord(record, {})).toThrow(ApplicationError);
+  });
+
   it('preserves caller identity config for spawn-time signing', () => {
     const record = buildHttpRecord('http://127.0.0.1:8081/mcp', {
       config: {

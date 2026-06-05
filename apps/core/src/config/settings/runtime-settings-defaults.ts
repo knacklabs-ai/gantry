@@ -34,6 +34,10 @@ export const DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE = 0.6;
 export const DEFAULT_MEMORY_DREAMING_CRON = '15 3 * * *';
 export const DEFAULT_MEMORY_EMBED_BATCH_SIZE = 16;
 export const DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING = 5_000;
+// Idle-session memory sweep: 3 parallel lanes (low — competes with live replies for
+// the model budget); 45s per-extraction deadline (modest headroom over the prior 30s).
+export const DEFAULT_IDLE_SWEEP_CONCURRENCY = 3;
+export const DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS = 45_000;
 export const DEFAULT_AGENT_SESSION_MEMORY_ITEM_LIMIT = 8;
 export const DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS = 12_000;
 export const DEFAULT_BROWSER_USAGE_ENABLED = false;
@@ -109,6 +113,8 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
     maintenance: {
       maxPending: DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
     },
+    idleSweepConcurrency: DEFAULT_IDLE_SWEEP_CONCURRENCY,
+    idleSweepExtractionTimeoutMs: DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS,
   };
   const runtime: RuntimeSettings['runtime'] = {
     queue: {

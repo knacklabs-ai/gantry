@@ -6,15 +6,15 @@
 //   npm run cli -- list
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { loadDotenvUpwards } from '../src/dotenv-load.js';
+import { loadRuntimeEnv } from '../src/dotenv-load.js';
 import { computeIdentitySignature } from '../src/identity/identity-header.js';
 
-loadDotenvUpwards();
+loadRuntimeEnv();
 
 const endpoint =
   process.env.BOONDI_CRM_MCP_URL ??
   `http://127.0.0.1:${process.env.BOONDI_CRM_MCP_PORT ?? '8082'}/mcp`;
-const secret = process.env.SHOPIFY_MCP_IDENTITY_SECRET ?? '';
+const secret = process.env.MCP_IDENTITY_SECRET ?? '';
 const phone = (process.env.CLI_PHONE ?? '').replace(/\D/g, '');
 const cmd = process.argv[2];
 

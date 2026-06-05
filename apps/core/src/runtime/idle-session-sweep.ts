@@ -4,8 +4,13 @@ import {
 } from '../adapters/storage/postgres/runtime-store.js';
 import { getRuntimeSettingsForConfig } from '../config/index.js';
 import { agentIdForFolder } from '../config/settings/desired-state-service-helpers.js';
+import {
+  DEFAULT_IDLE_SWEEP_CONCURRENCY,
+  DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS,
+} from '../config/settings/runtime-settings-defaults.js';
 import type { SessionMemoryCollector } from '../domain/ports/session-memory-collector.js';
 import { logger } from '../infrastructure/logging/logger.js';
+import { drainBatches } from './idle-sweep-drain.js';
 
 const MS_PER_MINUTE = 60_000;
 const DEFAULT_MAX_PER_SWEEP = 25;
@@ -111,6 +116,11 @@ export const IDLE_CANDIDATES_SQL = `
 export interface IdleSweepDeps {
   collectSessionMemory: SessionMemoryCollector;
   maxPerSweep?: number;
+  // How many of the per-pass batch to extract in parallel (default 3). Background
+  // work shares the model rate budget with live replies, so keep this low.
+  concurrency?: number;
+  // Per-extraction deadline threaded to the boundary extractor (default 45s).
+  extractionTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -126,6 +136,9 @@ export function createIdleSessionSweeper(
   deps: IdleSweepDeps,
 ): () => Promise<void> {
   const maxPerSweep = deps.maxPerSweep ?? DEFAULT_MAX_PER_SWEEP;
+  const concurrency = deps.concurrency ?? DEFAULT_IDLE_SWEEP_CONCURRENCY;
+  const extractionTimeoutMs =
+    deps.extractionTimeoutMs ?? DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS;
   const now = deps.now ?? (() => Date.now());
   // Per-session failure back-off (in-memory; cleared on success or restart).
   const backoff = new Map<
@@ -167,31 +180,40 @@ export function createIdleSessionSweeper(
         return;
       }
 
-      let rows: IdleCandidateRow[];
-      try {
-        const result = await pool.query<IdleCandidateRow>(IDLE_CANDIDATES_SQL, [
-          agentIds,
-          idleBeforeIso,
-          maxPerSweep * 4,
-        ]);
-        rows = result.rows;
-      } catch (err) {
-        logger.warn({ err }, 'Idle session sweep query failed');
-        return;
-      }
+      // Fetch one batch of eligible sessions: the loose-idle SQL candidates filtered
+      // by the precise per-agent idle cutoff and the in-memory failure back-off.
+      const fetchEligibleBatch = async (): Promise<IdleCandidateRow[]> => {
+        let rows: IdleCandidateRow[];
+        try {
+          const result = await pool.query<IdleCandidateRow>(
+            IDLE_CANDIDATES_SQL,
+            [agentIds, idleBeforeIso, maxPerSweep * 4],
+          );
+          rows = result.rows;
+        } catch (err) {
+          logger.warn({ err }, 'Idle session sweep query failed');
+          return [];
+        }
+        const eligible: IdleCandidateRow[] = [];
+        for (const row of rows) {
+          if (eligible.length >= maxPerSweep) break;
+          const cutoffMs = optIn.get(row.agent_id);
+          if (cutoffMs === undefined) continue;
+          const lastActivityMs = Date.parse(row.last_activity_at);
+          if (!Number.isFinite(lastActivityMs)) continue;
+          // Precise per-agent idle check (the SQL used the loosest cutoff).
+          if (nowMs - lastActivityMs < cutoffMs) continue;
+          // Bounded retry: skip a session still inside its failure back-off window.
+          const prior = backoff.get(row.agent_session_id);
+          if (prior && nowMs < prior.nextEligibleAt) continue;
+          eligible.push(row);
+        }
+        return eligible;
+      };
 
-      let extracted = 0;
-      for (const row of rows) {
-        if (extracted >= maxPerSweep) break;
-        const cutoffMs = optIn.get(row.agent_id);
-        if (cutoffMs === undefined) continue;
-        const lastActivityMs = Date.parse(row.last_activity_at);
-        if (!Number.isFinite(lastActivityMs)) continue;
-        // Precise per-agent idle check (the SQL used the loosest cutoff).
-        if (nowMs - lastActivityMs < cutoffMs) continue;
-        // Bounded retry: skip a session still inside its failure back-off window.
-        const prior = backoff.get(row.agent_session_id);
-        if (prior && nowMs < prior.nextEligibleAt) continue;
+      // Extract one session. Owns its own error handling so a failure never aborts
+      // the batch (it backs the session off and lets the others proceed).
+      const processSession = async (row: IdleCandidateRow): Promise<void> => {
         try {
           const outcome = await deps.collectSessionMemory({
             agentSessionId: row.agent_session_id,
@@ -199,8 +221,8 @@ export function createIdleSessionSweeper(
             // DM customer agents (the opt-in case today) are user-scoped. A
             // channel/group agent that opts in later would need kind-based scope.
             defaultScope: 'user',
+            timeoutMs: extractionTimeoutMs,
           });
-          extracted += 1;
           backoff.delete(row.agent_session_id);
           logger.info(
             {
@@ -231,7 +253,20 @@ export function createIdleSessionSweeper(
             'Idle session memory extraction failed; backing off before retry',
           );
         }
-      }
+      };
+
+      // Adaptive drain: extract each batch with bounded parallelism, and keep pulling
+      // batches while they come back full (more backlog) rather than waiting for the
+      // next poll interval. Re-querying each round is safe and terminating: a success
+      // advances the conversation cursor (row drops out) and a failure sets an
+      // in-memory back-off (fetchEligibleBatch skips it), so the loop makes progress
+      // and stops on the first partial batch.
+      await drainBatches({
+        fetchBatch: fetchEligibleBatch,
+        processItem: processSession,
+        batchSize: maxPerSweep,
+        concurrency,
+      });
     } finally {
       await lease.release();
     }

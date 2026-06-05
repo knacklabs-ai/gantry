@@ -70,7 +70,7 @@ REQUIRED_SECRETS=(
 # SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY=true and need the HMAC signing key
 # to resolve via the broker.
 OPTIONAL_SECRETS=(
-  SHOPIFY_MCP_IDENTITY_SECRET
+  MCP_IDENTITY_SECRET
 )
 
 ALLOW_SCOPE="mcp:shopify-api"

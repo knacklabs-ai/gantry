@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { TokenManager } from '../../src/auth/token-manager.js';
-import { loadDotenvUpwards } from '../../src/dotenv-load.js';
+import { loadRuntimeEnv } from '../../src/dotenv-load.js';
 
-loadDotenvUpwards();
+loadRuntimeEnv();
 
 const LIVE = process.env.SHOPIFY_LIVE === '1';
 const HAS_CREDS =

@@ -4,6 +4,8 @@ import {
   DEFAULT_MEMORY_EMBED_BATCH_SIZE,
   DEFAULT_MEMORY_EXTRACTOR_MAX_FACTS,
   DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE,
+  DEFAULT_IDLE_SWEEP_CONCURRENCY,
+  DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS,
   DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
   DEFAULT_OPENAI_DAILY_EMBED_LIMIT,
   getPresetManagedMemoryDefaults,
@@ -161,6 +163,8 @@ export function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
       maintenance: {
         maxPending: DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
       },
+      idleSweepConcurrency: DEFAULT_IDLE_SWEEP_CONCURRENCY,
+      idleSweepExtractionTimeoutMs: DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS,
     };
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -174,6 +178,8 @@ export function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
     'dreaming',
     'llm',
     'maintenance',
+    'idle_sweep_concurrency',
+    'idle_sweep_extraction_timeout_ms',
   ]);
   for (const key of Object.keys(map)) {
     if (!supportedKeys.has(key)) {
@@ -365,5 +371,15 @@ export function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
         DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
       ),
     },
+    idleSweepConcurrency: parsePositiveIntegerValue(
+      map.idle_sweep_concurrency,
+      'memory.idle_sweep_concurrency',
+      DEFAULT_IDLE_SWEEP_CONCURRENCY,
+    ),
+    idleSweepExtractionTimeoutMs: parsePositiveIntegerValue(
+      map.idle_sweep_extraction_timeout_ms,
+      'memory.idle_sweep_extraction_timeout_ms',
+      DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS,
+    ),
   };
 }

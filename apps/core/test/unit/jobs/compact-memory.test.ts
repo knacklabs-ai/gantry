@@ -4,6 +4,7 @@ import {
   collectCompactBoundaryMemory,
   collectJobCompletionMemory,
 } from '@core/jobs/compact-memory.js';
+import { MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS } from '@core/shared/memory-dreaming-timeout.js';
 
 describe('collectCompactBoundaryMemory', () => {
   it('collects durable memory when a scheduled run reaches an SDK compact boundary', async () => {
@@ -22,8 +23,8 @@ describe('collectCompactBoundaryMemory', () => {
       agentSessionId: 'agent-session:job',
       trigger: 'precompact',
       signal: expect.any(AbortSignal),
-      timeoutMs: 30_000,
-      statementTimeoutMs: 30_000,
+      timeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
+      statementTimeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
     });
     expect(logger.info).toHaveBeenCalledWith(
       {
@@ -53,8 +54,8 @@ describe('collectCompactBoundaryMemory', () => {
       trigger: 'precompact',
       defaultScope: 'user',
       signal: expect.any(AbortSignal),
-      timeoutMs: 30_000,
-      statementTimeoutMs: 30_000,
+      timeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
+      statementTimeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
     });
   });
 
@@ -99,7 +100,7 @@ describe('collectCompactBoundaryMemory', () => {
         logger,
         context: { jobId: 'job-1', runId: 'run-1' },
       });
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS);
       await done;
 
       expect(logger.info).not.toHaveBeenCalled();
@@ -145,8 +146,8 @@ describe('collectJobCompletionMemory', () => {
         },
       ],
       signal: expect.any(AbortSignal),
-      timeoutMs: 30_000,
-      statementTimeoutMs: 30_000,
+      timeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
+      statementTimeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
     });
     expect(logger.info).toHaveBeenCalledWith(
       {
@@ -179,8 +180,8 @@ describe('collectJobCompletionMemory', () => {
         { role: 'user', text: 'Remember the channel release rule.' },
       ],
       signal: expect.any(AbortSignal),
-      timeoutMs: 30_000,
-      statementTimeoutMs: 30_000,
+      timeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
+      statementTimeoutMs: MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS,
     });
   });
 
@@ -226,7 +227,7 @@ describe('collectJobCompletionMemory', () => {
         logger,
         context: { jobId: 'job-1', runId: 'run-1' },
       });
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS);
       await done;
 
       expect(logger.info).not.toHaveBeenCalled();

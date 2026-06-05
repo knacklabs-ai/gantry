@@ -1,4 +1,5 @@
-import { loadDotenvUpwards } from './dotenv-load.js';
+import { applyMigrations } from './db/migrate.js';
+import { loadRuntimeEnv } from './dotenv-load.js';
 import { loadEnv } from './env.js';
 import { createLogger } from './logger.js';
 import { startHttpServer } from './server.js';
@@ -27,7 +28,7 @@ const isEntry =
     process.argv[1].endsWith('packages/mcp-crm/src/index.ts'));
 
 if (isEntry) {
-  loadDotenvUpwards();
+  loadRuntimeEnv();
   const env = loadEnv();
   const logger = createLogger({
     level: env.logLevel,
@@ -35,35 +36,46 @@ if (isEntry) {
     context: { service: 'mcp-crm' },
   });
 
-  startHttpServer({ env, logger }).then(
-    (running) => {
-      // Durable backstop: reconstruct any missed/failed capture from the
-      // durable transcript. Started here so it shares the same pool/lifecycle.
-      const stopReconciler = startReconciler({
-        env,
-        logger,
-        pool: running.pool,
-        repo: running.repo,
-      });
+  // Always apply our own (idempotent) migrations on boot, then start. The
+  // operator just runs the server with .env; no manual migrate step.
+  applyMigrations({
+    databaseUrl: env.databaseUrl,
+    schema: env.dbSchema,
+    // One-time: move any pre-existing rows out of Gantry's schema into ours on the
+    // first boot after the schema flip (no-op once dbSchema === gantrySchema again).
+    gantrySchema: env.gantrySchema,
+    logger,
+  })
+    .then(() => startHttpServer({ env, logger }))
+    .then(
+      (running) => {
+        // Durable backstop: reconstruct any missed/failed capture from the
+        // durable transcript. Started here so it shares the same pool/lifecycle.
+        const stopReconciler = startReconciler({
+          env,
+          logger,
+          pool: running.pool,
+          repo: running.repo,
+        });
 
-      let shuttingDown = false;
-      const shutdown = async () => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        stopReconciler();
-        await running.close().catch(() => undefined);
-        await running.pool.end().catch(() => undefined);
-        process.exit(0);
-      };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
-    },
-    (err) => {
-      logger.fatal(
-        { err: err instanceof Error ? err.message : String(err) },
-        'boondi_crm_failed_to_start',
-      );
-      process.exit(1);
-    },
-  );
+        let shuttingDown = false;
+        const shutdown = async () => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          stopReconciler();
+          await running.close().catch(() => undefined);
+          await running.pool.end().catch(() => undefined);
+          process.exit(0);
+        };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+      },
+      (err) => {
+        logger.fatal(
+          { err: err instanceof Error ? err.message : String(err) },
+          'boondi_crm_failed_to_start',
+        );
+        process.exit(1);
+      },
+    );
 }

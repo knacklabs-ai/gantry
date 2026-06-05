@@ -12,6 +12,7 @@ import {
   syncRuntimeSettingsFromProjection,
 } from '../config/index.js';
 import { nowIso } from '../shared/time/datetime.js';
+import { runtimeEnvValueDynamic } from '../config/env/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { isValidGroupFolder } from '../platform/group-folder.js';
 import { TaskContext, TaskHandler } from './ipc-types.js';
@@ -892,6 +893,11 @@ async function createMcpProxyForSourceGroup(input: {
     secrets:
       input.deps.getCapabilitySecretRepository?.() ??
       storage.repositories.capabilitySecrets,
+    // http/sse signing secrets live in $GANTRY_HOME/.env, not process.env —
+    // resolve them via the runtime-env reader (same as agent-spawn), or the
+    // proxy can't sign caller-identity and tool calls fail FORBIDDEN.
+    readRuntimeEnv: runtimeEnvValueDynamic,
+    logger,
   });
   return new McpToolProxy(storage.repositories.mcpServers, {
     tools: storage.repositories.tools,

@@ -66,7 +66,7 @@ lead/query capture). A separate read-only Next.js dashboard at
   durable heuristic reconciler backstop; identity via signed `X-Caller-Identity`.
 - **Wiring (confirmed in `~/gantry/settings.yaml` + `~/gantry/.env`):**
   `mcp:boondi-crm` is registered (HTTP `:8082`, caller-identity required,
-  `signing_ref: SHOPIFY_MCP_IDENTITY_SECRET`, tool patterns
+  `signing_ref: MCP_IDENTITY_SECRET`, tool patterns
   `record_*/upgrade_*/update_*/get_*`, `credential_refs: BOONDI_CRM_DATABASE_URL`),
   and the `boondi_support` agent attaches **both** `mcp:shopify-api` and
   `mcp:boondi-crm`. The `.env` has `BOONDI_CRM_MCP_PORT / DATABASE_URL / DB_SCHEMA`.

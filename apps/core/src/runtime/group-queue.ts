@@ -6,7 +6,10 @@ import {
   writeContinuationInput,
 } from './continuation-input.js';
 import { stopActiveGroupRun } from './group-queue-stop.js';
-import { normalizeThreadQueueId } from './thread-queue-key.js';
+import {
+  normalizeThreadQueueId,
+  parseThreadQueueKey,
+} from './thread-queue-key.js';
 
 type QueueKind = 'message' | 'task';
 type ContinuationOptions = {
@@ -381,6 +384,7 @@ export class GroupQueue {
     try {
       writeContinuationInput(
         state.groupFolder,
+        parseThreadQueueKey(groupJid).chatJid,
         text,
         this.continuationSequence++,
         incomingThreadId,
@@ -396,7 +400,11 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return;
     try {
-      writeCloseSignal(state.groupFolder, state.threadId);
+      writeCloseSignal(
+        state.groupFolder,
+        parseThreadQueueKey(groupJid).chatJid,
+        state.threadId,
+      );
     } catch {
       // ignore
     }

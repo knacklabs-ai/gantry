@@ -706,6 +706,9 @@ export async function startRuntimeServices(
       opsRepository: resolved.opsRepository,
       runIdleSweep: createIdleSessionSweeper({
         collectSessionMemory: resolved.collectSessionMemory,
+        concurrency: getRuntimeSettingsForConfig().memory.idleSweepConcurrency,
+        extractionTimeoutMs:
+          getRuntimeSettingsForConfig().memory.idleSweepExtractionTimeoutMs,
       }),
     })
     .catch((err) => {

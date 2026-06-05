@@ -2,7 +2,11 @@ export const MEMORY_DREAM_RUN_TIMEOUT_MS = 20 * 60 * 1000;
 export const MEMORY_DREAM_SYSTEM_JOB_TIMEOUT_MS =
   MEMORY_DREAM_RUN_TIMEOUT_MS + 60_000;
 export const MEMORY_DREAM_SYSTEM_JOB_FINALIZATION_GRACE_MS = 60_000;
-export const MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS = 30_000;
+// Default per-extraction deadline (fallback when a caller does not pass one). The
+// idle sweep passes its own configurable value (memory.idle_sweep_extraction_timeout_ms,
+// default 45s); this is the floor for other callers. Raised from 30s to give modest
+// headroom for larger first-time (bootstrap) extractions.
+export const MEMORY_BOUNDARY_COLLECTION_TIMEOUT_MS = 45_000;
 
 export class MemoryOperationTimeoutError extends Error {
   readonly code = 'MEMORY_OPERATION_TIMEOUT';

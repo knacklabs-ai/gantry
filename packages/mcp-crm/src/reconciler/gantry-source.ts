@@ -1,7 +1,8 @@
 // Read-only access to Gantry's DURABLE transcript for the backstop, plus the
-// boondi-owned idempotency cursor. boondi-crm reads Gantry's messages exactly the
-// way the read-only dashboard does — a one-way dependency; Gantry never depends on
-// boondi-crm. All table names are unqualified (the pool sets search_path).
+// boondi-owned idempotency cursor. boondi-crm reads Gantry's messages — a one-way
+// dependency; Gantry never depends on boondi-crm. Gantry's transcript tables are
+// EXPLICITLY schema-qualified (the CRM's search_path is its own boondi_crm); the
+// boondi-owned `boondi_reconcile_cursor` stays unqualified (resolves in boondi_crm).
 
 import type { Pool } from 'pg';
 import type { TranscriptMessage } from './classify.js';
@@ -23,23 +24,31 @@ export function phoneFromConversationId(conversationId: string): string | undefi
 // Conversations that have gone idle (no message for >idleMinutes) but were active
 // within the lookback window — i.e. concluded chats the backstop should check. We
 // only look at settled conversations so we never race the live fast path mid-chat.
-export async function findReconcileCandidates(
-  pool: Pool,
-  opts: { idleMinutes: number; lookbackHours: number; limit?: number },
-): Promise<ReconcileCandidate[]> {
-  const res = await pool.query(
-    `SELECT m.conversation_id,
+// SQL builders parameterized by Gantry's schema so the cross-schema reads are
+// explicit and unit-testable. (Unqualified placeholder — qualified in the TDD step.)
+export function candidatesSql(gantrySchema: string): string {
+  return `SELECT m.conversation_id,
             max(m.created_at) AS last_activity,
             (array_agg(m.id ORDER BY m.created_at DESC, m.id DESC))[1] AS last_message_id
-       FROM messages m
-       JOIN conversations c ON c.id = m.conversation_id AND c.kind = 'direct'
+       FROM ${gantrySchema}.messages m
+       JOIN ${gantrySchema}.conversations c ON c.id = m.conversation_id AND c.kind = 'direct'
       WHERE m.created_at > now() - make_interval(hours => $1)
       GROUP BY m.conversation_id
      HAVING max(m.created_at) < now() - make_interval(mins => $2)
       ORDER BY max(m.created_at) DESC
-      LIMIT $3`,
-    [opts.lookbackHours, opts.idleMinutes, opts.limit ?? 200],
-  );
+      LIMIT $3`;
+}
+
+export async function findReconcileCandidates(
+  pool: Pool,
+  gantrySchema: string,
+  opts: { idleMinutes: number; lookbackHours: number; limit?: number },
+): Promise<ReconcileCandidate[]> {
+  const res = await pool.query(candidatesSql(gantrySchema), [
+    opts.lookbackHours,
+    opts.idleMinutes,
+    opts.limit ?? 200,
+  ]);
   const candidates: ReconcileCandidate[] = [];
   for (const row of res.rows) {
     const conversationId = row.conversation_id as string;
@@ -59,20 +68,25 @@ export async function findReconcileCandidates(
 }
 
 // The conversation's text transcript, oldest→newest, role-tagged by direction.
+export function transcriptSql(gantrySchema: string): string {
+  return `SELECT m.direction, p.payload_json->>'text' AS text
+       FROM ${gantrySchema}.messages m
+       JOIN ${gantrySchema}.message_parts p ON p.message_id = m.id AND p.kind = 'text'
+      WHERE m.conversation_id = $1
+      ORDER BY m.created_at ASC, p.ordinal ASC
+      LIMIT $2`;
+}
+
 export async function loadTranscript(
   pool: Pool,
+  gantrySchema: string,
   conversationId: string,
   maxMessages = 80,
 ): Promise<TranscriptMessage[]> {
-  const res = await pool.query(
-    `SELECT m.direction, p.payload_json->>'text' AS text
-       FROM messages m
-       JOIN message_parts p ON p.message_id = m.id AND p.kind = 'text'
-      WHERE m.conversation_id = $1
-      ORDER BY m.created_at ASC, p.ordinal ASC
-      LIMIT $2`,
-    [conversationId, maxMessages],
-  );
+  const res = await pool.query(transcriptSql(gantrySchema), [
+    conversationId,
+    maxMessages,
+  ]);
   const out: TranscriptMessage[] = [];
   for (const row of res.rows) {
     const text = (row.text as string | null)?.trim();

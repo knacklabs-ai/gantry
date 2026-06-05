@@ -1738,6 +1738,10 @@ describe('agent-spawn timeout behavior', () => {
         url: 'http://127.0.0.1:18081/mcp',
       }),
     ]);
+    // http connectors read their caller-identity signing secret from runtime
+    // env, not the capability secret store — so provide it via env and leave the
+    // store empty to prove the store is not the source.
+    process.env.CRM_IDENTITY_SECRET = 'test_secret_thirty_two_bytes_long_xx';
     const resultPromise = spawnTestAgent(
       testGroup,
       {
@@ -1749,9 +1753,7 @@ describe('agent-spawn timeout behavior', () => {
       undefined,
       {
         mcpServerRepository: repository,
-        capabilitySecretRepository: new SpawnCapabilitySecretRepository({
-          CRM_IDENTITY_SECRET: 'test_secret_thirty_two_bytes_long_xx',
-        }),
+        capabilitySecretRepository: new SpawnCapabilitySecretRepository({}),
         mcpContext: { appId: 'app-one', agentId: 'agent-one' },
       },
     );
@@ -1760,6 +1762,7 @@ describe('agent-spawn timeout behavior', () => {
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
+    delete process.env.CRM_IDENTITY_SECRET;
 
     const mcpConfigWrite = vi
       .mocked(fs.writeFileSync)

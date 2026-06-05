@@ -13,6 +13,8 @@ import {
   DEFAULT_MEMORY_EMBED_BATCH_SIZE,
   DEFAULT_MEMORY_EXTRACTOR_MAX_FACTS,
   DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE,
+  DEFAULT_IDLE_SWEEP_CONCURRENCY,
+  DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS,
   DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
   DEFAULT_ONECLI_DATABASE_URL_ENV,
   DEFAULT_ONECLI_POSTGRES_SCHEMA,
@@ -136,6 +138,8 @@ function renderMemorySettingsYaml(
     `      consolidation: ${quoteYamlString(memory.llm.models.consolidation)}`,
     '  maintenance:',
     `    max_pending: ${memory.maintenance.maxPending}`,
+    `  idle_sweep_concurrency: ${memory.idleSweepConcurrency}`,
+    `  idle_sweep_extraction_timeout_ms: ${memory.idleSweepExtractionTimeoutMs}`,
     '',
   );
 }
@@ -586,7 +590,10 @@ function isDefaultMemory(memory: RuntimeMemorySettings): boolean {
     memory.llm.extractorMaxFacts === DEFAULT_MEMORY_EXTRACTOR_MAX_FACTS &&
     memory.llm.extractorMinConfidence ===
       DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE &&
-    memory.maintenance.maxPending === DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING
+    memory.maintenance.maxPending === DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING &&
+    memory.idleSweepConcurrency === DEFAULT_IDLE_SWEEP_CONCURRENCY &&
+    memory.idleSweepExtractionTimeoutMs ===
+      DEFAULT_IDLE_SWEEP_EXTRACTION_TIMEOUT_MS
   );
 }
 

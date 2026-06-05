@@ -44,10 +44,14 @@ export async function runReconcileCycleOnce(
     reconstructed: 0,
     noSignal: 0,
   };
-  const candidates = await findReconcileCandidates(deps.pool, {
-    idleMinutes: deps.env.reconcileIdleMinutes,
-    lookbackHours: deps.env.reconcileLookbackHours,
-  });
+  const candidates = await findReconcileCandidates(
+    deps.pool,
+    deps.env.gantrySchema,
+    {
+      idleMinutes: deps.env.reconcileIdleMinutes,
+      lookbackHours: deps.env.reconcileLookbackHours,
+    },
+  );
   stats.candidates = candidates.length;
 
   for (const candidate of candidates) {
@@ -74,7 +78,11 @@ export async function runReconcileCycleOnce(
     }
 
     // (3) No record — reconstruct from the durable transcript.
-    const transcript = await loadTranscript(deps.pool, candidate.conversationId);
+    const transcript = await loadTranscript(
+      deps.pool,
+      deps.env.gantrySchema,
+      candidate.conversationId,
+    );
     const result = classifyTranscript(transcript);
     if (result) {
       await deps.repo.recordQuery(candidate.phone, result.input, 'reconciler');

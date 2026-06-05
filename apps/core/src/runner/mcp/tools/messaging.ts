@@ -28,6 +28,7 @@ import { truncateText } from '../formatting.js';
 import { hasValidIpcResponseSignature, writeIpcFile } from '../ipc.js';
 import { createSignedIpcRequestEnvelope } from '../signing.js';
 import { makeIpcId } from '../ipc-ids.js';
+import { buildUserQuestionRequestPayload } from './user-question-payload.js';
 
 const USER_QUESTION_TIMEOUT_MS = 5 * 60 * 1000;
 const USER_QUESTION_POLL_INTERVAL_MS = 100;
@@ -194,23 +195,21 @@ export function registerMessagingTools(server: McpServer): void {
 
       await requestUserInteractionBoundary(requestId, context?.signal);
 
-      const payload = {
+      const payload = buildUserQuestionRequestPayload({
         requestId,
         sourceAgentFolder: groupFolder,
+        // Stamp the asking conversation's jid so the host routes the question to
+        // THIS customer, not a first-match-by-folder fallback (cross-conversation
+        // bleed prevention — mirrors how send_message stamps chatJid).
+        targetJid: chatJid,
         questions: args.questions,
-        context: {
-          ...(appId ? { appId } : {}),
-          ...(agentId ? { agentId } : {}),
-          ...(threadId ? { threadId } : {}),
-          ...(IPC_RESPONSE_KEY_ID
-            ? { responseKeyId: IPC_RESPONSE_KEY_ID }
-            : {}),
-        },
-        timestamp: nowIso(),
-        expiresAt: new Date(
-          currentTimeMs() + USER_QUESTION_TIMEOUT_MS,
-        ).toISOString(),
-      };
+        appId,
+        agentId,
+        threadId,
+        responseKeyId: IPC_RESPONSE_KEY_ID,
+        nowMs: currentTimeMs(),
+        timeoutMs: USER_QUESTION_TIMEOUT_MS,
+      });
       const envelope = createSignedIpcRequestEnvelope(IPC_AUTH_TOKEN, payload);
 
       writePrivateFileSync(tmpPath, JSON.stringify(envelope, null, 2));
