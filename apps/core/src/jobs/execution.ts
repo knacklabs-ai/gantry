@@ -98,6 +98,12 @@ export async function runJob(
   const startedAtMs = nowMs();
   const startedAt = toIso(startedAtMs);
   const runtimeAppId = DEFAULT_JOB_RUNTIME_APP_ID;
+  const runtimeEventExchange = getRuntimeEventExchange();
+  const publishRuntimeEvent = async (
+    event: Parameters<typeof runtimeEventExchange.publish>[0],
+  ): Promise<void> => {
+    await runtimeEventExchange.publish(event);
+  };
   const groups = deps.conversationRoutes();
   const execution = resolveExecutionContext(currentJob, groups);
   if (!execution) {
@@ -111,9 +117,7 @@ export async function runJob(
       dispatch,
       runtimeAppId,
       control: getRuntimeControlRepository(),
-      publishRuntimeEvent: async (event) => {
-        await getRuntimeEventExchange().publish(event);
-      },
+      publishRuntimeEvent,
       logger,
     });
     return;
@@ -138,9 +142,7 @@ export async function runJob(
     appSession: preflightAppSession,
     source: 'preflight_setup',
     runId,
-    publishRuntimeEvent: async (event) => {
-      await getRuntimeEventExchange().publish(event);
-    },
+    publishRuntimeEvent,
   });
   if (pausedForSetup) return;
   const executionProviderId = (resolvedModel.entry?.executionProviderId ??
@@ -174,9 +176,7 @@ export async function runJob(
       scheduledFor,
       runtimeAppId,
       control: eventControl,
-      publishRuntimeEvent: async (event) => {
-        await getRuntimeEventExchange().publish(event);
-      },
+      publishRuntimeEvent,
       logger,
     });
     const deletionGuard = createJobExecutionDeletionGuard({
@@ -193,9 +193,7 @@ export async function runJob(
       state: eventState,
       resolveEventAppSession: () =>
         resolveAppSessionForJob(currentJob, eventControl),
-      publishRuntimeEvent: async (event) => {
-        await getRuntimeEventExchange().publish(event);
-      },
+      publishRuntimeEvent,
       deletionGuard,
       logger,
     });
@@ -366,8 +364,7 @@ export async function runJob(
             agentId: executionAgentId,
             source: 'final_setup',
             runId,
-            publishRuntimeEvent: (event) =>
-              getRuntimeEventExchange().publish(event),
+            publishRuntimeEvent,
           }));
           const browserPrelaunchSetup = finalReadinessPassed
             ? await prelaunchBrowserForJobRun({
@@ -399,9 +396,7 @@ export async function runJob(
                 deps.getCapabilitySecretRepository?.(),
               mcpHostnameLookup: deps.getMcpHostnameLookup?.(),
               mcpDnsValidationCache: deps.getMcpDnsValidationCache?.(),
-              publishRuntimeEvent: async (event) => {
-                await getRuntimeEventExchange().publish(event);
-              },
+              publishRuntimeEvent,
               executionAdapter: deps.executionAdapter,
               executionAdapters: deps.executionAdapters,
               runnerSandboxProvider: deps.runnerSandboxProvider,
@@ -590,9 +585,7 @@ export async function runJob(
       runtimeAppId,
       runId,
       appSession: eventState.eventAppSession ?? preflightAppSession,
-      publishRuntimeEvent: async (event) => {
-        await getRuntimeEventExchange().publish(event);
-      },
+      publishRuntimeEvent,
     });
     const resultSummary = deletionGuard.deletedDuringRun
       ? null
@@ -680,9 +673,7 @@ export async function runJob(
       state: eventState,
       runtimeAppId,
       control: eventControl,
-      publishRuntimeEvent: async (event) => {
-        await getRuntimeEventExchange().publish(event);
-      },
+      publishRuntimeEvent,
       logger,
     });
     deps.onSchedulerChanged?.(currentJob.id);

@@ -2,7 +2,6 @@ import { ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-
 import {
   DATA_DIR,
   PERMISSION_APPROVAL_TIMEOUT_MS,
@@ -163,9 +162,7 @@ export async function spawnAgent(
     fileArtifactStore: () => getRuntimeFileArtifactStore(),
   });
   const agentIdentifier = group.folder.toLowerCase().replace(/_/g, '-');
-
   let compiledSystemPrompt = '';
-
   try {
     compiledSystemPrompt = await promptProfileService.compileSystemPrompt({
       agentFolder: group.folder,
@@ -179,18 +176,15 @@ export async function spawnAgent(
       'Failed to compile prompt profile; continuing without custom system prompt',
     );
   }
-
   const browserProfileName = resolveConversationBrowserProfile({
     agentId: group.folder,
     workspaceKey: group.folder,
     conversationId: input.chatJid,
   });
-
   const trustedAllowedTools = input.allowedTools;
   const browserIpcEnabled = (trustedAllowedTools ?? []).some(
     isCanonicalBrowserCapabilityRule,
   );
-
   const runnerInput: RunnerAgentInput = {
     ...input,
     allowedTools: trustedAllowedTools,

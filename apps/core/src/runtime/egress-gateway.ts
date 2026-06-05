@@ -40,12 +40,7 @@ export interface EgressGatewayUpstreamProxy {
   url: string;
   provider: string;
 }
-/**
- * Run-scoped attribution of a declared outbound host to the reviewed capability
- * that authorized it. Derived from selected runtime access (local CLI and skill
- * action network bindings), never from product-specific host code, so egress
- * audit can name the capability that declared a host for the duration of a run.
- */
+/** Run-scoped attribution of a declared outbound host to its reviewed capability. */
 export interface EgressNetworkAttribution {
   host: string;
   capabilityId: string;
@@ -81,7 +76,6 @@ const EGRESS_GATEWAY_BASE_PORT = 18_080;
 const EGRESS_GATEWAY_PORT_SPAN = 2_000;
 const EGRESS_GATEWAY_MAX_PORT_PROBES = 50;
 const EGRESS_GATEWAY_CLOSE_TIMEOUT_MS = 1_000;
-const EGRESS_GATEWAY_DNS_LOOKUP_TIMEOUT_MS = 30_000;
 const gateways = new Map<string, EgressGatewayState>();
 export async function closeEgressGatewaysForTest(): Promise<void> {
   const states = [...gateways.values()];
@@ -580,7 +574,7 @@ async function resolvePublicEgressTarget(target: {
     records = await lookupHostnameWithDeadline({
       hostname: host,
       lookupHostname: lookupEgressHostname,
-      timeoutMs: EGRESS_GATEWAY_DNS_LOOKUP_TIMEOUT_MS,
+      timeoutMs: 30_000,
       timeoutMessage: 'Egress gateway DNS lookup timed out.',
     });
   } catch {

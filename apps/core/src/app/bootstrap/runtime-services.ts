@@ -125,6 +125,7 @@ function makeDefaultDeps(): RuntimeServicesDefaults {
     exit: (code: number) => process.exit(code),
   };
 }
+
 function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
   let syncInFlight: Promise<void> | undefined;
   let syncDirty = false;
@@ -164,7 +165,6 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
       });
   };
 }
-
 export async function startRuntimeServices(
   options: RuntimeServicesOptions,
   deps: Partial<RuntimeServicesDefaults> &
@@ -179,7 +179,6 @@ export async function startRuntimeServices(
   };
 
   const syncGroupSnapshots = createGroupSnapshotSync(app, resolved);
-
   const onSchedulerChanged = (jobId?: string) => requestSchedulerSync(jobId);
   const startScheduler = () =>
     resolved.startSchedulerLoop({
@@ -671,11 +670,8 @@ export async function startRuntimeServices(
       warn: (meta, message) => resolved.logger.warn(meta, message),
     });
   }
-
   await startScheduler();
-
   resolved.logger.info(`Gantry running (default trigger: ${DEFAULT_TRIGGER})`);
-
   resolved
     .startMessagePollingLoop({
       getConversationRoutes: () => app.getConversationRoutes(),

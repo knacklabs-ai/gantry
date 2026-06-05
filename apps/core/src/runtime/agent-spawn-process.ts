@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-
 import {
   AGENT_MAX_OUTPUT_SIZE,
   AGENT_TIMEOUT,
@@ -21,7 +20,6 @@ import {
   scheduledJobIdleTimeoutMs,
   type ScheduledJobHeartbeatPayload,
 } from './agent-spawn-scheduled-idle.js';
-
 const OUTPUT_START_MARKER = '---GANTRY_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---GANTRY_OUTPUT_END---';
 
