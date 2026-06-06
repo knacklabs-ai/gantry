@@ -54,6 +54,8 @@ export interface BusinessRecord {
   contactQuality: ContactQuality | null;
   score: number | null;
   band: Band | null;
+  confidence: number | null;
+  needsReview: boolean;
   summaryBrief: string | null;
   triggerExcerpt: string | null;
   source: string; // 'agent' (fast path) | 'reconciler' (durable backstop)
@@ -90,4 +92,6 @@ export interface RecordInput {
   contactQuality?: ContactQuality;
   summaryBrief?: string;
   triggerExcerpt?: string;
+  confidence?: number;
+  needsReview?: boolean;
 }

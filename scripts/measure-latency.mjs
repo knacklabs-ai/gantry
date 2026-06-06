@@ -1,14 +1,28 @@
 #!/usr/bin/env node
-// TEMP latency probe (delete after use). Drives ONE full-flow turn through the
-// running dev runtime and reports the per-step timeline from the flow log.
-// Reset (/new) first so every condition measures a cold session identically.
-// Usage: node scripts/measure-latency.mjs "<label>" "<message>"
+// Performance probe: measures per-turn customer-visible latency against the
+// locally running Gantry dev runtime. Consolidates the three retired latency
+// scripts (measure-latency / latency-analyze / latency-cold-replies) into one.
+//
+// What it does: posts a signed Interakt webhook for each representative turn
+// (via lib/webhook.mjs), then slices the runtime flow log (GANTRY_DEV_LOG,
+// default /tmp/gantry-dev.log) from the byte offset taken just before the send.
+// From that slice it reports the wall-clock time from send to the first
+// customer-visible 'outbound' reply, plus the MCP round-trip time when the turn
+// hit a tool. Turns: a greeting (guardrail fast path), a cold order lookup
+// (full agent+MCP path), and an immediate warm follow-up (reused SDK session).
+// Flow events are log lines containing `"flow":` over a JSON object; relevant
+// flows: outbound (.reply/.jid), mcp.request, mcp.response, llm.input/output.
+//
+// Usage: node scripts/measure-latency.mjs   (requires the dev server running)
 import fs from 'node:fs';
-import { sendWebhook } from './interakt-test-send.mjs';
+import { sendWebhook } from './lib/webhook.mjs';
 
 const LOG = process.env.GANTRY_DEV_LOG || '/tmp/gantry-dev.log';
-const FROM = process.env.MEASURE_FROM || '919654405340';
+const FROM = '919900050001'; // fake sender — never a real number (would receive sends)
+const RESET_REPLY = 'Started a fresh session';
+const TIMEOUT_MS = 90_000; // generous: cold turns boot the runner + run the agent
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 const size = () => {
   try {
     return fs.statSync(LOG).size;
@@ -16,6 +30,8 @@ const size = () => {
     return 0;
   }
 };
+
+// Read the log bytes appended since `from`.
 function slice(from) {
   const s = size();
   if (s <= from) return '';
@@ -28,70 +44,85 @@ function slice(from) {
     fs.closeSync(fd);
   }
 }
+
+// Extract flow events from a log slice. Timestamp comes from the leading
+// [ISO] bracket, falling back to a time/timestamp field inside the JSON.
 function events(text) {
   const out = [];
-  for (const l of text.split('\n')) {
-    const m = l.match(
-      /^\[([0-9T:.Z-]+)\].*?(flow:agent\.spawn|flow:llm\.input|flow:mcp\.request|flow:mcp\.response|flow:llm\.output|flow:outbound)/,
-    );
-    if (!m) continue;
-    let tag = m[2];
-    const t = l.match(/"toolName":"([^"]+)"/);
-    if (t) tag += `(${t[1]})`;
-    const rc = l.match(/"reply":"((?:[^"\\]|\\.)*)"/);
-    const reset = rc && /Started a fresh session/.test(rc[1]);
-    out.push({ ts: new Date(m[1]).getTime(), tag, reset, isOut: m[2] === 'flow:outbound' });
+  for (const line of text.split('\n')) {
+    const brace = line.indexOf('{');
+    if (brace === -1 || !line.includes('"flow":')) continue;
+    let json;
+    try {
+      json = JSON.parse(line.slice(brace));
+    } catch {
+      continue;
+    }
+    if (typeof json.flow !== 'string') continue;
+    const iso = line.match(/^\[([0-9T:.Z+-]+)\]/);
+    const t = Date.parse(iso ? iso[1] : json.time || json.timestamp);
+    if (Number.isNaN(t)) continue;
+    out.push({ t, flow: json.flow, reply: json.reply, toolName: json.toolName });
   }
   return out;
 }
 
+// Drive one turn: snapshot the offset, send, then poll the slice until the
+// first non-reset outbound reply appears (or we time out).
+async function turn(text) {
+  const off = size();
+  const sentAt = Date.now();
+  await sendWebhook({ text, from: FROM });
+  let ev = [];
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    ev = events(slice(off));
+    if (ev.some((e) => e.flow === 'outbound' && !String(e.reply || '').includes(RESET_REPLY))) break;
+    await sleep(500);
+  }
+  await sleep(300); // let any trailing mcp.response/outbound lines flush
+  ev = events(slice(off));
+
+  const reply = ev.find((e) => e.flow === 'outbound' && !String(e.reply || '').includes(RESET_REPLY));
+  const req = ev.find((e) => e.flow === 'mcp.request');
+  const resp = [...ev].reverse().find((e) => e.flow === 'mcp.response');
+  return {
+    msToReply: reply ? reply.t - sentAt : null,
+    mcpMs: req && resp && resp.t >= req.t ? resp.t - req.t : null,
+    tools: ev.filter((e) => e.flow === 'mcp.request').length,
+  };
+}
+
 async function main() {
-  const label = process.argv[2] || '(unlabeled)';
-  const msg = process.argv[3] || 'Can you give me the full details of my most recent order?';
-
-  // Cold reset.
-  let off = size();
+  // Reset to a cold session so the greeting + cold-order turns start clean.
   await sendWebhook({ text: '/new', from: FROM });
-  for (let i = 0; i < 25; i++) {
-    if (/Started a fresh session/.test(slice(off))) break;
-    await sleep(1000);
-  }
-  await sleep(1500);
+  await sleep(2000);
 
-  // Measured turn.
-  off = size();
-  await sendWebhook({ text: msg, from: FROM });
-  let done = false;
-  for (let i = 0; i < 90; i++) {
-    if (events(slice(off)).some((e) => e.isOut && !e.reset)) {
-      done = true;
-      break;
-    }
-    await sleep(1000);
-  }
-  await sleep(800);
-  const ev = events(slice(off));
+  const plan = [
+    { turn: 'greeting', path: 'guardrail fast-path', text: 'hi' },
+    { turn: 'cold order', path: 'agent + MCP', text: 'What was my last order?' },
+    { turn: 'warm follow-up', path: 'warm session', text: 'and was it delivered?' },
+  ];
 
-  console.log(`\n=== ${label} ===`);
-  console.log('delta(s) | event');
-  let prev = null;
-  for (const e of ev) {
-    const d = prev ? ((e.ts - prev) / 1000).toFixed(1) : '0.0';
-    console.log(String(d).padStart(7), '|', e.tag);
-    prev = e.ts;
+  const rows = [];
+  for (const step of plan) {
+    const r = await turn(step.text);
+    rows.push({ ...step, ...r });
   }
-  const first = ev[0];
-  const out = [...ev].reverse().find((e) => e.isOut && !e.reset);
-  const tools = ev.filter((e) => e.tag.startsWith('flow:mcp.request')).length;
-  if (first && out) {
-    console.log(
-      `TOTAL first-event→reply: ${((out.ts - first.ts) / 1000).toFixed(1)}s | tool calls: ${tools} | captured=${done}`,
-    );
-  } else {
-    console.log(`no reply captured (captured=${done})`);
+
+  const fmtMs = (x) => (x == null ? '—' : `${x}ms`);
+  const fmtMcp = (r) => (r.mcpMs == null ? (r.tools ? `${r.tools} call(s)` : '—') : `${r.mcpMs}ms`);
+  const pad = (s, n) => String(s).padEnd(n);
+  console.log(`\nLatency probe (log: ${LOG}, from: ${FROM})\n`);
+  console.log(pad('turn', 16), pad('path', 22), pad('ms-to-reply', 12), 'mcp-ms');
+  console.log('-'.repeat(62));
+  for (const r of rows) {
+    console.log(pad(r.turn, 16), pad(r.path, 22), pad(fmtMs(r.msToReply), 12), fmtMcp(r));
   }
+  console.log('');
   process.exit(0);
 }
+
 main().catch((e) => {
   console.error(e);
   process.exit(1);

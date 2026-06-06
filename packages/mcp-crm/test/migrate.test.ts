@@ -50,6 +50,33 @@ describeMaybe('applyMigrations (live Postgres)', () => {
     expect(await tableExists('boondi_business_records')).toBe(true);
   });
 
+  it('re-running with MANY open opportunities per phone neither throws nor truncates', async () => {
+    // The empty-table idempotency test above can't catch the two migration bugs
+    // that only surface with real per-opportunity data: 0001 re-creating the
+    // single-open-per-phone UNIQUE index (fails on >1 open/phone), and 0002's
+    // every-boot TRUNCATE (wipes real rows). Seed two open opps for one phone,
+    // then re-apply: must neither throw nor delete the rows.
+    const schema = 'boondi_crm_reapply_data_test';
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    try {
+      await applyMigrations({ databaseUrl: DATABASE_URL!, schema });
+      await client.query(
+        `INSERT INTO ${schema}.boondi_business_records (id, phone, status, source)
+           VALUES ('o1','910000000001','query','extractor'),
+                  ('o2','910000000001','lead','extractor')`,
+      );
+      await expect(
+        applyMigrations({ databaseUrl: DATABASE_URL!, schema }),
+      ).resolves.toBeDefined();
+      const cnt = await client.query(
+        `SELECT count(*)::int AS n FROM ${schema}.boondi_business_records WHERE phone='910000000001'`,
+      );
+      expect(cnt.rows[0].n).toBe(2); // preserved across re-apply, not truncated
+    } finally {
+      await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    }
+  });
+
   it('rejects an unsafe schema name', async () => {
     await expect(
       applyMigrations({ databaseUrl: DATABASE_URL!, schema: 'bad;name' }),

@@ -21,13 +21,14 @@ export interface BoondiCrmEnv {
   identityMaxAgeSec: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error' | 'fatal';
   logFormat: 'json' | 'text';
-  // Reconciler (durable backstop) — used from Phase 4 onward.
-  reconcileEnabled: boolean;
+  // Digest watcher: how often to poll gantry.agent_session_digests for new
+  // session-end digests, and which agent's sessions to scope to. (The env keys
+  // keep their historical BOONDI_CRM_RECONCILE_INTERVAL_MS / BOONDI_CRM_AGENT_ID
+  // names for backward compatibility.)
   reconcileIntervalMs: number;
-  reconcileIdleMinutes: number;
-  reconcileLookbackHours: number;
   reconcileAgentId: string;
-  reconcileModel: string;
+  // Extraction model for the background opportunity extractor.
+  extractorModel: string;
   anthropicApiKey?: string;
 }
 
@@ -152,27 +153,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BoondiCrmEnv {
     identityMaxAgeSec: identity.mode === 'disabled' ? 120 : identity.maxAgeSec,
     logLevel: parseLogLevel(source.LOG_LEVEL),
     logFormat: source.LOG_FORMAT === 'text' ? 'text' : 'json',
-    reconcileEnabled: parseBool(source.BOONDI_CRM_RECONCILE_ENABLED, true),
     reconcileIntervalMs: parsePositiveInt(
       'BOONDI_CRM_RECONCILE_INTERVAL_MS',
       source.BOONDI_CRM_RECONCILE_INTERVAL_MS,
       240_000,
     ),
-    reconcileIdleMinutes: parsePositiveInt(
-      'BOONDI_CRM_RECONCILE_IDLE_MIN',
-      source.BOONDI_CRM_RECONCILE_IDLE_MIN,
-      10,
-    ),
-    reconcileLookbackHours: parsePositiveInt(
-      'BOONDI_CRM_RECONCILE_LOOKBACK_HOURS',
-      source.BOONDI_CRM_RECONCILE_LOOKBACK_HOURS,
-      48,
-    ),
     reconcileAgentId:
       source.BOONDI_CRM_AGENT_ID?.trim() || 'agent:boondi_support',
-    reconcileModel:
-      source.BOONDI_CRM_RECONCILE_MODEL?.trim() ||
-      'claude-haiku-4-5-20251001',
+    extractorModel:
+      source.BOONDI_CRM_EXTRACTOR_MODEL?.trim() || 'claude-sonnet-4-6',
     anthropicApiKey: source.ANTHROPIC_API_KEY?.trim() || undefined,
   };
 }

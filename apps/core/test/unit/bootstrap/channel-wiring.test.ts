@@ -1008,14 +1008,14 @@ describe('createChannelWiring', () => {
       expect(outbound.sendMessage).not.toHaveBeenCalled();
       expect(info).toHaveBeenCalledWith(
         { jid: 'tg:123' },
-        'Outbound dry-run: reply logged, not sent to provider',
+        'Outbound dry-run: persisted, not sent (number not in test list)',
       );
     } finally {
       delete process.env.GANTRY_OUTBOUND_DRYRUN;
     }
   });
 
-  it('redirects outbound to GANTRY_TEST_OPERATOR_PHONE when set', async () => {
+  it('does NOT redirect outbound in production — operator list only scopes dry-run', async () => {
     const app = makeApp();
     const storeMessage = vi.fn(async () => {});
     const outbound = makeChannel({
@@ -1035,28 +1035,27 @@ describe('createChannelWiring', () => {
       makeRuntimeSettings({ telegram: true, slack: false }),
     );
 
-    // A real customer's conversation, but the operator number is configured: the
-    // reply must physically go to the operator, never the customer.
+    // Production (DRYRUN unset) with the operator number configured: the operator
+    // list no longer redirects — the reply goes to the real conversation. (The
+    // list only scopes sends inside dry-run + grants session-command access.)
     process.env.GANTRY_TEST_OPERATOR_PHONE = '919654405340';
     try {
       await wiring.sendMessage('tg:919999999999', 'hello', {
         durability: 'best_effort',
       });
       expect(outbound.sendMessage).toHaveBeenCalledWith(
-        'tg:919654405340',
+        'tg:919999999999',
         'hello',
       );
-      // Whole delivery pipeline redirected (leak-safe): persistence is keyed to
-      // the operator jid too, so even a retry can never reach the original number.
       expect(storeMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ chat_jid: 'tg:919654405340' }),
+        expect.objectContaining({ chat_jid: 'tg:919999999999' }),
       );
     } finally {
       delete process.env.GANTRY_TEST_OPERATOR_PHONE;
     }
   });
 
-  it('DRYRUN=1 suppresses sends even when GANTRY_TEST_OPERATOR_PHONE is set', async () => {
+  it('DRYRUN=1 does NOT send to a number outside GANTRY_TEST_OPERATOR_PHONE', async () => {
     const app = makeApp();
     const outbound = makeChannel({
       ownsJid: vi.fn((jid: string) => jid === 'tg:919999999999'),
@@ -1073,7 +1072,7 @@ describe('createChannelWiring', () => {
       makeRuntimeSettings({ telegram: true, slack: false }),
     );
 
-    // The dry-run kill-switch wins over the operator redirect: nothing is sent.
+    // Dry-run + a number NOT in the operator list: the reply is never sent.
     process.env.GANTRY_OUTBOUND_DRYRUN = '1';
     process.env.GANTRY_TEST_OPERATOR_PHONE = '919654405340';
     try {
@@ -1081,6 +1080,47 @@ describe('createChannelWiring', () => {
         durability: 'best_effort',
       });
       expect(outbound.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.GANTRY_OUTBOUND_DRYRUN;
+      delete process.env.GANTRY_TEST_OPERATOR_PHONE;
+    }
+  });
+
+  it('DRYRUN=1 DOES send (self-routed) to a number IN GANTRY_TEST_OPERATOR_PHONE', async () => {
+    const app = makeApp();
+    const storeMessage = vi.fn(async () => {});
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'tg:919654405340'),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'tgid.op' })),
+    });
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => outbound),
+        ),
+      ],
+      opsRepository: { storeMessage } as any,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    // Dry-run + the conversation's own number IS in the operator list: the reply
+    // is sent (self-routed) AND persisted under its own conversation.
+    process.env.GANTRY_OUTBOUND_DRYRUN = '1';
+    process.env.GANTRY_TEST_OPERATOR_PHONE = '919654405340';
+    try {
+      await wiring.sendMessage('tg:919654405340', 'hello', {
+        durability: 'best_effort',
+      });
+      expect(outbound.sendMessage).toHaveBeenCalledWith(
+        'tg:919654405340',
+        'hello',
+      );
+      expect(storeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ chat_jid: 'tg:919654405340' }),
+      );
     } finally {
       delete process.env.GANTRY_OUTBOUND_DRYRUN;
       delete process.env.GANTRY_TEST_OPERATOR_PHONE;

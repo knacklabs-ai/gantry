@@ -17,7 +17,7 @@ const COLUMNS = `
   occasion, quantity, quantity_raw, budget_per_gift_inr, budget_total_inr,
   budget_raw, locations, location_scope, timeline, timeline_days, buyer_type,
   customisation, contact_quality, score, band, summary_brief, trigger_excerpt,
-  source, created_at, updated_at
+  source, confidence, needs_review, created_at, updated_at
 `;
 
 type Row = Record<string, unknown>;
@@ -51,6 +51,8 @@ function rowToRecord(row: Row): BusinessRecord {
       (row.contact_quality as BusinessRecord['contactQuality']) ?? null,
     score: (row.score as number | null) ?? null,
     band: (row.band as BusinessRecord['band']) ?? null,
+    confidence: (row.confidence as number | null) ?? null,
+    needsReview: (row.needs_review as boolean | null) ?? false,
     summaryBrief: (row.summary_brief as string | null) ?? null,
     triggerExcerpt: (row.trigger_excerpt as string | null) ?? null,
     source: row.source as string,
@@ -95,16 +97,6 @@ function hasAnyQualificationField(r: {
 export class RecordsRepository {
   constructor(private readonly pool: Pool) {}
 
-  async getOpenRecordByPhone(phone: string): Promise<BusinessRecord | null> {
-    const res = await this.pool.query(
-      `SELECT ${COLUMNS} FROM boondi_business_records
-       WHERE phone = $1 AND status IN ('query','qualifying','lead')
-       ORDER BY updated_at DESC LIMIT 1`,
-      [phone],
-    );
-    return res.rows[0] ? rowToRecord(res.rows[0]) : null;
-  }
-
   async listAll(): Promise<BusinessRecord[]> {
     const res = await this.pool.query(
       `SELECT ${COLUMNS} FROM boondi_business_records
@@ -113,70 +105,11 @@ export class RecordsRepository {
     return res.rows.map(rowToRecord);
   }
 
-  // Capture/merge a query (or fill fields). Never downgrades an existing lead.
-  recordQuery(
-    phone: string,
-    input: RecordInput,
-    source: 'agent' | 'reconciler' = 'agent',
-  ): Promise<BusinessRecord> {
-    return this.upsert(phone, input, { targetLead: false, source });
-  }
-
-  // Promote to (or refresh) a lead and (re)compute the score.
-  upgradeToLead(
-    phone: string,
-    input: RecordInput,
-    source: 'agent' | 'reconciler' = 'agent',
-  ): Promise<BusinessRecord> {
-    return this.upsert(phone, input, { targetLead: true, source });
-  }
-
-  // Patch fields on the open record (create as a query if none exists yet).
-  updateRecord(
-    phone: string,
-    input: RecordInput,
-    source: 'agent' | 'reconciler' = 'agent',
-  ): Promise<BusinessRecord> {
-    return this.upsert(phone, input, { targetLead: false, source });
-  }
-
-  private async upsert(
-    phone: string,
-    input: RecordInput,
-    opts: { targetLead: boolean; source: 'agent' | 'reconciler' },
-  ): Promise<BusinessRecord> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const existingRes = await client.query(
-        `SELECT ${COLUMNS} FROM boondi_business_records
-         WHERE phone = $1 AND status IN ('query','qualifying','lead')
-         ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
-        [phone],
-      );
-      const existing = existingRes.rows[0]
-        ? rowToRecord(existingRes.rows[0])
-        : null;
-
-      const merged = this.merge(phone, existing, input, opts);
-      const saved = existing
-        ? await this.updateRow(client, existing.id, merged)
-        : await this.insertRow(client, merged);
-      await client.query('COMMIT');
-      return saved;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-
   private merge(
     phone: string,
     existing: BusinessRecord | null,
     input: RecordInput,
-    opts: { targetLead: boolean; source: 'agent' | 'reconciler' },
+    opts: { targetLead: boolean; source: 'agent' | 'reconciler' | 'extractor' },
   ): BusinessRecord {
     const quantity = pick(input.quantity, existing?.quantity);
     let budgetPerGiftInr = pick(
@@ -264,6 +197,8 @@ export class RecordsRepository {
       ...base,
       score,
       band,
+      confidence: pick(input.confidence, existing?.confidence),
+      needsReview: input.needsReview ?? existing?.needsReview ?? false,
       summaryBrief: pick(input.summaryBrief, existing?.summaryBrief),
       triggerExcerpt: pick(input.triggerExcerpt, existing?.triggerExcerpt),
       source: existing?.source ?? opts.source,
@@ -282,10 +217,10 @@ export class RecordsRepository {
          occasion, quantity, quantity_raw, budget_per_gift_inr, budget_total_inr,
          budget_raw, locations, location_scope, timeline, timeline_days,
          buyer_type, customisation, contact_quality, score, band, summary_brief,
-         trigger_excerpt, source
+         trigger_excerpt, source, confidence, needs_review
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-         $21,$22,$23,$24
+         $21,$22,$23,$24,$25,$26
        )
        RETURNING ${COLUMNS}`,
       this.values(r),
@@ -306,12 +241,71 @@ export class RecordsRepository {
          locations=$13, location_scope=$14, timeline=$15, timeline_days=$16,
          buyer_type=$17, customisation=$18, contact_quality=$19, score=$20,
          band=$21, summary_brief=$22, trigger_excerpt=$23, source=$24,
+         confidence=$25, needs_review=$26,
          updated_at=now()
        WHERE id=$1
        RETURNING ${COLUMNS}`,
       [id, ...this.values(r).slice(1)],
     );
     return rowToRecord(res.rows[0]);
+  }
+
+  // All OPEN opportunities for a phone (a customer may have several).
+  async getOpenOpportunitiesByPhone(phone: string): Promise<BusinessRecord[]> {
+    const res = await this.pool.query(
+      `SELECT ${COLUMNS} FROM boondi_business_records
+        WHERE phone = $1 AND status IN ('query','qualifying','lead')
+        ORDER BY updated_at DESC`,
+      [phone],
+    );
+    return res.rows.map(rowToRecord);
+  }
+
+  // Extractor write primitive: update the matched opportunity, else insert new.
+  async upsertOpportunity(params: {
+    match: string | null;
+    phone: string;
+    conversationId: string;
+    input: RecordInput;
+    targetLead: boolean;
+    source: 'agent' | 'reconciler' | 'extractor';
+    confidence?: number;
+    needsReview?: boolean;
+  }): Promise<BusinessRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      let existing: BusinessRecord | null = null;
+      if (params.match) {
+        const res = await client.query(
+          `SELECT ${COLUMNS} FROM boondi_business_records
+            WHERE id = $1 AND phone = $2
+              AND status IN ('query','qualifying','lead') FOR UPDATE`,
+          [params.match, params.phone],
+        );
+        existing = res.rows[0] ? rowToRecord(res.rows[0]) : null;
+      }
+      const input: RecordInput = {
+        ...params.input,
+        conversationId: params.conversationId,
+        confidence: params.confidence,
+        needsReview: params.needsReview,
+      };
+      const merged = this.merge(params.phone, existing, input, {
+        targetLead: params.targetLead,
+        source: params.source,
+      });
+      const saved = existing
+        ? await this.updateRow(client, existing.id, merged)
+        : await this.insertRow(client, merged);
+      await client.query('COMMIT');
+      return saved;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // Column order matches the INSERT/UPDATE statements above.
@@ -341,6 +335,8 @@ export class RecordsRepository {
       r.summaryBrief,
       r.triggerExcerpt,
       r.source,
+      r.confidence,
+      r.needsReview,
     ];
   }
 }

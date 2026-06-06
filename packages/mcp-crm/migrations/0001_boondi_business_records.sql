@@ -9,7 +9,7 @@
 --
 -- The migrate script runs this with search_path set to BOONDI_CRM_DB_SCHEMA, so
 -- table names are intentionally unqualified. Idempotent (IF NOT EXISTS). Roles +
--- grants are operator-managed (see docs/runbooks/boondi-crm-role.sql), NOT here.
+-- grants are operator-managed (the connector's DB role is set up out of band), NOT here.
 
 CREATE TABLE IF NOT EXISTS boondi_business_records (
   id                   text PRIMARY KEY,
@@ -50,11 +50,12 @@ CREATE TABLE IF NOT EXISTS boondi_business_records (
 CREATE INDEX IF NOT EXISTS idx_bcr_phone ON boondi_business_records (phone);
 CREATE INDEX IF NOT EXISTS idx_bcr_status_updated ON boondi_business_records (status, updated_at DESC);
 
--- Exactly one OPEN record per customer: both capture paths upsert it so the
--- record evolves (query -> qualifying -> lead) instead of duplicating.
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_bcr_open_per_phone
-  ON boondi_business_records (phone)
-  WHERE status IN ('query','qualifying','lead');
+-- NOTE: the original single-open-record-per-phone unique index
+-- (uniq_bcr_open_per_phone) was REMOVED in the per-opportunity redesign — a phone
+-- may now own MANY open opportunities. It is intentionally not (re)created here:
+-- the runner re-applies every migration on each boot, and CREATE UNIQUE INDEX
+-- would fail the moment a phone has >1 open opportunity. Migration 0002 also DROPs
+-- it for databases that applied 0001 before the redesign.
 
 -- Idempotency cursor for the durable reconciler (Phase 4): records how far the
 -- backstop has classified each conversation so it never re-does work.
@@ -66,5 +67,5 @@ CREATE TABLE IF NOT EXISTS boondi_reconcile_cursor (
 );
 
 -- Grants are operator-managed (the CRM role owns this schema; the dashboard role
--- gets SELECT). See docs/runbooks/boondi-crm-role.sql. Intentionally none here, so
--- the migration never assumes a specific role name exists.
+-- gets SELECT) and set up out of band. Intentionally none here, so the migration
+-- never assumes a specific role name exists.

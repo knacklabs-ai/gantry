@@ -8,7 +8,7 @@ export function registerGetOpenRecords(
 ): void {
   server.tool(
     'get_open_records',
-    'Return the verified caller\'s OPEN query/lead (if any), so you can greet a returning customer personally and continue where they left off. Call with empty arguments {} on the first turn of a returning conversation. Returns {found:false} for a brand-new customer.',
+    "Return the verified caller's OPEN opportunities (queries/leads) — a customer may have several. Call with empty arguments {} on the first turn of a returning conversation so you can greet them and continue where they left off. Returns {found:false, records:[]} for a brand-new customer.",
     {},
     async () => {
       try {
@@ -19,11 +19,11 @@ export function registerGetOpenRecords(
             'No verified caller identity on this request.',
           );
         }
-        const rec = await repo.getOpenRecordByPhone(phone);
-        if (!rec) return jsonContent({ found: false });
+        const recs = await repo.getOpenOpportunitiesByPhone(phone);
         return jsonContent({
-          found: true,
-          record: {
+          found: recs.length > 0,
+          records: recs.map((rec) => ({
+            id: rec.id,
             status: rec.status,
             intentCategory: rec.intentCategory,
             occasion: rec.occasion,
@@ -38,8 +38,9 @@ export function registerGetOpenRecords(
             score: rec.score,
             band: rec.band,
             summaryBrief: rec.summaryBrief,
+            needsReview: rec.needsReview,
             updatedAt: rec.updatedAt,
-          },
+          })),
         });
       } catch (err) {
         return toolErrorContent(

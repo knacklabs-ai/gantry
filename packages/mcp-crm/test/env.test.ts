@@ -33,3 +33,15 @@ describe('loadEnv — schema separation', () => {
     ).toBe('gantry_v2');
   });
 });
+
+describe('loadEnv extractorModel', () => {
+  it('defaults to claude-sonnet-4-6', () => {
+    expect(loadEnv({ ...base } as never).extractorModel).toBe('claude-sonnet-4-6');
+  });
+  it('honors BOONDI_CRM_EXTRACTOR_MODEL', () => {
+    expect(
+      loadEnv({ ...base, BOONDI_CRM_EXTRACTOR_MODEL: 'claude-haiku-4-5' } as never)
+        .extractorModel,
+    ).toBe('claude-haiku-4-5');
+  });
+});

@@ -34,7 +34,7 @@ import {
 } from '../../application/customer-output/customer-safe-output.js';
 import { CUSTOMER_VISIBLE_DECLINE_MESSAGE } from '../../shared/user-visible-messages.js';
 import { flowLog } from '../../shared/flow-log.js';
-import { testOperatorPhone } from '../../shared/test-mode.js';
+import { isTestOperatorJid } from '../../shared/test-mode.js';
 import {
   getRuntimeStorage,
   getRuntimeRepositories,
@@ -328,7 +328,7 @@ export function createChannelWiring(
       logger: resolved.logger,
     });
     // Flow trace: the final customer-visible reply, keyed by the real
-    // conversation JID. With dry-run on, this is the only record of the reply.
+    // conversation JID.
     flowLog(resolved.logger, 'outbound', {
       jid,
       replyChars: formatted.length,
@@ -336,34 +336,72 @@ export function createChannelWiring(
     });
     // ⚠️ SAFETY: when an LLM/agent is testing, ALWAYS keep
     // GANTRY_OUTBOUND_DRYRUN=1 so the test reply never reaches a real WhatsApp
-    // user. GANTRY_OUTBOUND_DRYRUN=1 → reply is logged here, not sent to the
-    // provider. GANTRY_OUTBOUND_DRYRUN=0 (or unset) → reply is sent for real.
+    // user. In dry-run we STILL persist the reply under its own conversation (so
+    // the admin panel shows the full per-number thread — independent test lanes,
+    // no funnelling to the operator), but skip the operator redirect and the
+    // provider send: "everything works + DB persists; only the WhatsApp send is
+    // off". GANTRY_OUTBOUND_DRYRUN=0 (or unset) → reply is sent for real.
     if (process.env.GANTRY_OUTBOUND_DRYRUN === '1') {
-      resolved.logger.info(
-        { jid },
-        'Outbound dry-run: reply logged, not sent to provider',
-      );
-      return { externalMessageId: `dryrun:${randomUUID()}` };
-    }
-    // DEV/TEST: when GANTRY_TEST_OPERATOR_PHONE is set, redirect EVERY real send
-    // to the operator's own number so nothing can reach a real customer while
-    // testing. Reassigning `jid` here points the WHOLE delivery pipeline below
-    // (persistence, durable attempt, provider send, retry-tail recovery) at the
-    // operator number, so even a retry can never leak to the original recipient.
-    // The DRYRUN=1 kill-switch above is checked first, so this only applies when
-    // actually sending. Unset in production => no-op.
-    const operatorPhone = testOperatorPhone();
-    const jidColonIdx = jid.indexOf(':');
-    if (operatorPhone && jidColonIdx >= 0) {
-      const operatorJid = `${jid.slice(0, jidColonIdx + 1)}${operatorPhone}`;
-      if (operatorJid !== jid) {
+      // Dev test mode. Always persist the reply under its OWN conversation (the
+      // admin panel shows the full per-number thread). Then SEND only when the
+      // conversation's number is explicitly in GANTRY_TEST_OPERATOR_PHONE
+      // (self-routed, x->x): a real listed number delivers via the provider, a
+      // fake listed number fails there (still persisted), and any number NOT in
+      // the list — i.e. a real customer — is never sent to.
+      let deliveryStatus: 'sent' | 'failed' = 'sent';
+      let delivery: MessageDeliveryResult | undefined;
+      if (isTestOperatorJid(jid)) {
+        try {
+          delivery = (options.messageOptions
+            ? await channel.sendMessage(jid, formatted, options.messageOptions)
+            : await channel.sendMessage(jid, formatted)) as
+            | MessageDeliveryResult
+            | undefined;
+          resolved.logger.info(
+            { jid },
+            'Outbound dry-run: sent to listed test number',
+          );
+        } catch (err) {
+          deliveryStatus = 'failed';
+          resolved.logger.warn(
+            { err, jid },
+            'Outbound dry-run: send to listed test number failed (persisted only)',
+          );
+        }
+      } else {
         resolved.logger.info(
-          { originalJid: jid, operatorJid },
-          'Test operator redirect: rerouting outbound to GANTRY_TEST_OPERATOR_PHONE',
+          { jid },
+          'Outbound dry-run: persisted, not sent (number not in test list)',
         );
-        jid = operatorJid;
       }
+      if (options.persistence === 'message_row_projection') {
+        try {
+          await optionalOps()?.storeMessage({
+            id: `outbound:${randomUUID()}`,
+            chat_jid: jid,
+            provider: providerForJid(jid)?.id ?? channel.name,
+            sender: 'gantry',
+            sender_name: 'Gantry',
+            content: formatted,
+            timestamp: nowIso(),
+            is_from_me: true,
+            is_bot_message: true,
+            thread_id: options.messageOptions?.threadId,
+            delivery_status: deliveryStatus,
+          });
+        } catch (err) {
+          resolved.logger.warn(
+            { err, jid },
+            'Outbound dry-run: message-row persistence failed',
+          );
+        }
+      }
+      return delivery ?? { externalMessageId: `dryrun:${randomUUID()}` };
     }
+    // Past the dry-run branch above, this is a real production send to the actual
+    // conversation. GANTRY_TEST_OPERATOR_PHONE does NOT redirect here — it scopes
+    // sends ONLY inside dry-run (see that branch) and grants session-command
+    // access; in production every reply goes to its own conversation.
     const provider = providerForJid(jid)?.id ?? channel.name;
     const now = nowIso();
     const messageId = `outbound:${randomUUID()}`;
