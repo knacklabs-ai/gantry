@@ -228,15 +228,6 @@
       },
       "reason": "The local CRM MCP package reports required Anthropic-compatible credential status until provider extraction is moved behind the shared model gateway.",
       "removeByPlan": "gantry-architecture-gates-20260517-provider-boundary-sentinels"
-    },
-    {
-      "file": "packages/mcp-crm/src/onecli-bootstrap.ts",
-      "matches": {
-        "ANTHROPIC_": 3,
-        "CLAUDE_CODE_OAUTH_TOKEN": 3
-      },
-      "reason": "The local CRM MCP bootstrap still supports Anthropic-compatible credential setup until provider extraction is moved behind the shared model gateway.",
-      "removeByPlan": "gantry-architecture-gates-20260517-provider-boundary-sentinels"
     }
   ]
 }

@@ -3,6 +3,12 @@
 // SECRET is shared with the runtime (MCP_IDENTITY_SECRET) so the signed
 // X-Caller-Identity verifies here exactly as it does for Shopify; everything
 // else is boondi-crm-specific (its own port, DB url, reconciler cadence).
+//
+// Credential note: the connector resolves its Anthropic credential from core's
+// Credential Center (the gantry schema's model_credentials table) via
+// bootstrapGantryCredentials, decrypting with SECRET_ENCRYPTION_KEY from
+// ~/gantry/.env. OneCLI is no longer used: ONECLI_DATABASE_URL / ONECLI_URL can
+// be removed from ~/gantry/.env and the OneCLI broker need not run.
 
 export type IdentityConfig =
   | { mode: 'disabled' }
