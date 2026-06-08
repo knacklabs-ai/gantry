@@ -7,8 +7,7 @@
 // Credential note: the connector resolves its Anthropic credential from core's
 // Credential Center (the gantry schema's model_credentials table) via
 // bootstrapGantryCredentials, decrypting with SECRET_ENCRYPTION_KEY from
-// ~/gantry/.env. OneCLI is no longer used: ONECLI_DATABASE_URL / ONECLI_URL can
-// be removed from ~/gantry/.env and the OneCLI broker need not run.
+// ~/gantry/.env.
 
 export type IdentityConfig =
   | { mode: 'disabled' }

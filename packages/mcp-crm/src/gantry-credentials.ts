@@ -35,7 +35,7 @@ const PROVIDER_ID = 'anthropic';
 // No-ops (with a clear log, never throwing) when: a raw ANTHROPIC_API_KEY is
 // already set (it wins), there is no active row, SECRET_ENCRYPTION_KEY is not
 // available, or the ciphertext fails to decrypt — the extractor then
-// self-disables exactly as it did on OneCLI-broker-unreachable.
+// self-disables (it runs without a projected token).
 export async function bootstrapGantryCredentials(
   pool: Pool,
   options: BootstrapGantryCredentialsOptions,
@@ -46,7 +46,7 @@ export async function bootstrapGantryCredentials(
 
   if (process.env.ANTHROPIC_API_KEY?.trim()) {
     log('gantry_creds_skip_raw_key');
-    return; // explicit raw key wins, same as OneCLI did
+    return; // explicit raw key wins
   }
 
   if (!secrets.getOptionalSecret({ env: SECRET_ENCRYPTION_KEY_ENV })?.trim()) {

@@ -74,7 +74,7 @@ function readResultText(message: unknown): string {
 
 // Drive the extraction model through the Claude Agent SDK's query() — the SAME
 // path Gantry core uses for the live agent and memory extraction. This matters:
-// a subscription OAuth token (what the OneCLI broker hands us) is rate-limited to
+// a subscription OAuth token is rate-limited to
 // 429 on the raw Messages API, but works through the first-party CLI the Agent SDK
 // spawns. The Credential Center bootstrap (gantry-credentials.ts) must have projected the
 // OAuth token into this process's env first; otherwise this returns null and the
