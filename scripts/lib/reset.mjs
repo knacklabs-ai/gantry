@@ -41,6 +41,10 @@ export async function resetTestData(
   await client.query(`delete from ${crmSchema}.boondi_business_records where phone = any($1)`, [phones]);
   await client.query(`delete from ${crmSchema}.boondi_digest_cursor where conversation_id = any($1)`, [convIds]).catch(() => {});
   await client.query(`delete from ${gantrySchema}.memory_items where user_id = any($1)`, [phones]).catch(() => {});
+  // The memory idle-sweep keys eligibility off this watermark; if it survives a
+  // reset, a re-used phone's fresh messages look "already extracted" and the sweep
+  // skips them (so no facts are saved on the new conversation). Clear it too.
+  await client.query(`delete from ${gantrySchema}.memory_extraction_cursor where conversation_id = any($1)`, [convIds]).catch(() => {});
   // Digests reference sessions (FK); drop them before the sessions.
   await client
     .query(`delete from ${gantrySchema}.agent_session_digests where agent_session_id in (select id from ${gantrySchema}.agent_sessions where conversation_id = any($1))`, [convIds])
