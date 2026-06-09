@@ -2891,7 +2891,7 @@ describe('agent-spawn timeout behavior', () => {
       testGroup,
       {
         ...testInput,
-        allowedTools: [
+        toolPolicyRules: [
           'capability:mcp.caw-ats.access',
           'mcp__caw-ats__ats_list_positions',
         ],
@@ -2903,6 +2903,7 @@ describe('agent-spawn timeout behavior', () => {
             reviewedServerId: 'caw-ats',
             allowedTools: ['mcp__caw-ats__ats_list_positions'],
             credentialRefs: [],
+            networkHosts: [],
           },
         ],
       },

@@ -149,6 +149,7 @@ export async function spawnAgent(
   const effectiveModelEntry = resolvedModel.value.modelEntry;
   const allowedToolValidationError = validateRunnerAllowedTools(
     input.toolPolicyRules ?? [],
+    input.runtimeAccess ?? [],
   );
   if (allowedToolValidationError) {
     return {

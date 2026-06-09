@@ -34,3 +34,7 @@
   `providerSession` output. Provider-native names such as Claude SDK
   `allowedTools` and stale provider-session error strings belong behind the
   execution adapter boundary.
+- Third-party MCP tool rules inside `toolPolicyRules` are runtime projections,
+  not durable direct grants. Runner validation may accept them only when the
+  same exact tool is backed by reviewed semantic capability `runtimeAccess`;
+  unbacked raw `mcp__server__tool` rules must still fail closed.
