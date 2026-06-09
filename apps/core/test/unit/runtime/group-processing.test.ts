@@ -8,6 +8,7 @@ import {
 import type { AgentOutput } from '@core/runtime/agent-spawn-types.js';
 import type { GroupProcessingDeps } from '@core/runtime/group-processing-types.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
+import { buildProviderSessionAccessFingerprint } from '@core/runtime/provider-session-access-fingerprint.js';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -104,6 +105,7 @@ const { createGroupProcessor } =
   await import('@core/runtime/group-processing.js');
 const { RUNTIME_RESULT_SUMMARY_MAX_CHARS } =
   await import('@core/runtime/session-resume-runtime.js');
+const EMPTY_ACCESS_FINGERPRINT = buildProviderSessionAccessFingerprint({});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -950,6 +952,7 @@ describe('createGroupProcessor', () => {
           agentSessionId: 'agent-session:1',
           providerSessionId: 'provider-session:1',
           externalSessionId: 'claude-session-1',
+          providerSessionAccessFingerprint: EMPTY_ACCESS_FINGERPRINT,
           memoryContextBlock:
             '<gantry_memory_context>memory</gantry_memory_context>',
         });
@@ -977,6 +980,57 @@ describe('createGroupProcessor', () => {
       });
     });
 
+    it('expires provider session resume when runtime access projection changes', async () => {
+      const agentOutput: AgentOutput = {
+        status: 'success',
+        result: 'fresh reply',
+        newSessionId: 'claude-session-fresh',
+      };
+      const group = makeGroup({ requiresTrigger: false });
+      const { deps } = setupHappyPath({ group, agentOutput });
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:1',
+          providerSessionId: 'provider-session:old',
+          externalSessionId: 'claude-session-old',
+          providerSessionAccessFingerprint: 'provider-session-access:v1:stale',
+        });
+      (deps.opsRepository as any).createSessionAgentRun = vi
+        .fn()
+        .mockResolvedValue('agent-run:message-1');
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(deps.opsRepository.expireProviderSession).toHaveBeenCalledWith({
+        providerSessionId: 'provider-session:old',
+        agentSessionId: 'agent-session:1',
+        provider: 'anthropic:claude-agent-sdk',
+        externalSessionId: 'claude-session-old',
+      });
+      expect(mockSpawnAgent.mock.calls[0][1]).not.toHaveProperty('sessionId');
+      expect(deps.opsRepository.createSessionAgentRun).toHaveBeenCalledWith({
+        agentSessionId: 'agent-session:1',
+        executionProviderId: 'anthropic:claude-agent-sdk',
+        providerSessionId: undefined,
+        cause: 'message',
+      });
+      expect(deps.opsRepository.setSession).toHaveBeenCalledWith(
+        group.folder,
+        'claude-session-fresh',
+        null,
+        expect.objectContaining({
+          expectedAgentSessionId: 'agent-session:1',
+          accessFingerprint: expect.stringMatching(
+            /^provider-session-access:v1:/,
+          ),
+        }),
+      );
+    });
+
     it('expires a missing provider session and retries the turn without resume', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group });
@@ -988,6 +1042,7 @@ describe('createGroupProcessor', () => {
           agentSessionId: 'agent-session:1',
           providerSessionId: 'provider-session:1',
           externalSessionId: 'claude-session-stale',
+          providerSessionAccessFingerprint: EMPTY_ACCESS_FINGERPRINT,
         });
       (deps.opsRepository as any).createSessionAgentRun = vi
         .fn()
@@ -1072,14 +1127,14 @@ describe('createGroupProcessor', () => {
         group.folder,
         'new-sess-123',
         null,
-        {
+        expect.objectContaining({
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
           memoryUserId: 'user1@s.whatsapp.net',
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: null,
-        },
+        }),
       );
       expect(deps.opsRepository.createSessionAgentRun).toHaveBeenCalledWith({
         agentSessionId: 'agent-session:1',
@@ -1140,14 +1195,14 @@ describe('createGroupProcessor', () => {
         group.folder,
         'streamed-sess',
         null,
-        {
+        expect.objectContaining({
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
           memoryUserId: 'user1@s.whatsapp.net',
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: null,
-        },
+        }),
       );
       expect(
         deps.opsRepository.updateAgentRunProviderMetadata,
@@ -1202,14 +1257,14 @@ describe('createGroupProcessor', () => {
         group.folder,
         'dm-sess-123',
         null,
-        {
+        expect.objectContaining({
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'sl:D123',
           conversationKind: 'dm',
           memoryUserId: 'sl:U123',
           expectedAgentSessionId: 'agent-session:dm',
           expectedAgentSessionResetAt: null,
-        },
+        }),
       );
     });
 
@@ -4006,14 +4061,14 @@ describe('createGroupProcessor', () => {
         group.folder,
         'session-42',
         null,
-        {
+        expect.objectContaining({
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
           memoryUserId: 'user1@s.whatsapp.net',
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: null,
-        },
+        }),
       );
     });
 
@@ -4068,14 +4123,14 @@ describe('createGroupProcessor', () => {
         group.folder,
         'session-42',
         null,
-        {
+        expect.objectContaining({
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
           memoryUserId: 'user1@s.whatsapp.net',
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: '2026-05-11T00:00:00.000Z',
-        },
+        }),
       );
     });
   });

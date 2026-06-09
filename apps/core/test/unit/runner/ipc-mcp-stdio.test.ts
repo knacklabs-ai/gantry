@@ -1174,6 +1174,59 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     expect(fs.existsSync(taskDir) ? fs.readdirSync(taskDir) : []).toEqual([]);
   });
 
+  it('rejects duplicate request_access capability requests when capability is already selected', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'request_access',
+      {
+        target: { kind: 'capability', id: 'mcp.caw-ats.access' },
+        reason: 'List Flipspaces projects from caw-ats.',
+      },
+      {
+        GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: JSON.stringify([
+          'capability:mcp.caw-ats.access',
+        ]),
+        GANTRY_SEMANTIC_CAPABILITIES_JSON: JSON.stringify([
+          {
+            capabilityId: 'mcp.caw-ats.access',
+            version: '1',
+            displayName: 'caw-ats MCP access',
+            category: 'MCP',
+            risk: 'write',
+            can: 'Call approved tools on the caw-ats MCP server.',
+            cannot: 'Call unapproved MCP tools or receive raw credentials.',
+            credentialSource: 'none',
+            implementationBindings: [
+              {
+                kind: 'mcp_tool',
+                mcpTool: 'mcp__caw-ats__ats_list_client_projects',
+              },
+            ],
+            source: {
+              source: 'mcp',
+              serverName: 'caw-ats',
+              allowedToolPatterns: ['ats_list_client_projects'],
+            },
+          },
+        ]),
+      },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
+    expect(record.result.isError).toBe(true);
+    expect(record.result.content[0].text).toContain(
+      'already selected for this run',
+    );
+    expect(record.result.content[0].text).toContain(
+      'use mcp_list_tools to inspect the ready source, then mcp_call_tool',
+    );
+    const taskDir = path.join(fixture.ipcDir, 'tasks');
+    expect(fs.existsSync(taskDir) ? fs.readdirSync(taskDir) : []).toEqual([]);
+  });
+
   it('submits a request_access capability target as a reviewed capability request', async () => {
     const fixture = createMcpFixture();
 

@@ -54,6 +54,7 @@ export function registerAccessRequestTool(
   submitCapabilityReviewTask: CapabilityReviewSubmitter,
   options: {
     listCapabilities?: SemanticCapabilityProvider;
+    isCapabilitySelected?: (capabilityId: string) => boolean;
     validateRunCommandFallback?: RunCommandFallbackValidator;
   } = {},
 ): void {
@@ -104,6 +105,25 @@ export function registerAccessRequestTool(
                     `No reviewed capability matches id "${target.id}".`,
                     'Use the Agent Access summary in your run context to find a valid capability id. If setup is missing, request source setup through the Gantry access flow.',
                     SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
+                  ].join('\n'),
+                },
+              ],
+            };
+          }
+          if (options.isCapabilitySelected?.(approved.capabilityId)) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text' as const,
+                  text: [
+                    `Capability "${approved.displayName}" is already selected for this run.`,
+                    'Use the available action directly instead of requesting the same access again.',
+                    approved.implementationBindings.some(
+                      (binding) => binding.kind === 'mcp_tool',
+                    )
+                      ? 'For MCP sources, use mcp_list_tools to inspect the ready source, then mcp_call_tool to call the approved action.'
+                      : 'Check capability_status if you need to confirm current access.',
                   ].join('\n'),
                 },
               ],

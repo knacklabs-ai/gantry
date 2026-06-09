@@ -25,6 +25,10 @@ import {
 } from './session-resume-runtime.js';
 import { createRuntimeModelStatusAccess } from './model-status-store.js';
 import { recordRuntimeModelUsage } from './model-status-output.js';
+import {
+  buildProviderSessionAccessFingerprint,
+  providerSessionAccessFingerprintMatches,
+} from './provider-session-access-fingerprint.js';
 import { buildBoundedMemoryRecallQuery } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 import { isRuntimeEventType } from '../domain/events/runtime-event-types.js';
@@ -230,6 +234,9 @@ export function createGroupAgentRunner(input: {
     const runState: { runId?: string } = {};
     let latestProviderSessionId =
       turnContext?.externalSessionId?.trim() || undefined;
+    let resumeProviderSessionId = turnContext?.providerSessionId;
+    let resumeExternalSessionId =
+      turnContext?.externalSessionId?.trim() || undefined;
     const updateRunProviderMetadata = async (input: {
       providerRunId?: string | null;
       providerSessionId?: string | null;
@@ -268,6 +275,7 @@ export function createGroupAgentRunner(input: {
           memoryUserId: options?.memoryContext?.userId,
           expectedAgentSessionId: turnContext.agentSessionId,
           expectedAgentSessionResetAt: turnContext.agentSessionResetAt ?? null,
+          accessFingerprint: currentAccessFingerprint,
         },
       );
       if (persisted === false) {
@@ -372,6 +380,41 @@ export function createGroupAgentRunner(input: {
       turnContext,
       configuredToolPolicy.allowedTools,
     );
+    const currentAccessFingerprint = buildProviderSessionAccessFingerprint({
+      allowedTools: configuredToolPolicy.allowedTools,
+      runtimeAccess: configuredToolPolicy.runtimeAccess,
+      attachedSkillSourceIds: selectedSkillContext.ids,
+      attachedMcpSourceIds,
+      semanticCapabilities,
+    });
+    if (
+      turnContext?.providerSessionId &&
+      turnContext.externalSessionId &&
+      !providerSessionAccessFingerprintMatches(
+        turnContext.providerSessionAccessFingerprint,
+        currentAccessFingerprint,
+      )
+    ) {
+      if (ops().expireProviderSession) {
+        await ops().expireProviderSession?.({
+          providerSessionId: turnContext.providerSessionId,
+          agentSessionId: turnContext.agentSessionId,
+          provider: executionProviderId,
+          externalSessionId: turnContext.externalSessionId,
+        });
+      }
+      latestProviderSessionId = undefined;
+      resumeProviderSessionId = undefined;
+      resumeExternalSessionId = undefined;
+      runtimeLogger.warn(
+        {
+          group: group.name,
+          agentId: turnContext.agentId,
+          agentSessionId: turnContext.agentSessionId,
+        },
+        'Expired provider session because runtime access projection changed',
+      );
+    }
     const memoryContextBlock = [
       turnContext?.memoryContextBlock,
       approvedSkillContextBlock,
@@ -382,7 +425,7 @@ export function createGroupAgentRunner(input: {
       ? await ops().createSessionAgentRun?.({
           agentSessionId: turnContext.agentSessionId,
           executionProviderId,
-          providerSessionId: turnContext.providerSessionId,
+          providerSessionId: resumeProviderSessionId,
           cause:
             options?.memoryContext?.source === 'command'
               ? 'control'
@@ -492,7 +535,7 @@ export function createGroupAgentRunner(input: {
         );
       let output = await invokeAgent({
         memoryContextBlock,
-        resumeSessionId: turnContext?.externalSessionId,
+        resumeSessionId: resumeExternalSessionId,
       });
       if (
         output.status === 'error' &&

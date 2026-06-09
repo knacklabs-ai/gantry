@@ -223,6 +223,7 @@ export interface RuntimeAgentSessionRepository {
     agentSessionResetAt?: string | null;
     providerSessionId?: string;
     externalSessionId?: string;
+    providerSessionAccessFingerprint?: string;
     memoryContextBlock?: string;
   }>;
   setSession(
@@ -237,6 +238,7 @@ export interface RuntimeAgentSessionRepository {
       jobId?: string;
       expectedAgentSessionId?: string;
       expectedAgentSessionResetAt?: string | null;
+      accessFingerprint?: string;
     },
   ): Promise<boolean | void>;
   expireProviderSession?(input: {

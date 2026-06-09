@@ -6,6 +6,7 @@ import {
   availableSemanticCapabilities,
   capabilityStatusText,
   chatJid,
+  configuredAllowedTools,
   isAdminMcpToolEnabled,
   TASKS_DIR,
   threadId,
@@ -158,6 +159,8 @@ export function registerServiceTools(server: McpServer): void {
   );
   registerAccessRequestTool(server, submitCapabilityReviewTask, {
     listCapabilities: () => availableSemanticCapabilities,
+    isCapabilitySelected: (capabilityId) =>
+      configuredAllowedTools.includes(`capability:${capabilityId}`),
     validateRunCommandFallback: requestAccessRunCommandFallbackGuidance,
   });
 

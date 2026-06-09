@@ -135,6 +135,7 @@ export async function runMessagePollingTick(
         const loopCmdMsg = groupMessages.find(
           (m) => extractSessionCommand(m.content, triggerPattern) !== null,
         );
+        const recoveredCursor = await deps.getOrRecoverCursor(queueJid);
 
         if (loopCmdMsg) {
           const loopCommand = extractSessionCommand(
@@ -189,12 +190,14 @@ export async function runMessagePollingTick(
                   group.folder,
                 )),
           );
-          if (!hasTrigger) continue;
+          const isContinuationThread =
+            threadId !== undefined && recoveredCursor.trim().length > 0;
+          if (!hasTrigger && !isContinuationThread) continue;
         }
 
         let initialBatch = await opsRepository.getMessagesSince(
           chatJid,
-          await deps.getOrRecoverCursor(queueJid),
+          recoveredCursor,
           MAX_MESSAGES_PER_PROMPT,
           { threadId: threadId ?? null },
         );
