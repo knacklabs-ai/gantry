@@ -56,7 +56,7 @@ export const command = {
   visibility: 'operator',            // 'operator' (default) | 'customer'
   timeoutMs: 60_000,                 // optional; core default applies otherwise
   ackOnStart: "On it — I'll confirm when it's done.", // optional; sent before run() for slow commands
-  async run(ctx) {                   // ctx: { conversationId, conversationJid, phone?, threadId? }
+  async run(ctx) {                   // ctx: { conversationId, conversationJid, threadId } (channel-neutral)
     // DB / MCP / HTTP / LLM — whatever the command needs.
     // Keep thin where credentials live elsewhere (call the agent's backend, e.g. mcp-crm).
     return 'Lead/query extraction processed. Digests: 3 …'; // result string, relayed to the chat
