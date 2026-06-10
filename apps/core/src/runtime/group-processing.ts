@@ -323,6 +323,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         deps.queue.closeStdin(queueJid);
       }, IDLE_TIMEOUT);
     };
+    resetIdleTimer();
 
     let typingActive = false;
     const setTypingState = (isTyping: boolean) => (
@@ -789,11 +790,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
             : sawTerminalDeliveryFailure
               ? 'failed'
               : 'completed';
+    const completedWhileAwaitingUserResponse =
+      finalProgressState === 'completed' && awaitingResponseReceipt;
     if (
-      finalProgressState !== 'completed' ||
-      !sentAnyTurnDoneProgress ||
-      (activeGenerationHasOutput &&
-        sentTurnDoneProgressGeneration !== progressGeneration)
+      !completedWhileAwaitingUserResponse &&
+      (finalProgressState !== 'completed' ||
+        !sentAnyTurnDoneProgress ||
+        (activeGenerationHasOutput &&
+          sentTurnDoneProgressGeneration !== progressGeneration))
     ) {
       await sendDoneProgress(finalProgressState);
     }

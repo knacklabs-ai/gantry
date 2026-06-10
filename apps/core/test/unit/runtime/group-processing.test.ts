@@ -1506,6 +1506,22 @@ describe('createGroupProcessor', () => {
       vi.useRealTimers();
     });
 
+    it('closes stdin after IDLE_TIMEOUT ms even before agent output arrives', async () => {
+      const group = makeGroup({ requiresTrigger: false });
+      const messages = [makeMessage()];
+      const { deps } = setupHappyPath({ group, messages });
+
+      mockSpawnAgent.mockImplementation(async () => {
+        await vi.advanceTimersByTimeAsync(1_800_000);
+        return { status: 'success', result: null } as AgentOutput;
+      });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(deps.queue.closeStdin).toHaveBeenCalledWith('group1@g.us');
+    });
+
     it('closes stdin after IDLE_TIMEOUT ms when agent produces output', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
@@ -2485,6 +2501,48 @@ describe('createGroupProcessor', () => {
         expect.objectContaining({ done: true, generation: afterGeneration }),
       ]);
       expect(deps.queue.notifyIdle).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not mark progress done when a successful turn is waiting for user input', async () => {
+      const streamingChannel = makeChannel({
+        sendStreamingChunk: vi.fn().mockResolvedValue(true),
+        sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath();
+      deps.channelRuntime = streamingChannel;
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'Which project should this position use?',
+          });
+          await onOutput?.({
+            status: 'success',
+            result: null,
+            interactionBoundary: 'user_interaction',
+          });
+          return { status: 'success', result: null } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      const progressTexts = (
+        streamingChannel.sendProgressUpdate as ReturnType<typeof vi.fn>
+      ).mock.calls.map((call) => call[1]);
+      expect(progressTexts).toContain('Waiting for your response (0s).');
+      expect(
+        progressTexts.some(
+          (text) => typeof text === 'string' && text.startsWith('Done in '),
+        ),
+      ).toBe(false);
     });
 
     it('excludes permission wait time from final elapsed progress', async () => {

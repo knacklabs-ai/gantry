@@ -1726,9 +1726,8 @@ describe('agent-spawn timeout behavior', () => {
     const startInput = start.mock.calls[0]?.[0] as RunnerSandboxSpawnInput;
     const env = startInput.env as Record<string, string>;
     const providerConfigDir = env.CLAUDE_CONFIG_DIR;
-    expect(env.TMPDIR).toContain(
-      '/tmp/gantry-test-data/ipc/test-group/tmp/gantry-test-group-',
-    );
+    expect(env.TMPDIR).toMatch(/^\/tmp\/gantry-srt-[a-f0-9]{12}$/);
+    expect(env.TMPDIR).not.toContain('/ipc/');
     expect(env.CLAUDE_CODE_TMPDIR).toBe(env.TMPDIR);
     expect(startInput.runtimeReadPaths).toContain(
       '/tmp/gantry-test-data/sessions/test-group/extra',
@@ -1737,7 +1736,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(startInput.runtimeWritePaths).toContain(providerConfigDir);
     expect(startInput.runtimeWritePaths).toContain(env.TMPDIR);
     const claudeToolTempDir = startInput.runtimeWritePaths.find((item) =>
-      /\/tmp\/gantry-test-group-.*\/claude-\d+$/.test(item),
+      /^\/tmp\/gantry-srt-[a-f0-9]{12}\/claude-\d+$/.test(item),
     );
     expect(claudeToolTempDir).toBeDefined();
     expect(startInput.runtimeReadPaths).toContain(claudeToolTempDir);
