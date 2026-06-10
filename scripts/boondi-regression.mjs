@@ -74,6 +74,13 @@ const LLM_OUTBOUND_GRACE_MS = Number(process.env.LLM_OUTBOUND_GRACE_MS || 4000);
 // scenario's own digest, not a cross-group backlog.
 const CRM_WAIT_MS = Number(process.env.CRM_WAIT_MS || 180_000);
 const CRM_POLL_MS = Number(process.env.CRM_POLL_MS || 4_000);
+// Extraction commands run a real LLM call; /extract-leads-queries declares
+// timeoutMs 150s (above mcp-crm's 120s extraction budget), so the harness must
+// wait at least that long for the reply — reusing the 20s /new reset wait here
+// made healthy-but-slow extractions abort the scenario.
+const COMMAND_REPLY_TIMEOUT_MS = Number(
+  process.env.COMMAND_REPLY_TIMEOUT_MS || 160_000,
+);
 // crm scenarios run on their own persona phones; cap how many at once (host load).
 const CRM_CONCURRENCY = Number(process.env.CRM_CONCURRENCY || 3);
 // Live-flow scenarios also use unique persona phones, but Gantry keeps each LLM
@@ -192,7 +199,7 @@ async function waitForReset(fromOffset, chatJid) {
 
 async function waitForCommandReply(fromOffset, chatJid, command) {
   const replyRe = COMMAND_REPLY[command];
-  const deadline = Date.now() + RESET_WAIT_TIMEOUT_MS;
+  const deadline = Date.now() + COMMAND_REPLY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const events = parseFlowEvents(readSlice(fromOffset), chatJid);
     if (
