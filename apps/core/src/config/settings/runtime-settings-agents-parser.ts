@@ -290,7 +290,9 @@ function parseConfiguredAgentPlugins(
   }
   if (map.commands !== undefined) {
     if (!Array.isArray(map.commands)) {
-      throw new Error(`${pathPrefix}.commands must be an array of command names`);
+      throw new Error(
+        `${pathPrefix}.commands must be an array of command names`,
+      );
     }
     plugins.commands = map.commands.map((item, index) => {
       const name = parseStringValue(item, `${pathPrefix}.commands[${index}]`);

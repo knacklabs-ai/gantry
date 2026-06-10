@@ -186,8 +186,11 @@ export async function runMessagePollingTick(
         const agentCommandNames = group.agentConfig?.plugins?.commands ?? [];
         const loopCmdMsg = groupMessages.find(
           (m) =>
-            extractSessionCommand(m.content, triggerPattern, agentCommandNames) !==
-            null,
+            extractSessionCommand(
+              m.content,
+              triggerPattern,
+              agentCommandNames,
+            ) !== null,
         );
 
         if (loopCmdMsg) {

@@ -26,7 +26,6 @@ vi.mock('@core/config/index.js', () => ({
   AGENTS_DIR: '/tmp/gantry-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   GANTRY_HOME: '/tmp/gantry-config',
-  GANTRY_HOME: '/tmp/gantry-config',
   RUNTIME_SETTINGS_PATH: '/tmp/gantry-config/settings.yaml',
   GANTRY_MODEL_GATEWAY_URL: 'http://localhost:10254',
   PERMISSION_APPROVAL_TIMEOUT_MS: 300000,

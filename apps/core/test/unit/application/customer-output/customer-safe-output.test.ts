@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   findInternalLeak,
   guardCustomerVisibleOutput,
+  stripDuplicateComplaintEmpathy,
   stripLeadingNarration,
 } from '@core/application/customer-output/customer-safe-output.js';
 import { CUSTOMER_VISIBLE_DECLINE_MESSAGE } from '@core/shared/user-visible-messages.js';
@@ -175,6 +176,40 @@ describe('stripLeadingNarration', () => {
     ).toBe('Yes! We have it in stock.');
   });
 
+  it('trims an "I need to search" preamble before a product answer', () => {
+    expect(
+      stripLeadingNarration(
+        'I need to search for Kaju Katli products first.हाँ, काजू कतली है.',
+      ),
+    ).toBe('हाँ, काजू कतली है.');
+  });
+
+  it('trims an "I need to look up" preamble before an order answer', () => {
+    expect(
+      stripLeadingNarration(
+        "I need to look up the customer's order history. Let me do that now.Your last order was #109260.",
+      ),
+    ).toBe('Your last order was #109260.');
+  });
+
+  it('trims multiple search-narration sentences before the product answer', () => {
+    expect(
+      stripLeadingNarration(
+        "That search only returned one result and it's currently out of stock. Let me try a broader search.These results are packaging/gift bags rather than the actual sweets. Let me search specifically for mithai.Of the available products right now, here's the one that's genuinely worth celebrating with.",
+      ),
+    ).toBe(
+      "Of the available products right now, here's the one that's genuinely worth celebrating with.",
+    );
+  });
+
+  it('trims a leading tool-availability sentence before the answer', () => {
+    expect(
+      stripLeadingNarration(
+        'The tools are now available. आपका सबसे हालिया ऑर्डर डिलीवर हो चुका है!',
+      ),
+    ).toBe('आपका सबसे हालिया ऑर्डर डिलीवर हो चुका है!');
+  });
+
   it('trims a "let me look that up" preamble (object between verb and "up")', () => {
     expect(
       stripLeadingNarration(
@@ -187,6 +222,25 @@ describe('stripLeadingNarration', () => {
     expect(
       stripLeadingNarration("I'll pull it up.Order #109260 shipped yesterday."),
     ).toBe('Order #109260 shipped yesterday.');
+  });
+});
+
+describe('stripDuplicateComplaintEmpathy', () => {
+  it('keeps one complaint empathy opener and removes stacked duplicate apology sentences', () => {
+    expect(
+      stripDuplicateComplaintEmpathy(
+        "I'm so sorry — a crushed box and broken sweets is genuinely not okay, and I completely understand why you're upset. That's not the experience we want for you at all.I'm so sorry — receiving a crushed box and broken sweets is really upsetting, and I'm sorry this happened.\n\nYour order #109260 shows as delivered on 28 May.",
+      ),
+    ).toBe(
+      "I'm so sorry — a crushed box and broken sweets is genuinely not okay, and I completely understand why you're upset. Your order #109260 shows as delivered on 28 May.",
+    );
+  });
+
+  it('leaves a single empathy opener untouched', () => {
+    const clean =
+      "I'm so sorry — a crushed box and broken sweets is genuinely not okay. Your order #109260 shows as delivered on 28 May.";
+
+    expect(stripDuplicateComplaintEmpathy(clean)).toBe(clean);
   });
 });
 

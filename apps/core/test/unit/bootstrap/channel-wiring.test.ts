@@ -621,6 +621,7 @@ describe('createChannelWiring', () => {
       },
     });
     const storeMessage = vi.fn(async () => {});
+    const enqueueMessageCheck = vi.fn();
     const info = vi.fn();
     const handlers = createChannelPersistenceHandlers({
       app,
@@ -645,6 +646,8 @@ describe('createChannelWiring', () => {
       ops: () => ({ storeMessage, storeChatMetadata: vi.fn() }) as any,
       findBoundChannel: vi.fn(),
       persistenceQueue: new AsyncTaskQueue(4, 100),
+      enqueueMessageCheck,
+      autoRegisteredMessageCheckDelayMs: 0,
     });
 
     const msg = {
@@ -661,6 +664,11 @@ describe('createChannelWiring', () => {
 
     await handlers.onMessage('wa:918097579999', msg);
 
+    expect(storeMessage).toHaveBeenCalledWith(msg);
+    expect(enqueueMessageCheck).toHaveBeenCalledWith('wa:918097579999');
+    expect(storeMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      enqueueMessageCheck.mock.invocationCallOrder[0],
+    );
     expect(app.registerGroup).toHaveBeenCalledWith(
       'wa:918097579999',
       expect.objectContaining({

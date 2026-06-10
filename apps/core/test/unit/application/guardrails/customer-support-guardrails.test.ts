@@ -38,7 +38,7 @@ describe('BSS customer support guardrail', () => {
   });
 
   it.each(['Hey', 'Hi Boondi', 'hello Bombay Sweet Shop'])(
-    'handles greetings directly: %s',
+    'handles greetings warmly without a cold scope list: %s',
     async (message) => {
       const decision = await evaluateAgentGuardrail({
         config,
@@ -51,11 +51,27 @@ describe('BSS customer support guardrail', () => {
         responseKind: 'greeting',
         reason: 'greeting',
       });
-      expect(customerVisibleGuardrailResponse(policy, 'greeting')).toContain(
-        'I am Boondi',
+      expect(customerVisibleGuardrailResponse(policy, 'greeting')).toBe(
+        'Welcome back! What can I help you with today?',
+      );
+      expect(customerVisibleGuardrailResponse(policy, 'greeting')).not.toMatch(
+        /I can help with orders/i,
       );
     },
   );
+
+  it('allows sincere AI identity questions so Boondi can answer honestly', async () => {
+    const decision = await evaluateAgentGuardrail({
+      config,
+      policy,
+      messages: ['Wait, am I talking to a real person or a bot?'],
+    });
+
+    expect(decision).toEqual({
+      action: 'allow',
+      reason: 'ai_identity_question',
+    });
+  });
 
   it.each([
     'What was my last order',
@@ -172,6 +188,88 @@ describe('BSS customer support guardrail', () => {
       action: 'direct_response',
       responseKind: 'scope_clarification',
       reason: 'ambiguous_support_intent',
+    });
+  });
+
+  it('defaults to both deterministic and classifier checks when mode is omitted', async () => {
+    const classifier = vi.fn().mockResolvedValue({
+      action: 'direct_response',
+      responseKind: 'scope_clarification',
+      reason: 'ambiguous_support_intent',
+    });
+
+    await expect(
+      evaluateAgentGuardrail({
+        config: { file: 'guardrail.ts', model: 'haiku' },
+        policy,
+        messages: ['What is the weather'],
+        classifier,
+      }),
+    ).resolves.toEqual({
+      action: 'direct_response',
+      responseKind: 'scope_rejection',
+      reason: 'out_of_scope_topic',
+    });
+    expect(classifier).not.toHaveBeenCalled();
+
+    await evaluateAgentGuardrail({
+      config: { file: 'guardrail.ts', model: 'haiku' },
+      policy,
+      messages: ['Can you help me with this?'],
+      classifier,
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports deterministic-only guardrails', async () => {
+    const classifier = vi.fn().mockResolvedValue({
+      action: 'allow',
+      reason: 'classifier_would_allow',
+    });
+
+    const deterministicDecision = await evaluateAgentGuardrail({
+      config: { file: 'guardrail.ts', model: 'haiku', mode: 'deterministic' },
+      policy,
+      messages: ['What is the weather'],
+      classifier,
+    });
+    expect(deterministicDecision).toEqual({
+      action: 'direct_response',
+      responseKind: 'scope_rejection',
+      reason: 'out_of_scope_topic',
+    });
+
+    const ambiguousDecision = await evaluateAgentGuardrail({
+      config: { file: 'guardrail.ts', model: 'haiku', mode: 'deterministic' },
+      policy,
+      messages: ['Can you help me with this?'],
+      classifier,
+    });
+    expect(classifier).not.toHaveBeenCalled();
+    expect(ambiguousDecision).toEqual({
+      action: 'direct_response',
+      responseKind: 'scope_clarification',
+      reason: 'ambiguous_without_classifier',
+    });
+  });
+
+  it('supports classifier-only guardrails', async () => {
+    const classifier = vi.fn().mockResolvedValue({
+      action: 'allow',
+      reason: 'classifier_allowed',
+    });
+
+    const decision = await evaluateAgentGuardrail({
+      config: { file: 'guardrail.ts', model: 'haiku', mode: 'classifier' },
+      policy,
+      messages: ['What is the weather'],
+      classifier,
+    });
+
+    expect(classifier).toHaveBeenCalledTimes(1);
+    expect(decision).toEqual({
+      action: 'allow',
+      reason: 'classifier_allowed',
     });
   });
 
@@ -312,7 +410,7 @@ describe('BSS guardrail — conversation-context awareness', () => {
   );
 
   it('forwards context to the classifier for an ambiguous pivot and never auto-allows it', async () => {
-    // "no, tell me a joke" is not a pure continuation (carries a new request)
+    // "no, tell me a story" is not a pure continuation (carries a new request)
     // and is not a hard-coded off-domain keyword, so it must defer to the
     // classifier — WITH the conversation context attached.
     const classifier = vi.fn().mockResolvedValue({
@@ -324,7 +422,7 @@ describe('BSS guardrail — conversation-context awareness', () => {
     const decision = await evaluateAgentGuardrail({
       config,
       policy,
-      messages: ['no, tell me a joke'],
+      messages: ['no, tell me a story'],
       context: inScopeContext,
       classifier,
     });
@@ -332,6 +430,63 @@ describe('BSS guardrail — conversation-context awareness', () => {
     expect(classifier).toHaveBeenCalledWith(
       expect.objectContaining({ context: inScopeContext }),
     );
+    expect(decision).toEqual({
+      action: 'direct_response',
+      responseKind: 'scope_rejection',
+      reason: 'off_topic',
+    });
+  });
+
+  it('allows a short gifting qualification answer without depending on the classifier', async () => {
+    const classifier = vi
+      .fn()
+      .mockRejectedValue(new Error('classifier should not be needed'));
+    const context = [
+      { role: 'customer' as const, text: 'I am looking to gift something.' },
+      {
+        role: 'assistant' as const,
+        text: "Lovely! A few quick questions to help me point you to the right thing: Who's the gift for, and is there an occasion? And roughly how many people are you gifting?",
+      },
+    ];
+
+    const decision = await evaluateAgentGuardrail({
+      config,
+      policy,
+      messages: ['Family party 10-12'],
+      context,
+      classifier,
+    });
+
+    expect(classifier).not.toHaveBeenCalled();
+    expect(decision).toEqual({
+      action: 'allow',
+      reason: 'qualification_answer',
+    });
+  });
+
+  it('does not auto-allow an unrelated request after a qualification question', async () => {
+    const classifier = vi.fn().mockResolvedValue({
+      action: 'direct_response',
+      responseKind: 'scope_rejection',
+      reason: 'off_topic',
+    });
+    const context = [
+      { role: 'customer' as const, text: 'I am looking to gift something.' },
+      {
+        role: 'assistant' as const,
+        text: "Lovely! Who's the gift for, and is there an occasion? And roughly how many people are you gifting?",
+      },
+    ];
+
+    const decision = await evaluateAgentGuardrail({
+      config,
+      policy,
+      messages: ['what should I wear'],
+      context,
+      classifier,
+    });
+
+    expect(classifier).toHaveBeenCalledTimes(1);
     expect(decision).toEqual({
       action: 'direct_response',
       responseKind: 'scope_rejection',

@@ -618,6 +618,20 @@ For client deployments, agent prompt folders live in the `apps/` directory of th
 
 Reusable guided workflows can be uploaded as skill zips with `SKILL.md`, then approved and bound to agents.
 
+Agent-owned guardrails are opt-in per agent. The `mode` field controls which
+guardrail stages run; omit it to keep the default `both` behavior.
+
+```yaml
+agents:
+  boondi_support:
+    name: Boondi Support
+    plugins:
+      guardrail:
+        file: guardrails/guardrail.ts
+        model: haiku
+        mode: both # both | deterministic | classifier
+```
+
 ## Contributing
 
 Contributions should keep the core runtime small and maintainable. Bug fixes, simplifications, docs improvements, and reusable skills are good fits. Feature creep in the default runtime is not.

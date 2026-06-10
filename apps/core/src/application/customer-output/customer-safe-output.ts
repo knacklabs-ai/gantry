@@ -39,7 +39,7 @@ export function findInternalLeak(text: string): string | undefined {
 // agent-specific phrasing); models tend to emit this before a tool call and it
 // gets glued to the answer ("…now.Your order is…").
 const LEADING_NARRATION_RE =
-  /\b(?:i['’]?ll\s+(?:just\s+|quickly\s+)?(?:look(?:\s+(?:that|it|this))?\s*up|pull(?:\s+(?:that|it|this))?\s*up|check|fetch|grab|pull|search)|let me\s+(?:just\s+|quickly\s+)?(?:look(?:\s+(?:that|it|this))?\s*up|pull(?:\s+(?:that|it|this))?\s*up|check|fetch|grab|pull|search)|looking\s+(?:that\s+up|it\s+up|up\b)|searching\b|pulling\s+(?:that|this|it|your)[^.!?\n]*\bup\b|fetching\b|one moment\b|on it\b)/i;
+  /\b(?:i['’]?ll\s+(?:just\s+|quickly\s+)?(?:look(?:\s+(?:that|it|this))?\s*up|pull(?:\s+(?:that|it|this))?\s*up|check|fetch|grab|pull|search)|i\s+need\s+to\s+(?:look\s+up|check|pull|search)\b|let me\s+(?:just\s+|quickly\s+)?(?:look(?:\s+(?:that|it|this))?\s*up|pull(?:\s+(?:that|it|this))?\s*up|check|fetch|grab|pull|search)|let me\s+do\s+that\s+now\b|let me\s+try[^.!?\n]*\bsearch\b|let me\s+search\s+specifically\b|looking\s+(?:that\s+up|it\s+up|up\b)|searching\b|pulling\s+(?:that|this|it|your)[^.!?\n]*\bup\b|fetching\b|one moment\b|on it\b|the\s+tools\s+are\s+now\s+available\b|that\s+search\s+only\s+returned\b|these\s+results\s+are\b)/i;
 
 // A lookup-narration sentence is not always the FIRST sentence: models often emit
 // a one-word acknowledgment or a line of empathy first ("Sure! Let me pull that
@@ -55,24 +55,54 @@ const NARRATION_HANDOFF_RE =
 // handoffs are spared, and it never removes a sentence that leaves nothing after it
 // — so it cannot blank a reply or clip a genuine answer.
 export function stripLeadingNarration(text: string): string {
-  const sentenceRe = /[^.!?\n]*[.!?]+/g;
-  let match: RegExpExecArray | null;
-  let scanned = 0;
-  while ((match = sentenceRe.exec(text)) !== null && scanned < 3) {
-    scanned += 1;
-    const sentence = match[0];
-    if (
-      !LEADING_NARRATION_RE.test(sentence) ||
-      NARRATION_HANDOFF_RE.test(sentence)
-    ) {
-      continue;
+  let current = text;
+  for (let removals = 0; removals < 6; removals += 1) {
+    const sentenceRe = /[^.!?\n]*[.!?]+/g;
+    let match: RegExpExecArray | null;
+    let scanned = 0;
+    let removed = false;
+    while ((match = sentenceRe.exec(current)) !== null && scanned < 5) {
+      scanned += 1;
+      const sentence = match[0];
+      if (
+        !LEADING_NARRATION_RE.test(sentence) ||
+        NARRATION_HANDOFF_RE.test(sentence)
+      ) {
+        continue;
+      }
+      const before = current.slice(0, match.index).replace(/\s+$/, '');
+      const after = current
+        .slice(match.index + sentence.length)
+        .replace(/^\s+/, '');
+      if (!after) return current; // nothing of substance would remain — leave it alone
+      current = before ? `${before} ${after}` : after;
+      removed = true;
+      break;
     }
-    const before = text.slice(0, match.index).replace(/\s+$/, '');
-    const after = text.slice(match.index + sentence.length).replace(/^\s+/, '');
-    if (!after) return text; // nothing of substance would remain — leave it alone
-    return before ? `${before} ${after}` : after;
+    if (!removed) return current;
   }
-  return text;
+  return current;
+}
+
+const COMPLAINT_EMPATHY_SENTENCE_RE =
+  /\b(?:i['’]m\s+so\s+sorry|i\s+am\s+so\s+sorry|sorry|that['’]?s\s+not\s+the\s+experience)\b/i;
+
+export function stripDuplicateComplaintEmpathy(text: string): string {
+  const firstSentence = /^\s*[^.!?\n]*[.!?]+/.exec(text);
+  if (!firstSentence || !COMPLAINT_EMPATHY_SENTENCE_RE.test(firstSentence[0])) {
+    return text;
+  }
+  const prefix = firstSentence[0].trim();
+  let rest = text.slice(firstSentence[0].length);
+  for (let removed = 0; removed < 4; removed += 1) {
+    const nextSentence = /^\s*[^.!?\n]*[.!?]+/.exec(rest);
+    if (!nextSentence || !COMPLAINT_EMPATHY_SENTENCE_RE.test(nextSentence[0])) {
+      break;
+    }
+    rest = rest.slice(nextSentence[0].length);
+  }
+  const remaining = rest.trimStart();
+  return remaining ? `${prefix} ${remaining}` : prefix;
 }
 
 // Guards a customer-facing outbound message. Developer-persona agents are
@@ -96,7 +126,9 @@ export function guardCustomerVisibleOutput(input: {
     );
     return CUSTOMER_VISIBLE_DECLINE_MESSAGE;
   }
-  const trimmed = stripLeadingNarration(input.text);
+  const trimmed = stripDuplicateComplaintEmpathy(
+    stripLeadingNarration(input.text),
+  );
   if (trimmed !== input.text) {
     input.logger?.warn(
       { conversationJid: input.conversationJid },

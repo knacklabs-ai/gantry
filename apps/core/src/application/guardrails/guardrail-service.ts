@@ -17,11 +17,21 @@ export async function evaluateAgentGuardrail(
       reason: 'unknown_policy',
     };
   }
-  const deterministic = policy.evaluateDeterministic(
-    input.messages,
-    input.context,
-  );
-  if (deterministic) return deterministic;
+  const mode = input.config.mode ?? 'both';
+  if (mode === 'both' || mode === 'deterministic') {
+    const deterministic = policy.evaluateDeterministic(
+      input.messages,
+      input.context,
+    );
+    if (deterministic) return deterministic;
+    if (mode === 'deterministic') {
+      return {
+        action: 'direct_response',
+        responseKind: 'scope_clarification',
+        reason: 'ambiguous_without_classifier',
+      };
+    }
+  }
   if (!input.classifier) {
     // No classifier to disambiguate: ask the customer to clarify rather than
     // hard-rejecting. A bare scope_rejection here turns away real (often

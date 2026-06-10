@@ -120,12 +120,26 @@ describe('handleAgentCommand', () => {
       setTyping: async (v: boolean) => void typing.push(v),
       advanceCursor: () => {},
       getAgentCommand: async () => ({
-        name: 'boom', description: 'd', visibility: 'operator' as const,
-        ackOnStart: 'On it.', async run() { throw new Error('nope'); },
+        name: 'boom',
+        description: 'd',
+        visibility: 'operator' as const,
+        ackOnStart: 'On it.',
+        async run() {
+          throw new Error('nope');
+        },
       }),
-      buildAgentCommandContext: () => ({ conversationId: 'c', conversationJid: 'wa:1', threadId: null }),
+      buildAgentCommandContext: () => ({
+        conversationId: 'c',
+        conversationJid: 'wa:1',
+        threadId: null,
+      }),
     };
-    await handleAgentCommand({ name: 'boom', deps, cmdMsg, sanitizeErrorText: sanitize });
+    await handleAgentCommand({
+      name: 'boom',
+      deps,
+      cmdMsg,
+      sanitizeErrorText: sanitize,
+    });
     expect(typing).toEqual([true, false]);
     expect(sent).toEqual(['On it.', '/boom failed: nope']);
   });

@@ -336,6 +336,9 @@ function renderAgentPluginsYaml(
       `        file: ${quoteYamlString(guardrail.file)}`,
       `        model: ${quoteYamlString(guardrail.model)}`,
     );
+    if (guardrail.mode && guardrail.mode !== 'both') {
+      lines.push(`        mode: ${quoteYamlString(guardrail.mode)}`);
+    }
   }
   if (hasExtraction) {
     lines.push(

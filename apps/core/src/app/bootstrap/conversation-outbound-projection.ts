@@ -36,7 +36,10 @@ export function createConversationOutboundProjection(input: {
       }): Promise<void>;
     }
   | undefined {
-  const formattedRaw = formatOutboundForChannel(input.rawText, input.providerId);
+  const formattedRaw = formatOutboundForChannel(
+    input.rawText,
+    input.providerId,
+  );
   if (!formattedRaw) return undefined;
   const formatted = input.guardFormatted?.(formattedRaw) ?? formattedRaw;
 

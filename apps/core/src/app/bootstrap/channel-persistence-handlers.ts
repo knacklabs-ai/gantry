@@ -6,6 +6,7 @@ import type {
 import type { RuntimeApp } from './runtime-app.js';
 import type { AsyncTaskQueue } from './async-task-queue.js';
 import type { ChannelWiringDeps } from './channel-wiring-types.js';
+import { POLL_INTERVAL } from '../../config/index.js';
 
 type ChannelPersistenceRepository = RuntimeChatMetadataRepository &
   RuntimeMessageRepository;
@@ -16,6 +17,13 @@ interface ChannelPersistenceHandlerDeps {
   resolved: ChannelWiringDeps;
   ops: () => ChannelPersistenceRepository;
   persistenceQueue: AsyncTaskQueue;
+  enqueueMessageCheck?: (chatJid: string) => void;
+  autoRegisteredMessageCheckDelayMs?: number;
+}
+
+interface EnsureConversationRouteResult {
+  canRoute: boolean;
+  autoRegistered: boolean;
 }
 
 async function enqueueAndWait(
@@ -157,13 +165,15 @@ export function createChannelPersistenceHandlers({
   resolved,
   ops,
   persistenceQueue,
+  enqueueMessageCheck,
+  autoRegisteredMessageCheckDelayMs = POLL_INTERVAL * 2,
 }: ChannelPersistenceHandlerDeps) {
   const chatIsGroup = new Map<string, boolean>();
 
   const ensureConfiguredConversationRoute = async (
     chatJid: string,
     msg: NewMessage,
-  ): Promise<boolean> => {
+  ): Promise<EnsureConversationRouteResult> => {
     const groupsByChat = app.getConversationRoutes();
     const existingGroup = groupsByChat[chatJid];
     if (!existingGroup && !msg.is_from_me && !msg.is_bot_message) {
@@ -173,26 +183,31 @@ export function createChannelPersistenceHandlers({
         msg,
         logger: resolved.logger,
       });
-      if (autoRegistered) return true;
+      if (autoRegistered) return { canRoute: true, autoRegistered: true };
     }
     const isKnownDirect =
       chatIsGroup.get(chatJid) === false ||
       existingGroup?.conversationKind === 'dm';
-    if (!isKnownDirect) return Boolean(existingGroup);
+    if (!isKnownDirect)
+      return { canRoute: Boolean(existingGroup), autoRegistered: false };
     if (!existingGroup && !msg.is_from_me && !msg.is_bot_message) {
       resolved.logger.warn(
         { chatJid, sender: msg.sender },
         'Dropping direct message without configured conversation binding',
       );
     }
-    return Boolean(existingGroup);
+    return { canRoute: Boolean(existingGroup), autoRegistered: false };
   };
 
+  const enqueueFirstAutoRegisteredMessage =
+    enqueueMessageCheck ?? app.queue?.enqueueMessageCheck?.bind(app.queue);
+
   return {
-    ensureMessageRoute: ensureConfiguredConversationRoute,
+    ensureMessageRoute: async (chatJid: string, msg: NewMessage) =>
+      (await ensureConfiguredConversationRoute(chatJid, msg)).canRoute,
     onMessage: async (chatJid: string, msg: NewMessage) => {
-      const canRoute = await ensureConfiguredConversationRoute(chatJid, msg);
-      if (!canRoute) return;
+      const route = await ensureConfiguredConversationRoute(chatJid, msg);
+      if (!route.canRoute) return;
       const groupsByChat = app.getConversationRoutes();
       if (!msg.is_from_me && !msg.is_bot_message && groupsByChat[chatJid]) {
         const cfg = resolved.loadSenderAllowlist();
@@ -233,6 +248,21 @@ export function createChannelPersistenceHandlers({
           'Persistence queue full; waiting to enqueue message persistence',
         ),
       );
+      if (
+        route.autoRegistered &&
+        !msg.is_from_me &&
+        !msg.is_bot_message &&
+        enqueueFirstAutoRegisteredMessage
+      ) {
+        if (autoRegisteredMessageCheckDelayMs <= 0) {
+          enqueueFirstAutoRegisteredMessage(chatJid);
+        } else {
+          setTimeout(
+            () => enqueueFirstAutoRegisteredMessage(chatJid),
+            autoRegisteredMessageCheckDelayMs,
+          );
+        }
+      }
     },
     onChatMetadata: async (
       chatJid: string,

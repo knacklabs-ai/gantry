@@ -185,6 +185,7 @@ export function createChannelWiring(
       resolved,
       ops,
       persistenceQueue,
+      enqueueMessageCheck: (chatJid) => app.queue.enqueueMessageCheck(chatJid),
     }),
     conversationRoutes: () => app.getConversationRoutes(),
     runtimeSettings: () => currentRuntimeSettings,

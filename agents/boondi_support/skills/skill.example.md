@@ -113,11 +113,17 @@ A `SKILL.md` on disk is **inert until declared**. Enable it in the agent's
 agents:
   boondi_support:
     plugins:
+      guardrail:
+        file: guardrails/guardrail.ts
+        model: haiku
+        mode: both
       skills:
         - my-skill        # ← the folder id; must match skills/my-skill/
         - boondi-kb
 ```
 
+`plugins.guardrail` activates one exact agent-owned guardrail file. `mode` may
+be `both`, `deterministic`, or `classifier`; omitted mode defaults to `both`.
 `plugins.skills` is a plain **list of folder ids** — there is no place in yaml
 for `description`, `disclosure`, `user_invocable`, or any per-skill metadata.
 All of that lives in the skill's frontmatter (above). yaml only switches skills

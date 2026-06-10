@@ -184,11 +184,9 @@ describe('agent plugins settings (plugins.*)', () => {
     expect(() =>
       parseRuntimeSettings(
         agentYaml(
-          [
-            '    plugins:',
-            '      commands:',
-            '        - Extract_Leads',
-          ].join('\n'),
+          ['    plugins:', '      commands:', '        - Extract_Leads'].join(
+            '\n',
+          ),
         ),
       ),
     ).toThrow(/kebab/i);

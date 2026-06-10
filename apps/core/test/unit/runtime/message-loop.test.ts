@@ -847,6 +847,38 @@ describe('startMessagePollingLoop', () => {
     expect(deps.sentTo).toContain('group@g.us');
   });
 
+  it('does not replay fallback groupMessages already behind the group cursor', async () => {
+    const msg = {
+      id: '1',
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      content: 'hello',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      is_from_me: false,
+      sender_name: 'User',
+    };
+
+    mockGetNewMessages.mockReturnValueOnce({
+      messages: [msg],
+      newTimestamp: '2024-01-01T00:00:01.000Z',
+    });
+    mockGetMessagesSince.mockReturnValue([]);
+
+    const deps = makeDeps();
+    deps.cursors['group@g.us'] = JSON.stringify({
+      timestamp: msg.timestamp,
+      id: msg.id,
+    });
+    const { runMessagePollingTick } =
+      await import('@core/runtime/message-loop.js');
+
+    await runMessagePollingTick(deps);
+
+    expect(mockFormatMessages).not.toHaveBeenCalled();
+    expect(deps.sentTo).toHaveLength(0);
+    expect(deps.enqueued).toHaveLength(0);
+  });
+
   it('processes conversation-scoped group when trigger matches and sender is allowed', async () => {
     const msg = {
       id: '1',

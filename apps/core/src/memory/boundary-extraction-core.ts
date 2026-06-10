@@ -138,16 +138,17 @@ export async function collectDurableMemoryFromRepositories(input: {
     | MemoryExtractionResult;
   defaultScope?: MemoryBoundaryDefaultScope;
   additionalTurns?: MemoryBoundaryTurn[];
+  excludeMessageIds?: string[];
   nowIso?: () => string;
   signal?: AbortSignal;
   timeoutMs?: number;
   statementTimeoutMs?: number;
-}): Promise<{ saved: number }> {
+}): Promise<{ saved: number; digestCreated: boolean }> {
   input.signal?.throwIfAborted();
   const session = await input.repositories.agentSessions.getAgentSession(
     input.agentSessionId as AgentSession['id'],
   );
-  if (!session?.conversationId) return { saved: 0 };
+  if (!session?.conversationId) return { saved: 0, digestCreated: false };
 
   input.signal?.throwIfAborted();
   // Read-watermark: only extract messages NEWER than the cursor so each turn is
@@ -173,7 +174,7 @@ export async function collectDurableMemoryFromRepositories(input: {
       limit: NEW_LIMIT,
     });
     // Nothing new since the cursor: skip digest/LLM and leave the cursor put.
-    if (messages.length === 0) return { saved: 0 };
+    if (messages.length === 0) return { saved: 0, digestCreated: false };
     contextSource = await input.repositories.messages.getMessagesBefore({
       conversationId: session.conversationId,
       threadId: session.threadId,
@@ -187,7 +188,7 @@ export async function collectDurableMemoryFromRepositories(input: {
       threadId: session.threadId,
       limit: NEW_LIMIT,
     });
-    if (messages.length === 0) return { saved: 0 };
+    if (messages.length === 0) return { saved: 0, digestCreated: false };
   }
   // Both getMessagesSince and listRecentMessages return oldest->newest, so the
   // last element is the newest covered message: that becomes the new watermark.
@@ -209,9 +210,13 @@ export async function collectDurableMemoryFromRepositories(input: {
     coveredThroughAt: exactCoveredAt,
     coveredThroughMessageId: newest.id,
   };
+  const excludedIds = new Set(input.excludeMessageIds ?? []);
+  const extractionMessages = excludedIds.size
+    ? messages.filter((message) => !excludedIds.has(message.id))
+    : messages;
   const candidateTurns: Array<{ role: 'user' | 'assistant'; text: string }> =
     [];
-  for (const message of messages) {
+  for (const message of extractionMessages) {
     const text = messageText(message);
     if (!text) continue;
     if (message.direction === 'inbound') {
@@ -264,7 +269,7 @@ export async function collectDurableMemoryFromRepositories(input: {
       coveredThroughAt: newWatermark.coveredThroughAt,
       coveredThroughMessageId: newWatermark.coveredThroughMessageId,
     });
-    return { saved: 0 };
+    return { saved: 0, digestCreated: false };
   }
 
   // Agent-owned extraction prompt: used ONLY when the agent's settings.yaml
@@ -403,7 +408,7 @@ export async function collectDurableMemoryFromRepositories(input: {
     coveredThroughAt: newWatermark.coveredThroughAt,
     coveredThroughMessageId: newWatermark.coveredThroughMessageId,
   });
-  return { saved };
+  return { saved, digestCreated: true };
 }
 
 function subjectForFact(

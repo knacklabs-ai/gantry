@@ -15,7 +15,10 @@
  * Loaded via tsx in dev (.ts, breakpoints bind) and as prebuilt .js in prod.
  */
 
-type GuardrailResponseKind = 'greeting' | 'scope_rejection' | 'scope_clarification';
+type GuardrailResponseKind =
+  | 'greeting'
+  | 'scope_rejection'
+  | 'scope_clarification';
 
 type GuardrailDecision =
   | { action: 'allow'; reason: string }

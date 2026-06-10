@@ -53,9 +53,8 @@ describe('LlmMemoryExtractionProvider', () => {
         },
       ]),
     );
-    const { LlmMemoryExtractionProvider } = await import(
-      '@core/memory/extractor-llm.js'
-    );
+    const { LlmMemoryExtractionProvider } =
+      await import('@core/memory/extractor-llm.js');
     const provider = new LlmMemoryExtractionProvider();
 
     const result = await provider.extractFactsWithOutcome({
@@ -84,8 +83,6 @@ describe('LlmMemoryExtractionProvider', () => {
     const dynamicUserBlock = queryInput.userBlocks?.[1]?.text ?? '';
     expect(dynamicUserBlock.indexOf('"earlier_context"')).toBeGreaterThan(-1);
     expect(dynamicUserBlock.indexOf('"session_arc"')).toBeGreaterThan(-1);
-    expect(dynamicUserBlock).toContain(
-      'NEVER extract facts from it',
-    );
+    expect(dynamicUserBlock).toContain('NEVER extract facts from it');
   });
 });

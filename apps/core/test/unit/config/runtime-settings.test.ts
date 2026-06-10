@@ -159,6 +159,7 @@ mcp_servers:
     expect(parsed.agents.boondi_support.plugins?.guardrail).toEqual({
       file: 'guardrail.ts',
       model: 'haiku',
+      mode: 'both',
     });
   });
 
@@ -176,6 +177,7 @@ agents:
     expect(parsed.agents.boondi_support?.plugins?.guardrail).toEqual({
       file: 'guardrail.ts',
       model: 'haiku',
+      mode: 'both',
     });
   });
 
