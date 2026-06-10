@@ -16,6 +16,8 @@ import {
 } from './identity/identity-header.js';
 import { runWithIdentity } from './identity/identity-context.js';
 import { registerAllTools } from './tools/index.js';
+import { runManualConversationExtraction } from './watcher/index.js';
+import { createAnthropicExtractorLlm } from './extractor/llm-client.js';
 
 function readHeader(req: IncomingMessage, name: string): string | undefined {
   const raw = req.headers[name.toLowerCase()];
@@ -39,6 +41,45 @@ function errToLog(err: unknown): Record<string, unknown> {
     return { err: { name: err.name, message: err.message, stack: err.stack } };
   }
   return { err: String(err) };
+}
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+function verifiedIdentityForRequest(
+  req: IncomingMessage,
+  env: BoondiCrmEnv,
+  logger: Logger,
+):
+  | { ok: true; identity: ReturnType<typeof verifyIdentityHeader> }
+  | { ok: false; status: number; payload: unknown } {
+  const headerCheck = env.requireVerifiedIdentity
+    ? verifyIdentityHeader(readHeader(req, IDENTITY_HEADER_NAME), {
+        secret:
+          env.identity.mode === 'disabled' ? undefined : env.identity.secret,
+        maxAgeSec: env.identityMaxAgeSec,
+      })
+    : ({ kind: 'absent' } as const);
+
+  if (headerCheck.kind === 'invalid') {
+    const isAttackSignal =
+      headerCheck.reason === 'BAD_SIGNATURE' ||
+      headerCheck.reason === 'STALE_TIMESTAMP' ||
+      headerCheck.reason === 'FUTURE_TIMESTAMP';
+    (isAttackSignal ? logger.error : logger.warn)(
+      { reason: headerCheck.reason },
+      'boondi_crm_identity_header_invalid',
+    );
+    return {
+      ok: false,
+      status: 401,
+      payload: { error: { code: 'IDENTITY_INVALID' } },
+    };
+  }
+
+  return { ok: true, identity: headerCheck };
 }
 
 interface ReadBodyResult {
@@ -87,40 +128,71 @@ export async function startHttpServer(
   const httpServer = createServer(
     async (req: IncomingMessage, res: ServerResponse) => {
       const path = parseUrlPath(req.url);
-      if (path !== '/mcp') {
-        if (path === '/healthz') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true }));
+      if (path === '/healthz') {
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (path === '/admin/extract-leads-queries') {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { error: 'method_not_allowed' });
           return;
         }
+        const identity = verifiedIdentityForRequest(req, env, logger);
+        if (!identity.ok) {
+          sendJson(res, identity.status, identity.payload);
+          return;
+        }
+        const bodyResult = await readRequestBody(req);
+        if (!bodyResult.ok || !bodyResult.body) {
+          logger.warn(
+            { rawLen: bodyResult.rawLen, err: bodyResult.error },
+            'boondi_crm_body_parse_failed',
+          );
+          sendJson(res, 400, { error: 'malformed_json_body' });
+          return;
+        }
+        const conversationId = (bodyResult.body as { conversationId?: unknown })
+          .conversationId;
+        if (
+          typeof conversationId !== 'string' ||
+          !/^conversation:wa:\d+$/.test(conversationId)
+        ) {
+          sendJson(res, 400, { error: 'invalid_conversation_id' });
+          return;
+        }
+        // Silent zeros when the extractor is unconfigured confused operators
+        // (looks identical to "nothing to extract") — surface it as a 503.
+        const llm = createAnthropicExtractorLlm(env);
+        if (!llm) {
+          logger.warn({}, 'boondi_crm_manual_extract_disabled');
+          sendJson(res, 503, { error: 'extractor_disabled' });
+          return;
+        }
+        try {
+          const stats = await runManualConversationExtraction(
+            { env, logger, pool, repo, llm },
+            conversationId,
+          );
+          sendJson(res, 200, { ok: true, stats });
+        } catch (err) {
+          logger.error(errToLog(err), 'boondi_crm_manual_extract_failed');
+          sendJson(res, 500, { error: 'internal_error' });
+        }
+        return;
+      }
+
+      if (path !== '/mcp') {
         res.writeHead(404).end();
         return;
       }
 
-      const headerCheck = env.requireVerifiedIdentity
-        ? verifyIdentityHeader(readHeader(req, IDENTITY_HEADER_NAME), {
-            secret:
-              env.identity.mode === 'disabled'
-                ? undefined
-                : env.identity.secret,
-            maxAgeSec: env.identityMaxAgeSec,
-          })
-        : ({ kind: 'absent' } as const);
-
-      if (headerCheck.kind === 'invalid') {
-        const isAttackSignal =
-          headerCheck.reason === 'BAD_SIGNATURE' ||
-          headerCheck.reason === 'STALE_TIMESTAMP' ||
-          headerCheck.reason === 'FUTURE_TIMESTAMP';
-        (isAttackSignal ? logger.error : logger.warn)(
-          { reason: headerCheck.reason },
-          'boondi_crm_identity_header_invalid',
-        );
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { code: 'IDENTITY_INVALID' } }));
+      const identity = verifiedIdentityForRequest(req, env, logger);
+      if (!identity.ok) {
+        sendJson(res, identity.status, identity.payload);
         return;
       }
-
+      const headerCheck = identity.identity;
       const verifiedIdentity =
         env.requireVerifiedIdentity && headerCheck.kind === 'ok'
           ? headerCheck.identity
@@ -132,8 +204,7 @@ export async function startHttpServer(
           { rawLen: bodyResult.rawLen, err: bodyResult.error },
           'boondi_crm_body_parse_failed',
         );
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'malformed_json_body' }));
+        sendJson(res, 400, { error: 'malformed_json_body' });
         return;
       }
 
