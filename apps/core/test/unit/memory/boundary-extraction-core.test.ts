@@ -173,7 +173,7 @@ describe('collectDurableMemoryFromRepositories', () => {
       }),
     });
 
-    expect(result).toEqual({ saved: 0 });
+    expect(result).toEqual({ saved: 0, digestCreated: true });
     expect(evidence).toHaveLength(0);
     expect(digests).toHaveLength(1);
     expect(digests[0]).toMatchObject({
@@ -262,7 +262,7 @@ describe('collectDurableMemoryFromRepositories', () => {
       }),
     });
 
-    expect(result).toEqual({ saved: 0 });
+    expect(result).toEqual({ saved: 0, digestCreated: true });
     expect(evidence).toHaveLength(0);
     expect(digests[0]).toMatchObject({
       metadata: {

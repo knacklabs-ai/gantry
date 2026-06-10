@@ -128,7 +128,7 @@ describe('collectDurableMemoryFromRepositories (read-watermark)', () => {
       extractFacts,
       defaultScope: 'user',
     });
-    expect(res).toEqual({ saved: 0 });
+    expect(res).toEqual({ saved: 0, digestCreated: false });
     expect(extractFacts).not.toHaveBeenCalled();
     expect(repos.sessionDigests.saveAgentSessionDigest).not.toHaveBeenCalled();
     expect(repos.extractionCursor.upsertCursor).not.toHaveBeenCalled();
