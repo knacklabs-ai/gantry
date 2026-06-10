@@ -19,6 +19,10 @@ import {
   patchRuntimeModelDefaults,
   syncRuntimeSettingsFromProjection,
 } from '../../config/index.js';
+import {
+  resolveRuntimeSecurityPosture,
+  validateProductionSecurityGate,
+} from '../../shared/security-posture.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import {
   getRuntimeControlRepository,
@@ -193,14 +197,56 @@ export function startControlServer(input: {
       repositories: storage.repositories,
     };
   });
-  const keys = parseControlApiKeysStrict({
-    rawJson: getControlEnvValue('GANTRY_CONTROL_API_KEYS_JSON'),
-  });
   const socketPath =
     getControlEnvValue('GANTRY_CONTROL_SOCKET_PATH') ||
     path.join(GANTRY_HOME, 'run', 'control.sock');
   const port = Number(getControlEnvValue('GANTRY_CONTROL_PORT') || 0);
   const host = resolveControlHost();
+  const nodeEnv = getControlEnvValue('NODE_ENV');
+  const deploymentMode = getControlEnvValue('GANTRY_DEPLOYMENT_MODE');
+  const runtimeEnv = getControlEnvValue('GANTRY_RUNTIME_ENV');
+  const posture = resolveRuntimeSecurityPosture({
+    NODE_ENV: nodeEnv,
+    GANTRY_DEPLOYMENT_MODE: deploymentMode,
+    GANTRY_RUNTIME_ENV: runtimeEnv,
+    GANTRY_CONTROL_HOST: host,
+    GANTRY_CONTROL_PORT: String(port),
+  });
+  const rawControlKeys = getControlEnvValue('GANTRY_CONTROL_API_KEYS_JSON');
+  const keys = parseControlApiKeysStrict({
+    rawJson: rawControlKeys,
+    requireStrongTokens: posture.requiresProductionSecrets,
+    requireNonEmptyScopes: posture.requiresProductionSecrets,
+  });
+  const sandboxProvider = posture.requiresEnforcingSandbox
+    ? getRuntimeSettingsForConfig().runtime.sandbox.provider
+    : undefined;
+  const productionFailures = validateProductionSecurityGate({
+    env: {
+      NODE_ENV: nodeEnv,
+      GANTRY_DEPLOYMENT_MODE: deploymentMode,
+      GANTRY_RUNTIME_ENV: runtimeEnv,
+      GANTRY_CONTROL_HOST: host,
+      GANTRY_CONTROL_PORT: String(port),
+      GANTRY_CONTROL_API_KEYS_JSON: rawControlKeys,
+      GANTRY_IPC_AUTH_SECRET: getControlEnvValue('GANTRY_IPC_AUTH_SECRET'),
+      REMOTE_CONTROL_AUTO_ACCEPT: getControlEnvValue(
+        'REMOTE_CONTROL_AUTO_ACCEPT',
+      ),
+      SECRET_ENCRYPTION_KEY: getControlEnvValue('SECRET_ENCRYPTION_KEY'),
+      SECRET_ENCRYPTION_KEYRING_JSON: getControlEnvValue(
+        'SECRET_ENCRYPTION_KEYRING_JSON',
+      ),
+    },
+    sandboxProvider,
+  });
+  if (productionFailures.length > 0) {
+    throw new Error(
+      ['Production security preflight failed.', ...productionFailures].join(
+        '\n- ',
+      ),
+    );
+  }
   const state: ControlServerState = {
     activeStreams: 0,
     activeWaits: 0,

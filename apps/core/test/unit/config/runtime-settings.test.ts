@@ -94,6 +94,8 @@ describe('runtime settings', () => {
     expect(settings.runtime.queue).toEqual({
       maxMessageRuns: 3,
       maxJobRuns: 4,
+      maxMessageBacklog: 0,
+      maxTaskBacklog: 0,
       maxRetries: 5,
       baseRetryMs: 5000,
     });
@@ -101,6 +103,8 @@ describe('runtime settings', () => {
     settings.runtime.queue = {
       maxMessageRuns: 6,
       maxJobRuns: 2,
+      maxMessageBacklog: 7,
+      maxTaskBacklog: 9,
       maxRetries: 1,
       baseRetryMs: 250,
     };
@@ -109,6 +113,8 @@ describe('runtime settings', () => {
     expect(yaml).toContain('runtime:');
     expect(yaml).toContain('max_message_runs: 6');
     expect(yaml).toContain('max_job_runs: 2');
+    expect(yaml).toContain('max_message_backlog: 7');
+    expect(yaml).toContain('max_task_backlog: 9');
     expect(yaml).toContain('max_retries: 1');
     expect(yaml).toContain('base_retry_ms: 250');
 
@@ -303,6 +309,24 @@ describe('runtime settings', () => {
     ).toThrow('runtime.queue.max_jobb_runs is not supported');
   });
 
+  it('rejects negative runtime queue backlog caps', () => {
+    expect(() =>
+      parseRuntimeSettings(`runtime:
+  queue:
+    max_message_backlog: -1
+`),
+    ).toThrow(
+      'runtime.queue.max_message_backlog must be a non-negative integer',
+    );
+
+    expect(() =>
+      parseRuntimeSettings(`runtime:
+  queue:
+    max_task_backlog: -1
+`),
+    ).toThrow('runtime.queue.max_task_backlog must be a non-negative integer');
+  });
+
   it('rejects unsupported runtime sandbox keys', () => {
     expect(() =>
       parseRuntimeSettings(`runtime:
@@ -348,6 +372,57 @@ agent:
         1,
       );
     } finally {
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts credential encryption keyring without direct encryption key', () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    const originalSecretEncryptionKeyring =
+      process.env.SECRET_ENCRYPTION_KEYRING_JSON;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-settings-keyring-'),
+    );
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@localhost:5432/gantry_test';
+      delete process.env.SECRET_ENCRYPTION_KEY;
+      process.env.SECRET_ENCRYPTION_KEYRING_JSON = JSON.stringify({
+        active: 'primary',
+        keys: {
+          primary: Buffer.from(
+            '00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f',
+            'hex',
+          ).toString('base64'),
+        },
+      });
+
+      const settings = createDefaultRuntimeSettings();
+      saveRuntimeSettings(runtimeHome, settings);
+
+      expect(
+        validateLoadedRuntimeSettings(runtimeHome, settings),
+      ).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
+      if (originalSecretEncryptionKeyring === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEYRING_JSON;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEYRING_JSON =
+          originalSecretEncryptionKeyring;
+      }
       fs.rmSync(runtimeHome, { recursive: true, force: true });
     }
   });

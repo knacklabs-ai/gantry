@@ -34,6 +34,14 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeEventExchange: () => ({
     publish: runtimeStoreMock.publish,
   }),
+  getWorkerCoordinationRepository: () => ({
+    appendRunnerControlEvent: vi.fn(async () => 'persisted'),
+    heartbeatRunLease: vi.fn(async () => true),
+  }),
+}));
+
+vi.mock('@core/jobs/worker-identity.js', () => ({
+  requireWorkerInstanceId: () => 'worker-test',
 }));
 
 vi.mock('@core/jobs/compact-memory.js', () => ({
@@ -110,7 +118,7 @@ function makeRoute(): ConversationRoute {
 }
 
 function makeOpsRepository(job: Job) {
-  return {
+  const repo = {
     getJobById: vi.fn(async () => job),
     getJobRunById: vi.fn(async () => ({
       run_id: 'run-1',
@@ -118,14 +126,45 @@ function makeOpsRepository(job: Job) {
       short_id: 1,
       status: 'running',
     })),
-    claimDueJobRunStart: vi.fn(async () => true),
+    claimDueJobRunStart: vi.fn(async () => ({
+      runId: 'run-1',
+      jobId: job.id,
+      workerInstanceId: 'worker-test',
+      leaseToken: 'lease-token-1',
+      fencingVersion: 1,
+      status: 'active' as const,
+      claimedAt: '2026-05-08T00:00:00.000Z',
+      expiresAt: '2026-05-08T01:00:00.000Z',
+      heartbeatAt: '2026-05-08T00:00:00.000Z',
+    })),
+    settleJobRunLease: vi.fn(async () => true),
     updateAgentRunProviderMetadata: vi.fn(async () => undefined),
     createJobRun: vi.fn(async () => true),
     updateJob: vi.fn(async () => undefined),
     completeJobRun: vi.fn(async () => undefined),
+    finalizeJobRunLease: vi.fn(async (input) => {
+      await repo.completeJobRun(
+        input.runId,
+        input.runStatus,
+        input.resultSummary ?? null,
+        input.errorSummary ?? null,
+      );
+      return true;
+    }),
+    finalizeJobRunWithLease: vi.fn(async (input) => {
+      await repo.updateJob(input.jobId, input.jobUpdates);
+      await repo.completeJobRun(
+        input.runId,
+        input.runStatus,
+        input.resultSummary ?? null,
+        input.errorSummary ?? null,
+      );
+      return true;
+    }),
     markJobRunNotified: vi.fn(async () => undefined),
     listRecentJobEvents: vi.fn(async () => []),
   };
+  return repo;
 }
 
 function makeToolRepository(toolNames: string[]) {
@@ -888,12 +927,14 @@ describe('jobs/execution', () => {
     });
     expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
       runId: expect.any(String),
+      leaseToken: 'lease-token-1',
       providerSessionId: 'provider-session:resume',
       runIds: [expect.any(String)],
     });
     expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
       runId: expect.any(String),
-      runIds: [expect.any(String), 'agent-run:job-1'],
+      leaseToken: 'lease-token-1',
+      runIds: [expect.any(String)],
       providerRunId: 'provider-run:scheduler-1',
     });
   });
@@ -1014,7 +1055,8 @@ describe('jobs/execution', () => {
     expect(opsRepository.setSession).not.toHaveBeenCalled();
     expect(opsRepository.updateAgentRunProviderMetadata).toHaveBeenCalledWith({
       runId: expect.any(String),
-      runIds: [expect.any(String), 'agent-run:job-1'],
+      leaseToken: 'lease-token-1',
+      runIds: [expect.any(String)],
       providerSessionId: 'provider-session:streamed',
     });
   });

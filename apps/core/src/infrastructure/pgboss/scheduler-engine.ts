@@ -10,8 +10,12 @@ import {
 import { logger } from '../logging/logger.js';
 import type { Job } from '../../domain/types.js';
 import type { ReleasedStaleJobLease } from '../../domain/repositories/ops-repo.js';
-import { getRuntimeControlRepository } from '../../adapters/storage/postgres/runtime-store.js';
+import {
+  getRuntimeControlRepository,
+  getWorkerCoordinationRepository,
+} from '../../adapters/storage/postgres/runtime-store.js';
 import { acquireRunSlot } from '../../jobs/concurrency.js';
+import { WORKER_STALE_AFTER_MS } from '../../shared/worker-heartbeat.js';
 import { validateScheduleConfig } from '../../jobs/schedule.js';
 import type {
   SchedulerDependencies,
@@ -134,7 +138,6 @@ export class PgBossSchedulerEngine {
     this.boss = boss;
     await this.ensureQueues();
     const queuePolicy = getRuntimeQueueConfig();
-    await this.releaseInterruptedStartupLeases();
     await boss.work<SchedulerDispatchPayload>(
       SCHEDULER_QUEUE,
       {
@@ -260,6 +263,7 @@ export class PgBossSchedulerEngine {
   private async syncAllJobs(): Promise<void> {
     const boss = this.requireBoss();
     await this.callbacks.registerSystemJobs(this.deps);
+    await this.recoverExpiredWorkerLeases();
     const released = await this.deps.opsRepository.releaseStaleJobLeases();
     if (released.length > 0) {
       logger.warn(
@@ -287,27 +291,42 @@ export class PgBossSchedulerEngine {
     }
   }
 
-  private async releaseInterruptedStartupLeases(): Promise<void> {
-    const releaseInterrupted =
-      this.deps.opsRepository.releaseInterruptedJobLeases;
-    if (!releaseInterrupted) return;
-    const released = await releaseInterrupted.call(this.deps.opsRepository);
-    if (released.length === 0) return;
-    logger.warn(
-      {
-        count: released.length,
-        releases: released.map((release) => ({
-          jobId: release.jobId,
-          runId: release.runId,
-          runTimedOut: release.runTimedOut,
-          reason: release.reason,
-        })),
-      },
-      'Released interrupted scheduler leases after runtime startup',
-    );
-    await this.callbacks.handleReleasedStaleLeases?.(released, this.deps);
-    this.scheduleSignatures.clear();
-    this.deps.onSchedulerChanged?.();
+  /**
+   * Stale recovery only: marks heartbeat-lapsed workers unhealthy and expires
+   * run leases whose lease window has lapsed. Live leases held by healthy
+   * workers — including a previous incarnation of this process — are never
+   * released here.
+   */
+  private async recoverExpiredWorkerLeases(): Promise<void> {
+    try {
+      const coordination = getWorkerCoordinationRepository();
+      const unhealthy = await coordination.markStaleWorkersUnhealthy({
+        staleBefore: toIso(currentTimeMs() - WORKER_STALE_AFTER_MS),
+      });
+      if (unhealthy.length > 0) {
+        logger.warn(
+          { workerInstanceIds: unhealthy },
+          'Marked heartbeat-lapsed worker instances unhealthy',
+        );
+      }
+      const recovered = await coordination.recoverExpiredRunLeases({});
+      if (recovered.length > 0) {
+        logger.warn(
+          {
+            count: recovered.length,
+            leases: recovered.map((lease) => ({
+              runId: lease.runId,
+              jobId: lease.jobId,
+              workerInstanceId: lease.workerInstanceId,
+              fencingVersion: lease.fencingVersion,
+            })),
+          },
+          'Expired lapsed run leases; runs are retryable with a higher fencing version',
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to recover expired worker run leases');
+    }
   }
 
   private async syncOneJob(jobId: string): Promise<void> {

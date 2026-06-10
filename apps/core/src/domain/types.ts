@@ -277,6 +277,8 @@ export interface PermissionApprovalRequest {
   jobId?: string;
   jobName?: string;
   runId?: string;
+  runLeaseToken?: string;
+  runLeaseFencingVersion?: number;
   targetJid?: string;
   approvalContextJid?: string;
   threadId?: string;

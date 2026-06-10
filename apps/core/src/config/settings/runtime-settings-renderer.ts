@@ -495,6 +495,8 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
   return (
     runtime.queue.maxMessageRuns === 3 &&
     runtime.queue.maxJobRuns === 4 &&
+    runtime.queue.maxMessageBacklog === 0 &&
+    runtime.queue.maxTaskBacklog === 0 &&
     runtime.queue.maxRetries === 5 &&
     runtime.queue.baseRetryMs === 5000 &&
     runtime.sandbox.provider === 'direct' &&
@@ -580,6 +582,8 @@ function renderRuntimeProcessYaml(
     '  queue:',
     `    max_message_runs: ${runtime.queue.maxMessageRuns}`,
     `    max_job_runs: ${runtime.queue.maxJobRuns}`,
+    `    max_message_backlog: ${runtime.queue.maxMessageBacklog}`,
+    `    max_task_backlog: ${runtime.queue.maxTaskBacklog}`,
     `    max_retries: ${runtime.queue.maxRetries}`,
     `    base_retry_ms: ${runtime.queue.baseRetryMs}`,
     '  sandbox:',

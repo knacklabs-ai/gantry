@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm';
+import { and, inArray, sql } from 'drizzle-orm';
 
 import * as pgSchema from '../schema/schema.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
@@ -7,6 +7,7 @@ export async function updateCanonicalJobRunProviderMetadata(
   db: CanonicalDb,
   runId: string | readonly string[],
   input: {
+    leaseToken?: string;
     providerRunId?: string | null;
     providerSessionId?: string | null;
   },
@@ -23,5 +24,20 @@ export async function updateCanonicalJobRunProviderMetadata(
   await db
     .update(pgSchema.agentRunsPostgres)
     .set(updates)
-    .where(inArray(pgSchema.agentRunsPostgres.id, runIds));
+    .where(
+      and(
+        inArray(pgSchema.agentRunsPostgres.id, runIds),
+        ...(input.leaseToken
+          ? [
+              sql`EXISTS (
+                SELECT 1 FROM ${pgSchema.runLeasesPostgres}
+                WHERE ${pgSchema.runLeasesPostgres.runId} = ${pgSchema.agentRunsPostgres.id}
+                  AND ${pgSchema.runLeasesPostgres.leaseToken} = ${input.leaseToken}
+                  AND ${pgSchema.runLeasesPostgres.status} = 'active'
+                  AND ${pgSchema.runLeasesPostgres.expiresAt} > now()
+              )`,
+            ]
+          : []),
+      ),
+    );
 }

@@ -465,6 +465,16 @@ export async function spawnAgent(
       ...(input.jobId ? { GANTRY_JOB_ID: input.jobId } : {}),
       ...(input.jobName ? { GANTRY_JOB_NAME: input.jobName } : {}),
       ...(input.runId ? { GANTRY_JOB_RUN_ID: input.runId } : {}),
+      ...(input.runLeaseToken
+        ? { GANTRY_JOB_RUN_LEASE_TOKEN: input.runLeaseToken }
+        : {}),
+      ...(typeof input.runLeaseFencingVersion === 'number'
+        ? {
+            GANTRY_JOB_RUN_LEASE_FENCING_VERSION: String(
+              input.runLeaseFencingVersion,
+            ),
+          }
+        : {}),
       ...(browserIpcEnabled
         ? {
             GANTRY_BROWSER_IPC_AUTH_TOKEN: computeBrowserIpcAuthToken(

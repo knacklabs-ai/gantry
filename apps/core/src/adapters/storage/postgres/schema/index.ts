@@ -21,3 +21,4 @@ export * from './sandbox.js';
 export * from './sessions.js';
 export * from './skills.js';
 export * from './tools.js';
+export * from './worker-coordination.js';

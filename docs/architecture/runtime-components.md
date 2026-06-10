@@ -252,6 +252,13 @@ sequenceDiagram
   Runner-->>Agent: allow once, apply returned permission update, or cancel
 ```
 
+Production and remote IPC must be treated as a signed protocol boundary, not as
+trusted worker output. Privileged envelopes bind the key ID, run or job-run ID,
+worker identity when present, request ID, nonce, timestamp, expiry, sequence,
+and action identity using deterministic encoding. State-changing actions must
+reject replayed request IDs and stale fencing tokens before mutating durable
+state, delivering provider output, writing files, or finalizing jobs.
+
 Important permission boundaries:
 
 - Sender allowlist controls whether a channel sender can interact with, trigger, or be dropped by the runtime.
@@ -261,6 +268,9 @@ Important permission boundaries:
 - Conversations can act on their own chat/session scope and need selected
   capability plus conversation approval for cross-conversation destinations.
 - Agents cannot set webhook URLs, secrets, headers, API keys, or channel destinations. Those are host-owned records and policies.
+- Providers and model harnesses render, collect, stream, or execute projected
+  work only. They do not decide permissions, approvers, durable grants,
+  settings writes, stop authority, or continuation admission.
 - `permissions.yolo_mode` is a settings-owned safety valve for the 5-minute
   all-tools timed grant only. The shipped command and path denylist is merged
   with user entries; matches skip the timed-grant bypass, emit an audit event,

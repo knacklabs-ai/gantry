@@ -175,6 +175,8 @@ export type { RuntimeMemorySettingsSnapshot, RuntimeStorageSettingsSnapshot };
 export interface RuntimeQueueSettings {
   maxMessageRuns: number;
   maxJobRuns: number;
+  maxMessageBacklog: number;
+  maxTaskBacklog: number;
   maxRetries: number;
   baseRetryMs: number;
 }

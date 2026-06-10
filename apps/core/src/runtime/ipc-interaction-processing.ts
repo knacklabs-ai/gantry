@@ -20,6 +20,12 @@ import {
 import { redactSensitiveText } from '../shared/sensitive-material.js';
 import { archiveIpcErrorFile } from './ipc-filesystem.js';
 import { getIpcResponseSigningPrivateKey } from './ipc-auth.js';
+import {
+  isActiveRunLeaseForInteraction,
+  recordPendingInteractionRequested,
+  recordRunScopedTransientGrant,
+  resolvePendingInteractionRecord,
+} from '../application/interactions/pending-interaction-durability.js';
 import type { IpcDeps } from './ipc-domain-types.js';
 import {
   processPermissionIpcRequest,
@@ -34,6 +40,13 @@ type IpcInteractionLogger = {
   warn(context: LogContext, message: string): void;
   error(context: LogContext, message: string): void;
 };
+
+class StaleScheduledPermissionLeaseError extends Error {
+  constructor() {
+    super('Scheduled permission request run lease is no longer active');
+    this.name = 'StaleScheduledPermissionLeaseError';
+  }
+}
 
 export function interactionInFlightKey(input: {
   sourceAgentFolder: string;
@@ -135,13 +148,65 @@ export async function processPermissionInteractionIpc(input: {
       decision: 'requested',
     });
     input.logger.info?.(requestedContext, 'Permission requested');
+    // Durable pending record first: the prompt may only render once the
+    // interaction can survive a provider/control-plane restart.
+    await recordPendingInteractionRequested({
+      kind: 'permission',
+      sourceAgentFolder: input.sourceAgentFolder,
+      requestId: input.request.requestId,
+      appId: input.request.appId,
+      runId: input.request.runId,
+      runLeaseToken: input.request.runLeaseToken,
+      runLeaseFencingVersion: input.request.runLeaseFencingVersion,
+      payload: requestedContext,
+      callbackRoute: {
+        targetJid: input.request.targetJid ?? null,
+        threadId: input.request.threadId ?? null,
+      },
+    });
     await publishPermissionRuntimeEvent(input.deps, input.request, {
       eventType: RUNTIME_EVENT_TYPES.PERMISSION_REQUESTED,
       payload: requestedContext,
     });
+    await assertActiveScheduledPermissionLease(input);
     const decision = await processPermissionIpcRequest(input.request, {
       requestPermissionApproval: input.deps.requestPermissionApproval,
     });
+    await assertActiveScheduledPermissionLease(input);
+    await resolvePendingInteractionRecord({
+      kind: 'permission',
+      sourceAgentFolder: input.sourceAgentFolder,
+      requestId: input.request.requestId,
+      status: decision.mode === 'cancel' ? 'cancelled' : 'resolved',
+      resolution: {
+        approved: decision.approved,
+        mode: decision.mode,
+        reason: decision.reason ?? null,
+        decisionClassification: decision.decisionClassification ?? null,
+      },
+      approverRef: decision.decidedBy ?? null,
+    });
+    if (
+      decision.approved === true &&
+      decision.decisionClassification !== 'user_permanent' &&
+      input.request.runId
+    ) {
+      // Transient authority stays run-scoped: bound to the active run lease
+      // and gone when the lease ends. Only the persistent path below commits
+      // durable grants.
+      await recordRunScopedTransientGrant({
+        appId: input.request.appId,
+        runId: input.request.runId,
+        runLeaseToken: input.request.runLeaseToken,
+        runLeaseFencingVersion: input.request.runLeaseFencingVersion,
+        grant: {
+          toolName: input.request.toolName,
+          mode: decision.mode,
+          requestId: input.request.requestId,
+        },
+        expiresAtMs: decision.timedGrantExpiresAtMs,
+      });
+    }
     const decisionContext = permissionTelemetryContext(input.request, {
       sourceAgentFolder: input.sourceAgentFolder,
       decision: permissionDecisionName(decision),
@@ -160,6 +225,7 @@ export async function processPermissionInteractionIpc(input: {
       decision.decisionClassification === 'user_permanent' &&
       (decision.updatedPermissions?.length ?? 0) > 0
     ) {
+      await assertActiveScheduledPermissionLease(input);
       const persistentScopeRequest = persistentPermissionScopeRequest(
         input.request,
       );
@@ -275,6 +341,7 @@ export async function processPermissionInteractionIpc(input: {
     const responsePermissionUpdates = persistentPermissionUpdates(decision) as
       | PermissionApprovalDecision['updatedPermissions']
       | undefined;
+    await assertActiveScheduledPermissionLease(input);
     writePermissionIpcResponse(
       input.ipcBaseDir,
       input.sourceAgentFolder,
@@ -297,6 +364,23 @@ export async function processPermissionInteractionIpc(input: {
     );
     fs.unlinkSync(input.claimedPath);
   } catch (err) {
+    if (err instanceof StaleScheduledPermissionLeaseError) {
+      await publishPermissionRuntimeEvent(input.deps, input.request, {
+        eventType: RUNTIME_EVENT_TYPES.PERMISSION_FINAL_OUTCOME,
+        payload: permissionTelemetryContext(input.request, {
+          sourceAgentFolder: input.sourceAgentFolder,
+          decision: 'cancelled',
+          error: err.message,
+        }),
+      });
+      archiveIpcErrorFile(
+        input.ipcBaseDir,
+        input.sourceAgentFolder,
+        input.file,
+        input.claimedPath,
+      );
+      return;
+    }
     writePermissionInteractionFailure({
       ipcBaseDir: input.ipcBaseDir,
       sourceAgentFolder: input.sourceAgentFolder,
@@ -415,6 +499,41 @@ async function sendPermissionOutcomeMessage(
   }
 }
 
+async function assertActiveScheduledPermissionLease(input: {
+  request: PermissionApprovalRequest;
+  sourceAgentFolder: string;
+  logger: IpcInteractionLogger;
+}): Promise<void> {
+  if (!input.request.jobId || !input.request.runId) return;
+  const active = await isActiveRunLeaseForInteraction({
+    runId: input.request.runId,
+    runLeaseToken: input.request.runLeaseToken,
+    runLeaseFencingVersion: input.request.runLeaseFencingVersion,
+  });
+  if (active) return;
+  await resolvePendingInteractionRecord({
+    kind: 'permission',
+    sourceAgentFolder: input.sourceAgentFolder,
+    requestId: input.request.requestId,
+    status: 'cancelled',
+    resolution: {
+      approved: false,
+      reason: 'Run lease is no longer active for this permission request.',
+    },
+    approverRef: null,
+  });
+  input.logger.warn(
+    {
+      requestId: input.request.requestId,
+      jobId: input.request.jobId,
+      runId: input.request.runId,
+      runLeaseFencingVersion: input.request.runLeaseFencingVersion,
+    },
+    'Rejected scheduled permission IPC because the run lease is no longer active',
+  );
+  throw new StaleScheduledPermissionLeaseError();
+}
+
 function permissionDecisionName(
   decision: PermissionApprovalDecision,
 ): 'allowed' | 'cancelled' | 'denied' {
@@ -466,6 +585,7 @@ function permissionTelemetryContext(
     appId: request.appId,
     agentId: request.agentId,
     runId: request.runId,
+    runLeaseFencingVersion: request.runLeaseFencingVersion,
     jobId: request.jobId,
     conversationId: request.targetJid,
     threadId: request.threadId,
@@ -520,8 +640,29 @@ export async function processUserQuestionInteractionIpc(input: {
   logger: IpcInteractionLogger;
 }): Promise<void> {
   try {
+    await recordPendingInteractionRequested({
+      kind: 'question',
+      sourceAgentFolder: input.sourceAgentFolder,
+      requestId: input.request.requestId,
+      payload: {
+        questions: input.request.questions.map((question) => question.question),
+        targetJid: input.request.targetJid ?? null,
+      },
+      callbackRoute: {
+        targetJid: input.request.targetJid ?? null,
+        threadId: input.request.threadId ?? null,
+      },
+    });
     const response = await processUserQuestionIpcRequest(input.request, {
       requestUserAnswer: input.deps.requestUserAnswer,
+    });
+    await resolvePendingInteractionRecord({
+      kind: 'question',
+      sourceAgentFolder: input.sourceAgentFolder,
+      requestId: input.request.requestId,
+      status: 'resolved',
+      resolution: { answers: response.answers || {} },
+      approverRef: response.answeredBy ?? null,
     });
     writeUserQuestionIpcResponse(
       input.ipcBaseDir,

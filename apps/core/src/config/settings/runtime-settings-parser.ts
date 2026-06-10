@@ -670,6 +670,8 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
     queue: {
       maxMessageRuns: 3,
       maxJobRuns: 4,
+      maxMessageBacklog: 0,
+      maxTaskBacklog: 0,
       maxRetries: 5,
       baseRetryMs: 5000,
     },
@@ -701,11 +703,13 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
     if (
       key !== 'max_message_runs' &&
       key !== 'max_job_runs' &&
+      key !== 'max_message_backlog' &&
+      key !== 'max_task_backlog' &&
       key !== 'max_retries' &&
       key !== 'base_retry_ms'
     ) {
       throw new Error(
-        `runtime.queue.${key} is not supported. Configure max_message_runs, max_job_runs, max_retries, or base_retry_ms.`,
+        `runtime.queue.${key} is not supported. Configure max_message_runs, max_job_runs, max_message_backlog, max_task_backlog, max_retries, or base_retry_ms.`,
       );
     }
   }
@@ -767,6 +771,16 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
         queue.max_job_runs,
         'runtime.queue.max_job_runs',
         defaults.queue.maxJobRuns,
+      ),
+      maxMessageBacklog: parseNonNegativeIntegerValue(
+        queue.max_message_backlog,
+        'runtime.queue.max_message_backlog',
+        defaults.queue.maxMessageBacklog,
+      ),
+      maxTaskBacklog: parseNonNegativeIntegerValue(
+        queue.max_task_backlog,
+        'runtime.queue.max_task_backlog',
+        defaults.queue.maxTaskBacklog,
       ),
       maxRetries: parseNonNegativeIntegerValue(
         queue.max_retries,

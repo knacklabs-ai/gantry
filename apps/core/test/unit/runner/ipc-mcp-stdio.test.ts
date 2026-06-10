@@ -98,6 +98,10 @@ function createMcpFixture(): {
   );
   copyDirectory(path.resolve('apps/core/src/runner/mcp'), runnerMcpDir);
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/canonical-json.ts'),
+    path.join(sharedDir, 'canonical-json.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/model-catalog.ts'),
     path.join(sharedDir, 'model-catalog.ts'),
   );

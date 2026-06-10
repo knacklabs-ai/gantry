@@ -519,6 +519,13 @@
       "when": 1777252200000,
       "tag": "0074_agent_mcp_binding_tool_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1777255800000,
+      "tag": "0075_multi_worker_execution",
+      "breakpoints": true
     }
   ]
 }

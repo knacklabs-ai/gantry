@@ -8,6 +8,7 @@ import type {
 } from './domain-types.js';
 import type { RuntimeEventType } from '../events/runtime-event-types.js';
 import type { ExecutionProviderId } from '../sessions/sessions.js';
+import type { RunLease } from '../ports/worker-coordination.js';
 
 export interface JobUpsertInput {
   id: string;
@@ -155,22 +156,27 @@ export interface RuntimeJobRepository {
     executionProviderId: ExecutionProviderId;
     workerId?: string | null;
     leaseOwner?: string | null;
+    workerInstanceId: string;
     scheduledFor: string;
     startedAt: string;
     retryCount: number;
     leaseExpiresAt: string;
     requireNextRun?: boolean;
+  }): Promise<RunLease | null>;
+  settleJobRunLease(input: {
+    runId: string;
+    leaseToken: string;
+    outcome: 'completed' | 'failed' | 'released';
+    allowAlreadySettled?: boolean;
   }): Promise<boolean>;
   updateAgentRunProviderMetadata?(input: {
     runId: string;
     runIds?: string[];
+    leaseToken?: string;
     providerRunId?: string | null;
     providerSessionId?: string | null;
   }): Promise<void>;
   releaseStaleJobLeases(nowIso?: string): Promise<ReleasedStaleJobLease[]>;
-  releaseInterruptedJobLeases?(
-    nowIso?: string,
-  ): Promise<ReleasedStaleJobLease[]>;
   createJobRun(run: JobRun): Promise<boolean>;
   completeJobRun(
     runId: string,
@@ -178,6 +184,31 @@ export interface RuntimeJobRepository {
     resultSummary?: string | null,
     errorSummary?: string | null,
   ): Promise<void>;
+  completeJobRunWithLease?(input: {
+    runId: string;
+    leaseToken: string;
+    status: JobRun['status'];
+    resultSummary?: string | null;
+    errorSummary?: string | null;
+  }): Promise<boolean>;
+  finalizeJobRunLease?(input: {
+    runId: string;
+    leaseToken: string;
+    leaseOutcome: 'completed' | 'failed' | 'released';
+    runStatus: JobRun['status'];
+    resultSummary?: string | null;
+    errorSummary?: string | null;
+  }): Promise<boolean>;
+  finalizeJobRunWithLease?(input: {
+    jobId: string;
+    runId: string;
+    leaseToken: string;
+    leaseOutcome: 'completed' | 'failed' | 'released';
+    runStatus: JobRun['status'];
+    resultSummary?: string | null;
+    errorSummary?: string | null;
+    jobUpdates: Partial<Job>;
+  }): Promise<boolean>;
   markJobRunNotified(runId: string): Promise<void>;
   getJobRunById(runId: string): Promise<JobRun | undefined>;
   listJobRuns(
@@ -197,7 +228,7 @@ export interface ReleasedStaleJobLease {
   runId: string | null;
   releasedAt: string;
   runTimedOut: boolean;
-  reason: 'lease_expired' | 'runtime_restarted';
+  reason: 'lease_expired';
 }
 
 export interface RuntimeRouterStateRepository {

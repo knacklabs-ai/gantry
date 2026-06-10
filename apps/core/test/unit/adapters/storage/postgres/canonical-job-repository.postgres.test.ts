@@ -58,13 +58,16 @@ describe('PostgresCanonicalJobRepository', () => {
           returning: vi.fn(async () => [{ id: 'run-1' }]),
         })),
       })),
+      // run_leases fencing update for the released runs.
+      vi.fn(() => ({ where: vi.fn(async () => undefined) })),
     ];
     const tx = {
       select: vi.fn(() => ({ from: selectFrom })),
       update: vi
         .fn()
         .mockReturnValueOnce({ set: updateSets[0] })
-        .mockReturnValueOnce({ set: updateSets[1] }),
+        .mockReturnValueOnce({ set: updateSets[1] })
+        .mockReturnValueOnce({ set: updateSets[2] }),
     };
     const db = {
       transaction: vi.fn(async (callback) => callback(tx)),
@@ -135,62 +138,6 @@ describe('PostgresCanonicalJobRepository', () => {
     expect(tx.update).toHaveBeenCalledTimes(1);
   });
 
-  it('releases interrupted leases only when the run owner matches the job execution conversation', async () => {
-    const selectWhere = vi
-      .fn()
-      .mockResolvedValueOnce([
-        { id: 'job-1', leaseRunId: 'run-owned', leaseOwner: 'worker:one' },
-        { id: 'job-2', leaseRunId: 'run-other', leaseOwner: 'worker:one' },
-      ])
-      .mockResolvedValueOnce([
-        { id: 'run-owned', leaseOwner: 'worker:one' },
-        { id: 'run-other', leaseOwner: 'worker:two' },
-      ]);
-    const selectFrom = vi.fn(() => ({ where: selectWhere }));
-    const updateWheres = [
-      vi.fn(() => ({
-        returning: vi.fn(async () => [{ id: 'job-1' }]),
-      })),
-    ];
-    const updateSets = [
-      vi.fn(() => ({ where: updateWheres[0] })),
-      vi.fn(() => ({
-        where: vi.fn(() => ({
-          returning: vi.fn(async () => [{ id: 'run-owned' }]),
-        })),
-      })),
-    ];
-    const tx = {
-      select: vi.fn(() => ({ from: selectFrom })),
-      update: vi
-        .fn()
-        .mockReturnValueOnce({ set: updateSets[0] })
-        .mockReturnValueOnce({ set: updateSets[1] }),
-    };
-    const db = {
-      transaction: vi.fn(async (callback) => callback(tx)),
-    };
-    const repository = new PostgresCanonicalJobRepository(db as never);
-
-    await expect(
-      repository.releaseInterruptedLeases('2026-05-12T09:00:00.000Z'),
-    ).resolves.toEqual([
-      {
-        jobId: 'job-1',
-        runId: 'run-owned',
-        releasedAt: '2026-05-12T09:00:00.000Z',
-        runTimedOut: true,
-        reason: 'runtime_restarted',
-      },
-    ]);
-
-    expect(selectWhere).toHaveBeenCalledTimes(2);
-    const ownerPredicate = selectWhere.mock.calls[1]?.[0];
-    expect(flattenSqlShape(ownerPredicate)).toContain('lease_owner');
-    const releasePredicate = updateWheres[0].mock.calls[0]?.[0];
-    expect(flattenSqlShape(releasePredicate)).toContain('lease_run_id');
-  });
-
   it('does not claim a queued dispatch after the job is paused', async () => {
     const limit = vi.fn(async () => [
       {
@@ -216,6 +163,7 @@ describe('PostgresCanonicalJobRepository', () => {
       repository.claimDueRunStart({
         jobId: 'job-1',
         leaseExpiresAt: '2026-05-12T10:05:00.000Z',
+        workerInstanceId: 'worker-test',
         run: {
           run_id: 'run-1',
           job_id: 'job-1',
@@ -229,7 +177,7 @@ describe('PostgresCanonicalJobRepository', () => {
           notified_at: null,
         },
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
 
     expect(tx.insert).not.toHaveBeenCalled();
     expect(tx.update).not.toHaveBeenCalled();

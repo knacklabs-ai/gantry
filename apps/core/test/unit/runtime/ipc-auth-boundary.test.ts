@@ -26,6 +26,7 @@ import {
   parseUserQuestionIpcRequest,
 } from '@core/runtime/ipc-parsing.js';
 import { parseTaskIpcData } from '@core/runtime/ipc-task-parsing.js';
+import { clearConsumedIpcRequestIds } from '@core/runtime/ipc-auth-validation.js';
 
 const TEST_RESPONSE_KEY_ID = 'test-response-key';
 
@@ -97,6 +98,7 @@ function signedMemoryPayload(
 
 describe('validateIpcAuthRequest', () => {
   afterEach(() => {
+    clearConsumedIpcRequestIds({ durable: 'consumed' });
     stopIpcWatcher();
   });
 
@@ -885,6 +887,8 @@ describe('validateIpcAuthRequest', () => {
       targetJid: 'tg:team',
       jobId: 'job-1',
       runId: 'run-1',
+      runLeaseToken: 'lease-token-1',
+      runLeaseFencingVersion: 1,
       toolName: 'Bash',
       decisionOptions: [
         'allow_once',
@@ -905,6 +909,8 @@ describe('validateIpcAuthRequest', () => {
         chatJid: 'tg:team',
         jobId: 'job-1',
         runId: 'run-1',
+        runLeaseToken: 'lease-token-1',
+        runLeaseFencingVersion: 1,
       },
     };
 
@@ -913,6 +919,8 @@ describe('validateIpcAuthRequest', () => {
         targetJid: 'tg:team',
         jobId: 'job-1',
         runId: 'run-1',
+        runLeaseToken: 'lease-token-1',
+        runLeaseFencingVersion: 1,
         appId: 'app:one',
         agentId: 'agent:team',
         decisionOptions: [
@@ -1104,6 +1112,23 @@ describe('validateIpcAuthRequest', () => {
     ).not.toThrow();
     expect(() =>
       validateIpcAuthRequest(signed, 'team', 'permission IPC'),
+    ).toThrow(/replay/);
+    clearConsumedIpcRequestIds({ durable: false });
+    expect(() =>
+      validateIpcAuthRequest(signed, 'team', 'permission IPC'),
+    ).toThrow(/replay/);
+
+    const restartReplay = signedPayload({
+      requestId: 'perm-restart',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    expect(() =>
+      validateIpcAuthRequest(restartReplay, 'team', 'permission IPC'),
+    ).not.toThrow();
+    stopIpcWatcher();
+    expect(() =>
+      validateIpcAuthRequest(restartReplay, 'team', 'permission IPC'),
     ).toThrow(/replay/);
   });
 });

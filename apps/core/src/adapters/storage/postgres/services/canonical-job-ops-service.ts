@@ -15,6 +15,7 @@ import {
   parseJson,
 } from '../repositories/canonical-graph-repository.postgres.js';
 import { assertSafeExecutionProviderId } from '../../../../domain/sessions/execution-provider-id.js';
+import type { RunLease } from '../../../../domain/ports/worker-coordination.js';
 import type { ExecutionProviderId } from '../../../../domain/sessions/sessions.js';
 // prettier-ignore
 import type { CanonicalJobEventRecord, CanonicalJobRecord, CanonicalRunRecord, JobRecordInput, PostgresCanonicalJobRepository } from '../repositories/canonical-job-repository.postgres.js';
@@ -137,14 +138,16 @@ export class CanonicalJobOpsService {
     executionProviderId: ExecutionProviderId;
     workerId?: string | null;
     leaseOwner?: string | null;
+    workerInstanceId: string;
     scheduledFor: string;
     startedAt: string;
     retryCount: number;
     leaseExpiresAt: string;
     requireNextRun?: boolean;
-  }): Promise<boolean> {
+  }): Promise<RunLease | null> {
     assertSafeExecutionProviderId(input.executionProviderId);
     return this.repository.claimDueRunStart({
+      workerInstanceId: input.workerInstanceId,
       jobId: input.jobId,
       run: {
         run_id: input.runId,
@@ -175,10 +178,13 @@ export class CanonicalJobOpsService {
     return this.repository.releaseStaleLeases(nowIso);
   }
 
-  async releaseInterruptedJobLeases(
-    nowIso: string = currentIso(),
-  ): Promise<ReleasedStaleJobLease[]> {
-    return this.repository.releaseInterruptedLeases(nowIso);
+  async settleJobRunLease(input: {
+    runId: string;
+    leaseToken: string;
+    outcome: 'completed' | 'failed' | 'released';
+    allowAlreadySettled?: boolean;
+  }): Promise<boolean> {
+    return this.repository.settleRunLease(input);
   }
 
   async createJobRun(run: JobRun): Promise<boolean> {
@@ -187,8 +193,8 @@ export class CanonicalJobOpsService {
   }
 
   // prettier-ignore
-  async updateAgentRunProviderMetadata(input: { runId: string; runIds?: string[]; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
-    await this.repository.updateRunProviderMetadata(input.runIds ?? input.runId, { providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
+  async updateAgentRunProviderMetadata(input: { runId: string; runIds?: string[]; leaseToken?: string; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
+    await this.repository.updateRunProviderMetadata(input.runIds ?? input.runId, { leaseToken: input.leaseToken, providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
   }
 
   async getRecentJobRuns(limit = 200): Promise<JobRun[]> {
@@ -214,6 +220,92 @@ export class CanonicalJobOpsService {
       endedAt: currentIso(),
       resultSummary: redactedResultSummary,
       errorSummary: redactedErrorSummary,
+    });
+  }
+
+  async completeJobRunWithLease(input: {
+    runId: string;
+    leaseToken: string;
+    status: JobRun['status'];
+    resultSummary?: string | null;
+    errorSummary?: string | null;
+  }): Promise<boolean> {
+    const redactedResultSummary =
+      input.resultSummary == null
+        ? (input.resultSummary ?? null)
+        : redactProviderSessionHandlesInText(input.resultSummary);
+    const redactedErrorSummary =
+      input.errorSummary == null
+        ? (input.errorSummary ?? null)
+        : redactProviderSessionHandlesInText(input.errorSummary);
+    return this.repository.updateRunCompletionWithLease(input.runId, {
+      leaseToken: input.leaseToken,
+      status: input.status,
+      endedAt: currentIso(),
+      resultSummary: redactedResultSummary,
+      errorSummary: redactedErrorSummary,
+    });
+  }
+
+  async finalizeJobRunLease(input: {
+    runId: string;
+    leaseToken: string;
+    leaseOutcome: 'completed' | 'failed' | 'released';
+    runStatus: JobRun['status'];
+    resultSummary?: string | null;
+    errorSummary?: string | null;
+  }): Promise<boolean> {
+    const redactedResultSummary =
+      input.resultSummary == null
+        ? (input.resultSummary ?? null)
+        : redactProviderSessionHandlesInText(input.resultSummary);
+    const redactedErrorSummary =
+      input.errorSummary == null
+        ? (input.errorSummary ?? null)
+        : redactProviderSessionHandlesInText(input.errorSummary);
+    return this.repository.finalizeRunCompletionWithLease({
+      runId: input.runId,
+      leaseToken: input.leaseToken,
+      leaseOutcome: input.leaseOutcome,
+      runCompletion: {
+        status: input.runStatus,
+        endedAt: currentIso(),
+        resultSummary: redactedResultSummary,
+        errorSummary: redactedErrorSummary,
+      },
+    });
+  }
+
+  async finalizeJobRunWithLease(input: {
+    jobId: string;
+    runId: string;
+    leaseToken: string;
+    leaseOutcome: 'completed' | 'failed' | 'released';
+    runStatus: JobRun['status'];
+    resultSummary?: string | null;
+    errorSummary?: string | null;
+    jobUpdates: Partial<Job>;
+  }): Promise<boolean> {
+    const redactedResultSummary =
+      input.resultSummary == null
+        ? (input.resultSummary ?? null)
+        : redactProviderSessionHandlesInText(input.resultSummary);
+    const redactedErrorSummary =
+      input.errorSummary == null
+        ? (input.errorSummary ?? null)
+        : redactProviderSessionHandlesInText(input.errorSummary);
+    return this.repository.finalizeRunWithLease({
+      jobId: input.jobId,
+      runId: input.runId,
+      leaseToken: input.leaseToken,
+      leaseOutcome: input.leaseOutcome,
+      runCompletion: {
+        status: input.runStatus,
+        endedAt: currentIso(),
+        resultSummary: redactedResultSummary,
+        errorSummary: redactedErrorSummary,
+      },
+      jobUpdate: this.toTerminalJobUpdate(input.jobUpdates),
     });
   }
 
@@ -385,6 +477,38 @@ export class CanonicalJobOpsService {
       leaseExpiresAt: job.lease_expires_at ?? null,
       createdAt: job.created_at || now,
       updatedAt: job.updated_at || now,
+    };
+  }
+
+  private toTerminalJobUpdate(job: Partial<Job>) {
+    const targetJsonPatch: Record<string, unknown> = {};
+    if (job.consecutive_failures !== undefined) {
+      targetJsonPatch.consecutiveFailures = job.consecutive_failures;
+    }
+    if (job.pause_reason !== undefined) {
+      targetJsonPatch.pauseReason = job.pause_reason;
+    }
+    if (job.setup_state !== undefined) {
+      targetJsonPatch.setupState = parseSetupState(job.setup_state);
+    }
+    if (job.recovery_intent !== undefined) {
+      targetJsonPatch.recoveryIntent = parseRecoveryIntent(job.recovery_intent);
+    }
+    if (job.max_consecutive_failures !== undefined) {
+      targetJsonPatch.maxConsecutiveFailures = job.max_consecutive_failures;
+    }
+    return {
+      ...(job.status !== undefined ? { status: job.status } : {}),
+      ...(job.next_run !== undefined ? { nextRunAt: job.next_run } : {}),
+      ...(job.last_run !== undefined ? { lastRunAt: job.last_run } : {}),
+      ...(job.lease_run_id !== undefined
+        ? { leaseRunId: job.lease_run_id }
+        : {}),
+      ...(job.lease_expires_at !== undefined
+        ? { leaseExpiresAt: job.lease_expires_at }
+        : {}),
+      updatedAt: job.updated_at ?? currentIso(),
+      ...(Object.keys(targetJsonPatch).length > 0 ? { targetJsonPatch } : {}),
     };
   }
 

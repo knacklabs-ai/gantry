@@ -54,6 +54,10 @@
     "format:fix": "prettier --write \"apps/core/**/*.{ts,md}\" \"packages/contracts/src/**/*.ts\" \"packages/sdk/src/**/*.ts\"",
     "format:check": "prettier --check \"apps/core/**/*.{ts,md}\" \"packages/contracts/src/**/*.ts\" \"packages/sdk/src/**/*.ts\"",
     "check:architecture": "python3 .codex/scripts/check_architecture.py",
+    "security:audit": "npm audit --omit=dev --audit-level=moderate",
+    "security:sbom": "npm sbom --omit=dev --sbom-format=cyclonedx",
+    "security:package": "python3 .codex/scripts/check_package_contents.py",
+    "security:images": "python3 .codex/scripts/check_runtime_images.py",
     "prepare": "HUSKY=1 husky || true",
     "prepublishOnly": "npm run build",
     "lint": "eslint apps/core/src packages/contracts/src packages/sdk/src",
@@ -107,5 +111,10 @@
   },
   "engines": {
     "node": ">=24 <26"
+  },
+  "overrides": {
+    "hono": "4.12.24",
+    "ws": "8.21.0",
+    "qs": "6.15.2"
   }
 }

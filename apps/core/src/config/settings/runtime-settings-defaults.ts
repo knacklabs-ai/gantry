@@ -137,6 +137,8 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
     queue: {
       maxMessageRuns: 3,
       maxJobRuns: 4,
+      maxMessageBacklog: 0,
+      maxTaskBacklog: 0,
       maxRetries: 5,
       baseRetryMs: 5000,
     },

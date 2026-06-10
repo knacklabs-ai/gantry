@@ -50,6 +50,8 @@ export interface AgentInput {
   jobId?: string;
   jobName?: string;
   runId?: string;
+  runLeaseToken?: string;
+  runLeaseFencingVersion?: number;
   jobModelUseKind?: 'oneTimeJob' | 'recurringJob';
   assistantName?: string;
   compiledSystemPrompt?: string;

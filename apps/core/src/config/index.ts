@@ -38,7 +38,14 @@ export type ControlEnvKey =
   | 'GANTRY_CONTROL_API_KEYS_JSON'
   | 'GANTRY_CONTROL_HOST'
   | 'GANTRY_CONTROL_PORT'
-  | 'GANTRY_CONTROL_SOCKET_PATH';
+  | 'GANTRY_CONTROL_SOCKET_PATH'
+  | 'GANTRY_IPC_AUTH_SECRET'
+  | 'GANTRY_DEPLOYMENT_MODE'
+  | 'GANTRY_RUNTIME_ENV'
+  | 'NODE_ENV'
+  | 'REMOTE_CONTROL_AUTO_ACCEPT'
+  | 'SECRET_ENCRYPTION_KEY'
+  | 'SECRET_ENCRYPTION_KEYRING_JSON';
 export function getControlEnvValue(key: ControlEnvKey): string {
   return envValueDynamic(key);
 }
@@ -139,6 +146,8 @@ export function getRuntimeQueueConfig() {
   return {
     maxMessageRuns: queue.maxMessageRuns,
     maxJobRuns: queue.maxJobRuns,
+    maxMessageBacklog: queue.maxMessageBacklog,
+    maxTaskBacklog: queue.maxTaskBacklog,
     maxRetries: queue.maxRetries,
     baseRetryMs: queue.baseRetryMs,
   };

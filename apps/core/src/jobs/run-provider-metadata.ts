@@ -8,6 +8,7 @@ export function createRunProviderMetadataUpdater(input: {
   opsRepository: SchedulerDependencies['opsRepository'];
   jobId: string;
   outerRunId: string;
+  leaseToken?: string;
   getSessionRunId: () => string | undefined;
   nowMs: () => number;
   logger: LoggerLike;
@@ -70,11 +71,18 @@ export function createRunProviderMetadataUpdater(input: {
         : {}),
     };
     const sessionRunId = input.getSessionRunId();
-    const runIds = sessionRunId
-      ? [input.outerRunId, sessionRunId]
-      : [input.outerRunId];
+    const runIds = input.leaseToken
+      ? [input.outerRunId]
+      : sessionRunId
+        ? [input.outerRunId, sessionRunId]
+        : [input.outerRunId];
     try {
-      await updateMetadata({ runId: input.outerRunId, runIds, ...update });
+      await updateMetadata({
+        runId: input.outerRunId,
+        runIds,
+        ...(input.leaseToken ? { leaseToken: input.leaseToken } : {}),
+        ...update,
+      });
       if (pendingProviderRunId !== undefined) {
         persistedProviderRunId = pendingProviderRunId;
         pendingProviderRunId = undefined;

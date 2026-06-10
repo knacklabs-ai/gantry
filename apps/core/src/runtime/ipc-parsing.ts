@@ -139,6 +139,17 @@ function sanitizeToolInputValue(value: unknown, depth: number): unknown {
   return String(value);
 }
 
+function toPositiveInteger(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value.trim())) {
+    return undefined;
+  }
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 function sanitizeToolInput(
   value: unknown,
 ): Record<string, unknown> | undefined {
@@ -449,6 +460,38 @@ export function parsePermissionIpcRequest(
     throw new Error('permission IPC runId mismatch');
   }
   const runId = payloadRunId ?? contextRunId;
+  const payloadRunLeaseToken = toTrimmedString(raw.runLeaseToken, {
+    maxLen: 200,
+  });
+  const contextRunLeaseToken = toTrimmedString(context?.runLeaseToken, {
+    maxLen: 200,
+  });
+  if (
+    payloadRunLeaseToken &&
+    contextRunLeaseToken &&
+    payloadRunLeaseToken !== contextRunLeaseToken
+  ) {
+    throw new Error('permission IPC runLeaseToken mismatch');
+  }
+  const runLeaseToken = payloadRunLeaseToken ?? contextRunLeaseToken;
+  const payloadRunLeaseFencingVersion = toPositiveInteger(
+    raw.runLeaseFencingVersion,
+  );
+  const contextRunLeaseFencingVersion = toPositiveInteger(
+    context?.runLeaseFencingVersion,
+  );
+  if (
+    payloadRunLeaseFencingVersion &&
+    contextRunLeaseFencingVersion &&
+    payloadRunLeaseFencingVersion !== contextRunLeaseFencingVersion
+  ) {
+    throw new Error('permission IPC runLeaseFencingVersion mismatch');
+  }
+  const runLeaseFencingVersion =
+    payloadRunLeaseFencingVersion ?? contextRunLeaseFencingVersion;
+  if (jobId && runId && (!runLeaseToken || !runLeaseFencingVersion)) {
+    throw new Error('permission IPC scheduled job lease identity is required');
+  }
   const payloadTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
   const contextTargetJid = toTrimmedString(context?.chatJid, { maxLen: 255 });
   if (
@@ -477,6 +520,8 @@ export function parsePermissionIpcRequest(
     ...(jobId ? { jobId } : {}),
     ...(jobName ? { jobName } : {}),
     ...(runId ? { runId } : {}),
+    ...(runLeaseToken ? { runLeaseToken } : {}),
+    ...(runLeaseFencingVersion ? { runLeaseFencingVersion } : {}),
     ...(targetJid ? { targetJid } : {}),
     ...(binding.authThreadId ? { threadId: binding.authThreadId } : {}),
     ...(binding.responseKeyId ? { responseKeyId: binding.responseKeyId } : {}),

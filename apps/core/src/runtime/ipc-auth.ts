@@ -1,14 +1,36 @@
 import { createHash, createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { createIpcResponseSigningKeyPair } from '../infrastructure/ipc/response-signing.js';
 import { GANTRY_IPC_AUTH_SECRET } from '../config/index.js';
-import { logger } from '../infrastructure/logging/logger.js';
+import { runtimeEnvValueDynamic } from '../config/env/index.js';
+import {
+  resolveRuntimeSecurityPosture,
+  type RuntimeSecurityEnv,
+} from '../shared/security-posture.js';
 import { normalizeMemoryIpcActions } from '../shared/memory-ipc-actions.js';
+
+function resolveIpcAuthSecurityEnv(): RuntimeSecurityEnv {
+  return {
+    NODE_ENV: runtimeEnvValueDynamic('NODE_ENV'),
+    GANTRY_DEPLOYMENT_MODE: runtimeEnvValueDynamic('GANTRY_DEPLOYMENT_MODE'),
+    GANTRY_RUNTIME_ENV: runtimeEnvValueDynamic('GANTRY_RUNTIME_ENV'),
+    GANTRY_CONTROL_HOST: runtimeEnvValueDynamic('GANTRY_CONTROL_HOST'),
+    GANTRY_CONTROL_PORT: runtimeEnvValueDynamic('GANTRY_CONTROL_PORT'),
+  };
+}
 
 const IPC_AUTH_SECRET =
   GANTRY_IPC_AUTH_SECRET ||
   (() => {
+    if (
+      resolveRuntimeSecurityPosture(resolveIpcAuthSecurityEnv())
+        .requiresProductionSecrets
+    ) {
+      throw new Error(
+        'GANTRY_IPC_AUTH_SECRET is required in production or remote control mode.',
+      );
+    }
     const generated = randomBytes(32).toString('hex');
-    logger.warn(
+    console.warn(
       'GANTRY_IPC_AUTH_SECRET not set; using ephemeral secret (IPC tokens will not survive restarts)',
     );
     return generated;

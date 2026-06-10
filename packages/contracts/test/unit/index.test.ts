@@ -472,6 +472,8 @@ describe('contracts package', () => {
           queue: {
             maxMessageRuns: 1,
             maxJobRuns: 1,
+            maxMessageBacklog: 0,
+            maxTaskBacklog: 0,
             maxRetries: 0,
             baseRetryMs: 0,
           },

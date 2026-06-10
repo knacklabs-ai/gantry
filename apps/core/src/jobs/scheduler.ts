@@ -3,10 +3,18 @@ import {
   getRuntimeControlRepository,
   getRuntimeEventExchange,
   getRuntimeRepositories,
+  getWorkerCoordinationRepository,
 } from '../adapters/storage/postgres/runtime-store.js';
 import { DEFAULT_JOB_RUNTIME_APP_ID } from '../application/jobs/job-access.js';
 import { PgBossSchedulerEngine } from '../infrastructure/pgboss/scheduler-engine.js';
-import { resetSchedulerRunSlots } from './concurrency.js';
+import {
+  configureRunSlotBackend,
+  resetSchedulerRunSlots,
+} from './concurrency.js';
+import {
+  registerWorkerInstance,
+  stopWorkerHeartbeat,
+} from './worker-identity.js';
 import { sweepCompletedOneTimeJobs } from './cleanup.js';
 import { runJob } from './execution.js';
 import { rehydratePendingJobRecoveryTurns } from './recovery.js';
@@ -67,6 +75,17 @@ export async function startSchedulerLoop(
     ...deps,
     opsRepository: deps.opsRepository ?? getRuntimeRepositories(),
   };
+  const warn = (context: Record<string, unknown>, message: string): void =>
+    logger.warn(context, message);
+  const workerCoordination = getWorkerCoordinationRepository();
+  const workerInstanceId = await registerWorkerInstance(workerCoordination, {
+    warn,
+  });
+  configureRunSlotBackend({
+    repository: workerCoordination,
+    workerInstanceId,
+    warn,
+  });
   const engine = new PgBossSchedulerEngine(resolvedDeps, {
     registerSystemJobs,
     runJob,
@@ -102,6 +121,8 @@ export async function startSchedulerLoop(
   } catch (err) {
     schedulerRunning = false;
     activeSchedulerEngine = null;
+    stopWorkerHeartbeat();
+    configureRunSlotBackend(null);
     await engine
       .stop()
       .catch((stopErr) =>
@@ -118,12 +139,15 @@ export async function stopSchedulerLoop(): Promise<void> {
   schedulerRunning = false;
   const engine = activeSchedulerEngine;
   activeSchedulerEngine = null;
+  stopWorkerHeartbeat();
+  configureRunSlotBackend(null);
   await engine?.stop();
 }
 
 export function _resetSchedulerLoopForTests(): void {
   schedulerRunning = false;
   activeSchedulerEngine = null;
+  stopWorkerHeartbeat();
   resetSchedulerRunSlots();
   resetSystemJobStateForTests();
 }

@@ -9,9 +9,11 @@ import * as pgSchema from '../schema/schema.js';
 // prettier-ignore
 import { CANONICAL_APP_ID, type CanonicalDb, PostgresCanonicalGraphRepository, configVersionIdForAgent, jsonb, jsonText, parseJson } from './canonical-graph-repository.postgres.js';
 import { CANONICAL_JOB_EVENT_TYPES } from './canonical-job-event-types.postgres.js';
-// prettier-ignore
-import { releaseInterruptedCanonicalJobLeases, releaseStaleCanonicalJobLeases } from './canonical-job-lease-release.postgres.js';
+import { releaseStaleCanonicalJobLeases } from './canonical-job-lease-release.postgres.js';
 import { insertCanonicalJobRun } from './canonical-job-run-insert.postgres.js';
+import type { RunLease } from '../../../../domain/ports/worker-coordination.js';
+import { claimDueCanonicalJobRunStart } from './canonical-job-claim.postgres.js';
+import { settleRunLeaseTx } from './worker-coordination-lease.postgres.js';
 import { updateCanonicalJobRunProviderMetadata } from './canonical-job-run-provider-metadata.postgres.js';
 
 export interface CanonicalJobRecord {
@@ -73,6 +75,16 @@ export interface CanonicalRunRecord {
   resultSummary: string | null;
   errorSummary: string | null;
   notifiedAt: string | null;
+}
+
+export interface CanonicalJobTerminalUpdate {
+  status?: string;
+  nextRunAt?: string | null;
+  lastRunAt?: string | null;
+  leaseRunId?: string | null;
+  leaseExpiresAt?: string | null;
+  updatedAt: string;
+  targetJsonPatch?: Record<string, unknown>;
 }
 
 const canonicalRunProjection = {
@@ -297,54 +309,29 @@ export class PostgresCanonicalJobRepository {
     jobId: string;
     run: JobRun;
     leaseExpiresAt: string;
+    workerInstanceId: string;
     requireNextRun?: boolean;
-  }): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
-      const rows = await tx
-        .select()
-        .from(pgSchema.canonicalJobsPostgres)
-        .where(eq(pgSchema.canonicalJobsPostgres.id, input.jobId))
-        .for('update')
-        .limit(1);
-      const job = rows[0];
-      if (!job) return false;
-      const target = parseJson<{ recoveryIntent?: { state?: unknown } }>(
-        job.targetJson,
-        {},
-      );
-      if (
-        job.status !== 'active' ||
-        target.recoveryIntent?.state === 'running' ||
-        (input.requireNextRun !== false &&
-          job.nextRunAt !== input.run.scheduled_for)
-      ) {
-        return false;
-      }
-      const inserted = await this.insertRun(input.run, tx);
-      if (!inserted) return false;
-      await tx
-        .update(pgSchema.canonicalJobsPostgres)
-        .set({
-          status: 'running',
-          leaseRunId: input.run.run_id,
-          leaseExpiresAt: input.leaseExpiresAt,
-          updatedAt: input.run.started_at,
-        })
-        .where(eq(pgSchema.canonicalJobsPostgres.id, input.jobId));
-      return true;
+  }): Promise<RunLease | null> {
+    return claimDueCanonicalJobRunStart({
+      db: this.db,
+      ...input,
+      insertRun: (run, tx) => this.insertRun(run, tx),
     });
+  }
+
+  async settleRunLease(input: {
+    runId: string;
+    leaseToken: string;
+    outcome: 'completed' | 'failed' | 'released';
+    allowAlreadySettled?: boolean;
+  }): Promise<boolean> {
+    return settleRunLeaseTx(this.db, input);
   }
 
   async releaseStaleLeases(
     nowIso: string = currentIso(),
   ): Promise<ReleasedStaleJobLease[]> {
     return releaseStaleCanonicalJobLeases(this.db, nowIso);
-  }
-
-  async releaseInterruptedLeases(
-    nowIso: string = currentIso(),
-  ): Promise<ReleasedStaleJobLease[]> {
-    return releaseInterruptedCanonicalJobLeases(this.db, nowIso);
   }
 
   async insertRun(
@@ -382,8 +369,181 @@ export class PostgresCanonicalJobRepository {
       .where(eq(pgSchema.agentRunsPostgres.id, runId));
   }
 
+  async updateRunCompletionWithLease(
+    runId: string,
+    input: {
+      leaseToken: string;
+      status: JobRun['status'];
+      endedAt: string;
+      resultSummary: string | null;
+      errorSummary: string | null;
+    },
+  ): Promise<boolean> {
+    const now = currentIso();
+    const rows = await this.db
+      .update(pgSchema.agentRunsPostgres)
+      .set({
+        status: input.status,
+        endedAt: input.endedAt,
+        resultSummary: input.resultSummary,
+        errorSummary: input.errorSummary,
+      })
+      .where(
+        and(
+          eq(pgSchema.agentRunsPostgres.id, runId),
+          sql`EXISTS (
+            SELECT 1 FROM ${pgSchema.runLeasesPostgres}
+            WHERE ${pgSchema.runLeasesPostgres.runId} = ${runId}
+              AND ${pgSchema.runLeasesPostgres.leaseToken} = ${input.leaseToken}
+              AND ${pgSchema.runLeasesPostgres.status} = 'active'
+              AND ${pgSchema.runLeasesPostgres.expiresAt} > ${now}
+          )`,
+        ),
+      )
+      .returning({ id: pgSchema.agentRunsPostgres.id });
+    return rows.length > 0;
+  }
+
+  async finalizeRunCompletionWithLease(input: {
+    runId: string;
+    leaseToken: string;
+    leaseOutcome: 'completed' | 'failed' | 'released';
+    runCompletion: {
+      status: JobRun['status'];
+      endedAt: string;
+      resultSummary: string | null;
+      errorSummary: string | null;
+    };
+  }): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const now = currentIso();
+      const runs = pgSchema.agentRunsPostgres;
+      const leases = pgSchema.runLeasesPostgres;
+      const runRows = await tx
+        .update(runs)
+        .set({
+          status: input.runCompletion.status,
+          endedAt: input.runCompletion.endedAt,
+          resultSummary: input.runCompletion.resultSummary,
+          errorSummary: input.runCompletion.errorSummary,
+        })
+        .where(
+          and(
+            eq(runs.id, input.runId),
+            sql`EXISTS (
+              SELECT 1 FROM ${leases}
+              WHERE ${leases.runId} = ${input.runId}
+                AND ${leases.leaseToken} = ${input.leaseToken}
+                AND ${leases.status} = 'active'
+                AND ${leases.expiresAt} > ${now}
+            )`,
+          ),
+        )
+        .returning({ id: runs.id });
+      if (runRows.length === 0) return false;
+
+      const settled = await settleRunLeaseTx(tx, {
+        runId: input.runId,
+        leaseToken: input.leaseToken,
+        outcome: input.leaseOutcome,
+      });
+      if (!settled) {
+        throw new Error('Run lease was lost during terminal finalization.');
+      }
+      return true;
+    });
+  }
+
+  async finalizeRunWithLease(input: {
+    jobId: string;
+    runId: string;
+    leaseToken: string;
+    leaseOutcome: 'completed' | 'failed' | 'released';
+    runCompletion: {
+      status: JobRun['status'];
+      endedAt: string;
+      resultSummary: string | null;
+      errorSummary: string | null;
+    };
+    jobUpdate: CanonicalJobTerminalUpdate;
+  }): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const now = currentIso();
+      const runs = pgSchema.agentRunsPostgres;
+      const leases = pgSchema.runLeasesPostgres;
+      const runRows = await tx
+        .update(runs)
+        .set({
+          status: input.runCompletion.status,
+          endedAt: input.runCompletion.endedAt,
+          resultSummary: input.runCompletion.resultSummary,
+          errorSummary: input.runCompletion.errorSummary,
+        })
+        .where(
+          and(
+            eq(runs.id, input.runId),
+            sql`EXISTS (
+              SELECT 1 FROM ${leases}
+              WHERE ${leases.runId} = ${input.runId}
+                AND ${leases.leaseToken} = ${input.leaseToken}
+                AND ${leases.status} = 'active'
+                AND ${leases.expiresAt} > ${now}
+            )`,
+          ),
+        )
+        .returning({ id: runs.id });
+      if (runRows.length === 0) return false;
+
+      const jobRows = await tx
+        .update(pgSchema.canonicalJobsPostgres)
+        .set({
+          ...(input.jobUpdate.status !== undefined
+            ? { status: input.jobUpdate.status }
+            : {}),
+          ...(input.jobUpdate.nextRunAt !== undefined
+            ? { nextRunAt: input.jobUpdate.nextRunAt }
+            : {}),
+          ...(input.jobUpdate.lastRunAt !== undefined
+            ? { lastRunAt: input.jobUpdate.lastRunAt }
+            : {}),
+          ...(input.jobUpdate.leaseRunId !== undefined
+            ? { leaseRunId: input.jobUpdate.leaseRunId }
+            : {}),
+          ...(input.jobUpdate.leaseExpiresAt !== undefined
+            ? { leaseExpiresAt: input.jobUpdate.leaseExpiresAt }
+            : {}),
+          ...(input.jobUpdate.targetJsonPatch
+            ? {
+                targetJson: sql`${pgSchema.canonicalJobsPostgres.targetJson} || ${jsonb(input.jobUpdate.targetJsonPatch)}`,
+              }
+            : {}),
+          updatedAt: input.jobUpdate.updatedAt,
+        })
+        .where(
+          and(
+            eq(pgSchema.canonicalJobsPostgres.id, input.jobId),
+            eq(pgSchema.canonicalJobsPostgres.leaseRunId, input.runId),
+          ),
+        )
+        .returning({ id: pgSchema.canonicalJobsPostgres.id });
+      if (jobRows.length === 0) {
+        throw new Error('Job lease row was lost during terminal finalization.');
+      }
+
+      const settled = await settleRunLeaseTx(tx, {
+        runId: input.runId,
+        leaseToken: input.leaseToken,
+        outcome: input.leaseOutcome,
+      });
+      if (!settled) {
+        throw new Error('Run lease was lost during terminal finalization.');
+      }
+      return true;
+    });
+  }
+
   // prettier-ignore
-  async updateRunProviderMetadata(runId: string | readonly string[], input: { providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
+  async updateRunProviderMetadata(runId: string | readonly string[], input: { leaseToken?: string; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
     await updateCanonicalJobRunProviderMetadata(this.db, runId, input);
   }
 
