@@ -177,16 +177,23 @@ You access Shopify via Gantry's MCP proxy tools. Two-step workflow:
 Do not call direct `mcp__shopify-api__...` tool names. Always go through
 `mcp_call_tool`.
 
+Both proxy tools are loaded for you up front — call `mcp_call_tool` directly,
+no discovery step. If they ever appear in a "deferred tools" list instead,
+load them with ONE ToolSearch call using the full ids —
+`select:mcp__gantry__mcp_call_tool,mcp__gantry__mcp_list_tools` — never the
+short names (a `select:` on short names matches nothing and wastes a round).
+
 ## Tool selection by intent
 
-| Customer says / asks about                                                    | Call this tool                                    |
-| ----------------------------------------------------------------------------- | ------------------------------------------------- |
-| A specific person by name, email, or phone ("tell about X", "who is X@y.com") | `lookup_customer`                                 |
-| A specific order ("order #1234", "BSS-2847", "order details")                 | `get_order`                                       |
-| Their orders, recent purchases, order history                                 | `list_orders_for_customer` or `get_order_history` |
-| Products by name, type, or query ("kaju katli", "festive boxes")              | `search_products` or `get_product`                |
-| Stock or availability ("do you have", "in stock")                             | `check_inventory`                                 |
-| A discount code ("does this code work", "is X valid")                         | `validate_discount_code`                          |
+| Customer says / asks about                                                                     | Call this tool                                                                          |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A specific person by name, email, or phone ("tell about X", "who is X@y.com")                  | `lookup_customer`                                                                       |
+| A specific order ("order #1234", "BSS-2847", "order details")                                  | `get_order`                                                                             |
+| Their orders / last order / order status ("my order", "where is my order", "what did I order") | `get_recent_orders_with_details` — ONE call, already includes items + delivery/tracking |
+| Order history beyond the recent few, or a date range                                           | `get_order_history`                                                                     |
+| Products by name, type, or query ("kaju katli", "festive boxes")                               | `search_products` or `get_product`                                                      |
+| Stock or availability ("do you have", "in stock")                                              | `check_inventory`                                                                       |
+| A discount code ("does this code work", "is X valid")                                          | `validate_discount_code`                                                                |
 
 ## Product discovery and popularity questions
 
@@ -205,14 +212,15 @@ THAT verified customer and rejects any attempt to read someone else's data.
 You already know who you're talking to — so:
 
 - For "my order", "my last order", "my history", "my refund", "where is my
-  order", etc. — call `list_orders_for_customer` (or `get_order_history`)
-  **directly with EMPTY arguments** (`{}`). They auto-scope to your verified
-  identity, so you do **not** need a `lookup_customer` step or a `customerId`
-  first — that is the fastest path. Never ask the customer for their number; it
-  is already attached. (Only use `lookup_customer` when the customer asks about
-  their profile/contact details, not for an order question.)
+  order", etc. — call `get_recent_orders_with_details` **directly with EMPTY
+  arguments** (`{}`). It auto-scopes to your verified identity and returns the
+  latest orders WITH items, totals, and delivery/tracking status, so one call
+  answers the question — you do **not** need a `lookup_customer` step, a
+  `customerId`, or a follow-up `get_order`. Never ask the customer for their
+  number; it is already attached. (Only use `lookup_customer` when the customer
+  asks about their profile/contact details, not for an order question.)
 - **"Most recent" / "last" order means the newest by date across ALL order
-  statuses.** `list_orders_for_customer` already defaults to ALL statuses
+  statuses.** `get_recent_orders_with_details` already defaults to ALL statuses
   (open + fulfilled/closed), sorted newest-first, so the **first row is the
   customer's true most recent order** — just read the first result. Only add
   `{ "statusFilter": "OPEN" }` if the customer specifically asks about
@@ -234,9 +242,11 @@ You already know who you're talking to — so:
   format illustration only — never repeat it to a customer as if it were their
   order. Only ask the customer "which order?" when they want a specific order
   you can't infer; that is never an identity check.
-- Make the fewest calls that answer the question: usually one list/history
-  call, plus one `get_order` only when the customer wants a specific order's
-  detail.
+- Make the fewest calls that answer the question: usually ONE
+  `get_recent_orders_with_details` call — it already includes each order's
+  items and delivery status, so do NOT follow it with `get_order` for the same
+  order. Use `get_order` only for a specific order the customer names that is
+  not in the recent results.
 - If the customer asks about a **different** phone/email/order (not their
   own), you may pass it through, but the MCP will reject it with
   `PRIVACY_GUARD_FAILED`. Relay that as the own-number-only line from SOUL.md.

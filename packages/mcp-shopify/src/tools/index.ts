@@ -4,6 +4,7 @@ import type { CustomerIdentityCache } from '../privacy/customer-identity-cache.j
 import { registerLookupCustomer } from './lookup-customer.js';
 import { registerGetOrder } from './get-order.js';
 import { registerListOrdersForCustomer } from './list-orders-for-customer.js';
+import { registerGetRecentOrdersWithDetails } from './get-recent-orders-with-details.js';
 import { registerGetOrderHistory } from './get-order-history.js';
 import { registerSearchProducts } from './search-products.js';
 import { registerGetProduct } from './get-product.js';
@@ -14,6 +15,7 @@ export const REGISTERED_TOOL_NAMES = [
   'lookup_customer',
   'get_order',
   'list_orders_for_customer',
+  'get_recent_orders_with_details',
   'get_order_history',
   'search_products',
   'get_product',
@@ -53,6 +55,10 @@ export function registerAllTools(
     requireVerifiedIdentity: options.requireVerifiedIdentity ?? false,
   });
   registerListOrdersForCustomer(server, client, {
+    identityCache: options.identityCache,
+    requireVerifiedIdentity: options.requireVerifiedIdentity ?? false,
+  });
+  registerGetRecentOrdersWithDetails(server, client, {
     identityCache: options.identityCache,
     requireVerifiedIdentity: options.requireVerifiedIdentity ?? false,
   });
