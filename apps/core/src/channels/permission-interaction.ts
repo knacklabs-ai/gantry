@@ -1,4 +1,5 @@
 import type {
+  InteractionFile,
   PermissionApprovalDecision,
   PermissionApprovalDecisionMode,
   PermissionApprovalRequest,
@@ -10,15 +11,13 @@ import {
   isThirdPartyMcpToolRule,
   parseReadableScopedToolRule,
   publicGantryToolNameForSdkTool,
-  RUN_COMMAND_TOOL_NAME,
 } from '../shared/agent-tool-references.js';
-import { formatPersistentPermissionRulesForUser } from '../shared/persistent-permission-rules.js';
 import {
   redactSensitiveText,
   sanitizeOutboundLlmText,
 } from '../shared/sensitive-material.js';
+import { generatedRuntimeSkillPathDisplay } from '../shared/generated-runtime-paths.js';
 import {
-  getBuiltinSemanticCapability,
   skillActionCapabilityDisplayName,
   type SemanticCapabilityDefinition,
 } from '../shared/semantic-capabilities.js';
@@ -26,9 +25,12 @@ import { parseSemanticCapabilityRule } from '../shared/semantic-capability-ids.j
 import {
   firstPersistentRule,
   PERSISTENT_RULE_APPROVAL_MAX_RULES,
-  persistentRules,
 } from './permission-decision.js';
-import { formatPermissionToolInputLines } from './permission-tool-input-format.js';
+import { escapeMarkdownFenceDelimiters } from './permission-fenced-content.js';
+import {
+  formatPermissionToolInputLines,
+  runtimeDisplayCommand,
+} from './permission-tool-input-format.js';
 
 export {
   decisionForMode,
@@ -39,19 +41,35 @@ export {
 } from './permission-decision.js';
 
 const PERMISSION_MESSAGE_BUDGET = 2800;
-
-export type PermissionActionToken =
-  | PermissionApprovalDecisionMode
-  | 'approve'
-  | 'deny';
+const USER_FACING_TOOL_LABELS: Record<string, string> = {
+  RunCommand: 'exact command access',
+  Bash: 'exact command access',
+  Browser: 'Browser',
+  WebSearch: 'web search',
+  WebRead: 'web page access',
+  WebFetch: 'web page access',
+  FileSearch: 'file search',
+  Glob: 'file search',
+  Grep: 'file search',
+  FileRead: 'file reading',
+  Read: 'file reading',
+  FileEdit: 'file editing',
+  Edit: 'file editing',
+  MultiEdit: 'file editing',
+  FileWrite: 'file writing',
+  Write: 'file writing',
+  AgentDelegation: 'agent delegation',
+  Agent: 'agent delegation',
+  Task: 'agent delegation',
+};
 
 export function normalizePermissionAction(
   action: string,
 ): PermissionApprovalDecisionMode | null {
-  if (action === 'allow_once' || action === 'approve') return 'allow_once';
+  if (action === 'allow_once') return 'allow_once';
   if (action === 'allow_persistent_rule') return 'allow_persistent_rule';
   if (action === 'allow_timed_grant') return 'allow_timed_grant';
-  if (action === 'cancel' || action === 'deny') return 'cancel';
+  if (action === 'cancel') return 'cancel';
   return null;
 }
 
@@ -107,16 +125,21 @@ export function permissionButtonLabel(
     return 'Allow 5 min';
   }
   if (mode === 'cancel') return 'Cancel';
-  return 'Always allow';
+  return 'Allow for future';
 }
 
 export function formatPermissionPromptText(
   request: PermissionApprovalRequest,
   timeoutMs: number,
+  options: { budget?: number } = {},
 ): string {
   const timeoutMinutes = Math.max(1, Math.round(timeoutMs / 60000));
   if (request.interaction) {
-    return formatInteractionPermissionPrompt(request, timeoutMinutes);
+    return formatInteractionPermissionPrompt(
+      request,
+      timeoutMinutes,
+      options.budget,
+    );
   }
   const rule = firstPersistentRule(request);
   const capabilityName = semanticCapabilityName(request, rule);
@@ -129,22 +152,7 @@ export function formatPermissionPromptText(
     );
   }
   const label = permissionAccessLabel(request);
-  const requestLabel = request.displayName || request.title;
-  const lines = [
-    `Allow ${label}?`,
-    '',
-    ...formatPermissionOriginLines(request),
-  ];
-  if (requestLabel) {
-    lines.push(`Request: ${sanitizePermissionText(requestLabel, 160, 40)}`);
-  }
-  if (request.agentID || request.subagentType) {
-    lines.push(
-      `Delegated Agent: ${request.subagentType || 'generic'}${request.agentID ? ` (${request.agentID})` : ''}`,
-    );
-  }
-  if (request.threadId)
-    lines.push(`Thread: ${sanitizePermissionText(request.threadId, 60, 20)}`);
+  const lines = [`🔐 Allow ${label}?`];
   const inputLines = formatPermissionToolInputLines(
     request,
     sanitizePermissionText,
@@ -155,27 +163,8 @@ export function formatPermissionPromptText(
     lines.push(
       `Path: ${sanitizePermissionText(request.blockedPath, 250, 100)}`,
     );
-  if (request.decisionReason)
-    lines.push(
-      `Reason: ${sanitizePermissionText(request.decisionReason, 260, 100)}`,
-    );
-  const closestRule = formatClosestRuleLine(request);
-  if (closestRule) lines.push(closestRule);
-  if (request.description)
-    lines.push(
-      `Details: ${sanitizePermissionText(request.description, 260, 100)}`,
-    );
-  const rules = persistentRules(request);
-  if (rules.length > 0) {
-    lines.push(
-      '',
-      `Details: ${formatPersistentPermissionRulesForUser(rules, {
-        semanticCapabilityDefinitions: request.semanticCapabilityDefinitions,
-      })}`,
-    );
-  }
-  lines.push('', ...formatPermissionBoundaryLines(request));
-  lines.push('', `Reply within ${timeoutMinutes} minute(s).`);
+  lines.push('', ...formatPermissionContextLines(request));
+  lines.push(`Reply in ${timeoutMinutes}m`);
   return limitPermissionMessage(lines.join('\n'));
 }
 
@@ -184,59 +173,121 @@ export function formatPermissionReceiptText(
   request: PermissionApprovalRequest | undefined,
   decision: PermissionApprovalDecision,
 ): string {
-  const actor = decision.decidedBy || 'unknown';
-  const label = permissionAccessLabel(request);
+  const summary = formatPermissionReceiptActionSummary(request);
   if (!decision.approved || decision.mode === 'cancel') {
-    return limitPermissionMessage(
-      [
-        `Canceled: ${label}. No permission changed.`,
-        ...formatPermissionOriginLines(request),
-        `By: ${sanitizePermissionText(actor, 120, 40)}`,
-      ].join('\n'),
-    );
+    return limitPermissionMessage(`Canceled: ${summary}. Nothing changed.`);
   }
   if (decision.mode === 'allow_timed_grant') {
     const expiresAt = decision.timedGrantExpiresAtMs;
-    const expiresLabel = expiresAt
+    const until = expiresAt
       ? new Date(expiresAt).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
         })
       : 'soon';
     return limitPermissionMessage(
-      [
-        `Allowed for 5 minutes: ${label}`,
-        `Until: ${expiresLabel}`,
-        `For: ${formatPermissionReceiptActionSummary(request)}`,
-        ...formatPermissionOriginLines(request),
-        `By: ${sanitizePermissionText(actor, 120, 40)}`,
-      ].join('\n'),
+      `Allowed for 5 min: ${summary}. This expires at ${until}.`,
     );
   }
   if (decision.mode === 'allow_persistent_rule') {
-    const rules = request ? persistentRules(request) : [];
-    const lines = [`Always allowed: ${label}`];
-    if (rules.length > 0) {
-      lines.push(
-        `Details: ${formatPersistentPermissionRulesForUser(rules, {
-          semanticCapabilityDefinitions: request?.semanticCapabilityDefinitions,
-        })}`,
-      );
-    }
-    lines.push(`For: ${formatPermissionReceiptActionSummary(request)}`);
-    lines.push(...formatPermissionOriginLines(request));
-    lines.push(`By: ${sanitizePermissionText(actor, 120, 40)}`);
-    lines.push('Revoke: /permissions remove <rule>');
-    return limitPermissionMessage(lines.join('\n'));
+    const agentName = request
+      ? formatAgentDisplayName(request.sourceAgentFolder)
+      : 'this agent';
+    return limitPermissionMessage(
+      `Allowed for future: ${summary}. Saved for ${agentName}. You can remove it from Agent Access.`,
+    );
   }
   return limitPermissionMessage(
-    [
-      `Allowed once: ${label}`,
-      `For: ${formatPermissionReceiptActionSummary(request)}`,
-      ...formatPermissionOriginLines(request),
-      `By: ${sanitizePermissionText(actor, 120, 40)}`,
-    ].join('\n'),
+    `Allowed once: ${summary}. The agent will continue this request.`,
   );
+}
+
+export const PERMISSION_GLYPH = '🔐';
+
+/**
+ * Structured view of a permission prompt for provider-native renderers
+ * (Slack blocks, Telegram HTML). The plain-text `formatPermissionPromptText`
+ * above remains the canonical fallback; keep both in sync when fields change.
+ */
+export interface PermissionPromptParts {
+  /** Title without the glyph, e.g. "Allow exact command access?" */
+  title: string;
+  /** Tool-input / field lines. May contain ``` fenced code regions. */
+  bodyLines: string[];
+  /** Dim metadata lines (agent · source, routing note). */
+  contextLines: string[];
+  replyInMinutes: number;
+}
+
+export function buildPermissionPromptParts(
+  request: PermissionApprovalRequest,
+  timeoutMs: number,
+): PermissionPromptParts {
+  const replyInMinutes = Math.max(1, Math.round(timeoutMs / 60000));
+  const contextLines = formatPermissionContextLines(request);
+  if (request.interaction) {
+    const interaction = request.interaction;
+    const rule = firstPersistentRule(request);
+    const capabilityName = semanticCapabilityName(request, rule);
+    const title = `Allow ${capabilityName ?? permissionAccessLabel(request)}?`;
+    const bodyLines: string[] = [];
+    const accountLabel = request.toolInput?.accountLabel;
+    if (typeof accountLabel === 'string' && accountLabel.trim()) {
+      bodyLines.push(
+        `Account: ${sanitizePermissionText(accountLabel.trim(), 100, 40)}`,
+      );
+    }
+    if (interaction.body) {
+      bodyLines.push(sanitizePermissionText(interaction.body, 500, 160));
+    }
+    if (interaction.details?.length) {
+      bodyLines.push(
+        ...interaction.details.map((detail) =>
+          formatInteractionDetailLine(detail.label, detail.value, detail.mono),
+        ),
+      );
+    }
+    if (interaction.files?.length) {
+      bodyLines.push(...formatInteractionFileLines(interaction.files));
+    }
+    return { title, bodyLines, contextLines, replyInMinutes };
+  }
+  const rule = firstPersistentRule(request);
+  const capabilityName = semanticCapabilityName(request, rule);
+  if (capabilityName) {
+    const definition = semanticCapabilityDefinition(request, rule);
+    const bodyLines: string[] = [];
+    const accountLabel =
+      definition?.accountLabel ?? request.toolInput?.accountLabel;
+    if (typeof accountLabel === 'string' && accountLabel.trim()) {
+      bodyLines.push(
+        `Account: ${sanitizePermissionText(accountLabel.trim(), 100, 40)}`,
+      );
+    }
+    if (definition?.risk) {
+      bodyLines.push(`Risk: ${humanizeIdentifier(definition.risk)}`);
+    }
+    const networkLine = semanticCapabilityNetworkLine(definition);
+    if (networkLine) bodyLines.push(networkLine);
+    return {
+      title: `Allow ${capabilityName}?`,
+      bodyLines,
+      contextLines,
+      replyInMinutes,
+    };
+  }
+  const label = permissionAccessLabel(request);
+  const bodyLines = formatPermissionToolInputLines(
+    request,
+    sanitizePermissionText,
+    { sanitizeCommandText: sanitizePermissionCommandText },
+  );
+  if (request.blockedPath) {
+    bodyLines.push(
+      `Path: ${sanitizePermissionText(request.blockedPath, 250, 100)}`,
+    );
+  }
+  return { title: `Allow ${label}?`, bodyLines, contextLines, replyInMinutes };
 }
 
 function headTailTruncate(input: string, head: number, tail: number): string {
@@ -250,11 +301,7 @@ function sanitizePermissionText(
   tail: number,
 ): string {
   const result = sanitizeOutboundLlmText(input);
-  if (
-    result.redacted ||
-    result.blocked ||
-    /\[REDACTED_(?:SECRET|POTENTIALLY_SENSITIVE)\]/.test(result.text)
-  ) {
+  if (result.blocked) {
     return 'Sensitive detail hidden.';
   }
   return headTailTruncate(result.text, head, tail);
@@ -268,33 +315,61 @@ function sanitizePermissionCommandText(
   return headTailTruncate(redactSensitiveText(input), head, tail);
 }
 
-function limitPermissionMessage(input: string): string {
-  if (input.length <= PERMISSION_MESSAGE_BUDGET) return input;
-  return `${input.slice(0, PERMISSION_MESSAGE_BUDGET - 44)}\n\n[additional permission details omitted]`;
+function limitPermissionMessage(
+  input: string,
+  budget = PERMISSION_MESSAGE_BUDGET,
+): string {
+  if (input.length <= budget) return input;
+  return `${input.slice(0, budget - 44)}\n\n[additional permission details omitted]`;
 }
 
-function formatPermissionOriginLines(
+function formatPermissionContextLines(
   request: PermissionApprovalRequest | undefined,
 ): string[] {
   if (!request) return [];
-  const source = request.jobId
+  const context = request.jobId
     ? `scheduled job${request.jobName ? `: ${sanitizePermissionText(request.jobName, 120, 40)}` : ''}`
     : 'agent chat';
-  return [
-    `From: ${source}`,
-    `Agent: ${sanitizePermissionText(request.sourceAgentFolder, 120, 40)}`,
+  const lines = [
+    `Agent: ${formatAgentDisplayName(request.sourceAgentFolder)}`,
+    `Context: ${context}`,
   ];
+  if (requestHasThreadRoute(request)) {
+    lines.push('Approval applies to the parent conversation.');
+  }
+  lines.push('The agent cannot approve this itself.');
+  return lines;
+}
+
+function formatAgentDisplayName(sourceAgentFolder: string): string {
+  const sanitized = sanitizePermissionText(sourceAgentFolder, 120, 40).trim();
+  if (!sanitized) return 'this agent';
+  const withoutPrefix = sanitized.replace(/^agent:/i, '');
+  const words = withoutPrefix
+    .replaceAll(/[_-]+/g, ' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+  if (!words) return 'this agent';
+  return words
+    .split(' ')
+    .map((word) =>
+      /^[A-Z0-9]+$/.test(word)
+        ? word
+        : `${word.charAt(0).toUpperCase()}${word.slice(1)}`,
+    )
+    .join(' ');
 }
 
 function formatInteractionPermissionPrompt(
   request: PermissionApprovalRequest,
   timeoutMinutes: number,
+  budget?: number,
 ): string {
   const interaction = request.interaction!;
   const rule = firstPersistentRule(request);
   const capabilityName = semanticCapabilityName(request, rule);
-  const title = `Allow ${capabilityName ?? permissionAccessLabel(request)}?`;
-  const lines = [title, ...formatPermissionOriginLines(request)];
+  const title = `🔐 Allow ${capabilityName ?? permissionAccessLabel(request)}?`;
+  const lines = [title];
   const accountLabel = request.toolInput?.accountLabel;
   if (typeof accountLabel === 'string' && accountLabel.trim()) {
     lines.push(
@@ -303,18 +378,26 @@ function formatInteractionPermissionPrompt(
   }
   if (interaction.body)
     lines.push('', sanitizePermissionText(interaction.body, 500, 160));
-  lines.push('', ...formatPermissionBoundaryLines(request));
   if (interaction.details?.length) {
     lines.push(
       '',
-      'Details:',
       ...interaction.details.map((detail) =>
         formatInteractionDetailLine(detail.label, detail.value, detail.mono),
       ),
     );
   }
-  lines.push(`Reply within ${timeoutMinutes} minute(s).`);
-  return limitPermissionMessage(lines.join('\n'));
+  if (interaction.files?.length) {
+    lines.push('', ...formatInteractionFileLines(interaction.files));
+  }
+  lines.push('', ...formatPermissionContextLines(request));
+  lines.push(`Reply in ${timeoutMinutes}m`);
+  return limitPermissionMessage(
+    lines.join('\n'),
+    budget ??
+      (interaction.files?.some((file) => file.preview && !file.truncated)
+        ? 6000
+        : undefined),
+  );
 }
 
 function formatSemanticPermissionPrompt(
@@ -324,12 +407,7 @@ function formatSemanticPermissionPrompt(
   rule: string | undefined,
 ): string {
   const definition = semanticCapabilityDefinition(request, rule);
-  const lines = [
-    `Allow ${capabilityName}?`,
-    ...formatPermissionOriginLines(request),
-  ];
-  const capabilityId =
-    definition?.capabilityId ?? semanticCapabilityId(request, rule);
+  const lines = [`🔐 Allow ${capabilityName}?`];
   const accountLabel =
     definition?.accountLabel ?? request.toolInput?.accountLabel;
   if (typeof accountLabel === 'string' && accountLabel.trim()) {
@@ -337,24 +415,28 @@ function formatSemanticPermissionPrompt(
       `Account: ${sanitizePermissionText(accountLabel.trim(), 100, 40)}`,
     );
   }
-  const can = definition?.can ?? request.toolInput?.can;
-  if (typeof can === 'string' && can.trim()) {
-    lines.push('', `Allows: ${sanitizePermissionText(can.trim(), 300, 100)}`);
+  if (definition?.risk) {
+    lines.push(`Risk: ${humanizeIdentifier(definition.risk)}`);
   }
-  const cannot = definition?.cannot ?? request.toolInput?.cannot;
-  if (typeof cannot === 'string' && cannot.trim()) {
-    lines.push(
-      `Does not allow: ${sanitizePermissionText(cannot.trim(), 300, 100)}`,
-    );
-  }
-  const details = [
-    capabilityId ? `capability:${capabilityId}` : undefined,
-    definition?.risk ? `risk: ${definition.risk}` : undefined,
-  ].filter((item): item is string => Boolean(item));
-  if (details.length > 0) lines.push('', `Details: ${details.join('; ')}`);
-  lines.push('', ...formatPermissionBoundaryLines(request));
-  lines.push(`Reply within ${timeoutMinutes} minute(s).`);
+  const networkLine = semanticCapabilityNetworkLine(definition);
+  if (networkLine) lines.push(networkLine);
+  lines.push('', ...formatPermissionContextLines(request));
+  lines.push(`Reply in ${timeoutMinutes}m`);
   return limitPermissionMessage(lines.join('\n'));
+}
+
+function semanticCapabilityNetworkLine(
+  definition: SemanticCapabilityDefinition | undefined,
+): string | undefined {
+  const hosts = [
+    ...new Set(
+      (definition?.networkHosts ?? [])
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (hosts.length === 0) return undefined;
+  return `Network: ${sanitizePermissionText(hosts.join(', '), 200, 100)}`;
 }
 
 function formatInteractionDetailLine(
@@ -366,27 +448,53 @@ function formatInteractionDetailLine(
   return `${label}: ${mono ? '`' : ''}${text}${mono ? '`' : ''}`;
 }
 
-function formatPermissionBoundaryLines(
-  request: PermissionApprovalRequest,
-): string[] {
-  const rule = firstPersistentRule(request);
-  const capabilityName = semanticCapabilityName(request, rule);
-  if (!rule) {
-    return [
-      'Scope: this request or a short 5-minute grant.',
-      'Safety: unrelated tools, secrets, settings changes, and protected paths are not included.',
-    ];
-  }
-  if (capabilityName) {
-    return [
-      'Scope: this request, a short 5-minute grant, or future matching runs.',
-      'Safety: unrelated apps, credentials, settings changes, and broader access are not included.',
-    ];
-  }
-  return [
-    'Scope: this request, a short 5-minute grant, or future matching tool calls.',
-    'Safety: only matching future access is included; unrelated tools, secrets, and settings changes are not included.',
-  ];
+function formatInteractionFileLines(files: InteractionFile[]): string[] {
+  const lines: string[] = [];
+  files.slice(0, 3).forEach((file, index) => {
+    const path = sanitizePermissionText(file.path, 160, 60);
+    const details = [
+      typeof file.sizeBytes === 'number'
+        ? formatApproxBytes(file.sizeBytes)
+        : null,
+      file.contentHash ? `sha256 ${file.contentHash.slice(0, 16)}` : null,
+    ].filter(Boolean);
+    lines.push(
+      `Review file${files.length > 1 ? ` ${index + 1}` : ''}: ${path}${
+        details.length > 0 ? ` (${details.join(', ')})` : ''
+      }`,
+    );
+    if (file.preview && !file.truncated) {
+      lines.push(
+        'Full content:',
+        '```markdown',
+        escapeMarkdownFenceDelimiters(
+          sanitizePermissionText(file.preview, file.preview.length, 0),
+        ),
+        '```',
+      );
+    } else if (file.preview) {
+      lines.push(
+        'Preview is truncated; review the full artifact before allowing.',
+      );
+    }
+  });
+  if (files.length > 3) lines.push(`+${files.length - 3} more review files`);
+  return lines;
+}
+
+function formatApproxBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} bytes`;
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function requestHasThreadRoute(
+  request: PermissionApprovalRequest | undefined,
+): boolean {
+  return (
+    typeof request?.threadId === 'string' && request.threadId.trim() !== ''
+  );
 }
 
 function permissionAccessLabel(
@@ -404,26 +512,16 @@ function permissionAccessLabel(
   }
   const scopedRule = rule ? parseReadableScopedToolRule(rule) : null;
   const requestedToolName = requestedToolNameFromInput(request);
-  if (
-    request.toolName === 'Bash' ||
-    requestedToolName === 'Bash' ||
-    requestedToolName === RUN_COMMAND_TOOL_NAME ||
-    scopedRule?.toolName === RUN_COMMAND_TOOL_NAME
-  ) {
+  if (permissionCommand(request)) {
     return 'exact command access';
   }
   if (capabilityName) return capabilityName;
   const toolName =
     scopedRule?.toolName || requestedToolName || request.toolName;
-  if (isCanonicalBrowserCapabilityRule(toolName)) return 'Browser';
-  if (toolName.startsWith('mcp__gantry__browser_')) return 'Browser';
-  const adminName = adminMcpToolNameFromFullName(toolName);
-  if (adminName) return `Gantry ${humanizeIdentifier(adminName)}`;
-  if (isThirdPartyMcpToolRule(toolName)) {
-    return `${humanizeMcpServerName(toolName)} MCP tool`;
-  }
+  const toolLabel = userFacingToolLabel(toolName);
+  if (toolLabel) return toolLabel;
   const display = request.displayName || request.title || toolName;
-  return sanitizePermissionText(display, 120, 40);
+  return formatPermissionRequestLabel(display);
 }
 
 function requestedToolNameFromInput(
@@ -449,7 +547,7 @@ function humanizeMcpServerName(toolName: string): string {
 function humanizeIdentifier(value: string): string {
   return value
     .replace(/^mcp__/, '')
-    .replaceAll(/[_-]+/g, ' ')
+    .replaceAll(/[._-]+/g, ' ')
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -482,10 +580,7 @@ function semanticCapabilityDefinition(
 ): SemanticCapabilityDefinition | undefined {
   const capabilityId = semanticCapabilityId(request, rule);
   if (!capabilityId) return undefined;
-  return (
-    request.semanticCapabilityDefinitions?.[capabilityId] ??
-    getBuiltinSemanticCapability(capabilityId)
-  );
+  return request.semanticCapabilityDefinitions?.[capabilityId];
 }
 
 function semanticCapabilityId(
@@ -504,13 +599,40 @@ function semanticCapabilityId(
     : undefined;
 }
 
-function formatClosestRuleLine(
-  request: PermissionApprovalRequest,
-): string | undefined {
-  return request.closestRule
-    ? `Closest existing rule: ${formatPersistentPermissionRulesForUser([request.closestRule.rule], { semanticCapabilityDefinitions: request.semanticCapabilityDefinitions })} (did not match: ${sanitizePermissionText(request.closestRule.reason, 220, 80)})`
-    : undefined;
+function formatPermissionRequestLabel(label: string): string {
+  const trimmed = label.trim();
+  const toolLabel = userFacingToolLabel(trimmed);
+  if (toolLabel) return humanizeIdentifier(toolLabel);
+  return neutralizeImplementationTerms(
+    sanitizePermissionText(trimmed, 160, 40),
+  );
 }
+
+function neutralizeImplementationTerms(input: string): string {
+  let text = input
+    .replaceAll('simple_expansion', 'shell expansion')
+    .replaceAll('Bash leaf', 'command');
+  for (const [technical, label] of Object.entries(USER_FACING_TOOL_LABELS)) {
+    text = text.replaceAll(technical, label);
+  }
+  return text;
+}
+
+function userFacingToolLabel(toolName: string | undefined): string | undefined {
+  const publicName = publicGantryToolNameForSdkTool(toolName?.trim() ?? '');
+  if (!publicName) return undefined;
+  const label = USER_FACING_TOOL_LABELS[publicName];
+  if (label) return label;
+  if (isCanonicalBrowserCapabilityRule(publicName)) return 'Browser';
+  if (publicName.startsWith('mcp__gantry__browser_')) return 'Browser';
+  const adminName = adminMcpToolNameFromFullName(publicName);
+  if (adminName) return `Gantry ${humanizeIdentifier(adminName)}`;
+  if (isThirdPartyMcpToolRule(publicName)) {
+    return `${humanizeMcpServerName(publicName)} tool access`;
+  }
+  return undefined;
+}
+
 function permissionCommand(request: PermissionApprovalRequest): string | null {
   if (!request.toolInput) return null;
   const command = request.toolInput.command ?? request.toolInput.cmd;
@@ -521,31 +643,49 @@ function formatPermissionReceiptActionSummary(
   request: PermissionApprovalRequest | undefined,
 ): string {
   if (!request) return 'permission request';
+  const rule = firstPersistentRule(request);
+  const capabilityName = semanticCapabilityName(request, rule);
+  if (capabilityName) return capabilityName;
   const tool =
-    request.displayName || publicGantryToolNameForSdkTool(request.toolName);
+    request.displayName ||
+    request.title ||
+    userFacingToolLabel(request.toolName);
   const input = request.toolInput;
-  if (!input || typeof input !== 'object') return tool;
+  if (!input || typeof input !== 'object') {
+    return tool ? formatPermissionRequestLabel(tool) : 'permission request';
+  }
   const command = permissionCommand(request);
   if (command) {
+    const displayCommand = runtimeDisplayCommand(command);
+    const generatedSkillPath = generatedRuntimeSkillPathDisplay(
+      displayCommand.command,
+    );
+    if (generatedSkillPath) {
+      const env = displayCommand.runtimeEnvAssignments.join(' ');
+      const envSummary = env ? `; env: ${sanitizeReceiptDetail(env)}` : '';
+      return `Selected skill action (${generatedSkillPath}${envSummary})`;
+    }
     const safeCommand = sanitizeReceiptDetail(command);
-    return safeCommand ? `${tool} (${safeCommand})` : `${tool} command`;
+    return safeCommand ? `Command (${safeCommand})` : 'Command';
   }
   const filePath = input.file_path;
   if (typeof filePath === 'string' && filePath.trim()) {
     const safePath = sanitizeReceiptDetail(filePath.trim());
-    return safePath ? `${tool} (${safePath})` : `${tool} file action`;
+    return safePath ? `File action (${safePath})` : 'File action';
   }
   const url = input.url;
   if (typeof url === 'string' && url.trim()) {
     const safeUrl = sanitizeReceiptDetail(url.trim());
-    return safeUrl ? `${tool} (${safeUrl})` : `${tool} URL action`;
+    return safeUrl ? `Web action (${safeUrl})` : 'Web action';
   }
   const pattern = input.pattern;
   if (typeof pattern === 'string' && pattern.trim()) {
     const safePattern = sanitizeReceiptDetail(pattern.trim());
-    return safePattern ? `${tool} (${safePattern})` : `${tool} pattern action`;
+    return safePattern ? `Pattern action (${safePattern})` : 'Pattern action';
   }
-  return tool;
+  return tool
+    ? sanitizePermissionText(humanizeIdentifier(tool), 120, 40)
+    : 'permission request';
 }
 
 function sanitizeReceiptDetail(input: string): string | null {

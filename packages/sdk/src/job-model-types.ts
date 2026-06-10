@@ -16,7 +16,6 @@ export type JobHealthState =
   | 'credential_unknown'
   | 'browser_login_may_be_required'
   | 'mcp_missing_credential'
-  | 'draft_only'
   | 'running'
   | 'completed'
   | 'failed'
@@ -52,7 +51,6 @@ export interface JobSetup {
     | 'credential_unknown'
     | 'browser_login_may_be_required'
     | 'mcp_missing_credential'
-    | 'draft_only'
   >;
   checkedAt: string | null;
   fingerprint: string | null;
@@ -69,14 +67,14 @@ export interface JobSetup {
 export interface JobExecutionContext {
   conversationJid: string;
   threadId: string | null;
-  groupScope: string;
+  workspaceKey: string;
   sessionId: string | null;
 }
 
 export interface JobRequestExecutionContext {
   conversationJid: string;
   threadId: string | null;
-  groupScope: string;
+  workspaceKey: string;
   sessionId: string;
 }
 
@@ -109,6 +107,20 @@ export interface JobCapabilityRequirement {
   implementation?: JobCapabilityRequirementImplementation;
 }
 
+export type JobAccessRequirementTarget =
+  | { kind: 'tool_rule'; rule: string }
+  | {
+      kind: 'capability';
+      capabilityId: string;
+      implementation?: JobCapabilityRequirementImplementation;
+    }
+  | { kind: 'mcp_server'; server: string };
+
+export interface JobAccessRequirement {
+  target: JobAccessRequirementTarget;
+  reason?: string;
+}
+
 export interface JobRecoveryMetadata {
   state: 'none' | 'pending' | 'running' | 'completed' | 'failed' | 'suppressed';
   kind:
@@ -139,9 +151,11 @@ export interface JobRecord {
     | { type: 'cron' | 'interval'; value: string };
   executionContext: JobExecutionContext;
   notificationRoutes: JobNotificationRoute[];
-  capabilityRequirements: JobCapabilityRequirement[];
-  toolAccessRequirements: string[];
-  requiredMcpServers: string[];
+  ownerLabel?: string;
+  deliveryLabel?: string;
+  setupLabel?: string;
+  nextActionLabel?: string | null;
+  accessRequirements: JobAccessRequirement[];
   setup?: JobSetup;
   nextRun: string | null;
   lastRun: string | null;
@@ -155,12 +169,12 @@ export interface JobRecord {
     explicit: boolean;
   };
   model: JobModelPreview | null;
-  groupScope: string;
+  workspaceKey: string;
   sessionId: string | null;
   target?: {
     appId: string;
     agentId: string;
-    groupScope: string;
+    workspaceKey: string;
     conversationJids: string[];
     threadId: string | null;
   };
@@ -188,11 +202,11 @@ export interface ModelRecord {
   displayName: string;
   aliases: string[];
   recommendedAlias: string;
-  responseFamily: 'anthropic' | 'openai';
+  responseFamily: string;
   executionProviderId: string;
   credentialProfileRef: string;
   modelRoute: {
-    id: 'anthropic' | 'openrouter';
+    id: string;
     label: string;
     metadata: {
       providerModelId: string;
@@ -215,6 +229,35 @@ export interface ModelRecord {
   maxOutputTokens: number;
   cacheMode: string;
   cacheTokenFields: string[];
+  cacheSupport: {
+    providerId: string;
+    providerLabel: string;
+    cacheProvider: string;
+    statusLabel: string;
+    prompt: {
+      mode: string;
+      automatic: boolean;
+      requestControl: string;
+      ttlOptions: string[];
+      minimumTokenThresholds: Array<{
+        modelFamily: string;
+        tokens: number;
+      }>;
+      usageFields: Record<string, unknown>;
+      supported: boolean;
+      accounted: boolean;
+    };
+    response: {
+      mode: string;
+      enabledByDefault: boolean;
+      requestControl: string;
+      requestHeaders: string[];
+      responseHeaders: string[];
+      usageBehavior: string;
+      available: boolean;
+    };
+    tokenFields: string[];
+  };
   supportsThinking: boolean;
   supportsTools: boolean;
   source: {
@@ -225,7 +268,7 @@ export interface ModelRecord {
   experimental: boolean;
 }
 
-export type ModelPreset = 'anthropic' | 'openrouter';
+export type ModelPreset = string;
 export type ModelWorkload =
   | 'chat'
   | 'one_time_job'
@@ -284,7 +327,7 @@ export interface ModelPreviewRequest {
   target: ModelPreviewTarget;
   jobId?: string;
   conversationJid?: string;
-  groupScope?: string;
+  workspaceKey?: string;
   kind?: 'one-time' | 'recurring';
   task?: 'extractor' | 'dreaming' | 'consolidation';
 }
@@ -304,9 +347,7 @@ export interface CreateJobInput {
   prompt: string;
   executionContext: JobRequestExecutionContext;
   notificationRoutes?: JobNotificationRoute[];
-  capabilityRequirements?: JobCapabilityRequirement[];
-  toolAccessRequirements?: string[];
-  requiredMcpServers?: string[];
+  accessRequirements?: JobAccessRequirement[];
   kind?: JobKind;
   runAt?: string;
   schedule?: { type: 'cron' | 'interval'; value: string };
@@ -319,16 +360,14 @@ export interface UpdateJobInput {
   prompt?: string;
   executionContext?: JobRequestExecutionContext;
   notificationRoutes?: JobNotificationRoute[];
-  capabilityRequirements?: JobCapabilityRequirement[];
-  toolAccessRequirements?: string[];
-  requiredMcpServers?: string[];
+  accessRequirements?: JobAccessRequirement[];
   status?: 'active' | 'paused';
   modelAlias?: string | null;
 }
 
 export interface ListJobsInput {
   agentId?: string;
-  groupScope?: string;
+  workspaceKey?: string;
   conversationJid?: string;
   kind?: JobKind;
   status?: JobStatus | JobStatus[];
@@ -366,7 +405,7 @@ export interface JobRuntimeContextPreview {
   browserProfileName: string;
   persona:
     | 'developer'
-    | 'personal_assistant'
+    | 'generalist'
     | 'sales'
     | 'marketing'
     | 'operations'
@@ -382,13 +421,13 @@ export type JobModelSource =
   | 'settings.yaml agent.default_model'
   | 'settings.yaml agent.one_time_job_default_model'
   | 'settings.yaml agent.recurring_job_default_model'
-  | 'group.agentConfig.model';
+  | 'conversation.agentConfig.model';
 
 export interface JobModelPreview {
   displayName: string;
-  responseFamily: 'anthropic' | 'openai';
+  responseFamily: string;
   modelRoute: {
-    id: 'anthropic' | 'openrouter';
+    id: string;
     label: string;
   };
   contextWindowTokens: number;

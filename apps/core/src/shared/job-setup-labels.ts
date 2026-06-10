@@ -1,5 +1,3 @@
-import { getBuiltinSemanticCapability } from './semantic-capabilities.js';
-
 export interface JobSetupLabelBlocker {
   state?: string;
   requirementType?: string;
@@ -27,7 +25,8 @@ export function setupBlockerLabel(
   if (!blocker) return humanizeIdentifier(fallbackState);
   if (
     blocker.requirementType === 'local_cli' &&
-    blocker.state === 'missing_capability'
+    blocker.state === 'missing_capability' &&
+    !isLocalCliCapabilityAction(blocker.nextAction)
   ) {
     return 'Job CLI configuration';
   }
@@ -58,16 +57,15 @@ export function setupActionLabel(
   const nextAction = blocker.nextAction ?? '';
   if (
     blocker.requirementType === 'local_cli' &&
-    blocker.state === 'missing_capability'
+    blocker.state === 'missing_capability' &&
+    !isLocalCliCapabilityAction(blocker.nextAction)
   ) {
     return 'Fix the job CLI configuration, then resume the job.';
   }
   if (blocker.requirementType === 'local_cli') {
     return `Approve ${semanticCapabilityLabel(blocker.requirementId)}, then resume the job.`;
   }
-  if (
-    /request_permission\s*\{[^}]*"toolName"\s*:\s*"RunCommand"/.test(nextAction)
-  ) {
+  if (/request_access\s*\{[^}]*"kind"\s*:\s*"run_command"/.test(nextAction)) {
     return 'Approve exact command access, then resume the job.';
   }
   if (blocker.requirementType === 'browser') {
@@ -77,6 +75,9 @@ export function setupActionLabel(
     return 'Approve Browser access, then resume the job.';
   }
   if (blocker.requirementType === 'semantic_capability') {
+    if (nextAction && !/request_access\s*\{/.test(nextAction)) {
+      return setupActionLabelFromNextAction(nextAction);
+    }
     return `Approve ${semanticCapabilityLabel(blocker.requirementId)}, then resume the job.`;
   }
   if (blocker.requirementType === 'mcp_server') {
@@ -94,17 +95,13 @@ export function setupActionLabelFromNextAction(
   if (/scheduler_update_job\s*\{/.test(nextAction)) {
     return 'Update the job setup, then resume the job.';
   }
-  if (
-    /request_permission\s*\{[^}]*"toolName"\s*:\s*"RunCommand"/.test(nextAction)
-  ) {
+  if (/request_access\s*\{[^}]*"kind"\s*:\s*"run_command"/.test(nextAction)) {
     return 'Approve exact command access, then resume the job.';
   }
-  if (
-    /request_permission\s*\{[^}]*"toolName"\s*:\s*"Browser"/.test(nextAction)
-  ) {
+  if (/request_access\s*\{[^}]*"id"\s*:\s*"browser\.use"/.test(nextAction)) {
     return 'Approve Browser access, then resume the job.';
   }
-  if (/request_permission\s*\{/.test(nextAction)) {
+  if (/request_access\s*\{/.test(nextAction)) {
     return 'Approve the requested access, then resume the job.';
   }
   return nextAction;
@@ -112,9 +109,34 @@ export function setupActionLabelFromNextAction(
 
 function semanticCapabilityLabel(capabilityId: string | undefined): string {
   return capabilityId
-    ? (getBuiltinSemanticCapability(capabilityId)?.displayName ??
-        humanizeIdentifier(capabilityId))
+    ? humanizeIdentifier(capabilityId)
     : 'Required capability';
+}
+
+/**
+ * Public 4-state job readiness label. Maps the internal setup states to the
+ * user-facing model: Ready / Needs approval / Needs connection / Blocked.
+ */
+export function setupReadinessLabel(state: string | undefined): string {
+  if (state === 'ready' || !state) return 'Ready';
+  if (state === 'missing_capability') return 'Needs approval';
+  if (
+    state === 'credential_unknown' ||
+    state === 'mcp_missing_credential' ||
+    state === 'browser_login_may_be_required'
+  ) {
+    return 'Needs connection';
+  }
+  if (
+    state === 'broker_unreachable' ||
+    state === 'invalid_config' ||
+    state === 'invalid_workspace' ||
+    state === 'malformed_requirement' ||
+    state === 'unsupported_field'
+  ) {
+    return 'Blocked';
+  }
+  return 'Blocked';
 }
 
 function humanizeIdentifier(value: string | undefined): string {
@@ -128,4 +150,8 @@ function humanizeIdentifier(value: string | undefined): string {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function isLocalCliCapabilityAction(value: string | undefined): boolean {
+  return Boolean(value && /request_access\s*\{/.test(value));
 }

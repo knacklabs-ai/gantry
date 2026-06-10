@@ -11,6 +11,10 @@ import {
   RUN_COMMAND_TOOL_NAME,
   sdkToolsForGantryFacadeTool,
 } from './agent-tool-references.js';
+import {
+  canonicalizeGeneratedRuntimeSkillPaths,
+  generatedRuntimeSkillPathDisplay,
+} from './generated-runtime-paths.js';
 
 export interface RequestableAdminToolAccess {
   tool: string;
@@ -42,7 +46,7 @@ export const PERMISSION_GATED_NATIVE_TOOLS = [
 
 export const BROWSER_TOOL_NAME = 'Browser';
 export const BROWSER_REQUEST_PERMISSION_ARGS =
-  'permissionKind=tool toolName=Browser toolCategory=browser temporaryOnly=false reason="<why this agent needs Browser>"';
+  'target.kind=capability target.id=browser.use temporaryOnly=false reason="<why this agent needs Browser>"';
 export const BROWSER_REQUESTABLE_NOTE =
   'Browser approval exposes Gantry-owned browser_* tools. Status is read-only; action calls launch the host-derived profile lazily.';
 
@@ -56,7 +60,7 @@ export function buildRequestableAdminToolAccess(
     return {
       tool: fullName,
       toolId: adminMcpToolIdForFullName(fullName),
-      requestPermission: `permissionKind=tool toolName=${fullName} temporaryOnly=false reason="<why this agent needs ${toolName}>"`,
+      requestPermission: `target.kind=capability target.id="<reviewed admin capability id>" temporaryOnly=false reason="<why this agent needs ${toolName}>"`,
     };
   });
 }
@@ -87,7 +91,7 @@ export function buildAgentToolAccessView(input: {
   source: string;
 }): AgentToolAccessView {
   return {
-    configuredTools: uniqueStrings(input.configuredTools ?? []),
+    configuredTools: uniqueDisplayRules(input.configuredTools ?? []),
     defaultTools: uniqueStrings(input.defaultTools ?? []),
     availableButGatedTools: uniqueStrings(input.availableButGatedTools ?? []),
     requestableAdminTools: uniqueRequestableAdminTools(
@@ -95,6 +99,25 @@ export function buildAgentToolAccessView(input: {
     ),
     source: input.source,
   };
+}
+
+export function buildConfiguredAgentToolAccess(
+  configuredTools: string[],
+  requestableAdminTools: readonly RequestableAdminToolAccess[],
+): AgentToolAccessView {
+  return buildAgentToolAccessView({
+    configuredTools,
+    defaultTools: [],
+    availableButGatedTools: PERMISSION_GATED_NATIVE_TOOLS.filter(
+      (toolName) =>
+        !configuredTools.some(
+          (configured) =>
+            configured === toolName || configured.startsWith(`${toolName}(`),
+        ),
+    ),
+    requestableAdminTools,
+    source: 'Postgres agent_tool_bindings projected from settings.yaml',
+  });
 }
 
 export function buildJobToolAccessView(input: {
@@ -107,8 +130,8 @@ export function buildJobToolAccessView(input: {
     input.effectiveAllowedTools ?? [],
   );
   return {
-    inheritedAgentTools: uniqueStrings(input.inheritedAgentTools ?? []),
-    effectiveAllowedTools,
+    inheritedAgentTools: uniqueDisplayRules(input.inheritedAgentTools ?? []),
+    effectiveAllowedTools: uniqueDisplayRules(effectiveAllowedTools),
     projectedRuntimeTools: uniqueStrings(
       input.projectedRuntimeTools ??
         projectedRuntimeToolsForRules(effectiveAllowedTools),
@@ -130,14 +153,11 @@ export function formatAgentToolAccess(view: AgentToolAccessView): string {
   ].join('\n');
 }
 
-export function formatJobToolAccess(view: JobToolAccessView): string {
-  return [
-    'Tool Access:',
-    `  Source: ${view.source}`,
-    `  Inherited agent tools: ${formatList(view.inheritedAgentTools)}`,
-    `  Effective allowed tools: ${formatList(view.effectiveAllowedTools)}`,
-    `  Projected runtime tools: ${formatList(view.projectedRuntimeTools)}`,
-  ].join('\n');
+export function formatJobToolAccess(
+  view: JobToolAccessView | undefined,
+): string {
+  if (!view) return 'Tool access: (none)';
+  return `Tool access: inherited ${formatList(view.inheritedAgentTools)}; effective ${formatList(view.effectiveAllowedTools)}; projected ${formatList(view.projectedRuntimeTools)}`;
 }
 
 export function compactToolList(
@@ -162,6 +182,24 @@ function uniqueStrings(values: readonly string[]): string[] {
     if (trimmed) out.add(trimmed);
   }
   return [...out];
+}
+
+function uniqueDisplayRules(values: readonly string[]): string[] {
+  return uniqueStrings(values.map(formatToolRuleForUser));
+}
+
+function formatToolRuleForUser(value: string): string {
+  const generatedSkillPath = generatedRuntimeSkillPathDisplay(value);
+  if (!generatedSkillPath) return value;
+  const canonical = canonicalizeGeneratedRuntimeSkillPaths(value);
+  const scoped = parseReadableScopedToolRule(canonical);
+  if (
+    scoped?.toolName === RUN_COMMAND_TOOL_NAME &&
+    /^chmod\s+\+x\s+/.test(scoped.scope)
+  ) {
+    return `Generated skill action setup (${generatedSkillPath})`;
+  }
+  return `Generated skill action (${generatedSkillPath})`;
 }
 
 function uniqueRequestableAdminTools(

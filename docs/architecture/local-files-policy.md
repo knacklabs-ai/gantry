@@ -8,10 +8,10 @@ Local files are allowed only when their durability is explicit.
 - Provider artifact bytes under `<runtime-home>/artifacts/` when the
   `local-filesystem` backend is selected for single-node or shared-volume
   deployments.
-- Readable skill source folders under `<runtime-home>/skills/<skill-slug>/`
-  after approval and `<runtime-home>/skill-drafts/<request-id>/<skill-slug>/`
-  while pending. Postgres owns metadata, status, hash, provider ref, audit, and
-  bindings; the folders own only non-secret reviewable files.
+- Readable reviewed skill artifacts under `<runtime-home>/artifacts/skills/...`
+  after approval. Postgres owns exact `skill:<id>` selection identity, metadata,
+  status, hash, audit, and bindings; artifact folders own only non-secret
+  reviewable files.
 - Credential adapter files owned by their credential adapter.
 
 ## Temporary
@@ -36,5 +36,5 @@ but runtime materializes them into a temp directory instead of syncing them into
 runtime home.
 
 Approved bound skill artifacts may also be unpacked into per-run temp Claude
-config. Draft, rejected, and disabled skill artifacts are durable but not
-runtime inputs.
+config. Draft, rejected, disabled, and superseded skill artifacts are durable
+history but not runtime inputs.

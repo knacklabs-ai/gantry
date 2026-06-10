@@ -108,6 +108,30 @@ describe('scheduledPermissionSuggestions', () => {
     ]);
   });
 
+  it('maps generated runtime skill paths to selected skill action capabilities', () => {
+    expect(
+      scheduledPermissionSuggestionPlan('Bash', undefined, {
+        toolInput: {
+          command:
+            'python3 /tmp/run/.llm-runtime/claude/skills/linkedin-posting/publish --draft post.md',
+        },
+        semanticCapabilityDefinitions: [linkedInPostingCapability],
+      }),
+    ).toEqual({
+      suggestions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'capability:skill.linkedin-posting.publish' }],
+        },
+      ],
+      semanticCapabilityDefinitions: {
+        'skill.linkedin-posting.publish': linkedInPostingCapability,
+      },
+    });
+  });
+
   it('synthesizes scoped RunCommand suggestions from parsed command leaves', () => {
     expect(
       synthesizePermissionSuggestions('Bash', {
@@ -126,29 +150,45 @@ describe('scheduledPermissionSuggestions', () => {
 
     expect(
       synthesizePermissionSuggestions('Bash', {
-        toolInput: { command: 'python3 /tmp/check.py' },
+        toolInput: {
+          command:
+            'GODEBUG=netdns=go /opt/homebrew/bin/acme records get leads --json',
+        },
       }),
     ).toEqual([
       {
         type: 'addRules',
         behavior: 'allow',
         destination: 'session',
-        rules: [{ toolName: 'RunCommand', ruleContent: '/tmp/check.py *' }],
+        rules: [
+          {
+            toolName: 'RunCommand',
+            ruleContent: '/opt/homebrew/bin/acme records get leads --json',
+          },
+        ],
       },
     ]);
 
     expect(
       synthesizePermissionSuggestions('Bash', {
+        toolInput: { command: 'python3 /tmp/check.py' },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      synthesizePermissionSuggestions('Bash', {
         toolInput: { command: 'python3 /tmp/check.py \'[["lead"]]\'' },
       }),
-    ).toEqual([
-      {
-        type: 'addRules',
-        behavior: 'allow',
-        destination: 'session',
-        rules: [{ toolName: 'RunCommand', ruleContent: '/tmp/check.py *' }],
-      },
-    ]);
+    ).toBeUndefined();
+
+    expect(
+      synthesizePermissionSuggestions('Bash', {
+        toolInput: {
+          command:
+            'python3 /tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py --file /tmp/post.md',
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it('suggests a selected skill action capability for matching Bash commands', () => {
@@ -192,6 +232,47 @@ describe('scheduledPermissionSuggestions', () => {
     });
   });
 
+  it('matches selected skill actions with runtime-managed CA trust env prefixes', () => {
+    const capability: SemanticCapabilityDefinition = {
+      capabilityId: 'skill.linkedin-posting.publish',
+      displayName: 'LinkedIn posting',
+      category: 'linkedin-posting',
+      risk: 'write',
+      can: 'Publish a prepared LinkedIn post through the approved script.',
+      cannot: 'Read unrelated accounts or receive raw credentials.',
+      credentialSource: 'skill_secret',
+      implementationBindings: [
+        {
+          kind: 'tool_rule',
+          rule: 'RunCommand(skills/linkedin-posting/post.py *)',
+        },
+      ],
+      preflight: { kind: 'none' },
+    };
+
+    expect(
+      scheduledPermissionSuggestionPlan('Bash', undefined, {
+        toolInput: {
+          command:
+            'GODEBUG=netdns=go REQUESTS_CA_BUNDLE=$NODE_EXTRA_CA_CERTS /opt/homebrew/bin/python3 "$CLAUDE_PROJECT_DIR/skills/linkedin-posting/post.py" --file /tmp/post.md',
+        },
+        semanticCapabilityDefinitions: [capability],
+      }),
+    ).toEqual({
+      suggestions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'capability:skill.linkedin-posting.publish' }],
+        },
+      ],
+      semanticCapabilityDefinitions: {
+        'skill.linkedin-posting.publish': capability,
+      },
+    });
+  });
+
   it('ignores skill action definitions embedded in untrusted tool input', () => {
     const plan = scheduledPermissionSuggestionPlan('Bash', undefined, {
       toolInput: {
@@ -215,21 +296,7 @@ describe('scheduledPermissionSuggestions', () => {
       },
     });
 
-    expect(plan).toEqual({
-      suggestions: [
-        {
-          type: 'addRules',
-          behavior: 'allow',
-          destination: 'session',
-          rules: [
-            {
-              toolName: 'RunCommand',
-              ruleContent: 'skills/linkedin-posting/post.py *',
-            },
-          ],
-        },
-      ],
-    });
+    expect(plan).toEqual({});
   });
 
   it('does not offer persistent suggestions for invalid durable tool rules', () => {
@@ -296,6 +363,26 @@ describe('scheduledPermissionSuggestions', () => {
           },
         ],
         { toolInput: { host: 'registry.npmjs.org' } },
+      ),
+    ).toBeUndefined();
+    expect(
+      scheduledPermissionSuggestions(
+        'Bash',
+        [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            destination: 'session',
+            rules: [
+              {
+                toolName: 'Bash',
+                ruleContent:
+                  '/tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py *',
+              },
+            ],
+          },
+        ],
+        {},
       ),
     ).toBeUndefined();
   });

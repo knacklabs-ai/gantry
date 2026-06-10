@@ -22,7 +22,17 @@ import { isValidTimezone } from '../shared/timezone.js';
 import { resolvePermissionApprovalTimeoutMs } from '../shared/permission-timeout.js';
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 export * from './memory.js';
-export { syncRuntimeSettingsFromProjection } from './settings/restart-sync.js';
+export { SettingsDesiredStateService } from './settings/desired-state-service.js';
+export { configureDesiredSettingsStorageProvider } from './settings/runtime-settings.js';
+export {
+  applyRuntimeSettingsDesiredState,
+  syncRuntimeSettingsFromProjection,
+} from './settings/restart-sync.js';
+export {
+  loadRuntimeSettings,
+  loadRuntimeSettingsFromPath,
+} from './settings/runtime-settings.js';
+export type { RuntimeSettings } from './settings/runtime-settings-types.js';
 export const POLL_INTERVAL = 2000;
 export type ControlEnvKey =
   | 'GANTRY_CONTROL_API_KEYS_JSON'
@@ -157,18 +167,15 @@ export const AGENT_MAX_OUTPUT_SIZE = parseInt(
 ); // 10MB default
 export function getCredentialBrokerRuntimeConfig(): {
   mode: RuntimeSettings['credentialBroker']['mode'];
-  onecliUrl: string;
-  externalBrokerBaseUrl: string;
+  gatewayBindHost: string;
 } {
   const settings = getRuntimeSettingsForConfig();
   return {
     mode: settings.credentialBroker.mode,
-    onecliUrl: settings.credentialBroker.onecli.url,
-    externalBrokerBaseUrl: settings.credentialBroker.external.baseUrl,
+    gatewayBindHost: settings.credentialBroker.gateway.bindHost,
   };
 }
-export const ONECLI_DATABASE_URL = envValue('ONECLI_DATABASE_URL');
-export const ONECLI_SECRET_ENCRYPTION_KEY = envValue('SECRET_ENCRYPTION_KEY');
+export const SECRET_ENCRYPTION_KEY = envValue('SECRET_ENCRYPTION_KEY');
 const normModel = resolveModelAlias;
 export function getConfiguredDefaultModel(): string {
   return normModel(getRuntimeSettingsForConfig().agent.defaultModel) || '';
@@ -187,7 +194,6 @@ export const HOST_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_DEFAULT_SONNET_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL',
 ] as const;
-export const ONECLI_ALLOWED_ENV_KEYS = ['ANTHROPIC_BASE_URL'] as const;
 type HostCredentialSource = Partial<Record<string, string | undefined>>;
 function readHostCredentialValue(
   key: (typeof HOST_CREDENTIAL_ENV_KEYS)[number],
@@ -223,14 +229,10 @@ export interface ClaudeAuthState {
 export function resolveClaudeAuthState(): ClaudeAuthState {
   const brokerConfig = getCredentialBrokerRuntimeConfig();
   const credentialMode = brokerConfig.mode;
-  const configured =
-    (credentialMode === 'onecli' && Boolean(brokerConfig.onecliUrl.trim())) ||
-    (credentialMode === 'external' &&
-      Boolean(brokerConfig.externalBrokerBaseUrl.trim()));
   return {
     hasOauthToken: false,
     hasApiKey: false,
-    mode: configured ? 'broker' : 'none',
+    mode: credentialMode === 'gantry' ? 'broker' : 'none',
   };
 }
 export function getMemoryModelRuntimeConfig(): ReturnType<
@@ -245,7 +247,7 @@ export type DefaultModelSource =
   | 'settings.yaml agent.default_model'
   | 'system default';
 export type EffectiveModelSource =
-  | 'group.agentConfig.model'
+  | 'conversation.agentConfig.model'
   | 'job.model'
   | 'settings.yaml agent.one_time_job_default_model'
   | 'settings.yaml agent.recurring_job_default_model'
@@ -349,7 +351,7 @@ export function getEffectiveModelConfig(
   if (normalizedGroupModel) {
     return {
       model: normalizedGroupModel,
-      source: 'group.agentConfig.model',
+      source: 'conversation.agentConfig.model',
     };
   }
   return getDefaultModelConfig(kind, agentFolder);

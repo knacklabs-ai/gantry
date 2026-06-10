@@ -1,4 +1,9 @@
-import type { Job, JobRun } from '../../domain/types.js';
+import type {
+  Job,
+  JobCapabilityRequirement,
+  JobRun,
+} from '../../domain/types.js';
+import { splitAccessRequirements } from './job-access-requirements.js';
 import type {
   SkillCatalogRepository,
   ToolCatalogRepository,
@@ -10,7 +15,7 @@ import type {
 } from './job-management-types.js';
 import { DEFAULT_JOB_RUNTIME_APP_ID } from './job-access.js';
 import {
-  agentIdForJobGroupScope,
+  agentIdForJobWorkspaceKey,
   resolveAgentToolBindings,
   resolveJobToolPolicy,
 } from './job-tool-policy.js';
@@ -27,6 +32,11 @@ import {
   parseAutonomousToolDenial,
   type AutonomousToolDenial,
 } from '../../shared/autonomous-tool-denial.js';
+import {
+  setupActionLabel,
+  setupActionLabelFromNextAction,
+  setupReadinessLabel,
+} from '../../shared/job-setup-labels.js';
 
 export interface JobVisibilityMetadata {
   executionContext: JobExecutionContextInput;
@@ -34,15 +44,19 @@ export interface JobVisibilityMetadata {
   target: {
     appId: string;
     agentId: string;
-    groupScope: string;
+    workspaceKey: string;
     conversationJids: string[];
     threadId: string | null;
   };
+  ownerLabel: string;
+  deliveryLabel: string;
+  setupLabel: string;
+  nextActionLabel: string | null;
   promptPreview: string;
   fullPrompt?: string;
   inheritedTools: string[];
   effectiveAllowedTools: string[];
-  capabilityRequirements: NonNullable<Job['capability_requirements']>;
+  capabilityRequirements: JobCapabilityRequirement[];
   toolAccessRequirements: string[];
   requiredMcpServers: string[];
   toolAccess: JobToolAccessView;
@@ -66,7 +80,6 @@ export interface JobHealthMetadata {
     | 'credential_unknown'
     | 'browser_login_may_be_required'
     | 'mcp_missing_credential'
-    | 'draft_only'
     | 'running'
     | 'completed'
     | 'failed'
@@ -124,7 +137,7 @@ export async function buildJobVisibilityMetadata(input: {
     input.job,
     executionContext,
   );
-  const agentId = agentIdForJobGroupScope(input.job.group_scope);
+  const agentId = agentIdForJobWorkspaceKey(input.job.workspace_key);
   const policy = await resolveJobToolPolicy({
     job: input.job,
     appId,
@@ -146,23 +159,28 @@ export async function buildJobVisibilityMetadata(input: {
   });
   const setup = setupMetadataForJob(input.job);
   const recovery = recoveryMetadataForJob(input.job);
+  const displayLabels = deriveJobDisplayLabels({
+    executionContext,
+    notificationRoutes,
+    setup,
+    health,
+  });
   return {
     executionContext,
     notificationRoutes,
     target: {
       appId,
       agentId,
-      groupScope: input.job.group_scope,
+      workspaceKey: input.job.workspace_key,
       conversationJids: dedupeConversationJids(notificationRoutes),
       threadId: executionContext.threadId,
     },
+    ...displayLabels,
     promptPreview: promptPreview(input.job.prompt),
     fullPrompt: input.job.prompt,
     inheritedTools: policy.inheritedTools,
     effectiveAllowedTools: policy.effectiveAllowedTools,
-    capabilityRequirements: input.job.capability_requirements ?? [],
-    toolAccessRequirements: input.job.tool_access_requirements ?? [],
-    requiredMcpServers: input.job.required_mcp_servers ?? [],
+    ...splitAccessRequirements(input.job.access_requirements),
     toolAccess: buildJobToolAccessView({
       inheritedAgentTools: policy.inheritedTools,
       effectiveAllowedTools: policy.effectiveAllowedTools,
@@ -217,39 +235,46 @@ export async function buildJobListVisibilityMetadata(input: {
           job,
           executionContext,
         );
-        const agentId = agentIdForJobGroupScope(job.group_scope);
+        const agentId = agentIdForJobWorkspaceKey(job.workspace_key);
         const inheritedTools = await loadInheritedTools(appId, agentId);
         const effectiveAllowedTools = mergeUnique(inheritedTools);
         const staleness = schedulerJobStaleness(job, nowMs);
         const runs = latestRunsByJobId.get(job.id) ?? [];
+        const setup = setupMetadataForJob(job);
+        const health = buildJobHealth({
+          job,
+          runs,
+          staleness,
+          nowMs,
+        });
+        const displayLabels = deriveJobDisplayLabels({
+          executionContext,
+          notificationRoutes,
+          setup,
+          health,
+        });
         const metadata: JobVisibilityMetadata = {
           executionContext,
           notificationRoutes,
           target: {
             appId,
             agentId,
-            groupScope: job.group_scope,
+            workspaceKey: job.workspace_key,
             conversationJids: dedupeConversationJids(notificationRoutes),
             threadId: executionContext.threadId,
           },
+          ...displayLabels,
           promptPreview: promptPreview(job.prompt),
           inheritedTools,
           effectiveAllowedTools,
-          capabilityRequirements: job.capability_requirements ?? [],
-          toolAccessRequirements: job.tool_access_requirements ?? [],
-          requiredMcpServers: job.required_mcp_servers ?? [],
+          ...splitAccessRequirements(job.access_requirements),
           toolAccess: buildJobToolAccessView({
             inheritedAgentTools: inheritedTools,
             effectiveAllowedTools,
           }),
-          setup: setupMetadataForJob(job),
+          setup,
           recovery: recoveryMetadataForJob(job),
-          health: buildJobHealth({
-            job,
-            runs,
-            staleness,
-            nowMs,
-          }),
+          health,
           staleness,
           recentRunErrors: runs
             .filter((run) => Boolean(run.error_summary))
@@ -342,6 +367,61 @@ function buildJobHealth(input: {
   };
 }
 
+function deriveJobDisplayLabels(input: {
+  executionContext: JobExecutionContextInput;
+  notificationRoutes: JobNotificationRouteInput[];
+  setup: JobSetupMetadata;
+  health: JobHealthMetadata;
+}): {
+  ownerLabel: string;
+  deliveryLabel: string;
+  setupLabel: string;
+  nextActionLabel: string | null;
+} {
+  const primaryRoute = input.notificationRoutes[0];
+  const ownerJid =
+    input.executionContext.conversationJid ||
+    primaryRoute?.conversationJid ||
+    '';
+  const deliveryJid =
+    primaryRoute?.conversationJid ||
+    input.executionContext.conversationJid ||
+    '';
+  const deliveryThread =
+    primaryRoute?.threadId ?? input.executionContext.threadId;
+  const blocker = input.setup.blockers[0];
+  const nextActionLabel = blocker
+    ? setupActionLabel(blocker)
+    : input.health.nextAction
+      ? setupActionLabelFromNextAction(input.health.nextAction)
+      : null;
+  return {
+    ownerLabel: genericConversationOwnerLabel(ownerJid),
+    deliveryLabel: genericConversationDeliveryLabel(
+      deliveryJid,
+      deliveryThread,
+    ),
+    setupLabel: setupReadinessLabel(input.setup.state),
+    nextActionLabel,
+  };
+}
+
+function genericConversationOwnerLabel(conversationJid: string): string {
+  return conversationJid.trim() ? 'Conversation' : 'Conversation';
+}
+
+function genericConversationDeliveryLabel(
+  conversationJid: string,
+  threadId?: string | null,
+): string {
+  if (!conversationJid.trim()) return 'Conversation';
+  return typeof threadId === 'string' && threadId.trim()
+    ? 'Conversation thread'
+    : 'Conversation';
+}
+
+// "Needs approval" only fits capability/permission grants; broker, credential,
+// and browser-login blockers are not approvals, so they read as "Needs setup".
 function setupMetadataForJob(job: Job): JobSetupMetadata {
   const setup = job.setup_state;
   const blockers = setup?.blockers ?? [];
@@ -388,10 +468,7 @@ function nextJobHealthAction(
 ): string | null {
   if (denial?.recoveryAction) return denial.recoveryAction;
   if (state === 'needs_permission' && denial?.toolName) {
-    if (denial.toolName.startsWith('mcp__gantry__browser_')) {
-      return 'Approve Browser access, then rerun the job.';
-    }
-    return `Approve ${denial.toolName} access, then rerun the job.`;
+    return `Approve ${neutralToolAccessLabel(denial.toolName)}, then rerun the job.`;
   }
   if (state === 'timed_out') {
     return 'Rerun with a longer job timeout if this work is expected to take more time.';
@@ -415,19 +492,31 @@ function isRestartInterruptedRun(summary: string | null): boolean {
   return /runtime restarted|gantry restarted/i.test(summary ?? '');
 }
 
+// Keep raw implementation tool ids (RunCommand, Bash, mcp__server__tool) out of
+// user-facing next-action copy; map them to provider-neutral access labels.
+function neutralToolAccessLabel(toolName: string): string {
+  if (toolName.startsWith('mcp__gantry__browser_') || toolName === 'Browser') {
+    return 'Browser access';
+  }
+  if (toolName === 'RunCommand' || toolName === 'Bash') {
+    return 'exact command access';
+  }
+  return 'the requested access';
+}
+
 function resolveExecutionContext(job: Job): JobExecutionContextInput {
   const stored = job.execution_context;
   if (
     stored &&
     typeof stored.conversationJid === 'string' &&
     stored.conversationJid.trim() &&
-    typeof stored.groupScope === 'string' &&
-    stored.groupScope.trim()
+    typeof stored.workspaceKey === 'string' &&
+    stored.workspaceKey.trim()
   ) {
     return {
       conversationJid: stored.conversationJid,
       threadId: stored.threadId ?? null,
-      groupScope: stored.groupScope,
+      workspaceKey: stored.workspaceKey,
       sessionId:
         stored.sessionId === undefined ? job.session_id : stored.sessionId,
     };
@@ -442,7 +531,7 @@ function resolveExecutionContext(job: Job): JobExecutionContextInput {
   return {
     conversationJid: fallbackConversationJid ?? '',
     threadId: job.thread_id,
-    groupScope: job.group_scope,
+    workspaceKey: job.workspace_key,
     sessionId: job.session_id,
   };
 }

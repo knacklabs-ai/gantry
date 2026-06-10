@@ -5,9 +5,8 @@ import type {
   AgentMcpServerBinding,
   McpServerDefinition,
   McpServerId,
-  McpServerVersionId,
 } from '../../domain/mcp/mcp-servers.js';
-import { isMcpServerApproved } from '../../domain/mcp/mcp-servers.js';
+import { isMcpServerActive } from '../../domain/mcp/mcp-servers.js';
 import type {
   AgentRepository,
   McpServerRepository,
@@ -20,6 +19,10 @@ import type {
   SkillId,
 } from '../../domain/skills/skills.js';
 import { isSkillUsableForBinding } from '../../domain/skills/skills.js';
+import {
+  formatSkillMaterializationCollision,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 import type {
   AgentToolBinding,
   AgentToolSource,
@@ -28,18 +31,39 @@ import type {
 } from '../../domain/tools/tools.js';
 import {
   displayToolReference,
+  isGantryFacadeExactToolRule,
   validateReadableAgentToolRule,
 } from '../../shared/agent-tool-references.js';
+import { validateDurableAccessRule } from '../../shared/durable-access-policy.js';
 import { ensureAgentToolCatalogItem } from '../../domain/tools/agent-tool-catalog-references.js';
 import {
-  buildAgentToolAccessView,
+  buildConfiguredAgentToolAccess,
   buildRequestableAdminToolAccess,
-  PERMISSION_GATED_NATIVE_TOOLS,
   type AgentToolAccessView,
 } from '../../shared/tool-access-view.js';
-import { semanticCapabilityFromToolCatalogItem } from '../../shared/semantic-capabilities.js';
-import { adminMcpToolNameFromFullName } from '../../shared/admin-mcp-tools.js';
+import {
+  adminMcpToolNameFromFullName,
+  isAdminMcpToolFullName,
+} from '../../shared/admin-mcp-tools.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import {
+  buildSelectedCapabilities,
+  canonicalToolReferenceForView,
+  skillActionDefinitionsForAgent,
+  skillActionDefinitionsForBindings,
+} from './agent-capability-skill-actions.js';
+import {
+  buildAgentSources,
+  readableSkillSources,
+  type ReadableSkillSource,
+  type ReadableToolSource,
+} from './agent-source-views.js';
+import { replaceAgentAccessDocument } from './agent-access-document-replacement.js';
+import { nextMcpSourceBindings } from './agent-mcp-source-bindings.js';
+import {
+  summarizeAgentAccess,
+  type AgentAccessSummary,
+} from './agent-access-summary.js';
 
 export interface CapabilityCatalogView {
   tools: ToolCatalogItem[];
@@ -50,12 +74,13 @@ export interface CapabilityCatalogView {
 export interface AgentCapabilitiesView {
   agentId: AgentId;
   sources: {
-    skills: Array<{ id: string; version: string }>;
-    mcpServers: Array<{ id: string; version: string }>;
-    tools: Array<{ id: string; kind: string; version?: string }>;
+    skills: ReadableSkillSource[];
+    mcpServers: Array<{ id: string; tools?: string[] }>;
+    tools: ReadableToolSource[];
   };
   capabilities: Array<{ id: string; version: string }>;
   toolAccess: AgentToolAccessView;
+  summary: AgentAccessSummary;
   updatedAt: string;
 }
 
@@ -81,10 +106,10 @@ export class AgentCapabilityAdministrationService {
   async listCatalog(appId: AppId): Promise<CapabilityCatalogView> {
     const [tools, skills, mcpServers] = await Promise.all([
       this.repositories.tools.listTools({ appId, statuses: ['active'] }),
-      this.repositories.skills.listSkills({ appId, statuses: ['approved'] }),
+      this.repositories.skills.listSkills({ appId, statuses: ['installed'] }),
       this.repositories.mcpServers.listServers({
         appId,
-        statuses: ['approved'],
+        statuses: ['active'],
         limit: 500,
       }),
     ]);
@@ -113,11 +138,17 @@ export class AgentCapabilityAdministrationService {
     const activeToolBindings = toolBindings.filter(
       (binding) => binding.status === 'active',
     );
-    const selectedTools = await Promise.all(
-      activeToolBindings.map((binding) =>
-        this.repositories.tools.getTool(binding.toolId),
+    const [selectedTools, configuredSkillSources] = await Promise.all([
+      Promise.all(
+        activeToolBindings.map((binding) =>
+          this.repositories.tools.getTool(binding.toolId),
+        ),
       ),
-    );
+      readableSkillSources({
+        skillBindings,
+        repository: this.repositories.skills,
+      }),
+    ]);
     const configuredToolEntries = activeToolBindings.flatMap(
       (binding, index) => {
         const tool = selectedTools[index];
@@ -135,44 +166,41 @@ export class AgentCapabilityAdministrationService {
           : [];
       },
     );
-    const configuredTools = configuredToolEntries.map(
-      (entry) => entry.reference,
+    const semanticCapabilityDefinitions =
+      await skillActionDefinitionsForBindings({
+        appId: input.appId,
+        skillBindings,
+        skillRepository: this.repositories.skills,
+      });
+    const configuredTools = configuredToolEntries.flatMap((entry) =>
+      canonicalToolReferenceForView(entry.reference, {
+        semanticCapabilityDefinitions,
+      }),
     );
     const enabledAdminTools = selectedAdminToolNames(configuredTools);
+    const sources = buildAgentSources({
+      configuredSkillSources,
+      mcpBindings,
+      toolSources,
+    });
+    const capabilities = buildSelectedCapabilities(
+      configuredToolEntries,
+      semanticCapabilityDefinitions,
+    );
+    const toolAccess = buildConfiguredAgentToolAccess(
+      configuredTools,
+      buildRequestableAdminToolAccess(enabledAdminTools),
+    );
     return {
       agentId: input.agentId,
-      sources: {
-        skills: skillBindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: String(binding.skillId),
-            version: 'approved',
-          })),
-        mcpServers: mcpBindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: String(binding.serverId),
-            version: String(binding.versionId),
-          })),
-        tools: readableToolSources(toolSources),
-      },
-      capabilities: configuredToolEntries.map((entry) =>
-        toolReferenceToCapability(entry.reference, entry.tool),
-      ),
-      toolAccess: buildAgentToolAccessView({
-        configuredTools,
-        defaultTools: [],
-        availableButGatedTools: PERMISSION_GATED_NATIVE_TOOLS.filter(
-          (toolName) =>
-            !configuredTools.some(
-              (configured) =>
-                configured === toolName ||
-                configured.startsWith(`${toolName}(`),
-            ),
-        ),
-        requestableAdminTools:
-          buildRequestableAdminToolAccess(enabledAdminTools),
-        source: 'Postgres agent_tool_bindings projected from settings.yaml',
+      sources,
+      capabilities,
+      toolAccess,
+      summary: summarizeAgentAccess({
+        sources,
+        capabilities,
+        toolAccess,
+        toolBindings,
       }),
       updatedAt: this.clock.now(),
     };
@@ -191,10 +219,14 @@ export class AgentCapabilityAdministrationService {
       );
     }
     const now = this.clock.now();
-    const selectedToolReferences = unique(
-      input.capabilities.map((capability) =>
-        capabilitySelectionToToolReference(capability.id),
-      ),
+    const semanticCapabilityDefinitions = await skillActionDefinitionsForAgent({
+      appId: input.appId,
+      agentId: input.agentId,
+      skillRepository: this.repositories.skills,
+    });
+    const selectedToolReferences = resolveSelectedToolReferences(
+      input.capabilities,
+      semanticCapabilityDefinitions,
     );
 
     const capabilityToolIds = await Promise.all(
@@ -204,6 +236,7 @@ export class AgentCapabilityAdministrationService {
           appId: input.appId,
           reference,
           now,
+          semanticCapabilityDefinitions,
         });
         return tool.id;
       }),
@@ -264,6 +297,10 @@ export class AgentCapabilityAdministrationService {
       updatedAt: now,
     });
 
+    const configuredSkillSources = await readableSkillSources({
+      skillBindings,
+      repository: this.repositories.skills,
+    });
     const configuredToolEntries = capabilityToolIds.map((toolId) => {
       const tool = toolMap.get(toolId);
       if (!tool) {
@@ -271,44 +308,34 @@ export class AgentCapabilityAdministrationService {
       }
       return { reference: displayToolReference({ toolId, tool }), tool };
     });
-    const configuredTools = configuredToolEntries.map(
-      (entry) => entry.reference,
+    const configuredTools = configuredToolEntries.flatMap((entry) =>
+      canonicalToolReferenceForView(entry.reference, {
+        semanticCapabilityDefinitions,
+      }),
+    );
+    const sources = buildAgentSources({
+      configuredSkillSources,
+      mcpBindings,
+      toolSources,
+    });
+    const capabilities = buildSelectedCapabilities(
+      configuredToolEntries,
+      semanticCapabilityDefinitions,
+    );
+    const toolAccess = buildConfiguredAgentToolAccess(
+      configuredTools,
+      buildRequestableAdminToolAccess(selectedAdminToolNames(configuredTools)),
     );
     return {
       agentId: input.agentId,
-      sources: {
-        skills: skillBindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: String(binding.skillId),
-            version: 'approved',
-          })),
-        mcpServers: mcpBindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: String(binding.serverId),
-            version: String(binding.versionId),
-          })),
-        tools: readableToolSources(toolSources),
-      },
-      capabilities: configuredToolEntries.map((entry) =>
-        toolReferenceToCapability(entry.reference, entry.tool),
-      ),
-      toolAccess: buildAgentToolAccessView({
-        configuredTools,
-        defaultTools: [],
-        availableButGatedTools: PERMISSION_GATED_NATIVE_TOOLS.filter(
-          (toolName) =>
-            !configuredTools.some(
-              (configured) =>
-                configured === toolName ||
-                configured.startsWith(`${toolName}(`),
-            ),
-        ),
-        requestableAdminTools: buildRequestableAdminToolAccess(
-          selectedAdminToolNames(configuredTools),
-        ),
-        source: 'Postgres agent_tool_bindings projected from settings.yaml',
+      sources,
+      capabilities,
+      toolAccess,
+      summary: summarizeAgentAccess({
+        sources,
+        capabilities,
+        toolAccess,
+        toolBindings: nextToolBindings,
       }),
       updatedAt: now,
     };
@@ -318,12 +345,49 @@ export class AgentCapabilityAdministrationService {
     appId: AppId;
     agentId: AgentId;
   }): Promise<AgentSourcesView> {
-    const view = await this.getCapabilities(input);
+    // Sources derive only from tool/skill/mcp bindings — they do not need the
+    // per-tool catalog lookups, capability resolution, tool-access view, or
+    // summary that getCapabilities computes, so load only what sources require.
+    await this.requireAgent(input.appId, input.agentId);
+    const [toolSources, skillBindings, mcpBindings] = await Promise.all([
+      this.listAgentToolSources(input),
+      this.repositories.skills.listAgentSkillBindings(input),
+      this.repositories.mcpServers.listAgentBindings({ ...input, limit: 500 }),
+    ]);
+    const configuredSkillSources = await readableSkillSources({
+      skillBindings,
+      repository: this.repositories.skills,
+    });
     return {
-      agentId: view.agentId,
-      sources: view.sources,
-      updatedAt: view.updatedAt,
+      agentId: input.agentId,
+      sources: buildAgentSources({
+        configuredSkillSources,
+        mcpBindings,
+        toolSources,
+      }),
+      updatedAt: this.clock.now(),
     };
+  }
+
+  async replaceAccessDocument(input: {
+    appId: AppId;
+    agentId: AgentId;
+    sources: AgentCapabilitiesView['sources'];
+    capabilities: Array<{ id: string; version: string }>;
+  }): Promise<AgentCapabilitiesView> {
+    return replaceAgentAccessDocument({
+      ...input,
+      repositories: this.repositories,
+      now: this.clock.now(),
+      requireAgent: (appId, agentId) => this.requireAgent(appId, agentId),
+      requireInstalledSkills: (appId, skillIds) =>
+        this.requireInstalledSkills(appId, skillIds),
+      requireActiveMcpServers: (appId, serverIds) =>
+        this.requireActiveMcpServers(appId, serverIds),
+      requireSelectableTools: (appId, toolIds) =>
+        this.requireSelectableTools(appId, toolIds),
+      getCapabilities: (scope) => this.getCapabilities(scope),
+    });
   }
 
   async replaceSources(input: {
@@ -350,10 +414,15 @@ export class AgentCapabilityAdministrationService {
       agentId: input.agentId,
       now,
     });
-    const [, mcpMap] = await Promise.all([
-      this.requireApprovedSkills(input.appId, sourceSkillIds),
-      this.requireApprovedMcpServers(input.appId, sourceMcpServerIds),
-    ]);
+    const skillMap = await this.requireInstalledSkills(
+      input.appId,
+      sourceSkillIds,
+    );
+    const mcpServerMap = await this.requireActiveMcpServers(
+      input.appId,
+      sourceMcpServerIds,
+    );
+    assertUniqueSkillMaterializationKeys(sourceSkillIds, skillMap);
     const [toolBindings, skillBindings, mcpBindings] = await Promise.all([
       this.repositories.tools.listAgentToolBindings(input),
       this.repositories.skills.listAgentSkillBindings(input),
@@ -381,39 +450,14 @@ export class AgentCapabilityAdministrationService {
         };
       },
     );
-    const mcpBindingMap = new Map(
-      mcpBindings.map((binding) => [binding.serverId, binding]),
-    );
-    const requestedMcpVersions = new Map(
-      input.sources.mcpServers.map((source) => [
-        source.id as McpServerId,
-        source.version as McpServerVersionId,
-      ]),
-    );
-    const mcpVersionByServerId = await this.resolveMcpSourceVersions({
+    const nextMcpBindings: AgentMcpServerBinding[] = nextMcpSourceBindings({
       appId: input.appId,
-      requestedVersions: requestedMcpVersions,
-      serversById: mcpMap,
+      agentId: input.agentId,
+      sources: input.sources.mcpServers,
+      servers: mcpServerMap,
+      existingBindings: mcpBindings,
+      now,
     });
-    const nextMcpBindings: AgentMcpServerBinding[] = sourceMcpServerIds.map(
-      (serverId) => {
-        const existing = mcpBindingMap.get(serverId);
-        return {
-          id: `agent-mcp-binding:${input.agentId}:${serverId}` as AgentMcpServerBinding['id'],
-          appId: input.appId,
-          agentId: input.agentId,
-          serverId,
-          versionId: mcpVersionByServerId.get(serverId)!,
-          status: 'active' as const,
-          required: existing?.required ?? false,
-          permissionPolicyIds: existing?.permissionPolicyIds ?? [],
-          conversationId: existing?.conversationId,
-          threadId: existing?.threadId,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
-        };
-      },
-    );
     await this.repositories.agents.replaceAgentCapabilityBindings({
       appId: input.appId,
       agentId: input.agentId,
@@ -429,40 +473,6 @@ export class AgentCapabilityAdministrationService {
       updatedAt: now,
     });
     return this.getSources(input);
-  }
-
-  private async resolveMcpSourceVersions(input: {
-    appId: AppId;
-    requestedVersions: Map<McpServerId, McpServerVersionId>;
-    serversById: Map<McpServerId, McpServerDefinition>;
-  }): Promise<Map<McpServerId, McpServerVersionId>> {
-    const entries = await Promise.all(
-      [...input.requestedVersions.entries()].map(
-        async ([serverId, requestedVersionId]) => {
-          const server = input.serversById.get(serverId);
-          if (!server?.latestApprovedVersionId) {
-            throw new ApplicationError(
-              'INVALID_REQUEST',
-              `MCP server ${serverId} has no approved version.`,
-            );
-          }
-          const version =
-            await this.repositories.mcpServers.getVersion(requestedVersionId);
-          if (
-            !version ||
-            version.appId !== input.appId ||
-            version.serverId !== serverId
-          ) {
-            throw new ApplicationError(
-              'INVALID_REQUEST',
-              `MCP server ${serverId} version ${requestedVersionId} is not approved for that source.`,
-            );
-          }
-          return [serverId, requestedVersionId] as const;
-        },
-      ),
-    );
-    return new Map(entries);
   }
 
   private async listAgentToolSources(input: {
@@ -528,7 +538,7 @@ export class AgentCapabilityAdministrationService {
     return tools;
   }
 
-  private async requireApprovedSkills(
+  private async requireInstalledSkills(
     appId: AppId,
     skillIds: SkillId[],
   ): Promise<Map<SkillId, SkillCatalogItem>> {
@@ -545,7 +555,7 @@ export class AgentCapabilityAdministrationService {
         if (!isSkillUsableForBinding(skill)) {
           throw new ApplicationError(
             'INVALID_REQUEST',
-            `Skill is not approved: ${skillId}`,
+            `Skill is not installed: ${skillId}`,
           );
         }
         skills.set(skillId, skill);
@@ -554,7 +564,7 @@ export class AgentCapabilityAdministrationService {
     return skills;
   }
 
-  private async requireApprovedMcpServers(
+  private async requireActiveMcpServers(
     appId: AppId,
     serverIds: McpServerId[],
   ): Promise<Map<McpServerId, McpServerDefinition>> {
@@ -568,10 +578,10 @@ export class AgentCapabilityAdministrationService {
             `MCP server not found: ${serverId}`,
           );
         }
-        if (!isMcpServerApproved(server)) {
+        if (!isMcpServerActive(server)) {
           throw new ApplicationError(
             'INVALID_REQUEST',
-            `MCP server is not approved: ${serverId}`,
+            `MCP server is not active: ${serverId}`,
           );
         }
         servers.set(serverId, server);
@@ -585,34 +595,63 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function assertUniqueSkillMaterializationKeys(
+  skillIds: readonly SkillId[],
+  skills: ReadonlyMap<SkillId, SkillCatalogItem>,
+): void {
+  const [collision] = skillMaterializationCollisions(
+    skillIds.flatMap((skillId) => {
+      const skill = skills.get(skillId);
+      return skill ? [skill] : [];
+    }),
+  );
+  if (!collision) return;
+  throw new ApplicationError(
+    'CONFLICT',
+    formatSkillMaterializationCollision(collision),
+  );
+}
+
 function capabilitySelectionToToolReference(capabilityId: string): string {
   const id = capabilityId.trim();
   if (id === 'browser.use') return 'Browser';
   if (id.startsWith('RunCommand(')) return id;
+  if (isAdminMcpToolFullName(id) || isGantryFacadeExactToolRule(id)) return id;
   return `capability:${id}`;
 }
 
-function toolReferenceToCapability(
-  reference: string,
-  tool?: ToolCatalogItem,
-): {
-  id: string;
-  version: string;
-} {
-  if (reference === 'Browser') return { id: 'browser.use', version: 'builtin' };
-  if (reference.startsWith('capability:')) {
-    const semanticCapability = tool
-      ? semanticCapabilityFromToolCatalogItem({
-          name: tool.name,
-          inputSchema: tool.inputSchema,
-        })
-      : undefined;
-    return {
-      id: reference.slice('capability:'.length),
-      version: semanticCapability?.version ?? 'builtin',
-    };
-  }
-  return { id: reference, version: 'builtin' };
+/**
+ * Validate selections structurally and resolve them to canonical tool
+ * references. Throws ApplicationError('INVALID_REQUEST') on any malformed
+ * selection. Source-independent — safe to call before persisting sources.
+ */
+function resolveSelectedToolReferences(
+  capabilities: ReadonlyArray<{ id: string; version: string }>,
+  semanticCapabilityDefinitions: Awaited<
+    ReturnType<typeof skillActionDefinitionsForAgent>
+  >,
+): string[] {
+  return unique(
+    capabilities.flatMap((capability) => {
+      const reference = capabilitySelectionToToolReference(capability.id);
+      const validation = validateDurableAccessRule(reference, {
+        semanticCapabilityDefinitions,
+      });
+      if (!validation.ok) {
+        throw new ApplicationError('INVALID_REQUEST', validation.reason);
+      }
+      const canonical = canonicalToolReferenceForView(reference, {
+        semanticCapabilityDefinitions,
+      });
+      if (canonical.length === 0) {
+        throw new ApplicationError(
+          'INVALID_REQUEST',
+          `Capability selection ${capability.id} is not a durable access rule.`,
+        );
+      }
+      return canonical;
+    }),
+  );
 }
 
 function selectedAdminToolNames(tools: readonly string[]): Set<string> {
@@ -622,20 +661,6 @@ function selectedAdminToolNames(tools: readonly string[]): Set<string> {
     if (name) names.add(name);
   }
   return names;
-}
-
-function readableToolSources(
-  sources: readonly AgentToolSource[],
-): AgentCapabilitiesView['sources']['tools'] {
-  return sources
-    .filter((source) => source.status === 'active')
-    .map((source) => ({
-      id: source.sourceId,
-      kind: source.kind,
-      ...(source.version && source.version !== source.kind
-        ? { version: source.version }
-        : {}),
-    }));
 }
 
 function uniqueToolSources(

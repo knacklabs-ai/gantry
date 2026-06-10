@@ -27,7 +27,7 @@ function job(input: Partial<Job>): Job {
     schedule_value: '',
     session_id: null,
     thread_id: null,
-    group_scope: 'agent-folder',
+    workspace_key: 'agent-folder',
     created_by: 'agent',
     status: 'active',
     next_run: null,
@@ -46,11 +46,11 @@ describe('resolveExecutionContext', () => {
 
     const resolved = resolveExecutionContext(
       job({
-        group_scope: 'agent-folder',
+        workspace_key: 'agent-folder',
         execution_context: {
           conversationJid: 'chat-b',
           threadId: 'thread-1',
-          groupScope: 'agent-folder',
+          workspaceKey: 'agent-folder',
         },
         notification_routes: [
           { conversationJid: 'chat-a', threadId: null, label: 'backup' },
@@ -68,11 +68,43 @@ describe('resolveExecutionContext', () => {
     });
   });
 
+  it('uses the same-conversation notification route thread for delivery when the job is conversation-owned', () => {
+    const groups = {
+      'chat-a': group('agent-folder', 'Conversation A'),
+    };
+
+    const resolved = resolveExecutionContext(
+      job({
+        workspace_key: 'agent-folder',
+        execution_context: {
+          conversationJid: 'chat-a',
+          threadId: null,
+          workspaceKey: 'agent-folder',
+        },
+        notification_routes: [
+          {
+            conversationJid: 'chat-a',
+            threadId: 'topic-2771',
+            label: 'primary',
+          },
+        ],
+      }),
+      groups,
+    );
+
+    expect(resolved).toMatchObject({
+      group: groups['chat-a'],
+      executionJid: 'chat-a',
+      threadId: 'topic-2771',
+      stopAliasJids: ['chat-a'],
+    });
+  });
+
   it('returns null without canonical execution context', () => {
     const groups = { 'chat-a': group('agent-folder', 'Conversation A') };
 
     const resolved = resolveExecutionContext(
-      job({ group_scope: 'agent-folder' }),
+      job({ workspace_key: 'agent-folder' }),
       groups,
     );
 
@@ -87,7 +119,7 @@ describe('resolveExecutionContext', () => {
         execution_context: {
           conversationJid: 'chat-missing',
           threadId: null,
-          groupScope: 'agent-folder',
+          workspaceKey: 'agent-folder',
         },
         notification_routes: [
           { conversationJid: 'chat-a', threadId: null, label: 'backup' },

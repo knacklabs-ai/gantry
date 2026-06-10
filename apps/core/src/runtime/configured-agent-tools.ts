@@ -6,12 +6,11 @@ import {
   resolveAgentToolRuntimePolicy,
   resolveAgentToolRuntimeRules,
 } from '../application/agents/agent-tool-runtime-rules.js';
+import type { CapabilityRuntimeAccess } from '../shared/capability-runtime-access.js';
 
 export interface ConfiguredAgentToolPolicy {
-  allowedTools: string[] | undefined;
-  localCliCredentialAccess: boolean;
-  localCliCredentialPaths: string[];
-  localCliNetworkHosts: string[];
+  toolPolicyRules: string[] | undefined;
+  runtimeAccess: CapabilityRuntimeAccess[];
 }
 
 export async function resolveConfiguredAllowedTools(input: {
@@ -38,10 +37,8 @@ export async function resolveConfiguredToolPolicy(input: {
 }): Promise<ConfiguredAgentToolPolicy> {
   if (!input.repository) {
     return {
-      allowedTools: undefined,
-      localCliCredentialAccess: false,
-      localCliCredentialPaths: [],
-      localCliNetworkHosts: [],
+      toolPolicyRules: undefined,
+      runtimeAccess: [],
     };
   }
   const policy = await resolveAgentToolRuntimePolicy({
@@ -52,9 +49,7 @@ export async function resolveConfiguredToolPolicy(input: {
     skillRepository: input.skillRepository,
   });
   return {
-    allowedTools: policy.rules,
-    localCliCredentialAccess: policy.localCliCredentialAccess,
-    localCliCredentialPaths: policy.localCliCredentialPaths,
-    localCliNetworkHosts: policy.localCliNetworkHosts,
+    toolPolicyRules: policy.rules,
+    runtimeAccess: policy.runtimeAccess,
   };
 }

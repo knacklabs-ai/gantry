@@ -5,6 +5,7 @@ import {
   RUN_COMMAND_TOOL_NAME,
   validateReadableAgentToolRule,
 } from './agent-tool-references.js';
+import { parseDeclaredNetworkHost } from './network-host-declaration.js';
 import {
   isValidSemanticCapabilityId,
   parseSemanticCapabilityRule,
@@ -15,8 +16,6 @@ import { NEUTRAL_CA_TRUST_ENV_KEYS } from './neutral-ca-trust-env.js';
 
 export type SemanticCapabilityRisk = 'read' | 'write' | 'admin';
 export type SemanticCapabilityCredentialSource =
-  | 'onecli'
-  | 'external_broker'
   | 'configured_access'
   | 'skill_secret'
   | 'local_cli'
@@ -72,6 +71,14 @@ export interface SemanticCapabilityDefinition {
 }
 
 const SEMANTIC_CAPABILITY_SCHEMA_FORMAT = 'gantry.semantic-capability.v1';
+const LOCAL_CLI_MISSING_BINDING_REASON =
+  'Local CLI capabilities require a local_cli implementation binding.';
+const LOCAL_CLI_BINDING_SOURCE_REASON =
+  'Local CLI bindings require credentialSource local_cli.';
+const NETWORK_HOSTS_SOURCE_REASON =
+  'networkHosts are only supported for local_cli or skill action capabilities.';
+const LOCAL_CLI_PROTECTED_PATHS_REASON =
+  'protectedPaths are only supported for local_cli capabilities.';
 
 export const DEFAULT_LOCAL_CLI_DENIED_ENV_PATTERNS = [
   '*TOKEN*',
@@ -89,158 +96,6 @@ export const DEFAULT_LOCAL_CLI_DENIED_ENV_PATTERNS = [
 ] as const;
 
 const NEUTRAL_CA_TRUST_ENV_KEY_SET = new Set<string>(NEUTRAL_CA_TRUST_ENV_KEYS);
-const GOG_EXECUTABLE_PATH = '/opt/homebrew/bin/gog';
-const GOG_EXECUTABLE_VERSION = 'v0.9.0';
-const GOG_EXECUTABLE_HASH =
-  'sha256:011a66fc2701d74a9009ce0b5c022f2360872326a138531c3ff674a1837f5738';
-const GOG_PROTECTED_PATHS = [
-  '${XDG_CONFIG_HOME}/gog',
-  '~/.config/gog',
-  '~/.gog',
-  '%APPDATA%\\gogcli',
-  '%LOCALAPPDATA%\\gogcli',
-  '~/Library/Application Support/gogcli',
-];
-const GOG_NETWORK_HOSTS = ['oauth2.googleapis.com', 'sheets.googleapis.com'];
-
-function gogSheetsCapability(input: {
-  capabilityId: string;
-  displayName: string;
-  risk: SemanticCapabilityRisk;
-  action: 'get' | 'update' | 'append';
-  can: string;
-  cannot: string;
-}): SemanticCapabilityDefinition {
-  return {
-    capabilityId: input.capabilityId,
-    version: '1',
-    displayName: input.displayName,
-    category: 'Google Sheets',
-    risk: input.risk,
-    accountLabel: 'Configured gog CLI account',
-    can: input.can,
-    cannot: input.cannot,
-    credentialSource: 'local_cli',
-    implementationBindings: [
-      {
-        kind: 'local_cli',
-        executablePath: GOG_EXECUTABLE_PATH,
-        executableVersion: GOG_EXECUTABLE_VERSION,
-        executableHash: GOG_EXECUTABLE_HASH,
-        commandTemplates: [`${GOG_EXECUTABLE_PATH} sheets ${input.action} *`],
-        authPreflightCommand: `${GOG_EXECUTABLE_PATH} auth status`,
-        deniedEnvPatterns: [...DEFAULT_LOCAL_CLI_DENIED_ENV_PATTERNS],
-      },
-    ],
-    preflight: {
-      kind: 'command',
-      command: `${GOG_EXECUTABLE_PATH} auth status`,
-    },
-    protectedPaths: GOG_PROTECTED_PATHS,
-    networkHosts: GOG_NETWORK_HOSTS,
-    sandboxProfile: { network: 'required', filesystem: 'credential_read' },
-    redactionPolicy: {
-      env: [...DEFAULT_LOCAL_CLI_DENIED_ENV_PATTERNS],
-      commandParts: ['token', 'secret', 'password'],
-    },
-    source: {
-      source: 'local_cli',
-      executablePath: GOG_EXECUTABLE_PATH,
-      executableHash: GOG_EXECUTABLE_HASH,
-    },
-  };
-}
-
-const BUILTIN_SEMANTIC_CAPABILITIES = [
-  {
-    capabilityId: 'google.sheets.read',
-    displayName: 'Google Sheets read',
-    category: 'Google Sheets',
-    risk: 'read',
-    accountLabel: 'Configured Google access',
-    can: 'Read spreadsheet metadata and cell values through configured Google access.',
-    cannot:
-      'Edit spreadsheets, change sharing, access Gmail, or receive raw OAuth tokens.',
-    credentialSource: 'configured_access',
-    implementationBindings: [
-      { kind: 'adapter', adapterRef: 'configured.google.sheets.read' },
-    ],
-    preflight: { kind: 'none' },
-    sandboxProfile: { network: 'required', filesystem: 'read_only' },
-  },
-  {
-    capabilityId: 'google.sheets.write',
-    displayName: 'Google Sheets write',
-    category: 'Google Sheets',
-    risk: 'write',
-    accountLabel: 'Configured Google access',
-    can: 'Read and update spreadsheet values through configured Google access.',
-    cannot:
-      'Change sharing, manage Drive files outside Sheets operations, access Gmail, or receive raw OAuth tokens.',
-    credentialSource: 'configured_access',
-    implementationBindings: [
-      { kind: 'adapter', adapterRef: 'configured.google.sheets.write' },
-    ],
-    preflight: { kind: 'none' },
-    sandboxProfile: { network: 'required', filesystem: 'read_only' },
-  },
-  {
-    capabilityId: 'gmail.read',
-    displayName: 'Gmail read',
-    category: 'Gmail',
-    risk: 'read',
-    accountLabel: 'Configured Google access',
-    can: 'Search and read Gmail message metadata and bodies through configured Google access.',
-    cannot:
-      'Send mail, delete mail, change labels, access Sheets, or receive raw OAuth tokens.',
-    credentialSource: 'configured_access',
-    implementationBindings: [
-      { kind: 'adapter', adapterRef: 'configured.gmail.read' },
-    ],
-    preflight: { kind: 'none' },
-    sandboxProfile: { network: 'required', filesystem: 'read_only' },
-  },
-  gogSheetsCapability({
-    capabilityId: 'gog.sheets.get',
-    displayName: 'Gog Sheets get',
-    risk: 'read',
-    action: 'get',
-    can: 'Read spreadsheet values through the pinned gog CLI.',
-    cannot:
-      'Edit spreadsheets, change sharing, access Gmail, or receive raw Google credentials.',
-  }),
-  gogSheetsCapability({
-    capabilityId: 'gog.sheets.update',
-    displayName: 'Gog Sheets update',
-    risk: 'write',
-    action: 'update',
-    can: 'Update spreadsheet values through the pinned gog CLI.',
-    cannot:
-      'Change sharing, manage Drive files outside Sheets operations, access Gmail, or receive raw Google credentials.',
-  }),
-  gogSheetsCapability({
-    capabilityId: 'gog.sheets.append',
-    displayName: 'Gog Sheets append',
-    risk: 'write',
-    action: 'append',
-    can: 'Append spreadsheet values through the pinned gog CLI.',
-    cannot:
-      'Change sharing, manage Drive files outside Sheets operations, access Gmail, or receive raw Google credentials.',
-  }),
-] as const satisfies readonly SemanticCapabilityDefinition[];
-
-export function listBuiltinSemanticCapabilities(): SemanticCapabilityDefinition[] {
-  return BUILTIN_SEMANTIC_CAPABILITIES.map(cloneCapabilityDefinition);
-}
-
-export function getBuiltinSemanticCapability(
-  capabilityId: string,
-): SemanticCapabilityDefinition | undefined {
-  const found = BUILTIN_SEMANTIC_CAPABILITIES.find(
-    (capability) => capability.capabilityId === capabilityId,
-  );
-  return found ? cloneCapabilityDefinition(found) : undefined;
-}
 
 export function semanticCapabilityInputSchema(
   capability: SemanticCapabilityDefinition,
@@ -271,12 +126,9 @@ export function semanticCapabilityFromToolCatalogItem(input: {
   name?: string;
   inputSchema?: unknown;
 }): SemanticCapabilityDefinition | undefined {
-  const capabilityId = input.name
-    ? parseSemanticCapabilityRule(input.name)
-    : undefined;
   const schemaCapability = parseSemanticCapabilitySchema(input.inputSchema);
   if (schemaCapability) return schemaCapability;
-  return capabilityId ? getBuiltinSemanticCapability(capabilityId) : undefined;
+  return undefined;
 }
 
 export function semanticCapabilityRuntimeRules(
@@ -285,7 +137,10 @@ export function semanticCapabilityRuntimeRules(
   const rules = capability.implementationBindings.flatMap((binding) => {
     if (binding.rule) return [binding.rule.trim()];
     if (binding.mcpTool) return [binding.mcpTool.trim()];
-    if (binding.kind === 'local_cli') {
+    if (
+      binding.kind === 'local_cli' &&
+      capability.credentialSource === 'local_cli'
+    ) {
       return (binding.commandTemplates ?? []).map(
         (template) => `${RUN_COMMAND_TOOL_NAME}(${template.trim()})`,
       );
@@ -318,9 +173,7 @@ export function expandSemanticCapabilityPermissionRules(input: {
     out.add(trimmed);
     const capabilityId = parseSemanticCapabilityRule(trimmed);
     if (!capabilityId) continue;
-    const definition =
-      input.definitions?.[capabilityId] ??
-      getBuiltinSemanticCapability(capabilityId);
+    const definition = input.definitions?.[capabilityId];
     if (!definition) continue;
     for (const runtimeRule of semanticCapabilityRuntimeRules(definition)) {
       if (runtimeRule.trim()) out.add(runtimeRule.trim());
@@ -354,6 +207,37 @@ export function validateSemanticCapabilityDefinition(
       reason: 'Capability must include at least one implementation binding.',
     };
   }
+  const hasLocalCliBinding = capability.implementationBindings.some(
+    (binding) => binding.kind === 'local_cli',
+  );
+  const hasNetworkHosts = (capability.networkHosts ?? []).some((host) =>
+    host.trim(),
+  );
+  const isSkillAction = isSkillActionCapability(capability);
+  if (capability.credentialSource === 'local_cli' && !hasLocalCliBinding) {
+    return { ok: false, reason: LOCAL_CLI_MISSING_BINDING_REASON };
+  }
+  if (capability.credentialSource !== 'local_cli') {
+    if (hasLocalCliBinding)
+      return { ok: false, reason: LOCAL_CLI_BINDING_SOURCE_REASON };
+    // Skill action capabilities (credentialSource skill_secret) may declare
+    // networkHosts; validate proposals with the same parser as manifests.
+    if (
+      hasNetworkHosts &&
+      (capability.credentialSource !== 'skill_secret' || !isSkillAction)
+    ) {
+      return { ok: false, reason: NETWORK_HOSTS_SOURCE_REASON };
+    }
+    if ((capability.protectedPaths ?? []).some((item) => item.trim())) {
+      return { ok: false, reason: LOCAL_CLI_PROTECTED_PATHS_REASON };
+    }
+  }
+  for (const host of capability.networkHosts ?? []) {
+    const validation = parseDeclaredNetworkHost(host);
+    if (!validation.ok) {
+      return { ok: false, reason: `networkHosts ${validation.reason}` };
+    }
+  }
   for (const binding of capability.implementationBindings) {
     const validation = validateSemanticCapabilityBinding(binding);
     if (!validation.ok) return validation;
@@ -377,6 +261,18 @@ export function validateSemanticCapabilityDefinition(
     }
   }
   return { ok: true };
+}
+
+function isSkillActionCapability(
+  capability: SemanticCapabilityDefinition,
+): boolean {
+  const source = capability.source;
+  return (
+    Boolean(source) &&
+    typeof source === 'object' &&
+    !Array.isArray(source) &&
+    (source as { kind?: unknown }).kind === 'skill_action'
+  );
 }
 
 export function buildLocalCliSemanticCapability(input: {
@@ -437,10 +333,7 @@ export function buildLocalCliSemanticCapability(input: {
 export function capabilityDisplayNameForRule(rule: string): string | undefined {
   const capabilityId = parseSemanticCapabilityRule(rule);
   if (!capabilityId) return undefined;
-  return (
-    getBuiltinSemanticCapability(capabilityId)?.displayName ??
-    skillActionCapabilityDisplayName(capabilityId)
-  );
+  return skillActionCapabilityDisplayName(capabilityId);
 }
 
 export function semanticCapabilityDefinitionFromToolInput(

@@ -16,9 +16,9 @@ different runtime home.
 
 Host runtime is the only supported runtime mode. Treat `settings.yaml` as the
 source of truth for runtime behavior. Treat `.env` as the place for
-runtime-owned secrets and process-specific launch values; agent-accessed model
-and tool credentials must go through OneCLI or the selected credential broker,
-not raw runtime env.
+runtime-owned secrets and process-specific launch values. Agent-accessed model
+and tool credentials must go through Gantry Credential Center, not raw runtime
+env.
 
 ## Current CLI Surface
 
@@ -72,6 +72,11 @@ gantry agent edit <agentId> [--name <name>] [--disabled|--active]
 gantry agent capabilities <agentId> --tools <ids> --skills <ids> --mcp <ids>
 gantry agent dm-access <agentId> --provider <provider> --allow <userId,userId> --admin <userId>
 gantry agent audit <agentId>
+gantry agent profile list <agentId>
+gantry agent profile read <agentId> <soul|agents>
+gantry agent profile set <agentId> <soul|agents> --file <path|-> [--expect-version N]
+gantry agent profile import <agentId> <soul|agents>
+gantry agent profile export <agentId> [<soul|agents>]
 
 gantry channel onboard <slack|teams|telegram> --external-id <id> --title <name>
 gantry channel list
@@ -160,19 +165,20 @@ Runtime memory:
 
 - Host runtime injects durable Gantry memory context at live session or job
   start. It does not replay Postgres transcripts as automatic prompt context.
-- Do not configure Codex memory hooks for runtime continuity; provider hook
+- Do not configure Claude memory hooks for runtime continuity; provider hook
   output and JSONL transcripts are not Gantry session state.
 
-Runtime Codex settings and skills are generated into a temporary per-run
-`CLAUDE_CONFIG_DIR`. Runtime-home `.Codex/skills` is not the skill source of
-truth. Do not install separate global Codex hooks for Gantry memory. Generated
-runtime settings do not install memory hooks.
+Runtime Claude settings and skills are generated into a temporary per-run
+`CLAUDE_CONFIG_DIR`. Runtime-home provider skill folders are not the skill
+source of truth. Do not install separate global Claude hooks for Gantry memory.
+Generated runtime settings do not install memory hooks.
 
 Capability changes are never direct edits. Agents must not run dependency
-install commands, edit `.Codex/skills`, edit `.mcp.json`, edit `settings.yaml`,
-edit Codex permission settings, or mutate generated capability config. Every
-capability change goes through request, review, approval or denial, durable
-audit, and a new config version. Tool permission approval can also resume the
+install commands, edit provider skill folders, edit `.mcp.json`, edit
+`settings.yaml`, edit provider permission settings, or mutate generated runtime
+config. Every capability change goes through request, review, approval or
+denial, durable audit, and a new config version. Tool permission approval can
+also resume the
 blocked active tool call: `Allow once` is current-run only, while `Always allow`
 updates the target agent capability binding, mirrors `settings.yaml`, and
 applies to future runs too.
@@ -183,15 +189,11 @@ Use these Gantry tools for capability work:
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `send_message`                     | Progress updates or direct channel messages while the agent is still running.                                                                   |
 | `ask_user_question`                | Structured choices only; supports content, options, single-select, multi-select, preview/details, and channel-native buttons.                   |
-| `request_skill_install`            | Provider-backed skill installs such as `gantryhub:<slug>@<version>`.                                                                              |
+| `request_skill_install`            | Skill source installs such as `gantryhub:<slug>@<version>`; install/connect never creates risky action authority.                                    |
 | `request_skill_proposal`           | Agent-created or modified skill file bundles for review.                                                                                        |
 | `request_skill_dependency_install` | npm, brew, go, uv, or download dependencies required by a skill; never run those commands directly.                                             |
-| `request_mcp_server`               | Third-party MCP server requests with transport, origin, tool patterns, credentials, and reason.                                                 |
-| `capability_search`                | Find semantic app/tool capabilities such as `google.sheets.write` before asking for raw tool access.                                            |
-| `request_capability`               | Request a reviewed semantic capability for durable agent/job reuse.                                                                             |
-| `propose_local_cli_capability`     | Propose an authenticated local CLI as a reviewed semantic capability with pinned executable, command templates, preflight, and protected paths. |
-| `manage_capability`                | View, revoke, change, test, or inspect audit history for semantic capabilities.                                                                 |
-| `request_permission`               | One-off exact tool access, scoped Bash fallback, and internal/provider permission requests when no semantic capability fits.                    |
+| `request_mcp_server`               | Third-party MCP source requests with transport, origin, tool patterns, credentials, and reason.                                                  |
+| `request_access`                   | One agent access tool. `target.kind=capability` requests an already-reviewed semantic capability by id for durable access; `target.kind=run_command` requests a scoped exact-command fallback (e.g. `"npm test *"`) and should set `temporaryOnly=true` for one-off use. |
 | `service_restart`                  | Main/admin agent only, after approved config or capability changes when host restart is needed.                                                 |
 | `register_agent`                   | Main/admin agent only, for binding a new channel conversation to an agent.                                                                      |
 
@@ -206,18 +208,17 @@ Permission selection:
   answer, multi-select when multiple answers are valid, and include concise
   option descriptions so Slack, Telegram, Teams, and Web/API can render native
   controls.
-- Use `request_permission` when a low-level one-off or fallback permission is
-  needed for provider-neutral tools or provider/channel capabilities such as
-  `Bash`, `Write`, `Edit`, the canonical `Browser` tool, scheduler tools,
-  memory tools, service tools, Slack file reads, Telegram file downloads, Teams
-  proactive messages, Teams card updates, or Web/API file browser access.
-- For app/tool workflows such as Google Sheets, Gmail, or business CLIs, call
-  `capability_search` first, then `request_capability` or
-  `propose_local_cli_capability` so the user approves a semantic capability
-  instead of a raw command.
-- Permission prompts offer `Allow once`, `Always allow for this agent/job` for
+- Use `request_access` with `target.kind=run_command` and `temporaryOnly=true`
+  when a scoped one-off exact-command fallback is needed and no reviewed
+  capability fits, such as a bounded `Bash`-style command like `npm test *` or
+  `git status`. Never request a broad `cli *` pattern.
+- For app/tool workflows such as records, publishing, repository checks, or
+  business CLIs, use `request_access` with `target.kind=capability` and a
+  reviewed capability id so the user approves a semantic capability instead of a
+  raw command.
+- Permission prompts offer `Allow once`, `Always allow for this agent` for
   semantic capabilities, `Always allow Browser`,
-  `Always allow mcp__gantry__<admin_tool>`,
+  persistent access for exact Gantry admin tools,
   `Always allow Bash(<literal command prefix pattern>)`, and `Cancel`.
 - Use the narrowest useful permission request:
   - Ask for temporary/one-time access when the action is rare, exploratory, or
@@ -230,20 +231,20 @@ Permission selection:
     likely to repeat, using a literal command prefix such as
     `Bash(npm test *)`. Persistent bare `Bash`, `Bash(*)`, and leading-wildcard
     shell rules are not allowed.
-  - Non-Bash persistent fallback grants are limited to canonical `Browser` and
+  - Non-Bash persistent fallback authority is limited to canonical `Browser` and
     selected first-party Gantry admin tools. Broad exact SDK/native tools such
     as `Read`, `Write`, `Edit`, `WebFetch`, or `Agent`, exact third-party MCP
     tools, scoped non-Bash rules such as `Edit(/docs/**)`, and durable MCP
     wildcards are not supported.
-  - User-defined `local_cli` capabilities are reviewed drafts until runtime
+  - User-defined `local_cli` capabilities remain Needs Review until runtime
     enforcement verifies executable identity, auth preflight, protected paths,
     and denied environment overrides on each invocation. Do not replace that
     gate with broad `Bash(cli *)`.
   - Browser authority is always the exact canonical `Browser` capability.
-    Runtime browser action tool names are projections, not durable grants.
+    Runtime browser action tool names are projections, not durable authority.
 - Browser state is scoped by agent plus conversation. Jobs inherit the target
-  agent's selected tools, skills, and MCP servers at run time; jobs do not carry
-  job-scoped tool, skill, or MCP grants. If a scheduled job needs a missing tool
+  agent's allowed capabilities and attached sources at run time; jobs do not carry
+  job-scoped tool, skill, or MCP authority. If a scheduled job needs a missing tool
   permission, the approval prompt uses the same channel/thread/topic flow as an
   agent run and resumes the blocked tool call after approval. Skill and MCP
   additions are requested through `request_skill_install`,
@@ -279,6 +280,70 @@ Global options:
 gantry --runtime-home <path> ...
 gantry --help
 ```
+
+## Permission Management
+
+Never edit permission files, `settings.yaml` permission blocks, `.claude`
+settings, or generated runtime config directly to change access. All grant
+changes go through reviewed runtime tools with durable audit.
+
+List current grants:
+
+- `admin_permission_list` is read-only and available without an admin grant. Use
+  it to see the agent's enabled admin tools, visible tool rules, selected
+  skills, and attached MCP sources before requesting or revoking anything.
+
+Request missing access:
+
+- Use `request_access` with `target.kind=capability` (reviewed semantic
+  capability by id) for durable app/tool access, or `target.kind=run_command`
+  with `temporaryOnly=true` for a scoped one-off exact-command fallback.
+- Use `request_skill_install`, `request_skill_proposal`,
+  `request_skill_dependency_install`, or `request_mcp_server` for skill, skill
+  dependency, and MCP source access.
+
+Revoke stale or overly broad grants:
+
+- Use `admin_permission_revoke` (requires the
+  `mcp__gantry__admin_permission_revoke` grant) to remove one current-agent
+  persistent tool grant by `tool_name` (public tool rule or `mcp__gantry__`
+  name) or `tool_id` (durable catalog id such as `tool:Browser`), with a
+  `reason`. Proactively suggest revoking access that `admin_permission_list`
+  shows as unused or broader than needed.
+
+## Proactive Actions
+
+When a request matches one of these patterns, proactively propose the durable
+fix instead of repeating one-off work. Every path below is a reviewed runtime
+tool; none are direct file edits.
+
+- Recurring or time-based request -> create a scheduled job with
+  `scheduler_upsert_job` (`schedule_type` `cron` | `interval` | `once`). Manage
+  it with `scheduler_update_job`, `scheduler_run_now`, `scheduler_pause_job`,
+  `scheduler_resume_job`, `scheduler_delete_job`, and the `scheduler_list_*`
+  read tools.
+- Repeated steps or a reusable procedure -> propose or install a skill with
+  `request_skill_proposal` (agent-authored bundle) or `request_skill_install`
+  (source ref such as `gantryhub:<slug>@<version>`). Use
+  `request_skill_dependency_install` for any npm/brew/go/uv/download dependency;
+  never run package managers from the agent.
+- Connect an MCP server or external source -> `request_mcp_server` with
+  transport, origin, tool patterns, credentials, and reason.
+- The same bounded shell command repeats -> request a durable local CLI
+  capability with `request_access` (`target.kind=run_command`, leave
+  `temporaryOnly` false) using a literal command prefix; never request broad
+  `cli *`.
+- Missing secret -> report `Setup required: credential missing: <NAME>` and ask
+  the host admin to set it in Gantry Credential Center. Do not run
+  `gantry credentials ...` from an agent; that CLI reads protected runtime
+  config and is host/admin-only. The secret is entered outside chat and is
+  never pasted into the conversation.
+- Needs a runtime settings change -> read current state with
+  `settings_desired_state`, then submit `request_settings_update`
+  (`replacementYaml`, `expectedRevision` from the read, `reason`). Never edit
+  `settings.yaml` directly to change a reviewed agent's runtime behavior.
+- Host restart needed after approved config or capability changes ->
+  `service_restart` (main/admin agent only).
 
 ## settings.yaml
 
@@ -326,12 +391,6 @@ storage:
     url_env: GANTRY_DATABASE_URL
     schema: gantry
 
-credential_broker:
-  onecli:
-    postgres:
-      url_env: ONECLI_DATABASE_URL
-      schema: onecli
-
 memory:
   enabled: true
   embeddings:
@@ -342,9 +401,9 @@ memory:
     enabled: false
   llm:
     models:
-      extractor: Codex-haiku-4-5-20251001
-      dreaming: Codex-sonnet-4-6
-      consolidation: Codex-sonnet-4-6
+      extractor: claude-haiku-4-5-20251001
+      dreaming: claude-sonnet-4-6
+      consolidation: claude-sonnet-4-6
 ```
 
 Rules:
@@ -353,10 +412,8 @@ Rules:
 - Enabled channels require matching credentials in `.env`.
 - Postgres is the only runtime store. `storage.postgres.url_env` names the `.env` key that contains the actual URL; by default that is `GANTRY_DATABASE_URL`.
 - `GANTRY_DATABASE_URL` must point at a Postgres database with pgvector, full-text search support, and pg-boss initialized.
-- OneCLI broker state uses the same database with a separate schema and database role. `credential_broker.onecli.postgres.url_env` names the `.env` key that contains that URL; by default that is `ONECLI_DATABASE_URL`.
-- `ONECLI_DATABASE_URL` must include `schema=onecli`; OneCLI owns the `onecli` schema and Gantry must not query OneCLI-owned tables.
-- `GANTRY_DATABASE_URL` and `ONECLI_DATABASE_URL` must use different Postgres users. A Prisma `schema` URL parameter is not a security boundary by itself.
-- `SECRET_ENCRYPTION_KEY` is required for stateless OneCLI restarts. Treat it as a deployment secret, not runtime state.
+- `SECRET_ENCRYPTION_KEY` is required for encrypted Gantry credentials. Treat it
+  as a deployment secret, not runtime state.
 - `memory.embeddings.provider` is currently `disabled` or `openai`; the settings
   shape is intentionally provider-extensible.
 - External embedding providers require brokered Model Access. Do not put provider
@@ -389,7 +446,6 @@ TEAMS_CLIENT_ID=...
 TEAMS_CLIENT_SECRET=...
 TEAMS_TENANT_ID=...
 GANTRY_DATABASE_URL=...
-ONECLI_DATABASE_URL=...
 SECRET_ENCRYPTION_KEY=<generated base64-encoded 32-byte secret>
 GANTRY_IPC_AUTH_SECRET=...
 CHROME_PATH=...
@@ -399,11 +455,12 @@ LOG_LEVEL=info
 Use `gantry config list` to inspect configured keys. Use `gantry config get
 <KEY> --raw` only when the raw value is required.
 
-Credential broker mode, OneCLI gateway URL, model selection, and provider base
-URLs belong in `settings.yaml`, not `.env`. Agent runners receive only
-broker-safe model endpoint settings projected from typed runtime settings. Do
-not pass proxy, certificate, raw provider key, database URL, or channel-token
-values through Model Access.
+Model selection and provider base URLs belong in `settings.yaml`, not `.env`.
+Provider keys belong in Gantry Credential Center through host/admin setup
+(`gantry credentials model set <provider>`). Agents must not run credential CLI
+commands or inspect `settings.yaml`; they receive only the loopback Gantry Model
+Gateway URL and run-scoped gateway token. Do not pass raw provider keys,
+database URLs, or channel-token values through Model Access.
 
 ## Direct Edit Workflow
 
@@ -411,29 +468,24 @@ When setting up local services for personal use:
 
 1. Run `gantry local setup`.
 2. Run `gantry local doctor`.
-3. Confirm `.env` has `GANTRY_DATABASE_URL`, `ONECLI_DATABASE_URL`, and `SECRET_ENCRYPTION_KEY`; confirm the OneCLI URL is in `settings.yaml`.
-4. Continue with `gantry setup` or restart with `gantry restart`.
-5. Confirm with `gantry status`.
+3. Confirm `.env` has `GANTRY_DATABASE_URL` and `SECRET_ENCRYPTION_KEY`.
+4. From the host/admin shell, configure required model credentials with
+   `gantry credentials model set <provider>`.
+5. Continue with `gantry setup` or restart with `gantry restart`.
+6. Confirm with `gantry status`.
 
 When switching to a shared hosted database:
 
 1. Create one hosted Postgres database with `vector` and `pg_trgm`.
-2. Create schemas `gantry`, `onecli`, and `pgboss`.
-3. Create separate database users for Gantry and OneCLI and grant each only the schemas it owns or needs.
+2. Create schemas `gantry` and `pgboss`.
+3. Create a Gantry database user and grant only the schemas it owns or needs.
 4. Set `GANTRY_DATABASE_URL` to the Gantry-role database URL.
-5. Set `ONECLI_DATABASE_URL` to the OneCLI-role database URL with `schema=onecli`.
-6. Set a stable high-entropy `SECRET_ENCRYPTION_KEY`.
-7. Keep `settings.yaml storage.postgres.schema: gantry` and `credential_broker.onecli.postgres.schema: onecli`.
+5. Set a stable high-entropy `SECRET_ENCRYPTION_KEY`.
+6. Keep `settings.yaml storage.postgres.schema: gantry`.
+7. Configure required model credentials with
+   `gantry credentials model set <provider>`.
 8. Run `gantry doctor`.
 9. Restart with `gantry restart` or `gantry service restart`.
-
-When repairing OneCLI broker persistence:
-
-1. Run `gantry doctor`.
-2. Check `ONECLI_DATABASE_URL` includes `schema=onecli`.
-3. Check `SECRET_ENCRYPTION_KEY` is set and stable across restarts.
-4. Confirm OneCLI is started with `DATABASE_URL` sourced from `ONECLI_DATABASE_URL`.
-5. Run `gantry doctor` again.
 
 When switching to hosted Postgres:
 
@@ -511,7 +563,12 @@ Capability requests:
 - `mcp__gantry__request_skill_proposal`
 - `mcp__gantry__request_skill_dependency_install`
 - `mcp__gantry__request_mcp_server`
-- `mcp__gantry__request_permission`
+- `mcp__gantry__request_access`
+
+Agent profile (own SOUL.md / AGENTS.md):
+
+- `mcp__gantry__agent_profile_read`
+- `mcp__gantry__request_agent_profile_update`
 
 Service and agents:
 
@@ -564,9 +621,9 @@ Browser:
 Gantry owns browser lifecycle for the current agent conversation's Chrome
 profile. DM sessions, channel/group conversations, and jobs created from them
 use separate profiles by default. The runtime installs `gantry-browser` into the
-generated per-run Codex config and exposes Gantry-owned browser gateway tools
+generated per-run Claude config and exposes Gantry-owned browser gateway tools
 only when the canonical `Browser` capability is selected. Do not ask the user to
-install browser skills or edit `.Codex/skills` manually.
+install browser skills or edit provider skill folders manually.
 
 ## Scheduler Usage
 

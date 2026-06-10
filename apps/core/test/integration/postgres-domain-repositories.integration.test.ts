@@ -188,7 +188,7 @@ maybeDescribe('Postgres domain repositories', () => {
       'select value_encrypted from capability_secrets where app_id = $1 and name = $2',
       [appId, 'GITHUB_TOKEN'],
     );
-    expect(raw.rows[0]?.value_encrypted).toContain('enc:v1:');
+    expect(raw.rows[0]?.value_encrypted).toContain('gcred:v2:');
     expect(raw.rows[0]?.value_encrypted).not.toContain('plain-token-value');
   });
 
@@ -412,6 +412,15 @@ maybeDescribe('Postgres domain repositories', () => {
   it('stores source-only tool attachments separately from capability bindings', async () => {
     const updatedAt = '2026-05-02T00:00:00.000Z';
 
+    await repositories.agents.replaceAgentCapabilityBindings({
+      appId,
+      agentId,
+      toolBindings: [],
+      skillBindings: [],
+      mcpBindings: [],
+      updatedAt,
+    });
+
     await repositories.tools.replaceAgentToolSources?.({
       appId,
       agentId,
@@ -451,6 +460,100 @@ maybeDescribe('Postgres domain repositories', () => {
     expect(bindings).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ toolId: 'tool:Browser', status: 'active' }),
+      ]),
+    );
+  });
+
+  it('replaces agent access bindings and tool sources in one repository call', async () => {
+    const updatedAt = '2026-05-02T00:01:00.000Z';
+    const mcpServerId = 'mcp:repo-test' as never;
+
+    await repositories.mcpServers.saveServer({
+      id: mcpServerId,
+      appId,
+      name: 'repo-test',
+      status: 'active',
+      createdSource: 'admin',
+      riskClass: 'medium',
+      transport: 'stdio_template',
+      config: { transport: 'stdio_template', templateId: 'node-script' },
+      allowedToolPatterns: ['read_*', 'write_*'],
+      autoApproveToolPatterns: [],
+      credentialRefs: [],
+      networkHosts: [],
+      createdAt: updatedAt,
+      updatedAt,
+    });
+
+    await repositories.agents.replaceAgentAccess({
+      appId,
+      agentId,
+      toolBindings: [
+        {
+          id: `agent-tool-binding:${agentId}:tool:Browser` as never,
+          appId,
+          agentId,
+          toolId: 'tool:Browser' as never,
+          status: 'active',
+          createdAt: updatedAt,
+          updatedAt,
+        },
+      ],
+      skillBindings: [],
+      mcpBindings: [
+        {
+          id: `agent-mcp-binding:${agentId}:${mcpServerId}` as never,
+          appId,
+          agentId,
+          serverId: mcpServerId,
+          status: 'active',
+          required: false,
+          permissionPolicyIds: [],
+          allowedToolPatterns: ['read_*'],
+          createdAt: updatedAt,
+          updatedAt,
+        },
+      ],
+      toolSources: [
+        {
+          id: `agent-tool-source:${agentId}:builtin:browser:builtin` as never,
+          appId,
+          agentId,
+          sourceId: 'browser',
+          kind: 'builtin',
+          version: 'builtin',
+          status: 'active',
+          createdAt: updatedAt,
+          updatedAt,
+        },
+      ],
+      updatedAt,
+    });
+
+    await expect(
+      repositories.tools.listAgentToolBindings({ appId, agentId }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolId: 'tool:Browser', status: 'active' }),
+      ]),
+    );
+    await expect(
+      repositories.tools.listAgentToolSources?.({ appId, agentId }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        sourceId: 'browser',
+        kind: 'builtin',
+        status: 'active',
+      }),
+    ]);
+    await expect(
+      repositories.mcpServers.listAgentBindings({ appId, agentId }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serverId: mcpServerId,
+          allowedToolPatterns: ['read_*'],
+        }),
       ]),
     );
   });
@@ -1177,7 +1280,7 @@ maybeDescribe('Postgres domain repositories', () => {
       agentId,
       providerConnectionId: providerConnectionId,
       conversationId,
-      displayName: 'Personal Agent',
+      displayName: 'Default Agent',
       status: 'active',
       triggerMode: 'always',
       requiresTrigger: false,
@@ -1219,7 +1322,7 @@ maybeDescribe('Postgres domain repositories', () => {
         conversationId,
       }),
     ).resolves.toMatchObject({
-      displayName: 'Personal Agent',
+      displayName: 'Default Agent',
       status: 'disabled',
       triggerMode: 'always',
       memoryScope: 'conversation',

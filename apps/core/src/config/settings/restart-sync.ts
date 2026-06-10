@@ -10,6 +10,7 @@ import {
   removeAgentToolRulesFromRuntimeSettings,
   saveRuntimeSettings,
 } from './runtime-settings.js';
+import { normalizeConfiguredCapabilitiesInSettings } from './configured-capability-normalization.js';
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
 import type { RuntimeSettings } from './runtime-settings-types.js';
 
@@ -22,10 +23,19 @@ export async function applyRuntimeSettingsDesiredState(input: {
   previousSettings?: RuntimeSettings;
   reloadRuntimeState?: () => Promise<void>;
 }): Promise<void> {
-  const validation = validateLoadedRuntimeSettings(
-    input.runtimeHome,
-    input.settings,
-  );
+  const service = new SettingsDesiredStateService({
+    ops: input.ops,
+    repositories: input.repositories,
+    appId: input.appId,
+  });
+  const normalization = await normalizeConfiguredCapabilitiesInSettings({
+    settings: input.settings,
+    repositories: input.repositories,
+    appId: input.appId ?? ('default' as AppId),
+  });
+  const settings = normalization.settings;
+  const reconcileSettings = normalization.changed ? input.settings : settings;
+  const validation = validateLoadedRuntimeSettings(input.runtimeHome, settings);
   if (!validation.ok) {
     throw new Error(
       [
@@ -34,11 +44,6 @@ export async function applyRuntimeSettingsDesiredState(input: {
       ].join('\n'),
     );
   }
-  const service = new SettingsDesiredStateService({
-    ops: input.ops,
-    repositories: input.repositories,
-    appId: input.appId,
-  });
   const rollback = async () => {
     if (!input.previousSettings) return;
     saveRuntimeSettings(input.runtimeHome, input.previousSettings);
@@ -46,8 +51,8 @@ export async function applyRuntimeSettingsDesiredState(input: {
     await input.reloadRuntimeState?.();
   };
   try {
-    saveRuntimeSettings(input.runtimeHome, input.settings);
-    const reconcile = await service.reconcile(input.settings);
+    saveRuntimeSettings(input.runtimeHome, settings);
+    const reconcile = await service.reconcile(reconcileSettings);
     if (reconcile.invalidReferences.length > 0) {
       throw new Error(
         `settings desired state contains invalid references:\n${reconcile.invalidReferences.join('\n')}`,

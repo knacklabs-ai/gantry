@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { nowIso } from '../../../shared/time/datetime.js';
 import {
+  availableSemanticCapabilities,
   capabilityStatusText,
   chatJid,
   isAdminMcpToolEnabled,
@@ -19,18 +20,22 @@ import {
   formatMcpListToolsResponse,
   formatSkillProposalResponse,
 } from './service-formatters.js';
-import { registerSemanticCapabilityTools } from './capabilities.js';
+import { registerAccessRequestTool } from './capabilities.js';
 import { registerAdminPermissionTools } from './admin-permissions.js';
 import { registerSettingsTools } from './settings.js';
 import { makeIpcId } from '../ipc-ids.js';
 import type { AdminMcpToolName } from '../../../shared/admin-mcp-tools.js';
 import { humanizeTechnicalIdentifier } from '../../../shared/user-visible-messages.js';
+import {
+  SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
+  UNREVIEWED_DISCOVERY_GUIDANCE,
+} from '../../../shared/capability-guidance.js';
 
 export function registerServiceTools(server: McpServer): void {
   registerSkillProposalTool(
     server,
     'request_skill_proposal',
-    'Submit an agent-created or modified skill bundle for same-conversation admin review. Approval makes the skill available to this agent.',
+    'Request skill source setup for an agent-created or modified skill bundle. Approval makes the skill available as inventory; risky actions still require reviewed capability access.',
   );
   registerSettingsTools(server, { isAdminToolEnabled: isAdminMcpToolEnabled });
   registerAdminPermissionTools(server, {
@@ -38,17 +43,8 @@ export function registerServiceTools(server: McpServer): void {
   });
 
   server.tool(
-    'capability_status',
-    'Show selected Gantry capabilities, attached skills/MCP services, and high-level requestable capabilities for this agent.',
-    {},
-    async () => ({
-      content: [{ type: 'text' as const, text: capabilityStatusText() }],
-    }),
-  );
-
-  server.tool(
     'request_skill_install',
-    'Request a skill install for same-conversation admin approval. Approval installs and enables staged files, or runs an approved installer command in host-controlled staging and imports the resulting SKILL.md package.',
+    'Request skill source setup for same-conversation admin approval. Approval installs staged files, or runs an approved installer command in host-controlled staging and imports the resulting SKILL.md package. Skill source approval records inventory only; reviewed gantry.skill.json actions become capability candidates.',
     {
       expectedFiles: z
         .array(z.string())
@@ -61,7 +57,7 @@ export function registerServiceTools(server: McpServer): void {
       requiredEnvVars: z
         .array(z.string())
         .optional()
-        .describe('Env var names this skill needs from Gantry Secrets'),
+        .describe('Env var names this skill needs from Gantry Credentials'),
       files: z
         .array(
           z.object({
@@ -115,7 +111,7 @@ export function registerServiceTools(server: McpServer): void {
   );
   server.tool(
     'request_skill_dependency_install',
-    'Request host-installed dependencies needed by a reviewed skill. Approval records the admin decision; the agent never runs install commands directly.',
+    'Request host-installed dependencies needed by a reviewed skill source. Approval records setup inventory; the agent never runs install commands directly.',
     {
       ecosystem: z
         .enum(['npm', 'brew', 'go', 'uv', 'download'])
@@ -159,124 +155,32 @@ export function registerServiceTools(server: McpServer): void {
         },
       ),
   );
-  server.tool(
-    'request_permission',
-    [
-      'Request one reviewed transient or fallback permission for the current agent.',
-      'Do not use this for semantic capability grants or capability proposals; use capability_search/propose_capability so users approve durable capabilities.',
-      'Use this directly for one-off exact tool access, provider/channel permissions, internal Browser requests, or scoped RunCommand fallback rules such as RunCommand(npm test *) when no reviewed semantic capability fits.',
-      'Use request_skill_install/request_skill_proposal for skills and request_mcp_server for third-party MCP server access.',
-    ].join(' '),
-    {
-      permissionKind: z
-        .enum(['tool', 'provider_capability'])
-        .optional()
-        .describe(
-          'Use tool for SDK/host/browser/scheduler/memory/service/MCP tool access; use provider_capability for Slack/Teams/Telegram provider capabilities.',
-        ),
-      toolName: z
-        .string()
-        .optional()
-        .describe(
-          'Single public fallback tool name to enable. Use RunCommand only with a rule; use exact Gantry names such as FileEdit, FileWrite, WebRead, AgentDelegation, Browser, scheduler_create_job, or an MCP tool name for non-command tools.',
-        ),
-      toolNames: z
-        .array(z.string())
-        .optional()
-        .describe(
-          'Exact tool names to enable. Use multiple names only when the request truly needs them together.',
-        ),
-      rule: z
-        .string()
-        .optional()
-        .describe(
-          'Required scoped command pattern for persistent Bash approvals, such as npm test * or git status. For non-Bash tools this is reviewer context only and is not persisted.',
-        ),
-      temporaryOnly: z
-        .boolean()
-        .optional()
-        .describe(
-          'Set true when the permission is needed only for the current action or an exploratory one-off. Leave false/omitted only for semantic capabilities, Browser, exact Gantry admin tools, or persistent scoped RunCommand rules that are genuinely useful for future turns.',
-        ),
-      broadAccess: z
-        .boolean()
-        .optional()
-        .describe(
-          'Optional reviewer signal that the requested exact tool is broad. Explain the need in reason.',
-        ),
-      toolCategory: z
-        .string()
-        .optional()
-        .describe(
-          'Optional category such as sdk, host, browser, scheduler, memory, or service',
-        ),
-      riskClass: z
-        .enum(['low', 'medium', 'high', 'critical'])
-        .optional()
-        .describe(
-          'Requested risk classification. Broad shell, edit/write, network, credential, service, or wildcard MCP access should be high or critical.',
-        ),
-      permissionPolicy: z
-        .string()
-        .optional()
-        .describe(
-          'Optional requested permission policy such as "ask once" or "persistent".',
-        ),
-      sandboxProfile: z
-        .string()
-        .optional()
-        .describe('Optional requested sandbox profile'),
-      reason: z.string().describe('Why this exact tool capability is needed.'),
-      channelTool: z
-        .string()
-        .optional()
-        .describe(
-          'Provider-native capability name, such as slack_file_access. Use only with permissionKind=provider_capability.',
-        ),
-      providerId: z
-        .string()
-        .optional()
-        .describe('Optional provider such as slack, telegram, or teams'),
-      requiredScopes: z
-        .array(z.string())
-        .optional()
-        .describe('Provider scopes or permissions needed by this capability'),
-      affectedConversations: z
-        .array(z.string())
-        .optional()
-        .describe('Conversation ids or names affected by this capability'),
-    },
-    async (args) =>
-      submitCapabilityReviewTask('request_permission', 'Permission', {
-        permissionKind: args.permissionKind,
-        toolName: args.toolName,
-        toolNames: args.toolNames ?? [],
-        rule: args.rule,
-        temporaryOnly: args.temporaryOnly,
-        broadAccess: args.broadAccess,
-        toolCategory: args.toolCategory,
-        riskClass: args.riskClass,
-        permissionPolicy: args.permissionPolicy,
-        sandboxProfile: args.sandboxProfile,
-        channelTool: args.channelTool,
-        providerId: args.providerId,
-        requiredScopes: args.requiredScopes ?? [],
-        affectedConversations: args.affectedConversations ?? [],
-        reason: args.reason,
-      }),
-  );
-
-  registerSemanticCapabilityTools(server, submitCapabilityReviewTask);
+  registerAccessRequestTool(server, submitCapabilityReviewTask, {
+    listCapabilities: () => availableSemanticCapabilities,
+  });
 
   server.tool(
     'request_mcp_server',
-    'Request a third-party MCP server capability for admin review. This creates a pending request only; it never approves, binds, or activates the server.',
+    'Request third-party MCP source setup for admin review. Approval connects the source; raw MCP tools are inventory and do not become durable capabilities until reviewed.',
     {
       name: z
         .string()
         .describe('Short MCP server name, such as github or linear'),
-      transport: z.enum(['http', 'sse']).describe('Requested MCP transport'),
-      origin: z.string().optional().describe('Server URL'),
+      transport: z
+        .literal('stdio_template')
+        .describe('Requested MCP transport'),
+      templateId: z
+        .enum(['node-script', 'npx-package'])
+        .describe('Reviewed stdio template to use'),
+      args: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Template arguments. npx-package requires exactly one safe npm package spec.',
+        ),
+      sandboxProfileId: z
+        .string()
+        .describe('Reviewed sandbox profile for the stdio server process'),
       requestedToolPatterns: z
         .array(z.string())
         .optional()
@@ -285,6 +189,12 @@ export function registerServiceTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe('Credential reference names the admin should review'),
+      networkHosts: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Outbound hosts the server may reach, as exact host or host:port (no URLs, wildcards, or private/localhost targets)',
+        ),
       reason: z.string().describe('Why this capability is needed'),
       docsUrl: z.string().optional().describe('Optional documentation URL'),
     },
@@ -293,7 +203,7 @@ export function registerServiceTools(server: McpServer): void {
         'request_mcp_server',
         {
           name: args.name,
-          origin: args.origin,
+          origin: undefined,
           requestedToolPatterns: args.requestedToolPatterns ?? [],
           credentialNeeds: args.credentialNeeds ?? [],
           reason: args.reason,
@@ -311,9 +221,12 @@ export function registerServiceTools(server: McpServer): void {
         payload: {
           name: args.name,
           transport: args.transport,
-          origin: args.origin,
+          templateId: args.templateId,
+          args: args.args ?? [],
+          sandboxProfileId: args.sandboxProfileId,
           requestedToolPatterns: args.requestedToolPatterns ?? [],
           credentialNeeds: args.credentialNeeds ?? [],
+          networkHosts: args.networkHosts ?? [],
           reason: args.reason,
           docsUrl: args.docsUrl,
         },
@@ -344,7 +257,8 @@ export function registerServiceTools(server: McpServer): void {
             type: 'text' as const,
             text: formatMcpApprovalResponse(
               response.data,
-              response.message || 'MCP server approved. It is available now.',
+              response.message ||
+                'MCP server source connected. Review needed for durable action capabilities.',
             ),
           },
         ],
@@ -354,12 +268,12 @@ export function registerServiceTools(server: McpServer): void {
 
   server.tool(
     'mcp_list_tools',
-    'List tools from MCP servers that are already approved and bound to this agent. Use this for third-party MCP servers; do not call direct third-party mcp__server__tool names.',
+    'Refresh tools from MCP server sources connected to this agent. This is source inventory only; use reviewed action capabilities as the authority.',
     {
       serverName: z
         .string()
         .optional()
-        .describe('Optional approved MCP server name to inspect'),
+        .describe('Optional connected MCP server name to inspect'),
     },
     async (args) => {
       const taskId = makeIpcId('mcp-list-tools');
@@ -392,6 +306,8 @@ export function registerServiceTools(server: McpServer): void {
             type: 'text' as const,
             text: [
               formatMcpListToolsResponse(response.data),
+              SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
+              UNREVIEWED_DISCOVERY_GUIDANCE,
               capabilityStatusText(),
             ].join('\n\n'),
           },
@@ -402,9 +318,9 @@ export function registerServiceTools(server: McpServer): void {
 
   server.tool(
     'mcp_call_tool',
-    'Call a tool on an MCP server that is already approved and bound to this agent. Use this for third-party MCP servers; do not call direct third-party mcp__server__tool names.',
+    'Call a raw MCP source tool only when the requested action is covered by reviewed current-run capability access. Prefer the reviewed action capability as the product contract; do not call direct third-party mcp__server__tool names.',
     {
-      serverName: z.string().describe('Approved MCP server name'),
+      serverName: z.string().describe('Connected MCP server name'),
       toolName: z
         .string()
         .describe('Raw MCP tool name without the mcp__server__ prefix'),
@@ -418,6 +334,7 @@ export function registerServiceTools(server: McpServer): void {
       writeIpcFile(TASKS_DIR, {
         type: 'mcp_call_tool',
         taskId,
+        runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
         targetJid: chatJid,
         chatJid,
         authThreadId: threadId,
@@ -598,7 +515,7 @@ function adminToolUnavailable(toolName: AdminMcpToolName): {
         type: 'text',
         text: [
           `${humanizeTechnicalIdentifier(fullName)} is not approved for this agent yet.`,
-          `Ask a configured conversation approver to approve it, then choose Always allow. Details: ${fullName}.`,
+          `Ask a configured conversation approver to approve ${toolName}, then choose persistent access. Details: ${fullName}.`,
         ].join(' '),
       },
     ],
@@ -786,7 +703,7 @@ function registerSkillProposalTool(
             text: formatSkillProposalResponse(
               response.data,
               response.message ||
-                `${requestLabel} approved. It is available now.`,
+                `${requestLabel} installed. It is available now.`,
             ),
           },
         ],

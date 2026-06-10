@@ -8,15 +8,19 @@ import {
   DEFAULT_BROWSER_USAGE_MAX_CONCURRENT_PER_SITE,
   DEFAULT_BROWSER_USAGE_MODE,
   DEFAULT_BROWSER_USAGE_WINDOW_MS,
+  DEFAULT_EMBED_DIMENSIONS,
   DEFAULT_EMBED_MODEL,
+  DEFAULT_MEMORY_BACKFILL_CRON,
+  DEFAULT_MEMORY_BACKFILL_ENABLED,
+  DEFAULT_MEMORY_BACKFILL_MAX_ITEMS_PER_RUN,
+  DEFAULT_MEMORY_BACKFILL_MODE,
+  DEFAULT_MEMORY_BACKFILL_PROVIDER_BATCH_MIN_ITEMS,
   DEFAULT_MEMORY_DREAMING_CRON,
   DEFAULT_MEMORY_EMBED_BATCH_SIZE,
   DEFAULT_MEMORY_EXTRACTOR_MAX_FACTS,
   DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE,
   DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
-  DEFAULT_ONECLI_DATABASE_URL_ENV,
-  DEFAULT_ONECLI_POSTGRES_SCHEMA,
-  DEFAULT_ONECLI_URL,
+  DEFAULT_MODEL_GATEWAY_BIND_HOST,
   DEFAULT_OPENAI_DAILY_EMBED_LIMIT,
   DEFAULT_STORAGE_POSTGRES_SCHEMA,
   DEFAULT_STORAGE_POSTGRES_URL_ENV,
@@ -26,7 +30,6 @@ import type {
   RuntimeCredentialBrokerSettings,
   RuntimeAgentSettings,
   RuntimeBrowserSettings,
-  RuntimeConfiguredAgentCapability,
   RuntimeConfiguredAgentSourceRef,
   RuntimeConfiguredAgent,
   RuntimeConfiguredBinding,
@@ -117,8 +120,15 @@ function renderMemorySettingsYaml(
     `    enabled: ${memory.embeddings.enabled ? 'true' : 'false'}`,
     `    provider: ${memory.embeddings.provider}`,
     `    model: ${quoteYamlString(memory.embeddings.model)}`,
+    `    dimensions: ${memory.embeddings.dimensions}`,
     `    daily_limit: ${memory.embeddings.dailyLimit}`,
     `    batch_size: ${memory.embeddings.batchSize}`,
+    '    backfill:',
+    `      enabled: ${memory.embeddings.backfill.enabled ? 'true' : 'false'}`,
+    `      cron: ${quoteYamlString(memory.embeddings.backfill.cron)}`,
+    `      max_items_per_run: ${memory.embeddings.backfill.maxItemsPerRun}`,
+    `      mode: ${memory.embeddings.backfill.mode}`,
+    `      provider_batch_min_items: ${memory.embeddings.backfill.providerBatchMinItems}`,
     '  dreaming:',
     `    enabled: ${memory.dreaming.enabled ? 'true' : 'false'}`,
     `    cron: ${quoteYamlString(memory.dreaming.cron)}`,
@@ -195,6 +205,11 @@ function renderConfiguredAgentsYaml(
     if (agent.persona && agent.persona !== 'developer') {
       lines.push(`    persona: ${quoteYamlString(agent.persona)}`);
     }
+    if (agent.relationshipMode && agent.relationshipMode !== 'personal') {
+      lines.push(
+        `    relationship_mode: ${quoteYamlString(agent.relationshipMode)}`,
+      );
+    }
     if (agent.model) {
       lines.push(`    model: ${quoteYamlString(agent.model)}`);
     }
@@ -208,27 +223,37 @@ function renderConfiguredAgentsYaml(
         `    recurring_job_default_model: ${quoteYamlString(agent.recurringJobDefaultModel)}`,
       );
     }
-    renderAgentSourcesYaml(lines, agent);
-    renderAgentCapabilitiesYaml(lines, agent.capabilities);
+    renderAgentAccessYaml(lines, agent);
   }
   lines.push('');
 }
 
-function renderAgentSourcesYaml(
+function renderAgentAccessYaml(
   lines: string[],
   agent: RuntimeConfiguredAgent,
 ): void {
-  if (
-    agent.sources.skills.length === 0 &&
-    agent.sources.mcpServers.length === 0 &&
-    agent.sources.tools.length === 0
-  ) {
+  const hasSources =
+    agent.sources.skills.length > 0 ||
+    agent.sources.mcpServers.length > 0 ||
+    agent.sources.tools.length > 0;
+  const hasSelections = agent.capabilities.length > 0;
+  if (!hasSources && !hasSelections) {
     return;
   }
-  lines.push('    sources:');
-  renderAgentSourceListYaml(lines, 'skills', agent.sources.skills);
-  renderAgentSourceListYaml(lines, 'mcp_servers', agent.sources.mcpServers);
-  renderAgentSourceListYaml(lines, 'tools', agent.sources.tools);
+  lines.push('    access:');
+  if (hasSources) {
+    lines.push('      sources:');
+    renderAgentSourceListYaml(lines, 'skills', agent.sources.skills);
+    renderAgentSourceListYaml(lines, 'mcp_servers', agent.sources.mcpServers);
+    renderAgentSourceListYaml(lines, 'tools', agent.sources.tools);
+  }
+  if (hasSelections) {
+    lines.push('      selections:');
+    for (const selection of agent.capabilities) {
+      lines.push(`        - id: ${quoteYamlString(selection.id)}`);
+      lines.push(`          version: ${quoteYamlString(selection.version)}`);
+    }
+  }
 }
 
 function renderAgentSourceListYaml(
@@ -237,27 +262,26 @@ function renderAgentSourceListYaml(
   sources: RuntimeConfiguredAgentSourceRef[],
 ): void {
   if (sources.length === 0) return;
-  lines.push(`      ${key}:`);
+  lines.push(`        ${key}:`);
   for (const source of sources) {
-    lines.push(`        - id: ${quoteYamlString(source.id)}`);
+    if (source.name !== undefined) {
+      lines.push(`          - name: ${quoteYamlString(source.name)}`);
+      lines.push(`            id: ${quoteYamlString(source.id)}`);
+    } else {
+      lines.push(`          - id: ${quoteYamlString(source.id)}`);
+    }
     if (source.version !== undefined) {
-      lines.push(`          version: ${quoteYamlString(source.version)}`);
+      lines.push(`            version: ${quoteYamlString(source.version)}`);
     }
     if (source.kind !== undefined) {
-      lines.push(`          kind: ${quoteYamlString(source.kind)}`);
+      lines.push(`            kind: ${quoteYamlString(source.kind)}`);
     }
-  }
-}
-
-function renderAgentCapabilitiesYaml(
-  lines: string[],
-  capabilities: RuntimeConfiguredAgentCapability[],
-): void {
-  if (capabilities.length === 0) return;
-  lines.push('    capabilities:');
-  for (const capability of capabilities) {
-    lines.push(`      - id: ${quoteYamlString(capability.id)}`);
-    lines.push(`        version: ${quoteYamlString(capability.version)}`);
+    if (source.tools !== undefined && source.tools.length > 0) {
+      lines.push(`            tools:`);
+      for (const tool of source.tools) {
+        lines.push(`              - ${quoteYamlString(tool)}`);
+      }
+    }
   }
 }
 
@@ -406,20 +430,15 @@ function bindingsByConversation(
   return grouped;
 }
 
-function renderCredentialBrokerSettingsYaml(
+function renderModelAccessSettingsYaml(
   lines: string[],
   credentialBroker: RuntimeCredentialBrokerSettings,
 ): void {
   lines.push(
-    'credential_broker:',
-    `  mode: ${quoteYamlString(credentialBroker.mode)}`,
-    '  onecli:',
-    `    url: ${quoteYamlString(credentialBroker.onecli.url)}`,
-    '    postgres:',
-    `      url_env: ${quoteYamlString(credentialBroker.onecli.postgres.urlEnv)}`,
-    `      schema: ${quoteYamlString(credentialBroker.onecli.postgres.schema)}`,
-    '  external:',
-    `    base_url: ${quoteYamlString(credentialBroker.external.baseUrl)}`,
+    'model_access:',
+    `  enabled: ${credentialBroker.mode === 'gantry' ? 'true' : 'false'}`,
+    '  gateway:',
+    `    bind_host: ${quoteYamlString(credentialBroker.gateway.bindHost)}`,
     '',
   );
 }
@@ -435,13 +454,8 @@ function isDefaultCredentialBroker(
   credentialBroker: RuntimeCredentialBrokerSettings,
 ): boolean {
   return (
-    credentialBroker.mode === 'onecli' &&
-    credentialBroker.onecli.url === DEFAULT_ONECLI_URL &&
-    credentialBroker.onecli.postgres.urlEnv ===
-      DEFAULT_ONECLI_DATABASE_URL_ENV &&
-    credentialBroker.onecli.postgres.schema ===
-      DEFAULT_ONECLI_POSTGRES_SCHEMA &&
-    credentialBroker.external.baseUrl === ''
+    credentialBroker.mode === 'gantry' &&
+    credentialBroker.gateway.bindHost === DEFAULT_MODEL_GATEWAY_BIND_HOST
   );
 }
 
@@ -452,8 +466,16 @@ function isDefaultMemory(memory: RuntimeMemorySettings): boolean {
     memory.embeddings.enabled === false &&
     memory.embeddings.provider === 'disabled' &&
     memory.embeddings.model === DEFAULT_EMBED_MODEL &&
+    memory.embeddings.dimensions === DEFAULT_EMBED_DIMENSIONS &&
     memory.embeddings.dailyLimit === DEFAULT_OPENAI_DAILY_EMBED_LIMIT &&
     memory.embeddings.batchSize === DEFAULT_MEMORY_EMBED_BATCH_SIZE &&
+    memory.embeddings.backfill.enabled === DEFAULT_MEMORY_BACKFILL_ENABLED &&
+    memory.embeddings.backfill.cron === DEFAULT_MEMORY_BACKFILL_CRON &&
+    memory.embeddings.backfill.maxItemsPerRun ===
+      DEFAULT_MEMORY_BACKFILL_MAX_ITEMS_PER_RUN &&
+    memory.embeddings.backfill.mode === DEFAULT_MEMORY_BACKFILL_MODE &&
+    memory.embeddings.backfill.providerBatchMinItems ===
+      DEFAULT_MEMORY_BACKFILL_PROVIDER_BATCH_MIN_ITEMS &&
     memory.dreaming.enabled === false &&
     memory.dreaming.cron === DEFAULT_MEMORY_DREAMING_CRON &&
     memory.dreaming.embeddings.enabled === false &&
@@ -474,7 +496,11 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
     runtime.queue.maxMessageRuns === 3 &&
     runtime.queue.maxJobRuns === 4 &&
     runtime.queue.maxRetries === 5 &&
-    runtime.queue.baseRetryMs === 5000
+    runtime.queue.baseRetryMs === 5000 &&
+    runtime.sandbox.provider === 'direct' &&
+    runtime.sandbox.resourceLimits.cpuSeconds === 0 &&
+    runtime.sandbox.resourceLimits.memoryMb === 0 &&
+    runtime.sandbox.resourceLimits.maxProcesses === 0
   );
 }
 
@@ -556,6 +582,12 @@ function renderRuntimeProcessYaml(
     `    max_job_runs: ${runtime.queue.maxJobRuns}`,
     `    max_retries: ${runtime.queue.maxRetries}`,
     `    base_retry_ms: ${runtime.queue.baseRetryMs}`,
+    '  sandbox:',
+    `    provider: ${quoteYamlString(runtime.sandbox.provider)}`,
+    '    resource_limits:',
+    `      cpu_seconds: ${runtime.sandbox.resourceLimits.cpuSeconds}`,
+    `      memory_mb: ${runtime.sandbox.resourceLimits.memoryMb}`,
+    `      max_processes: ${runtime.sandbox.resourceLimits.maxProcesses}`,
     '',
   );
 }
@@ -634,7 +666,7 @@ export function renderRuntimeSettingsYaml(settings: RuntimeSettings): string {
     renderStorageSettingsYaml(lines, settings.storage);
   }
   if (!isDefaultCredentialBroker(settings.credentialBroker)) {
-    renderCredentialBrokerSettingsYaml(lines, settings.credentialBroker);
+    renderModelAccessSettingsYaml(lines, settings.credentialBroker);
   }
   if (!isDefaultMemory(settings.memory)) {
     renderMemorySettingsYaml(lines, settings.memory);

@@ -19,12 +19,13 @@ import {
   JOB_RUN_ID,
   IPC_RESPONSE_KEY_ID,
   PERMISSION_REQUEST_TIMEOUT_MS,
-  resolveGroupIpcDir,
+  resolveWorkspaceIpcDir,
 } from './runtime-env.js';
 import type { PermissionDecision } from './types.js';
+import { WORKSPACE_FOLDER_OPTION_KEY } from './types.js';
 
 const DEFAULT_RUNNER_APP_ID = 'default';
-const AGENT_FOLDER_OPTION_KEY = `group${'Folder'}` as const;
+const AGENT_FOLDER_OPTION_KEY = WORKSPACE_FOLDER_OPTION_KEY;
 
 const inFlightTimedGrantRequests = new Map<
   string,
@@ -36,15 +37,14 @@ function timedGrantBatchKey(input: {
   agentId?: string;
   targetJid?: string;
   agentFolder: string;
-  threadId?: string;
   requestFingerprint: string;
 }): string {
+  // Topic/thread ids route the prompt; approval authority is the parent chat.
   return JSON.stringify([
     input.appId,
     input.agentId ?? '',
     input.targetJid ?? '',
     input.agentFolder,
-    input.threadId ?? '',
     JOB_ID,
     JOB_RUN_ID,
     input.requestFingerprint,
@@ -115,7 +115,6 @@ export async function requestPermissionApproval(options: {
       agentId,
       targetJid,
       agentFolder,
-      threadId: options.threadId,
       requestFingerprint,
     });
     const existingRequest = inFlightTimedGrantRequests.get(batchKey);
@@ -178,10 +177,13 @@ async function requestPermissionApprovalInner(options: {
     const agentId = options.agentId;
     const targetJid = options.targetJid;
     const agentFolder = options[AGENT_FOLDER_OPTION_KEY];
-    const groupIpcDir = resolveGroupIpcDir(agentFolder);
-    const permissionRequestsDir = path.join(groupIpcDir, 'permission-requests');
+    const workspaceIpcDir = resolveWorkspaceIpcDir(agentFolder);
+    const permissionRequestsDir = path.join(
+      workspaceIpcDir,
+      'permission-requests',
+    );
     const permissionResponsesDir = path.join(
-      groupIpcDir,
+      workspaceIpcDir,
       'permission-responses',
     );
     fs.mkdirSync(permissionRequestsDir, { recursive: true });

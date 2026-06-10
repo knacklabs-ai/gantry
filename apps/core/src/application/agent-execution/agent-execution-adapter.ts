@@ -17,6 +17,7 @@ import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
 import type { ModelCatalogEntry } from '../../shared/model-catalog.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import type { YoloModeSettings } from '../../shared/yolo-mode-policy.js';
+import type { SemanticCapabilityDefinition } from '../../shared/semantic-capabilities.js';
 
 export type AgentExecutionProviderId = ExecutionProviderId;
 
@@ -33,9 +34,11 @@ export interface AgentExecutionRunInput {
   memoryReviewerIsControlApprover?: boolean;
   persona?: AgentPersona;
   browserProfileName?: string;
-  allowedTools?: string[];
-  selectedSkillIds?: string[];
-  selectedMcpServerIds?: string[];
+  toolPolicyRules?: string[];
+  attachedSkillSourceIds?: string[];
+  selectedSkillDisplays?: string[];
+  attachedMcpSourceIds?: string[];
+  semanticCapabilities?: SemanticCapabilityDefinition[];
   isScheduledJob?: boolean;
   jobId?: string;
   jobName?: string;
@@ -71,7 +74,7 @@ export interface AgentExecutionAdapterOptions {
 
 export interface AgentExecutionHostRuntime {
   groupDir: string;
-  groupIpcDir: string;
+  workspaceIpcDir: string;
   runnerDistDir: string;
 }
 
@@ -103,17 +106,27 @@ export interface PreparedAgentExecution {
   providerId: AgentExecutionProviderId;
   runnerPath: string;
   runnerArgs: string[];
+  runtimeConfigDir?: string;
   runnerInputPatch?: {
     modelCredentialEnv?: Record<string, string>;
+    toolNetworkEnv?: Record<string, string>;
+    semanticCapabilities?: SemanticCapabilityDefinition[];
+  };
+  sandboxRuntime?: {
+    toolTempDirLeaf?: string;
+    tempEnv?: (runnerTempDir: string) => NodeJS.ProcessEnv;
   };
   env: NodeJS.ProcessEnv;
   protectedFilesystemPaths: string[];
+  protectedFilesystemDenyReadPaths?: string[];
+  protectedFilesystemDenyWritePaths?: string[];
   runtimeDetails: string[];
   cleanup: () => void;
 }
 
 export interface AgentExecutionAdapter {
   readonly id: AgentExecutionProviderId;
+  isMissingProviderSessionError?(error: string | undefined): boolean;
   prepare(
     input: AgentExecutionAdapterPrepareInput,
   ): Promise<PreparedAgentExecution>;

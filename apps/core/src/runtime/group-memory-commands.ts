@@ -1,12 +1,13 @@
 import {
   DEFAULT_MEMORY_APP_ID,
-  memoryAgentIdForGroupFolder,
+  memoryAgentIdForWorkspaceFolder,
 } from '../memory/app-memory-boundaries.js';
 import {
   resolveScopedMemorySubject,
   searchInputForResolvedMemorySubject,
 } from '../memory/app-memory-subject-resolver.js';
 import { AppMemoryService } from '../memory/app-memory-service.js';
+import { getEmbeddingBackfillStatus } from '../memory/app-memory-embedding-status.js';
 import type { AppMemoryItem } from '../memory/memory-types.js';
 import type { MemoryStatusSnapshot } from '../session/session-command-format.js';
 
@@ -166,6 +167,20 @@ async function getContinuityStatusData(
     : undefined;
 }
 
+async function safeEmbeddingStatus(
+  service: AppMemoryService,
+  subject: { appId: string; agentId?: string | null },
+): Promise<Awaited<ReturnType<typeof getEmbeddingBackfillStatus>> | undefined> {
+  try {
+    return await getEmbeddingBackfillStatus(service.db, {
+      appId: subject.appId,
+      agentId: subject.agentId,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 export async function getGroupMemoryStatus(
   input:
     | string
@@ -176,7 +191,10 @@ export async function getGroupMemoryStatus(
         threadId?: string | null;
         defaultScope?: 'user' | 'group';
       },
-  options: { embeddings?: MemoryEmbeddingsStatus } = {},
+  options: {
+    embeddings?: MemoryEmbeddingsStatus;
+    memoryEnabled?: boolean;
+  } = {},
 ): Promise<MemoryStatusSnapshot> {
   const service = AppMemoryService.getInstance();
   const context =
@@ -188,7 +206,7 @@ export async function getGroupMemoryStatus(
         };
   const subject = resolveScopedMemorySubject({
     appId: DEFAULT_MEMORY_APP_ID,
-    agentId: memoryAgentIdForGroupFolder(context.folder),
+    agentId: memoryAgentIdForWorkspaceFolder(context.folder),
     groupId: context.folder,
     conversationId: context.conversationId,
     userId: context.userId,
@@ -261,7 +279,9 @@ export async function getGroupMemoryStatus(
     continuityStatus?.lastInjectedBlock ??
       continuityStatus?.last_injected_block,
   );
+  const embeddingStatus = await safeEmbeddingStatus(service, subject);
   return {
+    memory_enabled: options.memoryEnabled ?? true,
     items_by_kind: memories.reduce<Record<string, number>>((acc, item) => {
       acc[item.kind] = (acc[item.kind] || 0) + 1;
       return acc;
@@ -279,9 +299,22 @@ export async function getGroupMemoryStatus(
         updated_at: item.updatedAt,
       })),
     retrieval: {
-      searchMode: 'lexical_keyword',
-      embeddings: options.embeddings ?? 'disabled',
-      vectorSearch: 'inactive',
+      searchMode: embeddingStatus?.searchMode ?? 'lexical_keyword',
+      embeddings: embeddingStatus
+        ? embeddingStatus.enabled
+          ? 'configured'
+          : 'disabled'
+        : (options.embeddings ?? 'disabled'),
+      vectorSearch: embeddingStatus?.vectorSearch ?? 'inactive',
+      ...(embeddingStatus?.pauseReason
+        ? { pauseReason: embeddingStatus.pauseReason }
+        : {}),
+      ...(embeddingStatus
+        ? {
+            ready: embeddingStatus.readyItems,
+            pending: embeddingStatus.pending,
+          }
+        : {}),
     },
     memory_pipeline: {
       staged: stagedCount,
@@ -310,7 +343,7 @@ export async function saveGroupProcedureMemory(input: {
 }) {
   const { subject } = resolveScopedMemorySubject({
     appId: DEFAULT_MEMORY_APP_ID,
-    agentId: memoryAgentIdForGroupFolder(input.folder),
+    agentId: memoryAgentIdForWorkspaceFolder(input.folder),
     groupId: input.folder,
     conversationId: input.conversationId,
     userId: input.userId,

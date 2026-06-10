@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import type { AgentMcpServerBinding } from '../../domain/mcp/mcp-servers.js';
-import type { AgentSkillBinding } from '../../domain/skills/skills.js';
+import type {
+  AgentSkillBinding,
+  SkillCatalogItem,
+} from '../../domain/skills/skills.js';
 import type {
   AgentToolBinding,
   AgentToolSource,
@@ -13,8 +16,12 @@ import type {
   RuntimeConfiguredConversation,
 } from './runtime-settings-types.js';
 import { displayToolReference } from '../../shared/agent-tool-references.js';
+import {
+  containsGeneratedRuntimeSkillPath,
+  GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
+} from '../../shared/generated-runtime-paths.js';
 import { semanticCapabilityFromToolCatalogItem } from '../../shared/semantic-capabilities.js';
-import { displaySkillReference } from './desired-state-skill-references.js';
+import { normalizeConfiguredCapabilities } from './configured-capability-normalization.js';
 
 export function activeCapabilities(
   toolBindings: AgentToolBinding[],
@@ -37,15 +44,17 @@ export function activeSources(
         const skillId = binding.skillId;
         const skill = skillCatalogById.get(skillId);
         return {
-          id: skill ? displaySkillReference(skill) : String(skillId),
-          version: 'approved',
+          ...(skill ? { name: skill.name } : {}),
+          id: String(skillId),
         };
       }),
     mcpServers: mcpBindings
       .filter((binding) => binding.status === 'active')
       .map((binding) => ({
         id: String(binding.serverId),
-        version: String(binding.versionId),
+        ...(binding.allowedToolPatterns?.length
+          ? { tools: [...binding.allowedToolPatterns] }
+          : {}),
       })),
     tools: toolSources
       .filter((source) => source.status === 'active')
@@ -62,22 +71,26 @@ export function activeSources(
 export function readableActiveCapabilities(
   toolBindings: AgentToolBinding[],
   toolCatalogById: Map<unknown, { name: string; inputSchema?: unknown }>,
+  options: {
+    skillBindings?: AgentSkillBinding[];
+    skillCatalogById?: Map<unknown, SkillCatalogItem>;
+  } = {},
 ): RuntimeConfiguredAgentCapability[] {
-  return activeCapabilities(toolBindings).flatMap((capability, index) => {
-    const binding = toolBindings.filter((item) => item.status === 'active')[
-      index
-    ];
-    if (!binding) return [];
-    const tool = toolCatalogById.get(binding.toolId);
-    return tool
-      ? [
-          capabilityFromToolReference(
-            displayToolReference({ toolId: binding.toolId, tool }),
-            tool,
-          ),
-        ]
-      : [capability];
-  });
+  const rawCapabilities = toolBindings
+    .filter((item) => item.status === 'active')
+    .map((binding) => {
+      const tool = toolCatalogById.get(binding.toolId);
+      const reference = tool
+        ? displayToolReference({ toolId: binding.toolId, tool })
+        : String(binding.toolId).replace(/^tool:/, '');
+      if (containsGeneratedRuntimeSkillPath(reference)) {
+        throw new Error(GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON);
+      }
+      return capabilityFromToolReference(reference, tool);
+    });
+  return normalizeConfiguredCapabilities({
+    capabilities: rawCapabilities,
+  }).capabilities;
 }
 
 function capabilityFromToolBinding(

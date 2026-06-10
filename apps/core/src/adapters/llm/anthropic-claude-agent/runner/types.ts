@@ -5,6 +5,8 @@ import type {
 } from '../../../../shared/model-catalog.js';
 import type { AgentPersona } from '../../../../shared/agent-persona.js';
 import type { YoloModeSettings } from '../../../../shared/yolo-mode-policy.js';
+import type { CapabilityRuntimeAccess } from '../../../../shared/capability-runtime-access.js';
+import type { SemanticCapabilityDefinition } from '../../../../shared/semantic-capabilities.js';
 
 export interface AgentRunnerInput {
   prompt: string;
@@ -12,7 +14,7 @@ export interface AgentRunnerInput {
   appId?: string;
   agentId?: string;
   sessionId?: string;
-  groupFolder: string;
+  workspaceFolder: string;
   chatJid: string;
   threadId?: string;
   memoryUserId?: string;
@@ -22,8 +24,10 @@ export interface AgentRunnerInput {
   browserProfileName?: string;
   allowedTools?: string[];
   toolAccessRequirements?: string[];
-  selectedSkillIds?: string[];
-  selectedMcpServerIds?: string[];
+  attachedSkillSourceIds?: string[];
+  selectedSkillDisplays?: string[];
+  attachedMcpSourceIds?: string[];
+  semanticCapabilities?: SemanticCapabilityDefinition[];
   isScheduledJob?: boolean;
   jobId?: string;
   runId?: string;
@@ -32,7 +36,8 @@ export interface AgentRunnerInput {
   memoryContextBlock?: string;
   yoloMode?: YoloModeSettings;
   modelCredentialEnv?: Record<string, string>;
-  localCliNetworkHosts?: string[];
+  toolNetworkEnv?: Record<string, string>;
+  runtimeAccess?: CapabilityRuntimeAccess[];
   thinking?: {
     mode: 'adaptive' | 'enabled' | 'disabled';
     effort?: EffortLevel;
@@ -108,3 +113,10 @@ export interface SessionSlashCommand {
   command: string;
   kind: 'model';
 }
+
+// Single source of truth for the permission-IPC workspace-folder option key.
+// Composed via string concatenation so a literal "workspaceFolder" never appears
+// verbatim in the bundle; the send (tool-permission-gate) and read
+// (permission-callback) sides MUST share this constant or the IPC silently
+// breaks (key mismatch is not a TS error across the string-concat boundary).
+export const WORKSPACE_FOLDER_OPTION_KEY = `${'workspace'}${'Folder'}` as const;

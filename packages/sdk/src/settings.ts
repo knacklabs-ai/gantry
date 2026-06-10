@@ -24,11 +24,12 @@ export type RuntimeSettingsResponse = {
         folder: string;
         persona?:
           | 'developer'
-          | 'personal_assistant'
+          | 'generalist'
           | 'sales'
           | 'marketing'
           | 'operations'
           | 'research';
+        relationshipMode?: 'personal' | 'organization';
         model?: string;
         oneTimeJobDefaultModel?: string;
         recurringJobDefaultModel?: string;
@@ -63,6 +64,14 @@ export type RuntimeSettingsResponse = {
         maxJobRuns: number;
         maxRetries: number;
         baseRetryMs: number;
+      };
+      sandbox: {
+        provider: 'direct' | 'sandbox_runtime';
+        resourceLimits: {
+          cpuSeconds: number;
+          memoryMb: number;
+          maxProcesses: number;
+        };
       };
     };
     browser: {

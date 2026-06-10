@@ -27,34 +27,24 @@ export const FULL_SEQUENCE: OnboardingStep[] = [
   'welcome',
   'runtime_home',
   'storage',
-  'prerequisites',
+  'credentials',
   'channel',
+  'model',
   'telegram',
   'slack',
-  'credentials',
-  'model',
-  'memory',
-  'embeddings',
-  'dreaming',
-  'service',
   'config',
   'group',
   'verify',
   'ready',
 ];
 
-export type ServiceChoice = 'skip' | 'install' | 'install_start';
-
 export interface SetupDraft {
   runtimeHome: string;
   postgresSetupKind: 'local' | 'hosted' | 'existing';
   postgresDatabaseUrl: string;
-  onecliPostgresDatabaseUrl: string;
   postgresSchema: string;
-  onecliPostgresSchema: string;
   primaryProvider: 'telegram' | 'slack';
   credentialMode: HostCredentialMode;
-  onecliUrl: string;
   agentName: string;
   modelPreset: ModelPresetId;
   selectedModel: string;
@@ -73,8 +63,8 @@ export interface SetupDraft {
   memoryEnabled: boolean;
   embeddingsEnabled: boolean;
   dreamingEnabled: boolean;
-  serviceChoice: ServiceChoice;
-  serviceStartedAfterSetup: boolean;
+  workspaceKey: string;
+  conversationLabel: string;
   startAfterSetup: boolean;
 }
 
@@ -114,22 +104,23 @@ export function updateStateData(
     runtimeHome: draft.runtimeHome,
     postgresSetupKind: draft.postgresSetupKind,
     postgresSchema: draft.postgresSchema || undefined,
-    onecliPostgresSchema: draft.onecliPostgresSchema || undefined,
     primaryProvider: draft.primaryProvider,
-    serviceChoice: draft.serviceChoice,
     telegramBotUsername: draft.telegramBotUsername || undefined,
     telegramChatJid: draft.telegramChatJid || undefined,
+    telegramDisplayName: draft.telegramDisplayName || undefined,
     telegramAdminSenderId: draft.telegramAdminSenderId || undefined,
     telegramAdminSenderName: draft.telegramAdminSenderName || undefined,
     telegramPermissionApproverIds:
       draft.telegramPermissionApproverIds || undefined,
     slackChatJid: draft.slackChatJid || undefined,
+    slackDisplayName: draft.slackDisplayName || undefined,
     slackPermissionApproverIds: draft.slackPermissionApproverIds || undefined,
     credentialMode: draft.credentialMode,
-    onecliUrl: draft.onecliUrl || undefined,
     agentName: draft.agentName,
     modelPreset: draft.modelPreset,
     selectedModel: draft.selectedModel || undefined,
+    workspaceKey: draft.workspaceKey || undefined,
+    conversationLabel: draft.conversationLabel || undefined,
     memoryEnabled: draft.memoryEnabled,
     embeddingsEnabled: draft.embeddingsEnabled,
     dreamingEnabled: draft.dreamingEnabled,
@@ -144,10 +135,11 @@ export function updateDraftFromState(
   draft.postgresSetupKind =
     state.data.postgresSetupKind || draft.postgresSetupKind;
   draft.primaryProvider = state.data.primaryProvider || draft.primaryProvider;
-  draft.serviceChoice = state.data.serviceChoice || draft.serviceChoice;
   draft.telegramBotUsername =
     state.data.telegramBotUsername || draft.telegramBotUsername;
   draft.telegramChatJid = state.data.telegramChatJid || draft.telegramChatJid;
+  draft.telegramDisplayName =
+    state.data.telegramDisplayName || draft.telegramDisplayName;
   draft.telegramAdminSenderId =
     state.data.telegramAdminSenderId || draft.telegramAdminSenderId;
   draft.telegramAdminSenderName =
@@ -156,18 +148,22 @@ export function updateDraftFromState(
     state.data.telegramPermissionApproverIds ||
     draft.telegramPermissionApproverIds;
   draft.slackChatJid = state.data.slackChatJid || draft.slackChatJid;
+  draft.slackDisplayName =
+    state.data.slackDisplayName || draft.slackDisplayName;
   draft.slackPermissionApproverIds =
     state.data.slackPermissionApproverIds || draft.slackPermissionApproverIds;
   draft.credentialMode = resolveHostCredentialMode(
     state.data.credentialMode || draft.credentialMode,
   );
-  draft.onecliUrl = state.data.onecliUrl || draft.onecliUrl;
   draft.agentName = state.data.agentName || draft.agentName;
   draft.modelPreset = isModelPresetId(state.data.modelPreset)
     ? state.data.modelPreset
     : draft.modelPreset;
   draft.selectedModel =
     resolveModelAlias(state.data.selectedModel) || draft.selectedModel;
+  draft.workspaceKey = state.data.workspaceKey || draft.workspaceKey;
+  draft.conversationLabel =
+    state.data.conversationLabel || draft.conversationLabel;
   draft.memoryEnabled = state.data.memoryEnabled ?? draft.memoryEnabled;
   draft.embeddingsEnabled =
     state.data.embeddingsEnabled ?? draft.embeddingsEnabled;
@@ -223,30 +219,18 @@ export function restoreDraft(
     settings.storage.postgres.urlEnv || 'GANTRY_DATABASE_URL';
   const postgresDatabaseUrl =
     env[postgresUrlEnv]?.trim() || process.env[postgresUrlEnv]?.trim() || '';
-  const onecliDatabaseUrlEnv =
-    settings.credentialBroker.onecli.postgres.urlEnv || 'ONECLI_DATABASE_URL';
-  const onecliPostgresDatabaseUrl =
-    env[onecliDatabaseUrlEnv]?.trim() ||
-    process.env[onecliDatabaseUrlEnv]?.trim() ||
-    '';
   const draft: SetupDraft = {
     runtimeHome,
     postgresSetupKind:
       state?.data.postgresSetupKind ||
       (postgresDatabaseUrl.includes('localhost') ? 'local' : 'existing'),
     postgresDatabaseUrl,
-    onecliPostgresDatabaseUrl,
     postgresSchema:
       state?.data.postgresSchema ||
       settings.storage.postgres.schema ||
       'gantry',
-    onecliPostgresSchema:
-      state?.data.onecliPostgresSchema ||
-      settings.credentialBroker.onecli.postgres.schema ||
-      'onecli',
     primaryProvider,
     credentialMode,
-    onecliUrl: settings.credentialBroker.onecli.url || '',
     agentName:
       state?.data.agentName || settings.agent.name || DEFAULT_AGENT_CLI_NAME,
     modelPreset: isModelPresetId(stateModelPreset)
@@ -275,12 +259,27 @@ export function restoreDraft(
     embeddingsEnabled:
       state?.data.embeddingsEnabled ?? settings.memory.embeddings.enabled,
     dreamingEnabled: state?.data.dreamingEnabled ?? defaultDreamingEnabled,
-    serviceChoice: 'skip',
-    serviceStartedAfterSetup: false,
+    ...resolveReadySummary(settings, primaryProvider),
     startAfterSetup: false,
   };
   if (state) updateDraftFromState(draft, state);
   return draft;
+}
+
+function resolveReadySummary(
+  settings: ReturnType<typeof loadExistingRuntimeSettings>,
+  providerId: string,
+): Pick<SetupDraft, 'workspaceKey' | 'conversationLabel'> {
+  for (const [agentId, agent] of Object.entries(settings.agents)) {
+    for (const binding of Object.values(agent.bindings)) {
+      if (binding.provider !== providerId) continue;
+      return {
+        workspaceKey: agent.folder || agentId,
+        conversationLabel: binding.name || binding.jid,
+      };
+    }
+  }
+  return { workspaceKey: '', conversationLabel: '' };
 }
 
 function firstConversationApprovers(

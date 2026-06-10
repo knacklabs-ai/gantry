@@ -11,12 +11,12 @@ const configMocks = vi.hoisted(() => ({
 
 vi.mock('@core/config/index.js', () => ({
   GANTRY_HOME: '/tmp/gantry-control-test-home',
-  ONECLI_ALLOWED_ENV_KEYS: [],
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
   syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: configMocks.getDefaultModelConfig,
   getRuntimeModelDefaults: vi.fn(() => ({ defaults: {} })),
   patchRuntimeModelDefaults: vi.fn(() => ({ ok: true })),
+  configureDesiredSettingsStorageProvider: vi.fn(() => undefined),
 }));
 
 const schedulerMocks = vi.hoisted(() => ({
@@ -70,7 +70,6 @@ const controlRepo = {
     appId: 'app-one',
     conversationId: 'conv-1',
     chatJid,
-    groupFolder: 'app-folder',
     workspaceKey: 'app-folder',
     title: null,
     defaultResponseMode: 'sse',
@@ -81,7 +80,6 @@ const controlRepo = {
     appId: sessionId === 'session-app-two' ? 'app-two' : 'app-one',
     conversationId: 'conv-1',
     chatJid: 'chat-1',
-    groupFolder: 'app-folder',
     workspaceKey: 'app-folder',
     title: null,
     defaultResponseMode: 'sse',
@@ -93,7 +91,6 @@ const controlRepo = {
       appId: sessionId === 'session-app-two' ? 'app-two' : 'app-one',
       conversationId: 'conv-1',
       chatJid: 'chat-1',
-      groupFolder: 'app-folder',
       workspaceKey: 'app-folder',
       title: null,
       defaultResponseMode: 'sse',
@@ -106,7 +103,6 @@ const controlRepo = {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid,
-      groupFolder: 'app-folder',
       workspaceKey: 'app-folder',
       title: null,
       defaultResponseMode: 'sse',
@@ -129,7 +125,7 @@ const opsRepo = {
       folder: 'app-folder',
       trigger: '@App',
       added_at: '2026-04-24T00:00:00.000Z',
-      agentConfig: { persona: 'personal_assistant' },
+      agentConfig: { persona: 'generalist' },
     },
   })),
   upsertJob: vi.fn(async (job) => ({ job, created: true })),
@@ -168,7 +164,6 @@ beforeEach(() => {
     appId: 'app-one',
     conversationId: 'conv-1',
     chatJid,
-    groupFolder: 'app-folder',
     workspaceKey: 'app-folder',
     title: null,
     defaultResponseMode: 'sse',
@@ -180,7 +175,6 @@ beforeEach(() => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid,
-      groupFolder: 'app-folder',
       workspaceKey: 'app-folder',
       title: null,
       defaultResponseMode: 'sse',
@@ -204,7 +198,6 @@ beforeEach(() => {
     appId: sessionId === 'session-app-two' ? 'app-two' : 'app-one',
     conversationId: 'conv-1',
     chatJid: 'chat-1',
-    groupFolder: 'app-folder',
     workspaceKey: 'app-folder',
     title: null,
     defaultResponseMode: 'sse',
@@ -216,7 +209,6 @@ beforeEach(() => {
       appId: sessionId === 'session-app-two' ? 'app-two' : 'app-one',
       conversationId: 'conv-1',
       chatJid: 'chat-1',
-      groupFolder: 'app-folder',
       workspaceKey: 'app-folder',
       title: null,
       defaultResponseMode: 'sse',
@@ -232,7 +224,7 @@ beforeEach(() => {
       folder: 'app-folder',
       trigger: '@App',
       added_at: '2026-04-24T00:00:00.000Z',
-      agentConfig: { persona: 'personal_assistant' },
+      agentConfig: { persona: 'generalist' },
     },
   });
   opsRepo.upsertJob.mockClear();
@@ -305,10 +297,10 @@ describe('control job trigger', () => {
       execution_context: {
         conversationJid: 'chat-1',
         threadId: null,
-        groupScope: 'app-folder',
+        workspaceKey: 'app-folder',
         sessionId: 'session-1',
       },
-      group_scope: 'app-folder',
+      workspace_key: 'app-folder',
       created_by: 'human',
       created_at: '2026-04-24T00:00:00.000Z',
       updated_at: '2026-04-24T00:00:00.000Z',
@@ -397,13 +389,13 @@ describe('control job trigger', () => {
           source: 'system default',
           workload: 'recurring_job',
           model: {
-            displayName: 'Opus 4.7',
+            displayName: 'Opus 4.8',
             responseFamily: 'anthropic',
             modelRoute: {
               id: 'anthropic',
               label: 'Anthropic',
               metadata: {
-                providerModelId: 'claude-opus-4-7',
+                providerModelId: 'claude-opus-4-8',
               },
             },
           },
@@ -432,7 +424,7 @@ describe('control job trigger', () => {
         execution_context: {
           conversationJid: 'chat-1',
           threadId: null,
-          groupScope: 'app-folder',
+          workspaceKey: 'app-folder',
           sessionId: 'session-app-two',
         },
       }),
@@ -485,7 +477,7 @@ describe('control job trigger', () => {
             trigger: '@App',
             requiresTrigger: false,
             conversationKind: 'channel',
-            agentConfig: { persona: 'personal_assistant' },
+            agentConfig: { persona: 'generalist' },
           },
         }),
       } as never,
@@ -505,7 +497,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -519,12 +511,12 @@ describe('control job trigger', () => {
         modelAlias: 'opus',
         modelSource: 'system default',
         model: {
-          displayName: 'Opus 4.7',
+          displayName: 'Opus 4.8',
         },
         runtimeContext: {
           executionContext: {
             conversationJid: 'chat-1',
-            groupScope: 'app-folder',
+            workspaceKey: 'app-folder',
             threadId: null,
             sessionId: 'session-1',
           },
@@ -535,7 +527,7 @@ describe('control job trigger', () => {
               label: 'primary',
             },
           ],
-          persona: 'personal_assistant',
+          persona: 'generalist',
           browserProfileLabel: 'App Folder conversation browser',
           browserProfileName: expect.stringMatching(
             /^c-app-folder-[a-f0-9]{12}$/,
@@ -583,7 +575,7 @@ describe('control job trigger', () => {
             trigger: '@App',
             requiresTrigger: false,
             conversationKind: 'channel',
-            agentConfig: { persona: 'personal_assistant' },
+            agentConfig: { persona: 'generalist' },
           },
         }),
       } as never,
@@ -603,7 +595,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -635,7 +627,7 @@ describe('control job trigger', () => {
     }
   });
 
-  it('creates required Browser jobs as active when the control route sees browser readiness', async () => {
+  it('creates required Browser jobs as active when Browser is selected for the agent', async () => {
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
     process.env.GANTRY_CONTROL_API_KEYS_JSON = JSON.stringify([
@@ -657,7 +649,7 @@ describe('control job trigger', () => {
             trigger: '@App',
             requiresTrigger: false,
             conversationKind: 'channel',
-            agentConfig: { persona: 'personal_assistant' },
+            agentConfig: { persona: 'generalist' },
           },
         }),
       } as never,
@@ -674,11 +666,13 @@ describe('control job trigger', () => {
           body: JSON.stringify({
             name: 'Browser Job',
             prompt: 'Open the site',
-            toolAccessRequirements: ['Browser'],
+            accessRequirements: [
+              { target: { kind: 'tool_rule', rule: 'Browser' } },
+            ],
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -686,10 +680,12 @@ describe('control job trigger', () => {
       );
 
       expect(response.status).toBe(201);
-      expect(browserMocks.getBrowserStatus).toHaveBeenCalled();
+      expect(browserMocks.getBrowserStatus).not.toHaveBeenCalled();
       expect(opsRepo.upsertJob).toHaveBeenCalledWith(
         expect.objectContaining({
-          tool_access_requirements: ['Browser'],
+          access_requirements: [
+            { target: { kind: 'tool_rule', rule: 'Browser' } },
+          ],
           status: 'active',
           setup_state: expect.objectContaining({ state: 'ready' }),
         }),
@@ -720,7 +716,7 @@ describe('control job trigger', () => {
             trigger: '@App',
             requiresTrigger: false,
             conversationKind: 'channel',
-            agentConfig: { persona: 'personal_assistant' },
+            agentConfig: { persona: 'generalist' },
           },
         }),
       } as never,
@@ -735,25 +731,28 @@ describe('control job trigger', () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             name: 'Lead Sync',
-            prompt: 'Append leads to Google Sheets',
-            capabilityRequirements: [
+            prompt: 'Append leads to Acme Records',
+            accessRequirements: [
               {
-                capabilityId: 'google.sheets.write',
-                reason: 'Write lead rows after each run',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'gog',
-                  executablePath: '/usr/local/bin/gog',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate: '/usr/local/bin/gog sheets append *',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate: '/usr/local/bin/acme records append *',
+                  },
                 },
+                reason: 'Write lead rows after each run',
               },
             ],
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -763,15 +762,17 @@ describe('control job trigger', () => {
       expect(response.status).toBe(201);
       expect(opsRepo.upsertJob).toHaveBeenCalledWith(
         expect.objectContaining({
-          capability_requirements: [
+          access_requirements: [
             expect.objectContaining({
-              capabilityId: 'google.sheets.write',
-              implementation: expect.objectContaining({ name: 'gog' }),
+              target: expect.objectContaining({
+                kind: 'capability',
+                capabilityId: 'acme.records.append',
+                implementation: expect.objectContaining({ name: 'acme' }),
+              }),
             }),
           ],
-          tool_access_requirements: ['capability:google.sheets.write'],
           status: 'paused',
-          setup_state: expect.objectContaining({ state: 'draft_only' }),
+          setup_state: expect.objectContaining({ state: 'missing_capability' }),
         }),
       );
     } finally {
@@ -800,7 +801,7 @@ describe('control job trigger', () => {
             trigger: '@App',
             requiresTrigger: false,
             conversationKind: 'channel',
-            agentConfig: { persona: 'personal_assistant' },
+            agentConfig: { persona: 'generalist' },
           },
         }),
       } as never,
@@ -819,7 +820,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             modelAlias: 'haiku',
@@ -837,7 +838,7 @@ describe('control job trigger', () => {
         runtimeContext: {
           executionContext: {
             conversationJid: 'chat-1',
-            groupScope: 'app-folder',
+            workspaceKey: 'app-folder',
             threadId: null,
             sessionId: 'session-1',
           },
@@ -872,7 +873,7 @@ describe('control job trigger', () => {
             trigger: '@App',
             requiresTrigger: false,
             conversationKind: 'channel',
-            agentConfig: { persona: 'personal_assistant' },
+            agentConfig: { persona: 'generalist' },
           },
         }),
       } as never,
@@ -888,11 +889,13 @@ describe('control job trigger', () => {
           body: JSON.stringify({
             name: 'Browser Preview',
             prompt: 'Preview browser work',
-            toolAccessRequirements: ['Browser'],
+            accessRequirements: [
+              { target: { kind: 'tool_rule', rule: 'Browser' } },
+            ],
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             dryRun: true,
@@ -952,7 +955,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             model: 'claude-opus-4-7',
@@ -1001,7 +1004,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
             },
           }),
         },
@@ -1185,7 +1188,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: 'thread-1',
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
             status: 'paused',
@@ -1209,7 +1212,7 @@ describe('control job trigger', () => {
         prompt: 'New prompt',
         execution_context: {
           conversationJid: 'chat-1',
-          groupScope: 'app-folder',
+          workspaceKey: 'app-folder',
           threadId: 'thread-1',
           sessionId: 'session-1',
         },
@@ -1248,18 +1251,21 @@ describe('control job trigger', () => {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            capabilityRequirements: [
+            accessRequirements: [
               {
-                capabilityId: 'google.sheets.write',
-                reason: 'Write lead rows after each run',
-                implementation: {
-                  kind: 'local_cli',
-                  name: 'gog',
-                  executablePath: '/usr/local/bin/gog',
-                  executableVersion: 'v0.9.0',
-                  executableHash: 'sha256:abc123',
-                  commandTemplate: '/usr/local/bin/gog sheets append *',
+                target: {
+                  kind: 'capability',
+                  capabilityId: 'acme.records.append',
+                  implementation: {
+                    kind: 'local_cli',
+                    name: 'acme',
+                    executablePath: '/usr/local/bin/acme',
+                    executableVersion: 'v0.9.0',
+                    executableHash: 'sha256:abc123',
+                    commandTemplate: '/usr/local/bin/acme records append *',
+                  },
                 },
+                reason: 'Write lead rows after each run',
               },
             ],
           }),
@@ -1270,15 +1276,17 @@ describe('control job trigger', () => {
       expect(opsRepo.updateJob).toHaveBeenCalledWith(
         'job-1',
         expect.objectContaining({
-          capability_requirements: [
+          access_requirements: [
             expect.objectContaining({
-              capabilityId: 'google.sheets.write',
-              implementation: expect.objectContaining({ name: 'gog' }),
+              target: expect.objectContaining({
+                kind: 'capability',
+                capabilityId: 'acme.records.append',
+                implementation: expect.objectContaining({ name: 'acme' }),
+              }),
             }),
           ],
-          tool_access_requirements: ['capability:google.sheets.write'],
           status: 'paused',
-          setup_state: expect.objectContaining({ state: 'draft_only' }),
+          setup_state: expect.objectContaining({ state: 'missing_capability' }),
         }),
       );
     } finally {
@@ -1302,8 +1310,6 @@ describe('control job trigger', () => {
       appId: sessionId === 'session-app-two' ? 'app-two' : 'app-one',
       conversationId: sessionId === 'session-app-two' ? 'conv-2' : 'conv-1',
       chatJid: sessionId === 'session-app-two' ? 'chat-2' : 'chat-1',
-      groupFolder:
-        sessionId === 'session-app-two' ? 'other-folder' : 'app-folder',
       workspaceKey:
         sessionId === 'session-app-two' ? 'other-folder' : 'app-folder',
       title: null,
@@ -1326,7 +1332,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-2',
               threadId: null,
-              groupScope: 'other-folder',
+              workspaceKey: 'other-folder',
               sessionId: 'session-app-two',
             },
           }),
@@ -1457,7 +1463,7 @@ describe('control job trigger', () => {
             executionContext: {
               conversationJid: 'chat-1',
               threadId: null,
-              groupScope: 'app-folder',
+              workspaceKey: 'app-folder',
               sessionId: 'session-1',
             },
           }),
@@ -1472,7 +1478,7 @@ describe('control job trigger', () => {
         expect.objectContaining({
           execution_context: {
             conversationJid: 'chat-1',
-            groupScope: 'app-folder',
+            workspaceKey: 'app-folder',
             threadId: null,
             sessionId: 'session-1',
           },
@@ -1742,7 +1748,7 @@ describe('control job trigger', () => {
         execution_context: {
           conversationJid: 'chat-1',
           threadId: null,
-          groupScope: 'app-folder',
+          workspaceKey: 'app-folder',
           sessionId: null,
         },
       }),
@@ -1793,7 +1799,6 @@ describe('control job trigger', () => {
       appId: 'app-two',
       conversationId: 'conv-2',
       chatJid: 'chat-2',
-      groupFolder: 'other-folder',
       workspaceKey: 'other-folder',
       title: null,
       defaultResponseMode: 'sse',
@@ -1805,7 +1810,7 @@ describe('control job trigger', () => {
         execution_context: {
           conversationJid: 'chat-2',
           threadId: null,
-          groupScope: 'other-folder',
+          workspaceKey: 'other-folder',
           sessionId: null,
         },
       }),
@@ -1850,11 +1855,11 @@ describe('control job trigger', () => {
     opsRepo.getJobById.mockResolvedValue(
       makeJob({
         session_id: null,
-        group_scope: 'main_agent',
+        workspace_key: 'main_agent',
         execution_context: {
           conversationJid: 'tg:-1003986348737',
           threadId: null,
-          groupScope: 'main_agent',
+          workspaceKey: 'main_agent',
           sessionId: null,
         },
       }),
@@ -2001,7 +2006,7 @@ describe('control job trigger', () => {
               explicit: false,
             },
             model: expect.objectContaining({
-              displayName: 'Opus 4.7',
+              displayName: 'Opus 4.8',
             }),
             toolAccess: expect.objectContaining({
               inheritedAgentTools: [],
@@ -2065,7 +2070,7 @@ describe('control job trigger', () => {
           explicit: false,
         },
         model: expect.objectContaining({
-          displayName: 'Opus 4.7',
+          displayName: 'Opus 4.8',
         }),
         toolAccess: expect.objectContaining({
           inheritedAgentTools: [],

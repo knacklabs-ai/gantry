@@ -18,6 +18,10 @@ import {
   formatAgentToolAccess,
   PERMISSION_GATED_NATIVE_TOOLS,
 } from '../../shared/tool-access-view.js';
+import {
+  parseSemanticCapabilityDefinitionsRecord,
+  type SemanticCapabilityDefinition,
+} from '../../shared/semantic-capabilities.js';
 
 function requirePathEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -44,8 +48,14 @@ export const IPC_RESPONSE_VERIFY_KEY =
   process.env.GANTRY_IPC_RESPONSE_VERIFY_KEY || '';
 export const IPC_RESPONSE_KEY_ID = process.env.GANTRY_IPC_RESPONSE_KEY_ID || '';
 
+if (process.env.GANTRY_GROUP_FOLDER !== undefined) {
+  throw new Error(
+    'GANTRY_GROUP_FOLDER is no longer supported. Use GANTRY_WORKSPACE_KEY.',
+  );
+}
+
 export const chatJid = process.env.GANTRY_CHAT_JID!;
-export const groupFolder = process.env.GANTRY_GROUP_FOLDER!;
+export const workspaceFolder = process.env.GANTRY_WORKSPACE_KEY!;
 export const appId = process.env.GANTRY_APP_ID?.trim() || undefined;
 export const agentId = process.env.GANTRY_AGENT_ID?.trim() || undefined;
 export const jobId = process.env.GANTRY_JOB_ID?.trim() || undefined;
@@ -70,11 +80,17 @@ export const enabledGantryMcpTools = parseEnabledGantryMcpToolNames(
 export const configuredAllowedTools = parseConfiguredAllowedTools(
   process.env.GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON,
 );
-export const selectedSkillIds = parseJsonStringArray(
+export const attachedSkillSourceIds = parseJsonStringArray(
   process.env.GANTRY_SELECTED_SKILLS_JSON,
 );
-export const selectedMcpServerIds = parseJsonStringArray(
+export const selectedSkillDisplays = parseJsonStringArray(
+  process.env.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
+);
+export const attachedMcpSourceIds = parseJsonStringArray(
   process.env.GANTRY_SELECTED_MCP_SERVERS_JSON,
+);
+export const availableSemanticCapabilities = parseSemanticCapabilities(
+  process.env.GANTRY_SEMANTIC_CAPABILITIES_JSON,
 );
 
 export function isAdminMcpToolEnabled(toolName: AdminMcpToolName): boolean {
@@ -114,6 +130,37 @@ function parseJsonStringArray(raw: string | undefined): string[] {
   }
 }
 
+function parseSemanticCapabilities(
+  raw: string | undefined,
+): SemanticCapabilityDefinition[] {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const record = Object.fromEntries(
+        parsed
+          .filter((item): item is SemanticCapabilityDefinition =>
+            Boolean(
+              item &&
+              typeof item === 'object' &&
+              !Array.isArray(item) &&
+              typeof item.capabilityId === 'string',
+            ),
+          )
+          .map((item) => [item.capabilityId, item]),
+      );
+      return Object.values(
+        parseSemanticCapabilityDefinitionsRecord(record) ?? {},
+      );
+    }
+    return Object.values(
+      parseSemanticCapabilityDefinitionsRecord(parsed) ?? {},
+    );
+  } catch {
+    return [];
+  }
+}
+
 function parseEnabledAdminMcpTools(
   raw: string | undefined,
 ): Set<AdminMcpToolName> {
@@ -133,27 +180,46 @@ function parseEnabledAdminMcpTools(
 
 export function capabilityStatusText(): string {
   const currentAdminTools = currentEnabledAdminMcpTools();
+  const selectedSkillStatusItems =
+    selectedSkillDisplays.length > 0
+      ? selectedSkillDisplays
+      : attachedSkillSourceIds;
   const availableToolNames = [...enabledGantryMcpTools].filter(
     (toolName) => !isAdminMcpToolName(toolName),
   );
   for (const adminToolName of currentAdminTools) {
     availableToolNames.push(adminToolName);
   }
+  const normalActionToolNames = availableToolNames.filter(
+    (toolName) =>
+      toolName === 'send_message' ||
+      toolName === 'ask_user_question' ||
+      toolName === 'memory_search' ||
+      toolName === 'memory_save' ||
+      toolName === 'continuity_summary' ||
+      toolName === 'procedure_save' ||
+      toolName === 'file' ||
+      toolName === 'request_access' ||
+      toolName.startsWith('scheduler_'),
+  );
   const requestableBrowserTools = buildRequestableBrowserToolAccess({
     configuredTools: configuredAllowedTools,
   });
   const lines = [
-    'Runtime capability context for this agent. Use these details to choose tools; do not quote this block directly to users.',
+    'Runtime capability context for this agent. Use available actions first; do not quote this block directly to users. Summarize access in plain language; keep raw capability ids and the Tool Access selected-capability block behind details and share verbatim only on explicit request.',
     '',
-    'Gantry MCP tools available in this run:',
-    ...availableToolNames
+    'Core actions available in this run:',
+    ...normalActionToolNames
       .sort()
       .map((toolName) => `- available: ${gantryMcpFullToolName(toolName)}`),
     '',
-    'Semantic capability tools:',
-    '- capability_search: find built-in capabilities such as google.sheets.write',
-    '- propose_capability: request an approved semantic capability or propose a reviewed local_cli capability with pinned executable details',
-    '- manage_capability: view/change/revoke/test/audit guidance for selected capabilities',
+    'Agent access model:',
+    '- Use an available action when one fits.',
+    '- If the action is missing, request_access target.kind=capability for the reviewed capability id.',
+    '- If setup is missing, request source setup through the Gantry access flow; setup records inventory, not authority.',
+    '- Use request_access target.kind=run_command only as a temporary exact-command fallback when no reviewed capability fits.',
+    '- Use admin_permission_list (read-only, no grant needed) to review current permissions, suggest cleanup of unused or overly broad access, or spot missing access; report findings in plain language.',
+    '- Treat skill commands, MCP tool names, local CLI commands, browser internals, and network hosts as review/audit metadata unless a reviewed capability grants the action.',
     '',
     'Scheduler monitoring:',
     '- Use scheduler_get_job, scheduler_list_runs, scheduler_list_events, and scheduler_wait_for_events to inspect or wait for jobs.',
@@ -175,16 +241,16 @@ export function capabilityStatusText(): string {
       .map((action) => `- available: ${action}`),
     '',
     'Installed skills ready for this agent:',
-    ...(selectedSkillIds.length > 0
-      ? selectedSkillIds
+    ...(selectedSkillStatusItems.length > 0
+      ? selectedSkillStatusItems
           .slice()
           .sort()
-          .map((skillId) => `- ready: ${skillId}`)
+          .map((skill) => `- ready: ${skill}`)
       : ['- none installed yet']),
     '',
     'Connected MCP services ready for this agent:',
-    ...(selectedMcpServerIds.length > 0
-      ? selectedMcpServerIds
+    ...(attachedMcpSourceIds.length > 0
+      ? attachedMcpSourceIds
           .slice()
           .sort()
           .map((serverId) => `- ready: ${serverId}`)
@@ -203,7 +269,7 @@ export function capabilityStatusText(): string {
   ];
   const view = buildAgentToolAccessView({
     configuredTools: configuredAllowedTools,
-    defaultTools: availableToolNames
+    defaultTools: normalActionToolNames
       .filter((toolName) => !ADMIN_MCP_TOOL_NAMES.includes(toolName as never))
       .map(gantryMcpFullToolName),
     availableButGatedTools: PERMISSION_GATED_NATIVE_TOOLS.filter(
@@ -217,7 +283,8 @@ export function capabilityStatusText(): string {
       ...buildRequestableAdminToolAccess(currentAdminTools),
       ...requestableBrowserTools,
     ],
-    source: 'settings.yaml current agent tools plus runtime defaults',
+    source:
+      'settings.yaml selected capabilities plus action-first runtime defaults',
   });
   return [...lines, '', formatAgentToolAccess(view)].join('\n');
 }

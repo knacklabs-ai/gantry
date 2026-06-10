@@ -4,13 +4,7 @@ import {
   ensureRuntimeSettings,
   validateRuntimeSettings,
 } from './settings/runtime-settings.js';
-import {
-  inspectOnecliPersistenceReadiness,
-  ONECLI_SECRET_ENCRYPTION_KEY_ENV,
-} from '../adapters/credentials/onecli/local/persistence.js';
-import { EnvRuntimeSecretProvider } from '../adapters/credentials/env-runtime-secret-provider.js';
 import { inspectRuntimeStorageReadiness } from '../adapters/storage/postgres/storage-readiness.js';
-import { validateExternalBrokerUrl } from './credentials/broker-url-policy.js';
 
 export interface RuntimePreflightFailure {
   summary: string;
@@ -40,11 +34,7 @@ export function validateRuntimePreflight(
 export async function validateRuntimePreflightWithStorage(
   runtimeHome: string,
 ): Promise<RuntimePreflightResult> {
-  const base = validateRuntimePreflight(runtimeHome);
-  if (!base.ok) {
-    return base;
-  }
-
+  ensureRuntimeLayout(runtimeHome);
   const storageReadiness = await inspectRuntimeStorageReadiness(runtimeHome, {
     migrate: true,
   });
@@ -63,74 +53,14 @@ export async function validateRuntimePreflightWithStorage(
     };
   }
 
-  const settings = ensureRuntimeSettings(runtimeHome);
-  const env = readEnvFile(envFilePath(runtimeHome));
-  const runtimeSecretsSource = {
-    ...env,
-    ...process.env,
-  };
-  const runtimeSecrets = new EnvRuntimeSecretProvider(runtimeSecretsSource);
-  const credentialMode = settings.credentialBroker.mode;
-  if (credentialMode === 'external') {
-    try {
-      const validation = validateExternalBrokerUrl(
-        settings.credentialBroker.external.baseUrl,
-        'credential_broker.external.base_url',
-      );
-      if (!validation.ok || !validation.normalizedUrl) {
-        throw new Error(
-          validation.error || 'credential_broker.external.base_url is invalid.',
-        );
-      }
-      return { ok: true };
-    } catch (err) {
-      return {
-        ok: false,
-        failure: {
-          summary:
-            err instanceof Error
-              ? err.message
-              : 'External credential broker is not configured.',
-          details: [
-            'Next action: Set credential_broker.external.base_url in settings.yaml to a broker-safe external credential endpoint.',
-          ],
-        },
-      };
-    }
-  }
-  if (credentialMode !== 'onecli') {
-    return { ok: true };
-  }
-  const onecliPostgres = settings.credentialBroker.onecli.postgres;
-  const gantryPostgres = settings.storage.postgres;
-  const onecliReadiness = await inspectOnecliPersistenceReadiness({
-    postgresUrl:
-      runtimeSecrets.getOptionalSecret({ env: onecliPostgres.urlEnv }) || '',
-    schema: onecliPostgres.schema,
-    secretEncryptionKey:
-      runtimeSecrets.getOptionalSecret({
-        env: ONECLI_SECRET_ENCRYPTION_KEY_ENV,
-      }) || '',
-    gantryPostgresUrl:
-      runtimeSecrets.getOptionalSecret({ env: gantryPostgres.urlEnv }) || '',
-    gantrySchema: gantryPostgres.schema,
-  });
-  if (onecliReadiness.status !== 'fail') {
-    return { ok: true };
+  const base = validateRuntimePreflight(runtimeHome);
+  if (!base.ok) {
+    return base;
   }
 
-  return {
-    ok: false,
-    failure: {
-      summary: onecliReadiness.message,
-      details: [
-        ...(onecliReadiness.details || []),
-        ...(onecliReadiness.nextAction
-          ? [`Next action: ${onecliReadiness.nextAction}`]
-          : []),
-      ],
-    },
-  };
+  ensureRuntimeSettings(runtimeHome);
+  readEnvFile(envFilePath(runtimeHome));
+  return { ok: true };
 }
 
 export function formatRuntimePreflightFailure(

@@ -55,6 +55,28 @@ function toolItem(name: string): ToolCatalogItem {
   };
 }
 
+function semanticCapabilityToolItem(
+  capability: SemanticCapabilityDefinition,
+): ToolCatalogItem {
+  return {
+    id: `tool:capability:${capability.capabilityId}` as never,
+    appId: 'app:test' as never,
+    name: `capability:${capability.capabilityId}`,
+    kind: capability.credentialSource === 'local_cli' ? 'local_cli' : 'host',
+    provider:
+      capability.credentialSource === 'local_cli' ? 'local_cli' : 'gantry',
+    displayName: capability.displayName,
+    category: 'productivity',
+    risk: capability.risk === 'read' ? 'low' : 'high',
+    selectable: true,
+    status: 'active',
+    adapterRef: `capability/${capability.capabilityId}`,
+    inputSchema: semanticCapabilityInputSchema(capability),
+    createdAt: '2026-05-15T12:00:00.000Z' as never,
+    updatedAt: '2026-05-15T12:00:00.000Z' as never,
+  };
+}
+
 function activeBinding(tool: ToolCatalogItem): AgentToolBinding {
   return {
     id: `binding:${tool.id}` as never,
@@ -87,8 +109,6 @@ function skillActionCapability(): SemanticCapabilityDefinition {
       kind: 'skill_action',
       skillId: 'skill:linkedin-posting',
       skillName: 'linkedin-posting',
-      skillVersion: 'abc123',
-      skillContentHash: 'sha256:abc123',
       actionId: 'publish',
     },
   };
@@ -134,6 +154,7 @@ describe('PermissionManagementService', () => {
       now: () => '2026-05-15T12:00:00.000Z',
     });
     const saveTool = vi.fn(async () => undefined);
+    const capability = skillActionCapability();
 
     await service.applyPersistentToolRuleGrant({
       appId: 'app:test' as never,
@@ -150,7 +171,7 @@ describe('PermissionManagementService', () => {
       ],
       toolRepository: {
         getTool: vi.fn(async () => null),
-        listTools: vi.fn(async () => []),
+        listTools: vi.fn(async () => [semanticCapabilityToolItem(capability)]),
         saveTool,
         saveAgentToolBinding: vi.fn(async () => undefined),
         disableAgentToolBinding: vi.fn(async () => null),
@@ -159,16 +180,9 @@ describe('PermissionManagementService', () => {
       },
       mirrorAgentToolRulesToSettings: vi.fn(async () => undefined),
       permissionRepository: repository,
-      semanticCapabilityDefinitions: {
-        'skill.linkedin-posting.publish': skillActionCapability(),
-      },
     });
 
-    expect(saveTool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'tool:capability:skill.linkedin-posting.publish',
-      }),
-    );
+    expect(saveTool).not.toHaveBeenCalled();
     const decision = saveDecision.mock.calls[0]?.[0] as PermissionDecision;
     expect(decision.actorContext).toMatchObject({
       requestId: 'permission_skill_action',
@@ -180,8 +194,9 @@ describe('PermissionManagementService', () => {
           capabilityId: 'skill.linkedin-posting.publish',
           displayName: 'LinkedIn posting',
           skillId: 'skill:linkedin-posting',
-          skillContentHash: 'sha256:abc123',
+          skillName: 'linkedin-posting',
           actionId: 'publish',
+          commandPreviewHashes: [expect.stringMatching(/^sha256:/)],
         }),
       ],
     });
@@ -192,6 +207,152 @@ describe('PermissionManagementService', () => {
         }>
       )[0]?.commandPreviewHashes[0],
     ).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it('canonicalizes generated skill runtime RunCommand grants to trusted skill action capabilities', async () => {
+    const service = new PermissionManagementService({
+      now: () => '2026-05-15T12:00:00.000Z',
+    });
+    const saveTool = vi.fn(async () => undefined);
+    const mirrorAgentToolRulesToSettings = vi.fn(async () => undefined);
+    const capability = skillActionCapability();
+
+    const persisted = await service.applyPersistentToolRuleGrant({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      sourceAgentFolder: 'main_agent',
+      requestId: 'permission_skill_action_generated_path',
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [
+            {
+              toolName: 'RunCommand',
+              ruleContent:
+                '/tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py *',
+            },
+          ],
+        },
+      ],
+      toolRepository: {
+        getTool: vi.fn(async () => null),
+        listTools: vi.fn(async () => [semanticCapabilityToolItem(capability)]),
+        saveTool,
+        saveAgentToolBinding: vi.fn(async () => undefined),
+        disableAgentToolBinding: vi.fn(async () => null),
+        listAgentToolBindings: vi.fn(async () => []),
+        listAgentToolBindingsForAgents: vi.fn(),
+      },
+      mirrorAgentToolRulesToSettings,
+    });
+
+    expect(persisted).toEqual(['capability:skill.linkedin-posting.publish']);
+    expect(saveTool).not.toHaveBeenCalled();
+    expect(mirrorAgentToolRulesToSettings).toHaveBeenCalledWith(
+      'main_agent',
+      ['capability:skill.linkedin-posting.publish'],
+      { appId: 'app:test' },
+    );
+  });
+
+  it('rejects request-supplied capability definitions that conflict with the catalog', async () => {
+    const service = new PermissionManagementService({
+      now: () => '2026-05-15T12:00:00.000Z',
+    });
+    const catalogCapability = skillActionCapability();
+    const requestCapability: SemanticCapabilityDefinition = {
+      ...catalogCapability,
+      implementationBindings: [
+        {
+          kind: 'tool_rule',
+          rule: 'RunCommand(skills/linkedin-posting/admin.py *)',
+        },
+      ],
+    };
+    const saveTool = vi.fn(async () => undefined);
+    const saveAgentToolBinding = vi.fn(async () => undefined);
+    const mirrorAgentToolRulesToSettings = vi.fn(async () => undefined);
+
+    await expect(
+      service.applyPersistentToolRuleGrant({
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+        sourceAgentFolder: 'main_agent',
+        requestId: 'permission_skill_action_conflict',
+        updates: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            rules: [{ toolName: 'capability:skill.linkedin-posting.publish' }],
+          },
+        ],
+        semanticCapabilityDefinitions: {
+          'skill.linkedin-posting.publish': requestCapability,
+        },
+        toolRepository: {
+          getTool: vi.fn(async () => null),
+          listTools: vi.fn(async () => [
+            semanticCapabilityToolItem(catalogCapability),
+          ]),
+          saveTool,
+          saveAgentToolBinding,
+          disableAgentToolBinding: vi.fn(async () => null),
+          listAgentToolBindings: vi.fn(async () => []),
+          listAgentToolBindingsForAgents: vi.fn(),
+        },
+        mirrorAgentToolRulesToSettings,
+      }),
+    ).rejects.toThrow(
+      'Semantic capability skill.linkedin-posting.publish does not match the active catalog definition.',
+    );
+
+    expect(saveTool).not.toHaveBeenCalled();
+    expect(saveAgentToolBinding).not.toHaveBeenCalled();
+    expect(mirrorAgentToolRulesToSettings).not.toHaveBeenCalled();
+  });
+
+  it('drops generated skill runtime RunCommand grants when no trusted skill action matches', async () => {
+    const service = new PermissionManagementService({
+      now: () => '2026-05-15T12:00:00.000Z',
+    });
+    const saveTool = vi.fn(async () => undefined);
+    const saveAgentToolBinding = vi.fn(async () => undefined);
+    const mirrorAgentToolRulesToSettings = vi.fn(async () => undefined);
+
+    const persisted = await service.applyPersistentToolRuleGrant({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      sourceAgentFolder: 'main_agent',
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [
+            {
+              toolName: 'RunCommand',
+              ruleContent:
+                '/tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py *',
+            },
+          ],
+        },
+      ],
+      toolRepository: {
+        getTool: vi.fn(async () => null),
+        listTools: vi.fn(async () => []),
+        saveTool,
+        saveAgentToolBinding,
+        disableAgentToolBinding: vi.fn(async () => null),
+        listAgentToolBindings: vi.fn(async () => []),
+        listAgentToolBindingsForAgents: vi.fn(),
+      },
+      mirrorAgentToolRulesToSettings,
+    });
+
+    expect(persisted).toEqual([]);
+    expect(saveTool).not.toHaveBeenCalled();
+    expect(saveAgentToolBinding).not.toHaveBeenCalled();
+    expect(mirrorAgentToolRulesToSettings).not.toHaveBeenCalled();
   });
 
   it('revokes a current-agent persistent tool grant and mirrors settings removal', async () => {

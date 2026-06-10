@@ -1,8 +1,11 @@
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
+import { getEffectiveModelConfig } from '../config/index.js';
+import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
 import type { Job } from '../domain/types.js';
 import { spawnAgent } from '../runtime/agent-spawn.js';
 import type { AgentOutput } from '../runtime/agent-spawn.js';
+import { providerSessionExternalSessionId } from '../runtime/agent-output-provider-session.js';
 import type { AgentInput } from '../runtime/agent-spawn-types.js';
 import {
   buildApprovedSkillContextBlock,
@@ -12,14 +15,12 @@ import {
   createRuntimeUserVisibleResultAccumulator,
 } from '../runtime/session-resume-runtime.js';
 import {
+  resolveTurnSemanticCapabilities,
   resolveTurnSelectedMcpServerIds,
-  resolveTurnSelectedSkillIds,
+  resolveTurnSelectedSkillContext,
 } from '../runtime/group-run-context.js';
-import {
-  DEFAULT_RUNTIME_EXECUTION_PROVIDER_ID,
-  resolveRuntimeExecutionProviderId,
-} from '../runtime/execution-provider-id.js';
-import { makeThreadQueueKey } from '../runtime/thread-queue-key.js';
+import { resolveConfiguredRuntimeExecutionProviderId } from '../runtime/execution-provider-id.js';
+import { makeThreadQueueKey } from '../shared/thread-queue-key.js';
 import {
   createJobRecoveryIntent,
   shouldRunRecoveryIntent,
@@ -33,10 +34,14 @@ import {
   resolveExecutionMemoryContext,
 } from './execution-context.js';
 import type { JobTurnContext, SchedulerDependencies } from './types.js';
+import {
+  modelUseKindForJobSchedule,
+  resolveJobModel,
+} from './model-resolution.js';
 
 const MAX_RECOVERY_TURN_TIMEOUT_MS = 300_000;
 const DEFAULT_RECOVERY_ASSISTANT_NAME = 'Gantry';
-const WORKSPACE_FOLDER_INPUT_KEY = `group${'Folder'}` as const;
+const WORKSPACE_FOLDER_INPUT_KEY = `workspace${'Folder'}` as const;
 
 export async function queueJobRecoveryTurn(input: {
   currentJob: Job;
@@ -316,10 +321,19 @@ async function runJobRecoveryAgentTurn(input: {
   ) => Promise<unknown> | unknown;
 }): Promise<AgentOutput> {
   const runAgentImpl = input.deps.runAgent ?? spawnAgent;
-  const executionProviderId =
-    input.deps.executionAdapter || !input.deps.runAgent
-      ? resolveRuntimeExecutionProviderId(input.deps.executionAdapter)
-      : DEFAULT_RUNTIME_EXECUTION_PROVIDER_ID;
+  const resolvedModel = resolveJobModel(
+    input.job,
+    getEffectiveModelConfig(
+      undefined,
+      modelUseKindForJobSchedule(input.job.schedule_type),
+      input.execution.group.folder,
+    ),
+  );
+  const executionProviderId = (resolvedModel.entry?.executionProviderId ??
+    resolveConfiguredRuntimeExecutionProviderId({
+      executionAdapter: input.deps.executionAdapter,
+      executionAdapters: input.deps.executionAdapters,
+    })) as ExecutionProviderId;
   const { memoryDefaultScope, memoryUserId } = resolveExecutionMemoryContext({
     conversationKind: input.execution.group.conversationKind,
     executionJid: input.execution.executionJid,
@@ -339,28 +353,37 @@ async function runJobRecoveryAgentTurn(input: {
   const executionAppId = turnContext?.appId ?? input.runtimeAppId;
   const executionAgentId =
     turnContext?.agentId ??
-    jobToolPolicy.agentIdForJobGroupScope(input.execution.group.folder);
-  const [toolPolicy, selectedSkillIds, credentialBroker, approvedSkillContext] =
-    await Promise.all([
-      jobToolPolicy.resolveJobToolPolicy({
-        job: input.job,
-        appId: executionAppId,
-        agentId: executionAgentId,
-        toolRepository: input.deps.getToolRepository?.(),
-        skillRepository: input.deps.getSkillRepository?.(),
-      }),
-      resolveTurnSelectedSkillIds(input.deps, {
-        appId: executionAppId,
-        agentId: executionAgentId,
-      }),
-      input.deps.getCredentialBroker?.() ?? Promise.resolve(undefined),
-      buildApprovedSkillContextBlock({
-        skillRepository: input.deps.getSkillRepository?.(),
-        skillArtifactStore: input.deps.getSkillArtifactStore?.(),
-        turnContext: turnContextForSkillContext(turnContext),
-      }),
-    ]);
-  const selectedMcpServerIds = await resolveTurnSelectedMcpServerIds(
+    jobToolPolicy.agentIdForJobWorkspaceKey(input.execution.group.folder);
+  const [
+    toolPolicy,
+    selectedSkillContext,
+    semanticCapabilities,
+    credentialBroker,
+    approvedSkillContext,
+  ] = await Promise.all([
+    jobToolPolicy.resolveJobToolPolicy({
+      job: input.job,
+      appId: executionAppId,
+      agentId: executionAgentId,
+      toolRepository: input.deps.getToolRepository?.(),
+      skillRepository: input.deps.getSkillRepository?.(),
+    }),
+    resolveTurnSelectedSkillContext(input.deps, {
+      appId: executionAppId,
+      agentId: executionAgentId,
+    }),
+    resolveTurnSemanticCapabilities(input.deps, {
+      appId: executionAppId,
+      agentId: executionAgentId,
+    }),
+    input.deps.getCredentialBroker?.() ?? Promise.resolve(undefined),
+    buildApprovedSkillContextBlock({
+      skillRepository: input.deps.getSkillRepository?.(),
+      skillArtifactStore: input.deps.getSkillArtifactStore?.(),
+      turnContext: turnContextForSkillContext(turnContext),
+    }),
+  ]);
+  const attachedMcpSourceIds = await resolveTurnSelectedMcpServerIds(
     input.deps,
     {
       appId: executionAppId,
@@ -379,6 +402,8 @@ async function runJobRecoveryAgentTurn(input: {
     mcpDnsValidationCache: input.deps.getMcpDnsValidationCache?.(),
     publishRuntimeEvent: input.publishRuntimeEvent,
     executionAdapter: input.deps.executionAdapter,
+    executionAdapters: input.deps.executionAdapters,
+    runnerSandboxProvider: input.deps.runnerSandboxProvider,
     skillContext: {
       appId: executionAppId,
       agentId: executionAgentId,
@@ -411,12 +436,12 @@ async function runJobRecoveryAgentTurn(input: {
     memoryContextBlock: [turnContext?.memoryContextBlock, approvedSkillContext]
       .filter((block): block is string => Boolean(block?.trim()))
       .join('\n\n'),
-    allowedTools: toolPolicy.effectiveAllowedTools,
-    localCliCredentialAccess: toolPolicy.localCliCredentialAccess,
-    localCliCredentialPaths: toolPolicy.localCliCredentialPaths,
-    localCliNetworkHosts: toolPolicy.localCliNetworkHosts,
-    selectedSkillIds,
-    selectedMcpServerIds,
+    toolPolicyRules: toolPolicy.effectiveAllowedTools,
+    runtimeAccess: toolPolicy.runtimeAccess,
+    attachedSkillSourceIds: selectedSkillContext.ids,
+    selectedSkillDisplays: selectedSkillContext.displays,
+    attachedMcpSourceIds,
+    semanticCapabilities,
     ...(turnContext?.externalSessionId
       ? { sessionId: turnContext.externalSessionId }
       : {}),
@@ -446,20 +471,23 @@ async function runJobRecoveryAgentTurn(input: {
       if (streamedOutput.result) {
         resultSummaryAccumulator.append(streamedOutput.result);
       }
-      if (streamedOutput.newSessionId && agentRunId) {
+      const streamedProviderSessionId =
+        providerSessionExternalSessionId(streamedOutput);
+      if (streamedProviderSessionId && agentRunId) {
         await input.deps.opsRepository.updateAgentRunProviderMetadata?.({
           runId: agentRunId,
-          providerSessionId: streamedOutput.newSessionId,
+          providerSessionId: streamedProviderSessionId,
         });
       }
     },
     runOptions,
   );
   if (output.result) resultSummaryAccumulator.append(output.result);
-  if (output.newSessionId && agentRunId) {
+  const providerSessionId = providerSessionExternalSessionId(output);
+  if (providerSessionId && agentRunId) {
     await input.deps.opsRepository.updateAgentRunProviderMetadata?.({
       runId: agentRunId,
-      providerSessionId: output.newSessionId,
+      providerSessionId,
     });
   }
   if (output.status === 'error') {
@@ -550,7 +578,7 @@ function buildJobRecoveryPrompt(job: Job): string {
     'React once to the deterministic setup or permission blocker. Use the same Gantry tools you would use in a normal conversation. Do not edit settings.yaml, mutate Postgres directly, or grant yourself access.',
     '',
     'Allowed recovery actions:',
-    '- If access is missing, use capability_search, propose_capability, manage_capability, request_permission, request_skill_install, request_skill_proposal, request_skill_dependency_install, or request_mcp_server as appropriate.',
+    '- If access is missing, request the reviewed capability. If setup is missing, request source setup through the Gantry access flow.',
     '- If a human decision is needed, ask the user or control approver clearly for the single next action.',
     '- If setup already looks ready, use scheduler_run_now or the scheduler tools to retry/resume the job.',
     '- If the job requirements are wrong, use scheduler update tools to correct the job requirement, then explain the change.',

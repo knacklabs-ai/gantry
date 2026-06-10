@@ -20,13 +20,40 @@ const capabilityRequirementImplementation = {
     protectedPaths: stringArray,
   },
 };
-const capabilityRequirement = {
+const accessRequirement = {
   type: 'object',
-  required: ['capabilityId', 'reason'],
+  required: ['target'],
   properties: {
-    capabilityId: { type: 'string' },
+    target: {
+      oneOf: [
+        {
+          type: 'object',
+          required: ['kind', 'rule'],
+          properties: {
+            kind: { type: 'string', enum: ['tool_rule'] },
+            rule: { type: 'string' },
+          },
+        },
+        {
+          type: 'object',
+          required: ['kind', 'capabilityId'],
+          properties: {
+            kind: { type: 'string', enum: ['capability'] },
+            capabilityId: { type: 'string' },
+            implementation: capabilityRequirementImplementation,
+          },
+        },
+        {
+          type: 'object',
+          required: ['kind', 'server'],
+          properties: {
+            kind: { type: 'string', enum: ['mcp_server'] },
+            server: { type: 'string' },
+          },
+        },
+      ],
+    },
     reason: { type: 'string' },
-    implementation: capabilityRequirementImplementation,
   },
 };
 const envelope = (name: string, schema: JsonSchema): JsonSchema => ({
@@ -54,12 +81,10 @@ export const automationOpenApiSchemas: Record<string, JsonSchema> = {
       schedule: metadata,
       executionContext: metadata,
       notificationRoutes: { type: 'array', items: metadata },
-      capabilityRequirements: {
+      accessRequirements: {
         type: 'array',
-        items: capabilityRequirement,
+        items: accessRequirement,
       },
-      toolAccessRequirements: stringArray,
-      requiredMcpServers: stringArray,
       setup: metadata,
       modelAlias: { type: 'string' },
     },
@@ -73,12 +98,10 @@ export const automationOpenApiSchemas: Record<string, JsonSchema> = {
       prompt: { type: 'string' },
       executionContext: metadata,
       notificationRoutes: { type: 'array', items: metadata },
-      capabilityRequirements: {
+      accessRequirements: {
         type: 'array',
-        items: capabilityRequirement,
+        items: accessRequirement,
       },
-      toolAccessRequirements: stringArray,
-      requiredMcpServers: stringArray,
       kind: { type: 'string', enum: ['manual', 'once', 'recurring'] },
       runAt: isoDateTime,
       schedule: metadata,
@@ -105,12 +128,10 @@ export const automationOpenApiSchemas: Record<string, JsonSchema> = {
       prompt: { type: 'string' },
       executionContext: metadata,
       notificationRoutes: { type: 'array', items: metadata },
-      capabilityRequirements: {
+      accessRequirements: {
         type: 'array',
-        items: capabilityRequirement,
+        items: accessRequirement,
       },
-      toolAccessRequirements: stringArray,
-      requiredMcpServers: stringArray,
       status: { type: 'string', enum: ['active', 'paused'] },
       modelAlias: { type: 'string' },
     },
@@ -207,6 +228,49 @@ export const automationOpenApiSchemas: Record<string, JsonSchema> = {
       metadata,
     },
   },
-  ExternalIngressInvokeRequest: metadata,
-  ExternalIngressInvokeResponse: metadata,
+  ExternalIngressConversationMessageTarget: {
+    type: 'object',
+    required: ['kind', 'conversationId', 'message'],
+    properties: {
+      kind: { type: 'string', enum: ['conversation_message'] },
+      conversationId: { type: 'string' },
+      threadId: { type: 'string' },
+      message: { type: 'string' },
+      senderId: { type: 'string' },
+      senderName: { type: 'string' },
+      correlationId: { type: 'string' },
+    },
+  },
+  ExternalIngressInvokeRequest: {
+    type: 'object',
+    required: ['target'],
+    properties: {
+      appId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      target: {
+        oneOf: [
+          {
+            $ref: '#/components/schemas/ExternalIngressConversationMessageTarget',
+          },
+          metadata,
+        ],
+      },
+    },
+  },
+  ExternalIngressInvokeResponse: {
+    type: 'object',
+    properties: {
+      invocationId: { type: 'string' },
+      duplicate: { type: 'boolean' },
+      targetKind: { type: 'string' },
+      messageId: { type: 'string' },
+      acceptedEventId: { type: 'integer' },
+      conversationId: { type: 'string' },
+      threadId: { type: 'string', nullable: true },
+      sessionId: { type: 'string' },
+      jobId: { type: 'string' },
+      triggerId: { type: 'string' },
+    },
+    additionalProperties: true,
+  },
 };

@@ -46,7 +46,7 @@ Three statements. Conflict with any of them means the gap is not closed.
 | G4  | No `scheduler_cancel_run` and no watchdog reaping zombie `running` rows                 | parent plan A Phase 2                                                                                                      | high        |
 | G5  | Telegram chunker still markdown-unaware; long replies truncate silently                 | `apps/core/src/channels/telegram/channel-shared.ts:132-155`, partial-delivery surface                                      | high        |
 | G6  | `formatOperatorError(err)` helper not introduced; three-line errors only ad-hoc         | spot-checked at `permission-callback.ts:175-176`, `channel-wiring-interactions.ts:44`, `runner/mcp/tools/scheduler.ts:220` | medium      |
-| G7  | Browser facade `status.cdpReady` lies when credential broker is dead                    | parent plan A §95; untouched in this refactor                                                                              | medium      |
+| G7  | Browser facade `status.cdpReady` must stay tied to browser/CDP readiness, not model gateway health | `apps/core/src/runtime/ipc-browser-handler.ts` and browser IPC tests                                                       | medium      |
 | G8  | Net delta of this branch is +1282 lines, violating parent non-negotiable                | `git diff --stat HEAD` summary                                                                                             | medium      |
 
 ## 5. Phases
@@ -60,9 +60,9 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 **Scope:**
 
 - Delete `DEFAULT_MEMORY_AGENT_ID` at `apps/core/src/memory/app-memory-boundaries.ts:13`. Surface every implicit caller as a TypeScript error.
-- Introduce `resolveSessionSubject(session) → { agentId, scope, groupFolder }` in `apps/core/src/memory/app-memory-subject-resolver.ts`. Single definition.
+- Introduce `resolveSessionSubject(session) → { agentId, scope, workspaceFolder }` in `apps/core/src/memory/app-memory-subject-resolver.ts`. Single definition.
 - Memory MCP handlers (`memory_search`, `memory_save`) read subject from the session context their handler runs in. Caller may _override_ scope (with audit), not invent agent.
-- Migration `0048_memory_subject_backfill.sql`: rewrite rows currently keyed `agent:personal` to the resolved subject by inspecting `groupFolder`. No dual-read path.
+- Migration `0048_memory_subject_backfill.sql`: rewrite rows currently keyed `agent:personal` to the resolved subject by inspecting `workspaceFolder`. No dual-read path.
 - Empty-result responses include the subject used so silent zero-results die.
 
 **Exit criteria:**
@@ -81,10 +81,12 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 
 - `apps/core/src/shared/permission-timeout.ts` exposes `getPermissionTimeoutMs(context: 'interactive' | 'autonomous')`. Interactive defaults 15000ms; autonomous defaults 0ms.
 - Autonomous-context callers (job runner) skip the IPC entirely on 0ms — fall through to the merged capability allowlist. No prompt fires.
-- Interactive denial message names the missing rule and points to the reviewed
-  capability or narrow `request_permission` path. Persistent fallback remains
-  limited to semantic capabilities, canonical `Browser`, exact Gantry admin
-  tools, exact Gantry file/web facades, or scoped `RunCommand(...)` rules.
+- Interactive denial message names the missing rule and points to
+  `request_access target.kind=capability` or the narrow
+  `request_access target.kind=run_command` fallback. Persistent fallback
+  remains limited to semantic capabilities, canonical `browser.use`, exact
+  Gantry admin tools, exact Gantry file/web facades, or scoped
+  `RunCommand(...)` rules.
 - Configurable via env, but defaults are the spec'd values.
 
 **Exit criteria:**
@@ -170,16 +172,20 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 
 ### Phase 7 — Browser surface honesty (G7)
 
-**Goal:** Browser facade `status.cdpReady` reflects driveability.
+**Goal:** Browser facade `status.cdpReady` reflects browser driveability.
 
 **Scope:**
 
-- `browser_status` checks both process liveness and credential broker reachability before reporting `cdpReady: true`. If the broker is unreachable, `cdpReady: false` with `formatOperatorError`-shaped reason.
+- `browser_status` checks browser process and CDP readiness only. Model gateway
+  and credential readiness belong to `gantry credentials`/`gantry doctor`, not
+  the browser status surface.
 - `mcp_list_tools` / `mcp_call_tool` failures during broker outage return the cause chain (Phase 6 helper), not the wrapper.
 
 **Exit criteria:**
 
-- **Repro:** kill the credential broker. Browser facade status reports `cdpReady: false` with cause + recover.
+- **Repro:** disable model gateway credentials. Browser facade status remains
+  available, reports browser/CDP readiness from the browser backend, and exposes
+  no `brokerHealth` fields.
 - No path returns `cdpReady: true` for a browser the agent cannot drive.
 
 **Deletion target:** ≥30 lines net.
@@ -216,7 +222,7 @@ Each phase: **goal**, **scope**, **exit criteria**, **deletion target**, **repro
 | Partial delivery surface             | `apps/core/src/domain/messages/partial-delivery.ts`                 | 91–99                  | 5     |
 | Group streaming overflow             | `apps/core/src/channels/telegram/channel-state.ts`                  | 431–442                | 5     |
 | Permission denial message            | `apps/core/src/adapters/llm/anthropic-claude-agent/runner/permission-callback.ts`                | 175–176                | 6     |
-| Credential broker error wrap         | `apps/core/src/application/credentials/agent-credential-service.ts` | 80–83                  | 6, 7  |
+| Model gateway error wrap             | `apps/core/src/application/credentials/agent-credential-service.ts` | 80–83                  | 6, 7  |
 
 ## 7. Pre-merge checklist
 

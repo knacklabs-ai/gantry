@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -14,23 +13,16 @@ import {
   stringifyClaudeSettings,
 } from './claude-settings-renderer.js';
 import {
-  BundledClaudeSkillSource,
+  BundledGantrySkillSource,
   materializeClaudeSkills,
   type ClaudeSkillSourceItem,
   type SkillSource,
 } from './claude-skill-materializer.js';
 
-const OPENROUTER_ANTHROPIC_COMPATIBLE_API_URL = 'https://openrouter.ai/api';
 const CLAUDE_MODEL_CREDENTIAL_ENV_KEYS = new Set([
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'NODE_USE_ENV_PROXY',
   'NODE_EXTRA_CA_CERTS',
 ]);
 
@@ -40,6 +32,8 @@ export interface ClaudeRuntimeMaterialization extends RuntimeMaterialization {
   providerSessionRestoreDir: string;
   projectDir: string;
   protectedFilesystemPaths: string[];
+  protectedFilesystemDenyReadPaths: string[];
+  protectedFilesystemDenyWritePaths: string[];
   materializedSkills: ClaudeSkillSourceItem[];
 }
 
@@ -56,12 +50,6 @@ export interface ClaudeRuntimeMaterializationInput {
   settings?: Omit<ClaudeSettingsRenderInput, 'cliEntryPoint'>;
   skillSource?: SkillSource;
   enabledSkillIds?: string[];
-}
-
-export function applyOpenRouterSdkEnv(env: NodeJS.ProcessEnv): void {
-  env.ANTHROPIC_BASE_URL = OPENROUTER_ANTHROPIC_COMPATIBLE_API_URL;
-  // secret-scan: empty sentinel prevents ambient first-party keys from winning.
-  env.ANTHROPIC_API_KEY = '';
 }
 
 export function projectClaudeModelCredentialEnv(
@@ -85,8 +73,7 @@ export async function materializeClaudeRuntime(
   const runId = input.runId ?? randomUUID();
   const ownsBaseTempDir = !input.baseTempDir;
   const baseTempDir =
-    input.baseTempDir ??
-    fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-claude-config-'));
+    input.baseTempDir ?? createDefaultBaseTempDir(input.groupDir);
   const cleanupPolicy = input.cleanupPolicy ?? 'delete-after-run';
   const claudeConfigDir = path.join(baseTempDir, 'claude');
   const skillsDir = path.join(claudeConfigDir, 'skills');
@@ -96,12 +83,13 @@ export async function materializeClaudeRuntime(
     getClaudeProjectDirName(input.groupDir),
   );
   let materializedSkills: ClaudeSkillSourceItem[] = [];
+  const claudeSettingsPath = path.join(claudeConfigDir, 'settings.json');
 
   try {
     fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
     fs.rmSync(skillsDir, { recursive: true, force: true });
     fs.writeFileSync(
-      path.join(claudeConfigDir, 'settings.json'),
+      claudeSettingsPath,
       stringifyClaudeSettings(
         renderClaudeSettings({
           cliEntryPoint: input.cliEntryPoint,
@@ -112,7 +100,7 @@ export async function materializeClaudeRuntime(
     );
     materializedSkills = await materializeClaudeSkills({
       skillSource:
-        input.skillSource ?? new BundledClaudeSkillSource(input.packageRoot),
+        input.skillSource ?? new BundledGantrySkillSource(input.packageRoot),
       skillsDir,
       enabledSkillIds: input.enabledSkillIds,
     });
@@ -123,6 +111,25 @@ export async function materializeClaudeRuntime(
     throw err;
   }
 
+  const protectedFilesystemDenyReadPaths = resolveProtectedFilesystemPaths([
+    claudeSettingsPath,
+    input.runtimeSettingsPath,
+    ...workspaceProtectedPaths(input.groupDir),
+    ...(input.globalDir ? workspaceProtectedPaths(input.globalDir) : []),
+    path.join(input.packageRoot, '.codex', 'skills'),
+    path.join(input.packageRoot, '.agents', 'skills'),
+    ...(input.managedSkillArtifactRoots ?? []),
+  ]);
+  const protectedFilesystemDenyWritePaths = resolveProtectedFilesystemPaths([
+    claudeConfigDir,
+    input.runtimeSettingsPath,
+    ...workspaceProtectedPaths(input.groupDir),
+    ...(input.globalDir ? workspaceProtectedPaths(input.globalDir) : []),
+    path.join(input.packageRoot, '.codex', 'skills'),
+    path.join(input.packageRoot, '.agents', 'skills'),
+    ...(input.managedSkillArtifactRoots ?? []),
+  ]);
+
   return {
     runId,
     baseTempDir,
@@ -130,16 +137,9 @@ export async function materializeClaudeRuntime(
     skillsDir,
     providerSessionRestoreDir: projectDir,
     projectDir,
-    protectedFilesystemPaths: resolveProtectedFilesystemPaths([
-      claudeConfigDir,
-      input.runtimeSettingsPath,
-      ...workspaceProtectedPaths(input.groupDir),
-      ...(input.globalDir ? workspaceProtectedPaths(input.globalDir) : []),
-      path.join(input.packageRoot, '.claude', 'skills'),
-      path.join(input.packageRoot, '.codex', 'skills'),
-      path.join(input.packageRoot, '.agents', 'skills'),
-      ...(input.managedSkillArtifactRoots ?? []),
-    ]),
+    protectedFilesystemPaths: protectedFilesystemDenyWritePaths,
+    protectedFilesystemDenyReadPaths,
+    protectedFilesystemDenyWritePaths,
     materializedSkills,
     cleanupPolicy,
     cleanup: () => {
@@ -148,6 +148,12 @@ export async function materializeClaudeRuntime(
       }
     },
   };
+}
+
+function createDefaultBaseTempDir(groupDir: string): string {
+  const runtimeDir = path.join(groupDir, '.llm-runtime');
+  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  return fs.mkdtempSync(path.join(runtimeDir, 'run-'));
 }
 
 function workspaceProtectedPaths(root: string): string[] {

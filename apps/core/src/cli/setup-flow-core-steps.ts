@@ -7,19 +7,13 @@ import {
 import { validatePostgresConnectionUrl } from '../adapters/storage/postgres/url.js';
 import {
   DEFAULT_MODEL_PRESET_ID,
-  formatModelDisplay,
   getModelPreset,
   isModelPresetId,
   listModelCatalogEntries,
   listModelPresets,
   resolveModelSelectionForWorkload,
 } from '../shared/model-catalog.js';
-import {
-  ONECLI_DEFAULT_SCHEMA,
-  renderOnecliDatabaseUrl,
-  validateOnecliDatabaseUrl,
-  validateSharedPostgresDatabase,
-} from '../adapters/credentials/onecli/local/persistence.js';
+import { formatModelDisplay } from '../shared/model-catalog-format.js';
 import {
   type FlowAction,
   isInputFlowControl,
@@ -79,7 +73,10 @@ export async function runRuntimeHomeStep(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     p.log.error(
-      `Cannot write to ${resolved}. Next action: fix permissions or choose another path. (${message})`,
+      [
+        `Setup blocked: cannot write to ${resolved} (${message})`,
+        'Next action: choose another Runtime home path.',
+      ].join('\n'),
     );
     return { action: { type: 'goto', step: 'runtime_home' } };
   }
@@ -146,8 +143,8 @@ export async function runStorageStep(draft: SetupDraft): Promise<FlowAction> {
   if (choice === 'local') {
     p.note(
       [
-        'Gantry ships a docker-compose.yml for local Postgres + OneCLI if you want a ready local stack.',
-        'Setup will not start Docker or create containers. Start your database first, then paste the URLs below.',
+        'Gantry ships a docker-compose.yml for local Postgres if you want a ready local database.',
+        'Setup will not start Docker or create containers. Start your database first, then paste the URL below.',
       ].join('\n'),
       'Postgres',
     );
@@ -220,117 +217,7 @@ export async function runStorageStep(draft: SetupDraft): Promise<FlowAction> {
   const schemaControl = parseInputFlowControl(schema);
   if (schemaControl) return schemaControl;
   draft.postgresSchema = String(schema).trim();
-
-  const onecliSchema = await p.text({
-    message: 'OneCLI Postgres schema',
-    placeholder: ONECLI_DEFAULT_SCHEMA,
-    defaultValue: draft.onecliPostgresSchema || ONECLI_DEFAULT_SCHEMA,
-    validate: (input) => {
-      const trimmed = String(input ?? '').trim();
-      if (isInputFlowControl(trimmed)) return undefined;
-      if (!/^[a-z_][a-z0-9_]{0,62}$/.test(trimmed)) {
-        return 'Use a lowercase PostgreSQL schema identifier.';
-      }
-      if (trimmed === draft.postgresSchema) {
-        return 'OneCLI schema must be separate from the Gantry schema.';
-      }
-      return undefined;
-    },
-  });
-  if (p.isCancel(onecliSchema)) return { type: 'resume' };
-  const onecliSchemaControl = parseInputFlowControl(onecliSchema);
-  if (onecliSchemaControl) return onecliSchemaControl;
-  draft.onecliPostgresSchema = String(onecliSchema).trim();
-
-  const defaultOnecliUrl = draft.onecliPostgresDatabaseUrl;
-  const onecliUrl = await p.text({
-    message:
-      'OneCLI Postgres URL (stored in ONECLI_DATABASE_URL, separate DB role)',
-    placeholder: renderOnecliDatabaseUrl({
-      postgresUrl:
-        choice === 'hosted'
-          ? 'postgres://onecli_user:pass@db.example.com:5432/gantry?sslmode=require'
-          : 'postgres://onecli_user:pass@localhost:5432/gantry',
-      schema: ONECLI_DEFAULT_SCHEMA,
-    }),
-    defaultValue: defaultOnecliUrl,
-    validate: (input) => {
-      const trimmed = String(input ?? '').trim();
-      if (isInputFlowControl(trimmed)) return undefined;
-      if (!trimmed) {
-        return 'OneCLI Postgres URL is required and must use a database role separate from Gantry.';
-      }
-      try {
-        validatePostgresConnectionUrl(trimmed, {
-          allowLocalhost: choice !== 'hosted',
-        });
-        const onecliValidation = validateOnecliDatabaseUrl({
-          postgresUrl: trimmed,
-          schema: draft.onecliPostgresSchema || ONECLI_DEFAULT_SCHEMA,
-        });
-        if (!onecliValidation.ok) {
-          return onecliValidation.message;
-        }
-        const sharedDatabase = validateSharedPostgresDatabase({
-          gantryPostgresUrl: normalizedUrl,
-          onecliPostgresUrl: trimmed,
-        });
-        if (!sharedDatabase.ok) {
-          return sharedDatabase.message;
-        }
-        if (new URL(trimmed).username === new URL(normalizedUrl).username) {
-          return 'OneCLI and Gantry must use different Postgres roles.';
-        }
-      } catch (err) {
-        return err instanceof Error ? err.message : String(err);
-      }
-      return undefined;
-    },
-  });
-  if (p.isCancel(onecliUrl)) return { type: 'resume' };
-  const onecliUrlControl = parseInputFlowControl(onecliUrl);
-  if (onecliUrlControl) return onecliUrlControl;
-  const normalizedOnecliUrl = String(onecliUrl).trim();
-  validatePostgresConnectionUrl(normalizedOnecliUrl, {
-    allowLocalhost: choice !== 'hosted',
-  });
-  const onecliValidation = validateOnecliDatabaseUrl({
-    postgresUrl: normalizedOnecliUrl,
-    schema: draft.onecliPostgresSchema || ONECLI_DEFAULT_SCHEMA,
-  });
-  if (!onecliValidation.ok) {
-    throw new Error(onecliValidation.message);
-  }
-  const sharedDatabase = validateSharedPostgresDatabase({
-    gantryPostgresUrl: normalizedUrl,
-    onecliPostgresUrl: normalizedOnecliUrl,
-  });
-  if (!sharedDatabase.ok) {
-    throw new Error(sharedDatabase.message);
-  }
-  if (
-    new URL(normalizedOnecliUrl).username === new URL(normalizedUrl).username
-  ) {
-    throw new Error('OneCLI and Gantry must use different Postgres roles.');
-  }
-  draft.onecliPostgresDatabaseUrl = normalizedOnecliUrl;
   return { type: 'next' };
-}
-
-export async function runPrerequisitesStep(): Promise<FlowAction> {
-  p.note(
-    [
-      'Gantry runs as a local host process.',
-      'Proceed once Node.js and runtime-home checks are passing.',
-    ].join('\n'),
-    'Runtime Prerequisites',
-  );
-
-  return chooseProgressAction({
-    message: 'Continue to provider selection?',
-    continueLabel: 'Continue',
-    includeBack: true,
-  });
 }
 
 export async function runChannelStep(draft: SetupDraft): Promise<FlowAction> {
@@ -397,7 +284,7 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
       ...listModelPresets().map((preset) => ({
         value: preset.id,
         label: preset.label,
-        hint: `Chat default ${preset.chatDefault}; memory is preset-managed.`,
+        hint: `Chat default ${preset.chatDefault}.`,
       })),
       {
         value: 'back',

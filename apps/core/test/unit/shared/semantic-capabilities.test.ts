@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLocalCliSemanticCapability,
   projectToolCatalogItemToRuntimeRules,
+  semanticCapabilityRuntimeRules,
   validateSemanticCapabilityDefinition,
 } from '@core/shared/semantic-capabilities.js';
 
@@ -67,6 +68,132 @@ describe('semantic capability catalog validation', () => {
     ).toEqual({
       ok: false,
       reason: 'Local CLI capabilities require an executable hash.',
+    });
+  });
+
+  it('rejects mismatched local CLI credential source and implementation bindings', () => {
+    expect(
+      validateSemanticCapabilityDefinition({
+        ...localCliCapability(),
+        credentialSource: 'configured_access',
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'Local CLI bindings require credentialSource local_cli.',
+    });
+
+    expect(
+      validateSemanticCapabilityDefinition({
+        ...localCliCapability(),
+        implementationBindings: [
+          { kind: 'adapter', adapterRef: 'configured.acme.invoices.read' },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        'Local CLI capabilities require a local_cli implementation binding.',
+    });
+  });
+
+  it('rejects local CLI-only credential and network fields on other capability types', () => {
+    expect(
+      validateSemanticCapabilityDefinition({
+        capabilityId: 'acme.invoices.read',
+        displayName: 'Acme invoices read',
+        category: 'Acme',
+        risk: 'read',
+        can: 'Read invoice records.',
+        cannot: 'Write invoices or export tokens.',
+        credentialSource: 'configured_access',
+        implementationBindings: [
+          { kind: 'adapter', adapterRef: 'configured.acme.invoices.read' },
+        ],
+        networkHosts: ['api.acme.test'],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        'networkHosts are only supported for local_cli or skill action capabilities.',
+    });
+
+    expect(
+      validateSemanticCapabilityDefinition({
+        capabilityId: 'acme.invoices.read',
+        displayName: 'Acme invoices read',
+        category: 'Acme',
+        risk: 'read',
+        can: 'Read invoice records.',
+        cannot: 'Write invoices or export tokens.',
+        credentialSource: 'configured_access',
+        implementationBindings: [
+          { kind: 'adapter', adapterRef: 'configured.acme.invoices.read' },
+        ],
+        protectedPaths: ['~/.config/acme'],
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'protectedPaths are only supported for local_cli capabilities.',
+    });
+  });
+
+  it('rejects network hosts on skill-secret capabilities that are not skill actions', () => {
+    expect(
+      validateSemanticCapabilityDefinition({
+        capabilityId: 'github.create_issue',
+        displayName: 'GitHub create issue',
+        category: 'MCP',
+        risk: 'write',
+        can: 'Create a GitHub issue.',
+        cannot: 'Call unrelated MCP tools.',
+        credentialSource: 'skill_secret',
+        implementationBindings: [
+          { kind: 'mcp_tool', mcpTool: 'mcp__github__create_issue' },
+        ],
+        networkHosts: ['api.github.com:443'],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        'networkHosts are only supported for local_cli or skill action capabilities.',
+    });
+  });
+
+  it('validates skill action network hosts with the shared host parser', () => {
+    const capability = {
+      capabilityId: 'skill.linkedin.publish',
+      displayName: 'LinkedIn publish',
+      category: 'linkedin-posting',
+      risk: 'write' as const,
+      can: 'Publish a LinkedIn post.',
+      cannot: 'Call unrelated endpoints.',
+      credentialSource: 'skill_secret' as const,
+      implementationBindings: [
+        { kind: 'tool_rule' as const, rule: 'RunCommand(skills/post.py *)' },
+      ],
+      source: {
+        kind: 'skill_action',
+        skillId: 'skill:linkedin-posting',
+        skillName: 'linkedin-posting',
+        actionId: 'publish',
+      },
+    };
+
+    expect(
+      validateSemanticCapabilityDefinition({
+        ...capability,
+        networkHosts: ['api.linkedin.com:443'],
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      validateSemanticCapabilityDefinition({
+        ...capability,
+        networkHosts: ['https://api.linkedin.com/v2'],
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        'networkHosts must be host or host:port values, not URLs, schemes, or paths.',
     });
   });
 
@@ -187,5 +314,14 @@ describe('semantic capability catalog validation', () => {
       'capability:acme.invoices.read',
       'RunCommand(/usr/local/bin/acme invoices read *)',
     ]);
+  });
+
+  it('does not project local CLI command rules from malformed non-local capability objects', () => {
+    expect(
+      semanticCapabilityRuntimeRules({
+        ...localCliCapability(),
+        credentialSource: 'configured_access',
+      }),
+    ).toEqual([]);
   });
 });

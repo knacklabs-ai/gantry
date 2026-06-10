@@ -693,7 +693,7 @@ describe('TeamsChannel adapter scaffold', () => {
       value: {
         action: 'permission_decision',
         requestId: 'perm-teams-1',
-        decision: 'approve',
+        decision: 'allow_once',
       },
     });
 
@@ -758,7 +758,7 @@ describe('TeamsChannel adapter scaffold', () => {
         data: {
           action: 'permission_decision',
           requestId: 'perm-teams-unauthorized',
-          decision: 'approve',
+          decision: 'allow_once',
         },
       },
     });

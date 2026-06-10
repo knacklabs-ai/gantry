@@ -27,10 +27,6 @@ import {
 } from './channel-shared.js';
 import { telegramActionReplyMarkup } from './message-action-affordances.js';
 import { sendTelegramPlannedChunk } from './send-planned-chunk.js';
-import {
-  permissionButtonLabel,
-  permissionDecisionOptions,
-} from '../permission-interaction.js';
 
 const TELEGRAM_ESCAPED_MARKDOWN_V2_CHAR_PATTERN =
   /\\([_*~[\]()`>#+\-=|{}.!\\])/g;
@@ -119,6 +115,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
               totalChunks: chunks.length,
             });
             Object.assign(partial, {
+              provider: 'telegram',
               deliveredParts: deliveredChunks,
               totalParts: chunks.length,
               externalMessageIds,
@@ -170,7 +167,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
     text: string,
     options: StreamingChunkOptions = {},
   ): Promise<boolean> {
-    if (!this.bot || !this.draftStreamApi) return false;
+    if (!this.bot) return false;
     if (!this.shouldAcceptStreamingChunk(jid, options.generation)) return false;
 
     const numericId = jid.replace(/^tg:/, '');
@@ -182,6 +179,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
     if (!this.isLikelyPrivateChatId(numericId)) {
       return this.handleGroupStreamingChunk(jid, numericId, text, options);
     }
+    if (!this.draftStreamApi) return false;
 
     const parsedThreadId = options.threadId
       ? Number.parseInt(options.threadId, 10)
@@ -527,18 +525,13 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
 
     const callbackId = this.nextPermissionCallbackId();
     const timeoutMs = TELEGRAM_USER_QUESTION_TIMEOUT_MS;
-    const promptText = this.formatPermissionPromptText(request, timeoutMs);
     try {
-      const sent = await this.bot.api.sendMessage(chatId, promptText, {
-        ...telegramThreadOptionsFromString(request.threadId),
-        reply_markup: {
-          inline_keyboard: permissionDecisionOptions(request).map((mode) => [
-            {
-              text: permissionButtonLabel(mode, request),
-              callback_data: `perm:${mode}:${callbackId}`,
-            },
-          ]),
-        },
+      const sent = await this.sendPermissionPromptMessage({
+        chatId,
+        request,
+        callbackId,
+        timeoutMs,
+        threadOpts: telegramThreadOptionsFromString(request.threadId),
       });
       return await new Promise<PermissionApprovalDecision>((resolve) => {
         const timer = setTimeout(() => {
@@ -604,20 +597,13 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
         continue;
       }
 
-      const promptText = this.formatUserQuestionPromptText(
-        request,
-        question,
-        timeoutMs,
-      );
       try {
-        const sent = await this.bot.api.sendMessage(chatId, promptText, {
-          ...telegramThreadOptionsFromString(request.threadId),
-          reply_markup: this.buildUserQuestionKeyboard(
-            request.requestId,
-            i,
-            question,
-            new Set<number>(),
-          ),
+        const sent = await this.sendUserQuestionPromptMessage({
+          chatId,
+          requestId: request.requestId,
+          questionIndex: i,
+          question,
+          threadOpts: telegramThreadOptionsFromString(request.threadId),
         });
 
         const selection = await new Promise<{
@@ -643,12 +629,13 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
             questionIndex: i,
             questionHeader: question.header,
             questionText: question.question,
-            promptText,
+            promptText: sent.promptText,
+            promptIsHtml: sent.promptIsHtml,
             optionLabels: question.options.map((option) => option.label),
             multiSelect: question.multiSelect,
             selectedOptionIndexes: new Set<number>(),
             chatId,
-            messageId: sent.message_id,
+            messageId: sent.messageId,
             timer,
             resolve,
           });

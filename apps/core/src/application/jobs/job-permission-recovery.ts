@@ -18,10 +18,10 @@ import {
   SETUP_REQUIRED_PAUSE_REASON,
   type JobReadinessBrowserStatus,
 } from './job-readiness-service.js';
-import { agentIdForJobGroupScope } from './job-tool-policy.js';
+import { agentIdForJobWorkspaceKey } from './job-tool-policy.js';
 import { nowIso } from '../../shared/time/datetime.js';
 
-export interface RecheckJobsAfterPermissionGrantInput {
+export interface RecheckPausedJobsAfterCapabilityUpdateInput {
   appId?: string;
   sourceAgentFolder: string;
   conversationJid?: string;
@@ -42,26 +42,26 @@ export interface RecheckJobsAfterPermissionGrantInput {
   clock?: { now(): string };
 }
 
-export interface RecheckedPermissionJob {
+export interface RecheckedSetupJob {
   jobId: string;
   name: string;
   state: 'queued' | 'still_blocked';
   nextAction?: string;
 }
 
-export interface PermissionGrantJobRecheckResult {
+export interface PausedJobCapabilityRecheckResult {
   checked: number;
-  queued: RecheckedPermissionJob[];
-  stillBlocked: RecheckedPermissionJob[];
+  queued: RecheckedSetupJob[];
+  stillBlocked: RecheckedSetupJob[];
 }
 
-export async function recheckSetupPausedJobsAfterPermissionGrant(
-  input: RecheckJobsAfterPermissionGrantInput,
-): Promise<PermissionGrantJobRecheckResult> {
+export async function recheckSetupPausedJobsAfterCapabilityUpdate(
+  input: RecheckPausedJobsAfterCapabilityUpdateInput,
+): Promise<PausedJobCapabilityRecheckResult> {
   const candidates = await listCandidateJobs(input);
   const now = input.clock?.now() ?? nowIso();
-  const queued: RecheckedPermissionJob[] = [];
-  const stillBlocked: RecheckedPermissionJob[] = [];
+  const queued: RecheckedSetupJob[] = [];
+  const stillBlocked: RecheckedSetupJob[] = [];
   for (const job of candidates) {
     if (!isSetupPausedJob(job)) continue;
     if (job.recovery_intent?.state === 'running') {
@@ -77,7 +77,7 @@ export async function recheckSetupPausedJobsAfterPermissionGrant(
     const readiness = await evaluateJobReadiness({
       job,
       appId: input.appId,
-      agentId: agentIdForJobGroupScope(input.sourceAgentFolder),
+      agentId: agentIdForJobWorkspaceKey(input.sourceAgentFolder),
       toolRepository: input.toolRepository,
       skillRepository: input.skillRepository,
       mcpServerRepository: input.mcpServerRepository,
@@ -130,30 +130,30 @@ export async function recheckSetupPausedJobsAfterPermissionGrant(
 }
 
 async function listCandidateJobs(
-  input: RecheckJobsAfterPermissionGrantInput,
+  input: RecheckPausedJobsAfterCapabilityUpdateInput,
 ): Promise<Job[]> {
   if (input.jobId) {
     const job = await input.opsRepository.getJobById(input.jobId);
-    return job && jobMatchesPermissionRecoveryScope(job, input) ? [job] : [];
+    return job && jobMatchesCapabilityRecoveryScope(job, input) ? [job] : [];
   }
   const filters: JobListFilters = {
     statuses: ['paused'],
-    groupScope: input.sourceAgentFolder,
+    workspaceKey: input.sourceAgentFolder,
     limit: 100,
   };
   if (input.conversationJid) filters.conversationJid = input.conversationJid;
   return input.opsRepository.listJobs(filters);
 }
 
-function jobMatchesPermissionRecoveryScope(
+function jobMatchesCapabilityRecoveryScope(
   job: Job,
-  input: RecheckJobsAfterPermissionGrantInput,
+  input: RecheckPausedJobsAfterCapabilityUpdateInput,
 ): boolean {
-  if (job.group_scope !== input.sourceAgentFolder) return false;
+  if (job.workspace_key !== input.sourceAgentFolder) return false;
   const executionContext = job.execution_context;
   if (
-    executionContext?.groupScope &&
-    executionContext.groupScope !== input.sourceAgentFolder
+    executionContext?.workspaceKey &&
+    executionContext.workspaceKey !== input.sourceAgentFolder
   ) {
     return false;
   }
@@ -170,7 +170,7 @@ function isSetupPausedJob(job: Job): boolean {
 }
 
 async function publishRecheckEvent(
-  input: RecheckJobsAfterPermissionGrantInput,
+  input: RecheckPausedJobsAfterCapabilityUpdateInput,
   job: Job,
   outcome: 'queued' | 'still_blocked',
   setupState: Job['setup_state'],
@@ -192,6 +192,6 @@ async function publishRecheckEvent(
       },
     });
   } catch {
-    // Permission recovery must not fail because telemetry is unavailable.
+    // Rechecking paused setup must not fail because telemetry is unavailable.
   }
 }

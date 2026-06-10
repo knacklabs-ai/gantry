@@ -23,6 +23,52 @@ describe('Postgres migration journal', () => {
     }
   });
 
+  it('registers the semantic memory vectors migration and schema', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const entry = journal.entries.find(
+      (item) => item.tag === '0070_semantic_memory_vectors',
+    );
+    expect(entry).toMatchObject({ idx: 70 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0070_semantic_memory_vectors.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(
+      'ADD COLUMN IF NOT EXISTS embedding vector(1536)',
+    );
+    expect(migration).toContain('USING hnsw (embedding vector_cosine_ops)');
+    expect(migration).toContain(
+      "WHERE status = 'ready' AND embedding IS NOT NULL",
+    );
+    expect(migration).toContain('idx_memory_item_embeddings_ready_lookup');
+    expect(migration).toContain(
+      'ON memory_item_embeddings(provider, model, status, provider_batch_id, updated_at, item_id)',
+    );
+    expect(migration).toContain(
+      'CREATE TABLE IF NOT EXISTS memory_embedding_backfill_runs',
+    );
+    expect(migration).toContain('run_id uuid');
+    expect(migration).toContain('idx_memory_embedding_backfill_runs_running');
+    expect(migration).toContain("WHERE status = 'running' AND mode = 'inline'");
+
+    const schema = fs.readFileSync(
+      path.resolve('apps/core/src/adapters/storage/postgres/schema/schema.ts'),
+      'utf8',
+    );
+    expect(schema).toContain('memoryEmbeddingBackfillRunsPostgres');
+    expect(schema).toContain("vector('embedding', { dimensions: 1536 })");
+    expect(schema).toContain('idx_memory_item_embeddings_hnsw');
+    expect(schema).toContain('idx_memory_item_embeddings_ready_lookup');
+  });
+
   it('applies the memory schema migration on fresh databases', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
@@ -32,6 +78,21 @@ describe('Postgres migration journal', () => {
     };
 
     expect(journal.entries.map((entry) => entry.tag)).toContain('0005_memory');
+  });
+
+  it('keeps the job workspace-key cutover fail-closed', () => {
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0071_jobs_target_workspace_key_cutover.sql',
+      ),
+      'utf8',
+    );
+
+    expect(migration).toContain('RAISE EXCEPTION');
+    expect(migration).toContain('executionContext.workspaceKey');
+    expect(migration).toContain('idx_jobs_target_workspace_key_updated');
+    expect(migration).not.toContain('jsonb_set(');
+    expect(migration).not.toContain("#- '{executionContext,groupScope}'");
   });
 
   it('applies the canonical domain cutover migration', () => {
@@ -571,6 +632,28 @@ describe('Postgres migration journal', () => {
     expect(migration).not.toContain("COALESCE(thread_id, '')");
   });
 
+  it('keeps pending skill and MCP drafts disabled during simple capability cutover', () => {
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0069_simple_capability_lifecycle.sql',
+      ),
+      'utf8',
+    );
+
+    expect(migration).toContain(
+      "WHEN status IN ('active', 'approved') THEN 'installed'",
+    );
+    expect(migration).toContain(
+      "WHEN status IN ('draft', 'rejected') THEN 'disabled'",
+    );
+    expect(migration).toContain(
+      "WHEN status IN ('approved', 'active') THEN 'active'",
+    );
+    expect(migration).toContain("WHEN status = 'draft' THEN 'disabled'");
+    expect(migration).not.toContain("'draft') THEN 'installed'");
+    expect(migration).not.toContain("'draft', 'active') THEN 'active'");
+  });
+
   it('registers message attachment message lookup index migration and schema', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
@@ -753,7 +836,7 @@ describe('Postgres migration journal', () => {
     expect(sessionDeletePolicyMigration).toContain('ON DELETE SET NULL');
   });
 
-  it('keeps skill draft persistence indexes aligned with one binding per agent skill', () => {
+  it('keeps skill persistence indexes aligned with one binding per agent skill', () => {
     const canonicalMigration = fs.readFileSync(
       path.resolve(
         'apps/core/src/adapters/storage/postgres/schema/migrations/0009_canonical_persistence_adapter_cut.sql',
@@ -775,6 +858,12 @@ describe('Postgres migration journal', () => {
     const repository = fs.readFileSync(
       path.resolve(
         'apps/core/src/adapters/storage/postgres/repositories/skill-repository.postgres.ts',
+      ),
+      'utf8',
+    );
+    const simpleCapabilityMigration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0069_simple_capability_lifecycle.sql',
       ),
       'utf8',
     );
@@ -812,7 +901,14 @@ describe('Postgres migration journal', () => {
     expect(skillOwnerScopedMigration).toContain(
       "ON skill_catalog(app_id, (coalesce(agent_id, '')), name, version)",
     );
-    expect(repository).toContain(
+    expect(simpleCapabilityMigration).toContain(
+      'DROP INDEX IF EXISTS idx_skill_catalog_app_hash',
+    );
+    expect(simpleCapabilityMigration).toContain('ranked_skill_slugs');
+    expect(simpleCapabilityMigration).toContain(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_catalog_app_skill_slug_installed',
+    );
+    expect(repository).not.toContain(
       'coalesce(${pgSchema.skillCatalogPostgres.agentId}',
     );
     expect(repository).toContain('configVersionId: binding.configVersionId');

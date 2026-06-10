@@ -21,21 +21,24 @@ export async function resolveAuthenticatedRouteContextForUpdate(input: {
   job: Job;
   appId?: string;
   access?: SchedulerJobAccess;
-  groupScope: string;
+  workspaceKey: string;
   patchExecutionContext?: JobUpdatePatch['executionContext'];
 }): Promise<{
   conversationJid: string;
   threadId: string | null;
-  groupScope: string;
+  workspaceKey: string;
 } | null> {
   if (input.access) {
-    return assertExecutionContextMatchesAuthenticatedContext({
+    const authenticatedContext = authenticatedContextFromAccess(
+      input.access,
+      input.workspaceKey,
+    );
+    assertExecutionContextMatchesAuthenticatedContext({
       executionContext: input.patchExecutionContext,
-      authenticatedContext: authenticatedContextFromAccess(
-        input.access,
-        input.groupScope,
-      ),
+      authenticatedContext,
+      enforceThread: input.patchExecutionContext !== undefined,
     });
+    return authenticatedContext;
   }
   if (!input.deps.control) return null;
   const requestedExecutionContext =
@@ -63,7 +66,7 @@ export async function resolveAuthenticatedRouteContextForUpdate(input: {
   }
   return {
     conversationJid: session.conversationJid,
-    groupScope: session.workspaceKey,
+    workspaceKey: session.workspaceKey,
     threadId:
       requestedExecutionContext?.threadId ??
       normalizeOptional(input.job.thread_id) ??

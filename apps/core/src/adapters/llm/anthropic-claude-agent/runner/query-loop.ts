@@ -21,13 +21,16 @@ import { log } from './logging.js';
 import { writeOutput } from './output.js';
 import {
   buildSdkFilesystemSandbox,
+  normalizeFilesystemSandboxPaths,
   readLocalCliCredentialDirectories,
-  readProtectedFilesystemPaths,
+  readProtectedFilesystemSandboxPaths,
 } from './filesystem-sandbox.js';
 import { createSafetyPreToolUseHook } from './protected-capability-hook.js';
 import {
+  allowedOuterSandboxClaudeExecutable,
   discoverAdditionalDirectories,
   IPC_POLL_MS,
+  resolveClaudeCodeExecutableFromPath,
   WORKSPACE_GROUP_DIR,
 } from './runtime-env.js';
 import {
@@ -58,6 +61,15 @@ import { createCanUseToolCallback } from './tool-permission-gate.js';
 interface RunQueryOptions {
   enableIpcFollowups?: boolean;
   persistSdkSession?: boolean;
+}
+
+function localCliCredentialDirectoriesFromRuntimeAccess(
+  agentInput: AgentRunnerInput,
+): string[] {
+  const dirs = (agentInput.runtimeAccess ?? []).flatMap((access) =>
+    access.sourceType === 'local_cli' ? access.credentialDirs : [],
+  );
+  return normalizeFilesystemSandboxPaths(dirs);
 }
 
 function sdkResultFailureMessage(message: unknown): string | null {
@@ -186,33 +198,60 @@ export async function runQuery(
     getSessionId: () => newSessionId,
   });
   const systemPrompt = buildRunnerSystemPrompt(agentInput, memoryBlock);
-  const localCliCredentialDirectories = readLocalCliCredentialDirectories();
+  const localCliCredentialDirectories = [
+    ...new Set([
+      ...readLocalCliCredentialDirectories(),
+      ...localCliCredentialDirectoriesFromRuntimeAccess(agentInput),
+    ]),
+  ].sort();
   const extraDirs = discoverAdditionalDirectories();
-  const protectedFilesystemPaths = [
-    ...readProtectedFilesystemPaths(),
+  const additionalDirectories = [
+    ...new Set([...extraDirs, ...localCliCredentialDirectories]),
+  ].sort();
+  const protectedFilesystemPaths = readProtectedFilesystemSandboxPaths();
+  const protectedFilesystemDenyReadPaths = protectedFilesystemPaths.denyRead;
+  const protectedFilesystemDenyWritePaths = [
+    ...protectedFilesystemPaths.denyWrite,
     ...localCliCredentialDirectories,
   ];
-  const workspaceFolder = agentInput.groupFolder;
+  const sdkFilesystemSandbox =
+    process.env.GANTRY_SANDBOX_RUNTIME_PROXY === '1'
+      ? undefined
+      : buildSdkFilesystemSandbox(protectedFilesystemDenyWritePaths, {
+          denyReadPaths: protectedFilesystemDenyReadPaths,
+          denyWritePaths: protectedFilesystemDenyWritePaths,
+        });
+  const workspaceFolder = agentInput.workspaceFolder;
   const enabledSdkSkills = readClaudeSdkSkillNamesFromEnv();
-  const isolatedSdkEnv = {
+  const isolatedSdkEnv: Record<string, string | undefined> = {
     ...sdkEnv,
     ...SDK_NATIVE_SKILL_DISABLE_ENV,
   };
+  const claudeCodeExecutable =
+    process.env.GANTRY_SANDBOX_RUNTIME_PROXY === '1'
+      ? allowedOuterSandboxClaudeExecutable(
+          resolveClaudeCodeExecutableFromPath(isolatedSdkEnv.PATH),
+        )
+      : undefined;
   const capabilities = composeAgentCapabilities({
     mcpServerPath,
     appId: agentInput.appId,
     agentId: agentInput.agentId,
     chatJid: agentInput.chatJid,
-    groupFolder: workspaceFolder,
+    workspaceFolder: workspaceFolder,
     threadId: agentInput.threadId,
+    jobId: agentInput.jobId,
+    runId: agentInput.runId,
     memoryUserId: agentInput.memoryUserId,
     memoryDefaultScope: agentInput.memoryDefaultScope,
     memoryReviewerIsControlApprover: agentInput.memoryReviewerIsControlApprover,
     persona: agentInput.persona,
     browserProfileName: agentInput.browserProfileName,
     configuredAllowedTools: agentInput.allowedTools,
-    selectedSkillIds: agentInput.selectedSkillIds,
-    selectedMcpServerIds: agentInput.selectedMcpServerIds,
+    attachedSkillSourceIds: agentInput.attachedSkillSourceIds,
+    selectedSkillDisplays: agentInput.selectedSkillDisplays,
+    attachedMcpSourceIds: agentInput.attachedMcpSourceIds,
+    semanticCapabilities: agentInput.semanticCapabilities,
     ipcDir: process.env.GANTRY_IPC_DIR,
     ipcAuthToken: process.env.GANTRY_IPC_AUTH_TOKEN,
     browserIpcAuthToken: process.env.GANTRY_BROWSER_IPC_AUTH_TOKEN,
@@ -231,7 +270,8 @@ export async function runQuery(
       thinking: queryThinking,
       effort: queryEffort,
       cwd: WORKSPACE_GROUP_DIR,
-      additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
+      additionalDirectories:
+        additionalDirectories.length > 0 ? additionalDirectories : undefined,
       persistSession: persistSdkSession,
       ...(persistSdkSession && agentInput.sessionId
         ? { resume: agentInput.sessionId }
@@ -249,12 +289,20 @@ export async function runQuery(
       allowedTools: [...capabilities.allowedTools],
       disallowedTools: [...capabilities.disallowedTools],
       env: isolatedSdkEnv,
-      sandbox: buildSdkFilesystemSandbox(protectedFilesystemPaths),
+      ...(claudeCodeExecutable
+        ? { pathToClaudeCodeExecutable: claudeCodeExecutable }
+        : {}),
+      ...(sdkFilesystemSandbox ? { sandbox: sdkFilesystemSandbox } : {}),
       permissionMode: capabilities.permissionMode,
       hooks: {
         PreToolUse: [
           {
-            hooks: [createSafetyPreToolUseHook(memoryBlock)],
+            hooks: [
+              createSafetyPreToolUseHook(
+                memoryBlock,
+                agentInput.toolNetworkEnv ?? {},
+              ),
+            ],
             timeout: 5,
           },
         ],

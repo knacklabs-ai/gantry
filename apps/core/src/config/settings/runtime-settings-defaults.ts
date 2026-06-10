@@ -13,9 +13,11 @@ import type {
   RuntimeCredentialBrokerSettings,
   RuntimeAgentSettings,
   RuntimeBrowserSettings,
+  RuntimeMemoryBackfillSettings,
   RuntimeMemoryLlmModels,
   RuntimeMemorySettings,
   RuntimePermissionSettings,
+  RuntimeSandboxSettings,
   RuntimeSettings,
   RuntimeStorageSettings,
 } from './runtime-settings-types.js';
@@ -24,16 +26,20 @@ export { DEFAULT_AGENT_NAME } from '../../shared/default-agent.js';
 
 export const DEFAULT_STORAGE_POSTGRES_URL_ENV = 'GANTRY_DATABASE_URL';
 export const DEFAULT_STORAGE_POSTGRES_SCHEMA = 'gantry';
-export const DEFAULT_ONECLI_URL = 'http://localhost:10254';
-export const DEFAULT_ONECLI_DATABASE_URL_ENV = 'ONECLI_DATABASE_URL';
-export const DEFAULT_ONECLI_POSTGRES_SCHEMA = 'onecli';
-export const DEFAULT_EMBED_MODEL = 'text-embedding-3-large';
+export const DEFAULT_MODEL_GATEWAY_BIND_HOST = '127.0.0.1';
+export const DEFAULT_EMBED_MODEL = 'text-embedding-3-small';
+export const DEFAULT_EMBED_DIMENSIONS = 1536;
 export const DEFAULT_OPENAI_DAILY_EMBED_LIMIT = 500;
 export const DEFAULT_MEMORY_EXTRACTOR_MAX_FACTS = 8;
 export const DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE = 0.6;
 export const DEFAULT_MEMORY_DREAMING_CRON = '15 3 * * *';
 export const DEFAULT_MEMORY_EMBED_BATCH_SIZE = 16;
 export const DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING = 5_000;
+export const DEFAULT_MEMORY_BACKFILL_ENABLED = true;
+export const DEFAULT_MEMORY_BACKFILL_CRON = '45 3 * * *';
+export const DEFAULT_MEMORY_BACKFILL_MAX_ITEMS_PER_RUN = 500;
+export const DEFAULT_MEMORY_BACKFILL_MODE = 'auto';
+export const DEFAULT_MEMORY_BACKFILL_PROVIDER_BATCH_MIN_ITEMS = 100;
 export const DEFAULT_AGENT_SESSION_MEMORY_ITEM_LIMIT = 8;
 export const DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS = 12_000;
 export const DEFAULT_BROWSER_USAGE_ENABLED = false;
@@ -41,6 +47,28 @@ export const DEFAULT_BROWSER_USAGE_MODE = 'audit';
 export const DEFAULT_BROWSER_USAGE_WINDOW_MS = 60_000;
 export const DEFAULT_BROWSER_USAGE_MAX_ACTIONS_PER_WINDOW = 120;
 export const DEFAULT_BROWSER_USAGE_MAX_CONCURRENT_PER_SITE = 1;
+export const DEFAULT_RUNTIME_SANDBOX_PROVIDER = 'direct';
+
+export function getDefaultRuntimeSandboxSettings(): RuntimeSandboxSettings {
+  return {
+    provider: DEFAULT_RUNTIME_SANDBOX_PROVIDER,
+    resourceLimits: {
+      cpuSeconds: 0,
+      memoryMb: 0,
+      maxProcesses: 0,
+    },
+  };
+}
+
+export function getDefaultMemoryBackfillSettings(): RuntimeMemoryBackfillSettings {
+  return {
+    enabled: DEFAULT_MEMORY_BACKFILL_ENABLED,
+    cron: DEFAULT_MEMORY_BACKFILL_CRON,
+    maxItemsPerRun: DEFAULT_MEMORY_BACKFILL_MAX_ITEMS_PER_RUN,
+    mode: DEFAULT_MEMORY_BACKFILL_MODE,
+    providerBatchMinItems: DEFAULT_MEMORY_BACKFILL_PROVIDER_BATCH_MIN_ITEMS,
+  };
+}
 
 export function getPresetManagedMemoryDefaults(
   presetId: ModelPresetId = DEFAULT_MODEL_PRESET_ID,
@@ -71,16 +99,9 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
     },
   };
   const credentialBroker: RuntimeCredentialBrokerSettings = {
-    mode: 'onecli',
-    onecli: {
-      url: DEFAULT_ONECLI_URL,
-      postgres: {
-        urlEnv: DEFAULT_ONECLI_DATABASE_URL_ENV,
-        schema: DEFAULT_ONECLI_POSTGRES_SCHEMA,
-      },
-    },
-    external: {
-      baseUrl: '',
+    mode: 'gantry',
+    gateway: {
+      bindHost: DEFAULT_MODEL_GATEWAY_BIND_HOST,
     },
   };
   const memory: RuntimeMemorySettings = {
@@ -89,8 +110,10 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       enabled: false,
       provider: 'disabled',
       model: DEFAULT_EMBED_MODEL,
+      dimensions: DEFAULT_EMBED_DIMENSIONS,
       dailyLimit: DEFAULT_OPENAI_DAILY_EMBED_LIMIT,
       batchSize: DEFAULT_MEMORY_EMBED_BATCH_SIZE,
+      backfill: getDefaultMemoryBackfillSettings(),
     },
     dreaming: {
       enabled: false,
@@ -117,6 +140,7 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       maxRetries: 5,
       baseRetryMs: 5000,
     },
+    sandbox: getDefaultRuntimeSandboxSettings(),
   };
   const browser: RuntimeBrowserSettings = {
     usage: {

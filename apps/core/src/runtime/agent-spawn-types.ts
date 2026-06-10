@@ -16,8 +16,15 @@ import type {
 } from '../shared/model-catalog.js';
 import type { AgentPersona } from '../shared/agent-persona.js';
 import type { YoloModeSettings } from '../shared/yolo-mode-policy.js';
+import type { CapabilityRuntimeAccess } from '../shared/capability-runtime-access.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
+import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
+import type { SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
+import type {
+  RunnerSandboxProvider,
+  RunnerSandboxSpawnInput,
+} from '../shared/runner-sandbox-provider.js';
 
 export interface AgentInput {
   prompt: string;
@@ -25,7 +32,7 @@ export interface AgentInput {
   agentId?: string;
   model?: string;
   sessionId?: string;
-  groupFolder: string;
+  workspaceFolder: string;
   chatJid: string;
   threadId?: string;
   memoryUserId?: string;
@@ -33,10 +40,12 @@ export interface AgentInput {
   memoryReviewerIsControlApprover?: boolean;
   persona?: AgentPersona;
   browserProfileName?: string;
-  allowedTools?: string[];
+  toolPolicyRules?: string[];
   toolAccessRequirements?: string[];
-  selectedSkillIds?: string[];
-  selectedMcpServerIds?: string[];
+  attachedSkillSourceIds?: string[];
+  selectedSkillDisplays?: string[];
+  attachedMcpSourceIds?: string[];
+  semanticCapabilities?: SemanticCapabilityDefinition[];
   isScheduledJob?: boolean;
   jobId?: string;
   jobName?: string;
@@ -47,14 +56,13 @@ export interface AgentInput {
   thinking?: ThinkingOverride;
   memoryContextBlock?: string;
   yoloMode?: YoloModeSettings;
-  localCliCredentialAccess?: boolean;
-  localCliCredentialPaths?: string[];
-  localCliNetworkHosts?: string[];
+  runtimeAccess?: CapabilityRuntimeAccess[];
 }
 
 export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
+  providerSession?: AgentOutputProviderSession;
   newSessionId?: string;
   compactBoundary?: boolean;
   interactionBoundary?: 'user_interaction';
@@ -64,6 +72,10 @@ export interface AgentOutput {
   contextUsage?: RuntimeContextUsageSnapshot;
   error?: string;
   runtimeEvents?: AgentOutputRuntimeEvent[];
+}
+
+export interface AgentOutputProviderSession {
+  externalSessionId: string;
 }
 
 export interface AgentOutputRuntimeEvent {
@@ -100,11 +112,13 @@ export interface RunAgentOptions {
     event: RuntimeEventPublishInput,
   ) => Promise<unknown> | unknown;
   executionAdapter?: AgentExecutionAdapter;
+  executionAdapters?: AgentExecutionAdapterRegistry;
+  runnerSandboxProvider: RunnerSandboxProvider;
 }
 
 export interface HostRuntimeContext {
   groupDir: string;
-  groupIpcDir: string;
+  workspaceIpcDir: string;
   runnerDistDir: string;
 }
 
@@ -129,4 +143,5 @@ export interface RunnerProcessSpec {
   startTime: number;
   logsDir: string;
   runtimeDetails: string[];
+  sandbox: Omit<RunnerSandboxSpawnInput, 'command' | 'args' | 'env'>;
 }

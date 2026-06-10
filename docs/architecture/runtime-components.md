@@ -33,23 +33,23 @@ ACP/ACPS are harness/runtime integration concerns. They are not part of the agen
 
 ## Runtime Map
 
-| Component                  | Main files                                                                                                                                                                                        | Responsibility                                                                                                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bootstrap and orchestrator | `apps/core/src/index.ts`, `apps/core/src/app/bootstrap/startup.ts`, `apps/core/src/app/bootstrap/runtime-services.ts`                                                                             | Create `RuntimeApp`, initialize Postgres storage, wire channels, start polling, IPC, scheduler, and control server.                                                                          |
-| Runtime app                | `apps/core/src/app/bootstrap/runtime-app.ts`                                                                                                                                                      | Holds runtime settings, groups, services, channel wiring, queue, scheduler, storage, and control-server lifecycle.                                                                           |
-| Channels                   | `apps/core/src/app/bootstrap/channel-wiring.ts`, `apps/core/src/channels/channel-provider.ts`, `apps/core/src/channels/slack/`, `apps/core/src/channels/telegram/`                                | Connect Slack, Telegram, and app channel adapters; route inbound messages, outbound replies, progress, streaming, typing, and permission prompts.                                            |
-| App channel                | `apps/core/src/channels/app.ts`                                                                                                                                                                   | Converts SDK-originated session output into durable `RuntimeEvent` records instead of sending to a chat network.                                                                             |
-| Postgres storage           | `apps/core/src/adapters/storage/postgres/runtime-store.ts`, `apps/core/src/adapters/storage/postgres/factory.ts`, `apps/core/src/adapters/storage/postgres/schema/schema.ts`                      | Owns first-party runtime tables, readiness checks, repositories, migrations, pgvector, and full-text search columns.                                                                         |
-| Message loop               | `apps/core/src/runtime/message-loop.ts`                                                                                                                                                           | Polls for new durable messages, recovers pending messages, applies slash/control checks, and enqueues processing.                                                                            |
-| Queue                      | `apps/core/src/runtime/group-queue.ts`                                                                                                                                                            | Maintains per-group/thread work ordering, active process tracking, retry behavior, and continuation input routing.                                                                           |
-| Group processor            | `apps/core/src/runtime/group-processing.ts`                                                                                                                                                       | Loads unread messages, checks triggers, hydrates durable memory context, starts agent runs, and commits cursors/results.                                                                     |
-| Agent spawn                | `apps/core/src/runtime/agent-spawn.ts`, `apps/core/src/runtime/agent-spawn-process.ts`                                                                                                            | Builds the child process environment, group working directory, model config, IPC secrets, MCP server path, and runtime credentials.                                                          |
-| Execution adapter          | `apps/core/src/application/agent-execution/agent-execution-adapter.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/execution-adapter.ts`                                                 | Converts canonical Gantry run context into a provider-owned child runner process, environment projection, protected paths, and cleanup.                                                       |
+| Component                  | Main files                                                                                                                                                                                                                       | Responsibility                                                                                                                                                                               |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bootstrap and orchestrator | `apps/core/src/index.ts`, `apps/core/src/app/bootstrap/startup.ts`, `apps/core/src/app/bootstrap/runtime-services.ts`                                                                                                            | Create `RuntimeApp`, initialize Postgres storage, wire channels, start polling, IPC, scheduler, and control server.                                                                          |
+| Runtime app                | `apps/core/src/app/bootstrap/runtime-app.ts`                                                                                                                                                                                     | Holds runtime settings, groups, services, channel wiring, queue, scheduler, storage, and control-server lifecycle.                                                                           |
+| Channels                   | `apps/core/src/app/bootstrap/channel-wiring.ts`, `apps/core/src/channels/channel-provider.ts`, `apps/core/src/channels/slack/`, `apps/core/src/channels/telegram/`                                                               | Connect Slack, Telegram, and app channel adapters; route inbound messages, outbound replies, progress, streaming, typing, and permission prompts.                                            |
+| App channel                | `apps/core/src/channels/app.ts`                                                                                                                                                                                                  | Converts SDK-originated session output into durable `RuntimeEvent` records instead of sending to a chat network.                                                                             |
+| Postgres storage           | `apps/core/src/adapters/storage/postgres/runtime-store.ts`, `apps/core/src/adapters/storage/postgres/factory.ts`, `apps/core/src/adapters/storage/postgres/schema/schema.ts`                                                     | Owns first-party runtime tables, readiness checks, repositories, migrations, pgvector, and full-text search columns.                                                                         |
+| Message loop               | `apps/core/src/runtime/message-loop.ts`                                                                                                                                                                                          | Polls for new durable messages, recovers pending messages, applies slash/control checks, and enqueues processing.                                                                            |
+| Queue                      | `apps/core/src/runtime/group-queue.ts`                                                                                                                                                                                           | Maintains per-group/thread work ordering, active process tracking, retry behavior, and continuation input routing.                                                                           |
+| Group processor            | `apps/core/src/runtime/group-processing.ts`                                                                                                                                                                                      | Loads unread messages, checks triggers, hydrates durable memory context, starts agent runs, and commits cursors/results.                                                                     |
+| Agent spawn                | `apps/core/src/runtime/agent-spawn.ts`, `apps/core/src/runtime/agent-spawn-process.ts`                                                                                                                                           | Builds the child process environment, group working directory, model config, IPC secrets, MCP server path, and runtime credentials.                                                          |
+| Execution adapter          | `apps/core/src/application/agent-execution/agent-execution-adapter.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/execution-adapter.ts`                                                                                 | Converts canonical Gantry run context into a provider-owned child runner process, environment projection, protected paths, and cleanup.                                                      |
 | Anthropic child runner     | `apps/core/src/adapters/llm/anthropic-claude-agent/runner/index.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/query-loop.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/permission-callback.ts` | Calls `@anthropic-ai/claude-agent-sdk`, streams follow-up input through `MessageStream`, and mediates tool permission callbacks as an adapter implementation detail.                         |
-| Tools and IPC              | `apps/core/src/adapters/llm/anthropic-claude-agent/agent-capabilities.ts`, `apps/core/src/runner/mcp/server.ts`, `apps/core/src/runtime/ipc.ts`, `apps/core/src/runtime/ipc-parsing.ts`                                        | Defines allowed tools, exposes Gantry MCP tools, validates signed IPC requests, and writes signed responses.                                                                                 |
-| Control server and SDK     | `apps/core/src/control/server/index.ts`, `apps/core/src/control/server/routes/`, `packages/sdk/src/index.ts`                                                                                      | Exposes HTTP/SSE control APIs for backend apps; SDK wraps this API for server-side Node consumers.                                                                                           |
-| Scheduler                  | `apps/core/src/jobs/scheduler.ts`, `apps/core/src/jobs/execution.ts`, `apps/core/src/jobs/schedule-math.ts`, `apps/core/src/infrastructure/pgboss/scheduler-engine.ts`                            | Owns Gantry job definitions, triggers, runs, events, pg-boss queueing, schedule sync, and dead-letter handling.                                                                              |
-| Memory and retrieval       | `apps/core/src/application/sessions/hydrate-agent-context-service.ts`, `apps/core/src/memory/app-memory-service.ts`, `apps/core/src/adapters/storage/postgres/schema/memory.ts`, `docs/MEMORY.md` | Stores flattened app/agent/subject-boundary memory in `memory_items`, records evidence and recall events, runs auditable dreaming, and builds bounded lexical memory context for fresh runs. |
+| Tools and IPC              | `apps/core/src/adapters/llm/anthropic-claude-agent/agent-capabilities.ts`, `apps/core/src/runner/mcp/server.ts`, `apps/core/src/runtime/ipc.ts`, `apps/core/src/runtime/ipc-parsing.ts`                                          | Defines allowed tools, exposes Gantry MCP tools, validates signed IPC requests, and writes signed responses.                                                                                 |
+| Control server and SDK     | `apps/core/src/control/server/index.ts`, `apps/core/src/control/server/routes/`, `packages/sdk/src/index.ts`                                                                                                                     | Exposes HTTP/SSE control APIs for backend apps; SDK wraps this API for server-side Node consumers.                                                                                           |
+| Scheduler                  | `apps/core/src/jobs/scheduler.ts`, `apps/core/src/jobs/execution.ts`, `apps/core/src/jobs/schedule-math.ts`, `apps/core/src/infrastructure/pgboss/scheduler-engine.ts`                                                           | Owns Gantry job definitions, triggers, runs, events, pg-boss queueing, schedule sync, and dead-letter handling.                                                                              |
+| Memory and retrieval       | `apps/core/src/application/sessions/hydrate-agent-context-service.ts`, `apps/core/src/memory/app-memory-service.ts`, `apps/core/src/adapters/storage/postgres/schema/memory.ts`, `docs/MEMORY.md`                                | Stores flattened app/agent/subject-boundary memory in `memory_items`, records evidence and recall events, runs auditable dreaming, and builds bounded lexical memory context for fresh runs. |
 
 ## End-to-End Message Flow
 
@@ -102,8 +102,15 @@ sequenceDiagram
 `agent-spawn.ts` launches a provider-neutral `AgentExecutionAdapter`. The
 adapter prepares provider-specific child runner files, SDK environment, model
 projection, runtime materialization, protected filesystem paths, and cleanup.
+Shared runtime passes Gantry-owned `toolPolicyRules` and neutral provider
+session output; adapter-owned renderers translate those into provider-native
+shapes such as Claude SDK `allowedTools` and stale-session error handling.
 The Anthropic adapter is the only production path that calls
 `@anthropic-ai/claude-agent-sdk`.
+The final child process spawn always goes through `RunnerSandboxProvider`.
+`direct` is compatibility mode; `sandbox_runtime` wraps the entire runner
+process, including SDK-managed Bash/file/MCP subprocesses and native SDK
+subagents.
 
 Key runner inputs:
 
@@ -117,7 +124,9 @@ Key runner inputs:
 
 `apps/core/src/adapters/llm/anthropic-claude-agent/runner/query-loop.ts` creates a `MessageStream` and passes it to `query()`. The stream lets the host add follow-up user messages to an already-running agent when the queue decides continuation is safe. The same `query()` call receives:
 
-- `allowedTools` from `apps/core/src/adapters/llm/anthropic-claude-agent/agent-capabilities.ts`, backed by the Gantry MCP surface in `apps/core/src/runner/gantry-mcp-tool-surface.ts`
+- `allowedTools` rendered by the Anthropic adapter from Gantry
+  `toolPolicyRules`, backed by the Gantry MCP surface in
+  `apps/core/src/runner/gantry-mcp-tool-surface.ts`
 - Gantry MCP server config from `apps/core/src/runner/mcp/server.ts`
 - provider-session projection: live interactive turns may pass adapter resume
   metadata from `ProviderSession`; scheduled jobs keep provider persistence
@@ -125,10 +134,20 @@ Key runner inputs:
 - working directory and extra directories
 - `canUseTool`, the permission callback that projects each SDK request through
   the canonical tool execution boundary before sensitive tools run
-- Claude SDK sandbox settings with `enabled=true`, `failIfUnavailable=true`,
-  `allowUnsandboxedCommands=false`, and `filesystem.denyWrite` for
-  `settings.yaml`, generated Claude config, MCP handoff files, and local
-  capability/config paths
+- an enforcing filesystem sandbox boundary for SDK-managed subprocesses:
+  `direct` runner mode uses Claude SDK sandbox settings with
+  `enabled=true`, `failIfUnavailable=true`, `allowUnsandboxedCommands=false`,
+  and protected-path denies, while `sandbox_runtime` mode uses the outer
+  whole-runner OS sandbox and does not request a nested SDK sandbox. In
+  outer-sandbox mode, the Claude Code child is marked already sandboxed, Gantry
+  prefers the resolved `claude` executable on `PATH` when present, reads stay
+  broad except explicit protected read denies, and generated Claude
+  session/cache state remains writable in
+  the per-agent config directory, per-run temp directory, and Claude Code's
+  uid-scoped temp directory, while stable settings, MCP, and skill definitions
+  stay deny-write protected. On macOS, sandbox-runtime's weaker network
+  isolation is enabled for this outer sandbox so Go-based approved CLIs can
+  perform TLS verification through `com.apple.trustd.agent`.
 
 The runner emits structured stdout markers back to the host. The group processor treats those markers as implementation signals, not as the public integration stream. SDK consumers should observe durable runtime events instead.
 
@@ -178,12 +197,18 @@ commands that reference protected capability paths; known text-payload flows
 such as `gh issue create --body ...` may mention those paths without becoming a
 capability mutation.
 
-SDK-managed Bash, file, hook, and MCP subprocesses also run behind the Claude
-SDK sandbox. Gantry passes only concrete protected paths through
-`GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON`; the runner projects them into
-`sandbox.filesystem.denyWrite`. On macOS and Linux, the SDK must fail closed if
-its sandbox dependency is unavailable. Docker deployments should still mount
-durable Gantry config and broker state read-only into the agent execution
+SDK-managed Bash, file, hook, and MCP subprocesses run behind one OS sandbox
+boundary. In `direct` runner mode, Gantry passes concrete protected paths
+through `GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON` and the runner projects them
+into the Claude SDK sandbox. In `sandbox_runtime` mode, Gantry does not request
+a nested SDK sandbox; the whole runner process and its children already run
+inside the enforcing sandbox-runtime profile, the Claude Code child is marked
+already sandboxed, reads stay broad except explicit protected read denies, and
+Gantry prefers the resolved `claude` executable on `PATH` when present. Gantry
+also allows Claude Code's uid-scoped temp directory for tool state, and enables
+macOS trustd access for Go-based CLI TLS verification while retaining Gantry's
+egress proxy enforcement. Docker deployments should still
+mount durable Gantry config and broker state read-only into the agent execution
 container wherever those paths are visible, because container mount policy is
 the OS boundary for non-SDK host-owned processes.
 
@@ -191,12 +216,10 @@ Gantry MCP tools are grouped by capability:
 
 - messaging and user interaction: send a message, ask a question
 - capability requests: skill install/proposal/dependency install, MCP server,
-  semantic capability search/request, local CLI capability proposal,
-  capability management, and the unified `request_permission` approval flow for
-  one-off scoped SDK, host, browser, memory, service, provider, and MCP actions
-- capability visibility: `capability_status`, `capability_search`, and
-  `mcp_list_tools` show available tools plus exact requestable admin tool IDs
-  and semantic capability request arguments
+  reviewed semantic capability request, and scoped `RunCommand` fallback request
+- capability visibility: the Agent Access summary and `mcp_list_tools` show
+  available tools, attached sources, requestable admin capabilities, and semantic
+  capability request arguments
 - scheduler: create, inspect, mutate, pause, resume, list, and wait for jobs, runs, events, and dead letters
 - memory: default tools include search/save for memory and procedures; patch
   tools are reviewed/selected-only
@@ -289,6 +312,11 @@ The public lifecycle is:
 Jobs have no serialized execution mode. Interactive message admission stays in
 `GroupQueue`; scheduler work enters the background pg-boss lane and uses
 `runtime.queue.max_job_runs` as its worker concurrency bound.
+Scheduled job prompt runs and scheduler recovery turns call the same
+`agent-spawn` runner path as live turns, so `runtime.sandbox.provider:
+sandbox_runtime` applies to jobs without a job-specific sandbox setting.
+Host-owned system jobs are trusted control-plane work and do not spawn an agent
+runner.
 
 ## Runtime Events
 
@@ -316,7 +344,7 @@ runtime event backend selector.
 
 ## Storage And Retrieval
 
-Postgres is mandatory runtime storage. The supported deployment model is one database with separate schemas and roles: `gantry` for first-party runtime tables, `onecli` for OneCLI broker state, and `pgboss` for pg-boss internals. Gantry provisions and verifies the schema boundary, but it does not query OneCLI-owned tables or run OneCLI migrations. `GANTRY_DATABASE_URL` and `ONECLI_DATABASE_URL` must use different Postgres users; the OneCLI `schema=onecli` URL parameter is not treated as a permission boundary by itself.
+Postgres is mandatory runtime storage. The supported deployment model is one Gantry runtime database/schema plus pg-boss internals. Runtime state, jobs, events, memory, capability credentials, and model credentials are first-party Gantry data protected by the configured storage role and `SECRET_ENCRYPTION_KEY`.
 
 The Gantry schema contains first-party tables for groups, chats, messages,
 sessions, jobs, runs, runtime events, webhooks, deliveries, flattened memory
@@ -326,27 +354,27 @@ subject identity is stored directly on `memory_items` and in item metadata.
 
 Retrieval uses two Postgres-native paths:
 
-- Postgres full-text search for lexical matching, filtering, and ranking
-- Future pgvector semantic lookup only after memory item embedding indexing and
-  querying are fully implemented
+- Postgres full-text search for lexical matching, filtering, and ranking (always-on baseline)
+- Optional pgvector semantic lookup, fused with lexical results when embeddings
+  are enabled and items are indexed; recall falls back to full-text otherwise
 
 Memory injected into a prompt is context, not trusted authority. The agent may use it to answer better, but runtime authorization still happens outside the model.
 
 ## Failure And Debugging Map
 
-| Symptom                                    | Start here                                                                                                                                                                                                                                                    | What to check                                                                                                                                                                                                                                                     |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inbound message is stuck                   | `apps/core/src/runtime/message-loop.ts`, `apps/core/src/runtime/group-queue.ts`                                                                                                                                                                               | Message persisted in Postgres, cursor state, pending recovery, active queue entry, retry count.                                                                                                                                                                   |
-| Agent starts but does not answer           | `apps/core/src/runtime/group-processing.ts`, `apps/core/src/runtime/agent-spawn.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/query-loop.ts`                                                                                                                              | Prompt construction, broker-safe child process env, runner stdout markers, final-output handling.                                                                                                                                                                 |
-| Conversation does not resume after restart | `apps/core/src/application/sessions/`, `apps/core/src/adapters/storage/postgres/repositories/domain-repositories.postgres.ts`, `apps/core/src/runtime/group-processing.ts`                                                                                    | `agent_sessions` deterministic key, durable memory context, thread id isolation, expected cold-start behavior.                                                                                                                                                    |
-| Follow-up is ignored                       | `apps/core/src/runtime/continuation-input.ts`, `apps/core/src/runtime/group-queue.ts`                                                                                                                                                                         | Whether the active run accepts continuation, queue key, thread key, and stop aliases.                                                                                                                                                                             |
-| Permission request hangs or denies         | `apps/core/src/runtime/ipc.ts`, `apps/core/src/runtime/ipc-auth-validation.ts`, `apps/core/src/app/bootstrap/channel-wiring.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/permission-callback.ts`                                                                         | IPC auth token, response signing key, request path ownership, conversation approval surface, sender policy, and control approvers.                                                                                                                                |
-| SDK wait or stream misses output           | `apps/core/src/control/server/routes/sessions.ts`, `apps/core/src/channels/app.ts`, `apps/core/src/adapters/storage/postgres/repositories/control-plane-repository.postgres.ts`                                                                               | App response route, `runtime_events`, SSE replay cursor, response mode, webhook destination status.                                                                                                                                                               |
-| Webhook delivery fails                     | `apps/core/src/control/server/webhook-delivery.ts`, `apps/core/src/control/server/routes/webhooks.ts`, `apps/core/src/adapters/storage/postgres/repositories/control-plane-repository.postgres.ts`                                                            | Registered URL, enabled flag, signing secret, retry count, dead-letter state, replay result.                                                                                                                                                                      |
-| Scheduled job does not run                 | `apps/core/src/jobs/scheduler.ts`, `apps/core/src/jobs/execution.ts`, `apps/core/src/infrastructure/pgboss/scheduler-engine.ts`                                                                                                                               | Scheduler readiness, pg-boss connection, schedule sync, due time, pause state, dead-letter queue.                                                                                                                                                                 |
-| Runtime reports storage not ready          | `apps/core/src/adapters/storage/postgres/runtime-store.ts`, `apps/core/src/adapters/storage/postgres/readiness.ts`, `apps/core/src/cli/doctor.ts`                                                                                                             | Postgres URL, migrations, pg-boss schema, pgvector extension, full-text indexes, connectivity.                                                                                                                                                                    |
-| OneCLI broker persistence is not ready     | `apps/core/src/adapters/credentials/onecli/local/persistence.ts`, `apps/core/src/cli/doctor.ts`, `apps/core/src/adapters/storage/postgres/storage-readiness.ts`                                                                                               | `ONECLI_DATABASE_URL`, `schema=onecli`, generated base64-encoded 32-byte `SECRET_ENCRYPTION_KEY`, schema existence, OneCLI gateway reachability.                                                                                                                  |
-| External ingress invoke fails              | `apps/core/src/control/server/routes/external-ingress.ts`, `apps/core/src/control/server/external-ingress-adapter.ts`, `apps/core/src/application/external-ingress/target-policy.ts`, `apps/core/src/application/external-ingress/external-ingress-module.ts` | HMAC signature/timestamp/nonce headers, ingress record `enabled` flag, target-policy allowlist (`allowedTargetKinds`, `sessionIds`, `conversationIds`, `jobIds`, `templateIds`), and the dispatch target kind (`session_message`, `job_trigger`, `job_template`). |
+| Symptom                                    | Start here                                                                                                                                                                                                                                                    | What to check                                                                                                                                                                                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound message is stuck                   | `apps/core/src/runtime/message-loop.ts`, `apps/core/src/runtime/group-queue.ts`                                                                                                                                                                               | Message persisted in Postgres, cursor state, pending recovery, active queue entry, retry count.                                                                                                                                                                                           |
+| Agent starts but does not answer           | `apps/core/src/runtime/group-processing.ts`, `apps/core/src/runtime/agent-spawn.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/query-loop.ts`                                                                                                 | Prompt construction, broker-safe child process env, runner stdout markers, final-output handling.                                                                                                                                                                                         |
+| Conversation does not resume after restart | `apps/core/src/application/sessions/`, `apps/core/src/adapters/storage/postgres/repositories/domain-repositories.postgres.ts`, `apps/core/src/runtime/group-processing.ts`                                                                                    | `agent_sessions` deterministic key, durable memory context, thread id isolation, expected cold-start behavior.                                                                                                                                                                            |
+| Follow-up is ignored                       | `apps/core/src/runtime/continuation-input.ts`, `apps/core/src/runtime/group-queue.ts`                                                                                                                                                                         | Whether the active run accepts continuation, queue key, thread key, and stop aliases.                                                                                                                                                                                                     |
+| Permission request hangs or denies         | `apps/core/src/runtime/ipc.ts`, `apps/core/src/runtime/ipc-auth-validation.ts`, `apps/core/src/app/bootstrap/channel-wiring.ts`, `apps/core/src/adapters/llm/anthropic-claude-agent/runner/permission-callback.ts`                                            | IPC auth token, response signing key, request path ownership, conversation approval surface, sender policy, and control approvers.                                                                                                                                                        |
+| SDK wait or stream misses output           | `apps/core/src/control/server/routes/sessions.ts`, `apps/core/src/channels/app.ts`, `apps/core/src/adapters/storage/postgres/repositories/control-plane-repository.postgres.ts`                                                                               | App response route, `runtime_events`, SSE replay cursor, response mode, webhook destination status.                                                                                                                                                                                       |
+| Webhook delivery fails                     | `apps/core/src/control/server/webhook-delivery.ts`, `apps/core/src/control/server/routes/webhooks.ts`, `apps/core/src/adapters/storage/postgres/repositories/control-plane-repository.postgres.ts`                                                            | Registered URL, enabled flag, signing secret, retry count, dead-letter state, replay result.                                                                                                                                                                                              |
+| Scheduled job does not run                 | `apps/core/src/jobs/scheduler.ts`, `apps/core/src/jobs/execution.ts`, `apps/core/src/infrastructure/pgboss/scheduler-engine.ts`                                                                                                                               | Scheduler readiness, pg-boss connection, schedule sync, due time, pause state, dead-letter queue.                                                                                                                                                                                         |
+| Runtime reports storage not ready          | `apps/core/src/adapters/storage/postgres/runtime-store.ts`, `apps/core/src/adapters/storage/postgres/readiness.ts`, `apps/core/src/cli/doctor.ts`                                                                                                             | Postgres URL, migrations, pg-boss schema, pgvector extension, full-text indexes, connectivity.                                                                                                                                                                                            |
+| Model credentials are not ready            | `apps/core/src/adapters/llm/anthropic-claude-agent/gantry-model-gateway.ts`, `apps/core/src/cli/credentials.ts`, `apps/core/src/cli/doctor.ts`                                                                                                                | `SECRET_ENCRYPTION_KEY`, `model_credentials` rows, provider id matches the selected model route, and `gantry credentials model status`.                                                                                                                                                   |
+| External ingress invoke fails              | `apps/core/src/control/server/routes/external-ingress.ts`, `apps/core/src/control/server/external-ingress-adapter.ts`, `apps/core/src/application/external-ingress/target-policy.ts`, `apps/core/src/application/external-ingress/external-ingress-module.ts` | HMAC signature/timestamp/nonce headers, ingress record `enabled` flag, target-policy allowlist (`allowedTargetKinds`, `sessionIds`, `conversationIds`, `jobIds`, `templateIds`), and the dispatch target kind (`session_message`, `conversation_message`, `job_trigger`, `job_template`). |
 
 ## Reading Paths
 

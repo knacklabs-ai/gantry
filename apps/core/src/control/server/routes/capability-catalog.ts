@@ -1,9 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import {
-  AgentCapabilitiesRequestSchema,
-  AgentSourcesRequestSchema,
-} from '@gantry/contracts';
+import { AgentAccessRequestSchema } from '@gantry/contracts';
 
 import { AgentCapabilityAdministrationService } from '../../../application/agents/agent-capability-administration-service.js';
 import { ApplicationError } from '../../../application/common/application-error.js';
@@ -14,6 +11,7 @@ import type { McpServerDefinition } from '../../../domain/mcp/mcp-servers.js';
 import type { SkillCatalogItem } from '../../../domain/skills/skills.js';
 import type { ToolCatalogItem } from '../../../domain/tools/tools.js';
 import type { AgentToolAccessView } from '../../../shared/tool-access-view.js';
+import type { AgentAccessSummary } from '../../../application/agents/agent-access-summary.js';
 import { semanticCapabilityFromToolCatalogItem } from '../../../shared/semantic-capabilities.js';
 import {
   authorizeControlRequest,
@@ -84,79 +82,41 @@ export async function handleCapabilityCatalogRoutes(
     return true;
   }
 
-  const agentCapabilityMatch = pathname.match(
-    /^\/v1\/agents\/([^/]+)\/capabilities$/,
-  );
-  const agentSourceMatch = pathname.match(/^\/v1\/agents\/([^/]+)\/sources$/);
-  if (agentSourceMatch && req.method === 'GET') {
+  const agentAccessMatch = pathname.match(/^\/v1\/agents\/([^/]+)\/access$/);
+  if (agentAccessMatch && req.method === 'GET') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
     if (!auth) return true;
     try {
-      const sources = await service().getSources({
+      const access = await service().getCapabilities({
         appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentSourceMatch[1]) as AgentId,
+        agentId: decodeURIComponent(agentAccessMatch[1]) as AgentId,
       });
-      sendJson(res, 200, sources);
+      sendJson(res, 200, accessToResponse(access));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
     }
     return true;
   }
 
-  if (agentSourceMatch && req.method === 'PUT') {
+  if (agentAccessMatch && req.method === 'PUT') {
     const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
     if (!auth) return true;
-    const parsed = AgentSourcesRequestSchema.safeParse(await readJson(req));
+    const parsed = AgentAccessRequestSchema.safeParse(await readJson(req));
     if (!parsed.success) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Invalid agent sources');
+      sendError(res, 400, 'INVALID_REQUEST', 'Invalid agent access document');
       return true;
     }
+    const appId = auth.appId as AppId;
+    const agentId = decodeURIComponent(agentAccessMatch[1]) as AgentId;
     try {
-      const sources = await service().replaceSources({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentSourceMatch[1]) as AgentId,
+      const access = await service().replaceAccessDocument({
+        appId,
+        agentId,
         sources: parsed.data.sources,
+        capabilities: parsed.data.selections,
       });
-      await ctx.syncSettingsFromProjection(auth.appId as AppId);
-      sendJson(res, 200, sources);
-    } catch (error) {
-      if (!sendApplicationError(res, error)) throw error;
-    }
-    return true;
-  }
-  if (agentCapabilityMatch && req.method === 'GET') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
-    if (!auth) return true;
-    try {
-      const capabilities = await service().getCapabilities({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentCapabilityMatch[1]) as AgentId,
-      });
-      sendJson(res, 200, capabilitiesToResponse(capabilities));
-    } catch (error) {
-      if (!sendApplicationError(res, error)) throw error;
-    }
-    return true;
-  }
-
-  if (agentCapabilityMatch && req.method === 'PUT') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
-    if (!auth) return true;
-    const parsed = AgentCapabilitiesRequestSchema.safeParse(
-      await readJson(req),
-    );
-    if (!parsed.success) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Invalid agent capabilities');
-      return true;
-    }
-    try {
-      const capabilities = await service().replaceCapabilities({
-        appId: auth.appId as AppId,
-        agentId: decodeURIComponent(agentCapabilityMatch[1]) as AgentId,
-        capabilities: parsed.data.capabilities,
-      });
-      await ctx.syncSettingsFromProjection(auth.appId as AppId);
-      sendJson(res, 200, capabilitiesToResponse(capabilities));
+      await ctx.syncSettingsFromProjection(appId);
+      sendJson(res, 200, accessToResponse(access));
     } catch (error) {
       if (!sendApplicationError(res, error)) throw error;
     }
@@ -166,14 +126,16 @@ export async function handleCapabilityCatalogRoutes(
   return false;
 }
 
-function capabilitiesToResponse(input: {
+function accessToResponse(input: {
   agentId: string;
   sources: unknown;
-  capabilities: unknown;
+  capabilities: Array<{ id: string; version: string }>;
   toolAccess: AgentToolAccessView;
+  summary: AgentAccessSummary;
   updatedAt: string;
 }) {
-  return input;
+  const { capabilities, ...rest } = input;
+  return { ...rest, selections: capabilities };
 }
 
 function toolToCapabilityResponse(tool: ToolCatalogItem) {
@@ -271,18 +233,19 @@ function skillToResponse(skill: SkillCatalogItem) {
     agentId: skill.agentId,
     name: skill.name,
     description: skill.description,
-    version: skill.version,
     source: skill.source,
     status: skill.status,
     promptRefs: skill.promptRefs,
     toolIds: skill.toolIds,
     workflowRefs: skill.workflowRefs,
-    storage: skill.storage,
+    storage: skill.storage
+      ? {
+          storageType: skill.storage.storageType,
+          storageRef: skill.storage.storageRef,
+          sizeBytes: skill.storage.sizeBytes,
+        }
+      : undefined,
     createdBy: skill.createdBy,
-    approvedBy: skill.approvedBy,
-    approvedAt: skill.approvedAt,
-    rejectedBy: skill.rejectedBy,
-    rejectedAt: skill.rejectedAt,
     createdAt: skill.createdAt,
     updatedAt: skill.updatedAt,
   };
@@ -300,13 +263,14 @@ function mcpServerToResponse(server: McpServerDefinition) {
     riskClass: server.riskClass,
     requestedBy: server.requestedBy,
     requestedReason: server.requestedReason,
-    latestApprovedVersionId: server.latestApprovedVersionId,
+    transport: server.transport,
+    config: server.config,
+    allowedToolPatterns: server.allowedToolPatterns,
+    autoApproveToolPatterns: server.autoApproveToolPatterns,
+    credentialRefs: server.credentialRefs,
+    sandboxProfileId: server.sandboxProfileId,
     createdAt: server.createdAt,
     updatedAt: server.updatedAt,
-    approvedBy: server.approvedBy,
-    approvedAt: server.approvedAt,
-    rejectedBy: server.rejectedBy,
-    rejectedAt: server.rejectedAt,
     disabledBy: server.disabledBy,
     disabledAt: server.disabledAt,
   };

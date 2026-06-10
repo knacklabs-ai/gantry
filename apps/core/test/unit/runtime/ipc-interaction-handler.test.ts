@@ -8,6 +8,7 @@ import {
   verifyIpcResponsePayload,
 } from '@core/infrastructure/ipc/response-signing.js';
 import { createIpcAuthEnvelope } from '@core/runtime/ipc-auth.js';
+import { semanticCapabilityInputSchema } from '@core/shared/semantic-capabilities.js';
 
 import {
   processPermissionIpcRequest,
@@ -255,8 +256,97 @@ describe('ipc-interaction-handler', () => {
     );
     expect(sendMessage).toHaveBeenCalledWith(
       'tg:team',
-      expect.stringContaining('Always allowed:'),
+      expect.stringContaining('Allowed for future:'),
       expect.any(Object),
+    );
+  });
+
+  it('records persistent approvals at parent conversation scope while routing the receipt to the thread', async () => {
+    const claimedPath = path.join(tempDir, 'claimed-thread-permission.json');
+    fs.writeFileSync(claimedPath, '{}');
+    const saveDecision = vi.fn(async () => undefined);
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+    const sendMessage = vi.fn(async () => undefined);
+    const toolRepository = {
+      getTool: vi.fn(async () => ({
+        id: 'tool:mcp__gantry__service_restart',
+        appId: 'app:test',
+        status: 'active',
+        selectable: true,
+      })),
+      listTools: vi.fn(async () => []),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+    };
+
+    await processPermissionInteractionIpc({
+      request: {
+        requestId: 'perm-thread-admin',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        responseNonce: 'nonce',
+        sourceAgentFolder: 'main_agent',
+        runHandle: 'agent-run-thread',
+        targetJid: 'tg:team',
+        threadId: 'topic-7',
+        toolName: 'mcp__gantry__service_restart',
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        requestPermissionApproval: vi.fn(async () => ({
+          approved: true,
+          mode: 'allow_persistent_rule',
+          decidedBy: 'owner',
+          reason: 'persistent tool allowed',
+          decisionClassification: 'user_permanent',
+          updatedPermissions: [
+            {
+              type: 'addRules',
+              behavior: 'allow',
+              rules: [{ toolName: 'mcp__gantry__service_restart' }],
+            },
+          ],
+        })),
+        sendMessage,
+        publishRuntimeEvent,
+        opsRepository: createEmptyJobRepository() as never,
+        getToolRepository: () => toolRepository as never,
+        getPermissionRepository: () =>
+          ({
+            savePolicy: vi.fn(),
+            saveRule: vi.fn(),
+            saveDecision,
+            getDecision: vi.fn(),
+          }) as never,
+        mirrorAgentToolRulesToSettings: vi.fn(async () => undefined),
+      },
+      ipcBaseDir: tempDir,
+      file: 'claimed-thread-permission.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    const savedDecision = saveDecision.mock.calls[0]?.[0];
+    expect(savedDecision.actorContext).toMatchObject({
+      requestId: 'perm-thread-admin',
+      conversationId: 'tg:team',
+      mode: 'allow_persistent_rule',
+      classification: 'user_permanent',
+    });
+    expect(savedDecision.actorContext).not.toHaveProperty('threadId');
+    const persistedEvent = publishRuntimeEvent.mock.calls
+      .map((call) => call[0])
+      .find((event) => event.eventType === 'permission.persisted');
+    expect(persistedEvent).toEqual(
+      expect.objectContaining({
+        conversationId: 'tg:team',
+        threadId: undefined,
+      }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      'tg:team',
+      expect.stringContaining('Allowed for future:'),
+      { threadId: 'topic-7' },
     );
   });
 
@@ -286,7 +376,24 @@ describe('ipc-interaction-handler', () => {
     };
     const toolRepository = {
       getTool: vi.fn(async () => null),
-      listTools: vi.fn(async () => []),
+      listTools: vi.fn(async () => [
+        {
+          appId: 'app:test',
+          id: 'tool:capability:skill.linkedin-posting.publish',
+          name: 'capability:skill.linkedin-posting.publish',
+          kind: 'host',
+          provider: 'gantry',
+          displayName: 'LinkedIn posting',
+          category: 'productivity',
+          risk: 'high',
+          selectable: true,
+          status: 'active',
+          adapterRef: 'capability/skill.linkedin-posting.publish',
+          inputSchema: semanticCapabilityInputSchema(skillCapability),
+          createdAt: '2026-05-15T12:00:00.000Z',
+          updatedAt: '2026-05-15T12:00:00.000Z',
+        },
+      ]),
       saveTool: vi.fn(async () => undefined),
       saveAgentToolBinding: vi.fn(async () => undefined),
       disableAgentToolBinding: vi.fn(async () => null),
@@ -341,13 +448,7 @@ describe('ipc-interaction-handler', () => {
       logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
     });
 
-    expect(toolRepository.saveTool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'tool:capability:skill.linkedin-posting.publish',
-        name: 'capability:skill.linkedin-posting.publish',
-        displayName: 'LinkedIn posting',
-      }),
-    );
+    expect(toolRepository.saveTool).not.toHaveBeenCalled();
     expect(toolRepository.saveAgentToolBinding).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: 'agent:test',

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from '../config/index.js';
-import { normalizeThreadQueueId } from './thread-queue-key.js';
+import { normalizeThreadQueueId } from '../shared/thread-queue-key.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 
 const THREAD_INPUT_PREFIX = 'thread-';
@@ -20,24 +20,24 @@ export function getContinuationInputNamespace(
 }
 
 export function getContinuationInputDir(
-  groupFolder: string,
+  workspaceFolder: string,
   threadId?: string | null,
 ): string {
   return path.join(
     DATA_DIR,
     'ipc',
-    groupFolder,
+    workspaceFolder,
     getContinuationInputNamespace(threadId),
   );
 }
 
 export function writeContinuationInput(
-  groupFolder: string,
+  workspaceFolder: string,
   text: string,
   sequence: number,
   threadId?: string | null,
 ): void {
-  const inputDir = getContinuationInputDir(groupFolder, threadId);
+  const inputDir = getContinuationInputDir(workspaceFolder, threadId);
   fs.mkdirSync(inputDir, { recursive: true });
   const filename = `${currentTimeMs()}-${String(sequence).padStart(12, '0')}.json`;
   const filepath = path.join(inputDir, filename);
@@ -54,10 +54,10 @@ export function writeContinuationInput(
 }
 
 export function writeCloseSignal(
-  groupFolder: string,
+  workspaceFolder: string,
   threadId?: string | null,
 ): void {
-  const inputDir = getContinuationInputDir(groupFolder, threadId);
+  const inputDir = getContinuationInputDir(workspaceFolder, threadId);
   fs.mkdirSync(inputDir, { recursive: true });
   fs.writeFileSync(path.join(inputDir, '_close'), '');
 }

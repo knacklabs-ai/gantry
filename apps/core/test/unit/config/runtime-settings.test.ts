@@ -15,6 +15,7 @@ import {
 import { renderRuntimeSettingsYaml } from '@core/config/settings/runtime-settings-renderer.js';
 import { validateLoadedRuntimeSettings } from '@core/config/settings/runtime-settings-validation.js';
 import { settingsFilePath } from '@core/config/settings/runtime-home.js';
+import { runSettingsCommand } from '@core/cli/settings.js';
 
 function emptySources() {
   return { skills: [], mcpServers: [], tools: [] };
@@ -49,6 +50,45 @@ describe('runtime settings', () => {
     expect(parsed.agent.recurringJobDefaultModel).toBe('opus-4.6');
   });
 
+  it('round-trips per-agent mcp tool scope through settings.yaml', () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [],
+        mcpServers: [{ id: 'github', tools: ['read_*'] }],
+        tools: [],
+      },
+      capabilities: [],
+    };
+
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('mcp_servers:');
+    expect(yaml).toContain('tools:');
+
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.agents.main_agent.sources.mcpServers).toEqual([
+      { id: 'github', tools: ['read_*'] },
+    ]);
+  });
+
+  it('rejects tool scope on non-mcp source refs', () => {
+    expect(() =>
+      parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    access:
+      sources:
+        skills:
+          - id: demo
+            tools:
+              - read_*
+`),
+    ).toThrow(/tools is only supported for mcp_servers/);
+  });
+
   it('defaults, renders, and parses runtime queue policy', () => {
     const settings = createDefaultRuntimeSettings();
     expect(settings.runtime.queue).toEqual({
@@ -74,6 +114,35 @@ describe('runtime settings', () => {
 
     const parsed = parseRuntimeSettings(yaml);
     expect(parsed.runtime.queue).toEqual(settings.runtime.queue);
+  });
+
+  it('defaults, renders, and parses runner sandbox policy', () => {
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.runtime.sandbox).toEqual({
+      provider: 'direct',
+      resourceLimits: {
+        cpuSeconds: 0,
+        memoryMb: 0,
+        maxProcesses: 0,
+      },
+    });
+
+    settings.runtime.sandbox = {
+      provider: 'sandbox_runtime',
+      resourceLimits: {
+        cpuSeconds: 120,
+        memoryMb: 2048,
+        maxProcesses: 64,
+      },
+    };
+
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('sandbox:');
+    expect(yaml).toContain('provider: sandbox_runtime');
+    expect(yaml).toContain('cpu_seconds: 120');
+
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.runtime.sandbox).toEqual(settings.runtime.sandbox);
   });
 
   it('defaults, renders, and parses neutral browser usage policy', () => {
@@ -234,6 +303,55 @@ describe('runtime settings', () => {
     ).toThrow('runtime.queue.max_jobb_runs is not supported');
   });
 
+  it('rejects unsupported runtime sandbox keys', () => {
+    expect(() =>
+      parseRuntimeSettings(`runtime:
+  sandbox:
+    provider: unsandboxed
+`),
+    ).toThrow('runtime.sandbox.provider must be direct or sandbox_runtime');
+  });
+
+  it('rejects duplicate settings keys before schema normalization', () => {
+    expect(() =>
+      parseRuntimeSettings(`agent:
+  name: Kai
+agent:
+  name: Other
+`),
+    ).toThrow('duplicate key "agent" (line 3)');
+
+    expect(() =>
+      parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    name: Other
+`),
+    ).toThrow('duplicate key "name" (line 4)');
+  });
+
+  it('validates settings.yaml schema without runtime preflight dependencies', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-settings-validate-'),
+    );
+    try {
+      saveRuntimeSettings(runtimeHome, createDefaultRuntimeSettings());
+      await expect(runSettingsCommand(runtimeHome, ['validate'])).resolves.toBe(
+        0,
+      );
+
+      fs.writeFileSync(
+        settingsFilePath(runtimeHome),
+        ['agent:', '  name: Kai', 'agent:', '  name: Other', ''].join('\n'),
+      );
+      await expect(runSettingsCommand(runtimeHome, ['validate'])).resolves.toBe(
+        1,
+      );
+    } finally {
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
   it('rejects unsupported agent settings keys', () => {
     const settings = createDefaultRuntimeSettings();
     const yaml = renderRuntimeSettingsYaml(settings).replace(
@@ -390,6 +508,21 @@ agents:
     expect(parsed.memory.llm.extractorMaxFacts).toBe(5);
     expect(parsed.memory.llm.extractorMinConfidence).toBe(0.75);
     expect(parsed.memory.maintenance.maxPending).toBe(250);
+  });
+
+  it('rejects unsupported semantic memory vector dimensions', () => {
+    expect(() =>
+      parseRuntimeSettings(`memory:
+  enabled: true
+  embeddings:
+    enabled: true
+    provider: openai
+    model: text-embedding-3-small
+    dimensions: 3072
+`),
+    ).toThrow(
+      'memory.embeddings.dimensions must be 1536; Gantry semantic memory v1 stores vector(1536) only.',
+    );
   });
 
   it('keeps explicit verbose provider connections over compact defaults', () => {
@@ -555,14 +688,15 @@ conversations:
     settings.agents.main_agent = {
       name: 'Default Agent',
       folder: 'main_agent',
-      persona: 'personal_assistant',
+      persona: 'generalist',
+      relationshipMode: 'organization',
       model: 'sonnet',
       oneTimeJobDefaultModel: 'haiku',
       recurringJobDefaultModel: 'opus',
       bindings: {},
       sources: {
-        skills: [{ id: 'skill:admin', version: 'approved' }],
-        mcpServers: [{ id: 'mcp:github', version: 'mcp-version:github' }],
+        skills: [{ id: 'skill:admin' }],
+        mcpServers: [{ id: 'mcp:github' }],
         tools: [],
       },
       capabilities: [{ id: 'Read', version: 'builtin' }],
@@ -594,9 +728,13 @@ conversations:
     const parsed = parseRuntimeSettings(renderRuntimeSettingsYaml(settings));
 
     expect(parsed.desiredState.authoritative).toBe(true);
-    expect(parsed.agents.main_agent.persona).toBe('personal_assistant');
+    expect(parsed.agents.main_agent.persona).toBe('generalist');
+    expect(parsed.agents.main_agent.relationshipMode).toBe('organization');
     expect(renderRuntimeSettingsYaml(parsed)).toContain(
-      '    persona: personal_assistant',
+      '    persona: generalist',
+    );
+    expect(renderRuntimeSettingsYaml(parsed)).toContain(
+      '    relationship_mode: organization',
     );
     expect(parsed.agents.main_agent.bindings.main_dm).toMatchObject({
       jid: 'tg:100',
@@ -637,7 +775,7 @@ conversations:
         rules: [
           'RunCommand(npm test *)',
           'Browser',
-          'capability:google.sheets.write',
+          'capability:acme.records.append',
         ],
       });
 
@@ -646,15 +784,74 @@ conversations:
         { id: 'mcp__gantry__service_restart', version: 'builtin' },
         { id: 'RunCommand(npm test *)', version: 'builtin' },
         { id: 'browser.use', version: 'builtin' },
-        { id: 'google.sheets.write', version: 'builtin' },
+        { id: 'acme.records.append', version: 'builtin' },
       ]);
       const yaml = fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8');
-      expect(yaml).toContain('id: google.sheets.write');
+      expect(yaml).toContain('id: acme.records.append');
       expect(yaml).not.toContain('capabilityPolicy');
       expect(yaml).not.toContain('permission-rule:');
     } finally {
       fs.rmSync(runtimeHome, { recursive: true, force: true });
     }
+  });
+
+  it('rejects generated runtime skill paths before mirroring settings', () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-settings-generated-runtime-'),
+    );
+    try {
+      const settings = createDefaultRuntimeSettings();
+      settings.agents.main_agent = {
+        name: 'Main',
+        folder: 'main_agent',
+        bindings: {},
+        sources: emptySources(),
+        capabilities: [],
+      };
+      saveRuntimeSettings(runtimeHome, settings);
+
+      expect(() =>
+        mirrorAgentToolRulesToRuntimeSettings({
+          runtimeHome,
+          agentFolder: 'main_agent',
+          rules: [
+            'RunCommand(/tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+          ],
+        }),
+      ).toThrow(
+        'Persistent RunCommand rules cannot reference generated runtime skill paths',
+      );
+      const parsed = loadRuntimeSettings(runtimeHome);
+      expect(parsed.agents.main_agent.capabilities).toEqual([]);
+    } finally {
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects generated runtime skill paths in settings validation', () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: emptySources(),
+      capabilities: [
+        {
+          id: 'RunCommand(/tmp/run/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+          version: 'builtin',
+        },
+      ],
+    };
+
+    const result = validateLoadedRuntimeSettings(
+      '/tmp/gantry-generated-runtime',
+      settings,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failure?.details.join('\n')).toContain(
+      'Persistent RunCommand rules cannot reference generated runtime skill paths',
+    );
   });
 
   it('rejects internal tool ids in settings agent tools', () => {
@@ -1248,7 +1445,7 @@ conversations:
     ]);
   });
 
-  it('renders opaque skill UUIDs because durable skill grants are restart-owned settings', () => {
+  it('renders readable skill names beside exact durable skill ids', () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.kai = {
       name: 'Kai',
@@ -1256,9 +1453,12 @@ conversations:
       bindings: {},
       sources: {
         skills: [
-          'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
-          'company-handbook',
-        ].map((id) => ({ id, version: 'approved' })),
+          {
+            name: 'linkedin-posting',
+            id: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
+          },
+          { id: 'company-handbook' },
+        ],
         mcpServers: [],
         tools: [],
       },
@@ -1267,14 +1467,20 @@ conversations:
 
     const yaml = renderRuntimeSettingsYaml(settings);
 
-    expect(yaml).toContain('skill:3014949c-a616-4b2c-80e7-0bc61bb31e85');
+    expect(yaml).toContain(
+      [
+        '        skills:',
+        '          - name: linkedin-posting',
+        '            id: "skill:3014949c-a616-4b2c-80e7-0bc61bb31e85"',
+      ].join('\n'),
+    );
     expect(yaml).toContain('company-handbook');
     expect(parseRuntimeSettings(yaml).agents.kai.sources.skills).toEqual([
       {
+        name: 'linkedin-posting',
         id: 'skill:3014949c-a616-4b2c-80e7-0bc61bb31e85',
-        version: 'approved',
       },
-      { id: 'company-handbook', version: 'approved' },
+      { id: 'company-handbook' },
     ]);
   });
 });

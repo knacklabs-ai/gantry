@@ -44,14 +44,7 @@ import { requireJobControl, requireRuntimeEvents, requireTriggerQueue } from './
 import { runSchedulerJobNowFromMcp } from './job-management-run-now.js';
 // prettier-ignore
 import { listManagedDeadLetterRuns, listManagedJobEvents, listManagedJobRuns } from './job-management-read-queries.js';
-import {
-  normalizeRequiredMcpServers,
-  normalizeToolAccessRequirements,
-} from './job-tool-access-requirements.js';
-import {
-  capabilityRequirementToolRules,
-  normalizeCapabilityRequirements,
-} from './job-capability-requirements.js';
+import { normalizeAccessRequirements } from './job-access-requirements.js';
 import {
   applyJobReadinessToUpdates,
   evaluateManagedJobReadiness,
@@ -107,8 +100,10 @@ export class JobManagementService {
         ? 'recurring_job'
         : 'one_time_job',
     );
-    const groupScope = (input.groupScope || access.sourceAgentFolder).trim();
-    if (groupScope !== access.sourceAgentFolder) {
+    const workspaceKey = (
+      input.workspaceKey || access.sourceAgentFolder
+    ).trim();
+    if (workspaceKey !== access.sourceAgentFolder) {
       throw new ApplicationError(
         'FORBIDDEN',
         'Scheduler jobs cannot be created outside the source group.',
@@ -124,49 +119,15 @@ export class JobManagementService {
     }
     const authenticatedContext = authenticatedContextFromAccess(
       access,
-      groupScope,
+      workspaceKey,
     );
-    const executionContext = assertExecutionContextMatchesAuthenticatedContext({
-      executionContext:
-        input.executionContext === undefined
-          ? {
-              conversationJid: authenticatedContext.conversationJid,
-              groupScope: authenticatedContext.groupScope,
-              threadId: authThreadId ?? null,
-            }
-          : input.executionContext,
-      authenticatedContext,
-    });
-    const requestedNotificationRoutes = normalizeNotificationRoutes(
-      input.notificationRoutes ?? [
-        {
-          conversationJid: authenticatedContext.conversationJid,
-          threadId: authenticatedContext.threadId,
-          label: 'primary',
-        },
-      ],
-    );
-    const toolAccessRequirements = normalizeToolAccessRequirements(
-      input.toolAccessRequirements ?? [],
-    );
-    const capabilityRequirements = normalizeCapabilityRequirements(
-      input.capabilityRequirements ?? [],
-    );
-    const effectiveToolAccessRequirements = normalizeToolAccessRequirements([
-      ...toolAccessRequirements,
-      ...capabilityRequirementToolRules(capabilityRequirements),
-    ]);
-    const requiredMcpServers = normalizeRequiredMcpServers(
-      input.requiredMcpServers ?? [],
-    );
-
     const requestedJobId = normalizeOptional(input.jobId);
     let id = this.deps.schedulePlanner.createJobId({
       name,
       prompt,
       scheduleType,
       scheduleValue: input.scheduleValue,
-      groupScope,
+      workspaceKey,
     });
     let existingJob: Job | undefined;
     if (requestedJobId) {
@@ -176,6 +137,37 @@ export class JobManagementService {
     }
     existingJob ??= await this.deps.ops.getJobById(id);
     if (existingJob) assertSchedulerJobAccess(existingJob, access);
+    const executionContext = assertExecutionContextMatchesAuthenticatedContext({
+      executionContext:
+        input.executionContext === undefined
+          ? (existingJob?.execution_context ?? {
+              conversationJid: authenticatedContext.conversationJid,
+              workspaceKey: authenticatedContext.workspaceKey,
+              threadId: authThreadId ?? null,
+            })
+          : input.executionContext,
+      authenticatedContext,
+      enforceThread: input.executionContext !== undefined,
+    });
+    const existingNotificationRoutes = normalizeStoredNotificationRoutes(
+      existingJob?.notification_routes,
+    );
+    const requestedNotificationRoutes = normalizeNotificationRoutes(
+      input.notificationRoutes ??
+        (existingNotificationRoutes.length > 0
+          ? existingNotificationRoutes
+          : [
+              {
+                conversationJid: authenticatedContext.conversationJid,
+                threadId: authenticatedContext.threadId,
+                label: 'primary',
+              },
+            ]),
+    );
+    const accessRequirements = normalizeAccessRequirements(
+      input.accessRequirements ?? [],
+    );
+
     const { canonicalSession } = await resolveCanonicalAppSessionForOrigin({
       access,
       control: this.deps.control,
@@ -184,23 +176,23 @@ export class JobManagementService {
       canonicalSession?.sessionId && executionContext.sessionId == null
         ? { ...executionContext, sessionId: canonicalSession.sessionId }
         : executionContext;
-    await requireJobNotificationRouteApproval({
-      deps: this.deps as never,
-      request: {
-        operation: existingJob ? 'update' : 'create',
-        jobId: id,
-        jobName: name,
-        authenticatedContext,
-        requestedRoutes: requestedNotificationRoutes,
-        existingRoutes: normalizeStoredNotificationRoutes(
-          existingJob?.notification_routes,
-        ),
-        routesBeyondContext: routesBeyondAuthenticatedContext({
-          routes: requestedNotificationRoutes,
+    if (input.notificationRoutes !== undefined || !existingJob) {
+      await requireJobNotificationRouteApproval({
+        deps: this.deps as never,
+        request: {
+          operation: existingJob ? 'update' : 'create',
+          jobId: id,
+          jobName: name,
           authenticatedContext,
-        }),
-      },
-    });
+          requestedRoutes: requestedNotificationRoutes,
+          existingRoutes: existingNotificationRoutes,
+          routesBeyondContext: routesBeyondAuthenticatedContext({
+            routes: requestedNotificationRoutes,
+            authenticatedContext,
+          }),
+        },
+      });
+    }
     const job: JobUpsertInput = {
       id,
       name,
@@ -210,7 +202,7 @@ export class JobManagementService {
       schedule_value: input.scheduleValue.trim(),
       session_id: canonicalSession?.sessionId ?? null,
       thread_id: executionContext.threadId ?? null,
-      group_scope: groupScope,
+      workspace_key: workspaceKey,
       created_by: input.createdBy === 'human' ? 'human' : 'agent',
       status: 'active',
       next_run: schedule.nextRun,
@@ -222,9 +214,7 @@ export class JobManagementService {
       max_consecutive_failures: input.maxConsecutiveFailures,
       execution_context: storedExecutionContext,
       notification_routes: requestedNotificationRoutes,
-      capability_requirements: capabilityRequirements,
-      tool_access_requirements: effectiveToolAccessRequirements,
-      required_mcp_servers: requiredMcpServers,
+      access_requirements: accessRequirements,
     };
     const readiness = await evaluateManagedJobReadiness({
       deps: this.deps,
@@ -258,15 +248,15 @@ export class JobManagementService {
   }
 
   async listJobs(input: ManagedJobListInput): Promise<{ jobs: Job[] }> {
-    const queryGroupScope = input.access
+    const queryWorkspaceKey = input.access
       ? input.access.sourceAgentFolder
-      : input.groupScope;
+      : input.workspaceKey;
     const repositoryAppId =
       input.appId === DEFAULT_JOB_RUNTIME_APP_ID ? undefined : input.appId;
     const jobs = await this.deps.ops.listJobs({
       appId: repositoryAppId,
       statuses: input.statuses,
-      groupScope: queryGroupScope,
+      workspaceKey: queryWorkspaceKey,
       agentId: input.agentId,
       kind: input.kind,
       conversationJid: input.conversationJid,

@@ -5,8 +5,6 @@ import { getGantryHome } from '../../shared/gantry-home.js';
 
 export const CONFIG_ENV_KEYS = [
   'GANTRY_HOME',
-  'GANTRY_DATABASE_URL',
-  'ONECLI_DATABASE_URL',
   'SECRET_ENCRYPTION_KEY',
   'TZ',
   'GANTRY_IPC_AUTH_SECRET',

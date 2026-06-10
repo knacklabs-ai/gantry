@@ -13,6 +13,10 @@ import type {
 } from '@core/domain/ports/repositories.js';
 import type { AppId } from '@core/domain/app/app.js';
 import type { Job } from '@core/domain/types.js';
+import {
+  semanticCapabilityInputSchema,
+  type SemanticCapabilityDefinition,
+} from '@core/shared/semantic-capabilities.js';
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -25,7 +29,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     status: 'active',
     session_id: null,
     thread_id: null,
-    group_scope: 'agent-one',
+    workspace_key: 'agent-one',
     created_by: 'agent',
     created_at: '2026-05-14T00:00:00.000Z',
     updated_at: '2026-05-14T00:00:00.000Z',
@@ -44,14 +48,47 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     execution_context: {
       conversationJid: 'tg:team',
       threadId: null,
-      groupScope: 'agent-one',
+      workspaceKey: 'agent-one',
     },
     ...overrides,
   };
 }
 
-function toolRepository(rules: string[]): ToolCatalogRepository {
+const sheetsAppendDefinition: SemanticCapabilityDefinition = {
+  capabilityId: 'acme.records.append',
+  displayName: 'Acme records append',
+  category: 'Acme Records',
+  risk: 'write',
+  can: 'Append values through a reviewed implementation.',
+  cannot: 'Expose raw credentials or manage unrelated Google resources.',
+  credentialSource: 'configured_access',
+  implementationBindings: [{ kind: 'tool_rule', rule: 'google_sheets_append' }],
+  preflight: { kind: 'none' },
+};
+
+function toolRepository(
+  rules: string[],
+  definitions: Record<string, SemanticCapabilityDefinition> = {},
+): ToolCatalogRepository {
   return {
+    listTools: vi.fn(async () =>
+      rules.map((rule, index) => {
+        const capabilityId = rule.startsWith('capability:')
+          ? rule.slice('capability:'.length)
+          : undefined;
+        const definition = capabilityId ? definitions[capabilityId] : undefined;
+        return {
+          appId: 'default',
+          id: `tool:${index}`,
+          name: rule,
+          selectable: true,
+          status: 'active',
+          ...(definition
+            ? { inputSchema: semanticCapabilityInputSchema(definition) }
+            : {}),
+        };
+      }),
+    ),
     listAgentToolBindings: vi.fn(async () =>
       rules.map((rule, index) => ({
         status: 'active',
@@ -60,7 +97,18 @@ function toolRepository(rules: string[]): ToolCatalogRepository {
     ),
     getTool: vi.fn(async (toolId: string) => {
       const index = Number(toolId.replace('tool:', ''));
-      return { appId: 'default', name: rules[index] };
+      const rule = rules[index];
+      const capabilityId = rule?.startsWith('capability:')
+        ? rule.slice('capability:'.length)
+        : undefined;
+      const definition = capabilityId ? definitions[capabilityId] : undefined;
+      return {
+        appId: 'default',
+        name: rule,
+        ...(definition
+          ? { inputSchema: semanticCapabilityInputSchema(definition) }
+          : {}),
+      };
     }),
   } as unknown as ToolCatalogRepository;
 }
@@ -96,8 +144,6 @@ function skillActionToolRepository(): ToolCatalogRepository {
             kind: 'skill_action',
             skillId: 'skill:linkedin-posting',
             skillName: 'linkedin-posting',
-            skillVersion: 'abc123',
-            skillContentHash: 'sha256:abc123',
             actionId: 'publish',
           },
         },
@@ -107,7 +153,18 @@ function skillActionToolRepository(): ToolCatalogRepository {
 }
 
 function selectedLinkedInSkillRepository(
-  contentHash = 'sha256:abc123',
+  actions: Array<Record<string, unknown>> = [
+    {
+      id: 'publish',
+      capabilityId: 'skill.linkedin-posting.publish',
+      displayName: 'LinkedIn posting',
+      risk: 'write',
+      can: 'Publish a prepared LinkedIn post.',
+      cannot: 'Read unrelated credentials.',
+      requiredEnvVars: [],
+      commandTemplates: ['skills/linkedin-posting/post.py *'],
+    },
+  ],
 ): SkillCatalogRepository {
   return {
     listEnabledSkillsForAgent: vi.fn(async () => [
@@ -117,14 +174,15 @@ function selectedLinkedInSkillRepository(
         name: 'linkedin-posting',
         version: 'abc123',
         source: 'admin_uploaded',
-        status: 'approved',
+        status: 'installed',
         promptRefs: [],
         toolIds: [],
         workflowRefs: [],
+        actionPermissions: actions,
         storage: {
           storageType: 'local-filesystem',
           storageRef: 'skill',
-          contentHash,
+          contentHash: 'sha256:abc123',
           sizeBytes: 1,
         },
         createdAt: '2026-05-14T00:00:00.000Z',
@@ -163,7 +221,11 @@ function secretRepository(
 describe('job readiness service', () => {
   it('reports ready when declared requirements have durable bindings and browser state', async () => {
     const result = await evaluateJobReadiness({
-      job: makeJob({ tool_access_requirements: ['Browser'] }),
+      job: makeJob({
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
+      }),
       appId: 'default',
       toolRepository: toolRepository(['Browser']),
       getBrowserStatus: vi.fn(async () => ({ hasState: true })),
@@ -180,7 +242,14 @@ describe('job readiness service', () => {
   it('passes skill action requirements through target agent skill grants', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:skill.linkedin-posting.publish'],
+        access_requirements: [
+          {
+            target: {
+              kind: 'tool_rule',
+              rule: 'capability:skill.linkedin-posting.publish',
+            },
+          },
+        ],
       }),
       appId: 'default',
       agentId: 'agent:agent-one',
@@ -193,15 +262,22 @@ describe('job readiness service', () => {
     expect(result.setupState.blockers).toEqual([]);
   });
 
-  it('blocks skill action requirements when the selected skill hash changed', async () => {
+  it('blocks skill action requirements when the selected skill no longer declares the action', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:skill.linkedin-posting.publish'],
+        access_requirements: [
+          {
+            target: {
+              kind: 'tool_rule',
+              rule: 'capability:skill.linkedin-posting.publish',
+            },
+          },
+        ],
       }),
       appId: 'default',
       agentId: 'agent:agent-one',
       toolRepository: skillActionToolRepository(),
-      skillRepository: selectedLinkedInSkillRepository('sha256:changed'),
+      skillRepository: selectedLinkedInSkillRepository([]),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
@@ -215,7 +291,11 @@ describe('job readiness service', () => {
 
   it('pauses for missing durable tool capabilities', async () => {
     const result = await evaluateJobReadiness({
-      job: makeJob({ tool_access_requirements: ['Browser'] }),
+      job: makeJob({
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
+      }),
       appId: 'default',
       toolRepository: toolRepository([]),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
@@ -227,36 +307,77 @@ describe('job readiness service', () => {
       state: 'missing_capability',
       requirementType: 'browser',
       requirementId: 'Browser',
+      message: 'Setup required: capability dependency missing: Browser access.',
     });
+    expect(result.setupState.blockers[0]?.message).not.toContain('sandbox');
   });
 
-  it('uses a conservative browser login blocker after durable Browser approval', async () => {
+  it('does not turn unreviewed semantic job requirements into grant prompts', async () => {
     const result = await evaluateJobReadiness({
-      job: makeJob({ tool_access_requirements: ['Browser'] }),
+      job: makeJob({
+        access_requirements: [
+          {
+            target: {
+              kind: 'tool_rule',
+              rule: 'capability:acme.records.append',
+            },
+          },
+        ],
+      }),
+      appId: 'default',
+      toolRepository: toolRepository([]),
+      clock: { now: () => '2026-05-14T00:00:00.000Z' },
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.setupState.blockers[0]).toMatchObject({
+      state: 'missing_capability',
+      requirementType: 'semantic_capability',
+      requirementId: 'acme.records.append',
+      message:
+        'This job references a capability that is not reviewed in the capability catalog.',
+    });
+    expect(result.setupState.blockers[0]?.nextAction).toContain(
+      'request_access',
+    );
+    expect(result.setupState.blockers[0]?.nextAction).not.toContain(
+      'request_permission',
+    );
+  });
+
+  it('does not block jobs on Browser login marker absence after durable Browser approval', async () => {
+    const result = await evaluateJobReadiness({
+      job: makeJob({
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
+      }),
       appId: 'default',
       toolRepository: toolRepository(['Browser']),
       getBrowserStatus: vi.fn(async () => ({ hasState: false })),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
-    expect(result.ready).toBe(false);
-    expect(result.setupState.blockers[0]).toMatchObject({
-      state: 'browser_login_may_be_required',
-      requirementType: 'browser',
+    expect(result.ready).toBe(true);
+    expect(result.setupState).toMatchObject({
+      state: 'ready',
+      blockers: [],
     });
   });
 
-  it('derives Browser profile from the runtime group folder, not canonical agent id', async () => {
+  it('does not require a Browser profile preflight for an approved Browser job', async () => {
     const getBrowserStatus = vi.fn(async () => ({ hasState: false }));
 
     const result = await evaluateJobReadiness({
       job: makeJob({
-        group_scope: 'main_agent',
-        tool_access_requirements: ['Browser'],
+        workspace_key: 'main_agent',
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'Browser' } },
+        ],
         execution_context: {
           conversationJid: 'tg:-1003986348737',
           threadId: null,
-          groupScope: 'main_agent',
+          workspaceKey: 'main_agent',
         },
       }),
       agentId: 'agent:main_agent',
@@ -266,18 +387,18 @@ describe('job readiness service', () => {
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
-    expect(getBrowserStatus).toHaveBeenCalledWith('c-main_agent-27f898a4e060');
-    expect(result.setupState.blockers[0]?.nextAction).toContain(
-      'c-main_agent-27f898a4e060',
-    );
-    expect(result.setupState.blockers[0]?.nextAction).not.toContain(
-      'c-agent-main_agent',
-    );
+    expect(getBrowserStatus).not.toHaveBeenCalled();
+    expect(result.ready).toBe(true);
+    expect(result.setupState.blockers).toEqual([]);
   });
 
   it('blocks unknown semantic capabilities even when a stale tool rule exists', async () => {
     const result = await evaluateJobReadiness({
-      job: makeJob({ tool_access_requirements: ['capability:unknown.tool'] }),
+      job: makeJob({
+        access_requirements: [
+          { target: { kind: 'tool_rule', rule: 'capability:unknown.tool' } },
+        ],
+      }),
       appId: 'default',
       toolRepository: toolRepository(['capability:unknown.tool']),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
@@ -291,13 +412,22 @@ describe('job readiness service', () => {
     });
   });
 
-  it('does not require the OneCLI broker for provider-neutral configured capabilities', async () => {
+  it('does not require the Gantry Model Gateway broker for provider-neutral configured capabilities', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:google.sheets.write'],
+        access_requirements: [
+          {
+            target: {
+              kind: 'tool_rule',
+              rule: 'capability:acme.records.append',
+            },
+          },
+        ],
       }),
       appId: 'default',
-      toolRepository: toolRepository(['capability:google.sheets.write']),
+      toolRepository: toolRepository(['capability:acme.records.append'], {
+        'acme.records.append': sheetsAppendDefinition,
+      }),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
@@ -308,73 +438,82 @@ describe('job readiness service', () => {
   it('uses the declared local CLI implementation instead of the builtin provider path', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:google.sheets.write'],
-        capability_requirements: [
+        access_requirements: [
           {
-            capabilityId: 'google.sheets.write',
-            reason: 'Write lead rows after each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'gog',
-              executablePath: '/usr/local/bin/gog',
-              executableVersion: 'v0.9.0',
-              executableHash: 'sha256:abc123',
-              commandTemplate:
-                '/usr/local/bin/gog sheets append <sheet_id> ...',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                executableVersion: 'v0.9.0',
+                executableHash: 'sha256:abc123',
+                commandTemplate:
+                  '/usr/local/bin/acme records append <sheet_id> ...',
+                networkHosts: [
+                  'oauth2.googleapis.com',
+                  'records.googleapis.com',
+                ],
+              },
             },
+            reason: 'Write lead rows after each run',
           },
         ],
       }),
       appId: 'default',
-      toolRepository: toolRepository(['capability:google.sheets.write']),
+      toolRepository: toolRepository([]),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
     expect(result.ready).toBe(false);
     expect(result.setupState.blockers).toEqual([
       expect.objectContaining({
-        state: 'draft_only',
+        state: 'missing_capability',
         requirementType: 'local_cli',
-        requirementId: 'google.sheets.write',
-        message: expect.stringContaining('using gog'),
+        requirementId: 'acme.records.append',
+        message: expect.stringContaining('using acme'),
       }),
     ]);
     expect(result.setupState.blockers[0]?.nextAction).toContain(
-      'propose_capability',
+      'request_access',
     );
     expect(result.setupState.blockers[0]?.nextAction).toContain(
-      '"source":"local_cli"',
+      '"kind":"capability"',
     );
     expect(result.setupState.blockers[0]?.nextAction).toContain(
-      '"executableHash":"sha256:abc123"',
+      '"id":"acme.records.append"',
     );
-    expect(result.setupState.blockers[0]?.message).not.toContain('OneCLI');
+    expect(result.setupState.blockers[0]?.message).not.toContain(
+      'Gantry Model Gateway',
+    );
   });
 
   it('treats a declared local CLI implementation as ready when its scoped RunCommand rule is bound', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:google.sheets.write'],
-        capability_requirements: [
+        access_requirements: [
           {
-            capabilityId: 'google.sheets.write',
-            reason: 'Write lead rows after each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'gog',
-              executablePath: '/usr/local/bin/gog',
-              executableVersion: 'v0.9.0',
-              executableHash: 'sha256:abc123',
-              commandTemplate:
-                '/usr/local/bin/gog sheets append <sheet_id> ...',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                executableVersion: 'v0.9.0',
+                executableHash: 'sha256:abc123',
+                commandTemplate:
+                  '/usr/local/bin/acme records append <sheet_id> ...',
+              },
             },
+            reason: 'Write lead rows after each run',
           },
         ],
       }),
       appId: 'default',
       toolRepository: toolRepository([
-        'capability:google.sheets.write',
-        'RunCommand(/usr/local/bin/gog sheets append *)',
+        'RunCommand(/usr/local/bin/acme records append *)',
       ]),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
@@ -386,23 +525,25 @@ describe('job readiness service', () => {
   it('requires pinned local CLI executable identity before proposing job access', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:google.sheets.write'],
-        capability_requirements: [
+        access_requirements: [
           {
-            capabilityId: 'google.sheets.write',
-            reason: 'Write lead rows after each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'gog',
-              executablePath: '/usr/local/bin/gog',
-              commandTemplate:
-                '/usr/local/bin/gog sheets append <sheet_id> ...',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                executablePath: '/usr/local/bin/acme',
+                commandTemplate:
+                  '/usr/local/bin/acme records append <sheet_id> ...',
+              },
             },
+            reason: 'Write lead rows after each run',
           },
         ],
       }),
       appId: 'default',
-      toolRepository: toolRepository(['capability:google.sheets.write']),
+      toolRepository: toolRepository([]),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
@@ -416,31 +557,30 @@ describe('job readiness service', () => {
       }),
     ]);
     expect(result.setupState.blockers[0]?.nextAction).not.toContain(
-      'request_permission',
+      'request_access',
     );
   });
 
   it('rejects persisted relative local CLI templates instead of converting legacy setup guidance', async () => {
     const result = await evaluateJobReadiness({
       job: makeJob({
-        tool_access_requirements: ['capability:google.sheets.write'],
-        capability_requirements: [
+        access_requirements: [
           {
-            capabilityId: 'google.sheets.write',
-            reason: 'Write lead rows after each run',
-            implementation: {
-              kind: 'local_cli',
-              name: 'gog',
-              commandTemplate: 'gog sheets append <sheet_id> ...',
+            target: {
+              kind: 'capability',
+              capabilityId: 'acme.records.append',
+              implementation: {
+                kind: 'local_cli',
+                name: 'acme',
+                commandTemplate: 'acme records append <sheet_id> ...',
+              },
             },
+            reason: 'Write lead rows after each run',
           },
         ],
       }),
       appId: 'default',
-      toolRepository: toolRepository([
-        'capability:google.sheets.write',
-        'RunCommand(gog sheets append *)',
-      ]),
+      toolRepository: toolRepository(['RunCommand(acme records append *)']),
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
     });
 
@@ -454,10 +594,10 @@ describe('job readiness service', () => {
       }),
     ]);
     expect(result.setupState.blockers[0]?.nextAction).not.toContain(
-      '"rule":"gog sheets append *"',
+      '"rule":"acme records append *"',
     );
     expect(result.setupState.blockers[0]?.nextAction).not.toContain(
-      'propose_capability',
+      'request_access',
     );
   });
 
@@ -468,10 +608,8 @@ describe('job readiness service', () => {
           definition: {
             id: 'mcp:server-1',
             appId: 'default',
-            name: 'sheets',
-            status: 'approved',
-          },
-          version: {
+            name: 'records',
+            status: 'active',
             credentialRefs: [
               { name: 'GOOGLE_TOKEN_REF', target: 'env', key: 'TOKEN' },
             ],
@@ -482,7 +620,11 @@ describe('job readiness service', () => {
     } as unknown as McpServerRepository;
 
     const result = await evaluateJobReadiness({
-      job: makeJob({ required_mcp_servers: ['sheets'] }),
+      job: makeJob({
+        access_requirements: [
+          { target: { kind: 'mcp_server', server: 'records' } },
+        ],
+      }),
       appId: 'default',
       mcpServerRepository: repository,
       clock: { now: () => '2026-05-14T00:00:00.000Z' },
@@ -492,21 +634,19 @@ describe('job readiness service', () => {
     expect(result.setupState.blockers[0]).toMatchObject({
       state: 'mcp_missing_credential',
       requirementType: 'mcp_server',
-      requirementId: 'sheets',
+      requirementId: 'records',
     });
   });
 
-  it('accepts required MCP server credentials from Gantry Secrets', async () => {
+  it('accepts required MCP server credentials from Gantry Credentials', async () => {
     const repository = {
       listMaterializedServersForAgent: vi.fn(async () => [
         {
           definition: {
             id: 'mcp:server-1',
             appId: 'default',
-            name: 'sheets',
-            status: 'approved',
-          },
-          version: {
+            name: 'records',
+            status: 'active',
             credentialRefs: [
               { name: 'GOOGLE_TOKEN_REF', target: 'env', key: 'TOKEN' },
             ],
@@ -517,7 +657,11 @@ describe('job readiness service', () => {
     } as unknown as McpServerRepository;
 
     const result = await evaluateJobReadiness({
-      job: makeJob({ required_mcp_servers: ['sheets'] }),
+      job: makeJob({
+        access_requirements: [
+          { target: { kind: 'mcp_server', server: 'records' } },
+        ],
+      }),
       appId: 'default',
       mcpServerRepository: repository,
       capabilitySecretRepository: secretRepository({
@@ -533,7 +677,7 @@ describe('job readiness service', () => {
   it('turns runtime denied tool use into setup state', () => {
     const setup = setupStateForDeniedTool({
       toolName: 'mcp__gantry__service_restart',
-      recoveryAction: 'request_permission ...',
+      recoveryAction: 'request_access ...',
       checkedAt: '2026-05-14T00:00:00.000Z',
     });
 
@@ -543,7 +687,7 @@ describe('job readiness service', () => {
         {
           requirementType: 'tool',
           requirementId: 'mcp__gantry__service_restart',
-          nextAction: 'request_permission ...',
+          nextAction: 'request_access ...',
         },
       ],
     });
@@ -558,7 +702,7 @@ describe('job readiness service', () => {
     expect(setup.blockers[0]).toMatchObject({
       requirementType: 'browser',
       requirementId: 'Browser',
-      nextAction: expect.stringContaining('"toolName":"Browser"'),
+      nextAction: expect.stringContaining('"id":"browser.use"'),
     });
   });
 
@@ -567,7 +711,7 @@ describe('job readiness service', () => {
       toolName: 'Bash',
       mode: 'allow_once',
       recoveryAction:
-        'request_permission {"toolName":"RunCommand","rule":"npm test *"}',
+        'request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This autonomous run requires RunCommand(npm test *) access."}',
       checkedAt: '2026-05-14T00:00:00.000Z',
     });
 
@@ -575,7 +719,7 @@ describe('job readiness service', () => {
       requirementType: 'tool',
       requirementId: 'RunCommand',
       nextAction:
-        'request_permission {"toolName":"RunCommand","rule":"npm test *"}',
+        'request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This autonomous run requires RunCommand(npm test *) access."}',
     });
   });
 });

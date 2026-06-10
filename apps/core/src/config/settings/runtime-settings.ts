@@ -6,13 +6,15 @@ import {
   getProvider,
   providerForJid,
 } from '../../channels/provider-registry.js';
-import { isValidGroupFolder } from '../../platform/group-folder-rules.js';
+import { isValidWorkspaceFolder } from '../../platform/workspace-folder-rules.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import { ensureRuntimeLayout, settingsFilePath } from './runtime-home.js';
 import {
   applyModelPreset,
   applyPresetManagedMemoryDefaults,
   createDefaultRuntimeSettings,
+  DEFAULT_EMBED_DIMENSIONS,
+  DEFAULT_EMBED_MODEL,
   getPresetManagedMemoryDefaults,
 } from './runtime-settings-defaults.js';
 import { parseRuntimeSettings } from './runtime-settings-parser.js';
@@ -30,7 +32,21 @@ import type {
   RuntimeSettingsValidationResult,
 } from './runtime-settings-types.js';
 import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
+import {
+  containsGeneratedRuntimeSkillPath,
+  GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
+} from '../../shared/generated-runtime-paths.js';
+import {
+  normalizeConfiguredCapabilities,
+  settingsCapabilityIdToToolRule,
+  toolRuleToSettingsCapability,
+} from './configured-capability-normalization.js';
 import { nowIso, nowMs as currentTimeMs } from '../../shared/time/datetime.js';
+
+export {
+  configureDesiredSettingsStorageProvider,
+  writeDesiredRuntimeSettings,
+} from './desired-settings-writer.js';
 
 const DEFAULT_PROVIDER_CONNECTION_IDS: Record<string, string> = {
   app: 'app_default',
@@ -71,6 +87,8 @@ export {
   applyModelPreset,
   applyPresetManagedMemoryDefaults,
   createDefaultRuntimeSettings,
+  DEFAULT_EMBED_DIMENSIONS,
+  DEFAULT_EMBED_MODEL,
   getPresetManagedMemoryDefaults,
   parseRuntimeSettings,
   readRuntimeMemorySettingsSnapshot,
@@ -119,6 +137,7 @@ export function mirrorAgentToolRulesToRuntimeSettings(input: {
       input.rules,
     );
   }
+  normalizeAgentCapabilities(settings);
   saveRuntimeSettings(input.runtimeHome, settings);
 }
 
@@ -138,17 +157,17 @@ export function addAgentToolRulesToRuntimeSettings(
   for (const existing of agent.capabilities) {
     const readable = capabilityToToolRule(existing.id);
     if (!readable) continue;
-    const validation = validateReadableAgentToolRule(readable);
-    if (!validation.ok) throw new Error(validation.reason);
+    validateSettingsAgentToolRule(readable);
     next.add(readable);
   }
   for (const rule of rules) {
     const readable = rule.trim();
-    const validation = validateReadableAgentToolRule(readable);
-    if (!validation.ok) throw new Error(validation.reason);
+    validateSettingsAgentToolRule(readable);
     if (readable) next.add(readable);
   }
-  agent.capabilities = [...next].map(toolRuleToCapability);
+  agent.capabilities = [...next].map((rule) =>
+    toolRuleToSettingsCapability(rule),
+  );
 }
 
 export function removeAgentToolRulesFromRuntimeSettings(
@@ -166,34 +185,35 @@ export function removeAgentToolRulesFromRuntimeSettings(
   const remove = new Set<string>();
   for (const rule of rules) {
     const readable = rule.trim();
-    const validation = validateReadableAgentToolRule(readable);
-    if (!validation.ok) throw new Error(validation.reason);
+    validateSettingsAgentToolRule(readable);
     if (readable) remove.add(readable);
   }
   agent.capabilities = agent.capabilities.filter((capability) => {
     const readable = capabilityToToolRule(capability.id);
     if (!readable) return false;
-    const validation = validateReadableAgentToolRule(readable);
-    if (!validation.ok) throw new Error(validation.reason);
+    validateSettingsAgentToolRule(readable);
     return !remove.has(readable);
   });
 }
 
 export function capabilityToToolRule(capabilityId: string): string {
-  const id = capabilityId.trim();
-  if (id === 'browser.use') return 'Browser';
-  if (id.includes('.') && !id.startsWith('RunCommand(')) {
-    return `capability:${id}`;
-  }
-  return id;
+  return settingsCapabilityIdToToolRule(capabilityId);
 }
 
-function toolRuleToCapability(rule: string): { id: string; version: string } {
-  if (rule === 'Browser') return { id: 'browser.use', version: 'builtin' };
-  if (rule.startsWith('capability:')) {
-    return { id: rule.slice('capability:'.length), version: 'builtin' };
+function validateSettingsAgentToolRule(readable: string): void {
+  if (containsGeneratedRuntimeSkillPath(readable)) {
+    throw new Error(GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON);
   }
-  return { id: rule, version: 'builtin' };
+  const validation = validateReadableAgentToolRule(readable);
+  if (!validation.ok) throw new Error(validation.reason);
+}
+
+function normalizeAgentCapabilities(settings: RuntimeSettings): void {
+  for (const agent of Object.values(settings.agents)) {
+    agent.capabilities = normalizeConfiguredCapabilities({
+      capabilities: agent.capabilities,
+    }).capabilities;
+  }
 }
 
 function writeSettingsYamlAtomic(filePath: string, content: string): void {
@@ -235,7 +255,7 @@ export function addControlSenderForAgent(
 ): boolean {
   const trimmedFolder = folder.trim();
   const trimmedSender = sender.trim();
-  if (!isValidGroupFolder(trimmedFolder)) {
+  if (!isValidWorkspaceFolder(trimmedFolder)) {
     throw new Error(`Invalid agent folder for control allowlist: ${folder}`);
   }
   if (!trimmedSender) {
@@ -295,10 +315,10 @@ export function ensureConfiguredConversationBinding(
 
   const agentId = input.agentId.trim();
   const folder = input.agentFolder.trim();
-  if (!isValidGroupFolder(agentId)) {
+  if (!isValidWorkspaceFolder(agentId)) {
     throw new Error(`Invalid agent id for settings: ${agentId}`);
   }
-  if (!isValidGroupFolder(folder)) {
+  if (!isValidWorkspaceFolder(folder)) {
     throw new Error(`Invalid agent folder for settings: ${folder}`);
   }
   settings.agents[agentId] ??= {

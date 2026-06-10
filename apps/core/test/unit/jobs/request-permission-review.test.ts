@@ -5,13 +5,73 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  formatPersistentPermissionRulesForUser,
+  formatDurableAccessRulesForUser,
   persistRequestPermissionRules,
   requestPermissionDescription,
   requestPermissionQueuedMessage,
   requestPermissionReviewSuggestions,
   requestPermissionSetupDecisionOptions,
+  semanticCapabilityDefinitionsForToolInput,
 } from '@core/jobs/request-permission-review.js';
+import type { SemanticCapabilityDefinition } from '@core/shared/semantic-capabilities.js';
+
+const acmeAppendCapability: SemanticCapabilityDefinition = {
+  capabilityId: 'acme.records.append',
+  displayName: 'Acme records append',
+  category: 'Acme',
+  risk: 'write',
+  can: 'Append records through the reviewed CLI binding.',
+  cannot: 'Read unrelated records or expose raw credentials.',
+  credentialSource: 'local_cli',
+  implementationBindings: [
+    {
+      kind: 'local_cli',
+      executablePath: '/usr/local/bin/acme',
+      executableVersion: '1.0.0',
+      executableHash: 'sha256:abc123',
+      commandTemplates: ['/usr/local/bin/acme records append *'],
+    },
+  ],
+};
+
+const acmeAdapterCapability: SemanticCapabilityDefinition = {
+  capabilityId: 'acme.records.get',
+  displayName: 'Acme records get',
+  category: 'Acme',
+  risk: 'read',
+  can: 'Read records through the reviewed adapter binding.',
+  cannot: 'Write records or expose raw credentials.',
+  credentialSource: 'configured_access',
+  implementationBindings: [
+    {
+      kind: 'adapter',
+      adapterRef: 'adapter:acme.records.get',
+    },
+  ],
+};
+
+const skillPublishCapability: SemanticCapabilityDefinition = {
+  capabilityId: 'skill.publisher.publish',
+  displayName: 'Publisher publish',
+  category: 'Publisher',
+  risk: 'write',
+  can: 'Publish prepared content through the selected skill.',
+  cannot: 'Use unrelated skills or credentials.',
+  credentialSource: 'skill_secret',
+  implementationBindings: [
+    {
+      kind: 'tool_rule',
+      rule: 'RunCommand(skills/publisher/publish.py *)',
+    },
+  ],
+  preflight: { kind: 'none' },
+  source: {
+    kind: 'skill_action',
+    skillId: 'skill:publisher',
+    skillName: 'publisher',
+    actionId: 'publish',
+  },
+};
 
 function depsWith(repository: unknown) {
   return {
@@ -40,7 +100,7 @@ describe('request permission review helpers', () => {
     ).toBeUndefined();
     expect(
       requestPermissionReviewSuggestions({
-        permissionKind: 'provider_capability',
+        permissionKind: 'provider',
         toolName: 'Bash',
       }),
     ).toBeUndefined();
@@ -80,14 +140,42 @@ describe('request permission review helpers', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
-        capabilityId: 'google.sheets.write',
+        capabilityRequestSource: 'request_access',
+        capabilityId: 'acme.records.append',
       }),
     ).toEqual([
       {
         type: 'addRules',
         behavior: 'allow',
         destination: 'session',
-        rules: [{ toolName: 'capability:google.sheets.write' }],
+        rules: [{ toolName: 'capability:acme.records.append' }],
+      },
+    ]);
+  });
+
+  it('does not trust agent-authored semantic capability definitions', () => {
+    expect(
+      semanticCapabilityDefinitionsForToolInput({
+        permissionKind: 'tool',
+        capabilityRequestSource: 'request_access',
+        capabilityId: 'acme.records.get',
+        semanticCapabilityDefinition: acmeAdapterCapability,
+      }),
+    ).toBeUndefined();
+
+    expect(
+      requestPermissionReviewSuggestions({
+        permissionKind: 'tool',
+        capabilityRequestSource: 'request_access',
+        capabilityId: 'acme.records.get',
+        semanticCapabilityDefinition: acmeAdapterCapability,
+      }),
+    ).toEqual([
+      {
+        type: 'addRules',
+        behavior: 'allow',
+        destination: 'session',
+        rules: [{ toolName: 'capability:acme.records.get' }],
       },
     ]);
   });
@@ -116,9 +204,9 @@ describe('request permission review helpers', () => {
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
         toolNames: ['Bash'],
-        rule: '/usr/local/bin/gog sheets append *',
-        capabilityId: 'google.sheets.write',
-        capabilityDisplayName: 'Google Sheets write using gog',
+        rule: '/usr/local/bin/acme records append *',
+        capabilityId: 'acme.records.append',
+        capabilityDisplayName: 'Acme records append using acme',
         temporaryOnly: false,
       }),
     ).toEqual([
@@ -129,14 +217,14 @@ describe('request permission review helpers', () => {
         rules: [
           {
             toolName: 'RunCommand',
-            ruleContent: '/usr/local/bin/gog sheets append *',
+            ruleContent: '/usr/local/bin/acme records append *',
           },
         ],
       },
     ]);
   });
 
-  it('canonicalizes interpreter script requests to script-path scoped RunCommand rules', () => {
+  it('does not suggest durable host-owned Python script RunCommand rules', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
@@ -144,19 +232,7 @@ describe('request permission review helpers', () => {
         rule: 'python3 /Users/example/scripts/dedup-append-lead.py *',
         temporaryOnly: false,
       }),
-    ).toEqual([
-      {
-        type: 'addRules',
-        behavior: 'allow',
-        destination: 'session',
-        rules: [
-          {
-            toolName: 'RunCommand',
-            ruleContent: '/Users/example/scripts/dedup-append-lead.py *',
-          },
-        ],
-      },
-    ]);
+    ).toBeUndefined();
 
     expect(
       requestPermissionReviewSuggestions({
@@ -165,22 +241,10 @@ describe('request permission review helpers', () => {
         rule: 'python3 /Users/example/scripts/dedup-append-lead.py',
         temporaryOnly: false,
       }),
-    ).toEqual([
-      {
-        type: 'addRules',
-        behavior: 'allow',
-        destination: 'session',
-        rules: [
-          {
-            toolName: 'RunCommand',
-            ruleContent: '/Users/example/scripts/dedup-append-lead.py *',
-          },
-        ],
-      },
-    ]);
+    ).toBeUndefined();
   });
 
-  it('persists reviewed local CLI capabilities with scoped command templates', async () => {
+  it('does not register agent-authored local CLI capability definitions from request_permission', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -204,11 +268,13 @@ describe('request permission review helpers', () => {
       commandTemplates: ['/usr/local/bin/acme invoices read *'],
       authPreflightCommand: '/usr/local/bin/acme auth status',
       protectedPaths: ['~/.config/acme'],
+      networkHosts: ['api.acme.test', 'oauth2.acme.test'],
     };
 
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
+        capabilityRequestSource: 'request_access',
         temporaryOnly: false,
         ...toolInput,
       }),
@@ -221,36 +287,27 @@ describe('request permission review helpers', () => {
       },
     ]);
 
-    await persistRequestPermissionRules({
-      appId: 'app:test' as never,
-      agentId: 'agent:test' as never,
-      deps: depsWith(repository),
-      sourceAgentFolder: 'main_agent',
-      toolInput,
-      updates: [
-        {
-          type: 'addRules',
-          behavior: 'allow',
-          rules: [{ toolName: 'capability:acme.invoices.read' }],
-        },
-      ],
-    });
-    expect(repository.saveTool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'tool:capability:acme.invoices.read',
-        name: 'capability:acme.invoices.read',
-        kind: 'local_cli',
+    await expect(
+      persistRequestPermissionRules({
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+        deps: depsWith(repository),
+        sourceAgentFolder: 'main_agent',
+        toolInput,
+        updates: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            rules: [{ toolName: 'capability:acme.invoices.read' }],
+          },
+        ],
       }),
-    );
-    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolId: 'tool:capability:acme.invoices.read',
-        status: 'active',
-      }),
-    );
+    ).rejects.toThrow('Unknown semantic capability acme.invoices.read');
+    expect(repository.saveTool).not.toHaveBeenCalled();
+    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
-  it('allows reviewed local CLI implementation for an existing semantic id', async () => {
+  it('rejects agent-authored local CLI implementation for an existing semantic id', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => []),
@@ -260,23 +317,24 @@ describe('request permission review helpers', () => {
       disableAgentToolBinding: vi.fn(async () => null),
     };
     const toolInput = {
-      capabilityId: 'google.sheets.write',
-      capabilityDisplayName: 'Google Sheets write using gog',
-      category: 'Google Sheets',
+      capabilityId: 'acme.records.append',
+      capabilityDisplayName: 'Acme records append using acme',
+      category: 'Acme Records',
       risk: 'write',
-      accountLabel: 'gog',
-      can: 'Append rows using gog.',
+      accountLabel: 'acme',
+      can: 'Append rows using acme.',
       cannot: 'Use configured broker Google access.',
       credentialSource: 'local_cli',
-      executablePath: '/usr/local/bin/gog',
+      executablePath: '/usr/local/bin/acme',
       executableVersion: '1.2.3',
-      executableHash: 'sha256:gog',
-      commandTemplates: ['/usr/local/bin/gog sheets append *'],
+      executableHash: 'sha256:acme',
+      commandTemplates: ['/usr/local/bin/acme records append *'],
     };
 
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
+        capabilityRequestSource: 'request_access',
         temporaryOnly: false,
         ...toolInput,
       }),
@@ -285,40 +343,31 @@ describe('request permission review helpers', () => {
         type: 'addRules',
         behavior: 'allow',
         destination: 'session',
-        rules: [{ toolName: 'capability:google.sheets.write' }],
+        rules: [{ toolName: 'capability:acme.records.append' }],
       },
     ]);
 
-    await persistRequestPermissionRules({
-      appId: 'app:test' as never,
-      agentId: 'agent:test' as never,
-      deps: depsWith(repository),
-      sourceAgentFolder: 'main_agent',
-      toolInput,
-      updates: [
-        {
-          type: 'addRules',
-          behavior: 'allow',
-          rules: [{ toolName: 'capability:google.sheets.write' }],
-        },
-      ],
-    });
-    expect(repository.saveTool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'tool:capability:google.sheets.write',
-        name: 'capability:google.sheets.write',
-        kind: 'local_cli',
+    await expect(
+      persistRequestPermissionRules({
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+        deps: depsWith(repository),
+        sourceAgentFolder: 'main_agent',
+        toolInput,
+        updates: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            rules: [{ toolName: 'capability:acme.records.append' }],
+          },
+        ],
       }),
-    );
-    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolId: 'tool:capability:google.sheets.write',
-        status: 'active',
-      }),
-    );
+    ).rejects.toThrow('Unknown semantic capability acme.records.append');
+    expect(repository.saveTool).not.toHaveBeenCalled();
+    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
-  it('rejects rebinding existing local CLI catalog rows through request_permission', async () => {
+  it('grants existing catalog semantic capabilities without trusting request payload definitions', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
       listTools: vi.fn(async () => [
@@ -359,22 +408,26 @@ describe('request permission review helpers', () => {
       disableAgentToolBinding: vi.fn(async () => null),
     };
 
-    await expect(
-      persistRequestPermissionRules({
-        appId: 'app:test' as never,
-        agentId: 'agent:test' as never,
-        deps: depsWith(repository),
-        sourceAgentFolder: 'main_agent',
-        updates: [
-          {
-            type: 'addRules',
-            behavior: 'allow',
-            rules: [{ toolName: 'capability:acme.invoices.read' }],
-          },
-        ],
+    await persistRequestPermissionRules({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      deps: depsWith(repository),
+      sourceAgentFolder: 'main_agent',
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'capability:acme.invoices.read' }],
+        },
+      ],
+    });
+    expect(repository.saveTool).not.toHaveBeenCalled();
+    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolId: 'tool:capability:acme.invoices.read',
+        status: 'active',
       }),
-    ).rejects.toThrow('Unknown semantic capability acme.invoices.read');
-    expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
+    );
   });
 
   it('stores scoped RunCommand permission rules as synthetic permission tools', async () => {
@@ -412,6 +465,47 @@ describe('request permission review helpers', () => {
         toolId: expect.stringMatching(/^tool:permission-rule:/),
       }),
     );
+  });
+
+  it('records request_permission persistent grants at parent conversation scope', async () => {
+    const saveDecision = vi.fn(async () => undefined);
+    const repository = {
+      getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
+      saveTool: vi.fn(async () => undefined),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+    };
+
+    await persistRequestPermissionRules({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      deps: {
+        getToolRepository: () => repository as never,
+        getPermissionRepository: () =>
+          ({
+            saveDecision,
+          }) as never,
+        mirrorAgentToolRulesToSettings: vi.fn(async () => undefined),
+      },
+      sourceAgentFolder: 'main_agent',
+      conversationId: 'tg:team',
+      threadId: 'topic-7',
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'Bash', ruleContent: 'npm test *' }],
+        },
+      ],
+    });
+
+    const savedDecision = saveDecision.mock.calls[0]?.[0];
+    expect(savedDecision.actorContext).toMatchObject({
+      conversationId: 'tg:team',
+      mode: 'allow_persistent_rule',
+    });
+    expect(savedDecision.actorContext).not.toHaveProperty('threadId');
   });
 
   it('persists scoped RunCommand permission when SDK command content contains parentheses', async () => {
@@ -653,20 +747,7 @@ describe('request permission review helpers', () => {
         rule: 'python3 /Users/example/runtime/scripts/dedup-append-lead.py',
         temporaryOnly: false,
       }),
-    ).toEqual([
-      {
-        type: 'addRules',
-        behavior: 'allow',
-        destination: 'session',
-        rules: [
-          {
-            toolName: 'RunCommand',
-            ruleContent:
-              '/Users/example/runtime/scripts/dedup-append-lead.py *',
-          },
-        ],
-      },
-    ]);
+    ).toBeUndefined();
   });
 
   it('suggests persistent scoped RunCommand rules from setup recovery actions', () => {
@@ -674,7 +755,7 @@ describe('request permission review helpers', () => {
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
         toolName: 'RunCommand',
-        rule: 'gog sheets append *',
+        rule: 'acme records append *',
         temporaryOnly: false,
       }),
     ).toEqual([
@@ -682,7 +763,9 @@ describe('request permission review helpers', () => {
         type: 'addRules',
         behavior: 'allow',
         destination: 'session',
-        rules: [{ toolName: 'RunCommand', ruleContent: 'gog sheets append *' }],
+        rules: [
+          { toolName: 'RunCommand', ruleContent: 'acme records append *' },
+        ],
       },
     ]);
   });
@@ -733,7 +816,7 @@ describe('request permission review helpers', () => {
     }
   });
 
-  it('does not suggest persistent grants for unknown semantic capabilities without a reviewed definition', () => {
+  it('only suggests semantic capability grants from the request_access path', () => {
     expect(
       requestPermissionReviewSuggestions({
         permissionKind: 'tool',
@@ -741,6 +824,87 @@ describe('request permission review helpers', () => {
         temporaryOnly: false,
       }),
     ).toBeUndefined();
+    expect(
+      requestPermissionReviewSuggestions(
+        {
+          permissionKind: 'tool',
+          capabilityRequestSource: 'request_access',
+          capabilityId: 'acme.invoices.read',
+          temporaryOnly: false,
+        },
+        {
+          semanticCapabilityDefinitions: {
+            'acme.records.append': acmeAppendCapability,
+          },
+        },
+      ),
+    ).toBeUndefined();
+    expect(
+      requestPermissionReviewSuggestions(
+        {
+          permissionKind: 'tool',
+          capabilityRequestSource: 'request_access',
+          capabilityId: 'acme.invoices.read',
+          temporaryOnly: false,
+        },
+        {
+          semanticCapabilityDefinitions: {
+            'acme.invoices.read': {
+              ...acmeAppendCapability,
+              capabilityId: 'acme.invoices.read',
+            },
+          },
+        },
+      ),
+    ).toEqual([
+      {
+        type: 'addRules',
+        behavior: 'allow',
+        destination: 'session',
+        rules: [{ toolName: 'capability:acme.invoices.read' }],
+      },
+    ]);
+  });
+
+  it('persists host-supplied selected skill capability definitions', async () => {
+    const repository = {
+      getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
+      listAgentToolBindings: vi.fn(async () => []),
+      saveTool: vi.fn(async () => undefined),
+      saveAgentToolBinding: vi.fn(async () => undefined),
+      disableAgentToolBinding: vi.fn(async () => null),
+    };
+
+    const persisted = await persistRequestPermissionRules({
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      deps: depsWith(repository),
+      sourceAgentFolder: 'main_agent',
+      semanticCapabilityDefinitions: {
+        'skill.publisher.publish': skillPublishCapability,
+      },
+      updates: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          rules: [{ toolName: 'capability:skill.publisher.publish' }],
+        },
+      ],
+    });
+
+    expect(persisted).toEqual(['capability:skill.publisher.publish']);
+    expect(repository.saveTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:capability:skill.publisher.publish',
+        name: 'capability:skill.publisher.publish',
+      }),
+    );
+    expect(repository.saveAgentToolBinding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolId: 'tool:capability:skill.publisher.publish',
+      }),
+    );
   });
 
   it('rejects unknown semantic capability persistent approval updates without trusted definitions', async () => {
@@ -871,15 +1035,22 @@ describe('request permission review helpers', () => {
     }
   });
 
-  it('formats public persistent-rule receipts without raw Bash command material', () => {
-    const formatted = formatPersistentPermissionRulesForUser([
-      'RunCommand(curl https://example.com -H Authorization:Bearer abcdefghijklmnopqrstuvwxyz123456)',
-      'capability:google.sheets.write',
-    ]);
+  it('formats public persistent-rule receipts with redacted command scope', () => {
+    const formatted = formatDurableAccessRulesForUser(
+      [
+        'RunCommand(curl https://example.com -H Authorization:Bearer abcdefghijklmnopqrstuvwxyz123456)',
+        'capability:acme.records.append',
+      ],
+      {
+        semanticCapabilityDefinitions: {
+          'acme.records.append': acmeAppendCapability,
+        },
+      },
+    );
 
-    expect(formatted).toContain('scoped RunCommand rule [sha256:');
-    expect(formatted).toContain('Google Sheets write [sha256:');
-    expect(formatted).not.toContain('curl https://example.com');
+    expect(formatted).toContain('matching command access');
+    expect(formatted).toContain('Acme records append');
+    expect(formatted).toContain('curl https://example.com');
     expect(formatted).not.toContain('abcdefghijklmnopqrstuvwxyz123456');
   });
 
@@ -1012,7 +1183,7 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Persistent request_permission approvals support');
+    ).rejects.toThrow('Persistent access approvals support');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
@@ -1454,6 +1625,7 @@ describe('request permission review helpers', () => {
   it('rejects persistent Gantry MCP wildcard approvals', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
       saveTool: vi.fn(async () => undefined),
       saveAgentToolBinding: vi.fn(async () => undefined),
       disableAgentToolBinding: vi.fn(async () => null),
@@ -1500,13 +1672,14 @@ describe('request permission review helpers', () => {
           },
         ],
       }),
-    ).rejects.toThrow('request the MCP server capability');
+    ).rejects.toThrow('request a reviewed semantic capability');
     expect(repository.saveAgentToolBinding).not.toHaveBeenCalled();
   });
 
   it('rejects Gantry MCP wildcard approvals even when SDK sends rule content', async () => {
     const repository = {
       getTool: vi.fn(async () => null),
+      listTools: vi.fn(async () => []),
       saveTool: vi.fn(async () => undefined),
       saveAgentToolBinding: vi.fn(async () => undefined),
       disableAgentToolBinding: vi.fn(async () => null),

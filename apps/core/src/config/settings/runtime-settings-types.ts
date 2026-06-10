@@ -3,6 +3,7 @@ import type {
   RuntimeStorageSettingsSnapshot,
 } from './memory-snapshot.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
+import type { AgentRelationshipMode } from '../../shared/agent-relationship-mode.js';
 import type { YoloModeSettings } from '../../shared/yolo-mode-policy.js';
 import type { EgressSettings } from '../../shared/egress-policy.js';
 
@@ -37,11 +38,20 @@ export interface RuntimeConfiguredConversation {
 
 export type EmbeddingProviderName = string;
 export type MemoryModelTask = 'extractor' | 'dreaming' | 'consolidation';
+export type MemoryBackfillMode = 'auto' | 'inline' | 'provider_batch';
 
 export interface RuntimeMemoryLlmModels {
   extractor: string;
   dreaming: string;
   consolidation: string;
+}
+
+export interface RuntimeMemoryBackfillSettings {
+  enabled: boolean;
+  cron: string;
+  maxItemsPerRun: number;
+  mode: MemoryBackfillMode;
+  providerBatchMinItems: number;
 }
 
 export interface RuntimeMemorySettings {
@@ -50,8 +60,10 @@ export interface RuntimeMemorySettings {
     enabled: boolean;
     provider: EmbeddingProviderName;
     model: string;
+    dimensions: number;
     dailyLimit: number;
     batchSize: number;
+    backfill: RuntimeMemoryBackfillSettings;
   };
   dreaming: {
     enabled: boolean;
@@ -111,9 +123,14 @@ export interface RuntimeConfiguredBinding {
 }
 
 export interface RuntimeConfiguredAgentSourceRef {
+  name?: string;
   id: string;
   version?: string;
   kind?: 'builtin' | 'skill' | 'mcp' | 'adapter' | 'local_cli';
+  // Per-agent MCP operation scope (subset of the server's reviewed tool
+  // patterns). Only meaningful for `mcp_servers` source refs; empty/absent means
+  // the agent inherits the server's full reviewed tool set.
+  tools?: string[];
 }
 
 export interface RuntimeConfiguredAgentSources {
@@ -131,6 +148,7 @@ export interface RuntimeConfiguredAgent {
   name: string;
   folder: string;
   persona?: AgentPersona;
+  relationshipMode?: AgentRelationshipMode;
   model?: string;
   oneTimeJobDefaultModel?: string;
   recurringJobDefaultModel?: string;
@@ -143,19 +161,12 @@ export interface RuntimeDesiredStateSettings {
   authoritative: boolean;
 }
 
-export type RuntimeCredentialBrokerMode = 'none' | 'onecli' | 'external';
+export type RuntimeCredentialBrokerMode = 'none' | 'gantry';
 
 export interface RuntimeCredentialBrokerSettings {
   mode: RuntimeCredentialBrokerMode;
-  onecli: {
-    url: string;
-    postgres: {
-      urlEnv: string;
-      schema: string;
-    };
-  };
-  external: {
-    baseUrl: string;
+  gateway: {
+    bindHost: string;
   };
 }
 
@@ -168,8 +179,20 @@ export interface RuntimeQueueSettings {
   baseRetryMs: number;
 }
 
+export type RuntimeSandboxProvider = 'direct' | 'sandbox_runtime';
+
+export interface RuntimeSandboxSettings {
+  provider: RuntimeSandboxProvider;
+  resourceLimits: {
+    cpuSeconds: number;
+    memoryMb: number;
+    maxProcesses: number;
+  };
+}
+
 export interface RuntimeProcessSettings {
   queue: RuntimeQueueSettings;
+  sandbox: RuntimeSandboxSettings;
 }
 
 export type RuntimeBrowserUsagePolicyMode = 'audit' | 'enforce';

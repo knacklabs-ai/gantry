@@ -7,42 +7,34 @@ not be written to `settings.yaml`.
 ## Capability Resolution
 
 At execution time, a job resolves its target agent from the runtime target:
-`group_scope` plus `execution_context` (`conversationJid`, optional `threadId`,
+`workspace_key` plus `execution_context` (`conversationJid`, optional `threadId`,
 optional `sessionId`). The job inherits that target agent's currently selected
 capabilities plus attached sources for the run. Job records do not carry
 separate tool, skill, MCP, or capability grants.
 
 Inherited tool grants are semantic capability entries such as
-`capability:google.sheets.write`, canonical `Browser`, selected first-party
+`capability:acme.records.append`, canonical `Browser`, selected first-party
 catalog tools, Gantry file/web facades such as `FileRead`, exact Gantry admin
 tools, approved third-party MCP server bindings, or scoped command rules such as
 `RunCommand(npm test *)`. Runtime expands semantic capabilities and may still
 project approved third-party MCP server bindings into SDK allowances for that
-run. Empty rules, global `*`, broad exact SDK/native request_permission grants,
-exact third-party MCP tool grants, bare `Bash`, bare `RunCommand`, `Bash(*)`,
-`RunCommand(*)`, leading-wildcard command scopes, private browser backend rules,
-and projected browser gateway rules are invalid as persistent request_permission
-authority.
+run. Empty rules, global `*`, broad exact SDK/native authority, exact third-party
+MCP tool authority, bare `Bash`, bare `RunCommand`, `Bash(*)`, `RunCommand(*)`,
+leading-wildcard command scopes, private browser backend rules, and projected
+browser gateway rules are invalid as persistent authority.
 
-Browser is one durable public capability: `Browser`. A job with an inherited
-`Browser` grant receives the projected Gantry browser gateway for that run. A job
-without that inherited grant must request `Browser` through `request_permission`;
+Browser is one durable public capability: `browser.use`. A job with inherited
+`Browser` authority receives the projected Gantry browser gateway for that run. A job
+without that inherited authority must request `browser.use` through `request_access`;
 it must not request or persist private browser backend names or projected
 browser gateway tool names.
 
 ## Readiness Gates
 
-Job create/update surfaces accept declared setup requirements:
-
-- `toolAccessRequirements`: durable readable tool rules such as `Browser`,
-  `capability:google.sheets.write`, exact Gantry file/web facades, exact
-  first-party Gantry MCP tools, or scoped `RunCommand(...)` rules.
-- `capabilityRequirements`: semantic capability requirements such as
-  `google.sheets.write` or a reviewed composite capability such as
-  `weekly.linkedin.report.publish`. Requirements are stored on the job and
-  converted into readiness checks; they are not grants.
-- `requiredMcpServers`: approved third-party MCP server names or ids expected
-  by the job.
+Job create/update surfaces accept `accessRequirements` setup assertions for
+reviewed capabilities, approved third-party MCP server names or ids, and scoped
+`RunCommand(...)` fallback rules. Requirements are stored on the job and
+converted into readiness checks; they are not grants.
 
 The declarations are UX assertions, not authorization. The runtime still
 enforces actual tool use at the permission boundary, and under-declared jobs
@@ -54,8 +46,8 @@ becoming compatibility state.
 
 Before activation and immediately before model spawn, Gantry performs a
 best-effort readiness check against durable target-agent capability bindings,
-tool-capability broker health, selected MCP server materialization metadata,
-MCP Gantry Secret references, and browser profile state. If setup is not ready,
+capability credential/preflight status, selected MCP server materialization
+metadata, MCP Gantry Credential references, and browser profile state. If setup is not ready,
 the job is stored as `paused` with the short redacted `pause_reason`
 `Setup required`, `next_run=null`, and structured `setup` metadata. User-facing
 notifications render this as `Setup needed` with a short reason and one action.
@@ -68,7 +60,6 @@ broker_unreachable
 credential_unknown
 browser_login_may_be_required
 mcp_missing_credential
-draft_only
 ```
 
 `Allow once` can resume the current blocked tool call in live interactive
@@ -77,10 +68,10 @@ readiness prompts do not show it because timed grants are not durable readiness
 for future recurring runs. Recurring activation requires a persistent
 target-agent capability binding such as `Browser`, `capability:<id>`, an exact
 Gantry file/web facade, an approved Gantry admin tool, a scoped
-`RunCommand(...)` rule, or an approved MCP server binding. Browser auth remains
+`RunCommand(...)` rule, or a connected MCP server binding. Browser auth remains
 profile/session based; Gantry reports that login may be required unless the
 profile already has durable state or auth markers.
-MCP readiness may inspect materialized definitions and Gantry Secret refs, but
+MCP readiness may inspect materialized definitions and Gantry Credential refs, but
 must not start arbitrary MCP servers as a readiness side effect.
 
 ## Execution
@@ -105,18 +96,16 @@ the tool call with recovery guidance such as:
 
 ```text
 Tool not on autonomous run allowlist: RunCommand.
-Recovery: propose_capability { "capabilityId": "google.sheets.write", "reason": "This scheduled job writes the weekly status sheet." }
-Recovery: request_permission { "permissionKind": "tool", "toolName": "RunCommand", "rule": "npm test *", "temporaryOnly": false, "reason": "This autonomous run needs scoped command access." }
+Recovery: request_access { "target": { "kind": "capability", "id": "acme.records.append" }, "reason": "This scheduled job writes reviewed records." }
+Recovery: request_access { "target": { "kind": "run_command", "argvPattern": "npm test *" }, "temporaryOnly": false, "reason": "This autonomous run needs scoped command access." }
 ```
 
-Missing capability recovery uses the same reviewed request tools as interactive
-agents: `capability_search` / `propose_capability` for semantic app/tool
-access and new reviewed capabilities including authenticated CLIs,
-`request_permission` for one-off Gantry file/web facades, Browser, or scoped
-`RunCommand(...)` fallback, `request_skill_install` or `request_skill_proposal`
-for skills, and
-`request_mcp_server` for third-party MCP servers. Approval updates the target
-agent's durable `capabilities` list or attached `sources`, exports the readable
+Missing capability recovery follows the same action-first flow as interactive
+agents: request the reviewed capability for the missing action, request source
+setup only when the skill, MCP server, or local CLI source is missing, and use
+`request_access target.kind=run_command` only as a scoped exact-command fallback
+when no reviewed capability fits. Approval updates the target agent's durable
+`access.selections` list or attached `access.sources`, exports the readable
 projection to `settings.yaml`, and activates for future runs. When a persistent
 tool approval matches paused jobs in `Setup required`, Gantry immediately
 re-runs shared setup readiness for those jobs. Jobs are reactivated and queued
@@ -133,27 +122,25 @@ or correct an invalid job requirement. Generic job failures do not create
 recovery turns unless they include structured setup or permission recovery
 metadata.
 
-Job creation can declare `capability_requirements` on `scheduler_upsert_job`
-instead of embedding provider-specific shell commands in the prompt. Each
-requirement names a semantic capability id, a human reason, and optional
-implementation hints such as `configured_access`, `local_cli`, `mcp_server`, or
-`builtin_tool`. Gantry stores those requirements on the canonical job target and
-derives `capability:<id>` tool-access-requirement rules from them. The pre-confirmation
-plan shows the required capabilities in human terms, for example
-`Google Sheets write using gog`.
+Job creation can declare one canonical `access_requirements` list on
+`scheduler_upsert_job` instead of embedding provider-specific shell commands in
+the prompt. Each entry targets either a reviewed semantic capability, a scoped
+tool rule such as `RunCommand(npm test *)`, or a third-party MCP server request.
+Gantry stores those requirements on the canonical job target and derives
+`capability:<id>` runtime rules only from reviewed catalog capabilities. The
+pre-confirmation plan shows the required access in human terms, for example
+`Acme records append using the reviewed CLI binding`.
 
-If a job creation request needs a capability that does not exist yet, the
-agent should propose a reviewed `local_cli` capability draft when the work is
-backed by a pinned local CLI; otherwise the job remains paused until an
-approved capability exists in the catalog. If the job later reaches a missing
-tool or capability during a run, the run pauses through the same
-permission/capability flow: the agent asks the user/admin, approval updates the
+If a job creation request needs a capability that does not exist yet, the job
+remains paused until an approved capability exists in the catalog. If the job
+later reaches a missing tool or capability during a run, the run pauses through
+the same capability flow: the agent asks the user/admin, approval updates the
 target agent, and readiness is evaluated again. The job is updated only when
-its declared requirements were incomplete or
-wrong; it never receives a job-local durable grant.
+its declared requirements were incomplete or wrong; it never receives job-local
+durable authority.
 
-`local_cli` requirements are setup blockers until the agent proposes and the
-user/admin approves a reviewed local CLI capability. They must declare an
+`local_cli` requirements are setup blockers until the source is reviewed and the
+user/admin approves the corresponding capability. They must declare an
 absolute `executablePath`, pinned `executableVersion`, pinned `executableHash`,
 and a narrow `commandTemplate`; any `authPreflight` must start with that exact
 path, so readiness never depends on PATH resolution. They do not create or
@@ -162,8 +149,6 @@ authority only after capability review verifies executable identity, command
 templates, protected paths, preflight behavior, and denied environment
 overrides. Malformed persisted `local_cli` requirements are not converted into
 capability proposals; the job must be updated with complete pinned CLI setup.
-Configured built-in capabilities use `propose_capability` with only the
-capability id and reason.
 
 The scheduler records the failure summary, emits `job.tool_denied`, pauses
 recurring jobs that need a missing persistent capability as `Setup required`,
@@ -181,7 +166,7 @@ action, and the terminal outcome message may summarize that report.
 Browser calls made by jobs emit
 `job.tool_activity` events with the job id, run id, tool name, result, elapsed
 time, and normalized site.
-When `Browser` is listed in `toolAccessRequirements`, readiness verifies that
+When `browser.use` is listed in `accessRequirements`, readiness verifies that
 the job has Browser access before launch. Browser use is observable through
 tool-activity events, but successful runs do not fail merely because the agent
 did not use an available Browser grant.
@@ -207,6 +192,11 @@ Bash only as a fallback low-level durable grant, through the normal capability
 request flow. Any future script-like job runner must first
 provide the same protected-path deny-write boundary on macOS, Linux, and Docker
 deployments.
+Persistent approval helpers do not suggest or store host-owned Python script
+rules such as `RunCommand(/path/to/script.py *)`; reviewed skill actions use
+stable `skills/<id>/...` command templates, and authenticated local CLIs use
+semantic `local_cli` capabilities so network and credential-path metadata stay
+attached to the approved capability.
 
 ## Visibility
 
@@ -248,11 +238,11 @@ leases move to timed-out runs even when the process is otherwise idle.
 
 Normal agent-facing scheduler MCP tools are not an admin surface. They may list,
 read, mutate, inspect runs/events, inspect dead letters, and manually queue runs
-only for jobs whose `group_scope` equals the calling agent group and whose
+only for jobs whose `workspace_key` equals the calling agent workspace and whose
 `execution_context.conversationJid` matches the originating conversation.
 Threads/topics remain delivery metadata for notifications and spoof checks: a
 thread id may be checked to prevent a caller from retargeting delivery outside
-the authenticated thread, but it never grants job visibility or run authority.
+the authenticated thread, but it never creates job visibility or run authority.
 
 Admin-wide job visibility and triggering remain on the Control API, SDK, and
 local/admin CLI surfaces. Event inspection is exposed through the scheduler

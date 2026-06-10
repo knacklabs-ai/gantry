@@ -285,7 +285,7 @@ function runnerInput(
 ): AgentRunnerInput {
   return {
     prompt: 'unused in direct runQuery tests',
-    groupFolder: 'group',
+    workspaceFolder: 'group',
     chatJid: 'tg:group',
     threadId: 'thread-1',
     compiledSystemPrompt: 'compiled Gantry system profile',
@@ -376,7 +376,7 @@ describe('Claude Agent SDK boundary integration', () => {
         'mcp__gantry__request_skill_proposal',
         'mcp__gantry__request_skill_dependency_install',
         'mcp__gantry__request_mcp_server',
-        'mcp__gantry__request_permission',
+        'mcp__gantry__request_access',
         'mcp__gantry__mcp_list_tools',
         'mcp__gantry__mcp_call_tool',
         'Agent',
@@ -443,9 +443,10 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(call?.options.mcpServers.gantry).toEqual({
       command: 'node',
       args: [env.mcpServerPath],
+      alwaysLoad: true,
       env: {
         GANTRY_CHAT_JID: 'tg:group',
-        GANTRY_GROUP_FOLDER: 'group',
+        GANTRY_WORKSPACE_KEY: 'group',
         GANTRY_THREAD_ID: 'thread-1',
         GANTRY_MEMORY_USER_ID: '',
         GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER: '',
@@ -453,7 +454,9 @@ describe('Claude Agent SDK boundary integration', () => {
         GANTRY_BROWSER_PROFILE_NAME: '',
         GANTRY_ADMIN_MCP_TOOLS_JSON: '[]',
         GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: '[]',
+        GANTRY_SEMANTIC_CAPABILITIES_JSON: '[]',
         GANTRY_SELECTED_SKILLS_JSON: '[]',
+        GANTRY_SELECTED_SKILL_DISPLAYS_JSON: '[]',
         GANTRY_SELECTED_MCP_SERVERS_JSON: '[]',
         GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
           selectedGantryMcpToolNames([]),

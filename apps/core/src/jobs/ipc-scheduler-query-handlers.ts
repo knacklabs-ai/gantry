@@ -189,6 +189,10 @@ function publicJobVisibility(metadata: JobVisibilityMetadata) {
     executionContext: metadata.executionContext,
     notificationRoutes: metadata.notificationRoutes,
     target: metadata.target,
+    ownerLabel: metadata.ownerLabel,
+    deliveryLabel: metadata.deliveryLabel,
+    setupLabel: metadata.setupLabel,
+    nextActionLabel: metadata.nextActionLabel,
     promptPreview: metadata.promptPreview,
     fullPrompt: metadata.fullPrompt,
     toolAccess: metadata.toolAccess,
@@ -357,7 +361,7 @@ const schedulerListNotificationTargetsHandler: TaskHandler = async (
         executionContext: {
           conversationJid: originConversationJid,
           threadId: authThreadId,
-          groupScope: access.sourceAgentFolder,
+          workspaceKey: access.sourceAgentFolder,
         },
         notificationRoutes: [
           {
@@ -375,7 +379,7 @@ const schedulerListNotificationTargetsHandler: TaskHandler = async (
         executionContext: {
           conversationJid: originConversationJid,
           threadId: authThreadId,
-          groupScope: access.sourceAgentFolder,
+          workspaceKey: access.sourceAgentFolder,
         },
         notificationRoutes: [
           {
@@ -391,7 +395,7 @@ const schedulerListNotificationTargetsHandler: TaskHandler = async (
         executionContext: {
           conversationJid: originConversationJid,
           threadId: authThreadId,
-          groupScope: access.sourceAgentFolder,
+          workspaceKey: access.sourceAgentFolder,
         },
         notificationRoutes: [
           {
@@ -409,7 +413,7 @@ const schedulerListNotificationTargetsHandler: TaskHandler = async (
         executionContext: {
           conversationJid: originConversationJid,
           threadId: null,
-          groupScope: access.sourceAgentFolder,
+          workspaceKey: access.sourceAgentFolder,
         },
         notificationRoutes: [
           {

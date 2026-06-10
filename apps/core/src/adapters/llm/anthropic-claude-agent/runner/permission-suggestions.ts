@@ -11,15 +11,22 @@ import {
   parseBashCommand,
 } from '../../../../shared/bash-command-parser.js';
 import { permissionUpdateAllowedToolRules } from '../../../../shared/permission-tool-rules.js';
-import { validatePersistentRequestPermissionRule } from '../../../../shared/persistent-permission-rules.js';
+import { validateDurableAccessRule } from '../../../../shared/durable-access-policy.js';
 import {
   expandSemanticCapabilityPermissionRules,
   semanticCapabilityRuntimeRules,
   type SemanticCapabilityDefinition,
   validateSemanticCapabilityDefinition,
 } from '../../../../shared/semantic-capabilities.js';
+import {
+  canonicalizeGeneratedRuntimeSkillPaths,
+  containsGeneratedRuntimeSkillPath,
+} from '../../../../shared/generated-runtime-paths.js';
 import { semanticCapabilityRule } from '../../../../shared/semantic-capability-ids.js';
-import { evaluateAutonomousToolUse } from '../../../../shared/tool-rule-matcher.js';
+import {
+  evaluateAutonomousToolUse,
+  normalizeRuntimeOwnedBashCommandForMatching,
+} from '../../../../shared/tool-rule-matcher.js';
 
 export interface PermissionSuggestionPlan {
   suggestions?: unknown[];
@@ -153,7 +160,13 @@ export function readRunnerSkillActionCapabilities(): SemanticCapabilityDefinitio
 function normalizePermissionSuggestions(
   sdkSuggestions: readonly unknown[] | undefined,
 ): unknown[] | undefined {
-  const allowedRules = permissionUpdateAllowedToolRules(sdkSuggestions);
+  const rawAllowedRules = permissionUpdateAllowedToolRules(sdkSuggestions);
+  if (rawAllowedRules.some(containsGeneratedRuntimeSkillPath)) {
+    return undefined;
+  }
+  const allowedRules = rawAllowedRules.map(
+    canonicalizeGeneratedRuntimeSkillPaths,
+  );
   if (allowedRules.length === 0) return undefined;
   if (allowedRules.some((rule) => !validatePersistentRule(rule))) {
     return undefined;
@@ -231,7 +244,9 @@ function inferBashRuleContents(toolInput: unknown): string[] {
   const input = toolInput as Record<string, unknown>;
   const command = input.command ?? input.cmd;
   if (typeof command !== 'string') return [];
-  const trimmed = command.trim();
+  const rawCommand = command.trim();
+  if (containsGeneratedRuntimeSkillPath(rawCommand)) return [];
+  const trimmed = normalizeRuntimeOwnedBashCommandForMatching(rawCommand);
   if (!trimmed || trimmed.length > 2048) return [];
   const parsed = parseBashCommand(trimmed);
   if (!parsed.ok) return [];
@@ -269,7 +284,7 @@ function skillActionPermissionSuggestion(
   const capability = matches[0];
   const rule = semanticCapabilityRule(capability.capabilityId);
   if (
-    !validatePersistentRequestPermissionRule(rule, {
+    !validateDurableAccessRule(rule, {
       semanticCapabilityDefinitions: {
         [capability.capabilityId]: capability,
       },
@@ -311,11 +326,34 @@ function skillActionDefinitionMatchesToolInput(
     return scoped?.toolName === RUN_COMMAND_TOOL_NAME;
   });
   if (rules.length === 0) return false;
+  const normalizedToolInput =
+    canonicalizeToolInputGeneratedRuntimePaths(toolInput);
   return evaluateAutonomousToolUse({
     rules,
     toolName: 'Bash',
-    toolInput,
+    toolInput: normalizedToolInput,
   }).allowed;
+}
+
+function canonicalizeToolInputGeneratedRuntimePaths(
+  toolInput: unknown,
+): unknown {
+  if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
+    return toolInput;
+  }
+  const input = toolInput as Record<string, unknown>;
+  const next = { ...input };
+  if (typeof next.command === 'string') {
+    next.command = canonicalizeSkillActionCommandForMatching(next.command);
+  }
+  if (typeof next.cmd === 'string') {
+    next.cmd = canonicalizeSkillActionCommandForMatching(next.cmd);
+  }
+  return next;
+}
+
+function canonicalizeSkillActionCommandForMatching(command: string): string {
+  return normalizeRuntimeOwnedBashCommandForMatching(command);
 }
 
 function splitReadableToolRule(rule: string): [string, string | undefined] {
@@ -325,5 +363,5 @@ function splitReadableToolRule(rule: string): [string, string | undefined] {
 }
 
 function validatePersistentRule(rule: string): boolean {
-  return validatePersistentRequestPermissionRule(rule).ok;
+  return validateDurableAccessRule(rule).ok;
 }

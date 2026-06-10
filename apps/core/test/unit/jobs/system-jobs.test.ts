@@ -10,7 +10,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     schedule_value: '* * * * *',
     status: 'active',
     session_id: null,
-    group_scope: 'agent',
+    workspace_key: 'agent',
     created_by: 'agent',
     created_at: '2026-05-08T00:00:00.000Z',
     updated_at: '2026-05-08T00:00:00.000Z',
@@ -53,6 +53,16 @@ async function loadSystemJobs(
     MEMORY_MAINTENANCE_MAX_PENDING: 5_000,
     RUNTIME_MEMORY_DREAMING_ENABLED: true,
     TIMEZONE: 'UTC',
+    MEMORY_BACKFILL_ENABLED: false,
+    MEMORY_BACKFILL_CRON: '45 3 * * *',
+    MEMORY_BACKFILL_MAX_ITEMS_PER_RUN: 500,
+    MEMORY_BACKFILL_MODE: 'auto',
+    MEMORY_BACKFILL_PROVIDER_BATCH_MIN_ITEMS: 100,
+    MEMORY_EMBED_PROVIDER: 'disabled',
+    MEMORY_EMBED_MODEL: 'text-embedding-3-small',
+    MEMORY_EMBED_DIMENSIONS: 1536,
+    MEMORY_EMBED_BATCH_SIZE: 16,
+    OPENAI_DAILY_EMBED_LIMIT: 500,
   }));
   vi.doMock('@core/memory/app-memory-service.js', () => ({
     AppMemoryService: {
@@ -95,13 +105,13 @@ describe('system memory dreaming jobs', () => {
       {
         conversationJid: 'sl:C123',
         threadId: null,
-        groupScope: 'agent-a',
+        workspaceKey: 'agent-a',
         sessionId: null,
       },
       {
         conversationJid: 'sl:D123',
         threadId: null,
-        groupScope: 'agent-a',
+        workspaceKey: 'agent-a',
         sessionId: null,
       },
     ]);
@@ -123,7 +133,7 @@ describe('system memory dreaming jobs', () => {
         },
       ],
     ]);
-    expect(upsertJob.mock.calls.map((call) => call[0].group_scope)).toEqual([
+    expect(upsertJob.mock.calls.map((call) => call[0].workspace_key)).toEqual([
       'agent-a',
       'agent-a',
     ]);

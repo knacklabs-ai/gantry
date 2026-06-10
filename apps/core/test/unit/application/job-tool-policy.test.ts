@@ -3,6 +3,23 @@ import { describe, expect, it } from 'vitest';
 import { resolveJobToolPolicy } from '@core/application/jobs/job-tool-policy.js';
 import type { Job } from '@core/domain/types.js';
 import { resolveConfiguredAllowedTools } from '@core/runtime/configured-agent-tools.js';
+import {
+  buildLocalCliSemanticCapability,
+  semanticCapabilityInputSchema,
+} from '@core/shared/semantic-capabilities.js';
+
+const reviewedAcmeAppendCapability = buildLocalCliSemanticCapability({
+  capabilityId: 'acme.records.append',
+  displayName: 'Acme records append',
+  category: 'Acme Records',
+  risk: 'write',
+  can: 'Append records through reviewed Acme access.',
+  cannot: 'Delete records, export secrets, or change account settings.',
+  executablePath: '/usr/local/bin/acme',
+  executableVersion: 'v1.0.0',
+  executableHash: 'sha256:abc123',
+  commandTemplates: ['/usr/local/bin/acme records append *'],
+});
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -14,7 +31,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     status: 'active',
     session_id: null,
     thread_id: null,
-    group_scope: 'team',
+    workspace_key: 'team',
     created_by: 'agent',
     created_at: '2026-05-09T00:00:00.000Z',
     updated_at: '2026-05-09T00:00:00.000Z',
@@ -35,14 +52,23 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 }
 
 function toolRepositoryFor(names: string[]) {
-  return {
-    listAgentToolBindings: async () =>
-      names.map((name) => ({ toolId: `tool:${name}`, status: 'active' })),
-    getTool: async (toolId: string) => ({
+  const toolFor = (toolId: string) => {
+    const name = toolId.replace(/^tool:/, '');
+    return {
       id: toolId,
       appId: 'default',
-      name: toolId.replace(/^tool:/, ''),
-    }),
+      name,
+      inputSchema:
+        name === 'capability:acme.records.append'
+          ? semanticCapabilityInputSchema(reviewedAcmeAppendCapability)
+          : undefined,
+    };
+  };
+  return {
+    listTools: async () => names.map((name) => toolFor(`tool:${name}`)),
+    listAgentToolBindings: async () =>
+      names.map((name) => ({ toolId: `tool:${name}`, status: 'active' })),
+    getTool: async (toolId: string) => toolFor(toolId),
   } as never;
 }
 
@@ -58,9 +84,7 @@ describe('job tool policy', () => {
     ).resolves.toEqual({
       inheritedTools: ['Browser'],
       effectiveAllowedTools: ['Browser'],
-      localCliCredentialAccess: false,
-      localCliCredentialPaths: [],
-      localCliNetworkHosts: [],
+      runtimeAccess: [],
     });
   });
 
@@ -118,7 +142,7 @@ describe('job tool policy', () => {
         agentId: 'agent:team',
         toolRepository: toolRepositoryFor(['mcp__github__*']),
       }),
-    ).rejects.toThrowError(/request the MCP server capability/);
+    ).rejects.toThrowError(/request a reviewed semantic capability/);
   });
 
   it('rejects stale inherited exact third-party MCP tool rules from agent tool bindings', async () => {
@@ -136,7 +160,7 @@ describe('job tool policy', () => {
 
   it('matches the interactive runtime resolver for the same agent bindings', async () => {
     const repository = toolRepositoryFor([
-      'capability:google.sheets.write',
+      'capability:acme.records.append',
       'Browser',
       'RunCommand(npm test *)',
     ]);
@@ -155,7 +179,8 @@ describe('job tool policy', () => {
 
     expect(jobPolicy.effectiveAllowedTools).toEqual(configuredTools);
     expect(jobPolicy.effectiveAllowedTools).toEqual([
-      'capability:google.sheets.write',
+      'capability:acme.records.append',
+      'RunCommand(/usr/local/bin/acme records append *)',
       'Browser',
       'RunCommand(npm test *)',
     ]);

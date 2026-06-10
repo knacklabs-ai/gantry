@@ -17,6 +17,13 @@ import {
 } from './desired-state-capability-reconcile.js';
 import { exportCurrentDesiredState } from './desired-state-current-export.js';
 import {
+  normalizeConfiguredCapabilities,
+  normalizeConfiguredCapabilitiesInSettings,
+  semanticCapabilityDefinitionsById,
+  semanticCapabilityDefinitionsFromCatalogTools,
+  skillActionDefinitionsForSkills,
+} from './configured-capability-normalization.js';
+import {
   configuredConversationKind,
   jidForConfiguredConversation,
   stripProviderPrefix,
@@ -31,7 +38,14 @@ import {
   loadMcpServersById,
   memorySubjectForConfiguredBinding,
 } from './desired-state-service-helpers.js';
-import { resolveConfiguredSkillReferences } from './desired-state-skill-references.js';
+import {
+  resolveConfiguredSkillReferences,
+  selectedSkillsFromResolvedSkillReferences,
+} from './desired-state-skill-references.js';
+import {
+  formatSkillMaterializationCollisionFragment,
+  skillMaterializationCollisions,
+} from '../../domain/skills/skill-identity.js';
 export {
   agentIdForFolder,
   classifySettingsChanges,
@@ -75,9 +89,19 @@ export class SettingsDesiredStateService {
       settings,
     });
   }
+
+  async normalizeConfiguredCapabilities(settings: RuntimeSettings) {
+    return normalizeConfiguredCapabilitiesInSettings({
+      settings,
+      repositories: this.deps.repositories,
+      appId: this.appId,
+    });
+  }
+
   async drift(
     settings: RuntimeSettings,
   ): Promise<SettingsDesiredStateDriftReport> {
+    settings = (await this.normalizeConfiguredCapabilities(settings)).settings;
     const groups = await this.deps.ops.getAllConversationRoutes();
     const configuredFolders = new Set(Object.keys(settings.agents));
     const configuredJids = new Set(
@@ -99,6 +123,15 @@ export class SettingsDesiredStateService {
   }
 
   async reconcile(settings: RuntimeSettings): Promise<SettingsReconcileResult> {
+    const normalization = await normalizeConfiguredCapabilitiesInSettings({
+      settings,
+      repositories: this.deps.repositories,
+      appId: this.appId,
+    });
+    settings = normalization.settings;
+    const normalizedCapabilityFolders = new Set(
+      normalization.changedAgentFolders,
+    );
     const invalidReferences = await this.validateCapabilityReferences(settings);
     if (invalidReferences.length > 0) {
       return { applied: [], skipped: [], invalidReferences };
@@ -138,14 +171,22 @@ export class SettingsDesiredStateService {
               ? 'dm'
               : 'channel',
           agentConfig:
-            binding.model || agent.persona
-              ? { model: binding.model, persona: agent.persona }
+            binding.model || agent.persona || agent.relationshipMode
+              ? {
+                  model: binding.model,
+                  persona: agent.persona,
+                  relationshipMode: agent.relationshipMode,
+                }
               : undefined,
         });
         applied.push(`binding:${binding.jid}`);
       }
 
-      if (settings.desiredState.authoritative || hasAnyCapability(agent)) {
+      if (
+        settings.desiredState.authoritative ||
+        hasAnyCapability(agent) ||
+        normalizedCapabilityFolders.has(folder)
+      ) {
         await this.replaceCapabilities(agentId, agent, now);
         applied.push(`capabilities:${folder}`);
       } else {
@@ -439,9 +480,43 @@ export class SettingsDesiredStateService {
       this.deps.repositories.mcpServers,
       [...serverIds],
     );
+    const catalogSemanticCapabilityDefinitions =
+      semanticCapabilityDefinitionsFromCatalogTools(
+        await this.deps.repositories.tools.listTools({
+          appId: this.appId,
+          statuses: ['active'],
+        }),
+      );
     for (const [folder, agent] of Object.entries(settings.agents)) {
+      const resolvedSkills = await resolveConfiguredSkillReferences({
+        repository: this.deps.repositories.skills,
+        appId: this.appId,
+        agentId: agentIdForFolder(folder),
+        references: agent.sources.skills.map((source) => source.id),
+      });
+      const [skillCollision] = skillMaterializationCollisions(
+        selectedSkillsFromResolvedSkillReferences(
+          agent.sources.skills.map((source) => source.id),
+          resolvedSkills,
+        ),
+      );
+      if (skillCollision) {
+        errors.push(
+          `agents.${folder}.sources.skills contains ${formatSkillMaterializationCollisionFragment(skillCollision)}`,
+        );
+      }
+      const skillActionDefinitionsForAgent = skillActionDefinitionsForSkills([
+        ...resolvedSkills.skills.values(),
+      ]);
+      const skillActionDefinitions = {
+        ...catalogSemanticCapabilityDefinitions,
+        ...semanticCapabilityDefinitionsById(skillActionDefinitionsForAgent),
+      };
+      const normalizedCapabilities = normalizeConfiguredCapabilities({
+        capabilities: agent.capabilities,
+      }).capabilities;
       for (const capability of [
-        ...new Set(agent.capabilities.map((item) => item.id)),
+        ...new Set(normalizedCapabilities.map((item) => item.id)),
       ]) {
         const toolReference = settingsCapabilityToToolReference({
           id: capability,
@@ -451,6 +526,7 @@ export class SettingsDesiredStateService {
           repository: this.deps.repositories.tools,
           appId: this.appId,
           reference: toolReference,
+          semanticCapabilityDefinitions: skillActionDefinitions,
         });
         if (resolved.error) {
           errors.push(
@@ -458,12 +534,6 @@ export class SettingsDesiredStateService {
           );
         }
       }
-      const resolvedSkills = await resolveConfiguredSkillReferences({
-        repository: this.deps.repositories.skills,
-        appId: this.appId,
-        agentId: agentIdForFolder(folder),
-        references: agent.sources.skills.map((source) => source.id),
-      });
       for (const skillId of [
         ...new Set(agent.sources.skills.map((source) => source.id)),
       ]) {
@@ -486,8 +556,7 @@ export class SettingsDesiredStateService {
         if (
           !server ||
           server.appId !== this.appId ||
-          server.status !== 'approved' ||
-          !server.latestApprovedVersionId
+          server.status !== 'active'
         ) {
           errors.push(
             `agents.${folder}.sources.mcp_servers contains unavailable MCP server: ${serverId}`,

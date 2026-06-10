@@ -1,5 +1,6 @@
 import type { JsonSchema } from './openapi-route-helpers.js';
 import { listModelPresets } from '../../shared/model-catalog.js';
+import { modelCredentialSchemas } from './openapi-model-credential-schemas.js';
 
 const isoDateTime = { type: 'string', format: 'date-time' };
 const metadata = { type: 'object', additionalProperties: true };
@@ -52,7 +53,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
     required: ['agent', 'boundConversations'],
     properties: {
       agent: { $ref: '#/components/schemas/Agent' },
-      capabilities: { $ref: '#/components/schemas/AgentCapabilitiesResponse' },
+      capabilities: { $ref: '#/components/schemas/AgentAccessResponse' },
       boundConversations: {
         type: 'array',
         items: {
@@ -118,10 +119,12 @@ export const openApiSchemas: Record<string, JsonSchema> = {
     },
   },
   CapabilityListResponse: arrayEnvelope('capabilities', 'CapabilityManifest'),
+  ...modelCredentialSchemas,
   AgentSourceSelection: {
     type: 'object',
     required: ['id'],
     properties: {
+      name: { type: 'string' },
       id: { type: 'string' },
       version: { oneOf: [{ type: 'string' }, { type: 'number' }] },
     },
@@ -138,6 +141,16 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       version: { oneOf: [{ type: 'string' }, { type: 'number' }] },
     },
   },
+  AgentMcpSourceSelection: {
+    type: 'object',
+    required: ['id'],
+    properties: {
+      name: { type: 'string' },
+      id: { type: 'string' },
+      version: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+      tools: { type: 'array', items: { type: 'string' } },
+    },
+  },
   AgentSources: {
     type: 'object',
     required: ['skills', 'mcpServers', 'tools'],
@@ -148,7 +161,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       },
       mcpServers: {
         type: 'array',
-        items: { $ref: '#/components/schemas/AgentSourceSelection' },
+        items: { $ref: '#/components/schemas/AgentMcpSourceSelection' },
       },
       tools: {
         type: 'array',
@@ -163,39 +176,81 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       sources: { $ref: '#/components/schemas/AgentSources' },
     },
   },
-  AgentSourcesResponse: {
+  AgentAccessRequest: {
     type: 'object',
-    required: ['agentId', 'sources', 'updatedAt'],
+    required: ['sources'],
     properties: {
-      agentId: { type: 'string' },
       sources: { $ref: '#/components/schemas/AgentSources' },
-      updatedAt: isoDateTime,
-    },
-  },
-  AgentCapabilitiesRequest: {
-    type: 'object',
-    required: ['capabilities'],
-    properties: {
-      capabilities: {
+      selections: {
         type: 'array',
         items: { $ref: '#/components/schemas/CapabilitySelection' },
       },
     },
   },
-  AgentCapabilitiesResponse: {
-    allOf: [
-      { $ref: '#/components/schemas/AgentCapabilitiesRequest' },
-      {
-        type: 'object',
-        required: ['agentId', 'sources', 'toolAccess', 'updatedAt'],
-        properties: {
-          agentId: { type: 'string' },
-          sources: { $ref: '#/components/schemas/AgentSources' },
-          toolAccess: metadata,
-          updatedAt: isoDateTime,
-        },
+  AgentAccessResponse: {
+    type: 'object',
+    required: ['agentId', 'sources', 'selections', 'toolAccess', 'updatedAt'],
+    properties: {
+      agentId: { type: 'string' },
+      sources: { $ref: '#/components/schemas/AgentSources' },
+      selections: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/CapabilitySelection' },
       },
+      toolAccess: metadata,
+      summary: metadata,
+      updatedAt: isoDateTime,
+    },
+  },
+  AgentProfileFileSummary: {
+    type: 'object',
+    required: [
+      'kind',
+      'path',
+      'version',
+      'contentHash',
+      'sizeBytes',
+      'updatedAt',
     ],
+    properties: {
+      kind: { type: 'string', enum: ['soul', 'agents'] },
+      path: { type: 'string', example: 'AGENTS.md' },
+      version: { type: 'integer' },
+      contentHash: { type: 'string' },
+      sizeBytes: { type: 'integer' },
+      updatedAt: { type: ['string', 'null'], format: 'date-time' },
+    },
+  },
+  AgentProfileFilesResponse: {
+    type: 'object',
+    required: ['agentId', 'files'],
+    properties: {
+      agentId: { type: 'string' },
+      files: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/AgentProfileFileSummary' },
+      },
+    },
+  },
+  AgentProfileFileContentResponse: {
+    type: 'object',
+    required: ['agentId', 'kind', 'path', 'version', 'contentHash', 'content'],
+    properties: {
+      agentId: { type: 'string' },
+      kind: { type: 'string', enum: ['soul', 'agents'] },
+      path: { type: 'string' },
+      version: { type: 'integer' },
+      contentHash: { type: 'string' },
+      content: { type: 'string' },
+    },
+  },
+  PutAgentProfileFileRequest: {
+    type: 'object',
+    required: ['content'],
+    properties: {
+      content: { type: 'string' },
+      expectedVersion: { type: 'integer' },
+    },
   },
   HealthResponse: {
     type: 'object',
@@ -227,13 +282,14 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       'modelRoute',
       'capabilities',
       'supportedWorkloads',
+      'cacheSupport',
     ],
     properties: {
       id: { type: 'string' },
       displayName: { type: 'string' },
       aliases: stringArray,
       recommendedAlias: { type: 'string' },
-      responseFamily: { type: 'string', enum: ['anthropic', 'openai'] },
+      responseFamily: { type: 'string' },
       executionProviderId: { type: 'string' },
       credentialProfileRef: { type: 'string' },
       modelRoute: {
@@ -300,6 +356,79 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       maxOutputTokens: { type: 'integer' },
       cacheMode: { type: 'string' },
       cacheTokenFields: stringArray,
+      cacheSupport: {
+        type: 'object',
+        required: [
+          'providerId',
+          'providerLabel',
+          'cacheProvider',
+          'statusLabel',
+          'prompt',
+          'response',
+          'tokenFields',
+        ],
+        properties: {
+          providerId: { type: 'string' },
+          providerLabel: { type: 'string' },
+          cacheProvider: { type: 'string' },
+          statusLabel: { type: 'string' },
+          prompt: {
+            type: 'object',
+            required: [
+              'mode',
+              'automatic',
+              'requestControl',
+              'ttlOptions',
+              'minimumTokenThresholds',
+              'usageFields',
+              'supported',
+              'accounted',
+            ],
+            properties: {
+              mode: { type: 'string' },
+              automatic: { type: 'boolean' },
+              requestControl: { type: 'string' },
+              ttlOptions: stringArray,
+              minimumTokenThresholds: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['modelFamily', 'tokens'],
+                  properties: {
+                    modelFamily: { type: 'string' },
+                    tokens: { type: 'integer' },
+                  },
+                },
+              },
+              usageFields: metadata,
+              supported: { type: 'boolean' },
+              accounted: { type: 'boolean' },
+            },
+          },
+          response: {
+            type: 'object',
+            required: [
+              'mode',
+              'enabledByDefault',
+              'requestControl',
+              'requestHeaders',
+              'responseHeaders',
+              'usageBehavior',
+              'available',
+            ],
+            properties: {
+              mode: { type: 'string' },
+              enabledByDefault: { type: 'boolean' },
+              requestControl: { type: 'string' },
+              requestHeaders: stringArray,
+              responseHeaders: stringArray,
+              usageBehavior: { type: 'string' },
+              available: { type: 'boolean' },
+            },
+          },
+          tokenFields: stringArray,
+        },
+      },
       supportsTools: { type: 'boolean' },
       supportsThinking: { type: 'boolean' },
       source: metadata,
@@ -429,10 +558,10 @@ export const openApiSchemas: Record<string, JsonSchema> = {
         description:
           'Optional chat preview scope for session /model overrides.',
       },
-      groupScope: {
+      workspaceKey: {
         type: 'string',
         description:
-          'Optional group folder/name preview scope for session /model overrides.',
+          'Optional workspace key preview scope for session /model overrides.',
       },
       kind: { type: 'string', enum: ['one-time', 'recurring'] },
       task: {

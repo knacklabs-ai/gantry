@@ -2,14 +2,28 @@ import type { AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
 import type { SkillCatalogRepository } from '../../domain/ports/repositories.js';
 import type { SkillCatalogItem, SkillId } from '../../domain/skills/skills.js';
+import { canonicalSkillReference } from '../../domain/skills/skill-identity.js';
 
 export interface ResolvedSkillReferences {
   skills: Map<string, SkillCatalogItem>;
   errors: Map<string, string>;
 }
 
-export function displaySkillReference(skill: Pick<SkillCatalogItem, 'name'>) {
-  return skill.name;
+export function selectedSkillsFromResolvedSkillReferences(
+  references: readonly string[],
+  resolved: ResolvedSkillReferences,
+): SkillCatalogItem[] {
+  const seen = new Set<string>();
+  const skills: SkillCatalogItem[] = [];
+  for (const reference of references) {
+    const skill = resolved.skills.get(reference);
+    if (!skill) continue;
+    const canonicalReference = canonicalSkillReference(skill);
+    if (seen.has(canonicalReference)) continue;
+    seen.add(canonicalReference);
+    skills.push(skill);
+  }
+  return skills;
 }
 
 export async function resolveConfiguredSkillReferences(input: {
@@ -19,11 +33,11 @@ export async function resolveConfiguredSkillReferences(input: {
   references: readonly string[];
 }): Promise<ResolvedSkillReferences> {
   const uniqueReferences = [...new Set(input.references)];
-  const [exactSkills, approvedSkills] = await Promise.all([
+  const [exactSkills, installedSkills] = await Promise.all([
     loadExactSkillReferences(input.repository, uniqueReferences),
     input.repository.listSkills({
       appId: input.appId,
-      statuses: ['approved'],
+      statuses: ['installed'],
     }),
   ]);
   const skills = new Map<string, SkillCatalogItem>();
@@ -40,8 +54,13 @@ export async function resolveConfiguredSkillReferences(input: {
       continue;
     }
 
-    const skillName = skillNameFromSettingsReference(reference);
-    const matches = approvedSkills.filter(
+    if (isExactSkillReference(reference)) {
+      errors.set(reference, `unavailable skill: ${reference}`);
+      continue;
+    }
+
+    const skillName = reference;
+    const matches = installedSkills.filter(
       (skill) =>
         skill.name === skillName &&
         isUsableSkillForSettings(input.appId, input.agentId, skill),
@@ -51,10 +70,7 @@ export async function resolveConfiguredSkillReferences(input: {
     } else if (matches.length === 0) {
       errors.set(reference, `unavailable skill: ${reference}`);
     } else {
-      errors.set(
-        reference,
-        `ambiguous skill name: ${skillName} matched ${matches.length} approved skills`,
-      );
+      errors.set(reference, ambiguousSkillNameError(skillName, matches));
     }
   }
 
@@ -81,10 +97,16 @@ async function loadExactSkillReferences(
   );
 }
 
-function skillNameFromSettingsReference(reference: string): string {
-  return reference.startsWith('skill:')
-    ? reference.slice('skill:'.length)
-    : reference;
+function isExactSkillReference(reference: string): boolean {
+  return reference.startsWith('skill:');
+}
+
+function ambiguousSkillNameError(
+  skillName: string,
+  matches: readonly SkillCatalogItem[],
+): string {
+  const candidates = matches.map(canonicalSkillReference).sort();
+  return `ambiguous skill name: ${skillName} matched ${matches.length} installed skills; use an exact skill id in settings, such as ${candidates.join(', ')}`;
 }
 
 function isUsableSkillForSettings(
@@ -92,6 +114,6 @@ function isUsableSkillForSettings(
   agentId: AgentId,
   skill: SkillCatalogItem,
 ): boolean {
-  if (skill.appId !== appId || skill.status !== 'approved') return false;
+  if (skill.appId !== appId || skill.status !== 'installed') return false;
   return !skill.agentId || skill.agentId === agentId;
 }

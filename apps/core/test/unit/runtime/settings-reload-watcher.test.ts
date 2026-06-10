@@ -27,7 +27,10 @@ function makeDeps() {
         replaceAgentCapabilityBindings: vi.fn(async () => undefined),
         disableAgent: vi.fn(async () => undefined),
       },
-      tools: { getTool: vi.fn(async () => null) },
+      tools: {
+        getTool: vi.fn(async () => null),
+        listTools: vi.fn(async () => []),
+      },
       skills: { getSkill: vi.fn(async () => null) },
       mcpServers: { getServer: vi.fn(async () => null) },
     },
@@ -61,8 +64,8 @@ describe('settings reload watcher', () => {
       'postgres://gantry_app:pass@localhost/gantry',
     );
     vi.stubEnv(
-      'ONECLI_DATABASE_URL',
-      'postgres://onecli_app:pass@localhost/gantry?schema=onecli',
+      'GANTRY_MODEL_GATEWAY_DATABASE_URL',
+      'postgres://model_gateway_app:pass@localhost/gantry?schema=model_gateway',
     );
     vi.stubEnv(
       'SECRET_ENCRYPTION_KEY',

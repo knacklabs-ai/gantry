@@ -28,7 +28,7 @@ vi.mock('@core/adapters/llm/model-preset-preflight.js', () => ({
   preflightModelPreset: vi.fn(async () => ({
     ok: true,
     status: 'pass',
-    message: 'OpenRouter-scoped Model Access credential is available.',
+    message: 'OpenRouter Model Access credential is available.',
   })),
 }));
 
@@ -104,6 +104,7 @@ vi.mock('@core/config/index.js', async () => {
       settingsModule.loadRuntimeSettings(runtimeHome),
     ),
     getPublicRuntimeSettings: toPublic,
+    configureDesiredSettingsStorageProvider: vi.fn(() => undefined),
   };
 });
 
@@ -138,7 +139,7 @@ const controlRepo = {
     appId: input.appId,
     conversationId: input.conversationId,
     chatJid: input.chatJid,
-    groupFolder: input.groupFolder,
+    workspaceKey: input.workspaceFolder,
     title: input.title ?? null,
     defaultResponseMode: input.defaultResponseMode ?? 'sse',
     defaultWebhookId: input.defaultWebhookId ?? null,
@@ -341,6 +342,7 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeEventExchange: () => runtimeEvents,
   getRuntimeRepositories: () => opsRepo,
   getRuntimeStorage: () => ({
+    ops: opsRepo,
     repositories: domainRepositories,
   }),
 }));
@@ -460,7 +462,7 @@ beforeEach(() => {
   mockedPreflightModelPreset.mockResolvedValue({
     ok: true,
     status: 'pass',
-    message: 'OpenRouter-scoped Model Access credential is available.',
+    message: 'OpenRouter Model Access credential is available.',
   });
   controlRepo.listDueWebhookDeliveries.mockResolvedValue([]);
   controlRepo.claimDueWebhookDeliveries.mockResolvedValue([]);
@@ -851,7 +853,7 @@ describe('control server auth key parsing', () => {
     );
   });
 
-  it('keeps app group folders collision-resistant for distinct valid ids', () => {
+  it('keeps app workspace folders collision-resistant for distinct valid ids', () => {
     const dashed = _testControlServer.makeAppGroup({
       appId: 'app-one',
       conversationId: 'conv',
@@ -878,7 +880,7 @@ describe('control server auth key parsing', () => {
     expect(dashed.folder).toMatch(/^app_[a-f0-9]{12}_app_one_conv$/);
   });
 
-  it('keeps app group hash suffix non-truncatable for max-length ids', () => {
+  it('keeps app workspace hash suffix non-truncatable for max-length ids', () => {
     const prefix = 'a'.repeat(64);
     const first = _testControlServer.makeAppGroup({
       appId: prefix,
@@ -1050,6 +1052,11 @@ describe('control server runtime hardening', () => {
   it('updates model defaults through settings-backed Control API routes', async () => {
     const runtimeHome = '/tmp/gantry-control-test-home';
     fs.rmSync(runtimeHome, { recursive: true, force: true });
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    process.env.GANTRY_DATABASE_URL =
+      'postgres://gantry:gantry@localhost:5432/gantry_test';
+    process.env.SECRET_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
     process.env.GANTRY_CONTROL_API_KEYS_JSON = JSON.stringify([
@@ -1134,6 +1141,16 @@ describe('control server runtime hardening', () => {
         },
       });
     } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
       await handle.close();
     }
   });
@@ -1184,7 +1201,7 @@ describe('control server runtime hardening', () => {
         scope: 'app:app-one:session-1',
         selection: {
           effectiveAlias: 'sonnet',
-          source: 'group.agentConfig.model',
+          source: 'conversation.agentConfig.model',
           inherited: false,
           model: {
             displayName: 'Sonnet 4.6',
@@ -1213,7 +1230,7 @@ describe('control server runtime hardening', () => {
     mockedPreflightModelPreset.mockResolvedValueOnce({
       ok: false,
       status: 'fail',
-      message: 'OpenRouter-scoped Model Access credential is missing.',
+      message: 'OpenRouter Model Access credential is missing.',
     });
 
     const handle = startControlServer({
@@ -1267,7 +1284,7 @@ describe('control server runtime hardening', () => {
     mockedPreflightModelPreset.mockResolvedValueOnce({
       ok: false,
       status: 'fail',
-      message: 'OpenRouter-scoped Model Access credential is missing.',
+      message: 'OpenRouter Model Access credential is missing.',
     });
 
     const handle = startControlServer({
@@ -1798,6 +1815,139 @@ describe('control server runtime hardening', () => {
       expect(app.registerGroup.mock.invocationCallOrder[0]).toBeLessThan(
         app.queue.enqueueMessageCheck.mock.invocationCallOrder[0],
       );
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('accepts signed external ingress conversation messages with Gantry ids only in the response', async () => {
+    const port = await reservePort();
+    process.env.GANTRY_CONTROL_PORT = String(port);
+    const app = {
+      registerGroup: vi.fn(async () => undefined),
+      getConversationRoutes: vi.fn(() => ({
+        'tg:-100': {
+          name: 'Team Topic',
+          folder: 'main_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+          requiresTrigger: false,
+          conversationKind: 'channel',
+        },
+      })),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    controlRepo.getExternalIngressById.mockResolvedValue({
+      ingressId: 'ingress-1',
+      appId: 'app-one',
+      name: 'ingress-main',
+      secret: 'ingress-secret',
+      enabled: true,
+      metadata: {
+        targetPolicy: {
+          allowedTargetKinds: ['conversation_message'],
+          conversationIds: ['conversation:tg:-100'],
+        },
+      },
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    domainRepositories.conversations.getConversation.mockResolvedValue({
+      id: 'conversation:tg:-100',
+      appId: 'app-one',
+      providerConnectionId: 'channel-providerConnection:app-one:telegram',
+      externalRef: { kind: 'conversation', value: '-100' },
+      kind: 'group',
+      title: 'Team Topic',
+      status: 'active',
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    domainRepositories.conversations.getThread.mockResolvedValue({
+      id: 'thread:tg:-100:42',
+      appId: 'app-one',
+      conversationId: 'conversation:tg:-100',
+      externalRef: { kind: 'conversation_thread', value: '42' },
+      title: 'Topic',
+      status: 'active',
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    const handle = startControlServer({ app: app as any });
+    const path = '/v1/ingresses/ingress-1/invoke';
+    const rawBody = JSON.stringify({
+      target: {
+        kind: 'conversation_message',
+        conversationId: 'conversation:tg:-100',
+        threadId: 'thread:tg:-100:42',
+        message: 'run the test',
+        senderId: 'external-ci',
+        senderName: 'External CI',
+      },
+      idempotencyKey: 'idem-ingress-conversation-message',
+    });
+    const signed = signIngressRequest({
+      ingressId: 'ingress-1',
+      path,
+      rawBody,
+      nonce: 'nonce-ingress-conversation-message',
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}${path}`,
+        '',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-gantry-ingress-timestamp': signed.timestamp,
+            'x-gantry-ingress-nonce': signed.nonce,
+            'x-gantry-ingress-signature': signed.signature,
+          },
+          body: rawBody,
+        },
+      );
+
+      expect(response.status).toBe(202);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        duplicate: false,
+        targetKind: 'conversation_message',
+        conversationId: 'conversation:tg:-100',
+        threadId: 'thread:tg:-100:42',
+        messageId: expect.any(String),
+        acceptedEventId: 1001,
+      });
+      expect(body).not.toHaveProperty('enqueue');
+      expect(body).not.toHaveProperty('conversationJid');
+      expect(JSON.stringify(body)).not.toContain('queueKey');
+      expect(opsRepo.storeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chat_jid: 'tg:-100',
+          thread_id: '42',
+          sender: 'external-ci',
+          sender_name: 'External CI',
+          content: 'run the test',
+        }),
+      );
+      expect(runtimeEvents.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appId: 'app-one',
+          conversationId: 'conversation:tg:-100',
+          threadId: 'thread:tg:-100:42',
+          eventType: 'conversation.message.inbound',
+          actor: 'external-ci',
+          payload: expect.objectContaining({
+            direction: 'inbound',
+            deliveryStatus: 'accepted',
+          }),
+        }),
+      );
+      expect(app.queue.enqueueMessageCheck).toHaveBeenCalledWith(
+        'tg:-100::thread:42',
+      );
+      expect(app.registerGroup).not.toHaveBeenCalled();
     } finally {
       await handle.close();
     }
@@ -3269,7 +3419,7 @@ describe('control server runtime hardening', () => {
     }
   });
 
-  it('rejects unsafe session identifiers before registering app groups', async () => {
+  it('rejects unsafe session identifiers before registering app workspaces', async () => {
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
     process.env.GANTRY_CONTROL_API_KEYS_JSON = JSON.stringify([
@@ -3457,7 +3607,7 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
+      workspaceKey: 'app_app_one_conv_1',
       title: null,
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
@@ -3510,7 +3660,7 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
+      workspaceKey: 'app_app_one_conv_1',
       title: 'Conversation',
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
@@ -3603,7 +3753,7 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
+      workspaceKey: 'app_app_one_conv_1',
       title: 'Conversation',
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
@@ -3665,7 +3815,7 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
+      workspaceKey: 'app_app_one_conv_1',
       title: 'Conversation',
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
@@ -3748,7 +3898,7 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
+      workspaceKey: 'app_app_one_conv_1',
       title: 'Conversation',
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
@@ -4062,7 +4212,7 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
+      workspaceKey: 'app_app_one_conv_1',
       title: null,
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
@@ -4177,7 +4327,6 @@ describe('control server runtime hardening', () => {
       appId: 'app-one',
       conversationId: 'conv-1',
       chatJid: 'app:app-one:conv-1',
-      groupFolder: 'app_app_one_conv_1',
       workspaceKey: 'app_app_one_conv_1',
       title: null,
       defaultResponseMode: 'sse',
@@ -4195,7 +4344,7 @@ describe('control server runtime hardening', () => {
       status: 'active',
       session_id: 'session-1',
       thread_id: null,
-      group_scope: 'app_app_one_conv_1',
+      workspace_key: 'app_app_one_conv_1',
       created_by: 'human',
       created_at: new Date(0).toISOString(),
       updated_at: new Date(0).toISOString(),
@@ -4286,7 +4435,7 @@ describe('control server runtime hardening', () => {
       status: 'active',
       session_id: 'session-1',
       thread_id: null,
-      group_scope: 'app_app_one_conv_1',
+      workspace_key: 'app_app_one_conv_1',
       created_by: 'human',
       created_at: new Date(0).toISOString(),
       updated_at: new Date(0).toISOString(),
@@ -4305,7 +4454,6 @@ describe('control server runtime hardening', () => {
         appId: 'app-one',
         conversationId: 'conv-1',
         chatJid: 'app:app-one:conv-1',
-        groupFolder: 'app_app_one_conv_1',
         workspaceKey: 'app_app_one_conv_1',
         title: null,
         defaultResponseMode: 'sse',

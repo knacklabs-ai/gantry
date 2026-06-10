@@ -17,10 +17,10 @@
 - Deadline-bounded read-only IPC work must propagate an `AbortSignal` through
   the memory service and continuity section calls; timer-only races are not
   enough because background search/status work can outlive the IPC response.
-- IPC patch actions must resolve the subject with the same trusted resolver used by search/save; never trust `group_folder`, `user_id`, channel, or thread hints from the patch payload.
+- IPC patch actions must resolve the subject with the same trusted resolver used by search/save; never trust `workspace_folder`, `user_id`, channel, or thread hints from the patch payload.
 - If digest or app-memory hydration dependencies are missing, fail closed to an empty memory context; never fall back to legacy session summaries or legacy memory-item reads.
 - Production `CanonicalSessionOpsService` hydration must pass `loadAppMemoryItems` with the current turn query when available; query-aware hydration searches app-memory first, then tops up from `list` using session-derived app/agent/user/conversation scope. Direct/private conversations stay user-scoped, and channel/group conversations stay whole-conversation scoped.
-- Canonical session rows persist provider-session scope keys from the exact trusted conversation boundary (`<group-folder>::conversation:<jid>` plus DM user and child thread/topic when applicable) and canonical conversation/thread ids; hydration must map canonical ids back to app-memory identities (`groupId` or `channelId`) so memory IPC writes and resume hydration use the same subject contract.
+- Canonical session rows persist provider-session scope keys from the exact trusted conversation boundary (`<workspace-folder>::conversation:<jid>` plus DM user and child thread/topic when applicable) and canonical conversation/thread ids; hydration must map canonical ids back to app-memory identities (`groupId` or `channelId`) so memory IPC writes and resume hydration use the same subject contract.
 - Automatic boundary evidence must use the canonical conversation/user memory
   subject before persistence; do not save evidence under provider topic/thread
   ids.
@@ -44,6 +44,9 @@
   Durable mutation still requires host validation against subject scope,
   evidence ids, current target versions, allowed memory kinds, confidence, and
   shared sensitive-material checks.
+- User-visible memory extractor labels must stay provider-neutral. Specific
+  model/provider choices belong in model settings or LLM adapter code, not
+  `MemoryExtractionProvider.providerName`.
 - Retire, rewrite, contradiction, and merge proposals belong in
   `memory_review_requests` with `pending_review` status; do not route these
   through `request_permission`, because review approves a specific data
@@ -118,8 +121,28 @@
   stays efficient without narrowing to unthreaded rows.
 - Automatic durable promotion/update must stay dreaming-only; boundary capture
   flows must not bypass dreaming review into active memory promotion logic.
-- Embedding/index update work should run only during dreaming
-  promotion/update flows, never as a requirement for turn-time recall.
+- Item embedding/index writes run during dreaming promotion/update flows and in
+  the resumable embedding backfill (CLI `gantry memory embeddings backfill` and
+  the scheduled backfill job). They must never be a requirement for turn-time
+  recall: live recall only reads ready embeddings and never indexes items.
+- Turn-time recall is hybrid when embeddings are enabled and a query embedding is
+  available: lexical full-text candidates and pgvector cosine candidates are
+  fused with Reciprocal Rank Fusion (`RRF_K = 60`, per-branch candidate limit
+  `min(100, max(limit*4, 20))`, final score `rrfScore + confidence * 0.001`).
+  Recall must fall back to lexical-only when embeddings are disabled/paused or the
+  query embedding fails (budget/quota/rate-limit/provider error); it must not
+  throw.
+- The embedded text and content hash for an item are
+  `sha256(key + "\n" + value + "\n" + why)`. Writing a ready embedding prunes
+  sibling rows for the same `(item_id, provider, model)` with a different content
+  hash so at most one ready vector represents an item's current text.
+- v1 semantic memory only stores 1536-dimension vectors. A provider/model that
+  returns another dimension is a hard config failure or `blocked_invalid_dimension`,
+  never a silently stored vector.
+- The embedding backfill is resumable: funds/quota/rate-limit/daily-budget
+  exhaustion pauses the run (exit code 0) and resumes from remaining items on the
+  next run without duplicate embedding calls; only invalid config or unsupported
+  dimensions are hard failures (exit code 1).
 - IPC `memory_save.kind` must fail visibly when present and not one of
   `preference`, `decision`, `fact`, `correction`, or `constraint`; omitted kind
   may continue to use the service default.

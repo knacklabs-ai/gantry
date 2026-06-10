@@ -18,7 +18,6 @@ export interface ClaudeSkillSourceItem {
   sourceType?: 'bundled' | 'artifact' | 'runtime';
   sourceDir?: string;
   assets?: Array<{ path: string; content: Uint8Array }>;
-  version?: string;
   contentHash?: string;
   actionPermissions?: SkillActionPermission[];
   materializedName?: string;
@@ -31,21 +30,21 @@ export interface SkillSource {
   }): Promise<ClaudeSkillSourceItem[]>;
 }
 
-export const GANTRY_BUNDLED_CLAUDE_SKILL_IDS = ['gantry-admin'] as const;
+export const GANTRY_BUNDLED_SKILL_IDS = ['gantry-admin'] as const;
 
-export class BundledClaudeSkillSource implements SkillSource {
+export class BundledGantrySkillSource implements SkillSource {
   constructor(private readonly packageRoot: string) {}
 
   async listSkills(input?: {
     enabledSkillIds?: string[];
   }): Promise<ClaudeSkillSourceItem[]> {
-    const skillsRoot = path.join(this.packageRoot, '.claude', 'skills');
+    const skillsRoot = path.join(this.packageRoot, '.agents', 'skills');
     if (!fs.existsSync(skillsRoot)) return [];
     const enabled = input?.enabledSkillIds
       ? new Set(input.enabledSkillIds)
       : undefined;
 
-    return GANTRY_BUNDLED_CLAUDE_SKILL_IDS.flatMap((skillId) => {
+    return GANTRY_BUNDLED_SKILL_IDS.flatMap((skillId) => {
       const sourceDir = path.join(skillsRoot, skillId);
       if (!fs.existsSync(path.join(sourceDir, 'SKILL.md'))) {
         return [];
@@ -79,7 +78,7 @@ export class ArtifactClaudeSkillSource implements SkillSource {
     const enabled = await this.skills.listEnabledSkillsForAgent(this.context);
     const items: ClaudeSkillSourceItem[] = [];
     for (const skill of enabled.filter(isSkillMaterializableLocally)) {
-      if (allowed && !allowed.has(skill.id) && !allowed.has(skill.name)) {
+      if (allowed && !allowed.has(skill.id)) {
         continue;
       }
       if (!skill.storage) continue;
@@ -91,7 +90,6 @@ export class ArtifactClaudeSkillSource implements SkillSource {
         name: skill.name,
         sourceType: 'artifact',
         assets: bundle.assets,
-        version: skill.version,
         contentHash: skill.storage.contentHash,
         actionPermissions: skill.actionPermissions ?? [],
         enabled: true,
@@ -116,13 +114,14 @@ Use this skill when a task needs a real browser session.
 Gantry owns the persistent browser lifecycle and gives each agent conversation its own default profile:
 
 - Use the compact Browser gateway: \`browser_status\`, \`browser_open\`, \`browser_inspect\`, \`browser_act\`, and \`browser_close\`.
+- For scheduled jobs that declare Browser as required access, call \`browser_open\` early for the first task-relevant web destination so the host-managed browser is visibly launched.
 - Search first when the destination is unknown. Use \`browser_open\` directly only when the user provided a URL or you have selected a search result.
 - Inspect before acting. Use \`browser_inspect\` to understand the current page before each \`browser_act\` interaction.
 - Use basic inspection by default. Request full inspection only with a concise reason when basic output is insufficient.
 - Close the browser with \`browser_close\` after scheduled jobs or other unattended browser work completes.
 - The Browser capability exposes only the Gantry gateway. Do not request private browser backends or alternate automation tools.
 - Gantry launches the backing browser lazily when an action needs it; \`browser_status\` is read-only and does not launch Chrome.
-- Do not install browser skills or edit user \`.claude/skills\` paths.
+- Do not install browser skills or edit user skill package paths.
 
 If a site requires login, launch the headed browser and ask the user to complete authentication in that persistent profile. Do not scrape credentials or bypass normal site authentication.
 `;

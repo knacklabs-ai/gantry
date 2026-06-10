@@ -8,19 +8,22 @@ import {
   getModelPreset,
   isModelPresetId,
   listModelCatalogEntries,
+  listModelPresets,
   resolveModelSelectionForWorkload,
   type ModelCatalogEntry,
   type ModelPresetId,
   type ModelWorkload,
 } from '../shared/model-catalog.js';
+import { resolveModelCacheSupport } from '../shared/model-cache-support.js';
 import {
   applyModelPreset,
   applyPresetManagedMemoryDefaults,
   ensureRuntimeSettings,
-  saveRuntimeSettings,
+  writeDesiredRuntimeSettings,
   type RuntimeSettings,
 } from '../config/settings/runtime-settings.js';
 import { controlApiRequest } from './control-api.js';
+import type { ModelPreviewResponse } from './model-preview-types.js';
 type ModelCommandSettings = ReturnType<typeof ensureRuntimeSettings>;
 interface ModelCommandOptions {
   preflightPreset?: (
@@ -30,38 +33,20 @@ interface ModelCommandOptions {
   ) => Promise<ModelPresetPreflightResult>;
 }
 
-interface ModelPreviewResponse {
-  target?: string;
-  jobId?: string;
-  scope?: string;
-  selection?: {
-    effectiveAlias?: string | null;
-    source?: string;
-    inherited?: boolean;
-    model?: {
-      displayName?: string;
-      responseFamily?: string;
-      modelRoute?: {
-        id?: string;
-        label?: string;
-        metadata?: { providerModelId?: string };
-      };
-    } | null;
-  };
-  why?: string[];
-}
-
 function usage(): string {
+  const presets = listModelPresets()
+    .map((p) => p.id)
+    .join('|');
   return `Usage:
   gantry model status
-  gantry model list [--preset anthropic|openrouter]
+  gantry model list [--preset ${presets}]
   gantry model chat|jobs|memory
   gantry model set chat <alias>
   gantry model set jobs inherit|<alias>
   gantry model reset chat|jobs|memory
   gantry model why chat [group-scope|conversation-id]
   gantry model why jobs|memory|job <id>
-  gantry model use-preset anthropic|openrouter
+  gantry model use-preset ${presets}
   gantry model doctor`;
 }
 
@@ -76,16 +61,8 @@ function presetFromSettings(settings: ModelCommandSettings): ModelPresetId {
 function resolveSlot(alias: string, workload: ModelWorkload) {
   const resolved = resolveModelSelectionForWorkload(alias, workload);
   return resolved.ok
-    ? `${resolved.alias} (${resolved.entry.displayName})`
+    ? `${resolved.alias} (${resolved.entry.displayName}; cache: ${resolveModelCacheSupport(resolved.entry).statusLabel})`
     : `invalid (${resolved.message})`;
-}
-
-function validateSlot(
-  alias: string,
-  workload: ModelWorkload,
-): string | undefined {
-  const resolved = resolveModelSelectionForWorkload(alias, workload);
-  return resolved.ok ? undefined : resolved.message;
 }
 
 async function preflightAliasPresets(input: {
@@ -164,18 +141,19 @@ function aliasStatus(
 function formatModelList(
   settings: ModelCommandSettings,
   preset?: ModelPresetId,
-): string {
+) {
   const defaults = defaultsFor(settings);
   const rows = [
     'Available model aliases',
-    'Alias | Model | Response family | Route | Status',
-    '--- | --- | --- | --- | ---',
+    'Alias | Model | Response family | Route | Cache | Status',
+    '--- | --- | --- | --- | --- | ---',
   ];
   for (const entry of listModelCatalogEntries()) {
     if (preset && entry.modelRoute.id !== preset) continue;
+    const cacheSupport = resolveModelCacheSupport(entry);
     for (const alias of entry.aliases) {
       rows.push(
-        `${alias} | ${entry.displayName} | ${entry.responseFamily} | ${entry.modelRoute.label} | ${aliasStatus(alias, entry, defaults)}`,
+        `${alias} | ${entry.displayName} | ${entry.responseFamily} | ${entry.modelRoute.label} | ${cacheSupport.statusLabel} | ${aliasStatus(alias, entry, defaults)}`,
       );
     }
   }
@@ -270,8 +248,8 @@ function modelValidationFailures(settings: ModelCommandSettings): string[] {
     },
   ];
   return slots.flatMap(({ label, alias, workload }) => {
-    const message = validateSlot(alias, workload);
-    return message ? [`${label}: ${message}`] : [];
+    const resolved = resolveModelSelectionForWorkload(alias, workload);
+    return resolved.ok ? [] : [`${label}: ${resolved.message}`];
   });
 }
 
@@ -408,6 +386,9 @@ function formatPreviewWhy(preview: ModelPreviewResponse): string {
       `provider model id: ${selection.model.modelRoute.metadata.providerModelId}`,
     );
   }
+  if (selection?.model?.cacheSupport?.statusLabel) {
+    lines.push(`cache: ${selection.model.cacheSupport.statusLabel}`);
+  }
   if (preview.why?.length) {
     lines.push(...preview.why.map((reason) => `reason: ${reason}`));
   }
@@ -435,6 +416,17 @@ export async function runModelCommand(
     options.preflightPreset ??
     ((runtimeHome, preset, settings) =>
       preflightModelPreset({ runtimeHome, preset, settings }));
+
+  const persistSettings = async (
+    previousSettings: RuntimeSettings,
+    nextSettings: RuntimeSettings,
+  ) => {
+    await writeDesiredRuntimeSettings({
+      runtimeHome,
+      settings: nextSettings,
+      previousSettings,
+    });
+  };
 
   if (!action || action === 'status') {
     console.log(formatStatus(settings));
@@ -468,8 +460,9 @@ export async function runModelCommand(
       ) {
         return 1;
       }
+      const previousSettings = structuredClone(settings);
       settings.agent.defaultModel = resolved.alias;
-      saveRuntimeSettings(runtimeHome, settings);
+      await persistSettings(previousSettings, settings);
       console.log(`chat: ${resolved.alias} (${resolved.entry.displayName})`);
       return 0;
     }
@@ -488,9 +481,10 @@ export async function runModelCommand(
         ) {
           return 1;
         }
+        const previousSettings = structuredClone(settings);
         settings.agent.oneTimeJobDefaultModel = '';
         settings.agent.recurringJobDefaultModel = '';
-        saveRuntimeSettings(runtimeHome, settings);
+        await persistSettings(previousSettings, settings);
         console.log(`one-time: inherits chat (${chatAlias(settings)})`);
         console.log(`recurring: inherits chat (${chatAlias(settings)})`);
         return 0;
@@ -521,9 +515,10 @@ export async function runModelCommand(
       ) {
         return 1;
       }
+      const previousSettings = structuredClone(settings);
       settings.agent.oneTimeJobDefaultModel = oneTime.alias;
       settings.agent.recurringJobDefaultModel = recurring.alias;
-      saveRuntimeSettings(runtimeHome, settings);
+      await persistSettings(previousSettings, settings);
       console.log(`one-time: ${oneTime.alias} (${oneTime.entry.displayName})`);
       console.log(
         `recurring: ${recurring.alias} (${recurring.entry.displayName})`,
@@ -578,6 +573,7 @@ export async function runModelCommand(
     ) {
       return 1;
     }
+    const previousSettings = structuredClone(settings);
     if (target === 'chat') {
       settings.agent.defaultModel = preset.chatDefault;
     } else if (target === 'jobs') {
@@ -586,7 +582,7 @@ export async function runModelCommand(
     } else if (target === 'memory') {
       applyPresetManagedMemoryDefaults(settings, presetId);
     }
-    saveRuntimeSettings(runtimeHome, settings);
+    await persistSettings(previousSettings, settings);
     console.log(formatTarget(settings, target));
     return 0;
   }
@@ -601,7 +597,7 @@ export async function runModelCommand(
             target: 'chat',
             ...(alias.includes(':')
               ? { conversationJid: alias }
-              : { groupScope: alias }),
+              : { workspaceKey: alias }),
           },
         })) as ModelPreviewResponse;
         console.log(formatPreviewWhy(preview));
@@ -648,8 +644,9 @@ export async function runModelCommand(
       console.error(`Preset preflight failed: ${result.message}`);
       return 1;
     }
+    const previousSettings = structuredClone(settings);
     applyModelPreset(settings, target);
-    saveRuntimeSettings(runtimeHome, settings);
+    await persistSettings(previousSettings, settings);
     console.log(`preset: ${target}`);
     console.log(`chat: ${settings.agent.defaultModel}`);
     console.log(`one-time: inherits chat (${settings.agent.defaultModel})`);

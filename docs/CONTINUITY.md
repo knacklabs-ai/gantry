@@ -9,7 +9,7 @@ Continuity is not the same as memory.
 
 ## Why This Exists
 
-A useful personal assistant should not start from zero after `/new`, compaction, restart, or a scheduled job. It should know enough to continue work safely:
+A useful agent runtime should not make an agent start from zero after `/new`, compaction, restart, or a scheduled job. It should provide enough context to continue work safely:
 
 - what the current task is
 - which decisions are already settled
@@ -26,16 +26,16 @@ Gantry currently has these layers:
 
 1. Static prompt profile FileArtifacts
    - `scope: prompt-profile`, `path: <agent-folder>/SOUL.md`
-   - `scope: prompt-profile`, `path: <agent-folder>/CLAUDE.md`
+   - `scope: prompt-profile`, `path: <agent-folder>/AGENTS.md`
 
 2. Structured memory in Postgres
    - flattened `memory_items` for durable facts, decisions, procedures, and
      references
    - recent session digests for continuation recall
    - `memory_candidates` for staged extracted facts
-   - Postgres full-text search for lexical recall
-   - vector recall inactive until memory item embeddings are fully indexed and
-     queried
+   - Postgres full-text search for lexical recall (always-on baseline)
+   - optional pgvector semantic recall, active when embeddings are enabled and
+     indexed; otherwise full-text recall remains the baseline
 
 3. Host-driven continuity context
    - Host runtime injects a fresh digest-first continuity block for every run.
@@ -113,7 +113,7 @@ This should not be stored as normal durable memory because it goes stale quickly
 Static prompt FileArtifacts are not memory dumps.
 
 - `SOUL.md` defines personality, voice, and boundaries.
-- `CLAUDE.md` defines stable agent-specific guidance.
+- `AGENTS.md` defines stable agent-specific guidance.
 - Shared `agents/shared` prompt projection is not a runtime input.
 - Former shared operating rules are compiled from built-in generated prompt
   guidance so agents keep memory, continuity, privacy, tool-use, and
@@ -147,13 +147,11 @@ Without embeddings, Gantry uses:
 - memory kind priority
 - pinned/importance signals
 
-Embeddings are configuration and cache plumbing in this slice; enabling them
-does not activate vector memory retrieval. Future vector search can improve
-recall and deduplication only after the memory item embedding index and query
-path are complete. It must never be required to save memory, search memory,
-inject context, or continue work.
-Embedding computation is limited to dreaming promotion/update workflows, not
-normal turn-time recall.
+Embeddings are optional. When embeddings are enabled and item vectors have been
+written by dreaming promotion/update workflows or resumable embedding backfill,
+turn-time recall fuses lexical and vector candidates. It must never be required
+to save memory, search memory, inject context, or continue work; query embedding
+timeouts and provider pauses fall back to lexical recall.
 
 ## User Controls
 

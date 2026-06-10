@@ -7,7 +7,7 @@ import {
 } from '@core/shared/tool-access-view.js';
 
 describe('tool access view', () => {
-  it('lists Browser as requestable with exact persistent browser permission args when not selected', () => {
+  it('lists Browser as requestable with semantic capability args when not selected', () => {
     expect(buildRequestableBrowserToolAccess({ configuredTools: [] })).toEqual([
       {
         tool: 'Browser',
@@ -17,7 +17,7 @@ describe('tool access view', () => {
       },
     ]);
     expect(BROWSER_REQUEST_PERMISSION_ARGS).toBe(
-      'permissionKind=tool toolName=Browser toolCategory=browser temporaryOnly=false reason="<why this agent needs Browser>"',
+      'target.kind=capability target.id=browser.use temporaryOnly=false reason="<why this agent needs Browser>"',
     );
   });
 
@@ -37,7 +37,7 @@ describe('tool access view', () => {
     ).toHaveLength(1);
   });
 
-  it('projects canonical Browser and facade grants into runtime tools for jobs', () => {
+  it('projects canonical Browser and facade authority into runtime tools for jobs', () => {
     expect(
       buildJobToolAccessView({
         effectiveAllowedTools: [
@@ -56,5 +56,26 @@ describe('tool access view', () => {
         'Bash',
       ]),
     );
+  });
+
+  it('hides generated runtime skill implementation paths in job tool access', () => {
+    const view = buildJobToolAccessView({
+      inheritedAgentTools: [
+        'RunCommand(/Users/tester/gantry/agents/main_agent/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+        'RunCommand(chmod +x /Users/tester/gantry/agents/main_agent/.llm-runtime/claude/skills/linkedin-posting/post.py)',
+      ],
+      effectiveAllowedTools: [
+        'RunCommand(/Users/tester/gantry/agents/main_agent/.llm-runtime/claude/skills/linkedin-posting/post.py *)',
+      ],
+    });
+
+    expect(view.inheritedAgentTools).toEqual([
+      'Generated skill action (skills/linkedin-posting/post.py)',
+      'Generated skill action setup (skills/linkedin-posting/post.py)',
+    ]);
+    expect(view.effectiveAllowedTools).toEqual([
+      'Generated skill action (skills/linkedin-posting/post.py)',
+    ]);
+    expect(view.projectedRuntimeTools).toContain('Bash');
   });
 });

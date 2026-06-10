@@ -3,158 +3,191 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+  vi.doUnmock('@clack/prompts');
+  vi.doUnmock('@core/adapters/storage/postgres/factory.js');
 });
 
 async function loadCredentialsStep(
-  responses: unknown[],
-  onecliEnvOrError: Record<string, string> | Error = {},
+  input: {
+    selections?: string[];
+    password?: string;
+  } = {},
 ) {
-  const text = vi.fn(async () => responses.shift());
   const note = vi.fn();
-  const spinner = {
-    start: vi.fn(),
-    stop: vi.fn(),
-    message: vi.fn(),
-  };
-  const getContainerConfig = vi.fn(async () => {
-    if (onecliEnvOrError instanceof Error) {
-      throw onecliEnvOrError;
-    }
-    return { env: onecliEnvOrError };
-  });
-  const ensureAgent = vi.fn(async () => ({ created: false }));
-  const OneCLI = vi.fn(function () {
-    return { getContainerConfig, ensureAgent };
-  });
+  const success = vi.fn();
+  const password = vi.fn(async () => input.password ?? 'provider-key');
+  const selections = [...(input.selections ?? ['anthropic', 'store'])];
+  const select = vi.fn(async () => selections.shift() ?? 'store');
+  const upsertModelCredential = vi.fn(async (credentialInput) => ({
+    id: 'model-credential:default:anthropic',
+    appId: credentialInput.appId,
+    providerId: credentialInput.providerId,
+    authMode: credentialInput.authMode,
+    status: 'active',
+    schemaVersion: credentialInput.schemaVersion,
+    fingerprint: credentialInput.fingerprint,
+    fieldFingerprints: credentialInput.fieldFingerprints,
+    createdAt: '2026-05-17T00:00:00.000Z',
+    updatedAt: '2026-05-17T00:00:00.000Z',
+  }));
   vi.doMock('@clack/prompts', () => ({
     isCancel: () => false,
-    text,
     note,
-    select: vi.fn(async () => responses.shift()),
-    spinner: vi.fn(() => spinner),
-    log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+    password,
+    select,
+    log: { error: vi.fn(), info: vi.fn(), success, warn: vi.fn() },
   }));
-  vi.doMock('@onecli-sh/sdk', () => ({ OneCLI }));
+  vi.doMock('@core/adapters/storage/postgres/factory.js', () => ({
+    createStorageRuntime: () => ({
+      service: {
+        migrate: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+      },
+      runtimeEventNotifier: { close: vi.fn(async () => undefined) },
+      runtimeEvents: { publish: vi.fn(async () => undefined) },
+      repositories: {
+        capabilitySecrets: {},
+        modelCredentials: {
+          upsertModelCredential,
+        },
+      },
+    }),
+  }));
   const { runCredentialsStep, verifyModelAccess } =
     await import('@core/cli/setup-credentials.js');
   return {
     runCredentialsStep,
     verifyModelAccess,
-    text,
     note,
-    spinner,
-    OneCLI,
-    getContainerConfig,
-    ensureAgent,
+    password,
+    select,
+    success,
+    upsertModelCredential,
   };
 }
 
 describe('setup credentials step', () => {
-  it('derives local OneCLI URL without prompting the user', async () => {
+  it('stores model credentials inline by default when selected', async () => {
     const {
       runCredentialsStep,
-      text,
-      note,
-      spinner,
-      OneCLI,
-      getContainerConfig,
-      ensureAgent,
-    } = await loadCredentialsStep([], {
-      ANTHROPIC_BASE_URL: 'http://localhost:10255/anthropic',
+      password,
+      select,
+      success,
+      upsertModelCredential,
+    } = await loadCredentialsStep({
+      selections: ['anthropic', 'api_key', 'store'],
     });
-
     const draft = {
-      credentialMode: 'onecli',
-      onecliUrl: '',
-      postgresSetupKind: 'local',
+      credentialMode: 'none' as const,
+      postgresSetupKind: 'local' as const,
     };
-    const action = await runCredentialsStep(draft);
+
+    const action = await runCredentialsStep(
+      draft,
+      '/tmp/gantry-credentials-test',
+    );
 
     expect(action).toEqual({ type: 'next' });
-    expect(draft.onecliUrl).toBe('http://localhost:10254');
-    expect(text).not.toHaveBeenCalled();
-    expect(OneCLI).toHaveBeenCalledWith({ url: 'http://localhost:10254' });
-    expect(ensureAgent).toHaveBeenCalledWith({
-      name: 'Gantry Model Access',
-      identifier: 'gantry-model-access',
-    });
-    expect(getContainerConfig).toHaveBeenCalledWith('gantry-model-access');
-    expect(spinner.start).toHaveBeenCalledWith('Validating Model Access...');
-    expect(note).toHaveBeenCalledWith(
-      expect.stringContaining('Model Access URL: http://localhost:10254'),
-      'Model Access URL',
+    expect(draft.credentialMode).toBe('gantry');
+    expect(password).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Anthropic key' }),
+    );
+    expect(upsertModelCredential).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'default',
+        providerId: 'anthropic',
+        authMode: 'api_key',
+        payload: { apiKey: 'provider-key' },
+        actor: 'cli',
+      }),
+    );
+    expect(success).toHaveBeenCalledWith(
+      'Anthropic credential stored. Model Access is ready to validate during runtime preflight.',
+    );
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.not.arrayContaining([
+          expect.objectContaining({ value: 'openai' }),
+        ]),
+      }),
     );
   });
 
-  it('keeps the reachability check for already provisioned or external Postgres', async () => {
-    const { runCredentialsStep, spinner, OneCLI, getContainerConfig } =
-      await loadCredentialsStep([], {
-        ANTHROPIC_BASE_URL: 'http://localhost:10255/anthropic',
+  it('lets the user go back instead of deferring required credentials', async () => {
+    const { runCredentialsStep, password, select, upsertModelCredential } =
+      await loadCredentialsStep({
+        selections: ['anthropic', 'api_key', 'back'],
       });
+    const draft = {
+      credentialMode: 'none' as const,
+      postgresSetupKind: 'local' as const,
+    };
 
-    const action = await runCredentialsStep({
-      credentialMode: 'onecli',
-      onecliUrl: '',
-      postgresSetupKind: 'existing',
+    const action = await runCredentialsStep(
+      draft,
+      '/tmp/gantry-credentials-test',
+    );
+
+    expect(action).toEqual({ type: 'back' });
+    const storePrompt = select.mock.calls.find(
+      (call) => call[0].message === 'Store this model credential now?',
+    )?.[0];
+    expect(storePrompt?.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 'store' }),
+        expect.objectContaining({ value: 'back' }),
+        expect.objectContaining({ value: 'resume' }),
+        expect.objectContaining({ value: 'cancel' }),
+      ]),
+    );
+    expect(storePrompt?.options).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ value: 'defer' })]),
+    );
+    expect(password).not.toHaveBeenCalled();
+    expect(upsertModelCredential).not.toHaveBeenCalled();
+  });
+
+  it('can go back from the first model access prompt', async () => {
+    const { runCredentialsStep, password, upsertModelCredential } =
+      await loadCredentialsStep({
+        selections: ['back'],
+      });
+    const draft = {
+      credentialMode: 'none' as const,
+      postgresSetupKind: 'local' as const,
+    };
+
+    const action = await runCredentialsStep(
+      draft,
+      '/tmp/gantry-credentials-test',
+    );
+
+    expect(action).toEqual({ type: 'back' });
+    expect(password).not.toHaveBeenCalled();
+    expect(upsertModelCredential).not.toHaveBeenCalled();
+  });
+
+  it('reports missing model credentials during setup verification', async () => {
+    vi.doMock('@core/cli/model-credential-readiness.js', () => ({
+      inspectModelCredentialReadiness: vi.fn(async () => ({
+        id: 'model-access-credentials',
+        title: 'Model Access Credentials',
+        status: 'fail',
+        message:
+          'Missing active model credentials for selected defaults: anthropic.',
+        nextAction: 'Run `gantry credentials model set anthropic`.',
+      })),
+    }));
+    const { verifyModelAccess } =
+      await import('@core/cli/setup-credentials.js');
+
+    await expect(
+      verifyModelAccess('/tmp/gantry-credentials-test', {} as never),
+    ).resolves.toEqual({
+      ok: false,
+      message:
+        'Missing active model credentials for selected defaults: anthropic.',
+      nextAction: 'Run `gantry credentials model set anthropic`.',
     });
-
-    expect(action).toEqual({ type: 'next' });
-    expect(OneCLI).toHaveBeenCalledWith({ url: 'http://localhost:10254' });
-    expect(getContainerConfig).toHaveBeenCalledWith('gantry-model-access');
-    expect(spinner.start).toHaveBeenCalledWith('Validating Model Access...');
-  });
-
-  it('verifies shared model access with broker-safe env', async () => {
-    const { verifyModelAccess, getContainerConfig } = await loadCredentialsStep(
-      [],
-      {
-        ANTHROPIC_BASE_URL: 'http://localhost:10255/anthropic',
-      },
-    );
-
-    const result = await verifyModelAccess('http://localhost:10254');
-
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain('broker-safe');
-    expect(getContainerConfig).toHaveBeenCalledWith('gantry-model-access');
-  });
-
-  it('fails shared model access when OneCLI returns raw provider credentials', async () => {
-    const { verifyModelAccess } = await loadCredentialsStep([], {
-      OPENAI_API_KEY: 'sk-secret',
-    });
-
-    const result = await verifyModelAccess('http://localhost:10254');
-
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain('forbidden raw credential');
-    expect(result.nextAction).toContain('Open Model Access');
-  });
-
-  it('fails shared model access for invalid Model Access URLs', async () => {
-    const { verifyModelAccess, getContainerConfig } = await loadCredentialsStep(
-      [],
-    );
-
-    const result = await verifyModelAccess('http://onecli.example');
-
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain('ONECLI_URL must use HTTPS');
-    expect(result.nextAction).toContain('Open Model Access');
-    expect(getContainerConfig).not.toHaveBeenCalled();
-  });
-
-  it('fails shared model access with actionable guidance when OneCLI is unreachable', async () => {
-    const { verifyModelAccess, getContainerConfig } = await loadCredentialsStep(
-      [],
-      new Error('gateway unavailable'),
-    );
-
-    const result = await verifyModelAccess('http://localhost:10254');
-
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain('gateway unavailable');
-    expect(result.nextAction).toContain('Open Model Access');
-    expect(getContainerConfig).toHaveBeenCalledWith('gantry-model-access');
   });
 });

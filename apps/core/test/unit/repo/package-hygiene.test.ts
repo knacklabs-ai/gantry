@@ -4,7 +4,7 @@ import path from 'path';
 
 import { describe, expect, it } from 'vitest';
 
-import { GANTRY_BUNDLED_CLAUDE_SKILL_IDS } from '@core/adapters/llm/anthropic-claude-agent/claude-skill-materializer.js';
+import { GANTRY_BUNDLED_SKILL_IDS } from '@core/adapters/llm/anthropic-claude-agent/claude-skill-materializer.js';
 
 describe('package hygiene', () => {
   function listSourceFiles(dir: string): string[] {
@@ -40,8 +40,8 @@ describe('package hygiene', () => {
   }, 30_000);
 
   it('ships only Gantry-owned bundled skills', () => {
-    const expectedSkillFiles = GANTRY_BUNDLED_CLAUDE_SKILL_IDS.map(
-      (skillId) => `.claude/skills/${skillId}/SKILL.md`,
+    const expectedSkillFiles = GANTRY_BUNDLED_SKILL_IDS.map(
+      (skillId) => `.agents/skills/${skillId}/SKILL.md`,
     );
     const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
       encoding: 'utf-8',
@@ -51,33 +51,36 @@ describe('package hygiene', () => {
     }>;
     const files = pack.files.map((file) => file.path);
     const skillFiles = files
-      .filter((file) => file.startsWith('.claude/skills/'))
+      .filter((file) => file.startsWith('.agents/skills/'))
       .sort();
 
     expect(skillFiles).toEqual(expectedSkillFiles);
+    expect(files.filter((file) => file.startsWith('.claude/'))).toEqual([]);
 
-    const sourceSkillsRoot = path.join(process.cwd(), '.claude', 'skills');
+    const sourceSkillsRoot = path.join(process.cwd(), '.agents', 'skills');
     const sourceSkillFiles = fs
       .readdirSync(sourceSkillsRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .flatMap((entry) => {
         const skillFile = path.join(sourceSkillsRoot, entry.name, 'SKILL.md');
         return fs.existsSync(skillFile)
-          ? [`.claude/skills/${entry.name}/SKILL.md`]
+          ? [`.agents/skills/${entry.name}/SKILL.md`]
           : [];
       })
       .sort();
     expect(sourceSkillFiles).toEqual(expectedSkillFiles);
   }, 30_000);
 
-  it('isolates OneCLI SDK imports to credential adapter and CLI setup adapter', () => {
+  it('isolates Gantry Model Gateway SDK imports to credential adapter and CLI setup adapter', () => {
     const allowed = new Set([
-      path.normalize('apps/core/src/adapters/credentials/onecli/broker.ts'),
+      path.normalize(
+        'apps/core/src/adapters/credentials/model_gateway/broker.ts',
+      ),
       path.normalize('apps/core/src/cli/setup-credentials.ts'),
     ]);
     const offenders = listSourceFiles('apps/core/src')
       .filter((file) =>
-        fs.readFileSync(file, 'utf-8').includes('@onecli-sh/sdk'),
+        fs.readFileSync(file, 'utf-8').includes('@model_gateway-sh/sdk'),
       )
       .map((file) => path.normalize(file))
       .filter((file) => !allowed.has(file));

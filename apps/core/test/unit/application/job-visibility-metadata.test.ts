@@ -34,7 +34,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     status: 'active',
     session_id: null,
     thread_id: null,
-    group_scope: 'tg:team',
+    workspace_key: 'tg:team',
     created_by: 'agent',
     created_at: '2026-04-24T08:00:00.000Z',
     updated_at: '2026-04-24T08:00:00.000Z',
@@ -176,7 +176,7 @@ describe('job visibility metadata', () => {
           makeRun({
             status: 'dead_lettered',
             error_summary:
-              'Tool not on autonomous run allowlist: mcp__gantry__browser_act. Recovery: request_permission { "toolName": "Browser" }',
+              'Tool not on autonomous run allowlist: mcp__gantry__browser_act. Recovery: request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
             result_summary: null,
           }),
         ]),
@@ -188,7 +188,8 @@ describe('job visibility metadata', () => {
       state: 'needs_permission',
       latestRunId: 'run-1',
       latestRunStatus: 'dead_lettered',
-      nextAction: 'request_permission { "toolName": "Browser" }',
+      nextAction:
+        'request_access {"target":{"kind":"capability","id":"browser.use"},"temporaryOnly":false,"reason":"This autonomous run requires Browser access."}',
     });
   });
 
@@ -209,6 +210,27 @@ describe('job visibility metadata', () => {
       latestRunStatus: null,
       nextAction: 'Approve Browser access, then rerun the job.',
     });
+  });
+
+  it('keeps raw tool ids out of needs-permission next-action copy', async () => {
+    const metadata = await buildJobListVisibilityMetadata({
+      jobs: [
+        makeJob({
+          status: 'dead_lettered',
+          pause_reason: 'Needs permission: RunCommand',
+        }),
+      ],
+      nowMs: Date.parse('2026-04-24T09:10:00.000Z'),
+    });
+
+    const view = metadata.get('job-1');
+    expect(view?.health.nextAction).toBe(
+      'Approve exact command access, then rerun the job.',
+    );
+    expect(view?.nextActionLabel).toBe(
+      'Approve exact command access, then rerun the job.',
+    );
+    expect(view?.nextActionLabel).not.toContain('RunCommand');
   });
 
   it('surfaces latest terminal run health in list metadata', async () => {
@@ -249,7 +271,8 @@ describe('job visibility metadata', () => {
           setup_fingerprint: 'fingerprint-1',
           requirement_type: 'tool',
           requirement_id: 'RunCommand',
-          next_action: 'request_permission {"toolName":"RunCommand"}',
+          next_action:
+            'request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This autonomous run requires RunCommand(npm test *) access."}',
           attempts: 1,
           last_error: null,
         },
@@ -267,7 +290,8 @@ describe('job visibility metadata', () => {
       attempts: 1,
       requirementType: 'tool',
       requirementId: 'RunCommand',
-      nextAction: 'request_permission {"toolName":"RunCommand"}',
+      nextAction:
+        'request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This autonomous run requires RunCommand(npm test *) access."}',
       lastError: null,
     });
   });

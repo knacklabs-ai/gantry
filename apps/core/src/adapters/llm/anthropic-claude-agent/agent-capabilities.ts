@@ -29,22 +29,27 @@ import {
   SAFE_NATIVE_SDK_TOOLS,
   UNSUPPORTED_CLAUDE_CODE_BUILTIN_TOOLS,
 } from './native-sdk-tools.js';
+import type { SemanticCapabilityDefinition } from '../../../shared/semantic-capabilities.js';
 
 export interface AgentCapabilityContext {
   mcpServerPath: string;
   appId?: string;
   agentId?: string;
   chatJid: string;
-  groupFolder: string;
+  workspaceFolder: string;
   threadId?: string;
+  jobId?: string;
+  runId?: string;
   memoryUserId?: string;
   memoryDefaultScope?: 'user' | 'group';
   memoryReviewerIsControlApprover?: boolean;
   persona?: AgentPersona;
   browserProfileName?: string;
   configuredAllowedTools?: readonly string[];
-  selectedSkillIds?: readonly string[];
-  selectedMcpServerIds?: readonly string[];
+  attachedSkillSourceIds?: readonly string[];
+  selectedSkillDisplays?: readonly string[];
+  attachedMcpSourceIds?: readonly string[];
+  semanticCapabilities?: readonly SemanticCapabilityDefinition[];
   ipcDir?: string;
   ipcAuthToken?: string;
   browserIpcAuthToken?: string;
@@ -63,11 +68,13 @@ export type McpServerConfig =
       command: string;
       args?: string[];
       env?: Record<string, string>;
+      alwaysLoad?: boolean;
     }
   | {
       type: 'http' | 'sse';
       url: string;
       headers?: Record<string, string>;
+      alwaysLoad?: boolean;
     };
 
 export interface AgentCapabilityProfile {
@@ -167,8 +174,10 @@ const gantryMcpProvider: AgentCapabilityProvider = {
       ...(ctx.appId ? { GANTRY_APP_ID: ctx.appId } : {}),
       ...(ctx.agentId ? { GANTRY_AGENT_ID: ctx.agentId } : {}),
       GANTRY_CHAT_JID: ctx.chatJid,
-      GANTRY_GROUP_FOLDER: ctx.groupFolder,
+      GANTRY_WORKSPACE_KEY: ctx.workspaceFolder,
       GANTRY_THREAD_ID: ctx.threadId || '',
+      ...(ctx.jobId ? { GANTRY_JOB_ID: ctx.jobId } : {}),
+      ...(ctx.runId ? { GANTRY_JOB_RUN_ID: ctx.runId } : {}),
       GANTRY_MEMORY_USER_ID: ctx.memoryUserId || '',
       GANTRY_MEMORY_DEFAULT_SCOPE: ctx.memoryDefaultScope || 'group',
       GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
@@ -180,9 +189,17 @@ const gantryMcpProvider: AgentCapabilityProvider = {
       GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: JSON.stringify(
         ctx.configuredAllowedTools ?? [],
       ),
-      GANTRY_SELECTED_SKILLS_JSON: JSON.stringify(ctx.selectedSkillIds ?? []),
+      GANTRY_SELECTED_SKILLS_JSON: JSON.stringify(
+        ctx.attachedSkillSourceIds ?? [],
+      ),
+      GANTRY_SELECTED_SKILL_DISPLAYS_JSON: JSON.stringify(
+        ctx.selectedSkillDisplays ?? ctx.attachedSkillSourceIds ?? [],
+      ),
       GANTRY_SELECTED_MCP_SERVERS_JSON: JSON.stringify(
-        ctx.selectedMcpServerIds ?? [],
+        ctx.attachedMcpSourceIds ?? [],
+      ),
+      GANTRY_SEMANTIC_CAPABILITIES_JSON: JSON.stringify(
+        ctx.semanticCapabilities ?? [],
       ),
       GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
         selectedGantryMcpToolNames(ctx.configuredAllowedTools ?? [], {
@@ -216,6 +233,7 @@ const gantryMcpProvider: AgentCapabilityProvider = {
         gantry: {
           command: 'node',
           args: [ctx.mcpServerPath],
+          alwaysLoad: true,
           env,
         },
       },
@@ -247,7 +265,7 @@ function isPublicExternalMcpServerConfig(
 }
 
 const PUBLIC_EXTERNAL_MCP_TOOL_RULE_RE =
-  /^mcp__[A-Za-z0-9_-]+__(?:[A-Za-z0-9_-]+|\*)$/;
+  /^mcp__[A-Za-z0-9_-]+__(?:[A-Za-z0-9_.-]+|\*)$/;
 
 export function isPublicExternalMcpToolRule(toolRule: string): boolean {
   const value = toolRule.trim();

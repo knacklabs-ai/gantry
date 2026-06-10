@@ -7,12 +7,10 @@ This inventory classifies local filesystem state by durability.
 - runtime home `settings.yaml`: non-secret runtime settings.
 - `<runtime-home>/artifacts/files/`: FileArtifact bytes when using the local
   filesystem artifact backend.
-- `<runtime-home>/skills/`: approved readable skill folders when using the
-  local skill backend. Each skill folder contains `SKILL.md` plus referenced
-  files and subfolders.
-- `<runtime-home>/skill-drafts/`: pending readable skill proposal folders. The
-  database stores metadata, lifecycle state, content hash, bindings, and audit;
-  these folders store only reviewable files.
+- `<runtime-home>/artifacts/skills/<skill-directory>/`: installed skill files
+  when using the local skill backend. Each package contains `SKILL.md` plus
+  referenced files and subfolders. This is the durable readable source for a
+  skill; generated `.llm-runtime/.../skills` folders are scratch projections.
 - Local credential files managed by their owning credential adapters.
 - Postgres, not runtime-home files, stores external ingress records,
   invocations, nonces, jobs, sessions, messages, runtime events, outbound
@@ -23,10 +21,10 @@ This inventory classifies local filesystem state by durability.
 - Per-run Claude `CLAUDE_CONFIG_DIR` directories under the OS temp directory.
   These include generated `settings.json` and materialized `skills/`.
 - Packaged or explicitly configured local skill folders are copied into per-run
-  Claude config as scratch input. They are not mirrored into a Gantry skill byte
-  registry.
-- Approved bound skill artifacts are unpacked into per-run Claude config as
-  scratch input. Draft, rejected, and disabled artifacts are never unpacked.
+  Claude config as scratch input. They are not durable source-selection
+  identity.
+- Installed bound skill artifacts are unpacked into per-run Claude config as
+  scratch input. Disabled artifacts are never unpacked.
 - IPC input/output files for active runtime processes.
 - Build, test, coverage, and generated verification artifacts.
 
@@ -53,5 +51,5 @@ snapshots, old provider transcript exports, and unused local hook/webhook
 scratch files may be archived under
 `~/gantry/cleanup-archive/<timestamp>/`.
 
-Do not move or delete secrets, `settings.yaml`, Postgres data, OneCLI data,
+Do not move or delete secrets, `settings.yaml`, Postgres data,
 `artifacts/`, or active agent folders unless a reset was explicitly requested.

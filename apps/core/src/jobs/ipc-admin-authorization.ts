@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { memoryAgentIdForGroupFolder } from '../memory/app-memory-boundaries.js';
+import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
 import type { TaskContext } from './ipc-types.js';
 import {
   adminMcpToolFullName,
@@ -25,7 +25,9 @@ export async function sourceAgentHasAdminToolCapability(
   const toolId = adminMcpToolIdForFullName(fullName);
   const bindings = await repository.listAgentToolBindings({
     appId: context.data.appId as never,
-    agentId: memoryAgentIdForGroupFolder(context.sourceAgentFolder) as never,
+    agentId: memoryAgentIdForWorkspaceFolder(
+      context.sourceAgentFolder,
+    ) as never,
   });
   const hasActiveBinding = bindings.some(
     (binding) =>
@@ -58,7 +60,7 @@ export function adminCapabilityRequiredMessage(
   const fullName = adminMcpToolFullName(toolName);
   return [
     `${fullName} requires a selected capability for this agent.`,
-    `Ask a configured conversation approver to approve ${fullName}, then choose Always allow.`,
+    `Ask a configured conversation approver to approve ${toolName}, then choose persistent access.`,
     'Admins can also select this exact admin capability through settings.yaml or the control API.',
   ].join(' ');
 }

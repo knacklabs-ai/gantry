@@ -5,7 +5,6 @@ import { syncRuntimeSettingsFromProjection } from '@core/config/index.js';
 
 vi.mock('@core/config/index.js', () => ({
   GANTRY_HOME: '/tmp/gantry-control-test-home',
-  ONECLI_ALLOWED_ENV_KEYS: [],
   getControlEnvValue: vi.fn((key: string) => process.env[key]?.trim() || ''),
   syncRuntimeSettingsFromProjection: vi.fn(async () => undefined),
   getDefaultModelConfig: vi.fn(() => ({
@@ -14,6 +13,7 @@ vi.mock('@core/config/index.js', () => ({
   })),
   getRuntimeModelDefaults: vi.fn(() => ({ defaults: {} })),
   patchRuntimeModelDefaults: vi.fn(() => ({ ok: true })),
+  configureDesiredSettingsStorageProvider: vi.fn(() => undefined),
 }));
 
 vi.mock('@core/jobs/scheduler.js', () => ({
@@ -55,8 +55,7 @@ type StoredSkill = {
   appId: string;
   agentId?: string;
   name: string;
-  status: 'draft' | 'approved' | 'rejected' | 'disabled';
-  version: string;
+  status: 'installed' | 'disabled';
   source: 'admin_uploaded' | 'agent_created' | 'bundled';
   promptRefs: string[];
   toolIds: string[];
@@ -86,18 +85,6 @@ const skillsRepo = {
   saveSkill: vi.fn(async (skill: StoredSkill) => {
     skillsRepo.skills.set(skill.id, skill);
   }),
-  getSkillByContentHash: vi.fn(
-    async (input: any) =>
-      [...skillsRepo.skills.values()].find(
-        (skill) =>
-          skill.appId === input.appId &&
-          skill.storage?.contentHash === input.contentHash &&
-          (input.agentId === null
-            ? !skill.agentId
-            : !input.agentId || skill.agentId === input.agentId) &&
-          (!input.statuses || input.statuses.includes(skill.status)),
-      ) ?? null,
-  ),
   saveAgentSkillBinding: vi.fn(async (binding: any) => {
     skillsRepo.bindings.set(
       `${binding.appId}:${binding.agentId}:${binding.skillId}`,
@@ -140,7 +127,7 @@ const skillsRepo = {
         continue;
       }
       const skill = skillsRepo.skills.get(binding.skillId);
-      if (skill?.status === 'approved') skills.push(skill);
+      if (skill?.status === 'installed') skills.push(skill);
     }
     return skills;
   }),
@@ -280,20 +267,19 @@ beforeEach(() => {
   opsRepo.getAllConversationRoutes.mockResolvedValue({});
   skillsRepo.skills.clear();
   skillsRepo.bindings.clear();
-  skillsRepo.skills.set('skill:approved', {
-    id: 'skill:approved',
+  skillsRepo.skills.set('skill:installed', {
+    id: 'skill:installed',
     appId: 'app-one',
-    name: 'Approved skill',
-    version: 'v1',
+    name: 'Installed skill',
     source: 'admin_uploaded',
-    status: 'approved',
+    status: 'installed',
     promptRefs: [],
     toolIds: [],
     workflowRefs: [],
     storage: {
       storageType: 'local-filesystem',
-      storageRef: 'skills/approved/hash',
-      contentHash: 'sha256:approved',
+      storageRef: 'skills/installed/hash',
+      contentHash: 'sha256:installed',
       sizeBytes: 31,
     },
     createdAt: new Date(0).toISOString(),
@@ -343,7 +329,7 @@ describe('control skill routes', () => {
 
     try {
       const response = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/agents/agent%3Aother-app/skills/skill%3Aapproved`,
+        `http://127.0.0.1:${port}/v1/agents/agent%3Aother-app/skills/skill%3Ainstalled`,
         'token-skills',
         {
           method: 'PUT',
@@ -370,7 +356,7 @@ describe('control skill routes', () => {
 
     try {
       const response = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills/skill%3Aapproved`,
+        `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills/skill%3Ainstalled`,
         'token-skills',
         {
           method: 'PUT',
@@ -388,7 +374,7 @@ describe('control skill routes', () => {
     }
   });
 
-  it('rejects draft upload when query appId conflicts with API key app', async () => {
+  it('rejects skill install when query appId conflicts with API key app', async () => {
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
     const handle = startControlServer({
@@ -397,7 +383,7 @@ describe('control skill routes', () => {
 
     try {
       const response = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/skills/drafts/upload?appId=app-two`,
+        `http://127.0.0.1:${port}/v1/skills/install?appId=app-two`,
         'token-skills',
         {
           method: 'POST',
@@ -408,14 +394,14 @@ describe('control skill routes', () => {
       const body = await response.json();
 
       expect(response.status).toBe(403);
-      expect(body.error?.message).toContain('cannot upload for this app');
+      expect(body.error?.message).toContain('cannot install for this app');
       expect(skillArtifacts.putSkillArtifact).not.toHaveBeenCalled();
     } finally {
       await handle.close();
     }
   });
 
-  it('rejects draft upload when agent belongs to another app', async () => {
+  it('rejects skill install when agent belongs to another app', async () => {
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
     const handle = startControlServer({
@@ -424,7 +410,7 @@ describe('control skill routes', () => {
 
     try {
       const response = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/skills/drafts/upload?agentId=agent%3Aother-app`,
+        `http://127.0.0.1:${port}/v1/skills/install?agentId=agent%3Aother-app`,
         'token-skills',
         {
           method: 'POST',
@@ -451,7 +437,7 @@ describe('control skill routes', () => {
 
     try {
       const enable = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills/skill%3Aapproved`,
+        `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills/skill%3Ainstalled`,
         'token-skills',
         {
           method: 'PUT',
@@ -477,7 +463,7 @@ describe('control skill routes', () => {
       expect(listedBody.bindings[0]?.status).toBe('active');
 
       const disable = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills/skill%3Aapproved`,
+        `http://127.0.0.1:${port}/v1/agents/agent%3Aone/skills/skill%3Ainstalled`,
         'token-skills',
         { method: 'DELETE' },
       );
@@ -494,7 +480,7 @@ describe('control skill routes', () => {
     }
   });
 
-  it('requires application/zip for draft uploads', async () => {
+  it('requires application/zip for skill installs', async () => {
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
     const handle = startControlServer({
@@ -503,7 +489,7 @@ describe('control skill routes', () => {
 
     try {
       const response = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/skills/drafts/upload?createdBy=admin`,
+        `http://127.0.0.1:${port}/v1/skills/install?createdBy=admin`,
         'token-skills',
         {
           method: 'POST',
@@ -528,7 +514,7 @@ describe('control skill routes', () => {
 
     try {
       const list = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/skills/skill%3Aapproved/files`,
+        `http://127.0.0.1:${port}/v1/skills/skill%3Ainstalled/files`,
         'token-skills',
       );
       const listBody = await list.json();
@@ -541,7 +527,7 @@ describe('control skill routes', () => {
         }),
         expect.objectContaining({
           path: 'references/context.md',
-          contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+          sizeBytes: Buffer.byteLength('Context\n'),
         }),
         expect.objectContaining({
           path: 'images/pixel.png',
@@ -550,7 +536,7 @@ describe('control skill routes', () => {
       ]);
 
       const read = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/skills/skill%3Aapproved/files/references%2Fcontext.md`,
+        `http://127.0.0.1:${port}/v1/skills/skill%3Ainstalled/files/references%2Fcontext.md`,
         'token-skills',
       );
       const readBody = await read.json();
@@ -561,7 +547,7 @@ describe('control skill routes', () => {
         content: 'Context\n',
       });
       const readBinary = await requestWithRetry(
-        `http://127.0.0.1:${port}/v1/skills/skill%3Aapproved/files/images%2Fpixel.png`,
+        `http://127.0.0.1:${port}/v1/skills/skill%3Ainstalled/files/images%2Fpixel.png`,
         'token-skills',
       );
       const readBinaryBody = await readBinary.json();
@@ -572,7 +558,7 @@ describe('control skill routes', () => {
         content: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
       });
       expect(skillArtifacts.getSkillArtifact).toHaveBeenCalledWith(
-        'skills/approved/hash',
+        'skills/installed/hash',
       );
     } finally {
       await handle.close();

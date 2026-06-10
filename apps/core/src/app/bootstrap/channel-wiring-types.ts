@@ -27,6 +27,7 @@ import type { Provider } from '../../channels/provider-registry.js';
 import type { logger } from '../../infrastructure/logging/logger.js';
 import type { RuntimeSecretProvider } from '../../domain/ports/runtime-secret-provider.js';
 import type { AppId } from '../../domain/app/app.js';
+import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
 
 export type ChannelWiringRepository = RuntimeChatMetadataRepository &
   RuntimeMessageRepository;
@@ -106,6 +107,7 @@ export interface ChannelWiringDeps {
   shouldLogDenied: typeof shouldLogDenied;
   logger: Pick<typeof logger, 'info' | 'warn' | 'debug' | 'error'>;
   runtimeSecrets: RuntimeSecretProvider;
+  publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<unknown>;
 }
 
 export interface ChannelWiring {

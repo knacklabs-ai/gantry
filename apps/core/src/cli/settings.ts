@@ -1,19 +1,23 @@
 import * as p from '@clack/prompts';
+import path from 'node:path';
 
 import {
   closeRuntimeStorage,
   getRuntimeStorage,
   initializeRuntimeStorage,
 } from '../adapters/storage/postgres/runtime-store.js';
-import { SettingsDesiredStateService } from '../config/settings/desired-state-service.js';
 import {
+  applyRuntimeSettingsDesiredState,
   loadRuntimeSettings,
-  saveRuntimeSettings,
-} from '../config/settings/runtime-settings.js';
+  loadRuntimeSettingsFromPath,
+  SettingsDesiredStateService,
+} from '../config/index.js';
+import type { AppId } from '../domain/app/app.js';
 
 function usage(): string {
   return [
     'Usage:',
+    '  gantry settings validate',
     '  gantry settings export-current',
     '  gantry settings drift',
     '',
@@ -31,6 +35,21 @@ export async function runSettingsCommand(
     return subcommand ? 0 : 1;
   }
 
+  if (subcommand === 'validate') {
+    try {
+      loadRuntimeSettingsFromPath(path.join(runtimeHome, 'settings.yaml'));
+      p.log.success('settings.yaml schema is valid.');
+      return 0;
+    } catch (err) {
+      p.log.error(
+        `settings.yaml schema is invalid: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return 1;
+    }
+  }
+
   await initializeRuntimeStorage();
   try {
     const storage = getRuntimeStorage();
@@ -42,7 +61,14 @@ export async function runSettingsCommand(
 
     if (subcommand === 'export-current') {
       const exported = await service.exportCurrent(settings);
-      saveRuntimeSettings(runtimeHome, exported);
+      await applyRuntimeSettingsDesiredState({
+        runtimeHome,
+        settings: exported,
+        ops: storage.ops,
+        repositories: storage.repositories,
+        appId: 'default' as AppId,
+        previousSettings: settings,
+      });
       const agentCount = Object.keys(exported.agents).length;
       p.log.success(
         `Exported ${agentCount} agent desired-state record(s) to settings.yaml.`,

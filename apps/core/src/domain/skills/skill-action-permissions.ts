@@ -10,11 +10,11 @@ import {
   isValidSemanticCapabilityId,
   semanticCapabilityIdValidationReason,
 } from '../../shared/semantic-capability-ids.js';
+import { parseDeclaredNetworkHost } from '../../shared/network-host-declaration.js';
 import type {
   SemanticCapabilityDefinition,
   SemanticCapabilityRisk,
 } from '../../shared/semantic-capabilities.js';
-import { validatePersistentRequestPermissionRule } from '../../shared/persistent-permission-rules.js';
 import {
   assertValidCapabilitySecretName,
   normalizeCapabilitySecretName,
@@ -31,15 +31,20 @@ export interface SkillActionPermission {
   cannot: string;
   requiredEnvVars: string[];
   commandTemplates: string[];
+  networkHosts: string[];
 }
 
 export interface SkillActionSourceMetadata {
   kind: 'skill_action';
   skillId: string;
   skillName: string;
-  skillVersion: string;
-  skillContentHash: string;
   actionId: string;
+}
+
+export interface SkillActionCapabilitySourceSkill {
+  id: string;
+  name: string;
+  actionPermissions?: SkillActionPermission[];
 }
 
 export function sanitizeSkillDirectoryName(value: string): string {
@@ -95,16 +100,12 @@ export function parseSkillActionPermissionsFromAssets(input: {
 export function skillActionSemanticCapability(input: {
   skillId: string;
   skillName: string;
-  skillVersion: string;
-  skillContentHash: string;
   action: SkillActionPermission;
 }): SemanticCapabilityDefinition {
   const source: SkillActionSourceMetadata = {
     kind: 'skill_action',
     skillId: input.skillId,
     skillName: input.skillName,
-    skillVersion: input.skillVersion,
-    skillContentHash: input.skillContentHash,
     actionId: input.action.id,
   };
   return {
@@ -121,6 +122,9 @@ export function skillActionSemanticCapability(input: {
     })),
     preflight: { kind: 'none' },
     sandboxProfile: { network: 'required', filesystem: 'workspace_write' },
+    networkHosts: input.action.networkHosts?.length
+      ? [...input.action.networkHosts]
+      : undefined,
     redactionPolicy:
       input.action.requiredEnvVars.length > 0
         ? { env: input.action.requiredEnvVars }
@@ -137,21 +141,31 @@ export function skillActionSource(
   const skillId = typeof source.skillId === 'string' ? source.skillId : '';
   const skillName =
     typeof source.skillName === 'string' ? source.skillName : '';
-  const skillVersion =
-    typeof source.skillVersion === 'string' ? source.skillVersion : '';
-  const skillContentHash =
-    typeof source.skillContentHash === 'string' ? source.skillContentHash : '';
   const actionId = typeof source.actionId === 'string' ? source.actionId : '';
-  if (!skillId || !skillName || !skillVersion || !skillContentHash || !actionId)
-    return undefined;
+  if (!skillId || !skillName || !actionId) return undefined;
   return {
     kind: 'skill_action',
     skillId,
     skillName,
-    skillVersion,
-    skillContentHash,
     actionId,
   };
+}
+
+export function skillActionSemanticCapabilitiesForSkills(
+  skills: Iterable<SkillActionCapabilitySourceSkill>,
+): Record<string, SemanticCapabilityDefinition> {
+  const definitions: Record<string, SemanticCapabilityDefinition> = {};
+  for (const skill of skills) {
+    for (const action of skill.actionPermissions ?? []) {
+      const capability = skillActionSemanticCapability({
+        skillId: String(skill.id),
+        skillName: skill.name,
+        action,
+      });
+      definitions[capability.capabilityId] = capability;
+    }
+  }
+  return definitions;
 }
 
 function parseSkillActionPermission(
@@ -201,6 +215,9 @@ function parseSkillActionPermission(
     optional: true,
   }).map(normalizeCapabilitySecretName);
   for (const envVar of requiredEnvVars) assertValidCapabilitySecretName(envVar);
+  const networkHosts = stringArray(raw.networkHosts, 'networkHosts', {
+    optional: true,
+  }).map((host) => normalizeSkillActionNetworkHost(host, capabilityId));
   return {
     id,
     capabilityId,
@@ -210,7 +227,26 @@ function parseSkillActionPermission(
     cannot,
     requiredEnvVars: [...new Set(requiredEnvVars)],
     commandTemplates: [...new Set(commandTemplates)],
+    networkHosts: [...new Set(networkHosts)],
   };
+}
+
+/**
+ * Validate a declared `host` or `host:port` skill-action network target via the
+ * shared declared-network-host parser. Skill action network authority is exact
+ * so an approved action can only reach the hosts a reviewer actually saw.
+ */
+function normalizeSkillActionNetworkHost(
+  value: string,
+  capabilityId: string,
+): string {
+  const result = parseDeclaredNetworkHost(value);
+  if (!result.ok) {
+    throw new Error(
+      `Skill action ${capabilityId} networkHosts ${result.reason}`,
+    );
+  }
+  return result.host;
 }
 
 function normalizeSkillActionCommandTemplate(
@@ -256,17 +292,26 @@ function normalizeSkillActionCommandTemplate(
       `Skill action command template must run under ${skillDir}.`,
     );
   }
+  // Skill action templates become durable capability grants whose command is
+  // never re-validated at grant time (the capability:<id> path only checks
+  // definition existence). Reject destructive redirection here so a skill
+  // author cannot smuggle e.g. `${skillRoot}/run.sh > /etc/passwd` into a
+  // durable grant. (Wildcard args are intentionally allowed — these templates
+  // are already pinned under the skill directory above, so the broader
+  // durable-RunCommand rules don't apply.)
+  const destructiveRedirect = parsed.leaves
+    .flatMap((leaf) => leaf.redirects)
+    .find((redirect) => redirect.destructive);
+  if (destructiveRedirect) {
+    throw new Error(
+      'Skill action command templates cannot include destructive redirection.',
+    );
+  }
   const readableRule = `${RUN_COMMAND_TOOL_NAME}(${stableNormalized})`;
   const readable = validateReadableAgentToolRule(readableRule);
   if (!readable.ok) {
     throw new Error(
       `Invalid skill action command template: ${readable.reason}`,
-    );
-  }
-  const persistent = validatePersistentRequestPermissionRule(readableRule);
-  if (!persistent.ok) {
-    throw new Error(
-      `Invalid skill action command template: ${persistent.reason}`,
     );
   }
   return stableNormalized;
