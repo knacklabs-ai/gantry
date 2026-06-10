@@ -32,6 +32,8 @@ export const RUNTIME_EVENT_TYPES = {
   CREDENTIAL_MODEL_UPDATED: 'credential.model.updated',
   CREDENTIAL_MODEL_DISABLED: 'credential.model.disabled',
   CREDENTIAL_MODEL_USED: 'credential.model.used',
+  MODEL_USAGE: 'model.usage',
+  MODEL_RATE_LIMIT: 'model.rate_limit',
   EGRESS_CONNECT: 'egress.connect',
   SANDBOX_BLOCKED: 'sandbox.blocked',
   RUN_STARTED: 'run.started',

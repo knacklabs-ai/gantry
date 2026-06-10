@@ -52,6 +52,10 @@ export async function startGantryRuntime(
     'GANTRY_OUTBOUND_DRYRUN',
     'GANTRY_TEST_OPERATOR_PHONE',
     'GANTRY_TEST_CALLER_IDENTITY_PHONE',
+    // Developer-only child-runner switch (fails safe to dist when no source
+    // tree exists); settable from .env so dev runs don't need a rebuild per
+    // runner-side edit.
+    'GANTRY_CHILD_RUNNER_FROM_SOURCE',
   ]);
   if (!options.skipPreflight) {
     const validation = await validateRuntimePreflightWithStorage(GANTRY_HOME);

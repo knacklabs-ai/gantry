@@ -27,7 +27,11 @@ import { createRuntimeModelStatusAccess } from './model-status-store.js';
 import { recordRuntimeModelUsage } from './model-status-output.js';
 import { buildBoundedMemoryRecallQuery } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
-import { isRuntimeEventType } from '../domain/events/runtime-event-types.js';
+import { flowLog } from '../shared/flow-log.js';
+import {
+  isRuntimeEventType,
+  RUNTIME_EVENT_TYPES,
+} from '../domain/events/runtime-event-types.js';
 import { resolveRuntimeExecutionProviderId } from './execution-provider-id.js';
 import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
 const DEFAULT_ASSISTANT_NAME = 'Gantry';
@@ -159,6 +163,15 @@ const runtimeLogger = {
       redactRuntimeLogValue(payload, 0),
     );
   },
+};
+// FlowLogger-shaped adapter over the redacting runtimeLogger, so flow events
+// reuse this module's logger instead of importing the infrastructure logger.
+const flowLogger = {
+  info: (data: string | Record<string, unknown>, msg?: string) =>
+    runtimeLogger.info(
+      typeof data === 'string' ? {} : data,
+      typeof data === 'string' ? data : (msg ?? ''),
+    ),
 };
 export function createGroupAgentRunner(input: {
   deps: GroupProcessingDeps;
@@ -293,6 +306,68 @@ export function createGroupAgentRunner(input: {
               group.agentConfig?.model ?? DEFAULT_MODEL_ALIAS;
             return defaultRuntimeModel;
           },
+        });
+        // Continuous measurement: every turn's model spend is traceable (flow
+        // log) and durable (runtime event), so latency numbers always carry
+        // their account-pressure context.
+        // Field names deliberately avoid the substring "token" — the pino
+        // redaction config scrubs any key matching it, and these are counts,
+        // not credentials.
+        flowLog(flowLogger, 'model.usage', {
+          chatJid,
+          model: output.usage.model,
+          input: output.usage.inputTokens,
+          output: output.usage.outputTokens,
+          cacheRead: output.usage.cacheReadTokens,
+          cacheWrite: output.usage.cacheWriteTokens,
+          billableInput: output.usage.totalBillableInputTokens,
+          costUsd: output.usage.estimatedCostUsd,
+          usageEventId: output.usageEventId,
+        });
+        if (deps.publishRuntimeEvent && turnContext?.appId) {
+          try {
+            await deps.publishRuntimeEvent({
+              appId: turnContext.appId as never,
+              ...(turnContext.agentId
+                ? { agentId: turnContext.agentId as never }
+                : {}),
+              ...(runState.runId ? { runId: runState.runId as never } : {}),
+              conversationId: chatJid as never,
+              ...(sessionThreadId
+                ? { threadId: sessionThreadId as never }
+                : {}),
+              eventType: RUNTIME_EVENT_TYPES.MODEL_USAGE,
+              actor: 'runner',
+              responseMode: 'none',
+              payload: {
+                ...output.usage,
+                ...(output.usageEventId
+                  ? { usageEventId: output.usageEventId }
+                  : {}),
+              },
+            });
+            // eslint-disable-next-line no-catch-all/no-catch-all -- telemetry persistence must never block the reply path; failure is logged.
+          } catch (err) {
+            runtimeLogger.warn(
+              { err, group: group.name },
+              'Failed to persist model usage runtime event',
+            );
+          }
+        }
+      }
+      for (const event of output.runtimeEvents ?? []) {
+        if (event.eventType !== RUNTIME_EVENT_TYPES.MODEL_RATE_LIMIT) continue;
+        const payload =
+          event.payload && typeof event.payload === 'object'
+            ? (event.payload as Record<string, unknown>)
+            : {};
+        // Session ids stay out of logs (runtime-log redaction policy); the
+        // durable runtime event keeps the full payload.
+        const { providerSessionId: _providerSessionId, ...loggablePayload } =
+          payload;
+        flowLog(flowLogger, 'model.rate_limit', {
+          chatJid,
+          ...loggablePayload,
         });
       }
       if (output.contextUsage) {
@@ -447,6 +522,7 @@ export function createGroupAgentRunner(input: {
             memoryReviewerIsControlApprover,
             persona: group.agentConfig?.persona,
             allowedTools: configuredToolPolicy.allowedTools,
+            gantryMcpToolSurface: group.agentConfig?.toolSurface?.gantryMcp,
             runtimeAccess: configuredToolPolicy.runtimeAccess,
             attachedSkillSourceIds: selectedSkillContext.ids,
             selectedSkillDisplays: selectedSkillContext.displays,
