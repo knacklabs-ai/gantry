@@ -2586,6 +2586,44 @@ describe('createGroupProcessor', () => {
       ).toBe(false);
     });
 
+    it('does not mark progress done when a follow-up question has examples after the question mark', async () => {
+      const channel = makeChannel({
+        sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath();
+      deps.channelRuntime = channel;
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result:
+              'To get started, I need the role title — what position are you opening? (e.g., Backend Engineer, Product Manager, Data Analyst, etc.)',
+          });
+          await onOutput?.({ status: 'success', result: null });
+          return { status: 'success', result: null } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      const progressTexts = (
+        channel.sendProgressUpdate as ReturnType<typeof vi.fn>
+      ).mock.calls.map((call) => call[1]);
+      expect(progressTexts).toContain('Waiting for your response (0s).');
+      expect(
+        progressTexts.some(
+          (text) => typeof text === 'string' && text.startsWith('Done in '),
+        ),
+      ).toBe(false);
+    });
+
     it('excludes permission wait time from final elapsed progress', async () => {
       vi.useFakeTimers();
       const streamingChannel = makeChannel({

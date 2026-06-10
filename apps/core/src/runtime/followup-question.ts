@@ -16,7 +16,6 @@ export function isLikelyFollowupQuestion(text: string | null): boolean {
     .slice(-6)
     .some(
       (line) =>
-        /[?\uFF1F]\s*(?:[)"'\]\*_~`]+)?$/.test(line) ||
-        FOLLOWUP_QUESTION_LINE_PATTERN.test(line),
+        /[?\uFF1F]/.test(line) || FOLLOWUP_QUESTION_LINE_PATTERN.test(line),
     );
 }
