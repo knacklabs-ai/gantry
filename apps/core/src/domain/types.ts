@@ -94,6 +94,17 @@ export interface AgentMemoryConfig {
   idleEndMinutes?: number;
 }
 
+/**
+ * Per-agent tool-surface restriction (the `agents.<folder>.tool_surface`
+ * block). Opt-in and purely restrictive: omit the block for the full default
+ * surface. Single-purpose personas keep only the tools they use, so the model
+ * carries fewer tool schemas and never burns rounds on tool discovery.
+ */
+export interface AgentToolSurfaceConfig {
+  /** Keep-list of non-admin gantry MCP tool names exposed to this agent. */
+  gantryMcp?: string[];
+}
+
 export interface AgentConfig {
   additionalMounts?: AdditionalMount[];
   persona?: import('../shared/agent-persona.js').AgentPersona;
@@ -102,6 +113,7 @@ export interface AgentConfig {
   timeout?: number; // Default: 300000 (5 minutes)
   plugins?: AgentPluginsConfig;
   memory?: AgentMemoryConfig;
+  toolSurface?: AgentToolSurfaceConfig;
 }
 
 export interface ConversationRoute {

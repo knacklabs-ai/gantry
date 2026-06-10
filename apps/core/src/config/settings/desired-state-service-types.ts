@@ -2,6 +2,7 @@ import type { AgentPersona } from '../../shared/agent-persona.js';
 import type { AppId } from '../../domain/app/app.js';
 import type {
   AgentPluginsConfig,
+  AgentToolSurfaceConfig,
   GuardrailConfig,
   ThinkingOverride,
 } from '../../domain/types.js';
@@ -28,6 +29,7 @@ export interface StoredAgentBinding {
     guardrail?: GuardrailConfig;
     plugins?: AgentPluginsConfig;
     thinking?: ThinkingOverride;
+    toolSurface?: AgentToolSurfaceConfig;
   };
   // Marks this binding as a clone-source template for inbound messages whose
   // external id has no specific route yet. Mirrored from settings.yaml

@@ -5,11 +5,7 @@ import { registerMemoryTools } from './tools/memory.js';
 import { registerMessagingTools } from './tools/messaging.js';
 import { registerSchedulerTools } from './tools/scheduler.js';
 import { registerServiceTools } from './tools/service.js';
-import { parseEnabledGantryMcpToolNames } from '../gantry-mcp-tool-surface.js';
-import {
-  ADMIN_MCP_TOOL_NAMES,
-  isAdminMcpToolName,
-} from '../../shared/admin-mcp-tools.js';
+import { effectiveEnabledMcpToolNames } from '../gantry-mcp-tool-surface.js';
 
 type McpToolRegistrar = {
   tool: (name: string, ...args: unknown[]) => unknown;
@@ -56,6 +52,7 @@ export function createGantryMcpServer(): McpServer {
   const enabledTools = effectiveEnabledMcpToolNames(
     process.env.GANTRY_MCP_TOOL_NAMES_JSON,
     process.env.GANTRY_ADMIN_MCP_TOOLS_JSON,
+    process.env.GANTRY_MCP_TOOL_SURFACE_JSON,
   );
   const registeredHandlers = new Set<string>();
   const filteredServer = filteredToolRegistrar(
@@ -74,19 +71,4 @@ export function createGantryMcpServer(): McpServer {
   assertRegisteredMcpToolHandlers({ enabledTools, registeredHandlers });
 
   return server;
-}
-
-function effectiveEnabledMcpToolNames(
-  rawToolNames: string | undefined,
-  _rawAdminToolNames: string | undefined,
-): Set<string> {
-  const enabledTools = new Set(
-    [...parseEnabledGantryMcpToolNames(rawToolNames)].filter(
-      (toolName) => !isAdminMcpToolName(toolName),
-    ),
-  );
-
-  for (const toolName of ADMIN_MCP_TOOL_NAMES) enabledTools.add(toolName);
-
-  return enabledTools;
 }

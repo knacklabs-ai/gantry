@@ -1,7 +1,9 @@
 import path from 'path';
 import {
+  applyGantryMcpToolSurface,
   gantryMcpFullToolName,
   parseEnabledGantryMcpToolNames,
+  parseGantryMcpToolSurfaceJson,
 } from '../gantry-mcp-tool-surface.js';
 import { readLiveToolRules } from '../../shared/live-tool-rules.js';
 import { normalizeMemoryIpcActions } from '../../shared/memory-ipc-actions.js';
@@ -68,8 +70,9 @@ export const browserProfileName =
 export const enabledAdminMcpTools = parseEnabledAdminMcpTools(
   process.env.GANTRY_ADMIN_MCP_TOOLS_JSON,
 );
-export const enabledGantryMcpTools = parseEnabledGantryMcpToolNames(
-  process.env.GANTRY_MCP_TOOL_NAMES_JSON,
+export const enabledGantryMcpTools = applyGantryMcpToolSurface(
+  parseEnabledGantryMcpToolNames(process.env.GANTRY_MCP_TOOL_NAMES_JSON),
+  parseGantryMcpToolSurfaceJson(process.env.GANTRY_MCP_TOOL_SURFACE_JSON),
 );
 export const configuredAllowedTools = parseConfiguredAllowedTools(
   process.env.GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON,

@@ -195,12 +195,17 @@ export class SettingsDesiredStateService {
               ? 'dm'
               : 'channel',
           agentConfig:
-            binding.model || agent.persona || agent.plugins || agent.thinking
+            binding.model ||
+            agent.persona ||
+            agent.plugins ||
+            agent.thinking ||
+            agent.toolSurface
               ? {
                   model: binding.model,
                   persona: agent.persona,
                   plugins: agent.plugins,
                   thinking: agent.thinking,
+                  toolSurface: agent.toolSurface,
                 }
               : undefined,
           isTemplate: conversation?.isTemplate,

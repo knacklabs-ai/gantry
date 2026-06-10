@@ -1687,3 +1687,72 @@ conversations:
     });
   });
 });
+
+describe('agents tool_surface', () => {
+  it('parses a gantry MCP keep-list and renders it back', () => {
+    const parsed = parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    tool_surface:
+      gantry_mcp: [mcp_call_tool, mcp_list_tools, memory_search, memory_save]
+`);
+    expect(parsed.agents.boondi_support.toolSurface).toEqual({
+      gantryMcp: [
+        'mcp_call_tool',
+        'mcp_list_tools',
+        'memory_save',
+        'memory_search',
+      ],
+    });
+    const rendered = renderRuntimeSettingsYaml(parsed);
+    expect(rendered).toContain('tool_surface:');
+    expect(rendered).toContain(
+      'gantry_mcp: ["mcp_call_tool","mcp_list_tools","memory_save","memory_search"]',
+    );
+    const reparsed = parseRuntimeSettings(rendered);
+    expect(reparsed.agents.boondi_support.toolSurface).toEqual(
+      parsed.agents.boondi_support.toolSurface,
+    );
+  });
+
+  it('rejects unknown gantry MCP tool names', () => {
+    expect(() =>
+      parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    tool_surface:
+      gantry_mcp: [mcp_call_tool, not_a_real_tool]
+`),
+    ).toThrow(
+      'agents.boondi_support.tool_surface.gantry_mcp[1] "not_a_real_tool" is not a known gantry MCP tool name.',
+    );
+  });
+
+  it('rejects admin tools in the keep-list with a pointer to capabilities', () => {
+    expect(() =>
+      parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    tool_surface:
+      gantry_mcp: [service_restart]
+`),
+    ).toThrow(
+      'agents.boondi_support.tool_surface.gantry_mcp[0] "service_restart" is a Gantry admin tool; grant it via capabilities, not tool_surface.',
+    );
+  });
+
+  it('rejects unsupported tool_surface keys', () => {
+    expect(() =>
+      parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    tool_surface:
+      native: [Bash]
+`),
+    ).toThrow('agents.boondi_support.tool_surface.native is not supported');
+  });
+});

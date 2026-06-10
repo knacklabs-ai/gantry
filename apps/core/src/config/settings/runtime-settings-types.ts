@@ -6,6 +6,7 @@ import type { AgentPersona } from '../../shared/agent-persona.js';
 import type {
   AgentMemoryConfig,
   AgentPluginsConfig,
+  AgentToolSurfaceConfig,
   GuardrailConfig,
   ThinkingOverride,
 } from '../../domain/types.js';
@@ -181,6 +182,8 @@ export type RuntimeConfiguredAgentPlugins = AgentPluginsConfig;
 
 export type RuntimeConfiguredAgentMemory = AgentMemoryConfig;
 
+export type RuntimeConfiguredAgentToolSurface = AgentToolSurfaceConfig;
+
 export interface RuntimeConfiguredAgent {
   name: string;
   folder: string;
@@ -191,6 +194,7 @@ export interface RuntimeConfiguredAgent {
   thinking?: ThinkingOverride;
   plugins?: RuntimeConfiguredAgentPlugins;
   memory?: RuntimeConfiguredAgentMemory;
+  toolSurface?: RuntimeConfiguredAgentToolSurface;
   bindings: Record<string, RuntimeConfiguredAgentBinding>;
   sources: RuntimeConfiguredAgentSources;
   capabilities: RuntimeConfiguredAgentCapability[];

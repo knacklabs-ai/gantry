@@ -16,8 +16,11 @@ import type {
   RuntimeConfiguredAgentPlugins,
   RuntimeConfiguredAgentSourceRef,
   RuntimeConfiguredAgentSources,
+  RuntimeConfiguredAgentToolSurface,
   RuntimeDesiredStateSettings,
 } from './runtime-settings-types.js';
+import { isRestrictableGantryMcpToolName } from '../../shared/gantry-mcp-tool-catalog.js';
+import { isAdminMcpToolName } from '../../shared/admin-mcp-tools.js';
 
 function parseStringValue(
   raw: unknown,
@@ -346,6 +349,50 @@ function parseConfiguredAgentMemory(
   return Object.keys(memory).length > 0 ? memory : undefined;
 }
 
+function parseConfiguredAgentToolSurface(
+  raw: unknown,
+  pathPrefix: string,
+): RuntimeConfiguredAgentToolSurface | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${pathPrefix} must be a mapping`);
+  }
+  const map = raw as Record<string, unknown>;
+  for (const key of Object.keys(map)) {
+    if (key !== 'gantry_mcp') {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure gantry_mcp (keep-list of gantry MCP tool names).`,
+      );
+    }
+  }
+  if (map.gantry_mcp === undefined) return undefined;
+  if (!Array.isArray(map.gantry_mcp)) {
+    throw new Error(
+      `${pathPrefix}.gantry_mcp must be a list of gantry MCP tool names`,
+    );
+  }
+  const names = new Set<string>();
+  for (const [index, item] of map.gantry_mcp.entries()) {
+    const itemPath = `${pathPrefix}.gantry_mcp[${index}]`;
+    if (typeof item !== 'string' || item.trim().length === 0) {
+      throw new Error(`${itemPath} must be a non-empty string`);
+    }
+    const name = item.trim();
+    if (isAdminMcpToolName(name)) {
+      throw new Error(
+        `${itemPath} "${name}" is a Gantry admin tool; grant it via capabilities, not tool_surface.`,
+      );
+    }
+    if (!isRestrictableGantryMcpToolName(name)) {
+      throw new Error(
+        `${itemPath} "${name}" is not a known gantry MCP tool name.`,
+      );
+    }
+    names.add(name);
+  }
+  return { gantryMcp: [...names].sort() };
+}
+
 function parseConfiguredAgentThinking(
   raw: unknown,
   pathPrefix: string,
@@ -571,12 +618,13 @@ export function parseConfiguredAgents(
         key !== 'thinking' &&
         key !== 'plugins' &&
         key !== 'memory' &&
+        key !== 'tool_surface' &&
         key !== 'bindings' &&
         key !== 'sources' &&
         key !== 'capabilities'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, thinking, plugins (guardrail/memory_extraction/skills), memory (idle_end_minutes), bindings, sources, or capabilities.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, model, job model defaults, thinking, plugins (guardrail/memory_extraction/skills), memory (idle_end_minutes), tool_surface (gantry_mcp), bindings, sources, or capabilities.`,
         );
       }
     }
@@ -644,6 +692,10 @@ export function parseConfiguredAgents(
         `${pathPrefix}.plugins`,
       ),
       memory: parseConfiguredAgentMemory(map.memory, `${pathPrefix}.memory`),
+      toolSurface: parseConfiguredAgentToolSurface(
+        map.tool_surface,
+        `${pathPrefix}.tool_surface`,
+      ),
       bindings: parseConfiguredAgentBindings(
         map.bindings,
         `${pathPrefix}.bindings`,

@@ -395,6 +395,7 @@ export async function exportCurrentDesiredState(input: {
       oneTimeJobDefaultModel: existing?.oneTimeJobDefaultModel,
       recurringJobDefaultModel: existing?.recurringJobDefaultModel,
       plugins: existing?.plugins ?? group.agentConfig?.plugins,
+      toolSurface: existing?.toolSurface ?? group.agentConfig?.toolSurface,
       bindings: {
         ...(existing?.bindings ?? {}),
         [bindingId]: {

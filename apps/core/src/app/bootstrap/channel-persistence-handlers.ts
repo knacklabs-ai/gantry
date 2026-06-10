@@ -116,12 +116,17 @@ async function ensureInteraktDirectRoute(input: {
     // (declared plugins — guardrail, extraction prompt, skills — included, so
     // the gates fire here too).
     const agentConfig =
-      agent.model || agent.persona || agent.plugins || agent.thinking
+      agent.model ||
+      agent.persona ||
+      agent.plugins ||
+      agent.thinking ||
+      agent.toolSurface
         ? {
             model: agent.model,
             persona: agent.persona,
             plugins: agent.plugins,
             thinking: agent.thinking,
+            toolSurface: agent.toolSurface,
           }
         : undefined;
     const synthesized: ConversationRoute = {

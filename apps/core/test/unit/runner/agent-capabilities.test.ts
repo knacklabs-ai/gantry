@@ -176,6 +176,63 @@ describe('agent capability composition', () => {
     });
   });
 
+  it('restricts the gantry MCP surface to a per-agent keep-list', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'wa:000000905',
+      groupFolder: 'boondi_support',
+      persona: 'sales',
+      gantryMcpToolSurface: [
+        'mcp_call_tool',
+        'mcp_list_tools',
+        'memory_search',
+        'memory_save',
+      ],
+    });
+
+    expect(profile.allowedTools).toContain('mcp__gantry__mcp_call_tool');
+    expect(profile.allowedTools).toContain('mcp__gantry__mcp_list_tools');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__send_message');
+    expect(profile.allowedTools).not.toContain(
+      'mcp__gantry__scheduler_list_jobs',
+    );
+
+    const gantryServer = profile.mcpServers.gantry as {
+      env: Record<string, string>;
+      alwaysLoad?: boolean;
+    };
+    expect(JSON.parse(gantryServer.env.GANTRY_MCP_TOOL_NAMES_JSON)).toEqual([
+      'mcp_call_tool',
+      'mcp_list_tools',
+      'memory_save',
+      'memory_search',
+    ]);
+    expect(JSON.parse(gantryServer.env.GANTRY_MCP_TOOL_SURFACE_JSON)).toEqual([
+      'mcp_call_tool',
+      'mcp_list_tools',
+      'memory_search',
+      'memory_save',
+    ]);
+    // Small-by-design surface → schemas load upfront, no ToolSearch detour.
+    expect(gantryServer.alwaysLoad).toBe(true);
+  });
+
+  it('omits the tool-surface projection when no keep-list is configured', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'wa:000000905',
+      groupFolder: 'boondi_support',
+      persona: 'sales',
+    });
+    const gantryServer = profile.mcpServers.gantry as {
+      env: Record<string, string>;
+      alwaysLoad?: boolean;
+    };
+    expect(gantryServer.env.GANTRY_MCP_TOOL_SURFACE_JSON).toBeUndefined();
+    expect(gantryServer.alwaysLoad).toBeUndefined();
+    expect(profile.allowedTools).toContain('mcp__gantry__send_message');
+  });
+
   it('projects the browser IPC token only when canonical Browser is selected', () => {
     const withoutBrowser = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',

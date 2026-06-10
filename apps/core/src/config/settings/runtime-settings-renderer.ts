@@ -226,10 +226,23 @@ function renderConfiguredAgentsYaml(
     }
     renderAgentPluginsYaml(lines, agent);
     renderAgentMemoryYaml(lines, agent);
+    renderAgentToolSurfaceYaml(lines, agent);
     renderAgentSourcesYaml(lines, agent);
     renderAgentCapabilitiesYaml(lines, agent.capabilities);
   }
   lines.push('');
+}
+
+function renderAgentToolSurfaceYaml(
+  lines: string[],
+  agent: RuntimeConfiguredAgent,
+): void {
+  const keepList = agent.toolSurface?.gantryMcp;
+  if (!keepList) return;
+  lines.push(
+    '    tool_surface:',
+    `      gantry_mcp: ${JSON.stringify(keepList)}`,
+  );
 }
 
 function renderMcpServersYaml(

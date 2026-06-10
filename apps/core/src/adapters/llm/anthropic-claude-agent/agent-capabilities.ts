@@ -44,6 +44,8 @@ export interface AgentCapabilityContext {
   persona?: AgentPersona;
   browserProfileName?: string;
   configuredAllowedTools?: readonly string[];
+  /** Per-agent gantry MCP tool keep-list (settings `tool_surface.gantry_mcp`). */
+  gantryMcpToolSurface?: readonly string[];
   attachedSkillSourceIds?: readonly string[];
   selectedSkillDisplays?: readonly string[];
   attachedMcpSourceIds?: readonly string[];
@@ -66,6 +68,8 @@ export type McpServerConfig =
       command: string;
       args?: string[];
       env?: Record<string, string>;
+      /** SDK: include this server's tool schemas in the prompt, never deferred behind ToolSearch. */
+      alwaysLoad?: boolean;
     }
   | {
       type: 'http' | 'sse';
@@ -99,6 +103,21 @@ const DEFAULT_ALLOWED_TOOLS = [
   ...SAFE_NATIVE_SDK_TOOLS,
   ...GANTRY_MCP_ALLOWED_TOOLS,
 ] as const;
+
+// The default allow-list, with the gantry MCP portion narrowed to the
+// per-agent tool-surface keep-list when one is configured.
+function defaultAllowedToolsForSurface(
+  keepList: readonly string[] | undefined,
+): readonly string[] {
+  if (!keepList) return DEFAULT_ALLOWED_TOOLS;
+  const keep = new Set(keepList);
+  return [
+    ...SAFE_NATIVE_SDK_TOOLS,
+    ...DEFAULT_GANTRY_MCP_TOOL_NAMES.filter((name) => keep.has(name)).map(
+      gantryMcpFullToolName,
+    ),
+  ];
+}
 
 function configuredToolAllowedSdkNames(toolRule: string): string[] {
   const trimmed = toolRule.trim();
@@ -144,11 +163,14 @@ const sdkToolsProvider: AgentCapabilityProvider = {
           ...SAFE_NATIVE_SDK_TOOLS,
         ]
       : AVAILABLE_NATIVE_SDK_TOOLS;
+    const defaultAllowedTools = defaultAllowedToolsForSurface(
+      ctx.gantryMcpToolSurface,
+    );
     return {
       allowedTools:
         persona === 'developer'
-          ? [...DEVELOPER_NATIVE_SDK_TOOLS, ...DEFAULT_ALLOWED_TOOLS]
-          : DEFAULT_ALLOWED_TOOLS,
+          ? [...DEVELOPER_NATIVE_SDK_TOOLS, ...defaultAllowedTools]
+          : defaultAllowedTools,
       availableTools: baseAvailableTools,
       disallowedTools: UNSUPPORTED_CLAUDE_CODE_BUILTIN_TOOLS,
     };
@@ -198,8 +220,18 @@ const gantryMcpProvider: AgentCapabilityProvider = {
       GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
         selectedGantryMcpToolNames(ctx.configuredAllowedTools ?? [], {
           memoryReviewerIsControlApprover: ctx.memoryReviewerIsControlApprover,
+          toolSurfaceKeepList: ctx.gantryMcpToolSurface ?? null,
         }),
       ),
+      // The runner-side parser re-seeds the default surface for stale-projection
+      // safety, so an explicit restriction travels as its own projection.
+      ...(ctx.gantryMcpToolSurface
+        ? {
+            GANTRY_MCP_TOOL_SURFACE_JSON: JSON.stringify(
+              ctx.gantryMcpToolSurface,
+            ),
+          }
+        : {}),
       GANTRY_MEMORY_IPC_ACTIONS_JSON: JSON.stringify(
         selectedMemoryIpcActions(ctx.configuredAllowedTools ?? [], {
           memoryReviewerIsControlApprover: ctx.memoryReviewerIsControlApprover,
@@ -228,6 +260,10 @@ const gantryMcpProvider: AgentCapabilityProvider = {
           command: 'node',
           args: [ctx.mcpServerPath],
           env,
+          // A configured keep-list means the surface is deliberately small, so
+          // its few schemas go straight into the prompt instead of behind a
+          // ToolSearch discovery round (the SDK defers MCP tools by default).
+          ...(ctx.gantryMcpToolSurface ? { alwaysLoad: true } : {}),
         },
       },
     };
@@ -315,6 +351,7 @@ const configuredToolProvider: AgentCapabilityProvider = {
         allowedTools,
         selectedGantryMcpFullToolNames(ctx.configuredAllowedTools ?? [], {
           memoryReviewerIsControlApprover: ctx.memoryReviewerIsControlApprover,
+          toolSurfaceKeepList: ctx.gantryMcpToolSurface ?? null,
         }),
       ),
       availableTools,

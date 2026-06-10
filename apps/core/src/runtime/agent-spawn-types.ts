@@ -37,6 +37,8 @@ export interface AgentInput {
   persona?: AgentPersona;
   browserProfileName?: string;
   allowedTools?: string[];
+  /** Per-agent gantry MCP tool keep-list (settings `tool_surface.gantry_mcp`). */
+  gantryMcpToolSurface?: string[];
   toolAccessRequirements?: string[];
   attachedSkillSourceIds?: string[];
   selectedSkillDisplays?: string[];
