@@ -74,6 +74,7 @@ import {
   isModelAccessAuthFailure,
   sendModelAccessAuthFailureNotice,
 } from './model-access-auth-failure.js';
+import { isLikelyFollowupQuestion } from './followup-question.js';
 let streamingGenerationCounter = 0;
 const PERMISSION_BACKGROUND_DEMOTE_MS = 120_000;
 type ProgressHeartbeat = ReturnType<typeof startGroupProgressHeartbeats>;
@@ -383,6 +384,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       ) {
         return;
       }
+      if (state === 'completed' && isLikelyFollowupQuestion(lastOutputText)) {
+        return;
+      }
       sentTurnDoneProgressGeneration = progressGeneration;
       sentAnyTurnDoneProgress = true;
       await sendDoneProgress(state);
@@ -404,6 +408,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           buildProgressOptions(),
         ).catch(() => undefined);
       }
+    };
+    const sendWaitingForUserResponseProgress = async () => {
+      if (!supportsProgress) return;
+      await sendProgressToChannel(
+        `Waiting for your response (${formatElapsed(activeElapsedMs())}).`,
+        buildProgressOptions({ replaceOnly: true }),
+      ).catch(() => undefined);
     };
     const { sendResponseReceipt } = createResponseProgressSenders({
       supportsProgress,
@@ -466,6 +477,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     let sawTerminalDeliveryFailure = false;
     let awaitingResponseReceipt = false;
     let outputCallbackError: unknown;
+    let lastOutputText: string | null = null;
     const supportsStreamingChunks =
       deps.channelRuntime.supportsStreaming(chatJid);
     let pendingOutputVisible = createRuntimeUserVisibleResultAccumulator();
@@ -489,6 +501,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       const text = visibleOutput ? formatOutboundForChannel(visibleOutput) : '';
       logger.info({ group: group.name }, `Agent output: ${rawChars} chars`);
       if (!text) return false;
+      lastOutputText = text;
       if (supportsStreamingChunks) {
         const settlement = await settleDeliveryAttempt(
           () =>
@@ -546,10 +559,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       pausedAt = currentTimeMs();
       progressHeartbeat?.pause();
       if (supportsProgress) {
-        await sendProgressToChannel(
-          `Waiting for your response (${formatElapsed(activeElapsedMs())}).`,
-          buildProgressOptions({ replaceOnly: true }),
-        ).catch(() => undefined);
+        await sendWaitingForUserResponseProgress();
       }
       clearBackgroundDemoteTimer();
       backgroundDemoteTimer = setTimeout(() => {
@@ -792,8 +802,16 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
               : 'completed';
     const completedWhileAwaitingUserResponse =
       finalProgressState === 'completed' && awaitingResponseReceipt;
+    const completedWithFollowupQuestion =
+      finalProgressState === 'completed' &&
+      !awaitingResponseReceipt &&
+      isLikelyFollowupQuestion(lastOutputText);
+    if (completedWithFollowupQuestion) {
+      await sendWaitingForUserResponseProgress();
+    }
     if (
       !completedWhileAwaitingUserResponse &&
+      !completedWithFollowupQuestion &&
       (finalProgressState !== 'completed' ||
         !sentAnyTurnDoneProgress ||
         (activeGenerationHasOutput &&
