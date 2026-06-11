@@ -164,13 +164,16 @@ describe('importFleetSettingsRevision', () => {
     expect(outcome).toEqual({ status: 'applied', revision: 2 });
   });
 
-  it('round-trips a settings document through render/parse', () => {
+  it('round-trips through the typed JSON document (no YAML wrapper on the wire)', () => {
     const settings = createDefaultRuntimeSettings();
+    settings.runtime.deploymentMode = 'fleet';
     const document = settingsToRevisionDocument(settings);
+    // The stored/wire document is the typed object form, not the legacy
+    // `{ yaml: <string> }` wrapper.
+    expect(typeof document).toBe('object');
+    expect('yaml' in document).toBe(false);
     const restored = settingsFromRevisionDocument(document);
     expect(restored.agent.name).toBe(settings.agent.name);
-    expect(restored.runtime.deploymentMode).toBe(
-      settings.runtime.deploymentMode,
-    );
+    expect(restored.runtime.deploymentMode).toBe('fleet');
   });
 });

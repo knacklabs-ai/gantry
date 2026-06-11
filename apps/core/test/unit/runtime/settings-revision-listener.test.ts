@@ -66,7 +66,7 @@ function revision(
   return {
     appId: 'default',
     revision: revisionNumber,
-    settingsDocument: { yaml: 'agent: {}' },
+    settingsDocument: { agent: { name: 'Ada' } },
     minReaderVersion,
     createdBy: 'test',
     note: null,

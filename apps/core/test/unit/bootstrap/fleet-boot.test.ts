@@ -99,7 +99,7 @@ function revisionRow(revision: number): SettingsRevision {
   return {
     appId: 'default',
     revision,
-    settingsDocument: { yaml: 'agent: {}' },
+    settingsDocument: { agent: { name: 'Ada' } },
     minReaderVersion: 1,
     createdBy: 'cli',
     note: null,
@@ -162,7 +162,7 @@ describe('prepareFleetSettings', () => {
     latest.current = {
       appId: 'default',
       revision: 9,
-      settingsDocument: { yaml: 'agent: {}' },
+      settingsDocument: { agent: { name: 'Ada' } },
       minReaderVersion: 1,
       createdBy: 'cli',
       note: null,

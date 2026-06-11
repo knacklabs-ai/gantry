@@ -243,3 +243,14 @@ export const RuntimeSettingsResponseSchema = z
 export type RuntimeSettingsResponse = z.infer<
   typeof RuntimeSettingsResponseSchema
 >;
+
+/**
+ * The typed JSON settings document carried by the desired-state control API/SDK
+ * and stored as `settings_revisions` jsonb. It is the full settings document in
+ * its native (snake_case) object form — YAML is only the human file format for
+ * the workstation file and CLI `--file` edge and never appears on the wire.
+ * Authoritative document-path-level validation runs server-side through the
+ * runtime settings parser; this contract names the wire shape for SDK consumers.
+ */
+export const SettingsDocumentSchema = z.record(z.string(), z.unknown());
+export type SettingsDocument = z.infer<typeof SettingsDocumentSchema>;

@@ -40,8 +40,9 @@ vi.mock('@core/config/settings/settings-import-service.js', async () => {
 });
 
 vi.mock('@core/config/settings/runtime-settings-parser.js', () => ({
-  parseRuntimeSettings: (raw: string) => {
-    if (raw.includes('PARSE_FAIL')) throw new Error('bad yaml');
+  parseRuntimeSettingsObject: (document: Record<string, unknown>) => {
+    if (document.PARSE_FAIL)
+      throw new Error('agent.name must be a non-empty string');
     return {} as never;
   },
 }));
@@ -79,20 +80,20 @@ describe('settings desired-state control routes', () => {
     expect(wrongScope.statusCode).toBe(403);
   });
 
-  it('returns revision 0 with null yaml when no revision is seeded', async () => {
+  it('returns revision 0 with null settings when no revision is seeded', async () => {
     const res = await invoke('GET', '/v1/settings/desired-state', undefined);
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({
       revision: 0,
-      settingsYaml: null,
+      settings: null,
     });
   });
 
-  it('returns the latest revision document', async () => {
+  it('returns the latest revision typed document', async () => {
     revisions.push({
       appId: 'default',
       revision: 4,
-      settingsDocument: { yaml: 'agent: {}' },
+      settingsDocument: { agent: { name: 'Ada' } },
       minReaderVersion: 1,
       createdBy: 'cli',
       note: 'seed',
@@ -102,25 +103,27 @@ describe('settings desired-state control routes', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({
       revision: 4,
-      settingsYaml: 'agent: {}',
+      settings: { agent: { name: 'Ada' } },
       note: 'seed',
     });
   });
 
-  it('rejects an empty settings document with a path-level 400', async () => {
+  it('rejects a non-object settings document with a 400', async () => {
     const res = await invoke('PUT', '/v1/settings/desired-state', {
-      settingsYaml: '   ',
+      settings: 'not-an-object',
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error.code).toBe('INVALID_REQUEST');
   });
 
-  it('returns 400 with parse errors for an unparseable document', async () => {
+  it('returns 400 with document-path errors for an unparseable document', async () => {
     const res = await invoke('PUT', '/v1/settings/desired-state', {
-      settingsYaml: 'PARSE_FAIL',
+      settings: { PARSE_FAIL: true },
     });
     expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error.code).toBe('INVALID_SETTINGS');
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe('INVALID_SETTINGS');
+    expect(body.error.message).toContain('agent.name');
   });
 
   it('surfaces validation errors as a path-level 400', async () => {
@@ -129,7 +132,7 @@ describe('settings desired-state control routes', () => {
       errors: ['agents.x.capabilities contains unavailable capability foo'],
     };
     const res = await invoke('PUT', '/v1/settings/desired-state', {
-      settingsYaml: 'agent: {}',
+      settings: { agent: {} },
     });
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.body);
@@ -144,7 +147,7 @@ describe('settings desired-state control routes', () => {
       actualRevision: 5,
     };
     const res = await invoke('PUT', '/v1/settings/desired-state', {
-      settingsYaml: 'agent: {}',
+      settings: { agent: {} },
       expectedRevision: 2,
     });
     expect(res.statusCode).toBe(409);
@@ -159,7 +162,7 @@ describe('settings desired-state control routes', () => {
   it('returns the new revision number on a successful update', async () => {
     importOutcome.current = { status: 'applied', revision: 7 };
     const res = await invoke('PUT', '/v1/settings/desired-state', {
-      settingsYaml: 'agent: {}',
+      settings: { agent: {} },
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ revision: 7 });
@@ -167,7 +170,7 @@ describe('settings desired-state control routes', () => {
 
   it('rejects a non-integer expectedRevision', async () => {
     const res = await invoke('PUT', '/v1/settings/desired-state', {
-      settingsYaml: 'agent: {}',
+      settings: { agent: {} },
       expectedRevision: 'latest',
     });
     expect(res.statusCode).toBe(400);
@@ -179,7 +182,7 @@ describe('settings desired-state control routes', () => {
       {
         appId: 'default',
         revision: 1,
-        settingsDocument: { yaml: '' },
+        settingsDocument: {},
         minReaderVersion: 1,
         createdBy: 'cli',
         note: 'first',
@@ -188,7 +191,7 @@ describe('settings desired-state control routes', () => {
       {
         appId: 'default',
         revision: 2,
-        settingsDocument: { yaml: '' },
+        settingsDocument: {},
         minReaderVersion: 1,
         createdBy: 'control-api:admin',
         note: null,

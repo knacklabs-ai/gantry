@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { getRuntimeStorage } from '../../../adapters/storage/postgres/runtime-store.js';
-import { parseRuntimeSettings } from '../../../config/settings/runtime-settings-parser.js';
+import { parseRuntimeSettingsObject } from '../../../config/settings/runtime-settings-parser.js';
 import {
   importFleetSettingsRevision,
   settingsFromRevisionDocument,
@@ -55,9 +55,12 @@ export async function handleSettingsRoutes(
 }
 
 /**
- * Fleet desired-state surface (ADR-3). The future management UI builds on these
- * endpoints. Mutations append a `settings_revisions` row through the same
- * validation path the YAML import uses; workers converge via NOTIFY + poll.
+ * Fleet desired-state surface (ADR-3). The API/SDK/future UI speak the typed
+ * JSON settings document (the same shape stored as `settings_revisions` jsonb);
+ * YAML is the human file format for the workstation file + CLI `--file` edge
+ * only and never appears here. Mutations decode the inbound document through the
+ * shared settings parser and append a `settings_revisions` row through the same
+ * validation path the file import uses; workers converge via NOTIFY + poll.
  */
 async function handleDesiredState(
   req: IncomingMessage,
@@ -73,22 +76,13 @@ async function handleDesiredState(
         appId,
       );
     if (!latest) {
-      sendJson(res, 200, { revision: 0, settingsYaml: null, updatedAt: null });
+      sendJson(res, 200, { revision: 0, settings: null, updatedAt: null });
       return true;
-    }
-    let settingsYaml: string | null = null;
-    try {
-      settingsYaml =
-        typeof latest.settingsDocument.yaml === 'string'
-          ? latest.settingsDocument.yaml
-          : null;
-    } catch {
-      settingsYaml = null;
     }
     sendJson(res, 200, {
       revision: latest.revision,
       minReaderVersion: latest.minReaderVersion,
-      settingsYaml,
+      settings: latest.settingsDocument,
       createdBy: latest.createdBy,
       note: latest.note,
       updatedAt: latest.createdAt,
@@ -101,16 +95,20 @@ async function handleDesiredState(
     if (!key) return true;
     const appId = key.appId as AppId;
     const body = (await readJson(req)) as {
-      settingsYaml?: unknown;
+      settings?: unknown;
       expectedRevision?: unknown;
       note?: unknown;
     };
-    if (typeof body.settingsYaml !== 'string' || !body.settingsYaml.trim()) {
+    if (
+      typeof body.settings !== 'object' ||
+      body.settings === null ||
+      Array.isArray(body.settings)
+    ) {
       sendError(
         res,
         400,
         'INVALID_REQUEST',
-        'settingsYaml is required and must be a non-empty YAML document string.',
+        'settings is required and must be a settings document object.',
       );
       return true;
     }
@@ -127,15 +125,23 @@ async function handleDesiredState(
       );
       return true;
     }
+    // Decode the inbound typed document through the shared settings parser so a
+    // structurally invalid document surfaces the same document-path-level error
+    // the file/CLI surface produces (one validation path). YAML never reaches
+    // this surface — it is the CLI `--file` edge only.
     let parsed;
     try {
-      parsed = parseRuntimeSettings(body.settingsYaml);
+      parsed = parseRuntimeSettingsObject(
+        body.settings as Record<string, unknown>,
+      );
     } catch (err) {
       sendError(
         res,
         400,
         'INVALID_SETTINGS',
-        err instanceof Error ? err.message : 'settingsYaml failed to parse.',
+        err instanceof Error
+          ? err.message
+          : 'settings document failed to parse.',
       );
       return true;
     }

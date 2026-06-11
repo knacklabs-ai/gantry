@@ -1030,9 +1030,21 @@ export function parseRuntimeSettings(raw: string): RuntimeSettings {
     throw new Error('root must be a mapping');
   }
 
-  const root = normalizeCompactRuntimeSettingsRoot(
-    parsed as Record<string, unknown>,
-  );
+  return parseRuntimeSettingsObject(parsed as Record<string, unknown>);
+}
+
+/**
+ * Decode an already-parsed settings document object into typed runtime
+ * settings. This is the structural-validation core shared by the YAML file edge
+ * (`parseRuntimeSettings`, via `parseSimpleYamlObject`) and the typed JSON
+ * settings document carried by the control API / stored in `settings_revisions`
+ * (`settingsFromRevisionDocument`). Both surfaces therefore produce identical
+ * document-path-level error messages (one validation path, no authority fork).
+ */
+export function parseRuntimeSettingsObject(
+  document: Record<string, unknown>,
+): RuntimeSettings {
+  const root = normalizeCompactRuntimeSettingsRoot(document);
   for (const key of Object.keys(root)) {
     if (key === 'features') {
       throw new Error(

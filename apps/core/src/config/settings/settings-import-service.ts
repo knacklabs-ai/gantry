@@ -8,8 +8,9 @@ import type {
   SettingsDesiredStateRepositories,
 } from './desired-state-service.js';
 import { applyRuntimeSettingsDesiredState } from './restart-sync.js';
-import { parseRuntimeSettings } from './runtime-settings-parser.js';
+import { parseRuntimeSettingsObject } from './runtime-settings-parser.js';
 import { renderRuntimeSettingsYaml } from './runtime-settings-renderer.js';
+import { parseSimpleYamlObject } from './yaml.js';
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
 import type { RuntimeSettings } from './runtime-settings-types.js';
 import {
@@ -161,25 +162,24 @@ export async function importFleetSettingsRevision(
 }
 
 /**
- * Serialize desired state into the revision document. We store the rendered
- * YAML text so workers re-hydrate through the exact same `parseRuntimeSettings`
- * path the file surface uses — lossless and single-parse-path.
+ * Serialize desired state into the typed JSON settings document that the
+ * control API/SDK transport and `settings_revisions` store as jsonb. YAML is the
+ * human file format for the workstation file + CLI `--file` edge only; it never
+ * appears on the wire. The document is the parser's native (snake_case) object
+ * form, so workers re-hydrate through the exact same structural-validation path
+ * the file surface uses — single-validation-path, with round-trip behavior
+ * identical to the file surface (including the file surface's pre-existing
+ * escaping limits for string values containing `"` or `\`).
  */
 export function settingsToRevisionDocument(
   settings: RuntimeSettings,
 ): Record<string, unknown> {
-  return { yaml: renderRuntimeSettingsYaml(settings) };
+  return parseSimpleYamlObject(renderRuntimeSettingsYaml(settings));
 }
 
-/** Re-hydrate a revision document back into typed runtime settings. */
+/** Re-hydrate a typed settings document back into typed runtime settings. */
 export function settingsFromRevisionDocument(
   document: Record<string, unknown>,
 ): RuntimeSettings {
-  const yaml = document.yaml;
-  if (typeof yaml !== 'string') {
-    throw new Error(
-      'Settings revision document is missing its rendered `yaml` field.',
-    );
-  }
-  return parseRuntimeSettings(yaml);
+  return parseRuntimeSettingsObject(document);
 }

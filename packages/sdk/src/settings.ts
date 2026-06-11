@@ -110,17 +110,26 @@ export type RuntimeSettingsResponse = {
   };
 };
 
+/**
+ * The typed JSON settings document carried by the desired-state API. Mirrors the
+ * `@gantry/contracts` `SettingsDocument` type (the SDK hand-mirrors contracts
+ * shapes rather than depending on the package). YAML is the human file format
+ * for the workstation file and CLI `--file` edge only and never appears here;
+ * authoritative document-path-level validation runs server-side.
+ */
+export type SettingsDocument = Record<string, unknown>;
+
 export type DesiredStateResponse = {
   revision: number;
   minReaderVersion?: number;
-  settingsYaml: string | null;
+  settings: SettingsDocument | null;
   createdBy?: string;
   note?: string | null;
   updatedAt: string | null;
 };
 
 export type DesiredStateUpdateRequest = {
-  settingsYaml: string;
+  settings: SettingsDocument;
   expectedRevision?: number | null;
   note?: string | null;
 };
