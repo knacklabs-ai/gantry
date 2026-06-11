@@ -211,4 +211,36 @@ describe('installShutdownHandlers', () => {
     );
     expect(exit).toHaveBeenCalledWith(0);
   });
+
+  it('drains exactly once when SIGTERM and SIGINT both fire', async () => {
+    const handlers = new Map<'SIGTERM' | 'SIGINT', () => void>();
+    const queueShutdown = vi.fn(async () => {});
+    const closeStorage = vi.fn(async () => {});
+    const exit = vi.fn(() => undefined as never);
+
+    installShutdownHandlers(
+      {
+        queue: { shutdown: queueShutdown },
+        drainDeadlineMs: 90000,
+        closeStorage,
+        disconnectChannels: vi.fn(async () => {}),
+      },
+      {
+        onSignal: (signal, handler) => handlers.set(signal, handler),
+        markDraining: vi.fn(),
+        closeAllBrowsers: vi.fn(async () => {}),
+        logger: { info: vi.fn(), warn: vi.fn() },
+        exit: exit as never,
+      },
+    );
+
+    // Container orchestration commonly delivers SIGTERM then SIGINT.
+    handlers.get('SIGTERM')?.();
+    handlers.get('SIGINT')?.();
+    await flushPromises();
+
+    expect(queueShutdown).toHaveBeenCalledTimes(1);
+    expect(closeStorage).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledTimes(1);
+  });
 });

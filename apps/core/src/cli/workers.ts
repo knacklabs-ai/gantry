@@ -24,7 +24,7 @@ export async function runWorkersCommand(args: string[]): Promise<number> {
   const [subcommand] = args;
   if (subcommand !== 'list') {
     console.log(usage());
-    return subcommand ? 1 : 1;
+    return 1;
   }
 
   await initializeRuntimeStorage();

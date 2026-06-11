@@ -142,10 +142,22 @@ export function installShutdownHandlers(
     resolved.exit(0);
   };
 
+  // Container orchestration can deliver SIGTERM then SIGINT (or a duplicate
+  // SIGTERM). Run the drain exactly once: the first signal owns the teardown,
+  // later signals join the in-flight drain instead of racing a second one
+  // through queue/storage/lease teardown.
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdownOnce = (signal: string) => {
+    if (!shutdownPromise) {
+      shutdownPromise = shutdown(signal);
+    }
+    return shutdownPromise;
+  };
+
   resolved.onSignal('SIGTERM', () => {
-    void shutdown('SIGTERM');
+    void shutdownOnce('SIGTERM');
   });
   resolved.onSignal('SIGINT', () => {
-    void shutdown('SIGINT');
+    void shutdownOnce('SIGINT');
   });
 }

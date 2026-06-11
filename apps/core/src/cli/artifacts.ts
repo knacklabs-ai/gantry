@@ -38,7 +38,7 @@ export async function runArtifactsCommand(args: string[]): Promise<number> {
   const [group, subcommand, ...rest] = args;
   if (group !== 'quarantine' || !subcommand) {
     console.log(usage());
-    return group ? 1 : 1;
+    return 1;
   }
 
   if (subcommand === 'list') {

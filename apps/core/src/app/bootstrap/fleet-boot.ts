@@ -15,6 +15,7 @@ import {
 } from '../../config/settings/settings-import-service.js';
 import { PostgresSettingsRevisionWakeupSource } from '../../config/settings/settings-revision-notify.js';
 import type { AppId } from '../../domain/app/app.js';
+import { isDraining } from './draining-state.js';
 import type { SkillArtifactMaterializer } from '../../domain/ports/skill-artifact-store.js';
 import type { ToolchainArtifactMaterializer } from '../../domain/ports/toolchain-artifact-store.js';
 import { logger } from '../../infrastructure/logging/logger.js';
@@ -177,6 +178,11 @@ export async function startFleetSubsystems(input: {
     onFirstRevisionApplied: async () => {
       // No-op when everything already started at boot (settingsLoaded).
       if (bakeQueueStarted || reconciler) return;
+      // A revision NOTIFY can land mid-drain, after shutdown stopped the
+      // scheduler but before it tears down this listener. Do not re-arm the
+      // held scheduler/capability subsystems on an instance the ALB already
+      // pulled from rotation.
+      if (isDraining()) return;
       await startCapabilitySubsystems();
       await input.onSettingsReady?.();
       logger.info(

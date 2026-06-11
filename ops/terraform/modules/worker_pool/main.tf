@@ -117,6 +117,11 @@ resource "aws_launch_template" "worker" {
   metadata_options {
     http_tokens   = "required"
     http_endpoint = "enabled"
+    # The runtime runs in a Docker container (bridge network), one extra network
+    # hop from IMDS. The default hop limit of 1 blocks the container from
+    # reaching 169.254.169.254, breaking instance-profile credential resolution
+    # for the S3 artifact store in production.
+    http_put_response_hop_limit = 2
   }
 
   tag_specifications {
