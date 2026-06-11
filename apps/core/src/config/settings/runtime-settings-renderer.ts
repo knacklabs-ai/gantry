@@ -237,10 +237,14 @@ function renderAgentAccessYaml(
     agent.sources.mcpServers.length > 0 ||
     agent.sources.tools.length > 0;
   const hasSelections = agent.capabilities.length > 0;
-  if (!hasSources && !hasSelections) {
+  const hasLockedPreset = agent.accessPreset === 'locked';
+  if (!hasSources && !hasSelections && !hasLockedPreset) {
     return;
   }
   lines.push('    access:');
+  if (hasLockedPreset) {
+    lines.push('      preset: locked');
+  }
   if (hasSources) {
     lines.push('      sources:');
     renderAgentSourceListYaml(lines, 'skills', agent.sources.skills);
@@ -499,6 +503,7 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
     runtime.queue.maxTaskBacklog === 0 &&
     runtime.queue.maxRetries === 5 &&
     runtime.queue.baseRetryMs === 5000 &&
+    runtime.queue.drainDeadlineMs === 120000 &&
     runtime.liveTurns.enabled === true &&
     runtime.sandbox.provider === 'direct' &&
     runtime.sandbox.resourceLimits.cpuSeconds === 0 &&
@@ -587,6 +592,7 @@ function renderRuntimeProcessYaml(
     `    max_task_backlog: ${runtime.queue.maxTaskBacklog}`,
     `    max_retries: ${runtime.queue.maxRetries}`,
     `    base_retry_ms: ${runtime.queue.baseRetryMs}`,
+    `    drain_deadline_ms: ${runtime.queue.drainDeadlineMs}`,
     '  live_turns:',
     `    enabled: ${runtime.liveTurns.enabled ? 'true' : 'false'}`,
     '  sandbox:',

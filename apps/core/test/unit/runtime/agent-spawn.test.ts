@@ -919,6 +919,61 @@ describe('agent-spawn timeout behavior', () => {
     );
   });
 
+  it('projects the locked access preset and no-permission env for a locked agent', async () => {
+    vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
+      agents: {
+        'test-group': {
+          name: 'Test',
+          folder: 'test-group',
+          bindings: {},
+          sources: { skills: [], mcpServers: [], tools: [] },
+          capabilities: [],
+          accessPreset: 'locked',
+        },
+      },
+      permissions: {
+        yoloMode: { enabled: true, denylist: [], denylistPaths: [] },
+        egress: { denylist: [] },
+      },
+      runtime: {
+        sandbox: {
+          provider: 'direct',
+          resourceLimits: { cpuSeconds: 0, memoryMb: 0, maxProcesses: 0 },
+        },
+      },
+    } as never);
+
+    const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'started' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.GANTRY_AGENT_ACCESS_PRESET).toBe('locked');
+    expect(env.GANTRY_NO_PERMISSION_TOOLS).toBe('1');
+  });
+
+  it('projects the full access preset for a default agent', async () => {
+    const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'started' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.GANTRY_AGENT_ACCESS_PRESET).toBe('full');
+    expect(env.GANTRY_NO_PERMISSION_TOOLS).toBe('');
+  });
+
   it('projects chat scope so spawned memory IPC signatures validate with runner context', async () => {
     const input = {
       ...testInput,

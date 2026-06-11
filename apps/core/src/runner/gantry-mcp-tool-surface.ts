@@ -85,6 +85,8 @@ const NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET = new Set<string>(
   NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES,
 );
 
+const ADMIN_MCP_TOOL_NAME_SET = new Set<string>(ADMIN_MCP_TOOL_NAMES);
+
 export function isAuthorityChangingGantryMcpToolName(value: string): boolean {
   return AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAME_SET.has(value);
 }
@@ -178,25 +180,58 @@ export function selectedGantryMcpFullToolNames(
   );
 }
 
+// Locked agents start from the default surface minus every authority-changing
+// and admin tool. This is the fail-closed base: an unset or corrupt env can
+// never restore authority tools for a locked agent.
+function lockedDefaultGantryMcpToolNames(): Set<string> {
+  const names = new Set<string>(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+  for (const toolName of NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES) {
+    names.delete(toolName);
+  }
+  for (const toolName of ADMIN_MCP_TOOL_NAMES) {
+    names.delete(toolName);
+  }
+  return names;
+}
+
 export function parseEnabledGantryMcpToolNames(
   raw: string | undefined,
+  options: { lockedPreset?: boolean } = {},
 ): Set<string> {
+  // For locked agents a malformed/unset env must fail closed to the locked
+  // base set, never to the full default set that still carries authority tools.
+  const fallback = (): Set<string> =>
+    options.lockedPreset
+      ? lockedDefaultGantryMcpToolNames()
+      : new Set(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+  const base = (): Set<string> =>
+    options.lockedPreset
+      ? lockedDefaultGantryMcpToolNames()
+      : new Set<string>(DEFAULT_GANTRY_MCP_TOOL_NAMES);
   if (!raw?.trim()) {
-    return new Set(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+    return fallback();
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
-      return new Set(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+      return fallback();
     }
-    const enabled = new Set<string>(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+    const enabled = base();
     for (const item of parsed) {
       const toolName = typeof item === 'string' ? item.trim() : '';
-      if (ALL_GANTRY_MCP_TOOL_NAME_SET.has(toolName)) enabled.add(toolName);
+      if (!ALL_GANTRY_MCP_TOOL_NAME_SET.has(toolName)) continue;
+      if (
+        options.lockedPreset &&
+        (NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET.has(toolName) ||
+          ADMIN_MCP_TOOL_NAME_SET.has(toolName))
+      ) {
+        continue;
+      }
+      enabled.add(toolName);
     }
     return enabled;
   } catch {
-    return new Set(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+    return fallback();
   }
 }
 

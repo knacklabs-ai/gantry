@@ -98,6 +98,7 @@ describe('runtime settings', () => {
       maxTaskBacklog: 0,
       maxRetries: 5,
       baseRetryMs: 5000,
+      drainDeadlineMs: 120000,
     });
 
     settings.runtime.queue = {
@@ -107,6 +108,7 @@ describe('runtime settings', () => {
       maxTaskBacklog: 9,
       maxRetries: 1,
       baseRetryMs: 250,
+      drainDeadlineMs: 45000,
     };
 
     const yaml = renderRuntimeSettingsYaml(settings);
@@ -117,6 +119,7 @@ describe('runtime settings', () => {
     expect(yaml).toContain('max_task_backlog: 9');
     expect(yaml).toContain('max_retries: 1');
     expect(yaml).toContain('base_retry_ms: 250');
+    expect(yaml).toContain('drain_deadline_ms: 45000');
 
     const parsed = parseRuntimeSettings(yaml);
     expect(parsed.runtime.queue).toEqual(settings.runtime.queue);

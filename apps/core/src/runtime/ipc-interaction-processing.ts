@@ -33,6 +33,11 @@ import {
   recordRunScopedTransientGrant,
   resolvePendingInteractionRecord,
 } from '../application/interactions/pending-interaction-durability.js';
+import {
+  resolveAgentLockStatus,
+  type AgentLockStatus,
+} from '../config/profiles.js';
+import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
 import type { IpcDeps } from './ipc-domain-types.js';
 import {
   processPermissionIpcRequest,
@@ -88,6 +93,7 @@ export function writePermissionInteractionFailure(input: {
   responseNonce?: string;
   threadId?: string;
   responseKeyId?: string;
+  reason?: string;
   logger: IpcInteractionLogger;
 }): void {
   try {
@@ -98,7 +104,7 @@ export function writePermissionInteractionFailure(input: {
         requestId: input.requestId,
         ...(input.responseNonce ? { responseNonce: input.responseNonce } : {}),
         approved: false,
-        reason: 'Failed to process permission request',
+        reason: input.reason ?? 'Failed to process permission request',
       },
       getIpcResponseSigningPrivateKey(
         input.sourceAgentFolder,
@@ -161,6 +167,17 @@ export async function processPermissionInteractionIpc(input: {
   claimedPath: string;
   logger: IpcInteractionLogger;
 }): Promise<void> {
+  // Parent-side security boundary: locked agents never reach any permission
+  // authority outcome (durable pending row, prompt, transient or persistent
+  // grant). The gate runs before recordPendingInteractionRequested so a forged
+  // permission-request file in a locked agent's runner workspace is denied
+  // without ever creating durable state. An unreadable lock status ('unknown')
+  // fails closed on this authority-bearing path.
+  const lockStatus = resolveAgentLockStatus(input.sourceAgentFolder);
+  if (lockStatus !== 'full') {
+    await denyLockedPermissionInteraction(input, lockStatus);
+    return;
+  }
   try {
     const requestedContext = permissionTelemetryContext(input.request, {
       sourceAgentFolder: input.sourceAgentFolder,
@@ -473,6 +490,72 @@ export async function processPermissionInteractionIpc(input: {
       input.claimedPath,
     );
   }
+}
+
+async function denyLockedPermissionInteraction(
+  input: Parameters<typeof processPermissionInteractionIpc>[0],
+  lockStatus: Exclude<AgentLockStatus, 'full'>,
+): Promise<void> {
+  input.logger.warn(
+    {
+      sourceAgentFolder: input.sourceAgentFolder,
+      requestId: input.request.requestId,
+      toolName: input.request.toolName,
+      reason: 'denied_by_profile',
+      accessPreset: lockStatus,
+    },
+    'Denied locked-agent permission IPC at parent boundary',
+  );
+  try {
+    await input.deps.publishRuntimeEvent?.({
+      appId: (input.request.appId ?? 'default') as never,
+      agentId: (input.request.agentId ??
+        memoryAgentIdForWorkspaceFolder(input.sourceAgentFolder)) as never,
+      runId: input.request.runId as never,
+      jobId: input.request.jobId as never,
+      conversationId: input.request.targetJid as never,
+      threadId: input.request.threadId as never,
+      eventType: RUNTIME_EVENT_TYPES.PERMISSION_DENIED,
+      actor: `agent:${input.sourceAgentFolder}`,
+      correlationId: input.request.requestId,
+      payload: {
+        requestId: input.request.requestId,
+        toolName: input.request.toolName,
+        reasonCode: 'denied_by_profile',
+        // 'unknown' marks a fail-closed denial: the settings desired state
+        // could not be read at decision time.
+        accessPreset: lockStatus,
+      },
+    });
+  } catch (err) {
+    input.logger.error(
+      {
+        err,
+        sourceAgentFolder: input.sourceAgentFolder,
+        requestId: input.request.requestId,
+      },
+      'Failed to publish denied_by_profile audit event',
+    );
+  }
+  writePermissionInteractionFailure({
+    ipcBaseDir: input.ipcBaseDir,
+    sourceAgentFolder: input.sourceAgentFolder,
+    requestId: input.request.requestId,
+    responseNonce: input.request.responseNonce,
+    threadId: input.request.threadId,
+    responseKeyId: input.request.responseKeyId,
+    reason:
+      lockStatus === 'locked'
+        ? 'denied_by_profile: this agent runs with a locked access preset. Permission prompts are disabled; provision the capability before the run.'
+        : 'denied_by_profile: agent access preset could not be verified; permission requests fail closed until runtime settings are readable.',
+    logger: input.logger,
+  });
+  archiveIpcErrorFile(
+    input.ipcBaseDir,
+    input.sourceAgentFolder,
+    input.file,
+    input.claimedPath,
+  );
 }
 
 function persistentPermissionScopeRequest(

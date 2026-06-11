@@ -83,6 +83,7 @@ export interface AgentRunnerToolAttemptOutput {
 export interface RunnerCapabilitiesForPermission {
   allowedTools: readonly string[];
   alwaysAllowedTools: readonly string[];
+  permissionMode: 'default' | 'deny';
 }
 
 export interface AgentRunnerRuntimeEventOutput {

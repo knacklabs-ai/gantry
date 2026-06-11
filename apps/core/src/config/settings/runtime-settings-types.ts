@@ -144,6 +144,8 @@ export interface RuntimeConfiguredAgentCapability {
   version: string;
 }
 
+export type AgentAccessPreset = 'full' | 'locked';
+
 export interface RuntimeConfiguredAgent {
   name: string;
   folder: string;
@@ -155,6 +157,7 @@ export interface RuntimeConfiguredAgent {
   bindings: Record<string, RuntimeConfiguredAgentBinding>;
   sources: RuntimeConfiguredAgentSources;
   capabilities: RuntimeConfiguredAgentCapability[];
+  accessPreset: AgentAccessPreset;
 }
 
 export interface RuntimeDesiredStateSettings {
@@ -179,6 +182,7 @@ export interface RuntimeQueueSettings {
   maxTaskBacklog: number;
   maxRetries: number;
   baseRetryMs: number;
+  drainDeadlineMs: number;
 }
 
 export interface RuntimeLiveTurnsSettings {

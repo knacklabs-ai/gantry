@@ -476,6 +476,7 @@ describe('contracts package', () => {
             maxTaskBacklog: 0,
             maxRetries: 0,
             baseRetryMs: 0,
+            drainDeadlineMs: 120000,
           },
           sandbox: {
             provider: 'sandbox_runtime',

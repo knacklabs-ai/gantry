@@ -8,6 +8,8 @@ afterEach(() => {
   vi.resetModules();
   vi.doUnmock('@core/cli/control-api.js');
   vi.doUnmock('@clack/prompts');
+  vi.doUnmock('@core/config/settings/runtime-settings.js');
+  vi.doUnmock('@core/config/settings/desired-settings-writer.js');
 });
 
 function mockClack(note?: ReturnType<typeof vi.fn>) {
@@ -220,5 +222,101 @@ describe('agent access CLI (runAccess)', () => {
     const { runAccess } = await import('@core/cli/group-access.js');
     expect(await runAccess('/tmp/gantry-access-test', ['apply', 'a1'])).toBe(1);
     expect(controlApiRequest).not.toHaveBeenCalled();
+  });
+});
+
+function lockedAgentSettings() {
+  return {
+    agents: {
+      support_agent: {
+        name: 'Support',
+        folder: 'support_agent',
+        bindings: {},
+        sources: { skills: [], mcpServers: [], tools: [] },
+        capabilities: [],
+        accessPreset: 'full' as const,
+      },
+    },
+  };
+}
+
+function mockSettingsWriters(
+  settings: ReturnType<typeof lockedAgentSettings>,
+  writeDesiredRuntimeSettings: ReturnType<typeof vi.fn>,
+) {
+  vi.doMock('@core/config/settings/runtime-settings.js', () => ({
+    loadRuntimeSettings: vi.fn(() => settings),
+  }));
+  vi.doMock('@core/config/settings/desired-settings-writer.js', () => ({
+    writeDesiredRuntimeSettings,
+  }));
+}
+
+describe('agent access preset CLI (runAccess preset)', () => {
+  it('writes the locked preset to settings.yaml via the desired-state writer', async () => {
+    mockClack();
+    vi.doMock('@core/cli/control-api.js', () => ({
+      controlApiRequest: vi.fn(),
+    }));
+    const writeDesiredRuntimeSettings = vi.fn(async () => ({
+      reconciled: true,
+    }));
+    mockSettingsWriters(lockedAgentSettings(), writeDesiredRuntimeSettings);
+    const { runAccess } = await import('@core/cli/group-access.js');
+
+    expect(
+      await runAccess('/tmp/gantry-access-test', [
+        'preset',
+        'support_agent',
+        'locked',
+      ]),
+    ).toBe(0);
+    expect(writeDesiredRuntimeSettings).toHaveBeenCalledTimes(1);
+    const written = writeDesiredRuntimeSettings.mock.calls[0]?.[0] as {
+      settings: { agents: Record<string, { accessPreset: string }> };
+    };
+    expect(written.settings.agents.support_agent.accessPreset).toBe('locked');
+  });
+
+  it('rejects an invalid preset value without writing', async () => {
+    mockClack();
+    vi.doMock('@core/cli/control-api.js', () => ({
+      controlApiRequest: vi.fn(),
+    }));
+    const writeDesiredRuntimeSettings = vi.fn(async () => ({
+      reconciled: true,
+    }));
+    mockSettingsWriters(lockedAgentSettings(), writeDesiredRuntimeSettings);
+    const { runAccess } = await import('@core/cli/group-access.js');
+
+    expect(
+      await runAccess('/tmp/gantry-access-test', [
+        'preset',
+        'support_agent',
+        'paranoid',
+      ]),
+    ).toBe(1);
+    expect(writeDesiredRuntimeSettings).not.toHaveBeenCalled();
+  });
+
+  it('returns 1 for an unknown agent without writing', async () => {
+    mockClack();
+    vi.doMock('@core/cli/control-api.js', () => ({
+      controlApiRequest: vi.fn(),
+    }));
+    const writeDesiredRuntimeSettings = vi.fn(async () => ({
+      reconciled: true,
+    }));
+    mockSettingsWriters(lockedAgentSettings(), writeDesiredRuntimeSettings);
+    const { runAccess } = await import('@core/cli/group-access.js');
+
+    expect(
+      await runAccess('/tmp/gantry-access-test', [
+        'preset',
+        'missing_agent',
+        'locked',
+      ]),
+    ).toBe(1);
+    expect(writeDesiredRuntimeSettings).not.toHaveBeenCalled();
   });
 });

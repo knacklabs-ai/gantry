@@ -54,6 +54,9 @@ export interface AgentCapabilityContext {
   attachedMcpSourceIds?: readonly string[];
   semanticCapabilities?: readonly SemanticCapabilityDefinition[];
   hideAuthorityTools?: boolean;
+  // Locked agents auto-deny permission prompts and never mount authority/admin
+  // tools. Default 'full' preserves today's behavior.
+  accessPreset?: 'full' | 'locked';
   ipcDir?: string;
   ipcAuthToken?: string;
   browserIpcAuthToken?: string;
@@ -86,7 +89,9 @@ export interface AgentCapabilityProfile {
   availableTools: readonly string[];
   disallowedTools: readonly string[];
   mcpServers: Record<string, McpServerConfig>;
-  permissionMode: 'default';
+  // 'deny' auto-denies any permission prompt for locked agents: they work only
+  // with pre-provisioned capabilities and never trigger an approval prompt.
+  permissionMode: 'default' | 'deny';
   alwaysAllowedTools: readonly string[];
 }
 
@@ -187,8 +192,8 @@ const sdkToolsProvider: AgentCapabilityProvider = {
 
 const permissionProvider: AgentCapabilityProvider = {
   id: 'permissions',
-  provide: () => ({
-    permissionMode: 'default',
+  provide: (ctx) => ({
+    permissionMode: ctx.accessPreset === 'locked' ? 'deny' : 'default',
     alwaysAllowedTools: [],
   }),
 };

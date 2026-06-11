@@ -776,6 +776,66 @@ describe('agent capability composition', () => {
     );
   });
 
+  it('denies permission prompts but keeps pre-provisioned skills and MCP tools for a locked agent', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'tg:support',
+      workspaceFolder: 'support_agent',
+      accessPreset: 'locked',
+      hideAuthorityTools: true,
+      attachedSkillSourceIds: ['skill:refunds'],
+      attachedMcpSourceIds: ['mcp:crm'],
+      externalMcpServers: {
+        crm: {
+          type: 'stdio',
+          command: 'node',
+          args: ['crm.js'],
+        },
+      },
+      externalMcpAllowedTools: ['mcp__crm__lookup_order'],
+      configuredAllowedTools: [
+        'mcp__gantry__request_access',
+        'mcp__gantry__request_skill_install',
+        'mcp__gantry__service_restart',
+      ],
+    });
+
+    // Locked agents auto-deny permission prompts.
+    expect(profile.permissionMode).toBe('deny');
+
+    // Authority/admin tools are never projected.
+    for (const toolName of NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES) {
+      expect(profile.allowedTools).not.toContain(
+        gantryMcpFullToolName(toolName),
+      );
+    }
+    expect(profile.allowedTools).not.toContain('mcp__gantry__service_restart');
+
+    // Pre-provisioned skill and MCP source projections still work.
+    expect(profile.mcpServers.crm).toBeDefined();
+    expect(profile.allowedTools).toContain('mcp__crm__lookup_order');
+    expect(profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILLS_JSON).toBe(
+      JSON.stringify(['skill:refunds']),
+    );
+    expect(
+      profile.mcpServers.gantry?.env?.GANTRY_SELECTED_MCP_SERVERS_JSON,
+    ).toBe(JSON.stringify(['mcp:crm']));
+
+    // Baseline messaging/profile-read tools still mount.
+    expect(profile.allowedTools).toContain('mcp__gantry__send_message');
+    expect(profile.allowedTools).toContain('mcp__gantry__agent_profile_read');
+  });
+
+  it('keeps the default permission mode for a full-preset agent', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      chatJid: 'tg:team',
+      workspaceFolder: 'telegram_team',
+      accessPreset: 'full',
+    });
+    expect(profile.permissionMode).toBe('default');
+  });
+
   it('does not expose raw runtime browser MCP servers as configured MCP input', () => {
     const hostPrivateServerName = `${'browser'}_${'backend'}`;
     const hiddenRuntimeServerName = `${'agent'}_${'browser'}`;

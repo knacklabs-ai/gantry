@@ -56,6 +56,12 @@ export const RuntimeSettingsConfiguredAgentCapabilitySchema = z
   })
   .strict();
 
+export const RuntimeSettingsConfiguredAgentAccessSchema = z
+  .object({
+    preset: z.enum(['full', 'locked']),
+  })
+  .strict();
+
 export const RuntimeSettingsConfiguredAgentSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -68,6 +74,7 @@ export const RuntimeSettingsConfiguredAgentSchema = z
     bindings: z.record(z.string(), RuntimeSettingsConfiguredAgentBindingSchema),
     sources: RuntimeSettingsConfiguredAgentSourcesSchema,
     capabilities: z.array(RuntimeSettingsConfiguredAgentCapabilitySchema),
+    access: RuntimeSettingsConfiguredAgentAccessSchema.optional(),
   })
   .strict();
 
@@ -165,6 +172,7 @@ export const RuntimeSettingsPublicSchema = z
             maxTaskBacklog: z.number().int().nonnegative(),
             maxRetries: z.number().int().nonnegative(),
             baseRetryMs: z.number().int().nonnegative(),
+            drainDeadlineMs: z.number().int().positive(),
           })
           .strict(),
         sandbox: z

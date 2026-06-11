@@ -255,6 +255,8 @@ export async function runQuery(
     attachedMcpSourceIds: agentInput.attachedMcpSourceIds,
     semanticCapabilities: agentInput.semanticCapabilities,
     hideAuthorityTools: agentInput.hideAuthorityTools === true,
+    accessPreset:
+      process.env.GANTRY_AGENT_ACCESS_PRESET === 'locked' ? 'locked' : 'full',
     ipcDir: process.env.GANTRY_IPC_DIR,
     ipcAuthToken: process.env.GANTRY_IPC_AUTH_TOKEN,
     browserIpcAuthToken: process.env.GANTRY_BROWSER_IPC_AUTH_TOKEN,
@@ -296,7 +298,13 @@ export async function runQuery(
         ? { pathToClaudeCodeExecutable: claudeCodeExecutable }
         : {}),
       ...(sdkFilesystemSandbox ? { sandbox: sdkFilesystemSandbox } : {}),
-      permissionMode: capabilities.permissionMode,
+      // Locked agents map to the SDK 'dontAsk' mode (deny if not pre-approved);
+      // the canUseTool gate auto-denies the prompt with "capability not
+      // provisioned" before any approval is requested.
+      permissionMode:
+        capabilities.permissionMode === 'deny'
+          ? 'dontAsk'
+          : capabilities.permissionMode,
       hooks: {
         PreToolUse: [
           {

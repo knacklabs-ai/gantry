@@ -50,6 +50,9 @@ export type RuntimeSettingsResponse = {
           skillIds: string[];
           mcpServerIds: string[];
         };
+        access?: {
+          preset: 'full' | 'locked';
+        };
       }
     >;
     memory: {
@@ -66,6 +69,7 @@ export type RuntimeSettingsResponse = {
         maxTaskBacklog: number;
         maxRetries: number;
         baseRetryMs: number;
+        drainDeadlineMs: number;
       };
       sandbox: {
         provider: 'direct' | 'sandbox_runtime';

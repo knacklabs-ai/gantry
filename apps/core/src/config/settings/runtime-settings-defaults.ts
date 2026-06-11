@@ -141,6 +141,7 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       maxTaskBacklog: 0,
       maxRetries: 5,
       baseRetryMs: 5000,
+      drainDeadlineMs: 120000,
     },
     liveTurns: {
       enabled: true,

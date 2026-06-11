@@ -9,6 +9,7 @@ import {
   getRuntimeSettingsForConfig,
   getEffectiveModelConfig,
 } from '../config/index.js';
+import { resolveAgentAccessPolicy } from '../config/profiles.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { ConversationRoute } from '../domain/types.js';
 import { MODEL_RUNTIME_CREDENTIAL_IDENTIFIER } from '../domain/models/credentials.js';
@@ -219,7 +220,12 @@ export async function spawnAgent(
   const browserIpcEnabled = (trustedToolPolicyRules ?? []).some(
     isCanonicalBrowserCapabilityRule,
   );
+  const agentAccessPolicy = resolveAgentAccessPolicy(
+    getRuntimeSettingsForConfig().agents?.[group.folder]?.accessPreset,
+  );
+  const isLockedAgent = agentAccessPolicy.preset === 'locked';
   const hideAuthorityTools =
+    isLockedAgent ||
     input.hideAuthorityTools === true ||
     process.env.GANTRY_NO_PERMISSION_TOOLS === '1';
   const runnerInput: RunnerAgentInput = {
@@ -540,6 +546,7 @@ export async function spawnAgent(
       GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
         input.memoryReviewerIsControlApprover ? '1' : '',
       GANTRY_NO_PERMISSION_TOOLS: hideAuthorityTools ? '1' : '',
+      GANTRY_AGENT_ACCESS_PRESET: agentAccessPolicy.preset,
       GANTRY_INTERACTIVE_PERMISSION_TIMEOUT_MS: String(
         PERMISSION_APPROVAL_TIMEOUT_MS,
       ),

@@ -144,6 +144,29 @@ export function createCanUseToolCallback(
     ...liveApprovedRules,
   ];
 
+  const lockedAccessPreset = input.capabilities.permissionMode === 'deny';
+  const denyLockedToolUse = (toolName: string) => {
+    const message =
+      'capability not provisioned: this agent runs with a locked access preset and cannot request new tools, skills, MCP servers, or permissions. Provision the capability before the run.';
+    log(`Permission auto-denied by locked access preset: tool=${toolName}`);
+    emitJobToolActivity(
+      input.agentInput,
+      input.getNewSessionId,
+      'deny',
+      toolName,
+      {
+        ok: false,
+        reason: message,
+        decision: 'denied_by_profile',
+      },
+    );
+    return {
+      behavior: 'deny' as const,
+      message,
+      interrupt: false,
+    };
+  };
+
   return async (toolName, rawToolInput, permissionOpts) => {
     input.recordToolActivity(toolName);
     emitJobToolActivity(
@@ -401,6 +424,9 @@ export function createCanUseToolCallback(
         log(`Autonomous run allowed tool ${toolName}: ${toolDecision.reason}`);
         return allowToolUse(toolDecision.reason);
       }
+      if (lockedAccessPreset) {
+        return denyLockedToolUse(toolName);
+      }
       if (permissionOpts.signal.aborted) {
         return {
           behavior: 'deny' as const,
@@ -572,6 +598,9 @@ export function createCanUseToolCallback(
         `Permission allowed for tool ${toolName}: ${currentToolDecision.reason}`,
       );
       return allowToolUse(currentToolDecision.reason);
+    }
+    if (lockedAccessPreset) {
+      return denyLockedToolUse(toolName);
     }
     if (permissionOpts.signal.aborted) {
       return {

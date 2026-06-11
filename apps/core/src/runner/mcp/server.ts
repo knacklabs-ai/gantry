@@ -67,6 +67,7 @@ export function createGantryMcpServer(): McpServer {
     process.env.GANTRY_MCP_TOOL_NAMES_JSON,
     process.env.GANTRY_ADMIN_MCP_TOOLS_JSON,
     process.env.GANTRY_NO_PERMISSION_TOOLS,
+    process.env.GANTRY_AGENT_ACCESS_PRESET === 'locked',
   );
   const registeredHandlers = new Set<string>();
   const filteredServer = filteredToolRegistrar(
@@ -92,21 +93,31 @@ export function effectiveEnabledMcpToolNames(
   rawToolNames: string | undefined,
   rawAdminToolNames: string | undefined,
   rawNoPermissionTools = process.env.GANTRY_NO_PERMISSION_TOOLS,
+  lockedPreset = process.env.GANTRY_AGENT_ACCESS_PRESET === 'locked',
 ): Set<string> {
-  const enabledTools = new Set(parseEnabledGantryMcpToolNames(rawToolNames));
+  const enabledTools = new Set(
+    parseEnabledGantryMcpToolNames(rawToolNames, { lockedPreset }),
+  );
   const selectedAdminTools = parseSelectedAdminMcpToolNames(rawAdminToolNames);
-  for (const toolName of selectedAdminTools) {
-    if (isAdminMcpToolName(toolName)) enabledTools.add(toolName);
+  // Locked agents never mount admin tools, even when capabilities selected them.
+  if (!lockedPreset) {
+    for (const toolName of selectedAdminTools) {
+      if (isAdminMcpToolName(toolName)) enabledTools.add(toolName);
+    }
   }
 
-  if (rawNoPermissionTools === '1') {
+  if (lockedPreset || rawNoPermissionTools === '1') {
     for (const toolName of NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES) {
       enabledTools.delete(toolName);
     }
     for (const toolName of ADMIN_MCP_TOOL_NAMES) {
       enabledTools.delete(toolName);
     }
-    for (const toolName of selectedAdminTools) enabledTools.add(toolName);
+    // Locked never restores admin tools; non-locked no-permission mode keeps the
+    // previously selected admin tools so admin agents stay functional.
+    if (!lockedPreset) {
+      for (const toolName of selectedAdminTools) enabledTools.add(toolName);
+    }
   }
   return enabledTools;
 }
