@@ -6,6 +6,7 @@ import {
   DATA_DIR,
   PERMISSION_APPROVAL_TIMEOUT_MS,
   TIMEZONE,
+  getDeploymentMode,
   getRuntimeSettingsForConfig,
   getEffectiveModelConfig,
 } from '../config/index.js';
@@ -197,6 +198,12 @@ export async function spawnAgent(
     fileArtifactStore: () => getRuntimeFileArtifactStore(),
   });
   const agentIdentifier = group.folder.toLowerCase().replace(/_/g, '-');
+  // The instruction projection follows the same resolved access policy as the
+  // tool surface: locked agents get the locked prompt fragments.
+  const agentAccessPolicy = resolveAgentAccessPolicy(
+    getRuntimeSettingsForConfig().agents?.[group.folder]?.accessPreset,
+  );
+  const isLockedAgent = agentAccessPolicy.preset === 'locked';
   let compiledSystemPrompt = '';
   try {
     compiledSystemPrompt = await promptProfileService.compileSystemPrompt({
@@ -204,6 +211,7 @@ export async function spawnAgent(
       persona: input.persona ?? group.agentConfig?.persona,
       appId: input.appId || DEFAULT_RUNNER_APP_ID,
       agentId: input.agentId || promptProfileAgentIdForFolder(group.folder),
+      accessPreset: agentAccessPolicy.preset,
     });
   } catch (err) {
     logger.warn(
@@ -220,10 +228,6 @@ export async function spawnAgent(
   const browserIpcEnabled = (trustedToolPolicyRules ?? []).some(
     isCanonicalBrowserCapabilityRule,
   );
-  const agentAccessPolicy = resolveAgentAccessPolicy(
-    getRuntimeSettingsForConfig().agents?.[group.folder]?.accessPreset,
-  );
-  const isLockedAgent = agentAccessPolicy.preset === 'locked';
   const hideAuthorityTools =
     isLockedAgent ||
     input.hideAuthorityTools === true ||
@@ -547,6 +551,7 @@ export async function spawnAgent(
         input.memoryReviewerIsControlApprover ? '1' : '',
       GANTRY_NO_PERMISSION_TOOLS: hideAuthorityTools ? '1' : '',
       GANTRY_AGENT_ACCESS_PRESET: agentAccessPolicy.preset,
+      GANTRY_DEPLOYMENT_MODE: getDeploymentMode(),
       GANTRY_INTERACTIVE_PERMISSION_TIMEOUT_MS: String(
         PERMISSION_APPROVAL_TIMEOUT_MS,
       ),

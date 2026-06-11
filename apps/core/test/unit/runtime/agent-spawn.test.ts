@@ -38,6 +38,7 @@ vi.mock('@core/config/index.js', () => ({
       ? { model: groupModel, source: 'conversation.agentConfig.model' }
       : { source: 'unset' },
   ),
+  getDeploymentMode: vi.fn(() => 'workstation'),
   getRuntimeSettingsForConfig: vi.fn(() => ({
     permissions: {
       yoloMode: {
@@ -217,6 +218,7 @@ import {
   AgentOutput,
 } from '@core/runtime/agent-spawn.js';
 import {
+  getDeploymentMode,
   getEffectiveModelConfig,
   getRuntimeSettingsForConfig,
 } from '@core/config/index.js';
@@ -972,6 +974,23 @@ describe('agent-spawn timeout behavior', () => {
     >;
     expect(env.GANTRY_AGENT_ACCESS_PRESET).toBe('full');
     expect(env.GANTRY_NO_PERMISSION_TOOLS).toBe('');
+    expect(env.GANTRY_DEPLOYMENT_MODE).toBe('workstation');
+  });
+
+  it('projects the fleet deployment mode into the runner env', async () => {
+    vi.mocked(getDeploymentMode).mockReturnValueOnce('fleet');
+    const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'started' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.GANTRY_DEPLOYMENT_MODE).toBe('fleet');
   });
 
   it('projects chat scope so spawned memory IPC signatures validate with runner context', async () => {
