@@ -30,8 +30,8 @@ export interface InstallShutdownHandlersOptions {
   closeMessagePolling?: () => void;
   closeLiveTurnAuthority?: () => Promise<void>;
   closeSettingsWatcher?: () => void;
-  /** Release the live-turn host lease EARLY so a successor can take over. */
-  closeLiveTurnHostLease?: () => Promise<void>;
+  /** Release the live-recovery-coordinator lease EARLY so a successor can take over. */
+  closeLiveRecoveryCoordinatorLease?: () => Promise<void>;
   /**
    * Stop fleet worker subsystems (bake queue, capability reconciler, settings
    * revision listener) after intake stops, so their background timers/LISTEN
@@ -103,11 +103,11 @@ export function installShutdownHandlers(
       'Failed to stop fleet subsystems during drain',
     );
 
-    // 3. Release the live-turn host lease EARLY so a successor live host can
+    // 3. Release the live-recovery-coordinator lease EARLY so a successor can
     //    acquire it and recover any turn this worker cannot finish in time.
     await runStep(
-      options.closeLiveTurnHostLease,
-      'Failed to release live-turn host lease during drain',
+      options.closeLiveRecoveryCoordinatorLease,
+      'Failed to release live-recovery-coordinator lease during drain',
     );
 
     // 4. Stdin-close active live/message runs so they finish naturally, then

@@ -40,7 +40,8 @@ export async function runLiveTurnRecoveryTick(input: {
   onTurnTimedOut?: (turn: LiveTurn) => Promise<void> | void;
   /**
    * Capability-matched recovery gate (fleet mode): whether THIS worker may
-   * recover `turn`. Absent ⇒ always eligible (single live host — unchanged).
+   * recover `turn`. Absent ⇒ always eligible (single-worker (workstation)
+   * deployment — unchanged).
    */
   isEligible?: (turn: LiveTurn) => boolean | Promise<boolean>;
   /**

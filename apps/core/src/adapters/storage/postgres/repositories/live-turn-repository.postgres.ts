@@ -510,6 +510,62 @@ export class PostgresLiveTurnRepository implements LiveTurnCoordinationRepositor
     return rows.map(toLiveTurn);
   }
 
+  async getOldestWaitingLiveAdmission(input: {
+    conversationJids: string[];
+    now?: string;
+  }): Promise<{
+    conversationJid: string;
+    threadId: string | null;
+    waitingSince: string;
+    ageSeconds: number;
+  } | null> {
+    if (input.conversationJids.length === 0) return null;
+    const now = input.now ?? currentIso();
+    // messages.conversation_id is `conversation:<jid>`; live_turns.conversation_id
+    // is the raw jid. A message waits when (a) no non-terminal turn covers its
+    // conversation AND (b) it arrived after that conversation's latest turn (or
+    // none ever existed). Newest-turn high-water mark per conversation makes
+    // already-handled history drop out without per-worker cursors. Conversation-
+    // level granularity: the waiting status is coarse and reverse-parsing
+    // canonical thread ids (whose chatJid can contain colons) is fragile.
+    const prefixed = sql.join(
+      input.conversationJids.map((jid) => sql`${`conversation:${jid}`}`),
+      sql`, `,
+    );
+    const result = await this.db.execute<{
+      conversation_id: string;
+      waiting_since: string;
+      age_seconds: number;
+    }>(sql`
+      SELECT m.conversation_id,
+             m.created_at AS waiting_since,
+             floor(extract(epoch FROM (${now}::timestamptz - m.created_at)))::int AS age_seconds
+      FROM messages m
+      WHERE m.conversation_id IN (${prefixed})
+        AND m.direction = 'inbound'
+        AND NOT EXISTS (
+          SELECT 1 FROM live_turns lt
+          WHERE 'conversation:' || lt.conversation_id = m.conversation_id
+            AND lt.state NOT IN ('completed', 'failed', 'timed_out')
+        )
+        AND m.created_at > COALESCE(
+          (SELECT max(lt2.created_at) FROM live_turns lt2
+           WHERE 'conversation:' || lt2.conversation_id = m.conversation_id),
+          '-infinity'::timestamptz
+        )
+      ORDER BY m.created_at ASC
+      LIMIT 1
+    `);
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      conversationJid: row.conversation_id.replace(/^conversation:/, ''),
+      threadId: null,
+      waitingSince: String(row.waiting_since),
+      ageSeconds: Number(row.age_seconds) || 0,
+    };
+  }
+
   async appendLiveTurnCommand(input: {
     id: string;
     liveTurnId: string;

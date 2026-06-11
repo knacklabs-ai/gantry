@@ -1,4 +1,20 @@
-# HANDOFF — deployment-modes branch (2026-06-11, updated same day after handoff continuation)
+# HANDOFF — deployment-modes branch (2026-06-11, updated 2026-06-12 after the process-roles + multi-live session)
+
+> 2026-06-12 session: the role split (`GANTRY_PROCESS_ROLE`: all|control|live-worker|job-worker)
+> AND the former Pending #4 (Phase 4 multi-live cutover) shipped — see
+> `docs/decisions/2026-06-12-process-roles-and-multi-live.md`. Live execution is
+> distributed across live workers (per-scope durable claims, per-worker
+> `live:messages:<workerId>` slots); the singleton live-host lease was replaced by a
+> recovery-coordinator lease. Compose/Terraform now deploy differentiated
+> control/live-worker/job-worker services. Adversarially reviewed by a three-lens
+> Opus panel (correctness/concurrency, security, completeness) — security CLEAN, all
+> confirmed findings fixed pre-commit. Gates at commit: build clean, full unit
+> 3653+/3653+, Postgres integration green on disposable pgvector (incl. the
+> two-process claim e2e), architecture findings exactly at the pre-existing 67
+> baseline (Pending #2 below still owns that debt). The Pending #1
+> live-horizontal-execution "prompt resolutions to the recovered owner" failure was
+> ROOT-CAUSED AND FIXED in this branch (pending-interaction re-prompt upsert
+> clobbered the stored callback route to null; now COALESCEd).
 
 Session handoff for continuing on another machine. Delete this file once the
 items below are absorbed into PRs/issues. Branch: `feature/deployment-modes`
@@ -48,7 +64,7 @@ first; single autoscaled pool; Go toolchain stays out of the image.
 
 ### 1. Pre-existing BASE-BRANCH defects (block merge gates; owned by `feature/mworker-01-safe-multi-worker-execution`, NOT this branch — both verified to fail with this branch's work stashed)
 - `apps/core/test/unit/runtime/message-loop.test.ts` "passes non-self sender ids with continuation batches" — fixed after closeout review by aligning the test with the cursor-carrying continuation contract.
-- `apps/core/test/integration/live-horizontal-execution.integration.test.ts` "delivers prompt resolutions to the recovered owner after adapter restart" — fails at base under Postgres; possible real durability bug (`interaction_resolved` command not enqueued after adapter restart + takeover). Ticket-worthy.
+- `apps/core/test/integration/live-horizontal-execution.integration.test.ts` "delivers prompt resolutions to the recovered owner after adapter restart" — FIXED in this branch (2026-06-12 session): the pending-interaction re-prompt upsert clobbered `callback_route_json` to null when the re-prompt omitted the route; the update now COALESCEs to preserve the durable route. Test green under Postgres.
 
 ### 2. Architecture-check debt (owned by THIS branch's Phases 2–3, pre-dates the continuation session)
 `python3 .codex/scripts/check_architecture.py` fails (boundary violations in
@@ -64,11 +80,11 @@ sanctioned exceptions in the checker config before merge.
 - Real AWS deploy has never been applied (terraform validate-only so far).
 - (The chaos-combo integration test and the two-process e2e from this list were built in the continuation session — `836c551f`. Note the e2e runs under `npm run test:e2e` (separate vitest config), which is not part of the default `npm test` gate; wire it into CI if the claim-protocol proof should gate merges.)
 
-### 4. Phase 4 (explicitly OUT of plan — future)
-Multi-live GroupQueue cutover (live chat horizontal scaling). Criteria recorded
-in `docs/decisions/2026-06-11-deployment-modes.md`; pull forward if a
-public-facing deployment expects real live-chat traffic. Browser profile
-snapshot/restore becomes necessary with it.
+### 4. Phase 4 — DONE (2026-06-12 session)
+Multi-live cutover shipped together with the process-role split; see the header
+note and `docs/decisions/2026-06-12-process-roles-and-multi-live.md`. The
+browser-profile snapshot/restore TODOS row is now ACTIVE (its trigger fired:
+browser-bearing turns can land on different live workers).
 
 ### 5. TODOS.md near-term flags (full list in TODOS.md, each with triggers)
 - Fleet container sandbox enablement (`sandbox_runtime` in Docker: seccomp/userns + doctor check) — REQUIRED before the first production fleet running public-facing agents; until then fleet keeps `runtime.sandbox.provider: direct`.

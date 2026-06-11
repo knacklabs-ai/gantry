@@ -119,3 +119,35 @@ describe('registerWorkerInstance image inventory', () => {
     expect(registered[0].capabilities).toEqual(['acme.records', 'browser']);
   });
 });
+
+describe('registerWorkerInstance process role', () => {
+  function makeRegistry(
+    captured: Array<{ processRole?: string }>,
+  ): WorkerRegistryRepository {
+    return {
+      registerWorker: async (input) => {
+        captured.push({ processRole: input.processRole });
+      },
+      heartbeatWorker: async () => true,
+      markStaleWorkersUnhealthy: async () => [],
+      listActiveWorkerCapabilities: async () => [],
+      getWorker: async () => null,
+      listWorkers: async () => [],
+      advertiseWorkerCapabilities: async () => true,
+    };
+  }
+
+  it('passes the supplied process role through to the registry', async () => {
+    const captured: Array<{ processRole?: string }> = [];
+    await registerWorkerInstance(makeRegistry(captured), {
+      processRole: 'job-worker',
+    });
+    expect(captured).toEqual([{ processRole: 'job-worker' }]);
+  });
+
+  it('defaults the process role to "all" when omitted', async () => {
+    const captured: Array<{ processRole?: string }> = [];
+    await registerWorkerInstance(makeRegistry(captured));
+    expect(captured).toEqual([{ processRole: 'all' }]);
+  });
+});

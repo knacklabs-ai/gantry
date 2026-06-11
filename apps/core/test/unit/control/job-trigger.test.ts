@@ -32,6 +32,7 @@ const browserMocks = vi.hoisted(() => ({
 vi.mock('@core/jobs/scheduler.js', () => ({
   enqueueJobTrigger: schedulerMocks.enqueueJobTrigger,
   isSchedulerReady: schedulerMocks.isSchedulerReady,
+  schedulerNotReadyReason: () => undefined,
   runtimeJobSchedulePlanner: {
     createManualJobId: () => 'job-test',
     createJobId: () => 'job-test',

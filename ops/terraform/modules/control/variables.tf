@@ -19,13 +19,16 @@ variable "control_port" {
   default     = 8080
 }
 
-variable "public_path_patterns" {
-  description = "Path patterns the PUBLIC listener forwards to workers (channel webhooks + public API). Operational endpoints (/metrics, /readyz, /healthz, and any admin paths) are deliberately excluded from the public listener — health endpoints are reachable only via the target-group health check, and /metrics stays internal."
+variable "api_path_patterns" {
+  description = "Path patterns the PUBLIC listener forwards to the CONTROL target group (admin/settings API, SDK session messages, external ingress). Only the control role serves these; worker roles 404 admin routes. Operational endpoints (/metrics, /readyz, /healthz) are deliberately excluded from the public listener — health endpoints are reachable only via the target-group health check, and /metrics stays internal."
   type        = list(string)
-  default = [
-    "/webhooks/*",
-    "/v1/*",
-  ]
+  default     = ["/v1/*"]
+}
+
+variable "webhook_path_patterns" {
+  description = "Path patterns the PUBLIC listener forwards to the LIVE target group (provider inbound webhooks). The live-worker role owns providerInbound. Most provider inbound is worker-initiated polling/socket (no ALB hop) today; this pattern is the correct home for HTTP webhook ingress as it lands."
+  type        = list(string)
+  default     = ["/webhooks/*"]
 }
 
 variable "health_check_path" {

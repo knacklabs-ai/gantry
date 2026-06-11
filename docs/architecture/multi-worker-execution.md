@@ -61,13 +61,36 @@ contract. Ownership of a live turn is keyed by the deterministic scope
 and prompt resolutions that land on a non-owner worker are appended to the
 owning turn's durable command inbox instead of mutating process-local state.
 
-The `runtime:live-turn-host:default` advisory lease and
-`runtime.live_turns.enabled` flag remain as a rollout guard: a runtime keeps
-the durable live-turn path behind that flag until the GroupQueue hot-path
-cutover is validated end-to-end. Scheduler-only workers set
-`runtime.live_turns.enabled: false` and initialize channel adapters in
-outbound-only mode for scheduler delivery; they do not acquire inbound provider
-polling/socket leases.
+Live execution is horizontally distributed (WP2): message polling, live-turn
+admission, and owned-turn execution run on EVERY live-capable worker (role
+`all`/`live-worker` with `runtime.live_turns.enabled`). The durable
+one-active-turn-per-scope claim (`uq_live_turns_active_scope`) is the only
+serialization point — a poller that loses the claim routes its message to the
+owning turn's command inbox instead of starting a second run. To avoid orphan
+`agent_run` rows under N pollers, admission does a cheap `getActiveLiveTurn`
+pre-check before minting a run, and terminal-marks any run that loses the
+residual claim race.
+
+Each live worker bounds its own concurrency with a per-worker slot key
+`live:messages:<workerInstanceId>` (capacity `runtime.queue.max_message_runs`);
+in workstation mode the single worker is the only holder, so the bound is
+identical to before.
+
+The `runtime:live-recovery-coordinator:default` advisory lease elects a SINGLE
+recovery coordinator. It no longer gates polling or admission — it gates only
+startup pending-message recovery and the periodic recovery sweep. Recovered
+turns resume on the coordinator under a strictly higher fencing version; if the
+coordinator lacks slot capacity for a turn, that turn defers to the next sweep.
+The `runtime.live_turns.enabled` flag remains the global rollout guard.
+
+Provider inbound is single-flighted per connection: polling transports (e.g.
+Telegram `getUpdates`) acquire a per-bot advisory lease
+(`telegram:poll:<botTokenHash>`) so exactly one live worker long-polls a given
+connection at a time, while the DB-persisted messages it ingests are admitted by
+ANY live worker through the distributed polling loop. Push/webhook transports
+(Slack Socket Mode, Teams SDK) need no such lease. Scheduler-only and control
+workers set `providerInbound: false` and connect channels outbound-only, so they
+never acquire inbound provider polling/socket leases.
 
 ## Permission durability
 

@@ -24,15 +24,31 @@ you provision the API key change.
   skill/dependency installs, `settings.yaml` watched on disk. The SDK reaches the
   control API over a **Unix domain socket** (set `socketPath`); loopback TCP is
   available when a control port is configured.
-- **Separated-to-scale (fleet).** Gantry runs as N immutable worker
+- **Separated-to-scale (fleet).** Gantry runs as immutable worker
   processes/machines behind an ALB, against RDS Postgres + S3, with desired state
   distributed through the control API. This is `runtime.deployment_mode: fleet` —
-  horizontal scale, availability via lease failover, no package manager on
-  workers. The SDK reaches the control API over **HTTPS through the ALB**
-  (set `baseUrl`); there is no Unix socket to share across machines.
+  horizontal scale, availability via distributed live execution, no package
+  manager on workers. The SDK reaches the control API over **HTTPS through the
+  ALB** (set `baseUrl`); there is no Unix socket to share across machines.
 
-Switching shapes is a config + base-URL change, not a code change. Which axis to
-scale on, and when to move from workstation to fleet, is the
+In the fleet shape the one image runs as differentiated **process roles**
+(deployment-owned env `GANTRY_PROCESS_ROLE`):
+
+- **`control`** serves the full admin/settings API plus SDK session messages and
+  external ingress (the `/v1/*` surface). **Point `baseUrl` at the control plane**
+  — that is where the SDK's authenticated calls go. The ALB forwards `/v1/*` to
+  control automatically; you target the ALB host.
+- **`live-worker` and `job-worker`** serve **ops-only** routes (`/healthz`,
+  `/readyz`, `/metrics`, and read-only `/v1/status`, `/v1/health`, `/v1/doctor`);
+  every admin/mutation route 404s on them. They are not an SDK base URL. Live
+  workers run distributed live execution; job workers run the scheduler + bakes.
+- **`all`** (workstation default) is every role in one process — the SDK targets
+  that one process.
+
+So a fleet SDK client always points at the ALB (which routes `/v1/*` to control);
+you never point it directly at a worker role. Switching shapes is a config +
+base-URL change, not a code change. Which axis to scale on, and when to move from
+workstation to fleet, is the
 [Scaling Decision Guide](../architecture/deployment-profiles.md#scaling-decision-guide-vertical-vs-horizontal).
 To stand up a fleet or locked support stack on AWS, follow the
 [AWS Terraform runbook](../deployment/aws-terraform.md).

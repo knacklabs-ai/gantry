@@ -235,6 +235,24 @@ export interface LiveTurnRepository {
     limit: number;
     now?: string;
   }): Promise<LiveTurn[]>;
+  /**
+   * The oldest inbound live message in the given routed conversations that is
+   * NOT yet being handled by a live turn: it arrived after that conversation's
+   * latest live turn (or no turn ever existed) AND no non-terminal turn covers
+   * the conversation right now. This is the cross-worker "waiting for capacity"
+   * signal — when capacity is free a turn is created near-instantly and advances
+   * past these messages, so a non-trivial age means messages are queued behind a
+   * saturated fleet. Single ordered statement, limit 1; null when nothing waits.
+   */
+  getOldestWaitingLiveAdmission(input: {
+    conversationJids: string[];
+    now?: string;
+  }): Promise<{
+    conversationJid: string;
+    threadId: string | null;
+    waitingSince: string;
+    ageSeconds: number;
+  } | null>;
 }
 
 export interface LiveTurnCommandRepository {

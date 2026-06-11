@@ -1,16 +1,42 @@
-# Local fleet rehearsal — exercises the fleet topology on one machine:
+# Local fleet rehearsal — exercises the role-differentiated fleet topology on one
+# machine:
 #   Postgres (same extension/role bootstrap as the root compose)
-#   + N identical workers from the built runtime image, migrating via the
-#   entrypoint and health-checked on /readyz. The live-turn host lease elects
-#   which worker hosts live turns; the rest are standbys + job capacity.
+#   + MinIO (S3-compatible artifact store)
+#   + one control process, N live-workers, and N job-workers, all from the same
+#   built runtime image, differentiated only by GANTRY_PROCESS_ROLE, and
+#   health-checked on /readyz.
+#
+# One image, many roles (deployment-owned env GANTRY_PROCESS_ROLE):
+#   control      full admin/settings API + channels outbound-only; runs no live
+#                or job execution, no bakes; does NOT register as a worker.
+#   live-worker  live admission/execution + provider inbound + chat delivery;
+#                ops-only API (healthz/readyz/metrics + read-only status/health/
+#                doctor; admin routes 404); no scheduler, no bakes.
+#   job-worker   scheduler + bakes + job-notification delivery; channels
+#                outbound-only; ops-only API; no live admission.
+# Live execution is horizontally distributed: every live-worker polls messages
+# and admits live turns; max_message_runs is per-live-worker capacity, so adding
+# live-workers adds chat capacity linearly. See
+# docs/architecture/live-horizontal-execution.md.
 #
 # This is NOT the workstation compose. The root docker-compose.yml (Postgres
 # only, for local dev) is unchanged. Run this from the repo root:
 #
 #   docker compose -f ops/docker/docker-compose.fleet.yml up --build
-#   docker compose -f ops/docker/docker-compose.fleet.yml up --build --scale worker=2
 #
-# See docs/deployment/aws-terraform.md (Local Fleet Rehearsal) for the walkthrough.
+#   # Scale the worker roles independently (the rehearsal command):
+#   docker compose -f ops/docker/docker-compose.fleet.yml up --build \
+#     --scale live-worker=3 --scale job-worker=2
+#
+# Migrations run from ONE service by design (control, see GANTRY_SKIP_MIGRATIONS
+# below). The settings-seed one-shot migrates the schema first; the entrypoint
+# advisory lock makes concurrent migration safe regardless, so this is a
+# deliberate "single explicit migrator" choice, not a correctness requirement.
+#
+# Only control publishes a host port (admin/API). Worker replicas take no host
+# port (they would collide under --scale) and are reachable on the internal
+# network or via `docker compose ... exec`. See
+# docs/deployment/aws-terraform.md (Local Fleet Rehearsal) for the walkthrough.
 
 name: gantry-fleet
 
@@ -25,13 +51,13 @@ x-worker-base: &worker-base
       condition: service_healthy
     minio-bootstrap:
       condition: service_completed_successfully
-    # Workers only boot after desired state is seeded: the seed service writes a
-    # fleet-marked settings.yaml into the shared gantry-home volume and appends
+    # All roles only boot after desired state is seeded: the seed service writes
+    # a fleet-marked settings.yaml into the shared gantry-home volume and appends
     # revision 1, so /readyz can go green (ADR-3 fleet boot).
     settings-seed:
       condition: service_completed_successfully
   # Shared runtime home: the seed writes settings.yaml here (declaring
-  # runtime.deployment_mode: fleet) and every worker reads it.
+  # runtime.deployment_mode: fleet) and every process reads it.
   volumes:
     - gantry-fleet-home:/var/lib/gantry
   environment: &worker-env
@@ -39,7 +65,7 @@ x-worker-base: &worker-base
     # Security posture (production|remote). Fleet topology requires production
     # posture; the fleet/workstation topology itself is the runtime.deployment_mode
     # settings key, seeded into desired state (see the seed step below), not an
-    # env var.
+    # env var. The process role is GANTRY_PROCESS_ROLE, set per service below.
     GANTRY_SECURITY_POSTURE: production
     # Runtime DB role (runtime URL). The migration role can differ via
     # MIGRATION_DATABASE_URL; here we use one role for rehearsal simplicity.
@@ -59,6 +85,12 @@ x-worker-base: &worker-base
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-gantry_minio}
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-gantry_minio_password}
     AWS_REGION: ${GANTRY_ARTIFACT_S3_REGION:-us-east-1}
+    # One explicit migrator: control migrates (GANTRY_SKIP_MIGRATIONS=0); the
+    # worker roles skip the explicit pass and override this to '1' below. The
+    # runtime boot-time migrate() still takes the same advisory lock on every
+    # role, so this only avoids redundant explicit passes — it is never a
+    # correctness dependency.
+    GANTRY_SKIP_MIGRATIONS: '1'
   healthcheck:
     # Readiness gates traffic: 503 while migrations/settings load or while draining.
     test:
@@ -122,7 +154,7 @@ services:
       timeout: 3s
       retries: 30
 
-  # One-shot bucket bootstrap: create the artifact bucket, then exit. Workers
+  # One-shot bucket bootstrap: create the artifact bucket, then exit. All roles
   # wait on service_completed_successfully before booting.
   minio-bootstrap:
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
@@ -139,10 +171,12 @@ services:
         && mc mb --ignore-existing "local/${GANTRY_ARTIFACT_S3_BUCKET:-gantry-artifacts}"
 
   # One-shot desired-state seed. Writes a fleet-marked settings.yaml into the
-  # shared gantry-home volume, then appends revision 1 via `gantry settings
-  # import --fleet`. Workers wait on this completing so /readyz can go green.
-  # Replace the heredoc settings.yaml with your real desired state (agents,
-  # providers, conversations) before a real deployment.
+  # shared gantry-home volume, migrates the schema, then appends revision 1 via
+  # `gantry settings import --fleet`. All roles wait on this completing so
+  # /readyz can go green. This is the one service that always migrates (it must,
+  # to import settings into a migrated schema). Replace the heredoc settings.yaml
+  # with your real desired state (agents, providers, conversations) before a real
+  # deployment.
   settings-seed:
     <<: *worker-base
     restart: 'no'
@@ -176,20 +210,44 @@ services:
         node /app/ops/docker/migrate.mjs;
         node /app/dist/cli/index.js settings import --file /var/lib/gantry/settings.yaml --fleet
 
-  # Identical workers — one pool. The live-turn host lease elects which replica
-  # hosts live turns; the others are warm standbys + job capacity. Scale with:
-  # --scale worker=N (the advisory lock makes concurrent boot migrations safe).
-  # The host-port range maps each replica's control port to the next free port
-  # (first replica is usually 127.0.0.1:8080).
-  worker:
+  # Control plane: full admin/settings API. Channels connect outbound-only; it
+  # runs no live or job execution and no bakes, and does not register as a worker
+  # instance. This is the single service whose control port is published for
+  # admin/API access during rehearsal, and the single explicit migrator
+  # (GANTRY_SKIP_MIGRATIONS=0). It depends on settings-seed (which already
+  # migrated), so its explicit pass is an idempotent, lock-safe no-op — a
+  # deliberate "one owner" choice. Not scaled (one control plane).
+  control:
     <<: *worker-base
     environment:
       <<: *worker-env
-      # Every worker migrates under the advisory lock (idempotent);
-      # GANTRY_SKIP_MIGRATIONS=1 skips the explicit pass if preferred.
+      GANTRY_PROCESS_ROLE: control
       GANTRY_SKIP_MIGRATIONS: '0'
     ports:
-      - '127.0.0.1:8080-8089:8080'
+      - '127.0.0.1:8080:8080'
+
+  # Live workers: live admission/execution + provider inbound + chat delivery.
+  # Ops-only API (admin routes 404). Live execution is horizontally distributed
+  # — every live-worker polls messages and admits live turns; per-worker slot
+  # capacity is runtime.queue.max_message_runs, so chat capacity scales with the
+  # replica count. Scale with --scale live-worker=N (no host port: replicas would
+  # collide; reach them on the internal network or via `docker compose exec`).
+  live-worker:
+    <<: *worker-base
+    environment:
+      <<: *worker-env
+      GANTRY_PROCESS_ROLE: live-worker
+
+  # Job workers: scheduler + bakes + job-notification delivery. Channels connect
+  # outbound-only; ops-only API; no live admission. Jobs are claimable by any
+  # job-worker (run-lease + fencing), so this scales horizontally for job/bake
+  # throughput. Scale with --scale job-worker=N (no host port, same reason as
+  # live-worker).
+  job-worker:
+    <<: *worker-base
+    environment:
+      <<: *worker-env
+      GANTRY_PROCESS_ROLE: job-worker
 
 volumes:
   gantry-fleet-pgdata:

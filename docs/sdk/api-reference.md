@@ -51,17 +51,42 @@ metrics. They are **unauthenticated by design** and carry no `/v1` prefix:
 | Endpoint | Returns |
 |---|---|
 | `GET /healthz` | `200 {"status":"ok"}` — process is up. |
-| `GET /readyz` | `200` when DB-migrated, settings loaded, and not draining; `503` with `{ status, checks, failing }` while starting or draining. |
+| `GET /readyz` | `200` when DB-migrated, settings loaded, and not draining; `503` with `{ status, checks, failing }` while starting or draining. Carries a top-level `role` and role-specific checks (below). |
 | `GET /metrics` | Prometheus text exposition (`text/plain; version=0.0.4`). |
 
 They are internal-only and **must not be exposed on the public ALB listener**.
-In the fleet shape the ALB serves only webhook/API paths; verify health from
-inside the VPC against a worker's control port (the ASG health check and the
-on-instance drain hook consume `/readyz`). See the
-[AWS Terraform runbook](../deployment/aws-terraform.md) health-verification step.
-These differ from the authenticated `GET /v1/health` and `GET /v1/doctor`
-(`sessions:read`), which the SDK exposes as `client.health()` and
-`client.doctor()`.
+In the fleet shape the ALB routes `/v1/*` to the control pool and `/webhooks/*`
+to the live pool; verify health from inside the VPC against a member's control
+port (the ASG health check and the on-instance drain hook consume `/readyz`). See
+the [AWS Terraform runbook](../deployment/aws-terraform.md) health-verification
+step.
+
+These ops endpoints are the only routes worker roles (`live-worker`,
+`job-worker`) serve besides the read-only `GET /v1/status`, `GET /v1/health`, and
+`GET /v1/doctor`; every admin/mutation `/v1/*` route 404s on a worker role. SDK
+admin/session calls go to the control role.
+
+**Role-aware `/readyz`.** On top of the shared `database`/`migrations`/`settings`/
+`draining` checks, `/readyz` carries a top-level `role`
+(`all|control|live-worker|job-worker`) and role-specific checks:
+
+- `control` adds `api_auth` (control API keys configured).
+- `live-worker` adds `worker_registered` and `live_capacity`
+  (`"available"|"saturated"`). Saturation is **reported, never failed** — a busy
+  live worker stays ready.
+- `job-worker` adds `worker_registered` and `scheduler` (the scheduler loop is
+  claiming).
+- `all` carries only the shared checks.
+
+**Role/live gauges on `/metrics`** (alongside the existing `gantry_*` gauges):
+`gantry_process_role{role}`, `gantry_live_turns_active`,
+`gantry_live_slots_used_cluster`, `gantry_live_turns_recoverable`, and
+`gantry_live_oldest_waiting_seconds` (the horizontal-live-pool scale signal).
+
+The authenticated `GET /v1/health` and `GET /v1/doctor` (`sessions:read`) — which
+the SDK exposes as `client.health()` and `client.doctor()` — are served by every
+role (read-only). `GET /v1/health` carries `processRole` so a client can confirm
+which role answered.
 
 ## Settings
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { runLiveTurnRecoveryTick } from '@core/runtime/live-turn-recovery.js';
-import { claimLiveTurnExecution } from '@core/application/live-turns/live-turn-lease-service.js';
+import {
+  claimLiveTurnExecution,
+  liveTurnSlotKey,
+} from '@core/application/live-turns/live-turn-lease-service.js';
 import type {
   LiveTurn,
   LiveTurnCoordinationRepository,
@@ -238,23 +241,21 @@ describe('runLiveTurnRecoveryTick', () => {
       runId: 'run-1',
       conversationId: 'tg:capacity-1',
     });
-    await claimCrashedTurn({
-      deps: ctx,
-      turnId: 'turn-2',
-      runId: 'run-2',
-      conversationId: 'tg:capacity-2',
-    });
-    // Capacity 1: the crashed owners' stale holds were never released, so
-    // simulate the slot table being full for new generations.
+    // Per-worker slot keys (WP2): capacity bounds the RECOVERING worker (w2),
+    // not the cluster. The crashed owner's stale holds live under w1's key and
+    // never consume w2's capacity. Saturate w2's own key so the recovery
+    // generation cannot acquire a slot and the sweep defers.
+    ctx.coordination.slots.set(
+      liveTurnSlotKey('w2'),
+      new Set(['existing-turn:1']),
+    );
     const result = await runLiveTurnRecoveryTick({
       deps: ctx.deps,
       resumeRecoveredTurn: async () => undefined,
-      slotCapacity: 2,
+      slotCapacity: 1,
       leaseTtlMs: 60_000,
       unleasedStaleMs: 300_000,
     });
-    // Two stale generation holds exist (one per crashed claim); capacity 2
-    // admits no recovery generation, so the sweep reports exhaustion.
     expect(result.capacityExhausted).toBe(true);
     expect(result.recovered).toBe(0);
   });

@@ -115,6 +115,16 @@ export async function startFleetSubsystems(input: {
   pool: Pool;
   /** Best-effort delivery for bake outcome notices to the approval conversation. */
   sendMessage: (conversationJid: string, text: string) => Promise<void>;
+  /**
+   * Whether this process role runs the toolchain bake queue + reaper (all,
+   * job-worker). Defaults true so existing fleet callers are unchanged.
+   */
+  bakeExecution?: boolean;
+  /**
+   * Whether this process role materializes/advertises capabilities via the
+   * worker capability reconciler (all, live-worker, job-worker). Defaults true.
+   */
+  capabilityReconciliation?: boolean;
   /** Whether a settings revision was applied at boot (prepareFleetSettings). */
   settingsLoaded: boolean;
   /** Released once, with the held subsystems, on the first applied revision. */
@@ -122,15 +132,22 @@ export async function startFleetSubsystems(input: {
 }): Promise<FleetSubsystems> {
   const storage = getRuntimeStorage();
   const workerInstanceId = currentWorkerInstanceId() ?? `fleet-${process.pid}`;
+  const bakeExecution = input.bakeExecution ?? true;
+  const capabilityReconciliation = input.capabilityReconciliation ?? true;
 
   let bakeQueueStarted = false;
   let reconciler: WorkerCapabilityReconciler | undefined;
+  let capabilitySubsystemsStarted = false;
   const startCapabilitySubsystems = async (): Promise<void> => {
-    if (bakeQueueStarted || reconciler) return;
-    bakeQueueStarted =
-      (await startToolchainBakeSubsystem({
-        outcomeNotice: buildBakeOutcomeNotice(input.sendMessage),
-      })) !== null;
+    if (capabilitySubsystemsStarted) return;
+    capabilitySubsystemsStarted = true;
+    if (bakeExecution) {
+      bakeQueueStarted =
+        (await startToolchainBakeSubsystem({
+          outcomeNotice: buildBakeOutcomeNotice(input.sendMessage),
+        })) !== null;
+    }
+    if (!capabilityReconciliation) return;
     reconciler = new WorkerCapabilityReconciler({
       appId: input.appId,
       workerInstanceId,
@@ -177,7 +194,7 @@ export async function startFleetSubsystems(input: {
     reloadRuntimeState: () => input.app.loadState(),
     onFirstRevisionApplied: async () => {
       // No-op when everything already started at boot (settingsLoaded).
-      if (bakeQueueStarted || reconciler) return;
+      if (capabilitySubsystemsStarted) return;
       // A revision NOTIFY can land mid-drain, after shutdown stopped the
       // scheduler but before it tears down this listener. Do not re-arm the
       // held scheduler/capability subsystems on an instance the ALB already

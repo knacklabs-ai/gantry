@@ -313,6 +313,67 @@ describe('startFleetSubsystems', () => {
     }
   });
 
+  it('job-worker role starts the bake queue + reconciler', async () => {
+    latest.current = revisionRow(1);
+    const subsystems = await startFleetSubsystems({
+      app: fakeApp,
+      appId: 'default' as never,
+      runtimeHome: '/tmp/gantry-fleet',
+      pool: {} as never,
+      sendMessage: async () => {},
+      bakeExecution: true,
+      capabilityReconciliation: true,
+      settingsLoaded: true,
+    });
+    try {
+      expect(bakeMock.start).toHaveBeenCalledOnce();
+      expect(reconcilerInstances).toHaveLength(1);
+    } finally {
+      await subsystems.stop();
+    }
+  });
+
+  it('live-worker role runs the reconciler but NOT the bake queue', async () => {
+    latest.current = revisionRow(1);
+    const subsystems = await startFleetSubsystems({
+      app: fakeApp,
+      appId: 'default' as never,
+      runtimeHome: '/tmp/gantry-fleet',
+      pool: {} as never,
+      sendMessage: async () => {},
+      bakeExecution: false,
+      capabilityReconciliation: true,
+      settingsLoaded: true,
+    });
+    try {
+      expect(bakeMock.start).not.toHaveBeenCalled();
+      expect(reconcilerInstances).toHaveLength(1);
+    } finally {
+      await subsystems.stop();
+    }
+  });
+
+  it('control role runs neither bake nor reconciler, only the revision listener', async () => {
+    latest.current = revisionRow(1);
+    const subsystems = await startFleetSubsystems({
+      app: fakeApp,
+      appId: 'default' as never,
+      runtimeHome: '/tmp/gantry-fleet',
+      pool: {} as never,
+      sendMessage: async () => {},
+      bakeExecution: false,
+      capabilityReconciliation: false,
+      settingsLoaded: true,
+    });
+    try {
+      expect(bakeMock.start).not.toHaveBeenCalled();
+      expect(reconcilerInstances).toHaveLength(0);
+      expect(subsystems.settingsRevisionListener).toBeDefined();
+    } finally {
+      await subsystems.stop();
+    }
+  });
+
   it('starts capability subsystems immediately when settings were loaded at boot', async () => {
     latest.current = revisionRow(1);
     const onSettingsReady = vi.fn();

@@ -653,11 +653,20 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       expiresAt: toIso(nowMs() + 60_000),
     });
     expect(reprompted.id).toBe('interaction-1');
+    // The re-prompt omitted callbackRoute; the durable record must KEEP the
+    // route the original prompt recorded (COALESCE), or interaction resolution
+    // can no longer reach the owning live turn after a restart + takeover.
+    expect(reprompted.callbackRoute).toEqual({
+      targetJid: 'tg:worker-coordination',
+    });
 
     const pending = await coordination.listPendingInteractions({
       appId: 'default',
     });
     expect(pending.map((row) => row.id)).toContain('interaction-1');
+    expect(
+      pending.find((row) => row.id === 'interaction-1')?.callbackRoute,
+    ).toEqual({ targetJid: 'tg:worker-coordination' });
 
     await expect(
       coordination.resolvePendingInteraction({
@@ -850,6 +859,28 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         ttlMs: 60_000,
       }),
     ).resolves.toBe(true);
+  });
+
+  it('round-trips the process role and defaults it to "all"', async () => {
+    await coordination.registerWorker({
+      id: 'w-role-default',
+      bootNonce: 'nonce-role-default',
+    });
+    await coordination.registerWorker({
+      id: 'w-role-job',
+      bootNonce: 'nonce-role-job',
+      processRole: 'job-worker',
+    });
+
+    const defaulted = await coordination.getWorker('w-role-default');
+    const jobWorker = await coordination.getWorker('w-role-job');
+    expect(defaulted?.processRole).toBe('all');
+    expect(jobWorker?.processRole).toBe('job-worker');
+
+    const listed = await coordination.listWorkers();
+    expect(listed.find((w) => w.id === 'w-role-job')?.processRole).toBe(
+      'job-worker',
+    );
   });
 
   it('worker heartbeats gate health; lapsed workers go unhealthy', async () => {

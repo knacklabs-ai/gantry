@@ -7,13 +7,20 @@ import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provi
 import { parseThreadQueueKey } from '../../shared/thread-queue-key.js';
 import { buildLiveTurnContinuation } from './live-turn-continuation.js';
 
-export const LIVE_TURN_HOST_LEASE_KEY = 'runtime:live-turn-host:default';
+/**
+ * WP2: the singleton lease is now a RECOVERY COORDINATOR election, not a live
+ * host election. Message polling and live-turn admission run on every live
+ * worker (distributed); only startup pending-message recovery and the periodic
+ * recovery sweep are gated by this lease so they run on exactly one worker.
+ */
+export const LIVE_RECOVERY_COORDINATOR_LEASE_KEY =
+  'runtime:live-recovery-coordinator:default';
 
 /** Bounded exponential backoff for the standby acquirer loop. */
-export const LIVE_TURN_HOST_LEASE_BASE_BACKOFF_MS = 1_000;
-export const LIVE_TURN_HOST_LEASE_MAX_BACKOFF_MS = 30_000;
+export const LIVE_RECOVERY_COORDINATOR_LEASE_BASE_BACKOFF_MS = 1_000;
+export const LIVE_RECOVERY_COORDINATOR_LEASE_MAX_BACKOFF_MS = 30_000;
 
-export interface LiveTurnHostLeasePort {
+export interface LiveRecoveryCoordinatorLeasePort {
   tryAcquire: (key: string) => Promise<RuntimeLease | undefined>;
 }
 
@@ -25,24 +32,25 @@ interface LiveTurnRuntimeSettings {
   };
 }
 
-export interface LiveTurnHostTransitionHandlers {
-  /** Fired each time this worker acquires the live-host lease (boot or takeover). */
+export interface LiveRecoveryCoordinatorTransitionHandlers {
+  /** Fired each time this worker acquires the coordinator lease (boot or takeover). */
   onAcquired: (lease: RuntimeLease) => void;
   /** Fired when a held lease is lost; the manager re-enters standby acquisition. */
   onLost: (err: Error) => void;
 }
 
-export interface LiveTurnHostLeaseManager {
+export interface LiveRecoveryCoordinatorLeaseManager {
   /** Resolves on the FIRST acquisition, or undefined when live turns are disabled. */
   whenAcquired: () => Promise<RuntimeLease | undefined>;
-  /** The current lease if this worker owns live turns, otherwise undefined. */
+  /** The current lease if this worker is the recovery coordinator, otherwise undefined. */
   getLease: () => RuntimeLease | undefined;
   /**
-   * Register the single transition consumer that starts/stops the live-host
-   * services. If the lease is already held at registration, onAcquired fires
-   * immediately (replay), so registration order does not race acquisition.
+   * Register the single transition consumer that starts/stops the recovery
+   * coordinator services. If the lease is already held at registration,
+   * onAcquired fires immediately (replay), so registration order does not race
+   * acquisition.
    */
-  onTransition: (handlers: LiveTurnHostTransitionHandlers) => void;
+  onTransition: (handlers: LiveRecoveryCoordinatorTransitionHandlers) => void;
   /** Stop the standby acquirer and release the lease if held (drain handoff). */
   stop: () => Promise<void>;
 }
@@ -52,7 +60,7 @@ interface AcquisitionLogger {
   warn: (obj: Record<string, unknown>, msg: string) => void;
 }
 
-interface StartLiveTurnHostLeaseAcquisitionDeps {
+interface StartLiveRecoveryCoordinatorLeaseAcquisitionDeps {
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
   random?: () => number;
@@ -62,38 +70,50 @@ interface StartLiveTurnHostLeaseAcquisitionDeps {
 }
 
 /**
- * Acquire the singleton live-turn host lease without blocking the rest of
- * startup. Fleet v1 runs 1 live host + N job workers, so a standby worker that
- * loses the race for the lease must boot fine as a job-only worker and keep
- * retrying. When the current holder drains and releases the lease, a standby
- * acquirer takes it over. Acquisition never throws and never blocks; callers
- * await {@link LiveTurnHostLeaseManager.whenAcquired} only where they actually
- * need ownership.
+ * Acquire the singleton live-recovery-coordinator lease without blocking the
+ * rest of startup. WP2: every live worker polls and admits turns; this lease
+ * elects only the single worker that runs recovery (startup pending-message
+ * recovery + the periodic recovery sweep). A worker that loses the race boots
+ * fine and keeps retrying; when the holder drains and releases, a standby
+ * acquirer takes over. Acquisition never throws and never blocks; callers await
+ * {@link LiveRecoveryCoordinatorLeaseManager.whenAcquired} only where they
+ * actually need to be the coordinator.
  */
-export function startLiveTurnHostLeaseAcquisition(input: {
+export function startLiveRecoveryCoordinatorLeaseAcquisition(input: {
   runtimeSettings: LiveTurnRuntimeSettings;
-  leases: LiveTurnHostLeasePort;
-  deps?: StartLiveTurnHostLeaseAcquisitionDeps;
-}): LiveTurnHostLeaseManager {
+  leases: LiveRecoveryCoordinatorLeasePort;
+  /**
+   * Whether this process role runs live execution. Defaults to true so
+   * single-host embeddings/tests are unchanged. A role without live execution
+   * (control, job-worker) never acquires the coordinator lease.
+   */
+  liveExecutionEnabled?: boolean;
+  deps?: StartLiveRecoveryCoordinatorLeaseAcquisitionDeps;
+}): LiveRecoveryCoordinatorLeaseManager {
   const deps = input.deps ?? {};
+  const liveExecutionEnabled = input.liveExecutionEnabled ?? true;
   const setTimeoutFn = deps.setTimeoutFn ?? setTimeout;
   const clearTimeoutFn = deps.clearTimeoutFn ?? clearTimeout;
   const random = deps.random ?? Math.random;
   const log = deps.logger ?? logger;
   const baseBackoffMs =
-    deps.baseBackoffMs ?? LIVE_TURN_HOST_LEASE_BASE_BACKOFF_MS;
-  const maxBackoffMs = deps.maxBackoffMs ?? LIVE_TURN_HOST_LEASE_MAX_BACKOFF_MS;
+    deps.baseBackoffMs ?? LIVE_RECOVERY_COORDINATOR_LEASE_BASE_BACKOFF_MS;
+  const maxBackoffMs =
+    deps.maxBackoffMs ?? LIVE_RECOVERY_COORDINATOR_LEASE_MAX_BACKOFF_MS;
 
   let lease: RuntimeLease | undefined;
   let stopped = false;
   let pendingTimer: ReturnType<typeof setTimeout> | undefined;
-  let transitionHandlers: LiveTurnHostTransitionHandlers | undefined;
+  let transitionHandlers: LiveRecoveryCoordinatorTransitionHandlers | undefined;
   let resolveAcquired!: (value: RuntimeLease | undefined) => void;
   const acquired = new Promise<RuntimeLease | undefined>((resolve) => {
     resolveAcquired = resolve;
   });
 
-  if (!input.runtimeSettings.runtime.liveTurns.enabled) {
+  if (
+    !input.runtimeSettings.runtime.liveTurns.enabled ||
+    !liveExecutionEnabled
+  ) {
     stopped = true;
     resolveAcquired(undefined);
     return {
@@ -130,7 +150,7 @@ export function startLiveTurnHostLeaseAcquisition(input: {
     lease = undefined;
     log.warn(
       { err },
-      'Live-turn host lease lost; stopping live-host services and re-entering standby acquisition',
+      'Live-recovery-coordinator lease lost; stopping recovery coordinator and re-entering standby acquisition',
     );
     transitionHandlers?.onLost(err);
     void attempt(0);
@@ -140,11 +160,13 @@ export function startLiveTurnHostLeaseAcquisition(input: {
     if (stopped) return;
     let acquiredLease: RuntimeLease | undefined;
     try {
-      acquiredLease = await input.leases.tryAcquire(LIVE_TURN_HOST_LEASE_KEY);
+      acquiredLease = await input.leases.tryAcquire(
+        LIVE_RECOVERY_COORDINATOR_LEASE_KEY,
+      );
     } catch (err) {
       log.warn(
         { err, attempt: attemptIndex },
-        'Failed to acquire live-turn host lease; standing by as a job-only worker',
+        'Failed to acquire live-recovery-coordinator lease; continuing to poll/admit without coordinating recovery',
       );
     }
     if (stopped) {
@@ -160,7 +182,7 @@ export function startLiveTurnHostLeaseAcquisition(input: {
     }
     log.info(
       { attempt: attemptIndex },
-      'Another runtime owns live turns; standing by as a job-only worker until the lease is released',
+      'Another runtime is the live recovery coordinator; this worker keeps polling/admitting and stands by to coordinate recovery',
     );
     scheduleRetry(attemptIndex + 1);
   };
@@ -282,14 +304,19 @@ export async function routeScopeActiveLiveTurnAdmission(input: {
   if (routed === 'queued_to_owner') {
     await input.continuation?.onRouted();
   }
-  await input.completeSessionAgentRun?.({
-    runId: input.liveRunId,
-    status: routed === 'queued_to_owner' ? 'canceled' : 'failed',
-    errorSummary:
-      routed === 'queued_to_owner'
-        ? 'Live-turn admission routed the message to the active owner.'
-        : `Live-turn admission could not route to active owner: ${routed}`,
-  });
+  // The orphan-avoidance pre-check routes a continuation BEFORE any run row is
+  // created (empty liveRunId), so there is nothing to terminal-mark in that
+  // case. Only settle the run when admission actually minted one.
+  if (input.liveRunId) {
+    await input.completeSessionAgentRun?.({
+      runId: input.liveRunId,
+      status: routed === 'queued_to_owner' ? 'canceled' : 'failed',
+      errorSummary:
+        routed === 'queued_to_owner'
+          ? 'Live-turn admission routed the message to the active owner.'
+          : `Live-turn admission could not route to active owner: ${routed}`,
+    });
+  }
   return routed === 'queued_to_owner';
 }
 

@@ -18,7 +18,20 @@ import type {
  * concurrency instead of process-local counters.
  */
 
-export const LIVE_TURN_SLOT_KEY = 'live:messages';
+/**
+ * Slot keys are per-live-worker (`live:messages:<workerInstanceId>`), so
+ * `runtime.queue.max_message_runs` bounds the concurrent live turns ON EACH
+ * live worker rather than cluster-wide. In workstation mode the single worker
+ * is the only holder, so the bound is identical to before. Recovery acquires
+ * under the RECOVERING worker's key; a dead owner's slot rows expire by TTL and
+ * are GC'd on the next acquire under that key. The prefix is exported for WP3
+ * cluster-usage queries (per-worker active-turn counts).
+ */
+export const LIVE_TURN_SLOT_KEY_PREFIX = 'live:messages:';
+
+export function liveTurnSlotKey(workerInstanceId: string): string {
+  return `${LIVE_TURN_SLOT_KEY_PREFIX}${workerInstanceId}`;
+}
 
 export type LiveTurnCoordination = Pick<
   RunLeaseRepository,
@@ -78,6 +91,7 @@ export async function claimLiveTurnExecution(input: {
 }): Promise<LiveTurnClaimResult> {
   const { deps } = input;
   const slotTtlMs = input.slotTtlMs ?? input.leaseTtlMs;
+  const slotKey = liveTurnSlotKey(deps.workerInstanceId);
 
   const existing = await deps.liveTurns.getActiveLiveTurn({
     scope: input.scope,
@@ -88,7 +102,7 @@ export async function claimLiveTurnExecution(input: {
   // the message simply stays queued until a slot frees up.
   const provisionalHolderId = liveTurnSlotHolderId(input.turnId, 0);
   const slotAcquired = await deps.coordination.acquireRunSlot({
-    slotKey: LIVE_TURN_SLOT_KEY,
+    slotKey,
     holderId: provisionalHolderId,
     capacity: input.slotCapacity,
     ttlMs: slotTtlMs,
@@ -110,7 +124,7 @@ export async function claimLiveTurnExecution(input: {
   });
   if (!turn) {
     await deps.coordination.releaseRunSlot({
-      slotKey: LIVE_TURN_SLOT_KEY,
+      slotKey,
       holderId: provisionalHolderId,
     });
     const activeTurn = await deps.liveTurns.getActiveLiveTurn({
@@ -129,7 +143,7 @@ export async function claimLiveTurnExecution(input: {
   });
   if (!lease) {
     await deps.coordination.releaseRunSlot({
-      slotKey: LIVE_TURN_SLOT_KEY,
+      slotKey,
       holderId: provisionalHolderId,
     });
     await deps.liveTurns.transitionLiveTurnState({
@@ -144,7 +158,7 @@ export async function claimLiveTurnExecution(input: {
   // Re-home the slot under the lease generation, then attach the lease
   // projection so the turn carries its owner coordinates.
   const rehomedSlotAcquired = await deps.coordination.acquireRunSlot({
-    slotKey: LIVE_TURN_SLOT_KEY,
+    slotKey,
     holderId: liveTurnSlotHolderId(input.turnId, lease.fencingVersion),
     // The provisional hold below is released in the same step, so allow the
     // re-homed hold to coexist with it momentarily.
@@ -164,7 +178,7 @@ export async function claimLiveTurnExecution(input: {
       now: input.now,
     });
     await deps.coordination.releaseRunSlot({
-      slotKey: LIVE_TURN_SLOT_KEY,
+      slotKey,
       holderId: provisionalHolderId,
     });
     await deps.liveTurns.transitionLiveTurnState({
@@ -176,7 +190,7 @@ export async function claimLiveTurnExecution(input: {
     return { outcome: 'no_capacity' };
   }
   await deps.coordination.releaseRunSlot({
-    slotKey: LIVE_TURN_SLOT_KEY,
+    slotKey,
     holderId: provisionalHolderId,
   });
   const attached = await deps.liveTurns.attachLiveTurnLease({
@@ -195,7 +209,7 @@ export async function claimLiveTurnExecution(input: {
       now: input.now,
     });
     await deps.coordination.releaseRunSlot({
-      slotKey: LIVE_TURN_SLOT_KEY,
+      slotKey,
       holderId: liveTurnSlotHolderId(input.turnId, lease.fencingVersion),
     });
     await deps.liveTurns.transitionLiveTurnState({
@@ -225,6 +239,7 @@ export async function heartbeatLiveTurnLease(input: {
   now?: string;
 }): Promise<LiveTurnHeartbeatResult> {
   const { deps } = input;
+  const slotKey = liveTurnSlotKey(deps.workerInstanceId);
   const leaseAlive = await deps.coordination.heartbeatRunLease({
     runId: input.lease.runId,
     leaseToken: input.lease.leaseToken,
@@ -233,7 +248,7 @@ export async function heartbeatLiveTurnLease(input: {
   });
   const slotHeld = leaseAlive
     ? await deps.coordination.renewRunSlot({
-        slotKey: LIVE_TURN_SLOT_KEY,
+        slotKey,
         holderId: liveTurnSlotHolderId(
           input.turnId,
           input.lease.fencingVersion,
@@ -260,6 +275,7 @@ export async function finalizeLiveTurnExecution(input: {
   now?: string;
 }): Promise<boolean> {
   const { deps } = input;
+  const slotKey = liveTurnSlotKey(deps.workerInstanceId);
   try {
     return await deps.liveTurns.finalizeLiveTurnWithLease({
       id: input.turnId,
@@ -272,7 +288,7 @@ export async function finalizeLiveTurnExecution(input: {
     });
   } finally {
     await deps.coordination.releaseRunSlot({
-      slotKey: LIVE_TURN_SLOT_KEY,
+      slotKey,
       holderId: liveTurnSlotHolderId(input.turnId, input.fence.fencingVersion),
     });
   }
@@ -294,7 +310,7 @@ export type LiveTurnRecoveryResult =
  * `isEligible` is an optional capability-matched dispatch gate (fleet mode):
  * when provided and it resolves false, this worker does NOT claim the lease and
  * returns 'ineligible' so a worker that can run the turn recovers it instead.
- * Absent ⇒ always eligible (workstation / single live host — unchanged).
+ * Absent ⇒ always eligible (single-worker (workstation) deployment — unchanged).
  */
 export async function recoverLiveTurnExecution(input: {
   deps: LiveTurnLeaseDeps;
@@ -306,6 +322,7 @@ export async function recoverLiveTurnExecution(input: {
   now?: string;
 }): Promise<LiveTurnRecoveryResult> {
   const { deps } = input;
+  const slotKey = liveTurnSlotKey(deps.workerInstanceId);
   if (!input.turn.runId) return { outcome: 'turn_gone' };
   if (input.isEligible && !(await input.isEligible(input.turn))) {
     return { outcome: 'ineligible' };
@@ -331,7 +348,7 @@ export async function recoverLiveTurnExecution(input: {
   };
 
   const slotAcquired = await deps.coordination.acquireRunSlot({
-    slotKey: LIVE_TURN_SLOT_KEY,
+    slotKey,
     holderId: liveTurnSlotHolderId(input.turn.id, lease.fencingVersion),
     capacity: input.slotCapacity,
     ttlMs: input.slotTtlMs ?? input.leaseTtlMs,
@@ -352,7 +369,7 @@ export async function recoverLiveTurnExecution(input: {
   if (!takenOver) {
     await release();
     await deps.coordination.releaseRunSlot({
-      slotKey: LIVE_TURN_SLOT_KEY,
+      slotKey,
       holderId: liveTurnSlotHolderId(input.turn.id, lease.fencingVersion),
     });
     return { outcome: 'turn_gone' };

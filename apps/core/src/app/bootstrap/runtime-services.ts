@@ -23,21 +23,16 @@ import { startIpcWatcher, type IpcDeps } from '../../runtime/ipc.js';
 // prettier-ignore
 import { recoverPendingMessages, startMessagePollingLoop, type MessageLoopDeps, type MessagePollingLoopHandle } from '../../runtime/message-loop.js';
 // prettier-ignore
-import { requestSchedulerSync, startSchedulerLoop } from '../../jobs/scheduler.js';
+import { markRoleHasNoJobExecution, requestSchedulerSync, startSchedulerLoop } from '../../jobs/scheduler.js';
 import { registerWorkerInstance } from '../../jobs/worker-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  makeThreadQueueKey,
-  parseThreadQueueKey,
-} from '../../shared/thread-queue-key.js';
+import { makeThreadQueueKey } from '../../shared/thread-queue-key.js';
 import type { RuntimeJobRepository } from '../../domain/repositories/ops-repo.js';
-import type { RuntimeLease } from '../../domain/ports/runtime-lease.js';
 import type { WorkerCoordinationRepository } from '../../domain/ports/worker-coordination.js';
 import type { RuntimeDependencyRepository } from '../../domain/ports/fleet-capability-state.js';
 import type {
   LiveTurn,
   LiveTurnCoordinationRepository,
-  LiveTurnScope,
 } from '../../domain/ports/live-turns.js';
 import {
   isWorkerEligibleForRequiredCapabilities,
@@ -91,18 +86,17 @@ import { createDurableOutboundAttempt } from './runtime-services-durable-outboun
 import { handleActiveNewSessionCommand } from './runtime-services-active-new.js';
 import { nowIso, nowMs as currentTimeMs } from '../../shared/time/datetime.js';
 import { LiveTurnAuthority } from '../../runtime/live-turn-authority.js';
-import {
-  runLiveTurnRecoveryTick,
-  startLiveTurnRecoveryLoop,
-  type LiveTurnRecoveryLoop,
-} from '../../runtime/live-turn-recovery.js';
-import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provider-id.js';
+import type { LiveTurnRecoveryLoop } from '../../runtime/live-turn-recovery.js';
 import { configurePendingInteractionPermissionPersistence } from '../../application/interactions/pending-interaction-durability.js';
+import { liveTurnScopeForQueue } from './live-recovery-coordinator.js';
 import {
-  liveTurnScopeForQueue,
-  routeScopeActiveLiveTurnAdmissionFromCursor,
-} from './live-turn-host.js';
-import { markPendingContinuationCommandsApplied } from './live-turn-continuation.js';
+  buildLiveAdmissionProcessor,
+  startLiveExecutionServices,
+  type LiveExecutionServicesHandle,
+  type RecoveryCoordinatorPort,
+} from './live-execution.js';
+import { startWaitingStatusMonitor } from './live-execution-waiting-status.js';
+import type { ProcessRole } from './roles/process-role.js';
 type RuntimeBootstrapRepository = RuntimeAppRepository & RuntimeJobRepository;
 interface Deps {
   startSchedulerLoop: typeof startSchedulerLoop;
@@ -154,27 +148,23 @@ type RuntimeServicesDefaults = Omit<
   | 'getLiveTurnRepository'
   | 'runnerSandboxProvider'
 >;
-/**
- * The singleton live-turn host lease elects WHICH worker runs the live-host
- * services (message polling, live-turn admission, recovery sweep, pending
- * message recovery). `liveTurnsEnabled` stays the global feature flag.
- */
-export interface LiveTurnHostPort {
-  onTransition: (handlers: {
-    onAcquired: (lease: RuntimeLease) => void;
-    onLost: (err: Error) => void;
-  }) => void;
-}
 export type RuntimeServicesOptions = {
   app: RuntimeApp;
   channelWiring: ChannelWiring;
   liveTurnsEnabled?: boolean;
   /**
-   * Live-host lease manager. When provided, the live-host services start only
-   * while this worker holds the lease (standby workers serve jobs only). When
-   * omitted (single-host embedding/tests), the worker hosts immediately.
+   * Recovery-coordinator lease manager. When provided, recovery (startup
+   * pending-message recovery + recovery sweep) runs only while this worker holds
+   * the lease; polling/admission run regardless. When omitted (single-process
+   * embedding/tests), this process is also the coordinator immediately.
    */
-  liveTurnHost?: LiveTurnHostPort;
+  recoveryCoordinator?: RecoveryCoordinatorPort;
+  /** Process role; persisted on the worker_instances row at registration. */
+  processRole?: ProcessRole;
+  /** Whether this role admits/executes live turns + interaction callbacks. Default true. */
+  liveExecution?: boolean;
+  /** Whether this role claims/runs scheduler jobs (the scheduler loop). Default true. */
+  jobExecution?: boolean;
 };
 function makeDefaultDeps(): RuntimeServicesDefaults {
   return {
@@ -233,7 +223,28 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
 let activeLiveTurnRecoveryLoop: LiveTurnRecoveryLoop | undefined;
 let activeLiveTurnAuthority: LiveTurnAuthority | undefined;
 let activeMessagePollingLoop: MessagePollingLoopHandle | undefined;
+let activeWaitingStatusMonitor:
+  | { oldestWaitingSeconds: () => number }
+  | undefined;
+let activeLiveExecutionServices: LiveExecutionServicesHandle | undefined;
+/**
+ * Oldest waiting live admission age in seconds (0 when none / this process is
+ * not the recovery coordinator). Read by `/metrics`; the monitor runs only on
+ * the coordinator, so a non-coordinator process reports 0.
+ */
+export function getOldestWaitingLiveAdmissionSeconds(): number {
+  return activeWaitingStatusMonitor?.oldestWaitingSeconds() ?? 0;
+}
 export function stopLiveTurnRecoveryLoop(): void {
+  // Graceful-drain choke point: stop the whole coordinator (recovery sweep AND
+  // the waiting-status monitor). Shared, idempotent stop path with the lease-loss
+  // `onLost` handler — the monitor interval clears and `activeWaitingStatusMonitor`
+  // resets exactly once whether teardown is lease loss OR SIGTERM drain.
+  if (activeLiveExecutionServices) {
+    activeLiveExecutionServices.stopRecovery();
+    activeLiveExecutionServices = undefined;
+    return;
+  }
   activeLiveTurnRecoveryLoop?.stop();
   activeLiveTurnRecoveryLoop = undefined;
 }
@@ -264,6 +275,9 @@ export async function startRuntimeServices(
 ): Promise<void> {
   const { app, channelWiring } = options;
   const liveTurnsEnabled = options.liveTurnsEnabled ?? true;
+  const liveExecution = options.liveExecution ?? true;
+  const jobExecution = options.jobExecution ?? true;
+  const processRole = options.processRole;
   const resolved: Deps = {
     ...makeDefaultDeps(),
     ...deps,
@@ -272,12 +286,13 @@ export async function startRuntimeServices(
   const workerCoordination = resolved.getWorkerCoordinationRepository?.();
   const liveTurns = resolved.getLiveTurnRepository?.();
   const liveTurnLeaseDeps =
-    liveTurnsEnabled && workerCoordination && liveTurns
+    liveTurnsEnabled && liveExecution && workerCoordination && liveTurns
       ? {
           liveTurns,
           coordination: workerCoordination,
           workerInstanceId: await registerWorkerInstance(workerCoordination, {
             warn: (context, message) => resolved.logger.warn(context, message),
+            processRole,
           }),
         }
       : undefined;
@@ -371,15 +386,11 @@ export async function startRuntimeServices(
       ),
     });
   };
-  // True only while this worker holds the live-turn host lease. Standby/job
-  // workers must not admit new live turns or poll for live messages; the
-  // lease decides WHICH worker hosts live turns (liveTurnsEnabled stays the
-  // global feature flag).
-  let hostingLiveTurns = false;
   const syncGroupSnapshots = createGroupSnapshotSync(app, resolved);
   const onSchedulerChanged = (jobId?: string) => requestSchedulerSync(jobId);
   const startScheduler = () =>
     resolved.startSchedulerLoop({
+      processRole,
       conversationRoutes: () => app.getConversationRoutes(),
       queue: app.queue,
       onProcess: (groupJid, proc, runHandle, workspaceFolder, stopAliasJids) =>
@@ -484,11 +495,11 @@ export async function startRuntimeServices(
     closeBrowserToolBackends: resolved.closeBrowserToolBackends,
     getBrowserUsageSettings: () => getRuntimeSettingsForConfig().browser.usage,
     requestPermissionApproval: (request) =>
-      liveTurnsEnabled
+      liveTurnsEnabled && liveExecution
         ? channelWiring.requestPermissionApproval(request)
         : Promise.reject(rejectNonLiveInteraction('permission')),
     requestUserAnswer: (request) =>
-      liveTurnsEnabled
+      liveTurnsEnabled && liveExecution
         ? channelWiring.requestUserAnswer(request)
         : Promise.reject(rejectNonLiveInteraction('question')),
     mcpHostnameLookup: resolved.mcpHostnameLookup,
@@ -500,143 +511,17 @@ export async function startRuntimeServices(
           liveTurnAuthority.registerLocalRunner(queueJid, hooks, routing)
       : null,
   );
-  app.queue.setProcessMessagesFn(async (queueJid) => {
-    if (!liveTurnAuthority) {
-      return app.processGroupMessages(queueJid, { queued: true });
-    }
-    let liveRunId = liveTurnAuthority.ownedRunId(queueJid) ?? undefined;
-    let liveRunFence = liveTurnAuthority.ownedFence(queueJid);
-    if (!liveTurnAuthority.ownsQueue(queueJid)) {
-      // Already-owned turns (registered or recovered here) proceed under their
-      // fenced per-turn lease, but NEW admissions belong to the live-turn host
-      // only; a standby worker leaves the message for the host's polling loop.
-      if (!hostingLiveTurns) {
-        resolved.logger.warn(
-          { queueJid },
-          'Skipping live-turn admission; this worker is not the live-turn host',
-        );
-        return false;
-      }
-      const { chatJid, threadId } = parseThreadQueueKey(queueJid);
-      const route = app.getConversationRoutes()[chatJid];
-      if (!route) return false;
-      const executionProviderId = resolveRuntimeExecutionProviderId(
-        resolved.executionAdapter ?? app.executionAdapter,
-      );
-      const turnContext = await resolved.opsRepository.getAgentTurnContext?.({
-        agentFolder: route.folder,
-        executionProviderId,
-        conversationJid: chatJid,
-        threadId: threadId ?? null,
-        conversationKind: route.conversationKind,
-        hydrateMemory: false,
-      });
-      if (!turnContext?.agentSessionId) return false;
-      liveRunId = await resolved.opsRepository.createSessionAgentRun?.({
-        agentSessionId: turnContext.agentSessionId,
-        executionProviderId,
-        providerSessionId: turnContext.providerSessionId,
-        cause: 'message',
-      });
-      if (!liveRunId) return false;
-      const scope: LiveTurnScope = {
-        appId: turnContext.appId,
-        agentSessionId: turnContext.agentSessionId,
-        conversationId: chatJid,
-        threadId: threadId ?? null,
-      };
-      const replayCursor = await app.getOrRecoverCursor(queueJid);
-      const admission = await liveTurnAuthority.admit({
-        queueJid,
-        scope,
-        turnId: `live-turn:${randomUUID()}`,
-        runId: liveRunId,
-        pendingMessage: {
-          kind: 'message_cursor',
-          queueJid,
-          cursorBefore: replayCursor,
-        },
-      });
-      if (admission.outcome !== 'claimed') {
-        if (admission.outcome === 'scope_active') {
-          return routeScopeActiveLiveTurnAdmissionFromCursor({
-            scope,
-            queueJid,
-            liveRunId,
-            chatJid,
-            threadId: threadId ?? null,
-            replayCursor,
-            maxMessagesPerPrompt: MAX_MESSAGES_PER_PROMPT,
-            timezone: TIMEZONE,
-            getMessagesSince: resolved.opsRepository.getMessagesSince,
-            setAgentCursor: app.setAgentCursor,
-            saveState: app.saveState,
-            routeMessage:
-              liveTurnAuthority.routeMessage.bind(liveTurnAuthority),
-            completeSessionAgentRun:
-              resolved.opsRepository.completeSessionAgentRun,
-          });
-        }
-        await resolved.opsRepository.completeSessionAgentRun?.({
-          runId: liveRunId,
-          status:
-            admission.outcome === 'lease_unavailable' ? 'failed' : 'canceled',
-          errorSummary: `Live-turn admission did not claim the run: ${admission.outcome}`,
-        });
-        return false;
-      }
-      liveRunFence = admission.fence;
-    }
-    try {
-      let liveRunResult: 'success' | 'error' | 'stopped' | null = null;
-      const success = await app.processGroupMessages(queueJid, {
-        queued: true,
-        existingRunId: liveRunId,
-        ...(liveRunFence
-          ? {
-              existingRunLeaseToken: liveRunFence.leaseToken,
-              existingRunLeaseWorkerInstanceId: liveRunFence.workerInstanceId,
-              existingRunLeaseFencingVersion: liveRunFence.fencingVersion,
-            }
-          : {}),
-        onRunResult: (result) => {
-          liveRunResult = result;
-        },
-      });
-      const terminalSuccess = success && liveRunResult !== 'stopped';
-      const finalized = await liveTurnAuthority.finalize(
-        queueJid,
-        terminalSuccess ? 'completed' : 'failed',
-        {
-          status: terminalSuccess ? 'completed' : 'failed',
-          ...(terminalSuccess
-            ? { resultSummary: 'Live turn completed.' }
-            : {
-                errorSummary:
-                  liveRunResult === 'stopped'
-                    ? 'Live turn stopped by request.'
-                    : 'Live turn failed.',
-              }),
-        },
-      );
-      return success && finalized;
-    } catch (err) {
-      const finalized = await liveTurnAuthority
-        .finalize(queueJid, 'failed', {
-          status: 'failed',
-          errorSummary: 'Live turn failed during message processing.',
-        })
-        .catch((finalizeErr) => {
-          resolved.logger.warn(
-            { err: finalizeErr, queueJid },
-            'Failed to finalize live turn after message processing error',
-          );
-          return false;
-        });
-      void finalized;
-      throw err;
-    }
-  });
+  app.queue.setProcessMessagesFn(
+    buildLiveAdmissionProcessor({
+      liveTurnAuthority,
+      app,
+      opsRepository: resolved.opsRepository,
+      executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
+      maxMessagesPerPrompt: MAX_MESSAGES_PER_PROMPT,
+      timezone: TIMEZONE,
+      warn: (context, message) => resolved.logger.warn(context, message),
+    }),
+  );
   const liveMessageQueue = {
     sendMessage: async (
       queueJid: string,
@@ -1085,17 +970,25 @@ export async function startRuntimeServices(
       warn: (meta, message) => resolved.logger.warn(meta, message),
     });
   }
-  await startScheduler();
-  resolved.logger.info(`Gantry running (default trigger: ${DEFAULT_TRIGGER})`);
-  if (!liveTurnsEnabled) {
+  if (jobExecution) await startScheduler();
+  else {
+    markRoleHasNoJobExecution();
     resolved.logger.info(
-      'Live-turn admission disabled; skipping live-host services (pending message recovery, recovery sweep, message polling)',
+      { processRole },
+      'Process role has no job execution; scheduler loop not started',
+    );
+  }
+  resolved.logger.info(`Gantry running (default trigger: ${DEFAULT_TRIGGER})`);
+  if (!liveTurnsEnabled || !liveExecution) {
+    resolved.logger.info(
+      'Live-turn execution disabled for this role; skipping live execution services (message polling, admission, recovery coordinator)',
     );
     return;
   }
 
-  // Live-host services. These run ONLY on the worker holding the live-turn
-  // host lease: every worker is a job worker, the lease elects the live host.
+  // WP2 live execution services: the message polling loop runs on EVERY live
+  // worker (distributed admission); only the recovery coordinator (startup
+  // pending-message recovery + recovery sweep) is lease-elected.
   const messageLoopDeps: MessageLoopDeps = {
     getConversationRoutes: () => app.getConversationRoutes(),
     getLastTimestamp: () => app.getLastTimestamp(),
@@ -1113,131 +1006,50 @@ export async function startRuntimeServices(
     handleActiveControlCommand,
     opsRepository: resolved.opsRepository,
   };
-  let pollingLoop: MessagePollingLoopHandle | undefined;
-  let recoveryLoop: LiveTurnRecoveryLoop | undefined;
-
-  const startLiveHostServices = (): void => {
-    if (hostingLiveTurns) return;
-    hostingLiveTurns = true;
-    // Takeover recovery: pick up messages the previous host never processed.
-    void Promise.resolve(
-      resolved.recoverPendingMessages(messageLoopDeps),
-    ).catch((err) =>
-      resolved.logger.warn({ err }, 'Pending message recovery failed'),
-    );
-    if (liveTurnAuthority && liveTurnLeaseDeps) {
-      activeLiveTurnRecoveryLoop?.stop();
-      recoveryLoop = startLiveTurnRecoveryLoop({
-        intervalMs: 20_000,
-        tick: () =>
-          runLiveTurnRecoveryTick({
-            deps: liveTurnLeaseDeps,
-            slotCapacity: app.queue.getPolicy().maxMessageRuns,
-            leaseTtlMs: 60_000,
-            unleasedStaleMs: 30_000,
-            isEligible: isEligibleToRecoverLiveTurn,
-            onNoEligibleRecoverer: starvationAlerter
-              ? alertNoEligibleLiveTurnRecoverer
-              : undefined,
-            warn: (context, message) => resolved.logger.warn(context, message),
-            resumeRecoveredTurn: async ({ turn, lease }) => {
-              const queueJid = makeThreadQueueKey(
-                turn.conversationId,
-                turn.threadId ?? undefined,
-              );
-              liveTurnAuthority.adoptRecoveredTurn({
-                queueJid,
-                turn,
-                fence: {
-                  leaseToken: lease.leaseToken,
-                  workerInstanceId: lease.workerInstanceId,
-                  fencingVersion: lease.fencingVersion,
-                },
-              });
-              const pendingMessage =
-                turn.pendingMessage &&
-                typeof turn.pendingMessage === 'object' &&
-                !Array.isArray(turn.pendingMessage)
-                  ? turn.pendingMessage
-                  : null;
-              const replayQueueJid =
-                pendingMessage?.queueJid === queueJid ? queueJid : null;
-              const cursorBefore =
-                typeof pendingMessage?.cursorBefore === 'string'
-                  ? pendingMessage.cursorBefore
-                  : null;
-              if (!replayQueueJid || cursorBefore === null) {
-                resolved.logger.warn(
-                  { turnId: turn.id, runId: turn.runId, queueJid },
-                  'Recovered live turn has no replayable pending message; failing closed',
-                );
-                await liveTurnAuthority.finalize(queueJid, 'failed', {
-                  status: 'failed',
-                  errorSummary:
-                    'Recovered live turn had no replayable pending message.',
-                });
-                return;
-              }
-              const pendingCommands =
-                await liveTurnLeaseDeps.liveTurns.listPendingLiveTurnCommands({
-                  liveTurnId: turn.id,
-                  limit: 5000,
-                });
-              app.setAgentCursor(queueJid, cursorBefore);
-              await app.saveState();
-              app.queue.enqueueMessageCheck(queueJid);
-              await markPendingContinuationCommandsApplied({
-                liveTurns: liveTurnLeaseDeps.liveTurns,
-                commands: pendingCommands,
-                fence: lease,
-              });
-            },
-          }),
-        warn: (context, message) => resolved.logger.warn(context, message),
-      });
-      activeLiveTurnRecoveryLoop = recoveryLoop;
-    }
-    pollingLoop = resolved.startMessagePollingLoop(messageLoopDeps);
-    activeMessagePollingLoop = pollingLoop;
-    pollingLoop.done.catch((err) => {
+  activeLiveExecutionServices = startLiveExecutionServices({
+    app,
+    liveTurnAuthority,
+    liveTurnLeaseDeps,
+    messageLoopDeps,
+    recoveryCoordinator: options.recoveryCoordinator,
+    isEligibleToRecoverLiveTurn,
+    alertNoEligibleLiveTurnRecoverer: starvationAlerter
+      ? alertNoEligibleLiveTurnRecoverer
+      : undefined,
+    recoverPendingMessages: resolved.recoverPendingMessages,
+    startMessagePollingLoop: resolved.startMessagePollingLoop,
+    registerActivePollingLoop: (loop) => {
+      activeMessagePollingLoop = loop;
+    },
+    registerActiveRecoveryLoop: (loop) => {
+      activeLiveTurnRecoveryLoop = loop;
+    },
+    // Waiting-status monitor (coordinator singleton): detects live messages
+    // queued behind a saturated fleet and sends the visible status once per
+    // episode via the transient progress-update path. Only wired when a durable
+    // live-turn repository is available to query.
+    waitingStatus: liveTurns
+      ? {
+          start: () =>
+            startWaitingStatusMonitor({
+              liveTurns,
+              getConversationJids: () =>
+                Object.keys(app.getConversationRoutes()),
+              sendStatus: (conversationJid, text) =>
+                channelWiring.sendProgressUpdate(conversationJid, text),
+              warn: (context, message) =>
+                resolved.logger.warn(context, message),
+            }),
+          register: (monitor) => {
+            activeWaitingStatusMonitor = monitor;
+          },
+        }
+      : undefined,
+    onPollingCrash: (err) => {
       resolved.logger.fatal({ err }, 'Message loop crashed unexpectedly');
       resolved.exit(1);
-    });
-  };
-
-  const stopLiveHostServices = (): void => {
-    hostingLiveTurns = false;
-    pollingLoop?.stop();
-    if (activeMessagePollingLoop === pollingLoop) {
-      activeMessagePollingLoop = undefined;
-    }
-    pollingLoop = undefined;
-    recoveryLoop?.stop();
-    if (activeLiveTurnRecoveryLoop === recoveryLoop) {
-      activeLiveTurnRecoveryLoop = undefined;
-    }
-    recoveryLoop = undefined;
-  };
-
-  const liveTurnHost = options.liveTurnHost;
-  if (!liveTurnHost) {
-    // Single-host embedding (no lease manager): host live turns immediately.
-    startLiveHostServices();
-    return;
-  }
-  liveTurnHost.onTransition({
-    onAcquired: () => {
-      resolved.logger.info(
-        'Live-turn host lease held; starting live-host services (pending message recovery, recovery sweep, message polling)',
-      );
-      startLiveHostServices();
     },
-    onLost: (err) => {
-      resolved.logger.warn(
-        { err },
-        'Live-turn host lease lost; stopping live-host services and serving jobs only until re-acquired',
-      );
-      stopLiveHostServices();
-    },
+    info: (obj, msg) => resolved.logger.info(obj as never, msg as never),
+    warn: (context, message) => resolved.logger.warn(context, message),
   });
 }

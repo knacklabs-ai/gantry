@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 
 import type { WorkerRegistryRepository } from '../domain/ports/worker-coordination.js';
+import {
+  DEFAULT_PROCESS_ROLE,
+  type ProcessRole,
+} from '../app/bootstrap/roles/process-role.js';
 import { WORKER_HEARTBEAT_INTERVAL_MS } from '../shared/worker-heartbeat.js';
 import { readImageCapabilityInventory } from '../shared/worker-image-inventory.js';
 
@@ -18,7 +22,7 @@ let activeWorker: ActiveWorkerIdentity | null = null;
 
 export async function registerWorkerInstance(
   registry: WorkerRegistryRepository,
-  options?: { warn?: WarnLog },
+  options?: { warn?: WarnLog; processRole?: ProcessRole },
 ): Promise<string> {
   if (activeWorker) return activeWorker.id;
   const id = `worker-${os.hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -29,6 +33,7 @@ export async function registerWorkerInstance(
     imageDigest: process.env.GANTRY_IMAGE_DIGEST ?? null,
     version: process.env.npm_package_version ?? null,
     capabilities: readImageCapabilityInventory() ?? [],
+    processRole: options?.processRole ?? DEFAULT_PROCESS_ROLE,
   });
   const heartbeatTimer = setInterval(() => {
     void registry

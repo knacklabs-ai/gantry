@@ -13,9 +13,14 @@ output "alb_arn" {
   value       = aws_lb.this.arn
 }
 
-output "target_group_arn" {
-  description = "ARN of the worker target group. Wire the worker pool ASG to this so instances register/deregister automatically."
-  value       = aws_lb_target_group.workers.arn
+output "control_target_group_arn" {
+  description = "ARN of the control target group (receives /v1/*). Wire the control role's worker pool ASG to this. Single-pool `all` stacks wire their one worker to both target groups."
+  value       = aws_lb_target_group.control.arn
+}
+
+output "live_target_group_arn" {
+  description = "ARN of the live target group (receives /webhooks/*). Wire the live-worker role's worker pool ASG to this. Single-pool `all` stacks wire their one worker to both target groups."
+  value       = aws_lb_target_group.live.arn
 }
 
 output "alb_security_group_id" {

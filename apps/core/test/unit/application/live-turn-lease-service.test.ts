@@ -6,7 +6,7 @@ import {
   heartbeatLiveTurnLease,
   liveTurnSlotHolderId,
   recoverLiveTurnExecution,
-  LIVE_TURN_SLOT_KEY,
+  liveTurnSlotKey,
   type LiveTurnLeaseDeps,
 } from '@core/application/live-turns/live-turn-lease-service.js';
 import type {
@@ -69,7 +69,7 @@ describe('claimLiveTurnExecution', () => {
       workerInstanceId: 'w1',
     });
     // Slot is held under the lease generation; the provisional hold is gone.
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([
       liveTurnSlotHolderId('turn-1', 1),
     ]);
   });
@@ -98,7 +98,7 @@ describe('claimLiveTurnExecution', () => {
       activeTurn: { id: 'turn-1' },
     });
     // The losing admission left no slot hold behind.
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([
       liveTurnSlotHolderId('turn-1', 1),
     ]);
   });
@@ -144,7 +144,7 @@ describe('claimLiveTurnExecution', () => {
       leaseTtlMs: 60_000,
     });
     expect(result.outcome).toBe('lease_unavailable');
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
     expect(liveTurns.turns.get('turn-1')?.state).toBe('failed');
   });
 
@@ -168,7 +168,7 @@ describe('claimLiveTurnExecution', () => {
     });
 
     expect(result.outcome).toBe('no_capacity');
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
     expect(coordination.leases).toMatchObject([
       {
         runId: 'run-1',
@@ -192,7 +192,7 @@ describe('claimLiveTurnExecution', () => {
     });
 
     expect(result.outcome).toBe('lease_unavailable');
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
     expect(coordination.leases).toMatchObject([
       {
         runId: 'run-1',
@@ -273,7 +273,7 @@ describe('finalizeLiveTurnExecution', () => {
         resultSummary: 'Live turn completed.',
       },
     ]);
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
     // The scope is claimable again.
     const next = await claimLiveTurnExecution({
       deps,
@@ -324,8 +324,11 @@ describe('finalizeLiveTurnExecution', () => {
     ).resolves.toBe(false);
     expect(liveTurns.turns.get('turn-1')?.state).toBe('recovered');
     expect(liveTurns.agentRunCompletions).toEqual([]);
-    // Only the recoverer's slot generation remains held.
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([
+    // Per-worker slot keys (WP2): the original owner's slot (w1) is freed when
+    // its stale finalize releases, and the recoverer holds its own generation
+    // under the RECOVERING worker's key (w2).
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w2'))).toEqual([
       liveTurnSlotHolderId('turn-1', 2),
     ]);
   });
@@ -358,7 +361,7 @@ describe('finalizeLiveTurnExecution', () => {
         leaseOutcome: 'failed',
       }),
     ).rejects.toThrow('db unavailable');
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
   });
 });
 
@@ -450,6 +453,6 @@ describe('recoverLiveTurnExecution', () => {
     expect(
       coordination.leases.filter((row) => row.status === 'active'),
     ).toEqual([]);
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
   });
 });

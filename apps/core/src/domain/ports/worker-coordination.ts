@@ -11,6 +11,12 @@ export interface WorkerInstance {
   bootNonce: string;
   version: string | null;
   capabilities: string[];
+  /**
+   * Deployment process role this worker registered as (`all | control |
+   * live-worker | job-worker`). Typed as string here because the canonical role
+   * union lives in the runtime layer; the domain port stays adapter/runtime-free.
+   */
+  processRole: string;
   status: WorkerInstanceStatus;
   heartbeatAt: string;
   lastSeenAt: string;
@@ -117,6 +123,8 @@ export interface WorkerRegistryRepository {
     imageDigest?: string | null;
     version?: string | null;
     capabilities?: string[];
+    /** Defaults to `'all'` when omitted (workstation single-process default). */
+    processRole?: string;
     now?: string;
   }): Promise<void>;
   heartbeatWorker(input: { id: string; now?: string }): Promise<boolean>;

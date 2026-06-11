@@ -3,6 +3,10 @@ import http from 'node:http';
 import path from 'node:path';
 
 import type { RuntimeApp } from '../../app/bootstrap/runtime-app.js';
+import type {
+  ProcessRole,
+  ReadinessRoleRequirements,
+} from './system-health.js';
 import type { JobManagementServiceDeps } from '../../application/jobs/job-management-types.js';
 import {
   DEFAULT_JOB_RUNTIME_APP_ID,
@@ -124,7 +128,10 @@ function sendControlError(
   sendError(res, status, code, message);
 }
 
-function createControlRequestHandler(ctx: ControlRouteContext) {
+function createControlRequestHandler(
+  ctx: ControlRouteContext,
+  routeProfile: 'full' | 'ops',
+) {
   return async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = new URL(req.url || '/', 'http://localhost');
     const pathname = url.pathname;
@@ -132,6 +139,14 @@ function createControlRequestHandler(ctx: ControlRouteContext) {
     res.on('error', (error) => logControlStreamError(error, pathname));
 
     try {
+      // Ops profile (live-worker, job-worker) serves only operational and
+      // read-only diagnostic routes; every admin/mutation route is unmounted and
+      // falls through to the 404 fallback below.
+      if (routeProfile === 'ops') {
+        if (await handleSystemRoutes(req, res, ctx, pathname)) return;
+        sendControlError(res, 404, 'NOT_FOUND', 'Route not found');
+        return;
+      }
       if (await handleOpenApiRoutes(req, res, pathname)) return;
       if (await handleSystemRoutes(req, res, ctx, pathname)) return;
       if (await handleGuidedActionRoutes(req, res, ctx, pathname)) return;
@@ -189,6 +204,23 @@ export function startControlServer(input: {
   app: RuntimeApp;
   getBrowserStatus?: JobManagementServiceDeps['getBrowserStatus'];
   sendConversationIngressProjection?: ControlRouteContext['sendConversationIngressProjection'];
+  /**
+   * Which control routes to mount. `'full'` (default) mounts every route, the
+   * historical behaviour. `'ops'` mounts only operational + read-only diagnostic
+   * routes for worker roles, 404ing all admin/mutation routes.
+   */
+  routeProfile?: 'full' | 'ops';
+  /** Process role this server runs as; surfaced on /readyz, /metrics, /v1/health. */
+  processRole?: ProcessRole;
+  /** Whether this role runs live execution (live readiness + live gauges). */
+  liveExecution?: boolean;
+  /** Role-specific readiness checks that apply (derived by the runtime caller). */
+  roleReadinessRequirements?: ReadinessRoleRequirements;
+  /** Runtime accessors injected from the runtime layer (DI; no cross-layer import here). */
+  currentWorkerInstanceId?: () => string | null;
+  isSchedulerReady?: () => boolean;
+  oldestWaitingLiveAdmissionSeconds?: () => number;
+  liveCapacityLimit?: () => number;
 }): ControlServerHandle {
   configureDesiredSettingsStorageProvider(async () => {
     const storage = getRuntimeStorage();
@@ -257,6 +289,19 @@ export function startControlServer(input: {
     app: input.app,
     runtimeHome: GANTRY_HOME,
     keys,
+    processRole: input.processRole ?? 'all',
+    liveExecution: input.liveExecution ?? true,
+    roleReadinessRequirements: input.roleReadinessRequirements ?? {
+      // Default (workstation `all`): the historical check set, no role checks.
+      requiresApiAuthConfigured: false,
+      requiresWorkerRegistration: false,
+      requiresSchedulerClaiming: false,
+      requiresLiveCapacitySignal: false,
+    },
+    currentWorkerInstanceId: input.currentWorkerInstanceId,
+    isSchedulerReady: input.isSchedulerReady,
+    oldestWaitingLiveAdmissionSeconds: input.oldestWaitingLiveAdmissionSeconds,
+    liveCapacityLimit: input.liveCapacityLimit,
     socketPath,
     port,
     maxConcurrentStreams: 25,
@@ -311,7 +356,9 @@ export function startControlServer(input: {
       }),
   };
 
-  const server = http.createServer(createControlRequestHandler(ctx));
+  const server = http.createServer(
+    createControlRequestHandler(ctx, input.routeProfile ?? 'full'),
+  );
   server.on('clientError', (error, socket) => {
     if (isControlClientDisconnectError(error)) {
       logger.debug({ err: error }, 'Control client socket disconnected');

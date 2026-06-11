@@ -39,8 +39,8 @@ describe('installShutdownHandlers', () => {
         closeLiveTurnRecovery: vi.fn(async () => {
           order.push('closeLiveTurnRecovery');
         }),
-        closeLiveTurnHostLease: vi.fn(async () => {
-          order.push('closeLiveTurnHostLease');
+        closeLiveRecoveryCoordinatorLease: vi.fn(async () => {
+          order.push('closeLiveRecoveryCoordinatorLease');
         }),
         closeBrowserToolBackends: vi.fn(async () => {
           order.push('closeBrowserToolBackends');
@@ -94,7 +94,7 @@ describe('installShutdownHandlers', () => {
       'closeLiveTurnAdmission',
       'closeMessagePolling',
       'closeLiveTurnRecovery',
-      'closeLiveTurnHostLease',
+      'closeLiveRecoveryCoordinatorLease',
       'queue.shutdown',
       'closeBrowserToolBackends',
       'closeAllBrowsers',
@@ -120,7 +120,7 @@ describe('installShutdownHandlers', () => {
           }),
         },
         drainDeadlineMs: 120000,
-        closeLiveTurnHostLease: vi.fn(async () => {
+        closeLiveRecoveryCoordinatorLease: vi.fn(async () => {
           order.push('release-host-lease');
         }),
         disconnectChannels: vi.fn(async () => {}),

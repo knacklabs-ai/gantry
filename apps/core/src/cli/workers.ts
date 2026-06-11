@@ -37,7 +37,7 @@ export async function runWorkersCommand(args: string[]): Promise<number> {
     }
     const lines = workers.map(
       (worker) =>
-        `${worker.id}  status=${worker.status}` +
+        `${worker.id}  role=${worker.processRole}  status=${worker.status}` +
         `  heartbeat=${ageLabel(worker.heartbeatAt)} ago` +
         `  capabilities=${worker.capabilities.length}`,
     );

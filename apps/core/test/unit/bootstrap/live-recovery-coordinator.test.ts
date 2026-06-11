@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  LIVE_TURN_HOST_LEASE_KEY,
+  LIVE_RECOVERY_COORDINATOR_LEASE_KEY,
   routeScopeActiveLiveTurnAdmission,
-  startLiveTurnHostLeaseAcquisition,
-} from '@core/app/bootstrap/live-turn-host.js';
+  startLiveRecoveryCoordinatorLeaseAcquisition,
+} from '@core/app/bootstrap/live-recovery-coordinator.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
 
 interface ScheduledTimer {
@@ -43,9 +43,24 @@ describe('live-turn host lease acquisition', () => {
     runtimeSettings.runtime.liveTurns.enabled = false;
     const tryAcquire = vi.fn();
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
+    });
+
+    await expect(manager.whenAcquired()).resolves.toBeUndefined();
+    expect(manager.getLease()).toBeUndefined();
+    expect(tryAcquire).not.toHaveBeenCalled();
+  });
+
+  it('skips the host lease when the process role has no live execution', async () => {
+    const runtimeSettings = createDefaultRuntimeSettings();
+    const tryAcquire = vi.fn();
+
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
+      runtimeSettings,
+      leases: { tryAcquire },
+      liveExecutionEnabled: false,
     });
 
     await expect(manager.whenAcquired()).resolves.toBeUndefined();
@@ -58,7 +73,7 @@ describe('live-turn host lease acquisition', () => {
     const lease = { release: vi.fn() };
     const tryAcquire = vi.fn(async () => lease);
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps: { logger: silentLogger },
@@ -66,7 +81,9 @@ describe('live-turn host lease acquisition', () => {
 
     await expect(manager.whenAcquired()).resolves.toBe(lease);
     expect(manager.getLease()).toBe(lease);
-    expect(tryAcquire).toHaveBeenCalledWith(LIVE_TURN_HOST_LEASE_KEY);
+    expect(tryAcquire).toHaveBeenCalledWith(
+      LIVE_RECOVERY_COORDINATOR_LEASE_KEY,
+    );
   });
 
   it('does not crash when another runtime owns live turns: stands by and takes over after release', async () => {
@@ -79,7 +96,7 @@ describe('live-turn host lease acquisition', () => {
     const timers = makeTimerHarness();
     const log = { info: vi.fn(), warn: vi.fn() };
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps: {
@@ -99,7 +116,7 @@ describe('live-turn host lease acquisition', () => {
     expect(timers.pendingCount()).toBe(1);
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ attempt: 0 }),
-      expect.stringContaining('standing by'),
+      expect.stringContaining('stands by to coordinate recovery'),
     );
 
     // Holder drains and releases; the next standby attempt takes over.
@@ -114,7 +131,7 @@ describe('live-turn host lease acquisition', () => {
     const tryAcquire = vi.fn(async () => undefined);
     const timers = makeTimerHarness();
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps: {
@@ -139,7 +156,7 @@ describe('live-turn host lease acquisition', () => {
     const lease = { release: vi.fn(async () => undefined) };
     const tryAcquire = vi.fn(async () => lease);
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps: { logger: silentLogger },
@@ -156,7 +173,7 @@ describe('live-turn host lease acquisition', () => {
     const lease = { release: vi.fn(async () => undefined) };
     const tryAcquire = vi.fn(async () => lease);
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps: { logger: silentLogger },
@@ -196,7 +213,7 @@ describe('live-turn host lease acquisition', () => {
       maxBackoffMs: 100,
     };
 
-    const workerA = startLiveTurnHostLeaseAcquisition({
+    const workerA = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps,
@@ -205,7 +222,7 @@ describe('live-turn host lease acquisition', () => {
     workerA.onTransition({ onAcquired: aAcquired, onLost: vi.fn() });
     await workerA.whenAcquired();
 
-    const workerB = startLiveTurnHostLeaseAcquisition({
+    const workerB = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps,
@@ -249,7 +266,7 @@ describe('live-turn host lease acquisition', () => {
     const timers = makeTimerHarness();
     const log = { info: vi.fn(), warn: vi.fn() };
 
-    const manager = startLiveTurnHostLeaseAcquisition({
+    const manager = startLiveRecoveryCoordinatorLeaseAcquisition({
       runtimeSettings,
       leases: { tryAcquire },
       deps: {

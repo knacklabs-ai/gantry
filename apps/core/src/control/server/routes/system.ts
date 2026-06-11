@@ -79,14 +79,23 @@ export async function handleSystemRoutes(
 
   if (pathname === '/readyz' && req.method === 'GET') {
     const deps: ReadinessDeps = {
+      role: ctx.processRole,
+      requirements: ctx.roleReadinessRequirements,
       query: runtimeQuery,
       shippedMigrationCount,
       settingsLoaded,
       isDraining,
+      apiKeyCount: () => ctx.keys.length,
+      workerRegistered: () =>
+        (ctx.currentWorkerInstanceId?.() ?? null) !== null,
+      schedulerReady: () => ctx.isSchedulerReady?.() ?? false,
+      liveCapacityLimit: () => ctx.liveCapacityLimit?.() ?? 0,
+      currentWorkerInstanceId: () => ctx.currentWorkerInstanceId?.() ?? null,
     };
     const result = await evaluateReadiness(deps);
     sendJson(res, result.ready ? 200 : 503, {
       status: result.ready ? 'ready' : 'not_ready',
+      role: result.role,
       checks: result.checks,
       ...(result.ready ? {} : { failing: result.failing }),
     });
@@ -98,6 +107,11 @@ export async function handleSystemRoutes(
       query: runtimeQuery,
       isDraining,
       uptimeSeconds: () => process.uptime(),
+      role: ctx.processRole,
+      liveExecutionEnabled: ctx.liveExecution,
+      currentWorkerInstanceId: () => ctx.currentWorkerInstanceId?.() ?? null,
+      oldestWaitingLiveAdmissionSeconds: () =>
+        ctx.oldestWaitingLiveAdmissionSeconds?.() ?? 0,
     };
     const body = await renderMetrics(deps);
     res.statusCode = 200;
@@ -123,6 +137,7 @@ export async function handleSystemRoutes(
     }
     sendJson(res, 200, {
       status: 'ok',
+      processRole: ctx.processRole,
       transport:
         ctx.port > 0
           ? { kind: 'tcp', port: ctx.port }

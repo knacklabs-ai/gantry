@@ -280,10 +280,14 @@ export interface MessagePollingLoopHandle {
 }
 
 /**
- * Start the live message polling loop. Only the live-turn host worker runs
- * this loop; standby/job-only workers must not poll (it would duplicate run
- * admission across the fleet). The returned handle stops the loop for graceful
- * drain and live-host lease handoff.
+ * Start the live message polling loop. The loop runs on EVERY live-capable
+ * worker (distributed admission); it is not gated by any lease. Duplicate run
+ * admission across the fleet is prevented downstream by the durable
+ * per-scope claim (`uq_live_turns_active_scope`) plus idempotent continuation
+ * commands — the losing poller routes its message to the durable owner instead
+ * of starting a second run. Role gating happens in the bootstrap caller
+ * (runtime-services gates this loop on `liveExecution`). The returned handle
+ * stops the loop for graceful drain.
  */
 export function startMessagePollingLoop(
   deps: MessageLoopDeps,

@@ -1,9 +1,21 @@
 # Fleet root module: wires network -> storage/secrets -> control -> worker pools
 # -> database. Secrets are passed as ARNs only; no secret values enter state.
 #
-# Topology (fleet v1): one autoscaled pool of identical workers behind one ALB,
-# against RDS (pgvector) via RDS Proxy, with capability artifacts in S3. The
-# live-turn host lease elects which worker hosts live turns.
+# Topology (role-differentiated fleet): three worker pools behind one ALB, one
+# image differentiated by GANTRY_PROCESS_ROLE, against RDS (pgvector) via RDS
+# Proxy, with capability artifacts in S3:
+#   - control     control plane: full admin/settings API; takes /v1/* from the
+#                 ALB; runs no live/job execution, no bakes; does not register as
+#                 a worker. Default min 1.
+#   - live_worker live admission/execution + provider inbound; takes /webhooks/*
+#                 from the ALB; ops-only API. Live execution is horizontally
+#                 distributed, so adding instances adds chat capacity linearly.
+#                 Autoscaled, min 2 (a warm pool for capacity + recovery
+#                 coordinator failover).
+#   - job_worker  scheduler + bakes + job-notification delivery; channels
+#                 outbound-only; ops-only API; takes no ALB traffic. Jobs are
+#                 claimable by any job-worker (run-lease + fencing), so this
+#                 scales horizontally. Autoscaled.
 
 locals {
   name_prefix = var.name_prefix
@@ -60,30 +72,82 @@ locals {
   ])
 }
 
-# Single autoscaled worker pool. All instances are identical: jobs, bakes, and
-# webhook/API traffic spread across the pool; the live-turn host lease elects
-# which instance hosts live turns (standbys retry acquisition with backoff;
-# failover RTO ~= lease TTL, ~30s). min_size >= 2 so a lease standby always
-# exists. Scale-in drains via the terminate lifecycle hook; if scale-in
-# terminates the current lease holder, live chat blips for ~lease TTL while a
-# standby takes over (accepted tradeoff — see docs/deployment/aws-terraform.md,
-# Sizing and scaling).
-module "worker" {
+# Control plane pool. Takes /v1/* from the ALB (control target group). Runs no
+# live/job execution, no bakes; does not register as a worker. Usually one
+# instance; raise control_max_size + control_autoscaling_enabled if the admin/
+# API surface itself needs more headroom (rare — execution lives on the worker
+# roles). The control role still serves /readyz for the ALB health check.
+module "control_worker" {
   source                  = "../../modules/worker_pool"
   name_prefix             = local.name_prefix
   vpc_id                  = module.network.vpc_id
   subnet_ids              = module.network.private_subnet_ids
   image_ref               = var.image_ref
   ami_id                  = var.worker_ami_id
-  instance_type           = var.worker_instance_type
-  min_size                = var.worker_min_size
-  max_size                = var.worker_max_size
-  desired_capacity        = var.worker_desired_capacity
-  autoscaling_enabled     = var.worker_autoscaling_enabled
-  cpu_target_value        = var.worker_cpu_target
+  instance_type           = var.control_instance_type
+  process_role            = "control"
+  min_size                = var.control_min_size
+  max_size                = var.control_max_size
+  desired_capacity        = var.control_desired_capacity
+  autoscaling_enabled     = var.control_autoscaling_enabled
+  cpu_target_value        = var.control_cpu_target
   drain_deadline_seconds  = var.drain_deadline_seconds
-  target_group_arns       = [module.control.target_group_arn]
+  target_group_arns       = [module.control.control_target_group_arn]
   alb_security_group_id   = module.control.alb_security_group_id
+  instance_policy_arns    = local.worker_instance_policy_arns
+  runtime_secret_env_refs = local.base_runtime_refs
+  tags                    = var.tags
+}
+
+# Live-worker pool. Takes /webhooks/* from the ALB (live target group) and runs
+# distributed live admission/execution + provider inbound. Live capacity scales
+# with the instance count (each worker bounds itself with max_message_runs), so
+# this is the pool to scale out for more concurrent chat. min_size >= 2 keeps a
+# warm pool for capacity headroom and recovery-coordinator failover (the
+# coordinator lease re-elects onto any live worker on drain; RTO ~= lease TTL).
+module "live_worker" {
+  source                  = "../../modules/worker_pool"
+  name_prefix             = local.name_prefix
+  vpc_id                  = module.network.vpc_id
+  subnet_ids              = module.network.private_subnet_ids
+  image_ref               = var.image_ref
+  ami_id                  = var.worker_ami_id
+  instance_type           = var.live_worker_instance_type
+  process_role            = "live-worker"
+  min_size                = var.live_worker_min_size
+  max_size                = var.live_worker_max_size
+  desired_capacity        = var.live_worker_desired_capacity
+  autoscaling_enabled     = var.live_worker_autoscaling_enabled
+  cpu_target_value        = var.live_worker_cpu_target
+  drain_deadline_seconds  = var.drain_deadline_seconds
+  target_group_arns       = [module.control.live_target_group_arn]
+  alb_security_group_id   = module.control.alb_security_group_id
+  instance_policy_arns    = local.worker_instance_policy_arns
+  runtime_secret_env_refs = local.base_runtime_refs
+  tags                    = var.tags
+}
+
+# Job-worker pool. Scheduler + bakes + job-notification delivery; channels
+# outbound-only. Takes NO ALB traffic (no target group; the ALB SG is empty so
+# the pool's control port is reachable only inside the VPC for ops checks). Jobs
+# are claimable by any job-worker, so this scales horizontally on job/bake load.
+module "job_worker" {
+  source                  = "../../modules/worker_pool"
+  name_prefix             = local.name_prefix
+  vpc_id                  = module.network.vpc_id
+  subnet_ids              = module.network.private_subnet_ids
+  image_ref               = var.image_ref
+  ami_id                  = var.worker_ami_id
+  instance_type           = var.job_worker_instance_type
+  process_role            = "job-worker"
+  min_size                = var.job_worker_min_size
+  max_size                = var.job_worker_max_size
+  desired_capacity        = var.job_worker_desired_capacity
+  autoscaling_enabled     = var.job_worker_autoscaling_enabled
+  cpu_target_value        = var.job_worker_cpu_target
+  drain_deadline_seconds  = var.drain_deadline_seconds
+  target_group_arns       = []
+  alb_security_group_id   = ""
   instance_policy_arns    = local.worker_instance_policy_arns
   runtime_secret_env_refs = local.base_runtime_refs
   tags                    = var.tags
@@ -101,6 +165,10 @@ module "database" {
   master_password_secret_arn = var.db_master_password_secret_arn
   proxy_role_arn             = module.secrets.proxy_role_arn
   proxy_secret_arn           = var.db_proxy_secret_arn
-  ingress_security_group_ids = [module.worker.security_group_id]
-  tags                       = var.tags
+  ingress_security_group_ids = [
+    module.control_worker.security_group_id,
+    module.live_worker.security_group_id,
+    module.job_worker.security_group_id,
+  ]
+  tags = var.tags
 }

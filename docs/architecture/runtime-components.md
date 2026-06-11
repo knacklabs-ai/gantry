@@ -320,15 +320,19 @@ The public lifecycle is:
 7. deliver matching SDK events or webhooks
 
 Jobs have no serialized execution mode. Interactive message admission stays in
-`GroupQueue`; scheduler work enters the background pg-boss lane and uses
-`runtime.queue.max_job_runs` as its worker concurrency bound.
-Because `GroupQueue` is process-local, only one runtime host may own live turns.
-The default `runtime.live_turns.enabled: true` host acquires the
-`runtime:live-turn-host:default` advisory lease before admitting live turns.
-Horizontal scheduler workers set `runtime.live_turns.enabled: false`; they still
-initialize channels in outbound-only mode for scheduler delivery, but skip
-inbound provider polling/socket leases, live message polling, and live-turn host
-ownership.
+`GroupQueue` per process; scheduler work enters the background pg-boss lane and
+uses `runtime.queue.max_job_runs` as its worker concurrency bound.
+Live execution is horizontally distributed across processes: message polling and
+durable live-turn admission run on every live-capable process (`all`/`live-worker`
+roles with `runtime.live_turns.enabled: true`), and the durable
+one-active-turn-per-scope claim — not a host lease — serializes ownership. The
+old singleton `runtime:live-turn-host:default` lease is gone; a lease-elected
+recovery coordinator (`runtime:live-recovery-coordinator:default`) owns only
+startup pending-message recovery and the periodic recovery sweep. Process roles
+that do not run live execution (`control`, `job-worker`) initialize channels in
+outbound-only mode for scheduler/control delivery and skip inbound provider
+polling/socket leases and live message polling entirely. See
+[live-horizontal-execution.md](./live-horizontal-execution.md).
 Scheduled job prompt runs and scheduler recovery turns call the same
 `agent-spawn` runner path as live turns, so `runtime.sandbox.provider:
 sandbox_runtime` applies to jobs without a job-specific sandbox setting.

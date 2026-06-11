@@ -31,6 +31,31 @@ import type {
 
 let activeSchedulerEngine: PgBossSchedulerEngine | null = null;
 let schedulerRunning = false;
+/**
+ * Set at bootstrap when the process role does not claim scheduled jobs
+ * (`jobExecution=false`). The scheduler loop is never started in that case, so
+ * `isSchedulerReady()` is permanently false — but the *reason* is the role, not
+ * a transient startup window. Threaded into trigger error messages so the user
+ * gets a plain explanation instead of "Scheduler is not ready".
+ */
+let roleHasNoJobExecution = false;
+
+/** Record that this process role does not run the scheduler (bootstrap-only). */
+export function markRoleHasNoJobExecution(): void {
+  roleHasNoJobExecution = true;
+}
+
+/**
+ * Role-aware reason for an unready scheduler, or undefined when the cause is
+ * transient (the role runs jobs but the engine is still starting).
+ */
+export function schedulerNotReadyReason(): string | undefined {
+  if (!roleHasNoJobExecution) return undefined;
+  return (
+    'This process role does not claim scheduled jobs; the job will run on ' +
+    'its schedule, or trigger it from a job-execution process.'
+  );
+}
 
 export type { SchedulerDependencies, SchedulerDispatchPayload };
 export { computeNextJobRun, registerSystemJobs, runJob };
@@ -78,6 +103,7 @@ export async function startSchedulerLoop(
   const workerCoordination = getWorkerCoordinationRepository();
   const workerInstanceId = await registerWorkerInstance(workerCoordination, {
     warn,
+    processRole: deps.processRole,
   });
   configureRunSlotBackend({
     repository: workerCoordination,

@@ -83,45 +83,121 @@ variable "db_deletion_protection" {
   default     = true
 }
 
-# --- Worker pool sizing (one autoscaled pool of identical workers; the
-#     live-turn host lease elects which instance hosts live turns). ---
-variable "worker_instance_type" {
-  description = "Instance type for workers. Size by expected concurrent live turns plus job load (memory is the limit — see the runbook's Sizing and scaling)."
+# --- Worker pools (role-differentiated: control + live-worker + job-worker).
+#     One image, GANTRY_PROCESS_ROLE per pool. ---
+
+# Control pool (admin/settings API; /v1/* ingress; no execution).
+variable "control_instance_type" {
+  description = "Instance type for the control pool. The control plane is light (API + settings writes, no agent runners), so a smaller class than the worker pools is fine."
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "control_min_size" {
+  description = "Minimum control ASG size. Default 1 (single control plane). Raise to 2 only if you need control-plane availability across an AZ failure."
+  type        = number
+  default     = 1
+}
+
+variable "control_max_size" {
+  description = "Maximum control ASG size."
+  type        = number
+  default     = 2
+}
+
+variable "control_desired_capacity" {
+  description = "Initial desired control ASG size."
+  type        = number
+  default     = 1
+}
+
+variable "control_autoscaling_enabled" {
+  description = "Attach CPU target tracking to the control pool. Default false — the control plane rarely needs to autoscale; execution lives on the worker roles."
+  type        = bool
+  default     = false
+}
+
+variable "control_cpu_target" {
+  description = "Average CPU percent the control pool is held at by target tracking (only used when control_autoscaling_enabled)."
+  type        = number
+  default     = 60
+}
+
+# Live-worker pool (distributed live admission/execution; /webhooks/* ingress).
+variable "live_worker_instance_type" {
+  description = "Instance type for live workers. Size by concurrent live turns per instance (memory is the limit — see the runbook's Sizing and scaling). Live capacity is per-worker max_message_runs, so more instances add chat capacity linearly."
   type        = string
   default     = "t3.large"
 }
 
-variable "worker_min_size" {
-  description = "Minimum worker ASG size. Must be >= 2: one instance holds the live-turn host lease, the rest are warm standbys plus job capacity, keeping live-chat failover RTO ~= the lease TTL (~30s)."
+variable "live_worker_min_size" {
+  description = "Minimum live-worker ASG size. Must be >= 2: a warm pool for live capacity plus recovery-coordinator failover (the coordinator lease re-elects onto any live worker on drain; RTO ~= lease TTL, ~30s)."
   type        = number
   default     = 2
 
   validation {
-    condition     = var.worker_min_size >= 2
-    error_message = "worker_min_size must be >= 2 in the fleet env (lease standby for live-chat availability). Single-worker stacks belong in envs/support."
+    condition     = var.live_worker_min_size >= 2
+    error_message = "live_worker_min_size must be >= 2 in the fleet env (warm live capacity + recovery-coordinator failover). Single-worker stacks belong in envs/support."
   }
 }
 
-variable "worker_max_size" {
-  description = "Maximum worker ASG size."
+variable "live_worker_max_size" {
+  description = "Maximum live-worker ASG size."
   type        = number
-  default     = 4
+  default     = 6
 }
 
-variable "worker_desired_capacity" {
-  description = "Initial desired worker ASG size. Once autoscaling is enabled the policy owns desired capacity (Terraform ignores drift); steer a running pool via min/max."
+variable "live_worker_desired_capacity" {
+  description = "Initial desired live-worker ASG size. Once autoscaling is enabled the policy owns desired capacity (Terraform ignores drift); steer a running pool via min/max."
   type        = number
   default     = 2
 }
 
-variable "worker_autoscaling_enabled" {
-  description = "Attach the CPU target-tracking policy so the pool scales between min and max. Scale-in drains via the lifecycle hook; terminating the current lease holder costs a ~lease-TTL live-chat blip (accepted tradeoff, see runbook)."
+variable "live_worker_autoscaling_enabled" {
+  description = "Attach the CPU target-tracking policy so the live pool scales between min and max. Scale-in drains via the lifecycle hook; a terminated recovery coordinator re-elects onto a standby (loss-free, ~lease-TTL blip)."
   type        = bool
   default     = true
 }
 
-variable "worker_cpu_target" {
-  description = "Average CPU percent the worker pool is held at by target tracking. Lower scales out earlier (10-90)."
+variable "live_worker_cpu_target" {
+  description = "Average CPU percent the live pool is held at by target tracking. Lower scales out earlier (10-90)."
+  type        = number
+  default     = 60
+}
+
+# Job-worker pool (scheduler + bakes; no ALB traffic).
+variable "job_worker_instance_type" {
+  description = "Instance type for job workers. Size by concurrent job/bake runners (max_job_runs) and memory per runner."
+  type        = string
+  default     = "t3.large"
+}
+
+variable "job_worker_min_size" {
+  description = "Minimum job-worker ASG size."
+  type        = number
+  default     = 1
+}
+
+variable "job_worker_max_size" {
+  description = "Maximum job-worker ASG size."
+  type        = number
+  default     = 4
+}
+
+variable "job_worker_desired_capacity" {
+  description = "Initial desired job-worker ASG size. Once autoscaling is enabled the policy owns desired capacity (Terraform ignores drift); steer a running pool via min/max."
+  type        = number
+  default     = 1
+}
+
+variable "job_worker_autoscaling_enabled" {
+  description = "Attach the CPU target-tracking policy so the job pool scales between min and max on job/bake load."
+  type        = bool
+  default     = true
+}
+
+variable "job_worker_cpu_target" {
+  description = "Average CPU percent the job pool is held at by target tracking. Lower scales out earlier (10-90)."
   type        = number
   default     = 60
 }

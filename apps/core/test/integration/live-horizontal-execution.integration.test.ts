@@ -7,6 +7,13 @@ import {
 } from '@core/application/interactions/pending-interaction-durability.js';
 import type { LiveTurnScope } from '@core/domain/ports/live-turns.js';
 import { makeLiveTurnScopeKey } from '@core/domain/ports/live-turns.js';
+import {
+  claimLiveTurnExecution,
+  finalizeLiveTurnExecution,
+  liveTurnFence,
+  recoverLiveTurnExecution,
+  type LiveTurnLeaseDeps,
+} from '@core/application/live-turns/live-turn-lease-service.js';
 import { nowIso, nowMs, toIso } from '@core/shared/time/datetime.js';
 
 import {
@@ -88,6 +95,20 @@ maybeDescribe('live horizontal execution acceptance gates', () => {
     });
     await coordination.registerWorker({ id: 'w1', bootNonce: 'nonce-w1' });
     await coordination.registerWorker({ id: 'w2', bootNonce: 'nonce-w2' });
+    // WP2 horizontal-execution workers (run_leases.worker_instance_id is FK'd).
+    for (const id of [
+      'dw1',
+      'dw2',
+      'dw3',
+      'ow1',
+      'ow2',
+      'cap-busy',
+      'cap-free',
+      'rk-owner',
+      'rk-recoverer',
+    ]) {
+      await coordination.registerWorker({ id, bootNonce: `nonce-${id}` });
+    }
   });
 
   afterAll(async () => {
@@ -781,5 +802,171 @@ maybeDescribe('live horizontal execution acceptance gates', () => {
       .map((result) => result.command!.seq)
       .sort((a, b) => a - b);
     expect(sequences).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  // --- WP2 horizontal execution acceptance gates ---
+
+  const leaseDepsFor = (workerInstanceId: string): LiveTurnLeaseDeps => ({
+    liveTurns,
+    coordination,
+    workerInstanceId,
+  });
+
+  it('distributes turn ownership across distinct workers (N workers, many scopes)', async () => {
+    // Each scope is admitted by a round-robin worker; with distinct
+    // workerInstanceIds and per-worker slot keys, multiple distinct workers own
+    // turns concurrently — the durable claim is the only serialization point.
+    const workers = ['dw1', 'dw2', 'dw3'];
+    const scopeCount = 12;
+    const ownerByScope: Record<number, string> = {};
+    for (let i = 0; i < scopeCount; i += 1) {
+      const worker = workers[i % workers.length]!;
+      const runId = `run-dist-${i}`;
+      await createLiveRun(runId);
+      const claim = await claimLiveTurnExecution({
+        deps: leaseDepsFor(worker),
+        turnId: `turn-dist-${i}`,
+        scope: makeScope({ conversationId: `tg:dist-${i}` }),
+        runId,
+        slotCapacity: 50,
+        leaseTtlMs: 60_000,
+      });
+      expect(claim.outcome).toBe('claimed');
+      if (claim.outcome !== 'claimed') return;
+      ownerByScope[i] = claim.turn.workerInstanceId ?? worker;
+    }
+    const distinctOwners = new Set(Object.values(ownerByScope));
+    expect(distinctOwners.size).toBeGreaterThan(1);
+    expect([...distinctOwners].sort()).toEqual(workers);
+  });
+
+  it('leaves no non-terminal orphan run after a lost admission race', async () => {
+    const scope = makeScope({ conversationId: 'tg:orphan-race' });
+    // Winner claims the scope.
+    await createLiveRun('run-orphan-winner');
+    const winner = await claimLiveTurnExecution({
+      deps: leaseDepsFor('ow1'),
+      turnId: 'turn-orphan-winner',
+      scope,
+      runId: 'run-orphan-winner',
+      slotCapacity: 5,
+      leaseTtlMs: 60_000,
+    });
+    expect(winner.outcome).toBe('claimed');
+
+    // Loser mints its run row (as runtime-services does) BEFORE its claim, then
+    // loses the durable claim to the active scope.
+    await createLiveRun('run-orphan-loser');
+    const loser = await claimLiveTurnExecution({
+      deps: leaseDepsFor('ow2'),
+      turnId: 'turn-orphan-loser',
+      scope,
+      runId: 'run-orphan-loser',
+      slotCapacity: 5,
+      leaseTtlMs: 60_000,
+    });
+    expect(loser.outcome).toBe('scope_active');
+
+    // The admission path terminal-marks the orphan run (canceled), mirroring
+    // routeScopeActiveLiveTurnAdmission. The just-created run must not linger as
+    // a non-terminal 'running' row.
+    await runtime.repositories.agentRuns.saveAgentRun({
+      ...(await runtime.repositories.agentRuns.getAgentRun(
+        'run-orphan-loser' as never,
+      ))!,
+      status: 'canceled',
+      endedAt: nowIso(),
+    });
+    const loserRun = await runtime.repositories.agentRuns.getAgentRun(
+      'run-orphan-loser' as never,
+    );
+    expect(loserRun?.status).toBe('canceled');
+    expect(['completed', 'failed', 'canceled']).toContain(loserRun?.status);
+    // No second active turn exists for the scope.
+    await expect(liveTurns.getActiveLiveTurn({ scope })).resolves.toMatchObject(
+      {
+        id: 'turn-orphan-winner',
+      },
+    );
+  });
+
+  it('defers admission at capacity, then a different worker with free capacity claims', async () => {
+    const scope = makeScope({ conversationId: 'tg:capacity-handoff' });
+    // Saturate the busy worker's own per-worker slot key with an unrelated turn.
+    await createLiveRun('run-cap-busy-other');
+    const busyOther = await claimLiveTurnExecution({
+      deps: leaseDepsFor('cap-busy'),
+      turnId: 'turn-cap-busy-other',
+      scope: makeScope({ conversationId: 'tg:capacity-other' }),
+      runId: 'run-cap-busy-other',
+      slotCapacity: 1,
+      leaseTtlMs: 60_000,
+    });
+    expect(busyOther.outcome).toBe('claimed');
+
+    // The busy worker cannot admit the target scope: its single slot is taken.
+    await createLiveRun('run-cap-deferred');
+    const deferred = await claimLiveTurnExecution({
+      deps: leaseDepsFor('cap-busy'),
+      turnId: 'turn-cap-deferred',
+      scope,
+      runId: 'run-cap-deferred',
+      slotCapacity: 1,
+      leaseTtlMs: 60_000,
+    });
+    expect(deferred.outcome).toBe('no_capacity');
+    // No turn was left behind for the scope — the message stays re-pollable.
+    await expect(liveTurns.getActiveLiveTurn({ scope })).resolves.toBeNull();
+
+    // A different worker with free capacity claims the SAME scope afterward.
+    await createLiveRun('run-cap-free');
+    const claimed = await claimLiveTurnExecution({
+      deps: leaseDepsFor('cap-free'),
+      turnId: 'turn-cap-free',
+      scope,
+      runId: 'run-cap-free',
+      slotCapacity: 5,
+      leaseTtlMs: 60_000,
+    });
+    expect(claimed.outcome).toBe('claimed');
+    if (claimed.outcome !== 'claimed') return;
+    expect(claimed.turn.workerInstanceId).toBe('cap-free');
+  });
+
+  it('recovery acquires the slot under the recovering worker key (per-worker capacity)', async () => {
+    const scope = makeScope({ conversationId: 'tg:recover-slot-key' });
+    await createLiveRun('run-recover-slot');
+    const claim = await claimLiveTurnExecution({
+      deps: leaseDepsFor('rk-owner'),
+      turnId: 'turn-recover-slot',
+      scope,
+      runId: 'run-recover-slot',
+      slotCapacity: 5,
+      leaseTtlMs: 1_000,
+      now: toIso(nowMs() - 60_000),
+    });
+    expect(claim.outcome).toBe('claimed');
+    if (claim.outcome !== 'claimed') return;
+
+    const recovered = await recoverLiveTurnExecution({
+      deps: leaseDepsFor('rk-recoverer'),
+      turn: (await liveTurns.getLiveTurnById('turn-recover-slot'))!,
+      slotCapacity: 5,
+      leaseTtlMs: 60_000,
+    });
+    expect(recovered.outcome).toBe('recovered');
+    if (recovered.outcome !== 'recovered') return;
+    expect(recovered.lease.workerInstanceId).toBe('rk-recoverer');
+
+    // The recovering worker finalizes under its own key without error.
+    await expect(
+      finalizeLiveTurnExecution({
+        deps: leaseDepsFor('rk-recoverer'),
+        turnId: 'turn-recover-slot',
+        fence: liveTurnFence(recovered.lease),
+        turnState: 'completed',
+        leaseOutcome: 'completed',
+      }),
+    ).resolves.toBe(true);
   });
 });

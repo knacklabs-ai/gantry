@@ -6,9 +6,38 @@
  * can be unit-tested without a live database or HTTP server.
  */
 
+import { LIVE_TURN_SLOT_KEY_PREFIX } from '../../application/live-turns/live-turn-lease-service.js';
+
+/**
+ * Process role string. Kept as a local union (not imported from the runtime
+ * `roles` module) so this DI'd adapter-layer logic stays free of a cross-layer
+ * import; the canonical union lives in app/bootstrap/roles/process-role.ts and
+ * the caller passes the value plus the per-role check requirements.
+ */
+export type ProcessRole = 'all' | 'control' | 'live-worker' | 'job-worker';
+
+/**
+ * Which role-specific readiness checks apply, derived by the caller from the
+ * role (app/bootstrap/roles/role-readiness.ts). The workstation `all` role
+ * passes all-false so its check set stays exactly the historical one.
+ */
+export interface ReadinessRoleRequirements {
+  requiresApiAuthConfigured: boolean;
+  requiresWorkerRegistration: boolean;
+  requiresSchedulerClaiming: boolean;
+  requiresLiveCapacitySignal: boolean;
+}
+
 export type CheckStatus = 'pass' | 'fail';
 
+/** Reported (never failing) live-worker capacity state. */
+export type LiveCapacity = 'available' | 'saturated';
+
 export interface ReadinessDeps {
+  /** Process role this server runs as; surfaced as the top-level `role`. */
+  role: ProcessRole;
+  /** Which role-specific checks apply (the caller derives this from `role`). */
+  requirements: ReadinessRoleRequirements;
   /** Runs a parameterless query; throws when the database is unreachable. */
   query: <T>(sql: string) => Promise<T[]>;
   /** Number of migrations shipped in this build (drizzle journal entries). */
@@ -17,15 +46,45 @@ export interface ReadinessDeps {
   settingsLoaded: () => boolean;
   /** Whether the process has entered graceful-drain state. */
   isDraining: () => boolean;
+  /**
+   * Count of valid control API keys parsed at startup. Drives the `api_auth`
+   * check for the `control` role. Required when the role needs API auth.
+   */
+  apiKeyCount?: () => number;
+  /**
+   * Whether this worker registered a `worker_instances` row. Drives the
+   * `worker_registered` check for worker roles. Required when the role
+   * requires worker registration.
+   */
+  workerRegistered?: () => boolean;
+  /**
+   * Whether the scheduler engine is ready. Drives the `scheduler` check for
+   * the `job-worker` role. Required when the role claims scheduled jobs.
+   */
+  schedulerReady?: () => boolean;
+  /**
+   * This worker's max concurrent live turns (`runtime.queue.max_message_runs`).
+   * Used with the active-turn count to derive `live_capacity`. Required when
+   * the role advertises live capacity.
+   */
+  liveCapacityLimit?: () => number;
+  /** This worker's instance id, or null before registration. */
+  currentWorkerInstanceId?: () => string | null;
 }
 
 export interface ReadinessResult {
   ready: boolean;
+  role: ProcessRole;
   checks: {
     database: CheckStatus;
     migrations: CheckStatus;
     settings: CheckStatus;
     draining: boolean;
+    api_auth?: CheckStatus;
+    worker_registered?: CheckStatus;
+    scheduler?: CheckStatus;
+    /** Reported, NEVER failing: a saturated worker still routes continuations. */
+    live_capacity?: LiveCapacity;
   };
   failing: string[];
 }
@@ -33,6 +92,7 @@ export interface ReadinessResult {
 export async function evaluateReadiness(
   deps: ReadinessDeps,
 ): Promise<ReadinessResult> {
+  const requirements = deps.requirements;
   const draining = deps.isDraining();
 
   let database: CheckStatus = 'fail';
@@ -52,23 +112,110 @@ export async function evaluateReadiness(
 
   const settings: CheckStatus = deps.settingsLoaded() ? 'pass' : 'fail';
 
+  const checks: ReadinessResult['checks'] = {
+    database,
+    migrations,
+    settings,
+    draining,
+  };
   const failing: string[] = [];
   if (database !== 'pass') failing.push('database');
   if (migrations !== 'pass') failing.push('migrations');
   if (settings !== 'pass') failing.push('settings');
   if (draining) failing.push('draining');
 
+  // Role `control`: at least one valid control API key must be configured.
+  if (requirements.requiresApiAuthConfigured && deps.role === 'control') {
+    const apiAuth: CheckStatus =
+      (deps.apiKeyCount?.() ?? 0) > 0 ? 'pass' : 'fail';
+    checks.api_auth = apiAuth;
+    if (apiAuth !== 'pass') failing.push('api_auth');
+  }
+
+  // Worker roles (`live-worker`, `job-worker`): a worker_instances row exists.
+  if (requirements.requiresWorkerRegistration) {
+    const workerRegistered: CheckStatus = deps.workerRegistered?.()
+      ? 'pass'
+      : 'fail';
+    checks.worker_registered = workerRegistered;
+    if (workerRegistered !== 'pass') failing.push('worker_registered');
+  }
+
+  // Role `job-worker`: the scheduler engine is claiming jobs.
+  if (requirements.requiresSchedulerClaiming) {
+    const scheduler: CheckStatus = deps.schedulerReady?.() ? 'pass' : 'fail';
+    checks.scheduler = scheduler;
+    if (scheduler !== 'pass') failing.push('scheduler');
+  }
+
+  // Role `live-worker`: report capacity (never failing). A saturated worker is
+  // still ready — it routes continuations to active turns while the DB is up.
+  if (requirements.requiresLiveCapacitySignal) {
+    checks.live_capacity = await evaluateLiveCapacity(deps);
+  }
+
   return {
     ready: failing.length === 0,
-    checks: { database, migrations, settings, draining },
+    role: deps.role,
+    checks,
     failing,
   };
+}
+
+/**
+ * 'available' when THIS worker can accept ≥1 new live turn (its own active live
+ * turn count < its limit), 'saturated' otherwise. Fails closed to 'saturated'
+ * when the DB is unreachable or the worker id/limit is unknown — a worker that
+ * cannot prove free capacity should not advertise it.
+ */
+async function evaluateLiveCapacity(
+  deps: ReadinessDeps,
+): Promise<LiveCapacity> {
+  const workerInstanceId = deps.currentWorkerInstanceId?.() ?? null;
+  const limit = deps.liveCapacityLimit?.() ?? 0;
+  if (!workerInstanceId || limit <= 0) return 'saturated';
+  try {
+    const rows = await deps.query<{ active: number }>(
+      `SELECT count(*)::int AS active
+       FROM live_turns
+       WHERE worker_instance_id = ${quoteSqlLiteral(workerInstanceId)}
+         AND state NOT IN ('completed', 'failed', 'timed_out')`,
+    );
+    const active = rows[0]?.active ?? 0;
+    return active < limit ? 'available' : 'saturated';
+  } catch {
+    return 'saturated';
+  }
+}
+
+/** Single-quote a SQL string literal for the parameterless query interface. */
+function quoteSqlLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 export interface MetricsDeps {
   query: <T>(sql: string) => Promise<T[]>;
   isDraining: () => boolean;
   uptimeSeconds: () => number;
+  /** Process role; emitted as the always-on `gantry_process_role` info gauge. */
+  role: ProcessRole;
+  /**
+   * Whether this process runs live execution. Live gauges are only emitted when
+   * true (a control/job-worker has no live capacity to report).
+   */
+  liveExecutionEnabled: boolean;
+  /** This worker's instance id, or null before registration. */
+  currentWorkerInstanceId: () => string | null;
+  /**
+   * Age in seconds of the oldest pending live admission waiting for a free
+   * worker (0 when none). Reported by the runtime; computed cheaply in-process,
+   * NOT via a DB query here, so it stays in the always-on (non DB-guarded) set.
+   */
+  oldestWaitingLiveAdmissionSeconds: () => number;
+}
+
+interface CountRow {
+  count: number;
 }
 
 interface WorkerStatusRow {
@@ -126,6 +273,15 @@ export async function renderMetrics(deps: MetricsDeps): Promise<string> {
     'gantry_draining',
     'Whether the process is draining (1) or serving normally (0).',
     deps.isDraining() ? 1 : 0,
+  );
+  // Info-style gauge: the value is always 1; the role lives in the label.
+  gauge(
+    'gantry_process_role',
+    'Process role of this runtime (info gauge).',
+    1,
+    {
+      role: deps.role,
+    },
   );
 
   try {
@@ -220,6 +376,84 @@ export async function renderMetrics(deps: MetricsDeps): Promise<string> {
     );
   } catch {
     // Starvation state unavailable; skip these gauges.
+  }
+
+  // Live execution gauges: only meaningful on a process that runs live turns.
+  // A control/job-worker has nothing to report here, so they are skipped.
+  if (deps.liveExecutionEnabled) {
+    const workerInstanceId = deps.currentWorkerInstanceId();
+    if (workerInstanceId) {
+      try {
+        // Non-terminal live turns owned by THIS worker.
+        const rows = await deps.query<CountRow>(
+          `SELECT count(*)::int AS count
+           FROM live_turns
+           WHERE worker_instance_id = ${quoteSqlLiteral(workerInstanceId)}
+             AND state NOT IN ('completed', 'failed', 'timed_out')`,
+        );
+        gauge(
+          'gantry_live_turns_active',
+          'Non-terminal live turns owned by this worker.',
+          rows[0]?.count ?? 0,
+        );
+      } catch {
+        // Live-turn inventory unavailable; skip this gauge.
+      }
+    }
+
+    try {
+      // Cluster-wide live slot usage: unexpired run_slots whose key is a live
+      // per-worker slot key. The LIKE pattern matches `live:messages:<id>`.
+      const rows = await deps.query<CountRow>(
+        `SELECT count(*)::int AS count
+         FROM run_slots
+         WHERE slot_key LIKE ${quoteSqlLiteral(`${LIVE_TURN_SLOT_KEY_PREFIX}%`)}
+           AND expires_at > now()`,
+      );
+      gauge(
+        'gantry_live_slots_used_cluster',
+        'Unexpired live-turn run slots held cluster-wide.',
+        rows[0]?.count ?? 0,
+      );
+    } catch {
+      // Slot usage unavailable; skip this gauge.
+    }
+
+    try {
+      // Recoverable live turns: the cheap COUNT form of the recovery sweep's
+      // listRecoverableLiveTurns predicate — non-terminal turns whose run lease
+      // is gone (owner lost). Unleased-but-stale turns are time-windowed in the
+      // sweep; here we report only the owner-lost class as a single statement.
+      const rows = await deps.query<CountRow>(
+        `SELECT count(*)::int AS count
+         FROM live_turns lt
+         WHERE lt.state NOT IN ('completed', 'failed', 'timed_out')
+           AND lt.run_id IS NOT NULL
+           AND lt.lease_token IS NOT NULL
+           AND lt.fencing_version IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM run_leases rl
+             WHERE rl.run_id = lt.run_id
+               AND rl.status = 'active'
+               AND rl.expires_at > now()
+           )`,
+      );
+      gauge(
+        'gantry_live_turns_recoverable',
+        'Non-terminal live turns whose owner lease has been lost (recoverable).',
+        rows[0]?.count ?? 0,
+      );
+    } catch {
+      // Recoverable count unavailable; skip this gauge.
+    }
+
+    // Oldest waiting live admission age. Computed in-process (not a DB query),
+    // so it is always emitted on a live process — 0 when nothing is waiting.
+    gauge(
+      'gantry_live_oldest_waiting_seconds',
+      'Age in seconds of the oldest live message waiting for an available worker (0 when none).',
+      Math.max(0, Math.floor(deps.oldestWaitingLiveAdmissionSeconds())),
+    );
   }
 
   return `${lines.join('\n')}\n`;

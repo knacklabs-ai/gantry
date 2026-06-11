@@ -6,7 +6,7 @@
 data "aws_region" "current" {}
 
 locals {
-  asg_name            = "${var.name_prefix}-worker"
+  asg_name            = "${var.name_prefix}-${var.process_role}"
   lifecycle_hook_name = "${local.asg_name}-drain"
 }
 
@@ -64,7 +64,7 @@ resource "aws_iam_instance_profile" "worker" {
 # --- Worker security group: control port reachable from the ALB SG only. ---
 resource "aws_security_group" "worker" {
   name        = local.asg_name
-  description = "Gantry worker pool"
+  description = "Gantry worker pool (${var.process_role})"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = local.asg_name })
 }
@@ -98,6 +98,7 @@ locals {
     lifecycle_hook_name     = local.lifecycle_hook_name
     asg_name                = local.asg_name
     aws_region              = data.aws_region.current.name
+    process_role            = var.process_role
     runtime_secret_env_refs = var.runtime_secret_env_refs
   })
 }
@@ -126,7 +127,7 @@ resource "aws_launch_template" "worker" {
 
   tag_specifications {
     resource_type = "instance"
-    tags          = merge(var.tags, { Name = local.asg_name })
+    tags          = merge(var.tags, { Name = local.asg_name, GantryProcessRole = var.process_role })
   }
 
   lifecycle {

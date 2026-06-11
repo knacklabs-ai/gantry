@@ -9,9 +9,9 @@ import {
   claimLiveTurnExecution,
   finalizeLiveTurnExecution,
   heartbeatLiveTurnLease,
-  LIVE_TURN_SLOT_KEY,
   liveTurnFence,
   liveTurnSlotHolderId,
+  liveTurnSlotKey,
   type LiveTurnLeaseDeps,
 } from '../application/live-turns/live-turn-lease-service.js';
 import {
@@ -100,6 +100,15 @@ export class LiveTurnAuthority {
 
   private warn(context: Record<string, unknown>, message: string): void {
     this.deps.warn?.(context, message);
+  }
+
+  /**
+   * Cheap durable pre-check used before minting an agent run row: with N
+   * pollers, the common case is that another worker already owns the scope, so
+   * the caller can route a continuation instead of creating an orphan run.
+   */
+  getActiveLiveTurn(scope: LiveTurnScope): Promise<LiveTurn | null> {
+    return this.deps.leaseDeps.liveTurns.getActiveLiveTurn({ scope });
   }
 
   /** Whether this worker currently owns the live turn for `queueJid`. */
@@ -432,7 +441,7 @@ export class LiveTurnAuthority {
         outcome: 'released',
       });
       await this.deps.leaseDeps.coordination.releaseRunSlot({
-        slotKey: LIVE_TURN_SLOT_KEY,
+        slotKey: liveTurnSlotKey(this.deps.leaseDeps.workerInstanceId),
         holderId: liveTurnSlotHolderId(
           registration.turnId,
           registration.fence.fencingVersion,

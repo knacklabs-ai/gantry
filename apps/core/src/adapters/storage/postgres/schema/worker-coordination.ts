@@ -23,6 +23,9 @@ export const workerInstancesPostgres = pgTable(
     capabilitiesJson: jsonb('capabilities_json')
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // process_role is application-constrained to:
+    // all | control | live-worker | job-worker.
+    processRole: text('process_role').notNull().default('all'),
     // status is application-constrained to:
     // starting | healthy | unhealthy | draining | stopped.
     status: text('status').notNull().default('starting'),

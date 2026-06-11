@@ -58,7 +58,7 @@ it.
 
 4. Fleet v1 live topology is **1 live-host worker + N job workers**
    (heterogeneous pool). The singleton live-host lease
-   `runtime:live-turn-host:default` (`apps/core/src/app/bootstrap/live-turn-host.ts:9`)
+   `runtime:live-turn-host:default` (`apps/core/src/app/bootstrap/live-recovery-coordinator.ts:9`)
    **stays**. The current boot behavior throws when the lease is contended;
    Phase 2 changes boot to **retry-with-backoff** so a rolling deploy does not
    crash-loop the incoming live host. Job workers run scheduler-only
@@ -66,14 +66,23 @@ it.
    [multi-worker-execution.md](../architecture/multi-worker-execution.md).
    Live-host failover RTO = lease TTL (~30s).
 
+   > **Superseded (2026-06-12).** The singleton live-host lease is gone and live
+   > execution is now horizontally distributed across process roles
+   > (`control`/`live-worker`/`job-worker`). See
+   > [2026-06-12 — Process Roles and Multi-Live](./2026-06-12-process-roles-and-multi-live.md).
+
 5. The **Phase-4 multi-live GroupQueue cutover is explicitly out of scope** for
    this plan. It is revisited only when one of these criteria is met:
    - live-turn throughput on a single live host saturates (one host can no longer
      admit the offered live-turn rate), or
    - an availability requirement sets failover RTO **below** the live-turn lease
      TTL.
-   Until then the singleton live host is the accepted v1 ceiling (user-accepted,
-   CEO plan T2).
+     Until then the singleton live host is the accepted v1 ceiling (user-accepted,
+     CEO plan T2).
+
+   > **Superseded (2026-06-12).** The multi-live cutover shipped by product
+   > decision, ahead of these saturation/RTO triggers. See
+   > [2026-06-12 — Process Roles and Multi-Live](./2026-06-12-process-roles-and-multi-live.md).
 
 ## Alternatives Considered
 

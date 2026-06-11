@@ -43,7 +43,13 @@ import {
   formatRuntimePreflightFailure,
   validateRuntimePreflightWithStorage,
 } from '../config/preflight.js';
-import { startLiveTurnHostLeaseAcquisition } from './bootstrap/live-turn-host.js';
+import { startLiveRecoveryCoordinatorLeaseAcquisition } from './bootstrap/live-recovery-coordinator.js';
+import { resolveProcessRole } from './bootstrap/roles/role-resolver.js';
+import { roleCapabilities } from './bootstrap/roles/role-capabilities.js';
+import { roleReadinessRequirements } from './bootstrap/roles/role-readiness.js';
+import { currentWorkerInstanceId } from '../jobs/worker-identity.js';
+import { isSchedulerReady } from '../jobs/scheduler.js';
+import { getOldestWaitingLiveAdmissionSeconds } from './bootstrap/runtime-services.js';
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import { defaultHostnameLookup } from '../infrastructure/network/hostname-lookup.js';
 
@@ -68,6 +74,13 @@ export async function startGantryRuntime(
       throw new Error(formatRuntimePreflightFailure(validation.failure));
     }
   }
+
+  // Resolve the deployment-owned process role once and thread its capability
+  // struct into every subsystem. Workstation default (env unset) is `all`,
+  // which keeps full single-process behaviour; a wrong value throws here.
+  const processRole = resolveProcessRole(process.env);
+  const roleCaps = roleCapabilities(processRole);
+  logger.info({ processRole, capabilities: roleCaps }, 'Resolved process role');
 
   const app = getDefaultRuntimeApp({
     mcpHostnameLookup: () => mcpHostnameLookup,
@@ -156,10 +169,12 @@ export async function startGantryRuntime(
   const loadApprovedCommandModule = () =>
     (approvedCommandModule ??= import(approvedCommandModulePath));
 
-  const liveTurnHostLeaseManager = startLiveTurnHostLeaseAcquisition({
-    runtimeSettings,
-    leases: { tryAcquire: tryAcquireRuntimeAdvisoryLease },
-  });
+  const liveRecoveryCoordinatorLeaseManager =
+    startLiveRecoveryCoordinatorLeaseAcquisition({
+      runtimeSettings,
+      leases: { tryAcquire: tryAcquireRuntimeAdvisoryLease },
+      liveExecutionEnabled: roleCaps.liveExecution,
+    });
 
   installShutdownHandlers({
     queue: app.queue,
@@ -178,8 +193,8 @@ export async function startGantryRuntime(
     },
     closeLiveTurnAuthority: shutdownLiveTurnAuthority,
     closeSettingsWatcher: settingsWatcher.close,
-    closeLiveTurnHostLease: async () => {
-      await liveTurnHostLeaseManager.stop();
+    closeLiveRecoveryCoordinatorLease: async () => {
+      await liveRecoveryCoordinatorLeaseManager.stop();
     },
     closeFleetSubsystems: async () => {
       await fleetSubsystems?.stop();
@@ -188,17 +203,25 @@ export async function startGantryRuntime(
       (await loadBrowserToolModule()).closeBrowserToolBackends(),
   });
 
-  // The standby acquirer runs in the background; a job-only worker boots fully
-  // while it waits for the live-host lease (fleet v1: 1 live host + N workers).
-  // Lease transitions (acquired/lost) start and stop the live-host services
+  // The standby acquirer runs in the background; every live worker polls and
+  // admits regardless. This lease only elects the single recovery coordinator;
+  // lease transitions (acquired/lost) start and stop the recovery coordinator
   // in-process via the manager handed to startRuntimeServices below.
   try {
     if (!runtimeSettings.runtime.liveTurns.enabled) {
       logger.info(
-        'Live-turn host lease disabled by runtime.live_turns.enabled=false; connecting channels in outbound-only mode',
+        'Live recovery coordinator disabled by runtime.live_turns.enabled=false; connecting channels in outbound-only mode',
       );
     }
-    await channelWiring.connectEnabledChannels(runtimeSettings);
+    if (!roleCaps.providerInbound) {
+      logger.info(
+        { processRole },
+        'Process role has no provider inbound; connecting channels in outbound-only mode',
+      );
+    }
+    await channelWiring.connectEnabledChannels(runtimeSettings, {
+      providerInbound: roleCaps.providerInbound,
+    });
 
     if (!channelWiring.hasConnectedChannels()) {
       logger.warn(
@@ -211,7 +234,10 @@ export async function startGantryRuntime(
         app,
         channelWiring,
         liveTurnsEnabled: runtimeSettings.runtime.liveTurns.enabled,
-        liveTurnHost: liveTurnHostLeaseManager,
+        recoveryCoordinator: liveRecoveryCoordinatorLeaseManager,
+        processRole,
+        liveExecution: roleCaps.liveExecution,
+        jobExecution: roleCaps.jobExecution,
       },
       {
         mcpHostnameLookup,
@@ -279,6 +305,8 @@ export async function startGantryRuntime(
         appId: 'default' as AppId,
         runtimeHome: GANTRY_HOME,
         pool: storage.service.pool,
+        bakeExecution: roleCaps.bakeExecution,
+        capabilityReconciliation: roleCaps.workerRegistration,
         settingsLoaded: fleetSettingsLoaded,
         onSettingsReady: async () => {
           const start = heldSchedulerStart;
@@ -300,6 +328,25 @@ export async function startGantryRuntime(
     controlServerRef.current = startControlServer({
       app,
       getBrowserStatus,
+      routeProfile: roleCaps.controlApi,
+      processRole,
+      liveExecution: roleCaps.liveExecution,
+      // Locked contract: the workstation `all` role keeps the historical
+      // readiness check set (no role-specific checks); split roles gate on
+      // exactly the subsystems they run.
+      roleReadinessRequirements:
+        processRole === 'all'
+          ? {
+              requiresApiAuthConfigured: false,
+              requiresWorkerRegistration: false,
+              requiresSchedulerClaiming: false,
+              requiresLiveCapacitySignal: false,
+            }
+          : roleReadinessRequirements(processRole),
+      currentWorkerInstanceId,
+      isSchedulerReady,
+      oldestWaitingLiveAdmissionSeconds: getOldestWaitingLiveAdmissionSeconds,
+      liveCapacityLimit: () => runtimeSettings.runtime.queue.maxMessageRuns,
       sendConversationIngressProjection: async (input) => {
         await channelWiring.sendMessage(input.conversationJid, input.text, {
           durability: 'required',
@@ -311,7 +358,7 @@ export async function startGantryRuntime(
       },
     });
   } catch (err) {
-    await liveTurnHostLeaseManager.stop();
+    await liveRecoveryCoordinatorLeaseManager.stop();
     await fleetSubsystems?.stop();
     throw err;
   }

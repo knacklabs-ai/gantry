@@ -35,6 +35,17 @@ variable "control_port" {
   default     = 8080
 }
 
+variable "process_role" {
+  description = "Deployment-owned process role surfaced to the runtime as GANTRY_PROCESS_ROLE. One image, many roles: \"all\" (everything; the minimal support stack), \"control\" (admin/settings API, no execution), \"live-worker\" (live admission/execution + provider inbound, ops-only API), \"job-worker\" (scheduler + bakes, ops-only API). Also names the ASG (name_prefix-process_role)."
+  type        = string
+  default     = "all"
+
+  validation {
+    condition     = contains(["all", "control", "live-worker", "job-worker"], var.process_role)
+    error_message = "process_role must be one of: all, control, live-worker, job-worker."
+  }
+}
+
 variable "min_size" {
   description = "Minimum ASG size."
   type        = number

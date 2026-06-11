@@ -62,6 +62,7 @@ function toWorkerInstance(
     capabilities: Array.isArray(row.capabilitiesJson)
       ? (row.capabilitiesJson as string[])
       : [],
+    processRole: row.processRole,
     status: row.status as WorkerInstanceStatus,
     heartbeatAt: row.heartbeatAt,
     lastSeenAt: row.lastSeenAt,
@@ -78,9 +79,11 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
     imageDigest?: string | null;
     version?: string | null;
     capabilities?: string[];
+    processRole?: string;
     now?: string;
   }): Promise<void> {
     const now = input.now ?? currentIso();
+    const processRole = input.processRole ?? 'all';
     await this.db
       .insert(pgSchema.workerInstancesPostgres)
       .values({
@@ -89,6 +92,7 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
         imageDigest: input.imageDigest ?? null,
         version: input.version ?? null,
         capabilitiesJson: input.capabilities ?? [],
+        processRole,
         status: 'healthy',
         heartbeatAt: now,
         lastSeenAt: now,
@@ -101,6 +105,7 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
           imageDigest: input.imageDigest ?? null,
           version: input.version ?? null,
           capabilitiesJson: input.capabilities ?? [],
+          processRole,
           status: 'healthy',
           heartbeatAt: now,
           lastSeenAt: now,
@@ -508,11 +513,18 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
       return toPendingInteraction(rows[0]!);
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
+      // A re-prompt after a provider/adapter restart reuses this record by
+      // idempotency key. The callback route is durable routing authority for the
+      // owning live turn; a re-prompt that omits it (restarted adapter) must NOT
+      // erase the original route or interaction resolution can no longer reach
+      // the (possibly recovered) owner. COALESCE preserves the existing route.
       const refreshed = await this.db
         .update(pgSchema.pendingInteractionsPostgres)
         .set({
           payloadJson: input.payload,
-          callbackRouteJson: input.callbackRoute ?? null,
+          callbackRouteJson:
+            input.callbackRoute ??
+            sql`${pgSchema.pendingInteractionsPostgres.callbackRouteJson}`,
           expiresAt: input.expiresAt,
         })
         .where(

@@ -12,7 +12,7 @@ import {
   sealIpcResponseSigningPrivateKey,
 } from '@core/runtime/ipc-auth.js';
 import {
-  LIVE_TURN_SLOT_KEY,
+  liveTurnSlotKey,
   liveTurnSlotHolderId,
 } from '@core/application/live-turns/live-turn-lease-service.js';
 import type {
@@ -163,7 +163,7 @@ describe('LiveTurnAuthority', () => {
     });
     expect(admission.outcome).toBe('claimed');
     if (admission.outcome !== 'claimed') return;
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([
       liveTurnSlotHolderId('turn-1', admission.fence.fencingVersion),
     ]);
 
@@ -177,7 +177,7 @@ describe('LiveTurnAuthority', () => {
         status: 'released',
       },
     ]);
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
   });
 
   it('releases the owner without finalizing when routed continuations are still pending', async () => {
@@ -208,7 +208,7 @@ describe('LiveTurnAuthority', () => {
         status: 'released',
       }),
     );
-    expect(coordination.slotHolders(LIVE_TURN_SLOT_KEY)).toEqual([]);
+    expect(coordination.slotHolders(liveTurnSlotKey('w1'))).toEqual([]);
     await authority.shutdown();
   });
 
@@ -374,7 +374,7 @@ describe('LiveTurnAuthority', () => {
       await authority.registerLocalRunner(QUEUE_JID, hooks);
 
       coordination.slots
-        .get(LIVE_TURN_SLOT_KEY)
+        .get(liveTurnSlotKey('w1'))
         ?.delete(
           liveTurnSlotHolderId('turn-1', admission.fence.fencingVersion),
         );

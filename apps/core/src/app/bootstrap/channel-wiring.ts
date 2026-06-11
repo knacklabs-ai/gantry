@@ -182,8 +182,13 @@ export function createChannelWiring(
 
   async function connectEnabledChannels(
     runtimeSettings: RuntimeSettings,
+    options?: { providerInbound?: boolean },
   ): Promise<void> {
     currentRuntimeSettings = runtimeSettings;
+    // Inbound needs the live-turns flag AND a role that admits inbound.
+    const inboundEnabled =
+      runtimeSettings.runtime.liveTurns.enabled &&
+      (options?.providerInbound ?? true);
     for (const provider of resolved.providerIds) {
       if (!provider.isEnabled(runtimeSettings)) {
         resolved.logger.info(
@@ -208,8 +213,8 @@ export function createChannelWiring(
       }
       connectedChannels.push(channel);
       await channel.connect({
-        inbound: runtimeSettings.runtime.liveTurns.enabled,
-        interactionCallbacks: runtimeSettings.runtime.liveTurns.enabled,
+        inbound: inboundEnabled,
+        interactionCallbacks: inboundEnabled,
       });
     }
   }

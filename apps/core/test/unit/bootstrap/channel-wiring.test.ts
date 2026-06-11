@@ -287,6 +287,58 @@ describe('createChannelWiring', () => {
     });
   });
 
+  it('connects outbound-only when the process role has no provider inbound', async () => {
+    const app = makeApp();
+    const channel = makeChannel();
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => channel),
+        ),
+      ],
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+        error: vi.fn(),
+      },
+    });
+    // Live turns enabled globally, but the role (control/job-worker) forbids
+    // inbound: channels still connect, but outbound-only.
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+      { providerInbound: false },
+    );
+
+    expect(channel.connect).toHaveBeenCalledWith({
+      inbound: false,
+      interactionCallbacks: false,
+    });
+  });
+
+  it('connects with inbound when the role admits provider inbound', async () => {
+    const app = makeApp();
+    const channel = makeChannel();
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => channel),
+        ),
+      ],
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+      { providerInbound: true },
+    );
+
+    expect(channel.connect).toHaveBeenCalledWith({
+      inbound: true,
+      interactionCallbacks: true,
+    });
+  });
+
   it('fails clearly when an enabled provider has only setup/discovery support', async () => {
     const app = makeApp();
     const wiring = createChannelWiring(app, {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  getOldestWaitingLiveAdmissionSeconds,
   shutdownLiveTurnAuthority,
   startRuntimeServices,
   stopLiveTurnRecoveryLoop,
@@ -172,15 +173,17 @@ describe('startRuntimeServices', () => {
 
     await new Promise((resolve) => setImmediate(resolve));
 
-    // Live-host services (pending message recovery, polling) start LAST: they
-    // are lease-gated and only start once this worker hosts live turns.
+    // WP2: the polling loop starts on every live worker (always-on), then the
+    // recovery coordinator (single-process embedding, no lease) logs and runs
+    // startup pending-message recovery.
     expect(order).toEqual([
       'startIpcWatcher',
       'startSchedulerLoop',
       'writeGroupsSnapshot',
       'runtime-ready-log',
-      'recoverPendingMessages',
       'startMessagePollingLoop',
+      'runtime-ready-log',
+      'recoverPendingMessages',
     ]);
 
     expect((app.queue.setProcessMessagesFn as any).mock.calls).toHaveLength(1);
@@ -227,7 +230,67 @@ describe('startRuntimeServices', () => {
     expect(app.queue.setProcessMessagesFn).toHaveBeenCalledOnce();
   });
 
-  it('gates live-host services on the live-turn host lease: standby serves jobs only, acquisition starts them, loss stops them', async () => {
+  it('does not start the scheduler loop when the role has no job execution', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const startSchedulerLoop = vi.fn();
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+        jobExecution: false,
+      },
+      {
+        startSchedulerLoop: startSchedulerLoop as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(() => ({
+          stop: vi.fn(),
+          done: new Promise<void>(() => {}),
+        })) as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+
+    expect(startSchedulerLoop).not.toHaveBeenCalled();
+  });
+
+  it('starts the scheduler loop when the role runs job execution', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const startSchedulerLoop = vi.fn();
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+        jobExecution: true,
+      },
+      {
+        startSchedulerLoop: startSchedulerLoop as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(() => ({
+          stop: vi.fn(),
+          done: new Promise<void>(() => {}),
+        })) as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+
+    expect(startSchedulerLoop).toHaveBeenCalledOnce();
+  });
+
+  it('runs polling on every live worker and gates only the recovery coordinator on the lease', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
     let transitions:
@@ -236,7 +299,7 @@ describe('startRuntimeServices', () => {
           onLost: (err: Error) => void;
         }
       | undefined;
-    const liveTurnHost = {
+    const recoveryCoordinator = {
       onTransition: vi.fn((handlers: typeof transitions) => {
         transitions = handlers;
       }),
@@ -254,7 +317,7 @@ describe('startRuntimeServices', () => {
       {
         app,
         channelWiring,
-        liveTurnHost: liveTurnHost as any,
+        recoveryCoordinator: recoveryCoordinator as any,
       },
       {
         startSchedulerLoop: startSchedulerLoop as any,
@@ -269,29 +332,101 @@ describe('startRuntimeServices', () => {
       },
     );
 
-    // Standby: job services run, live-host services do not.
+    // WP2: every live worker polls. Polling starts at boot regardless of the
+    // coordinator lease; only recovery is gated.
     expect(startSchedulerLoop).toHaveBeenCalledOnce();
-    expect(liveTurnHost.onTransition).toHaveBeenCalledOnce();
+    expect(recoveryCoordinator.onTransition).toHaveBeenCalledOnce();
+    expect(startMessagePollingLoop).toHaveBeenCalledOnce();
     expect(recoverPendingMessages).not.toHaveBeenCalled();
-    expect(startMessagePollingLoop).not.toHaveBeenCalled();
 
-    // Acquisition (boot win or takeover after the holder drains): the
-    // live-host services actually start.
+    // Acquiring the coordinator lease starts recovery; it does NOT restart
+    // polling (already running).
     transitions?.onAcquired({ release: vi.fn(async () => {}) });
     expect(recoverPendingMessages).toHaveBeenCalledOnce();
     expect(startMessagePollingLoop).toHaveBeenCalledOnce();
 
-    // Lease loss: live-host services stop in-process; worker serves jobs only.
+    // Losing the coordinator lease stops recovery but keeps polling running.
     transitions?.onLost(new Error('lease connection ended'));
-    expect(pollingStops[0]).toHaveBeenCalledOnce();
+    expect(pollingStops[0]).not.toHaveBeenCalled();
 
-    // Re-acquisition after standby re-entry: services start again.
+    // Re-acquisition re-runs recovery; polling is still the one boot loop.
     transitions?.onAcquired({ release: vi.fn(async () => {}) });
-    expect(startMessagePollingLoop).toHaveBeenCalledTimes(2);
     expect(recoverPendingMessages).toHaveBeenCalledTimes(2);
+    expect(startMessagePollingLoop).toHaveBeenCalledOnce();
   });
 
-  it('refuses new live-turn admission while not hosting and admits after takeover', async () => {
+  it('graceful drain stops the waiting-status monitor and resets its metrics accessor', async () => {
+    vi.useFakeTimers();
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    // The monitor only needs the durable read + the conversation set; back it
+    // with a controllable oldest-waiting probe.
+    const getOldestWaitingLiveAdmission = vi.fn(async () => ({
+      conversationJid: 'tg:primary',
+      threadId: null,
+      waitingSince: '2026-06-11T00:00:00.000Z',
+      ageSeconds: 42,
+    }));
+    (liveTurns as any).getOldestWaitingLiveAdmission =
+      getOldestWaitingLiveAdmission;
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+        // Single-process embedding: this worker is also the coordinator, so the
+        // waiting-status monitor starts immediately at boot.
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(() => ({
+          stop: vi.fn(),
+          done: new Promise<void>(() => {}),
+        })) as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      // Drive one probe so the monitor reports a non-zero oldest-waiting age via
+      // the /metrics accessor.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(getOldestWaitingLiveAdmission).toHaveBeenCalled();
+      expect(getOldestWaitingLiveAdmissionSeconds()).toBe(42);
+
+      // Graceful SIGTERM drain runs this choke point. It must stop the monitor
+      // (clearInterval) AND reset the metrics accessor — not only the lease-loss
+      // onLost path.
+      stopLiveTurnRecoveryLoop();
+      expect(getOldestWaitingLiveAdmissionSeconds()).toBe(0);
+
+      const callsAfterStop = getOldestWaitingLiveAdmission.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(20_000);
+      // The probe timer was cleared: no further probes fire after the drain.
+      expect(getOldestWaitingLiveAdmission.mock.calls.length).toBe(
+        callsAfterStop,
+      );
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+      vi.useRealTimers();
+    }
+  });
+
+  it('admits live turns on every worker without a coordinator lease gate', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
     const liveTurns = new FakeLiveTurns();
@@ -306,22 +441,13 @@ describe('startRuntimeServices', () => {
       agentSessionId: 'session-main',
     }));
     const createSessionAgentRun = vi.fn(async () => 'agent-run:live-1');
-    let transitions:
-      | {
-          onAcquired: (lease: { release: () => Promise<void> }) => void;
-          onLost: (err: Error) => void;
-        }
-      | undefined;
-    const warn = vi.fn();
 
     await startRuntimeServices(
       {
         app,
         channelWiring,
-        liveTurnHost: {
-          onTransition: (handlers: never) => {
-            transitions = handlers;
-          },
+        recoveryCoordinator: {
+          onTransition: () => {},
         } as any,
       },
       {
@@ -340,7 +466,7 @@ describe('startRuntimeServices', () => {
           stop: vi.fn(),
           done: new Promise<void>(() => {}),
         })) as any,
-        logger: { info: vi.fn(), warn, fatal: vi.fn() },
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
     );
@@ -348,16 +474,7 @@ describe('startRuntimeServices', () => {
       const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
         .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
 
-      // Standby: no admission, no run-row churn.
-      await expect(processMessages('tg:primary')).resolves.toBe(false);
-      expect(createSessionAgentRun).not.toHaveBeenCalled();
-      expect(warn).toHaveBeenCalledWith(
-        { queueJid: 'tg:primary' },
-        'Skipping live-turn admission; this worker is not the live-turn host',
-      );
-
-      // Takeover: the same worker now admits and processes the turn.
-      transitions?.onAcquired({ release: vi.fn(async () => {}) });
+      // No lease gate: any live worker admits and processes the turn directly.
       await expect(processMessages('tg:primary')).resolves.toBe(true);
       expect(createSessionAgentRun).toHaveBeenCalledOnce();
     } finally {
@@ -526,7 +643,7 @@ describe('startRuntimeServices', () => {
     }
   });
 
-  it('fails the precreated agent run when live-turn admission is not claimed', async () => {
+  it('routes a follow-up to the active owner without minting an orphan run (pre-check)', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
     const liveTurns = new FakeLiveTurns();
@@ -547,6 +664,7 @@ describe('startRuntimeServices', () => {
       runId: 'agent-run:other',
     });
     const completeSessionAgentRun = vi.fn(async () => undefined);
+    const createSessionAgentRun = vi.fn(async () => 'agent-run:live-1');
 
     await startRuntimeServices(
       {
@@ -563,7 +681,7 @@ describe('startRuntimeServices', () => {
             agentId: 'agent-main',
             agentSessionId: 'session-main',
           })),
-          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+          createSessionAgentRun,
           completeSessionAgentRun,
           getMessagesSince: vi.fn(async () => [
             {
@@ -598,12 +716,10 @@ describe('startRuntimeServices', () => {
 
       await expect(processMessages('tg:primary')).resolves.toBe(true);
       expect(app.processGroupMessages).not.toHaveBeenCalled();
-      expect(completeSessionAgentRun).toHaveBeenCalledWith({
-        runId: 'agent-run:live-1',
-        status: 'canceled',
-        errorSummary:
-          'Live-turn admission routed the message to the active owner.',
-      });
+      // Pre-check short-circuit: no run row is created, so there is nothing to
+      // terminal-mark — the orphan is avoided entirely, not cleaned up.
+      expect(createSessionAgentRun).not.toHaveBeenCalled();
+      expect(completeSessionAgentRun).not.toHaveBeenCalled();
       expect(app.setAgentCursor).toHaveBeenCalledWith(
         'tg:primary',
         JSON.stringify({

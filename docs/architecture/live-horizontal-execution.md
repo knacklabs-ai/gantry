@@ -33,7 +33,7 @@ migration `0076_live_interactive_execution.sql`):
   live turn per scope; concurrent claimers lose via unique violation.
 - `live_turn_commands` — the owner inbox. Each row carries a `command_type`
   (`continuation | stop | close_stdin | new_session | compact |
-  interaction_resolved`), a repository-allocated `seq`, an `idempotency_key`
+interaction_resolved`), a repository-allocated `seq`, an `idempotency_key`
   (unique), payload, `status` (`pending | applied | rejected`), and the fence
   snapshot at append time. A unique `(live_turn_id, seq)` index plus the
   row-locked `next_command_seq` allocation guarantee strict per-turn ordering.
@@ -42,16 +42,16 @@ migration `0076_live_interactive_execution.sql`):
 
 `live_turns.state` maps to the exact visible vocabulary:
 
-| State | Visible label | Meaning |
-|---|---|---|
-| `claimed` | Worker waking | scope + slot + lease acquired, runner not yet registered |
-| `running` | Running | owner registered the live runner and is heartbeating |
-| `awaiting_interaction` | Needs permission | a durable permission/question interaction is pending |
-| `setup_required` | Setup needed | deterministic capability/setup blocker |
-| `recovered` | Recovered | a new worker safely claimed an expired live lease |
-| `completed` | Completed | fenced owner completed the live run |
-| `failed` | Failed | fenced owner failed, stopped, or could not recover |
-| `timed_out` | Timed out | lease/recovery policy timed out without a valid owner |
+| State                  | Visible label    | Meaning                                                  |
+| ---------------------- | ---------------- | -------------------------------------------------------- |
+| `claimed`              | Worker waking    | scope + slot + lease acquired, runner not yet registered |
+| `running`              | Running          | owner registered the live runner and is heartbeating     |
+| `awaiting_interaction` | Needs permission | a durable permission/question interaction is pending     |
+| `setup_required`       | Setup needed     | deterministic capability/setup blocker                   |
+| `recovered`            | Recovered        | a new worker safely claimed an expired live lease        |
+| `completed`            | Completed        | fenced owner completed the live run                      |
+| `failed`               | Failed           | fenced owner failed, stopped, or could not recover       |
+| `timed_out`            | Timed out        | lease/recovery policy timed out without a valid owner    |
 
 `completed | failed | timed_out` are terminal.
 
@@ -99,29 +99,51 @@ before a drain request is always observed.
 
 `apps/core/src/runtime/live-turn-authority.ts` is the per-worker adapter that
 owns admission, the local runner-hook registry, the ownership tick (renew lease
-+ slot, stop the local runner on ownership loss), and fenced finalization.
 
-## Live-host election
+- slot, stop the local runner on ownership loss), and fenced finalization.
 
-The singleton advisory lease `runtime:live-turn-host:default`
-(`apps/core/src/app/bootstrap/live-turn-host.ts`) elects WHICH worker runs the
-live-host services: message polling, NEW live-turn admission, the recovery
-sweep, and pending-message recovery. `runtime.live_turns.enabled` stays the
-global feature flag; the lease decides the host among enabled workers.
+## Horizontal execution + recovery coordinator
 
-- **Standby:** a worker that loses the lease race boots fully as a job worker
-  and retries acquisition with bounded jittered backoff (no throw, no crash
-  loop). It does not poll, admit new live turns, or run the recovery sweep.
-- **Takeover:** when the holder drains, it releases the lease early; a standby
-  acquires it and starts the live-host services
-  (`startRuntimeServices` wires lease transitions in
-  `apps/core/src/app/bootstrap/runtime-services.ts`), including pending-message
-  recovery for messages the previous host never processed.
-- **Lease loss:** the holder stops its live-host services in-process and
-  re-enters standby acquisition. Already-active turns are NOT torn down — they
-  keep running under their fenced per-turn `run_leases` until they finish or
-  the per-turn lease expires and the recovery sweep on the new host reclaims
-  them at a higher fencing version.
+Live execution is distributed: message polling, NEW live-turn admission, and
+owned-turn execution run on EVERY live-capable worker
+(`apps/core/src/app/bootstrap/live-execution.ts`
+`buildLiveAdmissionProcessor`/`startLiveExecutionServices`). There is no lease
+gate on polling or admission. The durable one-active-turn-per-scope claim
+(`uq_live_turns_active_scope`) is the only serialization point: when two pollers
+race the same scope, the loser routes its message to the owning turn's command
+inbox instead of starting a second run. `runtime.live_turns.enabled` stays the
+global feature flag.
+
+Orphan-run avoidance: admission does a cheap `getActiveLiveTurn(scope)`
+pre-check before minting an `agent_run`. If a turn is already active the
+continuation routes without creating a run row at all; for the residual race
+(claimed between pre-check and claim) the just-created run is terminal-marked, so
+no non-terminal orphan run survives a lost race.
+
+Per-worker capacity: each live worker bounds concurrency with its own slot key
+`live:messages:<workerInstanceId>` (capacity `runtime.queue.max_message_runs`).
+A worker at capacity returns `no_capacity` and leaves the message re-pollable;
+another worker with free capacity claims the same scope next tick.
+
+The singleton advisory lease `runtime:live-recovery-coordinator:default`
+(`apps/core/src/app/bootstrap/live-recovery-coordinator.ts`) elects ONLY the recovery
+coordinator. It gates startup pending-message recovery and the periodic recovery
+sweep — nothing else.
+
+- **Standby:** a worker that loses the coordinator-lease race still polls,
+  admits, and executes live turns. It retries acquisition with bounded jittered
+  backoff (no throw, no crash loop); it just does not run the recovery sweep.
+- **Takeover:** when the holder drains it releases the lease early; a standby
+  acquires it and starts the recovery coordinator (`startLiveExecutionServices`
+  wires the lease transitions), including pending-message recovery for messages
+  the previous coordinator never processed. Recovered turns resume ON the
+  coordinator under a strictly higher fencing version; if the coordinator lacks
+  slot capacity for a turn, that turn defers to the next sweep.
+- **Lease loss:** the holder stops only its recovery coordinator in-process and
+  re-enters standby acquisition. Its polling/admission keep running. Active turns
+  are never torn down — they run under their fenced per-turn `run_leases` until
+  they finish or the recovery sweep on the new coordinator reclaims them at a
+  higher fencing version.
 
 ## Prompt durability across adapter restart
 

@@ -18,7 +18,17 @@ output "database_endpoint" {
   value       = module.database.endpoint
 }
 
-output "worker_asg" {
-  description = "Name of the worker ASG (single pool; the live-turn host lease elects which instance hosts live turns)."
-  value       = module.worker.asg_name
+output "control_asg" {
+  description = "Name of the control-plane ASG (admin/settings API; serves /v1/*)."
+  value       = module.control_worker.asg_name
+}
+
+output "live_worker_asg" {
+  description = "Name of the live-worker ASG (distributed live admission/execution; serves /webhooks/*). Scale this for more concurrent chat capacity."
+  value       = module.live_worker.asg_name
+}
+
+output "job_worker_asg" {
+  description = "Name of the job-worker ASG (scheduler + bakes; no ALB traffic)."
+  value       = module.job_worker.asg_name
 }

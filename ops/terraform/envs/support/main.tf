@@ -1,8 +1,10 @@
-# Support root module: minimal isolated stack. One combined worker (live + job
-# in a single instance, since support load is small and v1 keeps a singleton
-# live host anyway). Multi-AZ off, single NAT, small DB. Locked-agent settings
-# are seeded post-apply with `gantry settings import` (see runbook); the locked
-# posture itself is enforced in the runtime, not here.
+# Support root module: minimal isolated stack. ONE worker in the `all` process
+# role — it runs everything (control API + live + jobs + bakes) in one process,
+# because support load is small and a single box does not warrant the role split.
+# That one worker registers to BOTH ALB target groups (control + live), so /v1/*
+# and /webhooks/* both reach it. Multi-AZ off, single NAT, small DB. Locked-agent
+# settings are seeded post-apply with `gantry settings import` (see runbook); the
+# locked posture itself is enforced in the runtime, not here.
 
 locals {
   name_prefix = var.name_prefix
@@ -55,23 +57,29 @@ locals {
   ])
 }
 
-# Single support worker: 1 instance, takes ALB traffic, holds the live lease.
-# Fixed size, no scaling policy — minimal stack scales vertically only
-# (worker_instance_type); support load does not warrant a horizontal pool.
+# Single support worker: 1 instance in the `all` role, doing everything. Fixed
+# size, no scaling policy — minimal stack scales vertically only
+# (worker_instance_type); support load does not warrant a horizontal pool or the
+# role split. Registers to both ALB target groups so /v1/* and /webhooks/* both
+# land on the one box.
 module "worker" {
-  source                  = "../../modules/worker_pool"
-  name_prefix             = local.name_prefix
-  vpc_id                  = module.network.vpc_id
-  subnet_ids              = module.network.private_subnet_ids
-  image_ref               = var.image_ref
-  ami_id                  = var.worker_ami_id
-  instance_type           = var.worker_instance_type
-  min_size                = 1
-  max_size                = 1
-  desired_capacity        = 1
-  autoscaling_enabled     = false
-  drain_deadline_seconds  = var.drain_deadline_seconds
-  target_group_arns       = [module.control.target_group_arn]
+  source                 = "../../modules/worker_pool"
+  name_prefix            = local.name_prefix
+  vpc_id                 = module.network.vpc_id
+  subnet_ids             = module.network.private_subnet_ids
+  image_ref              = var.image_ref
+  ami_id                 = var.worker_ami_id
+  instance_type          = var.worker_instance_type
+  process_role           = "all"
+  min_size               = 1
+  max_size               = 1
+  desired_capacity       = 1
+  autoscaling_enabled    = false
+  drain_deadline_seconds = var.drain_deadline_seconds
+  target_group_arns = [
+    module.control.control_target_group_arn,
+    module.control.live_target_group_arn,
+  ]
   alb_security_group_id   = module.control.alb_security_group_id
   instance_policy_arns    = local.worker_instance_policy_arns
   runtime_secret_env_refs = local.base_runtime_refs

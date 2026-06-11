@@ -540,6 +540,13 @@
       "when": 1777263000000,
       "tag": "0077_fleet_capability_state",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1777266600000,
+      "tag": "0078_worker_process_role",
+      "breakpoints": true
     }
   ]
 }

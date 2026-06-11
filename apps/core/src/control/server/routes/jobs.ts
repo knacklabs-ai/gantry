@@ -23,6 +23,7 @@ import {
   isSchedulerReady,
   runtimeJobSchedulePlanner,
   requestSchedulerSync,
+  schedulerNotReadyReason,
 } from '../../../jobs/scheduler.js';
 import {
   formatBrowserProfileLabel,
@@ -153,6 +154,7 @@ export function createJobManagementService(ctx?: ControlRouteContext) {
     triggerQueue: {
       isReady: isSchedulerReady,
       enqueue: enqueueJobTrigger,
+      notReadyReason: schedulerNotReadyReason,
     },
     toolRepository: getRuntimeToolRepositoryIfReady(),
     skillRepository: getRuntimeStorage().repositories.skills,
