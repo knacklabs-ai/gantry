@@ -486,6 +486,9 @@ describe('contracts package', () => {
               maxProcesses: 24,
             },
           },
+          artifactStore: {
+            driver: 'local',
+          },
         },
         browser: {
           usage: {

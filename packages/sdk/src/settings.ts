@@ -79,6 +79,13 @@ export type RuntimeSettingsResponse = {
           maxProcesses: number;
         };
       };
+      artifactStore: {
+        driver: 'local' | 's3';
+        bucket?: string;
+        region?: string;
+        endpoint?: string;
+        forcePathStyle?: boolean;
+      };
     };
     browser: {
       usage: {

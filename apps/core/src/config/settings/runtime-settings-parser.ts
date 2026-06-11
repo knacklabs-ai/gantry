@@ -21,6 +21,7 @@ import {
   getDefaultRuntimeSandboxSettings,
 } from './runtime-settings-defaults.js';
 import type {
+  RuntimeArtifactStoreSettings,
   RuntimeCredentialBrokerSettings,
   RuntimeAgentSettings,
   RuntimeConfiguredBinding,
@@ -680,6 +681,9 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       enabled: true,
     },
     sandbox: getDefaultRuntimeSandboxSettings(),
+    artifactStore: {
+      driver: 'local',
+    },
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -687,9 +691,14 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'queue' && key !== 'live_turns' && key !== 'sandbox') {
+    if (
+      key !== 'queue' &&
+      key !== 'live_turns' &&
+      key !== 'sandbox' &&
+      key !== 'artifact_store'
+    ) {
       throw new Error(
-        `runtime.${key} is not supported. Configure runtime.queue.*, runtime.live_turns.*, or runtime.sandbox.*.`,
+        `runtime.${key} is not supported. Configure runtime.queue.*, runtime.live_turns.*, runtime.sandbox.*, or runtime.artifact_store.*.`,
       );
     }
   }
@@ -782,6 +791,7 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       'runtime.sandbox.provider must be direct or sandbox_runtime',
     );
   }
+  const artifactStore = parseRuntimeArtifactStoreSettings(map.artifact_store);
   return {
     queue: {
       maxMessageRuns: parsePositiveIntegerValue(
@@ -847,6 +857,70 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
         ),
       },
     },
+    artifactStore,
+  };
+}
+
+function parseRuntimeArtifactStoreSettings(
+  raw: unknown,
+): RuntimeArtifactStoreSettings {
+  if (raw === undefined) return { driver: 'local' };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('runtime.artifact_store must be a mapping');
+  }
+  const map = raw as Record<string, unknown>;
+  for (const key of Object.keys(map)) {
+    if (
+      key !== 'driver' &&
+      key !== 'bucket' &&
+      key !== 'region' &&
+      key !== 'endpoint' &&
+      key !== 'force_path_style'
+    ) {
+      throw new Error(
+        `runtime.artifact_store.${key} is not supported. Configure driver, bucket, region, endpoint, or force_path_style.`,
+      );
+    }
+  }
+  const driver =
+    map.driver === undefined
+      ? 'local'
+      : parseStringValue(map.driver, 'runtime.artifact_store.driver');
+  if (driver !== 'local' && driver !== 's3') {
+    throw new Error('runtime.artifact_store.driver must be local or s3');
+  }
+  if (driver === 'local') {
+    for (const key of ['bucket', 'region', 'endpoint', 'force_path_style']) {
+      if (map[key] !== undefined) {
+        throw new Error(
+          `runtime.artifact_store.${key} is only supported when driver is s3`,
+        );
+      }
+    }
+    return { driver: 'local' };
+  }
+  const bucket = parseStringValue(map.bucket, 'runtime.artifact_store.bucket');
+  const region =
+    map.region === undefined
+      ? undefined
+      : parseStringValue(map.region, 'runtime.artifact_store.region');
+  const endpoint =
+    map.endpoint === undefined
+      ? undefined
+      : parseStringValue(map.endpoint, 'runtime.artifact_store.endpoint');
+  const forcePathStyle =
+    map.force_path_style === undefined
+      ? undefined
+      : parseBooleanValue(
+          map.force_path_style,
+          'runtime.artifact_store.force_path_style',
+        );
+  return {
+    driver: 's3',
+    bucket,
+    ...(region !== undefined ? { region } : {}),
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    ...(forcePathStyle !== undefined ? { forcePathStyle } : {}),
   };
 }
 

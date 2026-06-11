@@ -17,6 +17,8 @@ import {
 } from '../../../config/index.js';
 import { LocalFileArtifactBytes } from '../../artifacts/files/local-file-artifact-bytes.js';
 import { LocalSkillArtifactStore } from '../../artifacts/skills/local-skill-artifact-store.js';
+import { S3SkillArtifactStore } from '../../artifacts/skills/s3-skill-artifact-store.js';
+import { createS3ArtifactClient } from '../../artifacts/skills/s3-artifact-client.js';
 import type {
   RuntimeAgentSessionRepository,
   RuntimeChatMetadataRepository,
@@ -113,7 +115,7 @@ export function createStorageRuntime(
       path.join(ARTIFACTS_DIR, FILE_ARTIFACTS_DIR_NAME),
     ),
   );
-  const skillArtifacts = new LocalSkillArtifactStore(ARTIFACTS_DIR);
+  const skillArtifacts = createSkillArtifactStore();
   return {
     service,
     ops,
@@ -124,4 +126,18 @@ export function createStorageRuntime(
     fileArtifacts,
     skillArtifacts,
   };
+}
+
+function createSkillArtifactStore(): SkillArtifactStore {
+  const artifactStore = getRuntimeSettingsForConfig().runtime.artifactStore;
+  if (artifactStore.driver === 's3') {
+    const { client, bucket } = createS3ArtifactClient({
+      bucket: artifactStore.bucket ?? '',
+      region: artifactStore.region,
+      endpoint: artifactStore.endpoint,
+      forcePathStyle: artifactStore.forcePathStyle,
+    });
+    return new S3SkillArtifactStore(client, bucket);
+  }
+  return new LocalSkillArtifactStore(ARTIFACTS_DIR);
 }

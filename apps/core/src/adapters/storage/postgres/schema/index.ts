@@ -8,6 +8,7 @@ export * from './control-http.js';
 export * from './events.js';
 export * from './external-ingress.js';
 export * from './file-artifacts.js';
+export * from './fleet-capability-state.js';
 export * from './jobs.js';
 export * from './live-turns.js';
 export * from './memory.js';

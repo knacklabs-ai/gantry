@@ -128,6 +128,7 @@ export function getPublicRuntimeSettings() {
     runtime: {
       queue: settings.runtime.queue,
       sandbox: settings.runtime.sandbox,
+      artifactStore: settings.runtime.artifactStore,
     },
     browser: {
       usage: {

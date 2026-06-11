@@ -1,4 +1,5 @@
 import { quoteYamlString } from './yaml.js';
+import { renderArtifactStoreYamlLines } from './runtime-settings-artifact-store-renderer.js';
 import {
   DEFAULT_AGENT_NAME,
   DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS,
@@ -508,7 +509,8 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
     runtime.sandbox.provider === 'direct' &&
     runtime.sandbox.resourceLimits.cpuSeconds === 0 &&
     runtime.sandbox.resourceLimits.memoryMb === 0 &&
-    runtime.sandbox.resourceLimits.maxProcesses === 0
+    runtime.sandbox.resourceLimits.maxProcesses === 0 &&
+    runtime.artifactStore.driver === 'local'
   );
 }
 
@@ -601,8 +603,8 @@ function renderRuntimeProcessYaml(
     `      cpu_seconds: ${runtime.sandbox.resourceLimits.cpuSeconds}`,
     `      memory_mb: ${runtime.sandbox.resourceLimits.memoryMb}`,
     `      max_processes: ${runtime.sandbox.resourceLimits.maxProcesses}`,
-    '',
   );
+  lines.push(...renderArtifactStoreYamlLines(runtime.artifactStore), '');
 }
 
 function renderProviderConnectionsInlineYaml(

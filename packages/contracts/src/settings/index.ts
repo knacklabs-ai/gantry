@@ -190,6 +190,15 @@ export const RuntimeSettingsPublicSchema = z
               .strict(),
           })
           .strict(),
+        artifactStore: z
+          .object({
+            driver: z.union([z.literal('local'), z.literal('s3')]),
+            bucket: z.string().min(1).optional(),
+            region: z.string().min(1).optional(),
+            endpoint: z.string().min(1).optional(),
+            forcePathStyle: z.boolean().optional(),
+          })
+          .strict(),
       })
       .strict(),
     browser: z

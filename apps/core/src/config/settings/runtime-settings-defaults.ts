@@ -147,6 +147,9 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       enabled: true,
     },
     sandbox: getDefaultRuntimeSandboxSettings(),
+    artifactStore: {
+      driver: 'local',
+    },
   };
   const browser: RuntimeBrowserSettings = {
     usage: {

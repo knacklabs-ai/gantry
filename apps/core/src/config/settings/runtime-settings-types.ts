@@ -200,10 +200,21 @@ export interface RuntimeSandboxSettings {
   };
 }
 
+export type RuntimeArtifactStoreDriver = 'local' | 's3';
+
+export interface RuntimeArtifactStoreSettings {
+  driver: RuntimeArtifactStoreDriver;
+  bucket?: string;
+  region?: string;
+  endpoint?: string;
+  forcePathStyle?: boolean;
+}
+
 export interface RuntimeProcessSettings {
   queue: RuntimeQueueSettings;
   liveTurns: RuntimeLiveTurnsSettings;
   sandbox: RuntimeSandboxSettings;
+  artifactStore: RuntimeArtifactStoreSettings;
 }
 
 export type RuntimeBrowserUsagePolicyMode = 'audit' | 'enforce';
