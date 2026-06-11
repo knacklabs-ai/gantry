@@ -11,6 +11,18 @@ import {
 
 const maybeDescribe = hasPostgresIntegrationDatabase ? describe : describe.skip;
 
+function leaseFence(lease: {
+  leaseToken: string;
+  workerInstanceId: string;
+  fencingVersion: number;
+}) {
+  return {
+    leaseToken: lease.leaseToken,
+    workerInstanceId: lease.workerInstanceId,
+    fencingVersion: lease.fencingVersion,
+  };
+}
+
 function makeJob(id: string, patch: Partial<JobUpsertInput> = {}) {
   const now = nowIso();
   return {
@@ -181,6 +193,8 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       runtime.ops.completeJobRunWithLease!({
         runId: 'run-expired-settle',
         leaseToken: expiredLease!.leaseToken,
+        workerInstanceId: expiredLease!.workerInstanceId,
+        fencingVersion: expiredLease!.fencingVersion,
         status: 'completed',
         resultSummary: 'late completion',
       }),
@@ -202,6 +216,8 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       runtime.ops.completeJobRunWithLease!({
         runId: 'run-fenced-completion',
         leaseToken: lease!.leaseToken,
+        workerInstanceId: lease!.workerInstanceId,
+        fencingVersion: lease!.fencingVersion,
         status: 'completed',
         resultSummary: 'done',
       }),
@@ -232,6 +248,8 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       runtime.ops.finalizeJobRunLease!({
         runId: 'run-run-only-finalization',
         leaseToken: lease!.leaseToken,
+        workerInstanceId: lease!.workerInstanceId,
+        fencingVersion: lease!.fencingVersion,
         leaseOutcome: 'failed',
         runStatus: 'failed',
         errorSummary: 'failsafe completion',
@@ -276,6 +294,8 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         jobId: 'job-finalize-preserve',
         runId: 'run-finalize-preserve',
         leaseToken: lease!.leaseToken,
+        workerInstanceId: lease!.workerInstanceId,
+        fencingVersion: lease!.fencingVersion,
         leaseOutcome: 'completed',
         runStatus: 'completed',
         resultSummary: 'done',
@@ -298,6 +318,112 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       status: 'completed',
       consecutive_failures: 0,
       pause_reason: null,
+    });
+  });
+
+  it('notification evidence is fenced by the terminal run lease', async () => {
+    await runtime.ops.upsertJob(makeJob('job-notification-fence'));
+    await createRunForJob('job-notification-fence', 'run-notification-fence');
+    const staleLease = await coordination.claimRunLease({
+      runId: 'run-notification-fence',
+      jobId: 'job-notification-fence',
+      workerInstanceId: 'w1',
+      ttlMs: 1_000,
+      now: toIso(nowMs() - 60_000),
+    });
+    expect(staleLease).not.toBeNull();
+    const recoveredLease = await coordination.claimRunLease({
+      runId: 'run-notification-fence',
+      jobId: 'job-notification-fence',
+      workerInstanceId: 'w2',
+      ttlMs: 60_000,
+    });
+    expect(recoveredLease).not.toBeNull();
+
+    await expect(
+      runtime.ops.finalizeJobRunLease!({
+        runId: 'run-notification-fence',
+        leaseToken: recoveredLease!.leaseToken,
+        workerInstanceId: recoveredLease!.workerInstanceId,
+        fencingVersion: recoveredLease!.fencingVersion,
+        leaseOutcome: 'completed',
+        runStatus: 'completed',
+        resultSummary: 'done',
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      runtime.ops.markJobRunNotified(
+        'run-notification-fence',
+        leaseFence(staleLease!),
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      runtime.ops.getJobRunById('run-notification-fence'),
+    ).resolves.toMatchObject({ notified_at: null });
+    await expect(
+      runtime.ops.markJobRunNotified(
+        'run-notification-fence',
+        leaseFence(recoveredLease!),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      runtime.ops.getJobRunById('run-notification-fence'),
+    ).resolves.toMatchObject({ notified_at: expect.any(String) });
+  });
+
+  it('provider metadata writes are fenced by the active run lease', async () => {
+    await runtime.ops.upsertJob(makeJob('job-provider-metadata-fence'));
+    await createRunForJob(
+      'job-provider-metadata-fence',
+      'run-provider-metadata-fence',
+    );
+    const staleLease = await coordination.claimRunLease({
+      runId: 'run-provider-metadata-fence',
+      jobId: 'job-provider-metadata-fence',
+      workerInstanceId: 'w1',
+      ttlMs: 1_000,
+      now: toIso(nowMs() - 60_000),
+    });
+    expect(staleLease).not.toBeNull();
+    const recoveredLease = await coordination.claimRunLease({
+      runId: 'run-provider-metadata-fence',
+      jobId: 'job-provider-metadata-fence',
+      workerInstanceId: 'w2',
+      ttlMs: 60_000,
+    });
+    expect(recoveredLease).not.toBeNull();
+
+    await expect(
+      runtime.ops.updateAgentRunProviderMetadata!({
+        runId: 'run-provider-metadata-fence',
+        runIds: ['run-provider-metadata-fence'],
+        ...leaseFence(staleLease!),
+        providerRunId: 'provider-stale',
+        providerSessionId: 'session-stale',
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      runtime.ops.getJobRunById('run-provider-metadata-fence'),
+    ).resolves.toMatchObject({
+      provider_run_id: null,
+      provider_session_id: null,
+    });
+
+    await expect(
+      runtime.ops.updateAgentRunProviderMetadata!({
+        runId: 'run-provider-metadata-fence',
+        runIds: ['run-provider-metadata-fence'],
+        ...leaseFence(recoveredLease!),
+        providerRunId: 'provider-recovered',
+        providerSessionId: 'session-recovered',
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      runtime.ops.getJobRunById('run-provider-metadata-fence'),
+    ).resolves.toMatchObject({
+      provider_run_id: 'provider-recovered',
+      provider_session_id: 'session-recovered',
     });
   });
 
@@ -423,6 +549,8 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         jobId: 'job-claim-recovered',
         runId: 'run-claim-recovered',
         leaseToken: retryLease!.leaseToken,
+        workerInstanceId: retryLease!.workerInstanceId,
+        fencingVersion: retryLease!.fencingVersion,
         leaseOutcome: 'completed',
         runStatus: 'completed',
         resultSummary: 'recovered done',
@@ -471,6 +599,8 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         jobId: 'job-terminal-replay',
         runId: 'run-terminal-replay',
         leaseToken: lease!.leaseToken,
+        workerInstanceId: lease!.workerInstanceId,
+        fencingVersion: lease!.fencingVersion,
         leaseOutcome: 'completed',
         runStatus: 'completed',
         resultSummary: 'done',

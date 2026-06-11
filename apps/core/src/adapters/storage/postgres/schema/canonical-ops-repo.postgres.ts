@@ -257,6 +257,8 @@ export class PostgresRuntimeRepositoryBundle
   async completeJobRunWithLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     status: JobRun['status'];
     resultSummary?: string | null;
     errorSummary?: string | null;
@@ -267,6 +269,8 @@ export class PostgresRuntimeRepositoryBundle
   async finalizeJobRunLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runStatus: JobRun['status'];
     resultSummary?: string | null;
@@ -279,6 +283,8 @@ export class PostgresRuntimeRepositoryBundle
     jobId: string;
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runStatus: JobRun['status'];
     resultSummary?: string | null;
@@ -288,8 +294,15 @@ export class PostgresRuntimeRepositoryBundle
     return this.jobs.finalizeJobRunWithLease(input);
   }
 
-  async markJobRunNotified(runId: string): Promise<void> {
-    await this.jobs.markJobRunNotified(runId);
+  async markJobRunNotified(
+    runId: string,
+    lease?: {
+      leaseToken: string;
+      workerInstanceId: string;
+      fencingVersion: number;
+    },
+  ): Promise<boolean> {
+    return this.jobs.markJobRunNotified(runId, lease);
   }
 
   async getJobRunById(runId: string): Promise<JobRun | undefined> {
@@ -435,10 +448,14 @@ export class PostgresRuntimeRepositoryBundle
   async updateAgentRunProviderMetadata(input: {
     runId: string;
     runIds?: string[];
+    fenceRunId?: string;
+    leaseToken?: string;
+    workerInstanceId?: string;
+    fencingVersion?: number;
     providerRunId?: string | null;
     providerSessionId?: string | null;
-  }): Promise<void> {
-    await this.jobs.updateAgentRunProviderMetadata(input);
+  }): Promise<boolean> {
+    return this.jobs.updateAgentRunProviderMetadata(input);
   }
 
   async completeSessionAgentRun(input: {

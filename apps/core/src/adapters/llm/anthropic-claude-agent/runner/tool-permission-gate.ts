@@ -16,6 +16,7 @@ import {
   persistentPermissionUpdates,
 } from '../../../../shared/permission-tool-rules.js';
 import {
+  buildAgentToolExecutionRequest,
   ToolExecutionClassifier,
   ToolExecutionPolicyService,
 } from '../../../../shared/tool-execution-policy-service.js';
@@ -379,21 +380,17 @@ export function createCanUseToolCallback(
       }
     }
 
-    const toolExecutionRequest = toolExecutionClassifier.classify({
-      origin: 'sdk',
+    const toolExecutionRequest = buildAgentToolExecutionRequest(
+      toolExecutionClassifier,
       toolName,
       toolInput,
-      executionMode: input.agentInput.isScheduledJob
-        ? 'autonomous'
-        : 'interactive',
-      runContext: {
-        jobId: input.agentInput.isScheduledJob
-          ? input.agentInput.jobId
-          : undefined,
+      {
+        isScheduledJob: input.agentInput.isScheduledJob,
+        jobId: input.agentInput.jobId,
         threadId: input.agentInput.threadId,
         conversationId: input.agentInput.chatJid,
       },
-    });
+    );
 
     if (input.agentInput.isScheduledJob) {
       const toolDecision = toolExecutionPolicy.evaluate({

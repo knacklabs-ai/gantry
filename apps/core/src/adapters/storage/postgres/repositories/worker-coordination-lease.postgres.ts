@@ -155,10 +155,22 @@ export async function settleRunLeaseTx(
   input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId?: string;
+    fencingVersion?: number;
     outcome: 'completed' | 'failed' | 'released';
     allowAlreadySettled?: boolean;
   },
 ): Promise<boolean> {
+  const hasFullFence =
+    input.workerInstanceId !== undefined || input.fencingVersion !== undefined;
+  if (
+    hasFullFence &&
+    (!input.workerInstanceId || input.fencingVersion === undefined)
+  ) {
+    throw new Error(
+      'Run lease settlement fence requires workerInstanceId and fencingVersion.',
+    );
+  }
   const now = currentIso();
   const rows = await executor
     .update(pgSchema.runLeasesPostgres)
@@ -167,6 +179,18 @@ export async function settleRunLeaseTx(
       and(
         eq(pgSchema.runLeasesPostgres.runId, input.runId),
         eq(pgSchema.runLeasesPostgres.leaseToken, input.leaseToken),
+        ...(input.workerInstanceId
+          ? [
+              eq(
+                pgSchema.runLeasesPostgres.workerInstanceId,
+                input.workerInstanceId,
+              ),
+              eq(
+                pgSchema.runLeasesPostgres.fencingVersion,
+                input.fencingVersion!,
+              ),
+            ]
+          : []),
         eq(pgSchema.runLeasesPostgres.status, 'active'),
         gt(pgSchema.runLeasesPostgres.expiresAt, now),
       ),
@@ -181,6 +205,18 @@ export async function settleRunLeaseTx(
       and(
         eq(pgSchema.runLeasesPostgres.runId, input.runId),
         eq(pgSchema.runLeasesPostgres.leaseToken, input.leaseToken),
+        ...(input.workerInstanceId
+          ? [
+              eq(
+                pgSchema.runLeasesPostgres.workerInstanceId,
+                input.workerInstanceId,
+              ),
+              eq(
+                pgSchema.runLeasesPostgres.fencingVersion,
+                input.fencingVersion!,
+              ),
+            ]
+          : []),
         inArray(pgSchema.runLeasesPostgres.status, [
           'completed',
           'failed',

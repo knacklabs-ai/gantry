@@ -66,7 +66,7 @@ describe('notifyReleasedStaleJobLeases', () => {
     const opsRepository = {
       getJobById: vi.fn(async () => job),
       getJobRunById: vi.fn(async () => run),
-      markJobRunNotified: vi.fn(async () => undefined),
+      markJobRunNotified: vi.fn(async () => true),
     };
     const sendMessage = vi.fn(async () => true);
     const publishRuntimeEvent = vi.fn(async () => undefined);

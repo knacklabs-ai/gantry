@@ -104,24 +104,52 @@ export async function validatePermissionIpcJobExecutionTarget(input: {
   sourceAgentFolder: string;
   deps: IpcDeps;
 }): Promise<void> {
-  const { request, sourceAgentFolder, deps } = input;
+  await validateScheduledInteractionIpcJobExecutionTarget({
+    ...input,
+    kind: 'permission',
+  });
+}
+
+export async function validateUserQuestionIpcJobExecutionTarget(input: {
+  request: ReturnType<typeof parseUserQuestionIpcRequest>;
+  sourceAgentFolder: string;
+  deps: IpcDeps;
+}): Promise<void> {
+  await validateScheduledInteractionIpcJobExecutionTarget({
+    ...input,
+    kind: 'user question',
+  });
+}
+
+async function validateScheduledInteractionIpcJobExecutionTarget(input: {
+  request: {
+    jobId?: string;
+    runId?: string;
+    targetJid?: string;
+    threadId?: string;
+  };
+  sourceAgentFolder: string;
+  deps: IpcDeps;
+  kind: 'permission' | 'user question';
+}): Promise<void> {
+  const { request, sourceAgentFolder, deps, kind } = input;
   if (!request.jobId) return;
 
   if (!request.targetJid) {
-    throw new Error('Scheduled job permission IPC requires targetJid');
+    throw new Error(`Scheduled job ${kind} IPC requires targetJid`);
   }
   if (!request.runId) {
-    throw new Error('Scheduled job permission IPC requires runId');
+    throw new Error(`Scheduled job ${kind} IPC requires runId`);
   }
 
   const job = await deps.opsRepository.getJobById(request.jobId);
   if (!job) {
-    throw new Error('Scheduled job permission IPC references unknown job');
+    throw new Error(`Scheduled job ${kind} IPC references unknown job`);
   }
   const execution = job.execution_context;
   if (!execution?.conversationJid) {
     throw new Error(
-      'Scheduled job permission IPC requires canonical execution_context',
+      `Scheduled job ${kind} IPC requires canonical execution_context`,
     );
   }
   const executionWorkspaceKey =
@@ -129,12 +157,12 @@ export async function validatePermissionIpcJobExecutionTarget(input: {
     normalizeNullableString(job.workspace_key);
   if (executionWorkspaceKey && executionWorkspaceKey !== sourceAgentFolder) {
     throw new Error(
-      'Scheduled job permission IPC source does not match job execution context',
+      `Scheduled job ${kind} IPC source does not match job execution context`,
     );
   }
   if (execution.conversationJid !== request.targetJid) {
     throw new Error(
-      'Scheduled job permission IPC target does not match job execution context',
+      `Scheduled job ${kind} IPC target does not match job execution context`,
     );
   }
   if (
@@ -142,13 +170,13 @@ export async function validatePermissionIpcJobExecutionTarget(input: {
     normalizeNullableString(request.threadId)
   ) {
     throw new Error(
-      'Scheduled job permission IPC thread does not match job execution context',
+      `Scheduled job ${kind} IPC thread does not match job execution context`,
     );
   }
 
   const run = await deps.opsRepository.getJobRunById(request.runId);
   if (!run || run.job_id !== request.jobId) {
-    throw new Error('Scheduled job permission IPC run does not match job');
+    throw new Error(`Scheduled job ${kind} IPC run does not match job`);
   }
 }
 
@@ -699,6 +727,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 rawRequest,
                 sourceAgentFolder,
               );
+              if (
+                request.targetJid &&
+                !folderTargetJids.get(sourceAgentFolder)?.has(request.targetJid)
+              ) {
+                throw new Error(
+                  'User question IPC target does not belong to the requesting agent folder',
+                );
+              }
+              await validateUserQuestionIpcJobExecutionTarget({
+                request,
+                sourceAgentFolder,
+                deps,
+              });
               request.targetJid =
                 request.targetJid || folderTargetJid.get(sourceAgentFolder);
               requestId = request.requestId;

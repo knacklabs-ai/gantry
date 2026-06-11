@@ -37,6 +37,13 @@ describe('settleSchedulerRunLease', () => {
 
     await expect(settleSchedulerRunLease(input)).resolves.toBe(true);
 
+    expect(input.deps.opsRepository.settleJobRunLease).toHaveBeenCalledWith({
+      runId: 'run-1',
+      leaseToken: 'lease-token-1',
+      workerInstanceId: 'worker-1',
+      fencingVersion: 1,
+      outcome: 'completed',
+    });
     expect(input.leaseContext.recordRunnerControlEvent).toHaveBeenCalledWith(
       'terminal_state',
       {

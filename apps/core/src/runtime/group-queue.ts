@@ -18,6 +18,7 @@ import {
   type QueueKind,
   type QueuedTask,
 } from './group-queue-types.js';
+import type { LiveTurnLocalRunnerHooks } from './live-turn-authority.js';
 
 interface GroupState {
   active: boolean;
@@ -48,6 +49,16 @@ export class GroupQueue {
   private continuationSequence = 0;
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
+  private liveTurnRunnerRegistrar:
+    | ((
+        queueJid: string,
+        hooks: LiveTurnLocalRunnerHooks,
+        routing: {
+          stopAliasJids?: string[];
+          requiredContinuationUserId?: string | null;
+        },
+      ) => Promise<void> | void)
+    | null = null;
   private shuttingDown = false;
   private activeRuns = new Set<Promise<void>>();
 
@@ -94,6 +105,21 @@ export class GroupQueue {
 
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
     this.processMessagesFn = fn;
+  }
+
+  setLiveTurnRunnerRegistrar(
+    registrar:
+      | ((
+          queueJid: string,
+          hooks: LiveTurnLocalRunnerHooks,
+          routing: {
+            stopAliasJids?: string[];
+            requiredContinuationUserId?: string | null;
+          },
+        ) => Promise<void> | void)
+      | null,
+  ): void {
+    this.liveTurnRunnerRegistrar = registrar;
   }
 
   private addStopAlias(aliasJid: string, queueJid: string): void {
@@ -350,6 +376,20 @@ export class GroupQueue {
         ? [stopAliasJids]
         : [];
     for (const alias of aliases) this.addStopAlias(alias, groupJid);
+    if (!state.isTaskRun) {
+      const hooks = this.createLiveTurnLocalRunnerHooks(groupJid, state);
+      void Promise.resolve(
+        this.liveTurnRunnerRegistrar?.(groupJid, hooks, {
+          stopAliasJids: aliases,
+          requiredContinuationUserId: state.requiredContinuationUserId,
+        }),
+      ).catch((err) =>
+        logger.warn(
+          { groupJid, err },
+          'Failed to register live-turn local runner hooks',
+        ),
+      );
+    }
   }
 
   notifyIdle(groupJid: string): void {
@@ -455,6 +495,33 @@ export class GroupQueue {
       }
     }
     return false;
+  }
+
+  private createLiveTurnLocalRunnerHooks(
+    groupJid: string,
+    state: GroupState,
+  ): LiveTurnLocalRunnerHooks {
+    return {
+      applyContinuation: ({ text, sequence, threadId }) => {
+        if (!state.active || !state.workspaceFolder || state.isTaskRun) return;
+        const incomingThreadId = normalizeThreadQueueId(threadId) || null;
+        if (state.threadId !== incomingThreadId) return;
+        state.idleWaiting = false;
+        this.runnerControlPort.writeContinuationInput({
+          workspaceFolder: state.workspaceFolder,
+          text,
+          sequence,
+          threadId: incomingThreadId,
+        });
+        state.continuationHandler?.();
+      },
+      applyCloseStdin: () => {
+        this.closeStdin(groupJid);
+      },
+      applyStop: () => {
+        this.stopGroup(groupJid);
+      },
+    };
   }
 
   private async runForGroup(

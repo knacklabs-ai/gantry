@@ -28,9 +28,12 @@ export interface AgentRunnerInput {
   selectedSkillDisplays?: string[];
   attachedMcpSourceIds?: string[];
   semanticCapabilities?: SemanticCapabilityDefinition[];
+  hideAuthorityTools?: boolean;
   isScheduledJob?: boolean;
   jobId?: string;
   runId?: string;
+  runLeaseToken?: string;
+  runLeaseFencingVersion?: number;
   assistantName?: string;
   compiledSystemPrompt?: string;
   memoryContextBlock?: string;

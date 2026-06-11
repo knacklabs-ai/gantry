@@ -16,7 +16,10 @@ import {
   writePermissionIpcResponse,
   writeUserQuestionIpcResponse,
 } from '@core/runtime/ipc-interaction-handler.js';
-import { processPermissionInteractionIpc } from '@core/runtime/ipc-interaction-processing.js';
+import {
+  processPermissionInteractionIpc,
+  processUserQuestionInteractionIpc,
+} from '@core/runtime/ipc-interaction-processing.js';
 import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 
 function fileMode(filePath: string): number {
@@ -713,6 +716,319 @@ describe('ipc-interaction-handler', () => {
           'main_agent',
           'permission-responses',
           'perm-stale-run.json',
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not prompt or answer scheduled question IPC when the run lease is stale', async () => {
+    const envelope = createIpcAuthEnvelope('main_agent', null);
+    const claimedPath = path.join(tempDir, 'claimed-stale-question.json');
+    fs.writeFileSync(claimedPath, '{}');
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'userq-stale-run',
+      answers: { mode: 'retry' },
+      answeredBy: 'owner',
+    }));
+    const repository = {
+      getActiveRunLease: vi.fn(async () => ({
+        runId: 'run:test',
+        jobId: 'job:test',
+        workerInstanceId: 'worker-2',
+        leaseToken: 'new-token',
+        fencingVersion: 8,
+        status: 'active',
+        claimedAt: '2026-06-10T00:01:00.000Z',
+        expiresAt: '2026-06-10T00:06:00.000Z',
+        heartbeatAt: '2026-06-10T00:01:00.000Z',
+      })),
+      createPendingInteraction: vi.fn(async () => true),
+      resolvePendingInteraction: vi.fn(async () => true),
+      createTransientGrant: vi.fn(async () => true),
+    };
+    configurePendingInteractionDurability({
+      repository: repository as never,
+    });
+
+    await processUserQuestionInteractionIpc({
+      request: {
+        requestId: 'userq-stale-run',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        responseKeyId: envelope.responseKeyId,
+        sourceAgentFolder: 'main_agent',
+        runId: 'run:test',
+        runLeaseToken: 'old-token',
+        runLeaseFencingVersion: 7,
+        jobId: 'job:test',
+        targetJid: 'tg:team',
+        questions: [
+          {
+            header: 'Mode',
+            question: 'Pick one',
+            options: [
+              { label: 'Retry', description: 'Try again' },
+              { label: 'Stop', description: 'Stop now' },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        requestUserAnswer,
+      },
+      ipcBaseDir: tempDir,
+      file: 'claimed-stale-question.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    expect(requestUserAnswer).not.toHaveBeenCalled();
+    expect(repository.resolvePendingInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'cancelled',
+        resolution: expect.objectContaining({ answers: {} }),
+      }),
+    );
+    expect(
+      fs.existsSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'user-answers',
+          'userq-stale-run.json',
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not write a scheduled permission response when durable resolution fails', async () => {
+    const envelope = createIpcAuthEnvelope('main_agent', null);
+    const claimedPath = path.join(
+      tempDir,
+      'claimed-unresolved-permission.json',
+    );
+    fs.writeFileSync(claimedPath, '{}');
+    configurePendingInteractionDurability({
+      repository: {
+        getActiveRunLease: vi.fn(async () => ({
+          runId: 'run:test',
+          jobId: 'job:test',
+          workerInstanceId: 'worker-1',
+          leaseToken: 'lease-token',
+          fencingVersion: 7,
+          status: 'active',
+          claimedAt: '2026-06-10T00:00:00.000Z',
+          expiresAt: '2026-06-10T00:05:00.000Z',
+          heartbeatAt: '2026-06-10T00:00:00.000Z',
+        })),
+        createPendingInteraction: vi.fn(async () => true),
+        resolvePendingInteraction: vi.fn(async () => false),
+        createTransientGrant: vi.fn(async () => true),
+      } as never,
+    });
+
+    await processPermissionInteractionIpc({
+      request: {
+        requestId: 'perm-unresolved-run',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        responseNonce: 'nonce-unresolved',
+        responseKeyId: envelope.responseKeyId,
+        sourceAgentFolder: 'main_agent',
+        runHandle: 'agent-run-1',
+        runId: 'run:test',
+        runLeaseToken: 'lease-token',
+        runLeaseFencingVersion: 7,
+        jobId: 'job:test',
+        targetJid: 'tg:team',
+        toolName: 'Bash',
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        requestPermissionApproval: vi.fn(async () => ({
+          approved: false,
+          mode: 'cancel',
+          decidedBy: 'owner',
+          decisionClassification: 'user_reject',
+        })),
+      },
+      ipcBaseDir: tempDir,
+      file: 'claimed-unresolved-permission.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    expect(
+      fs.existsSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'permission-responses',
+          'perm-unresolved-run.json',
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not write scheduled question answers when durable resolution fails', async () => {
+    const envelope = createIpcAuthEnvelope('main_agent', null);
+    const claimedPath = path.join(tempDir, 'claimed-unresolved-question.json');
+    fs.writeFileSync(claimedPath, '{}');
+    configurePendingInteractionDurability({
+      repository: {
+        getActiveRunLease: vi.fn(async () => ({
+          runId: 'run:test',
+          jobId: 'job:test',
+          workerInstanceId: 'worker-1',
+          leaseToken: 'lease-token',
+          fencingVersion: 7,
+          status: 'active',
+          claimedAt: '2026-06-10T00:00:00.000Z',
+          expiresAt: '2026-06-10T00:05:00.000Z',
+          heartbeatAt: '2026-06-10T00:00:00.000Z',
+        })),
+        createPendingInteraction: vi.fn(async () => true),
+        resolvePendingInteraction: vi.fn(async () => false),
+        createTransientGrant: vi.fn(async () => true),
+      } as never,
+    });
+
+    await processUserQuestionInteractionIpc({
+      request: {
+        requestId: 'userq-unresolved-run',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        responseKeyId: envelope.responseKeyId,
+        sourceAgentFolder: 'main_agent',
+        runId: 'run:test',
+        runLeaseToken: 'lease-token',
+        runLeaseFencingVersion: 7,
+        jobId: 'job:test',
+        targetJid: 'tg:team',
+        questions: [
+          {
+            header: 'Mode',
+            question: 'Pick one',
+            options: [
+              { label: 'Retry', description: 'Try again' },
+              { label: 'Stop', description: 'Stop now' },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        requestUserAnswer: vi.fn(async () => ({
+          requestId: 'userq-unresolved-run',
+          answers: { mode: 'retry' },
+          answeredBy: 'owner',
+        })),
+      },
+      ipcBaseDir: tempDir,
+      file: 'claimed-unresolved-question.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    expect(
+      fs.existsSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'user-answers',
+          'userq-unresolved-run.json',
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not write scheduled question answers after lease recovery', async () => {
+    const envelope = createIpcAuthEnvelope('main_agent', null);
+    const claimedPath = path.join(tempDir, 'claimed-recovered-question.json');
+    fs.writeFileSync(claimedPath, '{}');
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'userq-recovered-run',
+      answers: { mode: 'retry' },
+      answeredBy: 'owner',
+    }));
+    const getActiveRunLease = vi
+      .fn()
+      .mockResolvedValueOnce({
+        runId: 'run:test',
+        jobId: 'job:test',
+        workerInstanceId: 'worker-1',
+        leaseToken: 'old-token',
+        fencingVersion: 7,
+        status: 'active',
+        claimedAt: '2026-06-10T00:00:00.000Z',
+        expiresAt: '2026-06-10T00:05:00.000Z',
+        heartbeatAt: '2026-06-10T00:00:00.000Z',
+      })
+      .mockResolvedValue({
+        runId: 'run:test',
+        jobId: 'job:test',
+        workerInstanceId: 'worker-2',
+        leaseToken: 'new-token',
+        fencingVersion: 8,
+        status: 'active',
+        claimedAt: '2026-06-10T00:01:00.000Z',
+        expiresAt: '2026-06-10T00:06:00.000Z',
+        heartbeatAt: '2026-06-10T00:01:00.000Z',
+      });
+    configurePendingInteractionDurability({
+      repository: {
+        getActiveRunLease,
+        createPendingInteraction: vi.fn(async () => true),
+        resolvePendingInteraction: vi.fn(async () => true),
+        createTransientGrant: vi.fn(async () => true),
+      } as never,
+    });
+
+    await processUserQuestionInteractionIpc({
+      request: {
+        requestId: 'userq-recovered-run',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        responseKeyId: envelope.responseKeyId,
+        sourceAgentFolder: 'main_agent',
+        runId: 'run:test',
+        runLeaseToken: 'old-token',
+        runLeaseFencingVersion: 7,
+        jobId: 'job:test',
+        targetJid: 'tg:team',
+        questions: [
+          {
+            header: 'Mode',
+            question: 'Pick one',
+            options: [
+              { label: 'Retry', description: 'Try again' },
+              { label: 'Stop', description: 'Stop now' },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        requestUserAnswer,
+      },
+      ipcBaseDir: tempDir,
+      file: 'claimed-recovered-question.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    expect(requestUserAnswer).toHaveBeenCalledTimes(1);
+    expect(
+      fs.existsSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'user-answers',
+          'userq-recovered-run.json',
         ),
       ),
     ).toBe(false);

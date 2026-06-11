@@ -59,6 +59,11 @@ export const workspaceFolder = process.env.GANTRY_WORKSPACE_KEY!;
 export const appId = process.env.GANTRY_APP_ID?.trim() || undefined;
 export const agentId = process.env.GANTRY_AGENT_ID?.trim() || undefined;
 export const jobId = process.env.GANTRY_JOB_ID?.trim() || undefined;
+export const jobRunId = process.env.GANTRY_JOB_RUN_ID?.trim() || undefined;
+export const jobRunLeaseToken =
+  process.env.GANTRY_JOB_RUN_LEASE_TOKEN?.trim() || undefined;
+export const jobRunLeaseFencingVersion =
+  process.env.GANTRY_JOB_RUN_LEASE_FENCING_VERSION?.trim() || undefined;
 export const threadId = process.env.GANTRY_THREAD_ID?.trim() || undefined;
 export const memoryUserId =
   process.env.GANTRY_MEMORY_USER_ID?.trim() || undefined;

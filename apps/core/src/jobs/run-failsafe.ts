@@ -9,7 +9,8 @@ export async function completeFailedRunFailsafe(input: {
   jobId: string;
   runId: string;
   leaseToken: string;
-  fencingVersion?: number;
+  workerInstanceId: string;
+  fencingVersion: number;
   recordRunnerControlEvent?: (
     eventType: 'terminal_state',
     payload: Record<string, unknown>,
@@ -31,6 +32,8 @@ export async function completeFailedRunFailsafe(input: {
     const finalized = await finalizeRunLease.call(input.opsRepository, {
       runId: input.runId,
       leaseToken: input.leaseToken,
+      workerInstanceId: input.workerInstanceId,
+      fencingVersion: input.fencingVersion,
       leaseOutcome: 'failed',
       runStatus: 'failed',
       resultSummary: null,
@@ -45,9 +48,7 @@ export async function completeFailedRunFailsafe(input: {
     }
     await input.recordRunnerControlEvent?.('terminal_state', {
       outcome: 'failed',
-      ...(typeof input.fencingVersion === 'number'
-        ? { fencingVersion: input.fencingVersion }
-        : {}),
+      fencingVersion: input.fencingVersion,
       failsafe: true,
     });
   } catch (err) {

@@ -322,6 +322,13 @@ The public lifecycle is:
 Jobs have no serialized execution mode. Interactive message admission stays in
 `GroupQueue`; scheduler work enters the background pg-boss lane and uses
 `runtime.queue.max_job_runs` as its worker concurrency bound.
+Because `GroupQueue` is process-local, only one runtime host may own live turns.
+The default `runtime.live_turns.enabled: true` host acquires the
+`runtime:live-turn-host:default` advisory lease before admitting live turns.
+Horizontal scheduler workers set `runtime.live_turns.enabled: false`; they still
+initialize channels in outbound-only mode for scheduler delivery, but skip
+inbound provider polling/socket leases, live message polling, and live-turn host
+ownership.
 Scheduled job prompt runs and scheduler recovery turns call the same
 `agent-spawn` runner path as live turns, so `runtime.sandbox.provider:
 sandbox_runtime` applies to jobs without a job-specific sandbox setting.

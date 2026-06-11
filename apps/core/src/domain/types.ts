@@ -361,6 +361,12 @@ export interface UserQuestionItem {
 export interface UserQuestionRequest {
   requestId: string;
   sourceAgentFolder: string;
+  appId?: string;
+  agentId?: string;
+  jobId?: string;
+  runId?: string;
+  runLeaseToken?: string;
+  runLeaseFencingVersion?: number;
   targetJid?: string;
   threadId?: string;
   responseKeyId?: string;
@@ -532,7 +538,10 @@ export type OnChatMetadata = (
 
 export interface ChannelLifecyclePort {
   name: string;
-  connect(): Promise<void>;
+  connect(options?: {
+    inbound?: boolean;
+    interactionCallbacks?: boolean;
+  }): Promise<void>;
   isConnected(): boolean;
   disconnect(): Promise<void>;
 }

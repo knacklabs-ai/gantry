@@ -207,7 +207,10 @@ export function createChannelWiring(
         continue;
       }
       connectedChannels.push(channel);
-      await channel.connect();
+      await channel.connect({
+        inbound: runtimeSettings.runtime.liveTurns.enabled,
+        interactionCallbacks: runtimeSettings.runtime.liveTurns.enabled,
+      });
     }
   }
 

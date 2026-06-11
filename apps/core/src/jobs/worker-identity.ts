@@ -3,6 +3,7 @@ import os from 'node:os';
 
 import type { WorkerRegistryRepository } from '../domain/ports/worker-coordination.js';
 import { WORKER_HEARTBEAT_INTERVAL_MS } from '../shared/worker-heartbeat.js';
+import { readImageCapabilityInventory } from '../shared/worker-image-inventory.js';
 
 type WarnLog = (context: Record<string, unknown>, message: string) => void;
 
@@ -27,6 +28,7 @@ export async function registerWorkerInstance(
     bootNonce,
     imageDigest: process.env.GANTRY_IMAGE_DIGEST ?? null,
     version: process.env.npm_package_version ?? null,
+    capabilities: readImageCapabilityInventory() ?? [],
   });
   const heartbeatTimer = setInterval(() => {
     void registry

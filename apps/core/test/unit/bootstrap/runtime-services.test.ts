@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { startRuntimeServices } from '@core/app/bootstrap/runtime-services.js';
+import {
+  shutdownLiveTurnAuthority,
+  startRuntimeServices,
+  stopLiveTurnRecoveryLoop,
+} from '@core/app/bootstrap/runtime-services.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
 import { ChannelWiring } from '@core/app/bootstrap/channel-wiring.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
 import { runBoundedOutboundDeliveryRecovery } from '@core/jobs/outbound-delivery-recovery.js';
+import {
+  FakeCoordination,
+  FakeLiveTurns,
+} from '../application/live-turn-lease-fakes.js';
 
 function makeApp(): RuntimeApp {
   const queue = {
@@ -16,6 +24,15 @@ function makeApp(): RuntimeApp {
     stopGroup: vi.fn(),
     sendMessage: vi.fn(),
     enqueueMessageCheck: vi.fn(),
+    getPolicy: vi.fn(() => ({
+      maxMessageRuns: 3,
+      maxJobRuns: 1,
+      maxMessageBacklog: 10,
+      maxTaskBacklog: 10,
+      maxRetries: 3,
+      baseRetryMs: 100,
+    })),
+    setLiveTurnRunnerRegistrar: vi.fn(),
   };
 
   return {
@@ -126,7 +143,14 @@ describe('startRuntimeServices', () => {
         writeGroupsSnapshot: vi.fn(() => {
           order.push('writeGroupsSnapshot');
         }) as any,
-        opsRepository: {} as any,
+        opsRepository: {
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentId: 'agent-main',
+            agentSessionId: 'session-main',
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+        } as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn(() => {
           order.push('recoverPendingMessages');
@@ -158,6 +182,573 @@ describe('startRuntimeServices', () => {
     ]);
 
     expect((app.queue.setProcessMessagesFn as any).mock.calls).toHaveLength(1);
+  });
+
+  it('skips live message polling when live turns are disabled', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const startSchedulerLoop = vi.fn();
+    const startIpcWatcher = vi.fn();
+    const recoverPendingMessages = vi.fn();
+    const startMessagePollingLoop = vi.fn(() => new Promise<never>(() => {}));
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+        liveTurnsEnabled: false,
+      },
+      {
+        startSchedulerLoop: startSchedulerLoop as any,
+        startIpcWatcher: startIpcWatcher as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: recoverPendingMessages as any,
+        startMessagePollingLoop: startMessagePollingLoop as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+
+    expect(startSchedulerLoop).toHaveBeenCalledOnce();
+    expect(startIpcWatcher).toHaveBeenCalledOnce();
+    expect(recoverPendingMessages).not.toHaveBeenCalled();
+    expect(startMessagePollingLoop).not.toHaveBeenCalled();
+    expect(app.queue.setProcessMessagesFn).toHaveBeenCalledOnce();
+  });
+
+  it('wires live-turn admission and fenced finalization into message processing', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    const getAgentTurnContext = vi.fn(async () => ({
+      appId: 'default',
+      agentId: 'agent-main',
+      agentSessionId: 'session-main',
+    }));
+    const createSessionAgentRun = vi.fn(async () => 'agent-run:live-1');
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext,
+          createSessionAgentRun,
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(
+          () => new Promise<never>(() => {}),
+        ) as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      expect(app.queue.setLiveTurnRunnerRegistrar).toHaveBeenCalledOnce();
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      const processed = await processMessages('tg:primary');
+      expect(processed).toBe(true);
+      expect(getAgentTurnContext).toHaveBeenCalledOnce();
+      expect(createSessionAgentRun).toHaveBeenCalledOnce();
+
+      expect(app.processGroupMessages).toHaveBeenCalledWith('tg:primary', {
+        queued: true,
+        existingRunId: 'agent-run:live-1',
+        existingRunLeaseToken: 'lease-1',
+        existingRunLeaseWorkerInstanceId: expect.any(String),
+        existingRunLeaseFencingVersion: 1,
+        onRunResult: expect.any(Function),
+      });
+      expect([...liveTurns.turns.values()]).toEqual([
+        expect.objectContaining({
+          appId: 'default',
+          agentSessionId: 'session-main',
+          conversationId: 'tg:primary',
+          runId: 'agent-run:live-1',
+          state: 'completed',
+        }),
+      ]);
+      expect(coordination.leases).toEqual([
+        expect.objectContaining({ status: 'completed' }),
+      ]);
+      expect(liveTurns.agentRunCompletions).toEqual([
+        {
+          runId: 'agent-run:live-1',
+          status: 'completed',
+          resultSummary: 'Live turn completed.',
+        },
+      ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('returns false when live-turn finalization leaves pending commands for another owner', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    app.processGroupMessages = vi.fn(async () => {
+      const turn = [...liveTurns.turns.values()][0];
+      await liveTurns.appendLiveTurnCommand({
+        id: 'cmd-pending',
+        liveTurnId: turn.id,
+        commandType: 'continuation',
+        idempotencyKey: 'continuation:pending',
+        payload: { text: 'follow-up' },
+      });
+      return true;
+    });
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+        syncGroups: vi.fn(async () => {}),
+        startOutboundDeliveryRecoveryLoop: vi.fn(),
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentSessionId: 'session-main',
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(
+          () => new Promise<never>(() => {}),
+        ) as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await expect(processMessages('tg:primary')).resolves.toBe(false);
+      expect(liveTurns.commands[0]).toEqual(
+        expect.objectContaining({ status: 'pending' }),
+      );
+      expect([...liveTurns.turns.values()][0]).toEqual(
+        expect.objectContaining({ state: 'claimed' }),
+      );
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('fails the precreated agent run when live-turn admission is not claimed', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    await liveTurns.claimLiveTurn({
+      id: 'turn-existing',
+      scope: {
+        appId: 'default',
+        agentSessionId: 'session-main',
+        conversationId: 'tg:primary',
+        threadId: null,
+      },
+      workerInstanceId: 'worker-other',
+      runId: 'agent-run:other',
+    });
+    const completeSessionAgentRun = vi.fn(async () => undefined);
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentId: 'agent-main',
+            agentSessionId: 'session-main',
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+          completeSessionAgentRun,
+          getMessagesSince: vi.fn(async () => [
+            {
+              id: 'msg-follow-up',
+              chat_jid: 'tg:primary',
+              sender: 'user-other',
+              sender_name: 'Other',
+              content: 'same follow-up',
+              timestamp: 'cursor-after-follow-up',
+            },
+          ]),
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(
+          () => new Promise<never>(() => {}),
+        ) as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await expect(processMessages('tg:primary')).resolves.toBe(true);
+      expect(app.processGroupMessages).not.toHaveBeenCalled();
+      expect(completeSessionAgentRun).toHaveBeenCalledWith({
+        runId: 'agent-run:live-1',
+        status: 'canceled',
+        errorSummary:
+          'Live-turn admission routed the message to the active owner.',
+      });
+      expect(app.setAgentCursor).toHaveBeenCalledWith(
+        'tg:primary',
+        JSON.stringify({
+          timestamp: 'cursor-after-follow-up',
+          id: 'msg-follow-up',
+        }),
+      );
+      expect(liveTurns.commands).toEqual([
+        expect.objectContaining({
+          liveTurnId: 'turn-existing',
+          commandType: 'continuation',
+          idempotencyKey: 'continuation:tg:primary:msg-follow-up',
+          payload: expect.objectContaining({
+            text: expect.stringContaining('same follow-up'),
+          }),
+        }),
+      ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('cancels the precreated run on live-turn capacity deferral', async () => {
+    const app = makeApp();
+    vi.mocked(app.queue.getPolicy as any).mockReturnValue({
+      maxMessageRuns: 0,
+      maxJobRuns: 1,
+      maxMessageBacklog: 10,
+      maxTaskBacklog: 10,
+      maxRetries: 3,
+      baseRetryMs: 100,
+    });
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    const completeSessionAgentRun = vi.fn(async () => undefined);
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentId: 'agent-main',
+            agentSessionId: 'session-main',
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+          completeSessionAgentRun,
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(
+          () => new Promise<never>(() => {}),
+        ) as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await expect(processMessages('tg:primary')).resolves.toBe(false);
+      expect(app.processGroupMessages).not.toHaveBeenCalled();
+      expect(completeSessionAgentRun).toHaveBeenCalledWith({
+        runId: 'agent-run:live-1',
+        status: 'canceled',
+        errorSummary: 'Live-turn admission did not claim the run: no_capacity',
+      });
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('fails recovered live turns closed when no replayable pending message exists', async () => {
+    vi.useFakeTimers();
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    const oldLease = await coordination.claimRunLease({
+      runId: 'agent-run:lost',
+      workerInstanceId: 'worker-old',
+      ttlMs: 60_000,
+    });
+    if (!oldLease) throw new Error('expected old lease');
+    coordination.expireLease(oldLease.leaseToken);
+    const turn = await liveTurns.claimLiveTurn({
+      id: 'turn-lost',
+      scope: {
+        appId: 'default',
+        agentSessionId: null,
+        conversationId: 'tg:primary',
+        threadId: null,
+      },
+      workerInstanceId: 'worker-old',
+      runId: 'agent-run:lost',
+    });
+    if (!turn) throw new Error('expected turn');
+    turn.state = 'running';
+    turn.leaseToken = oldLease.leaseToken;
+    turn.fencingVersion = oldLease.fencingVersion;
+    turn.workerInstanceId = oldLease.workerInstanceId;
+    liveTurns.recoverableIds.add(turn.id);
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(
+          () => new Promise<never>(() => {}),
+        ) as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(app.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+      expect(liveTurns.turns.get('turn-lost')?.state).toBe('failed');
+      expect(coordination.leases).toContainEqual(
+        expect.objectContaining({
+          runId: 'agent-run:lost',
+          fencingVersion: 2,
+          status: 'failed',
+        }),
+      );
+      expect(liveTurns.agentRunCompletions).toEqual([
+        {
+          runId: 'agent-run:lost',
+          status: 'failed',
+          errorSummary:
+            'Recovered live turn had no replayable pending message.',
+        },
+      ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores the replay cursor before enqueueing a recovered live turn', async () => {
+    vi.useFakeTimers();
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    const oldLease = await coordination.claimRunLease({
+      runId: 'agent-run:lost',
+      workerInstanceId: 'worker-old',
+      ttlMs: 60_000,
+    });
+    if (!oldLease) throw new Error('expected old lease');
+    coordination.expireLease(oldLease.leaseToken);
+    const turn = await liveTurns.claimLiveTurn({
+      id: 'turn-lost',
+      scope: {
+        appId: 'default',
+        agentSessionId: null,
+        conversationId: 'tg:primary',
+        threadId: null,
+      },
+      workerInstanceId: 'worker-old',
+      runId: 'agent-run:lost',
+      pendingMessage: {
+        kind: 'message_cursor',
+        queueJid: 'tg:primary',
+        cursorBefore: 'cursor-before-run',
+      },
+    });
+    if (!turn) throw new Error('expected turn');
+    turn.state = 'running';
+    turn.leaseToken = oldLease.leaseToken;
+    turn.fencingVersion = oldLease.fencingVersion;
+    turn.workerInstanceId = oldLease.workerInstanceId;
+    await liveTurns.appendLiveTurnCommand({
+      id: 'cmd-continuation',
+      liveTurnId: turn.id,
+      commandType: 'continuation',
+      idempotencyKey: 'continuation:lost-owner',
+      payload: {
+        queueJid: 'tg:primary',
+        text: 'same follow-up',
+        cursorAfter: JSON.stringify({
+          timestamp: 'cursor-after-follow-up',
+          id: 'msg-follow-up',
+        }),
+      },
+    });
+    await liveTurns.appendLiveTurnCommand({
+      id: 'cmd-stop',
+      liveTurnId: turn.id,
+      commandType: 'stop',
+      idempotencyKey: 'stop:lost-owner',
+    });
+    liveTurns.recoverableIds.add(turn.id);
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        startMessagePollingLoop: vi.fn(
+          () => new Promise<never>(() => {}),
+        ) as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(app.setAgentCursor).toHaveBeenCalledWith(
+        'tg:primary',
+        'cursor-before-run',
+      );
+      expect(app.saveState).toHaveBeenCalled();
+      expect(app.queue.enqueueMessageCheck).toHaveBeenCalledWith('tg:primary');
+      expect(liveTurns.turns.get('turn-lost')?.state).toBe('recovered');
+      expect(liveTurns.commands).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'cmd-continuation',
+            status: 'applied',
+            rejectedReason: null,
+          }),
+          expect.objectContaining({
+            id: 'cmd-stop',
+            status: 'pending',
+          }),
+        ]),
+      );
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+      vi.useRealTimers();
+    }
   });
 
   it('installs durable outbound delivery before scheduler startup', async () => {
@@ -252,6 +843,7 @@ describe('startRuntimeServices', () => {
       'scheduler output',
       {
         durability: 'required',
+        throwOnMissing: true,
         messageOptions: { threadId: 'thread-42' },
       },
     );

@@ -8,9 +8,8 @@ import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
 import type { JobRecoveryIntentSource } from '../application/jobs/job-recovery-intent-service.js';
 import type { SchedulerEventAppSession } from './app-session-resolution.js';
-import { resolveExecutionContext } from './execution-context.js';
 import { notifySchedulerSetupRequired } from './execution-notifications.js';
-import { queueJobRecoveryTurn } from './recovery.js';
+import { readImageCapabilityInventory } from '../shared/worker-image-inventory.js';
 import type { SchedulerDependencies } from './types.js';
 
 export async function pauseJobForSetupIfNeeded(input: {
@@ -35,6 +34,7 @@ export async function pauseJobForSetupIfNeeded(input: {
     capabilitySecretRepository: input.deps.getCapabilitySecretRepository?.(),
     credentialBroker: await input.deps.getCredentialBroker?.(),
     getBrowserStatus: input.deps.getBrowserStatus,
+    workerImageInventory: readImageCapabilityInventory(),
   });
   if (readiness.ready) return false;
 
@@ -105,21 +105,5 @@ export async function notifyJobSetupRequired(input: {
     responseMode: input.appSession?.defaultResponseMode,
     webhookId: input.appSession?.defaultWebhookId,
   });
-  const execution = resolveExecutionContext(
-    input.currentJob,
-    input.deps.conversationRoutes(),
-  );
-  if (execution) {
-    await queueJobRecoveryTurn({
-      currentJob: input.currentJob,
-      deps: input.deps,
-      execution,
-      setupState: input.setupState,
-      source: input.source ?? 'preflight_setup',
-      runId: input.runId,
-      runtimeAppId: input.runtimeAppId,
-      publishRuntimeEvent: input.publishRuntimeEvent,
-    });
-  }
   return notified;
 }

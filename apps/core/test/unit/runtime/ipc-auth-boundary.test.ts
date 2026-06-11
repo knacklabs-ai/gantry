@@ -18,6 +18,7 @@ import {
   stopIpcWatcher,
   validateIpcAuthRequest,
   validatePermissionIpcJobExecutionTarget,
+  validateUserQuestionIpcJobExecutionTarget,
 } from '@core/runtime/ipc.js';
 import {
   parseBrowserIpcRequest,
@@ -713,7 +714,7 @@ describe('validateIpcAuthRequest', () => {
   });
 
   it('accepts user question IPC signed with scoped app and agent context', () => {
-    const run = createIpcAuthEnvelope('main_agent', undefined, {
+    const run = createIpcAuthEnvelope('main_agent', 'thread:123', {
       appId: 'app:telegram',
       agentId: 'agent:main',
     });
@@ -742,6 +743,12 @@ describe('validateIpcAuthRequest', () => {
       context: {
         appId: 'app:telegram',
         agentId: 'agent:main',
+        chatJid: 'tg:team',
+        threadId: 'thread:123',
+        jobId: 'job:daily',
+        runId: 'run:daily',
+        runLeaseToken: 'lease-token',
+        runLeaseFencingVersion: 3,
         responseKeyId: run.responseKeyId,
       },
     };
@@ -757,6 +764,14 @@ describe('validateIpcAuthRequest', () => {
     expect(parsed).toMatchObject({
       requestId: payload.requestId,
       sourceAgentFolder: 'main_agent',
+      appId: 'app:telegram',
+      agentId: 'agent:main',
+      targetJid: 'tg:team',
+      threadId: 'thread:123',
+      jobId: 'job:daily',
+      runId: 'run:daily',
+      runLeaseToken: 'lease-token',
+      runLeaseFencingVersion: 3,
       responseKeyId: run.responseKeyId,
       questions: [
         {
@@ -1088,6 +1103,70 @@ describe('validateIpcAuthRequest', () => {
         deps: deps as never,
       }),
     ).rejects.toThrow(/run does not match job/);
+  });
+
+  it('validates scheduled user-question IPC against the stored job execution context', async () => {
+    const deps = {
+      opsRepository: {
+        getJobById: async (id: string) =>
+          id === 'job-1'
+            ? {
+                id: 'job-1',
+                workspace_key: 'team',
+                execution_context: {
+                  conversationJid: 'tg:team',
+                  threadId: 'topic-1',
+                  workspaceKey: 'team',
+                },
+              }
+            : undefined,
+        getJobRunById: async (id: string) =>
+          id === 'run-1' ? { run_id: 'run-1', job_id: 'job-1' } : undefined,
+      },
+    };
+    const request = {
+      requestId: 'userq-job-target',
+      appId: 'app:one',
+      responseKeyId: TEST_RESPONSE_KEY_ID,
+      sourceAgentFolder: 'team',
+      targetJid: 'tg:team',
+      threadId: 'topic-1',
+      jobId: 'job-1',
+      runId: 'run-1',
+      questions: [
+        {
+          header: 'Mode',
+          question: 'Pick one',
+          options: [
+            { label: 'Retry', description: 'Try again' },
+            { label: 'Stop', description: 'Stop now' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+
+    await expect(
+      validateUserQuestionIpcJobExecutionTarget({
+        request,
+        sourceAgentFolder: 'team',
+        deps: deps as never,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      validateUserQuestionIpcJobExecutionTarget({
+        request: { ...request, targetJid: 'tg:other' },
+        sourceAgentFolder: 'team',
+        deps: deps as never,
+      }),
+    ).rejects.toThrow(/target does not match job execution context/);
+    await expect(
+      validateUserQuestionIpcJobExecutionTarget({
+        request: { ...request, sourceAgentFolder: 'other' },
+        sourceAgentFolder: 'other',
+        deps: deps as never,
+      }),
+    ).rejects.toThrow(/source does not match job execution context/);
   });
 
   it('rejects expired requests and replayed request ids', () => {

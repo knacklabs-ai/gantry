@@ -122,6 +122,38 @@ describe('runtime settings', () => {
     expect(parsed.runtime.queue).toEqual(settings.runtime.queue);
   });
 
+  it('keeps harness/provider internals out of the rendered settings.yaml', () => {
+    const settings = createDefaultRuntimeSettings();
+    const yaml = renderRuntimeSettingsYaml(settings);
+    for (const token of [
+      'permissionMode',
+      'executionProviderId',
+      'mcpServers',
+      'disallowedTools',
+      'LocalShellBackend',
+      'interrupt_on',
+      'harness:',
+    ]) {
+      expect(yaml, `settings.yaml must not render ${token}`).not.toContain(
+        token,
+      );
+    }
+  });
+
+  it('defaults, renders, and parses live-turn host policy', () => {
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.runtime.liveTurns).toEqual({ enabled: true });
+
+    settings.runtime.liveTurns = { enabled: false };
+
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('live_turns:');
+    expect(yaml).toContain('enabled: false');
+
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.runtime.liveTurns).toEqual(settings.runtime.liveTurns);
+  });
+
   it('defaults, renders, and parses runner sandbox policy', () => {
     const settings = createDefaultRuntimeSettings();
     expect(settings.runtime.sandbox).toEqual({
@@ -307,6 +339,15 @@ describe('runtime settings', () => {
     max_jobb_runs: 4
 `),
     ).toThrow('runtime.queue.max_jobb_runs is not supported');
+  });
+
+  it('rejects unsupported live-turn host keys', () => {
+    expect(() =>
+      parseRuntimeSettings(`runtime:
+  live_turns:
+    horizontal: true
+`),
+    ).toThrow('runtime.live_turns.horizontal is not supported');
   });
 
   it('rejects negative runtime queue backlog caps', () => {

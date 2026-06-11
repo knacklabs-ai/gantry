@@ -92,6 +92,8 @@ import { PostgresModelCredentialRepository } from './model-credential-repository
 import { PostgresPendingAccessRequestsRepository } from './pending-access-request-repository.postgres.js';
 import { PostgresWorkerCoordinationRepository } from './worker-coordination-repository.postgres.js';
 import type { WorkerCoordinationRepository } from '../../../../domain/ports/worker-coordination.js';
+import { PostgresLiveTurnRepository } from './live-turn-repository.postgres.js';
+import type { LiveTurnCoordinationRepository } from '../../../../domain/ports/live-turns.js';
 export interface PostgresDomainRepositoryBundle {
   apps: AppRepository;
   agents: AgentRepository;
@@ -115,6 +117,7 @@ export interface PostgresDomainRepositoryBundle {
   sandboxes: SandboxRepository;
   outboundDeliveries: OutboundDeliveryRepository;
   workerCoordination: WorkerCoordinationRepository;
+  liveTurns: LiveTurnCoordinationRepository;
 }
 type JsonRecord = Record<string, unknown>;
 function encodeJson(value: unknown): string {
@@ -1676,5 +1679,6 @@ export function createPostgresDomainRepositories(
     sandboxes: new PostgresSandboxRepository(db),
     outboundDeliveries: new PostgresOutboundDeliveryRepository(db),
     workerCoordination: new PostgresWorkerCoordinationRepository(db),
+    liveTurns: new PostgresLiveTurnRepository(db),
   };
 }

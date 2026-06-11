@@ -567,13 +567,6 @@
     "maxViolations": 4
   },
   {
-    "file": "apps/core/src/jobs/recovery.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Job recovery currently reads runtime config directly while scheduler recovery ports are being split from runtime wiring.",
-    "removeByPhase": "scheduler-recovery-config-port",
-    "maxViolations": 1
-  },
-  {
     "file": "apps/core/src/jobs/ipc-admin-handlers.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",

@@ -499,6 +499,7 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
     runtime.queue.maxTaskBacklog === 0 &&
     runtime.queue.maxRetries === 5 &&
     runtime.queue.baseRetryMs === 5000 &&
+    runtime.liveTurns.enabled === true &&
     runtime.sandbox.provider === 'direct' &&
     runtime.sandbox.resourceLimits.cpuSeconds === 0 &&
     runtime.sandbox.resourceLimits.memoryMb === 0 &&
@@ -586,6 +587,8 @@ function renderRuntimeProcessYaml(
     `    max_task_backlog: ${runtime.queue.maxTaskBacklog}`,
     `    max_retries: ${runtime.queue.maxRetries}`,
     `    base_retry_ms: ${runtime.queue.baseRetryMs}`,
+    '  live_turns:',
+    `    enabled: ${runtime.liveTurns.enabled ? 'true' : 'false'}`,
     '  sandbox:',
     `    provider: ${quoteYamlString(runtime.sandbox.provider)}`,
     '    resource_limits:',

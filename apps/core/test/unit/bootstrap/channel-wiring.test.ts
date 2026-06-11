@@ -87,6 +87,14 @@ function makeRuntimeSettings(enabled: {
         maxRetries: 5,
         baseRetryMs: 5000,
       },
+      liveTurns: {
+        enabled: true,
+        hostLeaseTtlMs: 30_000,
+        hostLeaseRenewMs: 10_000,
+        heartbeatMs: 10_000,
+        leaseTtlMs: 30_000,
+        maxRunMs: 3_600_000,
+      },
     },
   };
 }
@@ -249,6 +257,34 @@ describe('createChannelWiring', () => {
 
     expect(wiring.hasConnectedChannels()).toBe(false);
     expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('connects channels without inbound messages or callbacks when live turns are disabled', async () => {
+    const app = makeApp();
+    const channel = makeChannel();
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => channel),
+        ),
+      ],
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+        error: vi.fn(),
+      },
+    });
+    const settings = makeRuntimeSettings({ telegram: true, slack: false });
+    settings.runtime.liveTurns.enabled = false;
+
+    await wiring.connectEnabledChannels(settings);
+
+    expect(channel.connect).toHaveBeenCalledWith({
+      inbound: false,
+      interactionCallbacks: false,
+    });
   });
 
   it('fails clearly when an enabled provider has only setup/discovery support', async () => {
@@ -1251,6 +1287,58 @@ describe('createChannelWiring', () => {
       approved: false,
       reason: 'Permission approval target is missing',
     });
+  });
+
+  it('keeps prompt surfaces available when inbound callbacks are disabled', async () => {
+    const app = makeApp({
+      'tg:other': { name: 'Other', folder: 'other' },
+    });
+    const requestPermissionApproval = vi.fn(async () => ({ approved: true }));
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'q-outbound-only',
+      answers: { Choice: 'A' },
+    }));
+    const outboundOnlyChannel = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'tg:other'),
+      requestPermissionApproval,
+      requestUserAnswer,
+      supportsInteractionCallbacks: vi.fn(() => false),
+    } as Partial<ChannelAdapter> & {
+      supportsInteractionCallbacks: () => boolean;
+    });
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => outboundOnlyChannel),
+        ),
+      ],
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    await expect(
+      wiring.requestPermissionApproval({
+        requestId: 'req-outbound-only',
+        sourceAgentFolder: 'tg:other',
+        targetJid: 'tg:other',
+        toolName: 'danger-tool',
+      }),
+    ).resolves.toEqual({ approved: true });
+    await expect(
+      wiring.requestUserAnswer({
+        requestId: 'q-outbound-only',
+        sourceAgentFolder: 'tg:other',
+        targetJid: 'tg:other',
+        questions: [],
+      }),
+    ).resolves.toEqual({
+      requestId: 'q-outbound-only',
+      answers: { Choice: 'A' },
+    });
+    expect(requestPermissionApproval).toHaveBeenCalledOnce();
+    expect(requestUserAnswer).toHaveBeenCalledOnce();
   });
 
   it('routes direct DM permission approvals to the direct conversation', async () => {

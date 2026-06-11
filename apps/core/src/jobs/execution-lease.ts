@@ -158,9 +158,9 @@ export function startSchedulerRunLeaseHeartbeat(input: {
 }
 
 /**
- * Token-fenced settlement: terminal writes require this worker's lease token
- * to still be the run's active lease. Returns false when the run was
- * recovered by another worker — the caller must drop all terminal writes.
+ * Lease-fenced settlement: terminal writes require this worker's lease
+ * coordinates to still be the run's active lease. Returns false when the run
+ * was recovered by another worker — the caller must drop all terminal writes.
  */
 export async function settleSchedulerRunLease(input: {
   deps: SchedulerDependencies;
@@ -173,6 +173,8 @@ export async function settleSchedulerRunLease(input: {
   const settled = await input.deps.opsRepository.settleJobRunLease({
     runId: input.runId,
     leaseToken: input.leaseContext.lease.leaseToken,
+    workerInstanceId: input.leaseContext.lease.workerInstanceId,
+    fencingVersion: input.leaseContext.lease.fencingVersion,
     outcome: input.error ? 'failed' : 'completed',
   });
   if (!settled) {

@@ -19,7 +19,10 @@ export interface InstallShutdownHandlersOptions {
   closeControlServer?: () => Promise<void>;
   closeScheduler?: () => Promise<void>;
   closeOutboundDeliveryRecovery?: () => Promise<void>;
+  closeLiveTurnRecovery?: () => Promise<void>;
+  closeLiveTurnAuthority?: () => Promise<void>;
   closeSettingsWatcher?: () => void;
+  closeLiveTurnHostLease?: () => Promise<void>;
   closeBrowserToolBackends?: () => Promise<void>;
 }
 
@@ -88,7 +91,37 @@ export function installShutdownHandlers(
         );
       }
     }
+    if (options.closeLiveTurnRecovery) {
+      try {
+        await options.closeLiveTurnRecovery();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to stop live-turn recovery during shutdown',
+        );
+      }
+    }
+    if (options.closeLiveTurnAuthority) {
+      try {
+        await options.closeLiveTurnAuthority();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to shutdown live-turn authority during shutdown',
+        );
+      }
+    }
     options.closeSettingsWatcher?.();
+    if (options.closeLiveTurnHostLease) {
+      try {
+        await options.closeLiveTurnHostLease();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to release live-turn host lease during shutdown',
+        );
+      }
+    }
     if (options.closeStorage) {
       try {
         await options.closeStorage();

@@ -54,11 +54,13 @@ export interface MessageLoopDeps {
       options?: {
         threadId?: string | null;
         senderUserIds?: readonly string[] | null;
+        idempotencyKey?: string;
+        cursorAfter?: string;
       },
-    ) => boolean;
+    ) => boolean | Promise<boolean>;
     enqueueMessageCheck: (chatJid: string) => void;
-    closeStdin: (chatJid: string) => void;
-    stopGroup?: (chatJid: string) => boolean;
+    closeStdin: (chatJid: string) => void | Promise<void>;
+    stopGroup?: (chatJid: string) => boolean | Promise<boolean>;
   };
   handleActiveControlCommand?: (args: {
     chatJid: string;
@@ -166,9 +168,9 @@ export async function runMessagePollingTick(
               }
             }
             if (loopCommand?.kind === 'stop') {
-              deps.queue.stopGroup?.(queueJid);
+              await deps.queue.stopGroup?.(queueJid);
             } else {
-              deps.queue.closeStdin(queueJid);
+              await deps.queue.closeStdin(queueJid);
             }
           }
           deps.queue.enqueueMessageCheck(queueJid);
@@ -212,10 +214,16 @@ export async function runMessagePollingTick(
           const senderUserIds = resolveNonSelfSenderIds(messagesToSend);
 
           if (
-            !deps.queue.sendMessage(queueJid, formatted, {
+            !(await deps.queue.sendMessage(queueJid, formatted, {
               threadId,
               senderUserIds,
-            })
+              idempotencyKey: `continuation:${queueJid}:${messagesToSend
+                .map((message) => message.id)
+                .join(',')}`,
+              cursorAfter: encodeGroupMessageCursor(
+                toGroupMessageCursor(messagesToSend[messagesToSend.length - 1]),
+              ),
+            }))
           ) {
             shouldEnqueueMessageCheck = true;
             break;

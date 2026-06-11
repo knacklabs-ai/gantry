@@ -200,6 +200,7 @@ function createFakeProcess() {
 }
 
 let fakeProc: ReturnType<typeof createFakeProcess>;
+const previousImageInventory = process.env.GANTRY_IMAGE_CAPABILITIES_JSON;
 
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
@@ -639,6 +640,12 @@ describe('agent-spawn timeout behavior', () => {
         },
       },
     } as any);
+    process.env.GANTRY_IMAGE_CAPABILITIES_JSON = JSON.stringify([
+      'acme.records.get',
+      'acme.invoices.read',
+      'google.sheets.values.get',
+      'skill.linkedin-posting.publish',
+    ]);
     vi.mocked(getHostRuntimeCredentialEnv).mockReset();
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValue({
       env: {
@@ -702,6 +709,11 @@ describe('agent-spawn timeout behavior', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    if (previousImageInventory === undefined) {
+      delete process.env.GANTRY_IMAGE_CAPABILITIES_JSON;
+    } else {
+      process.env.GANTRY_IMAGE_CAPABILITIES_JSON = previousImageInventory;
+    }
   });
 
   it('timeout after output resolves as success', async () => {
@@ -2825,6 +2837,58 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.GANTRY_MCP_CONFIG_FILE).toBeUndefined();
     expect(env.GANTRY_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
     expect(env.GANTRY_BROWSER_IPC_AUTH_TOKEN).toEqual(expect.any(String));
+  });
+
+  it('fails closed before runner start when a selected capability is missing from the worker image', async () => {
+    const previousInventory = process.env.GANTRY_IMAGE_CAPABILITIES_JSON;
+    process.env.GANTRY_IMAGE_CAPABILITIES_JSON = JSON.stringify([]);
+    vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
+      permissions: {
+        yoloMode: {
+          enabled: true,
+          denylist: [],
+          denylistPaths: [],
+        },
+        egress: {
+          denylist: [],
+        },
+      },
+      runtime: {
+        sandbox: {
+          provider: 'direct',
+          resourceLimits: {
+            cpuSeconds: 0,
+            memoryMb: 0,
+            maxProcesses: 0,
+          },
+        },
+      },
+    } as any);
+
+    try {
+      const result = await spawnTestAgent(
+        testGroup,
+        {
+          ...testInput,
+          toolPolicyRules: ['capability:acme.records.append'],
+        },
+        () => {},
+      );
+
+      expect(result).toMatchObject({
+        status: 'error',
+        error: expect.stringContaining(
+          'not available in this worker image: acme.records.append',
+        ),
+      });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      if (previousInventory === undefined) {
+        delete process.env.GANTRY_IMAGE_CAPABILITIES_JSON;
+      } else {
+        process.env.GANTRY_IMAGE_CAPABILITIES_JSON = previousInventory;
+      }
+    }
   });
 
   it('fails closed on stale raw browser action MCP rules during spawn', async () => {

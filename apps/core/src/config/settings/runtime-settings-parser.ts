@@ -675,6 +675,9 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       maxRetries: 5,
       baseRetryMs: 5000,
     },
+    liveTurns: {
+      enabled: true,
+    },
     sandbox: getDefaultRuntimeSandboxSettings(),
   };
   if (raw === undefined) return defaults;
@@ -683,9 +686,9 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'queue' && key !== 'sandbox') {
+    if (key !== 'queue' && key !== 'live_turns' && key !== 'sandbox') {
       throw new Error(
-        `runtime.${key} is not supported. Configure runtime.queue.* or runtime.sandbox.*.`,
+        `runtime.${key} is not supported. Configure runtime.queue.*, runtime.live_turns.*, or runtime.sandbox.*.`,
       );
     }
   }
@@ -710,6 +713,23 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
     ) {
       throw new Error(
         `runtime.queue.${key} is not supported. Configure max_message_runs, max_job_runs, max_message_backlog, max_task_backlog, max_retries, or base_retry_ms.`,
+      );
+    }
+  }
+  const liveTurnsRaw = map.live_turns;
+  if (
+    liveTurnsRaw !== undefined &&
+    (typeof liveTurnsRaw !== 'object' ||
+      liveTurnsRaw === null ||
+      Array.isArray(liveTurnsRaw))
+  ) {
+    throw new Error('runtime.live_turns must be a mapping');
+  }
+  const liveTurns = (liveTurnsRaw || {}) as Record<string, unknown>;
+  for (const key of Object.keys(liveTurns)) {
+    if (key !== 'enabled') {
+      throw new Error(
+        `runtime.live_turns.${key} is not supported. Configure enabled.`,
       );
     }
   }
@@ -791,6 +811,13 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
         queue.base_retry_ms,
         'runtime.queue.base_retry_ms',
         defaults.queue.baseRetryMs,
+      ),
+    },
+    liveTurns: {
+      enabled: parseBooleanValue(
+        liveTurns.enabled,
+        'runtime.live_turns.enabled',
+        defaults.liveTurns.enabled,
       ),
     },
     sandbox: {

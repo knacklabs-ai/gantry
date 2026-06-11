@@ -41,6 +41,12 @@ describe('installShutdownHandlers', () => {
         closeBrowserToolBackends: vi.fn(async () => {
           order.push('closeBrowserToolBackends');
         }),
+        closeLiveTurnRecovery: vi.fn(async () => {
+          order.push('closeLiveTurnRecovery');
+        }),
+        closeLiveTurnAuthority: vi.fn(async () => {
+          order.push('closeLiveTurnAuthority');
+        }),
         disconnectChannels: vi.fn(async () => {
           await channelA.disconnect();
           await channelB.disconnect();
@@ -72,6 +78,8 @@ describe('installShutdownHandlers', () => {
       'closeAllBrowsers',
       'channel-a.disconnect',
       'channel-b.disconnect',
+      'closeLiveTurnRecovery',
+      'closeLiveTurnAuthority',
       'exit:0',
     ]);
   });

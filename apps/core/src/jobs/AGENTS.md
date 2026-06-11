@@ -17,6 +17,10 @@
   job reports, system maintenance results, and next-run times into readable
   product copy before delivery; never surface raw queue bookkeeping JSON,
   runner diagnostics, or ISO timestamps as the primary outcome.
+- Live scheduler notification evidence is part of terminal settlement. When a
+  live run stamps `notified_at`, pass the lease token that finalized the run and
+  fail if the repository rejects it; recovery-only timeout notification paths
+  may stamp after stale lease release because no live worker still owns the run.
 - System maintenance jobs must own their runtime budget explicitly. Include
   timeout constants in the registration signature so existing canonical jobs are
   updated, and pass the remaining deadline through maintenance queues into the

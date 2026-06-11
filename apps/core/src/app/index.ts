@@ -4,7 +4,11 @@ import {
 } from '../infrastructure/logging/logger.js';
 import { createChannelWiring } from './bootstrap/channel-wiring.js';
 import { getDefaultRuntimeApp } from './bootstrap/runtime-app.js';
-import { startRuntimeServices } from './bootstrap/runtime-services.js';
+import {
+  startRuntimeServices,
+  shutdownLiveTurnAuthority,
+  stopLiveTurnRecoveryLoop,
+} from './bootstrap/runtime-services.js';
 import { installShutdownHandlers } from './bootstrap/shutdown.js';
 import { runStartup } from './bootstrap/startup.js';
 import {
@@ -13,6 +17,7 @@ import {
   getRuntimeEventExchange,
   getRuntimeSkillArtifactStore,
   getRuntimeStorage,
+  tryAcquireRuntimeAdvisoryLease,
 } from '../adapters/storage/postgres/runtime-store.js';
 import { startControlServer } from '../control/server/index.js';
 import { stopSchedulerLoop } from '../jobs/scheduler.js';
@@ -25,6 +30,7 @@ import {
   formatRuntimePreflightFailure,
   validateRuntimePreflightWithStorage,
 } from '../config/preflight.js';
+import { acquireLiveTurnHostLease } from './bootstrap/live-turn-host.js';
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import { defaultHostnameLookup } from '../infrastructure/network/hostname-lookup.js';
 
@@ -109,6 +115,10 @@ export async function startGantryRuntime(
   const loadApprovedCommandModule = () =>
     (approvedCommandModule ??= import(approvedCommandModulePath));
 
+  let liveTurnHostLease:
+    | Awaited<ReturnType<typeof acquireLiveTurnHostLease>>
+    | undefined;
+
   installShutdownHandlers({
     queue: app.queue,
     disconnectChannels: channelWiring.disconnectChannels,
@@ -118,73 +128,104 @@ export async function startGantryRuntime(
     closeStorage: closeRuntimeStorage,
     closeScheduler: stopSchedulerLoop,
     closeOutboundDeliveryRecovery: stopOutboundDeliveryRecoveryLoop,
+    closeLiveTurnRecovery: async () => {
+      stopLiveTurnRecoveryLoop();
+    },
+    closeLiveTurnAuthority: shutdownLiveTurnAuthority,
     closeSettingsWatcher: settingsWatcher.close,
+    closeLiveTurnHostLease: async () => {
+      await liveTurnHostLease?.release();
+    },
     closeBrowserToolBackends: async () =>
       (await loadBrowserToolModule()).closeBrowserToolBackends(),
   });
 
-  await channelWiring.connectEnabledChannels(runtimeSettings);
+  liveTurnHostLease = await acquireLiveTurnHostLease({
+    runtimeSettings,
+    leases: { tryAcquire: tryAcquireRuntimeAdvisoryLease },
+  });
+  liveTurnHostLease?.onLost?.((err) => {
+    logger.error({ err }, 'Live-turn host lease lost; shutting down runtime');
+    process.exit(1);
+  });
 
-  if (!channelWiring.hasConnectedChannels()) {
-    logger.warn(
-      'No channels connected; runtime will continue without inbound/outbound channel delivery',
-    );
-  }
+  try {
+    if (!runtimeSettings.runtime.liveTurns.enabled) {
+      logger.info(
+        'Live-turn host lease disabled by runtime.live_turns.enabled=false; connecting channels in outbound-only mode',
+      );
+    }
+    await channelWiring.connectEnabledChannels(runtimeSettings);
 
-  await startRuntimeServices(
-    {
-      app,
-      channelWiring,
-    },
-    {
-      mcpHostnameLookup,
-      opsRepository: storage.ops,
-      getToolRepository: () => storage.repositories.tools,
-      getSkillRepository: () => storage.repositories.skills,
-      getMcpServerRepository: () => storage.repositories.mcpServers,
-      getCapabilitySecretRepository: () =>
-        storage.repositories.capabilitySecrets,
-      runApprovedCommand: async (input) =>
-        (await loadApprovedCommandModule()).runApprovedSandboxCommand(input),
-      getSkillArtifactStore: getRuntimeSkillArtifactStore,
-      getPermissionRepository: () => storage.repositories.permissions,
-      settingsRepositories: storage.repositories,
-      getOutboundDeliveryRepository: () =>
-        storage.repositories.outboundDeliveries,
-      publishRuntimeEvent: async (event) => {
-        await getRuntimeEventExchange().publish(event);
+    if (!channelWiring.hasConnectedChannels()) {
+      logger.warn(
+        'No channels connected; runtime will continue without inbound/outbound channel delivery',
+      );
+    }
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+        liveTurnsEnabled: runtimeSettings.runtime.liveTurns.enabled,
       },
-      callBrowserTool: async (input) =>
-        (await loadBrowserToolModule()).callBrowserTool(input),
-      publishBrowserJobActivity: async (input) => {
-        const controlRepository = getRuntimeControlRepository();
-        await publishBrowserJobActivityEvent({
-          activity: input,
-          getJobById: (jobId) => storage.ops.getJobById(jobId),
-          controlRepository,
-          publishRuntimeEvent: async (event) => {
-            await getRuntimeEventExchange().publish(event);
-          },
-          logger,
+      {
+        mcpHostnameLookup,
+        opsRepository: storage.ops,
+        getToolRepository: () => storage.repositories.tools,
+        getSkillRepository: () => storage.repositories.skills,
+        getMcpServerRepository: () => storage.repositories.mcpServers,
+        getCapabilitySecretRepository: () =>
+          storage.repositories.capabilitySecrets,
+        runApprovedCommand: async (input) =>
+          (await loadApprovedCommandModule()).runApprovedSandboxCommand(input),
+        getSkillArtifactStore: getRuntimeSkillArtifactStore,
+        getPermissionRepository: () => storage.repositories.permissions,
+        settingsRepositories: storage.repositories,
+        getOutboundDeliveryRepository: () =>
+          storage.repositories.outboundDeliveries,
+        getWorkerCoordinationRepository: () =>
+          storage.repositories.workerCoordination,
+        getLiveTurnRepository: () => storage.repositories.liveTurns,
+        publishRuntimeEvent: async (event) => {
+          await getRuntimeEventExchange().publish(event);
+        },
+        callBrowserTool: async (input) =>
+          (await loadBrowserToolModule()).callBrowserTool(input),
+        publishBrowserJobActivity: async (input) => {
+          const controlRepository = getRuntimeControlRepository();
+          await publishBrowserJobActivityEvent({
+            activity: input,
+            getJobById: (jobId) => storage.ops.getJobById(jobId),
+            controlRepository,
+            publishRuntimeEvent: async (event) => {
+              await getRuntimeEventExchange().publish(event);
+            },
+            logger,
+          });
+        },
+        closeBrowserToolBackends: async (profileName) =>
+          (await loadBrowserToolModule()).closeBrowserToolBackends(profileName),
+      },
+    );
+    controlServerRef.current = startControlServer({
+      app,
+      getBrowserStatus,
+      sendConversationIngressProjection: async (input) => {
+        await channelWiring.sendMessage(input.conversationJid, input.text, {
+          durability: 'required',
+          throwOnMissing: true,
+          messageOptions: input.threadId
+            ? { threadId: input.threadId }
+            : undefined,
         });
       },
-      closeBrowserToolBackends: async (profileName) =>
-        (await loadBrowserToolModule()).closeBrowserToolBackends(profileName),
-    },
-  );
-  controlServerRef.current = startControlServer({
-    app,
-    getBrowserStatus,
-    sendConversationIngressProjection: async (input) => {
-      await channelWiring.sendMessage(input.conversationJid, input.text, {
-        durability: 'required',
-        throwOnMissing: true,
-        messageOptions: input.threadId
-          ? { threadId: input.threadId }
-          : undefined,
-      });
-    },
-  });
+    });
+  } catch (err) {
+    await liveTurnHostLease?.release();
+    liveTurnHostLease = undefined;
+    throw err;
+  }
 }
 
 const isDirectRun =

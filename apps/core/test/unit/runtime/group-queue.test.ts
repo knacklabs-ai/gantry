@@ -62,6 +62,39 @@ describe('GroupQueue', () => {
     expect(maxConcurrent).toBe(1);
   });
 
+  it('registers live-turn runner hooks with routing metadata', async () => {
+    const registrar = vi.fn();
+    queue.setLiveTurnRunnerRegistrar(registrar);
+    queue.setProcessMessagesFn(async (groupJid) => {
+      queue.registerProcess(
+        groupJid,
+        { killed: false } as never,
+        'run-1',
+        '/workspace',
+        ['alias-1'],
+        null,
+        { requiredContinuationUserId: 'user-1' },
+      );
+      return true;
+    });
+
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(registrar).toHaveBeenCalledWith(
+      'group1@g.us',
+      expect.objectContaining({
+        applyContinuation: expect.any(Function),
+        applyCloseStdin: expect.any(Function),
+        applyStop: expect.any(Function),
+      }),
+      {
+        stopAliasJids: ['alias-1'],
+        requiredContinuationUserId: 'user-1',
+      },
+    );
+  });
+
   // --- Message concurrency limit ---
 
   it('respects message concurrency limit', async () => {

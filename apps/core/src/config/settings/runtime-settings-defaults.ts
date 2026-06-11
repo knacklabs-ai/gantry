@@ -142,6 +142,9 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       maxRetries: 5,
       baseRetryMs: 5000,
     },
+    liveTurns: {
+      enabled: true,
+    },
     sandbox: getDefaultRuntimeSandboxSettings(),
   };
   const browser: RuntimeBrowserSettings = {

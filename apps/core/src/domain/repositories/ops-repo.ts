@@ -166,16 +166,21 @@ export interface RuntimeJobRepository {
   settleJobRunLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId?: string;
+    fencingVersion?: number;
     outcome: 'completed' | 'failed' | 'released';
     allowAlreadySettled?: boolean;
   }): Promise<boolean>;
   updateAgentRunProviderMetadata?(input: {
     runId: string;
     runIds?: string[];
+    fenceRunId?: string;
     leaseToken?: string;
+    workerInstanceId?: string;
+    fencingVersion?: number;
     providerRunId?: string | null;
     providerSessionId?: string | null;
-  }): Promise<void>;
+  }): Promise<boolean>;
   releaseStaleJobLeases(nowIso?: string): Promise<ReleasedStaleJobLease[]>;
   createJobRun(run: JobRun): Promise<boolean>;
   completeJobRun(
@@ -187,6 +192,8 @@ export interface RuntimeJobRepository {
   completeJobRunWithLease?(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     status: JobRun['status'];
     resultSummary?: string | null;
     errorSummary?: string | null;
@@ -194,6 +201,8 @@ export interface RuntimeJobRepository {
   finalizeJobRunLease?(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runStatus: JobRun['status'];
     resultSummary?: string | null;
@@ -203,13 +212,22 @@ export interface RuntimeJobRepository {
     jobId: string;
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runStatus: JobRun['status'];
     resultSummary?: string | null;
     errorSummary?: string | null;
     jobUpdates: Partial<Job>;
   }): Promise<boolean>;
-  markJobRunNotified(runId: string): Promise<void>;
+  markJobRunNotified(
+    runId: string,
+    lease?: {
+      leaseToken: string;
+      workerInstanceId: string;
+      fencingVersion: number;
+    },
+  ): Promise<boolean>;
   getJobRunById(runId: string): Promise<JobRun | undefined>;
   listJobRuns(
     jobId?: string,
@@ -285,9 +303,13 @@ export interface RuntimeAgentSessionRepository {
   updateAgentRunProviderMetadata?(input: {
     runId: string;
     runIds?: string[];
+    fenceRunId?: string;
+    leaseToken?: string;
+    workerInstanceId?: string;
+    fencingVersion?: number;
     providerRunId?: string | null;
     providerSessionId?: string | null;
-  }): Promise<void>;
+  }): Promise<boolean>;
   completeSessionAgentRun?(input: {
     runId: string;
     status: 'completed' | 'failed' | 'canceled';

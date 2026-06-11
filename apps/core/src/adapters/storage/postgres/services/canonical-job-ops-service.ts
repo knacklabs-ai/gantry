@@ -193,8 +193,8 @@ export class CanonicalJobOpsService {
   }
 
   // prettier-ignore
-  async updateAgentRunProviderMetadata(input: { runId: string; runIds?: string[]; leaseToken?: string; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
-    await this.repository.updateRunProviderMetadata(input.runIds ?? input.runId, { leaseToken: input.leaseToken, providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
+  async updateAgentRunProviderMetadata(input: { runId: string; runIds?: string[]; fenceRunId?: string; leaseToken?: string; workerInstanceId?: string; fencingVersion?: number; providerRunId?: string | null; providerSessionId?: string | null }): Promise<boolean> {
+    return this.repository.updateRunProviderMetadata(input.runIds ?? input.runId, { fenceRunId: input.fenceRunId, leaseToken: input.leaseToken, workerInstanceId: input.workerInstanceId, fencingVersion: input.fencingVersion, providerRunId: input.providerRunId, providerSessionId: input.providerSessionId });
   }
 
   async getRecentJobRuns(limit = 200): Promise<JobRun[]> {
@@ -226,6 +226,8 @@ export class CanonicalJobOpsService {
   async completeJobRunWithLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     status: JobRun['status'];
     resultSummary?: string | null;
     errorSummary?: string | null;
@@ -240,6 +242,8 @@ export class CanonicalJobOpsService {
         : redactProviderSessionHandlesInText(input.errorSummary);
     return this.repository.updateRunCompletionWithLease(input.runId, {
       leaseToken: input.leaseToken,
+      workerInstanceId: input.workerInstanceId,
+      fencingVersion: input.fencingVersion,
       status: input.status,
       endedAt: currentIso(),
       resultSummary: redactedResultSummary,
@@ -250,6 +254,8 @@ export class CanonicalJobOpsService {
   async finalizeJobRunLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runStatus: JobRun['status'];
     resultSummary?: string | null;
@@ -266,6 +272,8 @@ export class CanonicalJobOpsService {
     return this.repository.finalizeRunCompletionWithLease({
       runId: input.runId,
       leaseToken: input.leaseToken,
+      workerInstanceId: input.workerInstanceId,
+      fencingVersion: input.fencingVersion,
       leaseOutcome: input.leaseOutcome,
       runCompletion: {
         status: input.runStatus,
@@ -280,6 +288,8 @@ export class CanonicalJobOpsService {
     jobId: string;
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runStatus: JobRun['status'];
     resultSummary?: string | null;
@@ -298,6 +308,8 @@ export class CanonicalJobOpsService {
       jobId: input.jobId,
       runId: input.runId,
       leaseToken: input.leaseToken,
+      workerInstanceId: input.workerInstanceId,
+      fencingVersion: input.fencingVersion,
       leaseOutcome: input.leaseOutcome,
       runCompletion: {
         status: input.runStatus,
@@ -309,8 +321,15 @@ export class CanonicalJobOpsService {
     });
   }
 
-  async markJobRunNotified(runId: string): Promise<void> {
-    await this.repository.markRunNotified(runId, currentIso());
+  async markJobRunNotified(
+    runId: string,
+    lease?: {
+      leaseToken: string;
+      workerInstanceId: string;
+      fencingVersion: number;
+    },
+  ): Promise<boolean> {
+    return this.repository.markRunNotified(runId, currentIso(), lease);
   }
 
   async getJobRunById(runId: string): Promise<JobRun | undefined> {

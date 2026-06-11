@@ -181,6 +181,10 @@ export interface RuntimeQueueSettings {
   baseRetryMs: number;
 }
 
+export interface RuntimeLiveTurnsSettings {
+  enabled: boolean;
+}
+
 export type RuntimeSandboxProvider = 'direct' | 'sandbox_runtime';
 
 export interface RuntimeSandboxSettings {
@@ -194,6 +198,7 @@ export interface RuntimeSandboxSettings {
 
 export interface RuntimeProcessSettings {
   queue: RuntimeQueueSettings;
+  liveTurns: RuntimeLiveTurnsSettings;
   sandbox: RuntimeSandboxSettings;
 }
 

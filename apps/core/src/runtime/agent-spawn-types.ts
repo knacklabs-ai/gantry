@@ -46,6 +46,7 @@ export interface AgentInput {
   selectedSkillDisplays?: string[];
   attachedMcpSourceIds?: string[];
   semanticCapabilities?: SemanticCapabilityDefinition[];
+  hideAuthorityTools?: boolean;
   isScheduledJob?: boolean;
   jobId?: string;
   jobName?: string;

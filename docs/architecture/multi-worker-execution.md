@@ -37,7 +37,8 @@ migration `0075_multi_worker_execution.sql`):
 3. Terminal writes are token-fenced: `settleRunLease` transitions the lease
    only when the caller's token is still the run's active lease. A stale
    worker whose run was recovered drops all terminal writes (including the
-   failsafe path).
+   failsafe path). Live-run `notified_at` evidence is stamped only when the
+   caller presents the same lease token that settled the terminal run.
 
 ## Recovery
 
@@ -50,6 +51,24 @@ migration `0075_multi_worker_execution.sql`):
   match again. Recovered retries notify:
   "Run recovered: previous worker lost its lease; Gantry safely retried this run."
 
+## Live turns
+
+Live interactive turns are durable and worker-routable; see
+[live-horizontal-execution.md](./live-horizontal-execution.md) for the full
+contract. Ownership of a live turn is keyed by the deterministic scope
+`(appId, agentSessionId, conversationId, threadId)` and fenced by `run_leases`
+(live leases carry `job_id = null`), exactly like jobs. Continuations, stops,
+and prompt resolutions that land on a non-owner worker are appended to the
+owning turn's durable command inbox instead of mutating process-local state.
+
+The `runtime:live-turn-host:default` advisory lease and
+`runtime.live_turns.enabled` flag remain as a rollout guard: a runtime keeps
+the durable live-turn path behind that flag until the GroupQueue hot-path
+cutover is validated end-to-end. Scheduler-only workers set
+`runtime.live_turns.enabled: false` and initialize channel adapters in
+outbound-only mode for scheduler delivery; they do not acquire inbound provider
+polling/socket leases.
+
 ## Permission durability
 
 `pending_interactions` rows are created before a permission/question prompt
@@ -59,11 +78,15 @@ callbacks resolve the
 durable record. Persistent grants are committed to settings/Postgres before
 the IPC response resumes the worker (pre-existing flow). Transient approvals
 become `transient_grants` rows scoped to the active run lease.
+Scheduled question prompts carry the same app/run/job/lease context as
+scheduled permission prompts and are lease-checked before rendering and before
+answer response delivery.
 
 ## Acceptance gates
 
 Covered by
 `apps/core/test/integration/worker-coordination.postgres.integration.test.ts`:
-double-claim refusal, stale-worker fencing, crash releasing only expired
-leases, restart-surviving prompts, replayed-event rejection, lease-scoped
-transient grants, cluster slot capacity/reclaim, and worker health sweeps.
+double-claim refusal, stale-worker fencing, fenced notification evidence, crash
+releasing only expired leases, restart-surviving prompts, replayed-event
+rejection, lease-scoped transient grants, cluster slot capacity/reclaim, and
+worker health sweeps.

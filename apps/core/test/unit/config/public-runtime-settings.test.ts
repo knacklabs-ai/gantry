@@ -43,4 +43,7 @@ it('redacts owner-defined browser usage override sites from public settings', as
     maxActionsPerWindow: 100,
     maxConcurrentPerSite: 2,
   });
+  expect(config.getPublicRuntimeSettings().runtime).not.toHaveProperty(
+    'liveTurns',
+  );
 });

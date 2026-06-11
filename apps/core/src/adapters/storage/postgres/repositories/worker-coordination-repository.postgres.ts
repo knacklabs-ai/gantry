@@ -455,6 +455,24 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
       return toPendingInteraction(rows[0]!);
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
+      const refreshed = await this.db
+        .update(pgSchema.pendingInteractionsPostgres)
+        .set({
+          payloadJson: input.payload,
+          callbackRouteJson: input.callbackRoute ?? null,
+          expiresAt: input.expiresAt,
+        })
+        .where(
+          and(
+            eq(
+              pgSchema.pendingInteractionsPostgres.idempotencyKey,
+              input.idempotencyKey,
+            ),
+            eq(pgSchema.pendingInteractionsPostgres.status, 'pending'),
+          ),
+        )
+        .returning();
+      if (refreshed[0]) return toPendingInteraction(refreshed[0]);
       const existing = await this.db
         .select()
         .from(pgSchema.pendingInteractionsPostgres)
@@ -485,6 +503,51 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
         approverRef: input.approverRef ?? null,
         resolvedAt: now,
       })
+      .where(
+        and(
+          eq(
+            pgSchema.pendingInteractionsPostgres.idempotencyKey,
+            input.idempotencyKey,
+          ),
+          eq(pgSchema.pendingInteractionsPostgres.status, 'pending'),
+        ),
+      )
+      .returning({ id: pgSchema.pendingInteractionsPostgres.id });
+    return rows.length > 0;
+  }
+
+  async restorePendingInteractionPending(input: {
+    idempotencyKey: string;
+    now?: string;
+  }): Promise<boolean> {
+    const rows = await this.db
+      .update(pgSchema.pendingInteractionsPostgres)
+      .set({
+        status: 'pending',
+        resolutionJson: null,
+        approverRef: null,
+        resolvedAt: null,
+      })
+      .where(
+        and(
+          eq(
+            pgSchema.pendingInteractionsPostgres.idempotencyKey,
+            input.idempotencyKey,
+          ),
+          sql`${pgSchema.pendingInteractionsPostgres.status} IN ('resolved', 'cancelled')`,
+        ),
+      )
+      .returning({ id: pgSchema.pendingInteractionsPostgres.id });
+    return rows.length > 0;
+  }
+
+  async updatePendingInteractionPayload(input: {
+    idempotencyKey: string;
+    payload: Record<string, unknown>;
+  }): Promise<boolean> {
+    const rows = await this.db
+      .update(pgSchema.pendingInteractionsPostgres)
+      .set({ payloadJson: input.payload })
       .where(
         and(
           eq(

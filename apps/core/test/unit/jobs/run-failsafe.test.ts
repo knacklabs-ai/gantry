@@ -17,6 +17,7 @@ describe('completeFailedRunFailsafe', () => {
       jobId: 'job-1',
       runId: 'run-1',
       leaseToken: 'lease-token-1',
+      workerInstanceId: 'worker-1',
       fencingVersion: 2,
       recordRunnerControlEvent,
       logger,
@@ -25,6 +26,8 @@ describe('completeFailedRunFailsafe', () => {
     expect(opsRepository.finalizeJobRunLease).toHaveBeenCalledWith({
       runId: 'run-1',
       leaseToken: 'lease-token-1',
+      workerInstanceId: 'worker-1',
+      fencingVersion: 2,
       leaseOutcome: 'failed',
       runStatus: 'failed',
       resultSummary: null,
@@ -51,6 +54,8 @@ describe('completeFailedRunFailsafe', () => {
       jobId: 'job-1',
       runId: 'run-1',
       leaseToken: 'stale-token',
+      workerInstanceId: 'worker-1',
+      fencingVersion: 2,
       recordRunnerControlEvent,
       logger,
     });

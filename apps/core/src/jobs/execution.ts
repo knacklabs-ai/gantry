@@ -276,6 +276,8 @@ export async function runJob(
           jobId: currentJob.id,
           outerRunId: runId,
           leaseToken: leaseContext.lease.leaseToken,
+          workerInstanceId: leaseContext.lease.workerInstanceId,
+          fencingVersion: leaseContext.lease.fencingVersion,
           getSessionRunId: () => agentRunId,
           nowMs,
           logger,
@@ -594,22 +596,16 @@ export async function runJob(
         if (deletionGuard.deletedDuringRun) return;
         const finalizeWithLease = deps.opsRepository.finalizeJobRunWithLease;
         if (!finalizeWithLease) {
-          await deps.opsRepository.updateJob(currentJob.id, jobUpdates);
-          await deps.opsRepository.completeJobRun(
-            runId,
-            state.runStatus,
-            safeResultSummary ? safeResultSummary.slice(0, 500) : null,
-            state.safeErrorSummary
-              ? state.safeErrorSummary.slice(0, 500)
-              : null,
+          throw new Error(
+            'Scheduler run lease finalization is unavailable for terminal job write.',
           );
-          terminalRunRecorded = true;
-          return;
         }
         const finalized = await finalizeWithLease.call(deps.opsRepository, {
           jobId: currentJob.id,
           runId,
           leaseToken: leaseContext.lease.leaseToken,
+          workerInstanceId: leaseContext.lease.workerInstanceId,
+          fencingVersion: leaseContext.lease.fencingVersion,
           leaseOutcome: error ? 'failed' : 'completed',
           runStatus: state.runStatus,
           resultSummary: safeResultSummary
@@ -638,6 +634,8 @@ export async function runJob(
       const finalized = await finalizeRunLease.call(deps.opsRepository, {
         runId,
         leaseToken: leaseContext.lease.leaseToken,
+        workerInstanceId: leaseContext.lease.workerInstanceId,
+        fencingVersion: leaseContext.lease.fencingVersion,
         leaseOutcome: error ? 'failed' : 'completed',
         runStatus,
         resultSummary: safeResultSummary
@@ -699,7 +697,19 @@ export async function runJob(
         sendMessage: deps.sendMessage,
       }));
     if (notified) {
-      await deps.opsRepository.markJobRunNotified(runId);
+      const markedNotified = await deps.opsRepository.markJobRunNotified(
+        runId,
+        {
+          leaseToken: leaseContext.lease.leaseToken,
+          workerInstanceId: leaseContext.lease.workerInstanceId,
+          fencingVersion: leaseContext.lease.fencingVersion,
+        },
+      );
+      if (!markedNotified) {
+        throw new Error(
+          'Scheduler run lease is no longer valid during notification finalization.',
+        );
+      }
     }
     await emitJobEvent(
       runStatus === 'completed'
@@ -750,6 +760,7 @@ export async function runJob(
         jobId: currentJob.id,
         runId,
         leaseToken: leaseContext.lease.leaseToken,
+        workerInstanceId: leaseContext.lease.workerInstanceId,
         fencingVersion: leaseContext.lease.fencingVersion,
         recordRunnerControlEvent: leaseContext.recordRunnerControlEvent,
         logger,

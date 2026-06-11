@@ -15,6 +15,11 @@ import type { RunLease } from '../../../../domain/ports/worker-coordination.js';
 import { claimDueCanonicalJobRunStart } from './canonical-job-claim.postgres.js';
 import { settleRunLeaseTx } from './worker-coordination-lease.postgres.js';
 import { updateCanonicalJobRunProviderMetadata } from './canonical-job-run-provider-metadata.postgres.js';
+import {
+  activeRunLeaseFence,
+  settledRunLeaseFence,
+  type RunLeaseFence,
+} from './run-lease-fence.postgres.js';
 
 export interface CanonicalJobRecord {
   id: string;
@@ -373,6 +378,8 @@ export class PostgresCanonicalJobRepository {
     runId: string,
     input: {
       leaseToken: string;
+      workerInstanceId: string;
+      fencingVersion: number;
       status: JobRun['status'];
       endedAt: string;
       resultSummary: string | null;
@@ -391,13 +398,11 @@ export class PostgresCanonicalJobRepository {
       .where(
         and(
           eq(pgSchema.agentRunsPostgres.id, runId),
-          sql`EXISTS (
-            SELECT 1 FROM ${pgSchema.runLeasesPostgres}
-            WHERE ${pgSchema.runLeasesPostgres.runId} = ${runId}
-              AND ${pgSchema.runLeasesPostgres.leaseToken} = ${input.leaseToken}
-              AND ${pgSchema.runLeasesPostgres.status} = 'active'
-              AND ${pgSchema.runLeasesPostgres.expiresAt} > ${now}
-          )`,
+          activeRunLeaseFence({
+            runId,
+            fence: input,
+            now,
+          }),
         ),
       )
       .returning({ id: pgSchema.agentRunsPostgres.id });
@@ -407,6 +412,8 @@ export class PostgresCanonicalJobRepository {
   async finalizeRunCompletionWithLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runCompletion: {
       status: JobRun['status'];
@@ -418,7 +425,6 @@ export class PostgresCanonicalJobRepository {
     return this.db.transaction(async (tx) => {
       const now = currentIso();
       const runs = pgSchema.agentRunsPostgres;
-      const leases = pgSchema.runLeasesPostgres;
       const runRows = await tx
         .update(runs)
         .set({
@@ -430,13 +436,11 @@ export class PostgresCanonicalJobRepository {
         .where(
           and(
             eq(runs.id, input.runId),
-            sql`EXISTS (
-              SELECT 1 FROM ${leases}
-              WHERE ${leases.runId} = ${input.runId}
-                AND ${leases.leaseToken} = ${input.leaseToken}
-                AND ${leases.status} = 'active'
-                AND ${leases.expiresAt} > ${now}
-            )`,
+            activeRunLeaseFence({
+              runId: input.runId,
+              fence: input,
+              now,
+            }),
           ),
         )
         .returning({ id: runs.id });
@@ -445,6 +449,8 @@ export class PostgresCanonicalJobRepository {
       const settled = await settleRunLeaseTx(tx, {
         runId: input.runId,
         leaseToken: input.leaseToken,
+        workerInstanceId: input.workerInstanceId,
+        fencingVersion: input.fencingVersion,
         outcome: input.leaseOutcome,
       });
       if (!settled) {
@@ -458,6 +464,8 @@ export class PostgresCanonicalJobRepository {
     jobId: string;
     runId: string;
     leaseToken: string;
+    workerInstanceId: string;
+    fencingVersion: number;
     leaseOutcome: 'completed' | 'failed' | 'released';
     runCompletion: {
       status: JobRun['status'];
@@ -470,7 +478,6 @@ export class PostgresCanonicalJobRepository {
     return this.db.transaction(async (tx) => {
       const now = currentIso();
       const runs = pgSchema.agentRunsPostgres;
-      const leases = pgSchema.runLeasesPostgres;
       const runRows = await tx
         .update(runs)
         .set({
@@ -482,13 +489,11 @@ export class PostgresCanonicalJobRepository {
         .where(
           and(
             eq(runs.id, input.runId),
-            sql`EXISTS (
-              SELECT 1 FROM ${leases}
-              WHERE ${leases.runId} = ${input.runId}
-                AND ${leases.leaseToken} = ${input.leaseToken}
-                AND ${leases.status} = 'active'
-                AND ${leases.expiresAt} > ${now}
-            )`,
+            activeRunLeaseFence({
+              runId: input.runId,
+              fence: input,
+              now,
+            }),
           ),
         )
         .returning({ id: runs.id });
@@ -533,6 +538,8 @@ export class PostgresCanonicalJobRepository {
       const settled = await settleRunLeaseTx(tx, {
         runId: input.runId,
         leaseToken: input.leaseToken,
+        workerInstanceId: input.workerInstanceId,
+        fencingVersion: input.fencingVersion,
         outcome: input.leaseOutcome,
       });
       if (!settled) {
@@ -543,15 +550,29 @@ export class PostgresCanonicalJobRepository {
   }
 
   // prettier-ignore
-  async updateRunProviderMetadata(runId: string | readonly string[], input: { leaseToken?: string; providerRunId?: string | null; providerSessionId?: string | null }): Promise<void> {
-    await updateCanonicalJobRunProviderMetadata(this.db, runId, input);
+  async updateRunProviderMetadata(runId: string | readonly string[], input: { fenceRunId?: string; leaseToken?: string; workerInstanceId?: string; fencingVersion?: number; providerRunId?: string | null; providerSessionId?: string | null }): Promise<boolean> {
+    return updateCanonicalJobRunProviderMetadata(this.db, runId, input);
   }
 
-  async markRunNotified(runId: string, notifiedAt: string): Promise<void> {
-    await this.db
+  async markRunNotified(
+    runId: string,
+    notifiedAt: string,
+    lease?: RunLeaseFence,
+  ): Promise<boolean> {
+    const now = currentIso();
+    const leaseFence = lease
+      ? settledRunLeaseFence({ runId, fence: lease, now })
+      : undefined;
+    const rows = await this.db
       .update(pgSchema.agentRunsPostgres)
       .set({ notifiedAt })
-      .where(eq(pgSchema.agentRunsPostgres.id, runId));
+      .where(
+        leaseFence
+          ? and(eq(pgSchema.agentRunsPostgres.id, runId), leaseFence)
+          : eq(pgSchema.agentRunsPostgres.id, runId),
+      )
+      .returning({ id: pgSchema.agentRunsPostgres.id });
+    return rows.length > 0;
   }
 
   async findRunById(runId: string): Promise<CanonicalRunRecord | undefined> {

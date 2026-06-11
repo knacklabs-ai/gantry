@@ -307,17 +307,23 @@ describe('PostgresCanonicalJobRepository', () => {
   });
 
   it('persists run notification timestamps on canonical agent runs', async () => {
-    const where = vi.fn(async () => undefined);
+    const returning = vi.fn(async () => [{ id: 'run-1' }]);
+    const where = vi.fn(() => ({ returning }));
     const set = vi.fn(() => ({ where }));
     const db = { update: vi.fn(() => ({ set })) };
     const repository = new PostgresCanonicalJobRepository(db as never);
 
-    await repository.markRunNotified('run-1', '2026-05-12T10:00:00.000Z');
+    const result = await repository.markRunNotified(
+      'run-1',
+      '2026-05-12T10:00:00.000Z',
+    );
 
     expect(set).toHaveBeenCalledWith({
       notifiedAt: '2026-05-12T10:00:00.000Z',
     });
     expect(where).toHaveBeenCalled();
+    expect(returning).toHaveBeenCalled();
+    expect(result).toBe(true);
   });
 
   it('filters nested session agent runs out of scheduler run lists', async () => {

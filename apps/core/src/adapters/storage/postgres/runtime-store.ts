@@ -61,6 +61,7 @@ export async function initializeRuntimeStorage(
     runtime = nextRuntime;
     configurePendingInteractionDurability({
       repository: nextRuntime.repositories.workerCoordination,
+      liveTurns: nextRuntime.repositories.liveTurns,
       warn: (context, message) => logger.warn(context, message),
     });
     return nextRuntime;
@@ -172,7 +173,12 @@ export function _setRuntimeStorageForTest(nextRuntime: StorageRuntime): void {
   runtime = nextRuntime;
   const workerCoordination = nextRuntime.repositories?.workerCoordination;
   configurePendingInteractionDurability(
-    workerCoordination ? { repository: workerCoordination } : null,
+    workerCoordination
+      ? {
+          repository: workerCoordination,
+          liveTurns: nextRuntime.repositories?.liveTurns ?? null,
+        }
+      : null,
   );
 }
 

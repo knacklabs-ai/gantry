@@ -9,6 +9,7 @@ export * from './events.js';
 export * from './external-ingress.js';
 export * from './file-artifacts.js';
 export * from './jobs.js';
+export * from './live-turns.js';
 export * from './memory.js';
 export * from './messages.js';
 export * from './model-credentials.js';

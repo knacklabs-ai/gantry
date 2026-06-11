@@ -51,6 +51,12 @@ import {
 } from './agent-spawn-types.js';
 import { selectedMemoryIpcActionsFromToolRules } from '../shared/memory-ipc-actions.js';
 import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-references.js';
+import { parseSemanticCapabilityRule } from '../shared/semantic-capability-ids.js';
+import {
+  fixedImageSetupRequiredMessage,
+  missingImageCapabilities,
+  readImageCapabilityInventory,
+} from '../shared/worker-image-inventory.js';
 import { resolveMcpCredentialEnvForAgent } from '../application/capability-secrets/mcp-secret-projection.js';
 import { resolveSelectedSkillEnvForAgent } from '../application/capability-secrets/skill-secret-projection.js';
 import {
@@ -92,6 +98,23 @@ export type {
   AgentInput,
   AgentOutput,
 } from './agent-spawn-types.js';
+function fixedImageCapabilityPreflightError(input: AgentInput): string | null {
+  const imageInventory = readImageCapabilityInventory();
+  if (!imageInventory) return null;
+  const selectedSemanticCapabilityIds = new Set(
+    (input.toolPolicyRules ?? [])
+      .map((rule) => parseSemanticCapabilityRule(rule))
+      .filter((id): id is string => Boolean(id)),
+  );
+  const missing = missingImageCapabilities(
+    [...selectedSemanticCapabilityIds].map((capabilityId) => ({
+      capabilityId,
+    })),
+    imageInventory,
+  );
+  return missing.length === 0 ? null : fixedImageSetupRequiredMessage(missing);
+}
+
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -157,6 +180,18 @@ export async function spawnAgent(
       error: allowedToolValidationError,
     };
   }
+  // Fixed-image worker preflight: fail closed before the runner process starts
+  // when a selected capability is not present in this worker image inventory.
+  // Scheduled jobs additionally pause earlier via job readiness; this is the
+  // admission guard for live turns and a defense-in-depth backstop for jobs.
+  const fixedImagePreflightError = fixedImageCapabilityPreflightError(input);
+  if (fixedImagePreflightError) {
+    return {
+      status: 'error',
+      result: null,
+      error: fixedImagePreflightError,
+    };
+  }
   const promptProfileService = new PromptProfileService({
     fileArtifactStore: () => getRuntimeFileArtifactStore(),
   });
@@ -184,10 +219,14 @@ export async function spawnAgent(
   const browserIpcEnabled = (trustedToolPolicyRules ?? []).some(
     isCanonicalBrowserCapabilityRule,
   );
+  const hideAuthorityTools =
+    input.hideAuthorityTools === true ||
+    process.env.GANTRY_NO_PERMISSION_TOOLS === '1';
   const runnerInput: RunnerAgentInput = {
     ...input,
     allowedTools: trustedToolPolicyRules,
     browserProfileName,
+    hideAuthorityTools,
     compiledSystemPrompt,
     yoloMode: effectiveYoloModeSettings(
       getRuntimeSettingsForConfig().permissions.yoloMode,
@@ -500,6 +539,7 @@ export async function spawnAgent(
       GANTRY_MEMORY_DEFAULT_SCOPE: input.memoryDefaultScope || 'group',
       GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
         input.memoryReviewerIsControlApprover ? '1' : '',
+      GANTRY_NO_PERMISSION_TOOLS: hideAuthorityTools ? '1' : '',
       GANTRY_INTERACTIVE_PERMISSION_TIMEOUT_MS: String(
         PERMISSION_APPROVAL_TIMEOUT_MS,
       ),

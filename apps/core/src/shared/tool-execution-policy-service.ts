@@ -143,6 +143,32 @@ export class ToolExecutionClassifier {
   }
 }
 
+export interface AgentToolExecutionContext {
+  isScheduledJob?: boolean;
+  jobId?: string;
+  threadId?: string;
+  conversationId: string;
+}
+
+export function buildAgentToolExecutionRequest(
+  classifier: ToolExecutionClassifier,
+  toolName: string,
+  toolInput: unknown,
+  context: AgentToolExecutionContext,
+): ToolExecutionRequest {
+  return classifier.classify({
+    origin: 'sdk',
+    toolName,
+    toolInput,
+    executionMode: context.isScheduledJob ? 'autonomous' : 'interactive',
+    runContext: {
+      jobId: context.isScheduledJob ? context.jobId : undefined,
+      threadId: context.threadId,
+      conversationId: context.conversationId,
+    },
+  });
+}
+
 export class ToolExecutionPolicyService {
   evaluate(input: {
     request: ToolExecutionRequest;

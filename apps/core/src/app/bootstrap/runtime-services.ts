@@ -1,5 +1,7 @@
 import {
   DEFAULT_TRIGGER,
+  MAX_MESSAGES_PER_PROMPT,
+  TIMEZONE,
   getCredentialBrokerRuntimeConfig,
   getRuntimeSettingsForConfig,
 } from '../../config/index.js';
@@ -20,9 +22,18 @@ import { startIpcWatcher, type IpcDeps } from '../../runtime/ipc.js';
 import { recoverPendingMessages, startMessagePollingLoop } from '../../runtime/message-loop.js';
 // prettier-ignore
 import { requestSchedulerSync, startSchedulerLoop } from '../../jobs/scheduler.js';
+import { registerWorkerInstance } from '../../jobs/worker-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { makeThreadQueueKey } from '../../shared/thread-queue-key.js';
+import {
+  makeThreadQueueKey,
+  parseThreadQueueKey,
+} from '../../shared/thread-queue-key.js';
 import type { RuntimeJobRepository } from '../../domain/repositories/ops-repo.js';
+import type { WorkerCoordinationRepository } from '../../domain/ports/worker-coordination.js';
+import type {
+  LiveTurnCoordinationRepository,
+  LiveTurnScope,
+} from '../../domain/ports/live-turns.js';
 import type {
   CapabilitySecretRepository,
   McpServerRepository,
@@ -65,6 +76,19 @@ import { splitLiveSendProfileText } from './runtime-services-live-send-segmentat
 import { createDurableOutboundAttempt } from './runtime-services-durable-outbound-attempt.js';
 import { handleActiveNewSessionCommand } from './runtime-services-active-new.js';
 import { nowIso, nowMs as currentTimeMs } from '../../shared/time/datetime.js';
+import { LiveTurnAuthority } from '../../runtime/live-turn-authority.js';
+import {
+  runLiveTurnRecoveryTick,
+  startLiveTurnRecoveryLoop,
+  type LiveTurnRecoveryLoop,
+} from '../../runtime/live-turn-recovery.js';
+import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provider-id.js';
+import { configurePendingInteractionPermissionPersistence } from '../../application/interactions/pending-interaction-durability.js';
+import {
+  liveTurnScopeForQueue,
+  routeScopeActiveLiveTurnAdmissionFromCursor,
+} from './live-turn-host.js';
+import { markPendingContinuationCommandsApplied } from './live-turn-continuation.js';
 type RuntimeBootstrapRepository = RuntimeAppRepository & RuntimeJobRepository;
 interface Deps {
   startSchedulerLoop: typeof startSchedulerLoop;
@@ -87,6 +111,10 @@ interface Deps {
   getPermissionRepository?: () => PermissionRepository;
   settingsRepositories?: AgentToolRuleSettingsRepositories;
   getOutboundDeliveryRepository?: () => OutboundDeliveryRepository | undefined;
+  getWorkerCoordinationRepository?: () =>
+    | WorkerCoordinationRepository
+    | undefined;
+  getLiveTurnRepository?: () => LiveTurnCoordinationRepository | undefined;
   startOutboundDeliveryRecoveryLoop: typeof startOutboundDeliveryRecoveryLoop;
   callBrowserTool: IpcDeps['callBrowserTool'];
   publishRuntimeEvent: IpcDeps['publishRuntimeEvent'];
@@ -102,11 +130,14 @@ type RuntimeServicesDefaults = Omit<
   | 'opsRepository'
   | 'getToolRepository'
   | 'getPermissionRepository'
+  | 'getWorkerCoordinationRepository'
+  | 'getLiveTurnRepository'
   | 'runnerSandboxProvider'
 >;
 export type RuntimeServicesOptions = {
   app: RuntimeApp;
   channelWiring: ChannelWiring;
+  liveTurnsEnabled?: boolean;
 };
 function makeDefaultDeps(): RuntimeServicesDefaults {
   return {
@@ -125,11 +156,9 @@ function makeDefaultDeps(): RuntimeServicesDefaults {
     exit: (code: number) => process.exit(code),
   };
 }
-
 function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
   let syncInFlight: Promise<void> | undefined;
   let syncDirty = false;
-
   const runSync = async () => {
     do {
       syncDirty = false;
@@ -137,7 +166,6 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
         app.getConversationRoutes(),
         await app.getAvailableGroups(),
       ];
-
       const registeredJids = new Set(Object.keys(conversationRoutes));
       await Promise.all(
         Object.values(conversationRoutes).map((group) =>
@@ -150,7 +178,6 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
       );
     } while (syncDirty);
   };
-
   return () => {
     if (syncInFlight) {
       syncDirty = true;
@@ -165,19 +192,62 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
       });
   };
 }
+let activeLiveTurnRecoveryLoop: LiveTurnRecoveryLoop | undefined;
+let activeLiveTurnAuthority: LiveTurnAuthority | undefined;
+export function stopLiveTurnRecoveryLoop(): void {
+  activeLiveTurnRecoveryLoop?.stop();
+  activeLiveTurnRecoveryLoop = undefined;
+}
+export async function shutdownLiveTurnAuthority(): Promise<void> {
+  const authority = activeLiveTurnAuthority;
+  activeLiveTurnAuthority = undefined;
+  await authority?.shutdown();
+}
 export async function startRuntimeServices(
   options: RuntimeServicesOptions,
   deps: Partial<RuntimeServicesDefaults> &
     Pick<Deps, 'opsRepository' | 'getToolRepository'> &
-    Partial<Pick<Deps, 'getPermissionRepository'>>,
+    Partial<
+      Pick<
+        Deps,
+        | 'getPermissionRepository'
+        | 'getWorkerCoordinationRepository'
+        | 'getLiveTurnRepository'
+      >
+    >,
 ): Promise<void> {
   const { app, channelWiring } = options;
+  const liveTurnsEnabled = options.liveTurnsEnabled ?? true;
   const resolved: Deps = {
     ...makeDefaultDeps(),
     ...deps,
     runnerSandboxProvider: app.runnerSandboxProvider,
   };
-
+  const workerCoordination = resolved.getWorkerCoordinationRepository?.();
+  const liveTurns = resolved.getLiveTurnRepository?.();
+  const liveTurnLeaseDeps =
+    liveTurnsEnabled && workerCoordination && liveTurns
+      ? {
+          liveTurns,
+          coordination: workerCoordination,
+          workerInstanceId: await registerWorkerInstance(workerCoordination, {
+            warn: (context, message) => resolved.logger.warn(context, message),
+          }),
+        }
+      : undefined;
+  const liveTurnAuthority = liveTurnLeaseDeps
+    ? new LiveTurnAuthority({
+        leaseDeps: liveTurnLeaseDeps,
+        slotCapacity: () => app.queue.getPolicy().maxMessageRuns,
+        warn: (context, message) => resolved.logger.warn(context, message),
+      })
+    : undefined;
+  activeLiveTurnAuthority = liveTurnAuthority;
+  if (liveTurnsEnabled && !liveTurnAuthority) {
+    resolved.logger.warn(
+      'Live-turn admission is enabled, but durable live-turn repositories are unavailable; falling back to local queue admission',
+    );
+  }
   const syncGroupSnapshots = createGroupSnapshotSync(app, resolved);
   const onSchedulerChanged = (jobId?: string) => requestSchedulerSync(jobId);
   const startScheduler = () =>
@@ -195,6 +265,7 @@ export async function startRuntimeServices(
       sendMessage: (jid, rawText, options) =>
         channelWiring.sendMessage(jid, rawText, {
           durability: 'required',
+          throwOnMissing: true,
           ...(options?.threadId
             ? { messageOptions: { threadId: options.threadId } }
             : {}),
@@ -225,7 +296,33 @@ export async function startRuntimeServices(
       closeBrowserSession: closeBrowser,
       closeBrowserToolBackends: resolved.closeBrowserToolBackends,
     });
-
+  const rejectNonLiveInteraction = (kind: 'permission' | 'question'): never => {
+    resolved.logger.warn(
+      { kind },
+      'Rejecting interaction IPC on a worker without live-turn callbacks',
+    );
+    throw new Error(
+      'This worker cannot receive provider interaction callbacks. Retry on a live-turn worker.',
+    );
+  };
+  const mirrorAgentToolRulesToSettings = createAgentToolRuleSettingsMirror({
+    opsRepository: resolved.opsRepository,
+    repositories: resolved.settingsRepositories,
+    reloadRuntimeState: () => app.loadState(),
+  });
+  configurePendingInteractionPermissionPersistence({
+    opsRepository: resolved.opsRepository,
+    getToolRepository: resolved.getToolRepository,
+    getPermissionRepository: resolved.getPermissionRepository,
+    mirrorAgentToolRulesToSettings,
+    onSchedulerChanged,
+    getSkillRepository: resolved.getSkillRepository,
+    getMcpServerRepository: resolved.getMcpServerRepository,
+    getCapabilitySecretRepository: resolved.getCapabilitySecretRepository,
+    getCredentialBroker: app.getCredentialBroker,
+    getBrowserStatus,
+    publishRuntimeEvent: resolved.publishRuntimeEvent,
+  });
   resolved.startIpcWatcher({
     sendMessage: (jid, text, options) =>
       channelWiring.sendMessage(jid, text, {
@@ -249,11 +346,7 @@ export async function startRuntimeServices(
     runApprovedCommand: resolved.runApprovedCommand,
     getPermissionRepository: resolved.getPermissionRepository,
     publishRuntimeEvent: resolved.publishRuntimeEvent,
-    mirrorAgentToolRulesToSettings: createAgentToolRuleSettingsMirror({
-      opsRepository: resolved.opsRepository,
-      repositories: resolved.settingsRepositories,
-      reloadRuntimeState: () => app.loadState(),
-    }),
+    mirrorAgentToolRulesToSettings,
     reloadRuntimeState: () => app.loadState(),
     getCredentialBroker: app.getCredentialBroker,
     getCredentialBrokerProfile: () => getCredentialBrokerRuntimeConfig().mode,
@@ -262,14 +355,224 @@ export async function startRuntimeServices(
     getBrowserStatus,
     closeBrowserToolBackends: resolved.closeBrowserToolBackends,
     getBrowserUsageSettings: () => getRuntimeSettingsForConfig().browser.usage,
-    requestPermissionApproval: channelWiring.requestPermissionApproval,
-    requestUserAnswer: channelWiring.requestUserAnswer,
+    requestPermissionApproval: (request) =>
+      liveTurnsEnabled
+        ? channelWiring.requestPermissionApproval(request)
+        : Promise.reject(rejectNonLiveInteraction('permission')),
+    requestUserAnswer: (request) =>
+      liveTurnsEnabled
+        ? channelWiring.requestUserAnswer(request)
+        : Promise.reject(rejectNonLiveInteraction('question')),
     mcpHostnameLookup: resolved.mcpHostnameLookup,
   });
   syncGroupSnapshots();
-  app.queue.setProcessMessagesFn((chatJid) =>
-    app.processGroupMessages(chatJid, { queued: true }),
+  app.queue.setLiveTurnRunnerRegistrar(
+    liveTurnAuthority
+      ? (queueJid, hooks, routing) =>
+          liveTurnAuthority.registerLocalRunner(queueJid, hooks, routing)
+      : null,
   );
+  app.queue.setProcessMessagesFn(async (queueJid) => {
+    if (!liveTurnAuthority) {
+      return app.processGroupMessages(queueJid, { queued: true });
+    }
+    let liveRunId = liveTurnAuthority.ownedRunId(queueJid) ?? undefined;
+    let liveRunFence = liveTurnAuthority.ownedFence(queueJid);
+    if (!liveTurnAuthority.ownsQueue(queueJid)) {
+      const { chatJid, threadId } = parseThreadQueueKey(queueJid);
+      const route = app.getConversationRoutes()[chatJid];
+      if (!route) return false;
+      const executionProviderId = resolveRuntimeExecutionProviderId(
+        resolved.executionAdapter ?? app.executionAdapter,
+      );
+      const turnContext = await resolved.opsRepository.getAgentTurnContext?.({
+        agentFolder: route.folder,
+        executionProviderId,
+        conversationJid: chatJid,
+        threadId: threadId ?? null,
+        conversationKind: route.conversationKind,
+        hydrateMemory: false,
+      });
+      if (!turnContext?.agentSessionId) return false;
+      liveRunId = await resolved.opsRepository.createSessionAgentRun?.({
+        agentSessionId: turnContext.agentSessionId,
+        executionProviderId,
+        providerSessionId: turnContext.providerSessionId,
+        cause: 'message',
+      });
+      if (!liveRunId) return false;
+      const scope: LiveTurnScope = {
+        appId: turnContext.appId,
+        agentSessionId: turnContext.agentSessionId,
+        conversationId: chatJid,
+        threadId: threadId ?? null,
+      };
+      const replayCursor = await app.getOrRecoverCursor(queueJid);
+      const admission = await liveTurnAuthority.admit({
+        queueJid,
+        scope,
+        turnId: `live-turn:${randomUUID()}`,
+        runId: liveRunId,
+        pendingMessage: {
+          kind: 'message_cursor',
+          queueJid,
+          cursorBefore: replayCursor,
+        },
+      });
+      if (admission.outcome !== 'claimed') {
+        if (admission.outcome === 'scope_active') {
+          return routeScopeActiveLiveTurnAdmissionFromCursor({
+            scope,
+            queueJid,
+            liveRunId,
+            chatJid,
+            threadId: threadId ?? null,
+            replayCursor,
+            maxMessagesPerPrompt: MAX_MESSAGES_PER_PROMPT,
+            timezone: TIMEZONE,
+            getMessagesSince: resolved.opsRepository.getMessagesSince,
+            setAgentCursor: app.setAgentCursor,
+            saveState: app.saveState,
+            routeMessage:
+              liveTurnAuthority.routeMessage.bind(liveTurnAuthority),
+            completeSessionAgentRun:
+              resolved.opsRepository.completeSessionAgentRun,
+          });
+        }
+        await resolved.opsRepository.completeSessionAgentRun?.({
+          runId: liveRunId,
+          status:
+            admission.outcome === 'lease_unavailable' ? 'failed' : 'canceled',
+          errorSummary: `Live-turn admission did not claim the run: ${admission.outcome}`,
+        });
+        return false;
+      }
+      liveRunFence = admission.fence;
+    }
+    try {
+      let liveRunResult: 'success' | 'error' | 'stopped' | null = null;
+      const success = await app.processGroupMessages(queueJid, {
+        queued: true,
+        existingRunId: liveRunId,
+        ...(liveRunFence
+          ? {
+              existingRunLeaseToken: liveRunFence.leaseToken,
+              existingRunLeaseWorkerInstanceId: liveRunFence.workerInstanceId,
+              existingRunLeaseFencingVersion: liveRunFence.fencingVersion,
+            }
+          : {}),
+        onRunResult: (result) => {
+          liveRunResult = result;
+        },
+      });
+      const terminalSuccess = success && liveRunResult !== 'stopped';
+      const finalized = await liveTurnAuthority.finalize(
+        queueJid,
+        terminalSuccess ? 'completed' : 'failed',
+        {
+          status: terminalSuccess ? 'completed' : 'failed',
+          ...(terminalSuccess
+            ? { resultSummary: 'Live turn completed.' }
+            : {
+                errorSummary:
+                  liveRunResult === 'stopped'
+                    ? 'Live turn stopped by request.'
+                    : 'Live turn failed.',
+              }),
+        },
+      );
+      return success && finalized;
+    } catch (err) {
+      const finalized = await liveTurnAuthority
+        .finalize(queueJid, 'failed', {
+          status: 'failed',
+          errorSummary: 'Live turn failed during message processing.',
+        })
+        .catch((finalizeErr) => {
+          resolved.logger.warn(
+            { err: finalizeErr, queueJid },
+            'Failed to finalize live turn after message processing error',
+          );
+          return false;
+        });
+      void finalized;
+      throw err;
+    }
+  });
+  const liveMessageQueue = {
+    sendMessage: async (
+      queueJid: string,
+      text: string,
+      options?: {
+        threadId?: string | null;
+        senderUserIds?: readonly string[] | null;
+        idempotencyKey?: string;
+        cursorAfter?: string;
+      },
+    ): Promise<boolean> => {
+      if (!liveTurnAuthority)
+        return app.queue.sendMessage(queueJid, text, options);
+      const scope = await liveTurnScopeForQueue({
+        app,
+        opsRepository: resolved.opsRepository,
+        executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
+        queueJid,
+      });
+      if (!scope) return false;
+      return (
+        (await liveTurnAuthority.routeMessage({
+          scope,
+          queueJid,
+          text,
+          idempotencyKey:
+            options?.idempotencyKey ?? `continuation:${randomUUID()}`,
+          senderUserIds: options?.senderUserIds,
+          cursorAfter: options?.cursorAfter,
+        })) === 'queued_to_owner'
+      );
+    },
+    enqueueMessageCheck: (queueJid: string): void => {
+      app.queue.enqueueMessageCheck(queueJid);
+    },
+    closeStdin: async (queueJid: string): Promise<void> => {
+      if (!liveTurnAuthority) {
+        app.queue.closeStdin(queueJid);
+        return;
+      }
+      const scope = await liveTurnScopeForQueue({
+        app,
+        opsRepository: resolved.opsRepository,
+        executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
+        queueJid,
+      });
+      const routed =
+        scope &&
+        (await liveTurnAuthority.routeCloseStdin({
+          scope,
+          queueJid,
+          idempotencyKey: `close:${randomUUID()}`,
+        }));
+      if (!routed) app.queue.closeStdin(queueJid);
+    },
+    stopGroup: async (queueJid: string): Promise<boolean> => {
+      if (app.queue.stopGroup(queueJid)) return true;
+      if (!liveTurnAuthority) return false;
+      const scope = await liveTurnScopeForQueue({
+        app,
+        opsRepository: resolved.opsRepository,
+        executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
+        queueJid,
+      });
+      const routed = await liveTurnAuthority.routeStop({
+        ...(scope ? { scope } : {}),
+        aliasJid: queueJid,
+        queueJid,
+        idempotencyKey: `stop:${randomUUID()}`,
+        requestedBy: 'runtime-control',
+      });
+      return routed;
+    },
+  };
   const handleActiveControlCommand = async ({
     chatJid,
     queueJid,
@@ -290,18 +593,22 @@ export async function startRuntimeServices(
     ) {
       return false;
     }
-    if (!app.queue.isGroupActive(queueJid)) {
+    if (
+      command.kind !== 'compact' &&
+      !app.queue.isGroupActive(queueJid) &&
+      !liveTurnAuthority?.ownsQueue(queueJid)
+    ) {
       return false;
     }
     const threadId =
       typeof message.thread_id === 'string' && message.thread_id.trim()
         ? message.thread_id.trim()
         : undefined;
-
     if (command.kind === 'compact') {
-      const sent = app.queue.sendMessage(queueJid, '/compact', {
+      const sent = await liveMessageQueue.sendMessage(queueJid, '/compact', {
         threadId,
         senderUserIds: message.sender ? [message.sender] : [],
+        idempotencyKey: `compact:${message.id}`,
       });
       if (!sent) return false;
       app.setAgentCursor(
@@ -315,7 +622,6 @@ export async function startRuntimeServices(
       });
       return true;
     }
-
     if (command.kind === 'new') {
       return handleActiveNewSessionCommand({
         app,
@@ -331,18 +637,15 @@ export async function startRuntimeServices(
         message,
       });
     }
-
-    const stopped = app.queue.stopGroup(queueJid);
+    const stopped = await liveMessageQueue.stopGroup(queueJid);
     if (!stopped) {
       return false;
     }
-
     app.setAgentCursor(
       makeThreadQueueKey(chatJid, threadId),
       encodeGroupMessageCursor(toGroupMessageCursor(message)),
     );
     await app.saveState();
-
     await channelWiring.sendMessage(
       chatJid,
       command.kind === 'stop'
@@ -356,31 +659,36 @@ export async function startRuntimeServices(
 
     return true;
   };
-
-  void Promise.resolve(
-    resolved.recoverPendingMessages({
-      getConversationRoutes: () => app.getConversationRoutes(),
-      getLastTimestamp: () => app.getLastTimestamp(),
-      setLastTimestamp: (timestamp) => {
-        app.setLastTimestamp(timestamp);
-      },
-      getOrRecoverCursor: app.getOrRecoverCursor,
-      setAgentCursor: (chatJid, timestamp) => {
-        app.setAgentCursor(chatJid, timestamp);
-      },
-      saveState: app.saveState,
-      hasChannel: (chatJid) => channelWiring.hasChannel(chatJid),
-      setTyping: (chatJid, isTyping) =>
-        channelWiring.setTyping(chatJid, isTyping),
-      sendProgressUpdate: (chatJid, text, options) =>
-        channelWiring.sendProgressUpdate(chatJid, text, options),
-      queue: app.queue,
-      handleActiveControlCommand,
-      opsRepository: resolved.opsRepository,
-    }),
-  ).catch((err) =>
-    resolved.logger.warn({ err }, 'Pending message recovery failed'),
-  );
+  if (liveTurnsEnabled) {
+    void Promise.resolve(
+      resolved.recoverPendingMessages({
+        getConversationRoutes: () => app.getConversationRoutes(),
+        getLastTimestamp: () => app.getLastTimestamp(),
+        setLastTimestamp: (timestamp) => {
+          app.setLastTimestamp(timestamp);
+        },
+        getOrRecoverCursor: app.getOrRecoverCursor,
+        setAgentCursor: (chatJid, timestamp) => {
+          app.setAgentCursor(chatJid, timestamp);
+        },
+        saveState: app.saveState,
+        hasChannel: (chatJid) => channelWiring.hasChannel(chatJid),
+        setTyping: (chatJid, isTyping) =>
+          channelWiring.setTyping(chatJid, isTyping),
+        sendProgressUpdate: (chatJid, text, options) =>
+          channelWiring.sendProgressUpdate(chatJid, text, options),
+        queue: liveMessageQueue,
+        handleActiveControlCommand,
+        opsRepository: resolved.opsRepository,
+      }),
+    ).catch((err) =>
+      resolved.logger.warn({ err }, 'Pending message recovery failed'),
+    );
+  } else {
+    resolved.logger.info(
+      'Live-turn admission disabled; skipping pending message recovery',
+    );
+  }
 
   const outboundDeliveryRepository = resolved.getOutboundDeliveryRepository?.();
   if (outboundDeliveryRepository) {
@@ -672,24 +980,94 @@ export async function startRuntimeServices(
   }
   await startScheduler();
   resolved.logger.info(`Gantry running (default trigger: ${DEFAULT_TRIGGER})`);
+  if (liveTurnAuthority && liveTurnLeaseDeps) {
+    activeLiveTurnRecoveryLoop?.stop();
+    activeLiveTurnRecoveryLoop = startLiveTurnRecoveryLoop({
+      intervalMs: 20_000,
+      tick: () =>
+        runLiveTurnRecoveryTick({
+          deps: liveTurnLeaseDeps,
+          slotCapacity: app.queue.getPolicy().maxMessageRuns,
+          leaseTtlMs: 60_000,
+          unleasedStaleMs: 30_000,
+          warn: (context, message) => resolved.logger.warn(context, message),
+          resumeRecoveredTurn: async ({ turn, lease }) => {
+            const queueJid = makeThreadQueueKey(
+              turn.conversationId,
+              turn.threadId ?? undefined,
+            );
+            liveTurnAuthority.adoptRecoveredTurn({
+              queueJid,
+              turn,
+              fence: {
+                leaseToken: lease.leaseToken,
+                workerInstanceId: lease.workerInstanceId,
+                fencingVersion: lease.fencingVersion,
+              },
+            });
+            const pendingMessage =
+              turn.pendingMessage &&
+              typeof turn.pendingMessage === 'object' &&
+              !Array.isArray(turn.pendingMessage)
+                ? turn.pendingMessage
+                : null;
+            const replayQueueJid =
+              pendingMessage?.queueJid === queueJid ? queueJid : null;
+            const cursorBefore =
+              typeof pendingMessage?.cursorBefore === 'string'
+                ? pendingMessage.cursorBefore
+                : null;
+            if (!replayQueueJid || cursorBefore === null) {
+              resolved.logger.warn(
+                { turnId: turn.id, runId: turn.runId, queueJid },
+                'Recovered live turn has no replayable pending message; failing closed',
+              );
+              await liveTurnAuthority.finalize(queueJid, 'failed', {
+                status: 'failed',
+                errorSummary:
+                  'Recovered live turn had no replayable pending message.',
+              });
+              return;
+            }
+            const pendingCommands =
+              await liveTurnLeaseDeps.liveTurns.listPendingLiveTurnCommands({
+                liveTurnId: turn.id,
+                limit: 5000,
+              });
+            app.setAgentCursor(queueJid, cursorBefore);
+            await app.saveState();
+            app.queue.enqueueMessageCheck(queueJid);
+            await markPendingContinuationCommandsApplied({
+              liveTurns: liveTurnLeaseDeps.liveTurns,
+              commands: pendingCommands,
+              fence: lease,
+            });
+          },
+        }),
+      warn: (context, message) => resolved.logger.warn(context, message),
+    });
+  }
+  if (!liveTurnsEnabled) {
+    resolved.logger.info(
+      'Live-turn admission disabled; skipping message polling loop',
+    );
+    return;
+  }
   resolved
     .startMessagePollingLoop({
       getConversationRoutes: () => app.getConversationRoutes(),
       getLastTimestamp: () => app.getLastTimestamp(),
-      setLastTimestamp: (timestamp) => {
-        app.setLastTimestamp(timestamp);
-      },
+      setLastTimestamp: (timestamp) => app.setLastTimestamp(timestamp),
       getOrRecoverCursor: app.getOrRecoverCursor,
-      setAgentCursor: (chatJid, timestamp) => {
-        app.setAgentCursor(chatJid, timestamp);
-      },
+      setAgentCursor: (chatJid, timestamp) =>
+        app.setAgentCursor(chatJid, timestamp),
       saveState: app.saveState,
       hasChannel: (chatJid) => channelWiring.hasChannel(chatJid),
       setTyping: (chatJid, isTyping) =>
         channelWiring.setTyping(chatJid, isTyping),
       sendProgressUpdate: (chatJid, text, options) =>
         channelWiring.sendProgressUpdate(chatJid, text, options),
-      queue: app.queue,
+      queue: liveMessageQueue,
       handleActiveControlCommand,
       opsRepository: resolved.opsRepository,
     })

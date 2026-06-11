@@ -144,10 +144,12 @@ export interface RunLeaseRepository {
     ttlMs: number;
     now?: string;
   }): Promise<boolean>;
-  /** Token-fenced terminal write. False means the caller lost the lease. */
+  /** Lease-fenced terminal write. False means the caller lost the lease. */
   settleRunLease(input: {
     runId: string;
     leaseToken: string;
+    workerInstanceId?: string;
+    fencingVersion?: number;
     outcome: 'completed' | 'failed' | 'released';
     now?: string;
     allowAlreadySettled?: boolean;
@@ -235,6 +237,14 @@ export interface PendingInteractionRepository {
     resolution: Record<string, unknown>;
     approverRef?: string | null;
     now?: string;
+  }): Promise<boolean>;
+  restorePendingInteractionPending?(input: {
+    idempotencyKey: string;
+    now?: string;
+  }): Promise<boolean>;
+  updatePendingInteractionPayload(input: {
+    idempotencyKey: string;
+    payload: Record<string, unknown>;
   }): Promise<boolean>;
   listPendingInteractions(input: {
     appId: string;
