@@ -49,7 +49,10 @@ class FakeWakeupSource implements SettingsRevisionWakeupSource {
 
 function makeRepo(rows: SettingsRevision[]): SettingsRevisionRepository {
   return {
-    appendSettingsRevision: async () => rows[rows.length - 1]!,
+    appendSettingsRevision: async () => ({
+      status: 'appended' as const,
+      revision: rows[rows.length - 1]!,
+    }),
     getLatestSettingsRevision: async () => rows.at(-1) ?? null,
     getSettingsRevision: async () => null,
     listRecentSettingsRevisions: async () => rows,
@@ -77,6 +80,7 @@ function makeListener(
   overrides: Partial<{
     readerVersion: number;
     onSkewAlert: (alert: unknown) => void;
+    onFirstRevisionApplied: () => Promise<void> | void;
   }> = {},
 ) {
   return new SettingsRevisionListener({
@@ -89,6 +93,7 @@ function makeListener(
     reloadRuntimeState: async () => {},
     readerVersion: overrides.readerVersion ?? 1,
     onSkewAlert: overrides.onSkewAlert,
+    onFirstRevisionApplied: overrides.onFirstRevisionApplied,
     // Never auto-fire the interval; tests drive passes explicitly.
     setIntervalFn: (() => 0 as never) as typeof setInterval,
     clearIntervalFn: (() => {}) as typeof clearInterval,
@@ -131,6 +136,67 @@ describe('SettingsRevisionListener', () => {
       }),
     );
     expect(listener.getAppliedRevision()).toBe(0);
+  });
+
+  it('fires onFirstRevisionApplied exactly once, on the first apply only', async () => {
+    applied.length = 0;
+    const rows = [revision(1, 1)];
+    const onFirstRevisionApplied = vi.fn();
+    const listener = makeListener(makeRepo(rows), new FakeWakeupSource(), {
+      onFirstRevisionApplied,
+    });
+
+    await listener.applyLatest();
+    expect(onFirstRevisionApplied).toHaveBeenCalledOnce();
+
+    rows.push(revision(2, 1));
+    await listener.applyLatest();
+    expect(onFirstRevisionApplied).toHaveBeenCalledOnce();
+  });
+
+  it('does not fire onFirstRevisionApplied on a skew hold', async () => {
+    applied.length = 0;
+    const onFirstRevisionApplied = vi.fn();
+    const listener = makeListener(
+      makeRepo([revision(5, 2)]),
+      new FakeWakeupSource(),
+      { readerVersion: 1, onFirstRevisionApplied },
+    );
+
+    const result = await listener.applyLatest();
+
+    expect(result).toEqual({ result: 'held', revision: 5 });
+    expect(onFirstRevisionApplied).not.toHaveBeenCalled();
+  });
+
+  it('keeps the applied revision when the first-revision hook throws', async () => {
+    applied.length = 0;
+    const warn = vi.fn();
+    const listener = new SettingsRevisionListener({
+      appId: 'default' as never,
+      runtimeHome: '/tmp/gantry-listener-test',
+      settingsRevisions: makeRepo([revision(1, 1)]),
+      ops: {} as never,
+      repositories: {} as never,
+      wakeupSource: new FakeWakeupSource(),
+      reloadRuntimeState: async () => {},
+      readerVersion: 1,
+      onFirstRevisionApplied: () => {
+        throw new Error('held service failed to start');
+      },
+      logWarn: warn,
+      setIntervalFn: (() => 0 as never) as typeof setInterval,
+      clearIntervalFn: (() => {}) as typeof clearInterval,
+    });
+
+    const result = await listener.applyLatest();
+
+    expect(result).toEqual({ result: 'applied', revision: 1 });
+    expect(listener.getAppliedRevision()).toBe(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 1 }),
+      expect.stringContaining('First-revision start hook failed'),
+    );
   });
 
   it('recovers a dropped NOTIFY via a subsequent poll pass', async () => {

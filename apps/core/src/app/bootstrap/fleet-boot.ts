@@ -97,6 +97,12 @@ export interface FleetSubsystems {
  * capability reconciler, and the settings revision listener. Each owns stoppable
  * timers/LISTEN clients; {@link FleetSubsystems.stop} tears them all down for
  * the drain sequence. Workstation never calls this.
+ *
+ * When `settingsLoaded` is false (first fleet boot with no seeded revision) the
+ * bake queue and capability reconciler are HELD — only the revision listener
+ * starts, because it is the thing that eventually loads settings. The first
+ * applied revision starts the held subsystems and invokes `onSettingsReady`
+ * (app boot uses it to release the held scheduler start).
  */
 export async function startFleetSubsystems(input: {
   app: RuntimeApp;
@@ -105,36 +111,54 @@ export async function startFleetSubsystems(input: {
   pool: Pool;
   /** Best-effort delivery for bake outcome notices to the approval conversation. */
   sendMessage: (conversationJid: string, text: string) => Promise<void>;
+  /** Whether a settings revision was applied at boot (prepareFleetSettings). */
+  settingsLoaded: boolean;
+  /** Released once, with the held subsystems, on the first applied revision. */
+  onSettingsReady?: () => Promise<void> | void;
 }): Promise<FleetSubsystems> {
   const storage = getRuntimeStorage();
   const workerInstanceId = currentWorkerInstanceId() ?? `fleet-${process.pid}`;
 
-  const bakeQueue = await startToolchainBakeSubsystem({
-    outcomeNotice: buildBakeOutcomeNotice(input.sendMessage),
-  });
+  let bakeQueueStarted = false;
+  let reconciler: WorkerCapabilityReconciler | undefined;
+  const startCapabilitySubsystems = async (): Promise<void> => {
+    if (bakeQueueStarted || reconciler) return;
+    bakeQueueStarted =
+      (await startToolchainBakeSubsystem({
+        outcomeNotice: buildBakeOutcomeNotice(input.sendMessage),
+      })) !== null;
+    reconciler = new WorkerCapabilityReconciler({
+      appId: input.appId,
+      workerInstanceId,
+      runtimeDependencies: storage.repositories.runtimeDependencies,
+      skills: storage.repositories.skills,
+      toolchainMaterializer: buildToolchainMaterializer(),
+      skillMaterializer: buildSkillMaterializer(),
+      workerRegistry: storage.repositories.workerCoordination,
+      wakeupSource: new PostgresManifestWakeupSource(
+        input.pool,
+        (context, message) => logger.warn(context, message),
+      ),
+      localRoot: ARTIFACTS_DIR,
+      onIntegrityError: (event) => {
+        logger.error(
+          { ...event },
+          'Artifact integrity failure; artifact quarantined and not advertised',
+        );
+      },
+      logWarn: (context, message) => logger.warn(context, message),
+    });
+    reconciler.start();
+  };
 
-  const reconciler = new WorkerCapabilityReconciler({
-    appId: input.appId,
-    workerInstanceId,
-    runtimeDependencies: storage.repositories.runtimeDependencies,
-    skills: storage.repositories.skills,
-    toolchainMaterializer: buildToolchainMaterializer(),
-    skillMaterializer: buildSkillMaterializer(),
-    workerRegistry: storage.repositories.workerCoordination,
-    wakeupSource: new PostgresManifestWakeupSource(
-      input.pool,
-      (context, message) => logger.warn(context, message),
-    ),
-    localRoot: ARTIFACTS_DIR,
-    onIntegrityError: (event) => {
-      logger.error(
-        { ...event },
-        'Artifact integrity failure; artifact quarantined and not advertised',
-      );
-    },
-    logWarn: (context, message) => logger.warn(context, message),
-  });
-  reconciler.start();
+  if (input.settingsLoaded) {
+    await startCapabilitySubsystems();
+  } else {
+    logger.warn(
+      'Fleet worker has no settings revision; bake queue and capability ' +
+        'reconciler are held until the first revision is applied',
+    );
+  }
 
   const settingsRevisionListener = new SettingsRevisionListener({
     appId: input.appId,
@@ -147,6 +171,15 @@ export async function startFleetSubsystems(input: {
       (context, message) => logger.warn(context, message),
     ),
     reloadRuntimeState: () => input.app.loadState(),
+    onFirstRevisionApplied: async () => {
+      // No-op when everything already started at boot (settingsLoaded).
+      if (bakeQueueStarted || reconciler) return;
+      await startCapabilitySubsystems();
+      await input.onSettingsReady?.();
+      logger.info(
+        'First settings revision applied; held fleet services started',
+      );
+    },
     onSkewAlert: (alert) => {
       logger.error(
         { ...alert },
@@ -157,15 +190,19 @@ export async function startFleetSubsystems(input: {
     logWarn: (context, message) => logger.warn(context, message),
     logInfo: (context, message) => logger.info(context, message),
   });
-  settingsRevisionListener.markAwaitingFirstRevision();
+  // Only a boot without an applied revision is awaiting one; flagging the
+  // already-loaded case would flap /readyz red until the listener's first pass.
+  if (!input.settingsLoaded) {
+    settingsRevisionListener.markAwaitingFirstRevision();
+  }
   settingsRevisionListener.start();
 
   return {
     settingsRevisionListener,
     stop: async () => {
       await settingsRevisionListener.stop();
-      await reconciler.stop();
-      if (bakeQueue) await stopToolchainBakeSubsystem();
+      await reconciler?.stop();
+      if (bakeQueueStarted) await stopToolchainBakeSubsystem();
     },
   };
 }

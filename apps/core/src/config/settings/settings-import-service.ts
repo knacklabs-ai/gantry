@@ -127,28 +127,25 @@ export async function importFleetSettingsRevision(
     return { status: 'invalid', errors: validation.errors };
   }
   const appId = deps.appId ?? ('default' as AppId);
-  if (
-    options.expectedRevision !== undefined &&
-    options.expectedRevision !== null
-  ) {
-    const latest =
-      await deps.settingsRevisions.getLatestSettingsRevision(appId);
-    const current = latest?.revision ?? 0;
-    if (current !== options.expectedRevision) {
-      return {
-        status: 'conflict',
-        expectedRevision: options.expectedRevision,
-        actualRevision: current,
-      };
-    }
-  }
+  // Optimistic concurrency lives in the repository: with expectedRevision the
+  // append is a conditional insert at exactly expectedRevision + 1 — no
+  // check-then-act window, no retry past a conflict. The loser of a concurrent
+  // same-expectation race gets the contracted conflict, never a silent append.
   const appended = await deps.settingsRevisions.appendSettingsRevision({
     appId,
     settingsDocument: settingsToRevisionDocument(settings),
     minReaderVersion: CURRENT_SETTINGS_READER_VERSION,
     createdBy: deps.createdBy,
     note: options.note ?? null,
+    expectedRevision: options.expectedRevision ?? null,
   });
+  if (appended.status === 'conflict') {
+    return {
+      status: 'conflict',
+      expectedRevision: appended.expectedRevision,
+      actualRevision: appended.actualRevision,
+    };
+  }
   if (deps.pool) {
     const notifier = new PostgresSettingsRevisionNotifier(
       deps.pool,
@@ -156,11 +153,11 @@ export async function importFleetSettingsRevision(
     );
     const wakeup: SettingsRevisionWakeup = {
       appId,
-      revision: appended.revision,
+      revision: appended.revision.revision,
     };
     await notifier.notifyRevisionChanged(wakeup);
   }
-  return { status: 'applied', revision: appended.revision };
+  return { status: 'applied', revision: appended.revision.revision };
 }
 
 /**

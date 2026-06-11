@@ -22,7 +22,7 @@ import {
   tryAcquireRuntimeAdvisoryLease,
 } from '../adapters/storage/postgres/runtime-store.js';
 import { startControlServer } from '../control/server/index.js';
-import { stopSchedulerLoop } from '../jobs/scheduler.js';
+import { startSchedulerLoop, stopSchedulerLoop } from '../jobs/scheduler.js';
 import { stopOutboundDeliveryRecoveryLoop } from '../jobs/outbound-delivery-recovery.js';
 import { publishBrowserJobActivityEvent } from '../jobs/browser-activity-events.js';
 import {
@@ -110,16 +110,24 @@ export async function startGantryRuntime(
   // reconcile it through the shared import path. No revision yet → settings NOT
   // loaded (red /readyz) + a log naming the seed command. The file watcher is
   // disabled in fleet (explicit CLI import only); workstation is unchanged.
+  let fleetSettingsLoaded = true;
   if (isFleet) {
     const prepared = await prepareFleetSettings({
       appId: 'default' as AppId,
       runtimeHome: GANTRY_HOME,
       app,
     });
+    fleetSettingsLoaded = prepared.loaded;
     if (prepared.loaded) {
       runtimeSettings = loadRuntimeSettings(GANTRY_HOME);
     }
   }
+  // P2 guard: a fleet worker with no settings revision must not claim
+  // scheduled jobs under bundled default settings (/readyz red only protects
+  // inbound). Hold the scheduler start; the settings revision listener
+  // releases it via onSettingsReady when the first revision is applied.
+  let heldSchedulerStart: (() => Promise<void>) | undefined;
+  const holdSchedulerUntilSettingsLoaded = isFleet && !fleetSettingsLoaded;
   const settingsWatcher = isFleet
     ? { close: () => {} }
     : startSettingsReloadWatcher({
@@ -244,19 +252,43 @@ export async function startGantryRuntime(
         },
         closeBrowserToolBackends: async (profileName) =>
           (await loadBrowserToolModule()).closeBrowserToolBackends(profileName),
+        ...(holdSchedulerUntilSettingsLoaded
+          ? {
+              startSchedulerLoop: (async (schedulerDeps) => {
+                heldSchedulerStart = () => startSchedulerLoop(schedulerDeps);
+                logger.warn(
+                  'Fleet worker has no settings revision; scheduler job ' +
+                    'claiming is held until desired state is seeded ' +
+                    '(gantry settings import --file settings.yaml)',
+                );
+              }) as typeof startSchedulerLoop,
+            }
+          : {}),
       },
     );
 
     // Fleet-only worker subsystems start after runtime services register this
     // worker instance: the toolchain bake queue, the capability reconciler, and
     // the settings revision listener (NOTIFY + poll, applying new revisions and
-    // holding on reader-version skew). Stopped in the drain sequence.
+    // holding on reader-version skew). Stopped in the drain sequence. On a
+    // first boot with no revision, the bake queue/reconciler are held and the
+    // scheduler start above is released by the first applied revision.
     if (isFleet) {
       fleetSubsystems = await startFleetSubsystems({
         app,
         appId: 'default' as AppId,
         runtimeHome: GANTRY_HOME,
         pool: storage.service.pool,
+        settingsLoaded: fleetSettingsLoaded,
+        onSettingsReady: async () => {
+          const start = heldSchedulerStart;
+          heldSchedulerStart = undefined;
+          if (!start) return;
+          await start();
+          logger.info(
+            'First settings revision applied; scheduler job claiming started',
+          );
+        },
         sendMessage: async (conversationJid, text) => {
           await channelWiring.sendMessage(conversationJid, text, {
             durability: 'required',

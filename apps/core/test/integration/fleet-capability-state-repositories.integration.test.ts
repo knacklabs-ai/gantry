@@ -9,6 +9,7 @@ import {
   quotePostgresIdentifier,
 } from '@core/adapters/storage/postgres/storage-service.js';
 import { DEFAULT_APP_ID } from '@core/adapters/storage/postgres/seeds.js';
+import type { AppendSettingsRevisionResult } from '@core/domain/ports/fleet-capability-state.js';
 
 const maybeDescribe = process.env.GANTRY_TEST_DATABASE_URL
   ? describe
@@ -147,7 +148,7 @@ maybeDescribe('Fleet capability-state repositories (0077)', () => {
           now,
         },
       );
-      expect(first.revision).toBe(1);
+      expect(appendedRevision(first).revision).toBe(1);
 
       const second =
         await repositories.settingsRevisions.appendSettingsRevision({
@@ -157,8 +158,8 @@ maybeDescribe('Fleet capability-state repositories (0077)', () => {
           createdBy: 'api',
           now,
         });
-      expect(second.revision).toBe(2);
-      expect(second.minReaderVersion).toBe(2);
+      expect(appendedRevision(second).revision).toBe(2);
+      expect(appendedRevision(second).minReaderVersion).toBe(2);
 
       const latest =
         await repositories.settingsRevisions.getLatestSettingsRevision(appId);
@@ -197,12 +198,68 @@ maybeDescribe('Fleet capability-state repositories (0077)', () => {
         ),
       );
       const revisions = results
-        .map((row) => row.revision)
+        .map((result) => appendedRevision(result).revision)
         .sort((a, b) => a - b);
       // Five distinct, contiguous revisions above the baseline.
       expect(new Set(revisions).size).toBe(5);
       expect(revisions[0]).toBeGreaterThan(baseline);
       expect(revisions[4]! - revisions[0]!).toBe(4);
     });
+
+    it('conditional appends with the same expectedRevision admit exactly one winner', async () => {
+      const head =
+        await repositories.settingsRevisions.getLatestSettingsRevision(appId);
+      const expectedRevision = head?.revision ?? 0;
+
+      const results = await Promise.all(
+        Array.from({ length: 2 }, (_, i) =>
+          repositories.settingsRevisions.appendSettingsRevision({
+            appId,
+            settingsDocument: { writer: i },
+            minReaderVersion: 0,
+            createdBy: `writer-${i}`,
+            expectedRevision,
+            now,
+          }),
+        ),
+      );
+
+      const appended = results.filter((result) => result.status === 'appended');
+      const conflicts = results.filter(
+        (result) => result.status === 'conflict',
+      );
+      expect(appended).toHaveLength(1);
+      expect(conflicts).toHaveLength(1);
+      if (appended[0]?.status === 'appended') {
+        expect(appended[0].revision.revision).toBe(expectedRevision + 1);
+      }
+      if (conflicts[0]?.status === 'conflict') {
+        expect(conflicts[0].expectedRevision).toBe(expectedRevision);
+        expect(conflicts[0].actualRevision).toBe(expectedRevision + 1);
+      }
+
+      // A stale expectation is a conflict, not a silent next-revision append.
+      const stale = await repositories.settingsRevisions.appendSettingsRevision(
+        {
+          appId,
+          settingsDocument: { writer: 'stale' },
+          minReaderVersion: 0,
+          createdBy: 'stale-writer',
+          expectedRevision,
+          now,
+        },
+      );
+      expect(stale.status).toBe('conflict');
+      const latest =
+        await repositories.settingsRevisions.getLatestSettingsRevision(appId);
+      expect(latest?.revision).toBe(expectedRevision + 1);
+    });
   });
 });
+
+function appendedRevision(result: AppendSettingsRevisionResult) {
+  if (result.status !== 'appended') {
+    throw new Error(`Expected an appended revision, got ${result.status}`);
+  }
+  return result.revision;
+}

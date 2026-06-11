@@ -21,8 +21,52 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
       settingsRevisions: {
         getLatestSettingsRevision: async () => latest.current,
       },
+      runtimeDependencies: {},
+      skills: {},
+      workerCoordination: {},
     },
   }),
+}));
+
+const bakeMock = vi.hoisted(() => ({
+  start: vi.fn(async () => ({}) as never),
+  stop: vi.fn(async () => {}),
+}));
+vi.mock('@core/jobs/toolchain-bake-bootstrap.js', () => ({
+  startToolchainBakeSubsystem: bakeMock.start,
+  stopToolchainBakeSubsystem: bakeMock.stop,
+}));
+
+const reconcilerInstances = vi.hoisted(
+  () => [] as Array<{ start: ReturnType<typeof vi.fn> }>,
+);
+vi.mock('@core/jobs/worker-capability-reconciler.js', () => ({
+  WorkerCapabilityReconciler: class {
+    start = vi.fn();
+    stop = vi.fn(async () => {});
+    constructor() {
+      reconcilerInstances.push(this as never);
+    }
+  },
+}));
+
+const FakeWakeupSource = vi.hoisted(
+  () =>
+    class {
+      subscribe(): () => void {
+        return () => {};
+      }
+      async close(): Promise<void> {}
+    },
+);
+vi.mock('@core/jobs/toolchain-manifest-listener.js', () => ({
+  PostgresManifestWakeupSource: FakeWakeupSource,
+}));
+vi.mock('@core/config/settings/settings-revision-notify.js', () => ({
+  PostgresSettingsRevisionWakeupSource: FakeWakeupSource,
+}));
+vi.mock('@core/jobs/worker-identity.js', () => ({
+  currentWorkerInstanceId: () => 'worker-test',
 }));
 
 vi.mock('@core/runtime/settings-load-state.js', () => ({
@@ -47,8 +91,21 @@ vi.mock('@core/infrastructure/logging/logger.js', () => ({ logger: log }));
 import {
   buildBakeOutcomeNotice,
   prepareFleetSettings,
+  startFleetSubsystems,
 } from '@core/app/bootstrap/fleet-boot.js';
 import type { RuntimeDependency } from '@core/domain/ports/fleet-capability-state.js';
+
+function revisionRow(revision: number): SettingsRevision {
+  return {
+    appId: 'default',
+    revision,
+    settingsDocument: { yaml: 'agent: {}' },
+    minReaderVersion: 1,
+    createdBy: 'cli',
+    note: null,
+    createdAt: '2026-06-11T00:00:00.000Z',
+  };
+}
 
 const fakeApp = { loadState: async () => {} } as never;
 
@@ -199,5 +256,90 @@ describe('buildBakeOutcomeNotice', () => {
       expect.objectContaining({ conversationJid: 'tg:approvals' }),
       'Failed to deliver toolchain bake failure notice',
     );
+  });
+});
+
+describe('startFleetSubsystems', () => {
+  beforeEach(() => {
+    latest.current = null;
+    bakeMock.start.mockClear();
+    bakeMock.stop.mockClear();
+    reconcilerInstances.length = 0;
+    loadState.markSettingsLoaded.mockClear();
+    loadState.markSettingsNotLoaded.mockClear();
+    importMock.importWorkstationSettings.mockClear();
+    log.warn.mockClear();
+    log.info.mockClear();
+  });
+
+  it('holds bake queue and reconciler until the first revision, then starts them and releases onSettingsReady', async () => {
+    const onSettingsReady = vi.fn();
+    const subsystems = await startFleetSubsystems({
+      app: fakeApp,
+      appId: 'default' as never,
+      runtimeHome: '/tmp/gantry-fleet',
+      pool: {} as never,
+      sendMessage: async () => {},
+      settingsLoaded: false,
+      onSettingsReady,
+    });
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // No revision yet: the listener runs, everything else is held.
+      expect(subsystems.settingsRevisionListener).toBeDefined();
+      expect(bakeMock.start).not.toHaveBeenCalled();
+      expect(reconcilerInstances).toHaveLength(0);
+      expect(onSettingsReady).not.toHaveBeenCalled();
+      expect(loadState.markSettingsNotLoaded).toHaveBeenCalled();
+
+      // First revision arrives: held services start, scheduler is released.
+      latest.current = revisionRow(1);
+      await subsystems.settingsRevisionListener.applyLatest();
+
+      expect(bakeMock.start).toHaveBeenCalledOnce();
+      expect(reconcilerInstances).toHaveLength(1);
+      expect(reconcilerInstances[0]?.start).toHaveBeenCalledOnce();
+      expect(onSettingsReady).toHaveBeenCalledOnce();
+
+      // Subsequent revisions never double-start.
+      latest.current = revisionRow(2);
+      await subsystems.settingsRevisionListener.applyLatest();
+      expect(bakeMock.start).toHaveBeenCalledOnce();
+      expect(reconcilerInstances).toHaveLength(1);
+      expect(onSettingsReady).toHaveBeenCalledOnce();
+    } finally {
+      await subsystems.stop();
+    }
+  });
+
+  it('starts capability subsystems immediately when settings were loaded at boot', async () => {
+    latest.current = revisionRow(1);
+    const onSettingsReady = vi.fn();
+    const subsystems = await startFleetSubsystems({
+      app: fakeApp,
+      appId: 'default' as never,
+      runtimeHome: '/tmp/gantry-fleet',
+      pool: {} as never,
+      sendMessage: async () => {},
+      settingsLoaded: true,
+      onSettingsReady,
+    });
+    try {
+      expect(bakeMock.start).toHaveBeenCalledOnce();
+      expect(reconcilerInstances).toHaveLength(1);
+      expect(reconcilerInstances[0]?.start).toHaveBeenCalledOnce();
+      // Loaded boot is not "awaiting a revision": /readyz must not flap red.
+      expect(loadState.markSettingsNotLoaded).not.toHaveBeenCalled();
+
+      // The listener's re-apply of the boot revision must not double-start or
+      // release a held scheduler that never existed.
+      await new Promise((resolve) => setImmediate(resolve));
+      await subsystems.settingsRevisionListener.applyLatest();
+      expect(bakeMock.start).toHaveBeenCalledOnce();
+      expect(onSettingsReady).not.toHaveBeenCalled();
+    } finally {
+      await subsystems.stop();
+    }
   });
 });

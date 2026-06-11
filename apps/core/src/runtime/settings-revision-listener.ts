@@ -37,6 +37,14 @@ export interface SettingsRevisionListenerDeps {
   pollIntervalMs?: number;
   readerVersion?: number;
   onSkewAlert?: (alert: SettingsRevisionSkewAlert) => void;
+  /**
+   * Invoked exactly once, after the FIRST revision is applied by this listener.
+   * Fleet boot uses it to release services held while no desired state existed
+   * (scheduler job claiming, capability subsystems). Never fired on skew-hold.
+   * Errors are logged, not thrown — a failed deferred start must not poison
+   * the applied revision.
+   */
+  onFirstRevisionApplied?: () => Promise<void> | void;
   logWarn?: (context: Record<string, unknown>, message: string) => void;
   logInfo?: (context: Record<string, unknown>, message: string) => void;
   setIntervalFn?: typeof setInterval;
@@ -187,6 +195,14 @@ export class SettingsRevisionListener {
     this.appliedRevision = revision.revision;
     if (previousRevision === 0) {
       markSettingsLoaded();
+      try {
+        await this.deps.onFirstRevisionApplied?.();
+      } catch (err) {
+        this.deps.logWarn?.(
+          { err, revision: revision.revision },
+          'First-revision start hook failed; held services may need a restart',
+        );
+      }
     }
     this.deps.logInfo?.(
       { appId: revision.appId, revision: revision.revision },

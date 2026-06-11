@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  AppendSettingsRevisionResult,
   SettingsRevision,
   SettingsRevisionRepository,
 } from '@core/domain/ports/fleet-capability-state.js';
@@ -35,11 +36,23 @@ class FakeRevisionRepo implements SettingsRevisionRepository {
     minReaderVersion: number;
     createdBy: string;
     note?: string | null;
-  }): Promise<SettingsRevision> {
-    const revision = (this.rows.at(-1)?.revision ?? 0) + 1;
+    expectedRevision?: number | null;
+  }): Promise<AppendSettingsRevisionResult> {
+    const currentRevision = this.rows.at(-1)?.revision ?? 0;
+    if (
+      input.expectedRevision !== undefined &&
+      input.expectedRevision !== null &&
+      input.expectedRevision !== currentRevision
+    ) {
+      return {
+        status: 'conflict',
+        expectedRevision: input.expectedRevision,
+        actualRevision: currentRevision,
+      };
+    }
     const row: SettingsRevision = {
       appId: input.appId,
-      revision,
+      revision: currentRevision + 1,
       settingsDocument: input.settingsDocument,
       minReaderVersion: input.minReaderVersion,
       createdBy: input.createdBy,
@@ -47,7 +60,7 @@ class FakeRevisionRepo implements SettingsRevisionRepository {
       createdAt: new Date().toISOString(),
     };
     this.rows.push(row);
-    return row;
+    return { status: 'appended', revision: row };
   }
 
   async getLatestSettingsRevision(): Promise<SettingsRevision | null> {
