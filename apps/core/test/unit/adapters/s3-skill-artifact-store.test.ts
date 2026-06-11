@@ -238,5 +238,25 @@ describe('S3SkillArtifactStore', () => {
     expect(
       fs.readFileSync(path.join(error.quarantinePath, 'SKILL.md'), 'utf-8'),
     ).toBe('# Uploaded\n');
+
+    // A second integrity failure for the same storageRef (same millisecond is
+    // typical here) must land in a distinct path so the first forensic copy
+    // is never overwritten.
+    const secondCaught: unknown = await store
+      .materializeSkillArtifact({
+        storageRef: stored.storageRef,
+        expectedContentHash: 'sha256:deadbeef',
+        targetDir,
+        quarantineDir,
+      })
+      .then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+    expect(secondCaught).toBeInstanceOf(ArtifactIntegrityError);
+    const secondError = secondCaught as ArtifactIntegrityError;
+    expect(secondError.quarantinePath).not.toBe(error.quarantinePath);
+    expect(fs.existsSync(error.quarantinePath)).toBe(true);
+    expect(fs.existsSync(secondError.quarantinePath)).toBe(true);
   });
 });

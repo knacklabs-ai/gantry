@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -183,7 +183,9 @@ export class S3SkillArtifactStore
   ): Promise<string> {
     const root = path.resolve(quarantineRoot);
     await fs.mkdir(root, { recursive: true, mode: 0o700 });
-    const stamp = `${sanitizeSegment(storageRef)}-${Date.now()}`;
+    // Random suffix: concurrent integrity failures for the same storageRef
+    // must never collapse onto one path and destroy a forensic copy.
+    const stamp = `${sanitizeSegment(storageRef)}-${Date.now()}-${randomUUID()}`;
     const quarantinePath = path.join(root, stamp);
     await fs.rm(quarantinePath, { recursive: true, force: true });
     await fs.rename(sourceDir, quarantinePath);

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -127,7 +128,9 @@ async function quarantine(
 ): Promise<string> {
   const root = path.resolve(quarantineRoot);
   await fs.mkdir(root, { recursive: true, mode: 0o700 });
-  const stamp = `${storageRef.replace(/[^A-Za-z0-9._-]+/g, '-')}-${Date.now()}`;
+  // Random suffix: concurrent integrity failures for the same storageRef
+  // must never collapse onto one path and destroy a forensic copy.
+  const stamp = `${storageRef.replace(/[^A-Za-z0-9._-]+/g, '-')}-${Date.now()}-${randomUUID()}`;
   const quarantinePath = path.join(root, stamp);
   await fs.rm(quarantinePath, { recursive: true, force: true });
   await fs.rename(sourceDir, quarantinePath);
