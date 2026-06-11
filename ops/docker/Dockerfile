@@ -65,8 +65,13 @@ ENV NODE_ENV=production \
 # package installs belong to a future bake lane, see TODOS.md) and the Go
 # toolchain (Go-built tools ship as binaries: add the binary here per tool).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-venv \
+    && apt-get install -y --no-install-recommends python3 python3-venv bubblewrap \
     && rm -rf /var/lib/apt/lists/*
+# bubblewrap backs runtime.sandbox.provider=sandbox_runtime (the whole-runner
+# OS sandbox on Linux). Creating its namespaces inside Docker additionally
+# requires a user-namespace-capable seccomp profile on `docker run` — see
+# TODOS.md (fleet container sandbox enablement) before flipping the provider
+# in fleet desired state.
 
 # Non-root runtime user. The base image already ships a `node` user (uid 1000);
 # create a dedicated home and a writable runtime-state dir owned by it.

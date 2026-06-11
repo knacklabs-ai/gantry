@@ -6,7 +6,7 @@
 data "aws_region" "current" {}
 
 locals {
-  asg_name            = "${var.name_prefix}-${var.worker_role}"
+  asg_name            = "${var.name_prefix}-worker"
   lifecycle_hook_name = "${local.asg_name}-drain"
 }
 
@@ -64,7 +64,7 @@ resource "aws_iam_instance_profile" "worker" {
 # --- Worker security group: control port reachable from the ALB SG only. ---
 resource "aws_security_group" "worker" {
   name        = local.asg_name
-  description = "Gantry worker pool (${var.worker_role})"
+  description = "Gantry worker pool"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = local.asg_name })
 }
@@ -98,7 +98,6 @@ locals {
     lifecycle_hook_name     = local.lifecycle_hook_name
     asg_name                = local.asg_name
     aws_region              = data.aws_region.current.name
-    worker_role             = var.worker_role
     runtime_secret_env_refs = var.runtime_secret_env_refs
   })
 }
@@ -122,7 +121,7 @@ resource "aws_launch_template" "worker" {
 
   tag_specifications {
     resource_type = "instance"
-    tags          = merge(var.tags, { Name = local.asg_name, GantryWorkerRole = var.worker_role })
+    tags          = merge(var.tags, { Name = local.asg_name })
   }
 
   lifecycle {
@@ -184,5 +183,33 @@ resource "aws_autoscaling_group" "worker" {
 
   lifecycle {
     create_before_destroy = true
+    # When the target-tracking policy (below) is enabled it owns desired
+    # capacity; without this, every apply would snap the pool back to
+    # var.desired_capacity and fight the scaler. Fixed-size pools are
+    # unaffected (min = max clamps desired regardless). Consequence: changing
+    # var.desired_capacity later only moves an existing pool via min/max.
+    ignore_changes = [desired_capacity]
+  }
+}
+
+# CPU target-tracking scaling policy. Target tracking creates and manages its
+# own CloudWatch alarms; scale-in is safe because instance termination goes
+# through the terminate lifecycle hook above (SIGTERM drain before the ASG
+# proceeds). CPU is the v1 signal; queue-depth tracking is the documented
+# upgrade path once the runtime's /metrics gauges are published to CloudWatch
+# (see docs/deployment/aws-terraform.md, Sizing and scaling).
+resource "aws_autoscaling_policy" "cpu_target" {
+  count = var.autoscaling_enabled ? 1 : 0
+
+  name                      = "${local.asg_name}-cpu-target"
+  autoscaling_group_name    = aws_autoscaling_group.worker.name
+  policy_type               = "TargetTrackingScaling"
+  estimated_instance_warmup = var.scaling_warmup_seconds
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = var.cpu_target_value
   }
 }

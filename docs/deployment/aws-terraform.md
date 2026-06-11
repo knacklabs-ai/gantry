@@ -30,8 +30,9 @@ From the repo root:
 # 1. Build the image and bring up Postgres + workers.
 docker compose -f ops/docker/docker-compose.fleet.yml up --build
 
-#    Scale job workers (advisory-locked migrations make concurrent boot safe):
-#    docker compose -f ops/docker/docker-compose.fleet.yml up --build --scale job-worker=3
+#    Scale workers (advisory-locked migrations make concurrent boot safe; the
+#    live-turn host lease elects which replica hosts live turns):
+#    docker compose -f ops/docker/docker-compose.fleet.yml up --build --scale worker=2
 ```
 
 The `settings-seed` one-shot service runs first: it writes a fleet-marked
@@ -46,16 +47,17 @@ Expected sequence in the logs:
 ```
 gantry-fleet-postgres    | ... database system is ready to accept connections
 gantry-fleet-settings-seed | ... Appended fleet settings revision 1.
-gantry-fleet-live-worker | <ts> [entrypoint] running migrations (GANTRY_DATABASE_URL)
-gantry-fleet-live-worker | <ts> [entrypoint] migrations complete
-gantry-fleet-live-worker | <ts> [entrypoint] starting runtime: node dist/index.js
-gantry-fleet-live-worker | ... Loaded fleet settings from revision
+gantry-fleet-worker-1    | <ts> [entrypoint] running migrations (GANTRY_DATABASE_URL)
+gantry-fleet-worker-1    | <ts> [entrypoint] migrations complete
+gantry-fleet-worker-1    | <ts> [entrypoint] starting runtime: node dist/index.js
+gantry-fleet-worker-1    | ... Loaded fleet settings from revision
 ```
 
 To push a new desired state after boot, re-run `gantry settings import --fleet`
 (or `PUT /v1/settings/desired-state`); workers converge via NOTIFY + poll.
 
-Verify readiness (control port published on 127.0.0.1:8080):
+Verify readiness (each replica's control port maps into the 127.0.0.1:8080-8089
+range; the first replica is usually 8080):
 
 ```bash
 # Liveness — process is up:
@@ -66,8 +68,8 @@ curl -fsS http://127.0.0.1:8080/healthz && echo OK
 curl -fsS http://127.0.0.1:8080/readyz && echo READY
 ```
 
-`docker compose ... ps` should show `live-worker` as `healthy` (the compose
-healthcheck polls `/readyz`).
+`docker compose ... ps` should show every `worker` replica as `healthy` (the
+compose healthcheck polls `/readyz`).
 
 First conversation: configure a channel / send a message through whatever channel
 the agent is wired to (same product flow as workstation). Tear down with:
@@ -196,8 +198,7 @@ alb_dns_name            = "gantry-fleet-alb-1234567890.us-east-1.elb.amazonaws.c
 artifacts_bucket        = "gantry-fleet-artifacts-ab12cd34"
 database_endpoint       = "gantry-fleet-pg.abcdef.us-east-1.rds.amazonaws.com"
 database_proxy_endpoint = "gantry-fleet-proxy.proxy-abcdefg.us-east-1.rds.amazonaws.com"
-job_worker_asg          = "gantry-fleet-job"      # (fleet only)
-live_worker_asg         = "gantry-fleet-live"     # support: worker_asg = "gantry-support-live"
+worker_asg              = "gantry-fleet-worker"   # support: "gantry-support-worker"
 ```
 
 ### B.5 Point the runtime DB URL secret at the proxy
@@ -214,7 +215,7 @@ Then refresh workers so they pick up the value (instance refresh, see Rollback):
 
 ```bash
 aws autoscaling start-instance-refresh \
-  --auto-scaling-group-name "$(terraform output -raw live_worker_asg)"
+  --auto-scaling-group-name "$(terraform output -raw worker_asg)"
 ```
 
 > Note: the runtime DB role (`gantry_app`) is created by the database bootstrap.
@@ -283,8 +284,7 @@ re-apply (the launch template changes → instance refresh rolls the fleet):
 # In tfvars: image_ref = "ghcr.io/<org>/gantry@sha256:<previous-digest>"
 terraform apply
 # Or trigger a refresh directly without a template change:
-aws autoscaling start-instance-refresh --auto-scaling-group-name "$(terraform output -raw live_worker_asg)"
-aws autoscaling start-instance-refresh --auto-scaling-group-name "$(terraform output -raw job_worker_asg)"   # fleet only
+aws autoscaling start-instance-refresh --auto-scaling-group-name "$(terraform output -raw worker_asg)"
 ```
 
 Drain is graceful: the terminate lifecycle hook holds each instance in
@@ -302,6 +302,61 @@ terraform destroy        # support: -var-file=support.tfvars if not using *.auto
 false and re-apply (or take a final snapshot). S3 artifacts and RDS revisions are
 destroyed with the stack unless `force_destroy`/snapshots are configured. Delete
 the secrets created in B.2 separately if no longer needed.
+
+---
+
+## Sizing and scaling
+
+**Memory model (process-per-turn).** The parent runtime process idles around
+~200 MB. Each *active* turn spawns a runner subprocess costing roughly
+150–400 MB depending on tools and context size. Sessions are Postgres rows —
+an idle session costs nothing on the worker, only active turns consume memory.
+Rough capacity guidance per worker: **4 GB ≈ 8–12 concurrent turns, 8 GB ≈
+20–30**. CPU is rarely the first limit; memory is — size instances by expected
+concurrent turns, not load average.
+
+**One pool; the live host is lease-elected within it.** The fleet runs a single
+autoscaled pool of identical workers (`worker_min_size`/`worker_max_size`, CPU
+target tracking via `worker_autoscaling_enabled = true`, `worker_cpu_target =
+60` by default). Jobs, bakes, and webhook/API traffic spread across the pool;
+exactly one instance holds the live-turn host lease and hosts live turns — the
+topology invariant is unchanged, only the pool packaging is. Keep
+`worker_min_size >= 2` (enforced) so a warm standby always exists: live-chat
+failover RTO ≈ the lease TTL (~30s). Note the scaling policy owns desired
+capacity once enabled; steer a running pool via min/max, not
+`worker_desired_capacity`.
+
+**Scale-in and the lease holder — accepted tradeoff.** Every termination goes
+through the terminate lifecycle hook (B.8): SIGTERM, `/readyz` 503, finish or
+hand off work, bounded deadline. If a scale-in event happens to terminate the
+instance currently holding the live-turn host lease, live chat blips for
+roughly one lease TTL (~30s) while a standby acquires the lease and recovers
+the turn — the drain hook plus standby takeover make this **loss-free**, just
+not blip-free. This is accepted in v1. Operators who later need blip-free
+scale-in can split a fixed-size live pool back out of the worker module or add
+lease-aware scale-in protection (protect the current holder from scale-in).
+
+**Live-chat throughput still scales vertically (v1).** One lease-elected live
+host means adding instances grows job/webhook capacity and standby coverage,
+not live-turn throughput. The levers are `worker_instance_type` (memory for
+more concurrent turns) and `runtime.queue` concurrency in settings. The
+multi-live cutover that makes live chat horizontal is the Phase 4 item in
+`TODOS.md`.
+
+**Always-on floor.** The pool minimum is two instances (`worker_min_size >= 2`).
+Scale-to-zero is not supported: a cold worker means webhook latency or drops on
+the first customer message of the day, lapsed lease heartbeats and recovery
+churn, and a multi-minute boot (Docker install, image pull, migration, settings
+load) before `/readyz` goes green.
+
+**Upgrade path: queue-depth scaling.** CPU is a proxy; the truthful scaling
+signal is queue depth (pending runs per eligible worker), which the runtime
+already exposes as Prometheus gauges on the internal `/metrics` endpoint. The
+upgrade is: run the CloudWatch agent on workers with a Prometheus scrape of the
+`gantry_*` gauges, publish them as CloudWatch custom metrics, and replace the
+predefined CPU specification in the worker_pool scaling policy with a
+customized-metric target tracking configuration on queue depth per instance.
+Not built in v1 — revisit when CPU tracking visibly lags real load.
 
 ---
 

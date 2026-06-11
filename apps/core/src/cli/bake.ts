@@ -79,7 +79,9 @@ async function bakeStatus(): Promise<number> {
  * fresh `baking` row is in flight and is rejected; uploaded/activated manifests
  * are rebaked with `gantry artifacts quarantine rebake` instead.
  */
-async function bakeRebake(manifestHashInput: string | undefined): Promise<number> {
+async function bakeRebake(
+  manifestHashInput: string | undefined,
+): Promise<number> {
   if (!manifestHashInput) {
     p.log.error('Usage: gantry bake rebake <manifestHash>');
     return 1;

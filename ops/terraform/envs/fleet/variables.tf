@@ -83,35 +83,47 @@ variable "db_deletion_protection" {
   default     = true
 }
 
-# --- Worker pool sizing (fleet v1 topology: 1 live host + N job workers). ---
-variable "live_worker_instance_type" {
-  description = "Instance type for the singleton live-host worker."
+# --- Worker pool sizing (one autoscaled pool of identical workers; the
+#     live-turn host lease elects which instance hosts live turns). ---
+variable "worker_instance_type" {
+  description = "Instance type for workers. Size by expected concurrent live turns plus job load (memory is the limit — see the runbook's Sizing and scaling)."
   type        = string
   default     = "t3.large"
 }
 
-variable "job_worker_instance_type" {
-  description = "Instance type for job workers."
-  type        = string
-  default     = "t3.large"
-}
-
-variable "job_worker_min_size" {
-  description = "Minimum job-worker ASG size."
+variable "worker_min_size" {
+  description = "Minimum worker ASG size. Must be >= 2: one instance holds the live-turn host lease, the rest are warm standbys plus job capacity, keeping live-chat failover RTO ~= the lease TTL (~30s)."
   type        = number
-  default     = 1
+  default     = 2
+
+  validation {
+    condition     = var.worker_min_size >= 2
+    error_message = "worker_min_size must be >= 2 in the fleet env (lease standby for live-chat availability). Single-worker stacks belong in envs/support."
+  }
 }
 
-variable "job_worker_max_size" {
-  description = "Maximum job-worker ASG size."
+variable "worker_max_size" {
+  description = "Maximum worker ASG size."
   type        = number
   default     = 4
 }
 
-variable "job_worker_desired_capacity" {
-  description = "Desired job-worker ASG size."
+variable "worker_desired_capacity" {
+  description = "Initial desired worker ASG size. Once autoscaling is enabled the policy owns desired capacity (Terraform ignores drift); steer a running pool via min/max."
   type        = number
   default     = 2
+}
+
+variable "worker_autoscaling_enabled" {
+  description = "Attach the CPU target-tracking policy so the pool scales between min and max. Scale-in drains via the lifecycle hook; terminating the current lease holder costs a ~lease-TTL live-chat blip (accepted tradeoff, see runbook)."
+  type        = bool
+  default     = true
+}
+
+variable "worker_cpu_target" {
+  description = "Average CPU percent the worker pool is held at by target tracking. Lower scales out earlier (10-90)."
+  type        = number
+  default     = 60
 }
 
 # --- Ingress. ---

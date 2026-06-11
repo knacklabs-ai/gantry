@@ -35,12 +35,6 @@ variable "control_port" {
   default     = 8080
 }
 
-variable "worker_role" {
-  description = "Logical worker role label, surfaced to the runtime as GANTRY_WORKER_ROLE (e.g. \"live\", \"job\"). Drives the 1 live-host + N job-workers topology."
-  type        = string
-  default     = "job"
-}
-
 variable "min_size" {
   description = "Minimum ASG size."
   type        = number
@@ -96,6 +90,29 @@ variable "min_healthy_percentage" {
   description = "Instance refresh minimum healthy percentage during a rolling image update."
   type        = number
   default     = 50
+}
+
+variable "autoscaling_enabled" {
+  description = "Attach a CPU target-tracking scaling policy to the ASG. Default true (the fleet's single worker pool; the live-turn host lease elects which instance hosts live turns). Set false for fixed-size pools such as the minimal support stack (min=max=1)."
+  type        = bool
+  default     = true
+}
+
+variable "cpu_target_value" {
+  description = "Average CPU utilization (percent) the target-tracking policy holds the pool at. Lower scales out earlier. Only used when autoscaling_enabled."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.cpu_target_value >= 10 && var.cpu_target_value <= 90
+    error_message = "cpu_target_value must be between 10 and 90 percent."
+  }
+}
+
+variable "scaling_warmup_seconds" {
+  description = "estimated_instance_warmup for the scaling policy: how long a new instance's metrics are excluded from the target-tracking average. Must cover boot + Docker install + image pull + migration + /readyz green, or the scaler over-provisions. Only used when autoscaling_enabled."
+  type        = number
+  default     = 180
 }
 
 variable "tags" {

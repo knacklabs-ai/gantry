@@ -56,6 +56,8 @@ locals {
 }
 
 # Single support worker: 1 instance, takes ALB traffic, holds the live lease.
+# Fixed size, no scaling policy — minimal stack scales vertically only
+# (worker_instance_type); support load does not warrant a horizontal pool.
 module "worker" {
   source                  = "../../modules/worker_pool"
   name_prefix             = local.name_prefix
@@ -64,10 +66,10 @@ module "worker" {
   image_ref               = var.image_ref
   ami_id                  = var.worker_ami_id
   instance_type           = var.worker_instance_type
-  worker_role             = "live"
   min_size                = 1
   max_size                = 1
   desired_capacity        = 1
+  autoscaling_enabled     = false
   drain_deadline_seconds  = var.drain_deadline_seconds
   target_group_arns       = [module.control.target_group_arn]
   alb_security_group_id   = module.control.alb_security_group_id

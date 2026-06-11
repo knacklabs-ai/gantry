@@ -31,9 +31,10 @@ shape. The runtime **setting** is `runtime.deployment_mode` (`workstation|fleet`
         ┌────────────────────────┼─────────────────────────┐
         ▼                        ▼                         ▼
   ┌───────────┐          ┌─────────────┐           ┌─────────────┐
-  │ live host │          │ job worker 1│    ...    │ job worker N│  ASG, immutable image
-  │ (1; lease │          │ + bake jobs │           │             │
-  │  failover)│          └──────┬──────┘           └──────┬──────┘
+  │ worker 1  │          │ worker 2    │    ...    │ worker N    │  one ASG, immutable
+  │ (lease-   │          │ + bake jobs │           │             │  image; the live-turn
+  │  elected  │          └──────┬──────┘           └──────┬──────┘  host lease elects the
+  │ live host)│                 │                         │         live host (here: 1)
   └────┬──────┘                 │                         │
        │ leases/slots/turns/commands/manifest/settings_revisions
        └──────────────────┬───────────────┬───────────────┘
@@ -49,8 +50,8 @@ shape. The runtime **setting** is `runtime.deployment_mode` (`workstation|fleet`
 
 | Concern | Workstation | Fleet | Locked Support Stack |
 |---|---|---|---|
-| Topology | Single machine, vertical scale | N immutable workers behind ALB; 1 live host + N job workers | Fleet variant; locked agents only |
-| Scaling | None (one host) | ASG; horizontal job workers; singleton live host (v1) | Same as fleet, sized per support deployment |
+| Topology | Single machine, vertical scale | N immutable workers behind ALB in one autoscaled pool; exactly one is the lease-elected live host | Fleet variant; locked agents only |
+| Scaling | None (one host) | One ASG, CPU target tracking; jobs/webhooks scale horizontally; live-turn throughput stays vertical (singleton lease-elected live host, v1) | Same as fleet, sized per support deployment |
 | Capability installs | Live on host (package manager runs) | Artifacts in S3, replace-on-update; sandboxed bake job; **no package manager on workers** | Pre-provisioned only; no live install, no escalation |
 | Settings surface | `settings.yaml` watcher → auto-import | Control-API desired-state CRUD; `settings_revisions` + pg_notify; YAML is bootstrap/backup only | Same as fleet |
 | Live-turn topology | In-process | 1 lease-elected live host + N standbys: the singleton lease `runtime:live-turn-host:default` gates the live-host services (message polling, new-turn admission, recovery sweep); standbys serve jobs and retry acquisition with backoff; failover RTO = lease TTL (~30s) | Same as fleet |
@@ -112,6 +113,56 @@ profile snapshot/restore mechanism becomes necessary. Browser profile
 snapshot/restore is deferred — see [TODOS.md](../../TODOS.md). A per-agent browser
 kill-switch is the documented v1 mitigation for any agent that must not depend on
 single-host browser state.
+
+## Worker Configuration (sandboxed agent child processes)
+
+Each worker is one parent Node process that spawns a child runner process per
+active agent turn. Sessions are Postgres rows and cost nothing while idle; the
+configuration below bounds what an *active* sandboxed child may consume and what
+the host must provide for the sandbox to exist at all.
+
+Recommended fleet worker desired state:
+
+```yaml
+runtime:
+  deployment_mode: fleet
+  queue:
+    max_message_runs: 6      # live host: concurrent live turns (vertical lever)
+    max_job_runs: 4          # concurrent scheduled-job runners
+    drain_deadline_ms: 120000
+  sandbox:
+    provider: sandbox_runtime # whole-runner OS sandbox (bubblewrap on Linux)
+    resource_limits:
+      cpu_seconds: 900        # hard CPU budget per child runner
+      memory_mb: 512          # hard memory cap per child runner
+      max_processes: 64       # runner + SDK subagents + tool subprocesses
+  artifact_store:
+    driver: s3
+```
+
+Sizing rule: instance memory ≥ 1 GB (parent + OS headroom) +
+(`max_message_runs` + `max_job_runs`) × `resource_limits.memory_mb`. The example
+above fits a 7–8 GB instance. Subagents run inside their parent turn's runner and
+share its caps — `max_processes` is the fan-out bound (see the subagent slot
+weighting item in [TODOS.md](../../TODOS.md)).
+
+Host/container requirements for `sandbox_runtime` on fleet workers:
+
+- `bubblewrap` is in the worker image (`ops/docker/Dockerfile`).
+- Namespace creation inside Docker requires a user-namespace-capable seccomp
+  profile on `docker run`; the default profile may block it. Until the fleet
+  container sandbox enablement item in [TODOS.md](../../TODOS.md) lands and is
+  verified with `gantry doctor`, fleet desired state should keep
+  `provider: direct` (the Claude SDK sandbox); workstation macOS uses
+  `sandbox_runtime` per the existing sandbox architecture rules.
+- Container `--pids-limit` should exceed
+  (`max_message_runs` + `max_job_runs`) × `max_processes`.
+- Disk: ≥ 20 GB for image, per-run temp workspaces, artifact cache, and bake
+  temp dirs.
+
+Operator sizing guidance (instance classes, scaling levers, autoscaling) lives in
+the [AWS Terraform runbook](../deployment/aws-terraform.md) "Sizing and scaling"
+section.
 
 ## Runbook Index
 

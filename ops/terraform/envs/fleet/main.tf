@@ -1,8 +1,9 @@
 # Fleet root module: wires network -> storage/secrets -> control -> worker pools
 # -> database. Secrets are passed as ARNs only; no secret values enter state.
 #
-# Topology (fleet v1): 1 live-host worker + N job workers behind one ALB,
-# against RDS (pgvector) via RDS Proxy, with capability artifacts in S3.
+# Topology (fleet v1): one autoscaled pool of identical workers behind one ALB,
+# against RDS (pgvector) via RDS Proxy, with capability artifacts in S3. The
+# live-turn host lease elects which worker hosts live turns.
 
 locals {
   name_prefix = var.name_prefix
@@ -59,42 +60,27 @@ locals {
   ])
 }
 
-# Singleton live-host worker: takes ALB traffic (live channel turns route here),
-# holds the live-turn host lease. One instance (min=max=desired=1).
-module "live_worker" {
+# Single autoscaled worker pool. All instances are identical: jobs, bakes, and
+# webhook/API traffic spread across the pool; the live-turn host lease elects
+# which instance hosts live turns (standbys retry acquisition with backoff;
+# failover RTO ~= lease TTL, ~30s). min_size >= 2 so a lease standby always
+# exists. Scale-in drains via the terminate lifecycle hook; if scale-in
+# terminates the current lease holder, live chat blips for ~lease TTL while a
+# standby takes over (accepted tradeoff — see docs/deployment/aws-terraform.md,
+# Sizing and scaling).
+module "worker" {
   source                  = "../../modules/worker_pool"
   name_prefix             = local.name_prefix
   vpc_id                  = module.network.vpc_id
   subnet_ids              = module.network.private_subnet_ids
   image_ref               = var.image_ref
   ami_id                  = var.worker_ami_id
-  instance_type           = var.live_worker_instance_type
-  worker_role             = "live"
-  min_size                = 1
-  max_size                = 1
-  desired_capacity        = 1
-  drain_deadline_seconds  = var.drain_deadline_seconds
-  target_group_arns       = [module.control.target_group_arn]
-  alb_security_group_id   = module.control.alb_security_group_id
-  instance_policy_arns    = local.worker_instance_policy_arns
-  runtime_secret_env_refs = local.base_runtime_refs
-  tags                    = var.tags
-}
-
-# Horizontal job workers: scheduler/job execution + bake jobs. Also registered
-# to the ALB so webhook/API traffic can spread across them.
-module "job_worker" {
-  source                  = "../../modules/worker_pool"
-  name_prefix             = local.name_prefix
-  vpc_id                  = module.network.vpc_id
-  subnet_ids              = module.network.private_subnet_ids
-  image_ref               = var.image_ref
-  ami_id                  = var.worker_ami_id
-  instance_type           = var.job_worker_instance_type
-  worker_role             = "job"
-  min_size                = var.job_worker_min_size
-  max_size                = var.job_worker_max_size
-  desired_capacity        = var.job_worker_desired_capacity
+  instance_type           = var.worker_instance_type
+  min_size                = var.worker_min_size
+  max_size                = var.worker_max_size
+  desired_capacity        = var.worker_desired_capacity
+  autoscaling_enabled     = var.worker_autoscaling_enabled
+  cpu_target_value        = var.worker_cpu_target
   drain_deadline_seconds  = var.drain_deadline_seconds
   target_group_arns       = [module.control.target_group_arn]
   alb_security_group_id   = module.control.alb_security_group_id
@@ -115,9 +101,6 @@ module "database" {
   master_password_secret_arn = var.db_master_password_secret_arn
   proxy_role_arn             = module.secrets.proxy_role_arn
   proxy_secret_arn           = var.db_proxy_secret_arn
-  ingress_security_group_ids = [
-    module.live_worker.security_group_id,
-    module.job_worker.security_group_id,
-  ]
-  tags = var.tags
+  ingress_security_group_ids = [module.worker.security_group_id]
+  tags                       = var.tags
 }

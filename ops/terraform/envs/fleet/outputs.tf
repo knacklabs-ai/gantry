@@ -18,12 +18,7 @@ output "database_endpoint" {
   value       = module.database.endpoint
 }
 
-output "live_worker_asg" {
-  description = "Name of the live-host worker ASG."
-  value       = module.live_worker.asg_name
-}
-
-output "job_worker_asg" {
-  description = "Name of the job-worker ASG."
-  value       = module.job_worker.asg_name
+output "worker_asg" {
+  description = "Name of the worker ASG (single pool; the live-turn host lease elects which instance hosts live turns)."
+  value       = module.worker.asg_name
 }

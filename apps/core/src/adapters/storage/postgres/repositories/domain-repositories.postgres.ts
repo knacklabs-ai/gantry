@@ -125,7 +125,8 @@ export interface PostgresDomainRepositoryBundle {
   outboundDeliveries: OutboundDeliveryRepository;
   workerCoordination: WorkerCoordinationRepository;
   liveTurns: LiveTurnCoordinationRepository;
-  runtimeDependencies: RuntimeDependencyRepository & StaleRuntimeDependencyLister;
+  runtimeDependencies: RuntimeDependencyRepository &
+    StaleRuntimeDependencyLister;
   settingsRevisions: SettingsRevisionRepository;
 }
 type JsonRecord = Record<string, unknown>;

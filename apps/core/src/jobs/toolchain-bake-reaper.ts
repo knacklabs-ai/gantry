@@ -110,7 +110,8 @@ export async function resetToolchainBakeForRequeue(
 }
 
 export interface ToolchainBakeReaperDeps extends ToolchainBakeResetDeps {
-  runtimeDependencies: RuntimeDependencyRepository & StaleRuntimeDependencyLister;
+  runtimeDependencies: RuntimeDependencyRepository &
+    StaleRuntimeDependencyLister;
   stalenessMs?: number;
   intervalMs?: number;
   now?: () => number;

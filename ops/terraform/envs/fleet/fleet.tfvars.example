@@ -30,12 +30,18 @@ db_instance_class      = "db.t4g.medium"
 db_multi_az            = true
 db_deletion_protection = true
 
-# --- Worker pools (1 live host + N job workers) ---
-live_worker_instance_type   = "t3.large"
-job_worker_instance_type    = "t3.large"
-job_worker_min_size         = 1
-job_worker_max_size         = 4
-job_worker_desired_capacity = 2
+# --- Worker pool (one autoscaled pool of identical workers; the live-turn
+#     host lease elects which instance hosts live turns). min >= 2 so a lease
+#     standby always exists (failover RTO ~= lease TTL, ~30s).
+worker_instance_type    = "t3.large"
+worker_min_size         = 2
+worker_max_size         = 4
+worker_desired_capacity = 2
+
+# CPU target tracking between min and max. Scale-in drains via the lifecycle
+# hook; terminating the lease holder costs a ~lease-TTL live-chat blip.
+worker_autoscaling_enabled = true
+worker_cpu_target          = 60
 
 # --- Ingress: set an ACM cert for HTTPS in production. ---
 # certificate_arn = "arn:aws:acm:us-east-1:REPLACE_ME:certificate/REPLACE_ME"

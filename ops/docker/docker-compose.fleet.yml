@@ -1,15 +1,18 @@
 # Local fleet rehearsal — exercises the fleet topology on one machine:
 #   Postgres (same extension/role bootstrap as the root compose)
-#   + 1 live-capable worker + N job workers, all from the built runtime image,
-#   migrating via the entrypoint and health-checked on /readyz.
+#   + N identical workers from the built runtime image, migrating via the
+#   entrypoint and health-checked on /readyz. The live-turn host lease elects
+#   which worker hosts live turns; the rest are standbys + job capacity.
 #
 # This is NOT the workstation compose. The root docker-compose.yml (Postgres
 # only, for local dev) is unchanged. Run this from the repo root:
 #
 #   docker compose -f ops/docker/docker-compose.fleet.yml up --build
-#   docker compose -f ops/docker/docker-compose.fleet.yml up --build --scale job-worker=3
+#   docker compose -f ops/docker/docker-compose.fleet.yml up --build --scale worker=2
 #
 # See docs/deployment/aws-terraform.md (Local Fleet Rehearsal) for the walkthrough.
+
+name: gantry-fleet
 
 x-worker-base: &worker-base
   build:
@@ -173,26 +176,20 @@ services:
         node /app/ops/docker/migrate.mjs;
         node /app/dist/cli/index.js settings import --file /var/lib/gantry/settings.yaml --fleet
 
-  # Singleton live-capable worker: holds the live-turn host lease (fleet v1
-  # topology = 1 live host + N job workers). Exposes the control port locally.
-  live-worker:
+  # Identical workers — one pool. The live-turn host lease elects which replica
+  # hosts live turns; the others are warm standbys + job capacity. Scale with:
+  # --scale worker=N (the advisory lock makes concurrent boot migrations safe).
+  # The host-port range maps each replica's control port to the next free port
+  # (first replica is usually 127.0.0.1:8080).
+  worker:
     <<: *worker-base
-    container_name: gantry-fleet-live-worker
     environment:
       <<: *worker-env
-      # First booting worker migrates; others can set GANTRY_SKIP_MIGRATIONS=1.
+      # Every worker migrates under the advisory lock (idempotent);
+      # GANTRY_SKIP_MIGRATIONS=1 skips the explicit pass if preferred.
       GANTRY_SKIP_MIGRATIONS: '0'
     ports:
-      - '127.0.0.1:8080:8080'
-
-  # Horizontal job workers. Scale with: --scale job-worker=N. No published
-  # port (the ALB/health checks reach them internally in real fleets); the
-  # advisory lock makes concurrent boot migrations safe.
-  job-worker:
-    <<: *worker-base
-    environment:
-      <<: *worker-env
-      GANTRY_SKIP_MIGRATIONS: '0'
+      - '127.0.0.1:8080-8089:8080'
 
 volumes:
   gantry-fleet-pgdata:

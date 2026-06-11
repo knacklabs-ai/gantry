@@ -11,7 +11,6 @@ DRAIN_DEADLINE_SECONDS="${drain_deadline_seconds}"
 LIFECYCLE_HOOK_NAME="${lifecycle_hook_name}"
 ASG_NAME="${asg_name}"
 AWS_REGION="${aws_region}"
-ROLE="${worker_role}"
 
 # --- Container runtime (Docker via Amazon Linux 2023). ---
 dnf install -y docker awscli || yum install -y docker awscli
@@ -44,7 +43,6 @@ NODE_ENV=production
 GANTRY_SECURITY_POSTURE=production
 GANTRY_CONTROL_HOST=0.0.0.0
 GANTRY_CONTROL_PORT=$CONTROL_PORT
-GANTRY_WORKER_ROLE=$ROLE
 EOF
 chmod 600 "$ENV_FILE"
 
