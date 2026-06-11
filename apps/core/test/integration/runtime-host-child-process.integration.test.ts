@@ -258,7 +258,15 @@ describe('host child-process runtime smoke', () => {
       expect.objectContaining({
         groupDir,
         ipcDir: groupIpcDir,
-        ipcInputDir: path.join(groupIpcDir, 'input'),
+        // The continuation-input mailbox is namespaced PER CONVERSATION (chatJid)
+        // for concurrency isolation — see getContinuationInputNamespace in
+        // continuation-input.ts. For this DM (no threadId) it is
+        // `<ipc>/input/conv-<encodeURIComponent(chatJid)>`.
+        ipcInputDir: path.join(
+          groupIpcDir,
+          'input',
+          `conv-${encodeURIComponent('tg:main')}`,
+        ),
         authTokenPresent: true,
         brokerBaseUrlPresent: false,
       }),
