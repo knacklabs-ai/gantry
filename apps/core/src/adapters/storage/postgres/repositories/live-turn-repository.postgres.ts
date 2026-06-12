@@ -522,14 +522,11 @@ export class PostgresLiveTurnRepository implements LiveTurnCoordinationRepositor
     if (input.conversationJids.length === 0) return null;
     const now = input.now ?? currentIso();
     // messages.conversation_id is `conversation:<jid>`; live_turns.conversation_id
-    // is the raw jid. A message waits when (a) no non-terminal turn covers its
-    // conversation AND (b) it arrived after that conversation's latest turn
-    // high-water mark (or none ever existed). For terminal turns, ended_at is
-    // the boundary: continuation messages handled during the turn can be newer
-    // than the turn's created_at, but they are still covered by the completed
-    // turn. Conversation-level granularity: the waiting status is coarse and
-    // reverse-parsing canonical thread ids (whose chatJid can contain colons)
-    // is fragile.
+    // is the raw jid. A message waits when no non-terminal turn covers its
+    // conversation AND it arrived after the conversation's latest turn
+    // high-water mark (terminal turns bound by ended_at: continuations handled
+    // mid-turn are newer than created_at yet covered). Conversation-level on
+    // purpose — reverse-parsing canonical thread ids is fragile.
     const prefixed = sql.join(
       input.conversationJids.map((jid) => sql`${`conversation:${jid}`}`),
       sql`, `,

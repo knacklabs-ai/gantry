@@ -66,14 +66,22 @@ first; single autoscaled pool; Go toolchain stays out of the image.
 - `apps/core/test/unit/runtime/message-loop.test.ts` "passes non-self sender ids with continuation batches" — fixed after closeout review by aligning the test with the cursor-carrying continuation contract.
 - `apps/core/test/integration/live-horizontal-execution.integration.test.ts` "delivers prompt resolutions to the recovered owner after adapter restart" — FIXED in this branch (2026-06-12 session): the pending-interaction re-prompt upsert clobbered `callback_route_json` to null when the re-prompt omitted the route; the update now COALESCEs to preserve the durable route. Test green under Postgres.
 
-### 2. Architecture-check debt (owned by THIS branch's Phases 2–3, pre-dates the continuation session)
-`python3 .codex/scripts/check_architecture.py` fails (boundary violations in
-e.g. `settings-revision-listener.ts`, `fleet-boot.ts`, `toolchain-bake-*.ts`,
-plus external-import and file-size-budget findings) — identical output at
-`975bb6c1` and current HEAD; the continuation work added nothing new. This
-blocks `verify.py` and, through `verify.json ok:false`, also
-`validate_artifacts.py`. Resolve by either fixing the boundaries or recording
-sanctioned exceptions in the checker config before merge.
+### 2. Architecture-check debt — RESOLVED (2026-06-12 session)
+`check_architecture.py` now exits 0 and `verify.py` + `validate_artifacts.py
+--allow-missing-run` pass END-TO-END (with a disposable Postgres for the
+test/e2e stages). Mix of genuine removals (infrastructure/logging reclassified
+to the shared layer; `RuntimeDeploymentMode` and the authority-changing tool
+names moved to shared, breaking runtime→config and config→runner edges) and
+time-bounded ratchet exceptions (exact no-headroom caps, reasons,
+`removeByPhase: canonical-boundary-cleanup-phase`) for the structural cluster
+— the burn-down ledger is `.codex/architecture-exceptions.json`. Also fixed
+en route: drizzle-wrapped 23505 detection (message-redelivery dedupe +
+outbound idempotency retries never fired), and fleet boot coherence (compose
+seeded `provider: direct` under production posture, which the security gate
+rejects — now `sandbox_runtime` + seccomp option; see the TODOS hardening row).
+Same session also shipped the cross-worker browser profile snapshot store and
+control-role manual job triggers (send-only pg-boss client) — see
+`git log 09c29188..` and TODOS.
 
 ### 3. Plan acceptance items never executed
 - Measured runbook walkthroughs: local compose → first turn ≤ 15 min; clean AWS account → first locked support-agent turn ≤ 60 min. Documented, never timed end-to-end.
