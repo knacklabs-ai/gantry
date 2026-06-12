@@ -9,8 +9,6 @@ import type {
 } from './desired-state-service.js';
 import { applyRuntimeSettingsDesiredState } from './restart-sync.js';
 import { parseRuntimeSettingsObject } from './runtime-settings-parser.js';
-import { renderRuntimeSettingsYaml } from './runtime-settings-renderer.js';
-import { parseSimpleYamlObject } from './yaml.js';
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
 import type { RuntimeSettings } from './runtime-settings-types.js';
 import {
@@ -165,16 +163,80 @@ export async function importFleetSettingsRevision(
  * Serialize desired state into the typed JSON settings document that the
  * control API/SDK transport and `settings_revisions` store as jsonb. YAML is the
  * human file format for the workstation file + CLI `--file` edge only; it never
- * appears on the wire. The document is the parser's native (snake_case) object
- * form, so workers re-hydrate through the exact same structural-validation path
- * the file surface uses — single-validation-path, with round-trip behavior
- * identical to the file surface (including the file surface's pre-existing
- * escaping limits for string values containing `"` or `\`).
+ * appears on the wire. The document is the parser's native snake_case object
+ * form, built directly from RuntimeSettings so JSON strings and numbers stay
+ * lossless.
  */
 export function settingsToRevisionDocument(
   settings: RuntimeSettings,
 ): Record<string, unknown> {
-  return parseSimpleYamlObject(renderRuntimeSettingsYaml(settings));
+  return stripUndefined({
+    desired_state: snakeRecord(settings.desiredState),
+    providers: mapRecord(settings.providers, snakeRecord),
+    provider_connections: mapRecord(settings.providerConnections, snakeRecord),
+    conversations: mapRecord(settings.conversations, (conversation) => ({
+      provider_connection: conversation.providerConnection,
+      external_id: conversation.externalId,
+      kind: conversation.kind,
+      display_name: conversation.displayName,
+      sender_policy: conversation.senderPolicy,
+      control_approvers: conversation.controlApprovers,
+    })),
+    bindings: mapRecord(settings.bindings, snakeRecord),
+    agents: mapRecord(settings.agents, (agent) => ({
+      name: agent.name,
+      persona: agent.persona,
+      relationship_mode: agent.relationshipMode,
+      model: agent.model,
+      one_time_job_default_model: agent.oneTimeJobDefaultModel,
+      recurring_job_default_model: agent.recurringJobDefaultModel,
+      bindings: mapRecord(agent.bindings, snakeRecord),
+      access: {
+        preset: agent.accessPreset,
+        sources: {
+          skills: agent.sources.skills.map(snakeRecord),
+          mcp_servers: agent.sources.mcpServers.map(snakeRecord),
+          tools: agent.sources.tools.map(snakeRecord),
+        },
+        selections: agent.capabilities.map(snakeRecord),
+      },
+    })),
+    storage: {
+      postgres: {
+        url_env: settings.storage.postgres.urlEnv,
+        schema: settings.storage.postgres.schema,
+      },
+    },
+    agent: {
+      name: settings.agent.name,
+      default_model: settings.agent.defaultModel,
+      one_time_job_default_model: settings.agent.oneTimeJobDefaultModel,
+      recurring_job_default_model: settings.agent.recurringJobDefaultModel,
+      sessions: {
+        memory_item_limit: settings.agent.sessions.memoryItemLimit,
+        max_memory_context_chars: settings.agent.sessions.maxMemoryContextChars,
+      },
+    },
+    model_access: {
+      enabled: settings.credentialBroker.mode === 'gantry',
+      gateway: {
+        bind_host: settings.credentialBroker.gateway.bindHost,
+      },
+    },
+    memory: snakeRecord(settings.memory),
+    runtime: snakeRecord(settings.runtime),
+    browser: {
+      usage: {
+        enabled: settings.browser.usage.enabled,
+        mode: settings.browser.usage.mode,
+        window_ms: settings.browser.usage.windowMs,
+        max_actions_per_window: settings.browser.usage.maxActionsPerWindow,
+        max_concurrent_per_site: settings.browser.usage.maxConcurrentPerSite,
+        overrides: mapRecord(settings.browser.usage.overrides, snakeRecord),
+      },
+    },
+    permissions: snakeRecord(settings.permissions),
+  });
 }
 
 /** Re-hydrate a typed settings document back into typed runtime settings. */
@@ -182,4 +244,33 @@ export function settingsFromRevisionDocument(
   document: Record<string, unknown>,
 ): RuntimeSettings {
   return parseRuntimeSettingsObject(document);
+}
+
+function mapRecord<T>(
+  record: Record<string, T>,
+  mapValue: (value: T) => unknown,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, mapValue(value)]),
+  );
+}
+
+function snakeRecord(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snakeRecord);
+  if (typeof value !== 'object' || value === null) return value;
+  return stripUndefined(
+    Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+        snakeRecord(item),
+      ]),
+    ),
+  );
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): T {
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) delete record[key];
+  }
+  return record;
 }

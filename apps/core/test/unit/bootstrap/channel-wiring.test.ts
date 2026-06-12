@@ -29,11 +29,17 @@ const runtimeStoreMock = vi.hoisted(() => ({
     },
   },
 }));
+const runtimeLeaseMock = vi.hoisted(() => ({
+  tryAcquire: vi.fn(async () => ({
+    onLost: vi.fn(),
+    release: vi.fn(async () => undefined),
+  })),
+}));
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeStorage: () => ({ repositories: runtimeStoreMock.repositories }),
   getRuntimeRepositories: () => runtimeStoreMock.opsRepository,
-  tryAcquireRuntimeAdvisoryLease: vi.fn(async () => true),
+  tryAcquireRuntimeAdvisoryLease: runtimeLeaseMock.tryAcquire,
 }));
 
 import { RuntimeSettings } from '@core/config/settings/runtime-settings.js';
@@ -336,6 +342,62 @@ describe('createChannelWiring', () => {
     expect(channel.connect).toHaveBeenCalledWith({
       inbound: true,
       interactionCallbacks: true,
+    });
+  });
+
+  it('uses a singleton provider inbound lease in fleet mode', async () => {
+    runtimeLeaseMock.tryAcquire.mockClear();
+    const app = makeApp();
+    const channel = makeChannel();
+    const lease = {
+      onLost: vi.fn(),
+      release: vi.fn(async () => undefined),
+    };
+    runtimeLeaseMock.tryAcquire.mockResolvedValueOnce(lease);
+    const settings = makeRuntimeSettings({ telegram: true, slack: false });
+    settings.runtime.deploymentMode = 'fleet';
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => channel),
+        ),
+      ],
+    });
+
+    await wiring.connectEnabledChannels(settings, { providerInbound: true });
+
+    expect(runtimeLeaseMock.tryAcquire).toHaveBeenCalledWith(
+      'runtime:provider-inbound:telegram:default',
+    );
+    expect(channel.connect).toHaveBeenCalledWith({
+      inbound: true,
+      interactionCallbacks: true,
+    });
+    expect(lease.onLost).toHaveBeenCalledOnce();
+  });
+
+  it('connects fleet channels outbound-only when another worker owns provider inbound', async () => {
+    runtimeLeaseMock.tryAcquire.mockClear();
+    runtimeLeaseMock.tryAcquire.mockResolvedValueOnce(undefined);
+    const app = makeApp();
+    const channel = makeChannel();
+    const settings = makeRuntimeSettings({ telegram: true, slack: false });
+    settings.runtime.deploymentMode = 'fleet';
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => channel),
+        ),
+      ],
+    });
+
+    await wiring.connectEnabledChannels(settings, { providerInbound: true });
+
+    expect(channel.connect).toHaveBeenCalledWith({
+      inbound: false,
+      interactionCallbacks: false,
     });
   });
 

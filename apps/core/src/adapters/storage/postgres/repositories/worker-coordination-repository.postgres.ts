@@ -581,31 +581,6 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
     return rows.length > 0;
   }
 
-  async restorePendingInteractionPending(input: {
-    idempotencyKey: string;
-    now?: string;
-  }): Promise<boolean> {
-    const rows = await this.db
-      .update(pgSchema.pendingInteractionsPostgres)
-      .set({
-        status: 'pending',
-        resolutionJson: null,
-        approverRef: null,
-        resolvedAt: null,
-      })
-      .where(
-        and(
-          eq(
-            pgSchema.pendingInteractionsPostgres.idempotencyKey,
-            input.idempotencyKey,
-          ),
-          sql`${pgSchema.pendingInteractionsPostgres.status} IN ('resolved', 'cancelled')`,
-        ),
-      )
-      .returning({ id: pgSchema.pendingInteractionsPostgres.id });
-    return rows.length > 0;
-  }
-
   async updatePendingInteractionPayload(input: {
     idempotencyKey: string;
     payload: Record<string, unknown>;

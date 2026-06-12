@@ -91,6 +91,7 @@ import { configurePendingInteractionPermissionPersistence } from '../../applicat
 import { liveTurnScopeForQueue } from './live-recovery-coordinator.js';
 import {
   buildLiveAdmissionProcessor,
+  buildLiveTurnBrowserFinalizer,
   startLiveExecutionServices,
   type LiveExecutionServicesHandle,
   type RecoveryCoordinatorPort,
@@ -520,6 +521,12 @@ export async function startRuntimeServices(
       maxMessagesPerPrompt: MAX_MESSAGES_PER_PROMPT,
       timezone: TIMEZONE,
       warn: (context, message) => resolved.logger.warn(context, message),
+      finalizeBrowserForLiveTurn: buildLiveTurnBrowserFinalizer({
+        getConversationRoutes: () => app.getConversationRoutes(),
+        closeBrowserSession: closeBrowser,
+        closeBrowserToolBackends: resolved.closeBrowserToolBackends,
+        warn: (context, message) => resolved.logger.warn(context, message),
+      }),
     }),
   );
   const liveMessageQueue = {

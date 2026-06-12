@@ -523,11 +523,13 @@ export class PostgresLiveTurnRepository implements LiveTurnCoordinationRepositor
     const now = input.now ?? currentIso();
     // messages.conversation_id is `conversation:<jid>`; live_turns.conversation_id
     // is the raw jid. A message waits when (a) no non-terminal turn covers its
-    // conversation AND (b) it arrived after that conversation's latest turn (or
-    // none ever existed). Newest-turn high-water mark per conversation makes
-    // already-handled history drop out without per-worker cursors. Conversation-
-    // level granularity: the waiting status is coarse and reverse-parsing
-    // canonical thread ids (whose chatJid can contain colons) is fragile.
+    // conversation AND (b) it arrived after that conversation's latest turn
+    // high-water mark (or none ever existed). For terminal turns, ended_at is
+    // the boundary: continuation messages handled during the turn can be newer
+    // than the turn's created_at, but they are still covered by the completed
+    // turn. Conversation-level granularity: the waiting status is coarse and
+    // reverse-parsing canonical thread ids (whose chatJid can contain colons)
+    // is fragile.
     const prefixed = sql.join(
       input.conversationJids.map((jid) => sql`${`conversation:${jid}`}`),
       sql`, `,
@@ -549,7 +551,8 @@ export class PostgresLiveTurnRepository implements LiveTurnCoordinationRepositor
             AND lt.state NOT IN ('completed', 'failed', 'timed_out')
         )
         AND m.created_at > COALESCE(
-          (SELECT max(lt2.created_at) FROM live_turns lt2
+          (SELECT max(COALESCE(lt2.ended_at, lt2.updated_at, lt2.created_at))
+           FROM live_turns lt2
            WHERE 'conversation:' || lt2.conversation_id = m.conversation_id),
           '-infinity'::timestamptz
         )

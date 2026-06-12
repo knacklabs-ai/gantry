@@ -4,9 +4,11 @@ import { getRuntimeStorage } from '../../../adapters/storage/postgres/runtime-st
 import { parseRuntimeSettingsObject } from '../../../config/settings/runtime-settings-parser.js';
 import {
   importFleetSettingsRevision,
+  importWorkstationSettings,
   settingsFromRevisionDocument,
 } from '../../../config/settings/settings-import-service.js';
 import type { AppId } from '../../../domain/app/app.js';
+import type { RuntimeDeploymentMode } from '../../../shared/runtime-deployment-mode.js';
 import {
   authorizeControlRequest,
   type ControlRouteContext,
@@ -146,6 +148,45 @@ async function handleDesiredState(
       return true;
     }
     const storage = getRuntimeStorage();
+    if (currentDeploymentMode(ctx) === 'workstation') {
+      if (
+        body.expectedRevision !== undefined &&
+        body.expectedRevision !== null
+      ) {
+        sendError(
+          res,
+          400,
+          'INVALID_REQUEST',
+          'expectedRevision is only supported for fleet settings revisions.',
+        );
+        return true;
+      }
+      try {
+        await importWorkstationSettings(
+          {
+            runtimeHome: ctx.runtimeHome,
+            ops: storage.ops,
+            repositories: storage.repositories,
+            appId,
+            previousSettings: ctx.getInternalRuntimeSettings() as never,
+            reloadRuntimeState: () => ctx.app.loadState(),
+          },
+          parsed,
+        );
+      } catch (err) {
+        sendError(
+          res,
+          400,
+          'INVALID_SETTINGS',
+          err instanceof Error
+            ? err.message
+            : 'Settings document failed validation.',
+        );
+        return true;
+      }
+      sendJson(res, 200, { revision: 0 });
+      return true;
+    }
     const outcome = await importFleetSettingsRevision(
       {
         runtimeHome: ctx.runtimeHome,
@@ -195,6 +236,14 @@ async function handleDesiredState(
   res.setHeader('Allow', 'GET, PUT, POST');
   sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
   return true;
+}
+
+function currentDeploymentMode(
+  ctx: ControlRouteContext,
+): RuntimeDeploymentMode {
+  return ctx.getRuntimeSettings().runtime.deploymentMode === 'workstation'
+    ? 'workstation'
+    : 'fleet';
 }
 
 async function handleRevisionsList(

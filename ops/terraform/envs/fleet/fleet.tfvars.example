@@ -12,16 +12,18 @@ image_ref = "ghcr.io/REPLACE_ME_ORG/gantry@sha256:REPLACE_ME"
 worker_ami_id = "ami-REPLACE_ME"
 
 # --- Secret REFERENCES (ARNs). Create the secret values first (see runbook). ---
-db_master_password_secret_arn   = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/db-master-REPLACE"
-db_proxy_secret_arn             = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/db-proxy-REPLACE"
-runtime_database_url_secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/runtime-db-url-REPLACE"
+runtime_database_url_secret_arn            = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/runtime-db-url-REPLACE"
+db_proxy_secret_arn                        = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/db-proxy-runtime-role-REPLACE"
+secret_encryption_key_secret_arn           = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/secret-encryption-key-REPLACE"
+gantry_ipc_auth_secret_arn                 = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/ipc-auth-secret-REPLACE"
+gantry_control_api_keys_json_secret_arn    = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/control-api-keys-json-REPLACE"
 
 # Optional: migration role distinct from runtime role.
 # migration_database_url_secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/migration-db-url-REPLACE"
 
-# Optional: channel/provider credentials, control API keys, etc.
+# Optional: channel/provider credentials.
 # additional_runtime_secret_refs = [
-#   { env_name = "GANTRY_CONTROL_API_KEYS_JSON", secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/control-api-keys-REPLACE" },
+#   { env_name = "WHATSAPP_ACCESS_TOKEN", secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/fleet/whatsapp-token-REPLACE" },
 # ]
 
 # --- Database ---

@@ -1,11 +1,17 @@
 import {
   createStorageRuntime,
+  createRuntimeBrowserProfileArtifactStore,
   type StorageRuntimeOptions,
   type RuntimeOpsRepositories,
   type StorageRuntime,
 } from './factory.js';
 import type { FileArtifactStore } from '../../../domain/ports/file-artifact-store.js';
 import type { SkillArtifactStore } from '../../../domain/ports/skill-artifact-store.js';
+import type {
+  BrowserProfileArtifactStore,
+  BrowserProfileArtifactMaterializer,
+} from '../../../domain/ports/browser-profile-artifact-store.js';
+import type { BrowserProfileSnapshotRepository } from '../../../domain/ports/browser-profile-snapshot.js';
 import { evaluatePostgresStorageCapabilities } from './readiness.js';
 import type { PostgresControlPlaneRepository } from './repositories/control-plane-repository.postgres.js';
 import type { RuntimeEventExchange } from '../../../application/runtime-events/runtime-event-exchange.js';
@@ -160,6 +166,16 @@ export function getRuntimeSkillArtifactStore(): SkillArtifactStore {
   return getRuntimeStorage().skillArtifacts;
 }
 
+export function getRuntimeBrowserProfileArtifactStore(): BrowserProfileArtifactStore &
+  BrowserProfileArtifactMaterializer {
+  getRuntimeStorage();
+  return createRuntimeBrowserProfileArtifactStore();
+}
+
+export function getRuntimeBrowserProfileSnapshotRepository(): BrowserProfileSnapshotRepository {
+  return getRuntimeStorage().browserProfileSnapshots;
+}
+
 export async function closeRuntimeStorage(): Promise<void> {
   const existing = runtime;
   runtime = null;
@@ -206,5 +222,6 @@ export function _setRuntimeRepositoriesForTest(
     } as StorageRuntime['runtimeEventNotifier'],
     fileArtifacts: {} as StorageRuntime['fileArtifacts'],
     skillArtifacts: {} as StorageRuntime['skillArtifacts'],
+    browserProfileSnapshots: {} as StorageRuntime['browserProfileSnapshots'],
   };
 }

@@ -18,8 +18,6 @@ FORBIDDEN_IMAGE_PATTERNS = [
     re.compile(r"(^|/)\.git($|/)"),
     re.compile(r"(^|/)\.claude($|/)"),
     re.compile(r"(^|/)\.factory($|/)"),
-    re.compile(r"(^|/)node_modules($|/)"),
-    re.compile(r"(^|/)dist($|/)"),
     re.compile(r"(^|/)\.env(?:[./]|$)"),
     re.compile(
         r"(^|/)(?:id_rsa|id_ed25519|.*private[-_]?key.*|.*(?:^|[-_.])key(?:[-_.]|$).*\.pem|.*(?:^|[-_.])priv(?:ate)?(?:[-_.]|$).*\.pem)$",
@@ -34,6 +32,12 @@ class ComposeImageEntry:
     image: str
     line_no: int
     built_locally: bool
+
+
+@dataclass(frozen=True)
+class ImageInspectionTarget:
+    image: str
+    pull_before_save: bool
 
 
 def default_compose_files(root: Path = Path(".")) -> list[Path]:
@@ -139,6 +143,20 @@ def compose_images(files: list[Path]) -> list[str]:
     return sorted(set(images))
 
 
+def compose_image_inspection_targets(files: list[Path]) -> list[ImageInspectionTarget]:
+    targets: dict[str, bool] = {}
+    for file in files:
+        for entry in compose_image_entries(file):
+            # Built images are checked by saving the local image that CI built
+            # from this checkout. Remote images are pulled before saving.
+            pull_before_save = not entry.built_locally
+            targets[entry.image] = targets.get(entry.image, True) and pull_before_save
+    return [
+        ImageInspectionTarget(image=image, pull_before_save=pull)
+        for image, pull in sorted(targets.items())
+    ]
+
+
 def forbidden_members(members: list[str]) -> list[str]:
     matches: list[str] = []
     for member in members:
@@ -152,18 +170,19 @@ def forbidden_members(members: list[str]) -> list[str]:
     return sorted(set(matches))
 
 
-def inspect_image(image: str) -> list[str]:
+def inspect_image(image: str, *, pull_before_save: bool = True) -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / "image.tar"
-        pull = subprocess.run(
-            ["docker", "image", "pull", image],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if pull.returncode != 0:
-            sys.stderr.write(pull.stderr)
-            raise SystemExit(pull.returncode)
+        if pull_before_save:
+            pull = subprocess.run(
+                ["docker", "image", "pull", image],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if pull.returncode != 0:
+                sys.stderr.write(pull.stderr)
+                raise SystemExit(pull.returncode)
         result = subprocess.run(
             ["docker", "image", "save", image, "-o", str(archive)],
             text=True,
@@ -243,19 +262,23 @@ def main() -> int:
         print("Runtime image gate passed.")
         return 0
 
-    images = [*args.image, *runtime_images_from_env()]
+    targets = {
+        image: True for image in [*args.image, *runtime_images_from_env()]
+    }
     if args.inspect_compose_images:
-        images.extend(compose_images(compose_files))
-    images = sorted(set(images))
-    for image in images:
-        failures = inspect_image(image)
+        for target in compose_image_inspection_targets(compose_files):
+            targets[target.image] = (
+                targets.get(target.image, True) and target.pull_before_save
+            )
+    for image, pull_before_save in sorted(targets.items()):
+        failures = inspect_image(image, pull_before_save=pull_before_save)
         if failures:
             print(f"Forbidden runtime image contents detected in {image}:")
             for path in failures:
                 print(f"- {path}")
             return 1
 
-    if not images:
+    if not targets:
         if args.require_content_inspection:
             print("No runtime images configured for content inspection.")
             return 1

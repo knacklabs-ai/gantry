@@ -97,6 +97,11 @@ variable "runtime_secret_env_refs" {
   default = []
 }
 
+variable "artifact_bucket_name" {
+  description = "S3 artifact bucket name seeded into fleet settings.yaml for runtime.artifact_store."
+  type        = string
+}
+
 variable "min_healthy_percentage" {
   description = "Instance refresh minimum healthy percentage during a rolling image update."
   type        = number

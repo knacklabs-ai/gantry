@@ -14,6 +14,55 @@ log() {
   printf '%s [entrypoint] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
 }
 
+rand_base64_32() {
+  node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"
+}
+
+rand_hex_32() {
+  node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))"
+}
+
+load_or_create_rehearsal_secrets() {
+  secret_file="${GANTRY_FLEET_REHEARSAL_SECRETS_FILE:-/var/lib/gantry/fleet-rehearsal-secrets.env}"
+  lock_dir="${secret_file}.lock"
+  mkdir -p "$(dirname "$secret_file")"
+
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    sleep 1
+  done
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT INT TERM
+
+  if [ -f "$secret_file" ]; then
+    # shellcheck disable=SC1090
+    . "$secret_file"
+  else
+    secret_encryption_key="${SECRET_ENCRYPTION_KEY:-$(rand_base64_32)}"
+    ipc_auth_secret="${GANTRY_IPC_AUTH_SECRET:-$(rand_hex_32)}"
+    control_api_keys_json="${GANTRY_CONTROL_API_KEYS_JSON:-}"
+    if [ -z "$control_api_keys_json" ]; then
+      token="$(rand_hex_32)"
+      control_api_keys_json="[{\"kid\":\"fleet-rehearsal-admin\",\"token\":\"${token}\",\"appId\":\"default\",\"scopes\":[\"sessions:read\"]}]"
+    fi
+    umask 077
+    {
+      printf "SECRET_ENCRYPTION_KEY='%s'\n" "$secret_encryption_key"
+      printf "GANTRY_IPC_AUTH_SECRET='%s'\n" "$ipc_auth_secret"
+      printf "GANTRY_CONTROL_API_KEYS_JSON='%s'\n" "$control_api_keys_json"
+    } >"$secret_file"
+    # shellcheck disable=SC1090
+    . "$secret_file"
+  fi
+
+  rmdir "$lock_dir"
+  trap - EXIT INT TERM
+}
+
+if [ "${GANTRY_FLEET_REHEARSAL_AUTO_SECRETS:-0}" = "1" ]; then
+  load_or_create_rehearsal_secrets
+  export SECRET_ENCRYPTION_KEY GANTRY_IPC_AUTH_SECRET GANTRY_CONTROL_API_KEYS_JSON
+  log "loaded shared rehearsal-only runtime secrets"
+fi
+
 # ---------------------------------------------------------------------------
 # Migrations.
 #

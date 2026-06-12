@@ -1,20 +1,10 @@
 # Database module: RDS PostgreSQL (pgvector-enabled), behind RDS Proxy to bound
-# connection count under a scaling worker fleet. All credentials are referenced
-# from Secrets Manager by ARN — no secret values are read into Terraform state.
+# connection count under a scaling worker fleet. The master password is managed
+# by RDS/Secrets Manager so no database password value enters Terraform state.
 
 locals {
   postgres_port = 5432
   family        = "postgres${split(".", var.engine_version)[0]}"
-}
-
-# Master password is referenced by ARN; the JSON-shaped proxy secret is resolved
-# only for its current version stage at apply time, not stored in state values.
-data "aws_secretsmanager_secret" "master_password" {
-  arn = var.master_password_secret_arn
-}
-
-data "aws_secretsmanager_secret_version" "master_password" {
-  secret_id = data.aws_secretsmanager_secret.master_password.id
 }
 
 resource "aws_db_subnet_group" "this" {
@@ -91,9 +81,9 @@ resource "aws_db_instance" "this" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  db_name  = var.database_name
-  username = var.master_username
-  password = data.aws_secretsmanager_secret_version.master_password.secret_string
+  db_name                     = var.database_name
+  username                    = var.master_username
+  manage_master_user_password = true
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [aws_security_group.db.id]
@@ -112,10 +102,57 @@ resource "aws_db_instance" "this" {
 }
 
 # --- RDS Proxy: bounds total DB connections under a scaling worker fleet. ---
+data "aws_iam_policy_document" "proxy_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["rds.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "proxy" {
+  name               = "${var.name_prefix}-rds-proxy"
+  assume_role_policy = data.aws_iam_policy_document.proxy_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "proxy_secret_read" {
+  statement {
+    sid       = "ReadProxySecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = [var.proxy_secret_arn]
+  }
+
+  dynamic "statement" {
+    for_each = length(var.kms_key_arns) > 0 ? [1] : []
+    content {
+      sid       = "DecryptProxySecretKms"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = var.kms_key_arns
+      condition {
+        test     = "StringEquals"
+        variable = "kms:ViaService"
+        values   = ["secretsmanager.${data.aws_region.current.name}.amazonaws.com"]
+      }
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "proxy_secret_read" {
+  name   = "${var.name_prefix}-rds-proxy-secret-read"
+  role   = aws_iam_role.proxy.id
+  policy = data.aws_iam_policy_document.proxy_secret_read.json
+}
+
 resource "aws_db_proxy" "this" {
   name                   = "${var.name_prefix}-proxy"
   engine_family          = "POSTGRESQL"
-  role_arn               = var.proxy_role_arn
+  role_arn               = aws_iam_role.proxy.arn
   vpc_subnet_ids         = var.subnet_ids
   vpc_security_group_ids = [aws_security_group.db.id]
   require_tls            = true
@@ -138,6 +175,8 @@ resource "aws_db_proxy_default_target_group" "this" {
     max_idle_connections_percent = 50
   }
 }
+
+data "aws_region" "current" {}
 
 resource "aws_db_proxy_target" "this" {
   db_proxy_name          = aws_db_proxy.this.name

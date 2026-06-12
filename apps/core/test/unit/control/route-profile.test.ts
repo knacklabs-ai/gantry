@@ -67,6 +67,10 @@ describe('control server route profile', () => {
     expect((await get(server, '/metrics')).status).toBe(200);
     // Authenticated read-only diagnostics are served (not 404).
     expect((await get(server, '/v1/health', true)).status).not.toBe(404);
+    // Live ingress aliases are mounted for the live-worker ALB target group.
+    expect((await send(server, 'POST', '/webhooks/ingress-1')).status).toBe(
+      400,
+    );
 
     // Representative admin/mutation routes are unmounted → 404.
     expect(

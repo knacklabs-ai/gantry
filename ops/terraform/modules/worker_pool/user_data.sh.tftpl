@@ -12,6 +12,7 @@ LIFECYCLE_HOOK_NAME="${lifecycle_hook_name}"
 ASG_NAME="${asg_name}"
 AWS_REGION="${aws_region}"
 PROCESS_ROLE="${process_role}"
+ARTIFACT_BUCKET_NAME="${artifact_bucket_name}"
 
 # --- Container runtime (Docker via Amazon Linux 2023). ---
 dnf install -y docker awscli || yum install -y docker awscli
@@ -26,8 +27,26 @@ docker pull "$IMAGE"
 #     Docker escalates to SIGKILL. Secrets arrive via env from Secrets Manager
 #     references resolved at boot (see fetch below); never baked into the image. ---
 ENV_FILE=/etc/gantry/worker.env
+GANTRY_HOME=/var/lib/gantry
 mkdir -p /etc/gantry
 install -m 600 /dev/null "$ENV_FILE"
+install -d -m 700 "$GANTRY_HOME"
+
+cat > "$GANTRY_HOME/settings.yaml" <<EOF
+runtime:
+  deployment_mode: fleet
+  sandbox:
+    provider: sandbox_runtime
+  artifact_store:
+    driver: s3
+    bucket: $ARTIFACT_BUCKET_NAME
+    region: $AWS_REGION
+storage:
+  postgres:
+    url_env: GANTRY_DATABASE_URL
+    schema: gantry
+EOF
+chown -R 1000:1000 "$GANTRY_HOME"
 
 # Resolve runtime secrets from Secrets Manager into the env file (0600). The
 # instance role grants read on exactly the referenced ARNs (secrets module).
@@ -63,6 +82,7 @@ docker run -d \
   --security-opt seccomp=unconfined \
   --env-file "$ENV_FILE" \
   --stop-timeout "$DRAIN_DEADLINE_SECONDS" \
+  -v "$GANTRY_HOME:$GANTRY_HOME" \
   -p "$CONTROL_PORT:$CONTROL_PORT" \
   "$IMAGE"
 

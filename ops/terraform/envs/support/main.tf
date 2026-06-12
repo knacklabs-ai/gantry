@@ -10,7 +10,12 @@ locals {
   name_prefix = var.name_prefix
 
   base_runtime_refs = concat(
-    [{ env_name = "GANTRY_DATABASE_URL", secret_arn = var.runtime_database_url_secret_arn }],
+    [
+      { env_name = "GANTRY_DATABASE_URL", secret_arn = var.runtime_database_url_secret_arn },
+      { env_name = "SECRET_ENCRYPTION_KEY", secret_arn = var.secret_encryption_key_secret_arn },
+      { env_name = "GANTRY_IPC_AUTH_SECRET", secret_arn = var.gantry_ipc_auth_secret_arn },
+      { env_name = "GANTRY_CONTROL_API_KEYS_JSON", secret_arn = var.gantry_control_api_keys_json_secret_arn },
+    ],
     var.migration_database_url_secret_arn != "" ?
     [{ env_name = "MIGRATION_DATABASE_URL", secret_arn = var.migration_database_url_secret_arn }] : [],
     var.additional_runtime_secret_refs,
@@ -36,7 +41,6 @@ module "secrets" {
   source              = "../../modules/secrets"
   name_prefix         = local.name_prefix
   runtime_secret_arns = local.worker_secret_arns
-  proxy_secret_arn    = var.db_proxy_secret_arn
   kms_key_arns        = var.secret_kms_key_arns
   tags                = var.tags
 }
@@ -53,6 +57,7 @@ module "control" {
 locals {
   worker_instance_policy_arns = compact([
     module.storage.worker_ro_policy_arn,
+    module.storage.worker_browser_rw_policy_arn,
     module.secrets.runtime_secret_read_policy_arn,
   ])
 }
@@ -81,8 +86,12 @@ module "worker" {
     module.control.live_target_group_arn,
   ]
   alb_security_group_id   = module.control.alb_security_group_id
-  instance_policy_arns    = local.worker_instance_policy_arns
+  instance_policy_arns = concat(
+    local.worker_instance_policy_arns,
+    [module.storage.bake_rw_policy_arn],
+  )
   runtime_secret_env_refs = local.base_runtime_refs
+  artifact_bucket_name    = module.storage.bucket_name
   tags                    = var.tags
 }
 
@@ -95,9 +104,8 @@ module "database" {
   instance_class             = var.db_instance_class
   multi_az                   = false # minimal support stack
   deletion_protection        = true
-  master_password_secret_arn = var.db_master_password_secret_arn
-  proxy_role_arn             = module.secrets.proxy_role_arn
   proxy_secret_arn           = var.db_proxy_secret_arn
+  kms_key_arns               = var.secret_kms_key_arns
   ingress_security_group_ids = [module.worker.security_group_id]
   tags                       = var.tags
 }

@@ -17,6 +17,22 @@ Module reference: `ops/terraform/modules/{network,database,storage,secrets,worke
 roots `ops/terraform/envs/{fleet,support}`. Image: `ops/docker/Dockerfile` +
 `ops/docker/entrypoint.sh`.
 
+Artifact bucket IAM is split by prefix. Capability artifacts (`skills/`,
+`toolchains/`) are **bake-rw / worker-ro** — workers never mutate capability
+state. Browser profile snapshots (`browser-profiles/`) are the exception:
+workers snapshot them at turn end and restore them at launch, so the worker role
+gets **read-write** on that prefix only. Both grants are encoded in the storage
+module (`bake_rw` / `worker_ro` / `worker_browser_rw` policies) and attached to
+the worker role in the env roots; no out-of-band IAM is required.
+
+Treat `browser-profiles/` objects as credential-grade secrets. A snapshot's
+full-minus-cache bundle carries Chrome's `Login Data` (saved-passwords DB) and
+the `Local State` `os_crypt` key material; on headless Linux that key is
+typically derivable, so the bundle is effectively a plaintext credential store.
+There is no application-layer encryption, so the bucket posture is the only
+protection: keep SSE-KMS, the prefix-scoped worker-rw IAM above, and the
+public-access block enabled.
+
 ---
 
 ## Part A — Local Fleet Rehearsal (≤ 15 min)

@@ -602,6 +602,13 @@
     "maxViolations": 3
   },
   {
+    "file": "apps/core/src/jobs/scheduler.ts",
+    "rule": "forbidden_external_import_by_layer",
+    "reason": "Non-executing-role manual trigger spins an ephemeral send-only pg-boss client directly; capped at exact count until the queue transport is behind an adapter port.",
+    "removeByPhase": "canonical-boundary-cleanup-phase",
+    "maxViolations": 1
+  },
+  {
     "file": "apps/core/src/jobs/system-jobs.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",

@@ -105,6 +105,30 @@ export function getConfiguredAgentName(): string {
   }
 }
 export const ASSISTANT_NAME = getConfiguredAgentName();
+
+function getPublicConfiguredAgents(settings: RuntimeSettings) {
+  return Object.fromEntries(
+    Object.entries(settings.agents).map(([agentId, agent]) => [
+      agentId,
+      {
+        name: agent.name,
+        folder: agent.folder,
+        persona: agent.persona,
+        relationshipMode: agent.relationshipMode,
+        model: agent.model,
+        oneTimeJobDefaultModel: agent.oneTimeJobDefaultModel,
+        recurringJobDefaultModel: agent.recurringJobDefaultModel,
+        bindings: agent.bindings,
+        sources: agent.sources,
+        capabilities: agent.capabilities,
+        access: {
+          preset: agent.accessPreset,
+        },
+      },
+    ]),
+  );
+}
+
 export function getPublicRuntimeSettings() {
   const settings = getRuntimeSettingsForConfig();
   return {
@@ -115,7 +139,7 @@ export function getPublicRuntimeSettings() {
       oneTimeJobDefaultModel: settings.agent.oneTimeJobDefaultModel,
       recurringJobDefaultModel: settings.agent.recurringJobDefaultModel,
     },
-    agents: settings.agents,
+    agents: getPublicConfiguredAgents(settings),
     providers: settings.providers,
     providerConnections: settings.providerConnections,
     conversations: settings.conversations,

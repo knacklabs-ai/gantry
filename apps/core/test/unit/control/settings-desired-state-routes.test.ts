@@ -15,6 +15,7 @@ const importOutcome = vi.hoisted(() => ({
     | { status: 'invalid'; errors: string[] }
     | { status: 'conflict'; expectedRevision: number; actualRevision: number },
 }));
+const workstationImports = vi.hoisted(() => [] as unknown[]);
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeStorage: () => ({
@@ -36,6 +37,9 @@ vi.mock('@core/config/settings/settings-import-service.js', async () => {
   return {
     ...actual,
     importFleetSettingsRevision: vi.fn(async () => importOutcome.current),
+    importWorkstationSettings: vi.fn(async (_deps, settings) => {
+      workstationImports.push(settings);
+    }),
   };
 });
 
@@ -57,6 +61,7 @@ type TestResponse = ServerResponse & {
 beforeEach(() => {
   revisions.length = 0;
   importOutcome.current = { status: 'applied', revision: 1 };
+  workstationImports.length = 0;
 });
 
 describe('settings desired-state control routes', () => {
@@ -168,6 +173,35 @@ describe('settings desired-state control routes', () => {
     expect(JSON.parse(res.body)).toEqual({ revision: 7 });
   });
 
+  it('writes desired-state through the workstation import path in workstation mode', async () => {
+    const res = await invoke(
+      'PUT',
+      '/v1/settings/desired-state',
+      {
+        settings: { agent: {} },
+      },
+      { deploymentMode: 'workstation' },
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ revision: 0 });
+    expect(workstationImports).toHaveLength(1);
+  });
+
+  it('rejects revision guards in workstation mode', async () => {
+    const res = await invoke(
+      'PUT',
+      '/v1/settings/desired-state',
+      {
+        settings: { agent: {} },
+        expectedRevision: 3,
+      },
+      { deploymentMode: 'workstation' },
+    );
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error.code).toBe('INVALID_REQUEST');
+    expect(workstationImports).toHaveLength(0);
+  });
+
   it('rejects a non-integer expectedRevision', async () => {
     const res = await invoke('PUT', '/v1/settings/desired-state', {
       settings: { agent: {} },
@@ -220,7 +254,11 @@ async function invoke(
   method: string,
   pathname: string,
   body: unknown,
-  options: { authorization?: string | null; scopes?: Scope[] } = {},
+  options: {
+    authorization?: string | null;
+    scopes?: Scope[];
+    deploymentMode?: 'workstation' | 'fleet';
+  } = {},
 ): Promise<TestResponse> {
   const raw = body === undefined ? '' : JSON.stringify(body);
   const req = Readable.from(raw ? [raw] : []) as IncomingMessage;
@@ -235,7 +273,12 @@ async function invoke(
       : { authorization: 'Bearer test-token' }),
   };
   const res = responseRecorder();
-  await handleSettingsRoutes(req, res, mockContext(options.scopes), pathname);
+  await handleSettingsRoutes(
+    req,
+    res,
+    mockContext(options.scopes, options.deploymentMode),
+    pathname,
+  );
   return res;
 }
 
@@ -257,7 +300,10 @@ function responseRecorder(): TestResponse {
   } as TestResponse;
 }
 
-function mockContext(scopes: Scope[] = ['agents:admin']): ControlRouteContext {
+function mockContext(
+  scopes: Scope[] = ['agents:admin'],
+  deploymentMode: 'workstation' | 'fleet' = 'fleet',
+): ControlRouteContext {
   return {
     app: {} as ControlRouteContext['app'],
     runtimeHome: '/tmp/gantry-test',
@@ -277,9 +323,13 @@ function mockContext(scopes: Scope[] = ['agents:admin']): ControlRouteContext {
     state: { activeStreams: 0, activeWaits: 0, activeTriggerWaits: 0 },
     triggerRateLimiter: { consume: () => true },
     getRuntimeSettings: () =>
-      ({}) as ReturnType<ControlRouteContext['getRuntimeSettings']>,
+      ({
+        runtime: { deploymentMode },
+      }) as ReturnType<ControlRouteContext['getRuntimeSettings']>,
     getInternalRuntimeSettings: () =>
-      ({}) as ReturnType<ControlRouteContext['getInternalRuntimeSettings']>,
+      ({
+        runtime: { deploymentMode },
+      }) as ReturnType<ControlRouteContext['getInternalRuntimeSettings']>,
     getDefaultModelConfig: () => ({ source: 'test' }),
     getModelDefaults: () =>
       ({ defaults: {} }) as ReturnType<ControlRouteContext['getModelDefaults']>,

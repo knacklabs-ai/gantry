@@ -184,7 +184,12 @@ describe('pending interaction durability', () => {
     });
   });
 
-  it('enqueues resolved interactions to the active live turn before resolving', async () => {
+  it('enqueues the durable command BEFORE resolving the pending row', async () => {
+    // The order matters for the crash window: if the row flipped to resolved
+    // first and the process died before the live-turn command persisted, the
+    // runner would be blocked with no durable command to replay. Pinning the
+    // order (command append → row resolve) is the whole point of the change.
+    const order: string[] = [];
     const repository = {
       listPendingInteractions: vi.fn(async () => [
         {
@@ -208,12 +213,84 @@ describe('pending interaction durability', () => {
           resolvedAt: null,
         },
       ]),
+      resolvePendingInteraction: vi.fn(async () => {
+        order.push('resolve');
+        return true;
+      }),
+    };
+    const liveTurns = {
+      findActiveLiveTurnByRunId: vi.fn(async () => ({ id: 'turn-1' })),
+      appendLiveTurnCommand: vi.fn(async () => {
+        order.push('append');
+        return { outcome: 'appended', command: null };
+      }),
+    };
+    configurePendingInteractionDurability({
+      repository: repository as never,
+      liveTurns: liveTurns as never,
+    });
+
+    await expect(
+      resolvePendingInteractionRecord({
+        kind: 'permission',
+        sourceAgentFolder: 'agent-folder',
+        requestId: 'req-1',
+        runId: 'run-1',
+        status: 'resolved',
+        resolution: { approved: true, mode: 'allow_once' },
+        approverRef: 'user:approver',
+      }),
+    ).resolves.toBe(true);
+
+    // The command was enqueued strictly before the row was resolved.
+    expect(order).toEqual(['append', 'resolve']);
+    expect(liveTurns.appendLiveTurnCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        liveTurnId: 'turn-1',
+        commandType: 'interaction_resolved',
+        idempotencyKey: 'interaction_resolved:permission:agent-folder:req-1',
+        payload: expect.objectContaining({
+          kind: 'permission',
+          requestId: 'req-1',
+          callbackRoute: expect.objectContaining({
+            ipcBaseDir: '/tmp/ipc',
+            responseKeyId: 'key-1',
+          }),
+        }),
+      }),
+    );
+    expect(repository.resolvePendingInteraction).toHaveBeenCalledOnce();
+  });
+
+  it('treats a replayed durable command as delivered and still resolves (idempotent retry)', async () => {
+    // Approver-retry / crash-window path: a second resolve attempt re-appends
+    // the same `interaction_resolved:<key>` idempotency key, which the command
+    // store replays (outcome 'replayed', not 'rejected'). The retry must still
+    // succeed and flip the row resolved — no duplicate command, no stuck row.
+    const repository = {
+      listPendingInteractions: vi.fn(async () => [
+        {
+          id: 'pending-1',
+          appId: 'default',
+          runId: 'run-1',
+          kind: 'permission',
+          status: 'pending',
+          payload: {},
+          callbackRoute: { ipcBaseDir: '/tmp/ipc' },
+          idempotencyKey: 'permission:agent-folder:req-1',
+          approverRef: null,
+          resolution: null,
+          createdAt: '2026-06-10T00:00:00.000Z',
+          expiresAt: '2026-06-11T00:00:00.000Z',
+          resolvedAt: null,
+        },
+      ]),
       resolvePendingInteraction: vi.fn(async () => true),
     };
     const liveTurns = {
       findActiveLiveTurnByRunId: vi.fn(async () => ({ id: 'turn-1' })),
       appendLiveTurnCommand: vi.fn(async () => ({
-        outcome: 'appended',
+        outcome: 'replayed',
         command: null,
       })),
     };
@@ -234,25 +311,11 @@ describe('pending interaction durability', () => {
       }),
     ).resolves.toBe(true);
 
-    expect(liveTurns.appendLiveTurnCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        liveTurnId: 'turn-1',
-        commandType: 'interaction_resolved',
-        idempotencyKey: 'interaction_resolved:permission:agent-folder:req-1',
-        payload: expect.objectContaining({
-          kind: 'permission',
-          requestId: 'req-1',
-          callbackRoute: expect.objectContaining({
-            ipcBaseDir: '/tmp/ipc',
-            responseKeyId: 'key-1',
-          }),
-        }),
-      }),
-    );
+    expect(liveTurns.appendLiveTurnCommand).toHaveBeenCalledOnce();
     expect(repository.resolvePendingInteraction).toHaveBeenCalledOnce();
   });
 
-  it('restores pending interactions when live-turn delivery is rejected', async () => {
+  it('leaves pending interactions unresolved when live-turn delivery is rejected', async () => {
     const repository = {
       listPendingInteractions: vi.fn(async () => [
         {
@@ -272,7 +335,6 @@ describe('pending interaction durability', () => {
         },
       ]),
       resolvePendingInteraction: vi.fn(async () => true),
-      restorePendingInteractionPending: vi.fn(async () => true),
     };
     const liveTurns = {
       findActiveLiveTurnByRunId: vi.fn(async () => ({ id: 'turn-1' })),
@@ -301,10 +363,10 @@ describe('pending interaction durability', () => {
     ).resolves.toBe(false);
 
     expect(liveTurns.appendLiveTurnCommand).toHaveBeenCalledOnce();
-    expect(repository.resolvePendingInteraction).toHaveBeenCalledOnce();
-    expect(repository.restorePendingInteractionPending).toHaveBeenCalledWith({
-      idempotencyKey: 'permission:agent-folder:req-1',
-    });
+    // The row is NOT resolved: it stays pending and re-resolvable. No
+    // compensating "restore to pending" step is needed because the resolve
+    // never happened (command-before-resolve order).
+    expect(repository.resolvePendingInteraction).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'run-1', requestId: 'req-1' }),
       'Failed to enqueue interaction resolution to the owning live turn',

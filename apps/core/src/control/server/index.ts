@@ -144,6 +144,10 @@ function createControlRequestHandler(
       // falls through to the 404 fallback below.
       if (routeProfile === 'ops') {
         if (await handleSystemRoutes(req, res, ctx, pathname)) return;
+        if (isLiveIngressRoute(pathname)) {
+          if (await handleExternalIngressRoutes(req, res, ctx, pathname))
+            return;
+        }
         sendControlError(res, 404, 'NOT_FOUND', 'Route not found');
         return;
       }
@@ -198,6 +202,10 @@ function createControlRequestHandler(
       );
     }
   };
+}
+
+function isLiveIngressRoute(pathname: string): boolean {
+  return /^\/webhooks\/[^/]+(?:\/wait)?$/.test(pathname);
 }
 
 export function startControlServer(input: {

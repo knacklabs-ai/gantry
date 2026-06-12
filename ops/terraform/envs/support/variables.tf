@@ -25,19 +25,44 @@ variable "worker_ami_id" {
 }
 
 # --- Secret REFERENCES (ARNs) only. Create values out-of-band before apply. ---
-variable "db_master_password_secret_arn" {
-  description = "Secrets Manager ARN of the RDS master password."
+variable "runtime_database_url_secret_arn" {
+  description = "Secrets Manager ARN of the runtime DATABASE_URL secret (runtime role, RDS Proxy host, sslmode=require). Injected as GANTRY_DATABASE_URL."
   type        = string
 }
 
 variable "db_proxy_secret_arn" {
-  description = "Secrets Manager ARN of the RDS Proxy credential secret (JSON {username,password})."
+  description = "Secrets Manager ARN of the RDS Proxy runtime-role credential secret (JSON {username,password}). Referenced, never read into state."
   type        = string
 }
 
-variable "runtime_database_url_secret_arn" {
-  description = "Secrets Manager ARN of the runtime DATABASE_URL secret (runtime role, RDS Proxy host, sslmode=require). Injected as GANTRY_DATABASE_URL."
+variable "secret_encryption_key_secret_arn" {
+  description = "Secrets Manager ARN of the SECRET_ENCRYPTION_KEY secret (base64-encoded 32-byte key). Required by the production security gate."
   type        = string
+
+  validation {
+    condition     = trimspace(var.secret_encryption_key_secret_arn) != ""
+    error_message = "secret_encryption_key_secret_arn is required for support deployments."
+  }
+}
+
+variable "gantry_ipc_auth_secret_arn" {
+  description = "Secrets Manager ARN of the GANTRY_IPC_AUTH_SECRET secret (strong runner IPC secret). Required by the production security gate."
+  type        = string
+
+  validation {
+    condition     = trimspace(var.gantry_ipc_auth_secret_arn) != ""
+    error_message = "gantry_ipc_auth_secret_arn is required for support deployments."
+  }
+}
+
+variable "gantry_control_api_keys_json_secret_arn" {
+  description = "Secrets Manager ARN of the GANTRY_CONTROL_API_KEYS_JSON secret (JSON array with at least one strong key and non-empty scopes). Required by the production security gate."
+  type        = string
+
+  validation {
+    condition     = trimspace(var.gantry_control_api_keys_json_secret_arn) != ""
+    error_message = "gantry_control_api_keys_json_secret_arn is required for support deployments."
+  }
 }
 
 variable "migration_database_url_secret_arn" {

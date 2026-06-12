@@ -16,16 +16,6 @@ variable "runtime_secret_arns" {
   }
 }
 
-variable "proxy_secret_arn" {
-  description = "ARN of the Secrets Manager secret (username+password JSON) the RDS Proxy reads to connect to the database. Created out-of-band."
-  type        = string
-
-  validation {
-    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:", var.proxy_secret_arn))
-    error_message = "proxy_secret_arn must be a Secrets Manager ARN."
-  }
-}
-
 variable "kms_key_arns" {
   description = "ARNs of KMS keys that encrypt the referenced secrets, if they use a customer-managed key. Grants kms:Decrypt to the readers. Leave empty when secrets use the AWS-managed aws/secretsmanager key."
   type        = list(string)

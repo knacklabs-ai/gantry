@@ -668,6 +668,8 @@ export async function runJob(
       executionJid: execution?.executionJid,
       diagnostics,
       deps,
+      snapshotRunId: runId,
+      snapshotFencingVersion: leaseContext.lease.fencingVersion,
       emitJobEvent,
       logger,
     });

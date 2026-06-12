@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { nowIso } from '@core/shared/time/datetime.js';
-
 import {
   createPostgresIntegrationRuntime,
   hasPostgresIntegrationDatabase,
@@ -80,11 +78,21 @@ maybeDescribe('live waiting admission signal', () => {
 
   it('reports again when a newer message arrives after the turn completes', async () => {
     // The turn completes; a fresh inbound message arrives AFTER its createdAt.
+    const completedAt = new Date(Date.now() - 2_000).toISOString();
     await liveTurns.transitionLiveTurnState({
       id: 'turn-waiting-cover',
       toState: 'completed',
       fromStates: ['claimed'],
-      now: nowIso(),
+      now: completedAt,
+    });
+    await runtime.ops.storeMessage({
+      id: 'msg-waiting-continuation-covered',
+      chat_jid: chatJid,
+      provider: 'telegram',
+      sender: 'user-1',
+      sender_name: 'User One',
+      content: 'handled during active turn',
+      timestamp: new Date(Date.now() - 4_000).toISOString(),
     });
     await runtime.ops.storeMessage({
       id: 'msg-waiting-2',
@@ -93,7 +101,7 @@ maybeDescribe('live waiting admission signal', () => {
       sender: 'user-1',
       sender_name: 'User One',
       content: 'still there?',
-      timestamp: new Date(Date.now() - 3_000).toISOString(),
+      timestamp: new Date(Date.now() - 1_000).toISOString(),
     });
 
     const waiting = await liveTurns.getOldestWaitingLiveAdmission({

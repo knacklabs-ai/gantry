@@ -110,17 +110,17 @@ class SupplyChainGateTests(unittest.TestCase):
         result = run_script(
             IMAGE_SCRIPT,
             "--members",
-            "app/index.js\napp/node_modules/pkg/index.js\napp/.env\n",
+            "app/index.js\napp/.factory/run.json\napp/.env\n",
         )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("app/node_modules/pkg/index.js", result.stdout)
+        self.assertIn("app/.factory/run.json", result.stdout)
         self.assertIn("app/.env", result.stdout)
 
     def test_runtime_image_members_allow_clean_paths(self) -> None:
         result = run_script(
             IMAGE_SCRIPT,
             "--members",
-            "app/index.js\nusr/bin/node\netc/ssl/certs/ca-certificates.crt\netc/ssl/certs/ACME_Root_CA.pem\n",
+            "app/dist/index.js\napp/node_modules/pkg/index.js\nusr/bin/node\netc/ssl/certs/ACME_Root_CA.pem\n",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -168,6 +168,23 @@ services:
                 [
                     "minio/minio:RELEASE.2025-04-22T22-12-26Z",
                     "pgvector/pgvector:0.8.2-pg16-trixie@sha256:fce8fb583b92ef8af5150b373a96415d46a8cd38ba09b38efeea17c8b4c7d782",
+                ],
+            )
+            self.assertEqual(
+                module.compose_image_inspection_targets([compose]),
+                [
+                    module.ImageInspectionTarget(
+                        image="gantry-runtime:fleet-rehearsal",
+                        pull_before_save=False,
+                    ),
+                    module.ImageInspectionTarget(
+                        image="minio/minio:RELEASE.2025-04-22T22-12-26Z",
+                        pull_before_save=True,
+                    ),
+                    module.ImageInspectionTarget(
+                        image="pgvector/pgvector:0.8.2-pg16-trixie@sha256:fce8fb583b92ef8af5150b373a96415d46a8cd38ba09b38efeea17c8b4c7d782",
+                        pull_before_save=True,
+                    ),
                 ],
             )
 

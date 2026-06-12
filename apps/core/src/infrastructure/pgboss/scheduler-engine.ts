@@ -223,41 +223,17 @@ export class PgBossSchedulerEngine {
     triggerId: string,
     options?: { runId?: string },
   ): Promise<void> {
-    const boss = this.requireBoss();
-    const [job, trigger] = await Promise.all([
-      this.deps.opsRepository.getJobById(jobId),
-      getRuntimeControlRepository().getTriggerById(triggerId),
-    ]);
-    if (!job) throw new Error(`Job not found: ${jobId}`);
-    if (!trigger) throw new Error(`Trigger not found: ${triggerId}`);
-    await boss.send(
-      SCHEDULER_QUEUE,
-      {
-        jobId,
-        runId: options?.runId,
-        triggerId,
-        scheduledFor: trigger.requestedAt,
-      },
-      {
-        id: pgBossSendId(jobId, `trigger:${triggerId}`),
-        group: { id: pgBossGroupId(job.workspace_key) },
-        retryLimit: 0,
-      },
-    );
+    await enqueueSchedulerTriggerDelivery({
+      boss: this.requireBoss(),
+      opsRepository: this.deps.opsRepository,
+      jobId,
+      triggerId,
+      runId: options?.runId,
+    });
   }
 
   private async ensureQueues(): Promise<void> {
-    const boss = this.requireBoss();
-    await boss.createQueue(SCHEDULER_QUEUE_DEAD_LETTER, {
-      policy: 'standard',
-      retentionSeconds: 14 * 24 * 60 * 60,
-    });
-    await boss.createQueue(SCHEDULER_QUEUE, {
-      policy: 'standard',
-      retryLimit: 0,
-      deadLetter: SCHEDULER_QUEUE_DEAD_LETTER,
-      retentionSeconds: 14 * 24 * 60 * 60,
-    });
+    await ensureSchedulerQueues(this.requireBoss());
   }
 
   private async drainSyncRequests(): Promise<void> {
@@ -569,6 +545,7 @@ export class PgBossSchedulerEngine {
         { err, jobId: job.id },
         'Failed to requeue scheduler delivery blocked on run slot capacity',
       );
+      throw err;
     }
   }
 
@@ -629,9 +606,9 @@ export class PgBossSchedulerEngine {
     } catch (err) {
       logger.warn(
         { err, jobId: job.id },
-        'Failed to requeue ineligible scheduler delivery; skipping execution on this worker',
+        'Failed to requeue ineligible scheduler delivery',
       );
-      return true;
+      throw err;
     }
     logger.info(
       {
@@ -669,6 +646,48 @@ export class PgBossSchedulerEngine {
     if (!this.boss) throw new Error('pg-boss scheduler is not running');
     return this.boss;
   }
+}
+
+export async function ensureSchedulerQueues(boss: PgBoss): Promise<void> {
+  await boss.createQueue(SCHEDULER_QUEUE_DEAD_LETTER, {
+    policy: 'standard',
+    retentionSeconds: 14 * 24 * 60 * 60,
+  });
+  await boss.createQueue(SCHEDULER_QUEUE, {
+    policy: 'standard',
+    retryLimit: 0,
+    deadLetter: SCHEDULER_QUEUE_DEAD_LETTER,
+    retentionSeconds: 14 * 24 * 60 * 60,
+  });
+}
+
+export async function enqueueSchedulerTriggerDelivery(input: {
+  boss: PgBoss;
+  opsRepository: SchedulerDependencies['opsRepository'];
+  jobId: string;
+  triggerId: string;
+  runId?: string;
+}): Promise<void> {
+  const [job, trigger] = await Promise.all([
+    input.opsRepository.getJobById(input.jobId),
+    getRuntimeControlRepository().getTriggerById(input.triggerId),
+  ]);
+  if (!job) throw new Error(`Job not found: ${input.jobId}`);
+  if (!trigger) throw new Error(`Trigger not found: ${input.triggerId}`);
+  await input.boss.send(
+    SCHEDULER_QUEUE,
+    {
+      jobId: input.jobId,
+      runId: input.runId,
+      triggerId: input.triggerId,
+      scheduledFor: trigger.requestedAt,
+    },
+    {
+      id: pgBossSendId(input.jobId, `trigger:${input.triggerId}`),
+      group: { id: pgBossGroupId(job.workspace_key) },
+      retryLimit: 0,
+    },
+  );
 }
 
 function runSlotRequeueDelayMs(random: () => number = Math.random): number {

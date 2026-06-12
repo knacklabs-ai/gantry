@@ -163,22 +163,9 @@ export async function resolvePendingInteractionRecord(input: {
     }
   }
 
-  try {
-    const resolved = await active.repository.resolvePendingInteraction({
-      idempotencyKey,
-      status: input.status,
-      resolution: input.resolution,
-      approverRef: input.approverRef ?? null,
-    });
-    if (!resolved) return false;
-  } catch (err) {
-    active.warn?.(
-      { err, kind: input.kind, requestId: input.requestId },
-      'Failed to resolve durable pending interaction',
-    );
-    return false;
-  }
-
+  // Persist the live-turn command before marking the pending row resolved. A
+  // crash after the row transition must not leave the runner blocked with no
+  // durable command to replay.
   if (input.runId && active.liveTurns && liveTurnDelivery) {
     try {
       const delivered = await enqueueResolvedInteractionCommand({
@@ -194,13 +181,6 @@ export async function resolvePendingInteractionRecord(input: {
         approverRef: input.approverRef,
       });
       if (!delivered) {
-        await restorePendingInteractionAfterDeliveryFailure({
-          active,
-          idempotencyKey,
-          kind: input.kind,
-          requestId: input.requestId,
-          runId: input.runId,
-        });
         active.warn?.(
           { kind: input.kind, requestId: input.requestId, runId: input.runId },
           'Failed to enqueue interaction resolution to the owning live turn',
@@ -217,53 +197,26 @@ export async function resolvePendingInteractionRecord(input: {
         },
         'Failed to deliver interaction resolution to the owning live turn',
       );
-      await restorePendingInteractionAfterDeliveryFailure({
-        active,
-        idempotencyKey,
-        kind: input.kind,
-        requestId: input.requestId,
-        runId: input.runId,
-      });
       return false;
     }
   }
-  return true;
-}
 
-async function restorePendingInteractionAfterDeliveryFailure(input: {
-  active: InteractionDurabilityBackend;
-  idempotencyKey: string;
-  kind: PendingInteractionKind;
-  requestId: string;
-  runId?: string | null;
-}): Promise<void> {
-  const restore = input.active.repository.restorePendingInteractionPending;
-  if (!restore) return;
   try {
-    const restored = await restore.call(input.active.repository, {
-      idempotencyKey: input.idempotencyKey,
+    const resolved = await active.repository.resolvePendingInteraction({
+      idempotencyKey,
+      status: input.status,
+      resolution: input.resolution,
+      approverRef: input.approverRef ?? null,
     });
-    if (!restored) {
-      input.active.warn?.(
-        {
-          kind: input.kind,
-          requestId: input.requestId,
-          runId: input.runId,
-        },
-        'Failed to restore pending interaction after live-turn delivery failure',
-      );
-    }
+    if (!resolved) return false;
   } catch (err) {
-    input.active.warn?.(
-      {
-        err,
-        kind: input.kind,
-        requestId: input.requestId,
-        runId: input.runId,
-      },
-      'Failed to restore pending interaction after live-turn delivery failure',
+    active.warn?.(
+      { err, kind: input.kind, requestId: input.requestId },
+      'Failed to resolve durable pending interaction',
     );
+    return false;
   }
+  return true;
 }
 
 export interface DurablePermissionInteractionContext {

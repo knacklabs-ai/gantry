@@ -15,6 +15,8 @@ const log = vi.hoisted(() => ({
 }));
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
+  getRuntimeBrowserProfileArtifactStore: () => ({}),
+  getRuntimeBrowserProfileSnapshotRepository: () => ({}),
   getRuntimeStorage: () => ({
     ops: {},
     repositories: {

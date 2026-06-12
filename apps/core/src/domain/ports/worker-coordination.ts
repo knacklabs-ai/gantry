@@ -269,10 +269,6 @@ export interface PendingInteractionRepository {
     approverRef?: string | null;
     now?: string;
   }): Promise<boolean>;
-  restorePendingInteractionPending?(input: {
-    idempotencyKey: string;
-    now?: string;
-  }): Promise<boolean>;
   updatePendingInteractionPayload(input: {
     idempotencyKey: string;
     payload: Record<string, unknown>;

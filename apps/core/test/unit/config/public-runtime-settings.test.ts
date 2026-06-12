@@ -47,3 +47,29 @@ it('redacts owner-defined browser usage override sites from public settings', as
     'liveTurns',
   );
 });
+
+it('projects configured agent access using the public contract shape', async () => {
+  const runtimeHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'gantry-settings-'),
+  );
+  runtimeHomes.push(runtimeHome);
+  vi.resetModules();
+  vi.stubEnv('GANTRY_HOME', runtimeHome);
+  const runtimeSettings =
+    await import('@core/config/settings/runtime-settings.js');
+  const defaults = runtimeSettings.ensureRuntimeSettings(runtimeHome);
+  defaults.agents.support = {
+    name: 'Support',
+    folder: 'support',
+    bindings: {},
+    sources: { skills: [], mcpServers: [], tools: [] },
+    capabilities: [],
+    accessPreset: 'locked',
+  };
+  runtimeSettings.saveRuntimeSettings(runtimeHome, defaults);
+  const config = await import('@core/config/index.js');
+
+  const publicAgent = config.getPublicRuntimeSettings().agents.support;
+  expect(publicAgent.access).toEqual({ preset: 'locked' });
+  expect(publicAgent).not.toHaveProperty('accessPreset');
+});

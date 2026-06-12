@@ -78,12 +78,12 @@ value throws). This is **not** a `settings.yaml` key — it is the deployment la
 (same axis as `GANTRY_SECURITY_POSTURE`), and it selects which subsystems a
 process boots. The workstation default is `all`.
 
-| Role | Control API | Live exec | Job exec | Provider inbound | Settings writes | Bakes | Registers as worker |
-|---|---|---|---|---|---|---|---|
-| `all` (workstation default) | full | yes | yes | yes | yes | yes | yes |
-| `control` | full | no | no | no | yes | no | **no** |
-| `live-worker` | ops-only | yes | no | yes | no | no | yes |
-| `job-worker` | ops-only | no | yes | no | no | yes | yes |
+| Role                        | Control API | Live exec | Job exec | Provider inbound | Settings writes | Bakes | Registers as worker |
+| --------------------------- | ----------- | --------- | -------- | ---------------- | --------------- | ----- | ------------------- |
+| `all` (workstation default) | full        | yes       | yes      | yes              | yes             | yes   | yes                 |
+| `control`                   | full        | no        | no       | no               | yes             | no    | **no**              |
+| `live-worker`               | ops-only    | yes       | no       | yes              | no              | no    | yes                 |
+| `job-worker`                | ops-only    | no        | yes      | no               | no              | yes   | yes                 |
 
 - **`full` control API** mounts every route (today's behaviour). **`ops-only`**
   mounts only `/healthz`, `/readyz`, `/metrics`, and the read-only `/v1/status`,
@@ -104,33 +104,33 @@ does not register).
 
 ## Mode Matrix
 
-| Concern | Workstation | Fleet | Locked Support Stack |
-|---|---|---|---|
-| Topology | Single machine (`all` role), vertical scale | Three role pools behind one ALB — `control` (admin/API), `live-worker` (distributed live exec), `job-worker` (scheduler + bakes); all from one image via `GANTRY_PROCESS_ROLE` | Single `all`-role worker (one box does everything); locked agents only |
-| Scaling | None (one host) | `live-worker` scales out for chat capacity; `job-worker` scales out for job/bake load; both on CPU target tracking. `control` is usually a single box | Vertical only (`worker_instance_type`); one box |
-| Capability installs | Live on host (package manager runs) | Artifacts in S3, replace-on-update; sandboxed bake job; **no package manager on workers** | Pre-provisioned only; no live install, no escalation |
-| Settings surface | `settings.yaml` watcher → auto-import | Control-API desired-state CRUD; `settings_revisions` + pg_notify; YAML is bootstrap/backup only | Same as fleet |
-| Live-turn topology | In-process | **Distributed**: every `live-worker` polls + admits; the durable one-active-turn-per-scope claim serializes ownership; a lease-elected recovery coordinator owns only startup recovery + the periodic sweep. Chat capacity scales with the live pool | Single `all` worker is the only claimer; identical primitives |
-| Security posture | Relaxed local (may opt into production) | **Production required** | **Production required** |
-| Agent access preset | `full` (default) | `full` or `locked` per agent | `locked` |
-| Delivery | Local run | Terraform/AWS (`envs/fleet`) | Terraform/AWS (`envs/support`) |
-| Isolation | n/a | Per-tenant stack | Isolated stack (default) or co-tenant (cheaper, weaker blast radius) |
+| Concern             | Workstation                                 | Fleet                                                                                                                                                                                                                                                | Locked Support Stack                                                   |
+| ------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Topology            | Single machine (`all` role), vertical scale | Three role pools behind one ALB — `control` (admin/API), `live-worker` (distributed live exec), `job-worker` (scheduler + bakes); all from one image via `GANTRY_PROCESS_ROLE`                                                                       | Single `all`-role worker (one box does everything); locked agents only |
+| Scaling             | None (one host)                             | `live-worker` scales out for chat capacity; `job-worker` scales out for job/bake load; both on CPU target tracking. `control` is usually a single box                                                                                                | Vertical only (`worker_instance_type`); one box                        |
+| Capability installs | Live on host (package manager runs)         | Artifacts in S3, replace-on-update; sandboxed bake job; **no package manager on workers**                                                                                                                                                            | Pre-provisioned only; no live install, no escalation                   |
+| Settings surface    | `settings.yaml` watcher → auto-import       | Control-API desired-state CRUD; `settings_revisions` + pg_notify; YAML is bootstrap/backup only                                                                                                                                                      | Same as fleet                                                          |
+| Live-turn topology  | In-process                                  | **Distributed**: every `live-worker` polls + admits; the durable one-active-turn-per-scope claim serializes ownership; a lease-elected recovery coordinator owns only startup recovery + the periodic sweep. Chat capacity scales with the live pool | Single `all` worker is the only claimer; identical primitives          |
+| Security posture    | Relaxed local (may opt into production)     | **Production required**                                                                                                                                                                                                                              | **Production required**                                                |
+| Agent access preset | `full` (default)                            | `full` or `locked` per agent                                                                                                                                                                                                                         | `locked`                                                               |
+| Delivery            | Local run                                   | Terraform/AWS (`envs/fleet`)                                                                                                                                                                                                                         | Terraform/AWS (`envs/support`)                                         |
+| Isolation           | n/a                                         | Per-tenant stack                                                                                                                                                                                                                                     | Isolated stack (default) or co-tenant (cheaper, weaker blast radius)   |
 
 ## State-Ownership Table
 
 Where each piece of state lives, per mode. "—" means not applicable in that mode.
 
-| State | Workstation | Fleet / Locked |
-|---|---|---|
-| Desired settings (canonical) | `settings.yaml` (watched, auto-imported) | Postgres `settings_revisions` via control API; `settings.yaml` = bootstrap/backup |
-| Secrets / channel credentials | `.env` (local secret source) | Secret manager refs; no secret values in Terraform state |
-| Skill source bytes | Local `skills/<name>/` on host disk | **S3** `skills/` (current-state artifact, sha256-verified) |
-| Dependency toolchains | Installed live on host | **S3** `toolchains/` (bake-job output, current-state artifact) |
-| Runtime/runs/leases/slots/turns/commands | Postgres | Postgres (RDS + Proxy) |
-| Worker capability advertisement | n/a (single host) | Postgres `worker_instances.capabilities_json` |
-| Activated artifact on a worker | Host disk | **Worker disk** (ephemeral cache; re-fetched/verified from S3, atomic temp-write + rename) |
-| Browser profiles | Host disk | Per-live-worker disk — a browser-bearing turn's profile lives on whichever live worker ran it (see Browser Note) |
-| Audit / provenance | Postgres audit events | Postgres audit events |
+| State                                    | Workstation                              | Fleet / Locked                                                                                                                                                     |
+| ---------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Desired settings (canonical)             | `settings.yaml` (watched, auto-imported) | Postgres `settings_revisions` via control API; `settings.yaml` = bootstrap/backup                                                                                  |
+| Secrets / channel credentials            | `.env` (local secret source)             | Secret manager refs; no secret values in Terraform state                                                                                                           |
+| Skill source bytes                       | Local `skills/<name>/` on host disk      | **S3** `skills/` (current-state artifact, sha256-verified)                                                                                                         |
+| Dependency toolchains                    | Installed live on host                   | **S3** `toolchains/` (bake-job output, current-state artifact)                                                                                                     |
+| Runtime/runs/leases/slots/turns/commands | Postgres                                 | Postgres (RDS + Proxy)                                                                                                                                             |
+| Worker capability advertisement          | n/a (single host)                        | Postgres `worker_instances.capabilities_json`                                                                                                                      |
+| Activated artifact on a worker           | Host disk                                | **Worker disk** (ephemeral cache; re-fetched/verified from S3, atomic temp-write + rename)                                                                         |
+| Browser profiles                         | Host disk                                | Worker disk + durable cross-worker snapshot store (`browser-profiles/` prefix); snapshot on turn end → restore on launch, atomic + sha-verified (see Browser Note) |
+| Audit / provenance                       | Postgres audit events                    | Postgres audit events                                                                                                                                              |
 
 ## Upgrade / Skew Matrix
 
@@ -138,14 +138,14 @@ Rolling deploys mix old and new workers, old and new settings revisions, and old
 and new artifacts. Each row is a skew scenario with the expected behavior and the
 operator-visible signal.
 
-| # | Scenario | Expected behavior | Operator signal |
-|---|---|---|---|
-| 1 | **Old worker + new settings revision** | Old worker whose code < revision `min_reader_version` **holds last-applied revision**, does not mis-apply | Skew-age alert + `/metrics` skew gauge; resolves as old workers cycle out |
-| 2 | **New worker + old revision** | New worker reads the current (older) revision normally; `min_reader_version` only blocks the reverse direction | No alert; normal convergence |
-| 3 | **Mixed-version workers mid-deploy** | Both serve; lease fencing + image digest keep terminal writes correct; no split-brain on a run | Worker inventory shows mixed image digests; normal during deploy |
-| 4 | **Migration vs old worker** | Additive-only migrations; one pg advisory lock (inside `migrate()`) serializes every migrator — entrypoint passes and runtime boot-time migrations alike, including boots with `GANTRY_SKIP_MIGRATIONS=1`; old worker runs against newer additive schema | Migration runs once (lock holder); losers wait; failure exits non-zero |
-| 5 | **Bake artifact vs old worker** | New artifact is replace-on-update; a worker still holding the prior artifact keeps serving until it reconciles (fetch → sha256 verify → atomic activate) | Capability advertised only after activate; hash mismatch → quarantine + `gantry artifacts quarantine rebake` |
-| 6 | **Live worker drains during deploy** | The draining worker stops admitting and finishes/hands off its owned turns; other live workers keep polling and admitting throughout. If the worker held the recovery-coordinator lease it releases it early and any live worker is re-elected; turns the previous coordinator never recovered resume on the new one at a higher fencing version | Live-turn `recovered` state for any turn that lost its owner; no global live-chat pause (only the draining worker's owned turns move). Coordinator failover RTO ≈ lease TTL (~30s) |
+| #   | Scenario                               | Expected behavior                                                                                                                                                                                                                                                                                                                                | Operator signal                                                                                                                                                                    |
+| --- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Old worker + new settings revision** | Old worker whose code < revision `min_reader_version` **holds last-applied revision**, does not mis-apply                                                                                                                                                                                                                                        | Skew-age alert + `/metrics` skew gauge; resolves as old workers cycle out                                                                                                          |
+| 2   | **New worker + old revision**          | New worker reads the current (older) revision normally; `min_reader_version` only blocks the reverse direction                                                                                                                                                                                                                                   | No alert; normal convergence                                                                                                                                                       |
+| 3   | **Mixed-version workers mid-deploy**   | Both serve; lease fencing + image digest keep terminal writes correct; no split-brain on a run                                                                                                                                                                                                                                                   | Worker inventory shows mixed image digests; normal during deploy                                                                                                                   |
+| 4   | **Migration vs old worker**            | Additive-only migrations; one pg advisory lock (inside `migrate()`) serializes every migrator — entrypoint passes and runtime boot-time migrations alike, including boots with `GANTRY_SKIP_MIGRATIONS=1`; old worker runs against newer additive schema                                                                                         | Migration runs once (lock holder); losers wait; failure exits non-zero                                                                                                             |
+| 5   | **Bake artifact vs old worker**        | New artifact is replace-on-update; a worker still holding the prior artifact keeps serving until it reconciles (fetch → sha256 verify → atomic activate)                                                                                                                                                                                         | Capability advertised only after activate; hash mismatch → quarantine + `gantry artifacts quarantine rebake`                                                                       |
+| 6   | **Live worker drains during deploy**   | The draining worker stops admitting and finishes/hands off its owned turns; other live workers keep polling and admitting throughout. If the worker held the recovery-coordinator lease it releases it early and any live worker is re-elected; turns the previous coordinator never recovered resume on the new one at a higher fencing version | Live-turn `recovered` state for any turn that lost its owner; no global live-chat pause (only the draining worker's owned turns move). Coordinator failover RTO ≈ lease TTL (~30s) |
 
 ## Security Posture vs Topology
 
@@ -164,24 +164,42 @@ posture is not production.
 With multi-live execution, browser-bearing turns can land on **different live
 workers** — successive turns for the same agent may admit on different boxes, and
 a recovered turn resumes wherever the recovery coordinator runs. Browser profiles
-(cookies, sessions, logged-in state) live on **per-worker disk** and do **not**
-follow the agent across workers. There is no durable cross-worker browser profile
-store yet.
+(cookies, sessions, logged-in state) **now follow the conversation across live
+workers** via a durable cross-worker snapshot store.
 
-Until browser profile snapshot/restore lands (see [TODOS.md](../../TODOS.md)),
-the consequence is operational, not data-loss: an agent that relied on a logged-in
-browser session may find a fresh profile on a different worker and have to
-re-authenticate. Mitigations for an agent that must not depend on cross-worker
-browser state:
+**Lifecycle.** When a turn that actually used the browser finishes (live turn
+finalize, or scheduled job browser cleanup), the worker closes Chrome so the
+bytes are quiescent and **snapshots** the profile's `user-data/` tree (cookies,
+logins, `Local State`, storage leveldbs — caches and host-local junk excluded)
+to the artifact store, then records the content hash + storage ref on the
+`browser_profiles` row. Before Chrome launches for that profile on any worker,
+the launch path **restores** the snapshot: if the recorded content hash differs
+from the local copy (or there is none), it materializes the bytes atomically
+(temp dir → sha256-verify → swap), exactly like the toolchain artifact cache,
+quarantining on integrity mismatch. The same-worker fast path is a no-op (a local
+marker already matches), so the workstation single-process deployment carries
+effectively zero overhead. A stale recovered-from worker cannot clobber a newer
+snapshot: the upsert is monotonic last-writer-wins keyed on the lease fencing
+version, so a higher-fence owner always wins.
 
-- Pin browser-dependent work to a single live worker is **not** supported (no
-  affinity primitive); prefer stateless browser flows (per-turn auth, no relied-on
-  persistent login) for fleet agents.
-- A per-agent browser kill-switch disables `Browser` for any agent that must not
-  silently depend on a profile that may not be present on the admitting worker.
+**Storage / IAM.** Snapshots live under the `browser-profiles/` prefix of the
+capability artifact store (local FS or S3, following `runtime.artifactStore`).
+Unlike toolchain artifacts (bake-rw / worker-ro), browser profiles are written by
+workers at turn end, so the **worker role needs read-write on the
+`browser-profiles/` prefix** (encoded as the `worker_browser_rw` policy in the
+Terraform storage module). There is no profile GC/TTL yet — snapshot rows and
+objects grow unbounded (see [TODOS.md](../../TODOS.md)).
 
-This is the trigger that activated the deferred browser profile snapshot/restore
-item — see [TODOS.md](../../TODOS.md).
+**Treat snapshot objects as credential-grade secrets.** The full-minus-cache
+bundle includes Chrome's `Login Data` (the saved-passwords SQLite DB) and the
+`Local State` `os_crypt` key material; on headless Linux that key is typically
+derivable, so a snapshot object is effectively a plaintext credential store, not
+just opaque session state. There is no application-layer encryption — protection
+rests entirely on the bucket posture: SSE-KMS at rest, prefix-scoped worker-rw
+IAM (no cross-tenant read), and S3 public-access block.
+
+The per-agent browser **kill-switch** still applies: it disables `Browser` for any
+agent that must not depend on a (now durable) browser profile at all.
 
 ## Worker Configuration (sandboxed agent child processes)
 
@@ -241,15 +259,15 @@ bigger instances and higher per-worker concurrency (`runtime.queue`,
 `runtime.sandbox.resource_limits`). **Horizontal** = more workers in the
 autoscaled pool. Start from the symptom, not the axis:
 
-| What is actually growing / hurting | Scale | Levers |
-|---|---|---|
+| What is actually growing / hurting                                                                               | Scale                                                                                                                       | Levers                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Live conversations: turns wait behind per-worker `max_message_runs`, users see "Waiting for an available worker" | **Horizontal (live pool)** — every live worker admits turns; cluster live capacity ≈ `max_message_runs` × live-worker count | Raise `live_worker_max_size` / `live_worker_desired_capacity`, or bigger `live_worker_instance_type` + higher `runtime.queue.max_message_runs` per box. Both add capacity now |
-| Scheduled jobs, bakes: queue depth grows, job-worker CPU sustained high | **Horizontal (job pool)** — jobs are claimable by any job worker | Raise `job_worker_max_size`, tune `job_worker_cpu_target` |
-| Admin/API latency (control plane): `/v1/*` slow, SDK calls back up | **Vertical (control), then horizontal** — control runs no execution, so this is rare | Bigger `control_instance_type`; raise `control_max_size` + set `control_autoscaling_enabled` if genuinely API-bound |
-| Single turns are too heavy: worker memory pressure, OOM-killed runners, subagent-dense turns | **Vertical** — more workers do not shrink one turn's footprint | Bigger instance, or cap harder via `resource_limits` (memory_mb / max_processes); see the sizing rule in Worker Configuration above |
-| Availability: live failover tolerance, deploy safety | **Horizontal floor** — independent of throughput | `live_worker_min_size >= 2` (enforced); recovery-coordinator failover RTO ≈ lease TTL (~30s); other live workers keep serving during a single worker's drain |
-| Everything is slow but workers are idle | **Neither** — look at the database | RDS instance class, RDS Proxy pool, `pgboss` queue health |
-| Cost at idle | **Neither** — scale down to the floor, never to zero | Fleet floor: ≥2 live workers + 1 control + 1 job worker; support stack floor 1; per-turn runner compute is already zero at idle |
+| Scheduled jobs, bakes: queue depth grows, job-worker CPU sustained high                                          | **Horizontal (job pool)** — jobs are claimable by any job worker                                                            | Raise `job_worker_max_size`, tune `job_worker_cpu_target`                                                                                                                     |
+| Admin/API latency (control plane): `/v1/*` slow, SDK calls back up                                               | **Vertical (control), then horizontal** — control runs no execution, so this is rare                                        | Bigger `control_instance_type`; raise `control_max_size` + set `control_autoscaling_enabled` if genuinely API-bound                                                           |
+| Single turns are too heavy: worker memory pressure, OOM-killed runners, subagent-dense turns                     | **Vertical** — more workers do not shrink one turn's footprint                                                              | Bigger instance, or cap harder via `resource_limits` (memory_mb / max_processes); see the sizing rule in Worker Configuration above                                           |
+| Availability: live failover tolerance, deploy safety                                                             | **Horizontal floor** — independent of throughput                                                                            | `live_worker_min_size >= 2` (enforced); recovery-coordinator failover RTO ≈ lease TTL (~30s); other live workers keep serving during a single worker's drain                  |
+| Everything is slow but workers are idle                                                                          | **Neither** — look at the database                                                                                          | RDS instance class, RDS Proxy pool, `pgboss` queue health                                                                                                                     |
+| Cost at idle                                                                                                     | **Neither** — scale down to the floor, never to zero                                                                        | Fleet floor: ≥2 live workers + 1 control + 1 job worker; support stack floor 1; per-turn runner compute is already zero at idle                                               |
 
 Signals to read before choosing (`/metrics` + CLI):
 
@@ -307,10 +325,10 @@ previous worker lost its lease; Gantry safely retried this run."**
 
 ## Runbook Index
 
-| Runbook | Location | Status |
-|---|---|---|
-| AWS Terraform deployment (prerequisites → secrets → terraform → seeding → first locked agent → health → rollback → teardown) | `docs/deployment/aws-terraform.md` | Created in Phase 2 |
-| Locked support stack | `envs/support` (covered in the AWS Terraform runbook) | Created in Phase 2 |
+| Runbook                                                                                                                      | Location                                              | Status             |
+| ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------ |
+| AWS Terraform deployment (prerequisites → secrets → terraform → seeding → first locked agent → health → rollback → teardown) | `docs/deployment/aws-terraform.md`                    | Created in Phase 2 |
+| Locked support stack                                                                                                         | `envs/support` (covered in the AWS Terraform runbook) | Created in Phase 2 |
 
 Measured gates (from the implementation plan): local compose → first agent turn
 ≤ 15 min; clean AWS account → first locked support-agent turn ≤ 60 min, both via

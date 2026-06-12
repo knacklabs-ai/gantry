@@ -20,7 +20,7 @@ import type {
 } from '../../../application/jobs/job-management-types.js';
 import {
   enqueueJobTrigger,
-  isSchedulerReady,
+  isJobTriggerQueueReady,
   runtimeJobSchedulePlanner,
   requestSchedulerSync,
   schedulerNotReadyReason,
@@ -152,7 +152,7 @@ export function createJobManagementService(ctx?: ControlRouteContext) {
     schedulePlanner: runtimeJobSchedulePlanner,
     clock: { now: nowIso },
     triggerQueue: {
-      isReady: isSchedulerReady,
+      isReady: isJobTriggerQueueReady,
       enqueue: enqueueJobTrigger,
       notReadyReason: schedulerNotReadyReason,
     },

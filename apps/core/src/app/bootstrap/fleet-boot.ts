@@ -4,7 +4,11 @@ import { createS3ArtifactClient } from '../../adapters/artifacts/skills/s3-artif
 import { S3SkillArtifactStore } from '../../adapters/artifacts/skills/s3-skill-artifact-store.js';
 import { LocalToolchainArtifactStore } from '../../adapters/artifacts/toolchains/local-toolchain-artifact-store.js';
 import { S3ToolchainArtifactStore } from '../../adapters/artifacts/toolchains/s3-toolchain-artifact-store.js';
-import { getRuntimeStorage } from '../../adapters/storage/postgres/runtime-store.js';
+import {
+  getRuntimeBrowserProfileArtifactStore,
+  getRuntimeBrowserProfileSnapshotRepository,
+  getRuntimeStorage,
+} from '../../adapters/storage/postgres/runtime-store.js';
 import {
   ARTIFACTS_DIR,
   getRuntimeSettingsForConfig,
@@ -27,6 +31,7 @@ import {
 import type { ToolchainBakeOutcomeNotice } from '../../jobs/toolchain-bake-executor.js';
 import { PostgresManifestWakeupSource } from '../../jobs/toolchain-manifest-listener.js';
 import { currentWorkerInstanceId } from '../../jobs/worker-identity.js';
+import { registerBrowserProfileSync } from '../../runtime/browser-profile-sync.js';
 import { WorkerCapabilityReconciler } from '../../jobs/worker-capability-reconciler.js';
 import {
   markSettingsLoaded,
@@ -150,6 +155,17 @@ export async function startFleetSubsystems(input: {
   const bakeExecution = input.bakeExecution ?? true;
   const capabilityReconciliation = input.capabilityReconciliation ?? true;
 
+  const registerBrowserSync = (): void => {
+    // Cross-worker browser profile snapshot/restore. Registered only after
+    // fleet settings are loaded so artifact storage resolves to the shared
+    // configured store instead of the default workstation-local store.
+    registerBrowserProfileSync({
+      store: getRuntimeBrowserProfileArtifactStore(),
+      repository: getRuntimeBrowserProfileSnapshotRepository(),
+      workerInstanceId,
+    });
+  };
+
   let bakeQueueStarted = false;
   let reconciler: WorkerCapabilityReconciler | undefined;
   let capabilitySubsystemsStarted = false;
@@ -188,8 +204,10 @@ export async function startFleetSubsystems(input: {
   };
 
   if (input.settingsLoaded) {
+    registerBrowserSync();
     await startCapabilitySubsystems();
   } else {
+    registerBrowserProfileSync(null);
     logger.warn(
       'Fleet worker has no settings revision; bake queue and capability ' +
         'reconciler are held until the first revision is applied',
@@ -215,6 +233,7 @@ export async function startFleetSubsystems(input: {
       // held scheduler/capability subsystems on an instance the ALB already
       // pulled from rotation.
       if (isDraining()) return;
+      registerBrowserSync();
       await startCapabilitySubsystems();
       await input.onSettingsReady?.();
       logger.info(
@@ -241,6 +260,7 @@ export async function startFleetSubsystems(input: {
   return {
     settingsRevisionListener,
     stop: async () => {
+      registerBrowserProfileSync(null);
       await settingsRevisionListener.stop();
       await reconciler?.stop();
       if (bakeQueueStarted) await stopToolchainBakeSubsystem();

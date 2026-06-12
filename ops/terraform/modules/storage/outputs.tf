@@ -17,3 +17,8 @@ output "worker_ro_policy_arn" {
   description = "IAM policy ARN granting read-only artifact access. Attach to the worker instance role."
   value       = aws_iam_policy.worker_ro.arn
 }
+
+output "worker_browser_rw_policy_arn" {
+  description = "IAM policy ARN granting worker read-write access to browser profile snapshots."
+  value       = aws_iam_policy.worker_browser_rw.arn
+}

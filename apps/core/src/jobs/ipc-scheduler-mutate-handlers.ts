@@ -14,7 +14,7 @@ import { schedulerAccessFromContext } from './ipc-scheduler-access.js';
 import { getRuntimeEventExchange } from '../adapters/storage/postgres/runtime-store.js';
 import {
   enqueueJobTrigger,
-  isSchedulerReady,
+  isJobTriggerQueueReady,
   schedulerNotReadyReason,
 } from './scheduler.js';
 import {
@@ -46,7 +46,7 @@ function makeRunNowJobService(context: TaskContext): JobManagementService {
     skillRepository: context.deps.getSkillRepository?.(),
     runtimeEvents: getRuntimeEventExchange(),
     triggerQueue: {
-      isReady: isSchedulerReady,
+      isReady: isJobTriggerQueueReady,
       enqueue: enqueueJobTrigger,
       notReadyReason: schedulerNotReadyReason,
     },

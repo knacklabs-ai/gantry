@@ -78,9 +78,14 @@ x-worker-base: &worker-base
     GANTRY_DB_SCHEMA: gantry
     GANTRY_CONTROL_HOST: 0.0.0.0
     GANTRY_CONTROL_PORT: '8080'
-    # Secrets are placeholders for rehearsal; production injects via Secrets
-    # Manager refs (see Terraform modules/secrets). Never commit real values.
-    GANTRY_CONTROL_API_KEYS_JSON: ${GANTRY_CONTROL_API_KEYS_JSON:-[]}
+    # Local rehearsal only: generate/load one shared secret set from the shared
+    # gantry-home volume when the operator did not supply real env vars.
+    # Production leaves this unset and injects values via Secrets Manager refs
+    # (see Terraform modules/secrets).
+    GANTRY_FLEET_REHEARSAL_AUTO_SECRETS: ${GANTRY_FLEET_REHEARSAL_AUTO_SECRETS:-1}
+    SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-}
+    GANTRY_IPC_AUTH_SECRET: ${GANTRY_IPC_AUTH_SECRET:-}
+    GANTRY_CONTROL_API_KEYS_JSON: ${GANTRY_CONTROL_API_KEYS_JSON:-}
     # Artifact store credentials are NOT settings: they resolve through the AWS
     # SDK default credential chain. For local fleet rehearsal these point at
     # MinIO. The driver itself (runtime.artifact_store.driver=s3, bucket,
@@ -194,25 +199,25 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - >-
+      - |-
         set -e;
         mkdir -p /var/lib/gantry;
-        cat > /var/lib/gantry/settings.yaml <<'YAML'
-        runtime:
-          deployment_mode: fleet
-          sandbox:
-            provider: sandbox_runtime
-          artifact_store:
-            driver: s3
-            bucket: ${GANTRY_ARTIFACT_S3_BUCKET:-gantry-artifacts}
-            endpoint: http://minio:9000
-            region: ${GANTRY_ARTIFACT_S3_REGION:-us-east-1}
-            force_path_style: true
-        storage:
-          postgres:
-            url_env: GANTRY_DATABASE_URL
-            schema: gantry
-        YAML
+        printf '%s\n' \
+          'runtime:' \
+          '  deployment_mode: fleet' \
+          '  sandbox:' \
+          '    provider: sandbox_runtime' \
+          '  artifact_store:' \
+          '    driver: s3' \
+          "    bucket: ${GANTRY_ARTIFACT_S3_BUCKET:-gantry-artifacts}" \
+          '    endpoint: http://minio:9000' \
+          "    region: ${GANTRY_ARTIFACT_S3_REGION:-us-east-1}" \
+          '    force_path_style: true' \
+          'storage:' \
+          '  postgres:' \
+          '    url_env: GANTRY_DATABASE_URL' \
+          '    schema: gantry' \
+          > /var/lib/gantry/settings.yaml;
         node /app/ops/docker/migrate.mjs;
         node /app/dist/cli/index.js settings import --file /var/lib/gantry/settings.yaml --fleet
 

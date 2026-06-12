@@ -39,6 +39,9 @@ jobs:
           name: gantry-runtime-sbom
           path: gantry-runtime-sbom.cdx.json
 
+      - name: Build runtime image
+        run: docker compose -f ops/docker/docker-compose.fleet.yml build --pull
+
       - name: Check runtime images
         run: npm run security:images -- --inspect-compose-images --require-content-inspection
 

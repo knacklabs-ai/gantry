@@ -167,13 +167,54 @@ describe('importFleetSettingsRevision', () => {
   it('round-trips through the typed JSON document (no YAML wrapper on the wire)', () => {
     const settings = createDefaultRuntimeSettings();
     settings.runtime.deploymentMode = 'fleet';
+    settings.agent.name = 'Agent "quoted" \\ path';
+    settings.memory.llm.extractorMinConfidence = 0.73;
+    settings.agents.researcher = {
+      name: 'Researcher',
+      folder: 'researcher',
+      model: undefined,
+      oneTimeJobDefaultModel: undefined,
+      recurringJobDefaultModel: undefined,
+      bindings: {},
+      sources: {
+        skills: [{ id: 'skill:browser', name: 'Browser' }],
+        mcpServers: [{ id: 'mcp:docs', tools: ['search'] }],
+        tools: [{ id: 'tool:local', kind: 'local_cli' }],
+      },
+      capabilities: [{ id: 'browser.use', version: '1' }],
+      accessPreset: 'locked',
+    };
     const document = settingsToRevisionDocument(settings);
     // The stored/wire document is the typed object form, not the legacy
     // `{ yaml: <string> }` wrapper.
     expect(typeof document).toBe('object');
     expect('yaml' in document).toBe(false);
+    expect(
+      ((document.agent as Record<string, unknown>).name as string).includes(
+        '\\"',
+      ),
+    ).toBe(false);
+    expect(
+      (
+        (document.memory as Record<string, unknown>).llm as Record<
+          string,
+          unknown
+        >
+      ).extractor_min_confidence,
+    ).toBe(0.73);
+    expect(
+      (
+        (document.agents as Record<string, Record<string, unknown>>).researcher
+          .access as Record<string, unknown>
+      ).preset,
+    ).toBe('locked');
     const restored = settingsFromRevisionDocument(document);
     expect(restored.agent.name).toBe(settings.agent.name);
+    expect(restored.memory.llm.extractorMinConfidence).toBe(0.73);
     expect(restored.runtime.deploymentMode).toBe('fleet');
+    expect(restored.agents.researcher.accessPreset).toBe('locked');
+    expect(restored.agents.researcher.capabilities).toEqual([
+      { id: 'browser.use', version: '1' },
+    ]);
   });
 });

@@ -55,14 +55,9 @@ variable "database_name" {
 }
 
 variable "master_username" {
-  description = "Master username for the database. The master password is supplied by reference, never inline (see master_password_secret_arn)."
+  description = "Master username for the database. RDS manages the master password in Secrets Manager so the value never enters Terraform state."
   type        = string
   default     = "gantry_admin"
-}
-
-variable "master_password_secret_arn" {
-  description = "ARN of an AWS Secrets Manager secret holding the master DB password (plaintext secret string). Referenced, never read into Terraform state. Create it out-of-band (see runbook) before apply."
-  type        = string
 }
 
 variable "deletion_protection" {
@@ -77,14 +72,20 @@ variable "backup_retention_days" {
   default     = 7
 }
 
-variable "proxy_role_arn" {
-  description = "IAM role ARN the RDS Proxy assumes to read the DB credential secret from Secrets Manager. Provided by the secrets module."
+variable "proxy_secret_arn" {
+  description = "ARN of the Secrets Manager secret (runtime DB username + password JSON) the RDS Proxy uses to authenticate runtime-role connections. Referenced, never read into state."
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:", var.proxy_secret_arn))
+    error_message = "proxy_secret_arn must be a Secrets Manager ARN."
+  }
 }
 
-variable "proxy_secret_arn" {
-  description = "ARN of the Secrets Manager secret (username + password JSON) the RDS Proxy uses to connect to the database. Referenced, never read into state."
-  type        = string
+variable "kms_key_arns" {
+  description = "KMS key ARNs encrypting the RDS Proxy credential secret, if customer-managed. Empty when using the AWS-managed aws/secretsmanager key."
+  type        = list(string)
+  default     = []
 }
 
 variable "tags" {

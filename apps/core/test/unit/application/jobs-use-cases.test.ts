@@ -1765,8 +1765,8 @@ describe('job application use cases', () => {
       createJobTrigger: vi.fn(),
     };
     const roleReason =
-      'This process role does not claim scheduled jobs; the job will run on ' +
-      'its schedule, or trigger it from a job-execution process.';
+      'This process role cannot enqueue job triggers without a configured ' +
+      'Postgres URL; the job will still run on its schedule once storage is set.';
     const service = new JobManagementService({
       ops: makeOps(
         makeJob({ session_id: 'session-1', status: 'active' }),
