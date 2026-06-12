@@ -36,7 +36,7 @@ const DENY_ALL_FILESYSTEM: FilesystemPermission[] = [
 interface DeepAgentGraph {
   streamEvents(
     input: { messages: BaseMessage[] },
-    options: { version: 'v2' },
+    options: { version: 'v2'; signal?: AbortSignal },
   ): AsyncIterable<LangGraphStreamEvent>;
 }
 
@@ -56,6 +56,9 @@ export async function runDeepAgentTurn(input: {
   priorMessages: PersistedTurnMessage[];
   newSessionId: string;
   emit: (frame: RunnerOutputFrame) => void;
+  // STOP delivered via the close sentinel aborts the in-flight LangGraph stream
+  // through this signal so the run terminates promptly (live-turn parity).
+  signal?: AbortSignal;
 }): Promise<DeepAgentTurnResult> {
   const resolved = buildRunnerModel({
     modelId: input.modelId,
@@ -101,7 +104,7 @@ export async function runDeepAgentTurn(input: {
 
     const events = agent.streamEvents(
       { messages: turnMessages },
-      { version: 'v2' },
+      { version: 'v2', ...(input.signal ? { signal: input.signal } : {}) },
     );
     const { text } = await normalizeDeepAgentStream({
       events,

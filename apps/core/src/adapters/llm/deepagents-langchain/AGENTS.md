@@ -106,3 +106,16 @@ v1 lane does not need) and delegates its protected-capability guard to
   `AgentOutput` in `agent-spawn-types.ts`): live turns emit `newSessionId` first,
   stream text deltas, then a final usage/contextUsage frame. Scheduled jobs are
   ephemeral (no session persistence).
+- Live-turn control parity (`runner/live-control.ts`): a poll loop watches the
+  neutral IPC-input dir while a turn is in flight. A `_close` sentinel (host
+  `/stop` or close-stdin, both written by `continuation-input.ts`) aborts the
+  in-flight LangGraph stream via an `AbortSignal` threaded into `streamEvents`,
+  and the runner emits a terminal success frame (graceful stop, mirroring the
+  Anthropic lane). Mid-stream follow-ups are buffered and drive an additional
+  turn, with the prior terminal frame carrying `continuedByFollowup`. The host
+  delivery is engine-neutral, so no host code branches on engine.
+- Scheduled-job heartbeat parity (`runner/job-heartbeat.ts`): scheduled runs
+  emit a `JOB_HEARTBEAT` runtime-event frame every 15s (same shape as the
+  Anthropic `job-heartbeat.ts`) so the host idle-stall detection
+  (`agent-spawn-scheduled-idle.ts`) and lease activity tracking behave
+  identically. Each streamed frame marks activity. Interactive runs emit none.

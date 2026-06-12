@@ -36,6 +36,7 @@ import {
   getRuntimeStorage,
 } from '../../adapters/storage/postgres/runtime-store.js';
 import { preflightModelPreset } from '../../adapters/llm/model-preset-preflight.js';
+import { buildAgentEngineChangeAuditContext } from '../../adapters/storage/postgres/agent-engine-change-audit-publisher.js';
 import type { AppId } from '../../domain/app/app.js';
 import { canAccessApp, makeAppGroup } from './app-identity.js';
 import {
@@ -237,6 +238,10 @@ export function startControlServer(input: {
     return {
       ops: getRuntimeRepositories(),
       repositories: storage.repositories,
+      engineChangeAudit: buildAgentEngineChangeAuditContext({
+        actor: 'settings-desired-state',
+        source: 'settings_import',
+      }),
     };
   });
   const socketPath =
@@ -375,6 +380,11 @@ export function startControlServer(input: {
         repositories: getRuntimeStorage().repositories,
         appId,
         reloadRuntimeState: () => input.app.loadState(),
+        engineChangeAudit: buildAgentEngineChangeAuditContext({
+          appId,
+          actor: 'control-api',
+          source: 'control_api',
+        }),
       }),
   };
 

@@ -42,6 +42,7 @@ import { PostgresCanonicalRouterStateRepository } from '../repositories/canonica
 import { PostgresCanonicalSessionRepository } from '../repositories/canonical-session-repository.postgres.js';
 import { createPostgresDomainRepositories } from '../repositories/domain-repositories.postgres.js';
 import { RUNTIME_EVENT_TYPES } from '../../../../domain/events/runtime-event-types.js';
+import { engineForExecutionProviderId } from '../../../../shared/model-execution-route.js';
 import { CanonicalBindingOpsService } from '../services/canonical-binding-ops-service.js';
 import { CanonicalJobOpsService } from '../services/canonical-job-ops-service.js';
 import { CanonicalMessageOpsService } from '../services/canonical-message-ops-service.js';
@@ -439,7 +440,16 @@ export class PostgresRuntimeRepositoryBundle
       sessionId: session.id,
       eventType: RUNTIME_EVENT_TYPES.RUN_STARTED,
       actor: 'runtime',
-      payload: { cause: input.cause },
+      // Resolved-run diagnostics for the live lane: the inherited agent engine
+      // (derived from the diagnostic executionProviderId) and the diagnostic id
+      // itself. No secrets. The DB-layer emit does not have the modelAlias /
+      // sandbox provider at this point; those live on the scheduled-lane payload.
+      payload: {
+        cause: input.cause,
+        agent_engine:
+          engineForExecutionProviderId(input.executionProviderId) ?? null,
+        execution_provider_id: input.executionProviderId,
+      },
       createdAt: now,
     });
     return runId;

@@ -48,9 +48,7 @@ export interface NeutralPreCheckInput {
 // Runs the ordered authority pre-checks that may hard-deny before any
 // policy evaluation or permission prompt. Returns the deny reason (already
 // user-facing) or null to continue.
-export function evaluateNeutralToolPreChecks(
-  input: NeutralPreCheckInput,
-): {
+export function evaluateNeutralToolPreChecks(input: NeutralPreCheckInput): {
   decision: 'protected_capability' | 'memory_boundary';
   reason: string;
 } | null {

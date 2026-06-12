@@ -3,9 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { resolveModelSelection } from '@core/shared/model-catalog.js';
 import {
   compatibleAliasesForEngine,
+  engineForExecutionProviderId,
   resolveExecutionRoute,
 } from '@core/shared/model-execution-route.js';
-import type { AgentEngine } from '@core/shared/agent-engine.js';
+import {
+  DEEPAGENTS_ENGINE,
+  DEFAULT_AGENT_ENGINE,
+  type AgentEngine,
+} from '@core/shared/agent-engine.js';
 
 function entryFor(alias: string) {
   const resolved = resolveModelSelection(alias);
@@ -75,6 +80,16 @@ describe('model execution route matrix', () => {
         'Model kimi cannot run with DeepAgents. Choose one of: opus, opus-4.7, opus-4.6, sonnet, haiku, gpt, gpt-5.4, gpt-mini.',
       );
     }
+  });
+
+  it('reverse-maps an executionProviderId back to its agent engine (run diagnostics)', () => {
+    expect(engineForExecutionProviderId('anthropic:claude-agent-sdk')).toBe(
+      DEFAULT_AGENT_ENGINE,
+    );
+    expect(engineForExecutionProviderId('deepagents:langchain')).toBe(
+      DEEPAGENTS_ENGINE,
+    );
+    expect(engineForExecutionProviderId('unknown:provider')).toBeUndefined();
   });
 
   it('lists compatible aliases per engine', () => {

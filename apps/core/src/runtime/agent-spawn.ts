@@ -83,6 +83,7 @@ import { getRuntimeFileArtifactStore } from '../adapters/storage/postgres/runtim
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 import { formatGeneratedRuntimePathPermissionError } from './generated-runtime-path-error.js';
 import { resolveAgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter-registry.js';
+import { deepAgentsShellFilesystemGuard } from './deepagents-shell-filesystem-guard.js';
 import { writeRunnerMcpConfigFile } from './agent-spawn-mcp-config.js';
 import { withStdioMcpEgressEnv } from './agent-spawn-mcp-egress-env.js';
 import {
@@ -180,15 +181,20 @@ export async function spawnAgent(
   }
   const effectiveModel = resolvedModel.value.runnerModel;
   const effectiveModelEntry = resolvedModel.value.modelEntry;
-  const allowedToolValidationError = validateRunnerAllowedTools(
-    input.toolPolicyRules ?? [],
-  );
-  if (allowedToolValidationError) {
-    return {
-      status: 'error',
-      result: null,
-      error: allowedToolValidationError,
-    };
+  // Pre-spawn tool-rule admission: invalid runner tool rules, plus DeepAgents
+  // shell/filesystem authority (disabled in v1; the future enablement path also
+  // requires an enforcing sandbox under production/remote posture). Engine and
+  // resolved tool rules are both known here, so these fail closed before spawn.
+  const preSpawnToolPolicyError =
+    validateRunnerAllowedTools(input.toolPolicyRules ?? []) ??
+    deepAgentsShellFilesystemGuard({
+      engine: agentEngine,
+      toolPolicyRules: input.toolPolicyRules,
+      securityEnv: process.env,
+      sandboxProvider: runtimeSettings.runtime.sandbox.provider,
+    });
+  if (preSpawnToolPolicyError) {
+    return { status: 'error', result: null, error: preSpawnToolPolicyError };
   }
   // Fixed-image worker preflight: fail closed before the runner process starts
   // when a selected capability is not present in this worker image inventory.

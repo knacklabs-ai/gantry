@@ -7,6 +7,8 @@ import {
   resolveJobExecutionProviderId,
   resolveJobModel,
 } from '@core/jobs/model-resolution.js';
+import { engineForExecutionProviderId } from '@core/shared/model-execution-route.js';
+import { DEFAULT_AGENT_ENGINE } from '@core/shared/agent-engine.js';
 
 describe('job model resolution', () => {
   it('maps manual and once jobs to one-time defaults', () => {
@@ -63,6 +65,24 @@ describe('job model resolution', () => {
       model_source: 'settings.yaml agent.one_time_job_default_model',
       cache_policy: 'anthropic-prompt',
     });
+  });
+
+  it('carries resolved-run diagnostics (engine, family, provider id, credential modes) in the start payload', () => {
+    const anthropic = resolveJobModel(
+      { model: 'opus', schedule_type: 'manual' } as never,
+      { model: 'opus', source: 'system default' },
+      DEFAULT_AGENT_ENGINE,
+    );
+    expect(jobStartedModelPayload(anthropic)).toMatchObject({
+      agent_engine: DEFAULT_AGENT_ENGINE,
+      response_family: 'anthropic',
+      execution_provider_id: 'anthropic:claude-agent-sdk',
+    });
+    const startPayload = jobStartedModelPayload(anthropic) as {
+      supported_credential_modes: string[];
+    };
+    expect(Array.isArray(startPayload.supported_credential_modes)).toBe(true);
+    expect(startPayload.supported_credential_modes.length).toBeGreaterThan(0);
   });
 
   it('inherits the bound agent engine when resolving the job execution provider', () => {

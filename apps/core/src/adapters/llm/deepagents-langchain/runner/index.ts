@@ -18,11 +18,13 @@ import { runDeepAgentTurn } from './deep-agent-runner.js';
 import {
   drainIpcInput,
   prepareInteractiveIpcInputDir,
-  shouldClose,
 } from '../../../../runner/runner-ipc-input.js';
+import { isAbortError, startDeepAgentLiveControl } from './live-control.js';
+import { startDeepAgentJobHeartbeat } from './job-heartbeat.js';
 import {
   readRunnerStdin,
   writeRunnerFrame,
+  type RunnerOutputFrame,
 } from '../../../../runner/runner-frame.js';
 import {
   DeepAgentSessionStore,
@@ -59,15 +61,30 @@ async function runScheduled(agentInput: DeepAgentRunnerInput): Promise<void> {
   // runner's isScheduledJob path). A diagnostic session id is still emitted.
   const store = new DeepAgentSessionStore(resolveSessionsDir());
   const diagnosticSessionId = store.newSessionId();
+  // Emit JOB_HEARTBEAT frames so the host's idle-stall detection and lease
+  // activity tracking behave identically to the Anthropic lane for long runs.
+  const heartbeat = startDeepAgentJobHeartbeat({
+    agentInput,
+    writeFrame: writeRunnerFrame,
+    getSessionId: () => diagnosticSessionId,
+  });
+  // Each streamed frame counts as runner activity so a streaming scheduled run
+  // is never falsely flagged idle.
+  const emit = (frame: RunnerOutputFrame): void => {
+    heartbeat.markActivity();
+    writeRunnerFrame(frame);
+  };
   try {
     await runDeepAgentTurn({
       agentInput,
       modelId: resolveModelId(agentInput),
       priorMessages: [],
       newSessionId: diagnosticSessionId,
-      emit: writeRunnerFrame,
+      emit,
     });
+    heartbeat.stop();
   } catch (err) {
+    heartbeat.stop();
     writeRunnerFrame({
       status: 'error',
       result: null,
@@ -83,12 +100,16 @@ async function runInteractive(agentInput: DeepAgentRunnerInput): Promise<void> {
   prepareInteractiveIpcInputDir();
 
   const sessionId = agentInput.sessionId ?? store.newSessionId();
+  // Live-turn control parity: the poll loop watches the neutral IPC-input dir for
+  // a `_close` sentinel (host /stop or close-stdin) and for mid-stream follow-up
+  // messages. A close aborts the in-flight LangGraph stream via its signal.
+  const liveControl = startDeepAgentLiveControl({ log });
   try {
     // Live continuity: resume the adapter-private session if one was passed,
     // else start a fresh one. A missing/corrupt session file throws here and
     // surfaces as the host's stale-session retry (isMissingProviderSessionError)
     // before any session frame is emitted, so the host does not adopt a bogus id.
-    const priorMessages: PersistedTurnMessage[] = agentInput.sessionId
+    let priorMessages: PersistedTurnMessage[] = agentInput.sessionId
       ? store.load(agentInput.sessionId)
       : [];
 
@@ -101,30 +122,76 @@ async function runInteractive(agentInput: DeepAgentRunnerInput): Promise<void> {
       newSessionId: sessionId,
     });
 
-    let turnInput = agentInput;
-    const pending = drainIpcInput(log);
-    if (pending.length > 0) {
-      turnInput = {
-        ...agentInput,
-        prompt: `${agentInput.prompt}\n${pending.join('\n')}`,
-      };
+    // Follow-ups already queued before the turn started are appended to the
+    // first prompt (pre-existing one-shot drain). Mid-stream follow-ups are
+    // buffered by the live-control loop and drive additional turns below.
+    let pendingFollowups = drainIpcInput(log);
+
+    // Run one or more turns: each turn streams until completion or until STOP
+    // aborts it. When follow-ups arrive mid-stream and the turn was not stopped,
+    // the prior terminal frame carries `continuedByFollowup` and the buffered
+    // text drives the next turn — mirroring the Anthropic steering gate.
+    for (;;) {
+      const turnInput =
+        pendingFollowups.length > 0
+          ? {
+              ...agentInput,
+              prompt: `${agentInput.prompt}\n${pendingFollowups.join('\n')}`,
+            }
+          : agentInput;
+      pendingFollowups = [];
+
+      let stoppedThisTurn = false;
+      try {
+        const result = await runDeepAgentTurn({
+          agentInput: turnInput,
+          modelId: resolveModelId(agentInput),
+          priorMessages,
+          newSessionId: sessionId,
+          emit: writeRunnerFrame,
+          signal: liveControl.signal,
+        });
+        priorMessages = result.messages;
+      } catch (err) {
+        // A close-driven abort is a graceful stop, not a failure: persist what
+        // we have and emit a terminal success frame consistent with the
+        // Anthropic stop semantics (turn ends cleanly on close).
+        if (liveControl.closed() && isAbortError(err)) {
+          stoppedThisTurn = true;
+        } else {
+          throw err;
+        }
+      }
+      store.save(sessionId, priorMessages);
+
+      const moreFollowups = liveControl.takeBufferedFollowups();
+      if (
+        !stoppedThisTurn &&
+        !liveControl.closed() &&
+        moreFollowups.length > 0
+      ) {
+        // Continue with the buffered follow-up(s) as a fresh turn; flag the
+        // terminal frame so the host knows the run is being continued.
+        pendingFollowups = moreFollowups;
+        writeRunnerFrame({
+          status: 'success',
+          result: null,
+          newSessionId: sessionId,
+          continuedByFollowup: true,
+        });
+        continue;
+      }
+      break;
     }
 
-    const result = await runDeepAgentTurn({
-      agentInput: turnInput,
-      modelId: resolveModelId(agentInput),
-      priorMessages,
-      newSessionId: sessionId,
-      emit: writeRunnerFrame,
-    });
-    store.save(sessionId, result.messages);
-    shouldClose();
+    liveControl.stop();
     writeRunnerFrame({
       status: 'success',
       result: null,
       newSessionId: sessionId,
     });
   } catch (err) {
+    liveControl.stop();
     writeRunnerFrame({
       status: 'error',
       result: null,

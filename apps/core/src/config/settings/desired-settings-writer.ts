@@ -1,5 +1,8 @@
 import type { AppId } from '../../domain/app/app.js';
-import { applyRuntimeSettingsDesiredState } from './restart-sync.js';
+import {
+  applyRuntimeSettingsDesiredState,
+  type AgentEngineChangeAuditContext,
+} from './restart-sync.js';
 import { saveRuntimeSettings } from './runtime-settings.js';
 import type {
   SettingsDesiredStateOps,
@@ -10,6 +13,9 @@ import type { RuntimeSettings } from './runtime-settings-types.js';
 export interface DesiredSettingsWriteStorage {
   ops: SettingsDesiredStateOps;
   repositories: SettingsDesiredStateRepositories;
+  // Optional audit sink so CLI/import engine changes through this path emit
+  // AGENT_ENGINE_CHANGED runtime events when runtime storage is reachable.
+  engineChangeAudit?: AgentEngineChangeAuditContext;
   close?: () => Promise<void>;
 }
 
@@ -55,6 +61,7 @@ export async function writeDesiredRuntimeSettings(input: {
       appId: input.appId ?? ('default' as AppId),
       ops: storage.ops,
       repositories: storage.repositories,
+      engineChangeAudit: storage.engineChangeAudit,
     });
     return { reconciled: true };
   } finally {

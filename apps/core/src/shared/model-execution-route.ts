@@ -7,6 +7,7 @@ import type { ModelCatalogEntry } from './model-catalog.js';
 import { listModelCatalogEntries } from './model-catalog.js';
 import {
   getModelProviderDefinition,
+  listModelRouteProviders,
   type ModelExecutionRoute,
 } from './model-provider-registry.js';
 
@@ -73,6 +74,23 @@ function incompatibleEngineMessage(
   const compatible = compatibleAliasesForEngine(agentEngine);
   const aliasList = compatible.length > 0 ? compatible.join(', ') : 'none';
   return `Model ${alias} cannot run with ${agentEngineLabel(agentEngine)}. Choose one of: ${aliasList}.`;
+}
+
+// Reverse lookup: which agent engine an internal `executionProviderId` belongs
+// to. The execution-route registry maps `engine -> executionProviderId` per
+// provider; this inverts it so run diagnostics (job run detail, run-start audit)
+// can surface the inherited engine from the persisted diagnostic provider id
+// without re-reading settings. Returns undefined for an unknown provider id.
+export function engineForExecutionProviderId(
+  executionProviderId: string,
+): AgentEngine | undefined {
+  const normalized = executionProviderId.trim();
+  for (const provider of listModelRouteProviders()) {
+    for (const route of provider.executionRoutes) {
+      if (route.executionProviderId === normalized) return route.engine;
+    }
+  }
+  return undefined;
 }
 
 // Recommended aliases whose provider route exposes an execution route for the

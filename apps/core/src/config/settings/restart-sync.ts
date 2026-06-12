@@ -14,6 +14,13 @@ import { normalizeConfiguredCapabilitiesInSettings } from './configured-capabili
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
 import type { RuntimeSettings } from './runtime-settings-types.js';
 import type { AgentEngine } from '../../shared/agent-engine.js';
+import { diffAgentEngineChanges } from './agent-engine-change-audit.js';
+import type { AgentEngineChangeAuditContext } from '../../domain/events/agent-engine-change.js';
+
+// Re-exported so existing callers keep their import site; the canonical type and
+// the AGENT_ENGINE_CHANGED audit-sink contract live in the domain layer so the
+// Postgres-wired publisher can implement it without a config<->adapter edge.
+export type { AgentEngineChangeAuditContext };
 
 export async function applyRuntimeSettingsDesiredState(input: {
   runtimeHome: string;
@@ -23,6 +30,7 @@ export async function applyRuntimeSettingsDesiredState(input: {
   appId?: AppId;
   previousSettings?: RuntimeSettings;
   reloadRuntimeState?: () => Promise<void>;
+  engineChangeAudit?: AgentEngineChangeAuditContext;
 }): Promise<void> {
   const service = new SettingsDesiredStateService({
     ops: input.ops,
@@ -64,6 +72,37 @@ export async function applyRuntimeSettingsDesiredState(input: {
     await rollback();
     throw err;
   }
+  // Durable engine changes are audited after the write+reconcile+reload land so
+  // the event reflects the persisted state. Audit failures must not fail the
+  // settings write, so this is best-effort and outside the rollback try.
+  await emitAgentEngineChangeAudit({
+    previousSettings: input.previousSettings,
+    settings,
+    audit: input.engineChangeAudit,
+  });
+}
+
+async function emitAgentEngineChangeAudit(input: {
+  previousSettings: RuntimeSettings | undefined;
+  settings: RuntimeSettings;
+  audit?: AgentEngineChangeAuditContext;
+}): Promise<void> {
+  if (!input.audit) return;
+  const changes = diffAgentEngineChanges(
+    input.previousSettings,
+    input.settings,
+  );
+  for (const change of changes) {
+    try {
+      await input.audit.publish({
+        appId: input.audit.appId,
+        actor: input.audit.actor,
+        change,
+      });
+    } catch {
+      // Best-effort: a failed audit publish must not break the settings write.
+    }
+  }
 }
 
 // Write a per-agent engine override into settings.yaml and reconcile in the
@@ -80,6 +119,7 @@ export async function setRuntimeAgentEngine(input: {
   repositories: SettingsDesiredStateRepositories;
   appId?: AppId;
   reloadRuntimeState?: () => Promise<void>;
+  engineChangeAudit?: AgentEngineChangeAuditContext;
 }): Promise<void> {
   const previousSettings = loadRuntimeSettings(input.runtimeHome);
   const agent = previousSettings.agents[input.agentFolder];
@@ -100,6 +140,7 @@ export async function setRuntimeAgentEngine(input: {
     repositories: input.repositories,
     appId: input.appId,
     reloadRuntimeState: input.reloadRuntimeState,
+    engineChangeAudit: input.engineChangeAudit,
   });
 }
 
