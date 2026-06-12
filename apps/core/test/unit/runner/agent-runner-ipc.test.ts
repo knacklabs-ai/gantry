@@ -153,6 +153,10 @@ function createRunnerFixture(): {
     path.join(runnerDir, 'memory-boundary.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/runner/tool-gate-core.ts'),
+    path.join(runnerDir, 'tool-gate-core.ts'),
+  );
+  fs.copyFileSync(
     path.resolve(
       'apps/core/src/adapters/llm/anthropic-claude-agent/runner/message-stream.ts',
     ),

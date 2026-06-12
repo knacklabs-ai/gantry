@@ -1181,6 +1181,13 @@
     "maxViolations": 3
   },
   {
+    "file": "apps/core/src/adapters/llm/openai-memory/memory-gateway-injection.ts",
+    "rule": "forbidden_import_by_layer",
+    "reason": "OpenAI-family memory LLM adapter reuses the same credential-broker runtime config as the Anthropic memory adapter to reach the Gantry model gateway; move credential runtime config behind an application port next.",
+    "removeByPhase": "memory credential port cleanup",
+    "maxViolations": 1
+  },
+  {
     "file": "apps/core/src/memory/extractor-llm.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Pre-existing memory runtime dependencies on config and logging remain unchanged by the Anthropic SDK extraction.",

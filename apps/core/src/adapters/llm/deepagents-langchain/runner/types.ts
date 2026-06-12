@@ -1,9 +1,10 @@
 import type { AgentPersona } from '../../../../shared/agent-persona.js';
 
 // Subset of the host AgentInput JSON that the DeepAgents (LangChain) runner
-// consumes. v1 is tool-less: no tool projection, MCP, HITL, or skills (those are
-// later packets), so only the fields needed for a tool-free chat/job turn are
-// read. The runner deliberately reads model credential env from
+// consumes. The runner projects Gantry-owned authority (facade tools, selected
+// third-party MCP servers, canonical Browser) into the graph via the Gantry MCP
+// stdio server and the neutral permission gate; raw DeepAgents authority stays
+// disabled. The runner deliberately reads model credential env from
 // modelCredentialEnv (gateway-projected) rather than process.env.
 export interface DeepAgentRunnerInput {
   prompt: string;
@@ -14,6 +15,11 @@ export interface DeepAgentRunnerInput {
   chatJid: string;
   threadId?: string;
   persona?: AgentPersona;
+  // Selected capability tool rules (= host toolPolicyRules). Drives the Gantry
+  // facade tool selection and the third-party MCP permission gate.
+  allowedTools?: string[];
+  // Fixed-image worker mode: hide authority-changing/admin request tools.
+  hideAuthorityTools?: boolean;
   isScheduledJob?: boolean;
   jobId?: string;
   runId?: string;
