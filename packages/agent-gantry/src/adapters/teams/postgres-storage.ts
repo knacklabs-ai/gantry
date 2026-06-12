@@ -2,8 +2,10 @@ import type {
   GantryPgRuntimeStorageConfig,
   GantryRuntimeStorage,
   GantryTeamsStoredConversationReference,
+  GantryUserConversationState,
+  GantryUserConversationStateKey,
 } from './types.js';
-import { readString } from '../../shared/helpers.js';
+import { asRecord, requireNonEmpty } from '../../shared/helpers.js';
 
 export function createPgGantryRuntimeStorage(
   config: GantryPgRuntimeStorageConfig,
@@ -44,16 +46,132 @@ export function createPgGantryRuntimeStorage(
         ],
       );
     },
+    getUserConversationState: async (input) => {
+      const key = normalizeUserConversationStateKey(input);
+      const result = await config.pool.query(
+        `select provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id,
+                summary_text, state_json, last_tender_id, last_seen_at, expires_at, created_at, updated_at
+         from "${schema}"."user_conversation_state"
+         where provider = $1
+           and tenant_id = $2
+           and user_id = $3
+           and conversation_id = $4
+           and conversation_scope_type = $5
+           and conversation_scope_id = $6
+           and expires_at > now()
+         limit 1`,
+        [
+          key.provider,
+          key.tenantId,
+          key.userId,
+          key.conversationId,
+          key.conversationScopeType,
+          key.conversationScopeId,
+        ],
+      );
+      return mapUserConversationStateRow(result.rows[0]);
+    },
+    upsertUserConversationState: async (input) => {
+      const key = normalizeUserConversationStateKey(input);
+      const updatedAt = input.updatedAt ?? input.lastSeenAt;
+      const result = await config.pool.query(
+        `insert into "${schema}"."user_conversation_state" (
+            provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id,
+            summary_text, state_json, last_tender_id, last_seen_at, expires_at, created_at, updated_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, coalesce($12::timestamptz, now()), $12)
+          on conflict (provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id)
+          do update set
+            summary_text = excluded.summary_text,
+            state_json = excluded.state_json,
+            last_tender_id = excluded.last_tender_id,
+            last_seen_at = excluded.last_seen_at,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at
+          returning provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id,
+                    summary_text, state_json, last_tender_id, last_seen_at, expires_at, created_at, updated_at`,
+        [
+          key.provider,
+          key.tenantId,
+          key.userId,
+          key.conversationId,
+          key.conversationScopeType,
+          key.conversationScopeId,
+          input.summaryText ?? '',
+          JSON.stringify(input.stateJson ?? {}),
+          input.lastTenderId ?? null,
+          input.lastSeenAt,
+          input.expiresAt,
+          updatedAt,
+        ],
+      );
+      return requireUserConversationStateRow(result.rows[0]);
+    },
+    mergeUserConversationState: async (input) => {
+      const key = normalizeUserConversationStateKey(input);
+      const updatedAt = input.updatedAt ?? input.lastSeenAt;
+      const result = await config.pool.query(
+        `insert into "${schema}"."user_conversation_state" (
+            provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id,
+            summary_text, state_json, last_tender_id, last_seen_at, expires_at, created_at, updated_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, coalesce($12::timestamptz, now()), $12)
+          on conflict (provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id)
+          do update set
+            summary_text = case
+              when excluded.summary_text = '' then "${schema}"."user_conversation_state".summary_text
+              when "${schema}"."user_conversation_state".summary_text = '' then excluded.summary_text
+              else left("${schema}"."user_conversation_state".summary_text || E'\n' || excluded.summary_text, 2000)
+            end,
+            state_json = "${schema}"."user_conversation_state".state_json || excluded.state_json,
+            last_tender_id = coalesce(excluded.last_tender_id, "${schema}"."user_conversation_state".last_tender_id),
+            last_seen_at = greatest("${schema}"."user_conversation_state".last_seen_at, excluded.last_seen_at),
+            expires_at = greatest("${schema}"."user_conversation_state".expires_at, excluded.expires_at),
+            updated_at = greatest("${schema}"."user_conversation_state".updated_at, excluded.updated_at)
+          returning provider, tenant_id, user_id, conversation_id, conversation_scope_type, conversation_scope_id,
+                    summary_text, state_json, last_tender_id, last_seen_at, expires_at, created_at, updated_at`,
+        [
+          key.provider,
+          key.tenantId,
+          key.userId,
+          key.conversationId,
+          key.conversationScopeType,
+          key.conversationScopeId,
+          input.summaryText ?? '',
+          JSON.stringify(input.stateJson ?? {}),
+          input.lastTenderId ?? null,
+          input.lastSeenAt,
+          input.expiresAt,
+          updatedAt,
+        ],
+      );
+      return requireUserConversationStateRow(result.rows[0]);
+    },
     getTeamsConversationReference: async (conversationId) => {
-      const normalized = normalizeTeamsJid(conversationId);
+      const trimmed = conversationId.trim();
+      const canonicalConversationId = canonicalTeamsConversationId(trimmed);
+      const normalized = normalizeTeamsJid(canonicalConversationId);
+      const originalJid = normalizeTeamsJid(trimmed);
       const result = await config.pool.query(
         `select conversation_jid, conversation_id, service_url, tenant_id, bot_id, teams_user_id, raw_reference_json, updated_at
          from "${schema}"."teams_conversation_references"
-         where conversation_jid = $1 or conversation_id = $2
+         where conversation_jid in ($1, $2)
+            or conversation_id in ($3, $4)
+            or regexp_replace(conversation_jid, ';messageid=.*$', '', 'i') = $1
+            or regexp_replace(conversation_id, ';messageid=.*$', '', 'i') = $3
+         order by case
+            when conversation_jid = $1 or conversation_id = $3 then 0
+            when conversation_jid = $2 or conversation_id = $4 then 1
+            else 2
+          end,
+          updated_at desc
          limit 1`,
-        [normalized, conversationId],
+        [normalized, originalJid, canonicalConversationId, trimmed],
       );
-      return mapTeamsReferenceRow(result.rows[0], conversationId);
+      return mapTeamsReferenceRow(
+        result.rows[0],
+        canonicalConversationId || trimmed,
+      );
     },
     getTeamsPersonalConversationReference: async (input) => {
       const result = await config.pool.query(
@@ -99,6 +217,13 @@ function normalizeTeamsJid(input: string): string {
   return trimmed.startsWith('teams:') ? trimmed : `teams:${trimmed}`;
 }
 
+function canonicalTeamsConversationId(conversationId: string): string {
+  const trimmed = conversationId.trim();
+  const messageIdIndex = trimmed.toLowerCase().indexOf(';messageid=');
+  if (messageIdIndex < 0) return trimmed;
+  return trimmed.slice(0, messageIdIndex).trim() || trimmed;
+}
+
 function normalizeSqlIdentifier(value: string): string {
   const normalized = value.trim();
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(normalized)) {
@@ -133,4 +258,64 @@ function mapTeamsReferenceRow(
           ? row.updated_at
           : null,
   };
+}
+
+function normalizeUserConversationStateKey(
+  input: GantryUserConversationStateKey,
+): GantryUserConversationStateKey {
+  return {
+    provider: requireNonEmpty(input.provider, 'provider'),
+    tenantId: requireNonEmpty(input.tenantId, 'tenantId'),
+    userId: requireNonEmpty(input.userId, 'userId'),
+    conversationId: requireNonEmpty(input.conversationId, 'conversationId'),
+    conversationScopeType: requireNonEmpty(
+      input.conversationScopeType,
+      'conversationScopeType',
+    ),
+    conversationScopeId: requireNonEmpty(
+      input.conversationScopeId,
+      'conversationScopeId',
+    ),
+  };
+}
+
+function requireUserConversationStateRow(
+  row: Record<string, unknown> | undefined,
+): GantryUserConversationState {
+  const mapped = mapUserConversationStateRow(row);
+  if (!mapped) {
+    throw new Error(
+      'Gantry user conversation state upsert did not return a row.',
+    );
+  }
+  return mapped;
+}
+
+function mapUserConversationStateRow(
+  row: Record<string, unknown> | undefined,
+): GantryUserConversationState | null {
+  if (!row) return null;
+  return {
+    provider: String(row.provider ?? ''),
+    tenantId: String(row.tenant_id ?? ''),
+    userId: String(row.user_id ?? ''),
+    conversationId: String(row.conversation_id ?? ''),
+    conversationScopeType: String(row.conversation_scope_type ?? ''),
+    conversationScopeId: String(row.conversation_scope_id ?? ''),
+    summaryText: typeof row.summary_text === 'string' ? row.summary_text : '',
+    stateJson: asRecord(row.state_json) ?? {},
+    lastTenderId:
+      typeof row.last_tender_id === 'string' ? row.last_tender_id : null,
+    lastSeenAt: normalizeDateLike(row.last_seen_at),
+    expiresAt: normalizeDateLike(row.expires_at),
+    createdAt: normalizeDateLike(row.created_at),
+    updatedAt: normalizeDateLike(row.updated_at),
+  };
+}
+
+function normalizeDateLike(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return typeof value === 'string' ? value : '';
 }

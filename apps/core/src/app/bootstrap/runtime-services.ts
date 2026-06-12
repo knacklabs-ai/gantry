@@ -695,9 +695,16 @@ export async function startRuntimeServices(
       profileId: LIVE_SEND_PROFILE_ID,
       plan: (input) => {
         const segments = splitLiveSendProfileText(input.text);
+        const providerPayload =
+          input.metadata &&
+          typeof input.metadata === 'object' &&
+          'providerPayload' in input.metadata
+            ? (input.metadata.providerPayload as unknown)
+            : undefined;
         return {
           parts: segments.map((segment) => ({
             canonicalText: segment,
+            providerPayload,
           })),
           canonicalFinalText: input.text,
         };
@@ -758,6 +765,7 @@ export async function startRuntimeServices(
           sourceProvider: input.provider,
           destinationJid: input.chatJid,
           destinationThreadId: input.threadId,
+          providerPayload: input.providerPayload,
         },
         initialClaim: {
           claimToken: `claim:live-send:${input.sourceMessageId}`,
@@ -929,17 +937,35 @@ export async function startRuntimeServices(
           ...(destinationThreadId ? { threadId: destinationThreadId } : {}),
         });
         try {
-          const deliveryResult = await channelWiring.sendProviderMessage(
-            destinationJid,
-            claimed.item.canonicalText,
-            {
-              permit: recoveryPermit,
-              throwOnMissing: true,
-              ...(destinationThreadId
-                ? { messageOptions: { threadId: destinationThreadId } }
-                : {}),
-            },
-          );
+          const cardPayload =
+            payload?.kind === 'adaptive_card' &&
+            payload.card &&
+            typeof payload.card === 'object'
+              ? (payload.card as never)
+              : undefined;
+          const deliveryResult = cardPayload
+            ? await channelWiring.sendAdaptiveCard(
+                destinationJid,
+                cardPayload,
+                {
+                  durability: 'best_effort',
+                  throwOnMissing: true,
+                  ...(destinationThreadId
+                    ? { threadId: destinationThreadId }
+                    : {}),
+                },
+              )
+            : await channelWiring.sendProviderMessage(
+                destinationJid,
+                claimed.item.canonicalText,
+                {
+                  permit: recoveryPermit,
+                  throwOnMissing: true,
+                  ...(destinationThreadId
+                    ? { messageOptions: { threadId: destinationThreadId } }
+                    : {}),
+                },
+              );
           return {
             status: 'sent',
             providerMessageId: deliveryResult?.externalMessageId,

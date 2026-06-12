@@ -59,9 +59,10 @@ export function signExternalCardAction(
   readonly signatureVersion?: 'v2';
 } {
   const nonce = input.nonce ?? randomUUID();
-  const expiresAt =
+  const expiresAt = normalizeExternalCardActionExpiresAtForSignature(
     input.expiresAt ??
-    new Date((input.nowMs ?? Date.now()) + 24 * 60 * 60_000).toISOString();
+      new Date((input.nowMs ?? Date.now()) + 24 * 60 * 60_000).toISOString(),
+  );
   return {
     nonce,
     expiresAt,
@@ -77,7 +78,10 @@ export function signExternalCardAction(
 export function verifyExternalCardAction(
   input: GantryExternalCardActionVerificationInput,
 ): boolean {
-  const expiresAtMs = Date.parse(input.action.expiresAt);
+  const expiresAt = normalizeExternalCardActionExpiresAtForSignature(
+    input.action.expiresAt,
+  );
+  const expiresAtMs = Date.parse(expiresAt);
   if (
     !Number.isFinite(expiresAtMs) ||
     expiresAtMs < (input.nowMs ?? Date.now())
@@ -99,11 +103,11 @@ export function verifyExternalCardAction(
         : null,
     requestId:
       input.action.signatureVersion === 'v2'
-        ? (input.action.requestId ?? null)
+        ? input.action.requestId || null
         : null,
     signatureVersion: input.action.signatureVersion ?? null,
     nonce: input.action.nonce,
-    expiresAt: input.action.expiresAt,
+    expiresAt,
     nowMs: input.nowMs,
   }).signature;
   return timingSafeHexEqual(expected, input.action.signature);
@@ -122,12 +126,12 @@ export function parseExternalCardAction(
     eventId: readStringValue(record.eventId),
     resourceId: readStringValue(record.resourceId),
     workspaceId: readStringValue(record.workspaceId),
-    sourceWorkspaceId: readStringValue(record.sourceWorkspaceId),
+    sourceWorkspaceId: readStringValue(record.sourceWorkspaceId) || null,
     sourceChannelId: readStringValue(record.sourceChannelId),
     teamsTenantId: readStringValue(record.teamsTenantId),
     actionType: readStringValue(record.actionType),
     platformOperation: readStringValue(record.platformOperation),
-    requestId: readStringValue(record.requestId),
+    requestId: readStringValue(record.requestId) || null,
     signatureVersion:
       readStringValue(record.signatureVersion) === 'v2'
         ? ('v2' as const)
@@ -151,11 +155,26 @@ export function parseExternalCardAction(
   ) {
     return null;
   }
-  return action;
+  return {
+    ...action,
+    expiresAt: normalizeExternalCardActionExpiresAtForSignature(
+      action.expiresAt,
+    ),
+  };
 }
 
 export const signGantryExternalEventRequest = signExternalEventRequest;
 export const verifyGantryExternalEventSignature = verifyExternalEventSignature;
+
+export function normalizeExternalCardActionExpiresAtForSignature(
+  expiresAt: string,
+): string {
+  const parsed = Date.parse(expiresAt.trim());
+  if (!Number.isFinite(parsed)) {
+    throw new Error('External card action expiration timestamp is invalid.');
+  }
+  return new Date(parsed).toISOString();
+}
 
 function buildExternalSignaturePayload(input: {
   readonly method: string;

@@ -133,13 +133,21 @@ async function collectStructuredToolContext(
         const record = asRecord(request) ?? {};
         const query = readString(record, 'query') ?? '';
         if (!query.trim()) return { error: 'search_query_required' };
-        const result = await searchTool.search({
-          query,
-          limit: readNumber(record, 'limit') ?? undefined,
-          budget: asRecord(record.budget) ?? undefined,
-          correlationId: input.correlationId ?? null,
-        });
-        return { query, ...result };
+        try {
+          const result = await searchTool.search({
+            query,
+            limit: readNumber(record, 'limit') ?? undefined,
+            budget: asRecord(record.budget) ?? undefined,
+            correlationId: input.correlationId ?? null,
+          });
+          return { query, ...result };
+        } catch (error) {
+          return {
+            query,
+            toolFailure: true,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       }),
     );
   }
@@ -154,12 +162,20 @@ async function collectStructuredToolContext(
         const record = asRecord(request) ?? {};
         const url = readString(record, 'url') ?? '';
         if (!url.trim()) return { error: 'fetch_url_required' };
-        const result = await fetchTool.fetch({
-          url,
-          budget: asRecord(record.budget) ?? undefined,
-          correlationId: input.correlationId ?? null,
-        });
-        return { requestedUrl: url, ...result };
+        try {
+          const result = await fetchTool.fetch({
+            url,
+            budget: asRecord(record.budget) ?? undefined,
+            correlationId: input.correlationId ?? null,
+          });
+          return { requestedUrl: url, ...result };
+        } catch (error) {
+          return {
+            requestedUrl: url,
+            toolFailure: true,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       }),
     );
   }
@@ -173,12 +189,21 @@ async function collectStructuredToolContext(
         const record = asRecord(request) ?? {};
         const url = readString(record, 'url') ?? '';
         if (!url.trim()) return { error: 'crawl_url_required' };
-        return await tools.crawl?.crawl({
-          url,
-          limit: readNumber(record, 'limit') ?? undefined,
-          budget: asRecord(record.budget) ?? undefined,
-          correlationId: input.correlationId ?? null,
-        });
+        try {
+          const result = await tools.crawl?.crawl({
+            url,
+            limit: readNumber(record, 'limit') ?? undefined,
+            budget: asRecord(record.budget) ?? undefined,
+            correlationId: input.correlationId ?? null,
+          });
+          return { requestedUrl: url, ...(result ?? {}) };
+        } catch (error) {
+          return {
+            requestedUrl: url,
+            toolFailure: true,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       }),
     );
   }
@@ -192,12 +217,21 @@ async function collectStructuredToolContext(
         const record = asRecord(request) ?? {};
         const url = readString(record, 'url') ?? '';
         if (!url.trim()) return { error: 'browser_url_required' };
-        return await tools.browser?.inspect?.({
-          url,
-          instructions: readString(record, 'instructions'),
-          budget: asRecord(record.budget) ?? undefined,
-          correlationId: input.correlationId ?? null,
-        });
+        try {
+          const result = await tools.browser?.inspect?.({
+            url,
+            instructions: readString(record, 'instructions'),
+            budget: asRecord(record.budget) ?? undefined,
+            correlationId: input.correlationId ?? null,
+          });
+          return { requestedUrl: url, ...(result ?? {}) };
+        } catch (error) {
+          return {
+            requestedUrl: url,
+            toolFailure: true,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       }),
     );
   }
@@ -209,13 +243,20 @@ async function collectStructuredToolContext(
     context.documentExtract = await Promise.all(
       documentRequests.map(async (request) => {
         const record = asRecord(request) ?? {};
-        return await tools.documentExtract?.extract({
-          url: readString(record, 'url'),
-          contentType: readString(record, 'contentType'),
-          text: readString(record, 'text'),
-          budget: asRecord(record.budget) ?? undefined,
-          correlationId: input.correlationId ?? null,
-        });
+        try {
+          return await tools.documentExtract?.extract({
+            url: readString(record, 'url'),
+            contentType: readString(record, 'contentType'),
+            text: readString(record, 'text'),
+            budget: asRecord(record.budget) ?? undefined,
+            correlationId: input.correlationId ?? null,
+          });
+        } catch (error) {
+          return {
+            toolFailure: true,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       }),
     );
   }

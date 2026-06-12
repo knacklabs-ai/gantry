@@ -69,6 +69,18 @@ export interface GantryRuntimeStorage {
   recordStructuredTaskRun?(
     input: GantryStructuredTaskAuditRecord,
   ): Promise<void> | void;
+  getUserConversationState?(
+    input: GantryUserConversationStateKey,
+  ):
+    | Promise<GantryUserConversationState | null>
+    | GantryUserConversationState
+    | null;
+  upsertUserConversationState?(
+    input: GantryUserConversationStateUpsertInput,
+  ): Promise<GantryUserConversationState> | GantryUserConversationState;
+  mergeUserConversationState?(
+    input: GantryUserConversationStateMergeInput,
+  ): Promise<GantryUserConversationState> | GantryUserConversationState;
   getTeamsConversationReference?(
     conversationId: string,
   ):
@@ -156,6 +168,36 @@ export interface GantryTeamsIncomingActivity {
   readonly teamsUserDisplayName?: string | null;
   readonly raw: Record<string, unknown>;
 }
+
+export interface GantryUserConversationStateKey {
+  readonly provider: string;
+  readonly tenantId: string;
+  readonly userId: string;
+  readonly conversationId: string;
+  readonly conversationScopeType: string;
+  readonly conversationScopeId: string;
+}
+
+export interface GantryUserConversationState extends GantryUserConversationStateKey {
+  readonly summaryText: string;
+  readonly stateJson: Record<string, unknown>;
+  readonly lastTenderId?: string | null;
+  readonly lastSeenAt: string;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface GantryUserConversationStateUpsertInput extends GantryUserConversationStateKey {
+  readonly summaryText?: string | null;
+  readonly stateJson?: Record<string, unknown> | null;
+  readonly lastTenderId?: string | null;
+  readonly lastSeenAt: string;
+  readonly expiresAt: string;
+  readonly updatedAt?: string | null;
+}
+
+export interface GantryUserConversationStateMergeInput extends GantryUserConversationStateUpsertInput {}
 
 export interface GantryExternalNotificationCardRequest {
   readonly integrationId: string;

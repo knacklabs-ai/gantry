@@ -199,6 +199,9 @@ async function rememberTeamsConversationReference(
   if (!storage.saveTeamsConversationReference) return;
   const conversationId = activity.conversation?.id;
   if (!conversationId || !activity.serviceUrl) return;
+  const canonicalConversationId =
+    readTeamsChannelConversationId(activity) ??
+    canonicalTeamsConversationId(conversationId);
   const reference = TurnContext.getConversationReference(activity);
   const from = activity.from as
     | { id?: string; aadObjectId?: string; name?: string }
@@ -207,8 +210,8 @@ async function rememberTeamsConversationReference(
   const tenant = asRecord(channelData?.tenant);
   await storage.saveTeamsConversationReference({
     exists: true,
-    conversationId,
-    conversationJid: normalizeTeamsJid(conversationId),
+    conversationId: canonicalConversationId,
+    conversationJid: normalizeTeamsJid(canonicalConversationId),
     serviceUrl: activity.serviceUrl,
     tenantId: readString(tenant, 'id') ?? readString(channelData, 'tenantId'),
     botId: activity.recipient?.id,
@@ -248,7 +251,7 @@ function parseStoredReference(
 function teamsBaseConversationIdFromThreadConversationId(
   conversationId: string,
 ): string {
-  return conversationId.split(';messageid=')[0]?.trim() || conversationId;
+  return canonicalTeamsConversationId(conversationId);
 }
 
 function teamsThreadConversationId(
@@ -263,6 +266,19 @@ function teamsThreadConversationId(
 function normalizeTeamsJid(input: string): string {
   const trimmed = input.trim();
   return trimmed.startsWith('teams:') ? trimmed : `teams:${trimmed}`;
+}
+
+function canonicalTeamsConversationId(conversationId: string): string {
+  const trimmed = conversationId.trim();
+  const messageIdIndex = trimmed.toLowerCase().indexOf(';messageid=');
+  if (messageIdIndex < 0) return trimmed;
+  return trimmed.slice(0, messageIdIndex).trim() || trimmed;
+}
+
+function readTeamsChannelConversationId(activity: Activity): string | null {
+  const channelData = asRecord(activity.channelData);
+  const channel = asRecord(channelData?.channel);
+  return readString(channelData, 'teamsChannelId') ?? readString(channel, 'id');
 }
 
 function isPersonalTeamsConversationReference(

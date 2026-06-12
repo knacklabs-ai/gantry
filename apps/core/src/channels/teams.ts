@@ -1,5 +1,6 @@
 import type { ChannelAdapter, ChannelOpts } from './channel-provider.js';
 import type {
+  AdaptiveCardPayload,
   MessageDeliveryResult,
   MessageSendOptions,
   NewMessage,
@@ -22,7 +23,10 @@ import {
   permissionDecisionOptions,
 } from './permission-interaction.js';
 import { sendTeamsTextMessage } from './teams-delivery.js';
+import { handleExternalCardAction } from './teams-external-card-actions.js';
+import { forwardExternalTenderChatReply } from './teams-external-tender-chat.js';
 import { nowIso } from '../shared/time/datetime.js';
+import { createTeamsBotFrameworkSdkClient } from './teams-bot-framework-client.js';
 
 export const TEAMS_JID_PREFIX = 'teams:';
 export const TEAMS_ADAPTIVE_CARD_CONTENT_TYPE =
@@ -32,6 +36,9 @@ export interface TeamsChannelCredentials {
   clientId: string;
   clientSecret: string;
   tenantId: string;
+  botAppId?: string;
+  botAppPassword?: string;
+  botTenantId?: string;
 }
 
 // Keep Microsoft SDK shapes behind this adapter-owned interface so domain,
@@ -48,6 +55,12 @@ export interface TeamsInboundMessage {
   };
   senderId?: string;
   senderName?: string;
+  senderIdKind?:
+    | 'aad_object_id'
+    | 'teams_user_id'
+    | 'user_principal_name'
+    | 'unknown';
+  tenantId?: string;
   timestamp?: string;
   threadId?: string;
   replyToId?: string;
@@ -103,22 +116,25 @@ export interface TeamsChannelDependencies {
 }
 const TEAMS_PERMISSION_APPROVAL_TIMEOUT_MS = PERMISSION_APPROVAL_TIMEOUT_MS;
 export interface TeamsAdaptiveCardAction {
-  type: 'Action.Execute';
+  type: string;
   title: string;
-  verb: string;
-  data: {
-    action: 'permission_decision';
-    requestId: string;
-    decision: string;
-    sourceAgentFolder: string;
-    targetJid?: string;
-    threadId?: string;
-  };
+  verb?: string;
+  url?: string;
+  data?:
+    | {
+        action: 'permission_decision';
+        requestId: string;
+        decision: string;
+        sourceAgentFolder: string;
+        targetJid?: string;
+        threadId?: string;
+      }
+    | Record<string, unknown>;
 }
 export interface TeamsAdaptiveCardPayload {
   $schema: 'http://adaptivecards.io/schemas/adaptive-card.json';
   type: 'AdaptiveCard';
-  version: '1.5';
+  version: string;
   body: Array<Record<string, unknown>>;
   actions: TeamsAdaptiveCardAction[];
 }
@@ -292,6 +308,27 @@ export class TeamsChannel implements ChannelAdapter {
     return sendTeamsTextMessage(this.sdkClient, conversationId, text, options);
   }
 
+  async sendAdaptiveCard(
+    jid: string,
+    card: AdaptiveCardPayload,
+    options: MessageSendOptions = {},
+  ): Promise<MessageDeliveryResult | void> {
+    if (!this.connected) return;
+    const conversationId = teamsConversationIdFromJid(jid);
+    if (!conversationId) return;
+    if (!this.sdkClient.sendAdaptiveCard) {
+      throw new Error('Teams SDK client cannot send Adaptive Cards');
+    }
+    const sent = await this.sdkClient.sendAdaptiveCard({
+      conversationId,
+      card: card as unknown as TeamsAdaptiveCardPayload,
+      ...(options.threadId ? { threadId: options.threadId } : {}),
+    });
+    return sent.externalMessageId
+      ? { externalMessageId: sent.externalMessageId }
+      : {};
+  }
+
   async ingestMessage(message: TeamsInboundMessage): Promise<void> {
     const jid = normalizeTeamsJid(message.conversationId);
     if (!jid) return;
@@ -302,9 +339,20 @@ export class TeamsChannel implements ChannelAdapter {
     if (await this.handlePermissionDecision(message, jid, sender, senderName)) {
       return;
     }
+    if (
+      await handleExternalCardAction({
+        message,
+        sdkClient: this.sdkClient,
+      })
+    ) {
+      return;
+    }
 
     const content = message.text?.trim() || '';
     if (!content) return;
+    if (await forwardExternalTenderChatReply(message)) {
+      return;
+    }
 
     await this.opts.onChatMetadata(
       jid,
@@ -579,7 +627,7 @@ export function createTeamsChannel(
     deps.sdkClient ?? createMicrosoftTeamsSdkClient(credentials);
   if (!sdkClient) {
     logger.warn(
-      'Teams: Microsoft Teams SDK transport is not configured for this scaffold',
+      'Teams: Microsoft Teams Bot Framework transport is not configured',
     );
     return null;
   }
@@ -597,11 +645,24 @@ function readTeamsCredentials(
   const tenantId =
     secrets.getOptionalSecret({ env: 'TEAMS_TENANT_ID' })?.trim() || '';
   if (!clientId || !clientSecret || !tenantId) return null;
-  return { clientId, clientSecret, tenantId };
+  const botAppId =
+    secrets.getOptionalSecret({ env: 'TEAMS_BOT_APP_ID' })?.trim() || '';
+  const botAppPassword =
+    secrets.getOptionalSecret({ env: 'TEAMS_BOT_APP_PASSWORD' })?.trim() || '';
+  const botTenantId =
+    secrets.getOptionalSecret({ env: 'TEAMS_BOT_TENANT_ID' })?.trim() || '';
+  return {
+    clientId,
+    clientSecret,
+    tenantId,
+    ...(botAppId ? { botAppId } : {}),
+    ...(botAppPassword ? { botAppPassword } : {}),
+    ...(botTenantId ? { botTenantId } : {}),
+  };
 }
 
 function createMicrosoftTeamsSdkClient(
   _credentials: TeamsChannelCredentials,
 ): TeamsSdkClient | null {
-  return null;
+  return createTeamsBotFrameworkSdkClient();
 }

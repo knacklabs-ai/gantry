@@ -337,6 +337,143 @@ describe('@cawstudios/agent-gantry', () => {
     ).toBe(false);
   });
 
+  it('verifies card actions when Teams rewrites equivalent expiresAt strings', () => {
+    const baseAction = {
+      action: 'external_card_action',
+      signatureVersion: 'v2' as const,
+      integrationId: 'manipal-tender-bot',
+      eventId: 'outbox-1',
+      resourceId: 'tender-1',
+      workspaceId: 'workspace-1',
+      sourceWorkspaceId: 'workspace-1',
+      sourceChannelId: '19:workspace',
+      teamsTenantId: 'tenant-1',
+      actionType: 'request_analysis',
+      platformOperation: 'requestAdminProcessingApproval',
+    };
+    const signedWithMilliseconds = signExternalCardAction({
+      secret: 'secret',
+      ...baseAction,
+      expiresAt: '2099-01-01T00:00:00.550Z',
+      nonce: 'nonce-550',
+    });
+    const shortenedMillisecondsAction = parseExternalCardAction({
+      ...baseAction,
+      nonce: signedWithMilliseconds.nonce,
+      expiresAt: '2099-01-01T00:00:00.55Z',
+      signature: signedWithMilliseconds.signature,
+    });
+
+    expect(shortenedMillisecondsAction).toMatchObject({
+      expiresAt: '2099-01-01T00:00:00.550Z',
+    });
+    expect(
+      shortenedMillisecondsAction &&
+        verifyExternalCardAction({
+          action: shortenedMillisecondsAction,
+          secret: 'secret',
+          nowMs: Date.parse('2026-05-27T00:00:00Z'),
+        }),
+    ).toBe(true);
+
+    const signedWithZeroMilliseconds = signExternalCardAction({
+      secret: 'secret',
+      ...baseAction,
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      nonce: 'nonce-000',
+    });
+    const omittedZeroMillisecondsAction = parseExternalCardAction({
+      ...baseAction,
+      nonce: signedWithZeroMilliseconds.nonce,
+      expiresAt: '2099-01-01T00:00:00Z',
+      signature: signedWithZeroMilliseconds.signature,
+    });
+
+    expect(omittedZeroMillisecondsAction).toMatchObject({
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    expect(
+      omittedZeroMillisecondsAction &&
+        verifyExternalCardAction({
+          action: omittedZeroMillisecondsAction,
+          secret: 'secret',
+          nowMs: Date.parse('2026-05-27T00:00:00Z'),
+        }),
+    ).toBe(true);
+  });
+
+  it('keeps card action signatures strict after expiresAt normalization', () => {
+    const signed = signExternalCardAction({
+      secret: 'secret',
+      signatureVersion: 'v2',
+      integrationId: 'manipal-tender-bot',
+      eventId: 'outbox-1',
+      resourceId: 'tender-1',
+      workspaceId: 'workspace-1',
+      sourceChannelId: '19:workspace',
+      teamsTenantId: 'tenant-1',
+      actionType: 'request_analysis',
+      platformOperation: 'requestAdminProcessingApproval',
+      nonce: 'nonce-1',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    const action = parseExternalCardAction({
+      action: 'external_card_action',
+      signatureVersion: signed.signatureVersion,
+      integrationId: 'manipal-tender-bot',
+      eventId: 'outbox-1',
+      resourceId: 'tender-1',
+      workspaceId: 'workspace-1',
+      sourceChannelId: '19:workspace',
+      teamsTenantId: 'tenant-1',
+      actionType: 'request_analysis',
+      platformOperation: 'requestAdminProcessingApproval',
+      nonce: signed.nonce,
+      expiresAt: '2099-01-01T00:00:00Z',
+      signature: signed.signature,
+    });
+
+    expect(
+      action &&
+        verifyExternalCardAction({
+          action: { ...action, platformOperation: 'markTenderWatching' },
+          secret: 'secret',
+          nowMs: Date.parse('2026-05-27T00:00:00Z'),
+        }),
+    ).toBe(false);
+    expect(
+      action &&
+        verifyExternalCardAction({
+          action: { ...action, resourceId: 'tender-2' },
+          secret: 'secret',
+          nowMs: Date.parse('2026-05-27T00:00:00Z'),
+        }),
+    ).toBe(false);
+    expect(
+      action &&
+        verifyExternalCardAction({
+          action: { ...action, nonce: 'nonce-2' },
+          secret: 'secret',
+          nowMs: Date.parse('2026-05-27T00:00:00Z'),
+        }),
+    ).toBe(false);
+    expect(() =>
+      signExternalCardAction({
+        secret: 'secret',
+        signatureVersion: 'v2',
+        integrationId: 'manipal-tender-bot',
+        eventId: 'outbox-1',
+        resourceId: 'tender-1',
+        workspaceId: 'workspace-1',
+        sourceChannelId: '19:workspace',
+        teamsTenantId: 'tenant-1',
+        actionType: 'request_analysis',
+        platformOperation: 'requestAdminProcessingApproval',
+        expiresAt: 'not-a-date',
+      }),
+    ).toThrow('External card action expiration timestamp is invalid.');
+  });
+
   it('sends notification card requests through the external platform event route', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> =
       [];
@@ -504,6 +641,112 @@ describe('@cawstudios/agent-gantry', () => {
     });
   });
 
+  it('stores Teams channel conversation references under the base channel id', async () => {
+    const savedReferences: unknown[] = [];
+    const activity = {
+      type: 'message',
+      id: 'message-action-1',
+      serviceUrl: 'https://smba.trafficmanager.net/in/tenant-1/',
+      conversation: {
+        id: '19:channel@thread.tacv2;messageid=parent-card-1',
+        isGroup: true,
+        conversationType: 'channel',
+      },
+      from: { aadObjectId: 'teams-user-1', id: '29:user', name: 'User' },
+      recipient: { id: '28:bot', name: 'Tender Bot' },
+      channelData: {
+        channel: { id: '19:channel@thread.tacv2' },
+        tenant: { id: 'tenant-1' },
+      },
+    };
+    const adapter: BotFrameworkAdapterLike = {
+      processActivity: async (_req, _res, logic) => {
+        await logic({ activity } as never);
+      },
+      continueConversation: async () => undefined,
+    };
+    const transport = createBotFrameworkTeamsTransport({
+      botAppId: 'bot',
+      botAppPassword: 'secret',
+      storage: {
+        saveTeamsConversationReference: (reference) =>
+          savedReferences.push(reference),
+      },
+      adapter,
+    });
+    const seenActivities: unknown[] = [];
+
+    await transport.handleHttpActivity?.({
+      req: {} as never,
+      res: {
+        writableEnded: false,
+        end: () => undefined,
+        setHeader: () => undefined,
+      } as never,
+      onActivity: (incoming) => seenActivities.push(incoming),
+    });
+
+    expect(savedReferences[0]).toMatchObject({
+      exists: true,
+      conversationId: '19:channel@thread.tacv2',
+      conversationJid: 'teams:19:channel@thread.tacv2',
+      serviceUrl: 'https://smba.trafficmanager.net/in/tenant-1/',
+      tenantId: 'tenant-1',
+      botId: '28:bot',
+      teamsUserId: 'teams-user-1',
+    });
+    expect(seenActivities[0]).toMatchObject({
+      conversationId: '19:channel@thread.tacv2;messageid=parent-card-1',
+    });
+  });
+
+  it('finds historical Teams references stored with message-scoped conversation ids', async () => {
+    const storage = createPgGantryRuntimeStorage({
+      schema: 'gantry_runtime',
+      pool: {
+        query: async (_sql, values) => {
+          expect(values).toEqual([
+            'teams:19:channel@thread.tacv2',
+            'teams:19:channel@thread.tacv2',
+            '19:channel@thread.tacv2',
+            '19:channel@thread.tacv2',
+          ]);
+          return {
+            rows: [
+              {
+                conversation_jid:
+                  'teams:19:channel@thread.tacv2;messageid=parent-card-1',
+                conversation_id:
+                  '19:channel@thread.tacv2;messageid=parent-card-1',
+                service_url: 'https://smba.trafficmanager.net/in/tenant-1/',
+                tenant_id: 'tenant-1',
+                bot_id: '28:bot',
+                teams_user_id: 'teams-user-1',
+                raw_reference_json: JSON.stringify({
+                  serviceUrl: 'https://smba.trafficmanager.net/in/tenant-1/',
+                  conversation: {
+                    id: '19:channel@thread.tacv2;messageid=parent-card-1',
+                  },
+                }),
+                updated_at: new Date('2026-06-05T13:29:56.000Z'),
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    await expect(
+      storage.getTeamsConversationReference?.('19:channel@thread.tacv2'),
+    ).resolves.toMatchObject({
+      exists: true,
+      conversationId: '19:channel@thread.tacv2;messageid=parent-card-1',
+      conversationJid: 'teams:19:channel@thread.tacv2;messageid=parent-card-1',
+      tenantId: 'tenant-1',
+      rawReferenceJson: expect.stringContaining('parent-card-1'),
+    });
+  });
+
   it('sends Teams cards through embedded Bot Framework transport', async () => {
     const sent: unknown[] = [];
     const adapter: BotFrameworkAdapterLike = {
@@ -543,6 +786,68 @@ describe('@cawstudios/agent-gantry', () => {
       }),
     ).resolves.toMatchObject({ accepted: true, statusCode: 202 });
     expect(sent).toHaveLength(1);
+  });
+
+  it('sends Teams cards to the base channel when the stored reference is message-scoped', async () => {
+    const sent: unknown[] = [];
+    const references: unknown[] = [];
+    const adapter: BotFrameworkAdapterLike = {
+      processActivity: async () => undefined,
+      continueConversation: async (reference, logic) => {
+        references.push(reference);
+        await logic({
+          sendActivity: async (activity: unknown) => {
+            sent.push(activity);
+            return { id: 'teams-message-1' };
+          },
+        } as never);
+      },
+    };
+    const storage = {
+      getTeamsConversationReference: (conversationId: string) => {
+        expect(conversationId).toBe('19:channel@thread.tacv2');
+        return {
+          exists: true,
+          conversationId: '19:channel@thread.tacv2;messageid=parent-card-1',
+          conversationJid:
+            'teams:19:channel@thread.tacv2;messageid=parent-card-1',
+          serviceUrl: 'https://smba.trafficmanager.net/in/tenant-1/',
+          rawReferenceJson: JSON.stringify({
+            serviceUrl: 'https://smba.trafficmanager.net/in/tenant-1/',
+            conversation: {
+              id: '19:channel@thread.tacv2;messageid=parent-card-1',
+            },
+          }),
+        };
+      },
+    };
+    const transport = createBotFrameworkTeamsTransport({
+      botAppId: 'bot',
+      botAppPassword: 'secret',
+      storage,
+      adapter,
+    });
+
+    await expect(
+      transport.sendCard({
+        conversationId: '19:channel@thread.tacv2',
+        card: { type: 'AdaptiveCard' },
+      }),
+    ).resolves.toMatchObject({ accepted: true, statusCode: 202 });
+
+    expect(references).toEqual([
+      expect.objectContaining({
+        conversation: { id: '19:channel@thread.tacv2' },
+      }),
+    ]);
+    expect(sent).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        attachments: [
+          expect.objectContaining({ content: { type: 'AdaptiveCard' } }),
+        ],
+      }),
+    ]);
   });
 
   it('sends Teams thread replies with a thread-scoped conversation reference', async () => {
@@ -719,27 +1024,89 @@ describe('@cawstudios/agent-gantry', () => {
     );
   });
 
+  it('creates, reads, and merges pg-backed user conversation state by full scope key', async () => {
+    const calls: unknown[][] = [];
+    const storage = createPgGantryRuntimeStorage({
+      pool: {
+        query: async (...args: unknown[]) => {
+          calls.push(args);
+          return {
+            rows: [
+              {
+                provider: 'teams',
+                tenant_id: 'tenant-1',
+                user_id: 'user-1',
+                conversation_id: 'conversation-1',
+                conversation_scope_type: 'teams_thread',
+                conversation_scope_id: 'reply-1',
+                summary_text: 'Safe UX summary',
+                state_json: { last_intent: 'document_qa' },
+                last_tender_id: 'tender-1',
+                last_seen_at: new Date('2026-06-01T00:00:00.000Z'),
+                expires_at: new Date('2026-07-01T00:00:00.000Z'),
+                created_at: new Date('2026-06-01T00:00:00.000Z'),
+                updated_at: new Date('2026-06-01T00:00:00.000Z'),
+              },
+            ],
+          };
+        },
+      },
+    });
+    const key = {
+      provider: 'teams',
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      conversationScopeType: 'teams_thread',
+      conversationScopeId: 'reply-1',
+    };
+
+    await expect(
+      storage.upsertUserConversationState?.({
+        ...key,
+        summaryText: 'Safe UX summary',
+        stateJson: { last_intent: 'document_qa' },
+        lastTenderId: 'tender-1',
+        lastSeenAt: '2026-06-01T00:00:00.000Z',
+        expiresAt: '2026-07-01T00:00:00.000Z',
+      }),
+    ).resolves.toMatchObject({
+      ...key,
+      summaryText: 'Safe UX summary',
+      stateJson: { last_intent: 'document_qa' },
+    });
+    await storage.getUserConversationState?.(key);
+    await storage.mergeUserConversationState?.({
+      ...key,
+      summaryText: 'Safe follow-up',
+      stateJson: { last_answered: true },
+      lastSeenAt: '2026-06-01T00:01:00.000Z',
+      expiresAt: '2026-07-01T00:01:00.000Z',
+    });
+
+    expect(String(calls[0]?.[0])).toContain(
+      '"gantry_runtime"."user_conversation_state"',
+    );
+    expect(String(calls[1]?.[0])).toContain('expires_at > now()');
+    expect(String(calls[2]?.[0])).toContain('state_json');
+    expect(calls[1]?.[1]).toEqual([
+      'teams',
+      'tenant-1',
+      'user-1',
+      'conversation-1',
+      'teams_thread',
+      'reply-1',
+    ]);
+  });
+
   it('runs structured model tasks and records audit state', async () => {
     const audits: unknown[] = [];
     const runner = createStructuredModelTaskRunner({
       model: {
-        generateJson: async (input) => ({
+        generateJson: async () => ({
           recipeSnapshotJson: { steps: [] },
-          validationReportJson: {
-            valid: true,
-            sawBrowserContext: Boolean(input.input.browserContext),
-          },
+          validationReportJson: { valid: true },
         }),
-      },
-      tools: {
-        browser: {
-          runTask: async () => ({
-            websiteRecipeExploration: {
-              status: 'completed',
-              selectedListingUrl: 'https://example.test/tenders',
-            },
-          }),
-        },
       },
       storage: {
         recordStructuredTaskRun: (input) => audits.push(input),
@@ -755,17 +1122,111 @@ describe('@cawstudios/agent-gantry', () => {
       }),
     ).resolves.toMatchObject({
       status: 'completed',
-      output: {
-        recipeSnapshotJson: { steps: [] },
-        browserContext: {
-          websiteRecipeExploration: {
-            status: 'completed',
-            selectedListingUrl: 'https://example.test/tenders',
+      output: { recipeSnapshotJson: { steps: [] } },
+    });
+    expect(audits).toHaveLength(1);
+  });
+
+  it('keeps successful structured tool evidence when sibling tools abort', async () => {
+    const runner = createStructuredModelTaskRunner({
+      tools: {
+        search: {
+          search: async () => ({
+            provider: 'firecrawl-search',
+            items: [
+              {
+                url: 'https://example.gov/tenders',
+                title: 'Tender portal',
+                snippet: 'Open bid notices',
+              },
+            ],
+          }),
+        },
+        fetch: {
+          fetch: async () => {
+            throw new Error('This operation was aborted');
+          },
+        },
+        crawl: {
+          crawl: async () => {
+            throw new Error('This operation was aborted');
           },
         },
       },
+      model: {
+        generateJson: async (input) => {
+          const toolContext = input.input.toolContext as {
+            search?: Array<{
+              items?: Array<{ title?: unknown; url?: unknown }>;
+            }>;
+          };
+          const firstItem = toolContext.search?.[0]?.items?.[0] ?? {};
+          return {
+            candidatesJson: [
+              {
+                url: firstItem.url,
+                title: firstItem.title,
+                confidence: 0.8,
+              },
+            ],
+          };
+        },
+      },
     });
-    expect(audits).toHaveLength(1);
+
+    await expect(
+      runner.runStructuredTask({
+        taskType: 'source_discovery',
+        instructions: 'find tender sources',
+        input: {
+          toolRequests: {
+            search: [{ query: 'state tender portal', limit: 1 }],
+            fetch: [{ url: 'https://example.gov/tenders' }],
+            crawl: [{ url: 'https://example.gov/tenders' }],
+          },
+        },
+        correlationId: 'source-discovery',
+      }),
+    ).resolves.toMatchObject({
+      status: 'completed',
+      output: {
+        candidatesJson: [
+          {
+            url: 'https://example.gov/tenders',
+            title: 'Tender portal',
+            confidence: 0.8,
+          },
+        ],
+        toolContext: {
+          search: [
+            {
+              query: 'state tender portal',
+              provider: 'firecrawl-search',
+              items: [
+                {
+                  url: 'https://example.gov/tenders',
+                  title: 'Tender portal',
+                },
+              ],
+            },
+          ],
+          fetch: [
+            {
+              requestedUrl: 'https://example.gov/tenders',
+              toolFailure: true,
+              error: 'This operation was aborted',
+            },
+          ],
+          crawl: [
+            {
+              requestedUrl: 'https://example.gov/tenders',
+              toolFailure: true,
+              error: 'This operation was aborted',
+            },
+          ],
+        },
+      },
+    });
   });
 
   it('runs generic agent tasks through tool calls until final output', async () => {

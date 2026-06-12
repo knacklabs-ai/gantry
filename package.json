@@ -86,6 +86,7 @@
     "@grammyjs/stream": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@slack/bolt": "^4.7.0",
+    "botbuilder": "^4.23.3",
     "cron-parser": "5.5.0",
     "dayjs": "^1.11.20",
     "drizzle-orm": "^0.45.2",
