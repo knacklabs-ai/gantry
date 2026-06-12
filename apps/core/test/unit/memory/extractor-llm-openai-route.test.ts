@@ -87,6 +87,9 @@ describe('memory extraction over an OpenAI-family route', () => {
       createRouteAwareMemoryLlmClient({
         anthropic: jsonFactsClient(defaultSeen, '[]'),
         openai: jsonFactsClient(openaiSeen, factsJson),
+        anthropicDirect: jsonFactsClient(defaultSeen, '[]'),
+        // OpenAI-family memory requires the deepagents memory engine.
+        getEngine: () => 'deepagents' as never,
       }),
     );
 

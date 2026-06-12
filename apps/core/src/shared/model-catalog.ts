@@ -489,7 +489,12 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     source: OPENAI_MODELS_SOURCE,
     cacheMode: 'openai-automatic-prompt',
     cacheTokenFields: ['prompt_tokens_details.cached_tokens'],
-    supportedWorkloads: ['chat'],
+    supportedWorkloads: [
+      'chat',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ],
     experimental: true,
   }),
   executableModelEntry({
@@ -502,7 +507,12 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     source: OPENAI_MODELS_SOURCE,
     cacheMode: 'openai-automatic-prompt',
     cacheTokenFields: ['prompt_tokens_details.cached_tokens'],
-    supportedWorkloads: ['chat'],
+    supportedWorkloads: [
+      'chat',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ],
     experimental: true,
   }),
   executableModelEntry({
@@ -515,7 +525,12 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     source: OPENAI_MODELS_SOURCE,
     cacheMode: 'openai-automatic-prompt',
     cacheTokenFields: ['prompt_tokens_details.cached_tokens'],
-    supportedWorkloads: ['chat'],
+    supportedWorkloads: [
+      'chat',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ],
     experimental: true,
   }),
 ] as const;

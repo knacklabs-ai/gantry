@@ -1,6 +1,7 @@
 import {
   ASSISTANT_NAME,
   getCredentialBrokerRuntimeConfig,
+  getMemoryEngine,
   getRuntimeQueueConfig,
   getRuntimeSettingsForConfig,
 } from '../../config/index.js';
@@ -151,7 +152,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     createDefaultRunnerSandboxProvider(
       getRuntimeSettingsForConfig().runtime.sandbox,
     );
-  registerMemoryLlmClient(createDefaultMemoryLlmClient());
+  registerMemoryLlmClient(createDefaultMemoryLlmClient(getMemoryEngine));
   const mcpDnsValidationCache = new RemoteMcpDnsValidationCache();
   let credentialBrokerPromise:
     | Promise<AgentCredentialBroker | undefined>

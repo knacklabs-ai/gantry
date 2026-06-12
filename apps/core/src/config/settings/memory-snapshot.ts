@@ -1,5 +1,6 @@
 export interface RuntimeMemorySettingsSnapshot {
   enabled?: boolean;
+  engine?: string;
   embeddingsEnabled?: boolean;
   embeddingProvider?: string;
   embeddingModel?: string;
@@ -216,6 +217,7 @@ export function parseRuntimeMemorySnapshotFromRoot(
 
   return {
     enabled: parseOptionalBoolean(memory.enabled, 'memory.enabled'),
+    engine: parseOptionalString(memory.engine),
     embeddingsEnabled: parseOptionalBoolean(
       embeddings.enabled,
       'memory.embeddings.enabled',

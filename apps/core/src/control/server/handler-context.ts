@@ -94,6 +94,9 @@ export type ControlRouteContext = {
     agentFolder?: string,
   ) => ControlDefaultModelConfig;
   getModelDefaults: () => ControlModelDefaults;
+  // The configured memory engine (`memory.engine`), read fresh so the model
+  // preview reflects a reviewed settings reload without restart.
+  getMemoryEngine: () => AgentEngine;
   patchModelDefaults: (
     body: Record<string, unknown>,
   ) => Promise<ControlModelDefaultsPatchResult>;

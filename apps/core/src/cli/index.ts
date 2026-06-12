@@ -37,9 +37,17 @@ configureDesiredSettingsStorageProvider(async () => {
     initializeRuntimeStorage,
     isStorageUnavailableError,
   } = await import('../adapters/storage/postgres/runtime-store.js');
-  const { buildAgentEngineChangeAuditContext } =
-    await import('../adapters/storage/postgres/agent-engine-change-audit-publisher.js');
+  const {
+    buildAgentEngineChangeAuditContext,
+    buildMemoryEngineChangeAuditContext,
+  } = await import(
+    '../adapters/storage/postgres/agent-engine-change-audit-publisher.js'
+  );
   const engineChangeAudit = buildAgentEngineChangeAuditContext({
+    actor: 'cli',
+    source: 'cli',
+  });
+  const memoryEngineChangeAudit = buildMemoryEngineChangeAuditContext({
     actor: 'cli',
     source: 'cli',
   });
@@ -49,6 +57,7 @@ configureDesiredSettingsStorageProvider(async () => {
       ops: storage.ops,
       repositories: storage.repositories,
       engineChangeAudit,
+      memoryEngineChangeAudit,
     };
   } catch {
     // CLI invocations usually run outside the runtime process.
@@ -59,6 +68,7 @@ configureDesiredSettingsStorageProvider(async () => {
       ops: storage.ops,
       repositories: storage.repositories,
       engineChangeAudit,
+      memoryEngineChangeAudit,
       close: closeRuntimeStorage,
     };
   } catch (err) {

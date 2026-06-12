@@ -109,6 +109,7 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
   };
   const memory: RuntimeMemorySettings = {
     enabled: true,
+    engine: DEFAULT_AGENT_ENGINE,
     embeddings: {
       enabled: false,
       provider: 'disabled',

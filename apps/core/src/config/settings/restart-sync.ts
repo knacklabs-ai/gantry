@@ -14,13 +14,19 @@ import { normalizeConfiguredCapabilitiesInSettings } from './configured-capabili
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
 import type { RuntimeSettings } from './runtime-settings-types.js';
 import type { AgentEngine } from '../../shared/agent-engine.js';
-import { diffAgentEngineChanges } from './agent-engine-change-audit.js';
-import type { AgentEngineChangeAuditContext } from '../../domain/events/agent-engine-change.js';
+import {
+  diffAgentEngineChanges,
+  diffMemoryEngineChange,
+} from './agent-engine-change-audit.js';
+import type {
+  AgentEngineChangeAuditContext,
+  MemoryEngineChangeAuditContext,
+} from '../../domain/events/agent-engine-change.js';
 
 // Re-exported so existing callers keep their import site; the canonical type and
 // the AGENT_ENGINE_CHANGED audit-sink contract live in the domain layer so the
 // Postgres-wired publisher can implement it without a config<->adapter edge.
-export type { AgentEngineChangeAuditContext };
+export type { AgentEngineChangeAuditContext, MemoryEngineChangeAuditContext };
 
 export async function applyRuntimeSettingsDesiredState(input: {
   runtimeHome: string;
@@ -31,6 +37,7 @@ export async function applyRuntimeSettingsDesiredState(input: {
   previousSettings?: RuntimeSettings;
   reloadRuntimeState?: () => Promise<void>;
   engineChangeAudit?: AgentEngineChangeAuditContext;
+  memoryEngineChangeAudit?: MemoryEngineChangeAuditContext;
 }): Promise<void> {
   const service = new SettingsDesiredStateService({
     ops: input.ops,
@@ -80,6 +87,30 @@ export async function applyRuntimeSettingsDesiredState(input: {
     settings,
     audit: input.engineChangeAudit,
   });
+  await emitMemoryEngineChangeAudit({
+    previousSettings: input.previousSettings,
+    settings,
+    audit: input.memoryEngineChangeAudit,
+  });
+}
+
+async function emitMemoryEngineChangeAudit(input: {
+  previousSettings: RuntimeSettings | undefined;
+  settings: RuntimeSettings;
+  audit?: MemoryEngineChangeAuditContext;
+}): Promise<void> {
+  if (!input.audit) return;
+  const change = diffMemoryEngineChange(input.previousSettings, input.settings);
+  if (!change) return;
+  try {
+    await input.audit.publish({
+      appId: input.audit.appId,
+      actor: input.audit.actor,
+      change,
+    });
+  } catch {
+    // Best-effort: a failed audit publish must not break the settings write.
+  }
 }
 
 async function emitAgentEngineChangeAudit(input: {

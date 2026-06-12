@@ -77,6 +77,37 @@ change and every resolved run is auditable with `modelAlias`, endpoint family,
 `agentEngine`, `executionProviderId`, credential mode without secrets, sandbox
 provider, permission decision, and egress decision.
 
+## Memory engine (addendum)
+
+Host-side memory (extraction, dreaming, consolidation) is system-owned work with
+no agent engine in scope. So that a deployment can run with **no Anthropic models
+at all**, memory has its own engine selector, `memory.engine` in `settings.yaml`
+(values `anthropic_sdk` default, or `deepagents`; same vocabulary and labels as
+`apps/core/src/shared/agent-engine.ts`). One engine governs all three memory
+workloads — there is no per-workload engine — for simplicity. Per-workload model
+selection stays `memory.llm.models.{extractor,dreaming,consolidation}`.
+
+The lane that speaks to the model gateway is chosen by (memory engine, model
+`responseFamily`) per the matrix in `apps/core/src/shared/memory-engine-matrix.ts`,
+enforced both at settings validation and at memory query dispatch
+(`route-aware-memory-llm-client.ts`):
+
+| `memory.engine` | model family | lane |
+| --- | --- | --- |
+| `anthropic_sdk` | anthropic | Claude Agent SDK memory client (unchanged) |
+| `anthropic_sdk` | openai | **INVALID** — `Model <alias> uses the OpenAI endpoint, which is not supported by Anthropic SDK. Choose DeepAgents or an Anthropic-compatible model.` |
+| `deepagents` | openai | OpenAI direct chat-completions client |
+| `deepagents` | anthropic | NEW direct Anthropic Messages client (`adapters/llm/anthropic-memory-direct/`, plain fetch to the loopback gateway `/v1/messages`, api_key mode only) |
+
+DeepAgents memory with Claude OAuth/subscription credentials is rejected when the
+gateway resolves the credential mode, with the locked copy `DeepAgents does not
+support Claude OAuth/subscription credentials in Gantry. Choose Anthropic SDK or
+configure Anthropic API-key Model Access.` The OpenAI gpt catalog entries declare
+the `memory_*` workloads so OpenAI memory models are selectable. Embeddings are
+already provider-neutral (`memory-embeddings.ts`) and out of scope. A memory
+engine change emits a sibling `MEMORY_ENGINE_CHANGED` audit event (the per-agent
+engine change keeps `AGENT_ENGINE_CHANGED`).
+
 ## Consequences
 
 - A user sets an agent engine through `settings.yaml`, `gantry agent engine

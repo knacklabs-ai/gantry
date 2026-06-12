@@ -54,11 +54,26 @@ describe('model catalog resolution', () => {
     expect(findModelByRunnerModel('gpt-5.5')?.responseFamily).toBe('openai');
   });
 
-  it('keeps OpenAI chat models scoped to the chat workload only', () => {
+  it('scopes OpenAI chat models to chat and memory workloads, not jobs', () => {
     expect(resolveModelSelectionForWorkload('gpt', 'chat')).toMatchObject({
       ok: true,
       alias: 'gpt',
     });
+    // OpenAI gpt entries now declare the memory workloads so a zero-Anthropic
+    // deployment can select them for memory under the deepagents memory engine.
+    for (const workload of [
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ] as const) {
+      expect(
+        resolveModelSelectionForWorkload('gpt', workload),
+      ).toMatchObject({ ok: true, alias: 'gpt' });
+      expect(
+        resolveModelSelectionForWorkload('gpt-mini', workload),
+      ).toMatchObject({ ok: true, alias: 'gpt-mini' });
+    }
+    // Jobs remain out of scope for OpenAI-lane chat models.
     expect(
       resolveModelSelectionForWorkload('gpt', 'one_time_job'),
     ).toMatchObject({

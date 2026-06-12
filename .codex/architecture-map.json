@@ -186,7 +186,8 @@
   ],
   "approvedProviderBoundaryPaths": [
     "apps/core/src/adapters/llm/anthropic-claude-agent",
-    "apps/core/src/adapters/llm/deepagents-langchain"
+    "apps/core/src/adapters/llm/deepagents-langchain",
+    "apps/core/src/adapters/llm/anthropic-memory-direct"
   ],
   "providerImportSpecifiers": [
     "@anthropic-ai/sdk",

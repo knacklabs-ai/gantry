@@ -58,6 +58,12 @@ export interface RuntimeMemoryBackfillSettings {
 
 export interface RuntimeMemorySettings {
   enabled: boolean;
+  // The harness (engine) that runs all three memory LLM workloads (extraction,
+  // dreaming, consolidation). The default SDK engine keeps the native SDK memory
+  // client; the DeepAgents engine uses the direct gateway memory clients. The
+  // route-aware memory client picks the transport from (engine, model family).
+  // One engine governs all memory workloads by design (simplicity).
+  engine: AgentEngine;
   embeddings: {
     enabled: boolean;
     provider: EmbeddingProviderName;

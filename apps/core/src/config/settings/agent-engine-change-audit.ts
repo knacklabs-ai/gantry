@@ -2,7 +2,10 @@ import {
   resolveAgentEngine,
   type AgentEngine,
 } from '../../shared/agent-engine.js';
-import type { AgentEngineChange } from '../../domain/events/agent-engine-change.js';
+import type {
+  AgentEngineChange,
+  MemoryEngineChange,
+} from '../../domain/events/agent-engine-change.js';
 import type { RuntimeSettings } from './runtime-settings-types.js';
 
 // Pure diff of durable agent-engine changes between two settings documents. Both
@@ -40,4 +43,19 @@ export function diffAgentEngineChanges(
     }
   }
   return changes;
+}
+
+// Pure diff of the durable memory-engine setting between two documents. Memory
+// engine is a singleton (`memory.engine`); a change emits one
+// MEMORY_ENGINE_CHANGED event. Returns undefined when unchanged or when there is
+// no previous document to diff against.
+export function diffMemoryEngineChange(
+  previousSettings: RuntimeSettings | undefined,
+  settings: RuntimeSettings,
+): MemoryEngineChange | undefined {
+  if (!previousSettings) return undefined;
+  const oldEngine = previousSettings.memory.engine;
+  const newEngine = settings.memory.engine;
+  if (oldEngine === newEngine) return undefined;
+  return { oldEngine, newEngine };
 }

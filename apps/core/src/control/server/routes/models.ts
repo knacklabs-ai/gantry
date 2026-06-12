@@ -15,6 +15,10 @@ import {
 } from '../../../shared/model-catalog.js';
 import { resolveModelCacheSupport } from '../../../shared/model-cache-support.js';
 import { getModelProviderDefinition } from '../../../shared/model-provider-registry.js';
+import {
+  memoryEngineLabel,
+  resolveMemoryEngineRouting,
+} from '../../../shared/memory-engine-matrix.js';
 import { agentModelPreview } from './model-agent-preview.js';
 import { createJobManagementService } from './jobs.js';
 import {
@@ -349,6 +353,52 @@ function authorizeModelPreviewRequest(
   return null;
 }
 
+// Memory preview: configured memory engine, resolved model family, and the
+// diagnostic transport lane the (engine, family) pair maps to; an incompatible
+// pairing reports the locked matrix copy in `incompatibility` (HTTP 200).
+export function memoryModelPreview(
+  ctx: ControlRouteContext,
+  body: Record<string, unknown>,
+): ModelPreviewRouteResult {
+  const defaults = ctx.getModelDefaults().defaults;
+  const task =
+    body.task === 'dreaming' || body.task === 'consolidation'
+      ? body.task
+      : 'extractor';
+  const slot =
+    task === 'dreaming'
+      ? modelDefaultSlotToResponse(defaults.memoryDreaming)
+      : task === 'consolidation'
+        ? modelDefaultSlotToResponse(defaults.memoryConsolidation)
+        : modelDefaultSlotToResponse(defaults.memoryExtractor);
+  const engine = ctx.getMemoryEngine();
+  const responseFamily = slot.model?.responseFamily ?? null;
+  const routing = responseFamily
+    ? resolveMemoryEngineRouting({
+        engine,
+        responseFamily,
+        alias: slot.effectiveAlias ?? slot.configuredAlias ?? '',
+      })
+    : undefined;
+  return {
+    ok: true,
+    body: {
+      target: 'memory',
+      task,
+      selection: slot,
+      engine,
+      engineLabel: memoryEngineLabel(engine),
+      responseFamily,
+      diagnosticLane: routing?.ok ? routing.lane : null,
+      ...(routing && !routing.ok ? { incompatibility: routing.message } : {}),
+      why: [
+        `memory ${task} uses preset-managed settings from ${slot.source}`,
+        `memory engine: ${memoryEngineLabel(engine)}`,
+      ],
+    },
+  };
+}
+
 async function previewResponse(
   ctx: ControlRouteContext,
   body: Record<string, unknown>,
@@ -504,27 +554,7 @@ async function previewResponse(
     };
   }
   if (target === 'memory') {
-    const task =
-      body.task === 'dreaming' || body.task === 'consolidation'
-        ? body.task
-        : 'extractor';
-    const slot =
-      task === 'dreaming'
-        ? modelDefaultSlotToResponse(defaults.memoryDreaming)
-        : task === 'consolidation'
-          ? modelDefaultSlotToResponse(defaults.memoryConsolidation)
-          : modelDefaultSlotToResponse(defaults.memoryExtractor);
-    return {
-      ok: true,
-      body: {
-        target,
-        task,
-        selection: slot,
-        why: [
-          `memory ${task} uses preset-managed settings from ${slot.source}`,
-        ],
-      },
-    };
+    return memoryModelPreview(ctx, body);
   }
   if (target === 'agent') {
     return agentModelPreview(ctx, body);

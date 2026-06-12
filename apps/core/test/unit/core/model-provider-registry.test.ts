@@ -69,11 +69,16 @@ describe('model provider registry', () => {
     ]);
   });
 
-  it('makes OpenAI an executable chat model route', () => {
+  it('makes OpenAI an executable chat and memory model route', () => {
     const openai = getModelProviderDefinition('openai');
     expect(openai?.executable).toBe(true);
     expect(openai?.modelRoute).toBe(true);
-    expect(openai?.supportedWorkloads).toEqual(['chat']);
+    expect(openai?.supportedWorkloads).toEqual([
+      'chat',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ]);
     expect(openai?.gateway.sdkProjection).toMatchObject({
       baseUrlEnv: 'OPENAI_BASE_URL',
       tokenEnv: 'OPENAI_API_KEY',

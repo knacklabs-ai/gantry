@@ -326,7 +326,12 @@ export const MODEL_PROVIDER_DEFINITIONS = [
     modelRoute: true,
     embeddingProvider: true,
     responseFamily: 'openai',
-    supportedWorkloads: ['chat'],
+    supportedWorkloads: [
+      'chat',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
+    ],
     credentialModes: [
       {
         id: 'api_key',

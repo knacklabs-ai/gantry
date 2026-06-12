@@ -148,6 +148,20 @@ an OpenAI-endpoint model is rejected with `Model <alias> uses the OpenAI
 endpoint, which is not supported by Anthropic SDK. Choose DeepAgents or an
 Anthropic-compatible model.` Neither pairing is silently re-routed.
 
+Host-side memory (extraction, dreaming, consolidation) has its own engine,
+`memory.engine` in `settings.yaml` (`anthropic_sdk` default, or `deepagents`),
+governing all three memory workloads. The same engine x model-family matrix
+applies, validated at settings load and enforced again at memory query dispatch:
+Anthropic SDK + an Anthropic-family memory model uses the Claude Agent SDK memory
+client; DeepAgents + an OpenAI-family memory model uses the direct
+chat-completions client; DeepAgents + an Anthropic-API-key memory model uses a
+direct Anthropic Messages client; Anthropic SDK + an OpenAI-family memory model
+is rejected with the OpenAI-endpoint copy above. A DeepAgents memory engine with
+Claude OAuth/subscription credentials is rejected when the gateway resolves the
+credential mode with the same DeepAgents-OAuth copy above. A deployment that
+configures `memory.engine: deepagents` with OpenAI memory model aliases runs
+memory with no Anthropic models at all.
+
 Agents do not receive every raw secret value from Gantry. Runtime code projects
 only the selected capability's declared credential names. Attached skills do
 not receive secrets by being attached; a selected reviewed skill action must
@@ -191,6 +205,7 @@ Gantry model credentials, never in Gantry `.env` or process env.
 | `agent.one_time_job_default_model`                            | `settings.yaml`                                          |
 | `agent.recurring_job_default_model`                           | `settings.yaml`                                          |
 | `memory.llm.models.*`                                         | `settings.yaml`                                          |
+| `memory.engine`                                               | `settings.yaml`                                          |
 | Conversation approvers                                        | `settings.yaml` and Postgres conversation approver rows  |
 | `storage.postgres.url_env`                                    | `settings.yaml` advanced override                        |
 | `GANTRY_DATABASE_URL`                                         | `RuntimeSecretProvider` / local `.env`                   |

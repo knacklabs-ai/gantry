@@ -117,6 +117,10 @@ vi.mock('@core/config/index.js', async () => {
       );
     }),
     setRuntimeAgentEngine: vi.fn(async () => undefined),
+    getMemoryEngine: vi.fn(() => {
+      const settings = settingsModule.loadRuntimeSettings(runtimeHome);
+      return agentEngineModule.resolveAgentEngine(settings.memory.engine);
+    }),
     getPublicRuntimeSettings: toPublic,
     configureDesiredSettingsStorageProvider: vi.fn(() => undefined),
   };

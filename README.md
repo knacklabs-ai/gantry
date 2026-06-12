@@ -618,6 +618,7 @@ Each agent also has a durable **agent engine**. `anthropic_sdk` (display label `
 - Catalog choices: Anthropic `opus`, `opus-4.7`, `opus-4.6`, `sonnet`, `sonnet-4.6`, `haiku`, `haiku-4.5`; OpenRouter `kimi`, `kimi-k2.6`, `kimi-2.6`
 - Job defaults: `agent.one_time_job_default_model` and `agent.recurring_job_default_model` inherit `agent.default_model` when empty
 - Memory task defaults are preset-managed. Use `gantry model memory` to inspect them and `gantry model reset memory` or `PATCH /v1/models/defaults` with `memory: null` to reapply preset-managed defaults.
+- Memory runs on its own engine, `memory.engine` in `settings.yaml` (`anthropic_sdk` default, or `deepagents`), governing extraction, dreaming, and consolidation. With `memory.engine: deepagents` plus OpenAI memory model aliases, memory runs with no Anthropic models. `gantry model memory` shows `Memory engine: <label>`; an incompatible engine/model pairing is rejected at settings validation.
 - Use `gantry model chat|jobs|memory` and `gantry model why ...` to preview what will actually run before changing defaults. SDK and Control API callers use `client.models.defaults.get()`, `client.models.defaults.update()`, and `client.models.preview()` over `GET /v1/models/defaults`, `PATCH /v1/models/defaults`, and `POST /v1/models/preview`.
 - The generated agent SDK settings JSON includes `model` and `availableModels`; memory hooks are not installed in runtime materialization.
 

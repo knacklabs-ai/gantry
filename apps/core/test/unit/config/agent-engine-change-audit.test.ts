@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { diffAgentEngineChanges } from '@core/config/settings/agent-engine-change-audit.js';
+import {
+  diffAgentEngineChanges,
+  diffMemoryEngineChange,
+} from '@core/config/settings/agent-engine-change-audit.js';
 import {
   DEEPAGENTS_ENGINE,
   DEFAULT_AGENT_ENGINE,
@@ -9,6 +12,7 @@ import type { RuntimeSettings } from '@core/config/settings/runtime-settings-typ
 
 function settings(input: {
   defaultEngine?: string;
+  memoryEngine?: string;
   agents: Record<string, { agentEngine?: string }>;
 }): RuntimeSettings {
   const agents: Record<string, unknown> = {};
@@ -26,6 +30,7 @@ function settings(input: {
   return {
     agent: { defaultAgentEngine: input.defaultEngine ?? DEFAULT_AGENT_ENGINE },
     agents,
+    memory: { engine: input.memoryEngine ?? DEFAULT_AGENT_ENGINE },
   } as unknown as RuntimeSettings;
 }
 
@@ -83,6 +88,27 @@ describe('diffAgentEngineChanges', () => {
       agents: { a: { agentEngine: DEEPAGENTS_ENGINE } },
     });
     expect(diffAgentEngineChanges(undefined, next)).toEqual([]);
+  });
+});
+
+describe('diffMemoryEngineChange', () => {
+  it('reports a memory engine flip', () => {
+    const prev = settings({ memoryEngine: DEFAULT_AGENT_ENGINE, agents: {} });
+    const next = settings({ memoryEngine: DEEPAGENTS_ENGINE, agents: {} });
+    expect(diffMemoryEngineChange(prev, next)).toEqual({
+      oldEngine: DEFAULT_AGENT_ENGINE,
+      newEngine: DEEPAGENTS_ENGINE,
+    });
+  });
+
+  it('returns undefined when the memory engine is unchanged', () => {
+    const same = settings({ memoryEngine: DEEPAGENTS_ENGINE, agents: {} });
+    expect(diffMemoryEngineChange(same, same)).toBeUndefined();
+  });
+
+  it('returns undefined when previous settings are absent', () => {
+    const next = settings({ memoryEngine: DEEPAGENTS_ENGINE, agents: {} });
+    expect(diffMemoryEngineChange(undefined, next)).toBeUndefined();
   });
 });
 
@@ -198,5 +224,62 @@ describe('applyRuntimeSettingsDesiredState engine-change audit emission', () => 
       engineChangeAudit: { publish },
     });
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('emits one MEMORY_ENGINE_CHANGED publish when the memory engine flips', async () => {
+    const prev = settings({ memoryEngine: DEFAULT_AGENT_ENGINE, agents: {} });
+    const next = settings({ memoryEngine: DEEPAGENTS_ENGINE, agents: {} });
+
+    vi.doMock('@core/config/settings/runtime-settings.js', () => ({
+      saveRuntimeSettings: vi.fn(),
+      loadRuntimeSettings: vi.fn(() => prev),
+    }));
+    vi.doMock('@core/config/settings/runtime-settings-validation.js', () => ({
+      validateLoadedRuntimeSettings: vi.fn(() => ({ ok: true })),
+    }));
+    vi.doMock(
+      '@core/config/settings/configured-capability-normalization.js',
+      () => ({
+        normalizeConfiguredCapabilitiesInSettings: vi.fn(async () => ({
+          settings: next,
+          changed: false,
+        })),
+      }),
+    );
+    vi.doMock('@core/config/settings/desired-state-service.js', () => ({
+      SettingsDesiredStateService: class {
+        async reconcile() {
+          return { invalidReferences: [] };
+        }
+      },
+    }));
+
+    const { applyRuntimeSettingsDesiredState } =
+      await import('@core/config/settings/restart-sync.js');
+
+    const memoryPublished: unknown[] = [];
+    await applyRuntimeSettingsDesiredState({
+      runtimeHome: '/tmp/gantry-memory-engine-audit',
+      settings: next,
+      previousSettings: prev,
+      ops: {} as never,
+      repositories: {} as never,
+      memoryEngineChangeAudit: {
+        appId: 'default' as never,
+        actor: 'settings-desired-state',
+        publish: (input) => {
+          memoryPublished.push(input);
+        },
+      },
+    });
+
+    expect(memoryPublished).toHaveLength(1);
+    expect(memoryPublished[0]).toMatchObject({
+      actor: 'settings-desired-state',
+      change: {
+        oldEngine: DEFAULT_AGENT_ENGINE,
+        newEngine: DEEPAGENTS_ENGINE,
+      },
+    });
   });
 });

@@ -118,9 +118,13 @@ function renderMemorySettingsYaml(
   lines: string[],
   memory: RuntimeMemorySettings,
 ): void {
+  lines.push('memory:', `  enabled: ${memory.enabled ? 'true' : 'false'}`);
+  // The system default engine stays implicit in rendered YAML; only a non-default
+  // memory engine is written, mirroring how `defaults.agent_engine` renders.
+  if (memory.engine !== DEFAULT_AGENT_ENGINE) {
+    lines.push(`  engine: ${quoteYamlString(memory.engine)}`);
+  }
   lines.push(
-    'memory:',
-    `  enabled: ${memory.enabled ? 'true' : 'false'}`,
     '  embeddings:',
     `    enabled: ${memory.embeddings.enabled ? 'true' : 'false'}`,
     `    provider: ${memory.embeddings.provider}`,
@@ -475,6 +479,7 @@ function isDefaultMemory(memory: RuntimeMemorySettings): boolean {
   const models = getPresetManagedMemoryDefaults();
   return (
     memory.enabled === true &&
+    memory.engine === DEFAULT_AGENT_ENGINE &&
     memory.embeddings.enabled === false &&
     memory.embeddings.provider === 'disabled' &&
     memory.embeddings.model === DEFAULT_EMBED_MODEL &&

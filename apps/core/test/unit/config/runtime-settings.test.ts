@@ -980,6 +980,71 @@ agents:
     }
   });
 
+  it('defaults, renders, parses, and round-trips the memory engine', () => {
+    const defaultEngine = ['anthropic', 'sdk'].join('_');
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.memory.engine).toBe(defaultEngine);
+
+    // System default stays implicit in rendered YAML.
+    const defaultYaml = renderRuntimeSettingsYaml(settings);
+    expect(defaultYaml).not.toContain('engine:');
+
+    settings.memory.engine = 'deepagents';
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('  engine: deepagents');
+    expect(parseRuntimeSettings(yaml).memory.engine).toBe('deepagents');
+  });
+
+  it('rejects an unsupported memory engine value with the locked copy', () => {
+    expect(() =>
+      parseRuntimeSettings(`memory:
+  enabled: true
+  engine: langchain
+  embeddings:
+    enabled: false
+    provider: disabled
+`),
+    ).toThrow('memory.engine: Unsupported agent engine: langchain.');
+  });
+
+  it('fails settings validation when memory engine/model family is incompatible', () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-settings-memory-engine-'),
+    );
+    try {
+      const settings = createDefaultRuntimeSettings();
+      // The default SDK memory engine cannot run an OpenAI-family memory model.
+      settings.memory.engine = ['anthropic', 'sdk'].join('_') as never;
+      settings.memory.llm.models.extractor = 'gpt';
+      const result = validateLoadedRuntimeSettings(runtimeHome, settings);
+      expect(result.ok).toBe(false);
+      expect(result.failure?.details).toContain(
+        'memory.llm.models.extractor is invalid: Model gpt uses the OpenAI endpoint, which is not supported by Anthropic SDK. Choose DeepAgents or an Anthropic-compatible model.',
+      );
+    } finally {
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts an OpenAI-family memory model under the deepagents memory engine', () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-settings-memory-engine-ok-'),
+    );
+    try {
+      const settings = createDefaultRuntimeSettings();
+      settings.memory.engine = 'deepagents';
+      settings.memory.llm.models.extractor = 'gpt';
+      const result = validateLoadedRuntimeSettings(runtimeHome, settings);
+      // No engine/family detail should be present for the compatible pairing.
+      const details = result.failure?.details ?? [];
+      expect(
+        details.some((d) => d.startsWith('memory.llm.models.extractor')),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
   it('mirrors persistent permission grants into readable semantic, Browser, and scoped RunCommand tools', () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-settings-tools-'),

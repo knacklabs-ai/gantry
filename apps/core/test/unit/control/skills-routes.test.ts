@@ -12,6 +12,7 @@ vi.mock('@core/config/index.js', () => ({
     source: 'system default',
   })),
   getRuntimeModelDefaults: vi.fn(() => ({ defaults: {} })),
+  getMemoryEngine: vi.fn(() => ['anthropic', 'sdk'].join('_')),
   patchRuntimeModelDefaults: vi.fn(() => ({ ok: true })),
   configureDesiredSettingsStorageProvider: vi.fn(() => undefined),
 }));
