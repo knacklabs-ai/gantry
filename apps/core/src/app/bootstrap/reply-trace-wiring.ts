@@ -30,9 +30,12 @@ export function createReplyTraceWiring(): ReplyTraceWiring {
   const resolveRepo = (): PostgresMessageTraceRepository | undefined => {
     if (repo) return repo;
     try {
-      repo = new PostgresMessageTraceRepository(getRuntimeStorage().service.db, {
-        warn: (payload, message) => logger.warn(payload, message),
-      });
+      repo = new PostgresMessageTraceRepository(
+        getRuntimeStorage().service.db,
+        {
+          warn: (payload, message) => logger.warn(payload, message),
+        },
+      );
     } catch (err) {
       logger.warn({ err }, 'Reply-trace repository unavailable (ignored)');
       return undefined;

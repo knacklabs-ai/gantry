@@ -14,11 +14,12 @@ vi.mock('@core/application/guardrails/policy-registry.js', () => ({
   })),
 }));
 
-const { handlePreAgentGuardrail } = await import(
-  '@core/runtime/group-guardrail.js'
-);
+const { handlePreAgentGuardrail } =
+  await import('@core/runtime/group-guardrail.js');
 
-function makeGroup(mode?: 'both' | 'deterministic' | 'classifier'): ConversationRoute {
+function makeGroup(
+  mode?: 'both' | 'deterministic' | 'classifier',
+): ConversationRoute {
   return {
     name: 'Agent',
     folder: 'some_agent',

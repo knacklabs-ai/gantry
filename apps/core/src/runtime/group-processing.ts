@@ -274,14 +274,14 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         const commandMs = currentTimeMs() - commandStartedAt;
         const commandName =
           extractSessionCommand(
-            (missedMessages.find(
+            missedMessages.find(
               (m) =>
                 extractSessionCommand(
                   m.content,
                   getTriggerPattern(group.trigger),
                   group.agentConfig?.plugins?.commands ?? [],
                 ) !== null,
-            )?.content ?? ''),
+            )?.content ?? '',
             getTriggerPattern(group.trigger),
             group.agentConfig?.plugins?.commands ?? [],
           )?.raw ?? 'command';

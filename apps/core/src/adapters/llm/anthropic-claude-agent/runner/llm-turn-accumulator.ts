@@ -32,9 +32,7 @@ function num(value: number | undefined): number {
  */
 export class LlmTurnAccumulator {
   private readonly completed: AgentRunnerLlmTurn[] = [];
-  private open:
-    | (AgentRunnerLlmTurn & { startedAt: number })
-    | undefined;
+  private open: (AgentRunnerLlmTurn & { startedAt: number }) | undefined;
   private readonly now: () => number;
   private readonly capturePayloads: boolean;
 

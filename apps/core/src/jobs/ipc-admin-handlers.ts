@@ -368,9 +368,7 @@ const mcpCallToolHandler: TaskHandler = async (context) => {
       startedAt,
       requestBytes: byteLength(args),
       responseBytes: byteLength(result),
-      ...(tracePayloadsEnabled()
-        ? { request: args, response: result }
-        : {}),
+      ...(tracePayloadsEnabled() ? { request: args, response: result } : {}),
     });
     acceptData(`MCP tool ${serverName}.${toolName} completed.`, result);
   } catch (err) {

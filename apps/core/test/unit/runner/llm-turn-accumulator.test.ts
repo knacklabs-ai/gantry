@@ -40,9 +40,17 @@ describe('LlmTurnAccumulator', () => {
 
   it('closes the previous turn when a new assistant message starts', () => {
     const acc = new LlmTurnAccumulator();
-    acc.onAssistant({ message: { stop_reason: 'tool_use', usage: usage() } }, 10);
     acc.onAssistant(
-      { message: { stop_reason: 'end_turn', usage: usage({ output_tokens: 5 }) } },
+      { message: { stop_reason: 'tool_use', usage: usage() } },
+      10,
+    );
+    acc.onAssistant(
+      {
+        message: {
+          stop_reason: 'end_turn',
+          usage: usage({ output_tokens: 5 }),
+        },
+      },
       40,
     );
     acc.closeOpenTurn(60);

@@ -13,10 +13,7 @@ const runtimeHomes: string[] = [];
  * tool-call handler resolves a known result and we can assert the trace record
  * pushed into the injected collector hook.
  */
-async function loadHandlers(
-  runtimeHome: string,
-  callToolResult: unknown,
-) {
+async function loadHandlers(runtimeHome: string, callToolResult: unknown) {
   vi.resetModules();
   vi.stubEnv('GANTRY_HOME', runtimeHome);
 
@@ -36,7 +33,12 @@ async function loadHandlers(
   vi.doMock('@core/adapters/storage/postgres/runtime-store.js', () => ({
     getRuntimeRepositories: vi.fn(() => ({})),
     getRuntimeStorage: vi.fn(() => ({
-      repositories: { mcpServers: {}, tools: {}, skills: {}, capabilitySecrets: {} },
+      repositories: {
+        mcpServers: {},
+        tools: {},
+        skills: {},
+        capabilitySecrets: {},
+      },
     })),
   }));
 
