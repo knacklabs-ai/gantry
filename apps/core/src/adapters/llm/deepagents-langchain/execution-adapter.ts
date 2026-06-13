@@ -10,10 +10,31 @@ import type {
 import { projectDeepAgentModelCredentialEnv } from './model-credential-env.js';
 import { validateDeepAgentCredentialProjection } from './credential-validation.js';
 import { isMissingDeepAgentSessionError } from './runner/session-store.js';
+import { resolveModelCacheSupport } from '../../../shared/model-cache-support.js';
 
 const GANTRY_DEEPAGENTS_MODEL_ID_ENV = 'GANTRY_DEEPAGENTS_MODEL_ID';
 const GANTRY_DEEPAGENTS_MODEL_PROVIDER_ENV = 'GANTRY_DEEPAGENTS_MODEL_PROVIDER';
 const GANTRY_DEEPAGENTS_SESSIONS_DIR_ENV = 'GANTRY_DEEPAGENTS_SESSIONS_DIR';
+const GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL_ENV =
+  'GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL';
+
+// Maps the resolved model's prompt-cache request control (catalog descriptor) to
+// the runner's gated cache_control mode. 'provider_automatic_prefix' (OpenAI
+// gpt, OpenRouter Kimi) -> 'automatic' (inject nothing, the upstream caches the
+// prefix); 'cache_control_blocks' (Anthropic/Gemini/Qwen sub-models) ->
+// 'explicit' (runner adds ephemeral breakpoints); otherwise 'none'.
+function cachePromptControlMode(
+  requestControl: 'none' | 'cache_control_blocks' | 'provider_automatic_prefix',
+): 'automatic' | 'explicit' | 'none' {
+  switch (requestControl) {
+    case 'provider_automatic_prefix':
+      return 'automatic';
+    case 'cache_control_blocks':
+      return 'explicit';
+    default:
+      return 'none';
+  }
+}
 
 export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapter {
   readonly id = 'deepagents:langchain' as AgentExecutionProviderId;
@@ -78,10 +99,17 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
     }
     // The runner builds the LangChain model from the resolved entry's provider,
     // not by sniffing which credential env var is set. Project the provider id
-    // (modelRoute.id) so the runner selects the correct LangChain class.
+    // (modelRoute.id) so the runner selects the correct LangChain class. The
+    // gated cache_control mode is derived on the HOST from the model's cache
+    // descriptor (the runner must not import the catalog) and projected so the
+    // runner only adds explicit breakpoints when the sub-model needs them.
     if (input.effectiveModelEntry) {
       env[GANTRY_DEEPAGENTS_MODEL_PROVIDER_ENV] =
         input.effectiveModelEntry.modelRoute.id;
+      env[GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL_ENV] = cachePromptControlMode(
+        resolveModelCacheSupport(input.effectiveModelEntry).prompt
+          .requestControl,
+      );
     }
 
     const runnerInputPatch: PreparedAgentExecution['runnerInputPatch'] = {};

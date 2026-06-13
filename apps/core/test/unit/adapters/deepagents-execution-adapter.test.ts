@@ -95,8 +95,38 @@ describe('DeepAgentsLangChainExecutionAdapter', () => {
     expect(prepared.env.GANTRY_DEEPAGENTS_MODEL_ID).toBe('gpt-5.5');
     // The runner builds the LangChain model from the projected provider string.
     expect(prepared.env.GANTRY_DEEPAGENTS_MODEL_PROVIDER).toBe('openai');
+    // OpenAI caches the prompt prefix automatically -> 'automatic' (the runner
+    // injects no cache_control breakpoints).
+    expect(prepared.env.GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL).toBe(
+      'automatic',
+    );
     expect(prepared.env.GANTRY_DEEPAGENTS_SESSIONS_DIR).toBe(
       '/tmp/gantry/agents/test-agent/.llm-runtime/deepagents/sessions',
+    );
+  });
+
+  it('projects the automatic cache-control mode for the OpenRouter (Kimi) lane', async () => {
+    const adapter = new DeepAgentsLangChainExecutionAdapter();
+    const prepared = await adapter.prepare(
+      prepareInput({
+        effectiveModel: 'moonshotai/kimi-k2.6',
+        effectiveModelEntry: catalogEntry('kimi'),
+        modelCredentialProjection: {
+          env: Object.fromEntries([
+            [openAiBaseUrlKey(), 'http://127.0.0.1:4567/openrouter'],
+            [openAiApiKeyKey(), 'gtw_test'],
+          ]),
+          credentialProviders: {},
+          brokerProfile: 'gantry',
+          brokerApplied: true,
+          brokerAuthMode: 'api_key',
+        },
+      }),
+    );
+    expect(prepared.env.GANTRY_DEEPAGENTS_MODEL_PROVIDER).toBe('openrouter');
+    // Kimi/Moonshot caches automatically via OpenRouter -> 'automatic'.
+    expect(prepared.env.GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL).toBe(
+      'automatic',
     );
   });
 

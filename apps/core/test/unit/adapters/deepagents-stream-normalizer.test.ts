@@ -53,14 +53,18 @@ describe('normalizeDeepAgentStream', () => {
     expect(frames.every((f) => f.usage === undefined)).toBe(true);
     expect(frames.every((f) => f.newSessionId === 'session-1')).toBe(true);
 
-    // The terminal payload is returned for the caller to emit.
+    // The terminal payload is returned for the caller to emit. No cacheProvider
+    // was passed (no prompt-cache lane), so cache accounting is unsupported.
     expect(result.terminalResult).toBeNull(); // partial text streamed
     expect(result.terminalUsage).toMatchObject({
       model: 'gpt-5.5',
       inputTokens: 120,
       outputTokens: 8,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
       totalBillableInputTokens: 120,
       cacheProvider: 'none',
+      cacheStatus: 'unsupported',
     });
     expect(result.terminalContextUsage).toMatchObject({
       maxTokens: 400_000,
@@ -72,6 +76,145 @@ describe('normalizeDeepAgentStream', () => {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       },
+    });
+  });
+
+  it('accounts OpenRouter-shaped cache reads/writes off the final raw usage', async () => {
+    // ChatOpenRouter / the OpenRouter gateway surfaces the raw provider usage on
+    // response_metadata.usage.prompt_tokens_details.{cached_tokens,
+    // cache_write_tokens}. Reads are billed out of input.
+    const result = await normalizeDeepAgentStream({
+      events: asStream([
+        streamEvent('hi'),
+        {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: '',
+              usage_metadata: {
+                input_tokens: 1000,
+                output_tokens: 20,
+                input_token_details: { cache_read: 800 },
+              },
+              response_metadata: {
+                usage: {
+                  prompt_tokens: 1000,
+                  completion_tokens: 20,
+                  prompt_tokens_details: {
+                    cached_tokens: 800,
+                    cache_write_tokens: 150,
+                  },
+                },
+              },
+            },
+          },
+        },
+      ]),
+      newSessionId: 'session-or',
+      modelId: 'moonshotai/kimi-k2.6',
+      modelProfile: { maxInputTokens: 262_142 },
+      cacheProvider: 'openrouter-provider',
+      emit: () => {},
+    });
+
+    expect(result.terminalUsage).toMatchObject({
+      model: 'moonshotai/kimi-k2.6',
+      inputTokens: 1000,
+      outputTokens: 20,
+      cacheReadTokens: 800,
+      cacheWriteTokens: 150,
+      // billable input = input - reads.
+      totalBillableInputTokens: 200,
+      cacheProvider: 'openrouter-provider',
+      // reads + writes -> partial.
+      cacheStatus: 'partial',
+    });
+    expect(result.terminalContextUsage.apiUsage).toMatchObject({
+      cache_read_input_tokens: 800,
+      cache_creation_input_tokens: 150,
+    });
+  });
+
+  it('accounts OpenAI-shaped cache reads (cached_tokens only, no writes) as a hit', async () => {
+    // ChatOpenAI emits a final empty chunk carrying response_metadata.usage with
+    // prompt_tokens_details.cached_tokens (automatic caching, reads only).
+    const result = await normalizeDeepAgentStream({
+      events: asStream([
+        streamEvent('answer'),
+        {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: '',
+              usage_metadata: {
+                input_tokens: 500,
+                output_tokens: 12,
+                input_token_details: { cache_read: 320 },
+              },
+              response_metadata: {
+                usage: {
+                  prompt_tokens: 500,
+                  completion_tokens: 12,
+                  prompt_tokens_details: { cached_tokens: 320 },
+                },
+              },
+            },
+          },
+        },
+      ]),
+      newSessionId: 'session-oai',
+      modelId: 'gpt-5.5',
+      modelProfile: { maxInputTokens: 400_000 },
+      cacheProvider: 'openai',
+      emit: () => {},
+    });
+
+    expect(result.terminalUsage).toMatchObject({
+      inputTokens: 500,
+      outputTokens: 12,
+      cacheReadTokens: 320,
+      cacheWriteTokens: 0,
+      totalBillableInputTokens: 180,
+      cacheProvider: 'openai',
+      // reads, no writes -> hit.
+      cacheStatus: 'hit',
+    });
+  });
+
+  it('falls back to LangChain input_token_details.cache_read when raw usage is absent', async () => {
+    // ChatOpenRouter v0.3.0 maps cached_tokens -> usage_metadata.input_token_
+    // details.cache_read but does NOT attach the raw response_metadata.usage on
+    // streamed chunks, so reads must still be accounted from the normalized name.
+    const result = await normalizeDeepAgentStream({
+      events: asStream([
+        streamEvent('hi'),
+        {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: '',
+              usage_metadata: {
+                input_tokens: 600,
+                output_tokens: 10,
+                input_token_details: { cache_read: 600 },
+              },
+            },
+          },
+        },
+      ]),
+      newSessionId: 'session-or2',
+      modelId: 'moonshotai/kimi-k2.6',
+      modelProfile: { maxInputTokens: 262_142 },
+      cacheProvider: 'openrouter-provider',
+      emit: () => {},
+    });
+
+    expect(result.terminalUsage).toMatchObject({
+      cacheReadTokens: 600,
+      cacheWriteTokens: 0,
+      totalBillableInputTokens: 0,
+      cacheProvider: 'openrouter-provider',
+      cacheStatus: 'hit',
     });
   });
 

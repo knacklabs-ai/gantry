@@ -70,8 +70,26 @@ interface ParsedFrame {
   newSessionId?: string;
   sessionInit?: boolean;
   continuedByFollowup?: boolean;
-  usage?: { inputTokens: number; outputTokens: number; model?: string };
-  contextUsage?: { maxTokens: number; totalTokens: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    model?: string;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    totalBillableInputTokens?: number;
+    cacheProvider?: string;
+    cacheStatus?: string;
+  };
+  contextUsage?: {
+    maxTokens: number;
+    totalTokens: number;
+    apiUsage?: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens: number;
+      cache_read_input_tokens: number;
+    } | null;
+  };
   error?: string;
 }
 
@@ -256,73 +274,74 @@ async function startToolForcingOpenAiGateway(): Promise<FakeGateway> {
   };
 }
 
-// A fake ANTHROPIC-format gateway: serves the Messages API SSE event shape
-// (message_start / content_block_delta(text_delta) / message_delta(usage) /
-// message_stop) that ChatAnthropic parses. Proves the Anthropic API-key
-// DeepAgents lane end to end against a loopback gateway, with NO real network.
-async function startFakeAnthropicGateway(): Promise<FakeGateway> {
+// A fake OPENROUTER chat-completions gateway: OpenRouter is OpenAI-wire-
+// compatible, so this serves OpenAI-shaped SSE that ChatOpenRouter parses, with
+// a FINAL usage chunk carrying prompt_tokens_details.{cached_tokens,
+// cache_write_tokens} (prompt-cache reads/writes). Used to prove end-to-end
+// OpenRouter cache accounting and session_id forwarding through the loopback
+// gateway, with NO real network. The gateway base path is /openrouter so
+// ChatOpenRouter (baseURL .../openrouter/v1) posts to /openrouter/v1/chat/
+// completions.
+async function startFakeOpenRouterGateway(): Promise<FakeGateway> {
   const requests: FakeGateway['requests'] = [];
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
       requests.push({
-        // ChatAnthropic authenticates with x-api-key, not Authorization: Bearer.
-        authorization: req.headers['x-api-key'] as string | undefined,
+        authorization: req.headers.authorization,
         body,
         path: req.url ?? '',
       });
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      const events = [
+      const id = 'chatcmpl-openrouter';
+      const model = 'moonshotai/kimi-k2.6';
+      const chunks = [
         {
-          type: 'message_start',
-          message: {
-            id: 'msg_integration',
-            type: 'message',
-            role: 'assistant',
-            model: 'claude-sonnet-4-6',
-            content: [],
-            stop_reason: null,
-            usage: { input_tokens: 37, output_tokens: 0 },
+          choices: [
+            {
+              index: 0,
+              delta: { role: 'assistant', content: 'Hello' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            { index: 0, delta: { content: ' Gantry' }, finish_reason: null },
+          ],
+        },
+        {
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          // Prompt-cache reads (cached_tokens) and writes (cache_write_tokens)
+          // on the final usage chunk — the OpenRouter prefix-cache shape.
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 12,
+            total_tokens: 1012,
+            prompt_tokens_details: {
+              cached_tokens: 800,
+              cache_write_tokens: 150,
+            },
           },
         },
-        {
-          type: 'content_block_start',
-          index: 0,
-          content_block: { type: 'text', text: '' },
-        },
-        {
-          type: 'content_block_delta',
-          index: 0,
-          delta: { type: 'text_delta', text: 'Hello' },
-        },
-        {
-          type: 'content_block_delta',
-          index: 0,
-          delta: { type: 'text_delta', text: ' Gantry' },
-        },
-        { type: 'content_block_stop', index: 0 },
-        {
-          type: 'message_delta',
-          delta: { stop_reason: 'end_turn', stop_sequence: null },
-          usage: { output_tokens: 5 },
-        },
-        { type: 'message_stop' },
       ];
-      for (const event of events) {
-        res.write(`event: ${event.type}\n`);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      for (const chunk of chunks) {
+        res.write(
+          `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', model, ...chunk })}\n\n`,
+        );
       }
+      res.write('data: [DONE]\n\n');
       res.end();
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   if (!address || typeof address === 'string') {
-    throw new Error('fake anthropic gateway did not bind a port');
+    throw new Error('fake openrouter gateway did not bind a port');
   }
   return {
-    baseUrl: `http://127.0.0.1:${address.port}/anthropic`,
+    baseUrl: `http://127.0.0.1:${address.port}/openrouter`,
     requests,
     close: () =>
       new Promise<void>((resolve, reject) =>
@@ -396,22 +415,33 @@ function runRunner(input: {
   temp: TempRoot;
   baseUrl: string;
   apiKey: string;
-  endpointFamily?: 'openai' | 'anthropic';
+  // The resolved model provider the host projects to the runner; it selects the
+  // LangChain class (openai -> ChatOpenAI via initChatModel; openrouter ->
+  // ChatOpenRouter). Defaults to the openai lane.
+  provider?: 'openai' | 'openrouter';
   modelId?: string;
+  // Gated cache_control mode the host derives from the model's cache descriptor.
+  cachePromptControl?: 'automatic' | 'explicit' | 'none';
   extraEnv?: Record<string, string>;
   // Invoked with the spawned child so a test can drive the IPC dir (e.g. write a
   // _close sentinel) while the run is in flight, then close stdin.
   onSpawn?: (child: ReturnType<typeof spawn>) => void;
 }): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const endpointFamily = input.endpointFamily ?? 'openai';
+  const provider = input.provider ?? 'openai';
   const modelId =
     input.modelId ??
-    (endpointFamily === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-5.5');
+    (provider === 'openrouter' ? 'moonshotai/kimi-k2.6' : 'gpt-5.5');
   return new Promise((resolve, reject) => {
     const child = spawn(TSX_BIN, [RUNNER_ENTRY], {
       env: {
         ...process.env,
         GANTRY_DEEPAGENTS_MODEL_ID: modelId,
+        // The runner builds the LangChain model from the projected provider
+        // string (host execution-adapter projects modelRoute.id). Without it the
+        // runner fails closed before any upstream call.
+        GANTRY_DEEPAGENTS_MODEL_PROVIDER: provider,
+        GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL:
+          input.cachePromptControl ?? 'automatic',
         GANTRY_DEEPAGENTS_SESSIONS_DIR: input.temp.sessionsDir,
         GANTRY_IPC_INPUT_DIR: input.temp.inputDir,
         // Common host env (agent-spawn projects these for every runner). The
@@ -439,17 +469,13 @@ function runRunner(input: {
     child.stderr.on('data', (chunk) => (stderr += chunk.toString()));
     child.on('error', reject);
     child.on('exit', (code) => resolve({ code, stdout, stderr }));
-    // The provider-boundary sentinel gates the Anthropic env-key prefix token to
-    // the approved adapter path, so the env-key names are assembled from
-    // fragments here (the runner resolves the endpoint family from these keys).
-    const anthropicPrefix = 'ANTHROPIC' + '_';
-    const modelCredentialEnv =
-      endpointFamily === 'anthropic'
-        ? {
-            [`${anthropicPrefix}BASE_URL`]: input.baseUrl,
-            [`${anthropicPrefix}API_KEY`]: input.apiKey,
-          }
-        : { OPENAI_BASE_URL: input.baseUrl, OPENAI_API_KEY: input.apiKey };
+    // Both DeepAgents lanes (openai + openrouter) project the OpenAI-family
+    // gateway env (single loopback base-url + run-scoped gtw_ token); the
+    // provider string selects the LangChain class, not which env var is set.
+    const modelCredentialEnv = {
+      OPENAI_BASE_URL: input.baseUrl,
+      OPENAI_API_KEY: input.apiKey,
+    };
     child.stdin.write(JSON.stringify({ ...input.stdin, modelCredentialEnv }));
     child.stdin.end();
     input.onSpawn?.(child);
@@ -696,12 +722,14 @@ describe('DeepAgents (LangChain) runner boundary integration', () => {
     }
   }, 60_000);
 
-  // R8: end-to-end DeepAgents spawn against a fake Anthropic-format gateway
-  // (Messages API SSE shape). Proves the Anthropic API-key deepagents lane and
-  // that ChatAnthropic received the explicit anthropicApiUrl/apiKey derived from
-  // the projected Anthropic base-url/api-key gateway env.
-  it('streams runner frames from a gateway-backed ANTHROPIC run (Anthropic API-key lane end to end)', async () => {
-    const gateway = await startFakeAnthropicGateway();
+  // OpenRouter cache accounting end to end: a fake OpenRouter chat-completions
+  // gateway returns a streamed FINAL chunk carrying usage with
+  // prompt_tokens_details.{cached_tokens,cache_write_tokens}. Asserts the
+  // runner's output frame carries the accounted cacheReadTokens/cacheWriteTokens
+  // and that the durable session_id was forwarded in the request body for sticky
+  // cache routing — with no gateway-token leakage to the upstream body.
+  it('accounts OpenRouter prompt-cache reads/writes and forwards session_id', async () => {
+    const gateway = await startFakeOpenRouterGateway();
     const temp = makeTempRoot();
     try {
       const result = await runRunner({
@@ -711,48 +739,45 @@ describe('DeepAgents (LangChain) runner boundary integration', () => {
           chatJid: 'tg:group',
         },
         temp,
-        endpointFamily: 'anthropic',
+        provider: 'openrouter',
         baseUrl: gateway.baseUrl,
-        apiKey: 'gtw_anthropictoken',
+        apiKey: 'gtw_openroutertoken',
       });
 
       expect(result.code).toBe(0);
       const frames = parseFrames(result.stdout);
-
-      // Same frame contract as the OpenAI lane: a sessionInit frame first, then
-      // deltas, then exactly one terminal marker (last frame).
-      expect(frames[0]).toMatchObject({
-        status: 'success',
-        result: null,
-        sessionInit: true,
-      });
-      expect(isTurnCompleteMarker(frames[0])).toBe(false);
-      const markerIdxs = frames
-        .map((frame, idx) => (isTurnCompleteMarker(frame) ? idx : -1))
-        .filter((idx) => idx >= 0);
-      expect(markerIdxs).toEqual([frames.length - 1]);
-
-      const textDeltas = frames
-        .map((frame) => frame.result)
-        .filter((value): value is string => typeof value === 'string');
-      expect(textDeltas.join('')).toBe('Hello Gantry');
+      const sessionId = frames[0].newSessionId;
+      expect(sessionId).toBeTruthy();
 
       const usageFrame = frames.find((frame) => frame.usage);
       expect(usageFrame?.usage).toMatchObject({
-        model: 'claude-sonnet-4-6',
-        inputTokens: 37,
-        outputTokens: 5,
+        model: 'moonshotai/kimi-k2.6',
+        inputTokens: 1000,
+        outputTokens: 12,
+        cacheReadTokens: 800,
+        cacheWriteTokens: 150,
+        // billable input = input - reads.
+        totalBillableInputTokens: 200,
+        cacheProvider: 'openrouter-provider',
+        cacheStatus: 'partial',
       });
-      expect(usageFrame?.contextUsage?.maxTokens).toBeGreaterThan(0);
+      expect(usageFrame?.contextUsage?.apiUsage).toMatchObject({
+        cache_creation_input_tokens: 150,
+        cache_read_input_tokens: 800,
+      });
 
-      // ChatAnthropic hit the loopback gateway at /anthropic/v1/messages with the
-      // run-scoped gateway token as x-api-key (env-derived anthropicApiUrl +
-      // apiKey). No raw provider secret reaches the upstream body.
+      // The durable session id was forwarded as body `session_id` on EVERY
+      // upstream request (sticky routing), and it equals the runner's session id.
       expect(gateway.requests.length).toBeGreaterThan(0);
       for (const request of gateway.requests) {
-        expect(request.authorization).toBe('gtw_anthropictoken');
-        expect(request.path).toContain('/anthropic/v1/messages');
+        expect(request.authorization).toBe('Bearer gtw_openroutertoken');
+        // ChatOpenRouter posts to <baseURL>/chat/completions; baseURL carries
+        // the /v1 segment -> loopback /openrouter/v1/chat/completions.
+        expect(request.path).toContain('/openrouter/v1/chat/completions');
+        // No gateway token leaks into the request body.
         expect(request.body).not.toContain('gtw_');
+        const parsed = JSON.parse(request.body) as { session_id?: string };
+        expect(parsed.session_id).toBe(sessionId);
       }
     } finally {
       await gateway.close();

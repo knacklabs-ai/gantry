@@ -6,9 +6,14 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 
 import { buildRunnerModel } from './model-factory.js';
 import {
+  applyCachePromptControl,
+  parseCachePromptControlMode,
+} from './cache-control.js';
+import {
   normalizeDeepAgentStream,
   type LangGraphStreamEvent,
 } from './stream-normalizer.js';
+import type { NormalizedCacheProvider } from '../../../../shared/model-catalog.js';
 import {
   composeDeepAgentSystemPrompt,
   readMemoryContextBlock,
@@ -75,11 +80,17 @@ export async function runDeepAgentTurn(input: {
   const gateway = resolveGatewayCredentialEnv(
     input.agentInput.modelCredentialEnv ?? {},
   );
+  // Stable durable session id for OpenRouter sticky cache routing. The runner's
+  // newSessionId is the durable session id for the conversation (resumed
+  // agentInput.sessionId, else freshly minted by the store), so cache hits
+  // persist across turns of the same conversation.
+  const stickySessionId = input.agentInput.sessionId ?? input.newSessionId;
   const resolved = await buildRunnerModel({
     provider: input.provider,
     modelId: input.modelId,
     gatewayBaseUrl: gateway.baseUrl,
     gatewayToken: gateway.token,
+    sessionId: stickySessionId,
   });
   logElapsed('Model built');
   const systemPrompt = composeDeepAgentSystemPrompt(input.agentInput);
@@ -119,11 +130,19 @@ export async function runDeepAgentTurn(input: {
     }) as unknown as DeepAgentGraph;
     logElapsed('DeepAgent graph created');
 
-    const turnMessages = buildTurnMessages(
-      input.agentInput,
-      input.priorMessages,
+    // Gated cache_control breakpoints: on 'explicit' the leading stable prompt
+    // prefix (memory-block + first message) gets `cache_control:{ephemeral}`;
+    // on 'automatic'/'none' (OpenAI/Kimi) nothing is injected.
+    const cacheMode = parseCachePromptControlMode(
+      process.env.GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL,
     );
-    logElapsed(`Turn messages built (messages=${turnMessages.length})`);
+    const turnMessages = applyCachePromptControl(
+      buildTurnMessages(input.agentInput, input.priorMessages),
+      cacheMode,
+    );
+    logElapsed(
+      `Turn messages built (messages=${turnMessages.length}, cacheMode=${cacheMode})`,
+    );
     const profile = readModelProfile(resolved.model);
 
     const events = agent.streamEvents(
@@ -136,6 +155,7 @@ export async function runDeepAgentTurn(input: {
       newSessionId: input.newSessionId,
       modelId: resolved.modelId,
       modelProfile: { maxInputTokens: profile.maxInputTokens },
+      cacheProvider: cacheProviderForEndpoint(resolved.endpointFamily),
       emit: input.emit,
       onFirstEvent: (eventName) =>
         logElapsed(`First LangGraph event (${eventName})`),
@@ -207,6 +227,17 @@ function resolveGatewayCredentialEnv(env: Record<string, string>): {
     );
   }
   return { baseUrl, token };
+}
+
+// Maps the resolved endpoint family to the prompt-cache provider the normalizer
+// records, kept consistent with the host catalog's resolveModelCacheProvider:
+// OpenAI gpt -> 'openai' (automatic prefix cache); OpenRouter Kimi/Moonshot ->
+// 'openrouter-provider' (automatic provider-prefix cache). The runner derives
+// this from the endpoint family so the normalizer needs no catalog import.
+function cacheProviderForEndpoint(
+  endpointFamily: 'openai' | 'openrouter',
+): NormalizedCacheProvider {
+  return endpointFamily === 'openrouter' ? 'openrouter-provider' : 'openai';
 }
 
 function readModelProfile(model: unknown): ModelProfileLike {

@@ -35,6 +35,9 @@ export async function buildRunnerModel(input: {
   modelId: string;
   gatewayBaseUrl: string;
   gatewayToken: string;
+  // Durable session id for OpenRouter sticky cache routing (see below). OpenAI
+  // has no session_id concept, so this is applied to the openrouter lane only.
+  sessionId?: string;
 }): Promise<ResolvedRunnerModel> {
   const provider = input.provider.trim().toLowerCase();
   const baseURL = input.gatewayBaseUrl;
@@ -42,6 +45,7 @@ export async function buildRunnerModel(input: {
   const apiKey = requireGatewayToken(input.gatewayToken, 'gateway token');
 
   if (provider === 'openrouter') {
+    const sessionId = input.sessionId?.trim();
     const model = new ChatOpenRouter({
       model: input.modelId,
       apiKey,
@@ -50,6 +54,12 @@ export async function buildRunnerModel(input: {
       // openrouter.ai/api/v1/chat/completions.
       baseURL: `${trimTrailingSlash(baseURL)}/v1`,
       streamUsage: true,
+      // Sticky routing: a stable session_id (request body) makes OpenRouter
+      // route follow-up turns of the same conversation to the same upstream
+      // provider so prompt-cache hits persist across turns. Derived from the
+      // durable session id; stable across turns. ChatOpenRouter injects this as
+      // body `session_id` via invocationParams.
+      ...(sessionId ? { sessionId } : {}),
     });
     return { model, endpointFamily: 'openrouter', modelId: input.modelId };
   }

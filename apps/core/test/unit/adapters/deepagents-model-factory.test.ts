@@ -67,6 +67,39 @@ describe('deepagents model factory', () => {
     expect(resolved.modelId).toBe('moonshotai/kimi-k2.6');
   });
 
+  it('threads the durable session id into ChatOpenRouter for sticky cache routing', async () => {
+    const resolved = await buildRunnerModel({
+      provider: 'openrouter',
+      modelId: 'moonshotai/kimi-k2.6',
+      gatewayBaseUrl: openrouterBaseUrl,
+      gatewayToken,
+      sessionId: 'durable-session-123',
+    });
+    // ChatOpenRouter injects body `session_id` from the constructor sessionId
+    // (invocationParams), so OpenRouter routes follow-up turns to the same
+    // upstream provider/cache.
+    const model = resolved.model as unknown as { sessionId?: string };
+    expect(model.sessionId).toBe('durable-session-123');
+  });
+
+  it('omits sessionId for the openai lane (session_id is OpenRouter-only)', async () => {
+    const resolved = await buildRunnerModel({
+      provider: 'openai',
+      modelId: 'gpt-5.5',
+      gatewayBaseUrl: loopbackBaseUrl,
+      gatewayToken,
+      sessionId: 'durable-session-123',
+    });
+    const underlying = await (
+      resolved.model as unknown as {
+        _getModelInstance: () => Promise<Record<string, unknown>>;
+      }
+    )._getModelInstance();
+    // ChatOpenAI has no session_id concept; the durable id is not applied.
+    expect('sessionId' in underlying).toBe(false);
+    expect((underlying as { session_id?: unknown }).session_id).toBeUndefined();
+  });
+
   it('rejects the anthropic provider (Claude is SDK-only)', async () => {
     await expect(
       buildRunnerModel({
