@@ -160,6 +160,7 @@ mcp_servers:
       file: 'guardrail.ts',
       model: 'haiku',
       mode: 'both',
+      unresolved: 'classifier',
     });
   });
 
@@ -178,6 +179,7 @@ agents:
       file: 'guardrail.ts',
       model: 'haiku',
       mode: 'both',
+      unresolved: 'classifier',
     });
   });
 
