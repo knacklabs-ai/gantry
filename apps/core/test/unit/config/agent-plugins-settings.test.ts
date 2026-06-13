@@ -24,6 +24,7 @@ describe('agent plugins settings (plugins.*)', () => {
           '        file: guardrail.ts',
           '        model: haiku',
           '        mode: deterministic',
+          '        unresolved: inline',
           '      memory_extraction: MEMORY_EXTRACTION.md',
           '      skills:',
           '        - boondi-kb',
@@ -36,6 +37,7 @@ describe('agent plugins settings (plugins.*)', () => {
         file: 'guardrail.ts',
         model: 'haiku',
         mode: 'deterministic',
+        unresolved: 'inline',
       },
       memoryExtraction: 'MEMORY_EXTRACTION.md',
       skills: ['boondi-kb', 'returns-kb'],
@@ -93,6 +95,7 @@ describe('agent plugins settings (plugins.*)', () => {
       file: 'guardrail.ts',
       model: 'haiku',
       mode: 'both',
+      unresolved: 'classifier',
     });
   });
 
@@ -127,6 +130,7 @@ describe('agent plugins settings (plugins.*)', () => {
       file: 'guardrail-strict.ts',
       model: 'haiku',
       mode: 'both',
+      unresolved: 'classifier',
     });
   });
 
@@ -190,6 +194,76 @@ describe('agent plugins settings (plugins.*)', () => {
         ),
       ),
     ).toThrow(/kebab/i);
+  });
+
+  it('parses deterministic + unresolved: inline', () => {
+    const parsed = parseRuntimeSettings(
+      agentYaml(
+        [
+          '    plugins:',
+          '      guardrail:',
+          '        file: guardrail.ts',
+          '        model: haiku',
+          '        mode: deterministic',
+          '        unresolved: inline',
+        ].join('\n'),
+      ),
+    );
+    expect(parsed.agents.boondi_support.plugins?.guardrail).toMatchObject({
+      mode: 'deterministic',
+      unresolved: 'inline',
+    });
+  });
+
+  it('defaults both + classifier when mode and unresolved are both omitted', () => {
+    const parsed = parseRuntimeSettings(
+      agentYaml(
+        [
+          '    plugins:',
+          '      guardrail:',
+          '        file: guardrail.ts',
+          '        model: haiku',
+        ].join('\n'),
+      ),
+    );
+    expect(parsed.agents.boondi_support.plugins?.guardrail).toMatchObject({
+      mode: 'both',
+      unresolved: 'classifier',
+    });
+  });
+
+  it.each([
+    [
+      'mode: classifier with an unresolved value',
+      ['        mode: classifier', '        unresolved: clarify'],
+    ],
+    [
+      'mode: both with unresolved: inline',
+      ['        mode: both', '        unresolved: inline'],
+    ],
+    ['mode: deterministic without unresolved', ['        mode: deterministic']],
+    [
+      'mode: deterministic with unresolved: classifier',
+      ['        mode: deterministic', '        unresolved: classifier'],
+    ],
+    [
+      'an unknown unresolved value',
+      ['        mode: deterministic', '        unresolved: banana'],
+    ],
+  ])('rejects %s', (_label, frag) => {
+    expect(() =>
+      parseRuntimeSettings(
+        agentYaml(
+          [
+            '    plugins:',
+            '      guardrail:',
+            '        file: guardrail.ts',
+            '        model: haiku',
+            ...frag,
+          ].join('\n'),
+        ),
+      ),
+    ).toThrow();
   });
 
   it('rejects path-escaping plugin references (defense in depth)', () => {

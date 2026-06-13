@@ -181,9 +181,14 @@ function parseConfiguredAgentGuardrail(
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'file' && key !== 'model' && key !== 'mode') {
+    if (
+      key !== 'file' &&
+      key !== 'model' &&
+      key !== 'mode' &&
+      key !== 'unresolved'
+    ) {
       throw new Error(
-        `${pathPrefix}.${key} is not supported. Configure file, model, or mode.`,
+        `${pathPrefix}.${key} is not supported. Configure file, model, mode, or unresolved.`,
       );
     }
   }
@@ -197,13 +202,18 @@ function parseConfiguredAgentGuardrail(
     map.mode === undefined
       ? 'both'
       : parseGuardrailMode(map.mode, `${pathPrefix}.mode`);
-  return { file, model, mode };
+  const unresolved = validateGuardrailUnresolved(
+    map.unresolved,
+    mode,
+    pathPrefix,
+  );
+  return { file, model, mode, unresolved };
 }
 
 function parseGuardrailMode(
   raw: unknown,
   pathPrefix: string,
-): RuntimeConfiguredAgentGuardrail['mode'] {
+): NonNullable<RuntimeConfiguredAgentGuardrail['mode']> {
   const value = parseStringValue(raw, pathPrefix);
   if (value === 'both' || value === 'deterministic' || value === 'classifier') {
     return value;
@@ -211,6 +221,53 @@ function parseGuardrailMode(
   throw new Error(
     `${pathPrefix} must be one of both, deterministic, or classifier`,
   );
+}
+
+// Validate `unresolved` against `mode` and fail fast on contradictory combos.
+// - mode: classifier  → no `unresolved` (the classifier runs every turn).
+// - mode: both        → `unresolved` absent or `classifier`; defaults classifier.
+// - mode: deterministic → `unresolved` required ∈ {clarify, allow, reject, inline}.
+function validateGuardrailUnresolved(
+  raw: unknown,
+  mode: NonNullable<RuntimeConfiguredAgentGuardrail['mode']>,
+  pathPrefix: string,
+): RuntimeConfiguredAgentGuardrail['unresolved'] {
+  const present = raw !== undefined;
+  const value = present
+    ? parseStringValue(raw, `${pathPrefix}.unresolved`)
+    : undefined;
+  const ALL = ['clarify', 'allow', 'reject', 'inline', 'classifier'] as const;
+  if (present && !ALL.includes(value as never)) {
+    throw new Error(
+      `${pathPrefix}.unresolved must be one of ${ALL.join(', ')}`,
+    );
+  }
+  if (mode === 'classifier') {
+    if (present) {
+      throw new Error(
+        `${pathPrefix}.unresolved is not valid with mode: classifier (the classifier runs every turn)`,
+      );
+    }
+    return undefined;
+  }
+  if (mode === 'both') {
+    if (present && value !== 'classifier') {
+      throw new Error(
+        `${pathPrefix}: mode: both only supports unresolved: classifier`,
+      );
+    }
+    return 'classifier';
+  }
+  // mode === 'deterministic'
+  if (!present) {
+    throw new Error(
+      `${pathPrefix}: mode: deterministic requires unresolved: clarify | allow | reject | inline`,
+    );
+  }
+  if (value === 'classifier') {
+    throw new Error(`${pathPrefix}: use mode: both for classifier escalation`);
+  }
+  return value as RuntimeConfiguredAgentGuardrail['unresolved'];
 }
 
 // A skill id is a single folder name under `skills/` — keep it a plain segment.
