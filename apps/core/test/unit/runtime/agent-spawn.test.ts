@@ -160,6 +160,7 @@ vi.mock('@core/application/agents/prompt-profile-service.js', () => ({
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeFileArtifactStore: vi.fn(() => ({})),
+  getConfiguredModelProvidersForApp: vi.fn(async () => new Set<string>()),
 }));
 
 // Mock platform
@@ -246,6 +247,7 @@ import {
   getEffectiveAgentEngine,
   getRuntimeSettingsForConfig,
 } from '@core/config/index.js';
+import { getConfiguredModelProvidersForApp } from '@core/adapters/storage/postgres/runtime-store.js';
 import { DirectRunnerSandboxProvider } from '@core/adapters/sandbox/runner-sandbox-provider.js';
 import {
   DEEPAGENTS_SHELL_EXECUTION_DISABLED_MESSAGE,
@@ -3236,6 +3238,59 @@ describe('agent-spawn timeout behavior', () => {
         'deepagents prepare not implemented in packet A',
       ),
     });
+  });
+
+  it('rewrites a model family alias to the configured provider member at spawn', async () => {
+    // gpt-oss family: members [groq-oss (groq), cerebras]. With only cerebras
+    // configured, resolution must pick the cerebras concrete entry.
+    vi.mocked(getConfiguredModelProvidersForApp).mockResolvedValueOnce(
+      new Set(['cerebras']),
+    );
+    let resolvedEntryId: string | undefined;
+    const result = await spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt-oss' },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: vi.fn(
+            async (prepareInput: { effectiveModelEntry?: { id: string } }) => {
+              resolvedEntryId = prepareInput.effectiveModelEntry?.id;
+              throw new Error('capture-only adapter');
+            },
+          ),
+        },
+      },
+    );
+    expect(result).toMatchObject({ status: 'error' });
+    expect(resolvedEntryId).toBe('cerebras:gpt-oss-120b');
+  });
+
+  it('falls back to the first family member when no provider is configured', async () => {
+    vi.mocked(getConfiguredModelProvidersForApp).mockResolvedValueOnce(
+      new Set<string>(),
+    );
+    let resolvedEntryId: string | undefined;
+    await spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt-oss' },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: vi.fn(
+            async (prepareInput: { effectiveModelEntry?: { id: string } }) => {
+              resolvedEntryId = prepareInput.effectiveModelEntry?.id;
+              throw new Error('capture-only adapter');
+            },
+          ),
+        },
+      },
+    );
+    expect(resolvedEntryId).toBe('groq:gpt-oss-120b');
   });
 
   it('A9: blocks a deepagents shell run before spawn with the tier-1 shell-execution copy', async () => {

@@ -7,9 +7,12 @@ import type {
 import { logger } from '../infrastructure/logging/logger.js';
 import {
   findModelByRunnerModel,
-  resolveModelSelectionForWorkload,
   type ModelDefaultAliases,
 } from '../shared/model-catalog.js';
+import {
+  getModelFamily,
+  resolveModelSelectionForWorkloadWithFamilies,
+} from '../shared/model-families.js';
 import { formatModelDisplay } from '../shared/model-catalog-format.js';
 import type { RuntimeModelStatusSnapshot } from '../runtime/model-status-store.js';
 import {
@@ -591,7 +594,12 @@ export async function handleSessionCommand(opts: {
   }
 
   if (command.kind === 'model_set') {
-    const resolved = resolveModelSelectionForWorkload(command.value, 'chat');
+    // Family aliases (e.g. gpt-oss) are accepted and stored verbatim; the
+    // concrete provider is picked at spawn from the configured credential.
+    const resolved = resolveModelSelectionForWorkloadWithFamilies(
+      command.value,
+      'chat',
+    );
     if (!resolved.ok) {
       deps.advanceCursor(cmdMsg);
       await deps.sendMessage(resolved.message);
@@ -617,9 +625,12 @@ export async function handleSessionCommand(opts: {
     }
 
     deps.advanceCursor(cmdMsg);
-    await deps.sendMessage(
-      `Using ${findModelByRunnerModel(resolved.runnerModel)?.displayName ?? resolved.alias} for this session.`,
-    );
+    const family = getModelFamily(resolved.alias);
+    const selectionLabel = family
+      ? `${family.displayName} (provider auto-selected by configured key)`
+      : (findModelByRunnerModel(resolved.runnerModel)?.displayName ??
+        resolved.alias);
+    await deps.sendMessage(`Using ${selectionLabel} for this session.`);
     return { handled: true, success: true };
   }
 

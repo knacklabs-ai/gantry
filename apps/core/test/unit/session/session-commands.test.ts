@@ -966,6 +966,28 @@ describe('handleSessionCommand', () => {
     );
   });
 
+  it('accepts a model family alias and stores the family alias verbatim', async () => {
+    const deps = makeDeps({ updateModelStatusSelection: vi.fn() });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/model gpt-oss')],
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    // The family alias is stored verbatim; the concrete provider is picked at
+    // spawn from the configured credential.
+    expect(deps.setGroupModelOverride).toHaveBeenCalledWith('gpt-oss');
+    expect(deps.updateModelStatusSelection).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'gpt-oss' }),
+    );
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Using GPT-OSS 120B (provider auto-selected by configured key) for this session.',
+    );
+  });
+
   it('fails /model when override persistence rejects', async () => {
     const deps = makeDeps({
       setGroupModelOverride: vi
@@ -1461,6 +1483,10 @@ describe('handleSessionCommand', () => {
     expect(sentMsg).toContain('chat default');
     expect(sentMsg).toContain('one-time default');
     expect(sentMsg).toContain('recurring default');
+    expect(sentMsg).toContain(
+      'Model families (provider auto-selected by configured key)',
+    );
+    expect(sentMsg).toContain('gpt-oss | GPT-OSS 120B | groq-oss > cerebras');
   });
 
   it('shows /status with model and cache token accounting', async () => {

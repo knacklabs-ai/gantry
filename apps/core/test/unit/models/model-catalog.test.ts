@@ -164,6 +164,12 @@ describe('model catalog resolution', () => {
     expect(output).toContain('recurring default');
     expect(output).toContain('memory extractor');
     expect(output).toContain('OpenRouter');
+    // Model families section: provider auto-selected by configured key.
+    expect(output).toContain(
+      'Model families (provider auto-selected by configured key)',
+    );
+    expect(output).toContain('gpt-oss | GPT-OSS 120B | groq-oss > cerebras');
+    expect(output).toContain('llama-70b | Llama 3.3 70B | groq > together');
   });
 
   it('derives cache support from provider metadata and model route', () => {

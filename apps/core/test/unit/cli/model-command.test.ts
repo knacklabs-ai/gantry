@@ -40,6 +40,10 @@ describe('model CLI command', () => {
     expect(output).toContain('opus-4.8 | Opus 4.8');
     expect(output).toContain('Opus 4.8');
     expect(output).toContain('kimi-2.6 | Kimi K2.6');
+    expect(output).toContain(
+      'Model families (provider auto-selected by configured key)',
+    );
+    expect(output).toContain('gpt-oss | GPT-OSS 120B | groq-oss > cerebras');
   });
 
   it('sets and resets chat and job defaults by alias', async () => {

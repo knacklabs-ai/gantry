@@ -17,6 +17,7 @@ import { MODEL_RUNTIME_CREDENTIAL_IDENTIFIER } from '../domain/models/credential
 import { LlmProfileResolutionService } from '../application/model-resolution/llm-profile-resolution-service.js';
 import type { LlmProfile } from '../domain/agent/agent.js';
 import { DEFAULT_SETUP_MODEL_ALIAS } from '../shared/model-catalog.js';
+import { rewriteModelFamilyAliasForApp } from './model-family-resolution.js';
 import { resolveWorkspaceFolderPath } from '../platform/workspace-folder.js';
 import {
   getHostRuntimeCredentialEnv,
@@ -71,7 +72,10 @@ import {
   sandboxAllowedNetworkHostsFromRuntimeAccess,
 } from './agent-spawn-runtime-policy.js';
 import { nowIso, nowMs as currentTimeMs } from '../shared/time/datetime.js';
-import { getRuntimeFileArtifactStore } from '../adapters/storage/postgres/runtime-store.js';
+import {
+  getConfiguredModelProvidersForApp,
+  getRuntimeFileArtifactStore,
+} from '../adapters/storage/postgres/runtime-store.js';
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 import { formatGeneratedRuntimePathPermissionError } from './generated-runtime-path-error.js';
 import { resolveAgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter-registry.js';
@@ -134,6 +138,13 @@ export async function spawnAgent(
     group.folder,
   );
   const requestedModel = input.model || modelConfig.model;
+  // Credential-driven model-family selection (live path): a family alias is
+  // rewritten to the concrete member whose provider has a configured credential.
+  const familyResolvedModel = await rewriteModelFamilyAliasForApp({
+    alias: requestedModel || modelConfig.model || DEFAULT_SETUP_MODEL_ALIAS,
+    appId: input.appId || DEFAULT_RUNNER_APP_ID,
+    listConfiguredProviders: getConfiguredModelProvidersForApp,
+  });
   const modelWorkload = input.isScheduledJob
     ? input.jobModelUseKind === 'oneTimeJob'
       ? 'one_time_job'
@@ -149,8 +160,7 @@ export async function spawnAgent(
     id: `transient-runtime-profile:${group.folder}:${modelWorkload}` as never,
     appId: (input.appId || DEFAULT_RUNNER_APP_ID) as never,
     purpose: input.isScheduledJob ? 'coding' : 'chat',
-    modelAlias:
-      requestedModel || modelConfig.model || DEFAULT_SETUP_MODEL_ALIAS,
+    modelAlias: familyResolvedModel,
     credentialProfileRef: MODEL_RUNTIME_CREDENTIAL_IDENTIFIER,
     createdAt: profileTimestamp as never,
     updatedAt: profileTimestamp as never,

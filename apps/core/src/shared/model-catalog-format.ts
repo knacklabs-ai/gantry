@@ -4,6 +4,7 @@ import {
   type ModelDefaultAliases,
 } from './model-catalog.js';
 import { resolveModelCacheSupport } from './model-cache-support.js';
+import { listModelFamilies } from './model-families.js';
 
 export function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000) {
@@ -42,6 +43,20 @@ export function formatModelCatalog(defaults: ModelDefaultAliases = {}): string {
       }
       lines.push(
         `${alias} | ${entry.displayName} | ${entry.responseFamily} | ${entry.modelRoute.label} | ${cacheSupport.statusLabel} | ${badges.join(', ')}`,
+      );
+    }
+  }
+  const families = listModelFamilies();
+  if (families.length) {
+    lines.push(
+      '',
+      'Model families (provider auto-selected by configured key)',
+      'Family | Model | Providers (preference order)',
+      '--- | --- | ---',
+    );
+    for (const family of families) {
+      lines.push(
+        `${family.alias} | ${family.displayName} | ${family.members.join(' > ')}`,
       );
     }
   }

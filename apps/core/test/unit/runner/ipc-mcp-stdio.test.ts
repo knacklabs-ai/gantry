@@ -132,6 +132,10 @@ function createMcpFixture(): {
     path.join(sharedDir, 'model-catalog-format.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-families.ts'),
+    path.join(sharedDir, 'model-families.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/scheduler-job-plan.ts'),
     path.join(sharedDir, 'scheduler-job-plan.ts'),
   );

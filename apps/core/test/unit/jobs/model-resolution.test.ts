@@ -8,6 +8,7 @@ import {
   resolveJobModel,
 } from '@core/jobs/model-resolution.js';
 import { DEFAULT_AGENT_ENGINE } from '@core/shared/agent-engine.js';
+import { resolveModelFamilyAlias } from '@core/shared/model-families.js';
 
 describe('job model resolution', () => {
   it('maps manual and once jobs to one-time defaults', () => {
@@ -102,5 +103,38 @@ describe('job model resolution', () => {
     expect(resolveJobExecutionProviderId({ resolvedModel: deepagents })).toBe(
       'deepagents:langchain',
     );
+  });
+
+  it('resolves a job whose model is a family alias credential-driven by app providers', () => {
+    // The job-seam rewrite (jobs/execution.ts) maps the family alias to a
+    // concrete member using the job app's configured providers, then resolves
+    // the job model from that concrete alias.
+    const rewriteFor = (providers: string[]) =>
+      resolveModelFamilyAlias('gpt-oss', {
+        isProviderConfigured: (id) => providers.includes(id),
+      })?.alias ?? 'gpt-oss';
+
+    const cerebrasOnly = resolveJobModel(
+      { model: rewriteFor(['cerebras']), schedule_type: 'cron' } as never,
+      { model: 'opus', source: 'system default' },
+    );
+    expect(cerebrasOnly.entry?.modelRoute.id).toBe('cerebras');
+    expect(cerebrasOnly.agentEngine).toBe('deepagents');
+    expect(resolveJobExecutionProviderId({ resolvedModel: cerebrasOnly })).toBe(
+      'deepagents:langchain',
+    );
+
+    const groqConfigured = resolveJobModel(
+      { model: rewriteFor(['groq']), schedule_type: 'cron' } as never,
+      { model: 'opus', source: 'system default' },
+    );
+    expect(groqConfigured.entry?.modelRoute.id).toBe('groq');
+
+    // None configured -> first member (loud-failure path), still resolvable.
+    const noneConfigured = resolveJobModel(
+      { model: rewriteFor([]), schedule_type: 'cron' } as never,
+      { model: 'opus', source: 'system default' },
+    );
+    expect(noneConfigured.entry?.modelRoute.id).toBe('groq');
   });
 });

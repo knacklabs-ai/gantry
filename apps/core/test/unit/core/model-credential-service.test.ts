@@ -179,6 +179,31 @@ describe('ModelCredentialService', () => {
     );
   });
 
+  it('reports only active providers via getConfiguredModelProviders', async () => {
+    const service = new ModelCredentialService(
+      new InMemoryModelCredentialRepository(),
+    );
+    await service.set({
+      appId,
+      providerId: 'groq',
+      authMode: 'api_key',
+      payload: { apiKey: 'gsk-test' },
+    });
+    await service.set({
+      appId,
+      providerId: 'cerebras',
+      authMode: 'api_key',
+      payload: { apiKey: 'csk-test' },
+    });
+    await service.disable({ appId, providerId: 'cerebras' });
+
+    const configured = await service.getConfiguredModelProviders({ appId });
+    expect(configured.has('groq')).toBe(true);
+    // Disabled credentials do not count as configured.
+    expect(configured.has('cerebras')).toBe(false);
+    expect(configured.has('together')).toBe(false);
+  });
+
   it('rejects unsupported providers and empty values', async () => {
     const service = new ModelCredentialService(
       new InMemoryModelCredentialRepository(),

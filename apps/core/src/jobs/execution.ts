@@ -4,6 +4,7 @@ import { ASSISTANT_NAME, getEffectiveModelConfig } from '../config/index.js';
 import type { Job } from '../domain/types.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import {
+  getConfiguredModelProvidersForApp,
   getRuntimeControlRepository,
   getRuntimeEventExchange,
   getWorkerCoordinationRepository,
@@ -16,6 +17,7 @@ import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
 import { nowIso, nowMs, toIso } from '../shared/time/datetime.js';
 import { resolveWorkspaceFolderPath } from '../platform/workspace-folder.js';
 import { AgentOutput, spawnAgent } from '../runtime/agent-spawn.js';
+import { rewriteModelFamilyAliasForApp } from '../runtime/model-family-resolution.js';
 import { providerSessionExternalSessionId } from '../runtime/agent-output-provider-session.js';
 import {
   buildRuntimeRunOptions,
@@ -126,8 +128,19 @@ export async function runJob(
   const timeoutMs = Math.max(30_000, currentJob.timeout_ms || 300_000);
   const leaseExpiresAt = toIso(nowMs() + timeoutMs + 30_000);
   const jobModelUseKind = modelUseKindForJobSchedule(currentJob.schedule_type);
+  // Credential-driven model-family selection for jobs: if the explicit job model
+  // is a family alias, rewrite it to the concrete member whose provider is
+  // configured for this job's app before resolving the model. Done here (not just
+  // at spawn) so the lease's executionProviderId and derived engine reflect the
+  // chosen provider; the spawn then receives the already-concrete alias via
+  // resolvedModel.selectedModel. An empty job model still inherits the default.
+  const jobModelForResolution = await rewriteModelFamilyAliasForApp({
+    alias: currentJob.model || '',
+    appId: runtimeAppId,
+    listConfiguredProviders: getConfiguredModelProvidersForApp,
+  });
   const resolvedModel = resolveJobModel(
-    currentJob,
+    { ...currentJob, model: jobModelForResolution || currentJob.model },
     getEffectiveModelConfig(undefined, jobModelUseKind, execution.group.folder),
   );
   const eventControl = getRuntimeControlRepository();

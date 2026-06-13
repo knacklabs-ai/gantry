@@ -15,6 +15,7 @@ import {
   type ModelWorkload,
 } from '../shared/model-catalog.js';
 import { resolveModelCacheSupport } from '../shared/model-cache-support.js';
+import { listModelFamilies } from '../shared/model-families.js';
 import {
   applyModelPreset,
   applyPresetManagedMemoryDefaults,
@@ -158,6 +159,17 @@ function formatModelList(
         `${alias} | ${entry.displayName} | ${entry.responseFamily} | ${entry.modelRoute.label} | ${cacheSupport.statusLabel} | ${aliasStatus(alias, entry, defaults)}`,
       );
     }
+  }
+  if (!preset) {
+    rows.push(
+      '',
+      'Model families (provider auto-selected by configured key)',
+      'Family | Model | Providers (preference order)',
+      '--- | --- | ---',
+      ...listModelFamilies().map(
+        (f) => `${f.alias} | ${f.displayName} | ${f.members.join(' > ')}`,
+      ),
+    );
   }
   return rows.join('\n');
 }

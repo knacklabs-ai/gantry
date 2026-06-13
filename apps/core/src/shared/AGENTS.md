@@ -29,6 +29,16 @@
 - Catalog response families are simple API-shape labels, currently `anthropic`
   and schema-only `openai`. OpenRouter belongs in `modelRoute` metadata and
   preset UX, not in `responseFamily` or raw user-facing model selectors.
+- `model-families.ts` is a SEPARATE selector namespace, not part of the catalog
+  `ALIAS_INDEX`. A family alias (e.g. `gpt-oss`, `llama-70b`) maps to ordered
+  EXISTING concrete catalog member aliases; the load-time guard throws if a
+  family alias collides with a catalog alias or a member is unknown. The pure
+  resolver (`resolveModelFamilyAlias`) takes an injected `isProviderConfigured`
+  predicate and never touches the repo/IO; it returns the first member whose
+  provider is configured, falling back to the first member (loud-failure path)
+  when none are. Credential-driven provider pick happens at the runtime spawn/job
+  seams via `rewriteModelFamilyAliasForApp`, sourced from the model credential
+  repo — do not push that lookup into the pure resolver.
 - Provider-side cache support belongs in provider registry metadata and
   route-aware model helpers. Do not add local semantic response caches,
   decrypted credential caches, or response-family-derived cache assumptions.

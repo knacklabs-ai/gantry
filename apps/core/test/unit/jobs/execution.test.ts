@@ -38,6 +38,7 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
     appendRunnerControlEvent: vi.fn(async () => 'persisted'),
     heartbeatRunLease: vi.fn(async () => true),
   }),
+  getConfiguredModelProvidersForApp: vi.fn(async () => new Set<string>()),
 }));
 
 vi.mock('@core/jobs/worker-identity.js', () => ({

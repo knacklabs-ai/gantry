@@ -226,6 +226,10 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'model-catalog-format.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-families.ts'),
+    path.join(sharedDir, 'model-families.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/model-usage.ts'),
     path.join(sharedDir, 'model-usage.ts'),
   );
