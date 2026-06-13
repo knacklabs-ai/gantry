@@ -757,6 +757,7 @@ async function runRunner(
   fixture: ReturnType<typeof createRunnerFixture>,
   input: Record<string, unknown>,
   extraEnv: Record<string, string> = {},
+  timeoutMs = 25_000,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const child = spawn(
     process.execPath,
@@ -802,7 +803,7 @@ async function runRunner(
       reject(
         new Error(`runner timed out\nstdout:\n${stdout}\nstderr:\n${stderr}`),
       );
-    }, 25_000);
+    }, timeoutMs);
     child.on('error', (err) => {
       clearTimeout(timeout);
       reject(err);
@@ -830,6 +831,11 @@ function readRunnerOutputs(stdout: string): Array<Record<string, unknown>> {
 }
 
 const RUNNER_IPC_TEST_TIMEOUT_MS = 35_000;
+// The heartbeat test observes a real 15s heartbeat interval after a cold tsx
+// runner boot, so it needs a wider per-spawn budget than the default 25s and a
+// matching vitest timeout above it.
+const HEARTBEAT_RUNNER_TIMEOUT_MS = 60_000;
+const HEARTBEAT_TEST_TIMEOUT_MS = 70_000;
 
 describe('agent-runner IPC lifecycle', () => {
   it(
@@ -1816,6 +1822,12 @@ describe('agent-runner IPC lifecycle', () => {
           TEST_WAIT_FOR_HEARTBEAT: '1',
           TEST_EXIT_AFTER_QUERY: '1',
         },
+        // This spawn must cover cold tsx runner boot + the full 15s heartbeat
+        // interval + query completion. The default 25s spawn budget is too tight
+        // serially / under load (the heartbeat fires correctly but the spawn is
+        // SIGKILLed first), so give it a wider budget under a matching vitest
+        // timeout.
+        HEARTBEAT_RUNNER_TIMEOUT_MS,
       );
 
       expect(result.exitCode, result.stderr).toBe(0);
@@ -1825,7 +1837,7 @@ describe('agent-runner IPC lifecycle', () => {
       expect(result.stdout).toContain('"pendingPermissionRequests":0');
       expect(result.stdout).toContain('"totalToolCalls":0');
     },
-    RUNNER_IPC_TEST_TIMEOUT_MS,
+    HEARTBEAT_TEST_TIMEOUT_MS,
   );
 
   it(
