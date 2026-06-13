@@ -260,6 +260,11 @@ export interface RuntimeSettings {
   runtime: RuntimeProcessSettings;
   browser: RuntimeBrowserSettings;
   permissions: RuntimePermissionSettings;
+  // Optional per-family member-order override for model families. Maps a family
+  // alias to a list of member aliases OR provider ids in preference order;
+  // absent/empty -> the hardcoded MODEL_FAMILIES order. Unknown tokens are
+  // ignored at resolve time.
+  modelFamilies: Record<string, string[]>;
 }
 
 export interface RuntimeSettingsValidationFailure {

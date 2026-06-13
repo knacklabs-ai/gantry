@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { resolveModelSelection } from '@core/shared/model-catalog.js';
 import {
   MODEL_FAMILIES,
+  describeFamilyResolution,
+  effectiveFamilyMembers,
   getModelFamily,
   isModelFamilyAlias,
   listModelFamilies,
@@ -113,6 +115,87 @@ describe('model families', () => {
           'memory_extractor',
         ),
       ).toMatchObject({ ok: false, reason: 'unsupported-workload' });
+    });
+  });
+
+  describe('effectiveFamilyMembers (settings order override)', () => {
+    const gptOss = getModelFamily('gpt-oss')!;
+
+    it('returns the hardcoded order with no override', () => {
+      expect(effectiveFamilyMembers(gptOss)).toEqual(['groq-oss', 'cerebras']);
+      expect(effectiveFamilyMembers(gptOss, {})).toEqual([
+        'groq-oss',
+        'cerebras',
+      ]);
+    });
+
+    it('reorders members by override, accepting member alias or provider id', () => {
+      // By member alias.
+      expect(
+        effectiveFamilyMembers(gptOss, { 'gpt-oss': ['cerebras', 'groq-oss'] }),
+      ).toEqual(['cerebras', 'groq-oss']);
+      // By provider id (cerebras provider == cerebras member; groq provider ==
+      // groq-oss member).
+      expect(
+        effectiveFamilyMembers(gptOss, { 'gpt-oss': ['cerebras', 'groq'] }),
+      ).toEqual(['cerebras', 'groq-oss']);
+    });
+
+    it('ignores unknown tokens and appends unnamed default members', () => {
+      expect(
+        effectiveFamilyMembers(gptOss, {
+          'gpt-oss': ['nope', 'cerebras', 'also-unknown'],
+        }),
+      ).toEqual(['cerebras', 'groq-oss']);
+    });
+
+    it('honors the override in resolveModelFamilyAlias', () => {
+      // Override puts cerebras first; both providers configured -> cerebras wins.
+      expect(
+        resolveModelFamilyAlias('gpt-oss', {
+          ...configured(['groq', 'cerebras']),
+          order: { 'gpt-oss': ['cerebras', 'groq-oss'] },
+        }),
+      ).toEqual({ alias: 'cerebras' });
+    });
+
+    it('honors the override in resolveModelSelectionForWorkloadWithFamilies display', () => {
+      const resolved = resolveModelSelectionForWorkloadWithFamilies(
+        'gpt-oss',
+        'chat',
+        { 'gpt-oss': ['cerebras', 'groq-oss'] },
+      );
+      expect(resolved).toMatchObject({ ok: true, alias: 'gpt-oss' });
+      // Borrows the FIRST effective member (cerebras) for display.
+      if (resolved.ok) expect(resolved.entry.aliases).toContain('cerebras');
+    });
+  });
+
+  describe('describeFamilyResolution', () => {
+    const gptOss = getModelFamily('gpt-oss')!;
+    const labelFor = (id: string | undefined) => id ?? 'unknown';
+
+    it('selects the first configured member and reports availability', () => {
+      const description = describeFamilyResolution(gptOss, {
+        isProviderConfigured: (id) => id === 'cerebras',
+        providerLabel: labelFor,
+      });
+      expect(description.selectedMember).toBe('cerebras');
+      expect(description.selectedProviderId).toBe('cerebras');
+      expect(description.selectedConfigured).toBe(true);
+      expect(description.members.map((m) => m.configured)).toEqual([
+        false,
+        true,
+      ]);
+    });
+
+    it('falls back to the first effective member when none configured', () => {
+      const description = describeFamilyResolution(gptOss, {
+        isProviderConfigured: () => false,
+        providerLabel: labelFor,
+      });
+      expect(description.selectedMember).toBe('groq-oss');
+      expect(description.selectedConfigured).toBe(false);
     });
   });
 

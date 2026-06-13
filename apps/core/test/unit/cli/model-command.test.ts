@@ -85,6 +85,47 @@ describe('model CLI command', () => {
     expect(settings.agent.recurringJobDefaultModel).toBe('');
   });
 
+  it('accepts a model family alias for set chat and stores it verbatim', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const preflightPreset = vi.fn(async () => ({
+      ok: true,
+      status: 'pass' as const,
+      message: 'ok',
+    }));
+
+    await expect(
+      runModelCommand(runtimeHome, ['set', 'chat', 'gpt-oss'], {
+        preflightPreset,
+      }),
+    ).resolves.toBe(0);
+    expect(loadRuntimeSettings(runtimeHome).agent.defaultModel).toBe('gpt-oss');
+
+    await expect(
+      runModelCommand(runtimeHome, ['set', 'jobs', 'llama-70b'], {
+        preflightPreset,
+      }),
+    ).resolves.toBe(0);
+    const settings = loadRuntimeSettings(runtimeHome);
+    expect(settings.agent.oneTimeJobDefaultModel).toBe('llama-70b');
+    expect(settings.agent.recurringJobDefaultModel).toBe('llama-70b');
+    logSpy.mockRestore();
+  });
+
+  it('shows family-aware why for an alias/family argument (no badges offline)', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await expect(
+      runModelCommand(runtimeHome, ['why', 'gpt-oss']),
+    ).resolves.toBe(0);
+    const output = logSpy.mock.calls.at(-1)?.[0] as string;
+    expect(output).toContain('Why model family gpt-oss');
+    // Offline (no control key): the configured/needs-key line is omitted.
+    expect(output).not.toContain('credential:');
+    logSpy.mockRestore();
+  });
+
   it('preflights OpenRouter aliases before direct CLI writes', async () => {
     const runtimeHome = makeRuntimeHome();
     const errorSpy = vi

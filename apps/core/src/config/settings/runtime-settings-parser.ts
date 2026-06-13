@@ -53,6 +53,28 @@ function parseStringArrayValue(raw: unknown, pathPrefix: string): string[] {
   ];
 }
 
+// `model_families` is an optional map of <familyAlias> -> [member-or-provider...]
+// in preference order. Structural validation only: each value must be a
+// non-empty string array. Unknown family aliases and unknown members are
+// tolerated here and ignored at resolve time (effectiveFamilyMembers), so the
+// override is always a partial reorder and never a way to add/drop a member.
+function parseModelFamilies(raw: unknown): Record<string, string[]> {
+  if (raw === undefined) return {};
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('model_families must be a mapping');
+  }
+  const families: Record<string, string[]> = {};
+  for (const [alias, membersRaw] of Object.entries(
+    raw as Record<string, unknown>,
+  )) {
+    families[alias] = parseStringArrayValue(
+      membersRaw,
+      `model_families.${alias}`,
+    );
+  }
+  return families;
+}
+
 function parseOptionalStringValue(
   raw: unknown,
   pathPrefix: string,
@@ -1064,10 +1086,11 @@ export function parseRuntimeSettingsObject(
       key !== 'memory' &&
       key !== 'runtime' &&
       key !== 'browser' &&
-      key !== 'permissions'
+      key !== 'permissions' &&
+      key !== 'model_families'
     ) {
       throw new Error(
-        `${key} is not supported. Supported root keys are defaults, desired_state, providers, provider_connections, conversations, bindings, agents, storage, agent, model_access, memory, runtime, browser, and permissions.`,
+        `${key} is not supported. Supported root keys are defaults, desired_state, providers, provider_connections, conversations, bindings, agents, storage, agent, model_access, memory, runtime, browser, permissions, and model_families.`,
       );
     }
   }
@@ -1101,6 +1124,7 @@ export function parseRuntimeSettingsObject(
   const runtime = parseRuntimeProcessSettings(root.runtime);
   const browser = parseBrowserSettings(root.browser);
   const permissions = parsePermissionSettings(root.permissions);
+  const modelFamilies = parseModelFamilies(root.model_families);
 
   return {
     desiredState,
@@ -1116,5 +1140,6 @@ export function parseRuntimeSettingsObject(
     runtime,
     browser,
     permissions,
+    modelFamilies,
   };
 }

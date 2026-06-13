@@ -88,6 +88,45 @@ export function listModelFamilies(): readonly ModelFamily[] {
   return MODEL_FAMILIES;
 }
 
+// Optional per-family member-order override sourced from settings.yaml
+// `model_families`. Each value is a list of member aliases OR provider ids in
+// the desired preference order. Unknown tokens are ignored; default members not
+// named are appended in their declared order so an override is always a partial
+// reorder, never a way to drop a member or smuggle in an unknown one.
+export type FamilyOrderOverrides = Readonly<Record<string, readonly string[]>>;
+
+// Effective member order for a family given an optional override. Pure: tokens
+// are matched against the family's own members (by alias or by the member's
+// provider id), de-duplicated in override order, then any remaining default
+// members are appended. Returns the hardcoded order when no override applies.
+export function effectiveFamilyMembers(
+  family: ModelFamily,
+  order?: FamilyOrderOverrides,
+): readonly string[] {
+  const override =
+    order?.[family.alias] ?? order?.[normalizeFamilyKey(family.alias)];
+  if (!override || override.length === 0) return family.members;
+  const memberByToken = new Map<string, string>();
+  for (const member of family.members) {
+    memberByToken.set(normalizeFamilyKey(member), member);
+    const providerId = providerIdForFamilyMember(member);
+    if (providerId) memberByToken.set(normalizeFamilyKey(providerId), member);
+  }
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const token of override) {
+    const member = memberByToken.get(normalizeFamilyKey(token));
+    if (member && !seen.has(member)) {
+      ordered.push(member);
+      seen.add(member);
+    }
+  }
+  for (const member of family.members) {
+    if (!seen.has(member)) ordered.push(member);
+  }
+  return ordered;
+}
+
 export function isModelFamilyAlias(value: string | null | undefined): boolean {
   if (!value) return false;
   return FAMILY_INDEX.has(normalizeFamilyKey(value));
@@ -122,17 +161,74 @@ export interface ModelFamilyResolution {
 // Pure/sync: the `isProviderConfigured` predicate is injected.
 export function resolveModelFamilyAlias(
   alias: string | null | undefined,
-  deps: { isProviderConfigured: (providerId: string) => boolean },
+  deps: {
+    isProviderConfigured: (providerId: string) => boolean;
+    order?: FamilyOrderOverrides;
+  },
 ): ModelFamilyResolution | null {
   const family = getModelFamily(alias);
   if (!family) return null;
-  for (const member of family.members) {
+  const members = effectiveFamilyMembers(family, deps.order);
+  for (const member of members) {
     const providerId = providerIdForFamilyMember(member);
     if (providerId && deps.isProviderConfigured(providerId)) {
       return { alias: member };
     }
   }
-  return { alias: family.members[0] };
+  return { alias: members[0] };
+}
+
+export interface FamilyMemberAvailability {
+  member: string;
+  providerId: string | undefined;
+  providerLabel: string;
+  configured: boolean;
+}
+
+export interface FamilyResolutionDescription {
+  family: ModelFamily;
+  members: readonly FamilyMemberAvailability[];
+  // The member that resolution WOULD pick given the configured set: the first
+  // configured member, or (when none configured) the first member in effective
+  // order. `selectedConfigured` says which of those two cases applies.
+  selectedMember: string;
+  selectedProviderId: string | undefined;
+  selectedProviderLabel: string;
+  selectedConfigured: boolean;
+}
+
+// Describe how a family alias resolves for the current configured-provider set,
+// honoring the optional order override. Used by /models badges and /model why.
+// Pure: configured membership + the order map are injected. `providerLabel` for
+// each member is resolved via the catalog (member -> provider label).
+export function describeFamilyResolution(
+  family: ModelFamily,
+  deps: {
+    isProviderConfigured: (providerId: string) => boolean;
+    order?: FamilyOrderOverrides;
+    providerLabel: (providerId: string | undefined) => string;
+  },
+): FamilyResolutionDescription {
+  const ordered = effectiveFamilyMembers(family, deps.order);
+  const members = ordered.map((member) => {
+    const providerId = providerIdForFamilyMember(member);
+    return {
+      member,
+      providerId,
+      providerLabel: deps.providerLabel(providerId),
+      configured: providerId ? deps.isProviderConfigured(providerId) : false,
+    };
+  });
+  const firstConfigured = members.find((entry) => entry.configured);
+  const selected = firstConfigured ?? members[0];
+  return {
+    family,
+    members,
+    selectedMember: selected.member,
+    selectedProviderId: selected.providerId,
+    selectedProviderLabel: selected.providerLabel,
+    selectedConfigured: Boolean(firstConfigured),
+  };
 }
 
 // Family-aware workload resolution for the user-selection seam (/model set).
@@ -144,12 +240,14 @@ export function resolveModelFamilyAlias(
 export function resolveModelSelectionForWorkloadWithFamilies(
   value: string | null | undefined,
   workload: ModelWorkload,
+  order?: FamilyOrderOverrides,
 ): ModelResolution {
   const family = getModelFamily(value);
   if (!family) {
     return resolveModelSelectionForWorkload(value, workload);
   }
-  const unsupported = family.members.find((member) => {
+  const members = effectiveFamilyMembers(family, order);
+  const unsupported = members.find((member) => {
     const resolved = resolveModelSelectionForWorkload(member, workload);
     return !resolved.ok;
   });
@@ -161,10 +259,7 @@ export function resolveModelSelectionForWorkloadWithFamilies(
       message: `Model family "${family.alias}" is not eligible for this workload. Use /models to view supported workloads.`,
     };
   }
-  const firstMember = resolveModelSelectionForWorkload(
-    family.members[0],
-    workload,
-  );
+  const firstMember = resolveModelSelectionForWorkload(members[0], workload);
   if (!firstMember.ok) return firstMember;
   return {
     ok: true,

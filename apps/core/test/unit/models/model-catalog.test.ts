@@ -151,12 +151,14 @@ describe('model catalog resolution', () => {
 
   it('renders model catalog defaults across chat and scheduler lanes', () => {
     const output = formatModelCatalog({
-      chat: 'opus',
-      oneTime: 'sonnet',
-      recurring: 'kimi',
-      memoryExtractor: 'haiku',
-      memoryDreaming: 'sonnet',
-      memoryConsolidation: 'sonnet',
+      defaults: {
+        chat: 'opus',
+        oneTime: 'sonnet',
+        recurring: 'kimi',
+        memoryExtractor: 'haiku',
+        memoryDreaming: 'sonnet',
+        memoryConsolidation: 'sonnet',
+      },
     });
 
     expect(output).toContain('Supported model aliases');
@@ -216,7 +218,7 @@ describe('model catalog resolution', () => {
   });
 
   it('renders a context-window column in the model catalog table', () => {
-    const output = formatModelCatalog({ chat: 'opus' });
+    const output = formatModelCatalog({ defaults: { chat: 'opus' } });
     // Header carries the new column and Gemini Pro shows the 1M window.
     expect(output).toContain(
       'Alias | Model | Response family | Route | Context | Cache | Status',

@@ -7,16 +7,23 @@ import {
   DEFAULT_SETUP_MODEL_ALIAS,
   getModelPreset,
   isModelPresetId,
-  listModelCatalogEntries,
   listModelPresets,
+  resolveModelSelection,
   resolveModelSelectionForWorkload,
-  type ModelCatalogEntry,
   type ModelPresetId,
   type ModelWorkload,
 } from '../shared/model-catalog.js';
 import { resolveModelCacheSupport } from '../shared/model-cache-support.js';
-import { formatContextWindow } from '../shared/model-catalog-format.js';
-import { listModelFamilies } from '../shared/model-families.js';
+import {
+  isModelFamilyAlias,
+  resolveModelSelectionForWorkloadWithFamilies,
+} from '../shared/model-families.js';
+import { formatModelWhy } from '../shared/model-why-format.js';
+import {
+  familyOrderFromSettings,
+  fetchConfiguredProviders,
+  formatModelList,
+} from './model-list-format.js';
 import {
   applyModelPreset,
   applyPresetManagedMemoryDefaults,
@@ -44,11 +51,12 @@ function usage(): string {
   gantry model status
   gantry model list [--preset ${presets}]
   gantry model chat|jobs|memory
-  gantry model set chat <alias>
-  gantry model set jobs inherit|<alias>
+  gantry model set chat <alias|family>
+  gantry model set jobs inherit|<alias|family>
   gantry model reset chat|jobs|memory
   gantry model why chat [group-scope|conversation-id]
   gantry model why jobs|memory|job <id>
+  gantry model why <alias|family>
   gantry model why <alias> --agent <id>
   gantry model use-preset ${presets}
   gantry model doctor`;
@@ -111,68 +119,6 @@ function effectiveJobAlias(
       ? settings.agent.oneTimeJobDefaultModel
       : settings.agent.recurringJobDefaultModel;
   return explicit || chatAlias(settings);
-}
-
-function defaultsFor(settings: ModelCommandSettings) {
-  return {
-    chat: chatAlias(settings),
-    oneTime: settings.agent.oneTimeJobDefaultModel || undefined,
-    recurring: settings.agent.recurringJobDefaultModel || undefined,
-    memoryExtractor: settings.memory.llm.models.extractor || undefined,
-    memoryDreaming: settings.memory.llm.models.dreaming || undefined,
-    memoryConsolidation: settings.memory.llm.models.consolidation || undefined,
-  };
-}
-
-function aliasStatus(
-  alias: string,
-  entry: ModelCatalogEntry,
-  defaults: ReturnType<typeof defaultsFor>,
-): string {
-  const statuses: string[] = [
-    alias === entry.recommendedAlias ? 'recommended' : 'pinned',
-  ];
-  if (defaults.chat === alias) statuses.push('chat');
-  if (defaults.oneTime === alias) statuses.push('one-time jobs');
-  if (defaults.recurring === alias) statuses.push('recurring jobs');
-  if (defaults.memoryExtractor === alias) statuses.push('memory extractor');
-  if (defaults.memoryDreaming === alias) statuses.push('memory dreaming');
-  if (defaults.memoryConsolidation === alias)
-    statuses.push('memory consolidation');
-  return statuses.join(', ');
-}
-
-function formatModelList(
-  settings: ModelCommandSettings,
-  preset?: ModelPresetId,
-) {
-  const defaults = defaultsFor(settings);
-  const rows = [
-    'Available model aliases',
-    'Alias | Model | Response family | Route | Context | Cache | Status',
-    '--- | --- | --- | --- | --- | --- | ---',
-  ];
-  for (const entry of listModelCatalogEntries()) {
-    if (preset && entry.modelRoute.id !== preset) continue;
-    const cacheSupport = resolveModelCacheSupport(entry);
-    for (const alias of entry.aliases) {
-      rows.push(
-        `${alias} | ${entry.displayName} | ${entry.responseFamily} | ${entry.modelRoute.label} | ${formatContextWindow(entry.contextWindowTokens)} | ${cacheSupport.statusLabel} | ${aliasStatus(alias, entry, defaults)}`,
-      );
-    }
-  }
-  if (!preset) {
-    rows.push(
-      '',
-      'Model families (provider auto-selected by configured key)',
-      'Family | Model | Providers (preference order)',
-      '--- | --- | ---',
-      ...listModelFamilies().map(
-        (f) => `${f.alias} | ${f.displayName} | ${f.members.join(' > ')}`,
-      ),
-    );
-  }
-  return rows.join('\n');
 }
 
 function formatAgentOverrides(settings: RuntimeSettings): string[] {
@@ -415,7 +361,13 @@ export async function runModelCommand(
   }
 
   if (action === 'list') {
-    console.log(formatModelList(settings, parsePresetFlag(args.slice(1))));
+    const configuredProviders = await fetchConfiguredProviders(runtimeHome);
+    console.log(
+      formatModelList(settings, parsePresetFlag(args.slice(1)), {
+        configuredProviders,
+        familyOrder: familyOrderFromSettings(settings),
+      }),
+    );
     return 0;
   }
 
@@ -425,8 +377,15 @@ export async function runModelCommand(
   }
 
   if (action === 'set') {
+    const familyOrder = familyOrderFromSettings(settings);
     if (target === 'chat' && alias) {
-      const resolved = resolveModelSelectionForWorkload(alias, 'chat');
+      // Family aliases (e.g. gpt-oss) are accepted and stored verbatim; the
+      // concrete provider is picked at spawn from the configured credential.
+      const resolved = resolveModelSelectionForWorkloadWithFamilies(
+        alias,
+        'chat',
+        familyOrder,
+      );
       if (!resolved.ok) {
         console.error(resolved.message);
         return 1;
@@ -470,14 +429,19 @@ export async function runModelCommand(
         console.log(`recurring: inherits chat (${chatAlias(settings)})`);
         return 0;
       }
-      const oneTime = resolveModelSelectionForWorkload(alias, 'one_time_job');
+      const oneTime = resolveModelSelectionForWorkloadWithFamilies(
+        alias,
+        'one_time_job',
+        familyOrder,
+      );
       if (!oneTime.ok) {
         console.error(oneTime.message);
         return 1;
       }
-      const recurring = resolveModelSelectionForWorkload(
+      const recurring = resolveModelSelectionForWorkloadWithFamilies(
         alias,
         'recurring_job',
+        familyOrder,
       );
       if (!recurring.ok) {
         console.error(recurring.message);
@@ -628,6 +592,26 @@ export async function runModelCommand(
         console.error(error instanceof Error ? error.message : String(error));
         return 1;
       }
+    }
+    // `gantry model why <alias|family>`: family-aware resolution preview. A
+    // family shows members in effective order, the provider it would resolve to
+    // for the configured set, and the reason; a concrete alias shows whether its
+    // provider key is configured. Degrades to no configured/needs-key line when
+    // the control API is unreachable.
+    if (
+      target &&
+      !alias &&
+      (isModelFamilyAlias(target) || resolveModelSelection(target).ok)
+    ) {
+      const configuredProviders = await fetchConfiguredProviders(runtimeHome);
+      console.log(
+        formatModelWhy({
+          value: target,
+          configuredProviders,
+          familyOrder: familyOrderFromSettings(settings),
+        }),
+      );
+      return 0;
     }
     const output = target ? formatWhy(settings, target) : undefined;
     if (!output) {

@@ -1,6 +1,10 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
-import { ASSISTANT_NAME, getEffectiveModelConfig } from '../config/index.js';
+import {
+  ASSISTANT_NAME,
+  getEffectiveModelConfig,
+  getRuntimeSettingsForConfig,
+} from '../config/index.js';
 import type { Job } from '../domain/types.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import {
@@ -138,6 +142,7 @@ export async function runJob(
     alias: currentJob.model || '',
     appId: runtimeAppId,
     listConfiguredProviders: getConfiguredModelProvidersForApp,
+    familyOrder: getRuntimeSettingsForConfig().modelFamilies,
   });
   const resolvedModel = resolveJobModel(
     { ...currentJob, model: jobModelForResolution || currentJob.model },

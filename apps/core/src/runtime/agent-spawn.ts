@@ -144,6 +144,7 @@ export async function spawnAgent(
     alias: requestedModel || modelConfig.model || DEFAULT_SETUP_MODEL_ALIAS,
     appId: input.appId || DEFAULT_RUNNER_APP_ID,
     listConfiguredProviders: getConfiguredModelProvidersForApp,
+    familyOrder: getRuntimeSettingsForConfig().modelFamilies,
   });
   const modelWorkload = input.isScheduledJob
     ? input.jobModelUseKind === 'oneTimeJob'

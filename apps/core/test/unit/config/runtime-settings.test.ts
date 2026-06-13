@@ -144,6 +144,34 @@ describe('runtime settings', () => {
     expect(parsed.runtime.queue).toEqual(settings.runtime.queue);
   });
 
+  it('defaults model_families to empty and omits the block when empty', () => {
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.modelFamilies).toEqual({});
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).not.toContain('model_families');
+    expect(parseRuntimeSettings(yaml).modelFamilies).toEqual({});
+  });
+
+  it('renders and round-trips a model_families order override', () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.modelFamilies = {
+      'gpt-oss': ['cerebras', 'groq-oss'],
+      'llama-70b': ['together'],
+    };
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('model_families:');
+    expect(yaml).toContain('gpt-oss: ["cerebras","groq-oss"]');
+    expect(yaml).toContain('llama-70b: ["together"]');
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.modelFamilies).toEqual(settings.modelFamilies);
+  });
+
+  it('rejects a non-array model_families value', () => {
+    expect(() =>
+      parseRuntimeSettings('model_families:\n  gpt-oss: not-an-array\n'),
+    ).toThrow(/model_families\.gpt-oss must be a string array/);
+  });
+
   it('keeps harness/provider internals out of the rendered settings.yaml', () => {
     const settings = createDefaultRuntimeSettings();
     const yaml = renderRuntimeSettingsYaml(settings);

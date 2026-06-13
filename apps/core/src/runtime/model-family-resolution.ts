@@ -2,6 +2,7 @@ import { logger } from '../infrastructure/logging/logger.js';
 import {
   isModelFamilyAlias,
   resolveModelFamilyAlias,
+  type FamilyOrderOverrides,
 } from '../shared/model-families.js';
 
 // Host-side credential-driven model-family rewrite. When a selected model alias
@@ -30,8 +31,10 @@ export async function rewriteModelFamilyAliasForApp(input: {
   alias: string;
   appId: string;
   listConfiguredProviders: ConfiguredModelProvidersLookup;
+  // Optional settings-sourced family member-order override.
+  familyOrder?: FamilyOrderOverrides;
 }): Promise<string> {
-  const { alias, appId, listConfiguredProviders } = input;
+  const { alias, appId, listConfiguredProviders, familyOrder } = input;
   if (!isModelFamilyAlias(alias)) return alias;
   let configured: Set<string>;
   try {
@@ -45,6 +48,7 @@ export async function rewriteModelFamilyAliasForApp(input: {
   }
   const resolved = resolveModelFamilyAlias(alias, {
     isProviderConfigured: (providerId) => configured.has(providerId),
+    order: familyOrder,
   });
   return resolved ? resolved.alias : alias;
 }

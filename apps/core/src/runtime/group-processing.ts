@@ -44,6 +44,7 @@ import {
 } from '../shared/thread-queue-key.js';
 import { formatElapsed } from './time-format.js';
 import { createRuntimeModelStatusAccess } from './model-status-store.js';
+import { getConfiguredModelProvidersForApp } from '../adapters/storage/postgres/runtime-store.js';
 import { memoryScopeForConversationKind } from './group-run-context.js';
 import { getGroupBrowserStatus } from './group-browser-status.js';
 import {
@@ -226,6 +227,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           oneTime: getDefaultModelConfig('oneTimeJob', group.folder).model,
           recurring: getDefaultModelConfig('recurringJob', group.folder).model,
         }),
+        getConfiguredModelProviders: () =>
+          getConfiguredModelProvidersForApp('default'),
+        getModelFamilyOrder: () => getRuntimeSettingsForConfig().modelFamilies,
         getGroupModelOverride: () => group.agentConfig?.model,
         setGroupModelOverride: async (value) =>
           deps.setGroupModelOverride(chatJid, value),

@@ -61,6 +61,18 @@ describe('rewriteModelFamilyAliasForApp', () => {
     ).toBe('groq');
   });
 
+  it('honors the settings family-order override', async () => {
+    // Override puts cerebras first; both providers configured -> cerebras wins
+    // (default order would have picked groq-oss).
+    const result = await rewriteModelFamilyAliasForApp({
+      alias: 'gpt-oss',
+      appId: 'a',
+      listConfiguredProviders: lookup(['groq', 'cerebras']),
+      familyOrder: { 'gpt-oss': ['cerebras', 'groq-oss'] },
+    });
+    expect(result).toBe('cerebras');
+  });
+
   it('returns the family alias unchanged when the credential lookup fails', async () => {
     const result = await rewriteModelFamilyAliasForApp({
       alias: 'gpt-oss',

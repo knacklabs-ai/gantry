@@ -98,6 +98,19 @@ describe('extractSessionCommand', () => {
     });
   });
 
+  it('detects /model why <alias|family>', () => {
+    expect(extractSessionCommand('/model why gpt-oss', trigger)).toEqual({
+      kind: 'model_why',
+      raw: '/model why gpt-oss',
+      value: 'gpt-oss',
+    });
+    expect(extractSessionCommand('/model why opus', trigger)).toEqual({
+      kind: 'model_why',
+      raw: '/model why opus',
+      value: 'opus',
+    });
+  });
+
   it('detects bare /thinking', () => {
     expect(extractSessionCommand('/thinking', trigger)).toEqual({
       kind: 'thinking_show',
@@ -1487,6 +1500,84 @@ describe('handleSessionCommand', () => {
       'Model families (provider auto-selected by configured key)',
     );
     expect(sentMsg).toContain('gpt-oss | GPT-OSS 120B | groq-oss > cerebras');
+  });
+
+  it('badges /models with the configured-provider set', async () => {
+    const deps = makeDeps({
+      getDefaultModel: vi.fn().mockReturnValue('opus'),
+      getConfiguredModelProviders: vi
+        .fn()
+        .mockResolvedValue(new Set(['cerebras'])),
+    });
+    await handleSessionCommand({
+      missedMessages: [makeMsg('/models')],
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    const sentMsg = (deps.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    expect(sentMsg).toContain('Availability');
+    expect(sentMsg).toContain('available via Cerebras');
+    expect(sentMsg).toContain('needs Anthropic key');
+  });
+
+  it('degrades /models to no badges when the configured set read throws', async () => {
+    const deps = makeDeps({
+      getDefaultModel: vi.fn().mockReturnValue('opus'),
+      getConfiguredModelProviders: vi
+        .fn()
+        .mockRejectedValue(new Error('db down')),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/models')],
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    const sentMsg = (deps.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    expect(sentMsg).not.toContain('Availability');
+  });
+
+  it('answers /model why <family> with the resolved provider and reason', async () => {
+    const deps = makeDeps({
+      getConfiguredModelProviders: vi
+        .fn()
+        .mockResolvedValue(new Set(['cerebras'])),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/model why gpt-oss')],
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    const sentMsg = (deps.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    expect(sentMsg).toContain('Why model family gpt-oss');
+    expect(sentMsg).toContain('gpt-oss → cerebras via Cerebras');
+  });
+
+  it('answers /model why <alias> with the configured/needs-key line', async () => {
+    const deps = makeDeps({
+      getConfiguredModelProviders: vi.fn().mockResolvedValue(new Set()),
+    });
+    await handleSessionCommand({
+      missedMessages: [makeMsg('/model why opus')],
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    const sentMsg = (deps.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    expect(sentMsg).toContain('Why model opus');
+    expect(sentMsg).toContain('needs Anthropic key');
   });
 
   it('shows /status with model and cache token accounting', async () => {
