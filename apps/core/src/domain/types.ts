@@ -28,6 +28,13 @@ export interface AllowedRoot {
 
 export type GuardrailMode = 'both' | 'deterministic' | 'classifier';
 
+export type GuardrailUnresolved =
+  | 'clarify'
+  | 'allow'
+  | 'reject'
+  | 'inline'
+  | 'classifier';
+
 export interface GuardrailConfig {
   /**
    * Exact guardrail plugin file in the agent's runtime folder (e.g.
@@ -39,11 +46,18 @@ export interface GuardrailConfig {
   /** Model alias used only when the guardrail policy takes a classifier path. */
   model: string;
   /**
-   * Which guardrail stages to run. Omit for the current default: deterministic
-   * policy checks first, then either the policy's inline main-agent guardrail
-   * block or the classifier for unresolved ambiguous input.
+   * Which guardrail STAGES exist. Omit for the legacy default `both`
+   * (deterministic screen first, classifier for unresolved turns).
    */
   mode?: GuardrailMode;
+  /**
+   * Disposition for a guarded turn the deterministic stage did not resolve
+   * (i.e. `evaluateDeterministic` returned `null`). Validated against `mode`
+   * at parse time (see runtime-settings-agents-parser). The inline scope block
+   * (`policy.systemPromptAppend`) is attached ONLY when this is `inline` —
+   * never inferred from whether the policy exports that function.
+   */
+  unresolved?: GuardrailUnresolved;
 }
 
 /**
