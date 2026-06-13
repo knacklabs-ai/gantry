@@ -56,11 +56,21 @@ type ExecutableModelEntryFn = (input: {
 }) => ModelCatalogEntry;
 
 const OPENAI_PREFIX_CACHE_MODE = 'openai-automatic-prompt' as const;
-// v1 workloads: chat + jobs only (no memory — kept to gpt/kimi as a follow-up).
+// Chat + jobs workloads for every DeepAgents instruct/answer model.
 const DEEPAGENTS_WORKLOADS: readonly ModelWorkload[] = [
   'chat',
   'one_time_job',
   'recurring_job',
+];
+// General instruct entries additionally serve the system-owned memory workloads;
+// the memory router dispatches them by engine to the host memory client on the
+// chat-completions lane. Search/answer entries keep DEEPAGENTS_WORKLOADS only
+// (their citation output is unsuitable for extraction/summarization).
+const DEEPAGENTS_MEMORY_WORKLOADS: readonly ModelWorkload[] = [
+  ...DEEPAGENTS_WORKLOADS,
+  'memory_extractor',
+  'memory_dreaming',
+  'memory_consolidation',
 ];
 
 const GROQ_SOURCE = {
@@ -136,7 +146,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -150,7 +160,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -164,7 +174,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     // deepseek
@@ -179,7 +189,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: ['prompt_cache_hit_tokens'],
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -193,7 +203,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: ['prompt_cache_hit_tokens'],
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     // xai (Grok)
@@ -208,7 +218,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_GROK,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -222,7 +232,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_GROK,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     // together
@@ -240,7 +250,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: ['cached_tokens'],
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -254,7 +264,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_QWEN3_235B,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: ['cached_tokens'],
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     // fireworks
@@ -272,7 +282,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: 163_840,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -289,7 +299,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     // cerebras
@@ -304,7 +314,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -318,7 +328,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_128K,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     // perplexity — no prompt cache
@@ -364,7 +374,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       // Best-effort: Gemini's cached-token field via the OpenAI-compat layer is
       // UNVERIFIED; accounting is best-effort and must not block.
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -378,7 +388,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_1M,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
     executableModelEntry({
@@ -392,7 +402,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_1M,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       experimental: true,
     }),
   ];

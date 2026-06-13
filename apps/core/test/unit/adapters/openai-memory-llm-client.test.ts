@@ -231,6 +231,82 @@ describe('OpenAI memory LLM client', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('targets the gateway projection for a memory-eligible DeepAgents provider (groq)', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(chatCompletionBody()), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createOpenAiMemoryLlmClient } =
+      await import('@core/adapters/llm/openai-memory/openai-memory-llm-client.js');
+
+    const result = await createOpenAiMemoryLlmClient().query({
+      appId: 'default' as never,
+      model: 'llama-3.3-70b-versatile',
+      modelProfile: {
+        ...OPENAI_PROFILE,
+        modelRoute: 'groq',
+        runnerModel: 'llama-3.3-70b-versatile',
+        modelRouteLabel: 'Groq',
+        alias: 'groq',
+      },
+      prompt: 'remember this',
+    });
+    expect(result).toBe('openai memory result');
+    // The OPENAI_BASE_URL/OPENAI_API_KEY projection is shared by every
+    // OpenAI-compatible provider; the gateway base-url segment routes upstream.
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://127.0.0.1:49231/openai/v1/chat/completions');
+    expect(init.headers.authorization).toBe('Bearer gtw_memory_openai');
+    expect(JSON.parse(init.body as string).model).toBe(
+      'llama-3.3-70b-versatile',
+    );
+  });
+
+  it('reads a flat per-provider cache-read usage field (deepseek prompt_cache_hit_tokens)', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'ok' } }],
+            usage: {
+              prompt_tokens: 200,
+              completion_tokens: 10,
+              // DeepSeek reports cache reads on a FLAT field, not the nested
+              // prompt_tokens_details.cached_tokens path.
+              prompt_cache_hit_tokens: 150,
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { createOpenAiMemoryLlmClient } =
+      await import('@core/adapters/llm/openai-memory/openai-memory-llm-client.js');
+
+    const usageSeen: MemoryLlmUsage[] = [];
+    await createOpenAiMemoryLlmClient().query({
+      appId: 'default' as never,
+      model: 'deepseek-v4-pro',
+      modelProfile: {
+        ...OPENAI_PROFILE,
+        modelRoute: 'deepseek',
+        runnerModel: 'deepseek-v4-pro',
+        modelRouteLabel: 'DeepSeek',
+        alias: 'deepseek',
+      },
+      prompt: 'remember this',
+      onUsage: (usage) => usageSeen.push(usage),
+    });
+
+    // Flat cache field is read by the provider-declared path: 200 - 150 = 50.
+    expect(usageSeen).toEqual([
+      { input_tokens: 50, output_tokens: 10, cache_read_input_tokens: 150 },
+    ]);
+  });
+
   it('accepts the OpenRouter route (OpenAI-compatible DeepAgents lane)', async () => {
     const fetchMock = vi.fn(
       async () =>

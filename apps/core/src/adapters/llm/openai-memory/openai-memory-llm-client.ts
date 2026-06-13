@@ -39,11 +39,11 @@ interface ChatCompletionResponse {
   choices?: Array<{
     message?: { content?: string | null };
   }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    prompt_tokens_details?: { cached_tokens?: number };
-  };
+  // Usage is read by field path declared on the provider (see reportUsage):
+  // the cache-read field varies (nested prompt_tokens_details.cached_tokens, or
+  // flat prompt_cache_hit_tokens / cached_tokens), so usage is treated as an
+  // open record and the read field is looked up dynamically.
+  usage?: Record<string, unknown>;
 }
 
 async function runOpenAiMemoryQuery(opts: MemoryLlmQueryOpts): Promise<string> {
@@ -107,7 +107,11 @@ async function runWithGantryGateway(opts: MemoryLlmQueryOpts): Promise<string> {
     }
     const parsed = (await response.json()) as ChatCompletionResponse;
     opts.signal?.throwIfAborted();
-    reportUsage(opts.onUsage, parsed.usage);
+    reportUsage(
+      opts.onUsage,
+      parsed.usage,
+      provider.cacheSupport.prompt.usageFields.readTokens,
+    );
     return readCompletionText(parsed).trim();
   } finally {
     await gateway.revoke();
@@ -145,20 +149,42 @@ function readCompletionText(response: ChatCompletionResponse): string {
 function reportUsage(
   onUsage: MemoryLlmQueryOpts['onUsage'],
   usage: ChatCompletionResponse['usage'],
+  cacheReadField: string | undefined,
 ): void {
   if (!onUsage || !usage) return;
-  const promptTokens = usage.prompt_tokens ?? 0;
-  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? 0;
-  // OpenAI cached_tokens is a SUBSET of prompt_tokens, but the canonical
+  const promptTokens = readNumberField(usage, 'prompt_tokens') ?? 0;
+  // The cache-read field path is declared per provider on the registry. It is
+  // either a flat key (e.g. cached_tokens, prompt_cache_hit_tokens) or a dotted
+  // nested path (e.g. prompt_tokens_details.cached_tokens). No declared field
+  // means the provider has no prompt cache; treat cached as 0.
+  const cachedTokens = cacheReadField
+    ? (readNumberField(usage, cacheReadField) ?? 0)
+    : 0;
+  // The cached count is a SUBSET of prompt_tokens, but the canonical
   // MemoryLlmUsage treats input_tokens and cache_read_input_tokens as disjoint
   // (cf. anthropic memory-query.ts). Subtract the cached portion so the two do
   // not double-count; floor at 0 in case of inconsistent upstream counts.
   const normalized: MemoryLlmUsage = {
     input_tokens: Math.max(0, promptTokens - cachedTokens),
-    output_tokens: usage.completion_tokens ?? 0,
+    output_tokens: readNumberField(usage, 'completion_tokens') ?? 0,
     ...(cachedTokens ? { cache_read_input_tokens: cachedTokens } : {}),
   };
   onUsage(normalized);
+}
+
+// Reads a numeric usage field by a flat key or a dotted nested path. Returns
+// undefined when the path is absent or the leaf is not a number, so callers can
+// fall back to 0 without distinguishing missing from zero.
+function readNumberField(
+  usage: Record<string, unknown>,
+  path: string,
+): number | undefined {
+  let cursor: unknown = usage;
+  for (const segment of path.split('.')) {
+    if (typeof cursor !== 'object' || cursor === null) return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return typeof cursor === 'number' ? cursor : undefined;
 }
 
 // Accepts any provider that speaks the OpenAI chat/completions API: the native

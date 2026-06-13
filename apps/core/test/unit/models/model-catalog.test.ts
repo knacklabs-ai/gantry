@@ -458,39 +458,70 @@ describe('model usage normalization', () => {
     expect(findModelByRunnerModel('Kimi 2.6')?.recommendedAlias).toBe('kimi');
   });
 
+  // memory === true: general instruct entries also serve the memory workloads.
+  // memory === false: search/answer entries keep chat + jobs only.
   it.each([
-    ['groq', 'llama-3.3-70b-versatile'],
-    ['groq-fast', 'llama-3.1-8b-instant'],
-    ['groq-oss', 'openai/gpt-oss-120b'],
-    ['deepseek', 'deepseek-v4-pro'],
-    ['deepseek-fast', 'deepseek-v4-flash'],
-    ['grok', 'grok-4.3'],
-    ['grok-fast', 'grok-build-0.1'],
-    ['together', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'],
-    ['together-qwen', 'Qwen/Qwen3-235B-A22B-fp8-tput'],
-    ['fireworks', 'accounts/fireworks/models/deepseek-v3p1'],
-    ['fireworks-fast', 'accounts/fireworks/models/llama-v3p1-8b-instruct'],
-    ['cerebras', 'gpt-oss-120b'],
-    ['cerebras-glm', 'zai-glm-4.7'],
-    ['perplexity', 'sonar-pro'],
-    ['perplexity-sonar', 'sonar'],
-    ['gemini', 'gemini-2.5-pro'],
-    ['gemini-flash', 'gemini-2.5-flash'],
-    ['gemini-3-flash', 'gemini-3.5-flash'],
+    ['groq', 'llama-3.3-70b-versatile', true],
+    ['groq-fast', 'llama-3.1-8b-instant', true],
+    ['groq-oss', 'openai/gpt-oss-120b', true],
+    ['deepseek', 'deepseek-v4-pro', true],
+    ['deepseek-fast', 'deepseek-v4-flash', true],
+    ['grok', 'grok-4.3', true],
+    ['grok-fast', 'grok-build-0.1', true],
+    ['together', 'meta-llama/Llama-3.3-70B-Instruct-Turbo', true],
+    ['together-qwen', 'Qwen/Qwen3-235B-A22B-fp8-tput', true],
+    ['fireworks', 'accounts/fireworks/models/deepseek-v3p1', true],
+    [
+      'fireworks-fast',
+      'accounts/fireworks/models/llama-v3p1-8b-instruct',
+      true,
+    ],
+    ['cerebras', 'gpt-oss-120b', true],
+    ['cerebras-glm', 'zai-glm-4.7', true],
+    ['perplexity', 'sonar-pro', false],
+    ['perplexity-sonar', 'sonar', false],
+    ['gemini', 'gemini-2.5-pro', true],
+    ['gemini-flash', 'gemini-2.5-flash', true],
+    ['gemini-3-flash', 'gemini-3.5-flash', true],
   ])(
     'resolves the %s alias to its OpenAI-family runner model',
-    (alias, runnerModel) => {
-      const resolved = resolveModelSelection(alias);
+    (alias, runnerModel, memory) => {
+      const resolved = resolveModelSelection(alias as string);
       expect(resolved).toMatchObject({ ok: true, alias, runnerModel });
       if (resolved.ok) {
         expect(resolved.entry.responseFamily).toBe('openai');
         expect(resolved.entry.experimental).toBe(true);
-        // v1: chat + jobs only, no memory workloads for the new providers.
-        expect(resolved.entry.supportedWorkloads).toEqual([
-          'chat',
-          'one_time_job',
-          'recurring_job',
-        ]);
+        const expectedWorkloads = memory
+          ? [
+              'chat',
+              'one_time_job',
+              'recurring_job',
+              'memory_extractor',
+              'memory_dreaming',
+              'memory_consolidation',
+            ]
+          : ['chat', 'one_time_job', 'recurring_job'];
+        expect(resolved.entry.supportedWorkloads).toEqual(expectedWorkloads);
+        // The memory workloads must each resolve for memory-eligible entries and
+        // be rejected for the search/answer entries (perplexity).
+        for (const workload of [
+          'memory_extractor',
+          'memory_dreaming',
+          'memory_consolidation',
+        ] as const) {
+          const memoryResolved = resolveModelSelectionForWorkload(
+            alias as string,
+            workload,
+          );
+          if (memory) {
+            expect(memoryResolved.ok).toBe(true);
+          } else {
+            expect(memoryResolved).toMatchObject({
+              ok: false,
+              reason: 'unsupported-workload',
+            });
+          }
+        }
       }
     },
   );

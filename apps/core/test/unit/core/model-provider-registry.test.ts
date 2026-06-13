@@ -369,15 +369,20 @@ describe('model provider registry', () => {
       expect(provider!.cacheSupport.prompt.usageFields.readTokens).toBe(
         readTokens,
       );
+      // These are general instruct providers: they serve chat + jobs AND the
+      // memory workloads, so a zero-Anthropic deployment can run memory on them.
       expect(provider!.supportedWorkloads).toEqual([
         'chat',
         'one_time_job',
         'recurring_job',
+        'memory_extractor',
+        'memory_dreaming',
+        'memory_consolidation',
       ]);
     },
   );
 
-  it('registers perplexity on the deepagents lane with a bare upstream prefix and no prompt cache', () => {
+  it('registers perplexity on the deepagents lane with a bare upstream prefix, no prompt cache, and no memory workloads', () => {
     const provider = getModelProviderDefinition('perplexity');
     expect(provider).toBeDefined();
     expect(provider!.executionRoute.engine).toBe('deepagents');
@@ -388,5 +393,12 @@ describe('model provider registry', () => {
     expect(
       provider!.cacheSupport.prompt.usageFields.readTokens,
     ).toBeUndefined();
+    // The search/answer provider is intentionally NOT a memory model: its
+    // responses carry citations and are unsuitable for extraction/summarization.
+    expect(provider!.supportedWorkloads).toEqual([
+      'chat',
+      'one_time_job',
+      'recurring_job',
+    ]);
   });
 });

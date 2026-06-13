@@ -72,6 +72,21 @@ describe('memoryModelPreview', () => {
     });
   });
 
+  it('treats a new OpenAI-compatible provider (gemini) as memory-eligible on the openai_direct lane', () => {
+    // slotFor throws if the alias is not resolvable for the memory workload, so
+    // building this fixture at all proves gemini is now memory-eligible. The
+    // preview must report the DeepAgents/openai_direct lane for it.
+    const result = memoryModelPreview(ctxWith('gemini'), {});
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.body).toMatchObject({
+      engine: DEEPAGENTS_ENGINE,
+      engineLabel: 'DeepAgents',
+      responseFamily: 'openai',
+      diagnosticLane: 'openai_direct',
+    });
+  });
+
   it('reports openai_direct for OpenRouter despite its nominal anthropic family', () => {
     // OpenRouter runs on the DeepAgents engine and speaks chat/completions, so
     // its memory lane is openai_direct even though responseFamily is 'anthropic'

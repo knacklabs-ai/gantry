@@ -3,6 +3,7 @@ import type {
   ModelProviderCacheSupport,
   ModelProviderDefinition,
 } from './model-provider-registry.js';
+import type { ModelWorkload } from './model-catalog.js';
 
 // Eight OpenAI-chat-completions-compatible providers on the DeepAgents engine.
 // Extracted from model-provider-registry.ts to keep that file under its line
@@ -108,10 +109,25 @@ const NO_CACHE_SUPPORT: ModelProviderCacheSupport = {
   },
 };
 
+const CHAT_AND_JOB_WORKLOADS: readonly ModelWorkload[] = [
+  'chat',
+  'one_time_job',
+  'recurring_job',
+];
+const MEMORY_WORKLOADS: readonly ModelWorkload[] = [
+  'memory_extractor',
+  'memory_dreaming',
+  'memory_consolidation',
+];
+
 // The DeepAgents OpenAI-compatible providers all share the same shape: bearer
 // api_key credential, OPENAI_BASE_URL/OPENAI_API_KEY sdk projection (so the
 // loopback gateway base-url + gtw_ token reach the runner's ChatOpenAI), the
 // chat-only DeepAgents execution route, and the experimental v1 workload set.
+// General instruct providers also opt in to the memory workloads (`memory`):
+// the memory dispatch routes them by engine to the OpenAI-compatible memory
+// client. Search/answer providers withhold memory because their responses carry
+// citations and are not general instruct output for extraction/summarization.
 function openAiCompatibleProvider(input: {
   id: string;
   label: string;
@@ -119,6 +135,7 @@ function openAiCompatibleProvider(input: {
   upstreamOrigin: string;
   upstreamPathPrefix: string;
   cacheSupport: ModelProviderCacheSupport;
+  memory?: boolean;
 }): ModelProviderDefinition {
   return {
     id: input.id,
@@ -127,11 +144,9 @@ function openAiCompatibleProvider(input: {
     modelRoute: true,
     embeddingProvider: false,
     responseFamily: 'openai',
-    // Memory workloads are intentionally withheld in v1 (kept to gpt/kimi); the
-    // memory dispatch routes by provider engine and would send these to the
-    // OpenAI memory client, but no catalog entry declares memory workloads so
-    // they are rejected before dispatch. Follow-up: extend memory coverage.
-    supportedWorkloads: ['chat', 'one_time_job', 'recurring_job'],
+    supportedWorkloads: input.memory
+      ? [...CHAT_AND_JOB_WORKLOADS, ...MEMORY_WORKLOADS]
+      : CHAT_AND_JOB_WORKLOADS,
     credentialModes: API_KEY_BEARER_CREDENTIAL_MODES,
     gateway: {
       pathSegment: input.pathSegment,
@@ -157,6 +172,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     upstreamOrigin: 'https://api.groq.com',
     upstreamPathPrefix: '/openai/v1',
     cacheSupport: automaticPrefixCache('prompt_tokens_details.cached_tokens'),
+    memory: true,
   }),
   openAiCompatibleProvider({
     id: 'deepseek',
@@ -166,6 +182,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     upstreamPathPrefix: '/v1',
     // DeepSeek reports cache reads on a FLAT, non-nested field.
     cacheSupport: automaticPrefixCache('prompt_cache_hit_tokens'),
+    memory: true,
   }),
   openAiCompatibleProvider({
     id: 'xai',
@@ -174,6 +191,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     upstreamOrigin: 'https://api.x.ai',
     upstreamPathPrefix: '/v1',
     cacheSupport: automaticPrefixCache('prompt_tokens_details.cached_tokens'),
+    memory: true,
   }),
   openAiCompatibleProvider({
     id: 'together',
@@ -183,6 +201,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     upstreamPathPrefix: '/v1',
     // Together reports cache reads on a FLAT usage.cached_tokens field.
     cacheSupport: automaticPrefixCache('cached_tokens'),
+    memory: true,
   }),
   openAiCompatibleProvider({
     id: 'fireworks',
@@ -191,6 +210,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     upstreamOrigin: 'https://api.fireworks.ai',
     upstreamPathPrefix: '/inference/v1',
     cacheSupport: automaticPrefixCache('prompt_tokens_details.cached_tokens'),
+    memory: true,
   }),
   openAiCompatibleProvider({
     id: 'cerebras',
@@ -199,6 +219,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     upstreamOrigin: 'https://api.cerebras.ai',
     upstreamPathPrefix: '/v1',
     cacheSupport: automaticPrefixCache('prompt_tokens_details.cached_tokens'),
+    memory: true,
   }),
   openAiCompatibleProvider({
     id: 'perplexity',
@@ -219,5 +240,6 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     // compat layer is UNVERIFIED. Best-effort: read the OpenAI-shaped field and
     // treat accounting as best-effort (do not block on it).
     cacheSupport: automaticPrefixCache('prompt_tokens_details.cached_tokens'),
+    memory: true,
   }),
 ] as const satisfies readonly ModelProviderDefinition[];

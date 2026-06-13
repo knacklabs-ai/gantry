@@ -107,14 +107,23 @@ describe('model families', () => {
       ).toMatchObject({ ok: true, alias: 'llama-70b' });
     });
 
-    it('rejects a family alias for a workload no member supports', () => {
-      // The deepagents-lane members are scoped to chat + jobs, not memory.
-      expect(
-        resolveModelSelectionForWorkloadWithFamilies(
-          'gpt-oss',
-          'memory_extractor',
-        ),
-      ).toMatchObject({ ok: false, reason: 'unsupported-workload' });
+    it('accepts a family alias for memory when every member is memory-eligible', () => {
+      // The seeded families' members are general instruct models, which now also
+      // serve the memory workloads, so the all-members gate passes. (Memory model
+      // selection itself reads concrete memory.llm.models.* aliases, not this
+      // user-selection seam, so this only governs /model acceptance.)
+      for (const workload of [
+        'memory_extractor',
+        'memory_dreaming',
+        'memory_consolidation',
+      ] as const) {
+        expect(
+          resolveModelSelectionForWorkloadWithFamilies('gpt-oss', workload),
+        ).toMatchObject({ ok: true, alias: 'gpt-oss' });
+        expect(
+          resolveModelSelectionForWorkloadWithFamilies('llama-70b', workload),
+        ).toMatchObject({ ok: true, alias: 'llama-70b' });
+      }
     });
   });
 

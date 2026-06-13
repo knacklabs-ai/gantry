@@ -85,6 +85,44 @@ describe('route-aware memory LLM client (family-derived)', () => {
     expect(anthropic.query).not.toHaveBeenCalled();
   });
 
+  it('routes a memory-eligible DeepAgents provider (groq) to the OpenAI-compatible client', async () => {
+    const { router, anthropic, openai } = buildRouter();
+    const result = await router.query({
+      appId: 'default' as never,
+      model: 'llama-3.3-70b-versatile',
+      modelProfile: profile({
+        responseFamily: OPENAI_FAMILY,
+        modelRoute: 'groq',
+        runnerModel: 'llama-3.3-70b-versatile',
+        modelRouteLabel: 'Groq',
+        alias: 'groq',
+      }),
+      prompt: 'remember this',
+    });
+    expect(result).toBe('openai-direct');
+    expect(openai.query).toHaveBeenCalledTimes(1);
+    expect(anthropic.query).not.toHaveBeenCalled();
+  });
+
+  it('routes a memory-eligible DeepAgents provider (gemini) to the OpenAI-compatible client', async () => {
+    const { router, anthropic, openai } = buildRouter();
+    const result = await router.query({
+      appId: 'default' as never,
+      model: 'gemini-2.5-pro',
+      modelProfile: profile({
+        responseFamily: OPENAI_FAMILY,
+        modelRoute: 'gemini',
+        runnerModel: 'gemini-2.5-pro',
+        modelRouteLabel: 'Google Gemini',
+        alias: 'gemini',
+      }),
+      prompt: 'remember this',
+    });
+    expect(result).toBe('openai-direct');
+    expect(openai.query).toHaveBeenCalledTimes(1);
+    expect(anthropic.query).not.toHaveBeenCalled();
+  });
+
   it('fails loud on an unknown response family', async () => {
     const { router } = buildRouter();
     await expect(
