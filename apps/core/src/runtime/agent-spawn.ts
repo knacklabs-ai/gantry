@@ -584,6 +584,12 @@ export async function spawnAgent(
       ...(process.env.GANTRY_TIMING_LOG
         ? { GANTRY_TIMING_LOG: process.env.GANTRY_TIMING_LOG }
         : {}),
+      // Forward the payload-capture flag so the child records full LLM
+      // input/output in the latency trace (timings/tokens are always captured;
+      // this only adds the heavy payloads). DEV/diagnostic only.
+      ...(process.env.GANTRY_TRACE_PAYLOADS
+        ? { GANTRY_TRACE_PAYLOADS: process.env.GANTRY_TRACE_PAYLOADS }
+        : {}),
       GANTRY_WORKSPACE_EXTRA_DIR: path.join(
         DATA_DIR,
         'sessions',
