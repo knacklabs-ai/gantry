@@ -587,14 +587,24 @@ function assertProviderPathAllowed(
 // Allowed upstream paths are scoped per provider. The OpenAI-compatible
 // DeepAgents lane (engine `deepagents`) speaks chat/completions; OpenAI also
 // serves embeddings + responses. The Anthropic SDK lane speaks /v1/messages.
+//
+// Path is the per-provider-prefix-stripped tail (see assertProviderPathAllowed).
+// Two client shapes reach the DeepAgents lane:
+//   - openrouter via ChatOpenRouter: posts loopback /openrouter/v1/chat/
+//     completions -> strip /api -> /v1/chat/completions.
+//   - the 8 OpenAI-compatible providers via ChatOpenAI (initChatModel): post
+//     loopback /<seg>/chat/completions -> strip the provider's real upstream
+//     prefix (e.g. groq /openai/v1) -> /chat/completions.
+// Both are permitted; the upstream confinement is enforced by upstreamPathPrefix
+// in buildConfinedUpstreamUrl, so allowing both tails is safe.
 function allowedGatewayPaths(provider: ModelProviderDefinition): Set<string> {
   if (provider.id === 'openai') {
+    // OpenAI keeps upstreamPathPrefix '' and its memory/embeddings consumers
+    // post explicit /v1/... paths, so the allowed tails carry /v1.
     return new Set(['/v1/embeddings', '/v1/chat/completions', '/v1/responses']);
   }
   if (provider.executionRoute.engine === DEEPAGENTS_ENGINE) {
-    // OpenRouter (and any future OpenAI-compatible provider on the DeepAgents
-    // lane): chat/completions only.
-    return new Set(['/v1/chat/completions']);
+    return new Set(['/chat/completions', '/v1/chat/completions']);
   }
   return new Set(['/v1/messages', '/v1/messages/count_tokens']);
 }

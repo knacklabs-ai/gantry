@@ -43,6 +43,48 @@ describe('deepagents model factory', () => {
     expect(resolved.modelId).toBe('gpt-5.5');
   });
 
+  it.each([
+    ['groq', 'llama-3.3-70b-versatile', 'http://127.0.0.1:4567/groq'],
+    ['deepseek', 'deepseek-v4-pro', 'http://127.0.0.1:4567/deepseek'],
+    [
+      'together',
+      'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      'http://127.0.0.1:4567/together',
+    ],
+  ])(
+    'builds a ChatOpenAI via the gateway baseURL for the %s provider (not ChatOpenRouter)',
+    async (provider, modelId, providerBaseUrl) => {
+      const resolved = await buildRunnerModel({
+        provider,
+        modelId,
+        gatewayBaseUrl: providerBaseUrl,
+        gatewayToken,
+      });
+      // The OpenAI-compatible providers go through initChatModel("openai:<id>")
+      // and resolve to ChatOpenAI bound to the RAW loopback gateway baseURL
+      // (no /v1) — the gateway prepends each provider's real upstream prefix.
+      expect(resolved.endpointFamily).toBe('openai');
+      expect(resolved.model.constructor.name).toBe('ConfigurableModel');
+      const underlying = await (
+        resolved.model as unknown as {
+          _getModelInstance: () => Promise<{
+            constructor: { name: string };
+            model: string;
+            streamUsage?: boolean;
+            clientConfig?: { baseURL?: string };
+            apiKey?: string;
+          }>;
+        }
+      )._getModelInstance();
+      expect(underlying.constructor.name).toBe('ChatOpenAI');
+      expect(underlying.model).toBe(modelId);
+      expect(underlying.streamUsage).toBe(true);
+      expect(underlying.clientConfig?.baseURL).toBe(providerBaseUrl);
+      expect(underlying.apiKey).toBe(gatewayToken);
+      expect(resolved.modelId).toBe(modelId);
+    },
+  );
+
   it('builds a ChatOpenRouter bound to the loopback /v1 gateway path', async () => {
     const resolved = await buildRunnerModel({
       provider: 'openrouter',

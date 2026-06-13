@@ -10,9 +10,14 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 // modelCredentialEnv. There is now ONE gateway base-url+token per run; the
 // provider string selects the LangChain class, not which env var is set.
 //
-// - `openai` (and any other initChatModel provider): `initChatModel` resolves
-//   the provider class and forwards `apiKey` + `configuration.baseURL` to the
-//   constructor.
+// - openai-compatible providers (`openai` + groq/deepseek/xai/together/
+//   fireworks/cerebras/perplexity/gemini): built with `initChatModel("openai:
+//   <id>", ...)` regardless of the real upstream provider, because we hit OUR
+//   loopback gateway (not api.openai.com); the gateway routes by pathSegment to
+//   the real upstream. `initChatModel` resolves ChatOpenAI and forwards `apiKey`
+//   + `configuration.baseURL` to it. The OpenAI SDK posts `<baseURL>/chat/
+//   completions` (baseURL is the raw loopback gateway base, no `/v1`), and the
+//   gateway prepends each provider's real upstreamPathPrefix.
 // - `openrouter`: first-party `@langchain/openrouter` `ChatOpenRouter` (talks
 //   OpenRouter REST/chat-completions via fetch). `initChatModel` does NOT know
 //   `openrouter`, so it is constructed directly. Its `buildUrl()` appends
@@ -22,7 +27,20 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 
 export type ModelEndpointFamily = 'openai' | 'openrouter';
 
-const INIT_CHAT_MODEL_PROVIDERS = new Set<string>(['openai']);
+// The "openai:" class prefix is correct for ALL of these — they reach the Gantry
+// loopback gateway, which routes to the real upstream by pathSegment. Adding a
+// provider here is all that is required for the runner to accept it.
+const INIT_CHAT_MODEL_PROVIDERS = new Set<string>([
+  'openai',
+  'groq',
+  'deepseek',
+  'xai',
+  'together',
+  'fireworks',
+  'cerebras',
+  'perplexity',
+  'gemini',
+]);
 
 export interface ResolvedRunnerModel {
   model: BaseChatModel;
@@ -65,7 +83,11 @@ export async function buildRunnerModel(input: {
   }
 
   if (INIT_CHAT_MODEL_PROVIDERS.has(provider)) {
-    const model = await initChatModel(`${provider}:${input.modelId}`, {
+    // The class prefix is ALWAYS "openai:" — we hit the Gantry loopback gateway,
+    // which routes to the real upstream (groq/deepseek/xai/...) by pathSegment.
+    // initChatModel only knows the LangChain class, and ChatOpenAI is the right
+    // class for every OpenAI-chat-completions-compatible upstream.
+    const model = await initChatModel(`openai:${input.modelId}`, {
       apiKey,
       configuration: { baseURL },
       streamUsage: true,

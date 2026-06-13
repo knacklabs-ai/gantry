@@ -181,8 +181,18 @@ function accumulateUsageFromChunk(
   //     .cache_creation. ChatOpenRouter only maps cached_tokens -> cache_read,
   //     so reads land here even when the raw usage is absent.
   const rawUsage = readPath(chunk, 'response_metadata.usage');
+  // Cache-read field varies by upstream provider, so read the FIRST present:
+  //   - prompt_tokens_details.cached_tokens (OpenAI / Groq / xAI / Fireworks /
+  //     Cerebras / Gemini / OpenRouter — nested);
+  //   - prompt_cache_hit_tokens (DeepSeek — flat, alongside
+  //     prompt_cache_miss_tokens);
+  //   - cached_tokens (Together — flat);
+  //   - the LangChain-normalized usage_metadata.input_token_details.cache_read
+  //     fallback.
   const cacheRead = firstFinite(
     readPath(rawUsage, 'prompt_tokens_details.cached_tokens'),
+    readPath(rawUsage, 'prompt_cache_hit_tokens'),
+    readPath(rawUsage, 'cached_tokens'),
     readPath(metadata, 'input_token_details.cache_read'),
   );
   const cacheWrite = firstFinite(

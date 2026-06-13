@@ -4,6 +4,7 @@ import {
   type ModelRouteProviderId,
 } from './model-provider-registry.js';
 import { resolveModelCacheProvider } from './model-cache-support.js';
+import { buildOpenAiCompatibleCatalog } from './model-catalog-openai-compatible.js';
 
 export type ModelResponseFamily = string;
 export type ModelRouteId = ModelRouteProviderId;
@@ -237,7 +238,7 @@ export function getModelPreset(presetId: ModelPresetId): ModelPreset {
   return preset;
 }
 
-function providerRoute(providerId: string, providerModelId: string) {
+export function providerRoute(providerId: string, providerModelId: string) {
   const id = normalizeModelRouteProviderId(providerId);
   const provider = getModelProviderDefinition(id);
   if (!provider?.modelRoute) {
@@ -258,7 +259,7 @@ function openAiRoute(providerModelId: string) {
   return providerRoute('openai', providerModelId);
 }
 
-function executableModelEntry(input: {
+export function executableModelEntry(input: {
   id: string;
   route: { id: ModelRouteId; label: string; providerModelId: string };
   displayName: string;
@@ -533,7 +534,12 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     ],
     experimental: true,
   }),
-] as const;
+  // Eight OpenAI-chat-completions-compatible providers on the deepagents lane
+  // (groq, deepseek, xai, together, fireworks, cerebras, perplexity, gemini).
+  // Built in a sibling module to keep this file under its line budget; the
+  // builder takes the local helpers so there is no import cycle back here.
+  ...buildOpenAiCompatibleCatalog({ executableModelEntry, providerRoute }),
+];
 
 validateModelCatalogProviderSupport(MODEL_CATALOG);
 

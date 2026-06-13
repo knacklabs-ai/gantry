@@ -8,6 +8,7 @@ import {
   DEEPAGENTS_ENGINE,
   type AgentEngine,
 } from './agent-engine.js';
+import { OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS } from './model-provider-registry-openai-compatible.js';
 
 export type ModelCredentialPayload = Record<string, string>;
 
@@ -387,6 +388,11 @@ export const MODEL_PROVIDER_DEFINITIONS = [
       supportedCredentialModes: ['api_key'],
     },
   },
+  // Eight additional OpenAI-chat-completions-compatible providers on the
+  // DeepAgents engine (groq, deepseek, xai, together, fireworks, cerebras,
+  // perplexity, gemini). Defined in a sibling module to keep this file under its
+  // line budget; spread here so the registry stays the single source of truth.
+  ...OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS,
 ] as const satisfies readonly ModelProviderDefinition[];
 
 const PROVIDER_BY_ID = indexProviderDefinitionsById(MODEL_PROVIDER_DEFINITIONS);

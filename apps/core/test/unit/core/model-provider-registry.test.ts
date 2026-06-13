@@ -312,4 +312,81 @@ describe('model provider registry', () => {
         .strategy,
     ).toBe('aws_sdk_default_chain');
   });
+
+  it.each([
+    [
+      'groq',
+      'https://api.groq.com',
+      '/openai/v1',
+      'prompt_tokens_details.cached_tokens',
+    ],
+    ['deepseek', 'https://api.deepseek.com', '/v1', 'prompt_cache_hit_tokens'],
+    ['xai', 'https://api.x.ai', '/v1', 'prompt_tokens_details.cached_tokens'],
+    ['together', 'https://api.together.ai', '/v1', 'cached_tokens'],
+    [
+      'fireworks',
+      'https://api.fireworks.ai',
+      '/inference/v1',
+      'prompt_tokens_details.cached_tokens',
+    ],
+    [
+      'cerebras',
+      'https://api.cerebras.ai',
+      '/v1',
+      'prompt_tokens_details.cached_tokens',
+    ],
+    [
+      'gemini',
+      'https://generativelanguage.googleapis.com',
+      '/v1beta/openai',
+      'prompt_tokens_details.cached_tokens',
+    ],
+  ])(
+    'registers %s on the deepagents lane with the right gateway upstream and cache-read field',
+    (id, upstreamOrigin, upstreamPathPrefix, readTokens) => {
+      const provider = getModelProviderDefinition(id);
+      expect(provider).toBeDefined();
+      expect(provider!.responseFamily).toBe('openai');
+      expect(provider!.executionRoute.engine).toBe('deepagents');
+      expect(provider!.executionRoute.executionProviderId).toBe(
+        'deepagents:langchain',
+      );
+      expect(provider!.executionRoute.supportedCredentialModes).toEqual([
+        'api_key',
+      ]);
+      expect(provider!.gateway.pathSegment).toBe(id);
+      expect(provider!.gateway.upstreamOrigin).toBe(upstreamOrigin);
+      expect(provider!.gateway.upstreamPathPrefix).toBe(upstreamPathPrefix);
+      expect(provider!.gateway.sdkProjection.baseUrlEnv).toBe(
+        'OPENAI_BASE_URL',
+      );
+      expect(provider!.gateway.sdkProjection.tokenEnv).toBe('OPENAI_API_KEY');
+      expect(provider!.credentialModes[0]!.id).toBe('api_key');
+      expect(provider!.credentialModes[0]!.gatewayAuth).toMatchObject({
+        strategy: 'bearer',
+        field: 'apiKey',
+      });
+      expect(provider!.cacheSupport.prompt.usageFields.readTokens).toBe(
+        readTokens,
+      );
+      expect(provider!.supportedWorkloads).toEqual([
+        'chat',
+        'one_time_job',
+        'recurring_job',
+      ]);
+    },
+  );
+
+  it('registers perplexity on the deepagents lane with a bare upstream prefix and no prompt cache', () => {
+    const provider = getModelProviderDefinition('perplexity');
+    expect(provider).toBeDefined();
+    expect(provider!.executionRoute.engine).toBe('deepagents');
+    expect(provider!.gateway.upstreamOrigin).toBe('https://api.perplexity.ai');
+    expect(provider!.gateway.upstreamPathPrefix).toBe('');
+    expect(provider!.cacheSupport.prompt.mode).toBe('none');
+    expect(provider!.cacheSupport.prompt.automatic).toBe(false);
+    expect(
+      provider!.cacheSupport.prompt.usageFields.readTokens,
+    ).toBeUndefined();
+  });
 });

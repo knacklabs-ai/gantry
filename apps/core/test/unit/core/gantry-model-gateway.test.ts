@@ -969,6 +969,96 @@ describe('GantryModelGatewayBroker', () => {
     }
   });
 
+  it.each([
+    ['groq', 'groq', 'https://api.groq.com/openai/v1/chat/completions'],
+    [
+      'fireworks',
+      'fireworks',
+      'https://api.fireworks.ai/inference/v1/chat/completions',
+    ],
+    ['perplexity', 'perplexity', 'https://api.perplexity.ai/chat/completions'],
+    [
+      'gemini',
+      'gemini',
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    ],
+  ])(
+    'maps loopback /%s/chat/completions to the exact upstream URL with bearer auth',
+    async (providerId, pathSegment, upstreamUrl) => {
+      // PATH COMPOSITION PROOF: ChatOpenAI posts `<loopback base>/chat/
+      // completions` where the base is the raw OPENAI_BASE_URL projection
+      // (http://127.0.0.1:<port>/<segment>, no /v1). The gateway prepends each
+      // provider's real upstreamPathPrefix to produce the upstream URL.
+      const repo = new MutableModelCredentialRepository();
+      repo.set(providerId as ModelCredentialProvider, `sk-${providerId}-up`);
+      const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+      vi.stubGlobal('fetch', upstreamFetch);
+      const broker = new GantryModelGatewayBroker(repo);
+      try {
+        const injection = await broker.getInjection({
+          binding: {
+            profile: 'gantry',
+            purpose: 'model_runtime',
+            appId,
+            modelCredentialProviderId: providerId as ModelCredentialProvider,
+          },
+        });
+
+        expect(injection.env.OPENAI_BASE_URL).toBe(
+          `${new URL(injection.env.OPENAI_BASE_URL!).origin}/${pathSegment}`,
+        );
+        expect(injection.env.OPENAI_API_KEY).toMatch(/^gtw_/);
+
+        // The exact path the OpenAI SDK posts: `<base>/chat/completions`.
+        const response = await gatewayRequest({
+          url: `${injection.env.OPENAI_BASE_URL}/chat/completions`,
+          token: injection.env.OPENAI_API_KEY!,
+        });
+
+        expect(response.status).toBe(200);
+        expect(upstreamFetch).toHaveBeenCalledWith(
+          new URL(upstreamUrl),
+          expect.objectContaining({
+            headers: expect.objectContaining({
+              authorization: `Bearer sk-${providerId}-up`,
+            }),
+          }),
+        );
+      } finally {
+        await broker.close();
+      }
+    },
+  );
+
+  it('rejects a disallowed path on an OpenAI-compatible DeepAgents provider before upstream fetch', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.set('groq', 'sk-groq-up');
+    const upstreamFetch = vi.fn(async () => new Response('should not call'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'groq',
+        },
+      });
+
+      // /chat/completions and /v1/chat/completions are allowed; anything else
+      // (here the Anthropic SDK lane path) is rejected before upstream fetch.
+      const disallowed = await gatewayRequest({
+        url: `${injection.env.OPENAI_BASE_URL}/v1/messages`,
+        token: injection.env.OPENAI_API_KEY!,
+      });
+      expect(disallowed.status).toBe(400);
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      await broker.close();
+    }
+  });
+
   it('proxies OpenAI embedding traffic through the same gateway boundary', async () => {
     const repo = new MutableModelCredentialRepository();
     repo.set('openai', 'sk-openai-upstream');

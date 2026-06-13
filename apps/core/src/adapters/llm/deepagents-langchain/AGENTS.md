@@ -19,8 +19,23 @@ Model construction is **library-driven**, not env-sniffing. The host
 modelCredentialEnv). `runner/model-factory.ts` selects the LangChain class from the
 provider string:
 
-- `openai` (and any other `initChatModel` provider):
+- OpenAI-compatible providers (`openai` + `groq`/`deepseek`/`xai`/`together`/
+  `fireworks`/`cerebras`/`perplexity`/`gemini`):
   `await initChatModel("openai:<id>", { apiKey, configuration: { baseURL }, streamUsage: true })`.
+  The class prefix is **always** `openai:` (ChatOpenAI) — these hit OUR loopback
+  gateway, not api.openai.com; the gateway routes to the real upstream by
+  `pathSegment`. `baseURL` is the RAW loopback gateway base
+  (`http://127.0.0.1:<port>/<seg>`, no `/v1`); the OpenAI SDK posts
+  `<baseURL>/chat/completions`, and the gateway prepends each provider's real
+  `upstreamPathPrefix` (groq `/openai/v1`, fireworks `/inference/v1`, perplexity
+  ``, gemini `/v1beta/openai`, deepseek/xai/together/cerebras `/v1`). The gateway
+allowlist permits `/chat/completions`AND`/v1/chat/completions`for the
+DeepAgents lane; upstream confinement is enforced by`upstreamPathPrefix`.
+Adding a provider to `INIT_CHAT_MODEL_PROVIDERS`in`model-factory.ts`plus a
+registry + catalog entry is all that is required. Cache-read field varies by
+provider — the stream-normalizer reads`prompt_tokens_details.cached_tokens`,
+`prompt_cache_hit_tokens`(DeepSeek), and flat`cached_tokens` (Together).
+  Memory workloads are NOT enabled for these in v1 (kept to gpt/kimi).
 - `openrouter`: `new ChatOpenRouter({ model: <id>, apiKey, baseURL: <gateway>/v1, streamUsage: true, sessionId? })`
   from `@langchain/openrouter` (`initChatModel` does not know `openrouter`).
   `ChatOpenRouter.buildUrl()` appends `/chat/completions` to `baseURL`, so the

@@ -396,4 +396,68 @@ describe('model usage normalization', () => {
     ).toBe('kimi');
     expect(findModelByRunnerModel('Kimi 2.6')?.recommendedAlias).toBe('kimi');
   });
+
+  it.each([
+    ['groq', 'llama-3.3-70b-versatile'],
+    ['groq-fast', 'llama-3.1-8b-instant'],
+    ['groq-oss', 'openai/gpt-oss-120b'],
+    ['deepseek', 'deepseek-v4-pro'],
+    ['deepseek-fast', 'deepseek-v4-flash'],
+    ['grok', 'grok-4.3'],
+    ['grok-fast', 'grok-build-0.1'],
+    ['together', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'],
+    ['together-qwen', 'Qwen/Qwen3-235B-A22B-fp8-tput'],
+    ['fireworks', 'accounts/fireworks/models/deepseek-v3p1'],
+    ['fireworks-fast', 'accounts/fireworks/models/llama-v3p1-8b-instruct'],
+    ['cerebras', 'gpt-oss-120b'],
+    ['cerebras-glm', 'zai-glm-4.7'],
+    ['perplexity', 'sonar-pro'],
+    ['perplexity-sonar', 'sonar'],
+    ['gemini', 'gemini-2.5-pro'],
+    ['gemini-flash', 'gemini-2.5-flash'],
+    ['gemini-3-flash', 'gemini-3.5-flash'],
+  ])(
+    'resolves the %s alias to its OpenAI-family runner model',
+    (alias, runnerModel) => {
+      const resolved = resolveModelSelection(alias);
+      expect(resolved).toMatchObject({ ok: true, alias, runnerModel });
+      if (resolved.ok) {
+        expect(resolved.entry.responseFamily).toBe('openai');
+        expect(resolved.entry.experimental).toBe(true);
+        // v1: chat + jobs only, no memory workloads for the new providers.
+        expect(resolved.entry.supportedWorkloads).toEqual([
+          'chat',
+          'one_time_job',
+          'recurring_job',
+        ]);
+      }
+    },
+  );
+
+  it('keeps the new provider friendly aliases collision-free with existing aliases', () => {
+    // Module load already throws on a duplicate alias (buildAliasIndex); this is
+    // a belt-and-suspenders check that the headline aliases stay distinct and do
+    // not shadow opus/sonnet/haiku/gpt/kimi.
+    const headline = [
+      'groq',
+      'deepseek',
+      'grok',
+      'together',
+      'fireworks',
+      'cerebras',
+      'perplexity',
+      'gemini',
+      'opus',
+      'sonnet',
+      'haiku',
+      'gpt',
+      'kimi',
+    ];
+    const runnerModels = headline.map(
+      (alias) =>
+        resolveModelSelection(alias).ok &&
+        (resolveModelSelection(alias) as { runnerModel: string }).runnerModel,
+    );
+    expect(new Set(runnerModels).size).toBe(headline.length);
+  });
 });

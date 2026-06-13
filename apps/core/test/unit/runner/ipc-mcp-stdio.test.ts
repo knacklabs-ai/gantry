@@ -110,6 +110,16 @@ function createMcpFixture(): {
     path.join(sharedDir, 'model-provider-registry.ts'),
   );
   fs.copyFileSync(
+    path.resolve(
+      'apps/core/src/shared/model-provider-registry-openai-compatible.ts',
+    ),
+    path.join(sharedDir, 'model-provider-registry-openai-compatible.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-catalog-openai-compatible.ts'),
+    path.join(sharedDir, 'model-catalog-openai-compatible.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/agent-engine.ts'),
     path.join(sharedDir, 'agent-engine.ts'),
   );

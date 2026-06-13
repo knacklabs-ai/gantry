@@ -181,6 +181,97 @@ describe('normalizeDeepAgentStream', () => {
     });
   });
 
+  it('accounts DeepSeek-shaped cache reads off the flat prompt_cache_hit_tokens field', async () => {
+    // DeepSeek reports cache reads on a FLAT response_metadata.usage.
+    // prompt_cache_hit_tokens field (not nested under prompt_tokens_details),
+    // alongside prompt_cache_miss_tokens. No LangChain-normalized cache_read is
+    // present, so the flat raw field must be read.
+    const result = await normalizeDeepAgentStream({
+      events: asStream([
+        streamEvent('hi'),
+        {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: '',
+              usage_metadata: {
+                input_tokens: 900,
+                output_tokens: 15,
+              },
+              response_metadata: {
+                usage: {
+                  prompt_tokens: 900,
+                  completion_tokens: 15,
+                  prompt_cache_hit_tokens: 700,
+                  prompt_cache_miss_tokens: 200,
+                },
+              },
+            },
+          },
+        },
+      ]),
+      newSessionId: 'session-deepseek',
+      modelId: 'deepseek-v4-pro',
+      modelProfile: { maxInputTokens: 128_000 },
+      cacheProvider: 'openai',
+      emit: () => {},
+    });
+
+    expect(result.terminalUsage).toMatchObject({
+      inputTokens: 900,
+      outputTokens: 15,
+      cacheReadTokens: 700,
+      cacheWriteTokens: 0,
+      totalBillableInputTokens: 200,
+      cacheProvider: 'openai',
+      cacheStatus: 'hit',
+    });
+  });
+
+  it('accounts Together-shaped cache reads off the flat cached_tokens field', async () => {
+    // Together reports cache reads on a FLAT response_metadata.usage.cached_tokens
+    // field (not nested under prompt_tokens_details).
+    const result = await normalizeDeepAgentStream({
+      events: asStream([
+        streamEvent('hi'),
+        {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: '',
+              usage_metadata: {
+                input_tokens: 400,
+                output_tokens: 9,
+              },
+              response_metadata: {
+                usage: {
+                  prompt_tokens: 400,
+                  completion_tokens: 9,
+                  cached_tokens: 250,
+                },
+              },
+            },
+          },
+        },
+      ]),
+      newSessionId: 'session-together',
+      modelId: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      modelProfile: { maxInputTokens: 128_000 },
+      cacheProvider: 'openai',
+      emit: () => {},
+    });
+
+    expect(result.terminalUsage).toMatchObject({
+      inputTokens: 400,
+      outputTokens: 9,
+      cacheReadTokens: 250,
+      cacheWriteTokens: 0,
+      totalBillableInputTokens: 150,
+      cacheProvider: 'openai',
+      cacheStatus: 'hit',
+    });
+  });
+
   it('falls back to LangChain input_token_details.cache_read when raw usage is absent', async () => {
     // ChatOpenRouter v0.3.0 maps cached_tokens -> usage_metadata.input_token_
     // details.cache_read but does NOT attach the raw response_metadata.usage on
