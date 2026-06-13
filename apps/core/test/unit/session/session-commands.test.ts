@@ -629,7 +629,9 @@ describe('handleSessionCommand', () => {
   it('keeps /digest-session operator flow moving when memory fact extraction times out', async () => {
     const collectCurrentSessionMemory = vi
       .fn()
-      .mockRejectedValue(new Error('memory boundary extraction deadline exceeded after 45000ms'));
+      .mockRejectedValue(
+        new Error('memory boundary extraction deadline exceeded after 45000ms'),
+      );
     const deps = makeDeps({ collectCurrentSessionMemory });
     const result = await handleSessionCommand({
       missedMessages: [

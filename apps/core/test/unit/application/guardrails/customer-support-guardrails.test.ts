@@ -267,8 +267,8 @@ describe('BSS customer support guardrail', () => {
     expect(
       customerVisibleGuardrailResponse(policy, 'scope_rejection'),
     ).toContain('Bombay Sweet Shop orders');
-    expect(
-      customerVisibleGuardrailResponse(undefined, 'scope_rejection'),
-    ).toBe('I can only help with the configured support scope.');
+    expect(customerVisibleGuardrailResponse(undefined, 'scope_rejection')).toBe(
+      'I can only help with the configured support scope.',
+    );
   });
 });
