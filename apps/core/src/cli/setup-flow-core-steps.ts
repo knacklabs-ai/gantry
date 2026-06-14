@@ -309,19 +309,19 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
   draft.modelPreset = preset;
   const selectedPreset = getModelPreset(draft.modelPreset);
 
+  // Offer every chat-capable model across all providers (not just the preset's),
+  // so a user can onboard directly onto a non-preset provider (openai/groq/...).
+  // The preset still governs the memory/defaults cascade; the provider is shown
+  // in the hint so the choice is clear.
   const chatModelOptions = listModelCatalogEntries()
-    .filter(
-      (entry) =>
-        entry.modelRoute.id === draft.modelPreset &&
-        entry.supportedWorkloads.includes('chat'),
-    )
+    .filter((entry) => entry.supportedWorkloads.includes('chat'))
     .map((entry) => ({
       value: entry.recommendedAlias,
       label:
         entry.recommendedAlias === selectedPreset.chatDefault
           ? `${entry.displayName} (Recommended)`
           : entry.displayName,
-      hint: `${formatModelDisplay(entry)}. Alias: ${entry.recommendedAlias}.`,
+      hint: `${entry.modelRoute.label} · ${formatModelDisplay(entry)}. Alias: ${entry.recommendedAlias}.`,
     }));
   const initialModel =
     chatModelOptions.some((option) => option.value === draft.selectedModel) &&
@@ -355,5 +355,19 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
   draft.selectedModel = resolvedModel.ok
     ? resolvedModel.alias
     : selectedPreset.chatDefault;
+  if (resolvedModel.ok) {
+    const providerId = resolvedModel.entry.modelRoute.id;
+    if (isModelPresetId(providerId)) {
+      // A preset chat model aligns the memory/defaults preset with the chat
+      // provider so the two stay consistent.
+      draft.modelPreset = providerId;
+    } else {
+      // A non-preset chat model keeps the chosen preset for the memory cascade;
+      // its own provider key must be configured in the credentials step.
+      p.note(
+        `${resolvedModel.entry.displayName} runs on the ${resolvedModel.entry.modelRoute.label} provider — configure its credential in the credentials step. Memory will use the ${selectedPreset.label} preset.`,
+      );
+    }
+  }
   return { type: 'next' };
 }
