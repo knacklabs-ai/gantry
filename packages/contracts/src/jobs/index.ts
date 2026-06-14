@@ -49,8 +49,11 @@ export const JobModelPreviewSchema = z
         label: z.string(),
       })
       .strict(),
-    contextWindowTokens: z.number().int().nonnegative(),
-    maxOutputTokens: z.number().int().nonnegative(),
+    // Optional: DeepAgents job-eligible models omit maxOutputTokens (and some
+    // omit contextWindowTokens); JSON.stringify drops the undefined fields, so
+    // these must be optional to parse valid job preview responses.
+    contextWindowTokens: z.number().int().nonnegative().optional(),
+    maxOutputTokens: z.number().int().nonnegative().optional(),
     cachePolicy: z.string(),
   })
   .strict();
@@ -577,6 +580,7 @@ export const ModelPreviewTargetSchema = z.enum([
   'chat',
   'jobs',
   'job',
+  'agent',
   'memory',
 ]);
 export type ModelPreviewTarget = z.infer<typeof ModelPreviewTargetSchema>;
@@ -585,6 +589,9 @@ export const ModelPreviewRequestSchema = z
   .object({
     target: ModelPreviewTargetSchema,
     jobId: z.string().optional(),
+    // target 'agent': resolve a model alias against the agent's derived engine.
+    agentId: z.string().optional(),
+    modelAlias: z.string().optional(),
     conversationJid: z.string().optional(),
     workspaceKey: z.string().optional(),
     kind: z.enum(['one-time', 'recurring']).optional(),
@@ -600,6 +607,15 @@ export const ModelPreviewResponseSchema = z
     scope: z.string().optional(),
     kind: z.enum(['one-time', 'recurring']).optional(),
     task: z.enum(['extractor', 'dreaming', 'consolidation']).optional(),
+    // Agent-only fields (target 'agent'): the derived (read-only) engine and its
+    // diagnostics for the resolved model. Optional so chat/job/memory previews
+    // still validate.
+    agentId: z.string().optional(),
+    agentEngine: AgentEngineSchema.optional(),
+    agentEngineLabel: z.string().optional(),
+    credentialProfile: z.string().optional(),
+    executionProviderId: z.string().optional(),
+    incompatible: z.string().optional(),
     selection: ModelDefaultSlotSchema,
     why: z.array(z.string()),
   })

@@ -8,7 +8,10 @@ import {
   wrapThirdPartyMcpToolsWithGate,
   type ThirdPartyMcpGateConfig,
 } from './third-party-mcp-gate.js';
-import { createGantryShellTool } from './gantry-shell-tool.js';
+import {
+  createGantryShellTool,
+  GANTRY_SHELL_TOOL_NAME,
+} from './gantry-shell-tool.js';
 import { isHostPrivateBrowserMcpServerName } from '../../../../shared/agent-tool-references.js';
 import { isRunCommandToolRule } from '../../../../shared/gantry-tool-facades.js';
 
@@ -122,7 +125,9 @@ export async function connectGantryAndThirdPartyMcpTools(
   const thirdPartyTools: StructuredToolInterface[] = [];
   for (const [name, tools] of Object.entries(serverTools)) {
     if (name === GANTRY_SERVER_NAME) continue;
-    thirdPartyTools.push(...tools);
+    thirdPartyTools.push(
+      ...dropCollidingThirdPartyTools(name, tools, selectedGantrySet),
+    );
   }
   const gatedThirdPartyTools = wrapThirdPartyMcpToolsWithGate(thirdPartyTools, {
     ...input.gate,
@@ -135,6 +140,33 @@ export async function connectGantryAndThirdPartyMcpTools(
     tools: [...gantryTools, ...gatedThirdPartyTools, ...shellTools],
     close: () => client.close(),
   };
+}
+
+// A third-party server must not be able to shadow a Gantry authority tool
+// (selectedGantrySet) or the reserved shell tool name: a duplicate name in the
+// final list would let a model calling e.g. send_message reach the third-party
+// tool instead. Drop colliding tools (never throw — one bad server must not kill
+// the run) and warn the operator with the offending server+tool. Exported for
+// unit coverage.
+export function dropCollidingThirdPartyTools(
+  serverName: string,
+  tools: readonly StructuredToolInterface[],
+  selectedGantrySet: ReadonlySet<string>,
+): StructuredToolInterface[] {
+  const kept: StructuredToolInterface[] = [];
+  for (const tool of tools) {
+    if (
+      selectedGantrySet.has(tool.name) ||
+      tool.name === GANTRY_SHELL_TOOL_NAME
+    ) {
+      console.warn(
+        `[deepagents-mcp] Dropping third-party MCP tool "${tool.name}" from server "${serverName}": it collides with a reserved Gantry tool name.`,
+      );
+      continue;
+    }
+    kept.push(tool);
+  }
+  return kept;
 }
 
 // Whether the Gantry-owned, policy-gated shell tool should be injected into the

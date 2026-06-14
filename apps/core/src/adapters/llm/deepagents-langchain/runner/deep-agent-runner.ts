@@ -73,6 +73,9 @@ export async function runDeepAgentTurn(input: {
   newSessionId: string;
   emit: (frame: RunnerOutputFrame) => void;
   log?: (message: string) => void;
+  // Marks tool activity (by name) on each tool-call start; the scheduled-job
+  // heartbeat wires this so a long-running tool keeps the lease alive.
+  onToolStart?: (toolName: string) => void;
   // STOP delivered via the close sentinel aborts the in-flight LangGraph stream
   // through this signal so the run terminates promptly (live-turn parity).
   signal?: AbortSignal;
@@ -171,6 +174,7 @@ export async function runDeepAgentTurn(input: {
       onFirstEvent: (eventName) =>
         logElapsed(`First LangGraph event (${eventName})`),
       onFirstVisibleText: () => logElapsed('First visible text delta'),
+      ...(input.onToolStart ? { onToolStart: input.onToolStart } : {}),
     });
     logElapsed('Stream normalized');
     const text = normalized.text;

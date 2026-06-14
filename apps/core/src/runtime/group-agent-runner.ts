@@ -35,6 +35,7 @@ import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
 import {
   resolveTurnFailoverCandidates,
   runFamilyFailoverLoop,
+  publishRunFailoverEvent,
 } from './failover-candidate-loop.js';
 const DEFAULT_ASSISTANT_NAME = 'Gantry';
 const DEFAULT_MODEL_ALIAS = 'opus';
@@ -639,9 +640,20 @@ export function createGroupAgentRunner(input: {
         fallbackProviderId: executionProviderId,
         hasStreamedOutput: () => (streamedResult.snapshot()?.length ?? 0) > 0,
         invoke: (model) => invokeAgent({ memoryContextBlock, model }),
-        onFailover: (toProviderId) => {
+        onFailover: (toProviderId, details) => {
           const fromProviderId = executionProviderId;
           executionProviderId = toProviderId;
+          publishRunFailoverEvent({
+            publish: deps.publishRuntimeEvent,
+            appId: turnContext?.appId,
+            agentId: turnContext?.agentId,
+            runId: runState.runId,
+            conversationId: chatJid,
+            threadId: sessionThreadId,
+            fromProvider: fromProviderId,
+            family: group.agentConfig?.model ?? null,
+            details,
+          });
           return fromProviderId;
         },
         log: (message) => runtimeLogger.warn({ group: group.name }, message),

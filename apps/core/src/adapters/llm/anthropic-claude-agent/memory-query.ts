@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   getCredentialBrokerRuntimeConfig,
+  getRuntimeSettingsForConfig,
   type ClaudeAuthMode,
 } from '../../../config/index.js';
 import { getAgentCredentialInjection } from '../../../application/credentials/agent-credential-service.js';
@@ -245,6 +246,9 @@ async function resolveGantryMemoryInjection(
     gatewayBindHost: brokerConfig.gatewayBindHost,
     publishRuntimeEvent: (event) =>
       getRuntimeStorage().runtimeEvents.publish(event),
+    // Honor per-provider rate caps for memory traffic, same getter runtime-app
+    // uses for the interactive broker. Without it the broker admits unlimited.
+    limits: () => getRuntimeSettingsForConfig().limits,
   }).catch((error) => {
     memoryCredentialBrokerPromise = undefined;
     throw error;

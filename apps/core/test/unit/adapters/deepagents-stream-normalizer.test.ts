@@ -366,6 +366,22 @@ describe('normalizeDeepAgentStream', () => {
     expect(visibleTextCount).toBe(1);
   });
 
+  it('marks tool activity by name on each on_tool_start event', async () => {
+    const toolStarts: string[] = [];
+    await normalizeDeepAgentStream({
+      events: asStream([
+        { event: 'on_tool_start', name: 'RunCommand' },
+        streamEvent('working'),
+        { event: 'on_tool_start', name: 'send_message' },
+      ]),
+      newSessionId: 'session-tools',
+      modelProfile: { maxInputTokens: 1000 },
+      emit: () => {},
+      onToolStart: (toolName) => toolStarts.push(toolName),
+    });
+    expect(toolStarts).toEqual(['RunCommand', 'send_message']);
+  });
+
   it('returns the assistant text as the terminal result when no partial text streamed', async () => {
     const frames: RunnerOutputFrame[] = [];
     const result = await normalizeDeepAgentStream({

@@ -68,8 +68,16 @@ const BILLING_PATTERNS: readonly RegExp[] = [
 //  - "stopped by request": a user/host stop, not a provider failure.
 //  - missing provider session: handled FIRST by the stale-session retry, which
 //    re-runs on the SAME provider; failing it over would skip that recovery.
+//    The REAL adapter marker strings are matched directly so they short-circuit
+//    even if a session error is ever wrapped with an HTTP code / "unavailable" /
+//    "not configured" token (which would otherwise classify it failover-
+//    eligible). The two execution adapters throw, respectively, "No conversation
+//    found with session ID" and "No DeepAgents session found with session ID".
+//    The generic "provider session ... missing/expired/not found" pattern is
+//    kept as an extra net for any future paraphrase of the same cause.
 const NON_ELIGIBLE_PATTERNS: readonly RegExp[] = [
   /\bstopped by request\b/i,
+  /\bno (?:conversation|deepagents session) found with session id\b/i,
   /\bprovider session\b.*\b(?:missing|expired|not found)\b/i,
 ];
 

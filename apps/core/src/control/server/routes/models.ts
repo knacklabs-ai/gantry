@@ -214,13 +214,13 @@ function modelDefaultsResponse(ctx: ControlRouteContext) {
 function presetFromDefaults(
   defaults: ReturnType<ControlRouteContext['getModelDefaults']>,
 ): ModelPresetId {
-  return (
+  // Guard: a DeepAgents-lane provider id is not a preset; fall back to default.
+  const providerId =
     defaults.defaults.chat.modelEntry?.modelRoute.id ??
     defaults.defaults.oneTime.modelEntry?.modelRoute.id ??
     defaults.defaults.recurring.modelEntry?.modelRoute.id ??
-    defaults.defaults.memoryExtractor.modelEntry?.modelRoute.id ??
-    DEFAULT_MODEL_PRESET_ID
-  );
+    defaults.defaults.memoryExtractor.modelEntry?.modelRoute.id;
+  return isModelPresetId(providerId) ? providerId : DEFAULT_MODEL_PRESET_ID;
 }
 
 function providerForAlias(
@@ -229,10 +229,13 @@ function providerForAlias(
 ): ModelPresetId | undefined {
   if (typeof value !== 'string' || value === 'inherit') return undefined;
   const resolved = resolveModelSelectionForWorkload(value, workload);
-  return resolved.ok ? resolved.entry.modelRoute.id : undefined;
+  if (!resolved.ok) return undefined;
+  // DeepAgents-lane provider ids are not presets, so skip them in the loop.
+  const providerId = resolved.entry.modelRoute.id;
+  return isModelPresetId(providerId) ? providerId : undefined;
 }
 
-function providersSelectedByPatch(
+export function providersSelectedByPatch(
   body: Record<string, unknown>,
   defaults: ReturnType<ControlRouteContext['getModelDefaults']>,
 ): ModelPresetId[] {

@@ -64,9 +64,9 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 // Network/proxy + neutral runtime env keys the child must inherit so egress is
 // proxied through the Gantry egress gateway and TLS trust resolves. These are
 // already set on the runner's own process.env by agent-spawn (the runner is a
-// child of the host that projects them), so spawning with the inherited
-// process.env carries them; this set is documented here for the security
-// argument and used to assert presence in tests.
+// child of the host that projects them). The child env is an explicit allowlist
+// (NOT inherited process.env) so these keys carry through while secrets do not;
+// this set is also asserted present in tests.
 export const SHELL_CHILD_NETWORK_ENV_KEYS = [
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -79,6 +79,37 @@ export const SHELL_CHILD_NETWORK_ENV_KEYS = [
   'GANTRY_EGRESS_PROXY_URL',
   'NODE_EXTRA_CA_CERTS',
 ] as const;
+
+// Minimal POSIX keys a shell needs to function. Only those actually set on
+// process.env are copied (skip undefined).
+const SHELL_CHILD_POSIX_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'USER',
+  'SHELL',
+  'TERM',
+] as const;
+
+// Secret-scrub: the model controls the command, so the child must NOT see the
+// runner's IPC HMAC keys (GANTRY_IPC_AUTH_TOKEN/SECRET,
+// GANTRY_MEMORY_IPC_AUTH_TOKEN) or any provider creds / gtw_ gateway tokens that
+// live on process.env — a `printenv` would otherwise exfiltrate them and let the
+// model forge IPC messages. Build a fresh env from an explicit allowlist of
+// network/proxy + POSIX keys, copying ONLY set values, and pass that to spawn.
+function buildShellChildEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of [
+    ...SHELL_CHILD_NETWORK_ENV_KEYS,
+    ...SHELL_CHILD_POSIX_ENV_KEYS,
+  ]) {
+    const value = process.env[key];
+    if (typeof value === 'string') env[key] = value;
+  }
+  return env;
+}
 
 export interface GantryShellToolConfig {
   workspaceFolder: string;
@@ -174,11 +205,13 @@ export function createGantryShellTool(
 }
 
 // Executes the approved command as a child of the already-sandboxed runner. The
-// child inherits process.env, so it inherits the OS sandbox confinement
-// (protected-path write denies) and the runner's egress-proxy env — egress stays
-// on the Gantry egress gateway. Uses a shell so the model can use pipes/globs
-// the policy matched against; the OS sandbox is the enforcement boundary, not
-// argv shape.
+// child inherits the OS sandbox confinement (protected-path write denies) from
+// being a runner child; its env is a scrubbed allowlist (buildShellChildEnv) so
+// the runner's egress-proxy env carries through — egress stays on the Gantry
+// egress gateway — but the IPC HMAC keys and provider creds do NOT leak to the
+// model-controlled command. Uses a shell so the model can use pipes/globs the
+// policy matched against; the OS sandbox is the enforcement boundary, not argv
+// shape.
 async function runShellCommand(
   command: string,
   config: GantryShellToolConfig,
@@ -189,7 +222,7 @@ async function runShellCommand(
     let settled = false;
     const child = spawn('/bin/sh', ['-c', command], {
       cwd: config.cwd,
-      env: process.env,
+      env: buildShellChildEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

@@ -88,7 +88,7 @@ async function runWithGantryGateway(opts: MemoryLlmQueryOpts): Promise<string> {
       model: opts.model,
       messages: buildMessages(opts),
     });
-    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const response = await fetch(`${baseUrl}${chatCompletionsTail(provider)}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${token}`,
@@ -206,6 +206,23 @@ function requireOpenAiCompatibleProvider(
     );
   }
   return provider;
+}
+
+// The chat/completions path tail to POST after the loopback gateway base
+// (`http://127.0.0.1:<port>/<segment>`), matching exactly what the runner lane
+// posts and what the gateway allowlists per provider. The gateway builds the
+// upstream as `upstreamOrigin + upstreamPathPrefix + tail`, then strips the
+// per-provider prefix before checking the allowlist (assertProviderPathAllowed):
+//   - openai/openrouter need the `/v1` tail because their prefixes do not
+//     include that version segment.
+//   - every other OpenAI-compatible provider encodes its real version in
+//     upstreamPathPrefix (groq `/openai/v1`, gemini `/v1beta/openai`, etc.) and
+//     allowlists the bare `/chat/completions`, so the tail must be bare -> e.g.
+//     upstream api.groq.com/openai/v1/chat/completions (no double `/v1`).
+function chatCompletionsTail(provider: ModelProviderDefinition): string {
+  return provider.id === 'openai' || provider.id === 'openrouter'
+    ? '/v1/chat/completions'
+    : '/chat/completions';
 }
 
 function readGatewayProjection(

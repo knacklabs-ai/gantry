@@ -390,6 +390,43 @@ describe('contracts package', () => {
         source: 'settings.yaml agents.<agent>.model',
       },
     });
+    // target 'agent' request round-trips agentId + modelAlias.
+    expect(
+      ModelPreviewRequestSchema.parse({
+        target: 'agent',
+        agentId: 'main_agent',
+        modelAlias: 'gpt',
+      }),
+    ).toEqual({
+      target: 'agent',
+      agentId: 'main_agent',
+      modelAlias: 'gpt',
+    });
+    // target 'agent' response carries the derived (read-only) engine diagnostics.
+    expect(
+      ModelPreviewResponseSchema.parse({
+        target: 'agent',
+        agentId: 'main_agent',
+        agentEngine: 'deepagents',
+        agentEngineLabel: 'DeepAgents',
+        credentialProfile: 'openai',
+        executionProviderId: 'deepagents:langchain',
+        selection: {
+          configuredAlias: null,
+          effectiveAlias: 'gpt',
+          source: 'agent main_agent engine deepagents',
+          inherited: false,
+          workload: 'chat',
+          model: null,
+        },
+        why: ['agent main_agent runs DeepAgents on the openai endpoint'],
+      }),
+    ).toMatchObject({
+      target: 'agent',
+      agentId: 'main_agent',
+      agentEngine: 'deepagents',
+      executionProviderId: 'deepagents:langchain',
+    });
     expect(
       CreateJobResponseSchema.parse({
         jobId: 'job-1',
@@ -419,6 +456,21 @@ describe('contracts package', () => {
     };
     expect(JobModelPreviewSchema.parse(jobModelPreview)).toEqual(
       jobModelPreview,
+    );
+    // DeepAgents job-eligible models omit maxOutputTokens (and some omit
+    // contextWindowTokens); JSON.stringify drops the undefined fields, so a
+    // preview without them must still parse.
+    const deepAgentsJobPreview = {
+      displayName: 'Groq Llama 3.3 70B Versatile',
+      responseFamily: 'openai',
+      modelRoute: {
+        id: 'groq',
+        label: 'Groq',
+      },
+      cachePolicy: 'openai-automatic-prompt',
+    };
+    expect(JobModelPreviewSchema.parse(deepAgentsJobPreview)).toEqual(
+      deepAgentsJobPreview,
     );
     expect(
       JobModelPreviewSchema.parse({

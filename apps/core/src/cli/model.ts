@@ -67,7 +67,11 @@ function presetFromSettings(settings: ModelCommandSettings): ModelPresetId {
     settings.agent.defaultModel || DEFAULT_SETUP_MODEL_ALIAS,
     'chat',
   );
-  return resolved.ok ? resolved.entry.modelRoute.id : DEFAULT_MODEL_PRESET_ID;
+  // modelRoute.id is the provider id, which is only a preset id for the
+  // anthropic/openrouter lanes. DeepAgents-lane providers (openai/groq/...) have
+  // no preset, so fall back to the default preset to avoid getModelPreset throws.
+  const providerId = resolved.ok ? resolved.entry.modelRoute.id : undefined;
+  return isModelPresetId(providerId) ? providerId : DEFAULT_MODEL_PRESET_ID;
 }
 
 function resolveSlot(alias: string, workload: ModelWorkload) {
@@ -91,7 +95,9 @@ async function preflightAliasPresets(input: {
   for (const { alias, workload } of input.aliases) {
     if (!alias) continue;
     const resolved = resolveModelSelectionForWorkload(alias, workload);
-    if (resolved.ok) presets.add(resolved.entry.modelRoute.id);
+    if (resolved.ok && isModelPresetId(resolved.entry.modelRoute.id)) {
+      presets.add(resolved.entry.modelRoute.id);
+    }
   }
   for (const preset of presets) {
     const result = await input.preflight(
@@ -240,7 +246,11 @@ function selectedModelPresets(settings: ModelCommandSettings): ModelPresetId[] {
     },
   ]) {
     const resolved = resolveModelSelectionForWorkload(alias, workload);
-    if (resolved.ok) selected.add(resolved.entry.modelRoute.id);
+    // Only anthropic/openrouter provider ids are preset ids; DeepAgents-lane
+    // providers have no preset to preflight, so skip them here.
+    if (resolved.ok && isModelPresetId(resolved.entry.modelRoute.id)) {
+      selected.add(resolved.entry.modelRoute.id);
+    }
   }
   return [...selected].sort();
 }

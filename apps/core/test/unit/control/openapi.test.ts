@@ -606,10 +606,8 @@ describe('control OpenAPI documentation', () => {
       agentEngine: { type: 'string', enum: engineEnum },
       credentialProfile: { type: 'string' },
       executionProviderId: { type: 'string' },
+      incompatible: { type: 'string' },
     });
-    expect(
-      spec.components.schemas.ModelPreviewResponse.properties.incompatible,
-    ).toBeUndefined();
     expect(engineEnum).toEqual([DEFAULT_AGENT_ENGINE, DEEPAGENTS_ENGINE]);
     expect(
       spec.paths['/v1/guided-actions/execute']?.post.description,

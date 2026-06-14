@@ -451,8 +451,10 @@ export interface JobModelPreview {
     id: string;
     label: string;
   };
-  contextWindowTokens: number;
-  maxOutputTokens: number;
+  // Optional: DeepAgents job-eligible models omit static limits (matching
+  // ModelRecord), so JSON.stringify drops them from valid job preview responses.
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
   cachePolicy: string;
 }
 

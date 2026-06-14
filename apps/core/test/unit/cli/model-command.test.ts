@@ -167,6 +167,24 @@ describe('model CLI command', () => {
     );
   });
 
+  it('does not preflight non-preset DeepAgents providers before direct CLI writes', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const preflightPreset = vi.fn(async () => ({
+      ok: false,
+      status: 'fail' as const,
+      message: 'should not run for openai',
+    }));
+
+    await expect(
+      runModelCommand(runtimeHome, ['set', 'chat', 'gpt'], {
+        preflightPreset,
+      }),
+    ).resolves.toBe(0);
+
+    expect(loadRuntimeSettings(runtimeHome).agent.defaultModel).toBe('gpt');
+    expect(preflightPreset).not.toHaveBeenCalled();
+  });
+
   it('preflights Anthropic aliases before direct CLI writes', async () => {
     const runtimeHome = makeRuntimeHome();
     const errorSpy = vi
@@ -326,5 +344,24 @@ describe('model CLI command', () => {
     expect(String(errorSpy.mock.calls.at(-1)?.[0])).toContain(
       'Preset preflight failed: missing OpenRouter token',
     );
+  });
+
+  it('renders status without throwing when chat is a DeepAgents model', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const settings = loadRuntimeSettings(runtimeHome);
+    // gpt resolves to the openai (DeepAgents-lane) provider, whose provider id
+    // is not a model preset; status must not crash resolving the preset.
+    settings.agent.defaultModel = 'gpt';
+    saveRuntimeSettings(runtimeHome, settings);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await expect(runModelCommand(runtimeHome, ['status'])).resolves.toBe(0);
+
+    const output = logSpy.mock.calls.at(-1)?.[0] as string;
+    expect(output).toContain('Model status');
+    // The provider has no preset, so status falls back to the default preset.
+    expect(output).toContain('preset: anthropic (Anthropic)');
+    logSpy.mockRestore();
   });
 });

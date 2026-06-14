@@ -26,6 +26,8 @@ import { nowIso } from '../../../../shared/time/datetime.js';
 
 export interface LangGraphStreamEvent {
   event: string;
+  // The runnable name on `on_tool_start`/`on_tool_end` events is the tool name.
+  name?: string;
   data?: {
     chunk?: unknown;
     output?: unknown;
@@ -51,6 +53,10 @@ export interface StreamNormalizerInput {
   emit: (frame: RunnerOutputFrame) => void;
   onFirstEvent?: (eventName: string) => void;
   onFirstVisibleText?: () => void;
+  // Called with the tool name when a tool invocation starts. The scheduled-job
+  // heartbeat uses this to mark tool activity so a long-running tool (e.g. the
+  // shell tool) keeps the lease alive instead of looking idle.
+  onToolStart?: (toolName: string) => void;
 }
 
 interface UsageAccumulator {
@@ -116,6 +122,10 @@ export async function normalizeDeepAgentStream(
     }
     if (event.event === 'on_chat_model_end') {
       accumulateUsageFromChunk(event.data?.output, usage);
+      continue;
+    }
+    if (event.event === 'on_tool_start' && typeof event.name === 'string') {
+      input.onToolStart?.(event.name);
     }
   }
 

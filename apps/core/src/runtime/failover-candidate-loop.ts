@@ -1,4 +1,6 @@
 import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
+import type { RuntimeEventPublishInput } from '../domain/events/events.js';
+import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
 import { resolveModelSelection } from '../shared/model-catalog.js';
 import { resolveExecutionRoute } from '../shared/model-execution-route.js';
 import {
@@ -90,6 +92,56 @@ export interface FailoverAttemptOutput {
   error?: string;
 }
 
+// Observability details for a single failover advance, passed to `onFailover` so
+// a lane can emit a RUN_FAILOVER event. `fromModel`/`toModel` are the concrete
+// family members; `reason` is the eligibility-class error text.
+export interface FailoverAdvanceDetails {
+  toProviderId: ExecutionProviderId;
+  fromModel: string;
+  toModel: string;
+  reason: string | undefined;
+}
+
+// RUN_FAILOVER observability event (no secrets): the provider advance
+// (from -> to), the requested family/alias, the concrete models, and the
+// eligibility-class reason. Best-effort: a missing emitter/appId is skipped, and
+// publish failures are swallowed (observability must never break failover).
+export function publishRunFailoverEvent(input: {
+  publish:
+    | ((event: RuntimeEventPublishInput) => Promise<unknown> | void)
+    | undefined;
+  appId: string | undefined;
+  agentId?: string;
+  runId?: string;
+  conversationId: string;
+  threadId?: string | null;
+  fromProvider: string;
+  family: string | null;
+  details: FailoverAdvanceDetails;
+}): void {
+  if (!input.publish || !input.appId) return;
+  void Promise.resolve(
+    input.publish({
+      appId: input.appId as never,
+      ...(input.agentId ? { agentId: input.agentId as never } : {}),
+      ...(input.runId ? { runId: input.runId as never } : {}),
+      conversationId: input.conversationId as never,
+      ...(input.threadId ? { threadId: input.threadId as never } : {}),
+      eventType: RUNTIME_EVENT_TYPES.RUN_FAILOVER,
+      actor: 'runtime',
+      responseMode: 'none',
+      payload: {
+        fromProvider: input.fromProvider,
+        toProvider: input.details.toProviderId,
+        family: input.family,
+        fromModel: input.details.fromModel,
+        toModel: input.details.toModel,
+        reason: (input.details.reason ?? 'provider error').slice(0, 200),
+      },
+    }),
+  ).catch(() => {});
+}
+
 // Generic candidate-iterating failover loop shared by the live and jobs lanes.
 // Given the first attempt's output, it advances through the remaining candidates
 // while `shouldFailoverToNextCandidate` holds — re-invoking on each next
@@ -106,7 +158,10 @@ export async function runFamilyFailoverLoop<
   fallbackProviderId: ExecutionProviderId;
   hasStreamedOutput: () => boolean;
   invoke: (model: string) => Promise<O>;
-  onFailover: (toProviderId: ExecutionProviderId) => ExecutionProviderId;
+  onFailover: (
+    toProviderId: ExecutionProviderId,
+    details: FailoverAdvanceDetails,
+  ) => ExecutionProviderId;
   log: (message: string) => void;
 }): Promise<O> {
   let output = input.initialOutput;
@@ -128,12 +183,18 @@ export async function runFamilyFailoverLoop<
       toModel,
       input.fallbackProviderId,
     );
-    const fromProviderId = input.onFailover(toProviderId);
+    const fromModel = input.candidates[attempt] ?? '(default)';
+    const fromProviderId = input.onFailover(toProviderId, {
+      toProviderId,
+      fromModel,
+      toModel,
+      reason: output.error,
+    });
     input.log(
       describeFailover({
         fromProviderId,
         toProviderId: providerIdForFamilyMember(toModel) ?? toProviderId,
-        fromModel: input.candidates[attempt] ?? '(default)',
+        fromModel,
         toModel,
         reason: output.error,
       }),

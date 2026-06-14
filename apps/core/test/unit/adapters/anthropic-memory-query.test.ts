@@ -10,11 +10,14 @@ const brokerMock = vi.hoisted(() => ({
 }));
 const createAgentCredentialBrokerMock = vi.hoisted(() => vi.fn());
 
+const memoryLimits = { providers: { anthropic: { requestsPerMinute: 7 } } };
+
 vi.mock('@core/config/index.js', () => ({
   getCredentialBrokerRuntimeConfig: () => ({
     mode: 'gantry',
     gatewayBindHost: '127.0.0.1',
   }),
+  getRuntimeSettingsForConfig: () => ({ limits: memoryLimits }),
 }));
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
@@ -123,6 +126,22 @@ describe('Anthropic memory query gateway credentials', () => {
         runId: binding.runId,
       }),
     });
+  });
+
+  it('builds the memory broker with a per-provider rate-cap limits getter', async () => {
+    const { runClaudeQuery } =
+      await import('@core/adapters/llm/anthropic-claude-agent/memory-query.js');
+
+    await runClaudeQuery({
+      appId: 'default' as never,
+      model: 'claude-sonnet-4-6',
+      prompt: 'Summarize memory.',
+    });
+
+    const factoryInput = createAgentCredentialBrokerMock.mock.calls[0]?.[0];
+    expect(typeof factoryInput.limits).toBe('function');
+    // The getter reads the live runtime limits so caps apply to memory traffic.
+    expect(factoryInput.limits()).toEqual(memoryLimits);
   });
 
   it('passes cacheable memory blocks as Anthropic cached user content', async () => {

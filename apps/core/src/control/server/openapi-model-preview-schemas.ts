@@ -8,14 +8,14 @@ const stringArray = { type: 'array', items: { type: 'string' } };
 // in the approved contracts module and never appear in this adapter file.
 const agentEngineEnum = [...AgentEngineSchema.options];
 
-// Read is the effective engine; write rewrites settings.yaml and reconciles,
-// rejecting incompatible model/engine pairs. Raw executionProviderId stays
+// Derived (read-only) effective engine: it follows the resolved model's
+// provider and is not settable. Raw executionProviderId stays
 // internal/diagnostic.
 export const agentEngineProp: JsonSchema = {
   type: 'string',
   enum: agentEngineEnum,
   description:
-    'Public agent engine. Read is the effective engine; write rewrites settings.yaml and reconciles, rejecting incompatible model/engine pairs. Raw executionProviderId stays internal.',
+    'Public agent engine, derived (read-only) from the resolved model provider and not settable. Raw executionProviderId stays internal.',
 };
 
 export const modelPreviewSchemas: Record<string, JsonSchema> = {
@@ -63,6 +63,7 @@ export const modelPreviewSchemas: Record<string, JsonSchema> = {
       agentEngineLabel: { type: 'string' },
       credentialProfile: { type: 'string' },
       executionProviderId: { type: 'string' },
+      incompatible: { type: 'string' },
       selection: { $ref: '#/components/schemas/ModelDefaultSlot' },
       why: stringArray,
     },

@@ -85,6 +85,37 @@ describe('isFailoverEligibleError', () => {
       ).toBe(false);
     });
 
+    it('does not fail over the REAL adapter missing-session markers', () => {
+      // The exact strings the adapters throw (anthropic execution-adapter +
+      // deepagents session-store). These must short-circuit to NOT eligible so
+      // the stale-session retry runs on the SAME provider instead of failing
+      // over and skipping recovery.
+      expect(
+        isFailoverEligibleError('No conversation found with session ID abc123'),
+      ).toBe(false);
+      expect(
+        isFailoverEligibleError(
+          'No DeepAgents session found with session ID abc123',
+        ),
+      ).toBe(false);
+    });
+
+    it('a real missing-session marker wins even with an HTTP-ish token', () => {
+      // If a session error is ever wrapped with a code / "unavailable" / "not
+      // configured" token, the missing-session short-circuit must still win so
+      // it is not misclassified as failover-eligible.
+      expect(
+        isFailoverEligibleError(
+          '503 unavailable: No conversation found with session ID abc',
+        ),
+      ).toBe(false);
+      expect(
+        isFailoverEligibleError(
+          'No DeepAgents session found with session ID abc (not configured)',
+        ),
+      ).toBe(false);
+    });
+
     it('does not fail over an unrelated/unknown error', () => {
       expect(isFailoverEligibleError('Sandbox runtime startup failed')).toBe(
         false,

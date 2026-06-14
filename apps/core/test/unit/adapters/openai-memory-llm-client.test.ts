@@ -11,10 +11,22 @@ vi.mock('@core/adapters/llm/openai-memory/memory-gateway-injection.js', () => ({
   resolveGatewayMemoryInjection: resolveGatewayMemoryInjectionMock,
 }));
 
-const GATEWAY_ENV = {
-  OPENAI_BASE_URL: 'http://127.0.0.1:49231/openai',
-  OPENAI_API_KEY: 'gtw_memory_openai',
-};
+// Mirror the REAL broker projection: the gateway projects
+// OPENAI_BASE_URL = `http://<host>:<port>/<provider.gateway.pathSegment>` (no
+// /v1) — the segment differs PER PROVIDER (openai, groq, gemini, ...). The old
+// fixed `/openai` base masked the double-/v1 bug because every provider looked
+// like openai. Derive the segment from the requested modelRouteId so the test
+// composes the same upstream path the runtime would.
+const GATEWAY_HOST_BASE = 'http://127.0.0.1:49231';
+
+function gatewayEnvForRoute(modelRouteId: string) {
+  return {
+    OPENAI_BASE_URL: `${GATEWAY_HOST_BASE}/${modelRouteId}`,
+    OPENAI_API_KEY: 'gtw_memory_openai',
+  };
+}
+
+const GATEWAY_ENV = gatewayEnvForRoute('openai');
 
 function chatCompletionBody() {
   return {
@@ -30,10 +42,18 @@ function chatCompletionBody() {
 beforeEach(() => {
   hasGatewayMemoryAccessMock.mockReturnValue(true);
   revokeMock.mockResolvedValue(undefined);
-  resolveGatewayMemoryInjectionMock.mockResolvedValue({
-    injection: { env: GATEWAY_ENV, applied: true, brokerProfile: 'gantry' },
-    revoke: revokeMock,
-  });
+  // Project the base URL for the route the client actually requests, so the
+  // composed upstream path is verified per provider (no fixed `/openai` mask).
+  resolveGatewayMemoryInjectionMock.mockImplementation(
+    async (input: { modelRouteId: string }) => ({
+      injection: {
+        env: gatewayEnvForRoute(input.modelRouteId),
+        applied: true,
+        brokerProfile: 'gantry',
+      },
+      revoke: revokeMock,
+    }),
+  );
 });
 
 afterEach(() => {
@@ -254,10 +274,13 @@ describe('OpenAI memory LLM client', () => {
       prompt: 'remember this',
     });
     expect(result).toBe('openai memory result');
-    // The OPENAI_BASE_URL/OPENAI_API_KEY projection is shared by every
-    // OpenAI-compatible provider; the gateway base-url segment routes upstream.
+    // groq's gateway prefix already carries `/openai/v1`, so the client must
+    // post the BARE `/chat/completions` tail (matching the runner lane + the
+    // gateway allowlist). The gateway then composes
+    // api.groq.com/openai/v1/chat/completions upstream — posting `/v1/chat/
+    // completions` here would double the version and 404.
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('http://127.0.0.1:49231/openai/v1/chat/completions');
+    expect(url).toBe('http://127.0.0.1:49231/groq/chat/completions');
     expect(init.headers.authorization).toBe('Bearer gtw_memory_openai');
     expect(JSON.parse(init.body as string).model).toBe(
       'llama-3.3-70b-versatile',
@@ -306,6 +329,72 @@ describe('OpenAI memory LLM client', () => {
       { input_tokens: 50, output_tokens: 10, cache_read_input_tokens: 150 },
     ]);
   });
+
+  // The path the client POSTs, combined with the REAL provider registry's
+  // upstreamOrigin + upstreamPathPrefix (and prefix-strip allowlist), must
+  // resolve to the correct upstream URL — no double `/v1` (the bug for
+  // prefix-carrying providers) and no missing `/v1` (the risk for openai whose
+  // prefix is '').
+  it.each([
+    [
+      'openai',
+      'gpt-test',
+      'http://127.0.0.1:49231/openai/v1/chat/completions',
+      'https://api.openai.com/v1/chat/completions',
+    ],
+    [
+      'groq',
+      'llama-3.3-70b-versatile',
+      'http://127.0.0.1:49231/groq/chat/completions',
+      'https://api.groq.com/openai/v1/chat/completions',
+    ],
+    [
+      'openrouter',
+      'moonshotai/kimi-k2.6',
+      'http://127.0.0.1:49231/openrouter/v1/chat/completions',
+      'https://openrouter.ai/api/v1/chat/completions',
+    ],
+    [
+      'gemini',
+      'gemini-2.5-flash',
+      'http://127.0.0.1:49231/gemini/chat/completions',
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    ],
+  ])(
+    'composes the correct upstream path for %s (no double/missing /v1)',
+    async (modelRoute, model, expectedClientUrl, expectedUpstreamUrl) => {
+      const { getModelProviderDefinition } =
+        await import('@core/shared/model-provider-registry.js');
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(JSON.stringify(chatCompletionBody()), { status: 200 }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { createOpenAiMemoryLlmClient } =
+        await import('@core/adapters/llm/openai-memory/openai-memory-llm-client.js');
+
+      await createOpenAiMemoryLlmClient().query({
+        appId: 'default' as never,
+        model,
+        modelProfile: { ...OPENAI_PROFILE, modelRoute, runnerModel: model },
+        prompt: 'remember this',
+      });
+
+      const [url] = fetchMock.mock.calls[0]!;
+      expect(url).toBe(expectedClientUrl);
+
+      // Re-derive the gateway's upstream URL from the tail the client posted:
+      // base = http://host/<segment>, so the tail is everything after /<segment>.
+      const posted = new URL(url as string);
+      const tail = posted.pathname.replace(`/${modelRoute}`, '');
+      const provider = getModelProviderDefinition(modelRoute)!;
+      const upstream = `${provider.gateway.upstreamOrigin}${provider.gateway.upstreamPathPrefix}${tail}`;
+      expect(upstream).toBe(expectedUpstreamUrl);
+      // No double `/v1` anywhere in the composed upstream path.
+      expect(upstream).not.toMatch(/\/v1\/v1\//);
+    },
+  );
 
   it('accepts the OpenRouter route (OpenAI-compatible DeepAgents lane)', async () => {
     const fetchMock = vi.fn(

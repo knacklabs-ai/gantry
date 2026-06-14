@@ -165,15 +165,15 @@ describe('Gantry DeepAgents shell tool', () => {
     expect(result).not.toContain('exited with code 0');
   });
 
-  it('documents the network/proxy env keys the sandboxed child inherits', () => {
-    // The child spawns with the runner's process.env, which agent-spawn populates
-    // with these proxy/CA keys so egress stays on the Gantry egress gateway.
+  it('documents the network/proxy env keys the sandboxed child receives', () => {
+    // The child env is a scrubbed allowlist that includes these proxy/CA keys
+    // (agent-spawn populates them on the runner) so egress stays on the gateway.
     expect(SHELL_CHILD_NETWORK_ENV_KEYS).toContain('HTTP_PROXY');
     expect(SHELL_CHILD_NETWORK_ENV_KEYS).toContain('HTTPS_PROXY');
     expect(SHELL_CHILD_NETWORK_ENV_KEYS).toContain('GANTRY_EGRESS_PROXY_URL');
   });
 
-  it('inherits the runner proxy env so egress is proxied (child sees HTTP_PROXY)', async () => {
+  it('passes the runner proxy env so egress is proxied (child sees HTTP_PROXY)', async () => {
     const previous = process.env.HTTP_PROXY;
     process.env.HTTP_PROXY = 'http://127.0.0.1:18080/';
     requestPermissionApprovalViaIpc.mockResolvedValue({ approved: true });
@@ -186,4 +186,37 @@ describe('Gantry DeepAgents shell tool', () => {
       else process.env.HTTP_PROXY = previous;
     }
   });
+
+  it('scrubs IPC HMAC secrets from the model-controlled child env', async () => {
+    // The child env is a scrubbed allowlist, not inherited process.env, so the
+    // model cannot `printenv` the runner's IPC tokens/secrets and forge IPC.
+    const priorToken = process.env.GANTRY_IPC_AUTH_TOKEN;
+    const priorMemToken = process.env.GANTRY_MEMORY_IPC_AUTH_TOKEN;
+    const priorSecret = process.env.GANTRY_IPC_AUTH_SECRET;
+    process.env.GANTRY_IPC_AUTH_TOKEN = 'ipc-token-secret';
+    process.env.GANTRY_MEMORY_IPC_AUTH_TOKEN = 'mem-ipc-token-secret';
+    process.env.GANTRY_IPC_AUTH_SECRET = 'ipc-hmac-secret';
+    requestPermissionApprovalViaIpc.mockResolvedValue({ approved: true });
+    try {
+      const tool = makeTool({ rules: [] });
+      const result = await invoke(
+        tool,
+        'printf "%s|%s|%s" "$GANTRY_IPC_AUTH_TOKEN" "$GANTRY_MEMORY_IPC_AUTH_TOKEN" "$GANTRY_IPC_AUTH_SECRET"',
+      );
+      expect(result).not.toContain('ipc-token-secret');
+      expect(result).not.toContain('mem-ipc-token-secret');
+      expect(result).not.toContain('ipc-hmac-secret');
+      // The vars resolve to empty in the child (the allowlist excluded them).
+      expect(result).toContain('|');
+    } finally {
+      restoreEnv('GANTRY_IPC_AUTH_TOKEN', priorToken);
+      restoreEnv('GANTRY_MEMORY_IPC_AUTH_TOKEN', priorMemToken);
+      restoreEnv('GANTRY_IPC_AUTH_SECRET', priorSecret);
+    }
+  });
 });
+
+function restoreEnv(key: string, prior: string | undefined): void {
+  if (prior === undefined) delete process.env[key];
+  else process.env[key] = prior;
+}

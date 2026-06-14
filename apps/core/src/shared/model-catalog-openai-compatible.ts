@@ -127,14 +127,14 @@ const NESTED_OPENAI_CACHE_FIELDS = ['prompt_tokens_details.cached_tokens'];
 // (1M) is the 2.5/3.5 multimodal family window; Grok = 256K; DeepSeek v4 = 1M
 // (verified on the provider pricing page); Qwen3-235B-A22B-fp8-tput = 40_960
 // (the exact window the Together model page lists for that throughput variant);
-// Perplexity Sonar Pro = 200K, Sonar = 127_072.
+// Perplexity Sonar Pro = 200K, Sonar = 131_072 (128K).
 const WINDOW_128K = 131_072;
 const WINDOW_1M = 1_048_576;
 const WINDOW_GROK = 256_000;
 const WINDOW_DEEPSEEK_V4 = 1_048_576;
 const WINDOW_QWEN3_235B = 40_960;
 const WINDOW_PERPLEXITY_PRO = 200_000;
-const WINDOW_PERPLEXITY_SONAR = 127_072;
+const WINDOW_PERPLEXITY_SONAR = 131_072;
 
 export function buildOpenAiCompatibleCatalog(deps: {
   executableModelEntry: ExecutableModelEntryFn;

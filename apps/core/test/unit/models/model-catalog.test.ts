@@ -202,7 +202,7 @@ describe('model catalog resolution', () => {
       ['gpt-oss-120b', 131_072],
       ['zai-glm-4.7', 131_072],
       ['sonar-pro', 200_000],
-      ['sonar', 127_072],
+      ['sonar', 131_072],
       ['gpt-5.4-mini', 400_000],
       ['moonshotai/kimi-k2.6', 262_142],
     ];

@@ -1,4 +1,7 @@
-import { getCredentialBrokerRuntimeConfig } from '../../../config/index.js';
+import {
+  getCredentialBrokerRuntimeConfig,
+  getRuntimeSettingsForConfig,
+} from '../../../config/index.js';
 import { getAgentCredentialInjection } from '../../../application/credentials/agent-credential-service.js';
 import { createAgentCredentialBroker } from '../../credentials/agent-credential-broker-factory.js';
 import { getRuntimeStorage } from '../../storage/postgres/runtime-store.js';
@@ -58,6 +61,9 @@ export async function resolveGatewayMemoryInjection(input: {
     gatewayBindHost: brokerConfig.gatewayBindHost,
     publishRuntimeEvent: (event) =>
       getRuntimeStorage().runtimeEvents.publish(event),
+    // Honor per-provider rate caps for memory traffic, same getter runtime-app
+    // uses for the interactive broker. Without it the broker admits unlimited.
+    limits: () => getRuntimeSettingsForConfig().limits,
   }).catch((error) => {
     memoryCredentialBrokerPromise = undefined;
     throw error;

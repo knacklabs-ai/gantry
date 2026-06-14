@@ -103,6 +103,9 @@ async function runScheduled(agentInput: DeepAgentRunnerInput): Promise<void> {
       newSessionId: diagnosticSessionId,
       emit,
       log,
+      // Long-running tool calls mark heartbeat activity so the scheduled run's
+      // lease stays alive instead of being flagged idle mid-tool.
+      onToolStart: (toolName) => heartbeat.recordToolActivity(toolName),
     });
     // The single terminal frame (usage/contextUsage) is emitted by the caller so
     // there is exactly one terminal marker per turn (the normalizer streams
