@@ -351,7 +351,14 @@ export function createChannelWiring(
     if (process.env.GANTRY_OUTBOUND_DRYRUN === '1') {
       let deliveryStatus: 'sent' | 'failed' = 'sent';
       let delivery: MessageDeliveryResult | undefined;
+      // Bracket the dry-run send attempt for the latency timeline. A listed
+      // number still triggers a real Interakt round-trip here, so its duration
+      // is a genuine `send` section even when the provider rejects a fake
+      // number (we stamp completion on both success and failure).
+      let sendStartedAt: string | undefined;
+      let sendCompletedAt: string | undefined;
       if (isTestOperatorJid(jid)) {
+        sendStartedAt = nowIso();
         try {
           delivery = (
             options.messageOptions
@@ -362,12 +369,14 @@ export function createChannelWiring(
                 )
               : await channel.sendMessage(jid, formatted)
           ) as MessageDeliveryResult | undefined;
+          sendCompletedAt = nowIso();
           resolved.logger.info(
             { jid },
             'Outbound dry-run: sent to listed test number',
           );
         } catch (err) {
           deliveryStatus = 'failed';
+          sendCompletedAt = nowIso();
           resolved.logger.warn(
             { err, jid },
             'Outbound dry-run: send to listed test number failed (persisted only)',
@@ -384,6 +393,8 @@ export function createChannelWiring(
           await optionalOps()?.storeMessage({
             ...baseMessage,
             delivery_status: deliveryStatus,
+            send_started_at: sendStartedAt,
+            send_completed_at: sendCompletedAt,
           });
         } catch (err) {
           resolved.logger.warn(
