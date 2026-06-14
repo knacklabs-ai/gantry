@@ -120,15 +120,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       messageFilter,
     );
     if (missedMessages.length === 0) return true;
-    // Window start for the latency timeline: most recent driving inbound's
-    // gateway-ingress instant (ms epoch). undefined if not captured.
-    const drivingIngressAtMs = (() => {
-      for (let i = missedMessages.length - 1; i >= 0; i--) {
-        const iso = missedMessages[i]?.ingress_at;
-        if (iso) return new Date(iso).getTime();
-      }
-      return undefined;
-    })();
     const latestMessage = missedMessages[missedMessages.length - 1];
     const activeThreadId = firstThreadQueueId(
       queueThreadId,
@@ -377,6 +368,25 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       lastPersistedTraceCursorId = cursor.id;
       const isFirstReply = persistedTurnCount === 0;
       persistedTurnCount = slice.nextPersistedTurnCount;
+      // Window start = THIS reply's driving inbound ingress, re-read per reply.
+      // A warm run serves many replies under one processGroupMessages, so a
+      // value captured once at run start would freeze at the run's first message
+      // and inflate every later reply's "queue". Bound by the reply's first
+      // activity so a message arriving mid-generation isn't mis-picked.
+      const firstSpanStartMs =
+        slice.guardrail?.startedAt ?? slice.llmTurns[0]?.startedAt;
+      const drivingIngressIso =
+        firstSpanStartMs !== undefined
+          ? await ops()
+              .getLastInboundIngressAtOrBefore(
+                chatJid,
+                new Date(firstSpanStartMs).toISOString(),
+              )
+              .catch(() => undefined)
+          : undefined;
+      const windowStart = drivingIngressIso
+        ? new Date(drivingIngressIso).getTime()
+        : undefined;
       await persistReplyTrace({
         replyTrace: deps.replyTrace,
         kind: 'reply',
@@ -386,9 +396,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         runHandle: traceRunHandle,
         ...(slice.guardrail ? { guardrail: slice.guardrail } : {}),
         llmTurns: slice.llmTurns,
-        ...(drivingIngressAtMs !== undefined
-          ? { windowStart: drivingIngressAtMs }
-          : {}),
+        ...(windowStart !== undefined ? { windowStart } : {}),
         ...(cursor.sendCompletedAt
           ? { windowEnd: new Date(cursor.sendCompletedAt).getTime() }
           : {}),

@@ -143,6 +143,16 @@ export interface RuntimeMessageRepository {
       }
     | undefined
   >;
+  /**
+   * The most recent INBOUND message's gateway-ingress instant (ISO) at or before
+   * `beforeIso`, for the latency timeline's window start. Re-read per reply (a
+   * warm run serves many replies) so each reply's window anchors to ITS driving
+   * inbound, not the run's first message. Undefined if none captured.
+   */
+  getLastInboundIngressAtOrBefore(
+    conversationJid: string,
+    beforeIso: string,
+  ): Promise<string | undefined>;
   getLastBotMessageTimestamp(
     conversationJid: string,
   ): Promise<string | undefined>;

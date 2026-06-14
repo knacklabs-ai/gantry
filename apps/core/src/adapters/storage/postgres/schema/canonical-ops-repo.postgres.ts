@@ -185,6 +185,13 @@ export class PostgresRuntimeRepositoryBundle
     return this.messages.getLastBotMessageTimestamp(chatJid);
   }
 
+  async getLastInboundIngressAtOrBefore(
+    chatJid: string,
+    beforeIso: string,
+  ): Promise<string | undefined> {
+    return this.messages.getLastInboundIngressAtOrBefore(chatJid, beforeIso);
+  }
+
   async upsertJob(job: JobUpsertInput): Promise<{ created: boolean }> {
     return this.jobs.upsertJob(job);
   }

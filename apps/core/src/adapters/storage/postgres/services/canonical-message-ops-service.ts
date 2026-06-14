@@ -128,6 +128,13 @@ export class CanonicalMessageOpsService {
     return (await this.getLastBotMessageCursor(chatJid))?.timestamp;
   }
 
+  async getLastInboundIngressAtOrBefore(
+    chatJid: string,
+    beforeIso: string,
+  ): Promise<string | undefined> {
+    return this.repository.getLastInboundIngressAtOrBefore(chatJid, beforeIso);
+  }
+
   private mapMessage(row: CanonicalOpsMessageRow): NewMessage {
     const ref = parseJson<Partial<NewMessage>>(row.external_ref_json, {});
     const payload = parseJson<{ text?: string }>(row.payload_json, {});

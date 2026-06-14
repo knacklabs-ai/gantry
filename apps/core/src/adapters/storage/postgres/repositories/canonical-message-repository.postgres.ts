@@ -1,4 +1,16 @@
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 
 import type { NewMessage } from '../../../../domain/repositories/domain-types.js';
 import { normalizeProviderId } from '../../../../channels/provider-registry.js';
@@ -397,5 +409,26 @@ export class PostgresCanonicalMessageRepository {
       .orderBy(desc(m.createdAt), desc(m.id))
       .limit(1);
     return rows[0];
+  }
+
+  async getLastInboundIngressAtOrBefore(
+    chatJid: string,
+    beforeIso: string,
+  ): Promise<string | undefined> {
+    const m = pgSchema.messagesPostgres;
+    const rows = await this.db
+      .select({ ingress_at: m.ingressAt })
+      .from(m)
+      .where(
+        and(
+          eq(m.conversationId, conversationIdForJid(chatJid)),
+          eq(m.direction, 'inbound'),
+          isNotNull(m.ingressAt),
+          lte(m.ingressAt, beforeIso),
+        ),
+      )
+      .orderBy(desc(m.ingressAt))
+      .limit(1);
+    return rows[0]?.ingress_at ?? undefined;
   }
 }
