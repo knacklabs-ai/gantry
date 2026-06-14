@@ -191,8 +191,14 @@ export async function runQuery(
   let ipcPolling = true;
   let closedDuringQuery = false;
   let newSessionId: string | undefined;
+  // The customer message that drives the NEXT turn (for the reply trace's
+  // per-turn input payload): the run prompt to begin with, then each warm-run
+  // continuation as it is piped in. Consumed by the first turn that answers it
+  // and cleared, so a turn's tool-loop follow-ons carry no input.
+  let pendingTurnInput: string | undefined = prompt;
   const steeringGate = new SteeringDeliveryGate((text) => {
     log(`Piping IPC message at turn boundary (${text.length} chars)`);
+    pendingTurnInput = text;
     stream.pushContent(text);
   });
   const emitInteractionBoundary = () => {
@@ -240,9 +246,6 @@ export async function runQuery(
   // Per-turn LLM latency + token capture for the reply trace (best-effort).
   // Payloads (input/output text) only when GANTRY_TRACE_PAYLOADS=1.
   const capturePayloads = process.env['GANTRY_TRACE_PAYLOADS']?.trim() === '1';
-  // The run input prompt is identical for the whole run; attach it to the first
-  // turn only. Each turn still carries its own output text.
-  let capturedRunInput = false;
   const llmTurns = new LlmTurnAccumulator({ capturePayloads });
   const heartbeat = startJobHeartbeat({
     agentInput,
@@ -397,11 +400,16 @@ export async function runQuery(
           capturePayloads
             ? {
                 output: assistantOutputText(message),
-                ...(capturedRunInput ? {} : { input: prompt }),
+                // The driving message (run prompt, or the warm-run continuation
+                // just piped in) belongs to the turn that answers it; tool-loop
+                // follow-ons of the same message carry no fresh input.
+                ...(pendingTurnInput !== undefined
+                  ? { input: pendingTurnInput }
+                  : {}),
               }
             : undefined,
         );
-        capturedRunInput = true;
+        pendingTurnInput = undefined;
         if (messageContainsToolUse(message)) {
           pendingPartialText = '';
         }
