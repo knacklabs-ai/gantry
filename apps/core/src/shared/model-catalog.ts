@@ -59,7 +59,7 @@ const CLAUDE_MODEL_IDS_SOURCE = {
 const OPENAI_MODELS_SOURCE = {
   label: 'OpenAI models',
   url: 'https://developers.openai.com/api/docs/models',
-  verifiedAt: '2026-06-12',
+  verifiedAt: '2026-06-14',
 };
 
 export interface ModelCatalogEntry {

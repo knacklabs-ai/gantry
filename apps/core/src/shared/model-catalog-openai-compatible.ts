@@ -24,10 +24,9 @@ import type {
 // contract, not model-profile data.
 //
 // The window values are CURATED FALLBACKS tied to each model family's real
-// context window (the 1M and 128K families were spot-checked against provider
-// listings; the rest use the family's documented window). They are not
-// authoritative for these forward-dated ids; the library profile is preferred
-// whenever LangChain ships one (it does not for any id here).
+// context window (verified against the provider listings on the verifiedAt date
+// in each *_SOURCE below). The library profile is still preferred whenever
+// LangChain ships one (it does not for any id here, so these fallbacks apply).
 //
 // cacheMode 'openai-automatic-prompt' resolves (via model-cache-support.ts) to
 // the 'openai' normalized cache provider, matching each provider's
@@ -76,55 +75,57 @@ const DEEPAGENTS_MEMORY_WORKLOADS: readonly ModelWorkload[] = [
 const GROQ_SOURCE = {
   label: 'Groq OpenAI-compatible chat completions',
   url: 'https://console.groq.com/docs/openai',
-  verifiedAt: '2026-06-13',
+  verifiedAt: '2026-06-14',
 };
 const DEEPSEEK_SOURCE = {
   label: 'DeepSeek API (OpenAI-compatible)',
-  url: 'https://api-docs.deepseek.com/',
-  verifiedAt: '2026-06-13',
+  url: 'https://api-docs.deepseek.com/quick_start/pricing',
+  verifiedAt: '2026-06-14',
 };
 const XAI_SOURCE = {
   label: 'xAI Grok API (OpenAI-compatible)',
-  url: 'https://docs.x.ai/docs/api-reference',
-  verifiedAt: '2026-06-13',
+  url: 'https://docs.x.ai/docs/models',
+  verifiedAt: '2026-06-14',
 };
 const TOGETHER_SOURCE = {
   label: 'Together AI chat completions',
-  url: 'https://docs.together.ai/docs/chat-overview',
-  verifiedAt: '2026-06-13',
+  url: 'https://docs.together.ai/docs/serverless-models',
+  verifiedAt: '2026-06-14',
 };
 const FIREWORKS_SOURCE = {
   label: 'Fireworks AI querying chat completions',
   url: 'https://docs.fireworks.ai/api-reference/post-chatcompletions',
-  verifiedAt: '2026-06-13',
+  verifiedAt: '2026-06-14',
 };
 const CEREBRAS_SOURCE = {
   label: 'Cerebras Inference (OpenAI-compatible)',
-  url: 'https://inference-docs.cerebras.ai/api-reference/chat-completions',
-  verifiedAt: '2026-06-13',
+  url: 'https://inference-docs.cerebras.ai/models/overview',
+  verifiedAt: '2026-06-14',
 };
 const PERPLEXITY_SOURCE = {
   label: 'Perplexity Sonar API',
-  url: 'https://docs.perplexity.ai/api-reference/chat-completions-post',
-  verifiedAt: '2026-06-13',
+  url: 'https://docs.perplexity.ai/getting-started/models',
+  verifiedAt: '2026-06-14',
 };
 const GEMINI_SOURCE = {
   label: 'Gemini OpenAI compatibility',
-  url: 'https://ai.google.dev/gemini-api/docs/openai',
-  verifiedAt: '2026-06-13',
+  url: 'https://ai.google.dev/gemini-api/docs/models',
+  verifiedAt: '2026-06-14',
 };
 
 const NESTED_OPENAI_CACHE_FIELDS = ['prompt_tokens_details.cached_tokens'];
 
 // Curated context windows (input-token limits) for the empty-profile DeepAgents
 // ids above. 131_072 (128K) is the Llama/GPT-OSS/GLM family window; 1_048_576
-// (1M) is the 2.5/3.5 multimodal family window; Grok = 256K; DeepSeek v4 = 131K;
-// Qwen3-235B = 262_144 (curated fallback; the fp8-tput variant's window is
-// release-dependent); Perplexity Sonar Pro = 200K, Sonar = 127_072.
+// (1M) is the 2.5/3.5 multimodal family window; Grok = 256K; DeepSeek v4 = 1M
+// (verified on the provider pricing page); Qwen3-235B-A22B-fp8-tput = 40_960
+// (the exact window the Together model page lists for that throughput variant);
+// Perplexity Sonar Pro = 200K, Sonar = 127_072.
 const WINDOW_128K = 131_072;
 const WINDOW_1M = 1_048_576;
 const WINDOW_GROK = 256_000;
-const WINDOW_QWEN3_235B = 262_144;
+const WINDOW_DEEPSEEK_V4 = 1_048_576;
+const WINDOW_QWEN3_235B = 40_960;
 const WINDOW_PERPLEXITY_PRO = 200_000;
 const WINDOW_PERPLEXITY_SONAR = 127_072;
 
@@ -186,7 +187,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       aliases: ['deepseek', 'deepseek-v4-pro'],
       recommendedAlias: 'deepseek',
       source: DEEPSEEK_SOURCE,
-      contextWindowTokens: WINDOW_128K,
+      contextWindowTokens: WINDOW_DEEPSEEK_V4,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: ['prompt_cache_hit_tokens'],
       supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
@@ -200,7 +201,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       aliases: ['deepseek-fast', 'deepseek-v4-flash'],
       recommendedAlias: 'deepseek-fast',
       source: DEEPSEEK_SOURCE,
-      contextWindowTokens: WINDOW_128K,
+      contextWindowTokens: WINDOW_DEEPSEEK_V4,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: ['prompt_cache_hit_tokens'],
       supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
