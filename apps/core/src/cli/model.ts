@@ -24,6 +24,7 @@ import {
   fetchConfiguredProviders,
   formatModelList,
 } from './model-list-format.js';
+import { providerLabel } from '../shared/model-catalog-availability.js';
 import {
   applyModelPreset,
   applyPresetManagedMemoryDefaults,
@@ -110,6 +111,23 @@ async function preflightAliasPresets(input: {
     return false;
   }
   return true;
+}
+
+// Best-effort note when a freshly selected concrete non-preset model has no
+// active credential, so `set` surfaces the missing key immediately instead of
+// only at run time. Skips silently when the control API is unreachable (the
+// global `gantry doctor` credential check still catches it).
+async function noteUnconfiguredProvider(
+  runtimeHome: string,
+  alias: string,
+  providerId: string,
+): Promise<void> {
+  if (isModelFamilyAlias(alias) || isModelPresetId(providerId)) return;
+  const configured = await fetchConfiguredProviders(runtimeHome);
+  if (!configured || configured.has(providerId)) return;
+  console.warn(
+    `Note: ${alias} runs on the ${providerLabel(providerId)} provider, which has no active credential. Run \`gantry credentials model set ${providerId}\` to use it.`,
+  );
 }
 
 function chatAlias(settings: ModelCommandSettings): string {
@@ -414,6 +432,11 @@ export async function runModelCommand(
       settings.agent.defaultModel = resolved.alias;
       await persistSettings(previousSettings, settings);
       console.log(`chat: ${resolved.alias} (${resolved.entry.displayName})`);
+      await noteUnconfiguredProvider(
+        runtimeHome,
+        resolved.alias,
+        resolved.entry.modelRoute.id,
+      );
       return 0;
     }
     if (target === 'jobs' && alias) {
@@ -477,6 +500,11 @@ export async function runModelCommand(
       console.log(`one-time: ${oneTime.alias} (${oneTime.entry.displayName})`);
       console.log(
         `recurring: ${recurring.alias} (${recurring.entry.displayName})`,
+      );
+      await noteUnconfiguredProvider(
+        runtimeHome,
+        oneTime.alias,
+        oneTime.entry.modelRoute.id,
       );
       return 0;
     }
