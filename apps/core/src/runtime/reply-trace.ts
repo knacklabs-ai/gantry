@@ -239,6 +239,13 @@ export interface AssembleTimelineInput {
   /** Outbound send bracket (ms epoch). */
   send?: { startedAt: number; endedAt: number };
   command?: { name: string; ms: number; startedAt: number };
+  /**
+   * Warm continuation only: the instant this turn's generation was dispatched to
+   * the live agent (ms epoch). Splits the leading pre-generation span into real
+   * pickup (`queue`, windowStart->dispatchedAt) and the model's first-token wait
+   * (`model_wait`, dispatchedAt->first token). Cold replies use startup instead.
+   */
+  dispatchedAt?: number;
 }
 
 type NamedSpanKind = Exclude<
@@ -363,6 +370,22 @@ function buildTimeline(input: AssembleTimelineInput): BuiltTimeline {
     sections.push({ kind, label, ms, startedAt: gapStart, detail: {} });
     payloadSources.push(undefined);
   };
+
+  // Warm continuation: no startup span exists, so the whole pre-generation span
+  // would otherwise be labelled `queue`. Split it at the dispatch instant into
+  // real pickup (`queue`) and the model's first-token wait (`model_wait`) — the
+  // same split a cold reply gets via startup + model_wait. Bounded so a stale or
+  // out-of-range dispatch mark is ignored (falls back to a single queue).
+  const firstSpanStart = spans.length ? spans[0]!.start : windowEnd;
+  if (
+    input.dispatchedAt !== undefined &&
+    input.dispatchedAt > windowStart &&
+    input.dispatchedAt <= firstSpanStart &&
+    input.dispatchedAt < windowEnd
+  ) {
+    pushGap(windowStart, input.dispatchedAt);
+    cursor = input.dispatchedAt;
+  }
 
   for (const span of spans) {
     const start = Math.min(Math.max(span.start, cursor), windowEnd);

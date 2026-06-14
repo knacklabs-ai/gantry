@@ -390,6 +390,41 @@ describe('assembleTimeline (v2)', () => {
     expect(t.sections.filter((s) => s.kind === 'queue').length).toBe(1);
     expect(t.sections.map((s) => s.kind)).toEqual(['queue', 'send']);
   });
+
+  it('splits a warm continuation into queue (pickup) + model_wait (TTFT)', () => {
+    // Warm: no startup span. dispatchedAt lies between ingress and first token.
+    const t = assembleTimeline({
+      windowStart: W0,
+      windowEnd: W0 + 5000,
+      dispatchedAt: W0 + 300, // picked up + piped 300ms after ingress
+      llmTurns: [{ ms: 2000, startedAt: W0 + 2500, detail: {} }], // first token +2500
+      send: { startedAt: W0 + 4990, endedAt: W0 + 5000 },
+    });
+    expect(t.totalMs).toBe(5000);
+    expect(t.sections.reduce((s, x) => s + x.ms, 0)).toBe(5000);
+    expect(t.sections.map((s) => s.kind)).toEqual([
+      'queue',
+      'model_wait',
+      'llm',
+      'gap',
+      'send',
+    ]);
+    expect(t.sections.find((s) => s.kind === 'queue')!.ms).toBe(300);
+    expect(t.sections.find((s) => s.kind === 'model_wait')!.ms).toBe(2200);
+  });
+
+  it('ignores an out-of-range dispatch mark (single queue, no bogus split)', () => {
+    const t = assembleTimeline({
+      windowStart: W0,
+      windowEnd: W0 + 3000,
+      dispatchedAt: W0 - 100, // stale (before ingress) → ignored
+      llmTurns: [{ ms: 1000, startedAt: W0 + 2000, detail: {} }],
+      send: { startedAt: W0 + 2990, endedAt: W0 + 3000 },
+    });
+    expect(t.sections.reduce((s, x) => s + x.ms, 0)).toBe(3000);
+    expect(t.sections.filter((s) => s.kind === 'queue').length).toBe(1);
+    expect(t.sections.some((s) => s.kind === 'model_wait')).toBe(false);
+  });
 });
 
 describe('assemblePayloads', () => {

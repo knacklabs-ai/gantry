@@ -33,6 +33,8 @@ export interface PersistReplyTraceInput {
   windowEnd?: number;
   send?: { startedAt: number; endedAt: number };
   startup?: { startedAt: number; readyAt: number };
+  /** Warm continuation: when this turn's generation was dispatched (ms epoch). */
+  dispatchedAt?: number;
   now?: () => Date;
 }
 
@@ -60,6 +62,9 @@ export async function persistReplyTrace(
       ...(input.llmTurns ? { llmTurns: input.llmTurns } : {}),
       ...(input.send ? { send: input.send } : {}),
       ...(input.command ? { command: input.command } : {}),
+      ...(input.dispatchedAt !== undefined
+        ? { dispatchedAt: input.dispatchedAt }
+        : {}),
       toolCalls,
     };
     const timeline = assembleTimeline(assembleInput);
