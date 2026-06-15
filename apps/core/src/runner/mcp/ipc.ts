@@ -216,6 +216,7 @@ export async function requestBrowserAction(
   const reqPath = path.join(BROWSER_REQUESTS_DIR, `${requestId}.json`);
   const tmpReqPath = `${reqPath}.tmp`;
 
+  const { threadId } = getBoundIdentity();
   const requestPayload = {
     requestId,
     action,
@@ -229,9 +230,7 @@ export async function requestBrowserAction(
       ...(process.env.GANTRY_JOB_RUN_ID
         ? { runId: process.env.GANTRY_JOB_RUN_ID }
         : {}),
-      ...(getBoundIdentity().threadId
-        ? { threadId: getBoundIdentity().threadId }
-        : {}),
+      ...(threadId ? { threadId } : {}),
       ...(appId ? { appId } : {}),
       ...(agentId ? { agentId } : {}),
       ...(options.publicToolName

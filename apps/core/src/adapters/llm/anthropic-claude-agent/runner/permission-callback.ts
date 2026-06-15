@@ -17,7 +17,6 @@ import {
   IPC_AUTH_TOKEN,
   AGENT_ID,
   APP_ID,
-  CHAT_JID,
   JOB_ID,
   JOB_NAME,
   JOB_RUN_ID,
@@ -110,8 +109,11 @@ export async function requestPermissionApproval(options: {
   try {
     const appId = options.appId?.trim() || APP_ID || DEFAULT_RUNNER_APP_ID;
     const agentId = options.agentId?.trim() || AGENT_ID;
-    const targetJid =
-      options.targetJid?.trim() || getBoundChatJid() || CHAT_JID;
+    // `getBoundChatJid()` already returns the bound jid when present and falls
+    // back to the spawn-env chatJid (trimmed) when unbound, so the old extra
+    // `|| CHAT_JID` operand was dead — dropped. Cold path is byte-for-byte
+    // unchanged (envIdentity() now trims GANTRY_CHAT_JID just like CHAT_JID did).
+    const targetJid = options.targetJid?.trim() || getBoundChatJid();
     const agentFolder = options[AGENT_FOLDER_OPTION_KEY];
     const requestFingerprint = permissionRequestFingerprint(options);
     const batchKey = timedGrantBatchKey({

@@ -51,22 +51,19 @@ export const IPC_RESPONSE_VERIFY_KEY =
 export const IPC_RESPONSE_KEY_ID = process.env.GANTRY_IPC_RESPONSE_KEY_ID || '';
 
 // Warm-pool (Pillar 2, D-P2-2(a), F4): the per-customer identity (chatJid /
-// threadId / memoryUserId) is NOT a spawn-env constant for a pooled worker — it
-// is bound at runtime. All MCP readers must source it via the bound-identity
-// accessor (`getBoundChatJid` / `getBoundThreadId` / `getBoundIdentity` in
-// `bound-identity.js`), which returns the bound value when present and falls
-// back to these spawn-env constants on the cold path. Do NOT import these three
-// consts into MCP tool writers — use the accessor so a warm worker routes to its
-// bound customer. (`bound-identity.ts` itself reads the same env vars for its
-// fallback, so these remain the single cold-path source.)
-export const chatJid = process.env.GANTRY_CHAT_JID!;
+// threadId / memoryUserId) is intentionally NOT exported as a spawn-env constant
+// here, because a pooled worker boots GENERIC and binds its customer at runtime.
+// MCP readers source that identity via the bound-identity accessor
+// (`getBoundChatJid` / `getBoundThreadId` / `getBoundIdentity` in
+// `bound-identity.js`), which returns the runtime-bound value when present and
+// otherwise falls back to `envIdentity()` inside `bound-identity.ts` (which reads
+// `GANTRY_CHAT_JID` / `GANTRY_THREAD_ID` / `GANTRY_MEMORY_USER_ID` directly on
+// the cold path). The remaining spawn-env consts below are run-wide, not
+// per-customer, so they stay as constants.
 export const groupFolder = process.env.GANTRY_GROUP_FOLDER!;
 export const appId = process.env.GANTRY_APP_ID?.trim() || undefined;
 export const agentId = process.env.GANTRY_AGENT_ID?.trim() || undefined;
 export const jobId = process.env.GANTRY_JOB_ID?.trim() || undefined;
-export const threadId = process.env.GANTRY_THREAD_ID?.trim() || undefined;
-export const memoryUserId =
-  process.env.GANTRY_MEMORY_USER_ID?.trim() || undefined;
 export const memoryDefaultScope =
   process.env.GANTRY_MEMORY_DEFAULT_SCOPE === 'user' ? 'user' : 'group';
 export const memoryReviewerIsControlApprover =

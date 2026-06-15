@@ -38,7 +38,10 @@ const BOUND_IDENTITY_FILE = 'bound-identity.json';
 
 function envIdentity(): BoundIdentity {
   return {
-    chatJid: process.env.GANTRY_CHAT_JID ?? '',
+    // Trim to match the runtime-env `CHAT_JID` (= GANTRY_CHAT_JID, trimmed), so
+    // the cold-path fallback here is byte-for-byte identical to the old
+    // permission-callback `|| CHAT_JID` operand it replaces.
+    chatJid: process.env.GANTRY_CHAT_JID?.trim() ?? '',
     threadId: process.env.GANTRY_THREAD_ID?.trim() || undefined,
     memoryUserId: process.env.GANTRY_MEMORY_USER_ID?.trim() || undefined,
   };

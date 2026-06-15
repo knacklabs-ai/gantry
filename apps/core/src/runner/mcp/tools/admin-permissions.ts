@@ -64,6 +64,7 @@ export function registerAdminPermissionTools(
         return adminToolUnavailable('admin_permission_revoke');
       }
       const taskId = makeIpcId('admin-permission-revoke');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'admin_permission_revoke',
         taskId,
@@ -73,8 +74,8 @@ export function registerAdminPermissionTools(
           toolId: args.tool_id,
           reason: args.reason,
         },
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         timestamp: nowIso(),
       });

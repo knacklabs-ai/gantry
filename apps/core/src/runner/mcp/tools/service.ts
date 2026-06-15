@@ -326,11 +326,12 @@ export function registerServiceTools(server: McpServer): void {
       );
       if (wrongLaneGuidance) return wrongLaneGuidance;
       const taskId = makeIpcId('request-mcp');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'request_mcp_server',
         taskId,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         payload: {
           name: args.name,
@@ -390,11 +391,12 @@ export function registerServiceTools(server: McpServer): void {
     },
     async (args) => {
       const taskId = makeIpcId('mcp-list-tools');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'mcp_list_tools',
         taskId,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         payload: {
           serverName: args.serverName,
@@ -444,6 +446,7 @@ export function registerServiceTools(server: McpServer): void {
     },
     async (args) => {
       const taskId = makeIpcId('mcp-call-tool');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'mcp_call_tool',
         taskId,
@@ -451,8 +454,8 @@ export function registerServiceTools(server: McpServer): void {
         // RunTraceCollector by runHandle at capture and drains by the same key
         // at persist time. Matches the other capability IPC writers.
         runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         payload: {
           serverName: args.serverName,
@@ -493,11 +496,12 @@ export function registerServiceTools(server: McpServer): void {
         return adminToolUnavailable('service_restart');
       }
       const taskId = makeIpcId('service-restart');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'service_restart',
         taskId,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         timestamp: nowIso(),
       });
 
@@ -566,12 +570,13 @@ The JID must be the current conversation. The folder name must be channel-prefix
         return adminToolUnavailable('register_agent');
       }
       const taskId = makeIpcId('register-agent');
+      const chatJid = getBoundChatJid();
       const data = {
         type: 'register_agent',
         taskId,
         jid: args.jid,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         name: args.name,
         folder: args.folder,
         trigger: args.trigger,
@@ -706,14 +711,15 @@ async function submitCapabilityReviewTask(
   payload: Record<string, unknown>,
 ) {
   const taskId = makeIpcId(toolName.replaceAll('_', '-'));
+  const chatJid = getBoundChatJid();
   writeIpcFile(TASKS_DIR, {
     type: toolName,
     taskId,
     runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
     jobId: process.env.GANTRY_JOB_ID || undefined,
     runId: process.env.GANTRY_JOB_RUN_ID || undefined,
-    targetJid: getBoundChatJid(),
-    chatJid: getBoundChatJid(),
+    targetJid: chatJid,
+    chatJid,
     authThreadId: getBoundThreadId(),
     payload,
     timestamp: nowIso(),
@@ -781,11 +787,12 @@ function registerSkillProposalTool(
     },
     async (args) => {
       const taskId = makeIpcId('request-skill');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: toolName,
         taskId,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         payload: {
           files: args.files,

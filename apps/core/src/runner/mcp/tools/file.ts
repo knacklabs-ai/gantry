@@ -84,11 +84,12 @@ async function requestHostFileArtifactAction(
   args: z.infer<z.ZodObject<typeof fileToolSchema>>,
 ): Promise<string> {
   const taskId = makeIpcId('file-artifact');
+  const chatJid = getBoundChatJid();
   writeIpcFile(TASKS_DIR, {
     type: 'file_artifact',
     taskId,
-    chatJid: getBoundChatJid(),
-    targetJid: getBoundChatJid(),
+    chatJid,
+    targetJid: chatJid,
     payload: compactPayload(args),
   });
   const response = await waitForTaskResponse(

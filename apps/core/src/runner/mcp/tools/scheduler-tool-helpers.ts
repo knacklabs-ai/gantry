@@ -28,12 +28,13 @@ export async function requestSchedulerData(
   timeoutMs = 20_000,
 ): Promise<TaskResponseEnvelope | null> {
   const taskId = makeIpcId(type.replace(/_/g, '-'));
+  const chatJid = getBoundChatJid();
   writeIpcFile(TASKS_DIR, {
     type,
     taskId,
     ...payload,
-    targetJid: getBoundChatJid(),
-    chatJid: getBoundChatJid(),
+    targetJid: chatJid,
+    chatJid,
     authThreadId: getBoundThreadId(),
     timestamp: nowIso(),
   });
@@ -87,12 +88,13 @@ export async function submitSchedulerMutationTask(input: {
   successText: string;
   timeoutMs?: number;
 }): Promise<SchedulerMutationResult> {
+  const chatJid = getBoundChatJid();
   writeIpcFile(TASKS_DIR, {
     type: input.taskType,
     taskId: input.taskId,
     ...input.payload,
-    targetJid: getBoundChatJid(),
-    chatJid: getBoundChatJid(),
+    targetJid: chatJid,
+    chatJid,
     authThreadId: getBoundThreadId(),
     timestamp: nowIso(),
   });

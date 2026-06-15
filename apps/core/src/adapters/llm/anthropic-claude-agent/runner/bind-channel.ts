@@ -25,10 +25,14 @@ export interface ConversationBindScope {
   chatJid: string;
   firstMessage: string;
   memoryBlock?: string;
+  // Reserved for Phase 3: the real Pillar-1 socket bind will deliver the
+  // per-customer guardrail preface here. Not yet consumed — the spike sources
+  // the preface from `agentInput.guardrailSystemPromptAppend`.
   guardrailPreface?: string;
   threadId?: string;
   memoryUserId?: string;
-  /** Sample token usage echoed by the fake SDK for cache-plumbing assertions. */
+  // Test-harness only (cache-plumbing assertion); remove or make real when the
+  // Phase-3 bind transport lands.
   usage?: {
     in?: number;
     out?: number;

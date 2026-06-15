@@ -24,11 +24,12 @@ export function registerSettingsTools(
         return adminToolUnavailable('settings_desired_state');
       }
       const taskId = makeIpcId('settings-desired-state');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'settings_desired_state',
         taskId,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         timestamp: nowIso(),
       });
@@ -81,11 +82,12 @@ export function registerSettingsTools(
         return adminToolUnavailable('request_settings_update');
       }
       const taskId = makeIpcId('settings-update');
+      const chatJid = getBoundChatJid();
       writeIpcFile(TASKS_DIR, {
         type: 'request_settings_update',
         taskId,
-        targetJid: getBoundChatJid(),
-        chatJid: getBoundChatJid(),
+        targetJid: chatJid,
+        chatJid,
         authThreadId: getBoundThreadId(),
         payload: {
           replacementYaml: args.replacementYaml,
