@@ -21,6 +21,10 @@ import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
 import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import type { SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
+import type {
+  WarmPoolKey,
+  WarmWorkerHandle,
+} from '../application/agent-execution/warm-pool-capable.js';
 
 export interface AgentInput {
   prompt: string;
@@ -112,6 +116,20 @@ export interface AgentOutputRuntimeEvent {
   payload: unknown;
 }
 
+export interface PooledWarmWorkerRun {
+  handle: WarmWorkerHandle;
+  release: () => Promise<void>;
+}
+
+export interface AgentProcessMetadata {
+  pooledWarmWorker?: PooledWarmWorkerRun;
+}
+
+export interface WarmPoolRuntime {
+  acquire(key: WarmPoolKey): WarmWorkerHandle | null;
+  release(handle: WarmWorkerHandle): Promise<void>;
+}
+
 export interface RunAgentOptions {
   timeoutMs?: number;
   credentialBroker?: AgentCredentialBroker;
@@ -134,6 +152,7 @@ export interface RunAgentOptions {
   ) => Promise<unknown> | unknown;
   executionAdapter?: AgentExecutionAdapter;
   executionAdapters?: AgentExecutionAdapterRegistry;
+  warmPool?: WarmPoolRuntime;
 }
 
 export interface HostRuntimeContext {
@@ -155,7 +174,11 @@ export interface RunnerProcessSpec {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv | undefined;
-  onProcess: (proc: ChildProcess, runHandle: string) => void;
+  onProcess: (
+    proc: ChildProcess,
+    runHandle: string,
+    metadata?: AgentProcessMetadata,
+  ) => void;
   onOutput?: (output: AgentOutput) => Promise<void>;
   options?: RunAgentOptions;
   runnerLabel: string;
@@ -163,4 +186,8 @@ export interface RunnerProcessSpec {
   startTime: number;
   logsDir: string;
   runtimeDetails: string[];
+  boundProcess?: ChildProcess;
+  inputDelivery?: 'stdin' | 'external';
+  registeredRunHandle?: string;
+  processMetadata?: AgentProcessMetadata;
 }

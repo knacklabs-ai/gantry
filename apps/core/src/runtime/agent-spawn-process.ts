@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -35,6 +35,11 @@ const DEFAULT_SCHEDULED_JOB_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const MIN_SCHEDULED_JOB_IDLE_TIMEOUT_MS = 60 * 1000;
 
 type RunnerTimeoutReason = 'timeout' | 'scheduled_job_idle_stall';
+type ObservableRunnerProcess = ChildProcess & {
+  stdin: NodeJS.WritableStream;
+  stdout: NodeJS.ReadableStream;
+  stderr: NodeJS.ReadableStream;
+};
 
 interface ScheduledJobHeartbeatPayload {
   lastTool?: string;
@@ -183,23 +188,35 @@ export function executeRunnerProcess(
     startTime,
     logsDir,
     runtimeDetails,
+    boundProcess,
+    inputDelivery,
+    registeredRunHandle,
+    processMetadata,
   } = spec;
 
   return new Promise((resolve) => {
-    const runner = spawn(command, args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env,
-    });
+    const runner = (boundProcess ??
+      spawn(command, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env,
+      })) as ObservableRunnerProcess;
 
-    onProcess(runner, processName);
+    const runHandle = registeredRunHandle ?? processName;
+    if (processMetadata) {
+      onProcess(runner, runHandle, processMetadata);
+    } else {
+      onProcess(runner, runHandle);
+    }
 
     let stdout = '';
     let stderr = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    runner.stdin.write(JSON.stringify(input));
-    runner.stdin.end();
+    if (inputDelivery !== 'external') {
+      runner.stdin.write(JSON.stringify(input));
+      runner.stdin.end();
+    }
 
     // Flow trace: what we hand to the LLM for this turn (user prompt + system
     // prompt size + whether the SDK session was resumed). Reply is logged on

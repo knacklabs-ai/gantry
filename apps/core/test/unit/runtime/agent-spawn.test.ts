@@ -8,6 +8,13 @@ const OUTPUT_END_MARKER = '---GANTRY_OUTPUT_END---';
 const mockGetBrowserStatus = vi.hoisted(() => vi.fn());
 const mockEnsureBrowserReady = vi.hoisted(() => vi.fn());
 const mockMaterializeClaudeRuntime = vi.hoisted(() => vi.fn());
+const mockGetRuntimeWarmPoolConfig = vi.hoisted(() =>
+  vi.fn(() => ({
+    enabled: false,
+    size: 1,
+    idleTtlMs: 240_000,
+  })),
+);
 const mockEnsureEgressGateway = vi.hoisted(() =>
   vi.fn(async () => ({
     key: 'test-egress',
@@ -32,6 +39,7 @@ vi.mock('@core/config/index.js', () => ({
   TIMEZONE: 'America/Los_Angeles',
   LOG_LEVEL: 'info',
   GANTRY_IPC_AUTH_SECRET: 'test-ipc-secret',
+  getRuntimeWarmPoolConfig: mockGetRuntimeWarmPoolConfig,
   getEffectiveModelConfig: vi.fn((groupModel?: string) =>
     groupModel
       ? { model: groupModel, source: 'group.agentConfig.model' }
@@ -198,8 +206,11 @@ import {
   spawnAgent as runtimeSpawnAgent,
   AgentOutput,
 } from '@core/runtime/agent-spawn.js';
-import { getEffectiveModelConfig } from '@core/config/index.js';
-import { spawn } from 'child_process';
+import {
+  getEffectiveModelConfig,
+  getRuntimeWarmPoolConfig,
+} from '@core/config/index.js';
+import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import type { ConversationRoute } from '@core/domain/types.js';
 import { PromptProfileService } from '@core/application/agents/prompt-profile-service.js';
@@ -229,6 +240,11 @@ import type {
   AgentExecutionAdapter,
   AgentExecutionAdapterPrepareInput,
 } from '@core/application/agent-execution/agent-execution-adapter.js';
+import type {
+  WarmPoolCapable,
+  WarmWorkerHandle,
+} from '@core/application/agent-execution/warm-pool-capable.js';
+import type { WarmPoolRuntime } from '@core/runtime/agent-spawn-types.js';
 
 const testGroup: ConversationRoute = {
   name: 'Test Group',
@@ -610,6 +626,12 @@ describe('agent-spawn timeout behavior', () => {
     vi.mocked(spawn).mockClear();
     vi.mocked(fs.writeFileSync).mockClear();
     vi.mocked(getEffectiveModelConfig).mockClear();
+    vi.mocked(getRuntimeWarmPoolConfig).mockClear();
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: false,
+      size: 1,
+      idleTtlMs: 240_000,
+    });
     vi.mocked(getHostRuntimeCredentialEnv).mockReset();
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValue({
       env: {
@@ -763,6 +785,255 @@ describe('agent-spawn timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('binds an available warm worker instead of spawning a cold child when the pool is enabled', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 1,
+      idleTtlMs: 240_000,
+    });
+    const warmProc = createFakeProcess();
+    const warmHandle: WarmWorkerHandle = {
+      id: 'warm-worker-1',
+      key: 'warm-key',
+      bornAt: 100,
+      processName: 'warm-worker-1',
+      bound: false,
+    };
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => warmHandle),
+      release: vi.fn(async () => undefined),
+    };
+    const warmAdapter: WarmPoolCapable = {
+      ...testExecutionAdapter,
+      prewarm: vi.fn(async () => warmHandle),
+      recycle: vi.fn(),
+      bind: vi.fn(async () => ({
+        handle: warmHandle,
+        process: warmProc as unknown as ChildProcess,
+        runHandle: 'warm-bound-run',
+      })),
+    };
+    const onProcess = vi.fn();
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+        memoryContextBlock: 'Customer context',
+      },
+      onProcess,
+      undefined,
+      {
+        executionAdapter: warmAdapter,
+        warmPool,
+      },
+    );
+
+    await vi.waitFor(() => expect(onProcess).toHaveBeenCalled());
+    expect(spawn).not.toHaveBeenCalled();
+    emitOutputMarker(warmProc, {
+      status: 'success',
+      result: 'served warm',
+      warmBound: true,
+      dispatchedAt: 123,
+    });
+    warmProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: 'served warm',
+      warmBound: true,
+    });
+    expect(warmPool.acquire).toHaveBeenCalledTimes(1);
+    expect(warmAdapter.bind).toHaveBeenCalledWith(
+      warmHandle,
+      expect.objectContaining({
+        appId: 'app-one',
+        agentId: 'agent-one',
+        chatJid: 'test@g.us',
+        firstMessage: 'Hello',
+        memoryBlock: 'Customer context',
+        runHandle: expect.any(String),
+      }),
+    );
+    expect(onProcess).toHaveBeenCalledWith(
+      warmProc,
+      'warm-bound-run',
+      expect.objectContaining({
+        pooledWarmWorker: expect.objectContaining({
+          handle: warmHandle,
+        }),
+      }),
+    );
+  });
+
+  it('falls back to the cold child path when the warm pool is empty', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 1,
+      idleTtlMs: 240_000,
+    });
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => null),
+      release: vi.fn(async () => undefined),
+    };
+    const warmHandle: WarmWorkerHandle = {
+      id: 'unused-warm-worker',
+      key: 'warm-key',
+      bornAt: 100,
+      bound: false,
+    };
+    const warmAdapter: WarmPoolCapable = {
+      ...testExecutionAdapter,
+      prewarm: vi.fn(async () => warmHandle),
+      recycle: vi.fn(),
+      bind: vi.fn(async () => ({
+        handle: warmHandle,
+        process: createFakeProcess() as unknown as ChildProcess,
+        runHandle: 'unused-warm-run',
+      })),
+    };
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+      },
+      vi.fn(),
+      undefined,
+      {
+        executionAdapter: warmAdapter,
+        warmPool,
+      },
+    );
+
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'served cold',
+    });
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: 'served cold',
+    });
+    expect(warmPool.acquire).toHaveBeenCalledTimes(1);
+    expect(warmAdapter.bind).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not acquire from the pool when the adapter is not warm-capable', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 1,
+      idleTtlMs: 240_000,
+    });
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => ({
+        id: 'warm-worker-1',
+        key: 'warm-key',
+        bornAt: 100,
+        bound: false,
+      })),
+      release: vi.fn(async () => undefined),
+    };
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+      },
+      vi.fn(),
+      undefined,
+      { warmPool },
+    );
+
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'not capable cold',
+    });
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: 'not capable cold',
+    });
+    expect(warmPool.acquire).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps saved provider sessions on the cold resume path', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 1,
+      idleTtlMs: 240_000,
+    });
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => ({
+        id: 'warm-worker-1',
+        key: 'warm-key',
+        bornAt: 100,
+        bound: false,
+      })),
+      release: vi.fn(async () => undefined),
+    };
+    const warmHandle: WarmWorkerHandle = {
+      id: 'unused-warm-worker',
+      key: 'warm-key',
+      bornAt: 100,
+      bound: false,
+    };
+    const warmAdapter: WarmPoolCapable = {
+      ...testExecutionAdapter,
+      prewarm: vi.fn(async () => warmHandle),
+      recycle: vi.fn(),
+      bind: vi.fn(async () => ({
+        handle: warmHandle,
+        process: createFakeProcess() as unknown as ChildProcess,
+        runHandle: 'unused-warm-run',
+      })),
+    };
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+        sessionId: 'provider-session-existing',
+      },
+      vi.fn(),
+      undefined,
+      {
+        executionAdapter: warmAdapter,
+        warmPool,
+      },
+    );
+
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'resumed cold',
+    });
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: 'resumed cold',
+    });
+    expect(warmPool.acquire).not.toHaveBeenCalled();
+    expect(warmAdapter.bind).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 
   it('preserves structured runner errors on nonzero streaming exit', async () => {

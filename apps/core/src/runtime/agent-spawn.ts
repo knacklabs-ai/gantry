@@ -1,5 +1,5 @@
 import { ChildProcess } from 'child_process';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -9,6 +9,7 @@ import {
   TIMEZONE,
   getRuntimeSettingsForConfig,
   getEffectiveModelConfig,
+  getRuntimeWarmPoolConfig,
 } from '../config/index.js';
 import { runtimeEnvValueDynamic } from '../config/env/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
@@ -46,6 +47,7 @@ import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
 import { closeEgressGateway, ensureEgressGateway } from './egress-gateway.js';
 import { resolveConversationBrowserProfile } from '../shared/browser-profile-scope.js';
 import {
+  AgentProcessMetadata,
   AgentInput,
   AgentOutput,
   RunAgentOptions,
@@ -66,6 +68,11 @@ import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 import { formatGeneratedRuntimePathPermissionError } from './generated-runtime-path-error.js';
 import { resolveAgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import { writeRunnerMcpConfigFile } from './agent-spawn-mcp-config.js';
+import {
+  hasWarmPoolCapability,
+  poolKeyOf,
+} from '../application/agent-execution/warm-pool-capable.js';
+import { isPoolEligible } from './warm-pool-eligibility.js';
 type RunnerAgentInput = AgentInput & {
   modelCredentialEnv?: Record<string, string>;
 };
@@ -240,10 +247,18 @@ function cleanupRunnerMcpConfigFile(configPath: string | undefined): void {
   }
 }
 
+function promptVersionHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
-  onProcess: (proc: ChildProcess, runHandle: string) => void,
+  onProcess: (
+    proc: ChildProcess,
+    runHandle: string,
+    metadata?: AgentProcessMetadata,
+  ) => void,
   onOutput?: (output: AgentOutput) => Promise<void>,
   options?: RunAgentOptions,
 ): Promise<AgentOutput> {
@@ -740,6 +755,91 @@ export async function spawnAgent(
         threadId: input.threadId,
       });
     }
+    const warmPoolConfig = getRuntimeWarmPoolConfig();
+    const warmPool = options?.warmPool;
+    if (
+      warmPoolConfig.enabled &&
+      warmPool &&
+      isPoolEligible(input) &&
+      hasWarmPoolCapability(executionAdapter)
+    ) {
+      const key = poolKeyOf({
+        providerId: preparedExecution.providerId,
+        appId: runnerAppId,
+        agentId: input.agentId || compileAgentId,
+        persona: compilePersona,
+        model: effectiveModel,
+        toolSurface: {
+          gantryMcp: input.gantryMcpToolSurface,
+          native: input.nativeToolSurface,
+        },
+        mcpSet: attachedMcpSourceIds,
+        thinking: group.agentConfig?.thinking,
+        systemPromptVersion: promptVersionHash(compiledSystemPrompt),
+      });
+      const handle = warmPool.acquire(key);
+      if (handle) {
+        try {
+          const bound = await executionAdapter.bind(handle, {
+            appId: runnerAppId,
+            agentId: input.agentId || compileAgentId,
+            chatJid: input.chatJid,
+            ...(input.threadId ? { threadId: input.threadId } : {}),
+            ...(input.memoryUserId ? { memoryUserId: input.memoryUserId } : {}),
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(input.memoryContextBlock
+              ? { memoryBlock: input.memoryContextBlock }
+              : {}),
+            firstMessage: input.prompt,
+            ...(input.guardrailSystemPromptAppend
+              ? { guardrailPreface: input.guardrailSystemPromptAppend }
+              : {}),
+            runHandle: processName,
+            ipcDir: hostRuntime.groupIpcDir,
+            ipcInputDir,
+            memoryIpcAuthToken: env.GANTRY_MEMORY_IPC_AUTH_TOKEN ?? '',
+            egressPrincipal: `${runnerAppId}:${input.agentId || group.folder}:${processName}`,
+          });
+          const output = await executeRunnerProcess({
+            group,
+            input: runnerInput,
+            command,
+            args,
+            env,
+            onProcess,
+            onOutput,
+            options,
+            runnerLabel: 'Host agent',
+            processName,
+            startTime,
+            logsDir,
+            runtimeDetails,
+            boundProcess: bound.process,
+            inputDelivery: 'external',
+            registeredRunHandle: bound.runHandle,
+            processMetadata: {
+              pooledWarmWorker: {
+                handle: bound.handle,
+                release: () => warmPool.release(bound.handle),
+              },
+            },
+          });
+          return output;
+        } catch (err) {
+          await warmPool.release(handle).catch((releaseErr) => {
+            logger.warn(
+              { err: releaseErr, workerId: handle.id },
+              'Failed to recycle warm worker after bind failure',
+            );
+          });
+          logger.warn(
+            { err, workerId: handle.id, group: group.name },
+            'Warm worker bind failed; falling back to cold spawn',
+          );
+        }
+      }
+    }
+
     const output = await executeRunnerProcess({
       group,
       input: runnerInput,

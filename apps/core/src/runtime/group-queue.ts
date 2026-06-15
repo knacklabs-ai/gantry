@@ -10,6 +10,7 @@ import {
   normalizeThreadQueueId,
   parseThreadQueueKey,
 } from '../shared/thread-queue-key.js';
+import type { PooledWarmWorkerRun } from './agent-spawn-types.js';
 
 type QueueKind = 'message' | 'task';
 type ContinuationOptions = {
@@ -18,6 +19,7 @@ type ContinuationOptions = {
 };
 type RegisterProcessOptions = {
   requiredContinuationUserId?: string | null;
+  pooledWarmWorker?: PooledWarmWorkerRun;
 };
 type ContinuationHandler = () => void;
 
@@ -60,6 +62,7 @@ interface GroupState {
   groupFolder: string | null;
   threadId: string | null;
   requiredContinuationUserId: string | null;
+  pooledWarmWorker: PooledWarmWorkerRun | null;
   retryCount: number;
   continuationHandler: ContinuationHandler | null;
 }
@@ -114,6 +117,7 @@ export class GroupQueue {
         groupFolder: null,
         threadId: null,
         requiredContinuationUserId: null,
+        pooledWarmWorker: null,
         retryCount: 0,
         continuationHandler: null,
       };
@@ -328,6 +332,7 @@ export class GroupQueue {
     state.threadId = normalizeThreadQueueId(threadId) || null;
     state.requiredContinuationUserId =
       options.requiredContinuationUserId?.trim() || null;
+    state.pooledWarmWorker = options.pooledWarmWorker ?? null;
     const aliases = Array.isArray(stopAliasJids)
       ? stopAliasJids
       : stopAliasJids
@@ -480,14 +485,19 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
+      const pooledWarmWorker = state.pooledWarmWorker;
       state.active = false;
       state.process = null;
       state.runHandle = null;
       state.groupFolder = null;
       state.threadId = null;
       state.requiredContinuationUserId = null;
+      state.pooledWarmWorker = null;
       state.continuationHandler = null;
       this.activeMessageCount--;
+      if (pooledWarmWorker) {
+        await this.releasePooledWarmWorker(groupJid, pooledWarmWorker);
+      }
       this.removeStopAliasForQueueJid(groupJid);
       this.drainGroup(groupJid);
     }
@@ -517,6 +527,7 @@ export class GroupQueue {
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
+      const pooledWarmWorker = state.pooledWarmWorker;
       state.active = false;
       state.isTaskRun = false;
       state.runningTaskId = null;
@@ -525,9 +536,27 @@ export class GroupQueue {
       state.groupFolder = null;
       state.threadId = null;
       state.requiredContinuationUserId = null;
+      state.pooledWarmWorker = null;
       this.activeTaskCount--;
+      if (pooledWarmWorker) {
+        await this.releasePooledWarmWorker(groupJid, pooledWarmWorker);
+      }
       this.removeStopAliasForQueueJid(groupJid);
       this.drainGroup(groupJid);
+    }
+  }
+
+  private async releasePooledWarmWorker(
+    groupJid: string,
+    pooledWarmWorker: PooledWarmWorkerRun,
+  ): Promise<void> {
+    try {
+      await pooledWarmWorker.release();
+    } catch (err) {
+      logger.warn(
+        { groupJid, err, workerId: pooledWarmWorker.handle.id },
+        'Failed to release pooled warm worker after run teardown',
+      );
     }
   }
 

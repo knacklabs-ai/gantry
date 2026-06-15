@@ -603,6 +603,46 @@ describe('GroupQueue', () => {
     expect(executionOrder[1]).toBe('messages');
   });
 
+  it('releases a pooled warm worker after message run teardown', async () => {
+    let resolveProcess: () => void;
+    const release = vi.fn(async () => undefined);
+    const processMessages = vi.fn(async () => {
+      queue.registerProcess(
+        'group1@g.us',
+        {} as any,
+        'run-1',
+        'test-group',
+        undefined,
+        undefined,
+        {
+          pooledWarmWorker: {
+            handle: {
+              id: 'warm-worker-1',
+              key: 'warm-key',
+              bornAt: 100,
+              bound: true,
+            },
+            release,
+          },
+        },
+      );
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(release).not.toHaveBeenCalled();
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   // --- Coverage for drainWaiting with messages (line 337) ---
 
   it('drainWaiting runs pending messages for waiting groups when slots free up', async () => {

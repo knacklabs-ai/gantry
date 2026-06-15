@@ -12,6 +12,7 @@ import type {
   RuntimeMessageRepository,
 } from '../domain/repositories/ops-repo.js';
 import type { AvailableGroup, spawnAgent } from './agent-spawn.js';
+import type { PooledWarmWorkerRun } from './agent-spawn-types.js';
 import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
 import type { SkillArtifactStore } from '../domain/ports/skill-artifact-store.js';
 import type {
@@ -117,7 +118,10 @@ export interface GroupProcessingDeps {
       groupFolder?: string,
       stopAliasJids?: string | string[],
       threadId?: string | null,
-      options?: { requiredContinuationUserId?: string | null },
+      options?: {
+        requiredContinuationUserId?: string | null;
+        pooledWarmWorker?: PooledWarmWorkerRun;
+      },
     ) => void;
     registerContinuationHandler?: (
       groupJid: string,
