@@ -24,7 +24,7 @@ export type SocketBindOutcome =
   | { ok: true; bound: SocketBindResult }
   | {
       ok: false;
-      reason: 'live_owner' | 'recycled_uncertain' | 'error';
+      reason: 'live_owner' | 'error';
       detail?: string;
     };
 
@@ -307,9 +307,9 @@ export async function releaseIpcSocket(bound: SocketBindResult): Promise<void> {
       resolve();
       return;
     }
+    // The server's stop() destroys all connections before calling release, so
+    // server.close(cb) resolves once the listener is torn down.
     bound.server.close(() => resolve());
-    // Force-close any open connections so close() callback fires promptly
-    bound.server.emit('close');
   });
 
   for (const p of [bound.socketPath, bound.ownerPath]) {
