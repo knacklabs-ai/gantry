@@ -199,6 +199,27 @@ export function classifyMemorySocketError(
   return { kind: 'result', result: { ok: false, error: err.message } };
 }
 
+/**
+ * Pure classification of a failed socket `user_question` request. The fs path is
+ * a durable write+poll with a 5-minute deadline, so:
+ *  - timeout              → the question genuinely timed out; surface the same
+ *                           "timed out" disposition (do NOT replay via fs, which
+ *                           would double the wait).
+ *  - transient transport  → fall back to the durable fs mailbox (write+poll) so
+ *                           a flaky socket never drops a question fs would land.
+ *  - other {ok:false}     → a server transport error (invalid_request /
+ *                           internal_error / rate_limited / busy is already in
+ *                           the fallback set); treat as fs fallback so the
+ *                           durable path still gets a chance.
+ */
+export function classifyUserQuestionSocketError(
+  err: unknown,
+): { kind: 'timeout' } | { kind: 'fallback' } {
+  if (!(err instanceof IpcRequestError)) return { kind: 'fallback' };
+  if (err.code === 'timeout') return { kind: 'timeout' };
+  return { kind: 'fallback' };
+}
+
 export async function requestMemoryAction(
   action: MemoryIpcAction,
   payload: Record<string, unknown>,
@@ -547,20 +568,43 @@ const SOCKET_FALLBACK_CODES = new Set([
 ]);
 
 /**
- * The slice of IpcSocketClient that sendTaskRequest and the socket branch of
- * requestMemoryAction depend on. Narrowed so a test can inject a fake to
- * exercise the timeout/fallback/ok:false branches without standing up a real
- * socket. The same lazily-built mcp-role client serves both the `task` and
- * `memory` channels.
+ * The slice of IpcSocketClient that the grandchild's socket branches depend on.
+ * Narrowed so a test can inject a fake to exercise the timeout/fallback/ok:false
+ * branches without standing up a real socket. The same lazily-built mcp-role
+ * client serves the `task`, `memory`, `user_question` (req→resp) and `message`
+ * (fire-and-forget) channels.
  */
 export interface TaskSocketClientLike {
   readonly connected: boolean;
   connect(): Promise<void>;
   request(
-    channel: 'task' | 'memory',
+    channel: 'task' | 'memory' | 'user_question',
     signedPayload: Record<string, unknown>,
     opts?: { id?: string; timeoutMs?: number },
   ): Promise<Record<string, unknown>>;
+  /** Fire-and-forget send (no response frame). Used for the `message` channel. */
+  send(channel: 'message', signedPayload: Record<string, unknown>): void;
+}
+
+/**
+ * Accessor for the lazily-built mcp-role socket client, shared across all
+ * grandchild channels (task/memory/user_question/message). Returns undefined in
+ * fs mode or when no socket path is configured. Exported so the messaging tools
+ * (send_message / ask_user_question) reuse the SAME connection.
+ */
+export function getMcpSocketClient(): TaskSocketClientLike | undefined {
+  return getTaskSocketClient();
+}
+
+/**
+ * Ensure the shared mcp-role socket client is connected (caching the in-flight
+ * handshake). Resolves true when connected, false if the connect failed (the
+ * caller then falls back to the fs path). Exported for the messaging tools.
+ */
+export function ensureMcpSocketConnected(
+  client: TaskSocketClientLike,
+): Promise<boolean> {
+  return ensureTaskSocketConnected(client);
 }
 
 let taskSocketClient: TaskSocketClientLike | undefined;

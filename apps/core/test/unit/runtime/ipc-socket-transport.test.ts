@@ -326,6 +326,59 @@ function buildMemoryPayload(
   });
 }
 
+// --- User-question + message envelopes -------------------------------------
+// Both share the SAME folder/thread auth token (computeIpcAuthToken) as task —
+// validateIpcAuthRequest re-derives it. The user_question payload mirrors the
+// grandchild's buildUserQuestionRequestPayload; the message payload mirrors the
+// grandchild's buildSignedTaskEnvelope({ type:'message', ... }).
+
+function buildUserQuestionPayload(
+  authToken: string,
+  responseKeyId: string,
+  opts: {
+    requestId: string;
+    threadId?: string;
+    targetJid?: string;
+    questions?: unknown;
+  },
+): Record<string, unknown> {
+  return createSignedIpcRequestEnvelope(authToken, {
+    requestId: opts.requestId,
+    sourceAgentFolder: FOLDER,
+    ...(opts.targetJid !== undefined ? { targetJid: opts.targetJid } : {}),
+    questions: opts.questions ?? [
+      {
+        question: 'Ship now?',
+        header: 'Deploy',
+        options: [
+          { label: 'Yes', description: 'Ship it' },
+          { label: 'No', description: 'Wait' },
+        ],
+        multiSelect: false,
+      },
+    ],
+    context: {
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
+      responseKeyId,
+    },
+  });
+}
+
+function buildMessagePayload(
+  authToken: string,
+  opts: { text: string; chatJid?: string; threadId?: string },
+): Record<string, unknown> {
+  return createSignedIpcRequestEnvelope(authToken, {
+    type: 'message',
+    chatJid: opts.chatJid ?? CHAT_JID,
+    text: opts.text,
+    groupFolder: FOLDER,
+    context: {
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Test lifecycle
 // ---------------------------------------------------------------------------
@@ -888,6 +941,288 @@ describe('ipc-socket-server memory dispatch', () => {
     expect((resp.payload as { ok?: boolean }).ok).toBe(false);
     expect((resp.payload as { code?: string }).code).toBe('rate_limited');
     expect(processMemoryRequestMock).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User-question dispatch (Pillar 1, Phase 5.3b)
+//
+// requestUserAnswer (the dep) is stubbed so the test controls the answer; the
+// server runs the REAL processUserQuestionInteractionIpc → router-aware
+// writeUserQuestionIpcResponse → signed-resp-frame path end to end. The
+// user_question channel shares the folder/thread auth token (re-verified by the
+// real parseUserQuestionIpcRequest exactly as the fs watcher does).
+// ---------------------------------------------------------------------------
+
+describe('ipc-socket-server user_question dispatch', () => {
+  async function handshake(
+    handle: IpcSocketServerHandle,
+    auth: ReturnType<typeof makeAuth>,
+    threadId = THREAD_ID,
+  ): Promise<FakeWorkerClient> {
+    const client = await connect(handle);
+    client.sendHello(
+      buildHelloPayload(auth.authToken, { folder: FOLDER, threadId }),
+      'hs',
+    );
+    const welcome = await client.waitForId('hs');
+    expect(welcome.ctrl).toBe('welcome');
+    return client;
+  }
+
+  it('U1. user_question req → signed resp frame (router + ed25519 end to end)', async () => {
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'userq-7',
+      answers: { 'Ship now?': 'Yes' },
+      answeredBy: 'admin',
+    }));
+    const handle = await startServer(buildDeps({ requestUserAnswer } as never));
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'user_question',
+      buildUserQuestionPayload(auth.authToken, auth.responseKeyId, {
+        requestId: 'userq-7',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-userq-7',
+    );
+
+    const resp = await client.waitForId('req-userq-7');
+    expect(resp.type).toBe('resp');
+    expect(resp.channel).toBe('user_question');
+    const { signature, ...payloadWithoutSig } = resp.payload as {
+      signature?: string;
+    } & Record<string, unknown>;
+    expect(typeof signature).toBe('string');
+    expect(
+      verifyIpcResponsePayload(
+        auth.responseVerifyKey,
+        payloadWithoutSig,
+        signature,
+      ),
+    ).toBe(true);
+    expect(payloadWithoutSig.requestId).toBe('userq-7');
+    expect(payloadWithoutSig.answers).toEqual({ 'Ship now?': 'Yes' });
+    expect(payloadWithoutSig.answeredBy).toBe('admin');
+
+    // The dep ran exactly once, with the trusted parsed request (targetJid
+    // preserved from the stamp → cross-conversation guard intact).
+    expect(requestUserAnswer).toHaveBeenCalledTimes(1);
+    const reqArg = requestUserAnswer.mock.calls[0][0] as {
+      requestId: string;
+      targetJid?: string;
+      sourceAgentFolder: string;
+    };
+    expect(reqArg.requestId).toBe('userq-7');
+    expect(reqArg.sourceAgentFolder).toBe(FOLDER);
+    expect(reqArg.targetJid).toBe(CHAT_JID);
+
+    // No user-answers file was written — the responder consumed it.
+    const answersDir = path.join(
+      process.env.GANTRY_HOME as string,
+      'data',
+      'ipc',
+      FOLDER,
+      'user-answers',
+    );
+    expect(fs.existsSync(path.join(answersDir, 'userq-7.json'))).toBe(false);
+  });
+
+  it('U2. forged user_question req (wrong token) → invalid_request, connection survives', async () => {
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'userq-ok',
+      answers: { 'Ship now?': 'Yes' },
+    }));
+    const handle = await startServer(buildDeps({ requestUserAnswer } as never));
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    // Sign with a token bound to a DIFFERENT folder → parseUserQuestionIpcRequest
+    // throws → invalid_request, the dep never runs.
+    const wrongAuth = makeAuth('group-evil', THREAD_ID);
+    client.sendReq(
+      'user_question',
+      buildUserQuestionPayload(wrongAuth.authToken, auth.responseKeyId, {
+        requestId: 'userq-bad',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-userq-bad',
+    );
+
+    const resp = await client.waitForId('req-userq-bad');
+    expect(resp.type).toBe('resp');
+    expect((resp.payload as { ok?: boolean }).ok).toBe(false);
+    expect((resp.payload as { code?: string }).code).toBe('invalid_request');
+    expect(requestUserAnswer).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+
+    // Connection still usable: a valid user_question now gets a signed response.
+    client.sendReq(
+      'user_question',
+      buildUserQuestionPayload(auth.authToken, auth.responseKeyId, {
+        requestId: 'userq-ok',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-userq-ok',
+    );
+    const ok = await client.waitForId('req-userq-ok');
+    expect(ok.channel).toBe('user_question');
+    expect((ok.payload as { requestId?: string }).requestId).toBe('userq-ok');
+  });
+
+  it('U3. replay of the same user_question req is rejected the second time', async () => {
+    let calls = 0;
+    const requestUserAnswer = vi.fn(async () => {
+      calls += 1;
+      return { requestId: 'userq-replay', answers: { 'Ship now?': 'Yes' } };
+    });
+    const handle = await startServer(buildDeps({ requestUserAnswer } as never));
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    const payload = buildUserQuestionPayload(
+      auth.authToken,
+      auth.responseKeyId,
+      {
+        requestId: 'userq-replay',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      },
+    );
+
+    client.sendReq('user_question', payload, 'req-first');
+    const first = await client.waitForId('req-first');
+    expect((first.payload as { requestId?: string }).requestId).toBe(
+      'userq-replay',
+    );
+
+    // Re-send the byte-identical signed payload → replay guard rejects it.
+    client.sendReq('user_question', payload, 'req-second');
+    const second = await client.waitForId('req-second');
+    expect((second.payload as { ok?: boolean }).ok).toBe(false);
+    expect((second.payload as { code?: string }).code).toBe('invalid_request');
+    expect(calls).toBe(1);
+  });
+
+  it('U4. user_question rate limit → rate_limited resp, connection survives', async () => {
+    const { canProcessIpcFile } =
+      await import('@core/runtime/ipc-rate-limit.js');
+    for (let i = 0; i < 300; i += 1) canProcessIpcFile(FOLDER, 'user-question');
+
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: 'userq-rl',
+      answers: {},
+    }));
+    const handle = await startServer(buildDeps({ requestUserAnswer } as never));
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'user_question',
+      buildUserQuestionPayload(auth.authToken, auth.responseKeyId, {
+        requestId: 'userq-rl',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-userq-rl',
+    );
+
+    const resp = await client.waitForId('req-userq-rl');
+    expect(resp.type).toBe('resp');
+    expect((resp.payload as { ok?: boolean }).ok).toBe(false);
+    expect((resp.payload as { code?: string }).code).toBe('rate_limited');
+    expect(requestUserAnswer).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Message dispatch (Pillar 1, Phase 5.3b) — fire-and-forget, no resp frame.
+//
+// The server already dispatches `message`; this proves the folder-owns-JID
+// authz + deps.sendMessage delivery over the socket, and that a frame whose
+// chatJid is NOT owned by the folder is dropped (no send, no response).
+// ---------------------------------------------------------------------------
+
+describe('ipc-socket-server message dispatch', () => {
+  async function handshake(
+    handle: IpcSocketServerHandle,
+    auth: ReturnType<typeof makeAuth>,
+    threadId = THREAD_ID,
+  ): Promise<FakeWorkerClient> {
+    const client = await connect(handle);
+    client.sendHello(
+      buildHelloPayload(auth.authToken, { folder: FOLDER, threadId }),
+      'hs',
+    );
+    const welcome = await client.waitForId('hs');
+    expect(welcome.ctrl).toBe('welcome');
+    return client;
+  }
+
+  async function waitForCall(
+    fn: ReturnType<typeof vi.fn>,
+    timeoutMs = 3000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (fn.mock.calls.length > 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error('timed out waiting for sendMessage');
+  }
+
+  it('MSG1. message frame → deps.sendMessage fires (folder owns the JID)', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const handle = await startServer(buildDeps({ sendMessage } as never));
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'message',
+      buildMessagePayload(auth.authToken, {
+        text: 'live progress update',
+        chatJid: CHAT_JID,
+        threadId: THREAD_ID,
+      }),
+      'req-msg-1',
+    );
+
+    await waitForCall(sendMessage);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [jidArg, textArg] = sendMessage.mock.calls[0];
+    expect(jidArg).toBe(CHAT_JID);
+    expect(textArg).toBe('live progress update');
+    // Fire-and-forget: the connection stays open, no resp frame is required.
+    expect(client.isClosed).toBe(false);
+  });
+
+  it('MSG2. message frame for a JID the folder does not own is dropped', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const handle = await startServer(buildDeps({ sendMessage } as never));
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    // chatJid not present in conversationRoutes → folder-owns-JID authz drops it.
+    client.sendReq(
+      'message',
+      buildMessagePayload(auth.authToken, {
+        text: 'cross-conversation bleed',
+        chatJid: 'wa:9999999@evil',
+        threadId: THREAD_ID,
+      }),
+      'req-msg-evil',
+    );
+
+    // Give the server a beat to process (and drop) the frame.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(client.isClosed).toBe(false);
   });
 });

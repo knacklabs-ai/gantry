@@ -25,7 +25,14 @@ import {
   jobId,
 } from '../context.js';
 import { truncateText } from '../formatting.js';
-import { hasValidIpcResponseSignature, writeIpcFile } from '../ipc.js';
+import {
+  buildSignedTaskEnvelope,
+  classifyUserQuestionSocketError,
+  ensureMcpSocketConnected,
+  getMcpSocketClient,
+  hasValidIpcResponseSignature,
+  writeIpcFile,
+} from '../ipc.js';
 import { createSignedIpcRequestEnvelope } from '../signing.js';
 import { makeIpcId } from '../ipc-ids.js';
 import { buildUserQuestionRequestPayload } from './user-question-payload.js';
@@ -35,6 +42,69 @@ const USER_QUESTION_POLL_INTERVAL_MS = 100;
 const USER_QUESTION_MAX_ANSWER_LENGTH = 500;
 const USER_QUESTION_MAX_ANSWERED_BY_LENGTH = 120;
 const INTERACTION_BOUNDARY_WAIT_MS = 2_000;
+
+type UserQuestionToolResult = {
+  content: Array<{ type: 'text'; text: string }>;
+};
+
+function textResult(text: string): UserQuestionToolResult {
+  return { content: [{ type: 'text' as const, text }] };
+}
+
+/**
+ * Validate a user-question response object (from either the fs response file or
+ * a socket `user_question` resp frame) and render it to the tool's text output.
+ * The validation (requestId match + ed25519 signature) and the answer → text
+ * formatting are byte-identical across transports, so both paths funnel through
+ * here. Returns the rendered result, or an error-text result on a mismatch /
+ * bad signature / malformed payload.
+ */
+function formatUserQuestionResponse(
+  raw: {
+    requestId?: unknown;
+    answers?: Record<string, unknown>;
+    answeredBy?: unknown;
+    signature?: unknown;
+  },
+  requestId: string,
+): UserQuestionToolResult {
+  const payload: Record<string, unknown> = {
+    requestId,
+    answers: raw?.answers && typeof raw.answers === 'object' ? raw.answers : {},
+    ...(typeof raw?.answeredBy === 'string' && raw.answeredBy.trim()
+      ? { answeredBy: raw.answeredBy }
+      : {}),
+  };
+  if (raw.requestId !== requestId) {
+    return textResult('Answer request id mismatch.');
+  }
+  if (
+    !hasValidIpcResponseSignature(
+      raw as unknown as Record<string, unknown>,
+      payload,
+    )
+  ) {
+    return textResult('Answer verification failed.');
+  }
+  if (raw?.answers && typeof raw.answers === 'object') {
+    const lines: string[] = [];
+    for (const [q, answer] of Object.entries(raw.answers)) {
+      const normalizedAnswer = Array.isArray(answer)
+        ? answer.map((item) => String(item)).join(', ')
+        : String(answer);
+      lines.push(
+        `${q}: ${truncateText(normalizedAnswer, USER_QUESTION_MAX_ANSWER_LENGTH)}`,
+      );
+    }
+    if (typeof raw.answeredBy === 'string' && raw.answeredBy.trim()) {
+      lines.push(
+        `(answered by ${truncateText(raw.answeredBy.trim(), USER_QUESTION_MAX_ANSWERED_BY_LENGTH)})`,
+      );
+    }
+    return textResult(lines.join('\n') || 'No answer received.');
+  }
+  return textResult('No answer received.');
+}
 
 async function sleepWithAbort(
   ms: number,
@@ -131,6 +201,25 @@ export function registerMessagingTools(server: McpServer): void {
         timestamp: nowIso(),
       };
 
+      // Socket/dual mode: deliver the message as a fire-and-forget `message`
+      // frame over the same mcp-role connection, reusing the byte-identical
+      // signed envelope the fs path would write. The host re-verifies it the
+      // same way whether it arrived as a file or a frame. If the socket is not
+      // usable we fall back to the durable fs write — messages are
+      // fire-and-forget and must never block on a flaky socket.
+      const client = getMcpSocketClient();
+      if (client) {
+        const connected = await ensureMcpSocketConnected(client);
+        if (connected) {
+          const signed = buildSignedTaskEnvelope(data);
+          client.send('message', signed);
+          return {
+            content: [{ type: 'text' as const, text: 'Message sent.' }],
+          };
+        }
+        // connect failed → fs fallback below.
+      }
+
       writeIpcFile(MESSAGES_DIR, data);
 
       return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
@@ -212,6 +301,48 @@ export function registerMessagingTools(server: McpServer): void {
       });
       const envelope = createSignedIpcRequestEnvelope(IPC_AUTH_TOKEN, payload);
 
+      // Socket/dual mode: route the question over the same mcp-role connection,
+      // reusing the byte-identical signed envelope. The resp frame carries the
+      // verified UserQuestionResponse, which we render exactly as the fs path
+      // would. A socket timeout maps to the same "timed out" outcome; any
+      // transient transport failure falls back to the durable fs write+poll
+      // below so a flaky socket never drops a question fs would have answered.
+      const client = getMcpSocketClient();
+      if (client) {
+        if (context?.signal?.aborted) {
+          return textResult(
+            'Question cancelled before an answer was received.',
+          );
+        }
+        const connected = await ensureMcpSocketConnected(client);
+        if (connected) {
+          try {
+            const resp = await client.request('user_question', envelope, {
+              id: requestId,
+              timeoutMs: USER_QUESTION_TIMEOUT_MS,
+            });
+            return formatUserQuestionResponse(
+              resp as {
+                requestId?: unknown;
+                answers?: Record<string, unknown>;
+                answeredBy?: unknown;
+                signature?: unknown;
+              },
+              requestId,
+            );
+          } catch (err) {
+            const disposition = classifyUserQuestionSocketError(err);
+            if (disposition.kind === 'timeout') {
+              return textResult(
+                'Question timed out — no answer received within 5 minutes.',
+              );
+            }
+            // 'fallback' → fall through to the durable fs mailbox below.
+          }
+        }
+        // connect failed or transient request failure → fs fallback.
+      }
+
       writePrivateFileSync(tmpPath, JSON.stringify(envelope, null, 2));
       fs.renameSync(tmpPath, requestPath);
 
@@ -219,14 +350,9 @@ export function registerMessagingTools(server: McpServer): void {
       while (nowMs() < deadline) {
         if (context?.signal?.aborted) {
           fs.rmSync(requestPath, { force: true });
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Question cancelled before an answer was received.',
-              },
-            ],
-          };
+          return textResult(
+            'Question cancelled before an answer was received.',
+          );
         }
         if (fs.existsSync(responsePath)) {
           try {
@@ -237,71 +363,9 @@ export function registerMessagingTools(server: McpServer): void {
               signature?: unknown;
             };
             fs.unlinkSync(responsePath);
-            const payload: Record<string, unknown> = {
-              requestId,
-              answers:
-                raw?.answers && typeof raw.answers === 'object'
-                  ? raw.answers
-                  : {},
-              ...(typeof raw?.answeredBy === 'string' && raw.answeredBy.trim()
-                ? { answeredBy: raw.answeredBy }
-                : {}),
-            };
-            if (raw.requestId !== requestId) {
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: 'Answer request id mismatch.',
-                  },
-                ],
-              };
-            }
-            if (
-              !hasValidIpcResponseSignature(
-                raw as unknown as Record<string, unknown>,
-                payload,
-              )
-            ) {
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: 'Answer verification failed.',
-                  },
-                ],
-              };
-            }
-            if (raw?.answers && typeof raw.answers === 'object') {
-              const lines: string[] = [];
-              for (const [q, answer] of Object.entries(raw.answers)) {
-                const normalizedAnswer = Array.isArray(answer)
-                  ? answer.map((item) => String(item)).join(', ')
-                  : String(answer);
-                lines.push(
-                  `${q}: ${truncateText(normalizedAnswer, USER_QUESTION_MAX_ANSWER_LENGTH)}`,
-                );
-              }
-              if (typeof raw.answeredBy === 'string' && raw.answeredBy.trim()) {
-                lines.push(
-                  `(answered by ${truncateText(raw.answeredBy.trim(), USER_QUESTION_MAX_ANSWERED_BY_LENGTH)})`,
-                );
-              }
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: lines.join('\n') || 'No answer received.',
-                  },
-                ],
-              };
-            }
+            return formatUserQuestionResponse(raw, requestId);
           } catch {
-            return {
-              content: [
-                { type: 'text' as const, text: 'Failed to read answer.' },
-              ],
-            };
+            return textResult('Failed to read answer.');
           }
         }
         const aborted = await sleepWithAbort(
@@ -310,14 +374,9 @@ export function registerMessagingTools(server: McpServer): void {
         );
         if (aborted) {
           fs.rmSync(requestPath, { force: true });
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Question cancelled before an answer was received.',
-              },
-            ],
-          };
+          return textResult(
+            'Question cancelled before an answer was received.',
+          );
         }
       }
       fs.rmSync(requestPath, { force: true });

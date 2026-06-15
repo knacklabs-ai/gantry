@@ -23,6 +23,8 @@ import { clearConsumedIpcRequestIds } from './ipc-auth-validation.js';
 import { processBrowserRequestDirectory } from './ipc-browser-requests.js';
 import { canProcessIpcFile, clearIpcRateLimitState } from './ipc-rate-limit.js';
 import { clearIpcResponders } from './ipc-response-router.js';
+// prettier-ignore
+import { clearInteractionInFlight, releaseInteractionInFlight, tryAdmitInteractionInFlight } from './ipc-interaction-inflight.js';
 import type { ConversationRoute as RuntimeGroupRecord } from '../domain/types.js';
 export type { IpcDeps } from './ipc-domain-types.js';
 export { isPendingIpcJsonFile } from './ipc-filesystem.js';
@@ -31,8 +33,6 @@ export { validateIpcAuthRequest } from './ipc-auth-validation.js';
 let ipcWatcherRunning = false;
 let ipcWatcherTimer: ReturnType<typeof setTimeout> | undefined;
 let ipcRootLockPath: string | undefined;
-const MAX_IN_FLIGHT_INTERACTION_IPC = 100;
-const inFlightInteractionIpc = new Set<string>();
 
 const isLongRunningTask = (type: string): boolean =>
   type.startsWith('mcp_') || type === 'scheduler_wait_for_events';
@@ -580,21 +580,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 fs.unlinkSync(claimedPath);
                 continue;
               }
-              if (
-                inFlightInteractionIpc.size >= MAX_IN_FLIGHT_INTERACTION_IPC
-              ) {
-                throw new Error('Too many in-flight interaction IPC requests');
-              }
               const inFlightKey = interactionInFlightKey({
                 sourceAgentFolder,
                 kind: 'permission',
                 threadId: requestThreadId,
                 requestId,
               });
-              if (inFlightInteractionIpc.has(inFlightKey)) {
-                throw new Error('Permission IPC request already in flight');
+              const admission = tryAdmitInteractionInFlight(inFlightKey);
+              if (!admission.ok) {
+                throw new Error(
+                  admission.reason === 'cap'
+                    ? 'Too many in-flight interaction IPC requests'
+                    : 'Permission IPC request already in flight',
+                );
               }
-              inFlightInteractionIpc.add(inFlightKey);
               void processPermissionInteractionIpc({
                 request,
                 sourceAgentFolder,
@@ -603,7 +602,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 file,
                 claimedPath,
                 logger,
-              }).finally(() => inFlightInteractionIpc.delete(inFlightKey));
+              }).finally(() => releaseInteractionInFlight(inFlightKey));
             } catch (err) {
               if (requestId) {
                 writePermissionInteractionFailure({
@@ -669,21 +668,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
               requestId = request.requestId;
               requestThreadId = request.threadId;
               responseKeyId = request.responseKeyId;
-              if (
-                inFlightInteractionIpc.size >= MAX_IN_FLIGHT_INTERACTION_IPC
-              ) {
-                throw new Error('Too many in-flight interaction IPC requests');
-              }
               const inFlightKey = interactionInFlightKey({
                 sourceAgentFolder,
                 kind: 'user-question',
                 threadId: requestThreadId,
                 requestId,
               });
-              if (inFlightInteractionIpc.has(inFlightKey)) {
-                throw new Error('User question IPC request already in flight');
+              const admission = tryAdmitInteractionInFlight(inFlightKey);
+              if (!admission.ok) {
+                throw new Error(
+                  admission.reason === 'cap'
+                    ? 'Too many in-flight interaction IPC requests'
+                    : 'User question IPC request already in flight',
+                );
               }
-              inFlightInteractionIpc.add(inFlightKey);
               void processUserQuestionInteractionIpc({
                 request,
                 sourceAgentFolder,
@@ -693,7 +691,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 claimedPath,
                 logger,
               }).finally(() => {
-                inFlightInteractionIpc.delete(inFlightKey);
+                releaseInteractionInFlight(inFlightKey);
               });
             } catch (err) {
               if (requestId) {
@@ -746,7 +744,7 @@ export function stopIpcWatcher(): void {
   }
   ipcWatcherRunning = false;
   clearIpcRateLimitState();
-  inFlightInteractionIpc.clear();
+  clearInteractionInFlight();
   clearConsumedIpcRequestIds();
   clearIpcResponders();
   releaseIpcRootLock();

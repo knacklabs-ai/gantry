@@ -29,13 +29,26 @@ import {
 } from './ipc-response-router.js';
 import { canProcessIpcFile } from './ipc-rate-limit.js';
 import { parseTaskIpcData } from './ipc-task-parsing.js';
-import { parseIpcMessage, parseMemoryIpcRequest } from './ipc-parsing.js';
+import {
+  parseIpcMessage,
+  parseMemoryIpcRequest,
+  parseUserQuestionIpcRequest,
+} from './ipc-parsing.js';
 import { getIpcResponseSigningPrivateKey } from './ipc-auth.js';
 import { processTaskIpc } from '../jobs/ipc-handler.js';
 import {
   processMemoryRequest,
   writeMemoryResponse,
 } from '../memory/memory-ipc.js';
+import {
+  interactionInFlightKey,
+  processUserQuestionInteractionIpc,
+  writeUserQuestionInteractionFailure,
+} from './ipc-interaction-processing.js';
+import {
+  releaseInteractionInFlight,
+  tryAdmitInteractionInFlight,
+} from './ipc-interaction-inflight.js';
 import type { IpcDeps } from './ipc-domain-types.js';
 import { type IpcWireChannel, type IpcWireFrame } from '../shared/ipc-wire.js';
 
@@ -201,6 +214,11 @@ export async function startIpcSocketServer(
       return;
     }
 
+    if (channel === 'user_question') {
+      await dispatchUserQuestion(frame, conn, folder);
+      return;
+    }
+
     if (channel === 'message') {
       // Fire-and-forget; no response frame.
       if (!canProcessIpcFile(folder, 'messages')) {
@@ -235,8 +253,8 @@ export async function startIpcSocketServer(
       return;
     }
 
-    // browser/permission/user_question/etc. are cut over in a later phase by
-    // making their writers router-aware. Until then: explicit reject.
+    // browser/permission/etc. are cut over in a later phase by making their
+    // writers router-aware. Until then: explicit reject.
     conn.send(transportError(frame.id, channel, 'unsupported_channel'));
   }
 
@@ -367,6 +385,133 @@ export async function startIpcSocketServer(
       }
       logger.error({ err, folder }, 'memory handler threw');
     } finally {
+      const after = state.get(conn);
+      if (after && after.inFlight > 0) after.inFlight -= 1;
+    }
+  }
+
+  /**
+   * The default JID owned by `folder` — the first conversation route bound to
+   * it. Mirrors the fs watcher's `folderTargetJid` fallback so an absent
+   * `targetJid` resolves to the same conversation on both transports. The
+   * grandchild always stamps the asking conversation's jid, so this is only a
+   * defensive fallback (the parser preserves the stamped targetJid).
+   */
+  function folderDefaultJid(folder: string): string | undefined {
+    for (const [jid, route] of Object.entries(deps.conversationRoutes())) {
+      if (route.folder === folder) return jid;
+    }
+    return undefined;
+  }
+
+  async function dispatchUserQuestion(
+    frame: IpcWireFrame,
+    conn: IpcConnection,
+    folder: string,
+  ): Promise<void> {
+    if (!canProcessIpcFile(folder, 'user-question')) {
+      // Unsigned transport-level error mirroring the fs path's rate-limit drop.
+      conn.send(transportError(frame.id, 'user_question', 'rate_limited'));
+      return;
+    }
+
+    let request;
+    try {
+      // parseUserQuestionIpcRequest re-verifies the HMAC/freshness/replay — a
+      // forged, replayed, or malformed frame throws here (fail-closed); the
+      // connection survives.
+      request = parseUserQuestionIpcRequest(frame.payload, folder);
+    } catch (err) {
+      conn.send(transportError(frame.id, 'user_question', 'invalid_request'));
+      logger.warn({ err, folder }, 'rejected user_question frame');
+      return;
+    }
+
+    // Cross-conversation routing: keep the asking conversation's jid (stamped by
+    // the grandchild and preserved by the parser); fall back to the folder's
+    // default jid only when absent — byte-identical to the fs watcher.
+    request.targetJid = request.targetJid || folderDefaultJid(folder);
+
+    const userqKey = `userq-${request.requestId}`;
+    const threadId = request.threadId;
+    // Register a responder so the handler's (router-aware) writeUserQuestion-
+    // IpcResponse — and the failure-response path — are delivered as a frame
+    // instead of a user-answers/<requestId>.json file write.
+    registerIpcResponder(folder, userqKey, (signed) => {
+      conn.send({
+        v: 1,
+        type: 'resp',
+        channel: 'user_question',
+        id: frame.id,
+        payload: signed,
+      });
+    });
+
+    // Honour the SHARED interaction in-flight cap + duplicate guard (the same
+    // accounting the fs watcher uses), so a request already in flight via either
+    // transport is not processed twice and the global cap of 100 is enforced.
+    const inFlightKey = interactionInFlightKey({
+      sourceAgentFolder: folder,
+      kind: 'user-question',
+      ...(threadId ? { threadId } : {}),
+      requestId: request.requestId,
+    });
+    const admission = tryAdmitInteractionInFlight(inFlightKey);
+    if (!admission.ok) {
+      // Mirror the fs watcher's thrown cap/duplicate path: emit a signed
+      // empty-answers failure response (routed to the responder above) so the
+      // grandchild's pending request settles exactly as it would on fs.
+      writeUserQuestionInteractionFailure({
+        ipcBaseDir,
+        sourceAgentFolder: folder,
+        requestId: request.requestId,
+        ...(threadId ? { threadId } : {}),
+        ...(request.responseKeyId
+          ? { responseKeyId: request.responseKeyId }
+          : {}),
+        logger,
+      });
+      // If the failure writer was fail-closed (no signing key) the responder is
+      // still registered; clear it and settle the request at the transport
+      // layer so it does not hang until the client deadline.
+      const pending = takeIpcResponder(folder, userqKey);
+      if (pending) {
+        conn.send(transportError(frame.id, 'user_question', 'busy'));
+      }
+      return;
+    }
+
+    const st = state.get(conn);
+    if (st) st.inFlight += 1;
+    try {
+      // No file/claimedPath on the socket path: the handler runs the approval
+      // flow and calls the router-aware writer, which delivers the signed
+      // response to the responder above. On internal failure it writes the
+      // signed empty-answers fallback (also routed to the responder).
+      await processUserQuestionInteractionIpc({
+        request,
+        sourceAgentFolder: folder,
+        deps,
+        ipcBaseDir,
+        logger,
+      });
+      // Fail-closed guard: if neither the success nor the failure write consumed
+      // the responder (e.g. no signing key), settle the request so it does not
+      // hang until the client deadline.
+      const pending = takeIpcResponder(folder, userqKey);
+      if (pending) {
+        conn.send(transportError(frame.id, 'user_question', 'internal_error'));
+      }
+    } catch (err) {
+      // processUserQuestionInteractionIpc catches its own errors, but guard the
+      // transport regardless: clear any still-registered responder and settle.
+      const pending = takeIpcResponder(folder, userqKey);
+      if (pending) {
+        conn.send(transportError(frame.id, 'user_question', 'internal_error'));
+      }
+      logger.error({ err, folder }, 'user_question handler threw');
+    } finally {
+      releaseInteractionInFlight(inFlightKey);
       const after = state.get(conn);
       if (after && after.inFlight > 0) after.inFlight -= 1;
     }

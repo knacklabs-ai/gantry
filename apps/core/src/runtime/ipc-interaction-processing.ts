@@ -515,8 +515,11 @@ export async function processUserQuestionInteractionIpc(input: {
   sourceAgentFolder: string;
   deps: IpcDeps;
   ipcBaseDir: string;
-  file: string;
-  claimedPath: string;
+  // file/claimedPath are present only on the fs-watcher path. On the socket
+  // path (Pillar 1) the request arrives as a frame with no backing file, so
+  // both are optional and the fs cleanup/archival below is guarded.
+  file?: string;
+  claimedPath?: string;
   logger: IpcInteractionLogger;
 }): Promise<void> {
   try {
@@ -537,7 +540,7 @@ export async function processUserQuestionInteractionIpc(input: {
         input.request.responseKeyId,
       ),
     );
-    fs.unlinkSync(input.claimedPath);
+    if (input.claimedPath) fs.unlinkSync(input.claimedPath);
   } catch (err) {
     writeUserQuestionInteractionFailure({
       ipcBaseDir: input.ipcBaseDir,
@@ -551,11 +554,13 @@ export async function processUserQuestionInteractionIpc(input: {
       { file: input.file, sourceAgentFolder: input.sourceAgentFolder, err },
       'Error processing user question IPC request',
     );
-    archiveIpcErrorFile(
-      input.ipcBaseDir,
-      input.sourceAgentFolder,
-      input.file,
-      input.claimedPath,
-    );
+    if (input.file && input.claimedPath) {
+      archiveIpcErrorFile(
+        input.ipcBaseDir,
+        input.sourceAgentFolder,
+        input.file,
+        input.claimedPath,
+      );
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
   UserQuestionResponse,
 } from '../domain/types.js';
 import { signIpcResponsePayload } from '../infrastructure/ipc/response-signing.js';
+import { takeIpcResponder } from './ipc-response-router.js';
 import {
   ensurePrivateDirSync,
   protectOwnerReadonlyFileSync,
@@ -137,6 +138,20 @@ export function writeUserQuestionIpcResponse(
     ...(response.answeredBy ? { answeredBy: response.answeredBy } : {}),
   });
   if (!payload) return;
+  // Router-aware delivery (Pillar 1): when the socket server has registered a
+  // responder for this request, hand it the exact signed object and skip the
+  // file write. With no responder registered the behaviour is byte-identical to
+  // the pre-router filesystem path. The fail-closed early return above (no
+  // signing key) happens BEFORE the responder is taken, mirroring the memory
+  // writer — so a no-key call leaves the responder registered to time out.
+  const responder = takeIpcResponder(
+    sourceAgentFolder,
+    `userq-${response.requestId}`,
+  );
+  if (responder) {
+    responder(payload);
+    return;
+  }
   writePrivateFileSync(tmpPath, JSON.stringify(payload, null, 2));
   if (fs.existsSync(responsePath)) {
     fs.rmSync(tmpPath, { force: true });

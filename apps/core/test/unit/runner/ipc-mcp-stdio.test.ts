@@ -1816,5 +1816,72 @@ describe(
         false,
       );
     });
+
+    it('routes send_message over the socket as a fire-and-forget frame (host receives it, no fs file)', async () => {
+      // Capture the host-side delivery: in socket mode the grandchild calls
+      // client.send('message', signedEnvelope) instead of writing a messages/
+      // file, and the server's deps.sendMessage fires with the folder-owned JID.
+      const sendMessage = vi.fn(async () => undefined);
+      const routes: Record<string, ConversationRoute> = {
+        [SOCKET_CHAT_JID]: {
+          name: 'Team',
+          folder: SOCKET_FOLDER,
+          trigger: '',
+          added_at: new Date().toISOString(),
+        },
+      };
+      const deps = {
+        sendMessage,
+        conversationRoutes: () => routes,
+        registerGroup: vi.fn(),
+        syncGroups: vi.fn(async () => undefined),
+        getAvailableGroups: vi.fn(() => []),
+        writeGroupsSnapshot: vi.fn(),
+        onSchedulerChanged: vi.fn(),
+        requestPermissionApproval: vi.fn(async () => ({}) as never),
+        requestUserAnswer: vi.fn(async () => ({}) as never),
+        opsRepository: {} as never,
+      } as unknown as IpcDeps;
+
+      const auth = createIpcAuthEnvelope(SOCKET_FOLDER, SOCKET_THREAD_ID);
+      const handle = await startIpcSocketServer(deps, { socketPath });
+      if (!handle) throw new Error('socket server failed to start');
+      socketServer = handle;
+
+      const fixture = createMcpFixture();
+      const result = await runMcpFixture(
+        fixture,
+        'send_message',
+        { text: 'live progress update' },
+        {
+          GANTRY_IPC_TRANSPORT: 'socket',
+          GANTRY_IPC_SOCKET_PATH: socketPath,
+          GANTRY_GROUP_FOLDER: SOCKET_FOLDER,
+          GANTRY_CHAT_JID: SOCKET_CHAT_JID,
+          GANTRY_THREAD_ID: SOCKET_THREAD_ID,
+          GANTRY_IPC_AUTH_TOKEN: auth.authToken,
+          GANTRY_IPC_RESPONSE_VERIFY_KEY: auth.responseVerifyKey,
+          GANTRY_IPC_RESPONSE_KEY_ID: auth.responseKeyId,
+          TEST_MCP_AUTO_RESPOND_TASKS: '0',
+        },
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+
+      // The host received the message over the socket (fire-and-forget). The
+      // grandchild may exit before the frame is fully processed host-side, so
+      // poll briefly for the delivery.
+      const deadline = Date.now() + 3000;
+      while (sendMessage.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      const [jidArg, textArg] = sendMessage.mock.calls[0];
+      expect(jidArg).toBe(SOCKET_CHAT_JID);
+      expect(textArg).toBe('live progress update');
+
+      // No fs messages file was written — pure socket path.
+      expect(fs.existsSync(path.join(fixture.ipcDir, 'messages'))).toBe(false);
+    });
   },
 );
