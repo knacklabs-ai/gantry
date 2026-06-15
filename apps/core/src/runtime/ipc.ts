@@ -22,6 +22,7 @@ import { parseTaskIpcData } from './ipc-task-parsing.js';
 import { clearConsumedIpcRequestIds } from './ipc-auth-validation.js';
 import { processBrowserRequestDirectory } from './ipc-browser-requests.js';
 import { canProcessIpcFile, clearIpcRateLimitState } from './ipc-rate-limit.js';
+import { clearIpcResponders } from './ipc-response-router.js';
 import type { ConversationRoute as RuntimeGroupRecord } from '../domain/types.js';
 export type { IpcDeps } from './ipc-domain-types.js';
 export { isPendingIpcJsonFile } from './ipc-filesystem.js';
@@ -747,6 +748,7 @@ export function stopIpcWatcher(): void {
   clearIpcRateLimitState();
   inFlightInteractionIpc.clear();
   clearConsumedIpcRequestIds();
+  clearIpcResponders();
   releaseIpcRootLock();
   logger.info('IPC watcher stopped');
 }

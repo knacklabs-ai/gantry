@@ -13,6 +13,7 @@ import {
 } from '../infrastructure/service/manager.js';
 import { toTrimmedString } from '../shared/object.js';
 import { getIpcResponseSigningPrivateKey } from '../runtime/ipc-auth.js';
+import { takeIpcResponder } from '../runtime/ipc-response-router.js';
 
 const TASK_IPC_RESPONSE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 export { toTrimmedString };
@@ -57,7 +58,13 @@ export function writeTaskIpcResponse(
   );
   const signature = signIpcResponsePayload(privateKeyPem, responsePayload);
   if (!signature) return;
-  writeJsonAtomic(responsePath, { ...responsePayload, signature });
+  const signed = { ...responsePayload, signature };
+  const responder = takeIpcResponder(sourceAgentFolder, `task-${taskId}`);
+  if (responder) {
+    responder(signed);
+    return;
+  }
+  writeJsonAtomic(responsePath, signed);
 }
 
 export function createTaskResponder(
