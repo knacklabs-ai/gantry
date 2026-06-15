@@ -1359,6 +1359,125 @@ describe('GroupQueue', () => {
     expect(processed).toContain('group4@g.us');
   });
 
+  // --- Continuation-delivery seam (Task A): an injected carrier replaces the
+  // default fs writers, receiving the correct target/text/sequence and doing
+  // NO fs write itself. ---
+
+  it('routes sendMessage/closeStdin through an injected continuation carrier (no fs write)', async () => {
+    const fs = await import('fs');
+    const deliverContinuation = vi.fn(() => true);
+    const deliverClose = vi.fn();
+    queue = new GroupQueue({
+      continuationDelivery: { deliverContinuation, deliverClose },
+    });
+
+    let resolveProcess: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us::thread:thread-a');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us::thread:thread-a',
+      {} as any,
+      'run-77',
+      'team-folder',
+      'group1@g.us',
+      'thread-a',
+    );
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+
+    // sendMessage → deliverContinuation with the full target + text + sequence.
+    expect(
+      queue.sendMessage('group1@g.us::thread:thread-a', 'hello world', {
+        threadId: 'thread-a',
+      }),
+    ).toBe(true);
+    expect(deliverContinuation).toHaveBeenCalledTimes(1);
+    const [contTarget, contText, contSeq] = deliverContinuation.mock.calls[0];
+    expect(contTarget).toEqual({
+      groupFolder: 'team-folder',
+      chatJid: 'group1@g.us',
+      threadId: 'thread-a',
+      runHandle: 'run-77',
+    });
+    expect(contText).toBe('hello world');
+    expect(contSeq).toBe(0);
+
+    // closeStdin → deliverClose with the same target construction.
+    queue.closeStdin('group1@g.us::thread:thread-a');
+    expect(deliverClose).toHaveBeenCalledTimes(1);
+    expect(deliverClose.mock.calls[0][0]).toEqual({
+      groupFolder: 'team-folder',
+      chatJid: 'group1@g.us',
+      threadId: 'thread-a',
+      runHandle: 'run-77',
+    });
+
+    // The injected carrier replaced the default — no fs writes occurred.
+    expect(writeFileSync).not.toHaveBeenCalled();
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('returns the injected carrier deliverContinuation result from sendMessage', async () => {
+    const deliverContinuation = vi.fn(() => false);
+    const deliverClose = vi.fn();
+    queue = new GroupQueue({
+      continuationDelivery: { deliverContinuation, deliverClose },
+    });
+
+    let resolveProcess: () => void;
+    queue.setProcessMessagesFn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess('group1@g.us', {} as any, 'run-1', 'team-folder');
+
+    // Carrier reports "not delivered" → sendMessage propagates false.
+    expect(queue.sendMessage('group1@g.us', 'hello')).toBe(false);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('setContinuationDelivery swaps the carrier after construction', async () => {
+    const deliverContinuation = vi.fn(() => true);
+    const deliverClose = vi.fn();
+
+    let resolveProcess: () => void;
+    queue.setProcessMessagesFn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess('group1@g.us', {} as any, 'run-1', 'team-folder');
+
+    // Default (fs) carrier is in place at construction; swap it now.
+    queue.setContinuationDelivery({ deliverContinuation, deliverClose });
+
+    expect(queue.sendMessage('group1@g.us', 'after swap')).toBe(true);
+    expect(deliverContinuation).toHaveBeenCalledTimes(1);
+    expect(deliverContinuation.mock.calls[0][1]).toBe('after swap');
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   it('stopGroup returns false when no active run exists', () => {
     expect(queue.stopGroup('group1@g.us')).toBe(false);
   });

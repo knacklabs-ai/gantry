@@ -2,9 +2,10 @@ import { ChildProcess } from 'child_process';
 
 import { logger } from '../infrastructure/logging/logger.js';
 import {
-  writeCloseSignal,
-  writeContinuationInput,
-} from './continuation-input.js';
+  fsContinuationDelivery,
+  type ContinuationDelivery,
+  type ContinuationTarget,
+} from './continuation-delivery.js';
 import { stopActiveGroupRun } from './group-queue-stop.js';
 import {
   normalizeThreadQueueId,
@@ -46,6 +47,13 @@ export interface GroupQueueOptions {
   maxMessageRuns?: number;
   maxJobRuns?: number;
   setTimeoutFn?: typeof setTimeout;
+  /**
+   * Carrier for continuation follow-ups + close signals. Defaults to the
+   * filesystem mailbox (today's behavior, byte-identical). The socket server
+   * (started after the queue is built) swaps in a push carrier via
+   * {@link GroupQueue.setContinuationDelivery}.
+   */
+  continuationDelivery?: ContinuationDelivery;
 }
 
 interface GroupState {
@@ -74,6 +82,7 @@ export class GroupQueue {
   private waitingMessageGroups: string[] = [];
   private waitingTaskGroups: string[] = [];
   private continuationSequence = 0;
+  private continuationDelivery: ContinuationDelivery;
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private shuttingDown = false;
@@ -93,6 +102,8 @@ export class GroupQueue {
       maxJobRuns: normalizePositiveInteger(options.maxJobRuns, MAX_JOB_RUNS),
     };
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
+    this.continuationDelivery =
+      options.continuationDelivery ?? fsContinuationDelivery;
   }
 
   getPolicy(): GroupQueuePolicy {
@@ -124,6 +135,15 @@ export class GroupQueue {
 
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
     this.processMessagesFn = fn;
+  }
+
+  /**
+   * Swap the continuation carrier after construction. The IPC socket server is
+   * started after the queue is built, so the push carrier is injected here
+   * (symmetric with {@link setProcessMessagesFn}).
+   */
+  setContinuationDelivery(delivery: ContinuationDelivery): void {
+    this.continuationDelivery = delivery;
   }
 
   private canStartMessageRun(): boolean {
@@ -381,16 +401,22 @@ export class GroupQueue {
       return false;
     }
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
+    const target: ContinuationTarget = {
+      groupFolder: state.groupFolder,
+      chatJid: parseThreadQueueKey(groupJid).chatJid,
+      // incomingThreadId === state.threadId here (guarded above), so this is
+      // byte-identical to the prior `incomingThreadId` write argument.
+      threadId: state.threadId ?? null,
+      runHandle: state.runHandle ?? null,
+    };
     try {
-      writeContinuationInput(
-        state.groupFolder,
-        parseThreadQueueKey(groupJid).chatJid,
+      const delivered = this.continuationDelivery.deliverContinuation(
+        target,
         text,
         this.continuationSequence++,
-        incomingThreadId,
       );
       state.continuationHandler?.();
-      return true;
+      return delivered;
     } catch {
       return false;
     }
@@ -399,12 +425,14 @@ export class GroupQueue {
   closeStdin(groupJid: string): void {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return;
+    const target: ContinuationTarget = {
+      groupFolder: state.groupFolder,
+      chatJid: parseThreadQueueKey(groupJid).chatJid,
+      threadId: state.threadId ?? null,
+      runHandle: state.runHandle ?? null,
+    };
     try {
-      writeCloseSignal(
-        state.groupFolder,
-        parseThreadQueueKey(groupJid).chatJid,
-        state.threadId,
-      );
+      this.continuationDelivery.deliverClose(target);
     } catch {
       // ignore
     }

@@ -36,6 +36,22 @@ const ctrl: IpcWireFrame = {
   id: 'ctrl-1',
   payload: {},
 };
+// Continuation-push seam (Task A): the socket transport delivers continuation
+// follow-ups and close signals as `type:'push'` frames on these channels.
+const continuationPush: IpcWireFrame = {
+  v: 1,
+  type: 'push',
+  channel: 'continuation',
+  id: 'cont-1',
+  payload: { text: 'hi', threadId: null },
+};
+const closePush: IpcWireFrame = {
+  v: 1,
+  type: 'push',
+  channel: 'close',
+  id: 'close-1',
+  payload: { threadId: null },
+};
 
 describe('ipc-wire', () => {
   describe('round-trips', () => {
@@ -50,6 +66,14 @@ describe('ipc-wire', () => {
     });
     it('ctrl frame with ctrl field', () => {
       expect(parseWireFrame(encodeWireFrame(ctrl))).toEqual(ctrl);
+    });
+    it('push frame on the continuation channel (Task A seam)', () => {
+      expect(parseWireFrame(encodeWireFrame(continuationPush))).toEqual(
+        continuationPush,
+      );
+    });
+    it('push frame on the close channel (Task A seam)', () => {
+      expect(parseWireFrame(encodeWireFrame(closePush))).toEqual(closePush);
     });
   });
 
