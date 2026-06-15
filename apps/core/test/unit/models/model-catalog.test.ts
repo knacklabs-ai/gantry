@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SETUP_MODEL_ALIAS,
   findModelByRunnerModel,
+  listModelCatalogEntries,
   MEMORY_MODEL_DEFAULT_ALIASES,
   resolveModelSelection,
   resolveModelSelectionForWorkload,
@@ -62,6 +63,41 @@ describe('model catalog resolution', () => {
       runnerModel: 'gpt-5.4-mini',
     });
     expect(findModelByRunnerModel('gpt-5.5')?.responseFamily).toBe('openai');
+  });
+
+  it('resolves Bedrock and Vertex aliases through the DeepAgents lane', () => {
+    expect(resolveModelSelection('bedrock-oss')).toMatchObject({
+      ok: true,
+      alias: 'bedrock-oss',
+      runnerModel: 'openai.gpt-oss-120b-1:0',
+      entry: {
+        responseFamily: 'openai',
+        modelRoute: { id: 'bedrock' },
+      },
+    });
+    expect(resolveModelSelection('vertex')).toMatchObject({
+      ok: true,
+      alias: 'vertex',
+      runnerModel: 'google/gemini-3.5-flash',
+      entry: {
+        responseFamily: 'openai',
+        modelRoute: { id: 'vertex' },
+      },
+    });
+    expect(resolveModelSelection('bedrock-sonnet')).toMatchObject({
+      ok: false,
+      reason: 'unknown',
+    });
+  });
+
+  it('keeps Bedrock Anthropic models out of the OpenAI-compatible catalog', () => {
+    const bedrockEntries = listModelCatalogEntries().filter(
+      (entry) => entry.modelRoute.id === 'bedrock',
+    );
+    expect(bedrockEntries).not.toHaveLength(0);
+    expect(
+      bedrockEntries.map((entry) => entry.modelRoute.providerModelId),
+    ).not.toContain('us.anthropic.claude-sonnet-4-6');
   });
 
   it('scopes OpenAI chat models to chat and memory workloads, not jobs', () => {
@@ -124,6 +160,20 @@ describe('model catalog resolution', () => {
 
   it('rejects raw provider model IDs with actionable guidance', () => {
     expect(resolveModelSelection('moonshotai/kimi-k2.6')).toMatchObject({
+      ok: false,
+      reason: 'raw-provider-id',
+    });
+    expect(
+      resolveModelSelection('us.anthropic.claude-sonnet-4-6'),
+    ).toMatchObject({
+      ok: false,
+      reason: 'raw-provider-id',
+    });
+    expect(resolveModelSelection('google/gemini-3.5-flash')).toMatchObject({
+      ok: false,
+      reason: 'raw-provider-id',
+    });
+    expect(resolveModelSelection('openai.gpt-oss-120b')).toMatchObject({
       ok: false,
       reason: 'raw-provider-id',
     });

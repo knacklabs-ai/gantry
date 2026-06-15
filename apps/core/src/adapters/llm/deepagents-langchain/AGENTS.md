@@ -1,13 +1,17 @@
 # DeepAgents (LangChain) Execution Adapter
 
-`deepagents:langchain` execution adapter + adapter-owned runner. Selected when the
-resolved model's provider derives the DeepAgents engine — the OpenAI and OpenRouter
-providers (and future non-Claude providers). The engine is **derived from the
-model provider**, not a settable `agent_engine` field; Claude (the `anthropic`
-provider) runs on the Anthropic SDK lane and never reaches this adapter. This is an
-**approved provider-boundary path** (`.codex/architecture-map.json` +
-`architecture_rules.py`): DeepAgents / LangChain / `@langchain/openrouter` imports
-and `OPENAI_`/`ANTHROPIC_` env keys live only here.
+`deepagents:langchain` execution adapter + adapter-owned runner. It is the
+DeepAgents harness implementation for Gantry. Today, `agentHarness: auto`
+reaches this adapter when the resolved model route derives the DeepAgents lane:
+OpenAI, OpenRouter, Bedrock, Vertex, and other OpenAI-compatible providers. The
+full-parity plan adds public durable `agentHarness` / `agent_harness` selection
+with values `auto`, `anthropic_sdk`, and `deepagents`; `agentEngine` remains the
+effective read-only diagnostic after `auto` resolves, and `executionProviderId`
+stays internal/read-only diagnostic detail. Claude OAuth/subscription is
+Anthropic-SDK-only. This is an **approved provider-boundary path**
+(`.codex/architecture-map.json` + `architecture_rules.py`): DeepAgents /
+LangChain / `@langchain/openrouter` imports and `OPENAI_`/`ANTHROPIC_` env keys
+live only here.
 
 ## Model construction (library-driven, provider-driven)
 
@@ -20,28 +24,41 @@ modelCredentialEnv). `runner/model-factory.ts` selects the LangChain class from 
 provider string:
 
 - OpenAI-compatible providers (`openai` + `groq`/`deepseek`/`xai`/`together`/
-  `fireworks`/`cerebras`/`perplexity`/`gemini`):
+  `fireworks`/`cerebras`/`perplexity`/`gemini`/`bedrock`/`vertex`):
   `await initChatModel("openai:<id>", { apiKey, configuration: { baseURL }, streamUsage: true })`.
   The class prefix is **always** `openai:` (ChatOpenAI) — these hit OUR loopback
   gateway, not api.openai.com; the gateway routes to the real upstream by
   `pathSegment`. `baseURL` is the RAW loopback gateway base
   (`http://127.0.0.1:<port>/<seg>`, no `/v1`); the OpenAI SDK posts
   `<baseURL>/chat/completions`, and the gateway prepends each provider's real
-  `upstreamPathPrefix` (groq `/openai/v1`, fireworks `/inference/v1`, perplexity
-  ``, gemini `/v1beta/openai`, deepseek/xai/together/cerebras `/v1`). The gateway
-allowlist permits `/chat/completions`AND`/v1/chat/completions`for the
-DeepAgents lane; upstream confinement is enforced by`upstreamPathPrefix`.
-Adding a provider to `INIT_CHAT_MODEL_PROVIDERS`in`model-factory.ts`plus a
-registry + catalog entry is all that is required. Cache-read field varies by
-provider — the stream-normalizer reads`prompt_tokens_details.cached_tokens`,
-`prompt_cache_hit_tokens`(DeepSeek), and flat`cached_tokens` (Together).
+  `upstreamPathPrefix`: groq `/openai/v1`, fireworks `/inference/v1`,
+  perplexity no extra prefix, gemini `/v1beta/openai`, and
+  deepseek/xai/together/cerebras `/v1`. Bedrock resolves to the regional
+  Bedrock Runtime `/openai/v1` endpoint and, for this OpenAI-compatible route,
+  accepts only the Amazon Bedrock API-key credential mode; AWS credentials,
+  SigV4, and default-chain identity require a separate non-OpenAI Bedrock API
+  family lane. Vertex resolves its upstream prefix from encrypted Model Access
+  location/project fields at gateway request time, currently accepts only
+  `global`, and uses the OpenAI-compatible `v1` endpoint prefix under
+  `https://aiplatform.googleapis.com`; regional/multi-region Vertex routing is
+  deferred until explicitly implemented and verified. The gateway allowlist permits
+  `/chat/completions` and
+  `/v1/chat/completions` for the DeepAgents lane; upstream confinement is
+  enforced by `upstreamPathPrefix`. Adding a provider requires the factory
+  allowlist, provider registry, catalog entry, gateway auth/upstream behavior
+  when credentials are not a plain bearer key, and official-doc-backed tests for
+  the provider/model/API family pairing. Cache-read field varies by provider:
+  the stream-normalizer reads `prompt_tokens_details.cached_tokens`,
+  `prompt_cache_hit_tokens` (DeepSeek), and flat `cached_tokens` (Together).
   Memory workloads are NOT enabled for these in v1 (kept to gpt/kimi).
 - `openrouter`: `new ChatOpenRouter({ model: <id>, apiKey, baseURL: <gateway>/v1, streamUsage: true, sessionId? })`
   from `@langchain/openrouter` (`initChatModel` does not know `openrouter`).
   `ChatOpenRouter.buildUrl()` appends `/chat/completions` to `baseURL`, so the
   factory passes `<gateway>/v1` -> loopback `/openrouter/v1/chat/completions` ->
   `openrouter.ai/api/v1/chat/completions` (bearer auth).
-- `anthropic` is NOT a DeepAgents provider (Claude is SDK-only); the factory throws.
+- `anthropic` is NOT accepted by this adapter today; the factory throws. Do not
+  route Claude OAuth/subscription here. Any future Anthropic API-key DeepAgents
+  route must be explicit, official-doc-backed, gateway-brokered, and tested.
 
 The built `BaseChatModel` instance is passed to `createDeepAgent({ model })`.
 Loopback-URL + `gtw_`-token guards are enforced in the factory; the runtime
@@ -98,16 +115,18 @@ correct-by-construction:
 - `runner/mcp-tools.ts` — connects Gantry-owned MCP authority via
   `@langchain/mcp-adapters` `MultiServerMCPClient`: it spawns the Gantry facade
   stdio server (`GANTRY_MCP_SERVER_PATH`) with the projected env block, filters
-  the facade tools to the host-selected name set, and connects selected
-  third-party MCP servers (`GANTRY_MCP_CONFIG_FILE`). DeepAgents has no
-  autonomous MCP; this is the only place tools enter the graph.
+  the facade tools to the host-selected name set, and rejects any external
+  third-party MCP config in `GANTRY_MCP_CONFIG_FILE` until Gantry owns a
+  DNS-pinned dispatcher/proxy path. DeepAgents has no autonomous MCP; this is
+  the only place tools enter the graph.
 - `runner/gantry-mcp-env.ts` — builds the Gantry facade server env block from the
   runner's process env + `agentInput.allowedTools`, reusing the shared
   `gantry-mcp-tool-surface` selection helpers. Strips `browser_*` tools unless the
   host provided `GANTRY_BROWSER_IPC_AUTH_TOKEN` AND the agent selected `Browser`.
-- `runner/third-party-mcp-gate.ts` — wraps each selected third-party MCP tool with
-  the neutral runner tool gate (`runner/tool-gate-core.ts`) + the neutral
-  permission-IPC client (`runner/permission-ipc-client.ts`) before execution.
+- `runner/third-party-mcp-gate.ts` — contains the neutral runner tool gate for
+  future/proxy-provided third-party MCP tools (`runner/tool-gate-core.ts`) + the
+  neutral permission-IPC client (`runner/permission-ipc-client.ts`) before
+  execution.
 - `runner/builtin-tool-exclusion.ts` — a `langchain` `createMiddleware`
   `wrapModelCall` that strips `task` and `write_todos` from the model-visible
   tool list (see task/write_todos decision below).
@@ -123,8 +142,9 @@ Projected tool inventory for a run, all reachable only through Gantry policy:
   the Gantry facade stdio MCP server, filtered to `selectedGantryMcpToolNames`.
 - **Canonical Browser gateway tools** (`browser_status/open/inspect/act/close`):
   same server, mounted only when browser IPC is enabled.
-- **Selected third-party MCP tools** (`mcp__<server>__<tool>`): from
-  `GANTRY_MCP_CONFIG_FILE` servers, each wrapped with the permission gate.
+- **Third-party MCP tools** (`mcp__<server>__<tool>`): not projected directly to
+  DeepAgents today. Keep them behind Gantry-owned proxy/facade paths until a
+  DNS-pinned dispatcher exists.
 
 Third-party MCP permission flow (end to end): the wrapped tool's `func` runs the
 neutral pre-checks (protected-capability + memory-boundary hard denials), then
@@ -160,8 +180,15 @@ egress-proxy env). NEVER swap in a deepagents execution backend (it throws when
 `createDeepAgent` itself uses a `wrapModelCall` middleware to exclude tools (its
 private `_ToolExclusionMiddleware`); we use the identical supported pattern via
 the public `middleware` param to strip `task` and `write_todos` from the
-model-visible tool list, so the model can never call them. v1-SAFEST: `task`
-sub-runs are not policy-reviewed, so the spawner must not be reachable.
+model-visible tool list today. Planned full-parity contract: `task` is
+re-enabled only behind a Gantry delegation wrapper mapped to durable
+`AgentDelegation` authority. The wrapper must evaluate Gantry policy before any
+DeepAgents subagent task is invoked; a denied delegation request returns a denial
+to the model and never calls raw `task`. Subagent definitions are host-resolved,
+the model cannot persist durable subagent identities, and subagent tool scopes
+replace rather than merge with parent tools. Raw DeepAgents tool names are
+adapter-private and are not user-facing authority. Until that wrapper
+implementation lands, keep stripping `task` and keep the raw spawner unreachable.
 
 rg guard: this directory reads NO raw DeepAgents/MCP `.mcp.json` authority file —
 `rg -n "\.mcp\.json" apps/core/src/adapters/llm/deepagents-langchain` must be
@@ -186,7 +213,9 @@ v1 lane does not need) and delegates its protected-capability guard to
 
 - Model credentials reach the runner ONLY via the loopback gateway env
   (`runnerInputPatch.modelCredentialEnv`); never via `toolNetworkEnv`. Tokens are
-  run-scoped `gtw_` gateway tokens, never raw provider secrets.
+  run-scoped `gtw_` gateway tokens, never raw provider secrets. Bedrock API keys,
+  AWS access keys/session tokens, Vertex service-account JSON, and gateway-minted
+  OAuth access tokens stay host-side inside the Gantry Model Gateway.
 - Context-window figures are reported at runtime from `model.profile`
   (`maxInputTokens`); never hardcode them (catalog deepagents entries omit them).
 - Frames must match the host parser (`runner/runner-frame.ts`, mirrors
@@ -237,7 +266,11 @@ newSessionId, sessionInit:true}` so the host persists the provider session
   backstop. `deepagents-raw-authority-denial.test.ts` asserts this against the
   ACTUAL `createDeepAgent` model surface (a fake model's `bindTools` captures the
   post-middleware tool list), with a negative control proving the baked-in tools
-  appear without the exclusion middleware.
+  appear without the exclusion middleware. When `AgentDelegation` and Gantry file
+  facade wrappers land, raw DeepAgents names still stay hidden: delegation maps
+  to Gantry-owned `AgentDelegation`, and filesystem access maps to `FileSearch`,
+  `FileRead`, `FileEdit`, and `FileWrite` with protected-path, symlink, sandbox,
+  and audit enforcement.
 - Scheduled-job heartbeat parity (`runner/job-heartbeat.ts`): scheduled runs
   emit a `JOB_HEARTBEAT` runtime-event frame every 15s (same shape as the
   Anthropic `job-heartbeat.ts`) so the host idle-stall detection

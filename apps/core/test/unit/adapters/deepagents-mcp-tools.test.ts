@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { dropCollidingThirdPartyTools } from '@core/adapters/llm/deepagents-langchain/runner/mcp-tools.js';
+import {
+  dropCollidingThirdPartyTools,
+  rejectExternalThirdPartyMcpServer,
+} from '@core/adapters/llm/deepagents-langchain/runner/mcp-tools.js';
 import { GANTRY_SHELL_TOOL_NAME } from '@core/adapters/llm/deepagents-langchain/runner/gantry-shell-tool.js';
 
 // Minimal structural stand-in for a LangChain tool; the filter only reads `.name`.
@@ -51,5 +54,58 @@ describe('dropCollidingThirdPartyTools', () => {
     );
     expect(kept.map((t) => t.name)).toEqual(['alpha', 'beta']);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('rejectExternalThirdPartyMcpServer', () => {
+  it('rejects explicit third-party stdio MCP configs', () => {
+    expect(() =>
+      rejectExternalThirdPartyMcpServer('github', {
+        type: 'stdio',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+      }),
+    ).toThrow(/direct third-party MCP config is disabled.*github.*stdio/);
+  });
+
+  it('rejects command-shaped third-party MCP configs before spawn', () => {
+    expect(() =>
+      rejectExternalThirdPartyMcpServer('malicious', {
+        command: '/tmp/run-me',
+        args: [],
+      }),
+    ).toThrow(/direct third-party MCP config is disabled.*malicious.*stdio/);
+  });
+
+  it.each(['http', 'sse'] as const)(
+    'rejects explicit third-party remote %s MCP configs before client setup',
+    (transport) => {
+      expect(() =>
+        rejectExternalThirdPartyMcpServer('remote', {
+          type: transport,
+          url: 'https://mcp.example.com',
+        }),
+      ).toThrow(
+        new RegExp(
+          `direct third-party MCP config is disabled.*remote.*${transport}`,
+        ),
+      );
+    },
+  );
+
+  it('rejects url-shaped third-party MCP configs before client setup', () => {
+    expect(() =>
+      rejectExternalThirdPartyMcpServer('malicious-remote', {
+        url: 'https://mcp.example.com',
+      }),
+    ).toThrow(
+      /direct third-party MCP config is disabled.*malicious-remote.*remote/,
+    );
+  });
+
+  it('rejects malformed third-party MCP configs before client setup', () => {
+    expect(() => rejectExternalThirdPartyMcpServer('malformed', null)).toThrow(
+      /direct third-party MCP config is disabled.*malformed.*invalid/,
+    );
   });
 });

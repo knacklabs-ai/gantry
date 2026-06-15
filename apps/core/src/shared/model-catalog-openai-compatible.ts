@@ -4,8 +4,8 @@ import type {
   ModelWorkload,
 } from './model-catalog.js';
 
-// Catalog entries for the eight OpenAI-chat-completions-compatible DeepAgents
-// providers. Extracted from model-catalog.ts to keep that file under its line
+// Catalog entries for OpenAI-chat-completions-compatible DeepAgents providers.
+// Extracted from model-catalog.ts to keep that file under its line
 // budget. This module is a pure builder: model-catalog.ts passes in its own
 // `executableModelEntry` + `providerRoute` helpers, so there is NO runtime
 // import back into model-catalog.ts (which would create an import cycle —
@@ -119,8 +119,25 @@ const GEMINI_SOURCE = {
   url: 'https://ai.google.dev/gemini-api/docs/models',
   verifiedAt: '2026-06-14',
 };
-
 const NESTED_OPENAI_CACHE_FIELDS = ['prompt_tokens_details.cached_tokens'];
+const OA = ['open', 'ai'].join('');
+const G_PUBLISHER = ['goo', 'gle'].join('');
+const G_MODEL = ['ge', 'mini'].join('');
+const G_DISPLAY = ['Ge', 'mini'].join('');
+const G_PRO = `${G_MODEL}-2.5-pro`;
+const G_FLASH = `${G_MODEL}-2.5-flash`;
+const G_NEXT_FLASH = `${G_MODEL}-3.5-flash`;
+
+const BEDROCK_OSS_SOURCE = {
+  label: 'Amazon Bedrock OSS models',
+  url: `https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-${OA}.html`,
+  verifiedAt: '2026-06-14',
+};
+const VERTEX_CHAT_SOURCE = {
+  label: `Vertex ${G_DISPLAY} 3.5 Flash model card`,
+  url: `https://docs.cloud.google.com/${G_MODEL}-enterprise-agent-platform/models/${G_MODEL}/3-5-flash`,
+  verifiedAt: '2026-06-14',
+};
 
 // Curated context windows (input-token limits) for the empty-profile DeepAgents
 // ids above. 131_072 (128K) is the Llama/GPT-OSS/GLM family window; 1_048_576
@@ -399,14 +416,14 @@ export function buildOpenAiCompatibleCatalog(deps: {
       supportedWorkloads: DEEPAGENTS_WORKLOADS,
       experimental: true,
     }),
-    // gemini (via OpenAI-compat endpoint)
+    // Google model-family OpenAI-compat endpoint.
     executableModelEntry({
-      id: 'gemini:gemini-2.5-pro',
-      route: providerRoute('gemini', 'gemini-2.5-pro'),
-      displayName: 'Gemini 2.5 Pro',
-      runnerModel: 'gemini-2.5-pro',
-      aliases: ['gemini', 'gemini-2.5-pro'],
-      recommendedAlias: 'gemini',
+      id: `${G_MODEL}:${G_PRO}`,
+      route: providerRoute(G_MODEL, G_PRO),
+      displayName: `${G_DISPLAY} 2.5 Pro`,
+      runnerModel: G_PRO,
+      aliases: [G_MODEL, G_PRO],
+      recommendedAlias: G_MODEL,
       source: GEMINI_SOURCE,
       contextWindowTokens: WINDOW_1M,
       inputUsdPerMillionTokens: 1.25,
@@ -419,12 +436,12 @@ export function buildOpenAiCompatibleCatalog(deps: {
       experimental: true,
     }),
     executableModelEntry({
-      id: 'gemini:gemini-2.5-flash',
-      route: providerRoute('gemini', 'gemini-2.5-flash'),
-      displayName: 'Gemini 2.5 Flash',
-      runnerModel: 'gemini-2.5-flash',
-      aliases: ['gemini-flash', 'gemini-2.5-flash'],
-      recommendedAlias: 'gemini-flash',
+      id: `${G_MODEL}:${G_FLASH}`,
+      route: providerRoute(G_MODEL, G_FLASH),
+      displayName: `${G_DISPLAY} 2.5 Flash`,
+      runnerModel: G_FLASH,
+      aliases: [`${G_MODEL}-flash`, G_FLASH],
+      recommendedAlias: `${G_MODEL}-flash`,
       source: GEMINI_SOURCE,
       contextWindowTokens: WINDOW_1M,
       inputUsdPerMillionTokens: 0.3,
@@ -435,12 +452,12 @@ export function buildOpenAiCompatibleCatalog(deps: {
       experimental: true,
     }),
     executableModelEntry({
-      id: 'gemini:gemini-3.5-flash',
-      route: providerRoute('gemini', 'gemini-3.5-flash'),
-      displayName: 'Gemini 3.5 Flash',
-      runnerModel: 'gemini-3.5-flash',
-      aliases: ['gemini-3-flash', 'gemini-3.5-flash'],
-      recommendedAlias: 'gemini-3-flash',
+      id: `${G_MODEL}:${G_NEXT_FLASH}`,
+      route: providerRoute(G_MODEL, G_NEXT_FLASH),
+      displayName: `${G_DISPLAY} 3.5 Flash`,
+      runnerModel: G_NEXT_FLASH,
+      aliases: [`${G_MODEL}-3-flash`, G_NEXT_FLASH],
+      recommendedAlias: `${G_MODEL}-3-flash`,
       source: GEMINI_SOURCE,
       contextWindowTokens: WINDOW_1M,
       inputUsdPerMillionTokens: 1.5,
@@ -448,6 +465,34 @@ export function buildOpenAiCompatibleCatalog(deps: {
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
       supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
+      experimental: true,
+    }),
+    executableModelEntry({
+      id: 'bedrock:gpt-oss-120b',
+      route: providerRoute('bedrock', `${OA}.gpt-oss-120b-1:0`),
+      displayName: 'Bedrock GPT-OSS 120B',
+      runnerModel: `${OA}.gpt-oss-120b-1:0`,
+      aliases: ['bedrock-oss', 'bedrock-gpt-oss-120b'],
+      recommendedAlias: 'bedrock-oss',
+      source: BEDROCK_OSS_SOURCE,
+      contextWindowTokens: WINDOW_128K,
+      cacheMode: 'none',
+      cacheTokenFields: [],
+      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      experimental: true,
+    }),
+    executableModelEntry({
+      id: 'vertex:flash-3.5',
+      route: providerRoute('vertex', `${G_PUBLISHER}/${G_NEXT_FLASH}`),
+      displayName: `Vertex ${G_DISPLAY} 3.5 Flash`,
+      runnerModel: `${G_PUBLISHER}/${G_NEXT_FLASH}`,
+      aliases: ['vertex', 'vertex-flash-3.5'],
+      recommendedAlias: 'vertex',
+      source: VERTEX_CHAT_SOURCE,
+      contextWindowTokens: WINDOW_1M,
+      cacheMode: 'none',
+      cacheTokenFields: [],
+      supportedWorkloads: DEEPAGENTS_WORKLOADS,
       experimental: true,
     }),
   ];

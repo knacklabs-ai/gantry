@@ -538,10 +538,9 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     ],
     experimental: true,
   }),
-  // Eight OpenAI-chat-completions-compatible providers on the deepagents lane
-  // (groq, deepseek, xai, together, fireworks, cerebras, perplexity, gemini).
-  // Built in a sibling module to keep this file under its line budget; the
-  // builder takes the local helpers so there is no import cycle back here.
+  // Additional OpenAI-chat-completions-compatible providers on the deepagents
+  // lane. Built in a sibling module to keep this file under its line budget;
+  // the builder takes the local helpers so there is no import cycle back here.
   ...buildOpenAiCompatibleCatalog({ executableModelEntry, providerRoute }),
 ];
 
@@ -558,6 +557,7 @@ function looksLikeRawProviderModelId(input: string): boolean {
   const value = input.trim().toLowerCase();
   if (!value) return false;
   if (/^claude-[a-z0-9][a-z0-9._-]*$/.test(value)) return true;
+  if (/^[a-z0-9][a-z0-9._-]*\.[a-z0-9][a-z0-9._:-]*$/.test(value)) return true;
   return /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/.test(value);
 }
 

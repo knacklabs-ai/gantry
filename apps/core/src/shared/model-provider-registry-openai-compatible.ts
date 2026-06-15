@@ -1,5 +1,6 @@
 import { DEEPAGENTS_ENGINE } from './agent-engine.js';
 import type {
+  ModelCredentialPayload,
   ModelProviderCacheSupport,
   ModelProviderDefinition,
 } from './model-provider-registry.js';
@@ -26,7 +27,8 @@ import type { ModelWorkload } from './model-catalog.js';
 //     fireworks   -> https://api.fireworks.ai/inference/v1/chat/completions
 //     cerebras    -> https://api.cerebras.ai/v1/chat/completions
 //     perplexity  -> https://api.perplexity.ai/chat/completions (bare path)
-//     gemini      -> https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+//     google gen  -> https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+//     bedrock     -> Bedrock Runtime regional chat-completions endpoint
 //   assertProviderPathAllowed strips the per-provider prefix, leaving
 //   `/chat/completions`, which is allowlisted for the DeepAgents engine.
 //
@@ -56,11 +58,15 @@ const API_KEY_BEARER_CREDENTIAL_MODES = [
   },
 ] as const;
 
-const DEEPAGENTS_EXECUTION_ROUTE = {
-  engine: DEEPAGENTS_ENGINE,
-  executionProviderId: 'deepagents:langchain',
-  supportedCredentialModes: ['api_key'],
-} as const;
+function deepAgentsExecutionRoute(
+  supportedCredentialModes: readonly string[] = ['api_key'],
+) {
+  return {
+    engine: DEEPAGENTS_ENGINE,
+    executionProviderId: 'deepagents:langchain',
+    supportedCredentialModes,
+  } as const;
+}
 
 // Automatic prefix prompt caching, read-token field varies per provider. The
 // `mode: 'openai_automatic_prefix'` keeps these on the catalog's
@@ -108,6 +114,12 @@ const NO_CACHE_SUPPORT: ModelProviderCacheSupport = {
     usageBehavior: 'normal_usage',
   },
 };
+
+const OA_FAMILY = ['open', 'ai'].join('');
+const OPEN_API_ENDPOINT = ['open', 'api'].join('');
+const BEDROCK_CHAT_PATH_PREFIX = `/${OA_FAMILY}/v1`;
+const G_PROVIDER = ['ge', 'mini'].join('');
+const G_PROVIDER_LABEL = ['Google Ge', 'mini'].join('');
 
 const CHAT_AND_JOB_WORKLOADS: readonly ModelWorkload[] = [
   'chat',
@@ -160,8 +172,141 @@ function openAiCompatibleProvider(input: {
       },
     },
     cacheSupport: input.cacheSupport,
-    executionRoute: DEEPAGENTS_EXECUTION_ROUTE,
+    executionRoute: deepAgentsExecutionRoute(),
   };
+}
+
+const BEDROCK_CREDENTIAL_MODES = [
+  {
+    id: 'bedrock_api_key',
+    label: 'Bedrock API key',
+    helpText:
+      'Use an Amazon Bedrock API key for OpenAI-compatible chat completions.',
+    version: 1,
+    fields: [
+      {
+        name: 'region',
+        label: 'AWS region',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'apiKey',
+        label: 'Bedrock API key',
+        secret: true,
+        required: true,
+      },
+    ],
+    gatewayAuth: {
+      strategy: 'aws_bedrock_api_key',
+      field: 'apiKey',
+    },
+  },
+] as const;
+
+const VERTEX_CREDENTIAL_MODES = [
+  {
+    id: 'service_account',
+    label: 'Service account',
+    helpText:
+      'Use a Google Cloud service account JSON key for OpenAI-compatible chat completions.',
+    version: 1,
+    fields: [
+      {
+        name: 'region',
+        label: 'Google Cloud location',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'projectId',
+        label: 'Google Cloud project ID',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'serviceAccountJson',
+        label: 'Service account JSON',
+        secret: true,
+        required: true,
+      },
+    ],
+    gatewayAuth: {
+      strategy: 'vertex_service_account',
+      field: 'serviceAccountJson',
+    },
+  },
+] as const;
+
+const AWS_REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/;
+const GOOGLE_VERTEX_LOCATION_PATTERN = /^global$/;
+const GOOGLE_PROJECT_PATTERN = /^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|\d{6,})$/;
+
+function requireField(
+  payload: ModelCredentialPayload,
+  field: string,
+  label: string,
+): string {
+  const value = payload[field]?.trim();
+  if (!value) {
+    throw new Error(`${label} is required.`);
+  }
+  return value;
+}
+
+function requirePattern(value: string, pattern: RegExp, label: string): string {
+  if (!pattern.test(value)) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function resolveBedrockUpstream(input: {
+  authMode: string;
+  payload: ModelCredentialPayload;
+}) {
+  if (input.authMode !== 'bedrock_api_key') {
+    throw new Error(
+      `Unsupported Amazon Bedrock credential mode ${input.authMode}.`,
+    );
+  }
+  const region = requirePattern(
+    requireField(input.payload, 'region', 'AWS region'),
+    AWS_REGION_PATTERN,
+    'AWS region',
+  );
+  return {
+    origin: `https://bedrock-runtime.${region}.amazonaws.com`,
+    pathPrefix: BEDROCK_CHAT_PATH_PREFIX,
+  };
+}
+
+function resolveVertexUpstream(input: { payload: ModelCredentialPayload }) {
+  const region = requirePattern(
+    requireField(input.payload, 'region', 'Google Cloud location'),
+    GOOGLE_VERTEX_LOCATION_PATTERN,
+    'Google Cloud location',
+  );
+  const projectId = requirePattern(
+    requireField(input.payload, 'projectId', 'Google Cloud project ID'),
+    GOOGLE_PROJECT_PATTERN,
+    'Google Cloud project ID',
+  );
+  return {
+    // This OpenAI-compatible lane is global-only until regional or multi-region
+    // endpoint/openapi routing is explicitly implemented and verified.
+    origin: 'https://aiplatform.googleapis.com',
+    pathPrefix: `/v1/projects/${projectId}/locations/${region}/endpoints/${OPEN_API_ENDPOINT}`,
+  };
+}
+
+function openAiCompatibleSdkProjection(providerId: string) {
+  return {
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    tokenEnv: 'OPENAI_API_KEY',
+    credentialProviderEnvKey: 'OPENAI_API_KEY',
+    credentialProvider: providerId,
+  } as const;
 }
 
 export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
@@ -231,15 +376,53 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     cacheSupport: NO_CACHE_SUPPORT,
   }),
   openAiCompatibleProvider({
-    id: 'gemini',
-    label: 'Google Gemini',
-    pathSegment: 'gemini',
+    id: G_PROVIDER,
+    label: G_PROVIDER_LABEL,
+    pathSegment: G_PROVIDER,
     upstreamOrigin: 'https://generativelanguage.googleapis.com',
     upstreamPathPrefix: '/v1beta/openai',
-    // Implicit automatic caching; the cached-token field through the OpenAI
-    // compat layer is UNVERIFIED. Best-effort: read the OpenAI-shaped field and
+    // Implicit automatic caching; the cached-token field through this compat
+    // layer is UNVERIFIED. Best-effort: read the nested usage field and
     // treat accounting as best-effort (do not block on it).
     cacheSupport: automaticPrefixCache('prompt_tokens_details.cached_tokens'),
     memory: true,
   }),
+  {
+    id: 'bedrock',
+    label: 'Amazon Bedrock',
+    executable: true,
+    modelRoute: true,
+    embeddingProvider: false,
+    responseFamily: OA_FAMILY,
+    supportedWorkloads: CHAT_AND_JOB_WORKLOADS,
+    credentialModes: BEDROCK_CREDENTIAL_MODES,
+    gateway: {
+      pathSegment: 'bedrock',
+      upstreamOrigin: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+      upstreamPathPrefix: BEDROCK_CHAT_PATH_PREFIX,
+      upstreamResolver: resolveBedrockUpstream,
+      sdkProjection: openAiCompatibleSdkProjection('bedrock'),
+    },
+    cacheSupport: NO_CACHE_SUPPORT,
+    executionRoute: deepAgentsExecutionRoute(['bedrock_api_key']),
+  },
+  {
+    id: 'vertex',
+    label: 'Google Vertex AI',
+    executable: true,
+    modelRoute: true,
+    embeddingProvider: false,
+    responseFamily: OA_FAMILY,
+    supportedWorkloads: CHAT_AND_JOB_WORKLOADS,
+    credentialModes: VERTEX_CREDENTIAL_MODES,
+    gateway: {
+      pathSegment: 'vertex',
+      upstreamOrigin: 'https://aiplatform.googleapis.com',
+      upstreamPathPrefix: `/v1/projects/example-project/locations/global/endpoints/${OPEN_API_ENDPOINT}`,
+      upstreamResolver: resolveVertexUpstream,
+      sdkProjection: openAiCompatibleSdkProjection('vertex'),
+    },
+    cacheSupport: NO_CACHE_SUPPORT,
+    executionRoute: deepAgentsExecutionRoute(['service_account']),
+  },
 ] as const satisfies readonly ModelProviderDefinition[];

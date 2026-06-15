@@ -13,7 +13,7 @@ import { getModelProviderDefinition } from '../../../shared/model-provider-regis
 // the Anthropic SDK lane only. The host threads the resolved bound credential
 // mode through modelCredentialProjection.brokerAuthMode.
 const DEEPAGENTS_OAUTH_CREDENTIAL_MESSAGE =
-  'DeepAgents does not support Claude OAuth/subscription credentials in Gantry. Choose Anthropic SDK or configure Anthropic API-key Model Access.';
+  'DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.';
 
 export function validateDeepAgentCredentialProjection(input: {
   entry?: ModelCatalogEntry;
@@ -54,7 +54,9 @@ export function validateDeepAgentCredentialProjection(input: {
   }
   // Affirmative allowlist: the bound mode must be in the route's supported set.
   if (!supportedModes.includes(projection.brokerAuthMode)) {
-    throw new Error(DEEPAGENTS_OAUTH_CREDENTIAL_MESSAGE);
+    throw new Error(
+      `unsupported-credential-mode: ${agentEngineLabel(DEEPAGENTS_ENGINE)} does not support credential mode "${projection.brokerAuthMode}" for ${provider.label} Model Access.`,
+    );
   }
 
   // Defense in depth: no raw provider OAuth/auth tokens may ride in the

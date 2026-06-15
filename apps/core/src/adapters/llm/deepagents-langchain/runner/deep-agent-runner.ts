@@ -30,10 +30,11 @@ import { nowMs } from '../../../../shared/time/datetime.js';
 // StateBackend has no `execute` tool, and these deny-all rules block every
 // built-in filesystem tool (ls/read_file/write_file/edit_file/glob/grep). Never
 // pass LocalShellBackend/FilesystemBackend or any sandbox backend. All reachable
-// tools come ONLY from Gantry-owned MCP authority (facade tools + selected
-// third-party MCP, gated). The `task` subagent tool and `write_todos` are
-// excluded from the model-visible surface (see builtin-tool-exclusion.ts). No
-// raw DeepAgents MCP authority file is read anywhere in this lane.
+// tools come ONLY from Gantry-owned MCP authority (facade tools plus selected
+// first-party projections such as Browser). The `task` subagent tool and
+// `write_todos` are excluded from the model-visible surface (see
+// builtin-tool-exclusion.ts). External third-party MCP config is rejected in
+// this lane until Gantry owns a DNS-pinned dispatcher/proxy path.
 const DENY_ALL_FILESYSTEM: FilesystemPermission[] = [
   { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
 ];

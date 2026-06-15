@@ -11,7 +11,7 @@ import { GantryChatOpenRouter } from './gantry-chat-openrouter.js';
 // provider string selects the LangChain class, not which env var is set.
 //
 // - openai-compatible providers (`openai` + groq/deepseek/xai/together/
-//   fireworks/cerebras/perplexity/gemini): built with `initChatModel("openai:
+//   fireworks/cerebras/perplexity/gemini/bedrock/vertex): built with `initChatModel("openai:
 //   <id>", ...)` regardless of the real upstream provider, because we hit OUR
 //   loopback gateway (not api.openai.com); the gateway routes by pathSegment to
 //   the real upstream. `initChatModel` resolves ChatOpenAI and forwards `apiKey`
@@ -40,6 +40,8 @@ const INIT_CHAT_MODEL_PROVIDERS = new Set<string>([
   'cerebras',
   'perplexity',
   'gemini',
+  'bedrock',
+  'vertex',
 ]);
 
 export interface ResolvedRunnerModel {

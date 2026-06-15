@@ -651,12 +651,43 @@ describe('contracts package', () => {
     });
     expect(AgentEngineSchema.options).toHaveLength(2);
     expect(AgentEngineSchema.options).toContain('deepagents');
-    // The engine is derived from the model provider, so the update request no
-    // longer carries it; an unknown engine key is simply ignored, not rejected.
+    expect(
+      CreateAgentRequestSchema.parse({ appId: 'app-1', name: 'Operator' }),
+    ).toEqual({ appId: 'app-1', name: 'Operator' });
+    expect(UpdateAgentRequestSchema.parse({ name: 'Operator' })).toEqual({
+      name: 'Operator',
+    });
     expect(UpdateAgentRequestSchema.parse({ status: 'active' })).toEqual({
       status: 'active',
     });
     expectInvalid(CreateAgentRequestSchema, { appId: 'app-1', name: '' });
+    const forbiddenAgentRequestFields = [
+      'description',
+      'promptProfileRef',
+      'llmProfileId',
+      'toolIds',
+      'skillIds',
+      'permissionPolicyIds',
+      'sandboxProfileId',
+      'workspaceSnapshotId',
+      'runtimeLimits',
+      'metadata',
+      'agentEngine',
+      'agentHarness',
+      'executionProviderId',
+      'unexpectedField',
+    ];
+    for (const field of forbiddenAgentRequestFields) {
+      expectInvalid(CreateAgentRequestSchema, {
+        appId: 'app-1',
+        name: 'Operator',
+        [field]: 'deepagents',
+      });
+      expectInvalid(UpdateAgentRequestSchema, {
+        status: 'active',
+        [field]: 'deepagents',
+      });
+    }
     expect(
       ProviderSessionResponseSchema.parse({
         provider: 'anthropic:claude-agent-sdk',

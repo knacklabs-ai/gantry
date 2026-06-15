@@ -51,6 +51,8 @@ describe('deepagents model factory', () => {
       'meta-llama/Llama-3.3-70B-Instruct-Turbo',
       'http://127.0.0.1:4567/together',
     ],
+    ['bedrock', 'openai.gpt-oss-120b-1:0', 'http://127.0.0.1:4567/bedrock'],
+    ['vertex', 'google/gemini-3.5-flash', 'http://127.0.0.1:4567/vertex'],
   ])(
     'builds a ChatOpenAI via the gateway baseURL for the %s provider (not ChatOpenRouter)',
     async (provider, modelId, providerBaseUrl) => {
@@ -153,6 +155,19 @@ describe('deepagents model factory', () => {
         gatewayToken,
       }),
     ).rejects.toThrow('does not support model provider');
+  });
+
+  it('rejects unknown providers outside the explicit DeepAgents allowlist', async () => {
+    await expect(
+      buildRunnerModel({
+        provider: 'unregistered-provider',
+        modelId: 'future-model',
+        gatewayBaseUrl: loopbackBaseUrl,
+        gatewayToken,
+      }),
+    ).rejects.toThrow(
+      'DeepAgents runner does not support model provider "unregistered-provider"',
+    );
   });
 
   it('rejects a non-loopback baseURL', async () => {

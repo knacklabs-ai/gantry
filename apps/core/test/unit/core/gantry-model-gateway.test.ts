@@ -3,6 +3,11 @@ import http from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { GantryModelGatewayBroker } from '@core/adapters/llm/anthropic-claude-agent/gantry-model-gateway.js';
+import { signAwsSigV4Request } from '@core/adapters/llm/anthropic-claude-agent/gantry-model-gateway-auth-sigv4.js';
+import {
+  clearVertexTokenCacheForTest,
+  getVertexServiceAccountBearerToken,
+} from '@core/adapters/llm/anthropic-claude-agent/gantry-model-gateway-auth-vertex.js';
 import type { AppId } from '@core/domain/app/app.js';
 import type {
   ModelCredential,
@@ -14,6 +19,23 @@ import {
   getModelProviderDefinition,
   type ModelCredentialModeDefinition,
 } from '@core/shared/model-provider-registry.js';
+
+const vertexGetAccessTokenMock = vi.hoisted(() =>
+  vi.fn(async () => ({ token: 'ya29.vertex-token' })),
+);
+const googleAuthOptionsMock = vi.hoisted(() => vi.fn());
+
+vi.mock('google-auth-library', () => ({
+  GoogleAuth: vi.fn().mockImplementation(function GoogleAuthMock(options) {
+    googleAuthOptionsMock(options);
+    return {
+      getClient: async () => ({
+        getAccessToken: vertexGetAccessTokenMock,
+        credentials: { expiry_date: Date.now() + 3_600_000 },
+      }),
+    };
+  }),
+}));
 
 const appId = 'default' as AppId;
 const anthropicBaseUrlKey = ['ANTHROPIC', 'BASE_URL'].join('_');
@@ -93,6 +115,9 @@ class MutableModelCredentialRepository implements ModelCredentialRepository {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vertexGetAccessTokenMock.mockClear();
+  googleAuthOptionsMock.mockClear();
+  clearVertexTokenCacheForTest();
 });
 
 function gatewayRequest(input: {
@@ -218,7 +243,167 @@ function gatewayRawPathRequest(input: {
   });
 }
 
+function vertexServiceAccountJson(projectId: string): string {
+  return JSON.stringify({
+    type: 'service_account',
+    project_id: projectId,
+    client_email: `${projectId}@example.iam.gserviceaccount.com`,
+    private_key:
+      '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n',
+  });
+}
+
 describe('GantryModelGatewayBroker', () => {
+  it('produces a stable Bedrock SigV4 known-answer signature', () => {
+    const headers: Record<string, string> = {
+      'content-type': ' application/json  ',
+      'x-amz-meta-z': ' last ',
+      'x-amz-meta-a': ' first   value ',
+    };
+
+    signAwsSigV4Request({
+      method: 'POST',
+      url: new URL(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions?b=two&a=one&a=zero&space=a%20b',
+      ),
+      headers,
+      body: Buffer.from('{"model":"openai.gpt-oss-120b-1:0"}'),
+      region: 'us-east-1',
+      service: 'bedrock',
+      credentials: {
+        accessKeyId: 'AKIDEXAMPLE',
+        secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+        sessionToken: 'session-token',
+      },
+      now: new Date('2026-06-14T12:34:56.000Z'),
+    });
+
+    expect(headers['x-amz-date']).toBe('20260614T123456Z');
+    expect(headers['x-amz-content-sha256']).toBe(
+      'e6f5b76929970d12f510677a95e505022a28268c8cfcc023e92171adbc006101',
+    );
+    expect(headers.authorization).toBe(
+      'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260614/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-meta-a;x-amz-meta-z;x-amz-security-token, Signature=9de8178ec3b808de2eb860072e16d957ba0bee0c621ba1242b9c387b9e372076',
+    );
+  });
+
+  it('signs literal plus signs in Bedrock SigV4 query strings as plus signs', () => {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+    };
+
+    signAwsSigV4Request({
+      method: 'POST',
+      url: new URL(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions?x=a+b&plus=%2B',
+      ),
+      headers,
+      body: Buffer.from('{"model":"openai.gpt-oss-120b-1:0"}'),
+      region: 'us-east-1',
+      service: 'bedrock',
+      credentials: {
+        accessKeyId: 'AKIDEXAMPLE',
+        secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+      },
+      now: new Date('2026-06-14T12:34:56.000Z'),
+    });
+
+    expect(headers.authorization).toBe(
+      'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260614/us-east-1/bedrock/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=ff3f5da667eb17cba3654b18053a2619b7c06f8473792b88fa907875beac0f74',
+    );
+  });
+
+  it('mints and caches Vertex service-account bearer tokens host-side', async () => {
+    const serviceAccountJson = vertexServiceAccountJson('other-project');
+
+    const firstToken = await getVertexServiceAccountBearerToken({
+      serviceAccountJson,
+      expectedProjectId: 'gantry-test',
+      nowMs: 1_000,
+    });
+    const secondToken = await getVertexServiceAccountBearerToken({
+      serviceAccountJson,
+      expectedProjectId: 'gantry-test',
+      nowMs: 2_000,
+    });
+
+    expect(firstToken).toBe('ya29.vertex-token');
+    expect(secondToken).toBe('ya29.vertex-token');
+    expect(vertexGetAccessTokenMock).toHaveBeenCalledTimes(1);
+    expect(googleAuthOptionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+        credentials: expect.objectContaining({
+          project_id: 'other-project',
+          client_email: 'other-project@example.iam.gserviceaccount.com',
+          token_uri: 'https://oauth2.googleapis.com/token',
+        }),
+      }),
+    );
+  });
+
+  it('rejects a malicious Vertex service-account token URI before GoogleAuth', async () => {
+    await expect(
+      getVertexServiceAccountBearerToken({
+        serviceAccountJson: JSON.stringify({
+          type: 'service_account',
+          project_id: 'other-project',
+          client_email: 'other-project@example.iam.gserviceaccount.com',
+          private_key:
+            '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n',
+          token_uri: 'https://evil.example/token',
+        }),
+        expectedProjectId: 'gantry-test',
+        nowMs: 1_000,
+      }),
+    ).rejects.toThrow('Invalid Vertex service account credential.');
+    expect(googleAuthOptionsMock).not.toHaveBeenCalled();
+    expect(vertexGetAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('times out a stuck Vertex service-account access-token request', async () => {
+    vi.useFakeTimers();
+    vertexGetAccessTokenMock.mockImplementationOnce(
+      () => new Promise<never>(() => undefined),
+    );
+    try {
+      const tokenPromise = getVertexServiceAccountBearerToken({
+        serviceAccountJson: vertexServiceAccountJson('gantry-test'),
+        expectedProjectId: 'gantry-test',
+        nowMs: 1_000,
+        tokenRequestTimeoutMs: 5,
+      });
+      const rejection = expect(tokenPromise).rejects.toThrow(
+        'Vertex service account token request timed out.',
+      );
+
+      await vi.advanceTimersByTimeAsync(5);
+      await rejection;
+      expect(vertexGetAccessTokenMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps the Vertex service-account token cache', async () => {
+    for (let index = 0; index < 129; index += 1) {
+      const projectId = `gantry-test-${index}`;
+      await getVertexServiceAccountBearerToken({
+        serviceAccountJson: vertexServiceAccountJson(projectId),
+        expectedProjectId: projectId,
+        nowMs: 1_000,
+      });
+    }
+
+    await getVertexServiceAccountBearerToken({
+      serviceAccountJson: vertexServiceAccountJson('gantry-test-0'),
+      expectedProjectId: 'gantry-test-0',
+      nowMs: 2_000,
+    });
+
+    expect(vertexGetAccessTokenMock).toHaveBeenCalledTimes(130);
+  });
+
   it('projects only a loopback URL and run-scoped token', async () => {
     const repo = new MutableModelCredentialRepository();
     repo.set('anthropic', 'sk-ant-upstream');
@@ -859,16 +1044,24 @@ describe('GantryModelGatewayBroker', () => {
     const originalModes = provider.credentialModes;
     const unsupportedMode: ModelCredentialModeDefinition = {
       ...originalModes[0]!,
-      id: 'sigv4',
-      label: 'SigV4',
+      id: 'aws_default_chain',
+      label: 'AWS default chain',
       helpText: 'Synthetic unsupported strategy.',
-      gatewayAuth: { strategy: 'aws_sigv4' },
+      fields: [
+        {
+          name: 'region',
+          label: 'AWS region',
+          secret: false,
+          required: true,
+        },
+      ],
+      gatewayAuth: { strategy: 'aws_sdk_default_chain' },
     };
     (
       provider as { credentialModes: readonly ModelCredentialModeDefinition[] }
     ).credentialModes = [unsupportedMode];
     const repo = new MutableModelCredentialRepository();
-    repo.setWithMode('anthropic', 'sigv4', { apiKey: 'unused-secret' });
+    repo.setWithMode('anthropic', 'aws_default_chain', { region: 'us-east-1' });
     const upstreamFetch = vi.fn(async () => new Response('should not call'));
     vi.stubGlobal('fetch', upstreamFetch);
     const broker = new GantryModelGatewayBroker(repo);
@@ -889,7 +1082,7 @@ describe('GantryModelGatewayBroker', () => {
 
       expect(response.status).toBe(502);
       expect(response.body).toContain(
-        'Model gateway auth strategy aws_sigv4 is not implemented',
+        'Model gateway auth strategy aws_sdk_default_chain is not implemented',
       );
       expect(upstreamFetch).not.toHaveBeenCalled();
     } finally {
@@ -1030,6 +1223,292 @@ describe('GantryModelGatewayBroker', () => {
     },
   );
 
+  it('routes Bedrock API-key mode through the regional OpenAI-compatible endpoint without forwarding client auth headers', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('bedrock', 'bedrock_api_key', {
+      region: 'us-east-1',
+      apiKey: 'bedrock-upstream-key',
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'bedrock',
+        },
+      });
+
+      expect(injection.env.OPENAI_BASE_URL).toMatch(
+        /^http:\/\/127\.0\.0\.1:\d+\/bedrock$/,
+      );
+      expect(injection.env.OPENAI_API_KEY).toMatch(/^gtw_/);
+
+      const response = await gatewayRequest({
+        url: `${injection.env.OPENAI_BASE_URL}/chat/completions`,
+        token: injection.env.OPENAI_API_KEY!,
+        headers: {
+          'x-amz-security-token': 'runner-controlled',
+          'x-goog-user-project': 'runner-project',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(upstreamFetch).toHaveBeenCalledWith(
+        new URL(
+          'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions',
+        ),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: 'Bearer bedrock-upstream-key',
+          }),
+        }),
+      );
+      const headers = upstreamFetch.mock.calls[0]![1]!.headers as Record<
+        string,
+        string
+      >;
+      expect(headers['x-amz-security-token']).toBeUndefined();
+      expect(headers['x-goog-user-project']).toBeUndefined();
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('rejects Bedrock access-key mode on the OpenAI-compatible provider route', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('bedrock', 'access_key', {
+      region: 'us-east-1',
+      accessKeyId: 'AKIATESTACCESSKEY',
+      secretAccessKey: 'test-secret-access-key',
+      sessionToken: 'session-token',
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      await expect(
+        broker.getInjection({
+          binding: {
+            profile: 'gantry',
+            purpose: 'model_runtime',
+            appId,
+            modelCredentialProviderId: 'bedrock',
+          },
+        }),
+      ).rejects.toThrow(
+        'Credential auth mode access_key is not supported for bedrock.',
+      );
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('routes Vertex service-account mode through the documented OpenAI-compatible location endpoint with a minted OAuth token', async () => {
+    const serviceAccountJson = JSON.stringify({
+      type: 'service_account',
+      project_id: 'gantry-test',
+      client_email: 'gantry-test@example.iam.gserviceaccount.com',
+      private_key:
+        '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n',
+    });
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('vertex', 'service_account', {
+      region: 'global',
+      projectId: 'gantry-test',
+      serviceAccountJson,
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'vertex',
+        },
+      });
+
+      const response = await gatewayRequest({
+        url: `${injection.env.OPENAI_BASE_URL}/chat/completions`,
+        token: injection.env.OPENAI_API_KEY!,
+      });
+
+      expect(response.status).toBe(200);
+      expect(vertexGetAccessTokenMock).toHaveBeenCalledTimes(1);
+      expect(googleAuthOptionsMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credentials: expect.objectContaining({
+            project_id: 'gantry-test',
+            client_email: 'gantry-test@example.iam.gserviceaccount.com',
+          }),
+        }),
+      );
+      expect(upstreamFetch).toHaveBeenCalledWith(
+        new URL(
+          'https://aiplatform.googleapis.com/v1/projects/gantry-test/locations/global/endpoints/openapi/chat/completions',
+        ),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: 'Bearer ya29.vertex-token',
+          }),
+        }),
+      );
+      const headers = upstreamFetch.mock.calls[0]![1]!.headers as Record<
+        string,
+        string
+      >;
+      expect(JSON.stringify(headers)).not.toContain('PRIVATE KEY');
+      expect(JSON.stringify(headers)).not.toContain(serviceAccountJson);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('rejects non-global Vertex locations before upstream fetch', async () => {
+    const serviceAccountJson = vertexServiceAccountJson('gantry-test');
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('vertex', 'service_account', {
+      region: 'us',
+      projectId: 'gantry-test',
+      serviceAccountJson,
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'vertex',
+        },
+      });
+
+      const response = await gatewayRequest({
+        url: `${injection.env.OPENAI_BASE_URL}/chat/completions`,
+        token: injection.env.OPENAI_API_KEY!,
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toContain('Google Cloud location is invalid.');
+      expect(upstreamFetch).not.toHaveBeenCalled();
+      expect(vertexGetAccessTokenMock).not.toHaveBeenCalled();
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('routes Vertex service-account JSON from a different owner project', async () => {
+    const serviceAccountJson = JSON.stringify({
+      type: 'service_account',
+      project_id: 'other-project',
+      client_email: 'other-project@example.iam.gserviceaccount.com',
+      private_key:
+        '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n',
+    });
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('vertex', 'service_account', {
+      region: 'global',
+      projectId: 'gantry-test',
+      serviceAccountJson,
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'vertex',
+        },
+      });
+
+      const response = await gatewayRequest({
+        url: `${injection.env.OPENAI_BASE_URL}/chat/completions`,
+        token: injection.env.OPENAI_API_KEY!,
+      });
+
+      expect(response.status).toBe(200);
+      expect(vertexGetAccessTokenMock).toHaveBeenCalledTimes(1);
+      expect(googleAuthOptionsMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credentials: expect.objectContaining({
+            project_id: 'other-project',
+            client_email: 'other-project@example.iam.gserviceaccount.com',
+            token_uri: 'https://oauth2.googleapis.com/token',
+          }),
+        }),
+      );
+      expect(upstreamFetch).toHaveBeenCalledWith(
+        new URL(
+          'https://aiplatform.googleapis.com/v1/projects/gantry-test/locations/global/endpoints/openapi/chat/completions',
+        ),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: 'Bearer ya29.vertex-token',
+          }),
+        }),
+      );
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('rejects a malicious Vertex service-account token URI before upstream fetch', async () => {
+    const serviceAccountJson = JSON.stringify({
+      type: 'service_account',
+      project_id: 'other-project',
+      client_email: 'other-project@example.iam.gserviceaccount.com',
+      private_key:
+        '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n',
+      token_uri: 'https://evil.example/token',
+    });
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('vertex', 'service_account', {
+      region: 'global',
+      projectId: 'gantry-test',
+      serviceAccountJson,
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'vertex',
+        },
+      });
+
+      const response = await gatewayRequest({
+        url: `${injection.env.OPENAI_BASE_URL}/chat/completions`,
+        token: injection.env.OPENAI_API_KEY!,
+      });
+
+      expect(response.status).toBe(502);
+      expect(response.body).toContain(
+        'Invalid Vertex service account credential.',
+      );
+      expect(upstreamFetch).not.toHaveBeenCalled();
+      expect(googleAuthOptionsMock).not.toHaveBeenCalled();
+      expect(vertexGetAccessTokenMock).not.toHaveBeenCalled();
+    } finally {
+      await broker.close();
+    }
+  });
+
   it('rejects a disallowed path on an OpenAI-compatible DeepAgents provider before upstream fetch', async () => {
     const repo = new MutableModelCredentialRepository();
     repo.set('groq', 'sk-groq-up');
@@ -1144,6 +1623,52 @@ describe('GantryModelGatewayBroker', () => {
           }),
         }),
       );
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('does not mint a Vertex token for requests rejected by the rate cap', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.setWithMode('vertex', 'service_account', {
+      region: 'global',
+      projectId: 'gantry-test',
+      serviceAccountJson: vertexServiceAccountJson('gantry-test'),
+    });
+    const upstreamFetch = vi.fn(async () => new Response('{"choices":[]}'));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo, {
+      limits: () => ({ providers: { vertex: { requestsPerMinute: 1 } } }),
+    });
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId,
+          modelCredentialProviderId: 'vertex',
+        },
+      });
+      const url = `${injection.env.OPENAI_BASE_URL}/chat/completions`;
+      const token = injection.env.OPENAI_API_KEY!;
+
+      expect((await gatewayRequest({ url, token })).status).toBe(200);
+      expect(vertexGetAccessTokenMock).toHaveBeenCalledTimes(1);
+
+      clearVertexTokenCacheForTest();
+      vertexGetAccessTokenMock.mockClear();
+      googleAuthOptionsMock.mockClear();
+      upstreamFetch.mockClear();
+
+      const rejected = await gatewayRequest({ url, token });
+
+      expect(rejected.status).toBe(429);
+      expect(rejected.body).toContain(
+        'Rate limit: vertex exceeded 1 requests/min for this app.',
+      );
+      expect(googleAuthOptionsMock).not.toHaveBeenCalled();
+      expect(vertexGetAccessTokenMock).not.toHaveBeenCalled();
+      expect(upstreamFetch).not.toHaveBeenCalled();
     } finally {
       await broker.close();
     }

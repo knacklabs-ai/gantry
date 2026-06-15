@@ -28,11 +28,14 @@ import {
   listExecutableModelProviders,
   normalizeModelProviderId,
   resolveModelCredentialMode,
-  type ModelCredentialPayload,
   type ModelProviderDefinition,
 } from '../../../shared/model-provider-registry.js';
-import { DEEPAGENTS_ENGINE } from '../../../shared/agent-engine.js';
 import { logger } from '../../../infrastructure/logging/logger.js';
+import {
+  assertProviderPathAllowed,
+  injectProviderAuth,
+  resolveGatewayUpstream,
+} from './gantry-model-gateway-routing.js';
 import {
   ALLOWED_GATEWAY_METHODS,
   DEFAULT_LOOPBACK_HOST,
@@ -388,24 +391,27 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
       return;
     }
 
-    const upstreamUrl = buildConfinedUpstreamUrl(
-      provider,
-      pathParts,
-      parsedUrl.search,
-    );
-    assertProviderPathAllowed(provider, upstreamUrl.pathname);
-    const body = await readRequestBody(req, this.requestBodyLimitBytes);
-    const headers = sanitizeProxyHeaders(req.headers);
-    injectProviderAuth(
-      headers,
+    const upstream = resolveGatewayUpstream(
       provider,
       credential.authMode,
       credential.payload,
     );
+    const upstreamUrl = buildConfinedUpstreamUrl(
+      provider,
+      pathParts,
+      parsedUrl.search,
+      upstream,
+    );
+    assertProviderPathAllowed(
+      provider,
+      upstreamUrl.pathname,
+      upstream.pathPrefix,
+    );
 
     // In-memory per-(app, provider) sliding-window rate cap. Enforced AFTER
-    // credential/path validation and BEFORE upstream fetch, so a rejected
-    // request never reaches the provider. No DB, no usage-body parsing.
+    // credential/path validation and BEFORE body read, auth injection, and
+    // upstream fetch, so a rejected request never triggers provider auth work.
+    // No DB, no usage-body parsing.
     const rateLimited = await applyRateCap({
       limiter: this.rateLimiter,
       appId: tokenRecord.appId,
@@ -422,6 +428,18 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
         }),
     });
     if (rateLimited) return;
+
+    const body = await readRequestBody(req, this.requestBodyLimitBytes);
+    const headers = sanitizeProxyHeaders(req.headers);
+    await injectProviderAuth({
+      headers,
+      provider,
+      authMode: credential.authMode,
+      payload: credential.payload,
+      method: req.method ?? 'POST',
+      upstreamUrl,
+      body,
+    });
 
     const upstreamAbort = new AbortController();
     const timeout = setTimeout(
@@ -603,57 +621,6 @@ function requireBindingAppId(input: AgentCredentialBrokerInput): AppId {
   return input.binding.appId;
 }
 
-function assertProviderPathAllowed(
-  provider: ModelProviderDefinition,
-  upstreamPathname: string,
-): void {
-  const providerPath = stripUpstreamPathPrefix(
-    upstreamPathname,
-    provider.gateway.upstreamPathPrefix,
-  );
-  const allowed = allowedGatewayPaths(provider).has(providerPath);
-  if (!allowed) {
-    throw new GatewayBadRequestError(
-      `Model gateway path is not allowed for ${provider.id}.`,
-    );
-  }
-}
-
-// Allowed upstream paths are scoped per provider. The OpenAI-compatible
-// DeepAgents lane (engine `deepagents`) speaks chat/completions; OpenAI also
-// serves embeddings + responses. The Anthropic SDK lane speaks /v1/messages.
-//
-// Path is the per-provider-prefix-stripped tail (see assertProviderPathAllowed).
-// Two client shapes reach the DeepAgents lane:
-//   - openrouter via ChatOpenRouter: posts loopback /openrouter/v1/chat/
-//     completions -> strip /api -> /v1/chat/completions.
-//   - the 8 OpenAI-compatible providers via ChatOpenAI (initChatModel): post
-//     loopback /<seg>/chat/completions -> strip the provider's real upstream
-//     prefix (e.g. groq /openai/v1) -> /chat/completions.
-// Both are permitted; the upstream confinement is enforced by upstreamPathPrefix
-// in buildConfinedUpstreamUrl, so allowing both tails is safe.
-function allowedGatewayPaths(provider: ModelProviderDefinition): Set<string> {
-  if (provider.id === 'openai') {
-    // OpenAI keeps upstreamPathPrefix '' and its memory/embeddings consumers
-    // post explicit /v1/... paths, so the allowed tails carry /v1.
-    return new Set(['/v1/embeddings', '/v1/chat/completions', '/v1/responses']);
-  }
-  if (provider.executionRoute.engine === DEEPAGENTS_ENGINE) {
-    return new Set(['/chat/completions', '/v1/chat/completions']);
-  }
-  return new Set(['/v1/messages', '/v1/messages/count_tokens']);
-}
-
-function stripUpstreamPathPrefix(pathname: string, prefix: string): string {
-  const normalizedPrefix = prefix.trim().replace(/\/+$/, '');
-  if (!normalizedPrefix) return pathname;
-  if (pathname === normalizedPrefix) return '/';
-  if (pathname.startsWith(`${normalizedPrefix}/`)) {
-    return pathname.slice(normalizedPrefix.length);
-  }
-  return pathname;
-}
-
 function projectGatewayTokenEnv(input: {
   provider: ModelProviderDefinition;
   baseUrl: string;
@@ -682,38 +649,4 @@ function projectedModelCredentialEnvKeys(): string[] {
       }),
     ]),
   ].sort();
-}
-
-function injectProviderAuth(
-  headers: Record<string, string>,
-  provider: ModelProviderDefinition,
-  authMode: string,
-  payload: ModelCredentialPayload,
-): void {
-  const auth = resolveModelCredentialMode(provider, authMode).gatewayAuth;
-  if (
-    auth.strategy !== 'bearer' &&
-    auth.strategy !== 'header' &&
-    auth.strategy !== 'claude_code_oauth'
-  ) {
-    throw new Error(
-      `Model gateway auth strategy ${auth.strategy} is not implemented for ${provider.id} ${authMode}.`,
-    );
-  }
-  if (!auth.field) {
-    throw new Error(
-      `Model gateway auth strategy ${auth.strategy} for ${provider.id} ${authMode} is missing a credential field.`,
-    );
-  }
-  const value = payload[auth.field];
-  if (!value) {
-    throw new Error(
-      `Model credential payload for ${provider.id} is missing ${auth.field}.`,
-    );
-  }
-  if (auth.strategy === 'bearer' || auth.strategy === 'claude_code_oauth') {
-    headers.authorization = `Bearer ${value}`;
-    return;
-  }
-  headers[auth.headerName ?? auth.field] = value;
 }

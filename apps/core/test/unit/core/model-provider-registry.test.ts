@@ -70,6 +70,16 @@ describe('model provider registry', () => {
       executionProviderId: 'deepagents:langchain',
       supportedCredentialModes: ['api_key'],
     });
+    expect(getModelProviderDefinition('bedrock')?.executionRoute).toEqual({
+      engine: 'deepagents',
+      executionProviderId: 'deepagents:langchain',
+      supportedCredentialModes: ['bedrock_api_key'],
+    });
+    expect(getModelProviderDefinition('vertex')?.executionRoute).toEqual({
+      engine: 'deepagents',
+      executionProviderId: 'deepagents:langchain',
+      supportedCredentialModes: ['service_account'],
+    });
   });
 
   it('makes OpenAI an executable chat and memory model route', () => {
@@ -138,9 +148,6 @@ describe('model provider registry', () => {
 
   it('keeps current providers on direct credential modes with friendly field labels', () => {
     for (const provider of listExecutableModelProviders()) {
-      expect(provider.credentialModes.map((mode) => mode.id)).toContain(
-        'api_key',
-      );
       for (const mode of provider.credentialModes) {
         for (const field of mode.fields) {
           expect(field.label).not.toMatch(/^[A-Z0-9_]+$/);
@@ -163,6 +170,16 @@ describe('model provider registry', () => {
         (mode) => mode.id,
       ),
     ).toEqual(['api_key']);
+    expect(
+      getModelProviderDefinition('bedrock')?.credentialModes.map(
+        (mode) => mode.id,
+      ),
+    ).toEqual(['bedrock_api_key']);
+    expect(
+      getModelProviderDefinition('vertex')?.credentialModes.map(
+        (mode) => mode.id,
+      ),
+    ).toEqual(['service_account']);
   });
 
   it('validates payloads through the selected credential mode', () => {
@@ -187,6 +204,97 @@ describe('model provider registry', () => {
         payload: { bogus: 'value' },
       }),
     ).toThrow('Credential field bogus is not supported for anthropic api_key.');
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'bedrock',
+        authMode: 'bedrock_api_key',
+        payload: { region: ' us-east-1 ', apiKey: ' bedrock-key ' },
+      }),
+    ).toEqual({ region: 'us-east-1', apiKey: 'bedrock-key' });
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'bedrock',
+        authMode: 'access_key',
+        payload: { region: 'us-west-2', accessKeyId: 'AKIATEST' },
+      }),
+    ).toThrow('Credential auth mode access_key is not supported for bedrock.');
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: ' global ',
+          projectId: 'gantry-test',
+          serviceAccountJson: JSON.stringify({
+            type: 'service_account',
+            project_id: 'other-project',
+            client_email: 'gantry@example.iam.gserviceaccount.com',
+            private_key:
+              '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n',
+          }),
+        },
+      }),
+    ).toMatchObject({
+      region: 'global',
+      projectId: 'gantry-test',
+    });
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'bedrock',
+        authMode: 'bedrock_api_key',
+        payload: { region: 'us-east-1.example.com', apiKey: 'key' },
+      }),
+    ).toThrow(
+      'Credential field region is invalid for bedrock bedrock_api_key.',
+    );
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: 'eu',
+          projectId: 'gantry-test',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).toThrow('Credential field region is invalid for vertex service_account.');
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: 'us-central1',
+          projectId: 'gantry-test',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).toThrow('Credential field region is invalid for vertex service_account.');
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: 'global',
+          projectId: 'gantry-test/evil',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).toThrow(
+      'Credential field projectId is invalid for vertex service_account.',
+    );
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: 'global',
+          projectId: 'gantry-test',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).toThrow(
+      'Credential field serviceAccountJson is invalid for vertex service_account.',
+    );
   });
 
   it('represents future multi-field and external-identity auth modes', () => {
@@ -396,6 +504,61 @@ describe('model provider registry', () => {
     // The search/answer provider is intentionally NOT a memory model: its
     // responses carry citations and are unsuitable for extraction/summarization.
     expect(provider!.supportedWorkloads).toEqual([
+      'chat',
+      'one_time_job',
+      'recurring_job',
+    ]);
+  });
+
+  it('registers region-aware Bedrock and global-only Vertex providers without prompt cache assumptions', () => {
+    const bedrock = getModelProviderDefinition('bedrock');
+    expect(bedrock).toBeDefined();
+    expect(bedrock!.responseFamily).toBe('openai');
+    expect(bedrock!.gateway.pathSegment).toBe('bedrock');
+    expect(bedrock!.gateway.upstreamResolver).toBeDefined();
+    expect(bedrock!.cacheSupport.prompt.mode).toBe('none');
+    expect(bedrock!.supportedWorkloads).toEqual([
+      'chat',
+      'one_time_job',
+      'recurring_job',
+    ]);
+
+    const vertex = getModelProviderDefinition('vertex');
+    expect(vertex).toBeDefined();
+    expect(vertex!.responseFamily).toBe('openai');
+    expect(vertex!.gateway.pathSegment).toBe('vertex');
+    expect(vertex!.gateway.upstreamOrigin).toBe(
+      'https://aiplatform.googleapis.com',
+    );
+    expect(vertex!.gateway.upstreamPathPrefix).toBe(
+      '/v1/projects/example-project/locations/global/endpoints/openapi',
+    );
+    expect(vertex!.gateway.upstreamResolver).toBeDefined();
+    expect(
+      vertex!.gateway.upstreamResolver!({
+        authMode: 'service_account',
+        payload: {
+          region: 'global',
+          projectId: 'gantry-test',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).toEqual({
+      origin: 'https://aiplatform.googleapis.com',
+      pathPrefix: '/v1/projects/gantry-test/locations/global/endpoints/openapi',
+    });
+    expect(() =>
+      vertex!.gateway.upstreamResolver!({
+        authMode: 'service_account',
+        payload: {
+          region: 'eu',
+          projectId: 'gantry-test',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).toThrow('Google Cloud location is invalid.');
+    expect(vertex!.cacheSupport.prompt.mode).toBe('none');
+    expect(vertex!.supportedWorkloads).toEqual([
       'chat',
       'one_time_job',
       'recurring_job',

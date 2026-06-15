@@ -367,7 +367,7 @@ export async function spawnAgent(
               serverIds: attachedMcpSourceIds as never,
             })
           : [];
-      const projection = resolveRunnerMcpProjection({
+      const projection = resolveRunnerMcpProjection(agentEngine, {
         runtimeAccess: input.runtimeAccess ?? [],
         mcpSourceRecords,
       });

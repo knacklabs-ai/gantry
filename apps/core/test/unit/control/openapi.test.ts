@@ -657,6 +657,25 @@ describe('control OpenAPI documentation', () => {
       spec.paths['/v1/agents']?.post.requestBody.content['application/json']
         .schema,
     ).toEqual({ $ref: '#/components/schemas/AgentCreateRequest' });
+    const createAgentRequest = spec.components.schemas.AgentCreateRequest;
+    const updateAgentRequest = spec.components.schemas.AgentUpdateRequest;
+    expect(createAgentRequest).toMatchObject({
+      required: ['appId', 'name'],
+      additionalProperties: false,
+    });
+    expect(Object.keys(createAgentRequest.properties).sort()).toEqual([
+      'appId',
+      'name',
+    ]);
+    expect(updateAgentRequest).toMatchObject({
+      additionalProperties: false,
+    });
+    expect(Object.keys(updateAgentRequest.properties).sort()).toEqual([
+      'name',
+      'status',
+    ]);
+    expect(createAgentRequest.properties).not.toHaveProperty('agentEngine');
+    expect(updateAgentRequest.properties).not.toHaveProperty('agentEngine');
     expect(
       spec.paths['/v1/provider-connections']?.post.requestBody.content[
         'application/json'

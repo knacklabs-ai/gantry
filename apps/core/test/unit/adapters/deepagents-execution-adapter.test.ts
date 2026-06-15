@@ -189,7 +189,7 @@ describe('DeepAgentsLangChainExecutionAdapter', () => {
         }),
       ),
     ).rejects.toThrow(
-      'DeepAgents does not support Claude OAuth/subscription credentials in Gantry. Choose Anthropic SDK or configure Anthropic API-key Model Access.',
+      'DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.',
     );
   });
 
@@ -207,7 +207,9 @@ describe('DeepAgentsLangChainExecutionAdapter', () => {
           },
         }),
       ),
-    ).rejects.toThrow('DeepAgents does not support Claude OAuth');
+    ).rejects.toThrow(
+      'DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.',
+    );
   });
 
   it('emits the missing-Model-Access copy when no gateway projection is present', async () => {

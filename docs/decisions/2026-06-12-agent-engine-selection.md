@@ -1,12 +1,19 @@
 # Agent Engine Selection
 
-> **Status: the user-selectable engine decision below is SUPERSEDED (2026-06-13).**
-> The engine is now **derived from the model's provider**, not chosen. See
-> [Superseding decision (2026-06-13): provider-derived engine + OpenRouter
-> caching](#superseding-decision-2026-06-13-provider-derived-engine--openrouter-caching)
-> for the current design. The original decision is kept below for history.
+> **Status: SUPERSEDED by
+> [Agent Harness Selection (2026-06-14)](./2026-06-14-agent-harness-selection.md).**
+> The active public contract is durable user intent `agentHarness`
+> (`agent_harness` in `settings.yaml`) with values `auto`, `anthropic_sdk`, and
+> `deepagents`. `agentEngine` is now the effective read-only diagnostic after
+> harness/model/credential resolution, and `executionProviderId` remains
+> internal/read-only diagnostic. The 2026-06-13 provider-derived-only decision
+> and the older user-selectable engine decision below are historical context.
 
 ## Superseding decision (2026-06-13): provider-derived engine + OpenRouter caching
+
+> Historical note: this provider-derived-only decision is superseded by
+> [Agent Harness Selection (2026-06-14)](./2026-06-14-agent-harness-selection.md).
+> Its derivation rules remain the behavior of `agentHarness: auto`.
 
 ### Why supersede
 
@@ -118,7 +125,7 @@ OpenRouter is now OpenAI-chat-completions-compatible end to end:
 | Control API | Changed | Agent records expose derived `agentEngine` (read-only); `PATCH /v1/agents/:id` no longer accepts it. |
 | SDK/contracts | Changed | `UpdateAgentRequestSchema` drops `agentEngine`; `AgentResponseSchema` keeps it as a derived read-only field. |
 | CLI | Changed | `gantry agent engine` verb removed; engine cell/`why`/preview remain read-only derived. |
-| Channel/provider adapters | Unchanged by design | No engine authority in channels. |
+| Channel/provider adapters | Read-only/observable | Channels render the same approvals/receipts and gain no channel-specific authority. |
 | Docs/prompts | Changed | README, credential-management, AGENTS model vocabulary, adapter AGENTS, HANDOFF, this ADR. |
 | Audit/events | Changed | `AGENT_ENGINE_CHANGED` + `MEMORY_ENGINE_CHANGED` removed; resolved-run engine diagnostics retained. |
 | Tests/verification | Changed | Provider-derived resolution, library-driven factory, OpenRouter gateway + caching, retired-selector rejection coverage. |
@@ -173,10 +180,9 @@ different engine, each with locked copy:
 - An OpenAI-endpoint model under Anthropic SDK is rejected
   (`... uses the OpenAI endpoint, which is not supported by Anthropic SDK ...`).
 - DeepAgents plus Claude OAuth/subscription credentials is rejected
-  (`DeepAgents does not support Claude OAuth/subscription credentials in
-  Gantry ...`); Anthropic SDK remains the Claude OAuth/subscription lane.
+  (`DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.`); Anthropic SDK remains the Claude OAuth/subscription lane.
 - Any model whose provider route has no execution route for the selected engine
-  is rejected with the generic compatible-aliases copy.
+  is rejected with `Model <alias> cannot run on <harness>. Choose Auto or a compatible model.`
 
 DeepAgents is the API-key engine for supported OpenAI-endpoint and
 Anthropic-API-key-endpoint routes, implemented by `deepagents:langchain` under
@@ -230,9 +236,7 @@ applied at memory query dispatch (`route-aware-memory-llm-client.ts`):
 > (Claude is SDK-only); see the Packet 7 docs update for the current design.
 
 DeepAgents memory with Claude OAuth/subscription credentials is rejected when the
-gateway resolves the credential mode, with the locked copy `DeepAgents does not
-support Claude OAuth/subscription credentials in Gantry. Choose Anthropic SDK or
-configure Anthropic API-key Model Access.` The OpenAI gpt catalog entries declare
+gateway resolves the credential mode, with the locked copy `DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.` The OpenAI gpt catalog entries declare
 the `memory_*` workloads so OpenAI memory models are selectable. Embeddings are
 already provider-neutral (`memory-embeddings.ts`) and out of scope. A memory
 engine change emits a sibling `MEMORY_ENGINE_CHANGED` audit event (the per-agent
@@ -262,7 +266,7 @@ engine change keeps `AGENT_ENGINE_CHANGED`).
 | SDK/contracts | Changed | Adds `AgentEngine`, `ModelRecord.executionRoutes`, `ModelPreviewTarget` `'agent'`, and optional DeepAgents-lane limit fields. |
 | CLI | Changed | `gantry agent engine`, agent list/show engine cell, and `gantry model why --agent`. |
 | Gantry MCP tools/admin skill | Changed | Reviewed engine updates flow through the settings desired-state write path. |
-| Channel/provider adapters | Unchanged by design | Channels render canonical status/errors only; no channel-specific engine authority. |
+| Channel/provider adapters | Read-only/observable | Channels render the same approvals/receipts and gain no channel-specific authority. |
 | Docs/prompts | Changed | README, SDK docs, model catalog ADR, credential, sandbox, and AGENTS guidance updated; alias-only/internal harness wording removed. |
 | Audit/events | Changed | `AGENT_ENGINE_CHANGED` plus engine/provider/endpoint diagnostics on resolved runs. |
 | Tests/verification | Changed | Matrix, adapter, memory, job/live, sandbox guard, and leakage coverage added. |

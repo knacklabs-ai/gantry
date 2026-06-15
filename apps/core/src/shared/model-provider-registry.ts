@@ -26,6 +26,7 @@ export type ModelGatewayAuthStrategy =
   | 'aws_bedrock_api_key'
   | 'aws_sigv4'
   | 'aws_sdk_default_chain'
+  | 'vertex_service_account'
   | 'azure_api_key'
   | 'azure_entra_default_credential';
 
@@ -52,10 +53,23 @@ export interface ModelGatewaySdkProjectionDefinition {
   credentialProvider: string;
 }
 
+export interface ModelGatewayResolvedUpstream {
+  origin: string;
+  pathPrefix: string;
+}
+
+export interface ModelGatewayUpstreamResolverInput {
+  authMode: string;
+  payload: ModelCredentialPayload;
+}
+
 export interface ModelGatewayDefinition {
   pathSegment: string;
   upstreamOrigin: string;
   upstreamPathPrefix: string;
+  upstreamResolver?: (
+    input: ModelGatewayUpstreamResolverInput,
+  ) => ModelGatewayResolvedUpstream;
   sdkProjection: ModelGatewaySdkProjectionDefinition;
 }
 
@@ -388,10 +402,9 @@ export const MODEL_PROVIDER_DEFINITIONS = [
       supportedCredentialModes: ['api_key'],
     },
   },
-  // Eight additional OpenAI-chat-completions-compatible providers on the
-  // DeepAgents engine (groq, deepseek, xai, together, fireworks, cerebras,
-  // perplexity, gemini). Defined in a sibling module to keep this file under its
-  // line budget; spread here so the registry stays the single source of truth.
+  // Additional OpenAI-chat-completions-compatible providers on the DeepAgents
+  // engine. Defined in a sibling module to keep this file under its line
+  // budget; spread here so the registry stays the single source of truth.
   ...OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS,
 ] as const satisfies readonly ModelProviderDefinition[];
 
@@ -508,7 +521,9 @@ export function normalizeModelCredentialPayload(input: {
   for (const field of mode.fields) {
     const value = rawPayload[field.name];
     if (typeof value === 'string' && value.trim()) {
-      payload[field.name] = value.trim();
+      const normalized = value.trim();
+      validateCredentialFieldValue(provider, mode.id, field.name, normalized);
+      payload[field.name] = normalized;
       continue;
     }
     if (field.required) {
@@ -556,7 +571,9 @@ export function normalizePartialModelCredentialPayload(input: {
     if (typeof value !== 'string' || !value.trim()) {
       throw new Error(`Credential field ${key} must be a non-empty string.`);
     }
-    payload[key] = value.trim();
+    const normalized = value.trim();
+    validateCredentialFieldValue(provider, mode.id, key, normalized);
+    payload[key] = normalized;
   }
   return payload;
 }
@@ -607,4 +624,62 @@ function indexProviderDefinitionsByGatewayPath(
     indexed.set(path, provider);
   }
   return indexed;
+}
+
+const AWS_REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/;
+const GOOGLE_VERTEX_LOCATION_PATTERN = /^global$/;
+const GOOGLE_PROJECT_PATTERN = /^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|\d{6,})$/;
+function validateCredentialFieldValue(
+  provider: ModelProviderDefinition,
+  modeId: string,
+  field: string,
+  value: string,
+): void {
+  if (provider.id === 'bedrock' && field === 'region') {
+    if (!AWS_REGION_PATTERN.test(value)) {
+      throw invalidCredentialField(provider.id, modeId, field);
+    }
+    return;
+  }
+  if (provider.id === 'vertex' && field === 'region') {
+    if (!GOOGLE_VERTEX_LOCATION_PATTERN.test(value)) {
+      throw invalidCredentialField(provider.id, modeId, field);
+    }
+    return;
+  }
+  if (provider.id === 'vertex' && field === 'projectId') {
+    if (!GOOGLE_PROJECT_PATTERN.test(value)) {
+      throw invalidCredentialField(provider.id, modeId, field);
+    }
+    return;
+  }
+  if (provider.id === 'vertex' && field === 'serviceAccountJson') {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw invalidCredentialField(provider.id, modeId, field);
+    }
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      (parsed as { type?: unknown }).type !== 'service_account' ||
+      typeof (parsed as { project_id?: unknown }).project_id !== 'string' ||
+      typeof (parsed as { client_email?: unknown }).client_email !== 'string' ||
+      typeof (parsed as { private_key?: unknown }).private_key !== 'string'
+    ) {
+      throw invalidCredentialField(provider.id, modeId, field);
+    }
+  }
+}
+
+function invalidCredentialField(
+  providerId: string,
+  modeId: string,
+  field: string,
+): Error {
+  return new Error(
+    `Credential field ${field} is invalid for ${providerId} ${modeId}.`,
+  );
 }

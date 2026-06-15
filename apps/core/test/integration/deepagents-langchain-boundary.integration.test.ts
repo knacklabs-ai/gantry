@@ -44,26 +44,6 @@ await server.connect(transport);
   fs.writeFileSync(filePath, src);
 }
 
-// A self-contained stub third-party MCP stdio server exposing one tool, used to
-// prove the third-party permission gate writes a host permission-request file.
-function writeStubThirdPartyMcpServer(filePath: string): void {
-  const src = `
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
-
-const server = new McpServer({ name: 'notion', version: '0.0.0-test' });
-server.registerTool(
-  'mcp__notion__search',
-  { description: 'search notion (stub)', inputSchema: { query: z.string() } },
-  async () => ({ content: [{ type: 'text', text: 'searched' }] }),
-);
-const transport = new StdioServerTransport();
-await server.connect(transport);
-`;
-  fs.writeFileSync(filePath, src);
-}
-
 interface ParsedFrame {
   status: 'success' | 'error';
   result: string | null;
@@ -168,101 +148,6 @@ async function startFakeOpenAiGateway(): Promise<FakeGateway> {
   const address = server.address();
   if (!address || typeof address === 'string') {
     throw new Error('fake gateway did not bind a port');
-  }
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}/openai`,
-    requests,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
-  };
-}
-
-// Gateway that forces the model to call the third-party tool on the first turn,
-// then returns a plain text answer once it has seen the tool result. Used to
-// drive the third-party MCP permission gate end to end.
-async function startToolForcingOpenAiGateway(): Promise<FakeGateway> {
-  const requests: FakeGateway['requests'] = [];
-  let turn = 0;
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', () => {
-      requests.push({
-        authorization: req.headers.authorization,
-        body,
-        path: req.url ?? '',
-      });
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
-      const id = 'chatcmpl-tool';
-      const firstTurn = turn === 0;
-      turn += 1;
-      const chunks = firstTurn
-        ? [
-            {
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    role: 'assistant',
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: 'call_1',
-                        type: 'function',
-                        function: {
-                          name: 'mcp__notion__search',
-                          arguments: '{"query":"roadmap"}',
-                        },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            },
-            {
-              choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-              usage: {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                total_tokens: 15,
-              },
-            },
-          ]
-        : [
-            {
-              choices: [
-                {
-                  index: 0,
-                  delta: { role: 'assistant', content: 'Done.' },
-                  finish_reason: null,
-                },
-              ],
-            },
-            {
-              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-              usage: {
-                prompt_tokens: 20,
-                completion_tokens: 2,
-                total_tokens: 22,
-              },
-            },
-          ];
-      for (const chunk of chunks) {
-        res.write(
-          `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', model: 'gpt-5.5', ...chunk })}\n\n`,
-        );
-      }
-      res.write('data: [DONE]\n\n');
-      res.end();
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('tool-forcing gateway did not bind a port');
   }
   return {
     baseUrl: `http://127.0.0.1:${address.port}/openai`,
@@ -501,7 +386,6 @@ interface TempRoot {
   ipcDir: string;
   workspaceIpcDir: string;
   gantryServerPath: string;
-  thirdPartyServerPath: string;
   mcpConfigPath: string;
 }
 
@@ -595,10 +479,8 @@ function makeTempRoot(): TempRoot {
   fs.mkdirSync(inputDir, { recursive: true });
   fs.mkdirSync(workspaceIpcDir, { recursive: true });
   const gantryServerPath = path.join(root, 'gantry-mcp.mjs');
-  const thirdPartyServerPath = path.join(root, 'notion-mcp.mjs');
   const mcpConfigPath = path.join(root, 'mcp-config.json');
   writeStubGantryMcpServer(gantryServerPath);
-  writeStubThirdPartyMcpServer(thirdPartyServerPath);
   return {
     root,
     sessionsDir,
@@ -606,7 +488,6 @@ function makeTempRoot(): TempRoot {
     ipcDir,
     workspaceIpcDir,
     gantryServerPath,
-    thirdPartyServerPath,
     mcpConfigPath,
   };
 }
@@ -760,17 +641,15 @@ describe('DeepAgents (LangChain) runner boundary integration', () => {
     }
   }, 120_000);
 
-  it('gates a third-party MCP tool call and writes a durable permission-request file (HITL durability)', async () => {
-    // A gateway that forces the model to call the third-party tool on the first
-    // turn, then (after the tool result) returns a final assistant message.
-    const gateway = await startToolForcingOpenAiGateway();
+  it('rejects direct third-party MCP config before model calls or permission requests', async () => {
+    const gateway = await startFakeOpenAiGateway();
     const temp = makeTempRoot();
     fs.writeFileSync(
       temp.mcpConfigPath,
       JSON.stringify({
         notion: {
           command: process.execPath,
-          args: [temp.thirdPartyServerPath],
+          args: ['third-party-mcp-should-not-spawn.mjs'],
         },
       }),
     );
@@ -781,37 +660,32 @@ describe('DeepAgents (LangChain) runner boundary integration', () => {
           prompt: 'search notion for the roadmap',
           workspaceFolder: 'group',
           chatJid: 'tg:group',
-          // No rule allows mcp__notion__search -> the gate must prompt the host.
-          allowedTools: [],
+          allowedTools: ['mcp__notion__search'],
         },
         temp,
         baseUrl: gateway.baseUrl,
         apiKey: 'gtw_integrationtoken',
         extraEnv: {
           GANTRY_MCP_CONFIG_FILE: temp.mcpConfigPath,
-          // Short interactive timeout so the unattended test resolves the
-          // pending request as a denial without an approver.
-          GANTRY_INTERACTIVE_PERMISSION_TIMEOUT_MS: '1200',
-          GANTRY_PERMISSION_TIMEOUT_MS: '1200',
         },
       });
 
-      // The gate wrote the signed permission-request file the host turns into a
-      // durable pending_interactions row BEFORE any approval renders.
-      expect(fs.existsSync(requestDir)).toBe(true);
-      const files = fs
-        .readdirSync(requestDir)
-        .filter((file) => file.endsWith('.json'));
-      expect(files.length).toBeGreaterThanOrEqual(1);
-      const request = JSON.parse(
-        fs.readFileSync(path.join(requestDir, files[0]), 'utf-8'),
-      ) as { toolName: string; sourceAgentFolder: string; signature?: string };
-      expect(request.toolName).toBe('mcp__notion__search');
-      expect(request.sourceAgentFolder).toBe('group');
-      expect(typeof request.signature).toBe('string');
-      // The runner does not crash; it streams a terminal frame after the gate
-      // denies (timeout) and the model produces its final answer.
-      expect(result.code).toBe(0);
+      expect(result.code).toBe(1);
+      const frames = parseFrames(result.stdout);
+      expect(frames[0]).toMatchObject({
+        status: 'success',
+        result: null,
+        sessionInit: true,
+      });
+      const errorFrame = frames.find((frame) => frame.status === 'error');
+      expect(errorFrame?.error).toMatch(
+        /direct third-party MCP config is disabled.*notion.*stdio.*DNS-pinned MCP dispatcher/,
+      );
+      expect(gateway.requests.length).toBe(0);
+      const requestFiles = fs.existsSync(requestDir)
+        ? fs.readdirSync(requestDir).filter((file) => file.endsWith('.json'))
+        : [];
+      expect(requestFiles).toEqual([]);
     } finally {
       await gateway.close();
     }

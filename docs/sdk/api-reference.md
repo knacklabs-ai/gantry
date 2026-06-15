@@ -659,9 +659,14 @@ reviewed Gantry MCP request tools to change authority.
 Use `client.models.list()` to inspect supported model aliases, response family,
 route metadata, capabilities, context windows, cache policy, and supported
 workloads. Each `ModelRecord` carries an `executionRoutes` array
-(`{ engine, executionProviderId }`) that is read-only diagnostic; the engine is
-derived from the model's provider (`modelAlias -> provider -> executionRoute`),
-not chosen. DeepAgents-lane entries omit the static
+(`{ engine, executionProviderId }`) that is read-only diagnostic. The currently
+active API exposes `agentEngine` as effective read-only state and keeps
+`executionProviderId` internal/read-only diagnostic; `PATCH /v1/agents/:id`
+does not yet accept `agentHarness`. The planned 2026-06-14 harness contract in
+[`docs/decisions/2026-06-14-agent-harness-selection.md`](../decisions/2026-06-14-agent-harness-selection.md)
+adds the agent-level `agentHarness` (`auto`, `anthropic_sdk`, or `deepagents`)
+and the `settings.yaml` key `agent_harness`; that write surface lands with the
+harness-selection implementation. DeepAgents-lane entries omit the static
 `contextWindowTokens`/`maxOutputTokens` limits because those are reported at
 runtime from the engine's model profile.
 API job creation rejects raw provider model IDs unless they are registered
@@ -691,9 +696,13 @@ Use `POST /v1/models/preview` for "why" checks before a run. `target: "chat"`
 can include `conversationJid` or `workspaceKey` to expose live session `/model`
 overrides; `target: "job"` with `jobId` distinguishes explicit job aliases from
 inherited defaults. `target: "agent"` with `agentId` resolves a `modelAlias` and
-returns the derived `agentEngine`, `agentEngineLabel`, `credentialProfile`, and
-diagnostic `executionProviderId` (the engine follows the resolved model's
-provider — it is not an agent-held choice).
+returns the read-only effective `agentEngine`, `agentEngineLabel`,
+`credentialProfile`, and diagnostic `executionProviderId`. The planned
+`agentHarness` resolution path will add `agentHarness + modelAlias`
+compatibility checks; explicit harness/model incompatibility will fail before
+runner spawn with
+`Model <alias> cannot run on <harness>. Choose Auto or a compatible model.`
+DeepAgents with Claude OAuth/subscription credentials fails with `DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.`
 
 ```ts
 await client.models.preview({
@@ -733,6 +742,19 @@ Read-only run event history is available over the control API:
 
 ```http
 GET /v1/runs/:runId/events
+```
+
+The current run event API exposes read-only runtime history, but Gantry does not
+yet host-enforce the five-line terminal evidence receipt until the receipt
+formatter/enforcer lands. The target terminal run and job evidence receipt uses
+this exact format:
+
+```text
+Completed: <short outcome>
+Used: <tools/capabilities>
+Changed: <files/accounts/channels or none>
+Delegated: yes/no
+Needs attention: <blocker or none>
 ```
 
 ## Providers And Conversations
@@ -835,13 +857,15 @@ approver user ids. Direct/private and group/channel approvals are configured
 through the conversation approver endpoints below; agents do not expose a
 separate direct-message policy API.
 
-`GET /v1/agents/:id` and `POST /v1/agents` agent records expose the derived,
-read-only `agentEngine` (`anthropic_sdk` or `deepagents`), computed from the
-agent's effective model provider; the raw `executionProviderId` stays internal and
-is not part of the agent record. `PATCH /v1/agents/:id` does not accept
-`agentEngine` (the engine is derived from the model, not settable). Jobs and
-conversations inherit the bound agent's derived engine; there is no job- or
-conversation-level engine selector.
+`GET /v1/agents/:id` and `POST /v1/agents` agent records currently expose the
+effective read-only `agentEngine`; `executionProviderId` stays
+internal/read-only diagnostic and must not be writable. `PATCH /v1/agents/:id`
+does not yet accept `agentHarness`, `agentEngine`, or `executionProviderId`.
+The planned 2026-06-14 harness-selection implementation will add durable
+`agentHarness` (`auto`, `anthropic_sdk`, or `deepagents`) and the
+`settings.yaml` key `agent_harness`, with jobs and conversations inheriting the
+bound agent's `agentHarness` and effective `agentEngine`. There is no planned
+job- or conversation-level harness selector.
 
 `GET /v1/conversations/:id/approvers` returns the Conversation approver list.
 `PUT /v1/conversations/:id/approvers` replaces it with

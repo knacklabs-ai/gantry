@@ -226,6 +226,30 @@ describe('ModelCredentialService', () => {
     ).rejects.toThrow(
       'Credential field apiKey is required for anthropic api_key.',
     );
+    await expect(
+      service.set({
+        appId,
+        providerId: 'bedrock',
+        authMode: 'bedrock_api_key',
+        payload: { region: 'us-east-1.example.com', apiKey: 'secret' },
+      }),
+    ).rejects.toThrow(
+      'Credential field region is invalid for bedrock bedrock_api_key.',
+    );
+    await expect(
+      service.set({
+        appId,
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: 'global',
+          projectId: 'gantry-test',
+          serviceAccountJson: '{}',
+        },
+      }),
+    ).rejects.toThrow(
+      'Credential field serviceAccountJson is invalid for vertex service_account.',
+    );
   });
 
   it('rotates only supplied fields in the existing auth mode', async () => {

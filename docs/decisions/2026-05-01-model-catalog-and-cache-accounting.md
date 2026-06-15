@@ -1,5 +1,13 @@
 # Model Catalog and Cache Accounting
 
+> **Status note (2026-06-14):** the model catalog and cache-accounting decision
+> remains useful, but all writable `agentEngine`, provider-derived-only, and
+> `agent_engine` selector language in this document is historical where it
+> conflicts with
+> [Agent Harness Selection](./2026-06-14-agent-harness-selection.md). The active
+> public contract is `agentHarness` (`agent_harness` in `settings.yaml`), while
+> `agentEngine` remains the effective read-only diagnostic.
+
 ## Context
 
 Gantry needs model selection to work the same way from chat commands, API/SDK
@@ -39,13 +47,10 @@ endpoint family, credential modes, supported workloads, and the internal
 the selected engine is rejected before runner spawn rather than re-routed to a
 different engine.
 
-> Superseded (2026-06-13): `agentEngine` is no longer a per-agent harness choice;
-> it is **derived from the model's provider** (Claude -> `anthropic_sdk`;
-> OpenAI/OpenRouter/future -> `deepagents`) and is a read-only diagnostic.
-> Resolution is `modelAlias -> provider -> executionRoute`; there is no incompatible
-> pairing to reject. The cache-accounting parts of this ADR are unchanged; only the
-> engine-as-a-choice framing is superseded. See the superseding section in
-> `docs/decisions/2026-06-12-agent-engine-selection.md`.
+> Historical note: this 2026-06-13 provider-derived-only text is superseded by
+> `docs/decisions/2026-06-14-agent-harness-selection.md`. Its derivation rules
+> are now the behavior of `agentHarness: auto`. The cache-accounting parts of
+> this ADR are unchanged; only the public selector framing is superseded.
 
 Vocabulary:
 

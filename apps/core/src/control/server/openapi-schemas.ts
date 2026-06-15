@@ -41,6 +41,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
   AgentCreateRequest: {
     type: 'object',
     required: ['appId', 'name'],
+    additionalProperties: false,
     properties: {
       appId: { type: 'string', example: 'default' },
       name: { type: 'string', minLength: 1 },
@@ -48,6 +49,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
   },
   AgentUpdateRequest: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       name: { type: 'string', minLength: 1 },
       status: { type: 'string', enum: ['active', 'disabled'] },

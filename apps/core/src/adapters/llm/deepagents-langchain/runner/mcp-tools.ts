@@ -23,9 +23,10 @@ import { isRunCommandToolRule } from '../../../../shared/gantry-tool-facades.js'
 //     here as a stdio MCP server with the projected GANTRY_* env block; its
 //     tools are filtered to the host-selected name set (browser_* only when the
 //     host enabled browser IPC).
-//   - Selected third-party MCP servers (GANTRY_MCP_CONFIG_FILE) are connected as
-//     additional stdio/http servers and each tool is wrapped with the neutral
-//     permission gate before it can execute.
+//   - Third-party MCP servers are not connected directly in this runner. Any
+//     external server config in GANTRY_MCP_CONFIG_FILE is rejected before
+//     MultiServerMCPClient is constructed until Gantry owns a DNS-pinned
+//     dispatcher/proxy path.
 //
 // We set prefixToolNameWithServerName=false and additionalToolNamePrefix='' so a
 // LangChain tool's `.name` equals the raw MCP tool name (send_message,
@@ -35,20 +36,15 @@ import { isRunCommandToolRule } from '../../../../shared/gantry-tool-facades.js'
 
 const GANTRY_SERVER_NAME = 'gantry';
 
-interface StdioServerConfig {
-  command: string;
-  args: string[];
+export interface ExternalServerConfig {
+  type?: 'stdio' | 'http' | 'sse';
+  transport?: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
   env?: Record<string, string>;
-}
-
-interface RemoteServerConfig {
-  type: 'http' | 'sse';
-  url: string;
+  url?: string;
   headers?: Record<string, string>;
 }
-
-type ExternalServerConfig = Partial<StdioServerConfig> &
-  Partial<RemoteServerConfig>;
 
 export interface ConnectedMcpTools {
   tools: StructuredToolInterface[];
@@ -231,9 +227,31 @@ function readExternalMcpServers(): Record<string, ExternalServerConfig> {
         'Host-private browser MCP servers are not configurable. Use the canonical Browser capability and Gantry-owned browser gateway tools.',
       );
     }
+    rejectExternalThirdPartyMcpServer(name, config);
     servers[name] = config;
   }
   return servers;
+}
+
+export function rejectExternalThirdPartyMcpServer(
+  name: string,
+  config: ExternalServerConfig | null | undefined,
+): void {
+  if (!config || typeof config !== 'object') {
+    throw new Error(
+      `DeepAgents direct third-party MCP config is disabled for external server "${name}" (invalid) until Gantry owns a DNS-pinned MCP dispatcher.`,
+    );
+  }
+  let transport = config.type ?? config.transport ?? 'unknown';
+  if (transport === 'unknown' && typeof config.command === 'string') {
+    transport = 'stdio';
+  }
+  if (transport === 'unknown' && typeof config.url === 'string') {
+    transport = 'remote';
+  }
+  throw new Error(
+    `DeepAgents direct third-party MCP config is disabled for external server "${name}" (${transport}) until Gantry owns a DNS-pinned MCP dispatcher.`,
+  );
 }
 
 function toMultiServerConnection(config: ExternalServerConfig): unknown {
