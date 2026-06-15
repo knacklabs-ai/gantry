@@ -6,10 +6,9 @@ import {
   capabilityStatusText,
   chatJid,
   isAdminMcpToolEnabled,
-  TASKS_DIR,
   threadId,
 } from '../context.js';
-import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
+import { sendTaskRequest } from '../ipc.js';
 import {
   MCP_PROXY_WAIT_MS,
   SKILL_APPROVAL_WAIT_MS,
@@ -324,29 +323,27 @@ export function registerServiceTools(server: McpServer): void {
       );
       if (wrongLaneGuidance) return wrongLaneGuidance;
       const taskId = makeIpcId('request-mcp');
-      writeIpcFile(TASKS_DIR, {
-        type: 'request_mcp_server',
-        taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        payload: {
-          name: args.name,
-          transport: args.transport,
-          templateId: args.templateId,
-          args: args.args ?? [],
-          sandboxProfileId: args.sandboxProfileId,
-          requestedToolPatterns: args.requestedToolPatterns ?? [],
-          credentialNeeds: args.credentialNeeds ?? [],
-          reason: args.reason,
-          docsUrl: args.docsUrl,
+      const response = await sendTaskRequest(
+        {
+          type: 'request_mcp_server',
+          taskId,
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          payload: {
+            name: args.name,
+            transport: args.transport,
+            templateId: args.templateId,
+            args: args.args ?? [],
+            sandboxProfileId: args.sandboxProfileId,
+            requestedToolPatterns: args.requestedToolPatterns ?? [],
+            credentialNeeds: args.credentialNeeds ?? [],
+            reason: args.reason,
+            docsUrl: args.docsUrl,
+          },
+          timestamp: nowIso(),
         },
-        timestamp: nowIso(),
-      });
-
-      const response = await waitForTaskResponse(
-        taskId,
-        SKILL_APPROVAL_WAIT_MS,
+        { timeoutMs: SKILL_APPROVAL_WAIT_MS },
       );
       if (!response?.ok) {
         return {
@@ -388,18 +385,20 @@ export function registerServiceTools(server: McpServer): void {
     },
     async (args) => {
       const taskId = makeIpcId('mcp-list-tools');
-      writeIpcFile(TASKS_DIR, {
-        type: 'mcp_list_tools',
-        taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        payload: {
-          serverName: args.serverName,
+      const response = await sendTaskRequest(
+        {
+          type: 'mcp_list_tools',
+          taskId,
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          payload: {
+            serverName: args.serverName,
+          },
+          timestamp: nowIso(),
         },
-        timestamp: nowIso(),
-      });
-      const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
+        { timeoutMs: MCP_PROXY_WAIT_MS },
+      );
       if (!response?.ok) {
         return {
           content: [
@@ -442,24 +441,26 @@ export function registerServiceTools(server: McpServer): void {
     },
     async (args) => {
       const taskId = makeIpcId('mcp-call-tool');
-      writeIpcFile(TASKS_DIR, {
-        type: 'mcp_call_tool',
-        taskId,
-        // The run handle joins this MCP call to its reply trace: core keys the
-        // RunTraceCollector by runHandle at capture and drains by the same key
-        // at persist time. Matches the other capability IPC writers.
-        runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        payload: {
-          serverName: args.serverName,
-          toolName: args.toolName,
-          arguments: args.arguments ?? {},
+      const response = await sendTaskRequest(
+        {
+          type: 'mcp_call_tool',
+          taskId,
+          // The run handle joins this MCP call to its reply trace: core keys the
+          // RunTraceCollector by runHandle at capture and drains by the same key
+          // at persist time. Matches the other capability IPC writers.
+          runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          payload: {
+            serverName: args.serverName,
+            toolName: args.toolName,
+            arguments: args.arguments ?? {},
+          },
+          timestamp: nowIso(),
         },
-        timestamp: nowIso(),
-      });
-      const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
+        { timeoutMs: MCP_PROXY_WAIT_MS },
+      );
       if (!response?.ok) {
         return {
           content: [
@@ -491,15 +492,16 @@ export function registerServiceTools(server: McpServer): void {
         return adminToolUnavailable('service_restart');
       }
       const taskId = makeIpcId('service-restart');
-      writeIpcFile(TASKS_DIR, {
-        type: 'service_restart',
-        taskId,
-        targetJid: chatJid,
-        chatJid,
-        timestamp: nowIso(),
-      });
-
-      const response = await waitForTaskResponse(taskId, 20_000);
+      const response = await sendTaskRequest(
+        {
+          type: 'service_restart',
+          taskId,
+          targetJid: chatJid,
+          chatJid,
+          timestamp: nowIso(),
+        },
+        { timeoutMs: 20_000 },
+      );
       if (!response) {
         return {
           content: [
@@ -564,22 +566,21 @@ The JID must be the current conversation. The folder name must be channel-prefix
         return adminToolUnavailable('register_agent');
       }
       const taskId = makeIpcId('register-agent');
-      const data = {
-        type: 'register_agent',
-        taskId,
-        jid: args.jid,
-        targetJid: chatJid,
-        chatJid,
-        name: args.name,
-        folder: args.folder,
-        trigger: args.trigger,
-        requiresTrigger: args.requiresTrigger ?? false,
-        timestamp: nowIso(),
-      };
-
-      writeIpcFile(TASKS_DIR, data);
-
-      const response = await waitForTaskResponse(taskId, 300_000);
+      const response = await sendTaskRequest(
+        {
+          type: 'register_agent',
+          taskId,
+          jid: args.jid,
+          targetJid: chatJid,
+          chatJid,
+          name: args.name,
+          folder: args.folder,
+          trigger: args.trigger,
+          requiresTrigger: args.requiresTrigger ?? false,
+          timestamp: nowIso(),
+        },
+        { timeoutMs: 300_000 },
+      );
       if (!response) {
         return {
           content: [
@@ -704,20 +705,21 @@ async function submitCapabilityReviewTask(
   payload: Record<string, unknown>,
 ) {
   const taskId = makeIpcId(toolName.replaceAll('_', '-'));
-  writeIpcFile(TASKS_DIR, {
-    type: toolName,
-    taskId,
-    runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
-    jobId: process.env.GANTRY_JOB_ID || undefined,
-    runId: process.env.GANTRY_JOB_RUN_ID || undefined,
-    targetJid: chatJid,
-    chatJid,
-    authThreadId: threadId,
-    payload,
-    timestamp: nowIso(),
-  });
-
-  const response = await waitForTaskResponse(taskId, SKILL_APPROVAL_WAIT_MS);
+  const response = await sendTaskRequest(
+    {
+      type: toolName,
+      taskId,
+      runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
+      jobId: process.env.GANTRY_JOB_ID || undefined,
+      runId: process.env.GANTRY_JOB_RUN_ID || undefined,
+      targetJid: chatJid,
+      chatJid,
+      authThreadId: threadId,
+      payload,
+      timestamp: nowIso(),
+    },
+    { timeoutMs: SKILL_APPROVAL_WAIT_MS },
+  );
   if (!response?.ok) {
     return {
       content: [
@@ -779,22 +781,20 @@ function registerSkillProposalTool(
     },
     async (args) => {
       const taskId = makeIpcId('request-skill');
-      writeIpcFile(TASKS_DIR, {
-        type: toolName,
-        taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        payload: {
-          files: args.files,
-          reason: args.reason,
+      const response = await sendTaskRequest(
+        {
+          type: toolName,
+          taskId,
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          payload: {
+            files: args.files,
+            reason: args.reason,
+          },
+          timestamp: nowIso(),
         },
-        timestamp: nowIso(),
-      });
-
-      const response = await waitForTaskResponse(
-        taskId,
-        SKILL_APPROVAL_WAIT_MS,
+        { timeoutMs: SKILL_APPROVAL_WAIT_MS },
       );
       if (!response?.ok) {
         return {

@@ -2,9 +2,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { FileArtifactDescriptor } from '../../../domain/file-artifacts/file-artifact.js';
-import { chatJid, TASKS_DIR } from '../context.js';
+import { chatJid } from '../context.js';
 import { makeIpcId } from '../ipc-ids.js';
-import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
+import { sendTaskRequest } from '../ipc.js';
 
 const FILE_ARTIFACT_TASK_TIMEOUT_MS = 30_000;
 const MAX_READ_LIMIT_BYTES = 256 * 1024;
@@ -82,16 +82,15 @@ async function requestHostFileArtifactAction(
   args: z.infer<z.ZodObject<typeof fileToolSchema>>,
 ): Promise<string> {
   const taskId = makeIpcId('file-artifact');
-  writeIpcFile(TASKS_DIR, {
-    type: 'file_artifact',
-    taskId,
-    chatJid,
-    targetJid: chatJid,
-    payload: compactPayload(args),
-  });
-  const response = await waitForTaskResponse(
-    taskId,
-    FILE_ARTIFACT_TASK_TIMEOUT_MS,
+  const response = await sendTaskRequest(
+    {
+      type: 'file_artifact',
+      taskId,
+      chatJid,
+      targetJid: chatJid,
+      payload: compactPayload(args),
+    },
+    { timeoutMs: FILE_ARTIFACT_TASK_TIMEOUT_MS },
   );
   if (!response) {
     return compactJson({

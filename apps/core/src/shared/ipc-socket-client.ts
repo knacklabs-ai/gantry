@@ -51,6 +51,16 @@ export interface IpcSocketClientOptions {
   onPush?: (frame: IpcWireFrame) => void;
   /** Reconnect policy. Default { enabled: false }. */
   reconnect?: IpcSocketClientReconnect;
+  /**
+   * When true, `unref()` the underlying socket so the connection NEVER by itself
+   * keeps the Node event loop alive. Use for a long-lived owner whose lifetime is
+   * pinned by some OTHER handle (e.g. the gantry-MCP grandchild, held open by its
+   * stdio transport): the socket is a dependent resource, not a reason to stay
+   * alive, so the process can exit cleanly when that other handle closes even if
+   * this client is never explicitly closed. Default false (socket keeps the loop
+   * alive — correct for a client that is explicitly close()d, like the runner).
+   */
+  unref?: boolean;
   /** Connect/handshake timeout in ms. Default 5000. */
   connectTimeoutMs?: number;
   /** Frame body size cap forwarded to IpcConnection. */
@@ -89,6 +99,7 @@ export class IpcSocketClient {
   ) => boolean;
   private readonly onPush?: (frame: IpcWireFrame) => void;
   private readonly reconnectCfg: IpcSocketClientReconnect;
+  private readonly unrefSocket: boolean;
   private readonly connectTimeoutMs: number;
   private readonly maxBytes: number | undefined;
   private readonly connectFn: (socketPath: string) => net.Socket;
@@ -114,6 +125,7 @@ export class IpcSocketClient {
     this.verifyResponse = opts.verifyResponse;
     this.onPush = opts.onPush;
     this.reconnectCfg = opts.reconnect ?? { enabled: false };
+    this.unrefSocket = opts.unref ?? false;
     this.connectTimeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.maxBytes = opts.maxBytes;
     this.connectFn = opts.connectFn ?? ((p) => net.connect(p));
@@ -154,6 +166,17 @@ export class IpcSocketClient {
       reject?.(err instanceof Error ? err : new Error(String(err)));
       this.scheduleReconnectIfNeeded();
       return;
+    }
+
+    // A long-lived owner (e.g. the gantry-MCP grandchild) is kept alive by some
+    // other handle; the socket must not by itself pin the event loop, or the
+    // process can't exit cleanly when that handle closes. unref() makes it a
+    // dependent resource. No-op for fakes without unref (tests).
+    if (
+      this.unrefSocket &&
+      typeof (socket as { unref?: () => void }).unref === 'function'
+    ) {
+      (socket as { unref: () => void }).unref();
     }
 
     this.connectResolve = resolve;

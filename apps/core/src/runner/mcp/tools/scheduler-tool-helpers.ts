@@ -1,11 +1,7 @@
 import { nowIso } from '../../../shared/time/datetime.js';
-import { chatJid, threadId, TASKS_DIR } from '../context.js';
+import { chatJid, threadId } from '../context.js';
 import { formatTaskFailureLines } from '../formatting.js';
-import {
-  waitForTaskResponse,
-  writeIpcFile,
-  type TaskResponseEnvelope,
-} from '../ipc.js';
+import { sendTaskRequest, type TaskResponseEnvelope } from '../ipc.js';
 import { makeIpcId } from '../ipc-ids.js';
 import {
   parseSchedulerTargetShortcut,
@@ -25,16 +21,18 @@ export async function requestSchedulerData(
   timeoutMs = 20_000,
 ): Promise<TaskResponseEnvelope | null> {
   const taskId = makeIpcId(type.replace(/_/g, '-'));
-  writeIpcFile(TASKS_DIR, {
-    type,
-    taskId,
-    ...payload,
-    targetJid: chatJid,
-    chatJid,
-    authThreadId: threadId,
-    timestamp: nowIso(),
-  });
-  return waitForTaskResponse(taskId, timeoutMs);
+  return sendTaskRequest(
+    {
+      type,
+      taskId,
+      ...payload,
+      targetJid: chatJid,
+      chatJid,
+      authThreadId: threadId,
+      timestamp: nowIso(),
+    },
+    { timeoutMs },
+  );
 }
 
 export function normalizeSchedulerWaitTimeoutMs(value: unknown): number {
@@ -84,18 +82,17 @@ export async function submitSchedulerMutationTask(input: {
   successText: string;
   timeoutMs?: number;
 }): Promise<SchedulerMutationResult> {
-  writeIpcFile(TASKS_DIR, {
-    type: input.taskType,
-    taskId: input.taskId,
-    ...input.payload,
-    targetJid: chatJid,
-    chatJid,
-    authThreadId: threadId,
-    timestamp: nowIso(),
-  });
-  const response = await waitForTaskResponse(
-    input.taskId,
-    input.timeoutMs ?? 20_000,
+  const response = await sendTaskRequest(
+    {
+      type: input.taskType,
+      taskId: input.taskId,
+      ...input.payload,
+      targetJid: chatJid,
+      chatJid,
+      authThreadId: threadId,
+      timestamp: nowIso(),
+    },
+    { timeoutMs: input.timeoutMs ?? 20_000 },
   );
   if (!response) {
     return {

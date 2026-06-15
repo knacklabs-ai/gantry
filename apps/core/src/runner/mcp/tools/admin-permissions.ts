@@ -12,11 +12,10 @@ import {
   attachedMcpSourceIds,
   selectedSkillDisplays,
   attachedSkillSourceIds,
-  TASKS_DIR,
   threadId,
 } from '../context.js';
 import { humanizeTechnicalIdentifier } from '../../../shared/user-visible-messages.js';
-import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
+import { sendTaskRequest } from '../ipc.js';
 import { makeIpcId } from '../ipc-ids.js';
 import { formatTaskFailureLines } from '../formatting.js';
 
@@ -64,21 +63,23 @@ export function registerAdminPermissionTools(
         return adminToolUnavailable('admin_permission_revoke');
       }
       const taskId = makeIpcId('admin-permission-revoke');
-      writeIpcFile(TASKS_DIR, {
-        type: 'admin_permission_revoke',
-        taskId,
-        runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
-        payload: {
-          toolName: args.tool_name,
-          toolId: args.tool_id,
-          reason: args.reason,
+      const response = await sendTaskRequest(
+        {
+          type: 'admin_permission_revoke',
+          taskId,
+          runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
+          payload: {
+            toolName: args.tool_name,
+            toolId: args.tool_id,
+            reason: args.reason,
+          },
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          timestamp: nowIso(),
         },
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        timestamp: nowIso(),
-      });
-      const response = await waitForTaskResponse(taskId, 20_000);
+        { timeoutMs: 20_000 },
+      );
       if (!response) {
         return {
           content: [

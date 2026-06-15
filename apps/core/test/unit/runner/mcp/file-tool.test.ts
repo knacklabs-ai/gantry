@@ -19,8 +19,7 @@ afterEach(() => {
 
 describe('mcp__gantry__file', () => {
   it('sends compact FileArtifact requests through signed host IPC', async () => {
-    const writeIpcFile = vi.fn();
-    const waitForTaskResponse = vi.fn(async () => ({
+    const sendTaskRequest = vi.fn(async () => ({
       ok: true,
       data: {
         ok: true,
@@ -39,8 +38,7 @@ describe('mcp__gantry__file', () => {
       },
     }));
     vi.doMock('@core/runner/mcp/ipc.js', () => ({
-      writeIpcFile,
-      waitForTaskResponse,
+      sendTaskRequest,
     }));
     const { handleFileToolAction, measureFileToolPayloadSize } =
       await import('@core/runner/mcp/tools/file.js');
@@ -55,10 +53,12 @@ describe('mcp__gantry__file', () => {
 
     expect(response).toMatchObject({ ok: true });
     expect(response.artifacts[0]).not.toHaveProperty('storageRef');
-    expect(writeIpcFile).toHaveBeenCalledWith(
-      '/tmp/gantry-file-tool-test/tasks',
+    // The file tool now routes through sendTaskRequest (transport-agnostic): the
+    // taskId rides INSIDE the payload, and the 30s wait is forwarded as opts.
+    expect(sendTaskRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'file_artifact',
+        taskId: expect.any(String),
         chatJid: 'sl:C123',
         targetJid: 'sl:C123',
         payload: {
@@ -67,13 +67,13 @@ describe('mcp__gantry__file', () => {
           path: 'notes/today.md',
         },
       }),
+      { timeoutMs: 30_000 },
     );
     expect(measureFileToolPayloadSize(response)).toBeLessThan(250);
   });
 
   it('returns compact rejection when host IPC rejects or times out', async () => {
-    const writeIpcFile = vi.fn();
-    const waitForTaskResponse = vi
+    const sendTaskRequest = vi
       .fn()
       .mockResolvedValueOnce({
         ok: false,
@@ -81,8 +81,7 @@ describe('mcp__gantry__file', () => {
       })
       .mockResolvedValueOnce(null);
     vi.doMock('@core/runner/mcp/ipc.js', () => ({
-      writeIpcFile,
-      waitForTaskResponse,
+      sendTaskRequest,
     }));
     const { handleFileToolAction } =
       await import('@core/runner/mcp/tools/file.js');

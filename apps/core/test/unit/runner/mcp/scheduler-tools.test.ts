@@ -247,11 +247,9 @@ describe('scheduler MCP tools', () => {
     const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-tools-'));
     tempRoots.push(ipcDir);
     process.env.GANTRY_IPC_DIR = ipcDir;
-    const waitForTaskResponse = vi.fn(async () => ({ ok: true }));
-    const writeIpcFile = vi.fn();
+    const sendTaskRequest = vi.fn(async () => ({ ok: true }));
     vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
-      waitForTaskResponse,
-      writeIpcFile,
+      sendTaskRequest,
     }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
@@ -297,10 +295,12 @@ describe('scheduler MCP tools', () => {
     });
 
     expect(response.isError).not.toBe(true);
-    expect(writeIpcFile).toHaveBeenCalledWith(
-      expect.any(String),
+    // Mutations route through sendTaskRequest now; the taskId rides inside the
+    // payload and the 20s mutation wait is forwarded as opts.timeoutMs.
+    expect(sendTaskRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'scheduler_update_job',
+        taskId: expect.any(String),
         jobId: 'job-1',
         executionContext: {
           conversationJid: 'tg:team',
@@ -322,6 +322,7 @@ describe('scheduler MCP tools', () => {
           },
         ],
       }),
+      { timeoutMs: 20_000 },
     );
   });
 
@@ -329,14 +330,12 @@ describe('scheduler MCP tools', () => {
     const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-tools-'));
     tempRoots.push(ipcDir);
     process.env.GANTRY_IPC_DIR = ipcDir;
-    const waitForTaskResponse = vi.fn(async () => ({
+    const sendTaskRequest = vi.fn(async () => ({
       ok: true,
       data: { events: [] },
     }));
-    const writeIpcFile = vi.fn();
     vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
-      waitForTaskResponse,
-      writeIpcFile,
+      sendTaskRequest,
     }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
@@ -366,17 +365,17 @@ describe('scheduler MCP tools', () => {
 
     expect(response.content[0].text).toContain('Scheduler events (0)');
     expect(response.content[0].text).toContain('[]');
-    expect(writeIpcFile).toHaveBeenCalledWith(
-      expect.any(String),
+    // R6: the long event wait (300s payload deadline + 10s response grace =
+    // 310s) must be forwarded verbatim as opts.timeoutMs — never clamped to the
+    // 15s socket default. The payload keeps its own 300s deadline field.
+    expect(sendTaskRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'scheduler_wait_for_events',
+        taskId: expect.any(String),
         jobId: 'job-1',
         timeoutMs: 300_000,
       }),
-    );
-    expect(waitForTaskResponse).toHaveBeenCalledWith(
-      expect.any(String),
-      310_000,
+      { timeoutMs: 310_000 },
     );
   });
 
@@ -386,11 +385,9 @@ describe('scheduler MCP tools', () => {
     process.env.GANTRY_IPC_DIR = ipcDir;
     process.env.GANTRY_CHAT_JID = 'tg:team';
     process.env.GANTRY_GROUP_FOLDER = 'team';
-    const waitForTaskResponse = vi.fn(async () => ({ ok: true }));
-    const writeIpcFile = vi.fn();
+    const sendTaskRequest = vi.fn(async () => ({ ok: true }));
     vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
-      waitForTaskResponse,
-      writeIpcFile,
+      sendTaskRequest,
     }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
@@ -453,7 +450,7 @@ describe('scheduler MCP tools', () => {
     expect(response.content[0].text).toContain('- Memory:');
     expect(response.content[0].text).toContain('- Runtime:');
     expect(response.content[0].text).toContain('Confirmation token:');
-    expect(writeIpcFile).not.toHaveBeenCalled();
+    expect(sendTaskRequest).not.toHaveBeenCalled();
   });
 
   it('writes canonical executionContext and notificationRoutes for confirmed target shortcuts', async () => {
@@ -462,11 +459,9 @@ describe('scheduler MCP tools', () => {
     process.env.GANTRY_IPC_DIR = ipcDir;
     process.env.GANTRY_CHAT_JID = 'tg:team';
     process.env.GANTRY_GROUP_FOLDER = 'team';
-    const waitForTaskResponse = vi.fn(async () => ({ ok: true }));
-    const writeIpcFile = vi.fn();
+    const sendTaskRequest = vi.fn(async () => ({ ok: true }));
     vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
-      waitForTaskResponse,
-      writeIpcFile,
+      sendTaskRequest,
     }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
@@ -522,10 +517,10 @@ describe('scheduler MCP tools', () => {
     });
 
     expect(response.isError).not.toBe(true);
-    expect(writeIpcFile).toHaveBeenCalledWith(
-      expect.any(String),
+    expect(sendTaskRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'scheduler_upsert_job',
+        taskId: expect.any(String),
         confirm: true,
         confirmationToken,
         executionContext: {
@@ -542,6 +537,7 @@ describe('scheduler MCP tools', () => {
         ],
         toolAccessRequirements: ['Browser'],
       }),
+      { timeoutMs: 20_000 },
     );
   });
 
@@ -549,10 +545,9 @@ describe('scheduler MCP tools', () => {
     const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-tools-'));
     tempRoots.push(ipcDir);
     process.env.GANTRY_IPC_DIR = ipcDir;
-    const writeIpcFile = vi.fn();
+    const sendTaskRequest = vi.fn();
     vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
-      waitForTaskResponse: vi.fn(),
-      writeIpcFile,
+      sendTaskRequest,
     }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
@@ -583,17 +578,16 @@ describe('scheduler MCP tools', () => {
     expect(response.content[0].text).toContain(
       'Unsupported scheduler fields: deliver_to',
     );
-    expect(writeIpcFile).not.toHaveBeenCalled();
+    expect(sendTaskRequest).not.toHaveBeenCalled();
   });
 
   it('rejects deprecated scheduler required_tools input with cutover guidance', async () => {
     const ipcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-tools-'));
     tempRoots.push(ipcDir);
     process.env.GANTRY_IPC_DIR = ipcDir;
-    const writeIpcFile = vi.fn();
+    const sendTaskRequest = vi.fn();
     vi.doMock('../../../../src/runner/mcp/ipc.js', () => ({
-      waitForTaskResponse: vi.fn(),
-      writeIpcFile,
+      sendTaskRequest,
     }));
     const { registerSchedulerTools } =
       await import('../../../../src/runner/mcp/tools/scheduler.js');
@@ -624,7 +618,7 @@ describe('scheduler MCP tools', () => {
     expect(response.content[0].text).toContain(
       'required_tools is no longer accepted. Use tool_access_requirements',
     );
-    expect(writeIpcFile).not.toHaveBeenCalled();
+    expect(sendTaskRequest).not.toHaveBeenCalled();
   });
 
   it('renders missed-window staleness in scheduler job summaries', async () => {

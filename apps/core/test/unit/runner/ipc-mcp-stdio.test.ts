@@ -4,10 +4,32 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { generateKeyPairSync } from 'crypto';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { schedulerJobConfirmationToken } from '@core/jobs/job-plan-formatter.js';
 import { ALL_GANTRY_MCP_TOOL_NAMES } from '@agent-runner-src/gantry-mcp-tool-surface.js';
+
+// Socket-mode (Pillar 1, Task D) real-child test deps. processTaskIpc is mocked
+// in the TEST process (which hosts the socket server); the spawned grandchild
+// runs the real socket client + signing and never touches this mock.
+vi.mock('@core/jobs/ipc-handler.js', () => ({
+  processTaskIpc: vi.fn(),
+}));
+
+import { processTaskIpc } from '@core/jobs/ipc-handler.js';
+import { writeTaskIpcResponse } from '@core/jobs/ipc-shared.js';
+import {
+  startIpcSocketServer,
+  type IpcSocketServerHandle,
+} from '@core/runtime/ipc-socket-server.js';
+import type { IpcDeps } from '@core/runtime/ipc-domain-types.js';
+import type { ConversationRoute } from '@core/domain/types.js';
+import { createIpcAuthEnvelope } from '@core/runtime/ipc-auth.js';
+import { clearIpcResponders } from '@core/runtime/ipc-response-router.js';
+import { clearConsumedIpcRequestIds } from '@core/runtime/ipc-auth-validation.js';
+import { clearIpcRateLimitState } from '@core/runtime/ipc-rate-limit.js';
+
+const processTaskIpcMock = vi.mocked(processTaskIpc);
 
 const tempRoots: string[] = [];
 
@@ -210,6 +232,25 @@ function createMcpFixture(): {
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/time/datetime.ts'),
     path.join(sharedTimeDir, 'datetime.ts'),
+  );
+  // Socket task transport (Pillar 1, Task D): ipc.ts now imports the socket
+  // client at module load, so its transitive shared deps must exist in the
+  // grandchild tree even when transport=fs (default).
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/ipc-socket-client.ts'),
+    path.join(sharedDir, 'ipc-socket-client.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/ipc-connection.ts'),
+    path.join(sharedDir, 'ipc-connection.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/ipc-frame.ts'),
+    path.join(sharedDir, 'ipc-frame.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/ipc-wire.ts'),
+    path.join(sharedDir, 'ipc-wire.ts'),
   );
   symlinkPackage(root, 'zod', 'node_modules/zod');
   symlinkPackage(root, 'cron-parser', 'node_modules/cron-parser');
@@ -1550,3 +1591,132 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Socket-mode task transport (Pillar 1, Task D)
+//
+// Stands up the REAL startIpcSocketServer in the test process on a temp socket,
+// then spawns the REAL grandchild stdio server with GANTRY_IPC_TRANSPORT=socket.
+// The grandchild builds its own IpcSocketClient (role=mcp), handshakes, signs a
+// task request, and the test-process server returns a signed ed25519 response
+// (via the mocked processTaskIpc → real writeTaskIpcResponse → response-router).
+// This proves the client side end to end: hello (role mcp) + signed task req +
+// verified signed resp — none of it touches the fs request-file/poll path.
+// ---------------------------------------------------------------------------
+
+const SOCKET_FOLDER = 'team';
+const SOCKET_CHAT_JID = 'tg:team';
+const SOCKET_THREAD_ID = 'socket-thread';
+
+function buildSocketDeps(): IpcDeps {
+  const routes: Record<string, ConversationRoute> = {
+    [SOCKET_CHAT_JID]: {
+      name: 'Team',
+      folder: SOCKET_FOLDER,
+      trigger: '',
+      added_at: new Date().toISOString(),
+    },
+  };
+  return {
+    sendMessage: vi.fn(async () => undefined),
+    conversationRoutes: () => routes,
+    registerGroup: vi.fn(),
+    syncGroups: vi.fn(async () => undefined),
+    getAvailableGroups: vi.fn(() => []),
+    writeGroupsSnapshot: vi.fn(),
+    onSchedulerChanged: vi.fn(),
+    requestPermissionApproval: vi.fn(async () => ({}) as never),
+    requestUserAnswer: vi.fn(async () => ({}) as never),
+    opsRepository: {} as never,
+  } as unknown as IpcDeps;
+}
+
+describe(
+  'agent-runner MCP socket-mode task transport',
+  { timeout: 40_000 },
+  () => {
+    let socketServer: IpcSocketServerHandle | undefined;
+    let socketPath: string;
+
+    beforeEach(() => {
+      processTaskIpcMock.mockReset();
+      clearIpcResponders();
+      clearConsumedIpcRequestIds();
+      clearIpcRateLimitState();
+      socketPath = path.join(makeTempRoot(), 'core.sock');
+    });
+
+    afterEach(async () => {
+      if (socketServer) {
+        await socketServer.stop().catch(() => undefined);
+        socketServer = undefined;
+      }
+      clearIpcResponders();
+      clearConsumedIpcRequestIds();
+      clearIpcRateLimitState();
+    });
+
+    async function runSocketTool(
+      fixture: ReturnType<typeof createMcpFixture>,
+      toolName: string,
+      args: Record<string, unknown>,
+    ): Promise<{ exitCode: number | null; stderr: string }> {
+      // The server-side auth envelope ALSO registers the ed25519 response signing
+      // key (in this process's in-memory map), keyed by responseKeyId — so the
+      // mocked handler's writeTaskIpcResponse can sign, and the grandchild can
+      // verify with the matching public key.
+      const auth = createIpcAuthEnvelope(SOCKET_FOLDER, SOCKET_THREAD_ID);
+      const handle = await startIpcSocketServer(buildSocketDeps(), {
+        socketPath,
+      });
+      if (!handle) throw new Error('socket server failed to start');
+      socketServer = handle;
+
+      return runMcpFixture(fixture, toolName, args, {
+        GANTRY_IPC_TRANSPORT: 'socket',
+        GANTRY_IPC_SOCKET_PATH: socketPath,
+        GANTRY_GROUP_FOLDER: SOCKET_FOLDER,
+        GANTRY_CHAT_JID: SOCKET_CHAT_JID,
+        GANTRY_THREAD_ID: SOCKET_THREAD_ID,
+        GANTRY_IPC_AUTH_TOKEN: auth.authToken,
+        GANTRY_IPC_RESPONSE_VERIFY_KEY: auth.responseVerifyKey,
+        GANTRY_IPC_RESPONSE_KEY_ID: auth.responseKeyId,
+        // Defuse the file-based fake-SDK auto-responder: in socket mode the
+        // grandchild never writes a task file, so this is inert, but make the
+        // intent explicit.
+        TEST_MCP_AUTO_RESPOND_TASKS: '0',
+      });
+    }
+
+    it('routes a scheduler task over the socket and returns the signed response data', async () => {
+      processTaskIpcMock.mockImplementation(async (data) => {
+        writeTaskIpcResponse(
+          SOCKET_FOLDER,
+          data.taskId,
+          {
+            ok: true,
+            message: 'Scheduler task confirmed.',
+            data: {
+              jobs: [{ id: 'job-1', status: 'active', group_scope: 'team' }],
+            },
+          },
+          data.authThreadId,
+          data.responseKeyId,
+        );
+      });
+
+      const fixture = createMcpFixture();
+      const result = await runSocketTool(fixture, 'scheduler_list_jobs', {
+        statuses: ['active'],
+      });
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
+      // The grandchild verified the ed25519 signature and surfaced the data.
+      expect(record.result.content[0].text).toContain('"id": "job-1"');
+      // The handler ran exactly once over the socket (no fs request file written).
+      expect(processTaskIpcMock).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(path.join(fixture.ipcDir, 'tasks'))).toBe(false);
+    });
+  },
+);

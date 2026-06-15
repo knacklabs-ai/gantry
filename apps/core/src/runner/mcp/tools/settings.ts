@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { nowIso } from '../../../shared/time/datetime.js';
-import { chatJid, TASKS_DIR, threadId } from '../context.js';
-import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
+import { chatJid, threadId } from '../context.js';
+import { sendTaskRequest } from '../ipc.js';
 import type { AdminMcpToolName } from '../../../shared/admin-mcp-tools.js';
 import { humanizeTechnicalIdentifier } from '../../../shared/user-visible-messages.js';
 import { makeIpcId } from '../ipc-ids.js';
@@ -22,15 +22,17 @@ export function registerSettingsTools(
         return adminToolUnavailable('settings_desired_state');
       }
       const taskId = makeIpcId('settings-desired-state');
-      writeIpcFile(TASKS_DIR, {
-        type: 'settings_desired_state',
-        taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        timestamp: nowIso(),
-      });
-      const response = await waitForTaskResponse(taskId, 20_000);
+      const response = await sendTaskRequest(
+        {
+          type: 'settings_desired_state',
+          taskId,
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          timestamp: nowIso(),
+        },
+        { timeoutMs: 20_000 },
+      );
       if (!response?.ok) {
         return {
           content: [
@@ -79,22 +81,21 @@ export function registerSettingsTools(
         return adminToolUnavailable('request_settings_update');
       }
       const taskId = makeIpcId('settings-update');
-      writeIpcFile(TASKS_DIR, {
-        type: 'request_settings_update',
-        taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
-        payload: {
-          replacementYaml: args.replacementYaml,
-          expectedRevision: args.expectedRevision,
-          reason: args.reason,
+      const response = await sendTaskRequest(
+        {
+          type: 'request_settings_update',
+          taskId,
+          targetJid: chatJid,
+          chatJid,
+          authThreadId: threadId,
+          payload: {
+            replacementYaml: args.replacementYaml,
+            expectedRevision: args.expectedRevision,
+            reason: args.reason,
+          },
+          timestamp: nowIso(),
         },
-        timestamp: nowIso(),
-      });
-      const response = await waitForTaskResponse(
-        taskId,
-        SETTINGS_APPROVAL_WAIT_MS,
+        { timeoutMs: SETTINGS_APPROVAL_WAIT_MS },
       );
       if (!response?.ok) {
         return {
