@@ -123,6 +123,13 @@ export class AnthropicWarmPoolController {
       key: recipe.key,
       bornAt: this.now(),
       processName,
+      ...(env.GANTRY_IPC_DIR ? { ipcDir: env.GANTRY_IPC_DIR } : {}),
+      ...(env.GANTRY_IPC_INPUT_DIR
+        ? { ipcInputDir: env.GANTRY_IPC_INPUT_DIR }
+        : {}),
+      ...(env.GANTRY_MEMORY_IPC_AUTH_TOKEN
+        ? { memoryIpcAuthToken: env.GANTRY_MEMORY_IPC_AUTH_TOKEN }
+        : {}),
       bound: false,
     };
     this.workers.set(handle.id, { handle, process });

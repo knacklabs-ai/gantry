@@ -59,6 +59,9 @@ export interface WarmWorkerHandle {
   readonly key: WarmPoolKey;
   readonly bornAt: number;
   readonly processName?: string;
+  readonly ipcDir?: string;
+  readonly ipcInputDir?: string;
+  readonly memoryIpcAuthToken?: string;
   bound: boolean;
 }
 

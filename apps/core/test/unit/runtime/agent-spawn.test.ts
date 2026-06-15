@@ -799,6 +799,9 @@ describe('agent-spawn timeout behavior', () => {
       key: 'warm-key',
       bornAt: 100,
       processName: 'warm-worker-1',
+      ipcDir: '/tmp/warm-worker/ipc',
+      ipcInputDir: '/tmp/warm-worker/ipc/input/generic',
+      memoryIpcAuthToken: 'warm-memory-token',
       bound: false,
     };
     const warmPool: WarmPoolRuntime = {
@@ -848,6 +851,11 @@ describe('agent-spawn timeout behavior', () => {
       result: 'served warm',
       warmBound: true,
     });
+    expect(mockCloseEgressGateway).not.toHaveBeenCalled();
+    const metadata = onProcess.mock.calls[0][2];
+    await metadata?.pooledWarmWorker?.release();
+    expect(warmPool.release).toHaveBeenCalledWith(warmHandle);
+    expect(mockCloseEgressGateway).toHaveBeenCalledTimes(1);
     expect(warmPool.acquire).toHaveBeenCalledTimes(1);
     expect(warmAdapter.bind).toHaveBeenCalledWith(
       warmHandle,
@@ -858,6 +866,9 @@ describe('agent-spawn timeout behavior', () => {
         firstMessage: 'Hello',
         memoryBlock: 'Customer context',
         runHandle: expect.any(String),
+        ipcDir: '/tmp/warm-worker/ipc',
+        ipcInputDir: '/tmp/warm-worker/ipc/input/generic',
+        memoryIpcAuthToken: 'warm-memory-token',
       }),
     );
     expect(onProcess).toHaveBeenCalledWith(

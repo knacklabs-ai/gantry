@@ -469,6 +469,23 @@ export async function spawnAgent(
     appId: input.appId || DEFAULT_RUNNER_APP_ID,
     agentId: input.agentId,
   });
+  let deferRunnerResourceCleanup = false;
+  let runnerResourcesCleaned = false;
+  const cleanupRunnerResources = async (): Promise<void> => {
+    if (runnerResourcesCleaned) return;
+    runnerResourcesCleaned = true;
+    cleanupRunnerMcpConfigFile(mcpConfigPath);
+    if (egressGateway) {
+      await closeEgressGateway(egressGateway);
+    }
+    await hostCredentials.revoke?.();
+    preparedExecution.cleanup();
+    revokeIpcResponseSigningKey(
+      ipcAuth.responseKeyId,
+      group.folder,
+      input.threadId,
+    );
+  };
   try {
     const command = process.execPath;
     const args = preparedExecution.runnerArgs;
@@ -795,11 +812,25 @@ export async function spawnAgent(
               ? { guardrailPreface: input.guardrailSystemPromptAppend }
               : {}),
             runHandle: processName,
-            ipcDir: hostRuntime.groupIpcDir,
-            ipcInputDir,
-            memoryIpcAuthToken: env.GANTRY_MEMORY_IPC_AUTH_TOKEN ?? '',
+            ipcDir: handle.ipcDir ?? hostRuntime.groupIpcDir,
+            ipcInputDir: handle.ipcInputDir ?? ipcInputDir,
+            memoryIpcAuthToken:
+              handle.memoryIpcAuthToken ??
+              env.GANTRY_MEMORY_IPC_AUTH_TOKEN ??
+              '',
             egressPrincipal: `${runnerAppId}:${input.agentId || group.folder}:${processName}`,
           });
+          let pooledReleaseCalled = false;
+          const releasePooledWorker = async (): Promise<void> => {
+            if (pooledReleaseCalled) return;
+            pooledReleaseCalled = true;
+            try {
+              await warmPool.release(bound.handle);
+            } finally {
+              await cleanupRunnerResources();
+            }
+          };
+          deferRunnerResourceCleanup = true;
           const output = await executeRunnerProcess({
             group,
             input: runnerInput,
@@ -820,7 +851,7 @@ export async function spawnAgent(
             processMetadata: {
               pooledWarmWorker: {
                 handle: bound.handle,
-                release: () => warmPool.release(bound.handle),
+                release: releasePooledWorker,
               },
             },
           });
@@ -864,16 +895,8 @@ export async function spawnAgent(
         threadId: input.threadId,
       });
     }
-    cleanupRunnerMcpConfigFile(mcpConfigPath);
-    if (egressGateway) {
-      await closeEgressGateway(egressGateway);
+    if (!deferRunnerResourceCleanup) {
+      await cleanupRunnerResources();
     }
-    await hostCredentials.revoke?.();
-    preparedExecution.cleanup();
-    revokeIpcResponseSigningKey(
-      ipcAuth.responseKeyId,
-      group.folder,
-      input.threadId,
-    );
   }
 }

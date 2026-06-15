@@ -48,6 +48,7 @@ function makeRecipe(): SharedBootRecipe {
     runnerEnv: {
       GANTRY_IPC_DIR: '/tmp/gantry/ipc/agent-1',
       GANTRY_IPC_INPUT_DIR: '/tmp/gantry/ipc/agent-1/input/generic',
+      GANTRY_MEMORY_IPC_AUTH_TOKEN: 'generic-memory-token',
     },
     runnerInput: {
       groupFolder: 'agent-1',
@@ -174,6 +175,9 @@ describe('Anthropic warm pool adapter', () => {
         bornAt: 1_000,
         bound: false,
         processName: 'warm-worker-1',
+        ipcDir: '/tmp/gantry/ipc/agent-1',
+        ipcInputDir: '/tmp/gantry/ipc/agent-1/input/generic',
+        memoryIpcAuthToken: 'generic-memory-token',
       }),
     );
   });
