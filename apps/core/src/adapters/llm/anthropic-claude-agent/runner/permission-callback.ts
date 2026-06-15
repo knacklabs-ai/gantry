@@ -8,6 +8,8 @@ import { persistentPermissionUpdates } from '../../../../shared/permission-tool-
 import { stableSha256Json } from '../../../../shared/stable-hash.js';
 import { hasValidIpcResponseSignature } from './ipc-signing.js';
 import { createSignedIpcRequestEnvelope } from './ipc-signing.js';
+import { IpcRequestError } from '../../../../shared/ipc-socket-client.js';
+import { getActiveRunnerSocketClient } from './active-runner-socket.js';
 import type { SemanticCapabilityDefinition } from '../../../../shared/semantic-capabilities.js';
 import {
   IPC_AUTH_TOKEN,
@@ -78,6 +80,153 @@ function permissionRequestFingerprint(options: {
 
 function canSharePermissionDecision(decision: PermissionDecision): boolean {
   return decision.mode === 'allow_timed_grant';
+}
+
+/**
+ * Map an already-parsed permission response object (`raw`, the signed payload as
+ * written by writePermissionIpcResponse) to a sanitized PermissionDecision.
+ *
+ * This is the SINGLE source of truth shared by both carriers: the fs poll (which
+ * reads `raw` from permission-responses/<id>.json) and the socket branch (which
+ * receives `raw` as the verified resp frame payload). It reconstructs the exact
+ * signed field-set/order, re-checks the requestId + responseNonce binding, and
+ * verifies the ed25519 signature — so a socket response is validated
+ * byte-for-byte identically to a file response. Returns a denial decision on any
+ * malformation / nonce mismatch / signature failure.
+ */
+function decisionFromVerifiedPermissionResponse(
+  raw: unknown,
+  requestId: string,
+  responseNonce: string,
+): PermissionDecision {
+  if (
+    !raw ||
+    typeof raw !== 'object' ||
+    (raw as { requestId?: string }).requestId !== requestId
+  ) {
+    return { approved: false, reason: 'Malformed permission response' };
+  }
+  const responsePayload: Record<string, unknown> = {
+    requestId,
+    responseNonce,
+    approved: Boolean((raw as { approved?: unknown }).approved),
+    ...(typeof (raw as { mode?: unknown }).mode === 'string'
+      ? { mode: (raw as { mode: string }).mode }
+      : {}),
+    ...(typeof (raw as { decidedBy?: unknown }).decidedBy === 'string'
+      ? { decidedBy: (raw as { decidedBy: string }).decidedBy }
+      : {}),
+    ...(typeof (raw as { reason?: unknown }).reason === 'string'
+      ? { reason: (raw as { reason: string }).reason }
+      : {}),
+    ...(Array.isArray(
+      (raw as { updatedPermissions?: unknown }).updatedPermissions,
+    )
+      ? {
+          updatedPermissions: (raw as { updatedPermissions: unknown[] })
+            .updatedPermissions,
+        }
+      : {}),
+    ...(typeof (raw as { decisionClassification?: unknown })
+      .decisionClassification === 'string'
+      ? {
+          decisionClassification: (raw as { decisionClassification: string })
+            .decisionClassification,
+        }
+      : {}),
+    ...(typeof (raw as { timedGrantExpiresAtMs?: unknown })
+      .timedGrantExpiresAtMs === 'number'
+      ? {
+          timedGrantExpiresAtMs: (raw as { timedGrantExpiresAtMs: number })
+            .timedGrantExpiresAtMs,
+        }
+      : {}),
+  };
+  if ((raw as { responseNonce?: unknown }).responseNonce !== responseNonce) {
+    return { approved: false, reason: 'Malformed permission response' };
+  }
+  if (
+    !hasValidIpcResponseSignature(
+      raw as Record<string, unknown>,
+      responsePayload,
+    )
+  ) {
+    return {
+      approved: false,
+      reason: 'Permission response signature verification failed',
+    };
+  }
+  const mode =
+    responsePayload.mode === 'allow_once' ||
+    responsePayload.mode === 'allow_persistent_rule' ||
+    responsePayload.mode === 'allow_timed_grant' ||
+    responsePayload.mode === 'cancel'
+      ? responsePayload.mode
+      : undefined;
+  const decisionClassification =
+    responsePayload.decisionClassification === 'user_temporary' ||
+    responsePayload.decisionClassification === 'user_permanent' ||
+    responsePayload.decisionClassification === 'user_reject'
+      ? responsePayload.decisionClassification
+      : undefined;
+  const sanitizedDecision = {
+    approved: responsePayload.approved as boolean,
+    mode,
+    decisionClassification,
+    updatedPermissions: Array.isArray(responsePayload.updatedPermissions)
+      ? (responsePayload.updatedPermissions as never)
+      : undefined,
+  };
+  return {
+    approved: sanitizedDecision.approved,
+    decidedBy:
+      typeof responsePayload.decidedBy === 'string'
+        ? responsePayload.decidedBy
+        : undefined,
+    reason:
+      typeof responsePayload.reason === 'string'
+        ? responsePayload.reason
+        : undefined,
+    mode,
+    updatedPermissions: persistentPermissionUpdates(sanitizedDecision) as never,
+    decisionClassification,
+    timedGrantExpiresAtMs:
+      typeof responsePayload.timedGrantExpiresAtMs === 'number'
+        ? (responsePayload.timedGrantExpiresAtMs as number)
+        : undefined,
+  };
+}
+
+/**
+ * Codes that mean "the socket did not deliver this permission request" — a
+ * transient issue the durable fs write+poll can still complete. We fall back to
+ * the fs path so a flaky/absent socket never fails a permission the fs path
+ * would finish. `timeout` and `busy` (server in-flight backpressure) are also
+ * safe to retry via fs — the request file is idempotent (same requestId).
+ */
+const PERMISSION_SOCKET_FALLBACK_CODES = new Set([
+  'connection_lost',
+  'not_connected',
+  'busy',
+  'timeout',
+]);
+
+/**
+ * Classify a failed socket `permission` request. Permission is interactive AND
+ * idempotent (the same signed request file can be re-presented), so:
+ *  - transient transport / timeout / busy → fall back to the durable fs path.
+ *  - a verified signed {ok:false} or bad_signature → that is a real
+ *    transport-level rejection (e.g. invalid_request / internal_error); fall
+ *    back to fs too, so the durable path still gets its chance rather than
+ *    failing the tool call on a single socket hiccup.
+ */
+function shouldFallBackToFsForPermission(err: unknown): boolean {
+  if (!(err instanceof IpcRequestError)) return true;
+  if (PERMISSION_SOCKET_FALLBACK_CODES.has(err.code)) return true;
+  // Any other protocol error (invalid_request/internal_error/bad_signature/…)
+  // also falls back to the durable fs path — never hang, never hard-fail on a
+  // socket-only error when fs can still resolve the request.
+  return true;
 }
 
 export async function requestPermissionApproval(options: {
@@ -239,6 +388,44 @@ async function requestPermissionApprovalInner(options: {
       timestamp: nowIso(),
     };
     const envelope = createSignedIpcRequestEnvelope(IPC_AUTH_TOKEN, payload);
+
+    // Socket fast-path (Pillar 1, Phase 5.3d): when the run's runner socket
+    // client is connected, send the SAME signed envelope over that ONE runner
+    // connection (the same one that receives continuation/close pushes — never a
+    // second connection) and await the signed decision. The client verifies the
+    // ed25519 response signature fail-closed; we then run the SAME
+    // verify+sanitize as the fs poll. A transient/timeout/busy failure (or any
+    // socket-only error) falls back to the durable fs write+poll below — the
+    // request file is idempotent (same requestId), so permission never hangs and
+    // never hard-fails on a socket hiccup. Scheduled jobs are non-interactive,
+    // so no runner socket exists for them: they take the fs path unchanged.
+    if (PERMISSION_REQUEST_TIMEOUT_MS > 0) {
+      const socketClient = getActiveRunnerSocketClient();
+      if (socketClient?.connected) {
+        try {
+          const resp = await socketClient.request('permission', envelope, {
+            id: requestId,
+            timeoutMs: PERMISSION_REQUEST_TIMEOUT_MS,
+          });
+          // The client already verified the signature; the shared mapper
+          // re-checks requestId/nonce binding + re-verifies, then sanitizes.
+          return decisionFromVerifiedPermissionResponse(
+            resp,
+            requestId,
+            responseNonce,
+          );
+        } catch (err) {
+          if (!shouldFallBackToFsForPermission(err)) {
+            // Unreachable today (the classifier always falls back), but kept so a
+            // future hard-fail disposition is explicit rather than silently
+            // dropping into fs.
+            throw err;
+          }
+          // Fall through to the durable fs write+poll below.
+        }
+      }
+    }
+
     fs.writeFileSync(requestTmpPath, JSON.stringify(envelope, null, 2));
     fs.renameSync(requestTmpPath, requestPath);
 
@@ -258,115 +445,12 @@ async function requestPermissionApprovalInner(options: {
         try {
           const raw = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
           fs.unlinkSync(responsePath);
-          if (
-            raw &&
-            typeof raw === 'object' &&
-            (raw as { requestId?: string }).requestId === requestId
-          ) {
-            const responsePayload: Record<string, unknown> = {
-              requestId,
-              responseNonce,
-              approved: Boolean((raw as { approved?: unknown }).approved),
-              ...(typeof (raw as { mode?: unknown }).mode === 'string'
-                ? { mode: (raw as { mode: string }).mode }
-                : {}),
-              ...(typeof (raw as { decidedBy?: unknown }).decidedBy === 'string'
-                ? { decidedBy: (raw as { decidedBy: string }).decidedBy }
-                : {}),
-              ...(typeof (raw as { reason?: unknown }).reason === 'string'
-                ? { reason: (raw as { reason: string }).reason }
-                : {}),
-              ...(Array.isArray(
-                (raw as { updatedPermissions?: unknown }).updatedPermissions,
-              )
-                ? {
-                    updatedPermissions: (
-                      raw as { updatedPermissions: unknown[] }
-                    ).updatedPermissions,
-                  }
-                : {}),
-              ...(typeof (raw as { decisionClassification?: unknown })
-                .decisionClassification === 'string'
-                ? {
-                    decisionClassification: (
-                      raw as { decisionClassification: string }
-                    ).decisionClassification,
-                  }
-                : {}),
-              ...(typeof (raw as { timedGrantExpiresAtMs?: unknown })
-                .timedGrantExpiresAtMs === 'number'
-                ? {
-                    timedGrantExpiresAtMs: (
-                      raw as { timedGrantExpiresAtMs: number }
-                    ).timedGrantExpiresAtMs,
-                  }
-                : {}),
-            };
-            if (
-              (raw as { responseNonce?: unknown }).responseNonce !==
-              responseNonce
-            ) {
-              return {
-                approved: false,
-                reason: 'Malformed permission response',
-              };
-            }
-            if (
-              !hasValidIpcResponseSignature(
-                raw as Record<string, unknown>,
-                responsePayload,
-              )
-            ) {
-              return {
-                approved: false,
-                reason: 'Permission response signature verification failed',
-              };
-            }
-            const mode =
-              responsePayload.mode === 'allow_once' ||
-              responsePayload.mode === 'allow_persistent_rule' ||
-              responsePayload.mode === 'allow_timed_grant' ||
-              responsePayload.mode === 'cancel'
-                ? responsePayload.mode
-                : undefined;
-            const decisionClassification =
-              responsePayload.decisionClassification === 'user_temporary' ||
-              responsePayload.decisionClassification === 'user_permanent' ||
-              responsePayload.decisionClassification === 'user_reject'
-                ? responsePayload.decisionClassification
-                : undefined;
-            const sanitizedDecision = {
-              approved: responsePayload.approved as boolean,
-              mode,
-              decisionClassification,
-              updatedPermissions: Array.isArray(
-                responsePayload.updatedPermissions,
-              )
-                ? (responsePayload.updatedPermissions as never)
-                : undefined,
-            };
-            return {
-              approved: sanitizedDecision.approved,
-              decidedBy:
-                typeof responsePayload.decidedBy === 'string'
-                  ? responsePayload.decidedBy
-                  : undefined,
-              reason:
-                typeof responsePayload.reason === 'string'
-                  ? responsePayload.reason
-                  : undefined,
-              mode,
-              updatedPermissions: persistentPermissionUpdates(
-                sanitizedDecision,
-              ) as never,
-              decisionClassification,
-              timedGrantExpiresAtMs:
-                typeof responsePayload.timedGrantExpiresAtMs === 'number'
-                  ? (responsePayload.timedGrantExpiresAtMs as number)
-                  : undefined,
-            };
-          }
-          return { approved: false, reason: 'Malformed permission response' };
+          // Shared verify+sanitize (byte-identical to the socket branch).
+          return decisionFromVerifiedPermissionResponse(
+            raw,
+            requestId,
+            responseNonce,
+          );
         } catch (err) {
           return {
             approved: false,

@@ -33,8 +33,10 @@ import {
   parseBrowserIpcRequest,
   parseIpcMessage,
   parseMemoryIpcRequest,
+  parsePermissionIpcRequest,
   parseUserQuestionIpcRequest,
 } from './ipc-parsing.js';
+import { validatePermissionIpcJobExecutionTarget } from './ipc.js';
 import {
   getIpcResponseSigningPrivateKey,
   isBrowserIpcAuthorized,
@@ -46,7 +48,9 @@ import {
 } from '../memory/memory-ipc.js';
 import {
   interactionInFlightKey,
+  processPermissionInteractionIpc,
   processUserQuestionInteractionIpc,
+  writePermissionInteractionFailure,
   writeUserQuestionInteractionFailure,
 } from './ipc-interaction-processing.js';
 import {
@@ -231,6 +235,11 @@ export async function startIpcSocketServer(
       return;
     }
 
+    if (channel === 'permission') {
+      await dispatchPermission(frame, conn, folder);
+      return;
+    }
+
     if (channel === 'browser') {
       await dispatchBrowser(frame, conn, folder);
       return;
@@ -270,8 +279,9 @@ export async function startIpcSocketServer(
       return;
     }
 
-    // permission/etc. are cut over in a later phase by making their writers
-    // router-aware. Until then: explicit reject.
+    // All req→resp channels (task/memory/user_question/permission/browser) plus
+    // the fire-and-forget message channel are cut over. Anything else (e.g. a
+    // future channel a newer worker speaks) is an explicit reject.
     conn.send(transportError(frame.id, channel, 'unsupported_channel'));
   }
 
@@ -527,6 +537,203 @@ export async function startIpcSocketServer(
         conn.send(transportError(frame.id, 'user_question', 'internal_error'));
       }
       logger.error({ err, folder }, 'user_question handler threw');
+    } finally {
+      releaseInteractionInFlight(inFlightKey);
+      const after = state.get(conn);
+      if (after && after.inFlight > 0) after.inFlight -= 1;
+    }
+  }
+
+  /**
+   * The set of JIDs owned by `folder` — every conversation route bound to it.
+   * Mirrors the fs watcher's `folderTargetJids` ownership check: a permission
+   * request whose stamped targetJid is not in this set is cross-conversation
+   * bleed and is rejected, exactly as on the fs path.
+   */
+  function folderOwnedJids(folder: string): Set<string> {
+    const owned = new Set<string>();
+    for (const [jid, route] of Object.entries(deps.conversationRoutes())) {
+      if (route.folder === folder) owned.add(jid);
+    }
+    return owned;
+  }
+
+  async function dispatchPermission(
+    frame: IpcWireFrame,
+    conn: IpcConnection,
+    folder: string,
+  ): Promise<void> {
+    if (!canProcessIpcFile(folder, 'permission')) {
+      // Unsigned transport-level error mirroring the fs path's rate-limit drop.
+      conn.send(transportError(frame.id, 'permission', 'rate_limited'));
+      return;
+    }
+
+    let request;
+    try {
+      // parsePermissionIpcRequest re-verifies the HMAC/freshness/replay — a
+      // forged, replayed, or malformed frame throws here (fail-closed); the
+      // connection survives. An exact byte-identical replay is rejected by the
+      // consumed-requestId guard inside this parse, which is also the socket
+      // idempotency guarantee against a re-sent permission request.
+      request = parsePermissionIpcRequest(frame.payload, folder);
+    } catch (err) {
+      conn.send(transportError(frame.id, 'permission', 'invalid_request'));
+      logger.warn({ err, folder }, 'rejected permission frame');
+      return;
+    }
+
+    try {
+      // Folder-owns-JID authz: the asking conversation's jid (stamped by the
+      // grandchild and preserved by the parser) must belong to this folder —
+      // byte-identical to the fs watcher's folderTargetJids check.
+      if (
+        request.targetJid &&
+        !folderOwnedJids(folder).has(request.targetJid)
+      ) {
+        throw new Error(
+          'Permission IPC target does not belong to the requesting agent folder',
+        );
+      }
+      // Scheduled-job exec-context binding: when the request carries a jobId,
+      // the job's canonical execution_context (folder/jid/thread/run) must match
+      // — identical to the fs watcher.
+      await validatePermissionIpcJobExecutionTarget({
+        request,
+        sourceAgentFolder: folder,
+        deps,
+      });
+    } catch (err) {
+      // The fs watcher writes a signed denial fallback for these binding
+      // failures (so the grandchild's pending request settles as denied) and
+      // archives the file. On the socket there is no file: emit the signed
+      // denial to a responder so the request settles exactly as on fs.
+      registerIpcResponder(
+        folder,
+        `permission-${request.requestId}`,
+        (signed) => {
+          conn.send({
+            v: 1,
+            type: 'resp',
+            channel: 'permission',
+            id: frame.id,
+            payload: signed,
+          });
+        },
+      );
+      writePermissionInteractionFailure({
+        ipcBaseDir,
+        sourceAgentFolder: folder,
+        requestId: request.requestId,
+        ...(request.responseNonce
+          ? { responseNonce: request.responseNonce }
+          : {}),
+        ...(request.threadId ? { threadId: request.threadId } : {}),
+        ...(request.responseKeyId
+          ? { responseKeyId: request.responseKeyId }
+          : {}),
+        logger,
+      });
+      const pending = takeIpcResponder(
+        folder,
+        `permission-${request.requestId}`,
+      );
+      if (pending) {
+        conn.send(transportError(frame.id, 'permission', 'invalid_request'));
+      }
+      logger.warn({ err, folder }, 'rejected permission frame (binding)');
+      return;
+    }
+
+    // Cross-conversation routing: keep the stamped jid; fall back to the
+    // folder's default jid only when absent — byte-identical to the fs watcher.
+    request.targetJid = request.targetJid || folderDefaultJid(folder);
+
+    const permissionKey = `permission-${request.requestId}`;
+    const threadId = request.threadId;
+    // Register a responder so the handler's (router-aware) writePermissionIpc-
+    // Response — and the failure-response path — are delivered as a frame
+    // instead of a permission-responses/<requestId>.json file write.
+    registerIpcResponder(folder, permissionKey, (signed) => {
+      conn.send({
+        v: 1,
+        type: 'resp',
+        channel: 'permission',
+        id: frame.id,
+        payload: signed,
+      });
+    });
+
+    // Honour the SHARED interaction in-flight cap + duplicate guard (the same
+    // accounting the fs watcher uses), so a request already in flight via either
+    // transport is not processed twice and the global cap of 100 is enforced.
+    // This is also the response-exists analogue: a second in-flight request with
+    // the same (folder,thread,requestId) is refused here, and an exact replay was
+    // already rejected by the parser, so the single-shot responder above is never
+    // double-registered for a live request.
+    const inFlightKey = interactionInFlightKey({
+      sourceAgentFolder: folder,
+      kind: 'permission',
+      ...(threadId ? { threadId } : {}),
+      requestId: request.requestId,
+    });
+    const admission = tryAdmitInteractionInFlight(inFlightKey);
+    if (!admission.ok) {
+      // Mirror the fs watcher's thrown cap/duplicate path: emit a signed denial
+      // response (routed to the responder above) so the grandchild's pending
+      // request settles exactly as it would on fs.
+      writePermissionInteractionFailure({
+        ipcBaseDir,
+        sourceAgentFolder: folder,
+        requestId: request.requestId,
+        ...(request.responseNonce
+          ? { responseNonce: request.responseNonce }
+          : {}),
+        ...(threadId ? { threadId } : {}),
+        ...(request.responseKeyId
+          ? { responseKeyId: request.responseKeyId }
+          : {}),
+        logger,
+      });
+      // If the failure writer was fail-closed (no signing key) the responder is
+      // still registered; clear it and settle the request at the transport layer
+      // so it does not hang until the client deadline.
+      const pending = takeIpcResponder(folder, permissionKey);
+      if (pending) {
+        conn.send(transportError(frame.id, 'permission', 'busy'));
+      }
+      return;
+    }
+
+    const st = state.get(conn);
+    if (st) st.inFlight += 1;
+    try {
+      // No file/claimedPath on the socket path: the handler runs the approval
+      // flow + persistence/recovery and calls the router-aware writer, which
+      // delivers the signed response to the responder above. On internal failure
+      // it writes the signed denial fallback (also routed to the responder).
+      await processPermissionInteractionIpc({
+        request,
+        sourceAgentFolder: folder,
+        deps,
+        ipcBaseDir,
+        logger,
+      });
+      // Fail-closed guard: if neither the success nor the failure write consumed
+      // the responder (e.g. no signing key), settle the request so it does not
+      // hang until the client deadline.
+      const pending = takeIpcResponder(folder, permissionKey);
+      if (pending) {
+        conn.send(transportError(frame.id, 'permission', 'internal_error'));
+      }
+    } catch (err) {
+      // processPermissionInteractionIpc catches its own errors, but guard the
+      // transport regardless: clear any still-registered responder and settle.
+      const pending = takeIpcResponder(folder, permissionKey);
+      if (pending) {
+        conn.send(transportError(frame.id, 'permission', 'internal_error'));
+      }
+      logger.error({ err, folder }, 'permission handler threw');
     } finally {
       releaseInteractionInFlight(inFlightKey);
       const after = state.get(conn);

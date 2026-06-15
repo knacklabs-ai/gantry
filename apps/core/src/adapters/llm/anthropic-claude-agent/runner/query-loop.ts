@@ -41,7 +41,12 @@ import {
 } from './runtime-env.js';
 import { IpcSocketClient } from '../../../../shared/ipc-socket-client.js';
 import type { IpcWireFrame } from '../../../../shared/ipc-wire.js';
-import { createSignedIpcRequestEnvelope } from './ipc-signing.js';
+import {
+  createSignedIpcRequestEnvelope,
+  verifyIpcResponsePayload,
+} from './ipc-signing.js';
+import { IPC_RESPONSE_VERIFY_KEY } from './runtime-env.js';
+import { setActiveRunnerSocketClient } from './active-runner-socket.js';
 import {
   buildRunnerSystemPrompt,
   includeGitInstructionsForPersona,
@@ -286,6 +291,12 @@ export async function runQuery(
             agentId: AGENT_ID || null,
           },
         }),
+      // The runner connection also CARRIES the permission request→response
+      // (Pillar 1, Phase 5.3d) via permission-callback.ts, which sends over this
+      // SAME client. A signed permission resp is verified fail-closed here with
+      // the runner's ed25519 response-verify key (same key the fs poll uses).
+      verifyResponse: (p, sig) =>
+        verifyIpcResponsePayload(IPC_RESPONSE_VERIFY_KEY, p, sig),
       onPush: (frame) => {
         const { closed } = routeRunnerPushFrame(frame, {
           // SAME call drainIpcInput makes (steering accept at a turn boundary).
@@ -304,12 +315,18 @@ export async function runQuery(
         });
         if (closed) {
           // Stop reacting to further pushes after a close (mirror the fs poll).
+          setActiveRunnerSocketClient(undefined);
           ipcSocketClient?.close();
           ipcSocketClient = undefined;
         }
       },
       reconnect: { enabled: true },
     });
+    // Publish the run's runner client so the permission callback sends its
+    // request over this SAME connection (one runner connection per run). It is
+    // published before connect() resolves; the callback only uses it when
+    // `connected` is true and otherwise falls back to the durable fs path.
+    setActiveRunnerSocketClient(ipcSocketClient);
   }
   const emitInteractionBoundary = () => {
     writeOutput({
@@ -759,6 +776,9 @@ export async function runQuery(
     ipcPolling = false;
     heartbeat.stop();
     steeringGate.close();
+    // Unpublish before close so a late permission callback never sends over a
+    // closing connection (it falls back to the durable fs path instead).
+    setActiveRunnerSocketClient(undefined);
     ipcSocketClient?.close();
     ipcSocketClient = undefined;
   }

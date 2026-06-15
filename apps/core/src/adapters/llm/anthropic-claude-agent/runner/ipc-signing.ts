@@ -40,7 +40,7 @@ function signIpcRequestPayload(
     .digest('hex');
 }
 
-function verifyIpcResponsePayload(
+export function verifyIpcResponsePayload(
   publicKeyPem: string | undefined,
   payload: Record<string, unknown>,
   signature: string | undefined,

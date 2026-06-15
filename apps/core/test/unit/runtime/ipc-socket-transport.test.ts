@@ -43,6 +43,7 @@ import { processMemoryRequest } from '@core/memory/memory-ipc.js';
 import { processBrowserIpcRequest } from '@core/runtime/ipc-browser-handler.js';
 import {
   computeBrowserIpcAuthToken,
+  computeIpcAuthToken,
   computeMemoryIpcAuthToken,
   registerBrowserIpcAuthorization,
   revokeBrowserIpcAuthorization,
@@ -379,6 +380,61 @@ function buildUserQuestionPayload(
       },
     ],
     context: {
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
+      responseKeyId,
+    },
+  });
+}
+
+// --- Permission envelopes --------------------------------------------------
+// Permission uses the folder/thread auth token computed WITH the appId binding
+// (computeIpcAuthToken(folder, threadId, { appId })) — validateIpcAuthRequest
+// re-derives the token from the request's appId, so the signing token must carry
+// it too (this is what the runner's IPC_AUTH_TOKEN env encodes at spawn). The
+// payload mirrors the runner's requestPermissionApprovalInner: a perm-* requestId,
+// responseNonce, appId + responseKeyId (both required by parsePermissionIpcRequest),
+// toolName, the stamped targetJid, and (for the job-exec-context binding) optional
+// jobId/runId.
+function permissionAuthToken(
+  folder: string,
+  threadId: string | undefined,
+  appId: string,
+): string {
+  return computeIpcAuthToken(folder, threadId ?? null, { appId });
+}
+
+function buildPermissionPayload(
+  responseKeyId: string,
+  opts: {
+    requestId: string;
+    folder?: string;
+    threadId?: string;
+    targetJid?: string;
+    toolName?: string;
+    appId?: string;
+    responseNonce?: string;
+    jobId?: string;
+    runId?: string;
+  },
+): Record<string, unknown> {
+  const appId = opts.appId ?? 'default';
+  const folder = opts.folder ?? FOLDER;
+  const token = permissionAuthToken(folder, opts.threadId, appId);
+  return createSignedIpcRequestEnvelope(token, {
+    requestId: opts.requestId,
+    appId,
+    responseNonce: opts.responseNonce ?? 'nonce-1',
+    sourceAgentFolder: folder,
+    ...(opts.targetJid !== undefined ? { targetJid: opts.targetJid } : {}),
+    ...(opts.jobId ? { jobId: opts.jobId } : {}),
+    ...(opts.runId ? { runId: opts.runId } : {}),
+    toolName: opts.toolName ?? 'Bash',
+    toolInput: { command: 'ls' },
+    context: {
+      appId,
+      ...(opts.targetJid !== undefined ? { chatJid: opts.targetJid } : {}),
+      ...(opts.jobId ? { jobId: opts.jobId } : {}),
+      ...(opts.runId ? { runId: opts.runId } : {}),
       ...(opts.threadId ? { threadId: opts.threadId } : {}),
       responseKeyId,
     },
@@ -755,11 +811,12 @@ describe('ipc-socket-server task dispatch', () => {
     const auth = makeAuth(FOLDER, THREAD_ID);
     const client = await handshake(handle, auth);
 
-    // `permission` is not yet cut over to the socket, so it remains the explicit
-    // unsupported-channel reject (task/memory/user_question/browser now each have
-    // their own dispatcher).
+    // All req→resp channels (task/memory/user_question/permission/browser) plus
+    // the fire-and-forget message channel are now dispatched. `continuation` is a
+    // server→worker PUSH channel, so a client `req` on it is genuinely
+    // unsupported and takes the explicit reject path.
     client.sendReq(
-      'permission',
+      'continuation',
       buildTaskPayload(auth.authToken, auth.responseKeyId, {
         taskId: 'b1',
         type: 'noop',
@@ -1201,6 +1258,368 @@ describe('ipc-socket-server user_question dispatch', () => {
     expect((resp.payload as { ok?: boolean }).ok).toBe(false);
     expect((resp.payload as { code?: string }).code).toBe('rate_limited');
     expect(requestUserAnswer).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Permission dispatch (Pillar 1, Phase 5.3d)
+//
+// requestPermissionApproval (the dep) is stubbed so the test controls the
+// decision; the server runs the REAL processPermissionInteractionIpc →
+// router-aware writePermissionIpcResponse → signed-resp-frame path end to end.
+// The permission channel shares the folder/thread auth token (re-verified by the
+// real parsePermissionIpcRequest exactly as the fs watcher does) and adds the
+// permission-specific authz: the targetJid folder-ownership check + the
+// scheduled-job execution-context binding (validatePermissionIpcJobExecution-
+// Target). Idempotency: an exact byte-identical replay is rejected by the
+// consumed-requestId guard, so the handler runs at most once per requestId.
+// ---------------------------------------------------------------------------
+
+describe('ipc-socket-server permission dispatch', () => {
+  async function handshake(
+    handle: IpcSocketServerHandle,
+    auth: ReturnType<typeof makeAuth>,
+    threadId = THREAD_ID,
+  ): Promise<FakeWorkerClient> {
+    const client = await connect(handle);
+    client.sendHello(
+      buildHelloPayload(auth.authToken, { folder: FOLDER, threadId }),
+      'hs',
+    );
+    const welcome = await client.waitForId('hs');
+    expect(welcome.ctrl).toBe('welcome');
+    return client;
+  }
+
+  it('P1. permission req → signed resp frame (router + ed25519 end to end)', async () => {
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      mode: 'allow_once' as const,
+      decidedBy: 'Ravi',
+      reason: 'looks fine',
+    }));
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-7',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-perm-7',
+    );
+
+    const resp = await client.waitForId('req-perm-7');
+    expect(resp.type).toBe('resp');
+    expect(resp.channel).toBe('permission');
+    const { signature, ...payloadWithoutSig } = resp.payload as {
+      signature?: string;
+    } & Record<string, unknown>;
+    expect(typeof signature).toBe('string');
+    expect(
+      verifyIpcResponsePayload(
+        auth.responseVerifyKey,
+        payloadWithoutSig,
+        signature,
+      ),
+    ).toBe(true);
+    expect(payloadWithoutSig.requestId).toBe('perm-7');
+    expect(payloadWithoutSig.approved).toBe(true);
+    expect(payloadWithoutSig.mode).toBe('allow_once');
+    expect(payloadWithoutSig.decidedBy).toBe('Ravi');
+    // The responseNonce stamped on the request is echoed back so the runner's
+    // poll/verify can bind the response to its request.
+    expect(payloadWithoutSig.responseNonce).toBe('nonce-1');
+
+    // The dep ran exactly once, with the trusted parsed request (targetJid
+    // preserved from the stamp → cross-conversation guard intact).
+    expect(requestPermissionApproval).toHaveBeenCalledTimes(1);
+    const reqArg = requestPermissionApproval.mock.calls[0][0] as {
+      requestId: string;
+      targetJid?: string;
+      sourceAgentFolder: string;
+    };
+    expect(reqArg.requestId).toBe('perm-7');
+    expect(reqArg.sourceAgentFolder).toBe(FOLDER);
+    expect(reqArg.targetJid).toBe(CHAT_JID);
+
+    // No permission-responses file was written — the responder consumed it.
+    const responsesDir = path.join(
+      process.env.GANTRY_HOME as string,
+      'data',
+      'ipc',
+      FOLDER,
+      'permission-responses',
+    );
+    expect(fs.existsSync(path.join(responsesDir, 'perm-7.json'))).toBe(false);
+  });
+
+  it('P2. forged permission req (wrong token) → invalid_request, connection survives', async () => {
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      mode: 'allow_once' as const,
+    }));
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    // Sign with a token bound to a DIFFERENT folder → parsePermissionIpcRequest
+    // (which recomputes the token with the connection's FOLDER) sees a signature
+    // mismatch → invalid_request, the dep never runs.
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-bad',
+        folder: 'group-evil',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-perm-bad',
+    );
+
+    const resp = await client.waitForId('req-perm-bad');
+    expect(resp.type).toBe('resp');
+    expect((resp.payload as { ok?: boolean }).ok).toBe(false);
+    expect((resp.payload as { code?: string }).code).toBe('invalid_request');
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+
+    // Connection still usable: a valid permission req now gets a signed response.
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-ok',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-perm-ok',
+    );
+    const ok = await client.waitForId('req-perm-ok');
+    expect(ok.channel).toBe('permission');
+    expect((ok.payload as { requestId?: string }).requestId).toBe('perm-ok');
+  });
+
+  it('P3. replay of the same permission req is rejected the second time (idempotent)', async () => {
+    let calls = 0;
+    const requestPermissionApproval = vi.fn(async () => {
+      calls += 1;
+      return { approved: true, mode: 'allow_once' as const };
+    });
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    const payload = buildPermissionPayload(auth.responseKeyId, {
+      requestId: 'perm-replay',
+      threadId: THREAD_ID,
+      targetJid: CHAT_JID,
+    });
+
+    client.sendReq('permission', payload, 'req-first');
+    const first = await client.waitForId('req-first');
+    expect((first.payload as { requestId?: string }).requestId).toBe(
+      'perm-replay',
+    );
+
+    // Re-send the byte-identical signed payload → replay guard rejects it; the
+    // approval dep is NOT invoked a second time (idempotent: at most once).
+    client.sendReq('permission', payload, 'req-second');
+    const second = await client.waitForId('req-second');
+    expect((second.payload as { ok?: boolean }).ok).toBe(false);
+    expect((second.payload as { code?: string }).code).toBe('invalid_request');
+    expect(calls).toBe(1);
+  });
+
+  it('P4. permission rate limit → rate_limited resp, connection survives', async () => {
+    const { canProcessIpcFile } =
+      await import('@core/runtime/ipc-rate-limit.js');
+    for (let i = 0; i < 300; i += 1) canProcessIpcFile(FOLDER, 'permission');
+
+    const requestPermissionApproval = vi.fn(async () => ({ approved: true }));
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-rl',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+      }),
+      'req-perm-rl',
+    );
+
+    const resp = await client.waitForId('req-perm-rl');
+    expect(resp.type).toBe('resp');
+    expect((resp.payload as { ok?: boolean }).ok).toBe(false);
+    expect((resp.payload as { code?: string }).code).toBe('rate_limited');
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+  });
+
+  it('P5. permission targetJid not owned by the folder → signed denial, dep never runs', async () => {
+    const requestPermissionApproval = vi.fn(async () => ({ approved: true }));
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    // A targetJid the folder does NOT own → the folder-ownership check throws
+    // BEFORE the approval flow; a signed denial is routed back so the request
+    // settles (mirrors the fs watcher's writePermissionInteractionFailure).
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-evil',
+        threadId: THREAD_ID,
+        targetJid: 'wa:9999999@evil',
+      }),
+      'req-perm-evil',
+    );
+
+    const resp = await client.waitForId('req-perm-evil');
+    expect(resp.type).toBe('resp');
+    expect(resp.channel).toBe('permission');
+    const { signature, ...payloadWithoutSig } = resp.payload as {
+      signature?: string;
+    } & Record<string, unknown>;
+    // Signed denial (router-delivered) — verified payload says approved:false.
+    expect(typeof signature).toBe('string');
+    expect(
+      verifyIpcResponsePayload(
+        auth.responseVerifyKey,
+        payloadWithoutSig,
+        signature,
+      ),
+    ).toBe(true);
+    expect(payloadWithoutSig.requestId).toBe('perm-evil');
+    expect(payloadWithoutSig.approved).toBe(false);
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+  });
+
+  it('P6. scheduled-job permission whose exec-context mismatches → signed denial, dep never runs', async () => {
+    const requestPermissionApproval = vi.fn(async () => ({ approved: true }));
+    // The job exists but its canonical execution_context targets a DIFFERENT
+    // conversation than the request's targetJid → validatePermissionIpcJob-
+    // ExecutionTarget throws → signed denial, approval flow never runs.
+    const opsRepository = {
+      getJobById: vi.fn(async () => ({
+        id: 'job-1',
+        group_scope: FOLDER,
+        execution_context: {
+          conversationJid: 'wa:other-conversation@test',
+          groupScope: FOLDER,
+          // Same thread as the request so ONLY the conversationJid differs —
+          // that is the mismatch under test.
+          threadId: THREAD_ID,
+        },
+      })),
+      getJobRunById: vi.fn(async () => ({ id: 'run-1', job_id: 'job-1' })),
+    };
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval, opsRepository } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-job-mismatch',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+        jobId: 'job-1',
+        runId: 'run-1',
+      }),
+      'req-perm-job',
+    );
+
+    const resp = await client.waitForId('req-perm-job');
+    expect(resp.type).toBe('resp');
+    expect(resp.channel).toBe('permission');
+    const { signature, ...payloadWithoutSig } = resp.payload as {
+      signature?: string;
+    } & Record<string, unknown>;
+    expect(typeof signature).toBe('string');
+    expect(
+      verifyIpcResponsePayload(
+        auth.responseVerifyKey,
+        payloadWithoutSig,
+        signature,
+      ),
+    ).toBe(true);
+    expect(payloadWithoutSig.requestId).toBe('perm-job-mismatch');
+    expect(payloadWithoutSig.approved).toBe(false);
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(client.isClosed).toBe(false);
+  });
+
+  it('P7. scheduled-job permission whose exec-context matches → approval flow runs', async () => {
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      mode: 'allow_once' as const,
+      decidedBy: 'Ravi',
+    }));
+    const opsRepository = {
+      getJobById: vi.fn(async () => ({
+        id: 'job-1',
+        group_scope: FOLDER,
+        execution_context: {
+          conversationJid: CHAT_JID,
+          groupScope: FOLDER,
+          threadId: THREAD_ID,
+        },
+      })),
+      getJobRunById: vi.fn(async () => ({ id: 'run-1', job_id: 'job-1' })),
+    };
+    const handle = await startServer(
+      buildDeps({ requestPermissionApproval, opsRepository } as never),
+    );
+    const auth = makeAuth(FOLDER, THREAD_ID);
+    const client = await handshake(handle, auth);
+
+    client.sendReq(
+      'permission',
+      buildPermissionPayload(auth.responseKeyId, {
+        requestId: 'perm-job-ok',
+        threadId: THREAD_ID,
+        targetJid: CHAT_JID,
+        jobId: 'job-1',
+        runId: 'run-1',
+      }),
+      'req-perm-job-ok',
+    );
+
+    const resp = await client.waitForId('req-perm-job-ok');
+    expect(resp.type).toBe('resp');
+    expect(resp.channel).toBe('permission');
+    const { signature, ...payloadWithoutSig } = resp.payload as {
+      signature?: string;
+    } & Record<string, unknown>;
+    expect(
+      verifyIpcResponsePayload(
+        auth.responseVerifyKey,
+        payloadWithoutSig,
+        signature,
+      ),
+    ).toBe(true);
+    expect(payloadWithoutSig.approved).toBe(true);
+    expect(requestPermissionApproval).toHaveBeenCalledTimes(1);
     expect(client.isClosed).toBe(false);
   });
 });

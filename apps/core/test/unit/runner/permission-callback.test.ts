@@ -215,3 +215,232 @@ describe('requestPermissionApproval', () => {
     expect(secondDecision.mode).toBe('allow_once');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Socket fast-path (Pillar 1, Phase 5.3d)
+//
+// When the run's runner socket client (published via setActiveRunnerSocketClient)
+// is connected, requestPermissionApproval sends the SAME signed envelope over
+// that ONE runner connection and maps the verified signed decision — writing NO
+// permission-request file. A transient socket failure falls back to the durable
+// fs write+poll so permission never hangs / hard-fails on a socket hiccup.
+// hasValidIpcResponseSignature is mocked to true (the transport-level signature
+// is exercised by the socket-server test); this isolates the callback's branch.
+// ---------------------------------------------------------------------------
+
+describe('requestPermissionApproval socket fast-path', () => {
+  let tempDir: string;
+  let oldEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    vi.resetModules();
+    oldEnv = { ...process.env };
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-permission-sock-'));
+    process.env.GANTRY_WORKSPACE_GROUP_DIR = path.join(tempDir, 'workspace');
+    process.env.GANTRY_WORKSPACE_EXTRA_DIR = path.join(tempDir, 'extra');
+    process.env.GANTRY_IPC_DIR = path.join(tempDir, 'ipc');
+    process.env.GANTRY_IPC_INPUT_DIR = path.join(tempDir, 'input');
+    process.env.GANTRY_IPC_RESPONSE_VERIFY_KEY = 'test-key';
+    process.env.GANTRY_IPC_RESPONSE_KEY_ID = 'test-response-key';
+    process.env.GANTRY_AGENT_RUN_HANDLE = 'run-handle-1';
+    // Socket/dual transport so the socket branch is eligible (the callback also
+    // gates on the active client being connected).
+    process.env.GANTRY_IPC_TRANSPORT = 'socket';
+    process.env.GANTRY_IPC_SOCKET_PATH = path.join(tempDir, 'core.sock');
+  });
+
+  afterEach(() => {
+    process.env = oldEnv;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('sends the permission request over the connected runner socket and writes no request file', async () => {
+    const { setActiveRunnerSocketClient } =
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/active-runner-socket.js');
+    const { requestPermissionApproval } =
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
+
+    const sent: Array<{
+      channel: string;
+      payload: Record<string, unknown>;
+      id?: string;
+    }> = [];
+    const fakeClient = {
+      connected: true,
+      request: vi.fn(
+        async (
+          channel: 'permission',
+          payload: Record<string, unknown>,
+          opts?: { id?: string; timeoutMs?: number },
+        ) => {
+          sent.push({ channel, payload, id: opts?.id });
+          // Echo a signed decision keyed to the request's id + responseNonce.
+          const requestId = String(opts?.id);
+          return {
+            requestId,
+            responseNonce: payload.responseNonce,
+            approved: true,
+            mode: 'allow_once',
+            decidedBy: 'Ravi',
+            reason: 'looks fine',
+            signature: 'sig-from-host',
+          } as Record<string, unknown>;
+        },
+      ),
+    };
+    setActiveRunnerSocketClient(fakeClient);
+
+    const decision = await requestPermissionApproval({
+      appId: 'default',
+      agentId: 'agent:main_agent',
+      groupFolder: 'main_agent',
+      targetJid: 'tg:test',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+    });
+
+    expect(decision.approved).toBe(true);
+    expect(decision.mode).toBe('allow_once');
+    expect(decision.decidedBy).toBe('Ravi');
+
+    // The request went over the socket exactly once on the `permission` channel,
+    // and the correlation id matches the signed envelope's requestId.
+    expect(fakeClient.request).toHaveBeenCalledTimes(1);
+    expect(sent[0].channel).toBe('permission');
+    expect(sent[0].payload.requestId).toBe(sent[0].id);
+    expect(String(sent[0].id)).toMatch(/^perm-/);
+
+    // Pure-socket: NO permission-request file was written to the fs mailbox.
+    const requestDir = path.join(
+      tempDir,
+      'ipc',
+      'main_agent',
+      'permission-requests',
+    );
+    const requestFiles = fs.existsSync(requestDir)
+      ? fs.readdirSync(requestDir).filter((f) => f.endsWith('.json'))
+      : [];
+    expect(requestFiles).toHaveLength(0);
+  });
+
+  it('falls back to the fs write+poll when the socket request fails (transient)', async () => {
+    const { setActiveRunnerSocketClient } =
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/active-runner-socket.js');
+    const { requestPermissionApproval } =
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
+
+    const fakeClient = {
+      connected: true,
+      request: vi.fn(async () => {
+        throw new Error('connection lost: socket_error');
+      }),
+    };
+    setActiveRunnerSocketClient(fakeClient);
+
+    const pending = requestPermissionApproval({
+      appId: 'default',
+      agentId: 'agent:main_agent',
+      groupFolder: 'main_agent',
+      targetJid: 'tg:test',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+    });
+
+    // The socket was attempted, then the durable fs request file is written.
+    const requestDir = path.join(
+      tempDir,
+      'ipc',
+      'main_agent',
+      'permission-requests',
+    );
+    const requestFiles = await waitForFiles(requestDir, 1);
+    expect(requestFiles).toHaveLength(1);
+    expect(fakeClient.request).toHaveBeenCalledTimes(1);
+
+    const request = JSON.parse(
+      fs.readFileSync(path.join(requestDir, requestFiles[0]), 'utf-8'),
+    ) as { requestId: string; responseNonce: string };
+
+    // Resolve via the fs response path (the host watcher's writer).
+    const responseDir = path.join(
+      tempDir,
+      'ipc',
+      'main_agent',
+      'permission-responses',
+    );
+    fs.mkdirSync(responseDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(responseDir, `${request.requestId}.json`),
+      JSON.stringify({
+        requestId: request.requestId,
+        responseNonce: request.responseNonce,
+        approved: true,
+        mode: 'allow_once',
+        decidedBy: 'Ravi',
+        signature: 'test-signature',
+      }),
+    );
+
+    const decision = await pending;
+    expect(decision.approved).toBe(true);
+    expect(decision.mode).toBe('allow_once');
+  });
+
+  it('takes the fs path (no socket request) when the active client is not connected', async () => {
+    const { setActiveRunnerSocketClient } =
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/active-runner-socket.js');
+    const { requestPermissionApproval } =
+      await import('@core/adapters/llm/anthropic-claude-agent/runner/permission-callback.js');
+
+    const fakeClient = {
+      connected: false,
+      request: vi.fn(async () => ({}) as Record<string, unknown>),
+    };
+    setActiveRunnerSocketClient(fakeClient);
+
+    const pending = requestPermissionApproval({
+      appId: 'default',
+      agentId: 'agent:main_agent',
+      groupFolder: 'main_agent',
+      targetJid: 'tg:test',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+    });
+
+    const requestDir = path.join(
+      tempDir,
+      'ipc',
+      'main_agent',
+      'permission-requests',
+    );
+    const requestFiles = await waitForFiles(requestDir, 1);
+    expect(requestFiles).toHaveLength(1);
+    // Not connected → the socket request is never attempted.
+    expect(fakeClient.request).not.toHaveBeenCalled();
+
+    const request = JSON.parse(
+      fs.readFileSync(path.join(requestDir, requestFiles[0]), 'utf-8'),
+    ) as { requestId: string; responseNonce: string };
+    const responseDir = path.join(
+      tempDir,
+      'ipc',
+      'main_agent',
+      'permission-responses',
+    );
+    fs.mkdirSync(responseDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(responseDir, `${request.requestId}.json`),
+      JSON.stringify({
+        requestId: request.requestId,
+        responseNonce: request.responseNonce,
+        approved: false,
+        mode: 'cancel',
+        signature: 'test-signature',
+      }),
+    );
+
+    const decision = await pending;
+    expect(decision.approved).toBe(false);
+  });
+});

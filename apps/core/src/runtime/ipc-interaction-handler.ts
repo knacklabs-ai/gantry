@@ -96,6 +96,22 @@ export function writePermissionIpcResponse(
       : {}),
   });
   if (!payload) return;
+  // Router-aware delivery (Pillar 1): when the socket server has registered a
+  // responder for this request, hand it the exact signed object and skip the
+  // file write. With no responder registered the behaviour is byte-identical to
+  // the pre-router filesystem path. The fail-closed early return above (no
+  // signing key) happens BEFORE the responder is taken, mirroring the
+  // user_question/memory writers — so a no-key call leaves the responder
+  // registered to time out (and the socket dispatcher's fail-closed guard
+  // settles it at the transport layer).
+  const responder = takeIpcResponder(
+    sourceAgentFolder,
+    `permission-${decision.requestId}`,
+  );
+  if (responder) {
+    responder(payload);
+    return;
+  }
   writePrivateFileSync(tmpPath, JSON.stringify(payload, null, 2));
   if (fs.existsSync(responsePath)) {
     fs.rmSync(tmpPath, { force: true });

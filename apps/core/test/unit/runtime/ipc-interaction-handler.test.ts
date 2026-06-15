@@ -16,6 +16,11 @@ import {
   writeUserQuestionIpcResponse,
 } from '@core/runtime/ipc-interaction-handler.js';
 import { processPermissionInteractionIpc } from '@core/runtime/ipc-interaction-processing.js';
+import {
+  clearIpcResponders,
+  registerIpcResponder,
+  takeIpcResponder,
+} from '@core/runtime/ipc-response-router.js';
 
 function fileMode(filePath: string): number {
   return fs.statSync(filePath).mode & 0o777;
@@ -38,6 +43,7 @@ describe('ipc-interaction-handler', () => {
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
+    clearIpcResponders();
     vi.clearAllMocks();
   });
 
@@ -179,6 +185,92 @@ describe('ipc-interaction-handler', () => {
       ],
       decisionClassification: 'user_permanent',
     });
+  });
+
+  it('routes a permission response to a registered responder and writes no file (Pillar 1)', () => {
+    const keys = createIpcResponseSigningKeyPair();
+    const delivered: Array<Record<string, unknown>> = [];
+    // The socket dispatcher registers this responder keyed by permission-<id>.
+    registerIpcResponder('grp', 'permission-perm-routed', (signed) => {
+      delivered.push(signed);
+    });
+
+    writePermissionIpcResponse(
+      tempDir,
+      'grp',
+      {
+        requestId: 'perm-routed',
+        responseNonce: 'nonce-r',
+        approved: true,
+        mode: 'allow_once',
+        decidedBy: 'reviewer',
+      },
+      keys.privateKeyPem,
+    );
+
+    // The signed payload was handed to the responder — and is the EXACT object
+    // the fs file would contain (verifiable with the public key).
+    expect(delivered).toHaveLength(1);
+    const { signature, ...payloadWithoutSig } = delivered[0] as {
+      signature?: string;
+    } & Record<string, unknown>;
+    expect(typeof signature).toBe('string');
+    expect(
+      verifyIpcResponsePayload(
+        keys.publicKeyPem,
+        payloadWithoutSig,
+        signature as string,
+      ),
+    ).toBe(true);
+    expect(payloadWithoutSig).toMatchObject({
+      requestId: 'perm-routed',
+      responseNonce: 'nonce-r',
+      approved: true,
+      mode: 'allow_once',
+      decidedBy: 'reviewer',
+    });
+
+    // No permission-responses file was written — the responder consumed it, and
+    // the responder is single-shot (now taken).
+    const responsePath = path.join(
+      tempDir,
+      'grp',
+      'permission-responses',
+      'perm-routed.json',
+    );
+    expect(fs.existsSync(responsePath)).toBe(false);
+    expect(takeIpcResponder('grp', 'permission-perm-routed')).toBeUndefined();
+  });
+
+  it('fail-closed (no signing key) leaves the permission responder registered to time out (Pillar 1)', () => {
+    const delivered: Array<Record<string, unknown>> = [];
+    registerIpcResponder('grp', 'permission-perm-nokey', (signed) => {
+      delivered.push(signed);
+    });
+
+    // No signing key → withSignature returns null → the writer returns BEFORE
+    // taking the responder (mirrors the user_question/memory writers). Nothing
+    // is delivered and nothing is written; the responder is still registered so
+    // the socket dispatcher's fail-closed guard settles the request.
+    writePermissionIpcResponse(
+      tempDir,
+      'grp',
+      { requestId: 'perm-nokey', approved: false, reason: 'denied' },
+      undefined,
+    );
+
+    expect(delivered).toHaveLength(0);
+    const responsePath = path.join(
+      tempDir,
+      'grp',
+      'permission-responses',
+      'perm-nokey.json',
+    );
+    expect(fs.existsSync(responsePath)).toBe(false);
+    // Responder NOT taken — left registered to time out.
+    expect(takeIpcResponder('grp', 'permission-perm-nokey')).toBeTypeOf(
+      'function',
+    );
   });
 
   it('writes persistent SDK permission approvals to the active run live-rule file', async () => {
