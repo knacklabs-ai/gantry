@@ -82,6 +82,39 @@ describe('boot-generic prefix (Pillar 2 §2.3)', () => {
     expect(promptA?.append).toContain('PREFIX');
   });
 
+  it('generic boot prompt bytes are identical for two distinct customers', () => {
+    const customerA = buildRunnerSystemPrompt(
+      baseInput({
+        chatJid: 'wa:111',
+        threadId: 'thread-a',
+        memoryUserId: 'user-a',
+        prompt: 'show sweets for Diwali',
+        guardrailSystemPromptAppend: 'CUSTOMER-A-GUARDRAIL',
+      } as never),
+      '<memory>A</memory>',
+      {},
+      { genericBoot: true },
+    );
+    const customerB = buildRunnerSystemPrompt(
+      baseInput({
+        chatJid: 'wa:222',
+        threadId: 'thread-b',
+        memoryUserId: 'user-b',
+        prompt: 'track order 123',
+        guardrailSystemPromptAppend: 'CUSTOMER-B-GUARDRAIL',
+      } as never),
+      '<memory>B</memory>',
+      {},
+      { genericBoot: true },
+    );
+
+    expect(customerA?.append).toBe(customerB?.append);
+    expect(customerA?.append).not.toContain('wa:111');
+    expect(customerA?.append).not.toContain('CUSTOMER-A-GUARDRAIL');
+    expect(customerB?.append).not.toContain('wa:222');
+    expect(customerB?.append).not.toContain('CUSTOMER-B-GUARDRAIL');
+  });
+
   // The cold path is unchanged: the guardrail append still rides the boot prompt.
   it('cold boot keeps the guardrail append in the system prompt (unchanged)', () => {
     const guardrail = bssCustomerSupportPolicy.systemPromptAppend?.([
