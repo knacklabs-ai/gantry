@@ -27,6 +27,7 @@ export interface ConversationBindScope {
   memoryBlock?: string;
   guardrailPreface?: string;
   threadId?: string;
+  memoryUserId?: string;
   /** Sample token usage echoed by the fake SDK for cache-plumbing assertions. */
   usage?: {
     in?: number;
@@ -75,6 +76,8 @@ function parseBindScope(raw: string): ConversationBindScope | undefined {
           ? scope.guardrailPreface
           : undefined,
       threadId: typeof scope.threadId === 'string' ? scope.threadId : undefined,
+      memoryUserId:
+        typeof scope.memoryUserId === 'string' ? scope.memoryUserId : undefined,
       usage:
         scope.usage && typeof scope.usage === 'object'
           ? scope.usage

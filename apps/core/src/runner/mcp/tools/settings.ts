@@ -1,7 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { nowIso } from '../../../shared/time/datetime.js';
-import { chatJid, TASKS_DIR, threadId } from '../context.js';
+import { TASKS_DIR } from '../context.js';
+// Warm-pool (F4): stamp the bound customer identity, not the spawn-env constant.
+import { getBoundChatJid, getBoundThreadId } from '../bound-identity.js';
 import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
 import type { AdminMcpToolName } from '../../../shared/admin-mcp-tools.js';
 import { humanizeTechnicalIdentifier } from '../../../shared/user-visible-messages.js';
@@ -25,9 +27,9 @@ export function registerSettingsTools(
       writeIpcFile(TASKS_DIR, {
         type: 'settings_desired_state',
         taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         timestamp: nowIso(),
       });
       const response = await waitForTaskResponse(taskId, 20_000);
@@ -82,9 +84,9 @@ export function registerSettingsTools(
       writeIpcFile(TASKS_DIR, {
         type: 'request_settings_update',
         taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         payload: {
           replacementYaml: args.replacementYaml,
           expectedRevision: args.expectedRevision,

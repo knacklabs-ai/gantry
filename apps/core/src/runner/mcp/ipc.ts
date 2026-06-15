@@ -25,13 +25,15 @@ import {
   TASK_RESPONSES_DIR,
   agentId,
   appId,
-  chatJid,
   memoryDefaultScope,
   memoryIpcAllowedActions,
   memoryReviewerIsControlApprover,
-  memoryUserId,
-  threadId,
 } from './context.js';
+// Warm-pool (F4 / §12 security parity): memory + browser IPC requests must
+// carry the BOUND customer scope (chatJid/thread/memoryUser), so a generic
+// worker's memory token is recomputed for its bound customer and server-
+// validated. Cold path: the accessors return the spawn-env constants.
+import { getBoundChatJid, getBoundIdentity } from './bound-identity.js';
 import {
   createSignedIpcRequestEnvelope,
   verifyIpcResponsePayload,
@@ -65,11 +67,12 @@ export function writeIpcFile(dir: string, data: object): string {
     !Array.isArray(data.context)
       ? (data.context as Record<string, unknown>)
       : {};
+  const boundThreadId = getBoundIdentity().threadId;
   const requestContext = {
     ...existingContext,
     ...(appId ? { appId } : {}),
     ...(agentId ? { agentId } : {}),
-    ...(threadId ? { threadId } : {}),
+    ...(boundThreadId ? { threadId: boundThreadId } : {}),
     ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
   };
   const payload = {
@@ -111,14 +114,17 @@ export async function requestMemoryAction(
   const requestId = makeIpcId('mem');
   const reqPath = path.join(MEMORY_REQUESTS_DIR, `${requestId}.json`);
   const tmpReqPath = `${reqPath}.tmp`;
+  const boundIdentity = getBoundIdentity();
   const requestPayload = {
     requestId,
     action,
     payload,
     context: {
-      chatJid,
-      ...(threadId ? { threadId } : {}),
-      ...(memoryUserId ? { userId: memoryUserId } : {}),
+      chatJid: boundIdentity.chatJid,
+      ...(boundIdentity.threadId ? { threadId: boundIdentity.threadId } : {}),
+      ...(boundIdentity.memoryUserId
+        ? { userId: boundIdentity.memoryUserId }
+        : {}),
       ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
       defaultScope: memoryDefaultScope,
       allowedActions: memoryIpcAllowedActions,
@@ -215,7 +221,7 @@ export async function requestBrowserAction(
     action,
     payload,
     context: {
-      chatJid,
+      chatJid: getBoundChatJid(),
       timeoutMs,
       ...(process.env.GANTRY_JOB_ID
         ? { jobId: process.env.GANTRY_JOB_ID }
@@ -223,7 +229,9 @@ export async function requestBrowserAction(
       ...(process.env.GANTRY_JOB_RUN_ID
         ? { runId: process.env.GANTRY_JOB_RUN_ID }
         : {}),
-      ...(threadId ? { threadId } : {}),
+      ...(getBoundIdentity().threadId
+        ? { threadId: getBoundIdentity().threadId }
+        : {}),
       ...(appId ? { appId } : {}),
       ...(agentId ? { agentId } : {}),
       ...(options.publicToolName

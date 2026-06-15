@@ -15,15 +15,17 @@ import {
 import {
   agentId,
   appId,
-  chatJid,
   groupFolder,
   IPC_AUTH_TOKEN,
   IPC_DIR,
   IPC_RESPONSE_KEY_ID,
   MESSAGES_DIR,
-  threadId,
   jobId,
 } from '../context.js';
+// Warm-pool (F4): route outbound messages / questions to the BOUND customer
+// identity (bind-delivered) so a generic worker never replies to a stale or
+// blank jid. Cold path: the accessor returns the spawn-env constant unchanged.
+import { getBoundChatJid, getBoundThreadId } from '../bound-identity.js';
 import { truncateText } from '../formatting.js';
 import { hasValidIpcResponseSignature, writeIpcFile } from '../ipc.js';
 import { createSignedIpcRequestEnvelope } from '../signing.js';
@@ -124,7 +126,7 @@ export function registerMessagingTools(server: McpServer): void {
       }
       const data: Record<string, string | undefined> = {
         type: 'message',
-        chatJid,
+        chatJid: getBoundChatJid(),
         text: args.text,
         sender: args.sender || undefined,
         groupFolder,
@@ -201,11 +203,11 @@ export function registerMessagingTools(server: McpServer): void {
         // Stamp the asking conversation's jid so the host routes the question to
         // THIS customer, not a first-match-by-folder fallback (cross-conversation
         // bleed prevention — mirrors how send_message stamps chatJid).
-        targetJid: chatJid,
+        targetJid: getBoundChatJid(),
         questions: args.questions,
         appId,
         agentId,
-        threadId,
+        threadId: getBoundThreadId(),
         responseKeyId: IPC_RESPONSE_KEY_ID,
         nowMs: currentTimeMs(),
         timeoutMs: USER_QUESTION_TIMEOUT_MS,

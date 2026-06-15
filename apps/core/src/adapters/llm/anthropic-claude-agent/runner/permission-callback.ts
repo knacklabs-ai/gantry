@@ -6,6 +6,10 @@ import { formatDuration } from '../../../../shared/human-format.js';
 import { isPlainObject } from '../../../../shared/object.js';
 import { persistentPermissionUpdates } from '../../../../shared/permission-tool-rules.js';
 import { stableSha256Json } from '../../../../shared/stable-hash.js';
+// Warm-pool (F4): the approval-target fallback must be the BOUND customer jid
+// (bind-delivered), not the generic boot env, so a pooled worker's permission
+// prompts route to its customer. Cold path: returns the env constant.
+import { getBoundChatJid } from '../../../../runner/mcp/bound-identity.js';
 import { hasValidIpcResponseSignature } from './ipc-signing.js';
 import { createSignedIpcRequestEnvelope } from './ipc-signing.js';
 import type { SemanticCapabilityDefinition } from '../../../../shared/semantic-capabilities.js';
@@ -106,7 +110,8 @@ export async function requestPermissionApproval(options: {
   try {
     const appId = options.appId?.trim() || APP_ID || DEFAULT_RUNNER_APP_ID;
     const agentId = options.agentId?.trim() || AGENT_ID;
-    const targetJid = options.targetJid?.trim() || CHAT_JID;
+    const targetJid =
+      options.targetJid?.trim() || getBoundChatJid() || CHAT_JID;
     const agentFolder = options[AGENT_FOLDER_OPTION_KEY];
     const requestFingerprint = permissionRequestFingerprint(options);
     const batchKey = timedGrantBatchKey({

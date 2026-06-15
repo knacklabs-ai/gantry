@@ -50,6 +50,15 @@ export const IPC_RESPONSE_VERIFY_KEY =
   process.env.GANTRY_IPC_RESPONSE_VERIFY_KEY || '';
 export const IPC_RESPONSE_KEY_ID = process.env.GANTRY_IPC_RESPONSE_KEY_ID || '';
 
+// Warm-pool (Pillar 2, D-P2-2(a), F4): the per-customer identity (chatJid /
+// threadId / memoryUserId) is NOT a spawn-env constant for a pooled worker — it
+// is bound at runtime. All MCP readers must source it via the bound-identity
+// accessor (`getBoundChatJid` / `getBoundThreadId` / `getBoundIdentity` in
+// `bound-identity.js`), which returns the bound value when present and falls
+// back to these spawn-env constants on the cold path. Do NOT import these three
+// consts into MCP tool writers — use the accessor so a warm worker routes to its
+// bound customer. (`bound-identity.ts` itself reads the same env vars for its
+// fallback, so these remain the single cold-path source.)
 export const chatJid = process.env.GANTRY_CHAT_JID!;
 export const groupFolder = process.env.GANTRY_GROUP_FOLDER!;
 export const appId = process.env.GANTRY_APP_ID?.trim() || undefined;

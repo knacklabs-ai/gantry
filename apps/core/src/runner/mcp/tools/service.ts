@@ -4,11 +4,13 @@ import { nowIso } from '../../../shared/time/datetime.js';
 import {
   availableSemanticCapabilities,
   capabilityStatusText,
-  chatJid,
   isAdminMcpToolEnabled,
   TASKS_DIR,
-  threadId,
 } from '../context.js';
+// Warm-pool (F4): stamp the BOUND customer identity (bind-delivered at runtime)
+// rather than the spawn-env constant, so a generic worker routes to its bound
+// customer. Cold path: the accessor returns the env constant unchanged.
+import { getBoundChatJid, getBoundThreadId } from '../bound-identity.js';
 import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
 import {
   MCP_PROXY_WAIT_MS,
@@ -327,9 +329,9 @@ export function registerServiceTools(server: McpServer): void {
       writeIpcFile(TASKS_DIR, {
         type: 'request_mcp_server',
         taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         payload: {
           name: args.name,
           transport: args.transport,
@@ -391,9 +393,9 @@ export function registerServiceTools(server: McpServer): void {
       writeIpcFile(TASKS_DIR, {
         type: 'mcp_list_tools',
         taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         payload: {
           serverName: args.serverName,
         },
@@ -449,9 +451,9 @@ export function registerServiceTools(server: McpServer): void {
         // RunTraceCollector by runHandle at capture and drains by the same key
         // at persist time. Matches the other capability IPC writers.
         runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         payload: {
           serverName: args.serverName,
           toolName: args.toolName,
@@ -494,8 +496,8 @@ export function registerServiceTools(server: McpServer): void {
       writeIpcFile(TASKS_DIR, {
         type: 'service_restart',
         taskId,
-        targetJid: chatJid,
-        chatJid,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
         timestamp: nowIso(),
       });
 
@@ -568,8 +570,8 @@ The JID must be the current conversation. The folder name must be channel-prefix
         type: 'register_agent',
         taskId,
         jid: args.jid,
-        targetJid: chatJid,
-        chatJid,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
         name: args.name,
         folder: args.folder,
         trigger: args.trigger,
@@ -710,9 +712,9 @@ async function submitCapabilityReviewTask(
     runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
     jobId: process.env.GANTRY_JOB_ID || undefined,
     runId: process.env.GANTRY_JOB_RUN_ID || undefined,
-    targetJid: chatJid,
-    chatJid,
-    authThreadId: threadId,
+    targetJid: getBoundChatJid(),
+    chatJid: getBoundChatJid(),
+    authThreadId: getBoundThreadId(),
     payload,
     timestamp: nowIso(),
   });
@@ -782,9 +784,9 @@ function registerSkillProposalTool(
       writeIpcFile(TASKS_DIR, {
         type: toolName,
         taskId,
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         payload: {
           files: args.files,
           reason: args.reason,

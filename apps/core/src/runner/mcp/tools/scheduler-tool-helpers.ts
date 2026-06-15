@@ -1,5 +1,8 @@
 import { nowIso } from '../../../shared/time/datetime.js';
-import { chatJid, threadId, TASKS_DIR } from '../context.js';
+import { TASKS_DIR } from '../context.js';
+// Warm-pool (F4): a scheduled job's conversation/thread is the BOUND customer
+// (bind-delivered), not the spawn-env constant. Cold path: env constant.
+import { getBoundChatJid, getBoundThreadId } from '../bound-identity.js';
 import { formatTaskFailureLines } from '../formatting.js';
 import {
   waitForTaskResponse,
@@ -29,9 +32,9 @@ export async function requestSchedulerData(
     type,
     taskId,
     ...payload,
-    targetJid: chatJid,
-    chatJid,
-    authThreadId: threadId,
+    targetJid: getBoundChatJid(),
+    chatJid: getBoundChatJid(),
+    authThreadId: getBoundThreadId(),
     timestamp: nowIso(),
   });
   return waitForTaskResponse(taskId, timeoutMs);
@@ -88,9 +91,9 @@ export async function submitSchedulerMutationTask(input: {
     type: input.taskType,
     taskId: input.taskId,
     ...input.payload,
-    targetJid: chatJid,
-    chatJid,
-    authThreadId: threadId,
+    targetJid: getBoundChatJid(),
+    chatJid: getBoundChatJid(),
+    authThreadId: getBoundThreadId(),
     timestamp: nowIso(),
   });
   const response = await waitForTaskResponse(
@@ -232,8 +235,8 @@ export function canonicalTargetFromArgs(
   error?: string;
 } {
   const defaultExecutionContext = {
-    conversationJid: chatJid,
-    threadId: threadId ?? null,
+    conversationJid: getBoundChatJid(),
+    threadId: getBoundThreadId() ?? null,
     groupScope: ambientGroupScope,
   };
   const executionContext = normalizeExecutionContextArg(args.execution_context);
@@ -275,17 +278,17 @@ export function canonicalTargetFromArgs(
     };
   }
 
-  const defaultThread = useAmbientDefault ? (threadId ?? null) : null;
+  const defaultThread = useAmbientDefault ? (getBoundThreadId() ?? null) : null;
   const baseExecutionContext =
     executionContext ??
     (shortcut
       ? {
-          conversationJid: chatJid,
+          conversationJid: getBoundChatJid(),
           threadId: shortcutResolution?.threadId ?? null,
           groupScope: ambientGroupScope,
         }
       : {
-          conversationJid: chatJid,
+          conversationJid: getBoundChatJid(),
           threadId: defaultThread,
           groupScope: ambientGroupScope,
         });

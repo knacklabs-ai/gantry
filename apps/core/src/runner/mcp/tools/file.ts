@@ -2,7 +2,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { FileArtifactDescriptor } from '../../../domain/file-artifacts/file-artifact.js';
-import { chatJid, TASKS_DIR } from '../context.js';
+import { TASKS_DIR } from '../context.js';
+// Warm-pool (F4): stamp the bound customer jid, not the spawn-env constant.
+import { getBoundChatJid } from '../bound-identity.js';
 import { makeIpcId } from '../ipc-ids.js';
 import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
 
@@ -85,8 +87,8 @@ async function requestHostFileArtifactAction(
   writeIpcFile(TASKS_DIR, {
     type: 'file_artifact',
     taskId,
-    chatJid,
-    targetJid: chatJid,
+    chatJid: getBoundChatJid(),
+    targetJid: getBoundChatJid(),
     payload: compactPayload(args),
   });
   const response = await waitForTaskResponse(

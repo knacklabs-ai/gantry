@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { schedulerJobConfirmationToken } from '@core/jobs/job-plan-formatter.js';
 import { ALL_GANTRY_MCP_TOOL_NAMES } from '@agent-runner-src/gantry-mcp-tool-surface.js';
+import { writeBoundIdentityFile } from '@agent-runner-src/mcp/bound-identity.js';
 
 const tempRoots: string[] = [];
 
@@ -1548,5 +1549,94 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     expect(record.result.content[0].text).toContain(
       'Unsupported scheduler fields: thread_id. Use execution_context and notification_routes for routing.',
     );
+  });
+
+  // Pillar 2 (D-P2-2(a), F4): a generic warm worker's MCP child has no
+  // GANTRY_CHAT_JID at spawn; it must stamp the BOUND chatJid (delivered at
+  // bind via bound-identity.json under GANTRY_IPC_DIR), not its boot env.
+  it('stamps the bound chatJid on a mcp_call_tool task (not the boot env) (F4/D-P2-2a)', async () => {
+    const fixture = createMcpFixture();
+    // Booted generic: no GANTRY_CHAT_JID. The bind writes the customer identity.
+    writeBoundIdentityFile(fixture.ipcDir, {
+      chatJid: 'wa:222',
+      threadId: 't-222',
+      memoryUserId: 'u-222',
+    });
+
+    const result = await runMcpFixture(
+      fixture,
+      'mcp_call_tool',
+      { serverName: 'shopify', toolName: 'search_products', arguments: {} },
+      { GANTRY_CHAT_JID: undefined, GANTRY_THREAD_ID: undefined },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task.type).toBe('mcp_call_tool');
+    expect(task.chatJid).toBe('wa:222');
+    expect(task.targetJid).toBe('wa:222');
+    // The bound thread id is stamped too (caller-identity / routing scope).
+    expect(task.authThreadId).toBe('t-222');
+  });
+
+  it('routes service_restart and ask_user_question to the bound chatJid (F4 readers)', async () => {
+    // service_restart (an admin task writer) → bound targetJid/chatJid.
+    const restartFixture = createMcpFixture();
+    writeBoundIdentityFile(restartFixture.ipcDir, { chatJid: 'wa:333' });
+    const restart = await runMcpFixture(
+      restartFixture,
+      'service_restart',
+      {},
+      {
+        GANTRY_CHAT_JID: undefined,
+        GANTRY_ADMIN_MCP_TOOLS_JSON: '["service_restart"]',
+      },
+    );
+    expect(restart.exitCode, restart.stderr).toBe(0);
+    const restartTasks = fs.readdirSync(
+      path.join(restartFixture.ipcDir, 'tasks'),
+    );
+    const restartTask = JSON.parse(
+      fs.readFileSync(
+        path.join(restartFixture.ipcDir, 'tasks', restartTasks[0]),
+        'utf-8',
+      ),
+    );
+    expect(restartTask.chatJid).toBe('wa:333');
+    expect(restartTask.targetJid).toBe('wa:333');
+
+    // ask_user_question (messaging) → bound targetJid on the request payload.
+    const questionFixture = createMcpFixture();
+    writeBoundIdentityFile(questionFixture.ipcDir, { chatJid: 'wa:444' });
+    const question = await runMcpFixture(
+      questionFixture,
+      'ask_user_question',
+      {
+        questions: [
+          {
+            question: 'Choose deployment?',
+            header: 'Deploy',
+            options: [
+              { label: 'Staging', description: 'Use test environment' },
+              { label: 'Canary', description: 'Limited production rollout' },
+            ],
+            multiSelect: true,
+          },
+        ],
+      },
+      { GANTRY_CHAT_JID: undefined },
+    );
+    expect(question.exitCode, question.stderr).toBe(0);
+    const questionRecord = JSON.parse(
+      fs.readFileSync(questionFixture.resultPath, 'utf-8'),
+    );
+    expect(questionRecord.observedRequest?.targetJid).toBe('wa:444');
   });
 });

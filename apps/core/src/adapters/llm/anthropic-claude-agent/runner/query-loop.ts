@@ -9,6 +9,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { composeAgentCapabilities } from '../agent-capabilities.js';
 import { awaitBind, type ConversationBindScope } from './bind-channel.js';
+import { writeBoundIdentityFile } from '../../../../runner/mcp/bound-identity.js';
 import {
   SDK_NATIVE_SKILL_DISABLE_ENV,
   SDK_NATIVE_SKILL_OVERRIDES,
@@ -200,6 +201,18 @@ async function dispatchWarmQuery(args: {
       /* ignore */
     }
     throw err;
+  }
+  // Publish the bound identity BEFORE running so the gantry-MCP child + the
+  // runner's permission/messaging readers stamp the bound chatJid on the first
+  // tool call (D-P2-2(a), F4). The shim source is a file under GANTRY_IPC_DIR;
+  // the Pillar-1 socket replaces it at combine time.
+  const ipcDir = process.env.GANTRY_IPC_DIR;
+  if (ipcDir) {
+    writeBoundIdentityFile(ipcDir, {
+      chatJid: scope.chatJid,
+      threadId: scope.threadId,
+      memoryUserId: scope.memoryUserId,
+    });
   }
   // The guardrail preface + memory block ride the FIRST user message (not the
   // cached system prompt) so the shared prefix stays byte-identical across

@@ -167,6 +167,14 @@ export function createRunnerFixture(): {
     path.resolve('apps/core/src/runner/memory-boundary.ts'),
     path.join(runnerDir, 'memory-boundary.ts'),
   );
+  // Warm-pool (F4): the runner imports the bound-identity accessor to publish
+  // the bound chatJid at bind. Copy it into the fixture's runner/mcp dir.
+  const runnerMcpDir = path.join(runnerDir, 'mcp');
+  fs.mkdirSync(runnerMcpDir, { recursive: true });
+  fs.copyFileSync(
+    path.resolve('apps/core/src/runner/mcp/bound-identity.ts'),
+    path.join(runnerMcpDir, 'bound-identity.ts'),
+  );
   fs.copyFileSync(
     path.resolve(
       'apps/core/src/adapters/llm/anthropic-claude-agent/runner/message-stream.ts',

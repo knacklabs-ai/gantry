@@ -6,15 +6,15 @@ import {
   type AdminMcpToolName,
 } from '../../../shared/admin-mcp-tools.js';
 import {
-  chatJid,
   configuredAllowedTools,
   currentEnabledAdminMcpTools,
   attachedMcpSourceIds,
   selectedSkillDisplays,
   attachedSkillSourceIds,
   TASKS_DIR,
-  threadId,
 } from '../context.js';
+// Warm-pool (F4): stamp the bound customer identity, not the spawn-env constant.
+import { getBoundChatJid, getBoundThreadId } from '../bound-identity.js';
 import { humanizeTechnicalIdentifier } from '../../../shared/user-visible-messages.js';
 import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
 import { makeIpcId } from '../ipc-ids.js';
@@ -73,9 +73,9 @@ export function registerAdminPermissionTools(
           toolId: args.tool_id,
           reason: args.reason,
         },
-        targetJid: chatJid,
-        chatJid,
-        authThreadId: threadId,
+        targetJid: getBoundChatJid(),
+        chatJid: getBoundChatJid(),
+        authThreadId: getBoundThreadId(),
         timestamp: nowIso(),
       });
       const response = await waitForTaskResponse(taskId, 20_000);
