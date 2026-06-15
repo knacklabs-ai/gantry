@@ -4,6 +4,7 @@ import {
   baseInput,
   createRunnerFixture,
   readRecord,
+  readRunnerOutputs,
   registerRunnerFixtureCleanup,
   runRunner,
 } from './agent-runner-ipc.test-helpers.js';
@@ -58,6 +59,39 @@ describe('warm-pool spike: SDK warm primitive', () => {
       expect(text).toContain('do you have kaju katli?'); // bound first message rode the stream
       expect(text).toContain('MEM-111'); // memory block rode the stream
       expect(call?.systemPromptAppend ?? '').not.toContain('wa:111'); // identity NOT in boot prompt
+    },
+    SPIKE_TIMEOUT_MS,
+  );
+
+  it(
+    'warm-bound first reply emits dispatchedAt and no runnerStartup (F1)',
+    async () => {
+      const fx = createRunnerFixture();
+      const { stdout } = await runRunner(
+        fx,
+        baseInput({ warmGenericBoot: true }),
+        {
+          GANTRY_WARM_POOL: '1',
+          GANTRY_SPIKE_BIND: JSON.stringify({
+            chatJid: 'wa:111',
+            firstMessage: 'hi',
+            memoryBlock: '',
+          }),
+        },
+      );
+      const outputs = readRunnerOutputs(stdout);
+      // The reply envelope is the one carrying the warm dispatch mark. A warm
+      // worker's firstSdkMessageAt predates bind, so runnerStartup would
+      // mis-route the trace; it must be suppressed in favor of dispatchedAt.
+      const reply = outputs.find((o) => o.dispatchedAt !== undefined);
+      expect(reply, JSON.stringify(outputs)).toBeDefined();
+      expect(reply?.dispatchedAt as number).toBeGreaterThan(0);
+      expect(reply?.runnerStartup).toBeUndefined();
+      // No envelope anywhere should carry runnerStartup for a warm-bound run.
+      expect(
+        outputs.some((o) => o.runnerStartup !== undefined),
+        JSON.stringify(outputs),
+      ).toBe(false);
     },
     SPIKE_TIMEOUT_MS,
   );
