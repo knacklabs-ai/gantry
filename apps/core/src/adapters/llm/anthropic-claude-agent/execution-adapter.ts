@@ -301,6 +301,10 @@ export class AnthropicClaudeAgentExecutionAdapter
   recycle(handle: WarmWorkerHandle): Promise<void> {
     return this.warmPool.recycle(handle);
   }
+
+  prewarmCaches(handle: WarmWorkerHandle): Promise<void> {
+    return this.warmPool.prewarmCaches(handle);
+  }
 }
 
 export function createAnthropicClaudeAgentExecutionAdapter(): AgentExecutionAdapter {

@@ -117,6 +117,7 @@ async function prewarmReady(
 describe('Anthropic warm pool adapter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    delete process.env.GANTRY_WARM_POOL_CACHE_PROBE;
     for (const root of tempRoots.splice(0)) {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -237,5 +238,27 @@ describe('Anthropic warm pool adapter', () => {
     await expect(controller.bind(handle, makeScope())).rejects.toThrow(
       'not found',
     );
+  });
+
+  it('prewarmCaches is a safe no-op unless the explicit probe flag is enabled', async () => {
+    const cachePrewarmProbe = vi.fn(async () => undefined);
+    const controller = new AnthropicWarmPoolController({
+      cachePrewarmProbe,
+    });
+    const handle = {
+      id: 'warm-worker-1',
+      key: makeRecipe().key,
+      bornAt: 1_000,
+      bound: false,
+    };
+
+    await controller.prewarmCaches(handle);
+
+    expect(cachePrewarmProbe).not.toHaveBeenCalled();
+
+    process.env.GANTRY_WARM_POOL_CACHE_PROBE = '1';
+    await controller.prewarmCaches(handle);
+
+    expect(cachePrewarmProbe).toHaveBeenCalledWith(handle);
   });
 });

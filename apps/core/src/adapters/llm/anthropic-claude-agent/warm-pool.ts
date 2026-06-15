@@ -17,6 +17,7 @@ import type {
 const READY_MARKER = 'awaiting bind';
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const BIND_FILE_NAME = '_bind.json';
+const CACHE_PROBE_ENV = 'GANTRY_WARM_POOL_CACHE_PROBE';
 
 type SpawnFunction = typeof nodeSpawn;
 
@@ -66,6 +67,7 @@ export class IpcDirectoryBindTransport implements BindTransport {
 export interface AnthropicWarmPoolOptions {
   spawn?: SpawnFunction;
   bindTransport?: BindTransport;
+  cachePrewarmProbe?: (handle: WarmWorkerHandle) => Promise<void>;
   now?: () => number;
   readyTimeoutMs?: number;
 }
@@ -73,6 +75,9 @@ export interface AnthropicWarmPoolOptions {
 export class AnthropicWarmPoolController {
   private readonly spawn: SpawnFunction;
   private readonly bindTransport: BindTransport;
+  private readonly cachePrewarmProbe?: (
+    handle: WarmWorkerHandle,
+  ) => Promise<void>;
   private readonly now: () => number;
   private readonly readyTimeoutMs: number;
   private readonly workers = new Map<string, WarmWorkerRecord>();
@@ -81,6 +86,7 @@ export class AnthropicWarmPoolController {
     this.spawn = options.spawn ?? nodeSpawn;
     this.bindTransport =
       options.bindTransport ?? new IpcDirectoryBindTransport();
+    this.cachePrewarmProbe = options.cachePrewarmProbe;
     this.now = options.now ?? Date.now;
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
   }
@@ -159,6 +165,11 @@ export class AnthropicWarmPoolController {
     this.workers.delete(handle.id);
     if (!worker) return;
     this.terminate(worker.process);
+  }
+
+  async prewarmCaches(handle: WarmWorkerHandle): Promise<void> {
+    if (process.env[CACHE_PROBE_ENV] !== '1') return;
+    await this.cachePrewarmProbe?.(handle);
   }
 
   private waitForReady(
