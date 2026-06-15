@@ -31,6 +31,7 @@ vi.mock('@core/config/index.js', () => ({
     },
   }),
   getDefaultModelConfig: () => ({ model: undefined }),
+  getSelectedAgentHarness: () => 'auto',
   getTriggerPattern: (trigger?: string) =>
     trigger ? new RegExp(`^@${trigger}\\b`, 'i') : /^@Andy\b/i,
 }));
@@ -2585,7 +2586,7 @@ describe('createGroupProcessor', () => {
       ).toBe(false);
     });
 
-    it('does not mark progress done after a plain follow-up question turn', async () => {
+    it('marks progress done after a plain final question turn', async () => {
       const channel = makeChannel({
         sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
       });
@@ -2618,15 +2619,15 @@ describe('createGroupProcessor', () => {
       const progressTexts = (
         channel.sendProgressUpdate as ReturnType<typeof vi.fn>
       ).mock.calls.map((call) => call[1]);
-      expect(progressTexts).toContain('Waiting for your response (0s).');
       expect(
         progressTexts.some(
           (text) => typeof text === 'string' && text.startsWith('Done in '),
         ),
-      ).toBe(false);
+      ).toBe(true);
+      expect(progressTexts).not.toContain('Waiting for your response (0s).');
     });
 
-    it('does not mark progress done when a follow-up question has examples after the question mark', async () => {
+    it('marks progress done when a final question has examples after the question mark', async () => {
       const channel = makeChannel({
         sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
       });
@@ -2656,12 +2657,12 @@ describe('createGroupProcessor', () => {
       const progressTexts = (
         channel.sendProgressUpdate as ReturnType<typeof vi.fn>
       ).mock.calls.map((call) => call[1]);
-      expect(progressTexts).toContain('Waiting for your response (0s).');
       expect(
         progressTexts.some(
           (text) => typeof text === 'string' && text.startsWith('Done in '),
         ),
-      ).toBe(false);
+      ).toBe(true);
+      expect(progressTexts).not.toContain('Waiting for your response (0s).');
     });
 
     it('excludes permission wait time from final elapsed progress', async () => {
@@ -4444,6 +4445,170 @@ describe('createGroupProcessor', () => {
           expectedAgentSessionResetAt: '2026-05-11T00:00:00.000Z',
         }),
       );
+    });
+  });
+
+  // =======================================================================
+  // Model-family runtime failover (Phase 3)
+  // =======================================================================
+
+  describe('model-family runtime failover', () => {
+    // gpt-oss family: members groq-oss (provider groq) and cerebras (provider
+    // cerebras). With both configured, candidates = [groq-oss, cerebras].
+    function setupFamilyGroup() {
+      const group = makeGroup({
+        requiresTrigger: false,
+        agentConfig: { name: 'Andy', model: 'gpt-oss' },
+      });
+      const { deps } = setupHappyPath({ group });
+      deps.executionAdapters = createAgentExecutionAdapterRegistry([
+        deps.executionAdapter!,
+        {
+          id: 'deepagents:langchain',
+          isMissingProviderSessionError: vi.fn(() => false),
+          prepare: vi.fn(),
+        },
+      ]);
+      deps.getConfiguredModelProviders = vi.fn(
+        async () => new Set(['groq', 'cerebras']),
+      );
+      deps.getModelFamilyOrder = vi.fn(() => undefined);
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:1',
+        });
+      (deps.opsRepository as any).createSessionAgentRun = vi
+        .fn()
+        .mockResolvedValue('agent-run:family-1');
+      return { deps, group };
+    }
+
+    it('fails over to the next configured provider on a 401 before any output streamed', async () => {
+      const { deps } = setupFamilyGroup();
+      // First candidate (groq-oss) returns a 401 frame with NO streamed output;
+      // the second candidate (cerebras) succeeds.
+      mockSpawnAgent.mockImplementationOnce(async () => ({
+        status: 'error',
+        result: null,
+        error: 'API Error: 401 authentication_error invalid api key',
+      }));
+      mockSpawnAgent.mockImplementationOnce(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          const output: AgentOutput = {
+            status: 'success',
+            result: 'second provider reply',
+          };
+          await onOutput?.(output);
+          return output;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await expect(processGroupMessages('group1@g.us')).resolves.toBe(true);
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+      // First attempt used the first candidate model (groq-oss).
+      expect(mockSpawnAgent.mock.calls[0][1]).toMatchObject({
+        model: 'groq-oss',
+      });
+      // Second attempt used the NEXT candidate model (cerebras) and NO resume id.
+      expect(mockSpawnAgent.mock.calls[1][1]).toMatchObject({
+        model: 'cerebras',
+      });
+      expect(mockSpawnAgent.mock.calls[1][1]).not.toHaveProperty('sessionId');
+    });
+
+    it('uses the first concrete family candidate provider for turn context and run creation', async () => {
+      const { deps, group } = setupFamilyGroup();
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await expect(processGroupMessages('group1@g.us')).resolves.toBe(true);
+
+      expect(deps.opsRepository.getAgentTurnContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentFolder: group.folder,
+          executionProviderId: 'deepagents:langchain',
+          conversationJid: 'group1@g.us',
+        }),
+      );
+      expect(deps.opsRepository.createSessionAgentRun).toHaveBeenCalledWith({
+        agentSessionId: 'agent-session:1',
+        executionProviderId: 'deepagents:langchain',
+        providerSessionId: undefined,
+        cause: 'message',
+      });
+      expect(mockSpawnAgent.mock.calls[0][1]).toMatchObject({
+        model: 'groq-oss',
+      });
+    });
+
+    it('does NOT fail over once visible output has streamed (safety boundary)', async () => {
+      const { deps } = setupFamilyGroup();
+      // First candidate streams a delta, THEN errors with a 401: no failover.
+      mockSpawnAgent.mockImplementationOnce(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({ status: 'success', result: 'partial reply' });
+          return {
+            status: 'error',
+            result: null,
+            error: 'API Error: 401 invalid api key',
+          } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      // Only ONE spawn: a provider failing mid-stream must not re-run.
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT fail over on a non-eligible error (stopped by request)', async () => {
+      const { deps } = setupFamilyGroup();
+      mockSpawnAgent.mockImplementationOnce(async () => ({
+        status: 'error',
+        result: null,
+        error: 'Agent runner stopped by request',
+      }));
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not fail over when no model override is set (single candidate)', async () => {
+      // No agentConfig.model -> resolveTurnFailoverCandidates returns [] -> the
+      // run keeps exact pre-failover behavior (one spawn, no model passed).
+      const group = makeGroup({ requiresTrigger: false });
+      const { deps } = setupHappyPath({ group });
+      deps.getConfiguredModelProviders = vi.fn(
+        async () => new Set(['groq', 'cerebras']),
+      );
+      mockSpawnAgent.mockImplementationOnce(async () => ({
+        status: 'error',
+        result: null,
+        error: 'API Error: 503 service unavailable',
+      }));
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      expect(mockSpawnAgent.mock.calls[0][1]).not.toHaveProperty('model');
     });
   });
 });

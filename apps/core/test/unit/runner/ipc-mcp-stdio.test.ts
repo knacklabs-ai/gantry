@@ -110,12 +110,34 @@ function createMcpFixture(): {
     path.join(sharedDir, 'model-provider-registry.ts'),
   );
   fs.copyFileSync(
+    path.resolve(
+      'apps/core/src/shared/model-provider-registry-openai-compatible.ts',
+    ),
+    path.join(sharedDir, 'model-provider-registry-openai-compatible.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-catalog-openai-compatible.ts'),
+    path.join(sharedDir, 'model-catalog-openai-compatible.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/agent-engine.ts'),
+    path.join(sharedDir, 'agent-engine.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/model-cache-support.ts'),
     path.join(sharedDir, 'model-cache-support.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/model-catalog-format.ts'),
     path.join(sharedDir, 'model-catalog-format.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-catalog-availability.ts'),
+    path.join(sharedDir, 'model-catalog-availability.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-families.ts'),
+    path.join(sharedDir, 'model-families.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/scheduler-job-plan.ts'),
@@ -1090,10 +1112,15 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
   it('rejects broad durable request_access run_command fallbacks before queuing review', async () => {
     const fixture = createMcpFixture();
 
-    const result = await runMcpFixture(fixture, 'request_access', {
-      target: { kind: 'run_command', argvPattern: 'gh *' },
-      reason: 'Run GitHub commands on schedule.',
-    });
+    const result = await runMcpFixture(
+      fixture,
+      'request_access',
+      {
+        target: { kind: 'run_command', argvPattern: 'gh *' },
+        reason: 'Run GitHub commands on schedule.',
+      },
+      { TEST_MCP_AUTO_RESPOND_TASKS: '0' },
+    );
 
     expect(result.exitCode, result.stderr).toBe(0);
     const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
@@ -1188,7 +1215,7 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
     });
   });
 
-  it('rejects request_access run_command fallbacks when MCP access is selected', async () => {
+  it('allows unrelated request_access run_command fallbacks when MCP access is selected', async () => {
     const fixture = createMcpFixture();
 
     const result = await runMcpFixture(
@@ -1211,36 +1238,33 @@ describe('agent-runner MCP stdio tools', { timeout: 35_000 }, () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
-    expect(record.result.isError).toBe(true);
-    expect(record.result.content[0].text).toContain(
-      'RunCommand/Bash permission is not available as a fallback',
-    );
-    expect(record.result.content[0].text).toContain(
-      'Selected MCP capabilities: mcp.caw-ats.access',
-    );
-    expect(record.result.content[0].text).toContain(
-      'Use mcp_list_tools to inspect the ready source, then mcp_call_tool',
-    );
+    expect(record.result.isError).not.toBe(true);
+    expect(record.result.content[0].text).toContain('Scheduler task confirmed');
     const taskDir = path.join(fixture.ipcDir, 'tasks');
-    expect(fs.existsSync(taskDir) ? fs.readdirSync(taskDir) : []).toEqual([]);
+    expect(fs.existsSync(taskDir) ? fs.readdirSync(taskDir) : []).toHaveLength(
+      1,
+    );
   });
 
-  it('rejects request_access run_command fallbacks when MCP access is live-selected', async () => {
+  it('rejects request_access run_command fallbacks that target selected MCP access', async () => {
     const fixture = createMcpFixture();
-    writeLiveToolRules(fixture, ['capability:mcp.caw-ats.access']);
 
     const result = await runMcpFixture(
       fixture,
       'request_access',
       {
-        target: { kind: 'run_command', argvPattern: "jq '.[1].content' -r" },
+        target: { kind: 'run_command', argvPattern: 'caw-ats list positions' },
         reason: 'List Manipal projects from caw-ats.',
         temporaryOnly: true,
       },
       {
+        GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON: JSON.stringify([
+          'capability:mcp.caw-ats.access',
+        ]),
         GANTRY_SEMANTIC_CAPABILITIES_JSON: JSON.stringify([
           cawAtsMcpCapability('mcp__caw-ats__ats_list_positions'),
         ]),
+        TEST_MCP_AUTO_RESPOND_TASKS: '0',
       },
     );
 

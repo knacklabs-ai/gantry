@@ -19,6 +19,7 @@ import {
   permissionDecisionOptions,
 } from '../permission-interaction.js';
 import { SlackChannelState, SlackMessageLike } from './channel-state.js';
+import { DEFAULT_TRIGGER, getTriggerPattern } from '../../config/index.js';
 import { buildPermissionReceiptBlocks } from './permission-blocks.js';
 import {
   SLACK_NATIVE_APPEND_MAX_LENGTH,
@@ -85,7 +86,10 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       setTimeout(resolve, clampSlackRetryDelayMs(delayMs));
     });
   }
-  protected async ingestSlackMessage(event: SlackMessageLike): Promise<void> {
+  protected async ingestSlackMessage(
+    event: SlackMessageLike,
+    options: { forceOwnedTopLevel?: boolean } = {},
+  ): Promise<void> {
     if (!event.channel || !event.ts) return;
     if (event.bot_id) return;
     if (event.subtype && event.subtype !== 'file_share') return;
@@ -110,12 +114,25 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       return;
     }
     const enriched = await this.enrichMessage(jid, event);
-    const content = enriched.text;
+    const rawContent = enriched.text;
+    const content =
+      this.botUserId && group
+        ? rawContent.replace(
+            new RegExp(`^<@${this.botUserId}>\\s+`),
+            `${group.trigger?.trim() || DEFAULT_TRIGGER} `,
+          )
+        : rawContent;
     if (!content) return;
     const sender = event.user || 'unknown';
     const senderName = await this.resolveUserName(event.user);
+    const ownsTopLevelMessage =
+      Boolean(group) &&
+      (options.forceOwnedTopLevel ||
+        group.requiresTrigger === false ||
+        getTriggerPattern(group.trigger).test(content.trim()));
     const threadId =
-      event.thread_ts || (isGroupConversation ? event.ts : undefined);
+      event.thread_ts ||
+      (isGroupConversation && ownsTopLevelMessage ? event.ts : undefined);
     await this.opts.onMessage(jid, {
       id: event.ts,
       chat_jid: jid,
@@ -316,7 +333,9 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         await this.ingestSlackMessage(args.event as SlackMessageLike);
       });
       this.app.event('app_mention', async (args: any) => {
-        await this.ingestSlackMessage(args.event as SlackMessageLike);
+        await this.ingestSlackMessage(args.event as SlackMessageLike, {
+          forceOwnedTopLevel: true,
+        });
       });
       this.app.event('app_home_opened', async (args: any) => {
         const event = args.event as { user?: string };

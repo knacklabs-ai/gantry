@@ -10,6 +10,7 @@ const currentControlAllowlist = vi.hoisted(() => ({
 }));
 
 vi.mock('@core/config/index.js', () => ({
+  DEFAULT_TRIGGER: '@bot',
   PERMISSION_APPROVAL_TIMEOUT_MS: 300000,
   getSlackBotToken: () => process.env.SLACK_BOT_TOKEN || '',
   getSlackAppToken: () => process.env.SLACK_APP_TOKEN || '',
@@ -21,6 +22,8 @@ vi.mock('@core/config/index.js', () => ({
         : allowlist.default;
     return new Set(scoped);
   },
+  getTriggerPattern: (trigger?: string) =>
+    trigger ? new RegExp(`^${trigger}\\b`, 'i') : /^@bot\b/i,
 }));
 
 vi.mock('@core/infrastructure/logging/logger.js', () => ({
@@ -344,8 +347,47 @@ describe('Slack channel', () => {
       expect.objectContaining({
         external_message_id: '1710000000.000100',
         thread_id: '1710000000.000100',
+        content: '@bot list projects',
         reply_to_message_id: undefined,
       }),
+    );
+  });
+
+  it('normalizes only the authenticated Slack bot mention before command parsing', async () => {
+    const opts = createOpts();
+    opts.conversationRoutes.mockReturnValue({
+      'sl:C123': { folder: 'slack_ops', name: 'Ops', trigger: '@Gantry' },
+    });
+    const channel = new SlackChannel('xoxb-token', 'xapp-token', opts as any);
+    await channel.connect();
+
+    const handlers = appRef.current.eventHandlers.get('app_mention') || [];
+    await handlers[0]({
+      event: {
+        channel: 'C123',
+        ts: '1710000000.000100',
+        user: 'U123',
+        text: '<@U_BOT> !new',
+      },
+    });
+    await handlers[0]({
+      event: {
+        channel: 'C123',
+        ts: '1710000000.000200',
+        user: 'U123',
+        text: '<@U_OTHER> !new',
+      },
+    });
+
+    expect(opts.onMessage).toHaveBeenNthCalledWith(
+      1,
+      'sl:C123',
+      expect.objectContaining({ content: '@Gantry !new' }),
+    );
+    expect(opts.onMessage).toHaveBeenNthCalledWith(
+      2,
+      'sl:C123',
+      expect.objectContaining({ content: '<@U_OTHER> !new' }),
     );
   });
 
@@ -374,6 +416,38 @@ describe('Slack channel', () => {
         external_message_id: '1710000001.000200',
         thread_id: '1710000000.000100',
         reply_to_message_id: '1710000000.000100',
+      }),
+    );
+  });
+
+  it('does not synthesize root threads for unrelated top-level channel chatter', async () => {
+    const opts = createOpts();
+    opts.conversationRoutes.mockReturnValue({
+      'sl:C123': {
+        folder: 'slack_ops',
+        name: 'Ops',
+        trigger: '@bot',
+        requiresTrigger: true,
+      },
+    });
+    const channel = new SlackChannel('xoxb-token', 'xapp-token', opts as any);
+    await channel.connect();
+
+    const handlers = appRef.current.eventHandlers.get('message') || [];
+    await handlers[0]({
+      event: {
+        channel: 'C123',
+        ts: '1710000000.000100',
+        user: 'U123',
+        text: 'hello ops',
+      },
+    });
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'sl:C123',
+      expect.objectContaining({
+        external_message_id: '1710000000.000100',
+        thread_id: undefined,
       }),
     );
   });

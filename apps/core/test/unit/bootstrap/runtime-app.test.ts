@@ -38,6 +38,7 @@ async function loadRuntimeApp() {
     }),
     getRuntimeSkillArtifactStore: vi.fn(),
     getRuntimeStorage: vi.fn(),
+    getConfiguredModelProvidersForApp: vi.fn(async () => new Set<string>()),
   }));
   return import('@core/app/bootstrap/runtime-app.js');
 }
@@ -71,6 +72,7 @@ async function loadRuntimeAppWithGroupProcessorSpy() {
     }),
     getRuntimeSkillArtifactStore: vi.fn(),
     getRuntimeStorage: vi.fn(),
+    getConfiguredModelProvidersForApp: vi.fn(async () => new Set<string>()),
   }));
   const runtimeApp = await import('@core/app/bootstrap/runtime-app.js');
   return { ...runtimeApp, createGroupProcessor };
@@ -176,7 +178,7 @@ describe('runtime app credential binding', () => {
     );
   });
 
-  it('recovers an explicit empty thread cursor from the global cursor', async () => {
+  it('preserves an explicit empty thread cursor for first-message retry', async () => {
     const { createRuntimeApp } = await loadRuntimeApp();
     const setRouterState = vi.fn(async () => undefined);
     const app = createRuntimeApp({
@@ -192,12 +194,10 @@ describe('runtime app credential binding', () => {
     app.setLastTimestamp(globalCursor);
     app.setAgentCursor(threadQueueJid, '');
 
-    await expect(app.getOrRecoverCursor(threadQueueJid)).resolves.toBe(
-      globalCursor,
-    );
-    expect(setRouterState).toHaveBeenCalledWith(
+    await expect(app.getOrRecoverCursor(threadQueueJid)).resolves.toBe('');
+    expect(setRouterState).not.toHaveBeenCalledWith(
       'last_agent_timestamp',
-      JSON.stringify({ [threadQueueJid]: globalCursor }),
+      expect.any(String),
     );
   });
 });

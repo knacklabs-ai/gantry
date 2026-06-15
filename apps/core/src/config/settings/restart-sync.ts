@@ -136,14 +136,32 @@ export async function addActiveMcpSourcesToRuntimeSettings(input: {
     agentId: agentIdForFolder(folder),
     limit: 500,
   });
-  const existing = new Set(agent.sources.mcpServers.map((source) => source.id));
+  const existing = new Map(
+    agent.sources.mcpServers.map((source) => [source.id, source]),
+  );
   const next: RuntimeConfiguredAgentSourceRef[] = [...agent.sources.mcpServers];
   for (const binding of bindings) {
     if (binding.status !== 'active') continue;
     const id = String(binding.serverId);
-    if (existing.has(id)) continue;
-    existing.add(id);
-    next.push({ id });
+    const existingSource = existing.get(id);
+    if (existingSource) {
+      if (
+        existingSource.tools?.length &&
+        binding.allowedToolPatterns.length > 0
+      ) {
+        existingSource.tools = [
+          ...new Set([...existingSource.tools, ...binding.allowedToolPatterns]),
+        ];
+      }
+      continue;
+    }
+    existing.set(id, { id });
+    next.push({
+      id,
+      ...(binding.allowedToolPatterns.length > 0
+        ? { tools: binding.allowedToolPatterns }
+        : {}),
+    });
   }
   agent.sources.mcpServers = next.sort((a, b) => a.id.localeCompare(b.id));
 }

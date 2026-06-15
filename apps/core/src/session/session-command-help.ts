@@ -12,6 +12,7 @@ export function formatSessionCommandsHelp(): string {
     'Models',
     '/model or !model - Show the current model selection.',
     '/model <alias> or !model <alias> - Set the conversation model override.',
+    '/model why <alias|family> or !model why <alias|family> - Explain a model: route, whether its provider key is configured, and why it would be selected.',
     '/model default or !model default - Clear the conversation model override.',
     '/models or !models - List available model aliases.',
     '',

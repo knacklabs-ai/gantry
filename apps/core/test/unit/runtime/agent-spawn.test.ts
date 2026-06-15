@@ -38,6 +38,7 @@ vi.mock('@core/config/index.js', () => ({
       ? { model: groupModel, source: 'conversation.agentConfig.model' }
       : { source: 'unset' },
   ),
+  getSelectedAgentHarness: vi.fn(() => 'auto'),
   getDeploymentMode: vi.fn(() => 'workstation'),
   getRuntimeSettingsForConfig: vi.fn(() => ({
     permissions: {
@@ -159,6 +160,7 @@ vi.mock('@core/application/agents/prompt-profile-service.js', () => ({
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeFileArtifactStore: vi.fn(() => ({})),
+  getConfiguredModelProvidersForApp: vi.fn(async () => new Set<string>()),
 }));
 
 // Mock platform
@@ -182,6 +184,13 @@ vi.mock('@core/runtime/egress-gateway.js', () => ({
   closeEgressGateway: (...args: unknown[]) => mockCloseEgressGateway(...args),
   ensureEgressGateway: (...args: unknown[]) => mockEnsureEgressGateway(...args),
 }));
+
+// DeepAgents shell/filesystem pre-spawn guard runs with its REAL implementation:
+// shell/filesystem authority that is not confined by an enforcing sandbox fails
+// closed with the enforcing-sandbox copy, while shell/filesystem authority under
+// `sandbox_runtime` is allowed (the runner projects the gated shell tool). The
+// per-test sandbox provider is driven by the runtime-settings mock + the passed
+// runnerSandboxProvider, so no guard mock seam is needed.
 
 // Create a controllable fake ChildProcess
 function createFakeProcess() {
@@ -221,8 +230,11 @@ import {
   getDeploymentMode,
   getEffectiveModelConfig,
   getRuntimeSettingsForConfig,
+  getSelectedAgentHarness,
 } from '@core/config/index.js';
+import { getConfiguredModelProvidersForApp } from '@core/adapters/storage/postgres/runtime-store.js';
 import { DirectRunnerSandboxProvider } from '@core/adapters/sandbox/runner-sandbox-provider.js';
+import { DEEPAGENTS_ENFORCING_SANDBOX_REQUIRED_MESSAGE } from '@core/runtime/deepagents-shell-filesystem-guard.js';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import type { ConversationRoute } from '@core/domain/types.js';
@@ -388,6 +400,24 @@ const testExecutionAdapter: AgentExecutionAdapter = {
         materialization.protectedFilesystemDenyWritePaths,
       runtimeDetails: [`executionProvider=anthropic:claude-agent-sdk`],
       cleanup: materialization.cleanup,
+    };
+  },
+};
+
+const testDeepAgentsExecutionAdapter: AgentExecutionAdapter = {
+  id: 'deepagents:langchain',
+  async prepare() {
+    return {
+      providerId: 'deepagents:langchain' as const,
+      runnerPath:
+        '/tmp/gantry-home/dist/adapters/llm/deepagents-langchain/runner/index.js',
+      runnerArgs: [
+        '/tmp/gantry-home/dist/adapters/llm/deepagents-langchain/runner/index.js',
+      ],
+      env: {},
+      protectedFilesystemPaths: [],
+      runtimeDetails: ['executionProvider=deepagents:langchain'],
+      cleanup: vi.fn(),
     };
   },
 };
@@ -620,6 +650,8 @@ describe('agent-spawn timeout behavior', () => {
     vi.mocked(spawn).mockClear();
     vi.mocked(fs.writeFileSync).mockClear();
     vi.mocked(getEffectiveModelConfig).mockClear();
+    vi.mocked(getSelectedAgentHarness).mockReset();
+    vi.mocked(getSelectedAgentHarness).mockReturnValue('auto');
     vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
       permissions: {
         yoloMode: {
@@ -1224,9 +1256,13 @@ describe('agent-spawn timeout behavior', () => {
   });
 
   it('projects provider models through Gantry gateway env only when broker supplies a run token', async () => {
+    // NOTE (Packets 4-5): OpenRouter now routes to the DeepAgents lane, so the
+    // SDK-lane gateway projection is exercised here with an Anthropic model. The
+    // OpenRouter-specific projection assertions move to the DeepAgents runner
+    // tests once the OpenAI-compatible gateway projection lands.
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
       env: {
-        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/openrouter',
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/anthropic',
         ANTHROPIC_API_KEY: 'gtw_test',
         ANTHROPIC_AUTH_TOKEN: 'gtw_test',
       },
@@ -1237,7 +1273,7 @@ describe('agent-spawn timeout behavior', () => {
     const writeSpy = vi.spyOn(fakeProc.stdin, 'write');
     const resultPromise = spawnTestAgent(
       testGroup,
-      { ...testInput, model: 'kimi 2.6' },
+      { ...testInput, model: 'opus' },
       () => {},
     );
     await vi.advanceTimersByTimeAsync(10);
@@ -1250,21 +1286,16 @@ describe('agent-spawn timeout behavior', () => {
       string,
       string
     >;
-    expect(env.ANTHROPIC_MODEL).toBe('moonshotai/kimi-k2.6');
+    expect(env.ANTHROPIC_MODEL).toBe('claude-opus-4-8');
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
     expect(runnerInput.modelCredentialEnv).toMatchObject({
-      ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/openrouter',
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/anthropic',
       ANTHROPIC_API_KEY: 'gtw_test',
       ANTHROPIC_AUTH_TOKEN: 'gtw_test',
     });
-    expect(mockEnsureEgressGateway).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        allowedNetworkHosts: expect.arrayContaining(['openrouter.ai:443']),
-      }),
-    );
   });
 
   it('rejects raw Claude Code OAuth projection in direct runtime', async () => {
@@ -1292,7 +1323,7 @@ describe('agent-spawn timeout behavior', () => {
   it('rejects provider models when the broker token is not run-scoped', async () => {
     vi.mocked(getHostRuntimeCredentialEnv).mockResolvedValueOnce({
       env: {
-        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/openrouter',
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/anthropic',
         ANTHROPIC_API_KEY: 'provider-token',
       },
       credentialProviders: {},
@@ -1302,7 +1333,7 @@ describe('agent-spawn timeout behavior', () => {
 
     const result = await spawnTestAgent(
       testGroup,
-      { ...testInput, model: 'kimi' },
+      { ...testInput, model: 'opus' },
       () => {},
     );
 
@@ -1322,7 +1353,7 @@ describe('agent-spawn timeout behavior', () => {
 
     const result = await spawnTestAgent(
       testGroup,
-      { ...testInput, model: 'kimi' },
+      { ...testInput, model: 'opus' },
       () => {},
     );
 
@@ -2323,7 +2354,7 @@ describe('agent-spawn timeout behavior', () => {
     ]);
   });
 
-  it('materializes approved third-party stdio MCP servers through scoped direct SDK MCP config', async () => {
+  it('does not materialize direct third-party stdio MCP servers into DeepAgents config', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const rmSyncSpy = vi
       .spyOn(fs, 'rmSync')
@@ -2368,6 +2399,7 @@ describe('agent-spawn timeout behavior', () => {
       testGroup,
       {
         ...testInput,
+        model: 'gpt',
         attachedMcpSourceIds: ['mcp:github'],
         runtimeAccess: [
           {
@@ -2400,6 +2432,7 @@ describe('agent-spawn timeout behavior', () => {
             },
           })),
         } as any,
+        executionAdapter: testDeepAgentsExecutionAdapter,
       },
     );
 
@@ -2418,26 +2451,11 @@ describe('agent-spawn timeout behavior', () => {
         agentId: 'agent-one',
         serverIds: ['mcp:github'],
       }),
-      expect.objectContaining({
-        appId: 'app-one',
-        agentId: 'agent-one',
-        serverIds: ['mcp:github'],
-      }),
-      expect.objectContaining({
-        appId: 'app-one',
-        agentId: 'agent-one',
-        serverIds: ['mcp:github'],
-        credentialEnv: { GITHUB_TOKEN: 'gantry-secret-token' },
-      }),
     ]);
     expect(env.GANTRY_MCP_SERVERS_JSON).toBeUndefined();
-    expect(env.GANTRY_MCP_CONFIG_FILE).toMatch(/mcp-.*\.json$/);
-    expect(JSON.parse(env.GANTRY_MCP_ALLOWED_TOOLS_JSON)).toEqual([
-      'mcp__github__issues.create',
-    ]);
-    expect(JSON.parse(env.GANTRY_MCP_ALWAYS_ALLOWED_TOOLS_JSON)).toEqual([
-      'mcp__github__issues.create',
-    ]);
+    expect(env.GANTRY_MCP_CONFIG_FILE).toBeUndefined();
+    expect(env.GANTRY_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
+    expect(env.GANTRY_MCP_ALWAYS_ALLOWED_TOOLS_JSON).toBeUndefined();
     expect(env.NO_PROXY.split(',')).toEqual(
       expect.arrayContaining(['127.0.0.1', 'localhost', '::1']),
     );
@@ -2445,57 +2463,34 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.NO_PROXY).not.toContain('.github.com');
     expect(mockEnsureEgressGateway).toHaveBeenCalledWith(
       expect.objectContaining({
-        networkAttribution: expect.arrayContaining([
-          expect.objectContaining({ host: 'api.github.com:443' }),
-        ]),
+        networkAttribution: [],
       }),
     );
-    expect(rmSyncSpy).toHaveBeenCalledWith(env.GANTRY_MCP_CONFIG_FILE, {
-      force: true,
-    });
+    expect(
+      rmSyncSpy.mock.calls.some(([target]) =>
+        /mcp-.*\.json$/.test(String(target)),
+      ),
+    ).toBe(false);
     const mcpConfigWrite = vi
       .mocked(fs.writeFileSync)
       .mock.calls.find(([target]) => String(target).includes('/mcp-'));
-    expect(mcpConfigWrite).toBeDefined();
-    expect(JSON.parse(String(mcpConfigWrite?.[1]))).toEqual({
-      github: {
-        type: 'stdio',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-github'],
-        env: expect.objectContaining({
-          GITHUB_TOKEN: 'gantry-secret-token',
-          HTTP_PROXY: 'http://127.0.0.1:18080/',
-          HTTPS_PROXY: 'http://127.0.0.1:18080/',
-          http_proxy: 'http://127.0.0.1:18080/',
-          https_proxy: 'http://127.0.0.1:18080/',
-          NODE_USE_ENV_PROXY: '1',
-          NO_PROXY: expect.stringContaining('127.0.0.1'),
-          no_proxy: expect.stringContaining('127.0.0.1'),
-        }),
-      },
-    });
+    expect(mcpConfigWrite).toBeUndefined();
     expect(
       vi
         .mocked(getHostRuntimeCredentialEnv)
         .mock.calls.some((call) => call[2]?.purpose === 'tool_capability'),
     ).toBe(false);
-    expect(repository.auditEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          eventType: 'materialize',
-          agentId: 'agent-one',
-          serverId: 'mcp:github',
-          metadata: expect.objectContaining({ name: 'github' }),
-        }),
-      ]),
-    );
+    expect(repository.auditEvents).toEqual([]);
     rmSyncSpy.mockRestore();
   });
 
   it.each(['http', 'sse'] as const)(
-    'does not project remote %s MCP sources into the direct SDK MCP config',
+    'does not materialize reviewed remote %s MCP sources into the DeepAgents handoff config',
     async (transport) => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
+      const rmSyncSpy = vi
+        .spyOn(fs, 'rmSync')
+        .mockImplementation(() => undefined);
       const { getHostRuntimeCredentialEnv } =
         await import('@core/runtime/agent-spawn-host.js');
       vi.mocked(getHostRuntimeCredentialEnv).mockImplementation(async () => ({
@@ -2514,10 +2509,14 @@ describe('agent-spawn timeout behavior', () => {
           bindingAllowedToolPatterns: ['issues.*'],
         }),
       ]);
+      const lookupHostname = vi.fn(async () => [
+        { address: '93.184.216.34', family: 4 as const },
+      ]);
       const resultPromise = spawnTestAgent(
         testGroup,
         {
           ...testInput,
+          model: 'gpt',
           attachedMcpSourceIds: ['mcp:github'],
           runtimeAccess: [
             {
@@ -2539,6 +2538,8 @@ describe('agent-spawn timeout behavior', () => {
             GITHUB_TOKEN: 'gantry-secret-token',
           }),
           mcpContext: { appId: 'app-one', agentId: 'agent-one' },
+          mcpHostnameLookup: lookupHostname,
+          executionAdapter: testDeepAgentsExecutionAdapter,
         },
       );
 
@@ -2553,6 +2554,7 @@ describe('agent-spawn timeout behavior', () => {
       >;
       expect(env.GANTRY_MCP_CONFIG_FILE).toBeUndefined();
       expect(env.GANTRY_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
+      expect(env.GANTRY_MCP_ALWAYS_ALLOWED_TOOLS_JSON).toBeUndefined();
       expect(repository.materializedInputs).toEqual([
         expect.objectContaining({
           appId: 'app-one',
@@ -2560,10 +2562,133 @@ describe('agent-spawn timeout behavior', () => {
           serverIds: ['mcp:github'],
         }),
       ]);
+      expect(mockEnsureEgressGateway).toHaveBeenCalledWith(
+        expect.objectContaining({
+          networkAttribution: [],
+        }),
+      );
+      expect(
+        rmSyncSpy.mock.calls.some(([target]) =>
+          /mcp-.*\.json$/.test(String(target)),
+        ),
+      ).toBe(false);
+      const mcpConfigWrite = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.find(([target]) => String(target).includes('/mcp-'));
+      expect(mcpConfigWrite).toBeUndefined();
+      expect(lookupHostname).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(getHostRuntimeCredentialEnv)
+          .mock.calls.some((call) => call[2]?.purpose === 'tool_capability'),
+      ).toBe(false);
+      expect(repository.auditEvents).toEqual([]);
+      rmSyncSpy.mockRestore();
     },
   );
 
-  it('starts the agent and skips selected MCP servers when credentials are missing', async () => {
+  it('materializes reviewed third-party stdio MCP servers for Anthropic SDK runner config', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    const rmSyncSpy = vi
+      .spyOn(fs, 'rmSync')
+      .mockImplementation(() => undefined);
+    const repository = new SpawnMcpRepository([
+      mcpRecord({
+        allowedToolPatterns: ['issues.*', 'search_*'],
+        autoApproveToolPatterns: [],
+        bindingAllowedToolPatterns: ['issues.*'],
+      }),
+    ]);
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        attachedMcpSourceIds: ['mcp:github'],
+        runtimeAccess: [
+          {
+            selectedCapabilityId: 'github.issues.create',
+            sourceType: 'mcp_server',
+            auditLabel: 'GitHub issues create',
+            reviewedServerId: 'github',
+            allowedTools: [
+              'mcp__github__issues.create',
+              'mcp__github__search_repositories',
+            ],
+            credentialRefs: [],
+            networkHosts: [],
+          },
+        ],
+      },
+      () => {},
+      undefined,
+      {
+        mcpServerRepository: repository,
+        capabilitySecretRepository: new SpawnCapabilitySecretRepository({
+          GITHUB_TOKEN: 'gantry-secret-token',
+        }),
+        mcpContext: { appId: 'app-one', agentId: 'agent-one' },
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'started with reviewed mcp',
+    });
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ status: 'success' });
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.GANTRY_MCP_CONFIG_FILE).toMatch(/mcp-.*\.json$/);
+    expect(JSON.parse(env.GANTRY_MCP_ALLOWED_TOOLS_JSON)).toEqual([
+      'mcp__github__issues.create',
+    ]);
+    expect(env.GANTRY_MCP_ALWAYS_ALLOWED_TOOLS_JSON).toBe(
+      env.GANTRY_MCP_ALLOWED_TOOLS_JSON,
+    );
+    expect(
+      repository.materializedInputs.filter((input) =>
+        input.serverIds?.includes('mcp:github' as never),
+      ).length,
+    ).toBe(3);
+    const mcpConfigWrite = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find(([target]) => String(target).includes('/mcp-'));
+    expect(mcpConfigWrite).toBeDefined();
+    const mcpConfig = JSON.parse(String(mcpConfigWrite?.[1]));
+    expect(mcpConfig.github).toMatchObject({
+      type: 'stdio',
+      env: { GITHUB_TOKEN: 'gantry-secret-token' },
+    });
+    expect(mockEnsureEgressGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        networkAttribution: [
+          expect.objectContaining({ host: 'api.github.com:443' }),
+        ],
+      }),
+    );
+    expect(repository.auditEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'materialize',
+          metadata: expect.objectContaining({ name: 'github' }),
+        }),
+      ]),
+    );
+    expect(
+      rmSyncSpy.mock.calls.some(([target]) =>
+        /mcp-.*\.json$/.test(String(target)),
+      ),
+    ).toBe(true);
+    rmSyncSpy.mockRestore();
+  });
+
+  it('starts the agent without resolving credentials for blocked stdio MCP sources', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const rmSyncSpy = vi
       .spyOn(fs, 'rmSync')
@@ -2573,6 +2698,7 @@ describe('agent-spawn timeout behavior', () => {
       testGroup,
       {
         ...testInput,
+        model: 'gpt',
         attachedMcpSourceIds: ['mcp:github'],
         runtimeAccess: [
           {
@@ -2592,6 +2718,7 @@ describe('agent-spawn timeout behavior', () => {
         mcpServerRepository: repository,
         capabilitySecretRepository: new SpawnCapabilitySecretRepository({}),
         mcpContext: { appId: 'app-one', agentId: 'agent-one' },
+        executionAdapter: testDeepAgentsExecutionAdapter,
       },
     );
 
@@ -2611,16 +2738,17 @@ describe('agent-spawn timeout behavior', () => {
       string
     >;
     expect(env.GANTRY_MCP_CONFIG_FILE).toBeUndefined();
-    expect(repository.auditEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          eventType: 'startup_failure',
-          agentId: 'agent-one',
-          serverId: 'mcp:github',
-          reason: expect.stringContaining('GITHUB_TOKEN'),
-        }),
-      ]),
-    );
+    expect(JSON.parse(env.GANTRY_SELECTED_MCP_SERVERS_JSON)).toEqual([
+      'github',
+    ]);
+    expect(repository.materializedInputs).toEqual([
+      expect.objectContaining({
+        appId: 'app-one',
+        agentId: 'agent-one',
+        serverIds: ['mcp:github'],
+      }),
+    ]);
+    expect(repository.auditEvents).toEqual([]);
     rmSyncSpy.mockRestore();
   });
 
@@ -3379,6 +3507,201 @@ describe('agent-spawn timeout behavior', () => {
     });
     expect(getHostRuntimeCredentialEnv).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('routes an OpenAI model to the DeepAgents adapter (engine derived from provider)', async () => {
+    const result = await spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt' },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: vi.fn(async () => {
+            throw new Error('deepagents prepare not implemented in packet A');
+          }),
+        },
+      },
+    );
+
+    // Resolution selected the deepagents adapter (prepare ran) rather than
+    // rejecting on engine compatibility.
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining(
+        'deepagents prepare not implemented in packet A',
+      ),
+    });
+  });
+
+  it('rejects an explicit incompatible agent harness before runner spawn', async () => {
+    vi.mocked(getSelectedAgentHarness).mockReturnValueOnce('anthropic_sdk');
+    const prepare = vi.fn(async () => {
+      throw new Error('should not prepare: harness gate must fire first');
+    });
+    const result = await spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt' },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare,
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining('agent harness anthropic_sdk'),
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('rewrites a model family alias to the configured provider member at spawn', async () => {
+    // gpt-oss family: members [groq-oss (groq), cerebras]. With only cerebras
+    // configured, resolution must pick the cerebras concrete entry.
+    vi.mocked(getConfiguredModelProvidersForApp).mockResolvedValueOnce(
+      new Set(['cerebras']),
+    );
+    let resolvedEntryId: string | undefined;
+    const result = await spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt-oss' },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: vi.fn(
+            async (prepareInput: { effectiveModelEntry?: { id: string } }) => {
+              resolvedEntryId = prepareInput.effectiveModelEntry?.id;
+              throw new Error('capture-only adapter');
+            },
+          ),
+        },
+      },
+    );
+    expect(result).toMatchObject({ status: 'error' });
+    expect(resolvedEntryId).toBe('cerebras:gpt-oss-120b');
+  });
+
+  it('falls back to the first family member when no provider is configured', async () => {
+    vi.mocked(getConfiguredModelProvidersForApp).mockResolvedValueOnce(
+      new Set<string>(),
+    );
+    let resolvedEntryId: string | undefined;
+    await spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt-oss' },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: vi.fn(
+            async (prepareInput: { effectiveModelEntry?: { id: string } }) => {
+              resolvedEntryId = prepareInput.effectiveModelEntry?.id;
+              throw new Error('capture-only adapter');
+            },
+          ),
+        },
+      },
+    );
+    expect(resolvedEntryId).toBe('groq:gpt-oss-120b');
+  });
+
+  it('A9: blocks a deepagents shell run under direct mode with the enforcing-sandbox copy (FAIL CLOSED)', async () => {
+    // Default mocked runtime sandbox provider is 'direct' (non-enforcing), so a
+    // DeepAgents run requesting shell authority fails closed before spawn — no
+    // shell tool can be projected without an enforcing OS sandbox.
+    const result = await spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        model: 'gpt',
+        toolPolicyRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],
+      },
+      () => {},
+      undefined,
+      {
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: vi.fn(async () => {
+            throw new Error('should not prepare: guard must fire first');
+          }),
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: DEEPAGENTS_ENFORCING_SANDBOX_REQUIRED_MESSAGE,
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('A9: allows a deepagents shell run under sandbox_runtime and projects GANTRY_DEEPAGENTS_SHELL_ENABLED', async () => {
+    // Under the enforcing whole-runner OS sandbox, a DeepAgents run with a
+    // RunCommand rule is allowed to spawn and the host projects the shell-enabled
+    // flag the runner reads to decide whether to inject the gated shell tool.
+    vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
+      permissions: {
+        yoloMode: { enabled: true, denylist: [], denylistPaths: [] },
+        egress: { denylist: [] },
+      },
+      runtime: {
+        sandbox: {
+          provider: 'sandbox_runtime',
+          resourceLimits: { cpuSeconds: 0, memoryMb: 0, maxProcesses: 0 },
+        },
+      },
+    } as any);
+    const start = vi.fn(() => fakeProc as any);
+    const runnerSandboxProvider: RunnerSandboxProvider = {
+      id: 'sandbox_runtime',
+      enforcing: true,
+      start,
+    };
+    const prepare = vi.fn(async () => ({
+      providerId: 'deepagents:langchain',
+      runnerPath: '/runner.js',
+      runnerArgs: ['/runner.js'],
+      env: {},
+      protectedFilesystemPaths: [],
+      runtimeDetails: [],
+      cleanup: vi.fn(),
+    }));
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        model: 'gpt',
+        toolPolicyRules: ['RunCommand(/usr/local/bin/acme invoices read *)'],
+      },
+      () => {},
+      undefined,
+      {
+        runnerSandboxProvider,
+        executionAdapter: {
+          id: 'deepagents:langchain',
+          prepare: prepare as any,
+        },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(prepare).toHaveBeenCalledOnce();
+    const startInput = start.mock.calls[0]?.[0] as RunnerSandboxSpawnInput;
+    const env = startInput.env as Record<string, string>;
+    expect(env.GANTRY_DEEPAGENTS_SHELL_ENABLED).toBe('1');
   });
 
   it('returns error when execution adapter prepare rejects', async () => {

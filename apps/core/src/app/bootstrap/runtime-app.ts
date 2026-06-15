@@ -36,6 +36,7 @@ import type {
   RuntimeRouterStateRepository,
 } from '../../domain/repositories/ops-repo.js';
 import {
+  getConfiguredModelProvidersForApp,
   getRuntimeRepositories,
   getRuntimeSkillArtifactStore,
   getRuntimeStorage,
@@ -190,6 +191,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
       modelCredentials: getRuntimeStorage().repositories.modelCredentials,
       gatewayBindHost: brokerConfig.gatewayBindHost,
       publishRuntimeEvent: options.publishRuntimeEvent,
+      limits: () => getRuntimeSettingsForConfig().limits,
     }).catch((error) => {
       credentialBrokerPromise = undefined;
       throw error;
@@ -347,22 +349,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   async function getOrRecoverCursor(chatJid: string): Promise<string> {
     const existing = lastAgentTimestamp[chatJid];
     if (existing) return existing;
-    const hasExplicitCursor = Object.prototype.hasOwnProperty.call(
-      lastAgentTimestamp,
-      chatJid,
-    );
-
     const parsed = parseThreadQueueKey(chatJid);
     if (parsed.threadId) {
-      if (hasExplicitCursor && lastTimestamp) {
-        lastAgentTimestamp[chatJid] = lastTimestamp;
-        await saveState();
-        logger.warn(
-          { queueJid: chatJid },
-          'Recovered empty thread cursor from global cursor',
-        );
-        return lastTimestamp;
-      }
       return '';
     }
 
@@ -570,6 +558,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     executionAdapter,
     executionAdapters,
     runnerSandboxProvider,
+    getConfiguredModelProviders: getConfiguredModelProvidersForApp,
+    getModelFamilyOrder: () => getRuntimeSettingsForConfig().modelFamilies,
   });
 
   return {

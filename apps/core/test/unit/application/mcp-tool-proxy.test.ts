@@ -131,14 +131,14 @@ describe('createGuardedMcpFetch', () => {
       const lookupHostname = vi.fn(async () => {
         throw new Error('loopback MCP fetch should not resolve DNS');
       });
-      const response = await createGuardedMcpFetch({ lookupHostname })(
-        `http://127.0.0.1:${address.port}/mcp`,
-        {
-          method: 'POST',
-          body: '{}',
-          redirect: 'error',
-        },
-      );
+      const response = await createGuardedMcpFetch({
+        allowLoopbackHttp: true,
+        lookupHostname,
+      })(`http://127.0.0.1:${address.port}/mcp`, {
+        method: 'POST',
+        body: '{}',
+        redirect: 'error',
+      });
 
       await expect(response.text()).resolves.toBe('{"ok":true}');
       expect(lookupHostname).not.toHaveBeenCalled();
@@ -147,6 +147,17 @@ describe('createGuardedMcpFetch', () => {
         server.close((err) => (err ? reject(err) : resolve())),
       );
     }
+  });
+
+  it('rejects loopback pivots for remote-configured MCP transports', async () => {
+    const lookupHostname = vi.fn(async () => [
+      { address: '127.0.0.1', family: 4 as const },
+    ]);
+
+    await expect(
+      createGuardedMcpFetch({ lookupHostname })('http://127.0.0.1:8123/mcp'),
+    ).rejects.toThrow(/must be public and routable/);
+    expect(lookupHostname).not.toHaveBeenCalled();
   });
 
   it('pins via DNS and fails closed on private resolution before any socket', async () => {

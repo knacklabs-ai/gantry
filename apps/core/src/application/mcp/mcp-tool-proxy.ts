@@ -253,7 +253,9 @@ export class McpToolProxy {
           { cache: this.options.dnsValidationCache },
         );
       }
+      const allowLoopbackHttp = isLocalLoopbackHttpMcpUrl(new URL(config.url));
       const fetch = createGuardedMcpFetch({
+        allowLoopbackHttp,
         lookupHostname: this.options.lookupHostname,
         dnsValidationCache: this.options.dnsValidationCache,
       });
@@ -402,6 +404,7 @@ async function closeCachedClient(
 }
 
 export function createGuardedMcpFetch(input: {
+  allowLoopbackHttp?: boolean;
   lookupHostname?: HostnameLookup;
   dnsValidationCache?: RemoteMcpDnsValidationCache;
 }): typeof fetch {
@@ -419,7 +422,7 @@ export function createGuardedMcpFetch(input: {
     const target = new URL(
       typeof url === 'string' || url instanceof URL ? url : url.url,
     );
-    if (isLocalLoopbackHttpMcpUrl(target)) {
+    if (input.allowLoopbackHttp && isLocalLoopbackHttpMcpUrl(target)) {
       return fetch(url, init);
     }
     return remoteFetch(url, init);

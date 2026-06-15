@@ -34,6 +34,7 @@ import {
   SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
   UNREVIEWED_DISCOVERY_GUIDANCE,
 } from '../../../shared/capability-guidance.js';
+import type { SemanticCapabilityDefinition } from '../../../shared/semantic-capabilities.js';
 
 export function registerServiceTools(server: McpServer): void {
   registerSkillProposalTool(
@@ -165,22 +166,34 @@ export function registerServiceTools(server: McpServer): void {
     listCapabilities: () => availableSemanticCapabilities,
     isCapabilitySelected: (capabilityId) =>
       currentConfiguredAllowedTools().includes(`capability:${capabilityId}`),
-    validateRunCommandFallback: () => {
+    validateRunCommandFallback: ({ argvPattern }) => {
       const currentAllowedTools = currentConfiguredAllowedTools();
-      const selectedMcpCapabilityIds = availableSemanticCapabilities
-        .filter(
-          (capability) =>
-            currentAllowedTools.includes(
-              `capability:${capability.capabilityId}`,
-            ) &&
-            capability.implementationBindings.some(
-              (binding) =>
-                binding.kind === 'mcp_tool' || Boolean(binding.mcpTool),
-            ),
-        )
+      const selectedMcpCapabilities = availableSemanticCapabilities.filter(
+        (capability) =>
+          currentAllowedTools.includes(
+            `capability:${capability.capabilityId}`,
+          ) &&
+          capability.implementationBindings.some(
+            (binding) =>
+              binding.kind === 'mcp_tool' || Boolean(binding.mcpTool),
+          ),
+      );
+      const selectedMcpCapabilityIds = selectedMcpCapabilities
         .map((capability) => capability.capabilityId)
         .sort();
       if (selectedMcpCapabilityIds.length === 0) return null;
+      const requestedPattern = normalizeMcpServerName(argvPattern);
+      const selectedMcpNames = [
+        ...new Set(
+          selectedMcpCapabilities.flatMap((capability) =>
+            mcpCapabilityNames(capability),
+          ),
+        ),
+      ].filter(Boolean);
+      const targetsSelectedMcp = selectedMcpNames.some((name) =>
+        requestedPattern.includes(name),
+      );
+      if (!targetsSelectedMcp) return null;
       return {
         isError: true,
         content: [
@@ -570,6 +583,20 @@ The JID must be the current conversation. The folder name must be channel-prefix
       };
     },
   );
+}
+
+function mcpCapabilityNames(
+  capability: SemanticCapabilityDefinition,
+): string[] {
+  const names: string[] = [capability.capabilityId];
+  const sourceServerName = mcpSourceServerName(capability.source);
+  if (sourceServerName) names.push(sourceServerName);
+  for (const binding of capability.implementationBindings) {
+    if (binding.kind !== 'mcp_tool' && !binding.mcpTool) continue;
+    const match = /^mcp__(.+?)__/.exec(binding.mcpTool ?? '');
+    if (match?.[1]) names.push(match[1]);
+  }
+  return names.map(normalizeMcpServerName).filter(Boolean);
 }
 
 function adminToolUnavailable(toolName: AdminMcpToolName): {

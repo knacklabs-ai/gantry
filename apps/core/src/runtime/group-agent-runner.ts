@@ -34,7 +34,15 @@ import { buildBoundedMemoryRecallQuery } from '../memory/app-memory-recall-query
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 import { isRuntimeEventType } from '../domain/events/runtime-event-types.js';
 import { resolveRuntimeExecutionProviderId } from './execution-provider-id.js';
+import { resolveExecutionRoute } from '../shared/model-execution-route.js';
+import { getSelectedAgentHarness } from '../config/index.js';
 import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
+import {
+  executionProviderIdForCandidate,
+  resolveTurnFailoverCandidates,
+  runFamilyFailoverLoop,
+  publishRunFailoverEvent,
+} from './failover-candidate-loop.js';
 const DEFAULT_ASSISTANT_NAME = 'Gantry';
 const DEFAULT_MODEL_ALIAS = 'opus';
 const MEMORY_REVIEW_APPROVER_CACHE_TTL_MS = 60_000;
@@ -241,11 +249,42 @@ export function createGroupAgentRunner(input: {
     const initialModelSelection = defaultModelStatusSelection(
       group.agentConfig?.model ?? DEFAULT_MODEL_ALIAS,
     );
-    const executionProviderId = (initialModelSelection.model
-      ?.executionProviderId ??
+    const agentHarness = getSelectedAgentHarness(group.folder);
+    // Configured-first model-family failover candidates for THIS turn. [] means
+    // no override (keep pre-failover behavior); candidates[0] is the existing
+    // single-rewrite default, passed as the model so spawn uses that member.
+    //
+    // This must happen before session/turn context lookup: family aliases do
+    // not resolve through defaultModelStatusSelection(), so provider-session
+    // lookup has to be keyed by the first concrete candidate's execution lane.
+    const failoverCandidates = await resolveTurnFailoverCandidates({
+      requestedModel: group.agentConfig?.model,
+      appId: 'default',
+      listConfiguredProviders: deps.getConfiguredModelProviders,
+      familyOrder: deps.getModelFamilyOrder?.(),
+    });
+    const firstModel = failoverCandidates[0];
+    const fallbackExecutionProviderId = (): ExecutionProviderId =>
       resolveRuntimeExecutionProviderId(
         deps.executionAdapter,
-      )) as ExecutionProviderId;
+      ) as ExecutionProviderId;
+    // Live-turn lease execution provider must match the runner's engine-resolved
+    // route. The engine is derived from the resolved model's provider.
+    const liveTurnRoute = initialModelSelection.model
+      ? resolveExecutionRoute({
+          entry: initialModelSelection.model,
+          agentHarness,
+        })
+      : undefined;
+    // Per-candidate during model-family failover: starts at the chat-default
+    // model's provider and is reassigned to the active candidate's provider when
+    // a failover advances. Closures below capture this binding by reference so
+    // provider-session persistence/expiry follow the candidate actually running.
+    let executionProviderId = firstModel
+      ? executionProviderIdForCandidate(firstModel, undefined, agentHarness)
+      : liveTurnRoute?.ok
+        ? (liveTurnRoute.value.executionProviderId as ExecutionProviderId)
+        : fallbackExecutionProviderId();
     const sessionThreadId = options?.memoryContext?.threadId ?? null;
     const modelStatus = createRuntimeModelStatusAccess(
       group.folder,
@@ -553,6 +592,7 @@ export function createGroupAgentRunner(input: {
       const invokeAgent = (agentInput: {
         memoryContextBlock?: string;
         resumeSessionId?: string;
+        model?: string;
       }) =>
         runAgentImpl(
           group,
@@ -560,6 +600,7 @@ export function createGroupAgentRunner(input: {
             prompt,
             ...(turnContext?.appId ? { appId: turnContext.appId } : {}),
             ...(turnContext?.agentId ? { agentId: turnContext.agentId } : {}),
+            ...(agentInput.model ? { model: agentInput.model } : {}),
             chatJid,
             threadId: options?.memoryContext?.threadId,
             memoryUserId: options?.memoryContext?.userId,
@@ -624,6 +665,7 @@ export function createGroupAgentRunner(input: {
         );
       let output = await invokeAgent({
         memoryContextBlock,
+        ...(firstModel ? { model: firstModel } : {}),
         resumeSessionId: resumeExternalSessionId,
       });
       const activeExecutionAdapter = resolveAgentExecutionAdapter({
@@ -640,8 +682,40 @@ export function createGroupAgentRunner(input: {
         (await expireTurnProviderSession(output.error ?? 'missing session'))
       ) {
         resumeExternalSessionId = undefined;
-        output = await invokeAgent({ memoryContextBlock });
+        output = await invokeAgent({
+          memoryContextBlock,
+          ...(firstModel ? { model: firstModel } : {}),
+        });
       }
+      // Live model-family failover: while NO visible output has streamed and the
+      // error is provider-specific, advance to the next configured candidate and
+      // re-invoke with that model and NO resume id (a different provider must not
+      // resume the prior provider's session). Streamed-output read fresh each iter.
+      output = await runFamilyFailoverLoop({
+        candidates: failoverCandidates,
+        initialOutput: output,
+        fallbackProviderId: executionProviderId,
+        agentHarness,
+        hasStreamedOutput: () => (streamedResult.snapshot()?.length ?? 0) > 0,
+        invoke: (model) => invokeAgent({ memoryContextBlock, model }),
+        onFailover: (toProviderId, details) => {
+          const fromProviderId = executionProviderId;
+          executionProviderId = toProviderId;
+          publishRunFailoverEvent({
+            publish: deps.publishRuntimeEvent,
+            appId: turnContext?.appId,
+            agentId: turnContext?.agentId,
+            runId: runState.runId,
+            conversationId: chatJid,
+            threadId: sessionThreadId,
+            fromProvider: fromProviderId,
+            family: group.agentConfig?.model ?? null,
+            details,
+          });
+          return fromProviderId;
+        },
+        log: (message) => runtimeLogger.warn({ group: group.name }, message),
+      });
       await forwardRuntimeEvents(output);
       if (output.status === 'error') {
         if (isStoppedByRequest(output)) {

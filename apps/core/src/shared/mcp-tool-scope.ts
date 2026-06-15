@@ -20,7 +20,11 @@ export function normalizeMcpToolScope(input: {
     ...new Set((input.requested ?? []).map((p) => p.trim()).filter(Boolean)),
   ];
   if (requested.length === 0) return [];
-  if (input.definitionPatterns.length === 0) return requested;
+  if (input.definitionPatterns.length === 0) {
+    throw new Error(
+      `MCP tool scope cannot be narrowed for ${input.serverName} because the server definition has no reviewed tools.`,
+    );
+  }
   for (const pattern of requested) {
     const covered = input.definitionPatterns.some(
       (allowed) =>

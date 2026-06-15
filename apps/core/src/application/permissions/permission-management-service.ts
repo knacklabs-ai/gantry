@@ -5,7 +5,6 @@ import type {
   PermissionRepository,
   ToolCatalogRepository,
 } from '../../domain/ports/repositories.js';
-import type { AgentMcpServerBinding } from '../../domain/mcp/mcp-servers.js';
 import type {
   PermissionDecision,
   PermissionDecisionId,
@@ -28,7 +27,11 @@ import type {
   PermissionApprovalDecision,
   PermissionApprovalUpdate,
 } from '../../domain/types.js';
-import { ensureMcpSourceBindingsForRules } from './mcp-capability-source-bindings.js';
+import {
+  ensureMcpSourceBindingsForRules,
+  rollbackAppliedMcpSourceBindings,
+  type AppliedMcpSourceBinding,
+} from './mcp-capability-source-bindings.js';
 import {
   adminMcpToolIdForFullName,
   isAdminMcpToolFullName,
@@ -151,7 +154,7 @@ export class PermissionManagementService {
 
     const timestamp = this.clock.now();
     const savedBindings: AgentToolBinding[] = [];
-    const activatedMcpBindings: AgentMcpServerBinding[] = [];
+    const activatedMcpBindings: AppliedMcpSourceBinding[] = [];
     const grantedToolIds: string[] = [];
     const previouslyActiveToolIds = new Set(
       (typeof input.toolRepository.listAgentToolBindings === 'function'
@@ -229,7 +232,7 @@ export class PermissionManagementService {
           agentId: input.agentId,
           mcpServerRepository: input.mcpServerRepository,
           rules: allowedRules,
-          semanticCapabilityDefinitions: input.semanticCapabilityDefinitions,
+          semanticCapabilityDefinitions: trustedSemanticCapabilityDefinitions,
           timestamp,
         })),
       );
@@ -249,16 +252,13 @@ export class PermissionManagementService {
           }),
         ),
       );
-      await Promise.allSettled(
-        activatedMcpBindings.map((binding) =>
-          input.mcpServerRepository?.disableAgentBinding({
-            appId: binding.appId,
-            agentId: binding.agentId,
-            serverId: binding.serverId,
-            updatedAt: this.clock.now() as never,
-          }),
-        ),
-      );
+      await rollbackAppliedMcpSourceBindings({
+        appId: input.appId,
+        agentId: input.agentId,
+        mcpServerRepository: input.mcpServerRepository,
+        applied: activatedMcpBindings,
+        timestamp: this.clock.now(),
+      });
       await this.recordDecision({
         appId: input.appId,
         agentId: input.agentId,
