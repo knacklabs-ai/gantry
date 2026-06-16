@@ -113,7 +113,6 @@ function uniqueStrings(values: readonly string[]): string[] {
   }
   return result;
 }
-
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -478,6 +477,7 @@ export async function spawnAgent(
       runnerInput.deepAgentCheckpointer =
         runnerInputPatch.deepAgentCheckpointer;
     }
+    runnerInput.deepAgentSkills = runnerInputPatch.deepAgentSkills;
     const localCliCredentialPaths = resolveHomeRelativePaths(
       localCliCredentialPathHintsFromRuntimeAccess(effectiveRuntimeAccess),
       process.env,

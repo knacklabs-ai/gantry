@@ -21,6 +21,22 @@ import type { SemanticCapabilityDefinition } from '../../shared/semantic-capabil
 
 export type AgentExecutionProviderId = ExecutionProviderId;
 
+export interface DeepAgentSkillFileProjection {
+  content: string;
+  mimeType: string;
+  created_at: string;
+  modified_at: string;
+}
+
+export interface DeepAgentSkillProjection {
+  sources: string[];
+  files: Record<string, DeepAgentSkillFileProjection>;
+  selectedSkillIds: string[];
+  skillCount: number;
+  fileCount: number;
+  contentBytes: number;
+}
+
 export interface AgentExecutionRunInput {
   prompt: string;
   appId?: string;
@@ -124,6 +140,7 @@ export interface PreparedAgentExecution {
       databaseUrl: string;
       schema: string;
     };
+    deepAgentSkills?: DeepAgentSkillProjection;
   };
   sandboxRuntime?: {
     toolTempDirLeaf?: string;

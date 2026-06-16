@@ -127,9 +127,15 @@ correct-by-construction:
   future/proxy-provided third-party MCP tools (`runner/tool-gate-core.ts`) + the
   neutral permission-IPC client (`runner/permission-ipc-client.ts`) before
   execution.
+- `skill-projection.ts` — host-side selected-skill projection. It reads only
+  Gantry-reviewed selected skill artifacts, validates DeepAgents-compatible
+  `SKILL.md` metadata/paths before runner spawn, and serializes virtual
+  `/skills/**` files for the child runner.
 - `runner/builtin-tool-exclusion.ts` — a `langchain` `createMiddleware`
-  `wrapModelCall` that strips `task` and `write_todos` from the model-visible
-  tool list (see task/write_todos decision below).
+  `wrapModelCall` that strips raw DeepAgents built-ins from the model-visible
+  tool list. `task`, `write_todos`, `write_file`, and `edit_file` stay hidden;
+  `ls`/`read_file`/`glob`/`grep` are visible only when a validated selected-skill
+  projection exists (see task/write_todos and skills decisions below).
 - `runner/runtime-env.ts` — reads the common `GANTRY_*` host env and builds the
   `PermissionIpcRuntimeEnv` for the neutral permission-IPC client.
 
@@ -157,7 +163,9 @@ returns a deny string to the model (imitating the anthropic-lane deny copy)
 without invoking the tool. Locked-preset agents are hard-denied without prompting.
 
 Raw DeepAgents authority stays disabled: default `StateBackend` (no `execute`),
-deny-all filesystem `permissions`, never `LocalShellBackend`/`FilesystemBackend`.
+deny-all filesystem `permissions` when no skills are projected, read-only
+`/skills/**` filesystem permission when Gantry projected selected skills, and
+never `LocalShellBackend`/`FilesystemBackend`.
 
 Gantry-owned shell tool (Phase 4): the ONLY execution surface is a `RunCommand`-
 named LangChain tool in `gantry-shell-tool.ts` (NOT `execute`/`ls`/`read_file`/etc
@@ -174,6 +182,19 @@ already-sandboxed runner (inherits OS protected-path denies + the runner's
 egress-proxy env). NEVER swap in a deepagents execution backend (it throws when
 `permissions` is combined with an execution backend, and does not enforce
 `permissions` on `execute`). `File*` tools are NOT projected yet (shell only).
+
+Skills decision: DeepAgents receives skills only from Gantry-reviewed selected
+skill artifacts. The host passes `skills: ["/skills/"]` and graph input `files`
+only after `skill-projection.ts` validates: selected id is enabled for the agent,
+artifact storage exists, `SKILL.md` exists, paths cannot escape or use hidden
+segments, the official frontmatter `name`/`description` are present and bounded,
+and the `name` exactly matches the materialized lowercase hyphen directory.
+Supporting files are projected as UTF-8 text only; unsupported binary assets
+fail closed before spawn instead of corrupting JSON runner input. The runner
+then exposes only read-only DeepAgents filesystem tools for virtual `/skills/**`
+so DeepAgents' official progressive disclosure can show metadata first and read
+full `SKILL.md` only after a match. Do not inject full skill bodies into system
+prompt, memory context, or resume input as a shortcut.
 
 `task` / `write_todos` decision: DeepAgents 1.10.2 bakes both middlewares into
 `createDeepAgent` unconditionally — there is no config switch to omit them.
@@ -275,18 +296,21 @@ newSessionId, sessionInit:true}` so the host persists the provider session
   the official saver methods only; do not log checkpoint values, thread ids,
   database URLs, schemas, prompts, or raw checkpoint blobs.
 - Raw-authority denial (`runner/builtin-tool-exclusion.ts` +
-  `runner/deep-agent-runner.ts`): the model-visible tool surface excludes the
-  DeepAgents built-ins `task`, `write_todos`, and the six filesystem tools
-  (`ls`/`read_file`/`write_file`/`edit_file`/`glob`/`grep`). The deny-all
-  `permissions` block (`DENY_ALL_FILESYSTEM`) stays as a defense-in-depth
+  `runner/deep-agent-runner.ts`): by default the model-visible tool surface
+  excludes the DeepAgents built-ins `task`, `write_todos`, and all filesystem
+  tools (`ls`/`read_file`/`write_file`/`edit_file`/`glob`/`grep`). When the host
+  projected reviewed selected skills, only the read-only filesystem tools
+  (`ls`/`read_file`/`glob`/`grep`) are visible and filesystem permissions allow
+  reads only under virtual `/skills/**`; `write_file`, `edit_file`, `task`, and
+  `write_todos` remain hidden. The deny-all `/**` rule stays as the fallback
   backstop. `deepagents-raw-authority-denial.test.ts` asserts this against the
   ACTUAL `createDeepAgent` model surface (a fake model's `bindTools` captures the
   post-middleware tool list), with a negative control proving the baked-in tools
   appear without the exclusion middleware. When `AgentDelegation` and Gantry file
   facade wrappers land, raw DeepAgents names still stay hidden: delegation maps
-  to Gantry-owned `AgentDelegation`, and filesystem access maps to `FileSearch`,
-  `FileRead`, `FileEdit`, and `FileWrite` with protected-path, symlink, sandbox,
-  and audit enforcement.
+  to Gantry-owned `AgentDelegation`, and non-skill filesystem access maps to
+  `FileSearch`, `FileRead`, `FileEdit`, and `FileWrite` with protected-path,
+  symlink, sandbox, and audit enforcement.
 - Scheduled-job heartbeat parity (`runner/job-heartbeat.ts`): scheduled runs
   emit a `JOB_HEARTBEAT` runtime-event frame every 15s (same shape as the
   Anthropic `job-heartbeat.ts`) so the host idle-stall detection

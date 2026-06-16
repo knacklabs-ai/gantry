@@ -118,6 +118,10 @@ export function buildDeepAgentStartupDiagnosticEvent(input: {
   turnMessageCount: number;
   cacheMode: CachePromptControlMode;
   checkpointerConfigured: boolean;
+  deepAgentSkillSourceCount?: number;
+  deepAgentSkillFileCount?: number;
+  deepAgentSkillContentBytes?: number;
+  deepAgentSkillReadToolsEnabled?: boolean;
   checkpointTiming?: DeepAgentCheckpointTimingSnapshot;
   scheduledJob: boolean;
 }): NonNullable<RunnerOutputFrame['runtimeEvents']>[number] {
@@ -146,6 +150,11 @@ export function buildDeepAgentStartupDiagnosticEvent(input: {
       turnMessageCount: input.turnMessageCount,
       cacheMode: input.cacheMode,
       checkpointerConfigured: input.checkpointerConfigured,
+      deepAgentSkillSourceCount: input.deepAgentSkillSourceCount ?? 0,
+      deepAgentSkillFileCount: input.deepAgentSkillFileCount ?? 0,
+      deepAgentSkillContentBytes: input.deepAgentSkillContentBytes ?? 0,
+      deepAgentSkillReadToolsEnabled:
+        input.deepAgentSkillReadToolsEnabled === true,
       ...(input.checkpointTiming
         ? {
             checkpointLoadCount: input.checkpointTiming.loadCount,

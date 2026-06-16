@@ -12,6 +12,7 @@ import { validateDeepAgentCredentialProjection } from './credential-validation.j
 import { isMissingDeepAgentSessionError } from './runner/session-store.js';
 import { ensureDeepAgentsCheckpointSchema } from './checkpoint-setup.js';
 import { resolveModelCacheSupport } from '../../../shared/model-cache-support.js';
+import { resolveDeepAgentSkillProjection } from './skill-projection.js';
 
 const GANTRY_DEEPAGENTS_MODEL_ID_ENV = 'GANTRY_DEEPAGENTS_MODEL_ID';
 const GANTRY_DEEPAGENTS_MODEL_PROVIDER_ENV = 'GANTRY_DEEPAGENTS_MODEL_PROVIDER';
@@ -158,6 +159,15 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
         databaseUrl: postgresUrl,
         schema: checkpointSchema,
       };
+    }
+    const deepAgentSkills = await resolveDeepAgentSkillProjection({
+      selectedSkillIds: input.input.attachedSkillSourceIds,
+      skillRepository: input.options?.skillRepository,
+      skillArtifactStore: input.options?.skillArtifactStore,
+      skillContext: input.options?.skillContext,
+    });
+    if (deepAgentSkills) {
+      runnerInputPatch.deepAgentSkills = deepAgentSkills;
     }
     runnerInputPatch.semanticCapabilities =
       input.input.semanticCapabilities ?? [];

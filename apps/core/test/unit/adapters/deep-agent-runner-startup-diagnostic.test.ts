@@ -188,4 +188,62 @@ describe('runDeepAgentTurn startup diagnostics', () => {
     expect(serialized).not.toContain('http://127.0.0.1:4545/openai');
     expect(serialized).not.toContain('gtw_secret_token');
   });
+
+  it('passes projected DeepAgents skill sources and files through the graph state', async () => {
+    const { runDeepAgentTurn } =
+      await import('@core/adapters/llm/deepagents-langchain/runner/deep-agent-runner.js');
+    const skillProjection = {
+      sources: ['/skills/'],
+      selectedSkillIds: ['skill:release'],
+      skillCount: 1,
+      fileCount: 1,
+      contentBytes: 112,
+      files: {
+        '/skills/release-writer/SKILL.md': {
+          content: `---
+name: release-writer
+description: Use this skill for release notes.
+---
+`,
+          mimeType: 'text/markdown',
+          created_at: '2026-06-16T00:00:00.000Z',
+          modified_at: '2026-06-16T00:00:00.000Z',
+        },
+      },
+    };
+
+    const turn = await runDeepAgentTurn({
+      agentInput: input({ deepAgentSkills: skillProjection }),
+      provider: 'openai',
+      modelId: 'gpt-test',
+      newSessionId: 'session-one',
+      includeMemoryContext: true,
+      emit: () => {},
+    });
+
+    expect(mocks.createDeepAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skills: ['/skills/'],
+        permissions: [
+          { operations: ['read'], paths: ['/skills', '/skills/**'] },
+          { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+        ],
+      }),
+    );
+    const graph = mocks.createDeepAgent.mock.results[0]?.value as {
+      streamEvents: ReturnType<typeof vi.fn>;
+    };
+    expect(graph.streamEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        files: skillProjection.files,
+      }),
+      expect.any(Object),
+    );
+    expect(turn.startupRuntimeEvents?.[0]?.payload).toMatchObject({
+      deepAgentSkillSourceCount: 1,
+      deepAgentSkillFileCount: 1,
+      deepAgentSkillContentBytes: 112,
+      deepAgentSkillReadToolsEnabled: true,
+    });
+  });
 });

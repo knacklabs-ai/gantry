@@ -7,6 +7,8 @@ import {
   createBuiltinToolExclusionMiddleware,
   EXCLUDED_BUILTIN_DEEPAGENT_TOOL_NAMES,
   EXCLUDED_FILESYSTEM_DEEPAGENT_TOOL_NAMES,
+  READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES,
+  WRITE_FILESYSTEM_DEEPAGENT_TOOL_NAMES,
 } from '@core/adapters/llm/deepagents-langchain/runner/builtin-tool-exclusion.js';
 import { shouldProjectGantryShellTool } from '@core/adapters/llm/deepagents-langchain/runner/mcp-tools.js';
 import {
@@ -157,6 +159,52 @@ describe('DeepAgents raw authority denial', () => {
       'read_file',
       'write_file',
     ]);
+    expect([...READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES].sort()).toEqual(
+      ['glob', 'grep', 'ls', 'read_file'],
+    );
+    expect([...WRITE_FILESYSTEM_DEEPAGENT_TOOL_NAMES].sort()).toEqual([
+      'edit_file',
+      'write_file',
+    ]);
+  });
+
+  it('exposes only read-only filesystem tools when reviewed skill files are projected', async () => {
+    const middleware = createBuiltinToolExclusionMiddleware({
+      exposeSkillReadTools: true,
+    }) as unknown as {
+      wrapModelCall: (
+        request: { tools: Array<{ name: string }> },
+        handler: (r: { tools: Array<{ name: string }> }) => Promise<unknown>,
+      ) => Promise<unknown>;
+    };
+    let seen: Array<{ name: string }> = [];
+    await middleware.wrapModelCall(
+      {
+        tools: [
+          { name: 'task' },
+          { name: 'write_todos' },
+          { name: 'ls' },
+          { name: 'read_file' },
+          { name: 'write_file' },
+          { name: 'edit_file' },
+          { name: 'glob' },
+          { name: 'grep' },
+          { name: 'send_message' },
+        ],
+      },
+      async (request) => {
+        seen = request.tools;
+        return { result: [] };
+      },
+    );
+
+    expect(seen.map((tool) => tool.name).sort()).toEqual([
+      'glob',
+      'grep',
+      'ls',
+      'read_file',
+      'send_message',
+    ]);
   });
 
   // R7: assert against the ACTUAL model-visible tool list of a real
@@ -226,7 +274,7 @@ describe('DeepAgents raw authority denial', () => {
     expect(text).not.toMatch(/import\s*\{[^}]*FilesystemBackend[^}]*\}/);
   });
 
-  it('keeps a deny-all filesystem permission block on the agent', () => {
+  it('keeps fail-closed filesystem permissions on the agent', () => {
     const runnerFile = path.join(
       DEEPAGENTS_DIR,
       'runner',
@@ -236,7 +284,9 @@ describe('DeepAgents raw authority denial', () => {
     expect(text).toMatch(/operations:\s*\['read',\s*'write'\]/);
     expect(text).toMatch(/paths:\s*\['\/\*\*'\]/);
     expect(text).toMatch(/mode:\s*'deny'/);
-    expect(text).toContain('permissions: DENY_ALL_FILESYSTEM');
+    expect(text).toContain('DENY_ALL_FILESYSTEM');
+    expect(text).toContain('READONLY_SKILLS_FILESYSTEM');
+    expect(text).toContain("paths: ['/skills', '/skills/**']");
   });
 
   it('reads no .mcp.json anywhere in the DeepAgents adapter directory', () => {

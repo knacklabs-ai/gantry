@@ -1,5 +1,5 @@
 import { createDeepAgent, StateBackend } from 'deepagents';
-import type { FilesystemPermission } from 'deepagents';
+import type { FileData, FilesystemPermission } from 'deepagents';
 import { HumanMessage } from '@langchain/core/messages';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -33,23 +33,27 @@ import type {
 import type { RunnerOutputFrame } from '../../../../runner/runner-frame.js';
 import { nowMs } from '../../../../shared/time/datetime.js';
 
-// Raw DeepAgents authority is fully disabled in v1: the default in-memory
-// StateBackend has no `execute` tool, and these deny-all rules block every
-// built-in filesystem tool (ls/read_file/write_file/edit_file/glob/grep). Never
+// Raw DeepAgents authority is fully disabled in v1: the default StateBackend has
+// no `execute` tool, and filesystem permissions deny reads/writes unless the
+// host projected reviewed selected skills into virtual `/skills/**` state. Never
 // pass LocalShellBackend/FilesystemBackend or any sandbox backend. All reachable
-// tools come ONLY from Gantry-owned MCP authority (facade tools plus selected
-// first-party projections such as Browser). The `task` subagent tool and
-// `write_todos` are excluded from the model-visible surface (see
-// builtin-tool-exclusion.ts). External third-party MCP config is rejected in
-// this lane until Gantry owns a DNS-pinned dispatcher/proxy path.
+// non-skill tools come ONLY from Gantry-owned MCP authority (facade tools plus
+// selected first-party projections such as Browser). The `task` subagent tool
+// and `write_todos` are excluded from the model-visible surface (see
+// builtin-tool-exclusion.ts). External third-party MCP config is rejected in this
+// lane until Gantry owns a DNS-pinned dispatcher/proxy path.
 const DENY_ALL_FILESYSTEM: FilesystemPermission[] = [
+  { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+];
+const READONLY_SKILLS_FILESYSTEM: FilesystemPermission[] = [
+  { operations: ['read'], paths: ['/skills', '/skills/**'] },
   { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
 ];
 
 // Minimal structural view of the compiled DeepAgents graph the runner drives.
 interface DeepAgentGraph {
   streamEvents(
-    input: { messages: BaseMessage[] },
+    input: { messages: BaseMessage[]; files?: Record<string, FileData> },
     options: {
       version: 'v2';
       signal?: AbortSignal;
@@ -159,6 +163,10 @@ export async function runDeepAgentTurn(input: {
   startupTiming.markToolsReady();
 
   try {
+    const skillProjection = input.agentInput.deepAgentSkills;
+    const hasProjectedSkills =
+      (skillProjection?.sources.length ?? 0) > 0 &&
+      Object.keys(skillProjection?.files ?? {}).length > 0;
     const agent = startupTiming.measure(
       'graphCreateMs',
       () =>
@@ -166,9 +174,16 @@ export async function runDeepAgentTurn(input: {
           model: resolved.model,
           backend: (config) => new StateBackend(config),
           ...(input.checkpointer ? { checkpointer: input.checkpointer } : {}),
-          permissions: DENY_ALL_FILESYSTEM,
+          permissions: hasProjectedSkills
+            ? READONLY_SKILLS_FILESYSTEM
+            : DENY_ALL_FILESYSTEM,
           tools: connected.tools as StructuredToolInterface[] as never,
-          middleware: [createBuiltinToolExclusionMiddleware()] as never,
+          middleware: [
+            createBuiltinToolExclusionMiddleware({
+              exposeSkillReadTools: hasProjectedSkills,
+            }),
+          ] as never,
+          ...(hasProjectedSkills ? { skills: skillProjection?.sources } : {}),
           ...(systemPrompt ? { systemPrompt } : {}),
         }) as unknown as DeepAgentGraph,
     );
@@ -195,7 +210,14 @@ export async function runDeepAgentTurn(input: {
 
     const events = startupTiming.measure('streamIteratorMs', () =>
       agent.streamEvents(
-        { messages: turnMessages },
+        {
+          messages: turnMessages,
+          ...(hasProjectedSkills
+            ? {
+                files: skillProjection?.files as Record<string, FileData>,
+              }
+            : {}),
+        },
         {
           version: 'v2',
           ...(input.signal ? { signal: input.signal } : {}),
@@ -246,6 +268,10 @@ export async function runDeepAgentTurn(input: {
         turnMessageCount: turnMessages.length,
         cacheMode,
         checkpointerConfigured: input.checkpointer !== undefined,
+        deepAgentSkillSourceCount: skillProjection?.sources.length ?? 0,
+        deepAgentSkillFileCount: skillProjection?.fileCount ?? 0,
+        deepAgentSkillContentBytes: skillProjection?.contentBytes ?? 0,
+        deepAgentSkillReadToolsEnabled: hasProjectedSkills,
         ...(input.checkpointTiming
           ? { checkpointTiming: input.checkpointTiming.snapshot() }
           : {}),

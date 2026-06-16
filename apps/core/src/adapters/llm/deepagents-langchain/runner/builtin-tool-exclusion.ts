@@ -16,24 +16,30 @@ import type { AgentMiddleware } from 'langchain';
 //     spawning, so it must not be reachable).
 //   - `write_todos` mutates DeepAgents in-state todos, which are non-durable
 //     scratch state Gantry does not own; hiding it keeps the surface minimal.
-//   - the six filesystem tools (ls/read_file/write_file/edit_file/glob/grep) are
-//     already hard-denied at runtime by the deny-all `permissions` block in
-//     deep-agent-runner.ts (DENY_ALL_FILESYSTEM). Leaving them model-VISIBLE
-//     means every call burns a turn on a guaranteed deny, so we also strip them
-//     from the tool list. The deny-all block stays as a defense-in-depth
-//     backstop in case the model-visible surface ever regains one of them.
+//   - the filesystem write tools (write_file/edit_file) are always hidden.
+//     Read-only filesystem tools (ls/read_file/glob/grep) are hidden unless the
+//     host projected reviewed selected skills into the DeepAgents StateBackend
+//     under virtual `/skills/**`; in that case deep-agent-runner.ts switches to
+//     read-only skill permissions so progressive disclosure can read SKILL.md.
 // This only removes the tools from the model-visible tool list; it does not
 // remove the baked-in middleware, so no DeepAgents internal invariant breaks.
 
-// The DeepAgents built-in filesystem tool names (deny-all'd at runtime; also
-// excluded from the model-visible surface so they never burn a turn).
-export const EXCLUDED_FILESYSTEM_DEEPAGENT_TOOL_NAMES = [
+export const READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES = [
   'ls',
   'read_file',
-  'write_file',
-  'edit_file',
   'glob',
   'grep',
+] as const;
+
+export const WRITE_FILESYSTEM_DEEPAGENT_TOOL_NAMES = [
+  'write_file',
+  'edit_file',
+] as const;
+
+// The DeepAgents built-in filesystem tool names.
+export const EXCLUDED_FILESYSTEM_DEEPAGENT_TOOL_NAMES = [
+  ...READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES,
+  ...WRITE_FILESYSTEM_DEEPAGENT_TOOL_NAMES,
 ] as const;
 
 export const EXCLUDED_BUILTIN_DEEPAGENT_TOOL_NAMES = [
@@ -43,8 +49,18 @@ export const EXCLUDED_BUILTIN_DEEPAGENT_TOOL_NAMES = [
 ] as const;
 
 const EXCLUDED_SET = new Set<string>(EXCLUDED_BUILTIN_DEEPAGENT_TOOL_NAMES);
+const SKILL_READ_TOOL_SET = new Set<string>(
+  READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES,
+);
 
-export function createBuiltinToolExclusionMiddleware(): AgentMiddleware {
+export function createBuiltinToolExclusionMiddleware(input?: {
+  exposeSkillReadTools?: boolean;
+}): AgentMiddleware {
+  const excluded = input?.exposeSkillReadTools
+    ? new Set(
+        [...EXCLUDED_SET].filter((name) => !SKILL_READ_TOOL_SET.has(name)),
+      )
+    : EXCLUDED_SET;
   return createMiddleware({
     name: 'GantryBuiltinToolExclusionMiddleware',
     wrapModelCall: async (request, handler) => {
@@ -54,7 +70,7 @@ export function createBuiltinToolExclusionMiddleware(): AgentMiddleware {
         ...request,
         tools: tools.filter(
           (tool) =>
-            typeof tool?.name !== 'string' || !EXCLUDED_SET.has(tool.name),
+            typeof tool?.name !== 'string' || !excluded.has(tool.name),
         ),
       });
     },
