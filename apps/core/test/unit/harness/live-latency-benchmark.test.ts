@@ -390,16 +390,19 @@ describe('live latency benchmark harness', () => {
       hostPhases: {
         mcpProjectionMs: 12,
         selectedSkillEnvMs: 3,
+        sandboxTemplateMs: 2,
         sandboxSpecMs: 4,
       },
     });
 
     expect(projection.metrics).toMatchObject({
       toolListingFilteringMs: 12,
+      sandboxTemplateMs: 2,
       sandboxSpecMs: 4,
     });
     expect(projection.metricSources).toMatchObject({
       toolListingFilteringMs: 'measured',
+      sandboxTemplateMs: 'measured',
       sandboxSpecMs: 'measured',
     });
     expect(projection.metrics.hydrationLagMs).toBeUndefined();
@@ -415,6 +418,7 @@ describe('live latency benchmark harness', () => {
           firstVisibleOutputMs: 31,
           hostPhases: {
             mcpProjectionMs: 12,
+            sandboxTemplateMs: 2,
             sandboxSpecMs: 4,
           },
         },
@@ -426,12 +430,14 @@ describe('live latency benchmark harness', () => {
       acceptedToFirstVisibleMs: 40,
       sandboxStartMs: 6,
       toolListingFilteringMs: 12,
+      sandboxTemplateMs: 2,
       sandboxSpecMs: 4,
     });
     expect(projection.metricSources).toMatchObject({
       acceptedToFirstVisibleMs: 'measured',
       sandboxStartMs: 'measured',
       toolListingFilteringMs: 'measured',
+      sandboxTemplateMs: 'measured',
       sandboxSpecMs: 'measured',
     });
   });

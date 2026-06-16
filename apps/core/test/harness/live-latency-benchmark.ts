@@ -280,6 +280,11 @@ export function startupDiagnosticToLiveLatencyMetrics(
       'toolListingFilteringMs',
       hostPhases.mcpProjectionMs,
     );
+    assignMeasuredMetric(
+      projection,
+      'sandboxTemplateMs',
+      hostPhases.sandboxTemplateMs,
+    );
     assignMeasuredMetric(projection, 'sandboxSpecMs', hostPhases.sandboxSpecMs);
   }
 
@@ -288,6 +293,11 @@ export function startupDiagnosticToLiveLatencyMetrics(
       projection,
       'sandboxStartMs',
       startupTiming.sandboxStartCallMs,
+    );
+    assignMeasuredMetric(
+      projection,
+      'sandboxTemplateMs',
+      startupTimingHostPhases?.sandboxTemplateMs,
     );
     assignMeasuredMetric(
       projection,

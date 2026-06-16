@@ -49,6 +49,8 @@ const baseDiagnostic = {
     protectedReadPathCount: 5,
     protectedWritePathCount: 6,
     localCliCredentialPathCount: 1,
+    warmTemplateAvailable: true,
+    warmTemplateCacheHit: true,
   },
   egress: {
     proxyConfigured: true,

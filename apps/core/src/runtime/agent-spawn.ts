@@ -45,11 +45,7 @@ import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
 import { buildToolNetworkEnv } from '../shared/tool-network-env.js';
 import { closeEgressGateway, ensureEgressGateway } from './egress-gateway.js';
 import { resolveConversationBrowserProfile } from '../shared/browser-profile-scope.js';
-import {
-  AgentInput,
-  AgentOutput,
-  RunAgentOptions,
-} from './agent-spawn-types.js';
+import { AgentInput, AgentOutput, RunAgentOptions } from './agent-spawn-types.js';
 import { selectedMemoryIpcActionsFromToolRules } from '../shared/memory-ipc-actions.js';
 import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-references.js';
 import { resolveMcpCredentialEnvForAgent } from '../application/capability-secrets/mcp-secret-projection.js';
@@ -92,17 +88,14 @@ import {
   sandboxRuntimeToolProcessEnv,
   sandboxRuntimeToolNetworkEnv,
   prepareRunnerWorkspace,
+  resolveRunnerSandboxStartup,
   buildRunnerSandboxSpawnInput,
   buildAndLogRunnerRuntimeDetails,
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
 const DEFAULT_RUNNER_APP_ID = 'default';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
-export type {
-  AvailableGroup,
-  AgentInput,
-  AgentOutput,
-} from './agent-spawn-types.js';
+export type { AvailableGroup, AgentInput, AgentOutput } from './agent-spawn-types.js';
 function uniqueStrings(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -403,18 +396,16 @@ export async function spawnAgent(
         memoryReviewerIsControlApprover: input.memoryReviewerIsControlApprover,
       },
     );
-    const upstreamProxyUrl =
-      hostCredentials.proxy?.https || hostCredentials.proxy?.http;
+    const upstreamProxyUrl = hostCredentials.proxy?.https || hostCredentials.proxy?.http;
     const runnerInputPatch = preparedExecution.runnerInputPatch ?? {};
     runnerInput.modelCredentialEnv = runnerInputPatch.modelCredentialEnv;
     const runtimeSandbox = getRuntimeSettingsForConfig().runtime.sandbox;
-    const runnerSandboxProviderId =
-      options?.runnerSandboxProvider?.id ?? 'direct';
-    if (runnerSandboxProviderId !== runtimeSandbox.provider) {
-      throw new Error(
-        `Runner sandbox provider mismatch: settings.yaml has ${runtimeSandbox.provider}, but the live runtime provider is ${runnerSandboxProviderId}. Restart Gantry before running agents.`,
-      );
-    }
+    const { runnerSandboxProviderId, sandboxWarmTemplate } =
+      resolveRunnerSandboxStartup({
+        provider: options?.runnerSandboxProvider,
+        runtimeProvider: runtimeSandbox.provider,
+        measure: hostStartup.measure,
+      });
     const sandboxRuntimeGateway = buildSandboxRuntimeGatewayOptions(
       runnerSandboxProviderId,
       sandboxAllowedNetworkHosts,
@@ -726,6 +717,7 @@ export async function spawnAgent(
         sandboxProtectedReadPaths,
         sandboxProtectedWritePaths,
         localCliCredentialPaths,
+        sandboxWarmTemplate,
         egressProxyConfigured: Boolean(egressGateway?.proxyUrl),
         upstreamProxyConfigured: Boolean(upstreamProxyUrl),
         hostCredentials,

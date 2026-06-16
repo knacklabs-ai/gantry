@@ -5,8 +5,11 @@ import path from 'path';
 import type { AgentInput } from './agent-spawn-types.js';
 import type { EgressGatewayPrivateHostMapping } from './egress-gateway.js';
 import type {
+  RunnerSandboxProvider,
+  RunnerSandboxProviderId,
   RunnerSandboxResourceLimits,
   RunnerSandboxSpawnInput,
+  RunnerSandboxWarmTemplateStatus,
 } from '../shared/runner-sandbox-provider.js';
 import { projectSandboxRuntimeModelGatewayEnv } from './agent-spawn-runtime-policy.js';
 import {
@@ -45,6 +48,37 @@ type SandboxRuntimeGatewayOptions = {
   allowedNetworkHosts?: string[];
   privateNetworkHostMappings?: readonly EgressGatewayPrivateHostMapping[];
 };
+
+const NO_RUNNER_SANDBOX_WARM_TEMPLATE_STATUS: RunnerSandboxWarmTemplateStatus = {
+  available: false,
+  cacheHit: false,
+  authorityFree: true,
+};
+
+export function resolveRunnerSandboxStartup(input: {
+  provider?: RunnerSandboxProvider;
+  runtimeProvider: RunnerSandboxProviderId;
+  measure: <T>(phase: 'sandboxTemplateMs', run: () => T) => T;
+}): {
+  runnerSandboxProviderId: RunnerSandboxProviderId;
+  sandboxWarmTemplate: RunnerSandboxWarmTemplateStatus;
+} {
+  const runnerSandboxProviderId = input.provider?.id ?? 'direct';
+  if (runnerSandboxProviderId !== input.runtimeProvider) {
+    throw new Error(
+      `Runner sandbox provider mismatch: settings.yaml has ${input.runtimeProvider}, but the live runtime provider is ${runnerSandboxProviderId}. Restart Gantry before running agents.`,
+    );
+  }
+  return {
+    runnerSandboxProviderId,
+    sandboxWarmTemplate: input.measure(
+      'sandboxTemplateMs',
+      () =>
+        input.provider?.warmTemplate?.() ??
+        NO_RUNNER_SANDBOX_WARM_TEMPLATE_STATUS,
+    ),
+  };
+}
 
 export function prepareRunnerWorkspace(input: {
   folder: string;

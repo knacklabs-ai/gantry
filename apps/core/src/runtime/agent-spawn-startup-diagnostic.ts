@@ -61,6 +61,8 @@ export interface RunnerHostStartupDiagnosticInput {
     protectedReadPathCount: number;
     protectedWritePathCount: number;
     localCliCredentialPathCount: number;
+    warmTemplateAvailable: boolean;
+    warmTemplateCacheHit: boolean;
   };
   egress: {
     proxyConfigured: boolean;
@@ -227,6 +229,8 @@ export async function publishRunnerHostStartupDiagnosticFromSpawn(input: {
         protectedReadPathCount: snapshot.sandboxProtectedReadPaths.length,
         protectedWritePathCount: snapshot.sandboxProtectedWritePaths.length,
         localCliCredentialPathCount: snapshot.localCliCredentialPaths.length,
+        warmTemplateAvailable: snapshot.sandboxWarmTemplate.available,
+        warmTemplateCacheHit: snapshot.sandboxWarmTemplate.cacheHit,
       },
       egress: {
         proxyConfigured: snapshot.egressProxyConfigured,
@@ -273,6 +277,10 @@ export interface RunnerHostStartupDiagnosticSnapshot {
   sandboxProtectedReadPaths: readonly string[];
   sandboxProtectedWritePaths: readonly string[];
   localCliCredentialPaths: readonly string[];
+  sandboxWarmTemplate: {
+    available: boolean;
+    cacheHit: boolean;
+  };
   egressProxyConfigured: boolean;
   upstreamProxyConfigured: boolean;
   hostCredentials: {
