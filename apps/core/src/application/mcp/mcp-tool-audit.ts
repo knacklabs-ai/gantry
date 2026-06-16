@@ -8,6 +8,7 @@ import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js'
 import type { McpServerRepository } from '../../domain/ports/repositories.js';
 import { redactSensitiveText } from '../../shared/sensitive-material.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import { ApplicationError } from '../common/application-error.js';
 
 export type McpToolAuditResultClass =
   | 'attempt'
@@ -106,6 +107,9 @@ export async function publishInvalidMcpToolRequestAudit(input: {
 export function classifyMcpToolAuditError(
   err: unknown,
 ): McpToolAuditResultClass {
+  if (err instanceof ApplicationError && err.code === 'FORBIDDEN') {
+    return 'denied';
+  }
   const message = err instanceof Error ? err.message.toLowerCase() : '';
   const name = err instanceof Error ? err.name.toLowerCase() : '';
   return name.includes('timeout') ||

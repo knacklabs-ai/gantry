@@ -1161,6 +1161,59 @@ describe('McpToolProxy', () => {
     );
   });
 
+  it('audits approved stdio MCP sources as denied until sandboxed proxy execution exists', async () => {
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+    const appendAuditEvent = vi.fn(async () => undefined);
+    const proxy = new McpToolProxy(mcpRepository({ appendAuditEvent }), {
+      tools: emptyToolRepository(),
+      liveToolRules: ['mcp__github__create_issue'],
+      publishRuntimeEvent,
+      runHandle: 'run-stdio',
+    });
+
+    await expect(
+      proxy.callTool({
+        appId: 'app-one' as never,
+        agentId: 'agent-one' as never,
+        serverName: 'github',
+        toolName: 'create_issue',
+        arguments: { title: 'Bug' },
+      }),
+    ).rejects.toThrow(/sandboxed stdio execution is implemented/);
+
+    expect(mcpSdkMocks.Client).toHaveBeenCalledTimes(1);
+    expect(mcpSdkMocks.client.connect).not.toHaveBeenCalled();
+    expect(publishRuntimeEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        eventType: RUNTIME_EVENT_TYPES.MCP_TOOL_ACTIVITY,
+        payload: expect.objectContaining({
+          serverName: 'github',
+          toolName: 'create_issue',
+          selectedToolRule: 'mcp__github__create_issue',
+          resultClass: 'denied',
+          runHandle: 'run-stdio',
+          error: expect.objectContaining({
+            name: 'ApplicationError',
+            message: expect.stringContaining('sandboxed stdio execution'),
+          }),
+        }),
+      }),
+    );
+    expect(appendAuditEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        eventType: 'tool_activity',
+        metadata: expect.objectContaining({
+          resultClass: 'denied',
+          selectedToolRule: 'mcp__github__create_issue',
+          argumentSummary: expect.objectContaining({
+            keys: ['title'],
+          }),
+        }),
+      }),
+    );
+    expect(JSON.stringify(publishRuntimeEvent.mock.calls)).not.toContain('Bug');
+  });
+
   it('does not turn a completed MCP side effect into a retryable failure when runtime event projection fails', async () => {
     vi.useFakeTimers();
     const appendAuditEvent = vi.fn(async () => undefined);
