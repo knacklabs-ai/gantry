@@ -116,7 +116,10 @@ describe('DeepAgents selected skill projection', () => {
         }),
       ]),
       skillArtifactStore: store,
-      skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+      skillContext: {
+        appId: 'app:test' as never,
+        agentId: 'agent:test' as never,
+      },
       nowIso: () => now,
     });
 
@@ -166,7 +169,10 @@ describe('DeepAgents selected skill projection', () => {
         selectedSkillIds: ['skill:missing'],
         skillRepository: repository([]),
         skillArtifactStore: artifactStore({}),
-        skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+        skillContext: {
+          appId: 'app:test' as never,
+          agentId: 'agent:test' as never,
+        },
       }),
     ).rejects.toThrow('is not enabled for this agent');
   });
@@ -179,7 +185,10 @@ describe('DeepAgents selected skill projection', () => {
           skill({ id: 'skill:release', name: 'release-writer' }),
         ]),
         skillArtifactStore: artifactStore({}),
-        skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+        skillContext: {
+          appId: 'app:test' as never,
+          agentId: 'agent:test' as never,
+        },
       }),
     ).rejects.toThrow('is not installed with a materializable artifact');
   });
@@ -200,7 +209,10 @@ describe('DeepAgents selected skill projection', () => {
             assets: [{ path: 'README.md', content: Buffer.from('# Nope') }],
           },
         }),
-        skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+        skillContext: {
+          appId: 'app:test' as never,
+          agentId: 'agent:test' as never,
+        },
       }),
     ).rejects.toThrow('artifact must include SKILL.md');
   });
@@ -219,12 +231,18 @@ describe('DeepAgents selected skill projection', () => {
         skillArtifactStore: artifactStore({
           'skill-release': {
             assets: [
-              { path: 'SKILL.md', content: skillMd({ name: 'release-writer' }) },
+              {
+                path: 'SKILL.md',
+                content: skillMd({ name: 'release-writer' }),
+              },
               { path: '../escape.md', content: Buffer.from('nope') },
             ],
           },
         }),
-        skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+        skillContext: {
+          appId: 'app:test' as never,
+          agentId: 'agent:test' as never,
+        },
       }),
     ).rejects.toThrow('Invalid skill asset path');
   });
@@ -250,7 +268,10 @@ describe('DeepAgents selected skill projection', () => {
             ],
           },
         }),
-        skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+        skillContext: {
+          appId: 'app:test' as never,
+          agentId: 'agent:test' as never,
+        },
       }),
     ).rejects.toThrow('declares SDK skill name "release_notes"');
   });
@@ -264,7 +285,10 @@ describe('DeepAgents selected skill projection', () => {
           skill({ id: 'skill:two', name: 'Release Writer', storageRef: 'two' }),
         ]),
         skillArtifactStore: artifactStore({}),
-        skillContext: { appId: 'app:test' as never, agentId: 'agent:test' as never },
+        skillContext: {
+          appId: 'app:test' as never,
+          agentId: 'agent:test' as never,
+        },
       }),
     ).rejects.toThrow('same runtime directory "release-writer"');
   });

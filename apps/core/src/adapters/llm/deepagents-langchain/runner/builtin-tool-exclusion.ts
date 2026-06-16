@@ -69,8 +69,7 @@ export function createBuiltinToolExclusionMiddleware(input?: {
       return handler({
         ...request,
         tools: tools.filter(
-          (tool) =>
-            typeof tool?.name !== 'string' || !excluded.has(tool.name),
+          (tool) => typeof tool?.name !== 'string' || !excluded.has(tool.name),
         ),
       });
     },

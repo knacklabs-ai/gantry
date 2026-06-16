@@ -159,9 +159,12 @@ describe('DeepAgents raw authority denial', () => {
       'read_file',
       'write_file',
     ]);
-    expect([...READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES].sort()).toEqual(
-      ['glob', 'grep', 'ls', 'read_file'],
-    );
+    expect([...READONLY_SKILL_FILESYSTEM_DEEPAGENT_TOOL_NAMES].sort()).toEqual([
+      'glob',
+      'grep',
+      'ls',
+      'read_file',
+    ]);
     expect([...WRITE_FILESYSTEM_DEEPAGENT_TOOL_NAMES].sort()).toEqual([
       'edit_file',
       'write_file',
