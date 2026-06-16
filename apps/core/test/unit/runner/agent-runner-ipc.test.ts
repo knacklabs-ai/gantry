@@ -739,13 +739,50 @@ export async function* query({ prompt, options }) {
   if (process.env.TEST_COMPACT_BOUNDARY === '1') {
     yield { type: 'system', subtype: 'compact_boundary', uuid: 'compact-1' };
   }
-  if (process.env.TEST_TASK_NOTIFICATION === '1') {
+  if (process.env.TEST_TASK_LIFECYCLE === '1') {
+    yield {
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'task-1',
+      tool_use_id: 'toolu_agent_1',
+      description: 'Research pricing',
+      subagent_type: 'general-purpose',
+      task_type: 'local_agent',
+      workflow_name: 'ignored-for-local-agent',
+      prompt: 'raw delegated prompt must not leak',
+    };
+    yield {
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: 'task-1',
+      tool_use_id: 'toolu_agent_1',
+      description: 'Research pricing',
+      subagent_type: 'general-purpose',
+      usage: { total_tokens: 123, tool_uses: 2, duration_ms: 456 },
+      last_tool_name: 'WebSearch',
+      summary: 'two sources checked',
+    };
+    yield {
+      type: 'system',
+      subtype: 'task_updated',
+      task_id: 'task-1',
+      patch: {
+        status: 'running',
+        description: 'Research pricing',
+        total_paused_ms: 0,
+        is_backgrounded: true,
+        error: 'raw task error must not leak',
+      },
+    };
     yield {
       type: 'system',
       subtype: 'task_notification',
       task_id: 'task-1',
+      tool_use_id: 'toolu_agent_1',
       status: 'completed',
+      output_file: '/tmp/raw-task-output.json',
       summary: 'subagent done',
+      usage: { total_tokens: 200, tool_uses: 3, duration_ms: 789 },
     };
   }
   yield { type: 'result', subtype: 'success', result: 'runner-ok' };
@@ -1087,7 +1124,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'emits SDK task notifications as structured runtime events',
+    'emits SDK task lifecycle messages as structured runtime events',
     async () => {
       const fixture = createRunnerFixture();
 
@@ -1101,34 +1138,96 @@ describe('agent-runner IPC lifecycle', () => {
           threadId: 'thread-1',
         }),
         {
-          TEST_TASK_NOTIFICATION: '1',
+          TEST_TASK_LIFECYCLE: '1',
           TEST_EXIT_AFTER_QUERY: '1',
         },
       );
 
       expect(result.exitCode, result.stderr).toBe(0);
       const outputs = readRunnerOutputs(result.stdout);
-      expect(outputs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            runtimeEvents: [
-              expect.objectContaining({
-                eventType: 'task.notification',
-                appId: 'app-one',
-                agentId: 'agent:team',
-                runId: 'run-1',
-                jobId: 'job-1',
-                conversationId: 'tg:team',
-                threadId: 'thread-1',
-                payload: {
-                  taskId: 'task-1',
-                  status: 'completed',
-                  summary: 'subagent done',
-                },
-              }),
-            ],
-          }),
-        ]),
+      const taskEvents = outputs
+        .flatMap((output) =>
+          Array.isArray(output.runtimeEvents) ? output.runtimeEvents : [],
+        )
+        .filter(
+          (event): event is Record<string, unknown> =>
+            typeof event === 'object' &&
+            event !== null &&
+            typeof event.eventType === 'string' &&
+            event.eventType.startsWith('task.'),
+        );
+      expect(taskEvents).toEqual([
+        expect.objectContaining({
+          eventType: 'task.started',
+          appId: 'app-one',
+          agentId: 'agent:team',
+          runId: 'run-1',
+          jobId: 'job-1',
+          conversationId: 'tg:team',
+          threadId: 'thread-1',
+          payload: {
+            taskId: 'task-1',
+            toolUseId: 'toolu_agent_1',
+            description: 'Research pricing',
+            subagentType: 'general-purpose',
+            taskType: 'local_agent',
+            workflowName: 'ignored-for-local-agent',
+            skipTranscript: false,
+          },
+        }),
+        expect.objectContaining({
+          eventType: 'task.progress',
+          payload: {
+            taskId: 'task-1',
+            toolUseId: 'toolu_agent_1',
+            description: 'Research pricing',
+            subagentType: 'general-purpose',
+            lastToolName: 'WebSearch',
+            summary: 'two sources checked',
+            usage: {
+              totalTokens: 123,
+              toolUses: 2,
+              durationMs: 456,
+            },
+          },
+        }),
+        expect.objectContaining({
+          eventType: 'task.updated',
+          payload: {
+            taskId: 'task-1',
+            patch: {
+              status: 'running',
+              description: 'Research pricing',
+              totalPausedMs: 0,
+              isBackgrounded: true,
+              hasError: true,
+            },
+          },
+        }),
+        expect.objectContaining({
+          eventType: 'task.notification',
+          payload: {
+            taskId: 'task-1',
+            toolUseId: 'toolu_agent_1',
+            status: 'completed',
+            summary: 'subagent done',
+            skipTranscript: false,
+            usage: {
+              totalTokens: 200,
+              toolUses: 3,
+              durationMs: 789,
+            },
+          },
+        }),
+      ]);
+      expect(JSON.stringify(taskEvents)).not.toContain(
+        'raw delegated prompt must not leak',
+      );
+      expect(JSON.stringify(taskEvents)).not.toContain(
+        '/tmp/raw-task-output.json',
+      );
+      expect(JSON.stringify(taskEvents)).not.toContain(
+        'raw task error must not leak',
       );
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,

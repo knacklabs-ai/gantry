@@ -42,6 +42,7 @@ import {
 } from './system-prompt.js';
 import type {
   AgentRunnerInput,
+  AgentRunnerRuntimeEventOutput,
   AgentRunnerToolAttemptOutput,
 } from './types.js';
 import { normalizeModelUsage } from '../../../../shared/model-usage.js';
@@ -125,6 +126,132 @@ function sdkResultFailureMessage(message: unknown): string | null {
   if (resultMessage.is_error && errors.length > 0) {
     return errors.join('; ');
   }
+  return null;
+}
+
+function stringField(
+  value: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const field = value[key];
+  return typeof field === 'string' && field.trim().length > 0
+    ? field
+    : undefined;
+}
+
+function finiteNumberField(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const field = value[key];
+  return typeof field === 'number' && Number.isFinite(field)
+    ? field
+    : undefined;
+}
+
+function taskUsagePayload(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const usage = value as Record<string, unknown>;
+  const out: Record<string, number> = {};
+  const totalTokens = finiteNumberField(usage, 'total_tokens');
+  const toolUses = finiteNumberField(usage, 'tool_uses');
+  const durationMs = finiteNumberField(usage, 'duration_ms');
+  if (totalTokens !== undefined) out.totalTokens = totalTokens;
+  if (toolUses !== undefined) out.toolUses = toolUses;
+  if (durationMs !== undefined) out.durationMs = durationMs;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function taskRuntimeEvent(
+  agentInput: AgentRunnerInput,
+  message: Record<string, unknown>,
+): AgentRunnerRuntimeEventOutput | null {
+  const taskId = stringField(message, 'task_id');
+  if (!taskId) return null;
+  const toolUseId = stringField(message, 'tool_use_id');
+  const basePayload: Record<string, unknown> = {
+    taskId,
+    ...(toolUseId ? { toolUseId } : {}),
+  };
+  const eventBase = {
+    appId: agentInput.appId,
+    agentId: agentInput.agentId,
+    runId: agentInput.runId,
+    jobId: agentInput.jobId,
+    conversationId: agentInput.chatJid,
+    threadId: agentInput.threadId,
+    actor: 'sdk',
+  } satisfies Omit<AgentRunnerRuntimeEventOutput, 'eventType' | 'payload'>;
+
+  if (message.subtype === 'task_started') {
+    return {
+      ...eventBase,
+      eventType: RUNTIME_EVENT_TYPES.TASK_STARTED,
+      payload: {
+        ...basePayload,
+        description: stringField(message, 'description'),
+        subagentType: stringField(message, 'subagent_type'),
+        taskType: stringField(message, 'task_type'),
+        workflowName: stringField(message, 'workflow_name'),
+        skipTranscript: message.skip_transcript === true,
+      },
+    };
+  }
+
+  if (message.subtype === 'task_progress') {
+    return {
+      ...eventBase,
+      eventType: RUNTIME_EVENT_TYPES.TASK_PROGRESS,
+      payload: {
+        ...basePayload,
+        description: stringField(message, 'description'),
+        subagentType: stringField(message, 'subagent_type'),
+        lastToolName: stringField(message, 'last_tool_name'),
+        summary: stringField(message, 'summary'),
+        usage: taskUsagePayload(message.usage),
+      },
+    };
+  }
+
+  if (message.subtype === 'task_updated') {
+    const patch =
+      message.patch && typeof message.patch === 'object'
+        ? (message.patch as Record<string, unknown>)
+        : {};
+    return {
+      ...eventBase,
+      eventType: RUNTIME_EVENT_TYPES.TASK_UPDATED,
+      payload: {
+        ...basePayload,
+        patch: {
+          status: stringField(patch, 'status'),
+          description: stringField(patch, 'description'),
+          endTime: finiteNumberField(patch, 'end_time'),
+          totalPausedMs: finiteNumberField(patch, 'total_paused_ms'),
+          isBackgrounded:
+            typeof patch.is_backgrounded === 'boolean'
+              ? patch.is_backgrounded
+              : undefined,
+          hasError: typeof patch.error === 'string' && patch.error.length > 0,
+        },
+      },
+    };
+  }
+
+  if (message.subtype === 'task_notification') {
+    return {
+      ...eventBase,
+      eventType: RUNTIME_EVENT_TYPES.TASK_NOTIFICATION,
+      payload: {
+        ...basePayload,
+        status: stringField(message, 'status'),
+        summary: stringField(message, 'summary'),
+        skipTranscript: message.skip_transcript === true,
+        usage: taskUsagePayload(message.usage),
+      },
+    };
+  }
+
   return null;
 }
 
@@ -427,38 +554,17 @@ export async function runQuery(
           compactBoundary: true,
         });
       }
-      if (
-        message.type === 'system' &&
-        (message as { subtype?: string }).subtype === 'task_notification'
-      ) {
-        const tn = message as {
-          task_id: string;
-          status: string;
-          summary: string;
-        };
-        log(
-          `Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`,
-        );
+      const taskEvent =
+        message.type === 'system'
+          ? taskRuntimeEvent(agentInput, message as Record<string, unknown>)
+          : null;
+      if (taskEvent) {
+        const payload = taskEvent.payload as Record<string, unknown>;
+        log(`Task event: type=${taskEvent.eventType} task=${payload.taskId}`);
         writeOutput({
           status: 'success',
           result: null,
-          runtimeEvents: [
-            {
-              appId: agentInput.appId,
-              agentId: agentInput.agentId,
-              runId: agentInput.runId,
-              jobId: agentInput.jobId,
-              conversationId: agentInput.chatJid,
-              threadId: agentInput.threadId,
-              actor: 'sdk',
-              eventType: RUNTIME_EVENT_TYPES.TASK_NOTIFICATION,
-              payload: {
-                taskId: tn.task_id,
-                status: tn.status,
-                summary: tn.summary,
-              },
-            },
-          ],
+          runtimeEvents: [taskEvent],
         });
       }
       if (message.type === 'stream_event') {
