@@ -31,6 +31,11 @@ export interface IpcRequestWakeupRegistryDeps {
   watch?: WatchFactory;
 }
 
+export interface IpcRequestWakeupHint {
+  workspaceFolder: string;
+  lane: RunnerControlRequestLane;
+}
+
 export class IpcRequestWakeupRegistry {
   private readonly lanes: readonly RunnerControlRequestLane[];
   private readonly onWatchError:
@@ -46,7 +51,7 @@ export class IpcRequestWakeupRegistry {
         RunnerControlPort,
         'isTrustedRequestDir' | 'requestDir'
       >;
-      trigger: () => void;
+      trigger: (hint?: IpcRequestWakeupHint) => void;
       deps?: IpcRequestWakeupRegistryDeps;
     },
   ) {
@@ -100,7 +105,13 @@ export class IpcRequestWakeupRegistry {
         dir,
         { persistent: false },
         (_eventType, filename) => {
-          if (isRelevantIpcWakeup(filename)) this.input.trigger();
+          const wakeup = classifyIpcWakeup(filename);
+          if (wakeup === 'ignored') return;
+          if (wakeup === 'specific') {
+            this.input.trigger({ workspaceFolder, lane });
+          } else {
+            this.input.trigger();
+          }
         },
       );
       watcher.unref?.();
@@ -150,10 +161,12 @@ function watchKey(
   return `${workspaceFolder}\0${lane}`;
 }
 
-function isRelevantIpcWakeup(filename: string | Buffer | null): boolean {
-  if (!filename) return true;
+function classifyIpcWakeup(
+  filename: string | Buffer | null,
+): 'specific' | 'unknown' | 'ignored' {
+  if (!filename) return 'unknown';
   const name = Buffer.isBuffer(filename)
     ? filename.toString('utf-8')
     : filename;
-  return isPendingIpcJsonFile(name);
+  return isPendingIpcJsonFile(name) ? 'specific' : 'ignored';
 }

@@ -62,3 +62,6 @@
   treat filesystem watch events as authority; request parsing, signing,
   permission, durable interaction, and response logic stay in the existing IPC
   processors.
+- IPC request wakeups may carry folder/lane hints to narrow immediate scans, but
+  unidentified watcher events, startup, fallback polling, and watcher-error
+  recovery must still run the full trusted-folder scan.

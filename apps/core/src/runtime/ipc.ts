@@ -22,8 +22,14 @@ import { canProcessIpcFile, clearIpcRateLimitState } from './ipc-rate-limit.js';
 import { validatePermissionIpcJobExecutionTarget, validateUserQuestionIpcJobExecutionTarget } from './ipc-scheduled-interaction-validation.js';
 import type { ConversationRoute as RuntimeGroupRecord } from '../domain/types.js';
 import { FilesystemRunnerControlPort } from './filesystem-runner-control-port.js';
-import { IpcRequestWakeupRegistry } from './ipc-request-wakeup-registry.js';
-import type { RunnerControlPort } from './runner-control-port.js';
+import {
+  IpcRequestWakeupRegistry,
+  type IpcRequestWakeupHint,
+} from './ipc-request-wakeup-registry.js';
+import type {
+  RunnerControlPort,
+  RunnerControlRequestLane,
+} from './runner-control-port.js';
 export type { IpcDeps } from './ipc-domain-types.js';
 export { processTaskIpc } from '../jobs/ipc-handler.js';
 export { validateIpcAuthRequest } from './ipc-auth-validation.js';
@@ -38,6 +44,7 @@ let activeRunnerControlPort: FilesystemRunnerControlPort | undefined;
 let activeRequestWakeups: IpcRequestWakeupRegistry | undefined;
 const MAX_IN_FLIGHT_INTERACTION_IPC = 100;
 const inFlightInteractionIpc = new Set<string>();
+type IpcProcessScope = 'all' | 'hinted';
 
 const isLongRunningTask = (type: string): boolean =>
   type.startsWith('mcp_') || type === 'scheduler_wait_for_events';
@@ -186,6 +193,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
   const initializedLayoutFolders = new Set<string>();
   let processingIpcFiles = false;
   let processAgainAfterCurrentPass = false;
+  let nextProcessScope: IpcProcessScope = 'all';
+  let processAgainScope: IpcProcessScope | undefined;
+  const pendingWakeHints = new Map<string, Set<RunnerControlRequestLane>>();
+
+  const addWakeHint = (hint: IpcRequestWakeupHint): void => {
+    const lanes = pendingWakeHints.get(hint.workspaceFolder) ?? new Set();
+    lanes.add(hint.lane);
+    pendingWakeHints.set(hint.workspaceFolder, lanes);
+  };
 
   const scheduleProcess = (delayMs: number): void => {
     if (!ipcWatcherRunning) return;
@@ -201,15 +217,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
   };
 
   const scheduleNextPoll = (): void => {
+    nextProcessScope = 'all';
     scheduleProcess(IPC_POLL_INTERVAL);
   };
 
-  const triggerIpcProcessing = (): void => {
+  const triggerIpcProcessing = (hint?: IpcRequestWakeupHint): void => {
     if (!ipcWatcherRunning) return;
+    if (hint) addWakeHint(hint);
+    else {
+      nextProcessScope = 'all';
+      processAgainScope = 'all';
+    }
     if (processingIpcFiles) {
+      processAgainScope =
+        !hint || processAgainScope === 'all' ? 'all' : 'hinted';
       processAgainAfterCurrentPass = true;
       return;
     }
+    nextProcessScope = hint ? 'hinted' : 'all';
     scheduleProcess(0);
   };
 
@@ -233,6 +258,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
       return;
     }
     processingIpcFiles = true;
+    const processScope = nextProcessScope;
+    nextProcessScope = 'all';
+    const wakeHints =
+      processScope === 'hinted'
+        ? new Map(pendingWakeHints)
+        : new Map<string, Set<RunnerControlRequestLane>>();
+    pendingWakeHints.clear();
+    const shouldProcessRequestLane = (
+      sourceAgentFolder: string,
+      lane: RunnerControlRequestLane,
+    ): boolean =>
+      processScope === 'all' ||
+      Boolean(wakeHints.get(sourceAgentFolder)?.has(lane));
     let scheduleFollowupPass = false;
     try {
       const groupRegistry = deps.conversationRoutes();
@@ -312,6 +350,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         // Process messages from this group's IPC directory
         try {
           if (
+            shouldProcessRequestLane(sourceAgentFolder, 'messages') &&
             runnerControlPort.isTrustedRequestDir(sourceAgentFolder, 'messages')
           ) {
             const messageFiles = runnerControlPort.listPendingRequests(
@@ -366,6 +405,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
             }
           } else if (
+            processScope === 'all' &&
             runnerControlPort.requestDirExists(sourceAgentFolder, 'messages')
           ) {
             logger.warn(
@@ -383,6 +423,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         // Process tasks from this group's IPC directory
         try {
           if (
+            shouldProcessRequestLane(sourceAgentFolder, 'tasks') &&
             runnerControlPort.isTrustedRequestDir(sourceAgentFolder, 'tasks')
           ) {
             const taskFiles = runnerControlPort.listPendingRequests(
@@ -432,6 +473,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
             }
           } else if (
+            processScope === 'all' &&
             runnerControlPort.requestDirExists(sourceAgentFolder, 'tasks')
           ) {
             logger.warn(
@@ -449,6 +491,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         // Process memory request/response IPC for this group
         try {
           if (
+            shouldProcessRequestLane(sourceAgentFolder, 'memory-requests') &&
             runnerControlPort.isTrustedRequestDir(
               sourceAgentFolder,
               'memory-requests',
@@ -513,6 +556,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
             }
           } else if (
+            processScope === 'all' &&
             runnerControlPort.requestDirExists(
               sourceAgentFolder,
               'memory-requests',
@@ -531,18 +575,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
 
         // Process browser request/response IPC for this group
-        processBrowserRequestDirectory({
-          ipcBaseDir,
-          sourceAgentFolder,
-          browserRequestsDir,
-          runnerControlPort,
-          deps,
-          logger,
-        });
+        if (shouldProcessRequestLane(sourceAgentFolder, 'browser-requests')) {
+          processBrowserRequestDirectory({
+            ipcBaseDir,
+            sourceAgentFolder,
+            browserRequestsDir,
+            runnerControlPort,
+            deps,
+            logger,
+          });
+        }
 
         // Process permission request/response IPC for this group
         try {
           if (
+            shouldProcessRequestLane(sourceAgentFolder, 'permission-requests') &&
             runnerControlPort.isTrustedRequestDir(
               sourceAgentFolder,
               'permission-requests',
@@ -651,6 +698,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
             }
           } else if (
+            processScope === 'all' &&
             runnerControlPort.requestDirExists(
               sourceAgentFolder,
               'permission-requests',
@@ -671,6 +719,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         // Process AskUserQuestion request/response IPC for this group
         try {
           if (
+            shouldProcessRequestLane(sourceAgentFolder, 'user-questions') &&
             runnerControlPort.isTrustedRequestDir(
               sourceAgentFolder,
               'user-questions',
@@ -773,6 +822,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
             }
           } else if (
+            processScope === 'all' &&
             runnerControlPort.requestDirExists(
               sourceAgentFolder,
               'user-questions',
@@ -797,9 +847,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
     }
     if (!ipcWatcherRunning) return;
     if (scheduleFollowupPass) {
+      nextProcessScope = processAgainScope ?? 'all';
+      processAgainScope = undefined;
       scheduleProcess(0);
       return;
     }
+    processAgainScope = undefined;
     scheduleNextPoll();
   };
 

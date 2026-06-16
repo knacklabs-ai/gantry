@@ -61,9 +61,38 @@ describe('IpcRequestWakeupRegistry', () => {
     listener?.('rename', 'perm-1.json');
 
     expect(trigger).toHaveBeenCalledTimes(1);
+    expect(trigger).toHaveBeenCalledWith({
+      workspaceFolder: 'main_agent',
+      lane: 'permission-requests',
+    });
     expect(unref).toHaveBeenCalledTimes(1);
     registry.stop();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('triggers an unscoped scan when the watcher cannot identify the file', () => {
+    const trusted = new Set(['main_agent:messages']);
+    const trigger = vi.fn();
+    let listener: WatchListener | undefined;
+
+    const registry = new IpcRequestWakeupRegistry({
+      runnerControlPort: runnerControlPort({ trusted }),
+      trigger,
+      deps: {
+        lanes: ['messages'],
+        watch: vi.fn((_dir, _options, callback) => {
+          listener = callback;
+          return watcher({});
+        }),
+      },
+    });
+
+    registry.reconcile(['main_agent']);
+    listener?.('rename', null);
+
+    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(trigger).toHaveBeenCalledWith();
+    registry.stop();
   });
 
   it('closes watchers for folders or lanes that are no longer trusted', () => {
