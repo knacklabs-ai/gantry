@@ -17,6 +17,7 @@ function bindPayload(scope: ConversationBindScope): Record<string, unknown> {
   return {
     chatJid: scope.chatJid,
     firstMessage: scope.firstMessage,
+    ...(scope.sessionId ? { sessionId: scope.sessionId } : {}),
     ...(scope.memoryBlock ? { memoryBlock: scope.memoryBlock } : {}),
     ...(scope.guardrailPreface
       ? { guardrailPreface: scope.guardrailPreface }

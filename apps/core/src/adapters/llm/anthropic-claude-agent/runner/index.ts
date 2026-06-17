@@ -260,7 +260,7 @@ async function runInteractiveQueryLoop(opts: {
       opts.configuredThinking,
       opts.configuredEffort,
       {
-        enableIpcFollowups: true,
+        enableIpcFollowups: opts.warmGenericBoot === true,
         persistSdkSession: true,
         warmGenericBoot: opts.warmGenericBoot ?? false,
       },

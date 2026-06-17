@@ -1027,6 +1027,87 @@ describe('agent-spawn timeout behavior', () => {
     expect(onProcess).toHaveBeenCalledTimes(2);
   });
 
+  it('falls back cold when a bound warm worker rejects a mismatched resume session before output', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 1,
+      idleTtlMs: 240_000,
+    });
+    const warmProc = createFakeProcess();
+    const warmHandle: WarmWorkerHandle = {
+      id: 'warm-worker-session-mismatch',
+      key: 'warm-key',
+      bornAt: 100,
+      processName: 'warm-worker-session-mismatch',
+      bound: false,
+    };
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => warmHandle),
+      release: vi.fn(async () => undefined),
+    };
+    const warmAdapter: WarmPoolCapable = {
+      ...testExecutionAdapter,
+      prewarm: vi.fn(async () => warmHandle),
+      recycle: vi.fn(),
+      bind: vi.fn(async () => ({
+        handle: warmHandle,
+        process: warmProc as unknown as ChildProcess,
+        runHandle: 'warm-bound-run',
+      })),
+    };
+    const onProcess = vi.fn();
+    const onOutput = vi.fn(async () => undefined);
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+      },
+      onProcess,
+      onOutput,
+      {
+        executionAdapter: warmAdapter,
+        warmPool,
+      },
+    );
+
+    await vi.waitFor(() => expect(onProcess).toHaveBeenCalledTimes(1));
+    emitOutputMarker(warmProc, {
+      status: 'error',
+      result: null,
+      error: 'Warm bind resume session does not match boot session',
+    });
+    warmProc.emit('close', 1);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'served by cold fallback',
+    });
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: null,
+    });
+    expect(onOutput).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'error',
+        error: 'Warm bind resume session does not match boot session',
+      }),
+    );
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'success',
+        result: 'served by cold fallback',
+      }),
+    );
+    expect(warmPool.release).toHaveBeenCalledWith(warmHandle);
+    expect(onProcess).toHaveBeenCalledTimes(2);
+  });
+
   it('does not cold-fallback uncommitted warm errors unrelated to Gantry MCP readiness', async () => {
     vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
       enabled: true,
@@ -1137,7 +1218,6 @@ describe('agent-spawn timeout behavior', () => {
         agentId: 'agent-one',
         threadId: 'thread-customer',
         memoryUserId: 'user-customer',
-        sessionId: 'provider-session-existing',
         memoryContextBlock: 'Customer memory must bind later',
       },
       onProcess,
@@ -1166,7 +1246,6 @@ describe('agent-spawn timeout behavior', () => {
       warmHandle,
       expect.objectContaining({
         chatJid: 'test@g.us',
-        sessionId: 'provider-session-existing',
         firstMessage: testInput.prompt,
         memoryBlock: 'Customer memory must bind later',
       }),
@@ -1183,9 +1262,6 @@ describe('agent-spawn timeout behavior', () => {
       }),
     );
     expect(JSON.stringify(recipe.runnerInput)).not.toContain('test@g.us');
-    expect(JSON.stringify(recipe.runnerInput)).not.toContain(
-      'provider-session-existing',
-    );
     expect(JSON.stringify(recipe.runnerInput)).not.toContain(
       'Customer memory must bind later',
     );
@@ -1525,7 +1601,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(spawn).toHaveBeenCalledTimes(1);
   });
 
-  it('uses a generic warm worker for saved provider sessions and binds the session later', async () => {
+  it('skips generic warm workers for saved provider sessions and cold-spawns with resume', async () => {
     vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
       enabled: true,
       size: 1,
@@ -1568,31 +1644,21 @@ describe('agent-spawn timeout behavior', () => {
       },
     );
 
-    await vi.waitFor(() => expect(warmAdapter.bind).toHaveBeenCalled());
-    emitOutputMarker(warmProc, {
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    emitOutputMarker(fakeProc, {
       status: 'success',
-      result: 'resumed warm',
-      warmBound: true,
+      result: 'resumed cold',
     });
-    warmProc.emit('close', 0);
+    fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);
 
     await expect(resultPromise).resolves.toMatchObject({
       status: 'success',
-      result: 'resumed warm',
-      warmBound: true,
+      result: 'resumed cold',
     });
-    expect(warmPool.acquire).toHaveBeenCalledTimes(1);
-    expect(String(vi.mocked(warmPool.acquire).mock.calls[0][0])).not.toContain(
-      'provider-session-existing',
-    );
-    expect(warmAdapter.bind).toHaveBeenCalledWith(
-      warmHandle,
-      expect.objectContaining({
-        sessionId: 'provider-session-existing',
-      }),
-    );
-    expect(spawn).not.toHaveBeenCalled();
+    expect(warmPool.acquire).not.toHaveBeenCalled();
+    expect(warmAdapter.bind).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 
   it('preserves structured runner errors on nonzero streaming exit', async () => {

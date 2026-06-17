@@ -90,6 +90,17 @@ function isWarmMcpReadinessError(output: AgentOutput): boolean {
   );
 }
 
+function isRecoverableWarmPathError(output: AgentOutput): boolean {
+  return (
+    isWarmMcpReadinessError(output) ||
+    (output.status === 'error' &&
+      typeof output.error === 'string' &&
+      output.error.includes(
+        'Warm bind resume session does not match boot session',
+      ))
+  );
+}
+
 function warmPoolKeyFingerprint(key: string): string {
   return createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
@@ -841,7 +852,6 @@ export async function spawnAgent(
           guardrailSystemPromptAppend: undefined,
           warmGenericBoot: true,
         };
-        delete warmRunnerInput.sessionId;
         let warmHostCredentials:
           | Awaited<ReturnType<typeof getHostRuntimeCredentialEnv>>
           | undefined;
@@ -1174,7 +1184,10 @@ export async function spawnAgent(
           let committedWarmOutput = false;
           const warmOnOutput: typeof onOutput = onOutput
             ? async (output) => {
-                if (!committedWarmOutput && isWarmMcpReadinessError(output)) {
+                if (
+                  !committedWarmOutput &&
+                  isRecoverableWarmPathError(output)
+                ) {
                   return;
                 }
                 committedWarmOutput = true;
@@ -1207,11 +1220,11 @@ export async function spawnAgent(
               },
             },
           });
-          if (!committedWarmOutput && isWarmMcpReadinessError(output)) {
+          if (!committedWarmOutput && isRecoverableWarmPathError(output)) {
             await warmPool.release(bound.handle).catch((releaseErr) => {
               logger.warn(
                 { err: releaseErr, workerId: bound.handle.id },
-                'Failed to recycle warm worker after MCP readiness failure',
+                'Failed to recycle warm worker after recoverable warm-path failure',
               );
             });
             deferRunnerResourceCleanup = false;
@@ -1221,7 +1234,7 @@ export async function spawnAgent(
                 group: group.name,
                 error: output.error,
               },
-              'Warm worker failed Gantry MCP readiness before output; falling back to cold spawn',
+              'Warm worker failed before visible output; falling back to cold spawn',
             );
           } else {
             return output;

@@ -23,6 +23,7 @@ function makeScope(): ConversationBindScope {
     appId: 'default',
     agentId: 'agent:boondi_support',
     chatJid: 'wa:000000001',
+    sessionId: 'provider-session-existing',
     firstMessage: 'Do you have kaju katli?',
     runHandle: 'bound-run-1',
     ipcDir: '/tmp/ipc',
@@ -73,6 +74,7 @@ describe('makeSocketWarmBindDelivery', () => {
         id: 'bind:bound-run-1',
         payload: expect.objectContaining({
           chatJid: 'wa:000000001',
+          sessionId: 'provider-session-existing',
           firstMessage: 'Do you have kaju katli?',
           runHandle: 'bound-run-1',
         }),

@@ -10,13 +10,13 @@ describe('warm-pool eligibility', () => {
     expect(isPoolEligible({ sessionId: '   ' })).toBe(true);
   });
 
-  it('allows returning conversations with a saved spawn session id', () => {
-    expect(isPoolEligible({ sessionId: 'claude-session-1' })).toBe(true);
+  it('skips returning conversations with a saved spawn session id', () => {
+    expect(isPoolEligible({ sessionId: 'claude-session-1' })).toBe(false);
   });
 
-  it('allows returning conversations when called with the source external session id', () => {
+  it('skips returning conversations when called with the source external session id', () => {
     expect(isPoolEligible({ externalSessionId: 'claude-session-1' })).toBe(
-      true,
+      false,
     );
   });
 });

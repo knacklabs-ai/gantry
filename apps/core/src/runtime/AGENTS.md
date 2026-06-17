@@ -97,6 +97,20 @@ session ID`, expire that provider session and retry the same turn once without
 - For the Anthropic SDK warm-pool path, the generic worker's `startup()` call is
   the customer-free cache prewarm. Do not add a second synthetic provider turn
   unless the adapter contract changes to prove it is needed and quota-safe.
+- Session-specific warm workers must boot `startup()` with the provider resume
+  handle already in SDK options; `WarmQuery.query()` cannot add `resume` later
+  at bind time. Keep resume handles out of prompt-cache shape keys and redact
+  them from trace payloads, but do not strip them from session-specific
+  `warmRunnerInput`.
+- Do not route saved provider-session turns through the generic warm pool.
+  A generic Anthropic warm worker has already called `startup()` without that
+  resume handle, so a returning conversation must either pipe to its retained
+  live worker or cold-spawn with `resume`; using a generic worker here causes
+  warm-bind session mismatches and retry churn.
+- Cold resumed message runs are one-shot. They may use IPC for permissions and
+  runtime callbacks, but must not stay open as retained continuation workers
+  after a customer-visible reply; otherwise a later inbound can sit pending
+  behind a cold process while generic warm workers are still available.
 - Sticky warm workers depend on live process state, not detached handle state.
   If a pooled worker reaches an idle boundary, keep it only while the runner
   process remains registered and release the pooled worker on process `close`.

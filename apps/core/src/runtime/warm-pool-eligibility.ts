@@ -6,6 +6,6 @@ export interface WarmPoolEligibilityInput {
 }
 
 export function isPoolEligible(input: WarmPoolEligibilityInput): boolean {
-  void input;
-  return true;
+  const sessionId = input.sessionId?.trim() || input.externalSessionId?.trim();
+  return !sessionId;
 }
