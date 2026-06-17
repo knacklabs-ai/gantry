@@ -1685,10 +1685,10 @@ conversation-bound worker until idle timeout."
 Checkpoint:
 
 ```text
-Status: In progress
+Status: Completed
 Checkpoint owner: Codex
 Started: 2026-06-17T01:33:50Z
-Completed:
+Completed: 2026-06-17T21:32:00+05:30
 Evidence:
   - Warm worker handles now carry provider-neutral cache prewarm status:
     `succeeded`, `skipped`, or `failed`.
@@ -1766,6 +1766,18 @@ Evidence:
     `cd /Users/caw-d/Desktop/boondi-admin && npm run build`
   - Verification:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/config/runtime-settings.test.ts apps/core/test/unit/config/public-runtime-settings.test.ts apps/core/test/unit/runtime/message-trace-payload-retention.test.ts apps/core/test/unit/bootstrap/shutdown.test.ts --testNamePattern "trace payload retention|startMessageTracePayloadRetention|shutdown order"`
+  - Fresh Phase 7 focused verification:
+    `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/application/warm-pool-capable.test.ts apps/core/test/unit/adapters/anthropic-warm-pool.test.ts apps/core/test/unit/runtime/warm-pool-manager.test.ts apps/core/test/unit/runtime/group-processing.test.ts apps/core/test/unit/runtime/reply-trace-persist.test.ts apps/core/test/unit/runtime/message-trace-repository.test.ts apps/core/test/unit/control/message-trace-routes.test.ts apps/core/test/unit/control/openapi.test.ts --testNamePattern "cache prewarm|prewarmCaches|cache-ready|payload|trace payload|excludes cache prewarm|Payload"`
+    passed 6 files / 16 selected tests, with 2 files and unrelated tests
+    skipped by the name filter.
+  - Fresh boondi-admin verification:
+    `cd /Users/caw-d/Desktop/boondi-admin && npm run build` passed.
+  - Fresh boondi-admin e2e verification:
+    `cd /Users/caw-d/Desktop/boondi-admin && PORT=3127 npx playwright test e2e/latency-report.spec.ts e2e/runtime-workers.spec.ts --reporter=list`
+    passed 4/4 tests. The first plain `npm run test:e2e -- ...` attempt timed
+    out waiting for `localhost:3000` because an existing Next server on that
+    port returned HTTP 500; the isolated port run avoided the stale listener
+    and exercised the same latency/runtime UI specs.
 Open follow-ups:
   - TODO(deferred): non-Anthropic SDK/provider cache-prewarm and warm-worker
     behavior is out of scope for the current implementation. Keep the runtime
