@@ -1492,6 +1492,126 @@ describe('agent-runner socket transport continuation', () => {
   });
 
   it(
+    'emits exact SDK startup cache prewarm payload for warm generic boots when tracing is enabled',
+    async () => {
+      const fixture = createRunnerFixture();
+      const socketPath = path.join(fixture.root, 'core.sock');
+
+      const handle = await startIpcSocketServer(buildSocketDeps(), {
+        socketPath,
+      });
+      if (!handle) throw new Error('socket server failed to start');
+      socketServer = handle;
+
+      const auth = createIpcAuthEnvelope(SOCKET_FOLDER, SOCKET_THREAD_ID);
+      const { child, stdoutRef, stderrRef, exit } = spawnRunner(
+        fixture,
+        baseInput({
+          prompt: '',
+          chatJid: '',
+          threadId: undefined,
+          warmGenericBoot: true,
+        }),
+        {
+          GANTRY_IPC_AUTH_TOKEN: auth.authToken,
+          GANTRY_IPC_RESPONSE_KEY_ID: auth.responseKeyId,
+          GANTRY_IPC_SOCKET_PATH: socketPath,
+          GANTRY_GROUP_FOLDER: SOCKET_FOLDER,
+          GANTRY_THREAD_ID: SOCKET_THREAD_ID,
+          GANTRY_AGENT_RUN_HANDLE: SOCKET_RUN_HANDLE,
+          GANTRY_WARM_POOL_BOOT: 'generic',
+          GANTRY_WARM_POOL_CACHE_SHAPE_KEY: 'shape-1',
+          GANTRY_TRACE_PAYLOADS: '1',
+        },
+      );
+
+      const runnerDiagnostics = () =>
+        [
+          `childExitCode=${child.exitCode ?? 'running'}`,
+          `stdout=${stdoutRef.value || '<empty>'}`,
+          `stderr=${stderrRef.value || '<empty>'}`,
+        ].join('\n');
+
+      try {
+        await waitFor(
+          () => {
+            if (!stderrRef.value.includes('awaiting bind')) {
+              return false;
+            }
+            return Boolean(
+              handle
+                .connectionsForFolder(SOCKET_FOLDER)
+                .find(
+                  (c) =>
+                    c.scope?.role === 'runner' &&
+                    c.scope?.runHandle === SOCKET_RUN_HANDLE,
+                ),
+            );
+          },
+          SOCKET_CONNECTION_TIMEOUT_MS,
+          'warm runner bind readiness',
+          runnerDiagnostics,
+        );
+        const runnerConnection = handle
+          .connectionsForFolder(SOCKET_FOLDER)
+          .find(
+            (c) =>
+              c.scope?.role === 'runner' &&
+              c.scope?.runHandle === SOCKET_RUN_HANDLE,
+          );
+        if (!runnerConnection) throw new Error('runner connection missing');
+        runnerConnection.send({
+          v: 1,
+          type: 'push',
+          channel: 'bind',
+          id: 'bind-1',
+          payload: {
+            chatJid: SOCKET_CHAT_JID,
+            threadId: SOCKET_THREAD_ID,
+            firstMessage: 'bound customer question',
+            runHandle: SOCKET_RUN_HANDLE,
+          },
+        });
+
+        const exitCode = await exit;
+        expect(exitCode, `${stderrRef.value}\n${stdoutRef.value}`).toBe(0);
+        const outputs = readRunnerOutputs(stdoutRef.value);
+        const terminal = outputs.find((output) => output.cachePrewarmTrace);
+        expect(terminal).toMatchObject({
+          status: 'success',
+          warmBound: true,
+          cachePrewarmTrace: {
+            kind: 'cache_prewarm',
+            detail: {
+              provider: 'anthropic',
+              status: 'succeeded',
+              promptShapeKey: 'shape-1',
+            },
+            payload: {
+              cache: {
+                provider: 'anthropic',
+                promptShapeKey: 'shape-1',
+                cacheReadTokens: 0,
+                input: {
+                  systemPrompt: expect.any(Object),
+                  includePartialMessages: true,
+                },
+                output: {
+                  status: 'succeeded',
+                  readyMarker: 'awaiting bind',
+                },
+              },
+            },
+          },
+        });
+      } finally {
+        if (child.exitCode === null) child.kill('SIGKILL');
+      }
+    },
+    SOCKET_RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
     'delivers continuation and close over the runner socket',
     async () => {
       const fixture = createRunnerFixture();

@@ -26,6 +26,7 @@ import type {
   WarmPoolKey,
   WarmWorkerHandle,
 } from '../application/agent-execution/warm-pool-capable.js';
+import type { OperationalTimelineSectionInput } from './reply-trace.js';
 import type { WarmPoolInventorySnapshot } from './warm-pool-manager.js';
 
 export interface AgentInput {
@@ -115,6 +116,8 @@ export interface AgentOutput {
   runnerStartup?: { queryDispatchedAt?: number; firstSdkMessageAt: number };
   /** First reply was served from an already-started generic warm worker. */
   warmBound?: boolean;
+  /** Exact customer-free warm cache prewarm payload, gated by trace capture. */
+  cachePrewarmTrace?: OperationalTimelineSectionInput;
   /** Warm continuation: when this reply's input was delivered to the model. */
   dispatchedAt?: number;
 }

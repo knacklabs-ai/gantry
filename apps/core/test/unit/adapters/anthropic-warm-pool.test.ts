@@ -220,6 +220,9 @@ describe('Anthropic warm pool adapter', () => {
     await expect(controller.prewarmCaches(handle)).resolves.toEqual({
       status: 'succeeded',
     });
+    expect(
+      (handle as { cachePrewarmTrace?: unknown }).cachePrewarmTrace,
+    ).toBeUndefined();
   });
 
   it('includes stderr tail when a warm worker exits before bind-ready', async () => {

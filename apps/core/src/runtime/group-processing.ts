@@ -73,7 +73,10 @@ import { createProgressChannelSender } from './group-progress-channel-sender.js'
 import { createGroupAgentRunner } from './group-agent-runner.js';
 import { screenBatchPreAgent } from './group-guardrail.js';
 import { persistReplyTrace } from './reply-trace-persist.js';
-import { selectTurnTraceSlice } from './reply-trace.js';
+import {
+  selectTurnTraceSlice,
+  type OperationalTimelineSectionInput,
+} from './reply-trace.js';
 import { createThreadOptionBuilders } from './group-thread-options.js';
 import { buildMemoryRecallQueryFromMessages } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
@@ -373,6 +376,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     let traceRunnerToolCalls: NonNullable<AgentOutput['toolCalls']> = [];
     let traceStartup: AgentOutput['runnerStartup'];
     let traceWarmBound = false;
+    let traceCachePrewarm: AgentOutput['cachePrewarmTrace'];
     // Warm continuation: dispatch instant of the reply being generated, taken
     // from the runner envelope (result.dispatchedAt = when the continuation was
     // delivered to the model). Splits a warm reply's leading span into real
@@ -426,6 +430,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       const windowStart = drivingIngressIso
         ? new Date(drivingIngressIso).getTime()
         : undefined;
+      const operationalSections: OperationalTimelineSectionInput[] = [];
+      if (isFirstReply && traceWarmBound && traceCachePrewarm) {
+        operationalSections.push(traceCachePrewarm);
+      }
       await persistReplyTrace({
         replyTrace: deps.replyTrace,
         kind: 'reply',
@@ -436,7 +444,15 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         ...(slice.guardrail ? { guardrail: slice.guardrail } : {}),
         llmTurns: slice.llmTurns,
         ...(runnerToolCalls.length > 0 ? { toolCalls: runnerToolCalls } : {}),
-        ...(windowStart !== undefined ? { windowStart } : {}),
+        ...(windowStart !== undefined || traceCachePrewarm
+          ? {
+              windowStart:
+                traceCachePrewarm && windowStart !== undefined
+                  ? Math.min(windowStart, traceCachePrewarm.startedAt)
+                  : (windowStart ?? traceCachePrewarm?.startedAt),
+            }
+          : {}),
+        ...(operationalSections.length > 0 ? { operationalSections } : {}),
         ...(cursor.sendCompletedAt
           ? { windowEnd: new Date(cursor.sendCompletedAt).getTime() }
           : {}),
@@ -830,6 +846,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       }
       if (result.runnerStartup) traceStartup = result.runnerStartup;
       if (result.warmBound) traceWarmBound = true;
+      if (result.cachePrewarmTrace && !traceCachePrewarm) {
+        traceCachePrewarm = result.cachePrewarmTrace;
+      }
       if (result.dispatchedAt !== undefined)
         traceDispatchedAt = result.dispatchedAt;
       if (awaitingResponseReceipt && !result.interactionBoundary) {

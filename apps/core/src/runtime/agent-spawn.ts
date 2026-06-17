@@ -69,6 +69,7 @@ import { formatGeneratedRuntimePathPermissionError } from './generated-runtime-p
 import { resolveAgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import { writeRunnerMcpConfigFile } from './agent-spawn-mcp-config.js';
 import {
+  cacheShapeKeyOf,
   hasWarmPoolCapability,
   poolKeyOf,
   type SharedBootRecipe,
@@ -938,6 +939,22 @@ export async function spawnAgent(
             ...env,
             ...pickPreparedExecutionEnv(warmPreparedExecution.env),
             GANTRY_AGENT_RUN_HANDLE: warmProcessName,
+            GANTRY_WARM_POOL_CACHE_SHAPE_KEY: cacheShapeKeyOf({
+              providerId: warmPreparedExecution.providerId,
+              credentialProfileRef: effectiveModelEntry?.credentialProfileRef,
+              appId: runnerAppId,
+              agentId: input.agentId || compileAgentId,
+              persona: compilePersona,
+              model: effectiveModel,
+              resumeSessionId: input.sessionId,
+              toolSurface: {
+                gantryMcp: input.gantryMcpToolSurface,
+                native: input.nativeToolSurface,
+              },
+              mcpSet: attachedMcpSourceIds,
+              thinking: group.agentConfig?.thinking,
+              systemPromptVersion: promptVersionHash(compiledSystemPrompt),
+            }),
             GANTRY_BOUND_IDENTITY_FILE: warmBoundIdentityFile,
             GANTRY_IPC_AUTH_TOKEN: warmIpcAuth.authToken,
             GANTRY_CHAT_JID: '',

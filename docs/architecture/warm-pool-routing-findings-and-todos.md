@@ -132,6 +132,9 @@ starting point for implementation.
 - Prompt-cache prewarm now has a provider-neutral readiness status on warm
   worker handles. `prewarmCaches()` is called only when
   `runtime.warm_pool.cache_prewarm_enabled` is true.
+- The active Anthropic SDK warm path can emit a customer-free
+  `cache_prewarm` trace payload from the runner's `startup({ options })`
+  boundary when `GANTRY_TRACE_PAYLOADS=1`.
 - The current pooled run path should be treated carefully during
   implementation because terminal-output resolution can release the pooled
   worker after a reply instead of keeping it conversation-owned until idle
@@ -164,9 +167,10 @@ starting point for implementation.
   `apps/core/src/adapters/llm/anthropic-claude-agent/runner/query-loop.ts`
   captures turn input/output only when trace payloads are enabled, and records
   cache read/write token counts from model usage.
-- Current turn input capture is not proven to be the exact full Claude SDK
-  request/cacheable prefix. Exact cache observability requires additional
-  capture at the provider adapter/cache-prewarm boundary.
+- Warm prewarm payload capture is now taken from the Anthropic runner's
+  `startup({ options })` SDK boundary. Live turn input/output capture still
+  comes from the runner turn accumulator and should not be treated as a full
+  serialized Claude SDK request object.
 - The boondi-admin repo lazy-loads heavy trace payloads:
   `/Users/caw-d/Desktop/boondi-admin/lib/gantry-control.ts`,
   `/Users/caw-d/Desktop/boondi-admin/app/api/trace/route.ts`,
@@ -188,8 +192,9 @@ starting point for implementation.
   channel with ownership hints and an owner-aware reconciler.
 - Runtime startup `recoverPendingMessages()` now goes through distributed
   owner-claim admission before local `GroupQueue` enqueue.
-- There is no implementation-proven exact cache input/output capture for the
-  full prompt-cache request shape.
+- Full live-turn SDK request serialization is not required for the current
+  Anthropic-only prewarm scope; if it becomes necessary, add it at the runner
+  SDK query boundary with the same trace-payload controls.
 
 ## High-Level Design
 
@@ -1702,6 +1707,11 @@ Evidence:
     handles created by `prewarm()`, because generic boot waits for the SDK
     `startup()` call to complete before the worker reports bind-ready. Ad hoc
     handles without that adapter marker still report an explicit skipped reason.
+  - When `GANTRY_TRACE_PAYLOADS=1`, warm generic Anthropic runners now emit a
+    customer-free `cache_prewarm` payload from the actual SDK
+    `startup({ options })` boundary. The payload is attached to the first
+    warm-bound reply trace and remains gated by the existing lazy Control API
+    read, audit event, redaction, size limit, and retention policy.
   - `GET /v1/runtime/workers` now exposes aggregate cache shape/status
     visibility from the warm-pool inventory so operators can see prewarm status
     without exact payload capture.
@@ -1716,6 +1726,8 @@ Evidence:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/application/warm-pool-capable.test.ts apps/core/test/unit/adapters/anthropic-warm-pool.test.ts apps/core/test/unit/runtime/warm-pool-manager.test.ts`
   - Verification:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/adapters/anthropic-warm-pool.test.ts --testNamePattern "SDK startup cache prewarm"`
+  - Verification:
+    `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/runner/agent-runner-ipc.test.ts apps/core/test/unit/adapters/anthropic-warm-pool.test.ts apps/core/test/unit/runtime/group-processing.test.ts --testNamePattern "SDK startup cache prewarm|exact SDK startup cache prewarm|persists cache prewarm payloads"`
   - Verification:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/application/warm-pool-capable.test.ts apps/core/test/unit/adapters/anthropic-warm-pool.test.ts apps/core/test/unit/runtime/warm-pool-manager.test.ts apps/core/test/unit/runtime/worker-inventory-snapshot.test.ts apps/core/test/unit/bootstrap/runtime-app.test.ts apps/core/test/unit/control/system-routes.test.ts apps/core/test/unit/control/openapi.test.ts`
   - Verification:

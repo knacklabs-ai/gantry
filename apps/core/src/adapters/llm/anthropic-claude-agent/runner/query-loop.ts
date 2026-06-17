@@ -387,14 +387,89 @@ export function routeRunnerPushFrame(
   return { closed: false };
 }
 
+function traceableSdkStartupOptions(options: Options): Record<string, unknown> {
+  return {
+    model: options.model,
+    thinking: options.thinking,
+    effort: options.effort,
+    cwd: options.cwd,
+    additionalDirectories: options.additionalDirectories,
+    persistSession: options.persistSession,
+    resume: options.resume,
+    systemPrompt: options.systemPrompt,
+    settings: options.settings,
+    skills: options.skills,
+    tools: options.tools,
+    allowedTools: options.allowedTools,
+    disallowedTools: options.disallowedTools,
+    env: options.env,
+    sandbox: options.sandbox,
+    permissionMode: options.permissionMode,
+    mcpServers: options.mcpServers,
+    includePartialMessages: options.includePartialMessages,
+    settingSources: options.settingSources,
+  };
+}
+
+type WarmCachePrewarmTrace = {
+  kind: 'cache_prewarm';
+  startedAt: number;
+  ms: number;
+  detail: Record<string, unknown>;
+  payload: {
+    cache: {
+      provider: string;
+      modelAlias?: string;
+      promptShapeKey: string;
+      cacheReadTokens: number;
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+      capturedAt: string;
+    };
+  };
+};
+
 async function dispatchWarmQuery(args: {
   sdkOptions: Options;
   stream: MessageStream;
   guardrailPreface?: string;
   onBound: (scope: ConversationBindScope) => void;
-}): Promise<Query> {
+  captureCachePrewarmPayloads: boolean;
+}): Promise<{ query: Query; cachePrewarmTrace?: WarmCachePrewarmTrace }> {
+  const startupStartedAt = Date.now();
   const warm = await startup({ options: args.sdkOptions });
+  const startupEndedAt = Date.now();
   log('Warm worker booted generic via startup(); awaiting bind');
+  const promptShapeKey =
+    process.env.GANTRY_WARM_POOL_CACHE_SHAPE_KEY?.trim() || 'unknown';
+  const cachePrewarmTrace = args.captureCachePrewarmPayloads
+    ? {
+        kind: 'cache_prewarm' as const,
+        startedAt: startupStartedAt,
+        ms: Math.max(0, startupEndedAt - startupStartedAt),
+        detail: {
+          provider: 'anthropic',
+          status: 'succeeded',
+          promptShapeKey,
+        },
+        payload: {
+          cache: {
+            provider: 'anthropic',
+            ...(args.sdkOptions.model
+              ? { modelAlias: args.sdkOptions.model }
+              : {}),
+            promptShapeKey,
+            cacheReadTokens: 0,
+            input: traceableSdkStartupOptions(args.sdkOptions),
+            output: {
+              status: 'succeeded',
+              readyMarker: 'awaiting bind',
+            },
+            capturedAt: new Date(startupEndedAt).toISOString(),
+          },
+        },
+      }
+    : undefined;
   let scope: ConversationBindScope;
   try {
     scope = await awaitBind();
@@ -441,7 +516,10 @@ async function dispatchWarmQuery(args: {
     : scope.firstMessage;
   args.stream.pushInitialPrompt(firstMessage, scope.memoryBlock || undefined);
   args.onBound(scope);
-  return warm.query(args.stream);
+  return {
+    query: warm.query(args.stream),
+    ...(cachePrewarmTrace ? { cachePrewarmTrace } : {}),
+  };
 }
 
 export async function runQuery(
@@ -568,6 +646,7 @@ export async function runQuery(
   let sawPartialTextSinceLastResult = false;
   let pendingPartialText = '';
   const primeToolAttempts: AgentRunnerToolAttemptOutput[] = [];
+  let pendingCachePrewarmTrace: WarmCachePrewarmTrace | undefined;
   // Per-turn LLM latency + token capture for the reply trace (best-effort).
   // Payloads (input/output text) only when GANTRY_TRACE_PAYLOADS=1.
   const capturePayloads = process.env['GANTRY_TRACE_PAYLOADS']?.trim() === '1';
@@ -709,11 +788,12 @@ export async function runQuery(
   // MEASUREMENT-ONLY: just before the SDK spawns the Claude Code CLI subprocess.
   timingMark('before_sdk_query');
   queryDispatchedAt = Date.now();
-  const sdkQuery = warmGenericBoot
+  const warmQueryResult = warmGenericBoot
     ? await dispatchWarmQuery({
         sdkOptions,
         stream,
         guardrailPreface: agentInput.guardrailSystemPromptAppend,
+        captureCachePrewarmPayloads: capturePayloads,
         onBound: (scope) => {
           warmBound = true;
           boundChatJid = scope.chatJid;
@@ -721,7 +801,10 @@ export async function runQuery(
           pendingTurnDispatchedAt = Date.now();
         },
       })
-    : query({ prompt: stream, options: sdkOptions });
+    : undefined;
+  pendingCachePrewarmTrace = warmQueryResult?.cachePrewarmTrace;
+  const sdkQuery =
+    warmQueryResult?.query ?? query({ prompt: stream, options: sdkOptions });
   // Context usage is diagnostics-only (model-status store / session-command
   // display) but its fetch round-trips the CLI (0.7-4.1s measured). It is
   // emitted as a follow-up envelope so the reply envelope is never held back.
@@ -957,6 +1040,9 @@ export async function runQuery(
           ...(turns.length > 0 ? { turns } : {}),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
           ...(warmBound ? { warmBound: true } : {}),
+          ...(pendingCachePrewarmTrace
+            ? { cachePrewarmTrace: pendingCachePrewarmTrace }
+            : {}),
           ...(!warmBound && firstSdkMessageAt !== undefined
             ? { runnerStartup: { queryDispatchedAt, firstSdkMessageAt } }
             : {}),
@@ -975,6 +1061,7 @@ export async function runQuery(
               }
             : {}),
         });
+        pendingCachePrewarmTrace = undefined;
         contextUsageEmitter.emitAfterResult();
         sawPartialTextSinceLastResult = false;
         pendingPartialText = '';

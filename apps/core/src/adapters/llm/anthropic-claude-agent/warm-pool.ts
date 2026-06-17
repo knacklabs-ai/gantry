@@ -109,17 +109,20 @@ export class AnthropicWarmPoolController {
         : {}),
       bound: false,
     };
-    this.workers.set(handle.id, { handle, process, cleanup: recipe.cleanup });
+    const bootInput = {
+      ...runnerInput,
+      prompt: '',
+      compiledSystemPrompt: recipe.compiledSystemPrompt,
+      warmGenericBoot: true,
+    };
+    this.workers.set(handle.id, {
+      handle,
+      process,
+      cleanup: recipe.cleanup,
+    });
     const ready = this.waitForReady(handle, process);
     try {
-      process.stdin?.write(
-        JSON.stringify({
-          ...runnerInput,
-          prompt: '',
-          compiledSystemPrompt: recipe.compiledSystemPrompt,
-          warmGenericBoot: true,
-        }),
-      );
+      process.stdin?.write(JSON.stringify(bootInput));
       process.stdin?.end();
       await ready;
       return handle;

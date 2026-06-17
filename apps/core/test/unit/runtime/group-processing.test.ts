@@ -7,6 +7,7 @@ import {
 } from '@core/shared/message-cursor.js';
 import type { AgentOutput } from '@core/runtime/agent-spawn-types.js';
 import type { GroupProcessingDeps } from '@core/runtime/group-processing-types.js';
+import type { OperationalTimelineSectionInput } from '@core/runtime/reply-trace.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
 import type { MessageTraceRow } from '@core/adapters/storage/postgres/repositories/message-trace-repository.postgres.js';
 
@@ -1052,6 +1053,89 @@ describe('createGroupProcessor', () => {
   });
 
   describe('reply trace warm-bound first replies', () => {
+    it('persists cache prewarm payloads on the first warm-bound reply trace', async () => {
+      const base = Date.now();
+      const cachePrewarmTrace: OperationalTimelineSectionInput = {
+        kind: 'cache_prewarm',
+        startedAt: base - 1_000,
+        ms: 25,
+        detail: {
+          provider: 'anthropic',
+          status: 'succeeded',
+          promptShapeKey: 'shape-1',
+        },
+        payload: {
+          cache: {
+            provider: 'anthropic',
+            modelAlias: 'opus',
+            promptShapeKey: 'shape-1',
+            cacheReadTokens: 0,
+            input: { prompt: '', warmGenericBoot: true },
+            output: { status: 'succeeded', readyMarker: 'awaiting bind' },
+            capturedAt: '2026-06-17T12:00:00.000Z',
+          },
+        },
+      };
+      const saveTrace = vi
+        .fn<(row: MessageTraceRow) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      const agentOutput = {
+        status: 'success',
+        result: 'warm reply',
+        warmBound: true,
+        cachePrewarmTrace,
+        dispatchedAt: base + 300,
+        turns: [
+          {
+            ms: 2_000,
+            startedAt: base + 2_500,
+            detail: {},
+          },
+        ],
+      } satisfies AgentOutput;
+      const { deps } = setupHappyPath({
+        group: makeGroup({ requiresTrigger: false }),
+        agentOutput,
+      });
+      deps.replyTrace = {
+        drain: vi.fn(() => []),
+        saveTrace,
+        payloadsEnabled: vi.fn(() => true),
+      };
+      const opsRepository = deps.opsRepository as NonNullable<
+        GroupProcessingDeps['opsRepository']
+      >;
+      opsRepository.getLastBotMessageCursor = vi.fn().mockResolvedValue({
+        id: 'bot-out-1',
+        timestamp: '1700000002',
+        sendStartedAt: new Date(base + 4_990).toISOString(),
+        sendCompletedAt: new Date(base + 5_000).toISOString(),
+      });
+      opsRepository.getLastInboundIngressAtOrBefore = vi
+        .fn()
+        .mockResolvedValue(new Date(base).toISOString());
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await expect(processGroupMessages('group1@g.us')).resolves.toBe(true);
+
+      expect(saveTrace).toHaveBeenCalledOnce();
+      const traceRow = saveTrace.mock.calls[0]?.[0];
+      expect(
+        traceRow?.timingsJson.sections.map((section) => section.kind),
+      ).toEqual(['cache_prewarm', 'llm', 'gap', 'send']);
+      expect(traceRow?.payloadsJson).toMatchObject({
+        0: {
+          cache: {
+            provider: 'anthropic',
+            modelAlias: 'opus',
+            promptShapeKey: 'shape-1',
+            input: { prompt: '', warmGenericBoot: true },
+            output: { status: 'succeeded', readyMarker: 'awaiting bind' },
+          },
+        },
+      });
+    });
+
     it('routes a warm-bound first reply through dispatchedAt instead of startup', async () => {
       const base = Date.now();
       const saveTrace = vi
