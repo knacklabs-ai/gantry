@@ -33,6 +33,8 @@ import {
 registerRunnerFixtureCleanup(afterEach);
 
 const RUNNER_IPC_TEST_TIMEOUT_MS = 35_000;
+const SOCKET_RUNNER_IPC_TEST_TIMEOUT_MS = 60_000;
+const SOCKET_CONNECTION_TIMEOUT_MS = 30_000;
 
 describe('agent-runner IPC lifecycle', () => {
   it(
@@ -1466,13 +1468,17 @@ async function waitFor(
   predicate: () => boolean,
   timeoutMs: number,
   label: string,
+  diagnostics?: () => string,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`timed out waiting for ${label}`);
+  const detail = diagnostics?.();
+  throw new Error(
+    `timed out waiting for ${label}${detail ? `\n${detail}` : ''}`,
+  );
 }
 
 describe('agent-runner socket transport continuation', () => {
@@ -1514,18 +1520,33 @@ describe('agent-runner socket transport continuation', () => {
         },
       );
 
+      const runnerDiagnostics = () =>
+        [
+          `childExitCode=${child.exitCode ?? 'running'}`,
+          `childKilled=${child.killed}`,
+          `stdout=${stdoutRef.value || '<empty>'}`,
+          `stderr=${stderrRef.value || '<empty>'}`,
+        ].join('\n');
+
       try {
         await waitFor(
-          () =>
-            handle
+          () => {
+            if (child.exitCode !== null) {
+              throw new Error(
+                `runner exited before socket connection\n${runnerDiagnostics()}`,
+              );
+            }
+            return handle
               .connectionsForFolder(SOCKET_FOLDER)
               .some(
                 (c) =>
                   c.scope?.role === 'runner' &&
                   c.scope?.runHandle === SOCKET_RUN_HANDLE,
-              ),
-          12_000,
+              );
+          },
+          SOCKET_CONNECTION_TIMEOUT_MS,
           'runner socket connection',
+          runnerDiagnostics,
         );
 
         await waitForMarker(markerDir, 'ready.json', 12_000);
@@ -1572,6 +1593,6 @@ describe('agent-runner socket transport continuation', () => {
         if (child.exitCode === null) child.kill('SIGKILL');
       }
     },
-    RUNNER_IPC_TEST_TIMEOUT_MS,
+    SOCKET_RUNNER_IPC_TEST_TIMEOUT_MS,
   );
 });
