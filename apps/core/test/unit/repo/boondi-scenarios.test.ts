@@ -527,7 +527,12 @@ describe('Boondi regression scenarios', () => {
       'SMOKE_CASES did not match any runtime smoke cases',
     );
     expect(smoke).toContain('SMOKE_CONCURRENCY');
-    expect(smoke).toContain('await mapPool(cases, SMOKE_CONCURRENCY');
+    expect(smoke).toContain('SMOKE_CASE_COUNT');
+    expect(smoke).toContain('SMOKE_GENERATED_PHONE_START');
+    expect(smoke).toContain('function expandCasesForSizing');
+    expect(smoke).toContain('const smokeCases = expandCasesForSizing(cases)');
+    expect(smoke).toContain('caseCount: smokeCases.length');
+    expect(smoke).toContain('await mapPool(smokeCases, SMOKE_CONCURRENCY');
     expect(smoke).toContain("name: 'shopify-secondary'");
     expect(smoke).toContain(
       'phone: process.env.BOONDI_SMOKE_SHOPIFY_SECONDARY_PHONE',

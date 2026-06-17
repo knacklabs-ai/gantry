@@ -51,6 +51,12 @@
   matching must stay scoped to parsed JSON flow records for the same chat JID.
   Loose substring checks can mix events from different fake phones and send the
   duplicate probe before the first turn for that chat has actually finished.
+- For the Phase 8 provider-sizing gate, run the same smoke with
+  `SMOKE_CONCURRENCY=5 SMOKE_CASE_COUNT=5`. Extra cases must use generated
+  `000`-prefixed fake phones, not real/customer numbers, and must keep checking
+  only runtime plumbing evidence: signed inbound, guardrail, MCP flow when
+  required, outbound dry-run, duplicate suppression, worker inventory, RSS,
+  reply time, and model rate-limit snapshots.
 - For local multi-core runtime-plumbing checks, use
   `GANTRY_CORE_COUNT=2 npm run dev:boondi-runtime`. The stack must give each
   Gantry core a distinct control port, log, smoke env file, and

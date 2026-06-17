@@ -11,7 +11,8 @@
 //   6. duplicate provider message ids do not trigger duplicate runtime work.
 //   7. authenticated runtime worker inventory is reachable.
 // Set SMOKE_CONCURRENCY=3 to exercise the local three-warm-worker runtime
-// hypothesis without enabling Boondi semantic assertions.
+// hypothesis, or SMOKE_CONCURRENCY=5 SMOKE_CASE_COUNT=5 for the provider-sizing
+// gate. Extra cases use generated 000-prefixed fake phones.
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
@@ -30,6 +31,10 @@ const DUPLICATE_SETTLE_MS = Number(
 const SMOKE_CONCURRENCY = Math.max(
   1,
   Number(process.env.SMOKE_CONCURRENCY || 1),
+);
+const SMOKE_CASE_COUNT = Math.max(0, Number(process.env.SMOKE_CASE_COUNT || 0));
+const GENERATED_PHONE_START = Number(
+  process.env.SMOKE_GENERATED_PHONE_START || 100,
 );
 
 const allCases = [
@@ -69,6 +74,28 @@ if (cases.length === 0) {
     `SMOKE_CASES did not match any runtime smoke cases: ${SMOKE_CASES.join(', ')}`,
   );
 }
+
+function generatedPhone(index) {
+  return String(GENERATED_PHONE_START + index).padStart(9, '0');
+}
+
+function expandCasesForSizing(selectedCases) {
+  const targetCount = SMOKE_CASE_COUNT || selectedCases.length;
+  if (targetCount <= selectedCases.length)
+    return selectedCases.slice(0, targetCount);
+  const expanded = [...selectedCases];
+  for (let index = selectedCases.length; index < targetCount; index += 1) {
+    const base = selectedCases[index % selectedCases.length];
+    expanded.push({
+      ...base,
+      name: `${base.name}-extra-${index - selectedCases.length + 1}`,
+      phone: generatedPhone(index),
+    });
+  }
+  return expanded;
+}
+
+const smokeCases = expandCasesForSizing(cases);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -180,7 +207,8 @@ function firstFlowTimeForChat(text, chatJid, flow, serverName) {
 function hasLogMessageForChat(text, chatJid, message) {
   return parseJsonLogLines(text).some(
     (entry) =>
-      entry?.message === message && logContextMatchesChat(entry?.context, chatJid),
+      entry?.message === message &&
+      logContextMatchesChat(entry?.context, chatJid),
   );
 }
 
@@ -192,7 +220,9 @@ async function waitFor(label, offset, predicate, timeoutMs = TURN_TIMEOUT_MS) {
     if (predicate(last)) return last;
     await sleep(POLL_MS);
   }
-  throw new Error(`timed out waiting for ${label}\nlast log:\n${last.slice(-4000)}`);
+  throw new Error(
+    `timed out waiting for ${label}\nlast log:\n${last.slice(-4000)}`,
+  );
 }
 
 async function health(url, label) {
@@ -328,7 +358,12 @@ async function runCase(smokeCase) {
       hasFlowForChat(text, chatJid, 'guardrail') &&
       (smokeCase.expectAgentMcpFlow === false ||
         (hasFlowForChat(text, chatJid, 'mcp.request', smokeCase.serverName) &&
-          hasFlowForChat(text, chatJid, 'mcp.response', smokeCase.serverName))) &&
+          hasFlowForChat(
+            text,
+            chatJid,
+            'mcp.response',
+            smokeCase.serverName,
+          ))) &&
       hasFlowForChat(text, chatJid, 'outbound') &&
       hasLogMessageForChat(
         text,
@@ -350,8 +385,18 @@ async function runCase(smokeCase) {
   const duplicateLog = readLogSince(duplicateOffset);
   const duplicateRuntimeWork =
     hasFlowForChat(duplicateLog, chatJid, 'guardrail') ||
-    hasFlowForChat(duplicateLog, chatJid, 'mcp.request', smokeCase.serverName) ||
-    hasFlowForChat(duplicateLog, chatJid, 'mcp.response', smokeCase.serverName) ||
+    hasFlowForChat(
+      duplicateLog,
+      chatJid,
+      'mcp.request',
+      smokeCase.serverName,
+    ) ||
+    hasFlowForChat(
+      duplicateLog,
+      chatJid,
+      'mcp.response',
+      smokeCase.serverName,
+    ) ||
     hasFlowForChat(duplicateLog, chatJid, 'outbound');
   if (duplicateRuntimeWork) {
     throw new Error(
@@ -390,7 +435,7 @@ async function main() {
   const workerInventoryBefore = await runtimeWorkersHealth();
   const warmWorkerRssBefore = warmWorkerRss();
 
-  const results = await mapPool(cases, SMOKE_CONCURRENCY, runCase);
+  const results = await mapPool(smokeCases, SMOKE_CONCURRENCY, runCase);
   const workerInventoryAfter = await runtimeWorkersHealth();
   const warmWorkerRssAfter = warmWorkerRss();
   console.log(
@@ -398,6 +443,7 @@ async function main() {
       {
         ok: true,
         concurrency: SMOKE_CONCURRENCY,
+        caseCount: smokeCases.length,
         workerInventory: {
           before: workerInventoryBefore.healthyTotals,
           after: workerInventoryAfter.healthyTotals,

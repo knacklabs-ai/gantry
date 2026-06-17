@@ -2700,6 +2700,31 @@ Evidence:
     (`6` workers, `529984KB` total, `259856KB` max). This gives the local
     provider-capacity gate concrete RSS/reply-time/rate-limit evidence for
     concurrency `3` without asserting CRM or Shopify semantic behavior.
+  - The runtime smoke now supports `SMOKE_CASE_COUNT` for provider sizing runs
+    above the default three cases. Extra cases are generated from the selected
+    runtime-plumbing templates using `000`-prefixed fake phone numbers, so
+    `SMOKE_CONCURRENCY=5 SMOKE_CASE_COUNT=5` truly drives five independent
+    signed-webhook conversations instead of only raising the worker-pool size
+    over three cases.
+  - Verification:
+    `node --check scripts/boondi-runtime-smoke.mjs` passed; focused
+    `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/repo/boondi-scenarios.test.ts --testNamePattern "basic runtime smoke"`
+    passed.
+  - Fresh local provider-sizing smoke passed against
+    `GANTRY_CORE_COUNT=1 GANTRY_DEV_LOG=/tmp/gantry-capture.log npm run dev:boondi-runtime`:
+    `GANTRY_RUNTIME_SMOKE_ENV=/tmp/gantry-runtime-smoke.env SMOKE_CONCURRENCY=5 SMOKE_CASE_COUNT=5 TURN_TIMEOUT_MS=240000 npm run smoke:boondi-runtime`
+    returned `ok: true`, `concurrency: 5`, and `caseCount: 5`. The five
+    independent fake-phone cases all produced guardrail, MCP request/response,
+    outbound dry-run, and duplicate-inbound suppression. Reply times were
+    `20072ms`, `11393ms`, `9322ms`, `8467ms`, and `80679ms`; all model-rate
+    snapshots were `null`. Worker inventory before/after remained one healthy
+    runtime instance with `genericAvailable: 6`, `genericStarting: 0`, and
+    `maxBoundWorkers: 3`. Warm-worker RSS was captured before (`6` workers,
+    `329824KB` total, `55088KB` max) and after (`6` workers, `1031728KB`
+    total, `356352KB` max). Log scan after shutdown found no egress,
+    listener, ownership, runtime-event FK, output-callback, warm-bind,
+    Postgres, or unhandled-error signatures; ports `4710`, `4711`, `8081`, and
+    `8082` were free.
 Open follow-ups:
   - Continue Boondi latency measurement with `scripts/measure-latency.mjs` and
     boondi-admin `replySeconds` across multiple T1-T5 samples; the broad
