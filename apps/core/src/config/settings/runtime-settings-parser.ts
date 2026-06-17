@@ -20,6 +20,8 @@ import {
   DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
   DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
   DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
+  DEFAULT_RUNTIME_TRACE_PAYLOAD_CLEANUP_INTERVAL_MS,
+  DEFAULT_RUNTIME_TRACE_PAYLOAD_RETENTION_MS,
   DEFAULT_RUNNER_IDLE_TIMEOUT_MS,
   DEFAULT_STORAGE_POSTGRES_SCHEMA,
   DEFAULT_STORAGE_POSTGRES_URL_ENV,
@@ -714,6 +716,11 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       reconcilerLimit: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
       shutdownClaimWaitMs: DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
     },
+    trace: {
+      payloadRetentionMs: DEFAULT_RUNTIME_TRACE_PAYLOAD_RETENTION_MS,
+      payloadCleanupIntervalMs:
+        DEFAULT_RUNTIME_TRACE_PAYLOAD_CLEANUP_INTERVAL_MS,
+    },
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -725,10 +732,11 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       key !== 'queue' &&
       key !== 'warm_pool' &&
       key !== 'runner' &&
-      key !== 'ownership'
+      key !== 'ownership' &&
+      key !== 'trace'
     ) {
       throw new Error(
-        `runtime.${key} is not supported. Configure runtime.queue.*, runtime.warm_pool.*, runtime.runner.*, or runtime.ownership.*.`,
+        `runtime.${key} is not supported. Configure runtime.queue.*, runtime.warm_pool.*, runtime.runner.*, runtime.ownership.*, or runtime.trace.*.`,
       );
     }
   }
@@ -817,6 +825,26 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       );
     }
   }
+  const traceRaw = map.trace;
+  if (
+    traceRaw !== undefined &&
+    (typeof traceRaw !== 'object' ||
+      traceRaw === null ||
+      Array.isArray(traceRaw))
+  ) {
+    throw new Error('runtime.trace must be a mapping');
+  }
+  const trace = (traceRaw || {}) as Record<string, unknown>;
+  for (const key of Object.keys(trace)) {
+    if (
+      key !== 'payload_retention_ms' &&
+      key !== 'payload_cleanup_interval_ms'
+    ) {
+      throw new Error(
+        `runtime.trace.${key} is not supported. Configure payload_retention_ms or payload_cleanup_interval_ms.`,
+      );
+    }
+  }
   return {
     queue: {
       maxMessageRuns: parsePositiveIntegerValue(
@@ -899,6 +927,18 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
         ownership.shutdown_claim_wait_ms,
         'runtime.ownership.shutdown_claim_wait_ms',
         defaults.ownership.shutdownClaimWaitMs,
+      ),
+    },
+    trace: {
+      payloadRetentionMs: parsePositiveIntegerValue(
+        trace.payload_retention_ms,
+        'runtime.trace.payload_retention_ms',
+        defaults.trace.payloadRetentionMs,
+      ),
+      payloadCleanupIntervalMs: parsePositiveIntegerValue(
+        trace.payload_cleanup_interval_ms,
+        'runtime.trace.payload_cleanup_interval_ms',
+        defaults.trace.payloadCleanupIntervalMs,
       ),
     },
   };

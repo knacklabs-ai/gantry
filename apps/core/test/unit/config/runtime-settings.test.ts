@@ -307,6 +307,28 @@ agents:
     expect(parsed.runtime.ownership).toEqual(settings.runtime.ownership);
   });
 
+  it('defaults, renders, and parses runtime trace payload retention policy', () => {
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.runtime.trace).toEqual({
+      payloadRetentionMs: 86_400_000,
+      payloadCleanupIntervalMs: 3_600_000,
+    });
+
+    settings.runtime.trace = {
+      payloadRetentionMs: 7_200_000,
+      payloadCleanupIntervalMs: 60_000,
+    };
+
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('runtime:');
+    expect(yaml).toContain('trace:');
+    expect(yaml).toContain('payload_retention_ms: 7200000');
+    expect(yaml).toContain('payload_cleanup_interval_ms: 60000');
+
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.runtime.trace).toEqual(settings.runtime.trace);
+  });
+
   it('defaults, renders, and parses neutral browser usage policy', () => {
     const settings = createDefaultRuntimeSettings();
     expect(settings.browser.usage).toEqual({

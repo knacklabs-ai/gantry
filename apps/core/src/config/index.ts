@@ -202,6 +202,13 @@ export function getRuntimeOwnershipConfig() {
     shutdownClaimWaitMs: ownership.shutdownClaimWaitMs,
   };
 }
+export function getRuntimeTraceConfig() {
+  const trace = getRuntimeSettingsForConfig().runtime.trace;
+  return {
+    payloadRetentionMs: trace.payloadRetentionMs,
+    payloadCleanupIntervalMs: trace.payloadCleanupIntervalMs,
+  };
+}
 
 export const STORE_DIR = path.resolve(RUNTIME_ROOT, 'store');
 export const AGENTS_DIR = path.resolve(RUNTIME_ROOT, 'agents');

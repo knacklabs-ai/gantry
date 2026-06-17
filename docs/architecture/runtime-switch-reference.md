@@ -4,7 +4,7 @@ Date: 2026-06-17
 
 This is the owner map for runtime switches that affect local startup,
 inbound/outbound delivery, MCP smoke verification, queue concurrency, warm
-workers, and runner retention. It is intentionally narrow: non-secret runtime
+workers, runner retention, and trace payload retention. It is intentionally narrow: non-secret runtime
 behavior belongs in `settings.yaml`; secrets and process binding values stay in
 the runtime environment; script-only smoke controls stay in scripts.
 
@@ -31,6 +31,8 @@ startup.
 | `runtime.ownership.reconciler_interval_ms`    | `settings.yaml` | `15000`   | Leave default for local smoke and missed-notify recovery checks.                                                                 | Tune from database load and missed-notification latency SLOs.                                                                                  | Restart Gantry.     | Controls periodic recovery scan cadence for missed notifications and expired/draining owner leases.                                              |
 | `runtime.ownership.reconciler_limit`          | `settings.yaml` | `100`     | Leave default unless stress-testing backlog recovery.                                                                            | Size from database scan budget and expected recovery backlog.                                                                                  | Restart Gantry.     | Caps work candidates per recovery scan; too low slows backlog recovery, too high can create bursty queue admission.                              |
 | `runtime.ownership.shutdown_claim_wait_ms`    | `settings.yaml` | `1000`    | Leave default; lower only in tests that intentionally simulate stuck storage.                                                    | Keep bounded below shutdown grace so stuck storage claims cannot block process shutdown.                                                       | Restart Gantry.     | Gives in-flight ownership claims a short chance to enter clean release cleanup without letting a hung claim deadlock shutdown.                   |
+| `runtime.trace.payload_retention_ms`          | `settings.yaml` | `86400000` | Leave default unless testing exact-payload cleanup timing.                                                                       | Keep short and aligned with admin/debug retention policy.                                                                                      | Restart Gantry.     | Controls how long optional heavy trace payload blobs remain readable; timing rows are preserved after cleanup.                                   |
+| `runtime.trace.payload_cleanup_interval_ms`   | `settings.yaml` | `3600000` | Leave default unless testing retention cleanup.                                                                                  | Tune against database maintenance load and retention SLOs.                                                                                    | Restart Gantry.     | Controls the periodic cleanup cadence for old `message_traces.payloads_json` blobs.                                                             |
 
 ## Environment-Owned Runtime Switches
 

@@ -28,6 +28,8 @@ import {
   DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
   DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
   DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
+  DEFAULT_RUNTIME_TRACE_PAYLOAD_CLEANUP_INTERVAL_MS,
+  DEFAULT_RUNTIME_TRACE_PAYLOAD_RETENTION_MS,
   DEFAULT_RUNNER_IDLE_TIMEOUT_MS,
   DEFAULT_STORAGE_POSTGRES_SCHEMA,
   DEFAULT_STORAGE_POSTGRES_URL_ENV,
@@ -664,7 +666,11 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
     runtime.ownership.reconcilerLimit ===
       DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT &&
     runtime.ownership.shutdownClaimWaitMs ===
-      DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS
+      DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS &&
+    runtime.trace.payloadRetentionMs ===
+      DEFAULT_RUNTIME_TRACE_PAYLOAD_RETENTION_MS &&
+    runtime.trace.payloadCleanupIntervalMs ===
+      DEFAULT_RUNTIME_TRACE_PAYLOAD_CLEANUP_INTERVAL_MS
   );
 }
 
@@ -760,6 +766,9 @@ function renderRuntimeProcessYaml(
     `    reconciler_interval_ms: ${runtime.ownership.reconcilerIntervalMs}`,
     `    reconciler_limit: ${runtime.ownership.reconcilerLimit}`,
     `    shutdown_claim_wait_ms: ${runtime.ownership.shutdownClaimWaitMs}`,
+    '  trace:',
+    `    payload_retention_ms: ${runtime.trace.payloadRetentionMs}`,
+    `    payload_cleanup_interval_ms: ${runtime.trace.payloadCleanupIntervalMs}`,
     '',
   );
 }

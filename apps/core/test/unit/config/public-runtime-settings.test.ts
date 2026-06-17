@@ -123,3 +123,30 @@ it('exposes settings-owned runtime ownership timing', async () => {
     shutdownClaimWaitMs: 250,
   });
 });
+
+it('exposes settings-owned trace payload retention timing', async () => {
+  const runtimeHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'gantry-settings-'),
+  );
+  runtimeHomes.push(runtimeHome);
+  vi.resetModules();
+  vi.stubEnv('GANTRY_HOME', runtimeHome);
+  const runtimeSettings =
+    await import('@core/config/settings/runtime-settings.js');
+  const defaults = runtimeSettings.ensureRuntimeSettings(runtimeHome);
+  defaults.runtime.trace = {
+    payloadRetentionMs: 7_200_000,
+    payloadCleanupIntervalMs: 60_000,
+  };
+  runtimeSettings.saveRuntimeSettings(runtimeHome, defaults);
+  const config = await import('@core/config/index.js');
+
+  expect(config.getPublicRuntimeSettings().runtime.trace).toEqual({
+    payloadRetentionMs: 7_200_000,
+    payloadCleanupIntervalMs: 60_000,
+  });
+  expect(config.getRuntimeTraceConfig()).toEqual({
+    payloadRetentionMs: 7_200_000,
+    payloadCleanupIntervalMs: 60_000,
+  });
+});

@@ -167,11 +167,14 @@ starting point for implementation.
 - Current turn input capture is not proven to be the exact full Claude SDK
   request/cacheable prefix. Exact cache observability requires additional
   capture at the provider adapter/cache-prewarm boundary.
-- The boondi-admin repo already lazy-loads heavy trace payloads:
-  `/Users/caw-d/Desktop/boondi-admin/lib/queries.ts`,
+- The boondi-admin repo lazy-loads heavy trace payloads:
+  `/Users/caw-d/Desktop/boondi-admin/lib/gantry-control.ts`,
+  `/Users/caw-d/Desktop/boondi-admin/app/api/trace/route.ts`,
   `/Users/caw-d/Desktop/boondi-admin/lib/types.ts`, and
-  `/Users/caw-d/Desktop/boondi-admin/components/LatencyReport.tsx` fetch
-  `payloads_json` only through `/api/trace` when a stage is expanded.
+  `/Users/caw-d/Desktop/boondi-admin/components/LatencyReport.tsx` fetch exact
+  payloads only through `/api/trace` when a stage is expanded. The server route
+  proxies to the Gantry Control API instead of selecting `payloads_json`
+  directly from Postgres.
 - `/Users/caw-d/Desktop/boondi-admin/e2e/latency-report.spec.ts` already tests
   that payloads are not fetched until expansion.
 
@@ -773,11 +776,13 @@ Switch audit:
 | `runtime.warm_pool.size`            | `settings.yaml`                   | Active                         | Keep; later rename/extend to `available_size` only with parser/renderer migration. |
 | `runtime.warm_pool.idle_ttl_ms`     | `settings.yaml`                   | Active                         | Keep for generic warm-pool maintenance; separate from live runner retention.       |
 | `runtime.runner.idle_timeout_ms`    | `settings.yaml`                   | Active                         | Live runner stdin retention and hard-timeout backstop owner.                       |
+| `runtime.trace.payload_retention_ms` | `settings.yaml`                   | Active                         | Keep as exact trace payload retention owner; timing rows are preserved.            |
+| `runtime.trace.payload_cleanup_interval_ms` | `settings.yaml`           | Active                         | Keep as exact trace payload cleanup cadence owner.                                 |
 | `GANTRY_WARM_POOL`                  | none                              | Removed                        | Legacy env is ignored; use `runtime.warm_pool.enabled`.                            |
 | `GANTRY_WARM_POOL_CACHE_PROBE`      | none                              | Removed                        | Use `runtime.warm_pool.cache_prewarm_enabled` and `cache_prewarm_concurrency`.     |
 | `IDLE_TIMEOUT`                      | none                              | Removed                        | Legacy env is ignored; use `runtime.runner.idle_timeout_ms`.                       |
 | `GANTRY_FLOW_LOG`                   | `$GANTRY_HOME/.env` / process env | Active dev diagnostic          | Keep for Boondi E2E until trace/admin coverage fully replaces it.                  |
-| `GANTRY_TRACE_PAYLOADS`             | `$GANTRY_HOME/.env` / process env | Active dev diagnostic          | Keep until Phase 7 adds admin-controlled payload policy.                           |
+| `GANTRY_TRACE_PAYLOADS`             | `$GANTRY_HOME/.env` / process env | Active dev diagnostic          | Keep as disabled-by-default exact payload capture gate; access/policy is now Control API/settings-owned. |
 | `GANTRY_OUTBOUND_DRYRUN`            | `$GANTRY_HOME/.env` / process env | Active dev safety gate         | Keep for local Boondi testing.                                                     |
 | `GANTRY_TEST_OPERATOR_PHONE`        | `$GANTRY_HOME/.env` / process env | Active dev safety scope        | Keep with outbound dry-run.                                                        |
 | `GANTRY_TEST_CALLER_IDENTITY_PHONE` | `$GANTRY_HOME/.env` / process env | Active Boondi harness override | Keep until test harness has a settings-owned alternative.                          |
@@ -1726,6 +1731,10 @@ Evidence:
     bounded `__gantryPayloadPolicy` truncation marker.
   - `PostgresMessageTraceRepository.clearPayloadsOlderThan()` can remove old
     `payloads_json` blobs while preserving timing rows for retention cleanup.
+  - Runtime startup now runs a settings-owned exact-payload retention loop using
+    `runtime.trace.payload_retention_ms` and
+    `runtime.trace.payload_cleanup_interval_ms`; shutdown closes the loop before
+    queue drain.
   - boondi-admin `/api/trace` now proxies exact payload expansion through the
     Gantry Control API instead of selecting `payloads_json` directly from
     Postgres. The browser-facing API shape remains unchanged and the Control
@@ -1734,9 +1743,9 @@ Evidence:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/runtime/message-trace-repository.test.ts apps/core/test/unit/control/message-trace-routes.test.ts apps/core/test/unit/control/openapi.test.ts`
   - Verification:
     `cd /Users/caw-d/Desktop/boondi-admin && npm run build`
+  - Verification:
+    `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/config/runtime-settings.test.ts apps/core/test/unit/config/public-runtime-settings.test.ts apps/core/test/unit/runtime/message-trace-payload-retention.test.ts apps/core/test/unit/bootstrap/shutdown.test.ts --testNamePattern "trace payload retention|startMessageTracePayloadRetention|shutdown order"`
 Open follow-ups:
-  - Automatic scheduled retention cleanup remains open; the repository cleanup
-    primitive exists, but no runtime scheduler invokes it yet.
   - TODO(deferred): non-Anthropic SDK/provider cache-prewarm and warm-worker
     behavior is out of scope for the current implementation. Keep the runtime
     contracts provider-neutral, but only the Anthropic SDK path is active until

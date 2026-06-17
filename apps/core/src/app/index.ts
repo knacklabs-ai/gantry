@@ -24,6 +24,7 @@ import { publishBrowserJobActivityEvent } from '../jobs/browser-activity-events.
 import {
   GANTRY_HOME,
   getRuntimeOwnershipConfig,
+  getRuntimeTraceConfig,
   getRuntimeWarmPoolConfig,
 } from '../config/index.js';
 import { hydrateDynamicRuntimeEnv } from '../config/env/index.js';
@@ -33,6 +34,7 @@ import type { IpcSocketServerHandle } from '../runtime/ipc-socket-server.js';
 import { startSettingsReloadWatcher } from '../runtime/settings-reload-watcher.js';
 import { startWarmPoolMaintenance } from '../runtime/warm-pool-maintenance.js';
 import { startWorkerInventoryHeartbeat } from '../runtime/worker-inventory-heartbeat.js';
+import { startMessageTracePayloadRetention } from '../runtime/message-trace-payload-retention.js';
 import { startConversationWorkDispatcher } from '../runtime/conversation-work-dispatcher.js';
 import { createConversationWorkClaimGate } from '../runtime/conversation-work-claim-gate.js';
 import {
@@ -46,6 +48,7 @@ import {
 } from '../config/preflight.js';
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import { defaultHostnameLookup } from '../infrastructure/network/hostname-lookup.js';
+import { PostgresMessageTraceRepository } from '../adapters/storage/postgres/repositories/message-trace-repository.postgres.js';
 
 export { escapeXml, formatMessages } from '../messaging/router.js';
 export {
@@ -240,6 +243,21 @@ export async function startGantryRuntime(
       storage.workerInventorySnapshots.saveSnapshot(input),
     logger,
   });
+  const traceConfig = getRuntimeTraceConfig();
+  const messageTracePayloadRepository = new PostgresMessageTraceRepository(
+    storage.service.db,
+    {
+      warn: (payload, message) => logger.warn(payload, message),
+    },
+  );
+  const messageTracePayloadRetention = startMessageTracePayloadRetention({
+    appId: 'default',
+    retentionMs: traceConfig.payloadRetentionMs,
+    cleanupIntervalMs: traceConfig.payloadCleanupIntervalMs,
+    clearPayloadsOlderThan: (input) =>
+      messageTracePayloadRepository.clearPayloadsOlderThan(input),
+    logger,
+  });
   const browserToolModulePath = [
     '..',
     'adapters',
@@ -278,6 +296,7 @@ export async function startGantryRuntime(
       conversationWorkDispatcher.close();
     },
     closeWorkerInventoryHeartbeat: workerInventoryHeartbeat.close,
+    closeMessageTracePayloadRetention: messageTracePayloadRetention.close,
     releaseConversationOwnerLeases: async () => {
       await conversationWorkClaimGate.releaseTrackedLeases({
         releaseLease: (input) =>

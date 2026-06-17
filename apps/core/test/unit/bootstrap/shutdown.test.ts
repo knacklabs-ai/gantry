@@ -56,6 +56,9 @@ describe('installShutdownHandlers', () => {
         closeWorkerInventoryHeartbeat: vi.fn(() => {
           order.push('closeWorkerInventoryHeartbeat');
         }),
+        closeMessageTracePayloadRetention: vi.fn(() => {
+          order.push('closeMessageTracePayloadRetention');
+        }),
         releaseConversationOwnerLeases: vi.fn(async () => {
           order.push('releaseConversationOwnerLeases');
         }),
@@ -93,6 +96,7 @@ describe('installShutdownHandlers', () => {
       'log-signal',
       'closeConversationWorkReconciler',
       'closeWorkerInventoryHeartbeat',
+      'closeMessageTracePayloadRetention',
       'queue.shutdown',
       'releaseConversationOwnerLeases',
       'markConversationOwnerLeasesDraining',

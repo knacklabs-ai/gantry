@@ -61,6 +61,8 @@ export const DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS = 45_000;
 export const DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS = 15_000;
 export const DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT = 100;
 export const DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS = 1_000;
+export const DEFAULT_RUNTIME_TRACE_PAYLOAD_RETENTION_MS = 86_400_000;
+export const DEFAULT_RUNTIME_TRACE_PAYLOAD_CLEANUP_INTERVAL_MS = 3_600_000;
 
 export function getDefaultMemoryBackfillSettings(): RuntimeMemoryBackfillSettings {
   return {
@@ -160,6 +162,11 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       reconcilerIntervalMs: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
       reconcilerLimit: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
       shutdownClaimWaitMs: DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
+    },
+    trace: {
+      payloadRetentionMs: DEFAULT_RUNTIME_TRACE_PAYLOAD_RETENTION_MS,
+      payloadCleanupIntervalMs:
+        DEFAULT_RUNTIME_TRACE_PAYLOAD_CLEANUP_INTERVAL_MS,
     },
   };
   const browser: RuntimeBrowserSettings = {

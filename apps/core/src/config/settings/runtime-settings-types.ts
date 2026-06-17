@@ -243,11 +243,17 @@ export interface RuntimeOwnershipSettings {
   shutdownClaimWaitMs: number;
 }
 
+export interface RuntimeTraceSettings {
+  payloadRetentionMs: number;
+  payloadCleanupIntervalMs: number;
+}
+
 export interface RuntimeProcessSettings {
   queue: RuntimeQueueSettings;
   warmPool: RuntimeWarmPoolSettings;
   runner: RuntimeRunnerSettings;
   ownership: RuntimeOwnershipSettings;
+  trace: RuntimeTraceSettings;
 }
 
 export type RuntimeBrowserUsagePolicyMode = 'audit' | 'enforce';
