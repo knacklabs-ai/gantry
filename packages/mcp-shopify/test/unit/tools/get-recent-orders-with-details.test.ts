@@ -65,6 +65,16 @@ describe('get_recent_orders_with_details', () => {
       ),
     );
     expect(result.error).toBeUndefined();
+    expect(Object.keys(result.raw as Record<string, unknown>).slice(0, 2)).toEqual(
+      ['customerReplyDraft', 'replyContract'],
+    );
+    expect(result.data?.customerReplyDraft).toContain('#BSS-3002');
+    expect(result.data?.replyContract).toEqual({
+      status: 'success',
+      useCustomerReplyDraft: true,
+      mustMentionLatestOrderName: '#BSS-3002',
+      mustNotUseHiccupWording: true,
+    });
     expect(result.data?.orders.map((o) => o.name)).toEqual([
       '#BSS-3002',
       '#BSS-3001',

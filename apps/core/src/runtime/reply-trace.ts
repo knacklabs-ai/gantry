@@ -81,10 +81,44 @@ export interface AssembleTimingsInput {
   command?: { ms: number; startedAt: number; name: string };
 }
 
-/** Per-stage payload candidate, used by `assemblePayloads` (flag-gated). */
-type StagePayloadSource =
-  | { kind: 'tool'; request?: unknown; response?: unknown }
-  | { kind: 'llm'; input?: unknown; output?: unknown };
+export interface ToolTracePayload {
+  request?: unknown;
+  response?: unknown;
+}
+
+export interface LlmTracePayload {
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface CacheTracePayload {
+  provider: string;
+  modelAlias?: string;
+  promptShapeKey: string;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  input?: unknown;
+  output?: unknown;
+  capturedAt?: string;
+}
+
+export interface CacheTracePayloadEnvelope {
+  cache: CacheTracePayload;
+}
+
+/**
+ * Stage-indexed debug payload written to `payloads_json` only when payload
+ * tracing is enabled. The map key is the timeline/timings section index.
+ */
+export type TracePayloadEnvelope =
+  | ToolTracePayload
+  | LlmTracePayload
+  | CacheTracePayloadEnvelope;
+
+export type TracePayloadsByStage = Record<number, TracePayloadEnvelope>;
+
+/** Per-stage payload candidate, used by payload assemblers (flag-gated). */
+type StagePayloadSource = TracePayloadEnvelope;
 
 interface BuiltStages {
   stages: LatencyStage[];
@@ -133,7 +167,7 @@ function buildStages(input: AssembleTimingsInput): BuiltStages {
         startedAt: turn.startedAt,
         detail: turn.detail,
       },
-      payload: { kind: 'llm', input: turn.input, output: turn.output },
+      payload: { input: turn.input, output: turn.output },
     });
   });
   (input.toolCalls ?? []).forEach((call) => {
@@ -152,7 +186,7 @@ function buildStages(input: AssembleTimingsInput): BuiltStages {
           responseBytes: call.responseBytes,
         },
       },
-      payload: { kind: 'tool', request: call.request, response: call.response },
+      payload: { request: call.request, response: call.response },
     });
   });
 
@@ -183,19 +217,29 @@ export function assembleTimings(input: AssembleTimingsInput): LatencyTimings {
  */
 export function assemblePayloads(
   input: AssembleTimingsInput,
-): Record<number, unknown> {
+): TracePayloadsByStage {
   const { payloadSources } = buildStages(input);
-  const payloads: Record<number, unknown> = {};
+  const payloads: TracePayloadsByStage = {};
   payloadSources.forEach((source, index) => {
     if (!source) return;
-    if (source.kind === 'tool') {
-      payloads[index] = { request: source.request, response: source.response };
-    } else {
-      payloads[index] = { input: source.input, output: source.output };
-    }
+    payloads[index] = source;
   });
   return payloads;
 }
+
+export type OperationalTimelineSectionKind =
+  | 'webhook_ack'
+  | 'message_persist'
+  | 'dedupe'
+  | 'notify_publish'
+  | 'notify_receive'
+  | 'lease_claim'
+  | 'lease_heartbeat'
+  | 'lease_takeover'
+  | 'outbound_fence'
+  | 'outbound_recovery'
+  | 'cache_prewarm'
+  | 'cache_use';
 
 export type TimelineSectionKind =
   | 'queue'
@@ -205,7 +249,8 @@ export type TimelineSectionKind =
   | 'tool'
   | 'send'
   | 'command'
-  | 'gap';
+  | 'gap'
+  | OperationalTimelineSectionKind;
 
 export interface TimelineSection {
   kind: TimelineSectionKind;
@@ -235,6 +280,12 @@ export interface AssembleTimelineInput {
   startup?: { startedAt: number; readyAt: number };
   llmTurns?: readonly LlmTurnRecord[];
   toolCalls?: readonly ToolCallRecord[];
+  /**
+   * Runtime pipeline spans that are not LLM/tool/guardrail stages. These are
+   * observability-only and must be supplied by the caller after the hot-path
+   * work is already complete.
+   */
+  operationalSections?: readonly OperationalTimelineSectionInput[];
   /** Outbound send bracket (ms epoch). */
   send?: { startedAt: number; endedAt: number };
   command?: { name: string; ms: number; startedAt: number };
@@ -249,6 +300,15 @@ export interface AssembleTimelineInput {
   dispatchedAt?: number;
 }
 
+export interface OperationalTimelineSectionInput {
+  kind: OperationalTimelineSectionKind;
+  label?: string;
+  ms: number;
+  startedAt: number;
+  detail?: Record<string, unknown>;
+  payload?: TracePayloadEnvelope;
+}
+
 type NamedSpanKind = Exclude<TimelineSectionKind, 'queue' | 'gap'>;
 
 interface NamedSpan {
@@ -258,6 +318,10 @@ interface NamedSpan {
   end: number;
   detail: Record<string, unknown>;
   payload?: StagePayloadSource;
+}
+
+function defaultOperationalLabel(kind: OperationalTimelineSectionKind): string {
+  return kind.replaceAll('_', ' ');
 }
 
 /** Ordered, time-sorted named spans from the capture sources (no gaps yet). */
@@ -272,6 +336,16 @@ function buildNamedSpans(input: AssembleTimelineInput): NamedSpan[] {
       detail: { name: input.command.name },
     });
   }
+  (input.operationalSections ?? []).forEach((section) => {
+    spans.push({
+      kind: section.kind,
+      label: section.label ?? defaultOperationalLabel(section.kind),
+      start: section.startedAt,
+      end: section.startedAt + section.ms,
+      detail: section.detail ?? {},
+      payload: section.payload,
+    });
+  });
   if (input.guardrail) {
     spans.push({
       kind: 'guardrail',
@@ -297,7 +371,7 @@ function buildNamedSpans(input: AssembleTimelineInput): NamedSpan[] {
       start: turn.startedAt,
       end: turn.startedAt + turn.ms,
       detail: turn.detail,
-      payload: { kind: 'llm', input: turn.input, output: turn.output },
+      payload: { input: turn.input, output: turn.output },
     });
   });
   (input.toolCalls ?? []).forEach((call) => {
@@ -314,7 +388,7 @@ function buildNamedSpans(input: AssembleTimelineInput): NamedSpan[] {
         requestBytes: call.requestBytes,
         responseBytes: call.responseBytes,
       },
-      payload: { kind: 'tool', request: call.request, response: call.response },
+      payload: { request: call.request, response: call.response },
     });
   });
   if (input.send && input.send.endedAt > input.send.startedAt) {
@@ -434,15 +508,12 @@ export function assembleTimeline(
 /** Flag-gated payloads, keyed by the v2 section index (aligns with assembleTimeline). */
 export function assembleTimelinePayloads(
   input: AssembleTimelineInput,
-): Record<number, unknown> {
+): TracePayloadsByStage {
   const { payloadSources } = buildTimeline(input);
-  const payloads: Record<number, unknown> = {};
+  const payloads: TracePayloadsByStage = {};
   payloadSources.forEach((source, index) => {
     if (!source) return;
-    payloads[index] =
-      source.kind === 'tool'
-        ? { request: source.request, response: source.response }
-        : { input: source.input, output: source.output };
+    payloads[index] = source;
   });
   return payloads;
 }

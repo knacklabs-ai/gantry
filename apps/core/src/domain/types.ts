@@ -571,6 +571,12 @@ export interface StreamingChunkOptions {
   threadId?: string;
   done?: boolean;
   generation?: number;
+  /**
+   * Runtime-internal ownership token used to fence customer-visible streaming
+   * chunks before provider dispatch. Channel adapters must never receive this
+   * field.
+   */
+  ownership?: MessageSendOwnershipToken;
 }
 
 export interface ProgressUpdateOptions {
@@ -592,9 +598,22 @@ export interface MessageActionAffordance {
   runId?: string | null;
 }
 
+export interface MessageSendOwnershipToken {
+  appId: string;
+  conversationId: string;
+  threadId?: string | null;
+  ownerInstanceId: string;
+  leaseVersion: number;
+}
+
 export interface MessageSendOptions {
   threadId?: string;
   actionAffordances?: MessageActionAffordance[];
+  /**
+   * Runtime-internal ownership token used to fence customer-visible sends before
+   * provider dispatch. Channel adapters must never receive this field.
+   */
+  ownership?: MessageSendOwnershipToken;
 }
 
 export type MessageDeliveryStatus =

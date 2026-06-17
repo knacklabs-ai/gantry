@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  cacheShapeKeyOf,
   poolKeyOf,
   type BoundRun,
   type SharedBootRecipe,
@@ -46,6 +47,7 @@ function makeCapability(now: () => number): {
     prewarm: vi.fn(async (recipe) => ({
       id: `worker-${++nextWorkerId}`,
       key: recipe.key,
+      cacheShapeKey: cacheShapeKeyOf(recipe),
       bornAt: now(),
       bound: false,
     })),
@@ -103,6 +105,60 @@ describe('WarmPoolManager', () => {
     expect(first?.bound).toBe(false);
     expect(second).toBeNull();
     expect(manager.size(recipe.key)).toBe(0);
+  });
+
+  it('tracks acquired workers as bound active and replenishes generic capacity', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    const manager = new WarmPoolManager({ capability, clock: () => now });
+    const recipe = makeRecipe();
+    await manager.prewarm(recipe, 1);
+
+    const acquired = manager.acquire(recipe.key);
+
+    expect(acquired).not.toBeNull();
+    expect(manager.inventory(recipe.key)).toMatchObject({
+      availableTarget: 1,
+      genericAvailable: 0,
+      boundActive: 1,
+    });
+    await vi.waitFor(() =>
+      expect(manager.inventory(recipe.key).genericAvailable).toBe(1),
+    );
+    expect(capability.prewarm).toHaveBeenCalledTimes(2);
+
+    await manager.release(acquired!);
+
+    expect(manager.inventory(recipe.key).boundActive).toBe(0);
+    expect(manager.inventory(recipe.key).genericAvailable).toBe(1);
+  });
+
+  it('preserves generic workers when bound active workers are at the cap', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    const manager = new WarmPoolManager({
+      capability,
+      clock: () => now,
+      maxBoundWorkers: 1,
+    });
+    const recipe = makeRecipe();
+    await manager.prewarm(recipe, 2);
+
+    const first = manager.acquire(recipe.key);
+    const second = manager.acquire(recipe.key);
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(manager.inventory(recipe.key)).toMatchObject({
+      availableTarget: 2,
+      genericAvailable: 1,
+      boundActive: 1,
+      maxBoundWorkers: 1,
+    });
+
+    await manager.release(first!);
+
+    expect(manager.acquire(recipe.key)).not.toBeNull();
   });
 
   it('hands a size-1 worker to only one concurrent acquirer', async () => {
@@ -276,6 +332,147 @@ describe('WarmPoolManager', () => {
 
     releases.shift()?.();
     await vi.waitFor(() => expect(capability.prewarm).toHaveBeenCalledTimes(3));
+
+    releases.shift()?.();
+    await prewarm;
+    expect(maxActive).toBe(1);
+    expect(manager.size(recipe.key)).toBe(3);
+  });
+
+  it('waits for cache prewarm before marking a worker idle', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    let finishCachePrewarm: (() => void) | undefined;
+    capability.prewarmCaches = vi.fn(
+      async () =>
+        new Promise<void>((resolve) => {
+          finishCachePrewarm = resolve;
+        }),
+    );
+    const manager = new WarmPoolManager({ capability, clock: () => now });
+    const recipe = makeRecipe();
+
+    const prewarm = manager.prewarm(recipe, 1);
+    await vi.waitFor(() => expect(capability.prewarmCaches).toHaveBeenCalled());
+
+    expect(manager.inventory(recipe.key)).toMatchObject({
+      genericAvailable: 0,
+      genericStarting: 1,
+    });
+
+    finishCachePrewarm?.();
+    await prewarm;
+
+    expect(manager.inventory(recipe.key)).toMatchObject({
+      genericAvailable: 1,
+      genericStarting: 0,
+    });
+    expect(manager.acquire(recipe.key)?.cachePrewarm).toEqual({
+      status: 'succeeded',
+    });
+  });
+
+  it('reports cache prewarm status and shape buckets in inventory', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    capability.prewarmCaches = vi.fn(async () => ({ status: 'succeeded' }));
+    const manager = new WarmPoolManager({ capability, clock: () => now });
+    const recipe = makeRecipe();
+
+    await manager.prewarm(recipe, 1);
+
+    expect(manager.inventory(recipe.key)).toMatchObject({
+      cachePrewarm: {
+        pending: 0,
+        succeeded: 1,
+        skipped: 0,
+        failed: 0,
+      },
+      cacheShapes: [
+        {
+          cacheShapeKey: cacheShapeKeyOf(recipe),
+          status: 'succeeded',
+          workers: 1,
+        },
+      ],
+    });
+  });
+
+  it('records failed cache prewarm without discarding the worker', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    capability.prewarmCaches = vi.fn(async () => {
+      throw new Error('provider quota exhausted');
+    });
+    const manager = new WarmPoolManager({ capability, clock: () => now });
+    const recipe = makeRecipe();
+
+    await manager.prewarm(recipe, 1);
+
+    const handle = manager.acquire(recipe.key);
+    expect(handle?.cachePrewarm).toEqual({
+      status: 'failed',
+      reason: 'provider quota exhausted',
+    });
+  });
+
+  it('skips provider cache prewarm when disabled by runtime config', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    capability.prewarmCaches = vi.fn(async () => ({ status: 'succeeded' }));
+    const manager = new WarmPoolManager({
+      capability,
+      clock: () => now,
+      cachePrewarmEnabled: false,
+    });
+    const recipe = makeRecipe();
+
+    await manager.prewarm(recipe, 1);
+
+    expect(capability.prewarmCaches).not.toHaveBeenCalled();
+    expect(manager.acquire(recipe.key)?.cachePrewarm).toEqual({
+      status: 'skipped',
+      reason: 'disabled',
+    });
+  });
+
+  it('bounds concurrent cache prewarm probes separately from process boots', async () => {
+    let now = 1_000;
+    const { capability } = makeCapability(() => now);
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    capability.prewarmCaches = vi.fn(
+      async () =>
+        new Promise<void>((resolve) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          releases.push(() => {
+            active -= 1;
+            resolve();
+          });
+        }),
+    );
+    const manager = new WarmPoolManager({
+      capability,
+      clock: () => now,
+      maxConcurrentCachePrewarm: 1,
+    });
+    const recipe = makeRecipe();
+
+    const prewarm = manager.prewarm(recipe, 3);
+    await vi.waitFor(() => expect(capability.prewarm).toHaveBeenCalledTimes(3));
+    expect(capability.prewarmCaches).toHaveBeenCalledTimes(1);
+
+    releases.shift()?.();
+    await vi.waitFor(() =>
+      expect(capability.prewarmCaches).toHaveBeenCalledTimes(2),
+    );
+
+    releases.shift()?.();
+    await vi.waitFor(() =>
+      expect(capability.prewarmCaches).toHaveBeenCalledTimes(3),
+    );
 
     releases.shift()?.();
     await prewarm;

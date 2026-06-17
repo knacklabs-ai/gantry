@@ -23,7 +23,8 @@ export interface RuntimeProviderSettings {
   defaultConnection?: string;
   // Folder of the agent that should receive any inbound chat for this provider
   // that does not match a more-specific conversation route. When set, the
-  // runtime synthesizes a per-customer route on first inbound message.
+  // runtime projects a live virtual route on first inbound message without
+  // persisting a per-customer route row.
   defaultAgent?: string;
 }
 
@@ -226,11 +227,27 @@ export interface RuntimeWarmPoolSettings {
   enabled: boolean;
   size: number;
   idleTtlMs: number;
+  maxBoundWorkers: number;
+  cachePrewarmEnabled: boolean;
+  cachePrewarmConcurrency: number;
+}
+
+export interface RuntimeRunnerSettings {
+  idleTimeoutMs: number;
+}
+
+export interface RuntimeOwnershipSettings {
+  leaseTtlMs: number;
+  reconcilerIntervalMs: number;
+  reconcilerLimit: number;
+  shutdownClaimWaitMs: number;
 }
 
 export interface RuntimeProcessSettings {
   queue: RuntimeQueueSettings;
   warmPool: RuntimeWarmPoolSettings;
+  runner: RuntimeRunnerSettings;
+  ownership: RuntimeOwnershipSettings;
 }
 
 export type RuntimeBrowserUsagePolicyMode = 'audit' | 'enforce';

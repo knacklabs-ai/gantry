@@ -16,9 +16,9 @@ import type { MessageTraceRow } from '@core/adapters/storage/postgres/repositori
 
 vi.mock('@core/config/index.js', () => ({
   ASSISTANT_NAME: 'Andy',
-  IDLE_TIMEOUT: 1_800_000,
   MEMORY_MAINTENANCE_MAX_PENDING: 5_000,
   MAX_MESSAGES_PER_PROMPT: 50,
+  RUNNER_IDLE_TIMEOUT_MS: 1_800_000,
   TIMEZONE: 'UTC',
   getRuntimeSettingsForConfig: () => ({
     memory: {
@@ -334,6 +334,36 @@ describe('createGroupProcessor', () => {
       const result = await processGroupMessages('group1@g.us');
 
       expect(result).toBe(true);
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+    });
+
+    it('pipes persisted messages into an idle live run without spawning a new agent', async () => {
+      const { deps, messages } = setupHappyPath();
+      const sendMessage = vi.fn().mockReturnValue(true);
+      deps.queue = {
+        ...deps.queue,
+        sendMessage,
+      };
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('group1@g.us');
+
+      expect(result).toBe(true);
+      expect(sendMessage).toHaveBeenCalledWith(
+        'group1@g.us',
+        'formatted prompt',
+        {
+          senderUserIds: ['user1@s.whatsapp.net'],
+        },
+      );
+      expect(deps.setCursor).toHaveBeenCalledWith(
+        'group1@g.us',
+        encodeGroupMessageCursor({
+          timestamp: messages[0]!.timestamp,
+          id: messages[0]!.id,
+        }),
+      );
+      expect(deps.saveState).toHaveBeenCalledTimes(1);
       expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
   });
@@ -896,6 +926,92 @@ describe('createGroupProcessor', () => {
         ),
       ).toBe(true);
     });
+
+    it('attaches the current ownership token to customer-visible message sends', async () => {
+      const ownership = {
+        appId: 'default',
+        conversationId: 'group1@g.us',
+        threadId: null,
+        ownerInstanceId: 'runtime:1',
+        leaseVersion: 7,
+      };
+      const { deps, channel } = setupHappyPath({
+        group: makeGroup({ requiresTrigger: false }),
+      });
+      deps.getMessageSendOwnershipToken = vi.fn(async () => ownership);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('group1@g.us');
+
+      expect(result).toBe(true);
+      expect(deps.getMessageSendOwnershipToken).toHaveBeenCalledWith({
+        conversationId: 'group1@g.us',
+        threadId: null,
+      });
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        'group1@g.us',
+        'Agent reply text',
+        { ownership },
+      );
+    });
+
+    it('attaches the current ownership token to customer-visible streaming chunks', async () => {
+      const ownership = {
+        appId: 'default',
+        conversationId: 'group1@g.us',
+        threadId: null,
+        ownerInstanceId: 'runtime:1',
+        leaseVersion: 7,
+      };
+      const streamingChannel = makeChannel({
+        sendStreamingChunk: vi.fn().mockResolvedValue(true),
+      });
+      const { deps } = setupHappyPath({
+        group: makeGroup({ requiresTrigger: false }),
+      });
+      deps.channelRuntime = streamingChannel;
+      deps.getMessageSendOwnershipToken = vi.fn(async () => ownership);
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({ status: 'success', result: 'stream text' });
+          return { status: 'success', result: 'stream text' } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('group1@g.us');
+
+      expect(result).toBe(true);
+      expect(deps.getMessageSendOwnershipToken).toHaveBeenCalledWith({
+        conversationId: 'group1@g.us',
+        threadId: null,
+      });
+      expect(streamingChannel.sendStreamingChunk).toHaveBeenCalledTimes(2);
+      expect(streamingChannel.sendStreamingChunk).toHaveBeenNthCalledWith(
+        1,
+        'group1@g.us',
+        'stream text',
+        expect.objectContaining({
+          done: false,
+          ownership,
+        }),
+      );
+      expect(streamingChannel.sendStreamingChunk).toHaveBeenNthCalledWith(
+        2,
+        'group1@g.us',
+        '',
+        expect.objectContaining({
+          done: true,
+          ownership,
+        }),
+      );
+    });
   });
 
   describe('agent spawn throws exception', () => {
@@ -1164,6 +1280,41 @@ describe('createGroupProcessor', () => {
       });
     });
 
+    it('does not fail customer replies when streamed runtime event persistence fails', async () => {
+      const agentOutput: AgentOutput = {
+        status: 'success',
+        result: 'response',
+        runtimeEvents: [
+          {
+            eventType: 'model.rate_limit',
+            actor: 'sdk',
+            payload: { status: 'allowed' },
+          },
+        ],
+      };
+      const group = makeGroup({ requiresTrigger: false });
+      const { deps, channel } = setupHappyPath({ group, agentOutput });
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:1',
+          agentSessionResetAt: null,
+        });
+      deps.publishRuntimeEvent = vi.fn(async () => {
+        throw new Error('runtime event store unavailable');
+      });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+
+      await expect(processGroupMessages('group1@g.us')).resolves.toBe(true);
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        'group1@g.us',
+        'response',
+      );
+    });
+
     it('persists SDK session ids from streamed output before the runner exits', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group });
@@ -1410,7 +1561,7 @@ describe('createGroupProcessor', () => {
       vi.useRealTimers();
     });
 
-    it('closes stdin after IDLE_TIMEOUT ms when agent produces output', async () => {
+    it('closes stdin after RUNNER_IDLE_TIMEOUT_MS when agent produces output', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
       const { deps } = setupHappyPath({ group, messages });
@@ -1462,7 +1613,7 @@ describe('createGroupProcessor', () => {
       const { processGroupMessages } = createGroupProcessor(deps);
       await processGroupMessages('group1@g.us');
 
-      // Now advance timers well past IDLE_TIMEOUT — closeStdin should NOT be called
+      // Now advance timers well past RUNNER_IDLE_TIMEOUT_MS — closeStdin should NOT be called
       // because the timer was cleared after the agent finished
       (deps.queue.closeStdin as ReturnType<typeof vi.fn>).mockClear();
       await vi.advanceTimersByTimeAsync(2_000_000);

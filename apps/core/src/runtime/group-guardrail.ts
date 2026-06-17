@@ -32,6 +32,10 @@ export type PreAgentGuardrailResult =
       guardrailTrace?: GuardrailRecord;
     };
 
+type BuildMessageOptions = (
+  threadId?: string,
+) => MessageSendOptions | undefined | Promise<MessageSendOptions | undefined>;
+
 export async function handlePreAgentGuardrail(input: {
   group: ConversationRoute;
   messages: readonly NewMessage[];
@@ -47,7 +51,7 @@ export async function handlePreAgentGuardrail(input: {
   guardrailClassifier?: GuardrailClassifier;
   allowInlineSystemPromptAppend?: boolean;
   sendMessage: (text: string, options?: MessageSendOptions) => Promise<void>;
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
+  buildMessageOptions: BuildMessageOptions;
   setCursor: GroupProcessingDeps['setCursor'];
   saveState: GroupProcessingDeps['saveState'];
   info: (metadata: Record<string, unknown>, message: string) => void;
@@ -104,7 +108,7 @@ export async function handlePreAgentGuardrail(input: {
   if (decision.action === 'direct_response') {
     await input.sendMessage(
       customerVisibleGuardrailResponse(policy, decision.responseKind),
-      input.buildMessageOptions(input.latestMessage.thread_id),
+      await input.buildMessageOptions(input.latestMessage.thread_id),
     );
     input.setCursor(
       input.queueJid,
@@ -162,7 +166,7 @@ export async function screenBatchPreAgent(input: {
   guardrailClassifier?: GuardrailClassifier;
   allowInlineSystemPromptAppend?: boolean;
   sendMessage: (text: string, options?: MessageSendOptions) => Promise<void>;
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
+  buildMessageOptions: BuildMessageOptions;
   setCursor: GroupProcessingDeps['setCursor'];
   saveState: GroupProcessingDeps['saveState'];
   info: (metadata: Record<string, unknown>, message: string) => void;

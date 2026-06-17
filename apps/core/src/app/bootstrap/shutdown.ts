@@ -19,9 +19,13 @@ export interface InstallShutdownHandlersOptions {
   closeControlServer?: () => Promise<void>;
   closeScheduler?: () => Promise<void>;
   closeOutboundDeliveryRecovery?: () => Promise<void>;
+  closeConversationWorkReconciler?: () => void;
+  releaseConversationOwnerLeases?: () => Promise<void>;
+  markConversationOwnerLeasesDraining?: () => Promise<void>;
   closeSettingsWatcher?: () => void;
   closeBrowserToolBackends?: () => Promise<void>;
   closeIpcSocketServer?: () => Promise<void>;
+  closeEgressGateways?: () => Promise<void>;
   closeWarmPool?: () => Promise<void>;
 }
 
@@ -44,10 +48,60 @@ export function installShutdownHandlers(
     ...makeDefaultDeps(),
     ...deps,
   };
+  let shutdownStarted = false;
 
   const shutdown = async (signal: string) => {
+    if (shutdownStarted) {
+      resolved.logger.info(
+        { signal },
+        'Shutdown signal ignored because shutdown is already in progress',
+      );
+      return;
+    }
+    shutdownStarted = true;
     resolved.logger.info({ signal }, 'Shutdown signal received');
+    options.closeConversationWorkReconciler?.();
     await options.queue.shutdown(10000);
+    if (options.releaseConversationOwnerLeases) {
+      try {
+        await options.releaseConversationOwnerLeases();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to release clean conversation owner leases during shutdown',
+        );
+      }
+    }
+    if (options.markConversationOwnerLeasesDraining) {
+      try {
+        await options.markConversationOwnerLeasesDraining();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to mark remaining conversation owner leases draining during shutdown',
+        );
+      }
+    }
+    if (options.closeIpcSocketServer) {
+      try {
+        await options.closeIpcSocketServer();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to stop IPC socket server during shutdown',
+        );
+      }
+    }
+    if (options.closeEgressGateways) {
+      try {
+        await options.closeEgressGateways();
+      } catch (err) {
+        resolved.logger.warn(
+          { err },
+          'Failed to close egress gateways during shutdown',
+        );
+      }
+    }
     if (options.closeWarmPool) {
       try {
         await options.closeWarmPool();
@@ -77,16 +131,6 @@ export function installShutdownHandlers(
         resolved.logger.warn(
           { err },
           'Failed to close control server during shutdown',
-        );
-      }
-    }
-    if (options.closeIpcSocketServer) {
-      try {
-        await options.closeIpcSocketServer();
-      } catch (err) {
-        resolved.logger.warn(
-          { err },
-          'Failed to stop IPC socket server during shutdown',
         );
       }
     }

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnthropicClaudeAgentExecutionAdapter } from '@core/adapters/llm/anthropic-claude-agent/execution-adapter.js';
 import { AnthropicWarmPoolController } from '@core/adapters/llm/anthropic-claude-agent/warm-pool.js';
 import {
+  cacheShapeKeyOf,
   hasWarmPoolCapability,
   poolKeyOf,
   type ConversationBindScope,
@@ -121,7 +122,6 @@ async function prewarmReady(
 describe('Anthropic warm pool adapter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.GANTRY_WARM_POOL_CACHE_PROBE;
     for (const root of tempRoots.splice(0)) {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -184,6 +184,42 @@ describe('Anthropic warm pool adapter', () => {
         memoryIpcAuthToken: 'generic-memory-token',
       }),
     );
+  });
+
+  it('attaches the cache shape key to Anthropic warm worker handles', async () => {
+    const child = makeChild();
+    const cachePrewarmProbe = vi.fn(async () => undefined);
+    const controller = new AnthropicWarmPoolController({
+      spawn: vi.fn(() => child),
+      cachePrewarmProbe,
+      now: () => 1_000,
+    });
+    const recipe = makeRecipe();
+
+    const handle = await prewarmReady(controller, recipe, child);
+    await controller.prewarmCaches(handle);
+
+    expect(handle.cacheShapeKey).toBe(cacheShapeKeyOf(recipe));
+    expect(cachePrewarmProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'warm-worker-1',
+        cacheShapeKey: cacheShapeKeyOf(recipe),
+      }),
+    );
+  });
+
+  it('reports SDK startup cache prewarm as succeeded for Anthropic prewarmed handles', async () => {
+    const child = makeChild();
+    const controller = new AnthropicWarmPoolController({
+      spawn: vi.fn(() => child),
+      now: () => 1_000,
+    });
+
+    const handle = await prewarmReady(controller, makeRecipe(), child);
+
+    await expect(controller.prewarmCaches(handle)).resolves.toEqual({
+      status: 'succeeded',
+    });
   });
 
   it('includes stderr tail when a warm worker exits before bind-ready', async () => {
@@ -319,11 +355,9 @@ describe('Anthropic warm pool adapter', () => {
     );
   });
 
-  it('prewarmCaches is a safe no-op unless the explicit probe flag is enabled', async () => {
+  it('prewarmCaches is a safe no-op when no probe is configured', async () => {
     const cachePrewarmProbe = vi.fn(async () => undefined);
-    const controller = new AnthropicWarmPoolController({
-      cachePrewarmProbe,
-    });
+    const controller = new AnthropicWarmPoolController();
     const handle = {
       id: 'warm-worker-1',
       key: makeRecipe().key,
@@ -331,12 +365,19 @@ describe('Anthropic warm pool adapter', () => {
       bound: false,
     };
 
-    await controller.prewarmCaches(handle);
+    await expect(controller.prewarmCaches(handle)).resolves.toEqual({
+      status: 'skipped',
+      reason: 'probe_unavailable',
+    });
 
     expect(cachePrewarmProbe).not.toHaveBeenCalled();
 
-    process.env.GANTRY_WARM_POOL_CACHE_PROBE = '1';
-    await controller.prewarmCaches(handle);
+    const controllerWithProbe = new AnthropicWarmPoolController({
+      cachePrewarmProbe,
+    });
+    await expect(controllerWithProbe.prewarmCaches(handle)).resolves.toEqual({
+      status: 'succeeded',
+    });
 
     expect(cachePrewarmProbe).toHaveBeenCalledWith(handle);
   });

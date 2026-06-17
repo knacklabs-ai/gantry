@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildExtractionMessages } from '../src/extractor/prompt.js';
+import {
+  buildExtractionMessages,
+  EXTRACTION_SYSTEM_PROMPT,
+} from '../src/extractor/prompt.js';
 
 describe('buildExtractionMessages', () => {
   it('includes existing opps, digest, and transcript', () => {
@@ -20,5 +23,14 @@ describe('buildExtractionMessages', () => {
       openOpportunities: [],
     });
     expect(msg.content).toContain('EXISTING OPEN OPPORTUNITIES for this customer:\n(none)');
+  });
+
+  it('defines B2B client gifting separately from staff corporate gifting', () => {
+    expect(EXTRACTION_SYSTEM_PROMPT).toContain(
+      'gifting_b2b = gifting to clients, partners, VIPs, or other businesses',
+    );
+    expect(EXTRACTION_SYSTEM_PROMPT).toContain(
+      'corporate = company buying for its own staff, employees, office, or team',
+    );
   });
 });

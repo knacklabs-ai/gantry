@@ -6,6 +6,15 @@ import type {
 const RECOVERY_DISPATCH_PERMIT_RUNTIME_BRAND = Symbol(
   'gantry.recovery-dispatch-permit',
 );
+const MAX_DELIVERY_ERROR_LENGTH = 500;
+
+function retryAfterSuffix(err: unknown): string {
+  if (!err || typeof err !== 'object') return '';
+  const retryAfterSeconds = Reflect.get(err, 'retryAfterSeconds');
+  if (typeof retryAfterSeconds !== 'number') return '';
+  if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds < 0) return '';
+  return `; retry_after_seconds=${retryAfterSeconds}`;
+}
 
 export function sanitizeDeliveryError(err: unknown, provider: string): string {
   const raw =
@@ -14,13 +23,15 @@ export function sanitizeDeliveryError(err: unknown, provider: string): string {
       : typeof err === 'string'
         ? err
         : String(err);
-  return (
+  const suffix = retryAfterSuffix(err);
+  const baseLimit = Math.max(0, MAX_DELIVERY_ERROR_LENGTH - suffix.length);
+  const sanitized =
     raw
       .replace(/xox[baprs]-[A-Za-z0-9-]+/g, '[REDACTED_SLACK_TOKEN]')
       .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_TELEGRAM_TOKEN]')
-      .slice(0, 500)
-      .trim() || `${provider} delivery failed`
-  );
+      .slice(0, baseLimit)
+      .trim() || `${provider} delivery failed`.slice(0, baseLimit).trim();
+  return `${sanitized}${suffix}`.slice(0, MAX_DELIVERY_ERROR_LENGTH);
 }
 
 export function createRecoveryDispatchPermit(

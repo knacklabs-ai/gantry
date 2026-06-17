@@ -44,6 +44,24 @@ describe('installShutdownHandlers', () => {
         closeBrowserToolBackends: vi.fn(async () => {
           order.push('closeBrowserToolBackends');
         }),
+        closeIpcSocketServer: vi.fn(async () => {
+          order.push('closeIpcSocketServer');
+        }),
+        closeEgressGateways: vi.fn(async () => {
+          order.push('closeEgressGateways');
+        }),
+        closeConversationWorkReconciler: vi.fn(() => {
+          order.push('closeConversationWorkReconciler');
+        }),
+        releaseConversationOwnerLeases: vi.fn(async () => {
+          order.push('releaseConversationOwnerLeases');
+        }),
+        markConversationOwnerLeasesDraining: vi.fn(async () => {
+          order.push('markConversationOwnerLeasesDraining');
+        }),
+        closeStorage: vi.fn(async () => {
+          order.push('closeStorage');
+        }),
         disconnectChannels: vi.fn(async () => {
           await channelA.disconnect();
           await channelB.disconnect();
@@ -70,13 +88,66 @@ describe('installShutdownHandlers', () => {
 
     expect(order).toEqual([
       'log-signal',
+      'closeConversationWorkReconciler',
       'queue.shutdown',
+      'releaseConversationOwnerLeases',
+      'markConversationOwnerLeasesDraining',
+      'closeIpcSocketServer',
+      'closeEgressGateways',
       'closeWarmPool',
       'closeBrowserToolBackends',
       'closeAllBrowsers',
       'channel-a.disconnect',
       'channel-b.disconnect',
+      'closeStorage',
       'exit:0',
     ]);
+  });
+
+  it('ignores duplicate shutdown signals while cleanup is in flight', async () => {
+    const handlers = new Map<'SIGTERM' | 'SIGINT', () => void>();
+    let resolveQueueShutdown: (() => void) | undefined;
+    const queue = {
+      shutdown: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveQueueShutdown = resolve;
+          }),
+      ),
+    };
+    const closeIpcSocketServer = vi.fn(async () => undefined);
+    const exit = vi.fn(() => undefined as never);
+
+    installShutdownHandlers(
+      {
+        queue,
+        disconnectChannels: vi.fn(async () => undefined),
+        closeIpcSocketServer,
+      },
+      {
+        onSignal: (signal, handler) => {
+          handlers.set(signal, handler);
+        },
+        closeAllBrowsers: vi.fn(async () => undefined),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+        exit: exit as any,
+      },
+    );
+
+    handlers.get('SIGINT')?.();
+    handlers.get('SIGTERM')?.();
+    await flushPromises();
+
+    expect(queue.shutdown).toHaveBeenCalledTimes(1);
+    expect(closeIpcSocketServer).not.toHaveBeenCalled();
+
+    resolveQueueShutdown?.();
+    await flushPromises();
+
+    expect(closeIpcSocketServer).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledTimes(1);
   });
 });

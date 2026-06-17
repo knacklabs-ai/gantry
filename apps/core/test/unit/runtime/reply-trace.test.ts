@@ -8,6 +8,7 @@ import {
   selectTurnTraceSlice,
   type GuardrailRecord,
   type LlmTurnRecord,
+  type OperationalTimelineSectionInput,
   type ToolCallRecord,
 } from '@core/runtime/reply-trace.js';
 
@@ -379,6 +380,95 @@ describe('assembleTimeline (v2)', () => {
     const toolIdx = t.sections.findIndex((s) => s.kind === 'tool');
     expect(p[llmIdx]).toEqual({ input: 'hi', output: 'yo' });
     expect(p[toolIdx]).toEqual({ request: { a: 1 }, response: { b: 2 } });
+  });
+
+  it('assembles operational pipeline sections with stage-indexed cache payloads', () => {
+    const operationalSections: OperationalTimelineSectionInput[] = [
+      {
+        kind: 'webhook_ack',
+        startedAt: W0,
+        ms: 3,
+        detail: { provider: 'interakt' },
+      },
+      { kind: 'message_persist', startedAt: W0 + 3, ms: 7 },
+      {
+        kind: 'dedupe',
+        startedAt: W0 + 10,
+        ms: 1,
+        detail: { duplicate: false },
+      },
+      { kind: 'notify_publish', startedAt: W0 + 11, ms: 2 },
+      { kind: 'notify_receive', startedAt: W0 + 13, ms: 2 },
+      { kind: 'lease_claim', startedAt: W0 + 15, ms: 5 },
+      { kind: 'lease_heartbeat', startedAt: W0 + 20, ms: 1 },
+      { kind: 'lease_takeover', startedAt: W0 + 21, ms: 4 },
+      { kind: 'outbound_fence', startedAt: W0 + 25, ms: 2 },
+      { kind: 'outbound_recovery', startedAt: W0 + 27, ms: 3 },
+      {
+        kind: 'cache_prewarm',
+        startedAt: W0 + 30,
+        ms: 40,
+        payload: {
+          cache: {
+            provider: 'anthropic',
+            modelAlias: 'sonnet',
+            promptShapeKey: 'provider+agent+model+tools+promptVersion',
+            cacheReadTokens: 0,
+            cacheWriteTokens: 9085,
+            input: { request: 'exact adapter payload' },
+            output: { ok: true },
+            capturedAt: '2026-06-17T12:30:00.000Z',
+          },
+        },
+      },
+      { kind: 'cache_use', startedAt: W0 + 70, ms: 4 },
+    ];
+
+    const t = assembleTimeline({
+      windowStart: W0,
+      windowEnd: W0 + 100,
+      operationalSections,
+      llmTurns: [{ startedAt: W0 + 80, ms: 10, detail: {} }],
+    });
+    const p = assembleTimelinePayloads({
+      windowStart: W0,
+      windowEnd: W0 + 100,
+      operationalSections,
+      llmTurns: [{ startedAt: W0 + 80, ms: 10, detail: {} }],
+    });
+
+    expect(t.sections.map((section) => section.kind)).toEqual([
+      'webhook_ack',
+      'message_persist',
+      'dedupe',
+      'notify_publish',
+      'notify_receive',
+      'lease_claim',
+      'lease_heartbeat',
+      'lease_takeover',
+      'outbound_fence',
+      'outbound_recovery',
+      'cache_prewarm',
+      'cache_use',
+      'llm',
+      'gap',
+    ]);
+    expect(t.sections.reduce((sum, section) => sum + section.ms, 0)).toBe(100);
+    const cacheIndex = t.sections.findIndex(
+      (section) => section.kind === 'cache_prewarm',
+    );
+    expect(p[cacheIndex]).toEqual({
+      cache: {
+        provider: 'anthropic',
+        modelAlias: 'sonnet',
+        promptShapeKey: 'provider+agent+model+tools+promptVersion',
+        cacheReadTokens: 0,
+        cacheWriteTokens: 9085,
+        input: { request: 'exact adapter payload' },
+        output: { ok: true },
+        capturedAt: '2026-06-17T12:30:00.000Z',
+      },
+    });
   });
 
   it('does not duplicate the leading gap when a 0ms named span is dropped', () => {

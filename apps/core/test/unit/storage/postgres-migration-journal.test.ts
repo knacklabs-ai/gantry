@@ -140,6 +140,34 @@ describe('Postgres migration journal', () => {
     expect(migration).toContain('DROP COLUMN IF EXISTS tool_ids_json');
   });
 
+  it('registers conversation owner leases with non-null thread keys', () => {
+    const journalPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
+    );
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    const entry = journal.entries.find(
+      (item) => item.tag === '0076_conversation_owner_leases',
+    );
+    expect(entry).toMatchObject({ idx: 76 });
+
+    const migration = fs.readFileSync(
+      path.resolve(
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0076_conversation_owner_leases.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(
+      'CREATE TABLE IF NOT EXISTS conversation_owner_leases',
+    );
+    expect(migration).toContain('thread_key text NOT NULL');
+    expect(migration).toContain('UNIQUE (app_id, conversation_id, thread_key)');
+    expect(migration).toContain('lease_version bigint NOT NULL');
+    expect(migration).toContain('last_claim_reason text');
+    expect(migration).toContain('draining_started_at timestamptz');
+  });
+
   it('applies the memory schema migration on fresh databases', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',

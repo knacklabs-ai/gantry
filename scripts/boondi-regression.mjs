@@ -16,7 +16,8 @@
 //
 // Prereqs (the setup brings these up): dev servers in watch mode with
 //   GANTRY_FLOW_LOG=1  GANTRY_OUTBOUND_DRYRUN=1
-//   IDLE_TIMEOUT=2500  (scenario runs must not hold warm LLM slots for 30 min)
+//   runtime.runner.idle_timeout_ms=2500 in settings.yaml
+//   (scenario runs must not hold warm LLM slots for 30 min)
 //   GANTRY_TEST_OPERATOR_PHONE=<all test phones>  (see lib/phones.mjs)
 //   GANTRY_TEST_CALLER_IDENTITY_PHONE=918097288633
 //   BOONDI_CRM_RECONCILE_INTERVAL_MS=<short, e.g. 10000>  (so the crm group is fast)
@@ -61,7 +62,9 @@ if (BAD_GROUPS.length) {
 }
 const GROUP_FILTER = REQUESTED_GROUPS;
 
-const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS || 120_000);
+// Broad live-flow regression proves correctness; use measure-latency.mjs and
+// boondi-admin replySeconds for latency benchmarks.
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS || 180_000);
 const SETTLE_MS = Number(process.env.SETTLE_MS || 700);
 const RESET_WAIT_TIMEOUT_MS = Number(
   process.env.RESET_WAIT_TIMEOUT_MS || 20_000,
@@ -85,7 +88,7 @@ const COMMAND_REPLY_TIMEOUT_MS = Number(
 // crm scenarios run on their own persona phones; cap how many at once (host load).
 const CRM_CONCURRENCY = Number(process.env.CRM_CONCURRENCY || 3);
 // Live-flow scenarios also use unique persona phones, but Gantry keeps each LLM
-// run warm until IDLE_TIMEOUT. Keep this at or below the runtime message queue
+// run warm until runtime.runner.idle_timeout_ms. Keep this at or below the runtime message queue
 // concurrency, otherwise later admin-panel transcripts can sit behind warm
 // sessions and look like Boondi went silent.
 const LIVE_FLOW_CONCURRENCY = Number(process.env.LIVE_FLOW_CONCURRENCY || 3);
@@ -162,13 +165,15 @@ async function waitForTurn(fromOffset, chatJid) {
   };
   const isOutbound = (e) =>
     e.flow === 'outbound' && !RESET_REPLY_RE.test(e.reply || '');
+  const isNonEmptyLlmOutput = (e) =>
+    e.flow === 'llm.output' && typeof e.reply === 'string' && e.reply.trim();
   let firstLlmAt = null;
   while (Date.now() < deadline) {
     const events = parseFlowEvents(readSlice(fromOffset), chatJid);
     if (events.some(isOutbound)) return settleAndSnapshot();
     if (events.some((e) => e.flow === 'guardrail' && e.guardrailDecision))
       return settleAndSnapshot();
-    if (events.some((e) => e.flow === 'llm.output')) {
+    if (events.some(isNonEmptyLlmOutput)) {
       if (firstLlmAt === null) firstLlmAt = Date.now();
       else if (Date.now() - firstLlmAt >= LLM_OUTBOUND_GRACE_MS)
         return settleAndSnapshot();

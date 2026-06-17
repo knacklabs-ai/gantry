@@ -6,7 +6,7 @@
 #                     (replies persist, sends go only to listed test numbers),
 #                     GANTRY_TEST_OPERATOR_PHONE=<all test phones>,
 #                     GANTRY_TEST_CALLER_IDENTITY_PHONE=918097288633 (Shopify "self"),
-#                     IDLE_TIMEOUT=<BOONDI_TEST_IDLE_TIMEOUT_MS, default 2500>
+#                     runtime.runner.idle_timeout_ms=<BOONDI_TEST_IDLE_TIMEOUT_MS, default 2500>
 #                     stdout tee'd to $GANTRY_DEV_LOG (default /tmp/gantry-dev.log).
 #   boondi-crm :8082  short digest-watcher poll so the crm group is fast.
 #   shopify    :8081  must already be up (this script only warns if it isn't).
@@ -17,6 +17,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV_LOG=${GANTRY_DEV_LOG:-/tmp/gantry-dev.log}
 CRM_LOG=${CRM_DEV_LOG:-/tmp/mcp-crm-dev.log}
 IDLE_TIMEOUT_MS=${BOONDI_TEST_IDLE_TIMEOUT_MS:-2500}
+SETTINGS_PATH="${GANTRY_HOME:-$HOME/gantry}/settings.yaml"
 STRIP="-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL -u CLAUDE_CODE_OAUTH_TOKEN"
 
 OPERATOR=$(node -e "import('$ROOT/scripts/lib/phones.mjs').then(m=>process.stdout.write(m.OPERATOR_LIST))") || {
@@ -32,15 +33,19 @@ if ! curl -s --max-time 3 http://127.0.0.1:8081/healthz 2>/dev/null | grep -q '"
   echo "⚠️  shopify MCP (:8081) is not up — start it before the shopify group will pass."
 fi
 
+if [ -f "$SETTINGS_PATH" ] && ! grep -Eq "^[[:space:]]*idle_timeout_ms:[[:space:]]*$IDLE_TIMEOUT_MS([[:space:]]|$)" "$SETTINGS_PATH"; then
+  echo "⚠️  runtime.runner.idle_timeout_ms in $SETTINGS_PATH is not $IDLE_TIMEOUT_MS."
+  echo "   Set it before broad Boondi scenario runs if you need short runner retention."
+fi
+
 echo "starting boondi-crm (:8082, 10s watcher poll) → $CRM_LOG"
-( cd "$ROOT" && env $STRIP BOONDI_CRM_RECONCILE_INTERVAL_MS=10000 \
-    node --enable-source-maps --import tsx "$ROOT/packages/mcp-crm/src/index.ts" > "$CRM_LOG" 2>&1 & )
+( cd "$ROOT" && nohup env $STRIP BOONDI_CRM_RECONCILE_INTERVAL_MS=10000 \
+    node --enable-source-maps --import tsx "$ROOT/packages/mcp-crm/src/index.ts" > "$CRM_LOG" 2>&1 < /dev/null & disown )
 
 echo "starting core (:4710, flow-log + dry-run + test operators) → $DEV_LOG"
-( cd "$ROOT" && env $STRIP GANTRY_FLOW_LOG=1 GANTRY_OUTBOUND_DRYRUN=1 \
+( cd "$ROOT" && nohup env $STRIP GANTRY_FLOW_LOG=1 GANTRY_OUTBOUND_DRYRUN=1 \
     GANTRY_TEST_OPERATOR_PHONE="$OPERATOR" GANTRY_TEST_CALLER_IDENTITY_PHONE=918097288633 \
-    IDLE_TIMEOUT="$IDLE_TIMEOUT_MS" \
-    node --enable-source-maps --import tsx "$ROOT/apps/core/src/index.ts" > "$DEV_LOG" 2>&1 & )
+    node --enable-source-maps --import tsx "$ROOT/apps/core/src/index.ts" > "$DEV_LOG" 2>&1 < /dev/null & disown )
 
 echo "waiting for health…"
 for _ in $(seq 1 30); do

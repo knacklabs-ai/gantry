@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
 
 import { GroupQueue } from '@core/runtime/group-queue.js';
 import { activeRunStopWasRequested } from '@core/runtime/group-queue-stop.js';
@@ -33,6 +34,13 @@ describe('GroupQueue', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  function useSuccessfulContinuationDelivery() {
+    const deliverContinuation = vi.fn(() => true);
+    const deliverClose = vi.fn();
+    queue.setContinuationDelivery({ deliverContinuation, deliverClose });
+    return { deliverContinuation, deliverClose };
+  }
 
   // --- Single group at a time ---
 
@@ -363,7 +371,7 @@ describe('GroupQueue', () => {
   });
 
   it('preempts idle agent run when task is enqueued', async () => {
-    const fs = await import('fs');
+    const { deliverClose } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -383,25 +391,18 @@ describe('GroupQueue', () => {
     queue.registerProcess('group1@g.us', {} as any, 'run-1', 'test-group');
     queue.notifyIdle('group1@g.us');
 
-    // Clear previous writes, then enqueue a task
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
-
     const taskFn = vi.fn(async () => {});
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
 
-    // _close SHOULD have been written (agent run is idle)
-    const closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeWrites).toHaveLength(1);
+    expect(deliverClose).toHaveBeenCalledTimes(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
 
   it('pipes follow-up messages into an idle-waiting live run', async () => {
-    const fs = await import('fs');
+    const { deliverContinuation, deliverClose } =
+      useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -425,28 +426,27 @@ describe('GroupQueue', () => {
 
     // enqueueMessageCheck while active records pending work without closing the
     // stream; task runs still preempt when the live run is idle again.
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
+    deliverClose.mockClear();
     queue.notifyIdle('group1@g.us');
     queue.enqueueMessageCheck('group1@g.us');
-    const closeFromPendingMessage = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeFromPendingMessage).toHaveLength(0);
+    expect(deliverClose).toHaveBeenCalledTimes(0);
 
-    writeFileSync.mockClear();
+    deliverClose.mockClear();
     const taskFn = vi.fn(async () => {});
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
-    const closeWritesAfterTask = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    expect(deliverClose).toHaveBeenCalledTimes(1);
+    expect(deliverContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({ runHandle: 'run-1' }),
+      'hello',
+      0,
     );
-    expect(closeWritesAfterTask).toHaveLength(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
 
   it('sendMessage resumes an idle-waiting live message run', async () => {
+    useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -470,6 +470,7 @@ describe('GroupQueue', () => {
   });
 
   it('notifies the active run when a continuation message is piped', async () => {
+    useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
     const continuationHandler = vi.fn();
 
@@ -495,7 +496,7 @@ describe('GroupQueue', () => {
   });
 
   it('task enqueue after queued idle messages preempts with a single close write', async () => {
-    const fs = await import('fs');
+    const { deliverClose } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -511,21 +512,12 @@ describe('GroupQueue', () => {
     queue.registerProcess('group1@g.us', {} as any, 'run-1', 'test-group');
     queue.notifyIdle('group1@g.us');
 
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
     queue.enqueueMessageCheck('group1@g.us');
-    const firstCloseWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(firstCloseWrites).toHaveLength(0);
+    expect(deliverClose).toHaveBeenCalledTimes(0);
 
-    writeFileSync.mockClear();
     const taskFn = vi.fn(async () => {});
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
-    const secondCloseWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(secondCloseWrites).toHaveLength(1);
+    expect(deliverClose).toHaveBeenCalledTimes(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
@@ -643,6 +635,117 @@ describe('GroupQueue', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it('retains an idle pooled warm worker after message run teardown until process close', async () => {
+    const release = vi.fn(async () => undefined);
+    queue.setContinuationDelivery({
+      deliverContinuation: vi.fn(() => true),
+      deliverClose: vi.fn(),
+    });
+    const proc = Object.assign(new EventEmitter(), {
+      killed: false,
+    });
+    const processMessages = vi.fn(async () => {
+      queue.registerProcess(
+        'group1@g.us',
+        proc as any,
+        'run-1',
+        'test-group',
+        undefined,
+        undefined,
+        {
+          pooledWarmWorker: {
+            handle: {
+              id: 'warm-worker-1',
+              key: 'warm-key',
+              bornAt: 100,
+              bound: true,
+            },
+            release,
+          },
+        },
+      );
+      queue.notifyIdle('group1@g.us');
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(release).not.toHaveBeenCalled();
+    expect(queue.sendMessage('group1@g.us', 'follow-up')).toBe(true);
+
+    proc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a retained pooled worker alive when a DB-drain run pipes a continuation', async () => {
+    const release = vi.fn(async () => undefined);
+    const deliverContinuation = vi.fn(() => true);
+    queue.setContinuationDelivery({
+      deliverContinuation,
+      deliverClose: vi.fn(),
+    });
+    const proc = Object.assign(new EventEmitter(), {
+      killed: false,
+    });
+    let processCalls = 0;
+    const processMessages = vi.fn(async () => {
+      processCalls += 1;
+      if (processCalls === 1) {
+        queue.registerProcess(
+          'group1@g.us',
+          proc as any,
+          'run-1',
+          'test-group',
+          undefined,
+          undefined,
+          {
+            pooledWarmWorker: {
+              handle: {
+                id: 'warm-worker-1',
+                key: 'warm-key',
+                bornAt: 100,
+                bound: true,
+              },
+              release,
+            },
+          },
+        );
+        queue.notifyIdle('group1@g.us');
+        return true;
+      }
+      expect(queue.sendMessage('group1@g.us', 'persisted follow-up')).toBe(
+        true,
+      );
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(release).not.toHaveBeenCalled();
+
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(processMessages).toHaveBeenCalledTimes(2);
+    expect(deliverContinuation).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runHandle: 'run-1' }),
+      'persisted follow-up',
+      0,
+    );
+    expect(release).not.toHaveBeenCalled();
+
+    queue.notifyIdle('group1@g.us');
+    proc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   // --- Coverage for drainWaiting with messages (line 337) ---
 
   it('drainWaiting runs pending messages for waiting groups when slots free up', async () => {
@@ -709,7 +812,7 @@ describe('GroupQueue', () => {
   // --- Coverage for shutdown with active processes (lines 355-356) ---
 
   it('shutdown signals active message runs to close before waiting', async () => {
-    const fs = await import('fs');
+    const { deliverClose } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
     const processMessages = vi.fn(async () => {
       await new Promise<void>((resolve) => {
@@ -726,16 +829,10 @@ describe('GroupQueue', () => {
     const mockProcess = { killed: false } as any;
     queue.registerProcess('group1@g.us', mockProcess, 'run-active', 'team');
 
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
-
     // Shutdown should request a graceful runner close without killing the process.
     await queue.shutdown(0);
 
-    const closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeWrites).toHaveLength(1);
+    expect(deliverClose).toHaveBeenCalledTimes(1);
     expect(mockProcess.killed).toBe(false);
 
     // After shutdown, new enqueues should be ignored
@@ -870,7 +967,7 @@ describe('GroupQueue', () => {
   });
 
   it('preempts when idle arrives with pending tasks', async () => {
-    const fs = await import('fs');
+    const { deliverClose } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -889,25 +986,15 @@ describe('GroupQueue', () => {
     // Register process and enqueue a task (no idle yet — no preemption)
     queue.registerProcess('group1@g.us', {} as any, 'run-1', 'test-group');
 
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
-
     const taskFn = vi.fn(async () => {});
     queue.enqueueTask('group1@g.us', 'task-1', taskFn);
 
-    let closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeWrites).toHaveLength(0);
+    expect(deliverClose).toHaveBeenCalledTimes(0);
 
     // Now agent run becomes idle — should preempt because task is pending
-    writeFileSync.mockClear();
     queue.notifyIdle('group1@g.us');
 
-    closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeWrites).toHaveLength(1);
+    expect(deliverClose).toHaveBeenCalledTimes(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
@@ -1144,8 +1231,8 @@ describe('GroupQueue', () => {
 
   // --- Coverage for sendMessage success path ---
 
-  it('sendMessage returns true and writes IPC file for active message agent run', async () => {
-    const fs = await import('fs');
+  it('sendMessage returns true when the continuation carrier accepts an active message run', async () => {
+    const { deliverContinuation } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -1161,23 +1248,24 @@ describe('GroupQueue', () => {
 
     queue.registerProcess('group1@g.us', {} as any, 'run-1', 'test-group');
 
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    const renameSync = vi.mocked(fs.default.renameSync);
-    writeFileSync.mockClear();
-    renameSync.mockClear();
-
     const result = queue.sendMessage('group1@g.us', 'hello world');
     expect(result).toBe(true);
-
-    // Should have written a temp file and renamed it
-    expect(writeFileSync).toHaveBeenCalled();
-    expect(renameSync).toHaveBeenCalled();
+    expect(deliverContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupFolder: 'test-group',
+        chatJid: 'group1@g.us',
+        runHandle: 'run-1',
+      }),
+      'hello world',
+      0,
+    );
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
 
   it('sendMessage rejects continuations for a different active thread', async () => {
+    useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -1216,7 +1304,7 @@ describe('GroupQueue', () => {
   });
 
   it('requires the same sender for reviewer-authorized continuations', async () => {
-    const fs = await import('fs');
+    const { deliverContinuation } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -1240,9 +1328,6 @@ describe('GroupQueue', () => {
       { requiredContinuationUserId: 'sl:UADMIN' },
     );
 
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
-
     expect(
       queue.sendMessage('group1@g.us', 'approve 1', {
         senderUserIds: ['sl:UADMIN'],
@@ -1260,14 +1345,14 @@ describe('GroupQueue', () => {
     ).toBe(false);
     expect(queue.sendMessage('group1@g.us', 'approve 4')).toBe(false);
 
-    expect(writeFileSync).toHaveBeenCalledTimes(1);
+    expect(deliverContinuation).toHaveBeenCalledTimes(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('[BUG-TEST-002-CONTINUATION-FIFO] same-millisecond continuation IPC filenames preserve FIFO order', async () => {
-    const fs = await import('fs');
+  it('[BUG-TEST-002-CONTINUATION-FIFO] same-millisecond continuations preserve FIFO sequence order', async () => {
+    const { deliverContinuation } = useSuccessfulContinuationDelivery();
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -1285,23 +1370,19 @@ describe('GroupQueue', () => {
 
     vi.spyOn(Date, 'now').mockReturnValue(1_776_438_800_000);
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.9).mockReturnValueOnce(0.1);
-    const renameSync = vi.mocked(fs.default.renameSync);
-    renameSync.mockClear();
 
     expect(queue.sendMessage('group1@g.us', 'first')).toBe(true);
     expect(queue.sendMessage('group1@g.us', 'second')).toBe(true);
 
-    const finalPaths = renameSync.mock.calls.map((call) => String(call[1]));
-    expect([...finalPaths].sort()).toEqual(finalPaths);
+    expect(deliverContinuation.mock.calls.map((call) => call[2])).toEqual([
+      0, 1,
+    ]);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  // --- Coverage for sendMessage catch block ---
-
-  it('sendMessage returns false when file write throws', async () => {
-    const fs = await import('fs');
+  it('sendMessage returns false when the default continuation carrier is unavailable', async () => {
     let resolveProcess: () => void;
 
     const processMessages = vi.fn(async () => {
@@ -1316,11 +1397,6 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     queue.registerProcess('group1@g.us', {} as any, 'run-1', 'test-group');
-
-    const mkdirSync = vi.mocked(fs.default.mkdirSync);
-    mkdirSync.mockImplementationOnce(() => {
-      throw new Error('disk full');
-    });
 
     const result = queue.sendMessage('group1@g.us', 'hello');
     expect(result).toBe(false);
@@ -1559,7 +1635,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
     queue.registerProcess('group1@g.us', {} as any, 'run-1', 'team-folder');
 
-    // Default (fs) carrier is in place at construction; swap it now.
+    // Default carrier is fail-closed at construction; swap it now.
     queue.setContinuationDelivery({ deliverContinuation, deliverClose });
 
     expect(queue.sendMessage('group1@g.us', 'after swap')).toBe(true);

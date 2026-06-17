@@ -3,6 +3,8 @@ import {
   logger,
 } from '../infrastructure/logging/logger.js';
 import { createChannelWiring } from './bootstrap/channel-wiring.js';
+import { createOutboundOwnershipVerifier } from './bootstrap/outbound-ownership-verifier.js';
+import { projectInteraktDefaultAgentRoute } from './bootstrap/channel-persistence-handlers.js';
 import { getDefaultRuntimeApp } from './bootstrap/runtime-app.js';
 import { createReplyTraceWiring } from './bootstrap/reply-trace-wiring.js';
 import { startRuntimeServices } from './bootstrap/runtime-services.js';
@@ -19,12 +21,24 @@ import { startControlServer } from '../control/server/index.js';
 import { stopSchedulerLoop } from '../jobs/scheduler.js';
 import { stopOutboundDeliveryRecoveryLoop } from '../jobs/outbound-delivery-recovery.js';
 import { publishBrowserJobActivityEvent } from '../jobs/browser-activity-events.js';
-import { GANTRY_HOME, getRuntimeWarmPoolConfig } from '../config/index.js';
+import {
+  GANTRY_HOME,
+  getRuntimeOwnershipConfig,
+  getRuntimeWarmPoolConfig,
+} from '../config/index.js';
 import { hydrateDynamicRuntimeEnv } from '../config/env/index.js';
 import { getBrowserStatus } from '../runtime/browser-capability.js';
+import { closeEgressGateways } from '../runtime/egress-gateway.js';
 import type { IpcSocketServerHandle } from '../runtime/ipc-socket-server.js';
 import { startSettingsReloadWatcher } from '../runtime/settings-reload-watcher.js';
 import { startWarmPoolMaintenance } from '../runtime/warm-pool-maintenance.js';
+import { startConversationWorkDispatcher } from '../runtime/conversation-work-dispatcher.js';
+import { createConversationWorkClaimGate } from '../runtime/conversation-work-claim-gate.js';
+import {
+  findPendingMessageWorkCandidates,
+  startConversationWorkReconciler,
+} from '../runtime/conversation-work-reconciler.js';
+import { createOwnerClaimingConversationWorkPublisher } from '../runtime/conversation-work-notification-publisher.js';
 import {
   formatRuntimePreflightFailure,
   validateRuntimePreflightWithStorage,
@@ -53,7 +67,6 @@ export async function startGantryRuntime(
   hydrateDynamicRuntimeEnv([
     'GANTRY_FLOW_LOG',
     'GANTRY_OUTBOUND_DRYRUN',
-    'GANTRY_WARM_POOL',
     'GANTRY_TEST_OPERATOR_PHONE',
     'GANTRY_TEST_CALLER_IDENTITY_PHONE',
     // Developer-only child-runner switch (fails safe to dist when no source
@@ -75,17 +88,60 @@ export async function startGantryRuntime(
   // One process-wide reply-trace wiring: a shared RunTraceCollector (MCP
   // capture ↔ persist-time drain) plus a best-effort trace repository.
   const replyTraceWiring = createReplyTraceWiring();
+  const instanceId = `runtime:${process.pid}`;
+  const ownershipConfig = getRuntimeOwnershipConfig();
+  const conversationWorkClaimGate = createConversationWorkClaimGate({
+    claimLease: (input) =>
+      getRuntimeStorage().conversationOwnerLeases.claimLease(input),
+  });
   const app = getDefaultRuntimeApp({
     mcpHostnameLookup: () => mcpHostnameLookup,
     publishRuntimeEvent: async (event) => {
       await getRuntimeEventExchange().publish(event);
     },
     replyTrace: replyTraceWiring.port,
+    getMessageSendOwnershipToken: async ({ conversationId, threadId }) => {
+      const claim =
+        await getRuntimeStorage().conversationOwnerLeases.claimLease({
+          appId: 'default',
+          conversationId,
+          threadId,
+          ownerInstanceId: instanceId,
+          leaseTtlMs: ownershipConfig.leaseTtlMs,
+          reason: 'process_group_messages_send',
+        });
+      if (!claim.acquired) {
+        throw new Error(
+          `Conversation ownership claim lost before provider send for ${conversationId}.`,
+        );
+      }
+      return {
+        appId: claim.lease.appId,
+        conversationId: claim.lease.conversationId,
+        threadId: claim.lease.threadId,
+        ownerInstanceId: claim.lease.ownerInstanceId,
+        leaseVersion: claim.lease.leaseVersion,
+      };
+    },
   });
+  const publishConversationWorkNotification =
+    createOwnerClaimingConversationWorkPublisher({
+      instanceId,
+      leaseTtlMs: ownershipConfig.leaseTtlMs,
+      claimLease: conversationWorkClaimGate.claimLease,
+      notify: (input) =>
+        getRuntimeStorage().conversationWorkNotifier.notify(input),
+      logger,
+    });
   const channelWiring = createChannelWiring(app, {
     publishRuntimeEvent: async (event) => {
       await getRuntimeEventExchange().publish(event);
     },
+    publishConversationWorkNotification,
+    verifyOutboundOwnership: createOutboundOwnershipVerifier({
+      verifyLeaseVersion: (input) =>
+        getRuntimeStorage().conversationOwnerLeases.verifyLeaseVersion(input),
+    }),
   });
   const controlServerRef: {
     current?: {
@@ -114,6 +170,57 @@ export async function startGantryRuntime(
 
   const { runtimeSettings } = await runStartup(app);
   const storage = getRuntimeStorage();
+  const conversationWorkDispatcher = startConversationWorkDispatcher({
+    instanceId,
+    notifier: storage.conversationWorkNotifier,
+    claimLease: conversationWorkClaimGate.claimLease,
+    leaseTtlMs: ownershipConfig.leaseTtlMs,
+    enqueueMessageCheck: (queueKey) => app.queue.enqueueMessageCheck(queueKey),
+    logger,
+  });
+  const conversationWorkReconciler = startConversationWorkReconciler({
+    instanceId,
+    leaseTtlMs: ownershipConfig.leaseTtlMs,
+    intervalMs: ownershipConfig.reconcilerIntervalMs,
+    scanLimit: ownershipConfig.reconcilerLimit,
+    findCandidates: async ({ now, limit }) => {
+      const pendingMessageCandidates = await findPendingMessageWorkCandidates({
+        getConversationRoutes: () => app.getConversationRoutes(),
+        getOrRecoverCursor: app.getOrRecoverCursor,
+        messageRepository: storage.ops,
+        ensureConversationRoute: (conversationId) =>
+          projectInteraktDefaultAgentRoute({
+            app,
+            chatJid: conversationId,
+            addedAt: now.toISOString(),
+            logger,
+          }),
+        limit,
+      });
+      const remainingLimit = limit - pendingMessageCandidates.length;
+      if (remainingLimit <= 0) return pendingMessageCandidates;
+      const leases =
+        await storage.conversationOwnerLeases.findExpiredOrUnownedWork({
+          now,
+          limit: remainingLimit,
+        });
+      return [
+        ...pendingMessageCandidates,
+        ...leases.map((lease) => ({
+          appId: lease.appId,
+          conversationId: lease.conversationId,
+          threadId: lease.threadId,
+          reason:
+            lease.state === 'draining'
+              ? ('draining_owner_lease' as const)
+              : ('expired_owner_lease' as const),
+        })),
+      ];
+    },
+    claimLease: conversationWorkClaimGate.claimLease,
+    enqueueMessageCheck: (queueKey) => app.queue.enqueueMessageCheck(queueKey),
+    logger,
+  });
   const settingsWatcher = startSettingsReloadWatcher({
     runtimeHome: GANTRY_HOME,
     app,
@@ -153,9 +260,28 @@ export async function startGantryRuntime(
     closeIpcSocketServer: async () => {
       await socketServerRef.current?.stop();
     },
+    closeEgressGateways,
     closeStorage: closeRuntimeStorage,
     closeScheduler: stopSchedulerLoop,
     closeOutboundDeliveryRecovery: stopOutboundDeliveryRecoveryLoop,
+    closeConversationWorkReconciler: () => {
+      conversationWorkClaimGate.close('runtime_shutdown');
+      conversationWorkReconciler.close();
+      conversationWorkDispatcher.close();
+    },
+    releaseConversationOwnerLeases: async () => {
+      await conversationWorkClaimGate.releaseTrackedLeases({
+        releaseLease: (input) =>
+          storage.conversationOwnerLeases.releaseLease(input),
+        inFlightClaimWaitMs: ownershipConfig.shutdownClaimWaitMs,
+      });
+    },
+    markConversationOwnerLeasesDraining: async () => {
+      await storage.conversationOwnerLeases.markDraining({
+        ownerInstanceId: instanceId,
+        reason: 'runtime_shutdown',
+      });
+    },
     closeSettingsWatcher: settingsWatcher.close,
     closeWarmPool: app.warmPool
       ? async () => {
@@ -196,6 +322,17 @@ export async function startGantryRuntime(
       settingsRepositories: storage.repositories,
       getOutboundDeliveryRepository: () =>
         storage.repositories.outboundDeliveries,
+      claimRecoveredConversationWork: async ({ conversationId, threadId }) => {
+        const claim = await conversationWorkClaimGate.claimLease({
+          appId: 'default',
+          conversationId,
+          threadId,
+          ownerInstanceId: instanceId,
+          leaseTtlMs: ownershipConfig.leaseTtlMs,
+          reason: 'recover_pending_messages',
+        });
+        return claim.acquired;
+      },
       publishRuntimeEvent: async (event) => {
         await getRuntimeEventExchange().publish(event);
       },

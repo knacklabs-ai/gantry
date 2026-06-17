@@ -27,7 +27,7 @@ const { mockLogger, mockWriteFileSync } = vi.hoisted(() => ({
 vi.mock('@core/config/index.js', () => ({
   AGENT_MAX_OUTPUT_SIZE: 512, // small limit so truncation tests are manageable
   AGENT_TIMEOUT: 5000, // 5 s
-  IDLE_TIMEOUT: 5000, // 5 s
+  RUNNER_IDLE_TIMEOUT_MS: 5000, // 5 s
   get LOG_LEVEL() {
     return process.env.LOG_LEVEL || 'info';
   },
@@ -602,9 +602,9 @@ describe('executeRunnerProcess', () => {
       });
       const resultP = executeRunnerProcess(spec);
 
-      // The timeout should be max(150, IDLE_TIMEOUT + 30000) = max(150, 35000) = 35000
+      // The timeout should be max(150, RUNNER_IDLE_TIMEOUT_MS + 30000) = max(150, 35000) = 35000
       // because options.timeoutMs is not set, Math.max applies
-      // IDLE_TIMEOUT is 5000, so 5000 + 30000 = 35000
+      // RUNNER_IDLE_TIMEOUT_MS is 5000, so 5000 + 30000 = 35000
       await vi.advanceTimersByTimeAsync(35100);
 
       expect(fakeProc.kill).toHaveBeenCalledWith('SIGKILL');
@@ -1240,8 +1240,8 @@ describe('executeRunnerProcess', () => {
     });
 
     it('uses AGENT_TIMEOUT when no options and no agentConfig timeout', async () => {
-      // AGENT_TIMEOUT = 5000, IDLE_TIMEOUT = 5000
-      // When options.timeoutMs is not set: Math.max(configuredTimeout, IDLE_TIMEOUT + 30000)
+      // AGENT_TIMEOUT = 5000, RUNNER_IDLE_TIMEOUT_MS = 5000
+      // When options.timeoutMs is not set: Math.max(configuredTimeout, RUNNER_IDLE_TIMEOUT_MS + 30000)
       // = Math.max(5000, 35000) = 35000
       const spec = makeSpec({ options: undefined });
       const resultP = executeRunnerProcess(spec);
@@ -1263,7 +1263,7 @@ describe('executeRunnerProcess', () => {
 
     it('uses exact timeoutMs when options.timeoutMs is provided (no Math.max)', async () => {
       // When options.timeoutMs IS set, it should use that value directly
-      // without the Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000) logic
+      // without the Math.max(configuredTimeout, RUNNER_IDLE_TIMEOUT_MS + 30_000) logic
       const spec = makeSpec({ options: { timeoutMs: 100 } });
       const resultP = executeRunnerProcess(spec);
 

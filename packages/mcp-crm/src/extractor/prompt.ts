@@ -20,7 +20,7 @@ Each opportunity object uses EXACTLY these field names. Always include match, is
 - summaryBrief: string — one line capturing the order (qty, occasion, budget, city, timing)
 - evidenceQuote: string — a single verbatim customer line that best evidences this opportunity
 - confidence: number 0..1 — your confidence this is a real, correctly-segmented opportunity
-- intentCategory: "shopping" | "gifting_personal" | "gifting_b2b" | "corporate" | "reorder" | "other"
+- intentCategory: "shopping" | "gifting_personal" | "gifting_b2b" | "corporate" | "reorder" | "other" — gifting_b2b = gifting to clients, partners, VIPs, or other businesses; corporate = company buying for its own staff, employees, office, or team
 - occasion: string — e.g. "Raksha Bandhan", "Diwali", "wedding", "quarterly celebration"
 - quantity: integer — number of boxes/units (e.g. 50)
 - quantityRaw: string — the verbatim quantity phrase (e.g. "50 boxes")

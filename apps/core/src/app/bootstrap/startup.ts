@@ -198,7 +198,8 @@ async function ensureFreshRuntimeHasDefaultAgent(
  * first-message time with only a per-message warn log.
  *
  * Acceptable routing sources for new customers (any one is enough):
- *   - providers.interakt.default_agent — synthesizes a route per customer
+ *   - providers.interakt.default_agent — projects a live virtual route per
+ *     customer without persisting a route row
  *   - a conversation flagged template: true with external_id starting `wa:`
  *     — clone source for new wa:* customers
  *

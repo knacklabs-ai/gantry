@@ -1,4 +1,5 @@
 import type { NewMessage } from '../../../../domain/repositories/domain-types.js';
+import type { RuntimeMessageStoreResult } from '../../../../domain/repositories/ops-repo.js';
 import {
   decodeGlobalMessageCursor,
   decodeGroupMessageCursor,
@@ -28,8 +29,8 @@ export class CanonicalMessageOpsService {
     private readonly repository: PostgresCanonicalMessageRepository,
   ) {}
 
-  async storeMessage(msg: NewMessage): Promise<void> {
-    await this.repository.saveMessage(msg);
+  async storeMessage(msg: NewMessage): Promise<RuntimeMessageStoreResult> {
+    return this.repository.saveMessage(msg);
   }
 
   async getNewMessages(
@@ -98,6 +99,12 @@ export class CanonicalMessageOpsService {
 
   async getMessageThreadIds(chatJid: string): Promise<Array<string | null>> {
     return this.repository.listThreadIds(chatJid);
+  }
+
+  async listInboundConversationJids(input: {
+    limit: number;
+  }): Promise<string[]> {
+    return this.repository.listInboundConversationJids(input);
   }
 
   async getLastBotMessageCursor(chatJid: string): Promise<

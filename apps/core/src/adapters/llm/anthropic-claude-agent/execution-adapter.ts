@@ -22,6 +22,7 @@ import type {
   SharedBootRecipe,
   WarmPoolCapable,
   WarmBindDelivery,
+  WarmWorkerCachePrewarmResult,
   WarmWorkerHandle,
 } from '../../../application/agent-execution/warm-pool-capable.js';
 import {
@@ -308,7 +309,9 @@ export class AnthropicClaudeAgentExecutionAdapter
     return this.warmPool.recycle(handle);
   }
 
-  prewarmCaches(handle: WarmWorkerHandle): Promise<void> {
+  prewarmCaches(
+    handle: WarmWorkerHandle,
+  ): Promise<WarmWorkerCachePrewarmResult | void> {
     return this.warmPool.prewarmCaches(handle);
   }
 

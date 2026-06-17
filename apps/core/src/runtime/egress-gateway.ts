@@ -57,11 +57,13 @@ const EGRESS_GATEWAY_CONNECT_TIMEOUT_MS = 30_000;
 const EGRESS_GATEWAY_CLOSE_TIMEOUT_MS = 1_000;
 const gateways = new Map<string, EgressGatewayState>();
 
-export async function closeEgressGatewaysForTest(): Promise<void> {
+export async function closeEgressGateways(): Promise<void> {
   const states = [...gateways.values()];
   gateways.clear();
   await Promise.all(states.map((state) => closeGatewayState(state)));
 }
+
+export const closeEgressGatewaysForTest = closeEgressGateways;
 
 export async function closeEgressGateway(
   handleOrKey: EgressGatewayHandle | string | undefined,
@@ -161,6 +163,7 @@ function createEgressGatewayServer(key: string): http.Server {
     socket.destroy();
   });
   server.on('error', (err) => {
+    if (isListenCollision(err) && !gateways.has(key)) return;
     logger.warn({ err, key }, 'Egress gateway server error');
   });
   return server;

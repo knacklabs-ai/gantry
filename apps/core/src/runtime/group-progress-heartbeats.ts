@@ -16,6 +16,10 @@ type GroupProgressHeartbeatLogger = {
   info?(metadata: Record<string, unknown>, message: string): void;
 };
 
+type BuildMessageOptions = (
+  threadId?: string,
+) => MessageSendOptions | undefined | Promise<MessageSendOptions | undefined>;
+
 function logProgressLifecycle(
   log: GroupProgressHeartbeatLogger,
   metadata: Record<string, unknown>,
@@ -31,7 +35,7 @@ function logProgressLifecycle(
 export function startInitialGroupProgress(input: {
   supportsProgress: boolean;
   groupName: string;
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
+  buildMessageOptions: BuildMessageOptions;
   buildProgressOptions?: () => ProgressUpdateOptions | undefined;
   sendProgressToChannel(
     text: string,
@@ -74,11 +78,11 @@ export function startInitialGroupProgress(input: {
       { group: input.groupName },
       'Progress lifecycle initial sending',
     );
-    sendStarted = input
-      .sendProgressToChannel(
+    sendStarted = (async () =>
+      input.sendProgressToChannel(
         'Working on it...',
-        input.buildProgressOptions?.() ?? input.buildMessageOptions(),
-      )
+        input.buildProgressOptions?.() ?? (await input.buildMessageOptions()),
+      ))()
       .then(() =>
         logProgressLifecycle(
           input.log,
@@ -117,7 +121,7 @@ export function createResponseProgressSenders(input: {
   supportsProgress: boolean;
   activeThreadId?: string;
   progressGeneration?: () => number | undefined;
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
+  buildMessageOptions: BuildMessageOptions;
   sendMessageToChannel(
     text: string,
     options?: MessageSendOptions,
@@ -167,7 +171,7 @@ export function startGroupProgressHeartbeats(input: {
   channelRuntime: {
     setTyping(jid: string, isTyping: boolean): Promise<void>;
   };
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
+  buildMessageOptions: BuildMessageOptions;
   buildProgressOptions?: () => ProgressUpdateOptions | undefined;
   sendProgressToChannel(
     text: string,
@@ -203,7 +207,7 @@ export function startGroupProgressHeartbeats(input: {
       if (now - lastElapsedProgressAt >= ELAPSED_PROGRESS_INTERVAL_MS) {
         lastElapsedProgressAt = now;
         const progressOptions =
-          input.buildProgressOptions?.() ?? input.buildMessageOptions();
+          input.buildProgressOptions?.() ?? (await input.buildMessageOptions());
         void input
           .sendProgressToChannel(
             `Still working (${formatElapsed(elapsedMs)})...`,
@@ -222,7 +226,7 @@ export function startGroupProgressHeartbeats(input: {
       ) {
         lastNoOutputWarningAt = now;
         const progressOptions =
-          input.buildProgressOptions?.() ?? input.buildMessageOptions();
+          input.buildProgressOptions?.() ?? (await input.buildMessageOptions());
         void input
           .sendProgressToChannel(
             `No new output yet, still running (${formatElapsed(elapsedMs)})...`,

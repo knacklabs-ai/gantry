@@ -243,6 +243,53 @@ describe('recoverPendingMessages', () => {
     expect(deps.enqueued).toEqual(['group@g.us::thread:topic-1']);
   });
 
+  it('claims recovered work before enqueueing startup recovery', async () => {
+    mockGetMessageThreadIds.mockReturnValue([null, 'topic-1']);
+    mockGetMessagesSince.mockImplementation(
+      (
+        _chatJid: string,
+        _cursor: string,
+        _limit: number,
+        options?: {
+          threadId?: string | null;
+        },
+      ) => [
+        {
+          id: options?.threadId ? 2 : 1,
+          chat_jid: 'group@g.us',
+          sender: 'user@s.whatsapp.net',
+          content: 'pending message',
+          timestamp: '2024-01-01T00:00:01.000Z',
+          thread_id: options?.threadId ?? null,
+          is_from_me: false,
+          message_id: options?.threadId ? 'msg-2' : 'msg-1',
+          reply_to_message_id: null,
+          reply_to_content: null,
+          sender_name: 'User',
+        },
+      ],
+    );
+    const claimRecoveredConversationWork = vi.fn(
+      async (input: { conversationId: string; threadId?: string | null }) =>
+        input.threadId === 'topic-1',
+    );
+
+    const deps = makeDeps({
+      claimRecoveredConversationWork,
+    });
+    await recoverPendingMessages(deps);
+
+    expect(claimRecoveredConversationWork).toHaveBeenNthCalledWith(1, {
+      conversationId: 'group@g.us',
+      threadId: null,
+    });
+    expect(claimRecoveredConversationWork).toHaveBeenNthCalledWith(2, {
+      conversationId: 'group@g.us',
+      threadId: 'topic-1',
+    });
+    expect(deps.enqueued).toEqual(['group@g.us::thread:topic-1']);
+  });
+
   it('checks all registered groups', async () => {
     mockGetMessagesSince.mockReturnValue([
       {

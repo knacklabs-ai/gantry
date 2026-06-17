@@ -99,6 +99,10 @@ export interface MessageLoopDeps {
     message: NewMessage;
     command: SessionCommand;
   }) => Promise<boolean> | boolean;
+  claimRecoveredConversationWork?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) => Promise<boolean> | boolean;
   opsRepository?: RuntimeMessageRepository;
 }
 
@@ -377,7 +381,7 @@ export async function recoverPendingMessages(
 ): Promise<void> {
   const opsRepository = resolveMessageRepository(deps);
   for (const [chatJid, group] of Object.entries(deps.getConversationRoutes())) {
-    const queuedThreads = new Set<string>();
+    const queuedThreads = new Map<string, string | null>();
     let pendingCount = 0;
 
     for (const threadId of await opsRepository.getMessageThreadIds(chatJid)) {
@@ -390,7 +394,7 @@ export async function recoverPendingMessages(
       );
       if (pending.length > 0) {
         pendingCount += pending.length;
-        queuedThreads.add(queueJid);
+        queuedThreads.set(queueJid, threadId);
       }
     }
 
@@ -400,7 +404,22 @@ export async function recoverPendingMessages(
       { group: group.name, pendingCount },
       'Recovery: found unprocessed messages',
     );
-    for (const queueJid of queuedThreads) {
+    for (const [queueJid, threadId] of queuedThreads) {
+      if (deps.claimRecoveredConversationWork) {
+        let acquired = false;
+        try {
+          acquired = await deps.claimRecoveredConversationWork({
+            conversationId: chatJid,
+            threadId,
+          });
+        } catch (err) {
+          logger.warn(
+            { chatJid, threadId, err },
+            'Failed to claim recovered conversation work',
+          );
+        }
+        if (!acquired) continue;
+      }
       deps.queue.enqueueMessageCheck(queueJid);
     }
   }

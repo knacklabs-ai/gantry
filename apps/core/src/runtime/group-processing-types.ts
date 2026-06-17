@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process';
 
 import type {
   MessageSendOptions,
+  MessageSendOwnershipToken,
   ProgressUpdateOptions,
   ConversationRoute,
   StreamingChunkOptions,
@@ -110,9 +111,24 @@ export interface GroupProcessingDeps {
   ) => Promise<void> | void;
   getAvailableGroups: () => Promise<AvailableGroup[]> | AvailableGroup[];
   getRegisteredJids: () => Set<string>;
+  getMessageSendOwnershipToken?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) =>
+    | Promise<MessageSendOwnershipToken | undefined>
+    | MessageSendOwnershipToken
+    | undefined;
   queue: {
     closeStdin: (chatJid: string) => void;
     notifyIdle: (chatJid: string) => void;
+    sendMessage?: (
+      chatJid: string,
+      text: string,
+      options?: {
+        threadId?: string | null;
+        senderUserIds?: readonly string[] | null;
+      },
+    ) => boolean;
     stopGroup?: (chatJid: string) => boolean;
     registerProcess: (
       groupJid: string,

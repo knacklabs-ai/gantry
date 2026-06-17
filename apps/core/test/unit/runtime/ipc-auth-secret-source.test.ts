@@ -44,6 +44,9 @@ describe('ipc auth secret source', () => {
           },
           external: { baseUrl: '' },
         },
+        runtime: {
+          runner: { idleTimeoutMs: 1_800_000 },
+        },
       }),
       readRuntimeMemorySettingsSnapshot: () => ({}),
       readRuntimeStorageSettingsSnapshot: () => ({
@@ -85,6 +88,9 @@ describe('ipc auth secret source', () => {
             },
           },
           external: { baseUrl: '' },
+        },
+        runtime: {
+          runner: { idleTimeoutMs: 1_800_000 },
         },
       }),
       readRuntimeMemorySettingsSnapshot: () => ({}),

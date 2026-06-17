@@ -114,6 +114,18 @@ type GiftingProductSummary = ProductSearchSummary & {
   matchedQueries: string[];
 };
 
+interface GiftingAnswerGuidance {
+  latestOrderLine: string;
+  productLine: string;
+}
+
+interface GiftingReplyContract {
+  status: 'success';
+  useCustomerReplyDraft: boolean;
+  mustMentionLatestOrderName: string;
+  mustNotUseHiccupWording: boolean;
+}
+
 interface GiftingBrief {
   occasion?: string;
   quantity?: number;
@@ -183,6 +195,76 @@ function isQualifiedGiftingBrief(brief: GiftingBrief): boolean {
   if (brief.deliveryLocations.length > 0 && typeof brief.budgetMax === 'number')
     return true;
   return Boolean(brief.occasion && typeof brief.budgetMax === 'number');
+}
+
+function buildAnswerGuidance(input: {
+  latestOrder: ReturnType<typeof detailedOrder> | null;
+  products: GiftingProductSummary[];
+}): GiftingAnswerGuidance | undefined {
+  if (!input.latestOrder || input.products.length > 0) return undefined;
+  return {
+    latestOrderLine: `Mention latest order ${input.latestOrder.name} and one detail from it before the gifting brief.`,
+    productLine:
+      'Product curation is team-owned for this brief; say the gifting team will curate options without treating it as a live-data failure.',
+  };
+}
+
+function formatInr(value: number): string {
+  return `₹${new Intl.NumberFormat('en-IN').format(value)}`;
+}
+
+function buildCustomerReplyDraft(input: {
+  latestOrder: ReturnType<typeof detailedOrder> | null;
+  products: GiftingProductSummary[];
+  brief: GiftingBrief;
+}): string | undefined {
+  if (!input.latestOrder || input.products.length > 0) return undefined;
+  const firstItem = input.latestOrder.items[0];
+  const itemDetail = firstItem
+    ? ` It included ${firstItem.quantity} x ${firstItem.title}.`
+    : '';
+  const briefParts = [
+    input.brief.occasion ? `occasion: ${input.brief.occasion}` : null,
+    input.brief.quantity ? `quantity: ${input.brief.quantity}` : null,
+    input.brief.budgetMax
+      ? `budget: ${formatInr(input.brief.budgetMax)} per gift`
+      : null,
+    input.brief.deliveryLocations.length > 0
+      ? `delivery: ${input.brief.deliveryLocations.join(' + ')}`
+      : null,
+    input.brief.timeline ? `timeline: ${input.brief.timeline}` : null,
+    input.brief.branding ? `branding: ${input.brief.branding}` : null,
+  ].filter((part): part is string => Boolean(part));
+  const briefLine =
+    briefParts.length > 0 ? ` Gifting brief: ${briefParts.join('; ')}.` : '';
+
+  return `Your latest order is ${input.latestOrder.name}.${itemDetail}${briefLine} Product curation is team-owned for this brief; the gifting team will curate suitable options.`;
+}
+
+function buildReplyContract(input: {
+  latestOrder: ReturnType<typeof detailedOrder> | null;
+  customerReplyDraft: string | undefined;
+}): GiftingReplyContract | undefined {
+  if (!input.latestOrder || !input.customerReplyDraft) return undefined;
+  return {
+    status: 'success',
+    useCustomerReplyDraft: true,
+    mustMentionLatestOrderName: input.latestOrder.name,
+    mustNotUseHiccupWording: true,
+  };
+}
+
+function compactLatestOrderForReply(
+  order: ReturnType<typeof detailedOrder> | null,
+) {
+  if (!order) return null;
+  return {
+    name: order.name,
+    items: order.items,
+    total: order.total,
+    financialStatus: order.financialStatus,
+    fulfillmentStatus: order.fulfillmentStatus,
+  };
 }
 
 export function registerGetGiftingContext(
@@ -310,9 +392,26 @@ export function registerGetGiftingContext(
           }
         }
 
-        return jsonContent({
+        const products = [...productsById.values()];
+        const answerGuidance = buildAnswerGuidance({ latestOrder, products });
+        const customerReplyDraft = buildCustomerReplyDraft({
           latestOrder,
-          products: [...productsById.values()],
+          products,
+          brief,
+        });
+        const replyContract = buildReplyContract({
+          latestOrder,
+          customerReplyDraft,
+        });
+
+        return jsonContent({
+          ...(customerReplyDraft ? { customerReplyDraft } : {}),
+          ...(replyContract ? { replyContract } : {}),
+          ...(answerGuidance ? { answerGuidance } : {}),
+          latestOrder: replyContract
+            ? compactLatestOrderForReply(latestOrder)
+            : latestOrder,
+          products,
           productQueries: productResults.map((result) => ({
             query: result.query,
             resultCount: uniqueCountByQuery.get(result.query) ?? 0,

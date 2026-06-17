@@ -8,6 +8,7 @@ import type { ThinkingOverride } from '../../domain/types.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
 
 export type WarmPoolKey = string;
+export type WarmPoolCacheShapeKey = string;
 
 export interface WarmPoolToolSurface {
   gantryMcp?: readonly string[];
@@ -16,6 +17,7 @@ export interface WarmPoolToolSurface {
 
 export interface WarmPoolKeyInput {
   providerId: AgentExecutionProviderId;
+  credentialProfileRef?: string;
   appId: string;
   agentId: string;
   persona?: AgentPersona;
@@ -70,13 +72,20 @@ export interface ConversationBindScope {
 export interface WarmWorkerHandle {
   readonly id: string;
   readonly key: WarmPoolKey;
+  readonly cacheShapeKey?: WarmPoolCacheShapeKey;
   readonly bornAt: number;
   readonly processName?: string;
   readonly ipcDir?: string;
   readonly boundIdentityFile?: string;
   readonly memoryIpcAuthToken?: string;
+  cachePrewarm?: WarmWorkerCachePrewarmResult;
   bound: boolean;
 }
+
+export type WarmWorkerCachePrewarmResult =
+  | { status: 'succeeded' }
+  | { status: 'skipped'; reason: string }
+  | { status: 'failed'; reason: string };
 
 export interface BoundRun {
   readonly handle: WarmWorkerHandle;
@@ -99,7 +108,9 @@ export interface WarmPoolCapable extends AgentExecutionAdapter {
   ): Promise<BoundRun>;
   recycle(handle: WarmWorkerHandle): Promise<void>;
   healthCheck?(handle: WarmWorkerHandle): Promise<boolean>;
-  prewarmCaches?(handle: WarmWorkerHandle): Promise<void>;
+  prewarmCaches?(
+    handle: WarmWorkerHandle,
+  ): Promise<WarmWorkerCachePrewarmResult | void>;
   setWarmBindDelivery?(delivery: WarmBindDelivery): void;
 }
 
@@ -131,6 +142,7 @@ function normalizeThinking(
 export function poolKeyOf(input: WarmPoolKeyInput): WarmPoolKey {
   return JSON.stringify({
     providerId: input.providerId,
+    credentialProfileRef: input.credentialProfileRef ?? null,
     appId: input.appId,
     agentId: input.agentId,
     persona: input.persona ?? null,
@@ -139,6 +151,22 @@ export function poolKeyOf(input: WarmPoolKeyInput): WarmPoolKey {
     toolSurface: normalizeToolSurface(input.toolSurface),
     mcpSet: sortedList(input.mcpSet),
     thinking: normalizeThinking(input.thinking),
+    systemPromptVersion: input.systemPromptVersion,
+  });
+}
+
+export function cacheShapeKeyOf(
+  input: WarmPoolKeyInput,
+): WarmPoolCacheShapeKey {
+  return JSON.stringify({
+    providerFamily: input.providerId.split(':')[0] ?? input.providerId,
+    executionProviderId: input.providerId,
+    credentialProfileRef: input.credentialProfileRef ?? null,
+    appId: input.appId,
+    agentId: input.agentId,
+    model: input.model ?? null,
+    toolSurface: normalizeToolSurface(input.toolSurface),
+    mcpSet: sortedList(input.mcpSet),
     systemPromptVersion: input.systemPromptVersion,
   });
 }

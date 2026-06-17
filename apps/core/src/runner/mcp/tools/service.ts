@@ -429,6 +429,17 @@ export function registerServiceTools(server: McpServer): void {
       toolName: z
         .string()
         .describe('Raw MCP tool name without the mcp__server__ prefix'),
+      mutationIntent: z
+        .enum(['read', 'write', 'delete', 'execute', 'configure'])
+        .describe(
+          'Side-effect classification for the raw MCP tool call. Known write-shaped tool names are still fenced as side-effecting even if this is set to read.',
+        ),
+      idempotencyKeyArgument: z
+        .string()
+        .optional()
+        .describe(
+          'For write/delete/execute/configure calls, the name of the argument carrying the external idempotency key when it is not arguments.idempotencyKey or arguments.idempotency_key.',
+        ),
       arguments: z
         .record(z.string(), z.unknown())
         .optional()
@@ -448,6 +459,8 @@ export function registerServiceTools(server: McpServer): void {
           payload: {
             serverName: args.serverName,
             toolName: args.toolName,
+            mutationIntent: args.mutationIntent,
+            idempotencyKeyArgument: args.idempotencyKeyArgument,
             arguments: args.arguments ?? {},
           },
           timestamp: nowIso(),

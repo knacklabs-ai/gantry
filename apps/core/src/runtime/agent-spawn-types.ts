@@ -26,6 +26,7 @@ import type {
   WarmPoolKey,
   WarmWorkerHandle,
 } from '../application/agent-execution/warm-pool-capable.js';
+import type { WarmPoolInventorySnapshot } from './warm-pool-manager.js';
 
 export interface AgentInput {
   prompt: string;
@@ -145,6 +146,7 @@ export interface WarmPoolRuntime {
   prewarm?(recipe: SharedBootRecipe, count: number): Promise<void>;
   healthCheck?(key?: WarmPoolKey): Promise<void>;
   evictIdle?(ttlMs: number): Promise<void>;
+  inventory?(): WarmPoolInventorySnapshot;
   release(handle: WarmWorkerHandle): Promise<void>;
   reapOrphans?(): Promise<number>;
   shutdown?(): Promise<void>;

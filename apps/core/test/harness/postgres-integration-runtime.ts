@@ -14,6 +14,8 @@ import { PostgresControlPlaneRepository } from '@core/adapters/storage/postgres/
 import { PostgresCanonicalSessionRepository } from '@core/adapters/storage/postgres/repositories/canonical-session-repository.postgres.js';
 import { RuntimeEventExchange } from '@core/application/runtime-events/runtime-event-exchange.js';
 import { PostgresRuntimeEventNotifier } from '@core/adapters/storage/postgres/runtime-event-notifier.postgres.js';
+import { PostgresConversationWorkNotifier } from '@core/adapters/storage/postgres/conversation-work-notifier.postgres.js';
+import { PostgresConversationOwnerLeaseRepository } from '@core/adapters/storage/postgres/repositories/conversation-owner-lease-repository.postgres.js';
 import {
   PostgresStorageService,
   quotePostgresIdentifier,
@@ -69,6 +71,12 @@ export async function createPostgresIntegrationRuntime(options?: {
   );
   const control = new PostgresControlPlaneRepository(service.db);
   const runtimeEventNotifier = new PostgresRuntimeEventNotifier(service.pool);
+  const conversationWorkNotifier = new PostgresConversationWorkNotifier(
+    service.pool,
+  );
+  const conversationOwnerLeases = new PostgresConversationOwnerLeaseRepository(
+    service.db,
+  );
   const runtimeEvents = new RuntimeEventExchange(
     repositories.runtimeEvents,
     runtimeEventNotifier,
@@ -101,6 +109,8 @@ export async function createPostgresIntegrationRuntime(options?: {
     repositories,
     runtimeEvents,
     runtimeEventNotifier,
+    conversationWorkNotifier,
+    conversationOwnerLeases,
     fileArtifacts,
     skillArtifacts,
   };

@@ -167,6 +167,10 @@ Important constraints:
 ## Codex Harness
 
 - Use relevant local skills under `.codex/skills/` for architecture refactors, permission safety, schema changes, and provider adapters.
+- Linked worktrees may not contain `.codex/scripts/`. Npm scripts that are
+  expected to run from linked worktrees should use self-contained checks or
+  gracefully report missing prerequisites instead of hard-requiring those
+  helpers.
 - Record new lessons with `python3 .codex/scripts/record_lesson.py` after repeated failures or review findings.
 - Run `python3 .codex/scripts/check_task_completion.py` before final response when possible.
 

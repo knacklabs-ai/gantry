@@ -16,10 +16,18 @@ import {
   DEFAULT_AGENT_SESSION_MAX_MEMORY_CONTEXT_CHARS,
   DEFAULT_AGENT_SESSION_MEMORY_ITEM_LIMIT,
   DEFAULT_MODEL_GATEWAY_BIND_HOST,
+  DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS,
+  DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
+  DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
+  DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
+  DEFAULT_RUNNER_IDLE_TIMEOUT_MS,
   DEFAULT_STORAGE_POSTGRES_SCHEMA,
   DEFAULT_STORAGE_POSTGRES_URL_ENV,
+  DEFAULT_WARM_POOL_CACHE_PREWARM_CONCURRENCY,
+  DEFAULT_WARM_POOL_CACHE_PREWARM_ENABLED,
   DEFAULT_WARM_POOL_ENABLED,
   DEFAULT_WARM_POOL_IDLE_TTL_MS,
+  DEFAULT_WARM_POOL_MAX_BOUND_WORKERS,
   DEFAULT_WARM_POOL_SIZE,
 } from './runtime-settings-defaults.js';
 import { parseMcpServers } from './runtime-settings-mcp-parser.js';
@@ -693,6 +701,18 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
       enabled: DEFAULT_WARM_POOL_ENABLED,
       size: DEFAULT_WARM_POOL_SIZE,
       idleTtlMs: DEFAULT_WARM_POOL_IDLE_TTL_MS,
+      maxBoundWorkers: DEFAULT_WARM_POOL_MAX_BOUND_WORKERS,
+      cachePrewarmEnabled: DEFAULT_WARM_POOL_CACHE_PREWARM_ENABLED,
+      cachePrewarmConcurrency: DEFAULT_WARM_POOL_CACHE_PREWARM_CONCURRENCY,
+    },
+    runner: {
+      idleTimeoutMs: DEFAULT_RUNNER_IDLE_TIMEOUT_MS,
+    },
+    ownership: {
+      leaseTtlMs: DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS,
+      reconcilerIntervalMs: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
+      reconcilerLimit: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
+      shutdownClaimWaitMs: DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
     },
   };
   if (raw === undefined) return defaults;
@@ -701,9 +721,14 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'queue' && key !== 'warm_pool') {
+    if (
+      key !== 'queue' &&
+      key !== 'warm_pool' &&
+      key !== 'runner' &&
+      key !== 'ownership'
+    ) {
       throw new Error(
-        `runtime.${key} is not supported. Configure runtime.queue.* or runtime.warm_pool.*.`,
+        `runtime.${key} is not supported. Configure runtime.queue.*, runtime.warm_pool.*, runtime.runner.*, or runtime.ownership.*.`,
       );
     }
   }
@@ -740,9 +765,55 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
   }
   const warmPool = (warmPoolRaw || {}) as Record<string, unknown>;
   for (const key of Object.keys(warmPool)) {
-    if (key !== 'enabled' && key !== 'size' && key !== 'idle_ttl_ms') {
+    if (
+      key !== 'enabled' &&
+      key !== 'size' &&
+      key !== 'idle_ttl_ms' &&
+      key !== 'max_bound_workers' &&
+      key !== 'cache_prewarm_enabled' &&
+      key !== 'cache_prewarm_concurrency'
+    ) {
       throw new Error(
-        `runtime.warm_pool.${key} is not supported. Configure enabled, size, or idle_ttl_ms.`,
+        `runtime.warm_pool.${key} is not supported. Configure enabled, size, idle_ttl_ms, max_bound_workers, cache_prewarm_enabled, or cache_prewarm_concurrency.`,
+      );
+    }
+  }
+  const runnerRaw = map.runner;
+  if (
+    runnerRaw !== undefined &&
+    (typeof runnerRaw !== 'object' ||
+      runnerRaw === null ||
+      Array.isArray(runnerRaw))
+  ) {
+    throw new Error('runtime.runner must be a mapping');
+  }
+  const runner = (runnerRaw || {}) as Record<string, unknown>;
+  for (const key of Object.keys(runner)) {
+    if (key !== 'idle_timeout_ms') {
+      throw new Error(
+        `runtime.runner.${key} is not supported. Configure idle_timeout_ms.`,
+      );
+    }
+  }
+  const ownershipRaw = map.ownership;
+  if (
+    ownershipRaw !== undefined &&
+    (typeof ownershipRaw !== 'object' ||
+      ownershipRaw === null ||
+      Array.isArray(ownershipRaw))
+  ) {
+    throw new Error('runtime.ownership must be a mapping');
+  }
+  const ownership = (ownershipRaw || {}) as Record<string, unknown>;
+  for (const key of Object.keys(ownership)) {
+    if (
+      key !== 'lease_ttl_ms' &&
+      key !== 'reconciler_interval_ms' &&
+      key !== 'reconciler_limit' &&
+      key !== 'shutdown_claim_wait_ms'
+    ) {
+      throw new Error(
+        `runtime.ownership.${key} is not supported. Configure lease_ttl_ms, reconciler_interval_ms, reconciler_limit, or shutdown_claim_wait_ms.`,
       );
     }
   }
@@ -784,6 +855,50 @@ function parseRuntimeProcessSettings(raw: unknown): RuntimeProcessSettings {
         warmPool.idle_ttl_ms,
         'runtime.warm_pool.idle_ttl_ms',
         defaults.warmPool.idleTtlMs,
+      ),
+      maxBoundWorkers: parsePositiveIntegerValue(
+        warmPool.max_bound_workers,
+        'runtime.warm_pool.max_bound_workers',
+        defaults.warmPool.maxBoundWorkers,
+      ),
+      cachePrewarmEnabled: parseBooleanValue(
+        warmPool.cache_prewarm_enabled,
+        'runtime.warm_pool.cache_prewarm_enabled',
+        defaults.warmPool.cachePrewarmEnabled,
+      ),
+      cachePrewarmConcurrency: parsePositiveIntegerValue(
+        warmPool.cache_prewarm_concurrency,
+        'runtime.warm_pool.cache_prewarm_concurrency',
+        defaults.warmPool.cachePrewarmConcurrency,
+      ),
+    },
+    runner: {
+      idleTimeoutMs: parsePositiveIntegerValue(
+        runner.idle_timeout_ms,
+        'runtime.runner.idle_timeout_ms',
+        defaults.runner.idleTimeoutMs,
+      ),
+    },
+    ownership: {
+      leaseTtlMs: parsePositiveIntegerValue(
+        ownership.lease_ttl_ms,
+        'runtime.ownership.lease_ttl_ms',
+        defaults.ownership.leaseTtlMs,
+      ),
+      reconcilerIntervalMs: parsePositiveIntegerValue(
+        ownership.reconciler_interval_ms,
+        'runtime.ownership.reconciler_interval_ms',
+        defaults.ownership.reconcilerIntervalMs,
+      ),
+      reconcilerLimit: parsePositiveIntegerValue(
+        ownership.reconciler_limit,
+        'runtime.ownership.reconciler_limit',
+        defaults.ownership.reconcilerLimit,
+      ),
+      shutdownClaimWaitMs: parseNonNegativeIntegerValue(
+        ownership.shutdown_claim_wait_ms,
+        'runtime.ownership.shutdown_claim_wait_ms',
+        defaults.ownership.shutdownClaimWaitMs,
       ),
     },
   };

@@ -232,12 +232,18 @@ agents:
       enabled: false,
       size: 1,
       idleTtlMs: 240_000,
+      maxBoundWorkers: 100,
+      cachePrewarmEnabled: false,
+      cachePrewarmConcurrency: 1,
     });
 
     settings.runtime.warmPool = {
       enabled: true,
       size: 2,
       idleTtlMs: 120_000,
+      maxBoundWorkers: 10,
+      cachePrewarmEnabled: true,
+      cachePrewarmConcurrency: 2,
     };
 
     const yaml = renderRuntimeSettingsYaml(settings);
@@ -246,9 +252,59 @@ agents:
     expect(yaml).toContain('enabled: true');
     expect(yaml).toContain('size: 2');
     expect(yaml).toContain('idle_ttl_ms: 120000');
+    expect(yaml).toContain('max_bound_workers: 10');
+    expect(yaml).toContain('cache_prewarm_enabled: true');
+    expect(yaml).toContain('cache_prewarm_concurrency: 2');
 
     const parsed = parseRuntimeSettings(yaml);
     expect(parsed.runtime.warmPool).toEqual(settings.runtime.warmPool);
+  });
+
+  it('defaults, renders, and parses runtime runner policy', () => {
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.runtime.runner).toEqual({
+      idleTimeoutMs: 1_800_000,
+    });
+
+    settings.runtime.runner = {
+      idleTimeoutMs: 2_500,
+    };
+
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('runtime:');
+    expect(yaml).toContain('runner:');
+    expect(yaml).toContain('idle_timeout_ms: 2500');
+
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.runtime.runner).toEqual(settings.runtime.runner);
+  });
+
+  it('defaults, renders, and parses runtime ownership policy', () => {
+    const settings = createDefaultRuntimeSettings();
+    expect(settings.runtime.ownership).toEqual({
+      leaseTtlMs: 45_000,
+      reconcilerIntervalMs: 15_000,
+      reconcilerLimit: 100,
+      shutdownClaimWaitMs: 1_000,
+    });
+
+    settings.runtime.ownership = {
+      leaseTtlMs: 30_000,
+      reconcilerIntervalMs: 2_500,
+      reconcilerLimit: 50,
+      shutdownClaimWaitMs: 250,
+    };
+
+    const yaml = renderRuntimeSettingsYaml(settings);
+    expect(yaml).toContain('runtime:');
+    expect(yaml).toContain('ownership:');
+    expect(yaml).toContain('lease_ttl_ms: 30000');
+    expect(yaml).toContain('reconciler_interval_ms: 2500');
+    expect(yaml).toContain('reconciler_limit: 50');
+    expect(yaml).toContain('shutdown_claim_wait_ms: 250');
+
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.runtime.ownership).toEqual(settings.runtime.ownership);
   });
 
   it('defaults, renders, and parses neutral browser usage policy', () => {
@@ -416,7 +472,20 @@ agents:
     enabled: true
     warmed_workers: 2
 `),
-    ).toThrow('runtime.warm_pool.warmed_workers is not supported');
+    ).toThrow(
+      'runtime.warm_pool.warmed_workers is not supported. Configure enabled, size, idle_ttl_ms, max_bound_workers, cache_prewarm_enabled, or cache_prewarm_concurrency.',
+    );
+  });
+
+  it('rejects unsupported runtime runner keys', () => {
+    expect(() =>
+      parseRuntimeSettings(`runtime:
+  runner:
+    idle_timeout: 2500
+`),
+    ).toThrow(
+      'runtime.runner.idle_timeout is not supported. Configure idle_timeout_ms.',
+    );
   });
 
   it('rejects duplicate settings keys before schema normalization', () => {

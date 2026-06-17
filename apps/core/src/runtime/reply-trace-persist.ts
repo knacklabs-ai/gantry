@@ -4,6 +4,7 @@ import {
   assembleTimelinePayloads,
   type GuardrailRecord,
   type LlmTurnRecord,
+  type OperationalTimelineSectionInput,
   type ToolCallRecord,
 } from './reply-trace.js';
 import type { ReplyTracePort } from './group-processing-types.js';
@@ -30,6 +31,7 @@ export interface PersistReplyTraceInput {
   guardrail?: GuardrailRecord;
   llmTurns?: readonly LlmTurnRecord[];
   toolCalls?: readonly ToolCallRecord[];
+  operationalSections?: readonly OperationalTimelineSectionInput[];
   command?: { name: string; ms: number; startedAt: number };
   windowStart?: number;
   windowEnd?: number;
@@ -86,6 +88,9 @@ export async function persistReplyTrace(
       ...(input.guardrail ? { guardrail: input.guardrail } : {}),
       ...(input.startup ? { startup: input.startup } : {}),
       ...(input.llmTurns ? { llmTurns: input.llmTurns } : {}),
+      ...(input.operationalSections
+        ? { operationalSections: input.operationalSections }
+        : {}),
       ...(input.send ? { send: input.send } : {}),
       ...(input.command ? { command: input.command } : {}),
       ...(input.dispatchedAt !== undefined

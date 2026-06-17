@@ -907,7 +907,7 @@
           }
         ],
         "replyMustMatch": [
-          "latest order|most recent order|Order:",
+          "last order|latest order|most recent order|Order:",
           "#109260",
           "gifting team|corporate team|corporate gifting"
         ]

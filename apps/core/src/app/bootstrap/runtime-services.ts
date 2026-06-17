@@ -79,6 +79,10 @@ interface Deps {
   writeGroupsSnapshot: typeof writeGroupsSnapshot;
   opsRepository: RuntimeBootstrapRepository;
   recoverPendingMessages: typeof recoverPendingMessages;
+  claimRecoveredConversationWork?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) => Promise<boolean> | boolean;
   logger: Pick<typeof logger, 'info' | 'warn' | 'fatal'>;
   mcpHostnameLookup?: HostnameLookup;
   collectSessionMemory: SessionMemoryCollector;
@@ -275,6 +279,13 @@ export async function startRuntimeServices(
     requestUserAnswer: channelWiring.requestUserAnswer,
     mcpHostnameLookup: resolved.mcpHostnameLookup,
     recordReplyToolCall: resolved.recordReplyToolCall,
+    verifySideEffectToolOwnership: async ({ conversationId, threadId }) => {
+      const ownership = await app.getMessageSendOwnershipToken({
+        conversationId,
+        threadId: threadId ?? null,
+      });
+      return Boolean(ownership);
+    },
   };
 
   // I-3 (GANTRY_IPC_REPLAY_PERSIST, default off): load + prune the persisted
@@ -431,6 +442,7 @@ export async function startRuntimeServices(
       guardrailClassifier: app.guardrailClassifier,
       queue: app.queue,
       handleActiveControlCommand,
+      claimRecoveredConversationWork: resolved.claimRecoveredConversationWork,
       opsRepository: resolved.opsRepository,
     }),
   ).catch((err) =>
@@ -681,6 +693,19 @@ export async function startRuntimeServices(
           canonicalText: claimed.item.canonicalText,
           ...(destinationThreadId ? { threadId: destinationThreadId } : {}),
         });
+        const ownership = await app.getMessageSendOwnershipToken({
+          conversationId: destinationJid,
+          threadId: destinationThreadId ?? null,
+        });
+        const messageOptions =
+          destinationThreadId || ownership
+            ? {
+                ...(destinationThreadId
+                  ? { threadId: destinationThreadId }
+                  : {}),
+                ...(ownership ? { ownership } : {}),
+              }
+            : undefined;
         try {
           const deliveryResult = await channelWiring.sendProviderMessage(
             destinationJid,
@@ -688,9 +713,7 @@ export async function startRuntimeServices(
             {
               permit: recoveryPermit,
               throwOnMissing: true,
-              ...(destinationThreadId
-                ? { messageOptions: { threadId: destinationThreadId } }
-                : {}),
+              ...(messageOptions ? { messageOptions } : {}),
             },
           );
           return {

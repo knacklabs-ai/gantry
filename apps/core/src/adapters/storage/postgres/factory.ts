@@ -33,7 +33,11 @@ import { PostgresFileArtifactStore } from './repositories/file-artifact-reposito
 import type { PostgresStorageService } from './storage-service.js';
 import { RuntimeEventExchange } from '../../../application/runtime-events/runtime-event-exchange.js';
 import { PostgresRuntimeEventNotifier } from './runtime-event-notifier.postgres.js';
+import { PostgresConversationWorkNotifier } from './conversation-work-notifier.postgres.js';
+import { PostgresConversationOwnerLeaseRepository } from './repositories/conversation-owner-lease-repository.postgres.js';
 import type { AgentSession } from '../../../domain/sessions/sessions.js';
+import type { ConversationWorkNotificationPublisher } from '../../../domain/ports/conversation-work-notifier.js';
+import type { ConversationOwnerLeaseRepository } from '../../../domain/ports/conversation-owner-lease-repository.js';
 
 const FILE_ARTIFACTS_DIR_NAME = 'files';
 
@@ -51,6 +55,12 @@ export interface StorageRuntime {
   repositories: PostgresDomainRepositoryBundle;
   runtimeEvents: RuntimeEventExchange;
   runtimeEventNotifier: PostgresRuntimeEventNotifier;
+  conversationWorkNotifier: {
+    notify: ConversationWorkNotificationPublisher;
+    subscribe: PostgresConversationWorkNotifier['subscribe'];
+    close: () => Promise<void>;
+  };
+  conversationOwnerLeases: ConversationOwnerLeaseRepository;
   fileArtifacts: FileArtifactStore;
   skillArtifacts: SkillArtifactStore;
 }
@@ -92,6 +102,12 @@ export function createStorageRuntime(
     service.pool,
   );
   const runtimeEventNotifier = new PostgresRuntimeEventNotifier(service.pool);
+  const conversationWorkNotifier = new PostgresConversationWorkNotifier(
+    service.pool,
+  );
+  const conversationOwnerLeases = new PostgresConversationOwnerLeaseRepository(
+    service.db,
+  );
   const runtimeEvents = new RuntimeEventExchange(
     repositories.runtimeEvents,
     runtimeEventNotifier,
@@ -121,6 +137,8 @@ export function createStorageRuntime(
     repositories,
     runtimeEvents,
     runtimeEventNotifier,
+    conversationWorkNotifier,
+    conversationOwnerLeases,
     fileArtifacts,
     skillArtifacts,
   };

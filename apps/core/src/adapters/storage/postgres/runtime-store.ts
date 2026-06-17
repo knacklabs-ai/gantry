@@ -121,6 +121,7 @@ export async function closeRuntimeStorage(): Promise<void> {
   const existing = runtime;
   runtime = null;
   await existing?.runtimeEventNotifier.close();
+  await existing?.conversationWorkNotifier.close();
   await existing?.service.close();
 }
 
@@ -151,6 +152,12 @@ export function _setRuntimeRepositoriesForTest(
     runtimeEventNotifier: {
       close: async () => {},
     } as StorageRuntime['runtimeEventNotifier'],
+    conversationWorkNotifier: {
+      notify: async () => {},
+      subscribe: () => () => {},
+      close: async () => {},
+    } as StorageRuntime['conversationWorkNotifier'],
+    conversationOwnerLeases: {} as StorageRuntime['conversationOwnerLeases'],
     fileArtifacts: {} as StorageRuntime['fileArtifacts'],
     skillArtifacts: {} as StorageRuntime['skillArtifacts'],
   };

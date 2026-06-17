@@ -45,7 +45,7 @@ it('redacts owner-defined browser usage override sites from public settings', as
   });
 });
 
-it('keeps warm pool disabled by default unless the runtime flag enables it', async () => {
+it('keeps warm pool enablement settings-owned even when legacy env is set', async () => {
   const runtimeHome = fs.mkdtempSync(
     path.join(os.tmpdir(), 'gantry-settings-'),
   );
@@ -59,10 +59,67 @@ it('keeps warm pool disabled by default unless the runtime flag enables it', asy
     enabled: false,
     size: 1,
     idleTtlMs: 240_000,
+    maxBoundWorkers: 100,
+    cachePrewarmEnabled: false,
+    cachePrewarmConcurrency: 1,
   });
   expect(config.getRuntimeWarmPoolConfig({ GANTRY_WARM_POOL: '1' })).toEqual({
-    enabled: true,
+    enabled: false,
     size: 1,
     idleTtlMs: 240_000,
+    maxBoundWorkers: 100,
+    cachePrewarmEnabled: false,
+    cachePrewarmConcurrency: 1,
+  });
+});
+
+it('keeps runner idle timeout settings-owned even when legacy env is set', async () => {
+  const runtimeHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'gantry-settings-'),
+  );
+  runtimeHomes.push(runtimeHome);
+  vi.resetModules();
+  vi.stubEnv('GANTRY_HOME', runtimeHome);
+  await import('@core/config/settings/runtime-settings.js');
+  const config = await import('@core/config/index.js');
+
+  expect(config.getRuntimeRunnerConfig({})).toEqual({
+    idleTimeoutMs: 1_800_000,
+  });
+  expect(config.getRuntimeRunnerConfig({ IDLE_TIMEOUT: '2500' })).toEqual({
+    idleTimeoutMs: 1_800_000,
+  });
+});
+
+it('exposes settings-owned runtime ownership timing', async () => {
+  const runtimeHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'gantry-settings-'),
+  );
+  runtimeHomes.push(runtimeHome);
+  vi.resetModules();
+  vi.stubEnv('GANTRY_HOME', runtimeHome);
+  const runtimeSettings =
+    await import('@core/config/settings/runtime-settings.js');
+  const defaults = runtimeSettings.ensureRuntimeSettings(runtimeHome);
+  defaults.runtime.ownership = {
+    leaseTtlMs: 30_000,
+    reconcilerIntervalMs: 2_500,
+    reconcilerLimit: 50,
+    shutdownClaimWaitMs: 250,
+  };
+  runtimeSettings.saveRuntimeSettings(runtimeHome, defaults);
+  const config = await import('@core/config/index.js');
+
+  expect(config.getPublicRuntimeSettings().runtime.ownership).toEqual({
+    leaseTtlMs: 30_000,
+    reconcilerIntervalMs: 2_500,
+    reconcilerLimit: 50,
+    shutdownClaimWaitMs: 250,
+  });
+  expect(config.getRuntimeOwnershipConfig()).toEqual({
+    leaseTtlMs: 30_000,
+    reconcilerIntervalMs: 2_500,
+    reconcilerLimit: 50,
+    shutdownClaimWaitMs: 250,
   });
 });

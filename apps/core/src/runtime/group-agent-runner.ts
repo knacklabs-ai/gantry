@@ -398,28 +398,36 @@ export function createGroupAgentRunner(input: {
           if (!isRuntimeEventType(event.eventType)) continue;
           const appId = event.appId ?? turnContext?.appId;
           if (!appId) continue;
-          await deps.publishRuntimeEvent({
-            appId: appId as never,
-            ...((event.agentId ?? turnContext?.agentId)
-              ? {
-                  agentId: (event.agentId ?? turnContext?.agentId) as never,
-                }
-              : {}),
-            ...((event.runId ?? runState.runId)
-              ? { runId: (event.runId ?? runState.runId) as never }
-              : {}),
-            ...(event.jobId ? { jobId: event.jobId as never } : {}),
-            conversationId: (event.conversationId ?? chatJid) as never,
-            ...((event.threadId ?? sessionThreadId)
-              ? {
-                  threadId: (event.threadId ?? sessionThreadId) as never,
-                }
-              : {}),
-            eventType: event.eventType,
-            actor: event.actor ?? 'runner',
-            responseMode: event.responseMode ?? 'none',
-            payload: event.payload,
-          });
+          try {
+            await deps.publishRuntimeEvent({
+              appId: appId as never,
+              ...((event.agentId ?? turnContext?.agentId)
+                ? {
+                    agentId: (event.agentId ?? turnContext?.agentId) as never,
+                  }
+                : {}),
+              ...((event.runId ?? runState.runId)
+                ? { runId: (event.runId ?? runState.runId) as never }
+                : {}),
+              ...(event.jobId ? { jobId: event.jobId as never } : {}),
+              conversationId: (event.conversationId ?? chatJid) as never,
+              ...((event.threadId ?? sessionThreadId)
+                ? {
+                    threadId: (event.threadId ?? sessionThreadId) as never,
+                  }
+                : {}),
+              eventType: event.eventType,
+              actor: event.actor ?? 'runner',
+              responseMode: event.responseMode ?? 'none',
+              payload: event.payload,
+            });
+            // eslint-disable-next-line no-catch-all/no-catch-all -- runtime-event telemetry must not block customer replies.
+          } catch (err) {
+            runtimeLogger.warn(
+              { err, group: group.name, eventType: event.eventType },
+              'Failed to persist streamed runtime event',
+            );
+          }
         }
       }
       if (

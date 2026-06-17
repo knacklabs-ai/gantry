@@ -2,8 +2,15 @@ import type {
   SharedBootRecipe,
   WarmPoolCapable,
   WarmPoolKey,
+  WarmWorkerCachePrewarmResult,
   WarmWorkerHandle,
 } from '../application/agent-execution/warm-pool-capable.js';
+import { DEFAULT_WARM_POOL_MAX_BOUND_WORKERS } from '../config/settings/runtime-settings-defaults.js';
+import type {
+  WorkerInventoryCachePrewarmSnapshot,
+  WorkerInventoryCachePrewarmStatus,
+  WorkerInventoryCacheShapeSnapshot,
+} from './worker-inventory-snapshot.js';
 
 interface IdleWorker {
   readonly handle: WarmWorkerHandle;
@@ -14,12 +21,26 @@ interface WarmPoolEntry {
   recipe: SharedBootRecipe;
   targetSize: number;
   idle: IdleWorker[];
+  active: Map<string, WarmWorkerHandle>;
   prewarming: number;
   bootAttempts: number;
+  replenishPromise?: Promise<void>;
   retryTimer?: ReturnType<typeof setTimeout>;
 }
 
 export const WARM_POOL_ORPHAN_MARKER = 'gantry-warm-pool-worker';
+
+export interface WarmPoolInventorySnapshot {
+  availableTarget: number;
+  genericAvailable: number;
+  genericStarting: number;
+  boundActive: number;
+  boundIdle: number;
+  boundDraining: number;
+  maxBoundWorkers: number;
+  cachePrewarm: WorkerInventoryCachePrewarmSnapshot;
+  cacheShapes: WorkerInventoryCacheShapeSnapshot[];
+}
 
 export interface WarmPoolOrphanReaper {
   reap(marker: string): Promise<number>;
@@ -29,6 +50,9 @@ export interface WarmPoolManagerOptions {
   capability: WarmPoolCapable;
   clock?: () => number;
   maxConcurrentPrewarm?: number;
+  cachePrewarmEnabled?: boolean;
+  maxConcurrentCachePrewarm?: number;
+  maxBoundWorkers?: number;
   replacementBackoffMs?: number;
   orphanMarker?: string;
   orphanReaper?: WarmPoolOrphanReaper;
@@ -38,12 +62,17 @@ export class WarmPoolManager {
   private readonly capability: WarmPoolCapable;
   private readonly clock: () => number;
   private readonly maxConcurrentPrewarm: number;
+  private readonly cachePrewarmEnabled: boolean;
+  private readonly maxConcurrentCachePrewarm: number;
+  private readonly maxBoundWorkers: number;
   private readonly replacementBackoffMs: number;
   private readonly orphanMarker: string;
   private readonly orphanReaper?: WarmPoolOrphanReaper;
   private readonly entries = new Map<WarmPoolKey, WarmPoolEntry>();
   private activePrewarms = 0;
   private readonly prewarmWaiters: Array<() => void> = [];
+  private activeCachePrewarms = 0;
+  private readonly cachePrewarmWaiters: Array<() => void> = [];
   private shuttingDown = false;
 
   constructor(options: WarmPoolManagerOptions) {
@@ -51,6 +80,10 @@ export class WarmPoolManager {
     this.clock = options.clock ?? Date.now;
     this.maxConcurrentPrewarm =
       options.maxConcurrentPrewarm ?? Number.POSITIVE_INFINITY;
+    this.cachePrewarmEnabled = options.cachePrewarmEnabled ?? true;
+    this.maxConcurrentCachePrewarm = options.maxConcurrentCachePrewarm ?? 1;
+    this.maxBoundWorkers =
+      options.maxBoundWorkers ?? DEFAULT_WARM_POOL_MAX_BOUND_WORKERS;
     this.replacementBackoffMs = options.replacementBackoffMs ?? 1_000;
     this.orphanMarker = options.orphanMarker ?? WARM_POOL_ORPHAN_MARKER;
     this.orphanReaper = options.orphanReaper;
@@ -65,14 +98,19 @@ export class WarmPoolManager {
   }
 
   acquire(key: WarmPoolKey): WarmWorkerHandle | null {
+    if (this.boundActiveCount() >= this.maxBoundWorkers) return null;
     const entry = this.entries.get(key);
-    const worker = entry?.idle.shift();
+    if (!entry) return null;
+    const worker = entry.idle.shift();
     if (!worker) return null;
+    entry.active.set(worker.handle.id, worker.handle);
+    void this.replenishOrSchedule(key);
     return worker.handle;
   }
 
   async release(handle: WarmWorkerHandle): Promise<void> {
     const entry = this.entries.get(handle.key);
+    entry?.active.delete(handle.id);
     await this.capability.recycle(handle);
     if (entry) await this.replenishOrSchedule(handle.key);
   }
@@ -81,6 +119,16 @@ export class WarmPoolManager {
     if (this.shuttingDown) return;
     const entry = this.entries.get(key);
     if (!entry) return;
+    if (entry.replenishPromise) return entry.replenishPromise;
+    entry.replenishPromise = this.replenishEntry(entry);
+    try {
+      await entry.replenishPromise;
+    } finally {
+      entry.replenishPromise = undefined;
+    }
+  }
+
+  private async replenishEntry(entry: WarmPoolEntry): Promise<void> {
     const missing = entry.targetSize - entry.idle.length - entry.prewarming;
     if (missing <= 0) return;
     await this.bootMany(entry, missing);
@@ -128,6 +176,38 @@ export class WarmPoolManager {
     return this.entries.get(key)?.idle.length ?? 0;
   }
 
+  inventory(key?: WarmPoolKey): WarmPoolInventorySnapshot {
+    const entries =
+      key === undefined
+        ? Array.from(this.entries.values())
+        : [this.entries.get(key)].filter(
+            (entry): entry is WarmPoolEntry => entry !== undefined,
+          );
+    return entries.reduce<WarmPoolInventorySnapshot>((snapshot, entry) => {
+      const handles = [
+        ...entry.idle.map((worker) => worker.handle),
+        ...entry.active.values(),
+      ];
+      return {
+        availableTarget: snapshot.availableTarget + entry.targetSize,
+        genericAvailable: snapshot.genericAvailable + entry.idle.length,
+        genericStarting: snapshot.genericStarting + entry.prewarming,
+        boundActive: snapshot.boundActive + entry.active.size,
+        boundIdle: snapshot.boundIdle,
+        boundDraining: snapshot.boundDraining,
+        maxBoundWorkers: this.maxBoundWorkers,
+        cachePrewarm: addCachePrewarmCounts(
+          snapshot.cachePrewarm,
+          cachePrewarmCountsFor(handles),
+        ),
+        cacheShapes: addCacheShapeBuckets(
+          snapshot.cacheShapes,
+          cacheShapeBucketsFor(handles),
+        ),
+      };
+    }, emptyInventorySnapshot(this.maxBoundWorkers));
+  }
+
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     const entries = Array.from(this.entries.values());
@@ -153,6 +233,7 @@ export class WarmPoolManager {
         recipe,
         targetSize: 0,
         idle: [],
+        active: new Map(),
         prewarming: 0,
         bootAttempts: 0,
       };
@@ -181,6 +262,11 @@ export class WarmPoolManager {
       });
       if (!handle) return;
       handle.bound = false;
+      if (this.shuttingDown || this.entries.get(entry.recipe.key) !== entry) {
+        await this.capability.recycle(handle);
+        return;
+      }
+      await this.prepareCache(handle);
       if (this.shuttingDown || this.entries.get(entry.recipe.key) !== entry) {
         await this.capability.recycle(handle);
         return;
@@ -216,6 +302,59 @@ export class WarmPoolManager {
     }, this.replacementBackoffMs);
   }
 
+  private boundActiveCount(): number {
+    return Array.from(this.entries.values()).reduce(
+      (count, entry) => count + entry.active.size,
+      0,
+    );
+  }
+
+  private async prepareCache(handle: WarmWorkerHandle): Promise<void> {
+    if (!this.cachePrewarmEnabled) {
+      handle.cachePrewarm = {
+        status: 'skipped',
+        reason: 'disabled',
+      };
+      return;
+    }
+    if (!this.capability.prewarmCaches) {
+      handle.cachePrewarm = {
+        status: 'skipped',
+        reason: 'capability_unavailable',
+      };
+      return;
+    }
+    await this.withCachePrewarmSlot(async () => {
+      try {
+        const result = await this.capability.prewarmCaches?.(handle);
+        handle.cachePrewarm = normalizeCachePrewarmResult(result);
+      } catch (error) {
+        handle.cachePrewarm = {
+          status: 'failed',
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+  }
+
+  private async withCachePrewarmSlot<T>(
+    operation: () => Promise<T>,
+  ): Promise<T | undefined> {
+    if (this.activeCachePrewarms >= this.maxConcurrentCachePrewarm) {
+      await new Promise<void>((resolve) =>
+        this.cachePrewarmWaiters.push(resolve),
+      );
+    }
+    if (this.shuttingDown) return undefined;
+    this.activeCachePrewarms += 1;
+    try {
+      return await operation();
+    } finally {
+      this.activeCachePrewarms -= 1;
+      this.cachePrewarmWaiters.shift()?.();
+    }
+  }
+
   private async withPrewarmSlot<T>(
     operation: () => Promise<T>,
   ): Promise<T | undefined> {
@@ -231,4 +370,108 @@ export class WarmPoolManager {
       this.prewarmWaiters.shift()?.();
     }
   }
+}
+
+function normalizeCachePrewarmResult(
+  result: WarmWorkerCachePrewarmResult | void,
+): WarmWorkerCachePrewarmResult {
+  return result ?? { status: 'succeeded' };
+}
+
+function emptyCachePrewarmCounts(): WorkerInventoryCachePrewarmSnapshot {
+  return {
+    pending: 0,
+    succeeded: 0,
+    skipped: 0,
+    failed: 0,
+  };
+}
+
+function emptyInventorySnapshot(
+  maxBoundWorkers: number,
+): WarmPoolInventorySnapshot {
+  return {
+    availableTarget: 0,
+    genericAvailable: 0,
+    genericStarting: 0,
+    boundActive: 0,
+    boundIdle: 0,
+    boundDraining: 0,
+    maxBoundWorkers,
+    cachePrewarm: emptyCachePrewarmCounts(),
+    cacheShapes: [],
+  };
+}
+
+function cachePrewarmStatusOf(
+  handle: WarmWorkerHandle,
+): WorkerInventoryCachePrewarmStatus {
+  return handle.cachePrewarm?.status ?? 'pending';
+}
+
+function cachePrewarmCountsFor(
+  handles: readonly WarmWorkerHandle[],
+): WorkerInventoryCachePrewarmSnapshot {
+  const counts = emptyCachePrewarmCounts();
+  for (const handle of handles) {
+    counts[cachePrewarmStatusOf(handle)] += 1;
+  }
+  return counts;
+}
+
+function addCachePrewarmCounts(
+  current: WorkerInventoryCachePrewarmSnapshot,
+  next: WorkerInventoryCachePrewarmSnapshot,
+): WorkerInventoryCachePrewarmSnapshot {
+  return {
+    pending: current.pending + next.pending,
+    succeeded: current.succeeded + next.succeeded,
+    skipped: current.skipped + next.skipped,
+    failed: current.failed + next.failed,
+  };
+}
+
+function cacheShapeBucketsFor(
+  handles: readonly WarmWorkerHandle[],
+): WorkerInventoryCacheShapeSnapshot[] {
+  const buckets = new Map<string, WorkerInventoryCacheShapeSnapshot>();
+  for (const handle of handles) {
+    if (!handle.cacheShapeKey) continue;
+    const status = cachePrewarmStatusOf(handle);
+    const key = `${handle.cacheShapeKey}\u0000${status}`;
+    const existing = buckets.get(key);
+    buckets.set(key, {
+      cacheShapeKey: handle.cacheShapeKey,
+      status,
+      workers: (existing?.workers ?? 0) + 1,
+    });
+  }
+  return sortedCacheShapeBuckets([...buckets.values()]);
+}
+
+function addCacheShapeBuckets(
+  current: readonly WorkerInventoryCacheShapeSnapshot[],
+  next: readonly WorkerInventoryCacheShapeSnapshot[],
+): WorkerInventoryCacheShapeSnapshot[] {
+  const buckets = new Map<string, WorkerInventoryCacheShapeSnapshot>();
+  for (const shape of [...current, ...next]) {
+    const key = `${shape.cacheShapeKey}\u0000${shape.status}`;
+    const existing = buckets.get(key);
+    buckets.set(key, {
+      cacheShapeKey: shape.cacheShapeKey,
+      status: shape.status,
+      workers: (existing?.workers ?? 0) + shape.workers,
+    });
+  }
+  return sortedCacheShapeBuckets([...buckets.values()]);
+}
+
+function sortedCacheShapeBuckets(
+  shapes: WorkerInventoryCacheShapeSnapshot[],
+): WorkerInventoryCacheShapeSnapshot[] {
+  return shapes.sort(
+    (left, right) =>
+      left.cacheShapeKey.localeCompare(right.cacheShapeKey) ||
+      left.status.localeCompare(right.status),
+  );
 }

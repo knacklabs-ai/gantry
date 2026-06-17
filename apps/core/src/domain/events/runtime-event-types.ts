@@ -36,6 +36,7 @@ export const RUNTIME_EVENT_TYPES = {
   MODEL_RATE_LIMIT: 'model.rate_limit',
   EGRESS_CONNECT: 'egress.connect',
   SANDBOX_BLOCKED: 'sandbox.blocked',
+  OUTBOUND_FENCE: 'outbound.fence',
   RUN_STARTED: 'run.started',
   RUN_CANCELED: 'run.canceled',
   RUN_COMPLETED: 'run.completed',

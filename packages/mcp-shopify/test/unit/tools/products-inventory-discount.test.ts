@@ -115,6 +115,40 @@ describe('search_products', () => {
     harness.tokenManager.stop();
   });
 
+  it('returns a customer-safe no-match draft for empty search results', async () => {
+    const mock = buildMockFetch({
+      graphqlResponses: [graphqlOk(productsEdges([]))],
+    });
+    const harness = buildToolHarness(mock.fetch);
+    const result = await harness.call<{
+      customerReplyDraft?: string;
+      replyContract?: {
+        status: string;
+        useCustomerReplyDraft: boolean;
+        mustNotUseHiccupWording: boolean;
+        emptyProductResult: boolean;
+      };
+      products: Array<Record<string, unknown>>;
+    }>('search_products', { query: 'durian cheesecake' });
+
+    expect(result.error).toBeUndefined();
+    expect(Object.keys(result.raw as Record<string, unknown>).slice(0, 2)).toEqual(
+      ['customerReplyDraft', 'replyContract'],
+    );
+    expect(result.data?.products).toEqual([]);
+    expect(result.data?.customerReplyDraft).toContain(
+      "I couldn't find durian cheesecake",
+    );
+    expect(result.data?.customerReplyDraft).not.toMatch(/hiccup|checking/i);
+    expect(result.data?.replyContract).toEqual({
+      status: 'success',
+      useCustomerReplyDraft: true,
+      mustNotUseHiccupWording: true,
+      emptyProductResult: true,
+    });
+    harness.tokenManager.stop();
+  });
+
 });
 
 describe('get_product', () => {

@@ -25,6 +25,7 @@ import type {
   RuntimeConversationRouteRepository,
   RuntimeJobRepository,
   RuntimeMessageRepository,
+  RuntimeMessageStoreResult,
   RuntimeRouterStateRepository,
 } from '../../../../domain/repositories/ops-repo.js';
 import type { RuntimeEventPublishInput } from '../../../../domain/events/events.js';
@@ -140,8 +141,8 @@ export class PostgresRuntimeRepositoryBundle
     return this.graph.listChats();
   }
 
-  async storeMessage(msg: NewMessage): Promise<void> {
-    await this.messages.storeMessage(msg);
+  async storeMessage(msg: NewMessage): Promise<RuntimeMessageStoreResult> {
+    return this.messages.storeMessage(msg);
   }
 
   async getNewMessages(
@@ -171,6 +172,12 @@ export class PostgresRuntimeRepositoryBundle
 
   async getMessageThreadIds(chatJid: string): Promise<Array<string | null>> {
     return this.messages.getMessageThreadIds(chatJid);
+  }
+
+  async listInboundConversationJids(input: {
+    limit: number;
+  }): Promise<string[]> {
+    return this.messages.listInboundConversationJids(input);
   }
 
   async getLastBotMessageCursor(

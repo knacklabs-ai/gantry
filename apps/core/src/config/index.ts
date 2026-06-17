@@ -174,12 +174,32 @@ export function getRuntimeQueueConfig() {
     killStragglersAfterGrace: IPC_SHUTDOWN_KILL,
   };
 }
-export function getRuntimeWarmPoolConfig(env: NodeJS.ProcessEnv = process.env) {
+export function getRuntimeWarmPoolConfig(
+  _env: NodeJS.ProcessEnv = process.env,
+) {
   const warmPool = getRuntimeSettingsForConfig().runtime.warmPool;
   return {
-    enabled: env.GANTRY_WARM_POOL === '1' || warmPool.enabled,
+    enabled: warmPool.enabled,
     size: warmPool.size,
     idleTtlMs: warmPool.idleTtlMs,
+    maxBoundWorkers: warmPool.maxBoundWorkers,
+    cachePrewarmEnabled: warmPool.cachePrewarmEnabled,
+    cachePrewarmConcurrency: warmPool.cachePrewarmConcurrency,
+  };
+}
+export function getRuntimeRunnerConfig(_env: NodeJS.ProcessEnv = process.env) {
+  const runner = getRuntimeSettingsForConfig().runtime.runner;
+  return {
+    idleTimeoutMs: runner.idleTimeoutMs,
+  };
+}
+export function getRuntimeOwnershipConfig() {
+  const ownership = getRuntimeSettingsForConfig().runtime.ownership;
+  return {
+    leaseTtlMs: ownership.leaseTtlMs,
+    reconcilerIntervalMs: ownership.reconcilerIntervalMs,
+    reconcilerLimit: ownership.reconcilerLimit,
+    shutdownClaimWaitMs: ownership.shutdownClaimWaitMs,
   };
 }
 
@@ -417,7 +437,7 @@ export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
 );
-export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep the agent run alive after last result
+export const RUNNER_IDLE_TIMEOUT_MS = getRuntimeRunnerConfig().idleTimeoutMs; // How long to keep the agent run alive after last result.
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

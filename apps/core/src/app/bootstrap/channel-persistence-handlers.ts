@@ -2,10 +2,12 @@ import type { ConversationRoute, NewMessage } from '../../domain/types.js';
 import type {
   RuntimeChatMetadataRepository,
   RuntimeMessageRepository,
+  RuntimeMessageStoreResult,
 } from '../../domain/repositories/ops-repo.js';
 import type { RuntimeApp } from './runtime-app.js';
 import type { AsyncTaskQueue } from './async-task-queue.js';
 import type { ChannelWiringDeps } from './channel-wiring-types.js';
+import type { ConversationWorkNotificationPublisher } from '../../domain/ports/conversation-work-notifier.js';
 import {
   IPC_EVENT_PIPE,
   IPC_EVENT_PIPE_DEBOUNCE_MS,
@@ -21,6 +23,7 @@ interface ChannelPersistenceHandlerDeps {
   ops: () => ChannelPersistenceRepository;
   persistenceQueue: AsyncTaskQueue;
   enqueueMessageCheck?: (chatJid: string) => void;
+  publishConversationWorkNotification?: ConversationWorkNotificationPublisher;
   autoRegisteredMessageCheckDelayMs?: number;
   eventPipeEnabled?: boolean;
   eventPipeDebounceMs?: number;
@@ -29,6 +32,13 @@ interface ChannelPersistenceHandlerDeps {
 interface EnsureConversationRouteResult {
   canRoute: boolean;
   autoRegistered: boolean;
+}
+
+interface InteraktDefaultAgentRouteInput {
+  app: RuntimeApp;
+  chatJid: string;
+  addedAt: string;
+  logger: Pick<ChannelWiringDeps['logger'], 'error' | 'info'>;
 }
 
 async function enqueueAndWait(
@@ -58,6 +68,65 @@ async function enqueueAndWait(
   await completion;
 }
 
+export async function projectInteraktDefaultAgentRoute(
+  input: InteraktDefaultAgentRouteInput,
+): Promise<boolean> {
+  if (!input.chatJid.startsWith('wa:')) return false;
+  const routes = input.app.getConversationRoutes();
+  if (routes[input.chatJid]) return true;
+
+  const interaktSettings = input.app.getProviderSettings('interakt');
+  const defaultAgentFolder = interaktSettings?.defaultAgent;
+  if (!defaultAgentFolder) return false;
+
+  const agent = input.app.getAgentSettings(defaultAgentFolder);
+  if (!agent) {
+    // Should be caught at parse time; defensive log.
+    input.logger.error(
+      { defaultAgentFolder, chatJid: input.chatJid },
+      'providers.interakt.default_agent references unknown agent folder; cannot route inbound direct message',
+    );
+    return false;
+  }
+  // Mirror desired-state-service.ts's agentConfig shape so virtual
+  // default_agent routes get the agent's runtime config
+  // (declared plugins — guardrail, extraction prompt, skills — included, so
+  // the gates fire here too).
+  const agentConfig =
+    agent.model ||
+    agent.persona ||
+    agent.plugins ||
+    agent.thinking ||
+    agent.toolSurface
+      ? {
+          model: agent.model,
+          persona: agent.persona,
+          plugins: agent.plugins,
+          thinking: agent.thinking,
+          toolSurface: agent.toolSurface,
+        }
+      : undefined;
+  const projected: ConversationRoute = {
+    name: agent.name,
+    folder: agent.folder,
+    trigger: `@${agent.name}`,
+    added_at: input.addedAt,
+    requiresTrigger: false,
+    conversationKind: 'dm',
+    ...(agentConfig ? { agentConfig } : {}),
+  };
+  await input.app.projectConversationRoute(input.chatJid, projected);
+  input.logger.info(
+    {
+      chatJid: input.chatJid,
+      folder: agent.folder,
+      source: 'default-agent',
+    },
+    'Projected virtual Interakt direct conversation route from provider default agent',
+  );
+  return true;
+}
+
 async function ensureInteraktDirectRoute(input: {
   app: RuntimeApp;
   chatJid: string;
@@ -73,8 +142,8 @@ async function ensureInteraktDirectRoute(input: {
   // Routing rules, in order:
   //   1. an existing conversation flagged isTemplate (settings.yaml
   //      conversations.<id>.template: true) → clone its route.
-  //   2. providers.interakt.default_agent → synthesize a new route from the
-  //      referenced agent block.
+  //   2. providers.interakt.default_agent → project a live virtual route from
+  //      the referenced agent block without writing a per-customer route row.
   // No silent fallback: if none match, return false and let the caller drop.
   //
   // We deliberately do NOT treat "any route whose JID starts with wa:" as a
@@ -104,58 +173,12 @@ async function ensureInteraktDirectRoute(input: {
     return true;
   }
 
-  const interaktSettings = input.app.getProviderSettings('interakt');
-  const defaultAgentFolder = interaktSettings?.defaultAgent;
-  if (defaultAgentFolder) {
-    const agent = input.app.getAgentSettings(defaultAgentFolder);
-    if (!agent) {
-      // Should be caught at parse time; defensive log.
-      input.logger.error(
-        { defaultAgentFolder, chatJid: input.chatJid },
-        'providers.interakt.default_agent references unknown agent folder; cannot route inbound direct message',
-      );
-      return false;
-    }
-    // Mirror desired-state-service.ts's agentConfig shape so per-customer
-    // routes synthesized via default_agent get the agent's runtime config
-    // (declared plugins — guardrail, extraction prompt, skills — included, so
-    // the gates fire here too).
-    const agentConfig =
-      agent.model ||
-      agent.persona ||
-      agent.plugins ||
-      agent.thinking ||
-      agent.toolSurface
-        ? {
-            model: agent.model,
-            persona: agent.persona,
-            plugins: agent.plugins,
-            thinking: agent.thinking,
-            toolSurface: agent.toolSurface,
-          }
-        : undefined;
-    const synthesized: ConversationRoute = {
-      name: agent.name,
-      folder: agent.folder,
-      trigger: `@${agent.name}`,
-      added_at: input.msg.timestamp,
-      requiresTrigger: false,
-      conversationKind: 'dm',
-      ...(agentConfig ? { agentConfig } : {}),
-    };
-    await input.app.registerGroup(input.chatJid, synthesized);
-    input.logger.info(
-      {
-        chatJid: input.chatJid,
-        folder: agent.folder,
-        source: 'default-agent',
-      },
-      'Auto-registered Interakt direct conversation route',
-    );
-    return true;
-  }
-
-  return false;
+  return projectInteraktDefaultAgentRoute({
+    app: input.app,
+    chatJid: input.chatJid,
+    addedAt: input.msg.timestamp,
+    logger: input.logger,
+  });
 }
 
 function findInteraktDirectRouteTemplate(
@@ -176,6 +199,7 @@ export function createChannelPersistenceHandlers({
   ops,
   persistenceQueue,
   enqueueMessageCheck,
+  publishConversationWorkNotification,
   autoRegisteredMessageCheckDelayMs = 0,
   eventPipeEnabled = IPC_EVENT_PIPE,
   eventPipeDebounceMs = IPC_EVENT_PIPE_DEBOUNCE_MS,
@@ -267,6 +291,27 @@ export function createChannelPersistenceHandlers({
     });
   };
 
+  const publishPersistedInboundWorkNotification = async (
+    chatJid: string,
+    msg: NewMessage,
+    storeResult: RuntimeMessageStoreResult | undefined,
+  ): Promise<void> => {
+    if (!publishConversationWorkNotification) return;
+    try {
+      await publishConversationWorkNotification({
+        appId: resolved.appId,
+        conversationId: chatJid,
+        threadId: msg.thread_id ?? null,
+        messageId: storeResult?.messageId ?? `message:${chatJid}:${msg.id}`,
+      });
+    } catch (err) {
+      resolved.logger.warn(
+        { err, chatJid, messageId: storeResult?.messageId ?? msg.id },
+        'Failed to publish conversation work notification; recovery reconciler must pick up persisted message',
+      );
+    }
+  };
+
   return {
     ensureMessageRoute: async (chatJid: string, msg: NewMessage) =>
       (await ensureConfiguredConversationRoute(chatJid, msg)).canRoute,
@@ -299,9 +344,10 @@ export function createChannelPersistenceHandlers({
         }
       }
 
+      let storeResult: RuntimeMessageStoreResult | undefined;
       const persistMessage = async () => {
         try {
-          await ops().storeMessage(msg);
+          storeResult = await ops().storeMessage(msg);
         } catch (err) {
           resolved.logger.error({ err, chatJid }, 'Failed to store message');
           throw err;
@@ -313,7 +359,17 @@ export function createChannelPersistenceHandlers({
           'Persistence queue full; waiting to enqueue message persistence',
         ),
       );
-      if (!msg.is_from_me && !msg.is_bot_message) {
+      if (
+        !msg.is_from_me &&
+        !msg.is_bot_message &&
+        storeResult?.status !== 'duplicate_existing_message'
+      ) {
+        await publishPersistedInboundWorkNotification(
+          chatJid,
+          msg,
+          storeResult,
+        );
+        if (publishConversationWorkNotification) return;
         await prewarmAfterPersistence(chatJid, route);
         wakePersistedInboundMessageCheck(chatJid, route);
       }

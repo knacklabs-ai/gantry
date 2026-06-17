@@ -31,7 +31,7 @@ vi.mock('@core/config/index.js', () => ({
   DATA_DIR: '/tmp/gantry-test-data',
   ARTIFACTS_DIR: '/tmp/gantry-test-data/artifacts',
   AGENTS_DIR: '/tmp/gantry-test-groups',
-  IDLE_TIMEOUT: 1800000, // 30min
+  RUNNER_IDLE_TIMEOUT_MS: 1800000, // 30min
   GANTRY_HOME: '/tmp/gantry-config',
   RUNTIME_SETTINGS_PATH: '/tmp/gantry-config/settings.yaml',
   GANTRY_MODEL_GATEWAY_URL: 'http://localhost:10254',
@@ -722,7 +722,7 @@ describe('agent-spawn timeout behavior', () => {
     // Let output processing settle
     await vi.advanceTimersByTimeAsync(10);
 
-    // Fire the hard timeout (IDLE_TIMEOUT + 30s = 1830000ms)
+    // Fire the hard timeout (RUNNER_IDLE_TIMEOUT_MS + 30s = 1830000ms)
     await vi.advanceTimersByTimeAsync(1830000);
 
     // Emit close event (as if process was killed by the timeout)

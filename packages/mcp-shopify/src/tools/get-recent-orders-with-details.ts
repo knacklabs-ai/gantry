@@ -47,6 +47,13 @@ interface OrderEdgesResponse {
   orders: { edges: Array<{ node: Parameters<typeof mapOrderResponse>[0] }> };
 }
 
+interface OrderReplyContract {
+  status: 'success';
+  useCustomerReplyDraft: boolean;
+  mustMentionLatestOrderName: string;
+  mustNotUseHiccupWording: boolean;
+}
+
 function statusQuery(filter: 'OPEN' | 'CLOSED' | 'ANY'): string {
   switch (filter) {
     case 'CLOSED':
@@ -78,6 +85,47 @@ export function detailedOrder(order: ShopifyOrder) {
       quantity: item.quantity,
     })),
     fulfillments: order.fulfillments,
+  };
+}
+
+function formatInrAmount(input: { amount: string; currencyCode: string }) {
+  if (input.currencyCode !== 'INR') return `${input.amount} ${input.currencyCode}`;
+  const amount = Number.parseFloat(input.amount);
+  if (!Number.isFinite(amount)) return `₹${input.amount}`;
+  return `₹${new Intl.NumberFormat('en-IN').format(amount)}`;
+}
+
+function buildOrderReplyDraft(
+  orders: Array<ReturnType<typeof detailedOrder>>,
+): string | undefined {
+  const latest = orders[0];
+  if (!latest) return undefined;
+  const itemLine =
+    latest.items.length > 0
+      ? ` It included ${latest.items
+          .map((item) => `${item.quantity} x ${item.title}`)
+          .join(', ')}.`
+      : '';
+  const discountLine =
+    latest.discountCodes.length > 0
+      ? ` Discount code: ${latest.discountCodes.join(', ')}.`
+      : '';
+  return `Your latest order is ${latest.name}.${itemLine} Total: ${formatInrAmount(
+    latest.total,
+  )}. Status: ${latest.financialStatus} and ${latest.fulfillmentStatus}.${discountLine}`;
+}
+
+function buildOrderReplyContract(
+  orders: Array<ReturnType<typeof detailedOrder>>,
+  customerReplyDraft: string | undefined,
+): OrderReplyContract | undefined {
+  const latest = orders[0];
+  if (!latest || !customerReplyDraft) return undefined;
+  return {
+    status: 'success',
+    useCustomerReplyDraft: true,
+    mustMentionLatestOrderName: latest.name,
+    mustNotUseHiccupWording: true,
   };
 }
 
@@ -139,7 +187,14 @@ export function registerGetRecentOrdersWithDetails(
         const orders = (data.orders?.edges ?? [])
           .map((edge) => detailedOrder(mapOrderResponse(edge.node)))
           .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        const customerReplyDraft = buildOrderReplyDraft(orders);
+        const replyContract = buildOrderReplyContract(
+          orders,
+          customerReplyDraft,
+        );
         return jsonContent({
+          ...(customerReplyDraft ? { customerReplyDraft } : {}),
+          ...(replyContract ? { replyContract } : {}),
           orders,
           ...(ownership && identity
             ? {

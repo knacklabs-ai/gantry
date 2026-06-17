@@ -39,6 +39,7 @@ function makeApp(): RuntimeApp {
     ensureCredentialBindingsForConversationRoutes: vi.fn(),
     clearSessionForChatJid: vi.fn(),
     processGroupMessages: vi.fn(async () => true),
+    getMessageSendOwnershipToken: vi.fn(async () => undefined),
     getConversationRoutes: vi.fn(() => ({
       'tg:primary': {
         name: 'Main',
@@ -437,6 +438,13 @@ describe('startRuntimeServices', () => {
 
   it('starts outbound delivery recovery loop when repository seam is provided', async () => {
     const app = makeApp();
+    vi.mocked(app.getMessageSendOwnershipToken).mockResolvedValue({
+      appId: 'default',
+      conversationId: 'tg:primary',
+      threadId: 'thread-1',
+      ownerInstanceId: 'runtime:test',
+      leaseVersion: 9,
+    });
     const channelWiring = makeChannelWiring();
     const startOutboundDeliveryRecoveryLoop = vi.fn(({ dispatch }: any) => {
       void dispatch({
@@ -518,7 +526,16 @@ describe('startRuntimeServices', () => {
       'Recovered outbound',
       expect.objectContaining({
         throwOnMissing: true,
-        messageOptions: { threadId: 'thread-1' },
+        messageOptions: {
+          threadId: 'thread-1',
+          ownership: {
+            appId: 'default',
+            conversationId: 'tg:primary',
+            threadId: 'thread-1',
+            ownerInstanceId: 'runtime:test',
+            leaseVersion: 9,
+          },
+        },
         permit: expect.objectContaining({
           deliveryId: 'delivery:1',
           itemId: 'delivery-item:1',

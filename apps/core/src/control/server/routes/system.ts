@@ -5,6 +5,9 @@ import {
   authorizeControlRequest,
   type ControlRouteContext,
 } from '../handler-context.js';
+import { summarizeWorkerInventorySnapshots } from '../../../runtime/worker-inventory-snapshot.js';
+
+const WORKER_INVENTORY_STALE_AFTER_MS = 60_000;
 
 export async function handleSystemRoutes(
   req: IncomingMessage,
@@ -54,6 +57,23 @@ export async function handleSystemRoutes(
         },
       ],
     });
+    return true;
+  }
+
+  if (pathname === '/v1/runtime/workers' && req.method === 'GET') {
+    if (!authorizeControlRequest(req, res, ctx.keys, ['sessions:read'])) {
+      return true;
+    }
+    const now = new Date();
+    sendJson(
+      res,
+      200,
+      summarizeWorkerInventorySnapshots({
+        snapshots: [ctx.app.getWorkerInventorySnapshot(now)],
+        now,
+        staleAfterMs: WORKER_INVENTORY_STALE_AFTER_MS,
+      }),
+    );
     return true;
   }
 

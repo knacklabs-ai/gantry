@@ -366,6 +366,11 @@ describe('get_gifting_context', () => {
         latestOrder: { name: string } | null;
         products: Array<{ handle: string }>;
         productQueries: Array<{ query: string; resultCount: number }>;
+        answerGuidance?: {
+          latestOrderLine: string;
+          productLine: string;
+        };
+        customerReplyDraft?: string;
       }>('get_gifting_context', {
         includeLatestOrder: true,
         occasion: 'Diwali',
@@ -376,9 +381,40 @@ describe('get_gifting_context', () => {
     );
 
     expect(result.error).toBeUndefined();
+    expect(Object.keys(result.raw as Record<string, unknown>).slice(0, 2)).toEqual(
+      ['customerReplyDraft', 'replyContract'],
+    );
+    expect(JSON.stringify(result.raw).length).toBeLessThan(1000);
+    expect(result.data?.replyContract).toEqual({
+      status: 'success',
+      useCustomerReplyDraft: true,
+      mustMentionLatestOrderName: '#BSS-3002',
+      mustNotUseHiccupWording: true,
+    });
     expect(result.data?.latestOrder?.name).toBe('#BSS-3002');
     expect(result.data?.products).toEqual([]);
     expect(result.data?.productQueries).toEqual([]);
+    expect(result.data?.answerGuidance).toEqual({
+      latestOrderLine:
+        'Mention latest order #BSS-3002 and one detail from it before the gifting brief.',
+      productLine:
+        'Product curation is team-owned for this brief; say the gifting team will curate options without treating it as a live-data failure.',
+    });
+    expect(result.data?.customerReplyDraft).toBeDefined();
+    expect(result.data?.customerReplyDraft ?? '').toContain(
+      'Your latest order is #BSS-3002',
+    );
+    expect(result.data?.customerReplyDraft ?? '').toContain('Diwali');
+    expect(result.data?.customerReplyDraft ?? '').toContain('80');
+    expect(result.data?.customerReplyDraft ?? '').toContain('₹1,200');
+    expect(result.data?.customerReplyDraft ?? '').toContain('Mumbai + Delhi');
+    expect(result.data?.customerReplyDraft ?? '').toContain('gifting team');
+    expect(result.data?.customerReplyDraft ?? '').toContain(
+      'Product curation is team-owned',
+    );
+    expect(result.data?.customerReplyDraft ?? '').not.toContain(
+      'No live product matches',
+    );
     expect(mock.graphqlCallCount()).toBe(2);
     harness.tokenManager.stop();
   });

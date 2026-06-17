@@ -27,6 +27,11 @@
 - Continuity docs must preserve the clean-cut contract: unsupported old continuity rows fail closed and are not imported, backfilled, or repaired.
 - Memory tool docs must keep `memory_save` limited to canonical direct-save kinds (`preference`, `decision`, `fact`, `correction`, `constraint`) and state that common/global writes require approved admin or service authority.
 - For Boondi LLM payload and command-context questions, use `docs/BOONDI-LLM-CONTEXT-FLOW.md` as the local reference and verify against a fresh `GANTRY_LLM_PAYLOAD_LOG` trace before changing latency-sensitive behavior.
+- For Boondi local runtime-readiness docs, keep the primary gate on Gantry
+  plumbing: signed inbound webhook ACK, persisted/traceable processing,
+  dry-run outbound, and MCP request/response evidence. Treat CRM/Shopify
+  semantic scenario gates as separate product regression checks unless the task
+  explicitly asks for them.
 - Boondi command docs should lead with purpose, when to use it, what data it
   changes, and LLM payload behavior. Keep code paths as short evidence refs, not
   the primary explanation.

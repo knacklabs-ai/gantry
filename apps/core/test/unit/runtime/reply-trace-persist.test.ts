@@ -119,6 +119,68 @@ describe('persistReplyTrace', () => {
     });
   });
 
+  it('persists operational sections and gated cache payload slots', async () => {
+    const saved: MessageTraceRow[] = [];
+    const port = makePort(saved, {
+      payloadsEnabled: () => true,
+    });
+
+    await persistReplyTrace({
+      replyTrace: port,
+      kind: 'reply',
+      chatJid: 'wa:cache',
+      appId: 'app:test',
+      outboundMessageId: 'outbound:cache',
+      windowStart: 1000,
+      windowEnd: 1100,
+      operationalSections: [
+        { kind: 'message_persist', startedAt: 1000, ms: 10 },
+        {
+          kind: 'cache_use',
+          startedAt: 1010,
+          ms: 20,
+          payload: {
+            cache: {
+              provider: 'anthropic',
+              modelAlias: 'sonnet',
+              promptShapeKey: 'boondi-support:v1',
+              cacheReadTokens: 1024,
+              cacheWriteTokens: 0,
+              input: { sdk: 'request' },
+              output: { usage: 'response' },
+              capturedAt: '2026-06-17T12:30:00.000Z',
+            },
+          },
+        },
+      ],
+      now: () => new Date('2026-06-17T12:31:00.000Z'),
+    });
+
+    expect(saved).toHaveLength(1);
+    const timeline = saved[0].timingsJson as {
+      sections: Array<{ kind: string; label: string; ms: number }>;
+    };
+    expect(timeline.sections.map((section) => section.kind)).toEqual([
+      'message_persist',
+      'cache_use',
+      'gap',
+    ]);
+    expect(saved[0].payloadsJson).toEqual({
+      1: {
+        cache: {
+          provider: 'anthropic',
+          modelAlias: 'sonnet',
+          promptShapeKey: 'boondi-support:v1',
+          cacheReadTokens: 1024,
+          cacheWriteTokens: 0,
+          input: { sdk: 'request' },
+          output: { usage: 'response' },
+          capturedAt: '2026-06-17T12:30:00.000Z',
+        },
+      },
+    });
+  });
+
   it('does not save when there are no stages at all', async () => {
     const saved: MessageTraceRow[] = [];
     const port = makePort(saved);

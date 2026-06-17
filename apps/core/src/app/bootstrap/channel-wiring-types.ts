@@ -1,6 +1,7 @@
 import type {
   MessageDeliveryResult,
   MessageSendOptions,
+  MessageSendOwnershipToken,
   PermissionApprovalDecision,
   PermissionApprovalRequest,
   ProgressUpdateOptions,
@@ -24,6 +25,7 @@ import type {
 import type { Provider } from '../../channels/provider-registry.js';
 import type { logger } from '../../infrastructure/logging/logger.js';
 import type { RuntimeSecretProvider } from '../../domain/ports/runtime-secret-provider.js';
+import type { ConversationWorkNotificationPublisher } from '../../domain/ports/conversation-work-notifier.js';
 import type { AppId } from '../../domain/app/app.js';
 import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
 
@@ -78,6 +80,16 @@ export type DurableOutboundAttemptFactory = (
   input: DurableOutboundAttemptInput,
 ) => Promise<DurableOutboundAttempt>;
 
+export interface OutboundOwnershipVerificationInput {
+  destinationJid: string;
+  destinationThreadId?: string;
+  ownership: MessageSendOwnershipToken;
+}
+
+export type OutboundOwnershipVerifier = (
+  input: OutboundOwnershipVerificationInput,
+) => Promise<boolean>;
+
 declare const recoveryDispatchPermitBrand: unique symbol;
 
 export interface RecoveryDispatchPermitInput {
@@ -105,6 +117,8 @@ export interface ChannelWiringDeps {
   logger: Pick<typeof logger, 'info' | 'warn' | 'debug' | 'error'>;
   runtimeSecrets: RuntimeSecretProvider;
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<unknown>;
+  publishConversationWorkNotification?: ConversationWorkNotificationPublisher;
+  verifyOutboundOwnership?: OutboundOwnershipVerifier;
 }
 
 export interface ChannelWiring {

@@ -53,6 +53,14 @@ export const DEFAULT_BROWSER_USAGE_MAX_CONCURRENT_PER_SITE = 1;
 export const DEFAULT_WARM_POOL_ENABLED = false;
 export const DEFAULT_WARM_POOL_SIZE = 1;
 export const DEFAULT_WARM_POOL_IDLE_TTL_MS = 240_000;
+export const DEFAULT_WARM_POOL_MAX_BOUND_WORKERS = 100;
+export const DEFAULT_WARM_POOL_CACHE_PREWARM_ENABLED = false;
+export const DEFAULT_WARM_POOL_CACHE_PREWARM_CONCURRENCY = 1;
+export const DEFAULT_RUNNER_IDLE_TIMEOUT_MS = 1_800_000;
+export const DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS = 45_000;
+export const DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS = 15_000;
+export const DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT = 100;
+export const DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS = 1_000;
 
 export function getDefaultMemoryBackfillSettings(): RuntimeMemoryBackfillSettings {
   return {
@@ -140,6 +148,18 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       enabled: DEFAULT_WARM_POOL_ENABLED,
       size: DEFAULT_WARM_POOL_SIZE,
       idleTtlMs: DEFAULT_WARM_POOL_IDLE_TTL_MS,
+      maxBoundWorkers: DEFAULT_WARM_POOL_MAX_BOUND_WORKERS,
+      cachePrewarmEnabled: DEFAULT_WARM_POOL_CACHE_PREWARM_ENABLED,
+      cachePrewarmConcurrency: DEFAULT_WARM_POOL_CACHE_PREWARM_CONCURRENCY,
+    },
+    runner: {
+      idleTimeoutMs: DEFAULT_RUNNER_IDLE_TIMEOUT_MS,
+    },
+    ownership: {
+      leaseTtlMs: DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS,
+      reconcilerIntervalMs: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
+      reconcilerLimit: DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
+      shutdownClaimWaitMs: DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
     },
   };
   const browser: RuntimeBrowserSettings = {

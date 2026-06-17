@@ -4,6 +4,7 @@ export * from './browser.js';
 export * from './capability-secrets.js';
 export * from './providers.js';
 export * from './conversations.js';
+export * from './conversation-owner-leases.js';
 export * from './control-http.js';
 export * from './events.js';
 export * from './external-ingress.js';

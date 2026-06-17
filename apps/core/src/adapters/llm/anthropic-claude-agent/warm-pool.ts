@@ -6,17 +6,18 @@ import {
   writeBoundIdentityFilePath,
   type BoundIdentity,
 } from '../../../runner/mcp/bound-identity.js';
-import type {
-  BoundRun,
-  ConversationBindScope,
-  SharedBootRecipe,
-  WarmBindDelivery,
-  WarmWorkerHandle,
+import {
+  cacheShapeKeyOf,
+  type BoundRun,
+  type ConversationBindScope,
+  type SharedBootRecipe,
+  type WarmBindDelivery,
+  type WarmWorkerCachePrewarmResult,
+  type WarmWorkerHandle,
 } from '../../../application/agent-execution/warm-pool-capable.js';
 
 const READY_MARKER = 'awaiting bind';
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
-const CACHE_PROBE_ENV = 'GANTRY_WARM_POOL_CACHE_PROBE';
 
 type SpawnFunction = typeof nodeSpawn;
 
@@ -96,6 +97,7 @@ export class AnthropicWarmPoolController {
     const handle: WarmWorkerHandle = {
       id: processName,
       key: recipe.key,
+      cacheShapeKey: cacheShapeKeyOf(recipe),
       bornAt: this.now(),
       processName,
       ...(env.GANTRY_IPC_DIR ? { ipcDir: env.GANTRY_IPC_DIR } : {}),
@@ -169,9 +171,18 @@ export class AnthropicWarmPoolController {
     }
   }
 
-  async prewarmCaches(handle: WarmWorkerHandle): Promise<void> {
-    if (process.env[CACHE_PROBE_ENV] !== '1') return;
+  async prewarmCaches(
+    handle: WarmWorkerHandle,
+  ): Promise<WarmWorkerCachePrewarmResult> {
+    if (!this.cachePrewarmProbe) {
+      // prewarm() waits for the runner's Anthropic SDK startup() to complete.
+      if (handle.cacheShapeKey) {
+        return { status: 'succeeded' };
+      }
+      return { status: 'skipped', reason: 'probe_unavailable' };
+    }
     await this.cachePrewarmProbe?.(handle);
+    return { status: 'succeeded' };
   }
 
   async healthCheck(handle: WarmWorkerHandle): Promise<boolean> {

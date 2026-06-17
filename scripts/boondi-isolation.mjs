@@ -23,7 +23,9 @@ import { gantryEnv, schemaEnv } from './lib/runtime-env.mjs';
 
 const CONN = gantryEnv('GANTRY_DATABASE_URL') || gantryEnv('BOONDI_CRM_DATABASE_URL');
 const SCHEMA = schemaEnv('GANTRY_DB_SCHEMA', 'gantry');
-const SETTLE_MS = Number(process.env.ISOLATION_SETTLE_MS || 60_000);
+// This is a correctness/bleed gate, not a latency benchmark. Concurrent live
+// tool turns can validly reply after 60s under local model/provider load.
+const SETTLE_MS = Number(process.env.ISOLATION_SETTLE_MS || 180_000);
 // Keep concurrency within host capacity (warm sessions stall the group loop past ~5).
 const N = Math.min(Number(process.env.ISOLATION_USERS || 4), ISOLATION_PHONES.length);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

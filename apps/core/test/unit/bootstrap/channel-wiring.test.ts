@@ -42,6 +42,7 @@ import { Provider } from '@core/channels/provider-registry.js';
 import { AsyncTaskQueue } from '@core/app/bootstrap/async-task-queue.js';
 import { createChannelPersistenceHandlers } from '@core/app/bootstrap/channel-persistence-handlers.js';
 import { createChannelWiring } from '@core/app/bootstrap/channel-wiring.js';
+import { sanitizeDeliveryError } from '@core/app/bootstrap/channel-wiring-delivery-guards.js';
 import { createPermissionApprovalRequester } from '@core/app/bootstrap/channel-wiring-interactions.js';
 import { PERMISSION_APPROVAL_TIMEOUT_MS } from '@core/config/index.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
@@ -51,11 +52,13 @@ import { AmbiguousDurableDeliveryError } from '@core/domain/messages/durable-del
 function makeRuntimeSettings(enabled: {
   telegram: boolean;
   slack: boolean;
+  interakt?: boolean;
 }): RuntimeSettings {
   return {
     providers: {
       telegram: { enabled: enabled.telegram },
       slack: { enabled: enabled.slack },
+      interakt: { enabled: enabled.interakt ?? false },
     },
     memory: {
       enabled: true,
@@ -171,6 +174,17 @@ function makeProvider(
 }
 
 describe('createChannelWiring', () => {
+  it('keeps rate-limit delivery errors bounded while preserving retry-after metadata', () => {
+    const err = Object.assign(new Error('x'.repeat(700)), {
+      retryAfterSeconds: 30,
+    });
+
+    const sanitized = sanitizeDeliveryError(err, 'interakt');
+
+    expect(sanitized).toHaveLength(500);
+    expect(sanitized).toMatch(/; retry_after_seconds=30$/);
+  });
+
   it('writes a host-side timeout denial when a channel approval surface wedges', async () => {
     vi.useFakeTimers();
     try {
@@ -596,7 +610,7 @@ describe('createChannelWiring', () => {
     );
   });
 
-  it('auto-registers new Interakt direct conversations from providers.interakt.default_agent', async () => {
+  it('routes new Interakt direct conversations through providers.interakt.default_agent without persisting a route', async () => {
     const routes: Record<string, any> = {
       'app:default': {
         name: 'Default Agent',
@@ -702,7 +716,8 @@ describe('createChannelWiring', () => {
     expect(storeMessage.mock.invocationCallOrder[0]).toBeLessThan(
       enqueueMessageCheck.mock.invocationCallOrder[0],
     );
-    expect(app.registerGroup).toHaveBeenCalledWith(
+    expect(app.registerGroup).not.toHaveBeenCalled();
+    expect(app.projectConversationRoute).toHaveBeenCalledWith(
       'wa:918097579999',
       expect.objectContaining({
         name: 'Boondi',
@@ -710,18 +725,23 @@ describe('createChannelWiring', () => {
         trigger: '@Boondi',
         requiresTrigger: false,
         conversationKind: 'dm',
-        // Persona and model must flow onto the synthesized route, mirroring
-        // what desired-state-service.ts populates for bindings.
+        // Persona and model must flow onto the virtual route, mirroring what
+        // desired-state-service.ts populates for persisted bindings.
         agentConfig: { model: 'sonnet', persona: 'sales' },
       }),
     );
+    expect(routes['wa:918097579999']).toMatchObject({
+      folder: 'boondi_support',
+      conversationKind: 'dm',
+      agentConfig: { model: 'sonnet', persona: 'sales' },
+    });
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({
         chatJid: 'wa:918097579999',
         folder: 'boondi_support',
         source: 'default-agent',
       }),
-      'Auto-registered Interakt direct conversation route',
+      'Projected virtual Interakt direct conversation route from provider default agent',
     );
   });
 
@@ -784,6 +804,148 @@ describe('createChannelWiring', () => {
     expect(storeMessage.mock.invocationCallOrder[0]).toBeLessThan(
       enqueueMessageCheck.mock.invocationCallOrder[0],
     );
+  });
+
+  it('publishes a sanitized conversation-work doorbell instead of locally waking after persisting a new inbound message', async () => {
+    const routes: Record<string, any> = {
+      'wa:918097570021': {
+        name: 'Boondi',
+        folder: 'boondi_support',
+        trigger: '@Boondi',
+        added_at: '2026-05-20T19:30:00.000Z',
+        requiresTrigger: false,
+        conversationKind: 'dm',
+      },
+    };
+    const app = makeApp(routes);
+    const storeMessage = vi.fn(async () => ({
+      status: 'inserted_new_message',
+      messageId: 'message:wa:918097570021:wa-existing-route',
+    }));
+    const publishConversationWorkNotification = vi.fn(async () => undefined);
+    const enqueueMessageCheck = vi.fn();
+    const handlers = createChannelPersistenceHandlers({
+      app,
+      resolved: {
+        appId: 'app:default',
+        providerIds: [],
+        loadSenderAllowlist: vi.fn(() => ({}) as any),
+        loadSenderControlAllowlist: vi.fn(() => ({}) as any),
+        shouldDropMessage: vi.fn(() => false),
+        isSenderAllowed: vi.fn(() => true),
+        isSenderControlAllowed: vi.fn(() => true),
+        shouldLogDenied: vi.fn(() => false),
+        asRemoteControlCommand: vi.fn(() => null),
+        handleRemoteControlCommand: vi.fn(async () => {}),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          debug: vi.fn(),
+          error: vi.fn(),
+        },
+        opsRepository: { storeMessage } as any,
+      } as any,
+      ops: () => ({ storeMessage, storeChatMetadata: vi.fn() }) as any,
+      findBoundChannel: vi.fn(),
+      persistenceQueue: new AsyncTaskQueue(4, 100),
+      enqueueMessageCheck,
+      publishConversationWorkNotification,
+    } as any);
+
+    const msg = {
+      id: 'wa-existing-route',
+      chat_jid: 'wa:918097570021',
+      provider: 'interakt',
+      sender: '918097570021',
+      sender_name: 'Existing Customer',
+      content: 'Can you check my latest order?',
+      timestamp: '2026-05-22T11:46:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+      thread_id: 'thread-1',
+      external_message_id: 'interakt-message-1',
+    };
+
+    await handlers.onMessage('wa:918097570021', msg);
+
+    expect(publishConversationWorkNotification).toHaveBeenCalledWith({
+      appId: 'app:default',
+      conversationId: 'wa:918097570021',
+      threadId: 'thread-1',
+      messageId: 'message:wa:918097570021:wa-existing-route',
+    });
+    expect(
+      JSON.stringify(publishConversationWorkNotification.mock.calls[0]?.[0]),
+    ).not.toContain('Can you check my latest order?');
+    expect(storeMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      publishConversationWorkNotification.mock.invocationCallOrder[0],
+    );
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
+  it('does not wake an existing Interakt direct conversation when inbound persistence reports a duplicate', async () => {
+    const routes: Record<string, any> = {
+      'wa:918097570011': {
+        name: 'Boondi',
+        folder: 'boondi_support',
+        trigger: '@Boondi',
+        added_at: '2026-05-20T19:30:00.000Z',
+        requiresTrigger: false,
+        conversationKind: 'dm',
+      },
+    };
+    const app = makeApp(routes);
+    const storeMessage = vi.fn(async () => ({
+      status: 'duplicate_existing_message',
+      messageId: 'message:wa:918097570011:wa-existing-route',
+    }));
+    const publishConversationWorkNotification = vi.fn(async () => undefined);
+    const enqueueMessageCheck = vi.fn();
+    const handlers = createChannelPersistenceHandlers({
+      app,
+      resolved: {
+        providerIds: [],
+        loadSenderAllowlist: vi.fn(() => ({}) as any),
+        loadSenderControlAllowlist: vi.fn(() => ({}) as any),
+        shouldDropMessage: vi.fn(() => false),
+        isSenderAllowed: vi.fn(() => true),
+        isSenderControlAllowed: vi.fn(() => true),
+        shouldLogDenied: vi.fn(() => false),
+        asRemoteControlCommand: vi.fn(() => null),
+        handleRemoteControlCommand: vi.fn(async () => {}),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          debug: vi.fn(),
+          error: vi.fn(),
+        },
+        opsRepository: { storeMessage } as any,
+      },
+      ops: () => ({ storeMessage, storeChatMetadata: vi.fn() }) as any,
+      findBoundChannel: vi.fn(),
+      persistenceQueue: new AsyncTaskQueue(4, 100),
+      enqueueMessageCheck,
+      publishConversationWorkNotification,
+    } as any);
+
+    const msg = {
+      id: 'wa-existing-route-redelivery',
+      chat_jid: 'wa:918097570011',
+      provider: 'interakt',
+      sender: '918097570011',
+      sender_name: 'Existing Customer',
+      content: 'Can you check my latest order?',
+      timestamp: '2026-05-22T11:46:10.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+      external_message_id: 'interakt-delivery-1',
+    };
+
+    await handlers.onMessage('wa:918097570011', msg);
+
+    expect(storeMessage).toHaveBeenCalledWith(msg);
+    expect(publishConversationWorkNotification).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
   it('debounces event-pipe wakes for rapid inbound messages to preserve batching', async () => {
@@ -1439,6 +1601,113 @@ describe('createChannelWiring', () => {
     );
   });
 
+  it('blocks stale owner tokens before live provider sends and emits a fence event', async () => {
+    const app = makeApp();
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+    const verifyOutboundOwnership = vi.fn(async () => false);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'sl:C123'),
+      sendMessage: vi.fn(async () => ({ externalMessageId: '171.123' })),
+    });
+
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'slack',
+          vi.fn(() => outbound),
+        ),
+      ],
+      publishRuntimeEvent,
+      verifyOutboundOwnership,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: false, slack: true }),
+    );
+
+    await expect(
+      wiring.sendMessage('sl:C123', 'done', {
+        durability: 'best_effort',
+        messageOptions: {
+          threadId: '1700.1',
+          ownership: {
+            appId: 'default',
+            conversationId: 'conversation:sl:C123',
+            threadId: 'thread:sl:C123:1700.1',
+            ownerInstanceId: 'server-a',
+            leaseVersion: 7,
+          },
+        },
+      }),
+    ).rejects.toThrow(/outbound ownership fence/i);
+
+    expect(outbound.sendMessage).not.toHaveBeenCalled();
+    expect(verifyOutboundOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationJid: 'sl:C123',
+        destinationThreadId: '1700.1',
+        ownership: expect.objectContaining({
+          ownerInstanceId: 'server-a',
+          leaseVersion: 7,
+        }),
+      }),
+    );
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'outbound.fence',
+        conversationId: 'sl:C123',
+        threadId: '1700.1',
+        actor: 'runtime',
+        responseMode: 'none',
+        payload: expect.objectContaining({
+          kind: 'outbound_fence',
+          allowed: false,
+          ownerInstanceId: 'server-a',
+          leaseVersion: 7,
+        }),
+      }),
+    );
+  });
+
+  it('strips ownership tokens before sending to channel adapters', async () => {
+    const app = makeApp();
+    const verifyOutboundOwnership = vi.fn(async () => true);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'sl:C123'),
+      sendMessage: vi.fn(async () => ({ externalMessageId: '171.123' })),
+    });
+
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'slack',
+          vi.fn(() => outbound),
+        ),
+      ],
+      verifyOutboundOwnership,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: false, slack: true }),
+    );
+
+    await wiring.sendMessage('sl:C123', 'done', {
+      durability: 'best_effort',
+      messageOptions: {
+        threadId: '1700.1',
+        ownership: {
+          appId: 'default',
+          conversationId: 'conversation:sl:C123',
+          threadId: 'thread:sl:C123:1700.1',
+          ownerInstanceId: 'server-a',
+          leaseVersion: 7,
+        },
+      },
+    });
+
+    expect(outbound.sendMessage).toHaveBeenCalledWith('sl:C123', 'done', {
+      threadId: '1700.1',
+    });
+  });
+
   it('requires a channel-minted recovery permit for provider-level recovery sends', async () => {
     const app = makeApp();
     const outbound = makeChannel({
@@ -1508,6 +1777,96 @@ describe('createChannelWiring', () => {
       { threadId: '171.000' },
     );
     expect(storeMessage).not.toHaveBeenCalled();
+  });
+
+  it('blocks stale owner tokens before recovery provider sends', async () => {
+    const app = makeApp();
+    const verifyOutboundOwnership = vi.fn(async () => false);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'sl:C123'),
+      sendMessage: vi.fn(async () => ({ externalMessageId: '171.123' })),
+    });
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'slack',
+          vi.fn(() => outbound),
+        ),
+      ],
+      verifyOutboundOwnership,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: false, slack: true }),
+    );
+    const permit = wiring.createRecoveryDispatchPermit({
+      deliveryId: 'delivery:1',
+      itemId: 'delivery-item:1',
+      destinationJid: 'sl:C123',
+      canonicalText: 'Recovered outbound',
+      threadId: '171.000',
+    });
+
+    await expect(
+      wiring.sendProviderMessage('sl:C123', 'Recovered outbound', {
+        permit,
+        messageOptions: {
+          threadId: '171.000',
+          ownership: {
+            appId: 'default',
+            conversationId: 'conversation:sl:C123',
+            threadId: 'thread:sl:C123:171.000',
+            ownerInstanceId: 'server-stale',
+            leaseVersion: 3,
+          },
+        },
+      }),
+    ).rejects.toThrow(/outbound ownership fence/i);
+
+    expect(outbound.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('blocks stale owner tokens before dry-run test sends', async () => {
+    const app = makeApp();
+    const verifyOutboundOwnership = vi.fn(async () => false);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'tg:919654405340'),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'tgid.op' })),
+    });
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => outbound),
+        ),
+      ],
+      verifyOutboundOwnership,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    process.env.GANTRY_OUTBOUND_DRYRUN = '1';
+    process.env.GANTRY_TEST_OPERATOR_PHONE = '919654405340';
+    try {
+      await expect(
+        wiring.sendMessage('tg:919654405340', 'hello', {
+          durability: 'best_effort',
+          messageOptions: {
+            ownership: {
+              appId: 'default',
+              conversationId: 'conversation:tg:919654405340',
+              threadId: null,
+              ownerInstanceId: 'server-stale',
+              leaseVersion: 1,
+            },
+          },
+        }),
+      ).rejects.toThrow(/outbound ownership fence/i);
+      expect(outbound.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.GANTRY_OUTBOUND_DRYRUN;
+      delete process.env.GANTRY_TEST_OPERATOR_PHONE;
+    }
   });
 
   it('fails closed before provider send when durable outbound delivery storage is unavailable', async () => {
@@ -1616,6 +1975,78 @@ describe('createChannelWiring', () => {
     expect(error).toHaveBeenCalledWith(
       { err: persistErr, jid: 'sl:C123' },
       'Failed to persist outbound delivery failure',
+    );
+  });
+
+  it('persists provider retry-after metadata for rate-limited live sends', async () => {
+    const app = makeApp();
+    const rateLimitError = Object.assign(
+      new Error('Interakt rate limit exceeded (HTTP 429)'),
+      {
+        retryAfterSeconds: 5,
+      },
+    );
+    const storeMessage = vi.fn().mockResolvedValue(undefined);
+    const settleFailed = vi.fn(async () => undefined);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'wa:917003705584'),
+      sendMessage: vi.fn(async () => {
+        throw rateLimitError;
+      }),
+    });
+
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'interakt',
+          vi.fn(() => outbound),
+          {
+            jidPrefix: 'wa:',
+            isGroupJid: (jid: string) => jid.startsWith('wa:'),
+            isEnabled: (settings: RuntimeSettings) =>
+              settings.providers.interakt?.enabled === true,
+            formatting: 'plain',
+          },
+        ),
+      ],
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+        error: vi.fn(),
+      },
+      opsRepository: { storeMessage } as any,
+    });
+    wiring.setDurableOutboundAttemptFactory(
+      vi.fn(async () => ({
+        settleSent: vi.fn(async () => undefined),
+        settleFailed,
+        settlePartiallyDelivered: vi.fn(async () => undefined),
+      })),
+    );
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: false, slack: false, interakt: true }),
+    );
+
+    await expect(
+      wiring.sendMessage('wa:917003705584', 'done', {
+        durability: 'required',
+      }),
+    ).rejects.toThrow(rateLimitError);
+
+    const expectedError =
+      'Interakt rate limit exceeded (HTTP 429); retry_after_seconds=5';
+    expect(settleFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expectedError,
+      }),
+    );
+    expect(storeMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chat_jid: 'wa:917003705584',
+        delivery_status: 'failed',
+        delivery_error: expectedError,
+      }),
     );
   });
 
@@ -2039,6 +2470,109 @@ describe('createChannelWiring', () => {
       threadId: 'thread-1',
     });
     expect(outbound.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('blocks stale owner tokens before streaming provider sends and emits a fence event', async () => {
+    const app = makeApp();
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+    const verifyOutboundOwnership = vi.fn(async () => false);
+    const streamSink = vi.fn(async () => true);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'tg:-123'),
+      sendStreamingChunk: streamSink,
+    });
+
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => outbound),
+        ),
+      ],
+      publishRuntimeEvent,
+      verifyOutboundOwnership,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    await expect(
+      wiring.sendStreamingChunk('tg:-123', 'chunk', {
+        threadId: 'thread-1',
+        ownership: {
+          appId: 'default',
+          conversationId: 'conversation:tg:-123',
+          threadId: 'thread:tg:-123:thread-1',
+          ownerInstanceId: 'server-a',
+          leaseVersion: 7,
+        },
+      }),
+    ).rejects.toThrow(/outbound ownership fence/i);
+
+    expect(streamSink).not.toHaveBeenCalled();
+    expect(verifyOutboundOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationJid: 'tg:-123',
+        destinationThreadId: 'thread-1',
+        ownership: expect.objectContaining({
+          ownerInstanceId: 'server-a',
+          leaseVersion: 7,
+        }),
+      }),
+    );
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'outbound.fence',
+        conversationId: 'tg:-123',
+        threadId: 'thread-1',
+        actor: 'runtime',
+        responseMode: 'none',
+        payload: expect.objectContaining({
+          kind: 'outbound_fence',
+          allowed: false,
+          ownerInstanceId: 'server-a',
+          leaseVersion: 7,
+        }),
+      }),
+    );
+  });
+
+  it('strips ownership tokens before streaming to channel adapters', async () => {
+    const app = makeApp();
+    const verifyOutboundOwnership = vi.fn(async () => true);
+    const streamSink = vi.fn(async () => true);
+    const outbound = makeChannel({
+      ownsJid: vi.fn((jid: string) => jid === 'tg:-123'),
+      sendStreamingChunk: streamSink,
+    });
+
+    const wiring = createChannelWiring(app, {
+      providerIds: [
+        makeProvider(
+          'telegram',
+          vi.fn(() => outbound),
+        ),
+      ],
+      verifyOutboundOwnership,
+    });
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    await wiring.sendStreamingChunk('tg:-123', 'chunk', {
+      threadId: 'thread-1',
+      ownership: {
+        appId: 'default',
+        conversationId: 'conversation:tg:-123',
+        threadId: 'thread:tg:-123:thread-1',
+        ownerInstanceId: 'server-a',
+        leaseVersion: 7,
+      },
+    });
+
+    expect(streamSink).toHaveBeenCalledWith('tg:-123', 'chunk', {
+      threadId: 'thread-1',
+    });
   });
 
   it('calls provider streaming sinks for final chunks and returns their delivery result', async () => {

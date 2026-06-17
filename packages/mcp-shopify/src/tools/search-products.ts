@@ -24,6 +24,13 @@ export type ProductSearchSummary = Pick<
   'id' | 'handle' | 'title' | 'priceRange' | 'available'
 >;
 
+interface EmptyProductReplyContract {
+  status: 'success';
+  useCustomerReplyDraft: boolean;
+  mustNotUseHiccupWording: boolean;
+  emptyProductResult: boolean;
+}
+
 export function buildProductQuery(args: {
   query?: string;
   tag?: string;
@@ -51,6 +58,23 @@ export function compactProductSearchSummary(
     title: product.title,
     priceRange: product.priceRange,
     available: product.available,
+  };
+}
+
+function buildEmptyProductReplyDraft(args: {
+  query?: string;
+  tag?: string;
+}): string {
+  const target = args.query?.trim() || args.tag?.trim() || 'a matching product';
+  return `I couldn't find ${target} in our current catalogue.`;
+}
+
+function emptyProductReplyContract(): EmptyProductReplyContract {
+  return {
+    status: 'success',
+    useCustomerReplyDraft: true,
+    mustNotUseHiccupWording: true,
+    emptyProductResult: true,
   };
 }
 
@@ -87,6 +111,13 @@ export function registerSearchProducts(
           );
         }
         const summaries = filtered.map(compactProductSearchSummary);
+        if (summaries.length === 0) {
+          return jsonContent({
+            customerReplyDraft: buildEmptyProductReplyDraft(args),
+            replyContract: emptyProductReplyContract(),
+            products: summaries,
+          });
+        }
         return jsonContent({
           products: summaries,
         });

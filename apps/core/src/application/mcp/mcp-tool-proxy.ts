@@ -34,6 +34,8 @@ const MCP_PROXY_CLIENT_IDLE_MS = 0;
 
 type CachedMcpClient = {
   client: Client;
+  activeOperations: number;
+  closeWhenIdle?: boolean;
   idleTimer?: ReturnType<typeof setTimeout>;
 };
 
@@ -92,7 +94,7 @@ export class McpToolProxy {
             })),
         });
       } finally {
-        scheduleClientIdleClose(capability);
+        releaseCachedClient(capability);
       }
     }
     return { servers };
@@ -133,6 +135,7 @@ export class McpToolProxy {
       callerIdentityJid,
       arguments: input.arguments ?? {},
     });
+    let closeClientAfterCall = false;
     try {
       const result = await client.callTool(
         {
@@ -156,10 +159,10 @@ export class McpToolProxy {
         chatJid: this.options.conversationJid,
         error: err instanceof Error ? err.message : String(err),
       });
-      await closeCachedClient(capability);
+      closeClientAfterCall = true;
       throw err;
     } finally {
-      scheduleClientIdleClose(capability);
+      releaseCachedClient(capability, { close: closeClientAfterCall });
     }
   }
 
@@ -213,6 +216,7 @@ export class McpToolProxy {
         clearTimeout(cached.idleTimer);
         cached.idleTimer = undefined;
       }
+      cached.activeOperations += 1;
       return cached.client;
     }
     const client = new Client(
@@ -221,7 +225,7 @@ export class McpToolProxy {
     );
     const transport = await this.createTransport(capability);
     await client.connect(transport, { timeout: MCP_PROXY_TIMEOUT_MS });
-    clientCache.set(cacheKey, { client });
+    clientCache.set(cacheKey, { client, activeOperations: 1 });
     return client;
   }
 
@@ -339,13 +343,23 @@ function mcpClientCacheKey(capability: MaterializedMcpCapability): string {
   return `${capability.name}:${JSON.stringify(capability.config)}`;
 }
 
-function scheduleClientIdleClose(capability: MaterializedMcpCapability): void {
+function releaseCachedClient(
+  capability: MaterializedMcpCapability,
+  options: { close?: boolean } = {},
+): void {
   const cacheKey = mcpClientCacheKey(capability);
   const cached = clientCache.get(cacheKey);
   if (!cached) return;
   if (cached.idleTimer) {
     clearTimeout(cached.idleTimer);
     cached.idleTimer = undefined;
+  }
+  cached.activeOperations = Math.max(0, cached.activeOperations - 1);
+  cached.closeWhenIdle = cached.closeWhenIdle || options.close;
+  if (cached.activeOperations > 0) return;
+  if (cached.closeWhenIdle) {
+    void closeCachedClient(capability);
+    return;
   }
   if (MCP_PROXY_CLIENT_IDLE_MS <= 0) {
     void closeCachedClient(capability);

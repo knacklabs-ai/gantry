@@ -5,8 +5,8 @@ import path from 'path';
 import {
   AGENT_MAX_OUTPUT_SIZE,
   AGENT_TIMEOUT,
-  IDLE_TIMEOUT,
   LOG_LEVEL,
+  RUNNER_IDLE_TIMEOUT_MS,
 } from '../config/index.js';
 import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
 import { logger, redactString } from '../infrastructure/logging/logger.js';
@@ -265,7 +265,7 @@ export function executeRunnerProcess(
     const hasExplicitTimeout = options?.timeoutMs != null;
     const timeoutMs = hasExplicitTimeout
       ? configuredTimeout
-      : Math.max(configuredTimeout, IDLE_TIMEOUT + 30_000);
+      : Math.max(configuredTimeout, RUNNER_IDLE_TIMEOUT_MS + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;

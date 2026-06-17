@@ -117,8 +117,18 @@ export interface RuntimeChatMetadataRepository {
   getAllChats(): Promise<ChatInfo[]>;
 }
 
+export type RuntimeMessageStoreStatus =
+  | 'inserted_new_message'
+  | 'duplicate_existing_message'
+  | 'updated_existing_projection';
+
+export interface RuntimeMessageStoreResult {
+  status: RuntimeMessageStoreStatus;
+  messageId: string;
+}
+
 export interface RuntimeMessageRepository {
-  storeMessage(msg: NewMessage): Promise<void>;
+  storeMessage(msg: NewMessage): Promise<RuntimeMessageStoreResult>;
   getNewMessages(
     jids: string[],
     lastCursor: string,
@@ -133,6 +143,7 @@ export interface RuntimeMessageRepository {
     limit?: number,
     options?: { threadId?: string | null },
   ): Promise<NewMessage[]>;
+  listInboundConversationJids?(input: { limit: number }): Promise<string[]>;
   getMessageThreadIds(conversationJid: string): Promise<Array<string | null>>;
   getLastBotMessageCursor(conversationJid: string): Promise<
     | {

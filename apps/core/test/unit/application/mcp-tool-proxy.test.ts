@@ -3,10 +3,72 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationError } from '@core/application/common/application-error.js';
 import {
   createGuardedMcpFetch,
+  McpToolProxy,
   projectMcpProxyCallerIdentity,
 } from '@core/application/mcp/mcp-tool-proxy.js';
 import type { MaterializedMcpCapability } from '@core/application/mcp/mcp-server-service.js';
+import type { McpServerRepository } from '@core/domain/ports/repositories.js';
 import { CUSTOMER_IDENTITY_MISMATCH_MESSAGE } from '@core/shared/user-visible-messages.js';
+
+type PendingMcpCall = {
+  name: string;
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+};
+
+type MockMcpClient = {
+  closed: boolean;
+  close: ReturnType<typeof vi.fn>;
+  connect: ReturnType<typeof vi.fn>;
+  callTool: ReturnType<typeof vi.fn>;
+  listTools: ReturnType<typeof vi.fn>;
+};
+
+const sdkMocks = vi.hoisted(() => ({
+  clients: [] as MockMcpClient[],
+  pendingCalls: [] as PendingMcpCall[],
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: vi.fn().mockImplementation(function MockClient() {
+    const client: MockMcpClient = {
+      closed: false,
+      close: vi.fn(async () => {
+        client.closed = true;
+      }),
+      connect: vi.fn(async () => undefined),
+      callTool: vi.fn(
+        (input: { name: string }) =>
+          new Promise((resolve, reject) => {
+            sdkMocks.pendingCalls.push({
+              name: input.name,
+              resolve,
+              reject,
+            });
+          }),
+      ),
+      listTools: vi.fn(async () => ({ tools: [] })),
+    };
+    sdkMocks.clients.push(client);
+    return client;
+  }),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: vi
+    .fn()
+    .mockImplementation(function MockStreamableHTTPClientTransport() {
+      return {};
+    }),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
+  SSEClientTransport: vi
+    .fn()
+    .mockImplementation(function MockSSEClientTransport() {
+      return {};
+    }),
+}));
 
 const TEST_SECRET = 'test_secret_thirty_two_bytes_long_xx';
 
@@ -34,6 +96,8 @@ function httpCap(
 describe('createGuardedMcpFetch', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    sdkMocks.clients.length = 0;
+    sdkMocks.pendingCalls.length = 0;
   });
 
   it('rejects hostname fetches until MCP proxy has DNS-pinned transport', async () => {
@@ -66,6 +130,60 @@ describe('createGuardedMcpFetch', () => {
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://93.184.216.34/tools',
       expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+});
+
+describe('McpToolProxy', () => {
+  afterEach(() => {
+    sdkMocks.clients.length = 0;
+    sdkMocks.pendingCalls.length = 0;
+  });
+
+  it('keeps a shared MCP client open while another concurrent call is still running', async () => {
+    const repository = mcpRepositoryForProxyTest();
+    const proxy = new McpToolProxy(repository, {
+      tools: {} as never,
+      credentialEnv: {},
+    });
+    const baseInput = {
+      appId: 'app:test' as never,
+      agentId: 'agent:test' as never,
+      serverName: 'shopify-api',
+    };
+
+    const slow = proxy.callTool({
+      ...baseInput,
+      toolName: 'get_slow',
+      arguments: {},
+    });
+    await vi.waitFor(() => expect(sdkMocks.pendingCalls).toHaveLength(1));
+
+    const fast = proxy.callTool({
+      ...baseInput,
+      toolName: 'get_fast',
+      arguments: {},
+    });
+    await vi.waitFor(() => expect(sdkMocks.pendingCalls).toHaveLength(2));
+
+    const fastCall = sdkMocks.pendingCalls.find(
+      (call) => call.name === 'get_fast',
+    );
+    expect(fastCall).toBeDefined();
+    fastCall!.resolve({ content: [] });
+    await expect(fast).resolves.toEqual({ content: [] });
+
+    expect(sdkMocks.clients).toHaveLength(1);
+    expect(sdkMocks.clients[0]!.close).not.toHaveBeenCalled();
+
+    const slowCall = sdkMocks.pendingCalls.find(
+      (call) => call.name === 'get_slow',
+    );
+    expect(slowCall).toBeDefined();
+    slowCall!.resolve({ content: [] });
+    await expect(slow).resolves.toEqual({ content: [] });
+    await vi.waitFor(() =>
+      expect(sdkMocks.clients[0]!.close).toHaveBeenCalled(),
     );
   });
 });
@@ -152,3 +270,52 @@ describe('projectMcpProxyCallerIdentity', () => {
     }
   });
 });
+
+function mcpRepositoryForProxyTest(): McpServerRepository {
+  const now = '2026-06-17T00:00:00.000Z' as never;
+  const definition = {
+    id: 'mcp:shopify-api' as never,
+    appId: 'app:test' as never,
+    name: 'shopify-api',
+    status: 'active',
+    createdSource: 'admin',
+    riskClass: 'medium',
+    transport: 'http',
+    config: {
+      transport: 'http',
+      url: 'http://127.0.0.1:18081/mcp',
+    },
+    allowedToolPatterns: ['get_*'],
+    autoApproveToolPatterns: ['get_*'],
+    credentialRefs: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const binding = {
+    id: 'binding:shopify-api' as never,
+    appId: 'app:test' as never,
+    agentId: 'agent:test' as never,
+    serverId: definition.id,
+    status: 'active',
+    required: false,
+    permissionPolicyIds: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  return {
+    getServer: vi.fn(async () => definition),
+    getServerByName: vi.fn(async () => definition),
+    listServers: vi.fn(async () => [definition]),
+    saveServer: vi.fn(async () => undefined),
+    transitionServerStatus: vi.fn(async () => definition),
+    saveAgentBinding: vi.fn(async () => undefined),
+    disableAgentBinding: vi.fn(async () => binding),
+    listAgentBindings: vi.fn(async () => [binding]),
+    listAgentBindingsForAgents: vi.fn(async () => [binding]),
+    listMaterializedServersForAgent: vi.fn(async () => [
+      { definition, binding },
+    ]),
+    appendAuditEvent: vi.fn(async () => undefined),
+    listAuditEvents: vi.fn(async () => []),
+  };
+}

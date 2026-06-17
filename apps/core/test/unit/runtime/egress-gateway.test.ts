@@ -1,13 +1,28 @@
 import http from 'http';
 import net from 'net';
+import { createHash } from 'node:crypto';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@core/infrastructure/logging/logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
 
 import {
   closeEgressGateway,
   closeEgressGatewaysForTest,
   ensureEgressGateway,
 } from '@core/runtime/egress-gateway.js';
+import { logger } from '@core/infrastructure/logging/logger.js';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 afterEach(async () => {
   await closeEgressGatewaysForTest();
@@ -198,6 +213,33 @@ describe('egress gateway', () => {
       await target.close();
     }
   });
+
+  it('falls back from a preferred port collision without logging a generic server error', async () => {
+    const blocker = await startPreferredPortBlocker('test:egress-collision');
+    try {
+      const gateway = await ensureEgressGateway({
+        key: blocker.key,
+        settings: { denylist: [] },
+        principal: { appId: 'default', agentId: 'agent:test' },
+      });
+
+      expect(gateway.port).not.toBe(blocker.preferredPort);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: blocker.key,
+          preferredPort: blocker.preferredPort,
+          port: gateway.port,
+        }),
+        'Egress gateway preferred port was unavailable; using next stable candidate',
+      );
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Egress gateway server error',
+      );
+    } finally {
+      await blocker.close();
+    }
+  });
 });
 
 async function startTargetServer(): Promise<{
@@ -216,6 +258,60 @@ async function startTargetServer(): Promise<{
   }
   return {
     port: address.port,
+    close: () =>
+      new Promise((resolve) => {
+        server.close(() => resolve());
+      }),
+  };
+}
+
+async function startPreferredPortBlocker(prefix: string): Promise<{
+  key: string;
+  preferredPort: number;
+  close: () => Promise<void>;
+}> {
+  for (let i = 0; i < 100; i += 1) {
+    const key = `${prefix}:${i}`;
+    const preferredPort = preferredTestEgressGatewayPort(key);
+    try {
+      const server = await startServerOnPort(preferredPort);
+      return {
+        key,
+        preferredPort,
+        close: server.close,
+      };
+    } catch {
+      // Try another stable key when the local machine already uses this port.
+    }
+  }
+  throw new Error('Could not reserve an egress gateway preferred port.');
+}
+
+function preferredTestEgressGatewayPort(key: string): number {
+  const hash = createHash('sha256').update(key).digest();
+  return 18_080 + (hash.readUInt32BE(0) % 2_000);
+}
+
+async function startServerOnPort(port: number): Promise<{
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer((_req, res) => {
+    res.end('blocked');
+  });
+  await new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+  return {
     close: () =>
       new Promise((resolve) => {
         server.close(() => resolve());

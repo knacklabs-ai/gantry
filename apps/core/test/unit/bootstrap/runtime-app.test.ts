@@ -233,4 +233,113 @@ describe('runtime app credential binding', () => {
     expect(app.warmPool).toBe(warmPool);
     expect(capturedDeps?.warmPool).toBe(warmPool);
   });
+
+  it('composes a local worker inventory snapshot from warm pool and queue state', async () => {
+    const { createRuntimeApp } = await loadRuntimeAppWithGroupProcessorSpy();
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => null),
+      inventory: vi.fn(() => ({
+        availableTarget: 2,
+        genericAvailable: 1,
+        genericStarting: 1,
+        boundActive: 3,
+        boundIdle: 0,
+        boundDraining: 0,
+        maxBoundWorkers: 4,
+        cachePrewarm: {
+          pending: 0,
+          succeeded: 1,
+          skipped: 0,
+          failed: 0,
+        },
+        cacheShapes: [
+          {
+            cacheShapeKey: 'shape:test',
+            status: 'succeeded',
+            workers: 1,
+          },
+        ],
+      })),
+      release: vi.fn(async () => undefined),
+    };
+    const app = createRuntimeApp({
+      warmPool,
+      runtimeInstanceId: 'runtime:test',
+      runtimeHostname: 'test-host',
+      runtimeStartedAt: new Date('2026-06-17T00:00:00.000Z'),
+    });
+
+    expect(
+      app.getWorkerInventorySnapshot(new Date('2026-06-17T00:00:05.000Z')),
+    ).toEqual({
+      instanceId: 'runtime:test',
+      hostname: 'test-host',
+      startedAt: '2026-06-17T00:00:00.000Z',
+      lastHeartbeatAt: '2026-06-17T00:00:05.000Z',
+      warmPool: {
+        availableTarget: 2,
+        genericAvailable: 1,
+        genericStarting: 1,
+        boundActive: 3,
+        boundIdle: 0,
+        boundDraining: 0,
+        maxBoundWorkers: 4,
+        cachePrewarm: {
+          pending: 0,
+          succeeded: 1,
+          skipped: 0,
+          failed: 0,
+        },
+        cacheShapes: [
+          {
+            cacheShapeKey: 'shape:test',
+            status: 'succeeded',
+            workers: 1,
+          },
+        ],
+      },
+      queue: {
+        activeMessageRuns: 0,
+        pendingConversationKeys: 0,
+        maxMessageRuns: 3,
+      },
+    });
+  });
+
+  it('wires the ownership token resolver into group processing when provided', async () => {
+    const { createRuntimeApp, createGroupProcessor } =
+      await loadRuntimeAppWithGroupProcessorSpy();
+    const getMessageSendOwnershipToken = vi.fn();
+
+    createRuntimeApp({ getMessageSendOwnershipToken });
+    const capturedDeps = vi.mocked(createGroupProcessor).mock.calls[0]?.[0];
+
+    expect(capturedDeps?.getMessageSendOwnershipToken).toBe(
+      getMessageSendOwnershipToken,
+    );
+  });
+
+  it('exposes the ownership token resolver for runtime services', async () => {
+    const { createRuntimeApp } = await loadRuntimeAppWithGroupProcessorSpy();
+    const ownershipToken = {
+      appId: 'default',
+      conversationId: 'wa:918097570111',
+      threadId: null,
+      ownerInstanceId: 'runtime:test',
+      leaseVersion: 3,
+    };
+    const getMessageSendOwnershipToken = vi.fn(async () => ownershipToken);
+    const app = createRuntimeApp({ getMessageSendOwnershipToken });
+
+    await expect(
+      app.getMessageSendOwnershipToken({
+        conversationId: 'wa:918097570111',
+        threadId: null,
+      }),
+    ).resolves.toEqual(ownershipToken);
+    expect(getMessageSendOwnershipToken).toHaveBeenCalledWith({
+      conversationId: 'wa:918097570111',
+      threadId: null,
+    });
+  });
 });

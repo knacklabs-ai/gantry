@@ -78,6 +78,7 @@ import {
 import { createConversationOutboundProjection } from './conversation-outbound-projection.js';
 import { sanitizeRetryTailForCanonicalDestination } from './runtime-services-destination-hints.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
 export type { ChannelWiring } from './channel-wiring-types.js';
 
 export function createChannelWiring(
@@ -122,6 +123,120 @@ export function createChannelWiring(
       return undefined;
     }
   };
+
+  function stripInternalMessageOptions(
+    options?: MessageSendOptions,
+  ): MessageSendOptions | undefined {
+    if (!options) return undefined;
+    const { ownership: _ownership, ...channelOptions } = options;
+    return Object.keys(channelOptions).length > 0 ? channelOptions : undefined;
+  }
+
+  function stripInternalStreamingOptions(
+    options?: StreamingChunkOptions,
+  ): StreamingChunkOptions | undefined {
+    if (!options) return undefined;
+    const { ownership: _ownership, ...channelOptions } = options;
+    return Object.keys(channelOptions).length > 0 ? channelOptions : undefined;
+  }
+
+  async function publishOutboundFenceDiagnostic(input: {
+    jid: string;
+    provider: string;
+    sourceMessageId: string;
+    messageOptions?: MessageSendOptions | StreamingChunkOptions;
+    reason: string;
+  }): Promise<void> {
+    const ownership = input.messageOptions?.ownership;
+    if (!ownership || !resolved.publishRuntimeEvent) return;
+    try {
+      await resolved.publishRuntimeEvent({
+        appId: resolved.appId,
+        conversationId: input.jid as never,
+        ...(input.messageOptions?.threadId
+          ? { threadId: input.messageOptions.threadId as never }
+          : {}),
+        eventType: RUNTIME_EVENT_TYPES.OUTBOUND_FENCE,
+        actor: 'runtime',
+        responseMode: 'none',
+        payload: {
+          kind: 'outbound_fence',
+          allowed: false,
+          reason: input.reason,
+          provider: input.provider,
+          sourceMessageId: input.sourceMessageId,
+          ownerInstanceId: ownership.ownerInstanceId,
+          leaseVersion: ownership.leaseVersion,
+          ownershipConversationId: ownership.conversationId,
+          ownershipThreadId: ownership.threadId ?? null,
+        },
+      });
+    } catch (err) {
+      resolved.logger.warn(
+        { err, jid: input.jid, provider: input.provider },
+        'Failed to publish outbound fence diagnostic runtime event',
+      );
+    }
+  }
+
+  async function assertOutboundOwnershipFence(input: {
+    jid: string;
+    provider: string;
+    messageId: string;
+    messageOptions?: MessageSendOptions | StreamingChunkOptions;
+  }): Promise<void> {
+    const ownership = input.messageOptions?.ownership;
+    if (!ownership) return;
+    let allowed = false;
+    let reason = 'stale_owner';
+    try {
+      if (!resolved.verifyOutboundOwnership) {
+        reason = 'missing_verifier';
+      } else {
+        allowed = await resolved.verifyOutboundOwnership({
+          destinationJid: input.jid,
+          ...(input.messageOptions?.threadId
+            ? { destinationThreadId: input.messageOptions.threadId }
+            : {}),
+          ownership,
+        });
+      }
+    } catch (err) {
+      reason = 'verification_error';
+      resolved.logger.warn(
+        {
+          err,
+          jid: input.jid,
+          provider: input.provider,
+          ownerInstanceId: ownership.ownerInstanceId,
+          leaseVersion: ownership.leaseVersion,
+        },
+        'Outbound ownership fence verification failed closed',
+      );
+    }
+    if (allowed) return;
+
+    await publishOutboundFenceDiagnostic({
+      jid: input.jid,
+      provider: input.provider,
+      sourceMessageId: input.messageId,
+      messageOptions: input.messageOptions,
+      reason,
+    });
+    resolved.logger.warn(
+      {
+        jid: input.jid,
+        provider: input.provider,
+        ownerInstanceId: ownership.ownerInstanceId,
+        leaseVersion: ownership.leaseVersion,
+        reason,
+      },
+      'Outbound ownership fence blocked provider send',
+    );
+    throw new Error(
+      `Outbound ownership fence rejected provider send to ${input.jid}.`,
+    );
+  }
 
   let currentRuntimeSettings: RuntimeSettings;
   function findBoundChannel(jid: string): ChannelAdapter | undefined {
@@ -185,6 +300,8 @@ export function createChannelWiring(
       resolved,
       ops,
       persistenceQueue,
+      publishConversationWorkNotification:
+        resolved.publishConversationWorkNotification,
       enqueueMessageCheck: (chatJid) => {
         const enqueue = app.queue?.enqueueMessageCheck;
         if (typeof enqueue === 'function') {
@@ -348,6 +465,10 @@ export function createChannelWiring(
       reply: formatted,
     });
 
+    const providerMessageOptions = stripInternalMessageOptions(
+      options.messageOptions,
+    );
+
     if (process.env.GANTRY_OUTBOUND_DRYRUN === '1') {
       let deliveryStatus: 'sent' | 'failed' = 'sent';
       let delivery: MessageDeliveryResult | undefined;
@@ -358,14 +479,20 @@ export function createChannelWiring(
       let sendStartedAt: string | undefined;
       let sendCompletedAt: string | undefined;
       if (isTestOperatorJid(jid)) {
+        await assertOutboundOwnershipFence({
+          jid,
+          provider,
+          messageId,
+          messageOptions: options.messageOptions,
+        });
         sendStartedAt = nowIso();
         try {
           delivery = (
-            options.messageOptions
+            providerMessageOptions
               ? await channel.sendMessage(
                   jid,
                   formatted,
-                  options.messageOptions,
+                  providerMessageOptions,
                 )
               : await channel.sendMessage(jid, formatted)
           ) as MessageDeliveryResult | undefined;
@@ -453,12 +580,19 @@ export function createChannelWiring(
       outboundOps = undefined;
     }
 
+    await assertOutboundOwnershipFence({
+      jid,
+      provider,
+      messageId,
+      messageOptions: options.messageOptions,
+    });
+
     let result: MessageDeliveryResult | undefined;
     const sendStartedAt = nowIso();
     let sendCompletedAt: string | undefined;
     try {
-      const delivery = options.messageOptions
-        ? await channel.sendMessage(jid, formatted, options.messageOptions)
+      const delivery = providerMessageOptions
+        ? await channel.sendMessage(jid, formatted, providerMessageOptions)
         : await channel.sendMessage(jid, formatted);
       sendCompletedAt = nowIso();
       result = delivery as MessageDeliveryResult | undefined;
@@ -707,6 +841,12 @@ export function createChannelWiring(
 
     const sink = asStreamingSink(channel);
     if (!sink) return false;
+    await assertOutboundOwnershipFence({
+      jid,
+      provider: provider?.id ?? 'unknown',
+      messageId: `streaming:${options?.generation ?? 'unknown'}:${options?.done ? 'final' : 'chunk'}`,
+      messageOptions: options,
+    });
 
     // Customer-safety backstop for the STREAMING path — the streaming twin of
     // guardCustomerVisibleOutput on the non-streaming send. A leak token (MCP,
@@ -767,7 +907,8 @@ export function createChannelWiring(
       if (options?.done) streamingLeakGuards.delete(guardKey);
     }
 
-    return sink.sendStreamingChunk(jid, text, options);
+    const providerStreamingOptions = stripInternalStreamingOptions(options);
+    return sink.sendStreamingChunk(jid, text, providerStreamingOptions);
   }
 
   function resetStreaming(jid: string): void {

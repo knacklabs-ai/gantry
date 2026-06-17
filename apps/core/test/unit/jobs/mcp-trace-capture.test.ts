@@ -13,13 +13,18 @@ const runtimeHomes: string[] = [];
  * tool-call handler resolves a known result and we can assert the trace record
  * pushed into the injected collector hook.
  */
-async function loadHandlers(runtimeHome: string, callToolResult: unknown) {
+async function loadHandlers(
+  runtimeHome: string,
+  callToolResult: unknown,
+  callToolSpy?: (input: unknown) => void,
+) {
   vi.resetModules();
   vi.stubEnv('GANTRY_HOME', runtimeHome);
 
   vi.doMock('@core/application/mcp/mcp-tool-proxy.js', () => ({
     McpToolProxy: class {
-      async callTool() {
+      async callTool(input: unknown) {
+        callToolSpy?.(input);
         return callToolResult;
       }
     },
@@ -49,6 +54,7 @@ async function loadHandlers(runtimeHome: string, callToolResult: unknown) {
 
 function makeContext(opts: {
   recordReplyToolCall?: (runHandle: string, record: ToolCallRecord) => void;
+  verifySideEffectToolOwnership?: (input: unknown) => Promise<boolean>;
   runHandle?: string;
   responseKeyId: string;
 }) {
@@ -65,6 +71,7 @@ function makeContext(opts: {
       payload: {
         serverName: 'some-server',
         toolName: 'some_tool',
+        mutationIntent: 'read',
         arguments: { q: 'hello' },
       },
     },
@@ -83,10 +90,24 @@ function makeContext(opts: {
       ...(opts.recordReplyToolCall
         ? { recordReplyToolCall: opts.recordReplyToolCall }
         : {}),
+      ...(opts.verifySideEffectToolOwnership
+        ? { verifySideEffectToolOwnership: opts.verifySideEffectToolOwnership }
+        : {}),
     } as never,
     conversationBindings: {},
     sourceAgentFolderJids: [chatJid],
   };
+}
+
+async function registerTaskResponder(input: {
+  folder: string;
+  taskId: string;
+  onResponse: (response: Record<string, unknown>) => void;
+}) {
+  const router = await import('@core/runtime/ipc-response-router.js');
+  router.registerIpcResponder(input.folder, `task-${input.taskId}`, (signed) =>
+    input.onResponse(signed),
+  );
 }
 
 afterEach(() => {
@@ -114,6 +135,11 @@ describe('mcpCallToolHandler trace capture', () => {
       responseKeyId: envelope.responseKeyId,
       recordReplyToolCall: (runHandle, record) =>
         captured.push({ runHandle, record }),
+    });
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: () => undefined,
     });
 
     await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
@@ -146,6 +172,11 @@ describe('mcpCallToolHandler trace capture', () => {
       responseKeyId: envelope.responseKeyId,
       recordReplyToolCall: (_runHandle, record) => captured.push(record),
     });
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: () => undefined,
+    });
 
     await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
 
@@ -170,6 +201,11 @@ describe('mcpCallToolHandler trace capture', () => {
       responseKeyId: envelope.responseKeyId,
       recordReplyToolCall: (_runHandle, record) => captured.push(record),
     });
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: () => undefined,
+    });
 
     await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
     expect(captured[0].ok).toBe(false);
@@ -187,8 +223,267 @@ describe('mcpCallToolHandler trace capture', () => {
       responseKeyId: envelope.responseKeyId,
       recordReplyToolCall: (_runHandle, record) => captured.push(record),
     });
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: () => undefined,
+    });
 
     await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
     expect(captured.length).toBe(0);
+  });
+
+  it('blocks write-shaped MCP tool calls when the runtime no longer owns the conversation', async () => {
+    const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-trace-'));
+    runtimeHomes.push(runtimeHome);
+    const callTool = vi.fn();
+    const verifySideEffectToolOwnership = vi.fn(async () => false);
+    const { handlers, ipcAuth } = await loadHandlers(
+      runtimeHome,
+      { content: [{ type: 'text', text: 'mutated' }] },
+      callTool,
+    );
+    const envelope = ipcAuth.createIpcAuthEnvelope('main_agent');
+    const response: Record<string, unknown>[] = [];
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: (signed) => response.push(signed),
+    });
+    const ctx = makeContext({
+      runHandle: 'gantry-run-write',
+      responseKeyId: envelope.responseKeyId,
+      verifySideEffectToolOwnership,
+    });
+    ctx.data.payload = {
+      serverName: 'shopify',
+      toolName: 'update_order',
+      arguments: { orderId: 'gid://shopify/Order/1' },
+    };
+
+    await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
+
+    expect(verifySideEffectToolOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'chat@s.whatsapp.net',
+        threadId: null,
+        serverName: 'shopify',
+        toolName: 'update_order',
+        mutationIntent: 'write',
+      }),
+    );
+    expect(callTool).not.toHaveBeenCalled();
+    expect(response[0]).toMatchObject({
+      ok: false,
+      code: 'ownership_lost',
+    });
+  });
+
+  it('rejects unknown MCP tool names without explicit mutation metadata', async () => {
+    const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-trace-'));
+    runtimeHomes.push(runtimeHome);
+    const callTool = vi.fn();
+    const { handlers, ipcAuth } = await loadHandlers(
+      runtimeHome,
+      { content: [{ type: 'text', text: 'ran' }] },
+      callTool,
+    );
+    const envelope = ipcAuth.createIpcAuthEnvelope('main_agent');
+    const response: Record<string, unknown>[] = [];
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: (signed) => response.push(signed),
+    });
+    const ctx = makeContext({
+      responseKeyId: envelope.responseKeyId,
+    });
+    ctx.data.payload = {
+      serverName: 'some-server',
+      toolName: 'some_tool',
+      arguments: { q: 'hello' },
+    };
+
+    await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
+
+    expect(callTool).not.toHaveBeenCalled();
+    expect(response[0]).toMatchObject({
+      ok: false,
+      code: 'side_effect_metadata_required',
+    });
+  });
+
+  it('allows unknown MCP tool names when explicit metadata marks them read-only', async () => {
+    const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-trace-'));
+    runtimeHomes.push(runtimeHome);
+    const callTool = vi.fn();
+    const verifySideEffectToolOwnership = vi.fn(async () => false);
+    const { handlers, ipcAuth } = await loadHandlers(
+      runtimeHome,
+      { content: [{ type: 'text', text: 'read result' }] },
+      callTool,
+    );
+    const envelope = ipcAuth.createIpcAuthEnvelope('main_agent');
+    const response: Record<string, unknown>[] = [];
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: (signed) => response.push(signed),
+    });
+    const ctx = makeContext({
+      responseKeyId: envelope.responseKeyId,
+      verifySideEffectToolOwnership,
+    });
+    ctx.data.payload = {
+      serverName: 'custom',
+      toolName: 'calculate_total',
+      mutationIntent: 'read',
+      arguments: { orderId: '1' },
+    };
+
+    await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
+
+    expect(verifySideEffectToolOwnership).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'custom',
+        toolName: 'calculate_total',
+        arguments: { orderId: '1' },
+      }),
+    );
+    expect(response[0]).toMatchObject({ ok: true });
+  });
+
+  it('checks ownership for unknown MCP tool names with explicit write metadata', async () => {
+    const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-trace-'));
+    runtimeHomes.push(runtimeHome);
+    const callTool = vi.fn();
+    const verifySideEffectToolOwnership = vi.fn(async () => false);
+    const { handlers, ipcAuth } = await loadHandlers(
+      runtimeHome,
+      { content: [{ type: 'text', text: 'mutated' }] },
+      callTool,
+    );
+    const envelope = ipcAuth.createIpcAuthEnvelope('main_agent');
+    const response: Record<string, unknown>[] = [];
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: (signed) => response.push(signed),
+    });
+    const ctx = makeContext({
+      runHandle: 'gantry-run-write',
+      responseKeyId: envelope.responseKeyId,
+      verifySideEffectToolOwnership,
+    });
+    ctx.data.payload = {
+      serverName: 'custom',
+      toolName: 'fulfillmentFinalize',
+      mutationIntent: 'write',
+      arguments: { fulfillmentId: '1' },
+    };
+
+    await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
+
+    expect(verifySideEffectToolOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'custom',
+        toolName: 'fulfillmentFinalize',
+        mutationIntent: 'write',
+      }),
+    );
+    expect(callTool).not.toHaveBeenCalled();
+    expect(response[0]).toMatchObject({
+      ok: false,
+      code: 'ownership_lost',
+    });
+  });
+
+  it('rejects side-effecting MCP tool calls without an external idempotency key after ownership passes', async () => {
+    const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-trace-'));
+    runtimeHomes.push(runtimeHome);
+    const callTool = vi.fn();
+    const verifySideEffectToolOwnership = vi.fn(async () => true);
+    const { handlers, ipcAuth } = await loadHandlers(
+      runtimeHome,
+      { content: [{ type: 'text', text: 'mutated' }] },
+      callTool,
+    );
+    const envelope = ipcAuth.createIpcAuthEnvelope('main_agent');
+    const response: Record<string, unknown>[] = [];
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: (signed) => response.push(signed),
+    });
+    const ctx = makeContext({
+      runHandle: 'gantry-run-write',
+      responseKeyId: envelope.responseKeyId,
+      verifySideEffectToolOwnership,
+    });
+    ctx.data.payload = {
+      serverName: 'custom',
+      toolName: 'fulfillmentFinalize',
+      mutationIntent: 'write',
+      arguments: { fulfillmentId: '1' },
+    };
+
+    await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
+
+    expect(verifySideEffectToolOwnership).toHaveBeenCalledOnce();
+    expect(callTool).not.toHaveBeenCalled();
+    expect(response[0]).toMatchObject({
+      ok: false,
+      code: 'idempotency_key_required',
+    });
+  });
+
+  it('allows side-effecting MCP tool calls with current ownership and an external idempotency key argument', async () => {
+    const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-trace-'));
+    runtimeHomes.push(runtimeHome);
+    const callTool = vi.fn();
+    const verifySideEffectToolOwnership = vi.fn(async () => true);
+    const { handlers, ipcAuth } = await loadHandlers(
+      runtimeHome,
+      { content: [{ type: 'text', text: 'mutated' }] },
+      callTool,
+    );
+    const envelope = ipcAuth.createIpcAuthEnvelope('main_agent');
+    const response: Record<string, unknown>[] = [];
+    await registerTaskResponder({
+      folder: 'main_agent',
+      taskId: 'task-mcp-1',
+      onResponse: (signed) => response.push(signed),
+    });
+    const ctx = makeContext({
+      runHandle: 'gantry-run-write',
+      responseKeyId: envelope.responseKeyId,
+      verifySideEffectToolOwnership,
+    });
+    ctx.data.payload = {
+      serverName: 'custom',
+      toolName: 'fulfillmentFinalize',
+      mutationIntent: 'write',
+      idempotencyKeyArgument: 'clientMutationId',
+      arguments: {
+        fulfillmentId: '1',
+        clientMutationId: 'gantry:reply:1:fulfillment:1',
+      },
+    };
+
+    await handlers.adminTaskHandlers.mcp_call_tool(ctx as never);
+
+    expect(verifySideEffectToolOwnership).toHaveBeenCalledOnce();
+    expect(callTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'custom',
+        toolName: 'fulfillmentFinalize',
+        arguments: {
+          fulfillmentId: '1',
+          clientMutationId: 'gantry:reply:1:fulfillment:1',
+        },
+      }),
+    );
+    expect(response[0]).toMatchObject({ ok: true });
   });
 });

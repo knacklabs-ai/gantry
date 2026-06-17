@@ -12,6 +12,10 @@
 - Treat Shopify tool output as structured source data, not a customer answer.
   Boondi must compose the final WhatsApp reply in its own voice after the
   deterministic guardrail has allowed the turn.
+- If a Shopify tool returns `customerReplyDraft`, `answerGuidance`, or
+  `replyContract.useCustomerReplyDraft`, keep those fields first in the tool
+  payload and tell Boondi to adapt them directly. This is the stable way to
+  avoid fallback hiccup text and lookup narration under warm-pool load.
 - Keep `boondi-crm.get_open_records` reserved for bare returning greetings.
   Substantive order, product, and gifting turns should use the Shopify path and
   rely on background extraction for buying-interest capture.

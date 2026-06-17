@@ -1,3 +1,5 @@
+import { hostname as getHostname } from 'node:os';
+
 import {
   ASSISTANT_NAME,
   getCredentialBrokerRuntimeConfig,
@@ -17,7 +19,11 @@ import {
 import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
 import { encodeGroupMessageCursor } from '../../shared/message-cursor.js';
 import { logger } from '../../infrastructure/logging/logger.js';
-import { ConversationRoute, ThinkingOverride } from '../../domain/types.js';
+import {
+  ConversationRoute,
+  MessageSendOwnershipToken,
+  ThinkingOverride,
+} from '../../domain/types.js';
 import type {
   RuntimeConfiguredAgent,
   RuntimeProviderSettings,
@@ -68,6 +74,10 @@ import { runClaudeQuery } from '../../adapters/llm/anthropic-claude-agent/memory
 import { WarmPoolManager } from '../../runtime/warm-pool-manager.js';
 import { ProcessWarmPoolOrphanReaper } from '../../runtime/warm-pool-orphan-reaper.js';
 import type { WarmPoolRuntime } from '../../runtime/agent-spawn-types.js';
+import type {
+  WorkerInventorySnapshot,
+  WorkerInventoryWarmPoolSnapshot,
+} from '../../runtime/worker-inventory-snapshot.js';
 import { spawnAgent } from '../../runtime/agent-spawn.js';
 import { promptProfileAgentIdForFolder } from '../../application/agents/prompt-profile-service.js';
 import { defaultModelStatusSelection } from '../../session/session-model-status.js';
@@ -121,7 +131,12 @@ export interface RuntimeApp {
     chatJid: string,
     options?: { queued?: boolean },
   ) => Promise<boolean>;
+  getMessageSendOwnershipToken: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) => Promise<MessageSendOwnershipToken | undefined>;
   prewarmAgentForConversationRoute: (chatJid: string) => Promise<boolean>;
+  getWorkerInventorySnapshot: (now?: Date) => WorkerInventorySnapshot;
   getConversationRoutes: () => Record<string, ConversationRoute>;
   getLastTimestamp: () => string;
   setLastTimestamp: (timestamp: string) => void;
@@ -137,7 +152,7 @@ export interface RuntimeApp {
     providerId: string,
   ) => RuntimeProviderSettings | undefined;
   // Configured agents from settings.yaml's agents: block, indexed by folder.
-  // Used by the routing layer to synthesize routes for a provider's
+  // Used by the routing layer to project virtual routes for a provider's
   // default_agent (we need the agent's display name + folder).
   setAgentsSettings: (agents: Record<string, RuntimeConfiguredAgent>) => void;
   getAgentSettings: (folder: string) => RuntimeConfiguredAgent | undefined;
@@ -160,7 +175,11 @@ export interface RuntimeAppOptions {
   executionAdapter?: AgentExecutionAdapter;
   executionAdapters?: AgentExecutionAdapterRegistry;
   warmPool?: WarmPoolRuntime;
+  runtimeInstanceId?: string;
+  runtimeHostname?: string;
+  runtimeStartedAt?: Date;
   opsRepository?: RuntimeAppRepository;
+  getMessageSendOwnershipToken?: GroupProcessingDeps['getMessageSendOwnershipToken'];
   /** Per-reply latency trace (best-effort). Injected at boot; absent in tests. */
   replyTrace?: GroupProcessingDeps['replyTrace'];
 }
@@ -175,9 +194,29 @@ function createConfiguredWarmPool(
   return new WarmPoolManager({
     capability: executionAdapter,
     maxConcurrentPrewarm: Math.max(1, config.size),
+    maxBoundWorkers: config.maxBoundWorkers,
+    cachePrewarmEnabled: config.cachePrewarmEnabled,
+    maxConcurrentCachePrewarm: config.cachePrewarmConcurrency,
     orphanReaper: new ProcessWarmPoolOrphanReaper(),
   });
 }
+
+const EMPTY_WORKER_WARM_POOL_SNAPSHOT: WorkerInventoryWarmPoolSnapshot = {
+  availableTarget: 0,
+  genericAvailable: 0,
+  genericStarting: 0,
+  boundActive: 0,
+  boundIdle: 0,
+  boundDraining: 0,
+  maxBoundWorkers: 0,
+  cachePrewarm: {
+    pending: 0,
+    succeeded: 0,
+    skipped: 0,
+    failed: 0,
+  },
+  cacheShapes: [],
+};
 
 export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   let lastTimestamp = '';
@@ -210,6 +249,12 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   }
   const warmPool =
     options.warmPool ?? createConfiguredWarmPool(executionAdapter);
+  const runtimeInstanceId =
+    options.runtimeInstanceId ?? `runtime:${process.pid}`;
+  const runtimeHostname = options.runtimeHostname ?? getHostname();
+  const runtimeStartedAt = (
+    options.runtimeStartedAt ?? new Date()
+  ).toISOString();
   registerMemoryLlmClient(createDefaultMemoryLlmClient());
   const mcpDnsValidationCache = new RemoteMcpDnsValidationCache();
   let credentialBrokerPromise:
@@ -573,6 +618,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     getRegisteredJids: () => new Set(Object.keys(conversationRoutes)),
     opsRepository: options.opsRepository,
     getRuntimeRepository: ops,
+    getMessageSendOwnershipToken: options.getMessageSendOwnershipToken,
     replyTrace: options.replyTrace,
     queue: {
       closeStdin: (chatJid) => queue.closeStdin(chatJid),
@@ -722,6 +768,21 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     return true;
   }
 
+  function getWorkerInventorySnapshot(
+    now: Date = new Date(),
+  ): WorkerInventorySnapshot {
+    return {
+      instanceId: runtimeInstanceId,
+      hostname: runtimeHostname,
+      startedAt: runtimeStartedAt,
+      lastHeartbeatAt: now.toISOString(),
+      warmPool: warmPool?.inventory?.() ?? {
+        ...EMPTY_WORKER_WARM_POOL_SNAPSHOT,
+      },
+      queue: queue.getWorkerInventorySnapshot(),
+    };
+  }
+
   return {
     executionAdapter,
     executionAdapters,
@@ -743,7 +804,10 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     clearSessionForChatJid,
     processGroupMessages: (chatJid, options) =>
       groupProcessor.processGroupMessages(chatJid, options),
+    getMessageSendOwnershipToken: async (input) =>
+      options.getMessageSendOwnershipToken?.(input),
     prewarmAgentForConversationRoute,
+    getWorkerInventorySnapshot,
     getConversationRoutes: () => conversationRoutes,
     getLastTimestamp: () => lastTimestamp,
     setLastTimestamp: (timestamp) => {

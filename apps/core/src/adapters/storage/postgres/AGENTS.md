@@ -52,6 +52,18 @@
   `direct`/`dm` rows return runtime `conversationKind: "dm"` and group/channel
   rows return `conversationKind: "channel"`. Do not infer DM-vs-group memory
   scope from trigger settings or binding memory-subject blobs.
+- Runtime missed-message recovery should discover durable inbound conversations
+  from canonical message/conversation identifiers, not provider payload JSON.
+  Keep `listInboundConversationJids` distinct, newest-first, and inbound-only so
+  restart recovery can rebuild virtual routes without waking outbound-only
+  conversations.
+- Conversation-work notifications are the cross-instance inbound wakeup bridge.
+  Keep payloads identifier-only and verify the adapter with real Postgres
+  `LISTEN/NOTIFY` integration coverage, not only fake listener clients.
+- Missed-notification recovery must also be covered against real Postgres:
+  persist inbound work, deliberately skip notification delivery, run the
+  conversation-work reconciler, and prove it claims ownership plus enqueues only
+  the sanitized conversation key.
 - JSON-shaped runtime payload columns that are queried, indexed, validated, or
   partially updated belong in native `jsonb`. Pass objects/arrays to Drizzle
   `jsonb` columns, keep canonical route/lease/audit/join fields typed, and do

@@ -168,7 +168,33 @@ Kills core + boondi-crm + shopify (127.0.0.1) and force-frees :4710 and :8081
 can usually stay up across a DB reset; this snippet now clears it too for a full
 stop.
 
-### Starting the stack (dev mode)
+### Starting the basic runtime MCP stack
+
+For the basic inbound/outbound/MCP smoke, start the checked-in runtime stack in
+one terminal:
+
+```bash
+cd /Users/caw-d/Desktop/gantry
+npm run dev:boondi-runtime
+```
+
+Then run the smoke from a second terminal:
+
+```bash
+# Use the exact "Next:" command printed by npm run dev:boondi-runtime.
+GANTRY_DEV_LOG=/tmp/gantry-dev.log npm run smoke:boondi-runtime
+```
+
+If `~/gantry/.env` overrides `GANTRY_DEV_LOG`, the stack command prints that
+path in its `Next:` line; use the printed value so the smoke reads the active
+core flow log.
+
+This starts Gantry core, `shopify-api`, and `boondi-crm` with flow logging and
+outbound dry-run. It proves webhook ACK, guardrail entry, MCP proxy
+request/response for both MCP servers, and dry-run outbound only. It does not
+judge Boondi CRM/Shopify product behavior.
+
+### Starting the stack manually (dev mode)
 
 **Always plain `npm run dev`, one per server, driven entirely by
 `~/gantry/.env`** — core hydrates the §2 dev/test flags from that file at
@@ -197,13 +223,14 @@ Gotchas (will bite if ignored):
 - **Regression-harness runs only** (§8): the harness parses core's flow log
   from a file, so start core as
   `npm run dev > "${GANTRY_DEV_LOG:-/tmp/gantry-dev.log}" 2>&1 &` and with a
-  short `IDLE_TIMEOUT=2500` (default is 30 min —
-  `apps/core/src/config/index.ts:411` — and warm LLM runs fill the active-run
-  slots, making later fake-phone chats appear unanswered).
-  For warm-follow-up latency measurements, use a bounded realistic window such
-  as `BOONDI_TEST_IDLE_TIMEOUT_MS=20000 scripts/boondi-test-setup.sh`, otherwise
-  the short regression-suite timeout forces SDK-session resume instead of
-  measuring the in-process `MessageStream` path.
+  short `runtime.runner.idle_timeout_ms: 2500` in `settings.yaml` (default is
+  30 min, and warm LLM runs fill the active-run slots, making later fake-phone
+  chats appear unanswered). For warm-follow-up latency measurements, use a
+  bounded realistic window such as
+  `BOONDI_TEST_IDLE_TIMEOUT_MS=20000 scripts/boondi-test-setup.sh` and set the
+  same `runtime.runner.idle_timeout_ms` value, otherwise the short
+  regression-suite timeout forces SDK-session resume instead of measuring the
+  in-process `MessageStream` path.
   `scripts/boondi-test-setup.sh` exists to set up exactly that shape for
   harness runs; it is not the normal way to start the stack.
 
@@ -516,10 +543,46 @@ running core**: `.env` may point `GANTRY_DEV_LOG` elsewhere (it pointed at
 terminal tees nowhere — `lsof -p <core-pid> | awk '$4=="1u"'` shows where
 stdout goes. Prereq env for harness runs is exactly what
 `scripts/boondi-test-setup.sh` sets (flow log, dry-run, operator phones,
-caller-identity override, short CRM poll) plus `IDLE_TIMEOUT=2500` by default.
-For warm-retention latency runs, start the same script with
-`BOONDI_TEST_IDLE_TIMEOUT_MS=20000` so a realistic follow-up can reach the live
-runner before stdin closes.
+caller-identity override, short CRM poll) and expects
+`runtime.runner.idle_timeout_ms: 2500` in `settings.yaml` by default. For
+warm-retention latency runs, start the same script with
+`BOONDI_TEST_IDLE_TIMEOUT_MS=20000` and set the same
+`runtime.runner.idle_timeout_ms` value so a realistic follow-up can reach the
+live runner before stdin closes.
+
+`scripts/boondi-regression.mjs` defaults each customer-visible live-flow turn to
+`TURN_TIMEOUT_MS=180000`. That suite is a correctness gate for guardrails, tool
+calls, privacy, routing, and visible replies. Do not treat it as the latency
+benchmark; measure reply latency with `scripts/measure-latency.mjs` and
+boondi-admin `replySeconds` evidence instead.
+
+`scripts/boondi-isolation.mjs` defaults to `ISOLATION_SETTLE_MS=180000` for the
+same reason: it is a concurrency liveness/bleed gate. Under local model/provider
+load, valid concurrent replies can land after 60s; use the latency script for
+speed claims.
+
+For a fast local runtime smoke that avoids Boondi product semantics, start the
+stack first, then run:
+
+```bash
+npm run dev:boondi-runtime
+# second terminal; use the exact "Next:" command printed by the stack:
+GANTRY_DEV_LOG=/tmp/gantry-dev.log npm run smoke:boondi-runtime
+```
+
+This check sends signed fake Interakt webhooks and proves only the basic
+runtime path: webhook ACK, guardrail entry, MCP proxy request/response for
+`shopify-api` and `boondi-crm`, outbound dry-run, and duplicate provider
+message-id dedupe without duplicate runtime work. Use the full
+`boondi-regression.mjs` groups only when you intentionally want to test Boondi
+CRM/Shopify behavior.
+
+For repeated CRM subset reruns, stale `agent_session_digests` can be replayed by
+the boondi-crm background watcher if the reset races a running watcher. If a
+checkpoint sees old CRM rows after a reset, stop boondi-crm, reset the affected
+test phones while the watcher is offline, restart the stack, and rerun that
+subset with `BOONDI_NO_RESET=1`. Do not loosen the scenario expectation until
+the flow log and CRM log prove the row came from the current transcript.
 
 ---
 
@@ -543,11 +606,13 @@ Location depends on launch: setup script → `$GANTRY_DEV_LOG` (default
 3. `flow:guardrail` event? `direct_response` means the canned reply IS the
    reply (it's in the transcript).
 4. Agent never spawned / queue stuck → warm runs hogging active slots (30-min
-   `IDLE_TIMEOUT`, §3), or an orphaned second core double-processing — one
-   core only.
-5. Reply came but it's the vague **"small hiccup pulling that up"** apology →
-   that is the LLM's blanket fallback for a FAILED TOOL CALL, not a real
-   answer. Diagnose at the tool layer; two known causes that look identical:
+   `runtime.runner.idle_timeout_ms`, §3), or an orphaned second core
+   double-processing — one core only.
+5. Reply came back as vague hiccup text or lookup narration such as
+   **"fetching"** / **"let me check"** / **"small hiccup"** →
+   that is either the LLM's blanket fallback for a failed/unclear tool call or
+   a prompt-contract miss, not a real answer. Diagnose at the tool layer and
+   prompt/tool payload contract; two known causes that look identical:
 
 - **no `flow:mcp.request` in the log + hung tool turn** → the runner did not
   connect to the socket IPC server. Check `flow:warm_pool`, `flow:mcp.request`,

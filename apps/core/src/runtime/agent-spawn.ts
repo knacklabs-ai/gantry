@@ -797,6 +797,7 @@ export async function spawnAgent(
     ) {
       const key = poolKeyOf({
         providerId: preparedExecution.providerId,
+        credentialProfileRef: effectiveModelEntry?.credentialProfileRef,
         appId: runnerAppId,
         agentId: input.agentId || compileAgentId,
         persona: compilePersona,
@@ -1013,6 +1014,7 @@ export async function spawnAgent(
           };
           return {
             providerId: warmPreparedExecution.providerId,
+            credentialProfileRef: effectiveModelEntry?.credentialProfileRef,
             appId: runnerAppId,
             agentId: input.agentId || compileAgentId,
             persona: compilePersona,

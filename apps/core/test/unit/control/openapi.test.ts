@@ -100,6 +100,7 @@ const expectedControlRoutes = [
   'GET /v1/runs',
   'GET /v1/runs/{runId}',
   'GET /v1/runs/{runId}/events',
+  'GET /v1/runtime/workers',
   'GET /v1/sessions/{sessionId}',
   'GET /v1/sessions/{sessionId}/events',
   'GET /v1/sessions/{sessionId}/messages',

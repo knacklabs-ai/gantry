@@ -17,7 +17,7 @@
 //      sample with no reset. Samples default to 3; medians are reported.
 //   4. Slot isolation: every send waits until no agent-runner child process is
 //      alive, so queue waits never contaminate a sample. Run core with a short
-//      IDLE_TIMEOUT (e.g. 2500) per docs/BOONDI-E2E-TESTING.md §3. This also
+//      runtime.runner.idle_timeout_ms (e.g. 2500) per docs/BOONDI-E2E-TESTING.md §3. This also
 //      makes the warm turn deterministic (session-resume warm, not a race
 //      against the live child's idle window).
 //

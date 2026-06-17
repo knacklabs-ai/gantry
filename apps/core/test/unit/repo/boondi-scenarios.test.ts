@@ -30,6 +30,19 @@ const regressionRunnerPath = path.join(
   process.cwd(),
   'scripts/boondi-regression.mjs',
 );
+const isolationRunnerPath = path.join(
+  process.cwd(),
+  'scripts/boondi-isolation.mjs',
+);
+const runtimeSmokePath = path.join(
+  process.cwd(),
+  'scripts/boondi-runtime-smoke.mjs',
+);
+const runtimeStackPath = path.join(
+  process.cwd(),
+  'scripts/boondi-runtime-stack.sh',
+);
+const packageJsonPath = path.join(process.cwd(), 'package.json');
 const testSetupPath = path.join(process.cwd(), 'scripts/boondi-test-setup.sh');
 const phonesModulePath = path.join(process.cwd(), 'scripts/lib/phones.mjs');
 const boondiPromptPath = path.join(
@@ -316,6 +329,94 @@ describe('Boondi regression scenarios', () => {
     expect(runner).toContain('expected MCP call');
   });
 
+  it('requires Boondi to surface latest order data from qualified gifting context', () => {
+    const prompt = fs.readFileSync(boondiPromptPath, 'utf-8');
+    const scenarios = loadScenarios();
+    const giftingFlow = scenarios.find(
+      (scenario) => scenario.name === 'qualified-gifting-product-options',
+    );
+
+    expect(prompt).toContain(
+      'If `latestOrder` is returned, mention `latestOrder.name` explicitly',
+    );
+    expect(prompt).toContain(
+      'Do not say order details are unavailable when `latestOrder` is present',
+    );
+    expect(prompt).toContain(
+      'An empty `products` array is not a live-data failure when `latestOrder` is',
+    );
+    expect(prompt).toContain(
+      'present; mention the latest order, then say the gifting team will curate options',
+    );
+    expect(prompt).toContain(
+      'Never use hiccup or live-data-unavailable wording after a successful',
+    );
+    expect(prompt).toContain(
+      '`get_gifting_context` result containing `latestOrder`',
+    );
+    expect(prompt).toContain('If `products` is empty,');
+    expect(prompt).toContain(
+      'say product curation is team-owned and the gifting team will curate',
+    );
+    expect(prompt).not.toContain('No live product matches');
+    expect(prompt).not.toContain('no live product matches');
+    expect(prompt).toContain(
+      'If `answerGuidance` is returned, follow it as the authoritative reply plan',
+    );
+    expect(prompt).toContain(
+      'If `replyContract.useCustomerReplyDraft` is true',
+    );
+    expect(prompt).toContain(
+      'do not reply unless the customer-visible answer includes `replyContract.mustMentionLatestOrderName`',
+    );
+    expect(prompt).toContain(
+      'If `customerReplyDraft` is returned, base the customer reply on it and do not',
+    );
+    expect(prompt).toContain('contradict it.');
+    expect(giftingFlow?.expect?.replyMustMatch).toContain(
+      'last order|latest order|most recent order|Order:',
+    );
+  });
+
+  it('requires explicit phone lookups to reach Shopify before privacy denial', () => {
+    const prompt = fs.readFileSync(boondiPromptPath, 'utf-8');
+
+    expect(prompt).toContain(
+      'You cannot infer whether an explicit phone, email, or order number belongs to the customer from the visible chat text alone',
+    );
+    expect(prompt).toContain(
+      'Never answer an explicit phone, email, or order lookup with the privacy denial before a Shopify MCP call',
+    );
+  });
+
+  it('requires return and refund asks to check the customer order before handoff', () => {
+    const prompt = fs.readFileSync(boondiPromptPath, 'utf-8');
+
+    expect(prompt).toContain(
+      'For return, refund, stale, damaged, missing, or wrong-item asks about the',
+    );
+    expect(prompt).toContain(
+      'customer order, call `get_recent_orders_with_details` first',
+    );
+  });
+
+  it('keeps transient tool-error wording free of lookup narration', () => {
+    const prompt = fs.readFileSync(boondiPromptPath, 'utf-8');
+
+    expect(prompt).toMatch(/I'm having a small\s+hiccup with that right now/);
+    expect(prompt).toContain(
+      'Never say "I will look it up", "I will pull it up", "I will check it", "fetching", "searching", "one moment", or similar lookup narration in a customer-visible reply',
+    );
+    expect(prompt).toContain(
+      'If any Shopify tool returns `replyContract.useCustomerReplyDraft: true`, adapt `customerReplyDraft` directly',
+    );
+    expect(prompt).toContain(
+      'Do not use hiccup wording after a Shopify tool returns a successful `replyContract`',
+    );
+    expect(prompt).not.toContain('pulling that up');
+    expect(prompt).not.toContain('pulling live');
+  });
+
   it('preserves admin-visible scenario transcripts by default', () => {
     const runner = fs.readFileSync(regressionRunnerPath, 'utf-8');
 
@@ -340,12 +441,23 @@ describe('Boondi regression scenarios', () => {
     expect(setupScript).toContain(
       'IDLE_TIMEOUT_MS=${BOONDI_TEST_IDLE_TIMEOUT_MS:-2500}',
     );
-    expect(setupScript).toContain('IDLE_TIMEOUT="$IDLE_TIMEOUT_MS"');
+    expect(setupScript).toContain('runtime.runner.idle_timeout_ms');
+    expect(setupScript).not.toContain('IDLE_TIMEOUT="$IDLE_TIMEOUT_MS"');
+  });
+
+  it('starts local Boondi services so they survive setup script exit', () => {
+    const setupScript = fs.readFileSync(testSetupPath, 'utf-8');
+
+    expect(setupScript.match(/nohup env \$STRIP/g)).toHaveLength(2);
+    expect(setupScript.match(/< \/dev\/null & disown \)/g)).toHaveLength(2);
   });
 
   it('requires visible replies and bounds live-flow concurrency by default', () => {
     const runner = fs.readFileSync(regressionRunnerPath, 'utf-8');
 
+    expect(runner).toContain(
+      'const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS || 180_000);',
+    );
     expect(runner).toContain('replyRequired: true');
     expect(runner).toContain(
       "failures.push('expected a customer-visible reply, none seen');",
@@ -356,6 +468,114 @@ describe('Boondi regression scenarios', () => {
     );
     expect(runner).not.toContain(
       'liveFlow.forEach((s, i) => queues[i % LANE_PHONES.length].push(s));',
+    );
+  });
+
+  it('does not finish a live turn on an empty LLM output from a retryable agent failure', () => {
+    const runner = fs.readFileSync(regressionRunnerPath, 'utf-8');
+
+    expect(runner).toContain('const isNonEmptyLlmOutput = (e) =>');
+    expect(runner).toContain(
+      "e.flow === 'llm.output' && typeof e.reply === 'string' && e.reply.trim()",
+    );
+    expect(runner).not.toContain("events.some((e) => e.flow === 'llm.output')");
+  });
+
+  it('waits long enough for concurrent isolation replies by default', () => {
+    const runner = fs.readFileSync(isolationRunnerPath, 'utf-8');
+
+    expect(runner).toContain(
+      'const SETTLE_MS = Number(process.env.ISOLATION_SETTLE_MS || 180_000);',
+    );
+  });
+
+  it('keeps a basic runtime smoke separate from Boondi semantic scenarios', () => {
+    const smoke = fs.readFileSync(runtimeSmokePath, 'utf-8');
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(smoke).toContain("import { sendWebhook } from './lib/webhook.mjs';");
+    expect(smoke).toContain(
+      "import { parseRuntimeSmokeEnv } from './lib/runtime-smoke-env.mjs';",
+    );
+    expect(smoke).toContain("serverName: 'shopify-api'");
+    expect(smoke).toContain("serverName: 'boondi-crm'");
+    expect(smoke).toContain("if (label === 'core') return response.status;");
+    expect(smoke).toContain('await runtimeWorkersHealth();');
+    expect(smoke).toContain("'/v1/runtime/workers'");
+    expect(smoke).toContain('Authorization: `Bearer ${smokeEnv.controlToken}`');
+    expect(smoke).toContain('workerInventory.healthyTotals.instances');
+    expect(smoke).toContain("'mcp.request'");
+    expect(smoke).toContain("'mcp.response'");
+    expect(smoke).toContain('Outbound dry-run: sent to listed test number');
+    expect(smoke).toContain('messageId: firstTurn.messageId');
+    expect(smoke).toContain('duplicateInbound: true');
+    expect(smoke).toContain('SMOKE_CONCURRENCY');
+    expect(smoke).toContain('await mapPool(cases, SMOKE_CONCURRENCY');
+    expect(smoke).toContain("name: 'shopify-secondary'");
+    expect(smoke).toContain(
+      'phone: process.env.BOONDI_SMOKE_SHOPIFY_SECONDARY_PHONE',
+    );
+    expect(smoke).toContain('function hasFlowForChat');
+    expect(smoke).toContain('function countFlowForChat');
+    expect(smoke).toContain(
+      "hasFlowForChat(text, chatJid, 'mcp.request', smokeCase.serverName)",
+    );
+    expect(smoke).toContain(
+      "guardrail: countFlowForChat(finalLog, chatJid, 'guardrail')",
+    );
+    expect(smoke).toContain(
+      "hasFlowForChat(duplicateLog, chatJid, 'outbound')",
+    );
+    expect(smoke).not.toContain('boondi-scenarios.json');
+    expect(smoke).not.toContain('expectRecord');
+    expect(smoke).not.toContain('replyMustMatch');
+    expect(pkg.scripts?.['smoke:boondi-runtime']).toBe(
+      'node scripts/boondi-runtime-smoke.mjs',
+    );
+  });
+
+  it('keeps a checked-in command for the basic runtime MCP stack', () => {
+    const stack = fs.readFileSync(runtimeStackPath, 'utf-8');
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(stack).toContain('packages/mcp-shopify/src/index.ts');
+    expect(stack).toContain('packages/mcp-crm/src/index.ts');
+    expect(stack).toContain('apps/core/src/index.ts');
+    expect(stack.match(/-u OPENAI_API_KEY/g) ?? []).toHaveLength(3);
+    expect(stack).toContain('GANTRY_FLOW_LOG=1');
+    expect(stack).toContain('GANTRY_OUTBOUND_DRYRUN=1');
+    expect(stack).toContain(
+      'SMOKE_ENV_FILE="${GANTRY_RUNTIME_SMOKE_ENV:-/tmp/gantry-runtime-smoke.env}"',
+    );
+    expect(stack).toContain('chmod 600 "$SMOKE_ENV_FILE"');
+    expect(stack).toContain('const token=process.env.SMOKE_CONTROL_TOKEN;');
+    expect(stack).not.toContain('const token=process.argv[1]');
+    expect(stack).toContain(
+      'GANTRY_CONTROL_API_KEYS_JSON="$CONTROL_API_KEYS_JSON"',
+    );
+    expect(stack).toContain(
+      'GANTRY_RUNTIME_SMOKE_ENV=$SMOKE_ENV_FILE npm run smoke:boondi-runtime',
+    );
+    expect(stack).toContain('GANTRY_TEST_OPERATOR_PHONE="$OPERATOR"');
+    expect(stack).toContain(
+      'CALLER_IDENTITY_PHONE="${GANTRY_TEST_CALLER_IDENTITY_PHONE:-918097288633}"',
+    );
+    expect(stack).toContain(
+      'GANTRY_TEST_CALLER_IDENTITY_PHONE="$CALLER_IDENTITY_PHONE"',
+    );
+    expect(stack).toContain('BOONDI_CRM_RECONCILE_INTERVAL_MS');
+    expect(stack).toContain('GANTRY_DEV_LOG');
+    expect(stack).toContain('http://127.0.0.1:8081/healthz');
+    expect(stack).toContain('http://127.0.0.1:8082/healthz');
+    expect(stack).toContain('http://127.0.0.1:4710/');
+    expect(stack).toContain('kill "$CORE_PID" "$SHOPIFY_PID" "$CRM_PID"');
+    expect(stack).toContain('npm run smoke:boondi-runtime');
+    expect(pkg.scripts?.['dev:boondi-runtime']).toBe(
+      'bash scripts/boondi-runtime-stack.sh',
     );
   });
 });

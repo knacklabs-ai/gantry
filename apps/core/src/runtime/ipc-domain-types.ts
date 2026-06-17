@@ -27,6 +27,7 @@ import type { BrowserUsageSettings } from './browser-usage-governor.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
 import type { FileArtifactStore } from '../domain/ports/file-artifact-store.js';
 import type { ToolCallRecord } from './reply-trace.js';
+import type { ToolMutationIntent } from '../shared/tool-execution-policy-service.js';
 
 export interface IpcDeps {
   sendMessage: (
@@ -112,6 +113,13 @@ export interface IpcDeps {
    * trace. Must never throw into the reply path.
    */
   recordReplyToolCall?: (runHandle: string, record: ToolCallRecord) => void;
+  verifySideEffectToolOwnership?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+    serverName?: string;
+    toolName: string;
+    mutationIntent: ToolMutationIntent;
+  }) => Promise<boolean> | boolean;
 }
 
 export interface IpcDomainContext {

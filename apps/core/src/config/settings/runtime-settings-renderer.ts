@@ -24,10 +24,18 @@ import {
   DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
   DEFAULT_MODEL_GATEWAY_BIND_HOST,
   DEFAULT_OPENAI_DAILY_EMBED_LIMIT,
+  DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS,
+  DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS,
+  DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT,
+  DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS,
+  DEFAULT_RUNNER_IDLE_TIMEOUT_MS,
   DEFAULT_STORAGE_POSTGRES_SCHEMA,
   DEFAULT_STORAGE_POSTGRES_URL_ENV,
+  DEFAULT_WARM_POOL_CACHE_PREWARM_CONCURRENCY,
+  DEFAULT_WARM_POOL_CACHE_PREWARM_ENABLED,
   DEFAULT_WARM_POOL_ENABLED,
   DEFAULT_WARM_POOL_IDLE_TTL_MS,
+  DEFAULT_WARM_POOL_MAX_BOUND_WORKERS,
   DEFAULT_WARM_POOL_SIZE,
   getPresetManagedMemoryDefaults,
 } from './runtime-settings-defaults.js';
@@ -643,7 +651,20 @@ function isDefaultRuntime(runtime: RuntimeSettings['runtime']): boolean {
     runtime.queue.baseRetryMs === 5000 &&
     runtime.warmPool.enabled === DEFAULT_WARM_POOL_ENABLED &&
     runtime.warmPool.size === DEFAULT_WARM_POOL_SIZE &&
-    runtime.warmPool.idleTtlMs === DEFAULT_WARM_POOL_IDLE_TTL_MS
+    runtime.warmPool.idleTtlMs === DEFAULT_WARM_POOL_IDLE_TTL_MS &&
+    runtime.warmPool.maxBoundWorkers === DEFAULT_WARM_POOL_MAX_BOUND_WORKERS &&
+    runtime.warmPool.cachePrewarmEnabled ===
+      DEFAULT_WARM_POOL_CACHE_PREWARM_ENABLED &&
+    runtime.warmPool.cachePrewarmConcurrency ===
+      DEFAULT_WARM_POOL_CACHE_PREWARM_CONCURRENCY &&
+    runtime.runner.idleTimeoutMs === DEFAULT_RUNNER_IDLE_TIMEOUT_MS &&
+    runtime.ownership.leaseTtlMs === DEFAULT_RUNTIME_OWNERSHIP_LEASE_TTL_MS &&
+    runtime.ownership.reconcilerIntervalMs ===
+      DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_INTERVAL_MS &&
+    runtime.ownership.reconcilerLimit ===
+      DEFAULT_RUNTIME_OWNERSHIP_RECONCILER_LIMIT &&
+    runtime.ownership.shutdownClaimWaitMs ===
+      DEFAULT_RUNTIME_OWNERSHIP_SHUTDOWN_CLAIM_WAIT_MS
   );
 }
 
@@ -729,6 +750,16 @@ function renderRuntimeProcessYaml(
     `    enabled: ${runtime.warmPool.enabled ? 'true' : 'false'}`,
     `    size: ${runtime.warmPool.size}`,
     `    idle_ttl_ms: ${runtime.warmPool.idleTtlMs}`,
+    `    max_bound_workers: ${runtime.warmPool.maxBoundWorkers}`,
+    `    cache_prewarm_enabled: ${runtime.warmPool.cachePrewarmEnabled ? 'true' : 'false'}`,
+    `    cache_prewarm_concurrency: ${runtime.warmPool.cachePrewarmConcurrency}`,
+    '  runner:',
+    `    idle_timeout_ms: ${runtime.runner.idleTimeoutMs}`,
+    '  ownership:',
+    `    lease_ttl_ms: ${runtime.ownership.leaseTtlMs}`,
+    `    reconciler_interval_ms: ${runtime.ownership.reconcilerIntervalMs}`,
+    `    reconciler_limit: ${runtime.ownership.reconcilerLimit}`,
+    `    shutdown_claim_wait_ms: ${runtime.ownership.shutdownClaimWaitMs}`,
     '',
   );
 }

@@ -13,8 +13,10 @@ import {
 } from 'drizzle-orm';
 
 import type { NewMessage } from '../../../../domain/repositories/domain-types.js';
+import type { RuntimeMessageStoreResult } from '../../../../domain/repositories/ops-repo.js';
 import { normalizeProviderId } from '../../../../channels/provider-registry.js';
 import { sanitizeRetryTailProviderPayload } from '../../../../domain/messages/retry-tail-provider-payload.js';
+import { isUniqueViolation } from './outbound-delivery-repository.postgres.helpers.js';
 import * as pgSchema from '../schema/schema.js';
 import {
   CANONICAL_APP_ID,
@@ -52,6 +54,21 @@ function messageIdFor(chatJid: string, id: string): string {
   return `message:${chatJid}:${id}`;
 }
 
+function providerMessageIdFromCanonical(
+  chatJid: string,
+  canonicalMessageId: string,
+): string | undefined {
+  const prefix = `message:${chatJid}:`;
+  if (!canonicalMessageId.startsWith(prefix)) return undefined;
+  return canonicalMessageId.slice(prefix.length);
+}
+
+function jidFromConversationId(conversationId: string): string | undefined {
+  const prefix = 'conversation:';
+  if (!conversationId.startsWith(prefix)) return undefined;
+  return conversationId.slice(prefix.length);
+}
+
 export function externalRefForMessage(
   msg: NewMessage,
 ): Record<string, unknown> {
@@ -86,8 +103,24 @@ export class PostgresCanonicalMessageRepository {
     this.graph = new PostgresCanonicalGraphRepository(db);
   }
 
-  async saveMessage(msg: NewMessage): Promise<void> {
-    await this.db.transaction(async (tx) => {
+  async saveMessage(msg: NewMessage): Promise<RuntimeMessageStoreResult> {
+    try {
+      return await this.writeMessage(msg);
+    } catch (err) {
+      const hasProviderRedeliveryKey =
+        msg.external_message_id?.trim() ||
+        (!msg.is_from_me && !msg.is_bot_message && msg.id.trim());
+      if (!hasProviderRedeliveryKey || !isUniqueViolation(err)) {
+        throw err;
+      }
+      return this.writeMessage(msg);
+    }
+  }
+
+  private async writeMessage(
+    msg: NewMessage,
+  ): Promise<RuntimeMessageStoreResult> {
+    return this.db.transaction(async (tx) => {
       const providerId =
         normalizeProviderId(msg.provider ?? providerIdForJid(msg.chat_jid)) ||
         'app';
@@ -114,6 +147,50 @@ export class PostgresCanonicalMessageRepository {
       const externalMessageId =
         msg.external_message_id ??
         (direction === 'inbound' ? msg.id || null : null);
+      let targetMessageId = canonicalMessageId;
+      let resultStatus: RuntimeMessageStoreResult['status'] =
+        'inserted_new_message';
+      if (externalMessageId) {
+        const duplicateRows = await tx
+          .select({ id: pgSchema.messagesPostgres.id })
+          .from(pgSchema.messagesPostgres)
+          .where(
+            and(
+              eq(pgSchema.messagesPostgres.providerId, providerId),
+              eq(
+                pgSchema.messagesPostgres.providerConnectionId,
+                providerConnectionId,
+              ),
+              eq(pgSchema.messagesPostgres.conversationId, conversationId),
+              canonicalThreadId
+                ? eq(pgSchema.messagesPostgres.threadId, canonicalThreadId)
+                : isNull(pgSchema.messagesPostgres.threadId),
+              eq(
+                pgSchema.messagesPostgres.externalMessageId,
+                externalMessageId,
+              ),
+            ),
+          )
+          .limit(1);
+        const duplicateMessageId = duplicateRows[0]?.id;
+        if (duplicateMessageId) {
+          targetMessageId = duplicateMessageId;
+          resultStatus =
+            direction === 'inbound'
+              ? 'duplicate_existing_message'
+              : 'updated_existing_projection';
+        }
+      }
+      if (resultStatus === 'inserted_new_message') {
+        const existingRows = await tx
+          .select({ id: pgSchema.messagesPostgres.id })
+          .from(pgSchema.messagesPostgres)
+          .where(eq(pgSchema.messagesPostgres.id, targetMessageId))
+          .limit(1);
+        if (existingRows[0]) {
+          resultStatus = 'updated_existing_projection';
+        }
+      }
       if (direction === 'inbound') {
         await this.graph.ensureParticipant(
           {
@@ -127,17 +204,26 @@ export class PostgresCanonicalMessageRepository {
           tx,
         );
       }
+      const externalRefMessage =
+        resultStatus === 'duplicate_existing_message'
+          ? {
+              ...msg,
+              id:
+                providerMessageIdFromCanonical(msg.chat_jid, targetMessageId) ??
+                msg.id,
+            }
+          : msg;
       await tx
         .insert(pgSchema.messagesPostgres)
         .values({
-          id: canonicalMessageId,
+          id: targetMessageId,
           appId: CANONICAL_APP_ID,
           providerId,
           providerConnectionId,
           conversationId,
           threadId: canonicalThreadId,
           externalMessageId,
-          externalRefJson: jsonb(externalRefForMessage(msg)),
+          externalRefJson: jsonb(externalRefForMessage(externalRefMessage)),
           direction,
           senderUserId: msg.sender,
           senderDisplayName: msg.sender_name,
@@ -155,7 +241,7 @@ export class PostgresCanonicalMessageRepository {
           target: pgSchema.messagesPostgres.id,
           set: {
             externalMessageId,
-            externalRefJson: jsonb(externalRefForMessage(msg)),
+            externalRefJson: jsonb(externalRefForMessage(externalRefMessage)),
             direction,
             senderUserId: msg.sender,
             senderDisplayName: msg.sender_name,
@@ -171,7 +257,7 @@ export class PostgresCanonicalMessageRepository {
       await tx
         .insert(pgSchema.messagePartsPostgres)
         .values({
-          messageId: canonicalMessageId,
+          messageId: targetMessageId,
           ordinal: 0,
           kind: 'text',
           payloadJson: jsonb({ kind: 'text', text: msg.content }),
@@ -189,15 +275,14 @@ export class PostgresCanonicalMessageRepository {
       await tx
         .delete(pgSchema.messageAttachmentsPostgres)
         .where(
-          eq(pgSchema.messageAttachmentsPostgres.messageId, canonicalMessageId),
+          eq(pgSchema.messageAttachmentsPostgres.messageId, targetMessageId),
         );
       if (msg.attachments && msg.attachments.length > 0) {
         await tx.insert(pgSchema.messageAttachmentsPostgres).values(
           msg.attachments.map((attachment, index) => ({
             id:
-              attachment.id ??
-              `message-attachment:${canonicalMessageId}:${index}`,
-            messageId: canonicalMessageId,
+              attachment.id ?? `message-attachment:${targetMessageId}:${index}`,
+            messageId: targetMessageId,
             kind: attachment.kind,
             contentType: attachment.contentType ?? null,
             sizeBytes: attachment.sizeBytes ?? null,
@@ -212,6 +297,7 @@ export class PostgresCanonicalMessageRepository {
           })),
         );
       }
+      return { status: resultStatus, messageId: targetMessageId };
     });
   }
 
@@ -371,6 +457,27 @@ export class PostgresCanonicalMessageRepository {
         ? row.thread_id.slice(prefix.length)
         : row.thread_id;
     });
+  }
+
+  async listInboundConversationJids(input: {
+    limit: number;
+  }): Promise<string[]> {
+    const m = pgSchema.messagesPostgres;
+    const latestCreatedAt = sql<string>`max(${m.createdAt})`;
+    const rows = await this.db
+      .select({
+        conversation_id: m.conversationId,
+        latest_created_at: latestCreatedAt,
+      })
+      .from(m)
+      .where(eq(m.direction, 'inbound'))
+      .groupBy(m.conversationId)
+      .orderBy(desc(latestCreatedAt), desc(m.conversationId))
+      .limit(input.limit);
+
+    return rows
+      .map((row) => jidFromConversationId(row.conversation_id))
+      .filter((jid): jid is string => Boolean(jid));
   }
 
   async getLastBotMessageRow(

@@ -19,6 +19,7 @@ import { TaskContext, TaskHandler } from './ipc-types.js';
 import { memoryAgentIdForGroupFolder } from '../memory/app-memory-boundaries.js';
 import { tracePayloadsEnabled } from '../runtime/reply-trace.js';
 import { createTaskResponder, toTrimmedString } from './ipc-shared.js';
+import type { ToolMutationIntent } from '../shared/tool-execution-policy-service.js';
 import { resolveMcpCredentialEnvForAgent } from '../application/capability-secrets/mcp-secret-projection.js';
 import {
   isPermanentPermissionDecision,
@@ -317,6 +318,58 @@ const mcpCallToolHandler: TaskHandler = async (context) => {
       !Array.isArray(payload.arguments)
         ? (payload.arguments as Record<string, unknown>)
         : {};
+    const intentResolution = resolveMcpToolMutationIntent(payload, toolName);
+    if (!intentResolution.ok) {
+      reject(intentResolution.message, intentResolution.code);
+      return;
+    }
+    const mutationIntent = intentResolution.mutationIntent;
+    if (isSideEffectMutationIntent(mutationIntent)) {
+      if (!deps.verifySideEffectToolOwnership) {
+        reject(
+          'Side-effecting MCP tool calls require current conversation ownership.',
+          'ownership_required',
+        );
+        return;
+      }
+      let ownsConversation = false;
+      try {
+        ownsConversation = await deps.verifySideEffectToolOwnership({
+          conversationId: requestedTargetJid,
+          threadId: data.authThreadId ?? null,
+          serverName,
+          toolName,
+          mutationIntent,
+        });
+      } catch (err) {
+        logger.warn(
+          {
+            err,
+            serverName,
+            toolName,
+            conversationId: requestedTargetJid,
+            threadId: data.authThreadId ?? null,
+          },
+          'Side-effecting MCP tool ownership check failed closed',
+        );
+      }
+      if (!ownsConversation) {
+        reject(
+          'Side-effecting MCP tool call blocked because this runtime no longer owns the conversation.',
+          'ownership_lost',
+        );
+        return;
+      }
+      const idempotencyResolution = resolveMcpToolIdempotency(
+        payload,
+        args,
+        mutationIntent,
+      );
+      if (!idempotencyResolution.ok) {
+        reject(idempotencyResolution.message, idempotencyResolution.code);
+        return;
+      }
+    }
     const proxy = await createMcpProxyForSourceGroup({
       appId: data.appId as never,
       agentId: memoryAgentIdForGroupFolder(sourceAgentFolder) as never,
@@ -378,6 +431,197 @@ const mcpCallToolHandler: TaskHandler = async (context) => {
     );
   }
 };
+
+const MCP_READ_TOOL_VERBS = new Set([
+  'count',
+  'describe',
+  'fetch',
+  'find',
+  'get',
+  'inspect',
+  'list',
+  'lookup',
+  'preview',
+  'query',
+  'read',
+  'search',
+  'status',
+  'summarize',
+  'validate',
+]);
+
+const MCP_SIDE_EFFECT_TOOL_VERBS = new Map<string, ToolMutationIntent>([
+  ['add', 'write'],
+  ['approve', 'write'],
+  ['archive', 'write'],
+  ['assign', 'write'],
+  ['cancel', 'write'],
+  ['capture', 'write'],
+  ['charge', 'write'],
+  ['close', 'write'],
+  ['create', 'write'],
+  ['delete', 'delete'],
+  ['disable', 'configure'],
+  ['enable', 'configure'],
+  ['execute', 'execute'],
+  ['fulfill', 'write'],
+  ['import', 'write'],
+  ['insert', 'write'],
+  ['install', 'configure'],
+  ['link', 'write'],
+  ['mark', 'write'],
+  ['patch', 'write'],
+  ['post', 'write'],
+  ['publish', 'write'],
+  ['put', 'write'],
+  ['refund', 'write'],
+  ['reject', 'write'],
+  ['remove', 'delete'],
+  ['restart', 'execute'],
+  ['run', 'execute'],
+  ['save', 'write'],
+  ['send', 'write'],
+  ['set', 'write'],
+  ['start', 'execute'],
+  ['stop', 'execute'],
+  ['submit', 'write'],
+  ['sync', 'write'],
+  ['unarchive', 'write'],
+  ['unlink', 'delete'],
+  ['update', 'write'],
+  ['upsert', 'write'],
+  ['write', 'write'],
+]);
+
+const MCP_EXPLICIT_MUTATION_INTENTS = new Set<ToolMutationIntent>([
+  'read',
+  'write',
+  'delete',
+  'execute',
+  'configure',
+]);
+
+type McpToolIntentResolution =
+  | { ok: true; mutationIntent: ToolMutationIntent }
+  | { ok: false; code: string; message: string };
+
+type McpToolIdempotencyResolution =
+  | { ok: true }
+  | { ok: false; code: string; message: string };
+
+function resolveMcpToolMutationIntent(
+  payload: Record<string, unknown>,
+  toolName: string,
+): McpToolIntentResolution {
+  const explicit = parseExplicitMcpMutationIntent(payload.mutationIntent);
+  if (explicit === 'invalid') {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message:
+        'Invalid mutationIntent. Use one of: read, write, delete, execute, configure.',
+    };
+  }
+
+  const inferred = inferMcpToolMutationIntent(toolName);
+  if (isSideEffectMutationIntent(inferred)) {
+    return { ok: true, mutationIntent: inferred };
+  }
+  if (explicit) {
+    return { ok: true, mutationIntent: explicit };
+  }
+  if (inferred === 'read') {
+    return { ok: true, mutationIntent: inferred };
+  }
+  return {
+    ok: false,
+    code: 'side_effect_metadata_required',
+    message:
+      'Unknown MCP tool side-effect risk. Include mutationIntent as read, write, delete, execute, or configure before calling this tool.',
+  };
+}
+
+function parseExplicitMcpMutationIntent(
+  value: unknown,
+): ToolMutationIntent | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return 'invalid';
+  const normalized = value.trim().toLowerCase();
+  if (!MCP_EXPLICIT_MUTATION_INTENTS.has(normalized as ToolMutationIntent)) {
+    return 'invalid';
+  }
+  return normalized as ToolMutationIntent;
+}
+
+function resolveMcpToolIdempotency(
+  payload: Record<string, unknown>,
+  args: Record<string, unknown>,
+  mutationIntent: ToolMutationIntent,
+): McpToolIdempotencyResolution {
+  if (!isSideEffectMutationIntent(mutationIntent)) return { ok: true };
+
+  const keyArgument = parseMcpIdempotencyKeyArgument(
+    payload.idempotencyKeyArgument,
+  );
+  if (keyArgument === 'invalid') {
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message:
+        'Invalid idempotencyKeyArgument. Use a non-empty argument name already present in arguments.',
+    };
+  }
+
+  const candidateNames = keyArgument
+    ? [keyArgument]
+    : ['idempotencyKey', 'idempotency_key'];
+  const hasExternalKey = candidateNames.some((name) => {
+    const value = args[name];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+  if (hasExternalKey) return { ok: true };
+
+  return {
+    ok: false,
+    code: 'idempotency_key_required',
+    message:
+      'Side-effecting MCP tool calls require an external idempotency key argument. Include arguments.idempotencyKey, arguments.idempotency_key, or idempotencyKeyArgument naming the argument that carries the key.',
+  };
+}
+
+function parseMcpIdempotencyKeyArgument(
+  value: unknown,
+): string | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return 'invalid';
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : 'invalid';
+}
+
+function inferMcpToolMutationIntent(toolName: string): ToolMutationIntent {
+  const verb = mcpToolVerb(toolName);
+  if (!verb) return 'unknown';
+  if (MCP_READ_TOOL_VERBS.has(verb)) return 'read';
+  return MCP_SIDE_EFFECT_TOOL_VERBS.get(verb) ?? 'unknown';
+}
+
+function isSideEffectMutationIntent(intent: ToolMutationIntent): boolean {
+  return (
+    intent === 'write' ||
+    intent === 'delete' ||
+    intent === 'configure' ||
+    intent === 'execute'
+  );
+}
+
+function mcpToolVerb(toolName: string): string | undefined {
+  const normalized = toolName
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase();
+  const [verb] = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  return verb;
+}
 
 /** Approximate byte size of a value for the trace (best-effort; 0 on failure). */
 function byteLength(value: unknown): number {

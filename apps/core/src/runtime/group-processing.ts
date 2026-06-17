@@ -2,8 +2,8 @@ import {
   getDefaultModelConfig,
   getRuntimeSettingsForConfig,
   getTriggerPattern,
-  IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
+  RUNNER_IDLE_TIMEOUT_MS,
   TIMEZONE,
 } from '../config/index.js';
 import {
@@ -39,6 +39,7 @@ import {
   createRuntimeResultSummaryAccumulator,
   createRuntimeUserVisibleResultAccumulator,
   createRuntimeUserVisibleStreamSanitizer,
+  resolveNonSelfSenderIds,
   resolveMemoryUserId,
 } from './session-resume-runtime.js';
 import {
@@ -127,12 +128,35 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     );
     let streamGeneration = (streamingGenerationCounter += 1);
     let progressGeneration = streamGeneration;
-    const { buildMessageOptions, buildStreamingOptions, buildProgressOptions } =
-      createThreadOptionBuilders({
-        activeThreadId,
-        getStreamGeneration: () => streamGeneration,
-        getProgressGeneration: () => progressGeneration,
+    const threadOptions = createThreadOptionBuilders({
+      activeThreadId,
+      getStreamGeneration: () => streamGeneration,
+      getProgressGeneration: () => progressGeneration,
+    });
+    const { buildStreamingOptions, buildProgressOptions } = threadOptions;
+    const buildMessageOptions = async (
+      threadId?: string,
+    ): Promise<MessageSendOptions | undefined> => {
+      const baseOptions = threadOptions.buildMessageOptions(threadId);
+      const ownership = await deps.getMessageSendOwnershipToken?.({
+        conversationId: chatJid,
+        threadId: threadOptions.resolveThreadId(threadId) ?? null,
       });
+      if (!ownership) return baseOptions;
+      return { ...(baseOptions ?? {}), ownership };
+    };
+    const buildStreamingOptionsWithOwnership = async (args: {
+      threadId?: string;
+      done?: boolean;
+    }) => {
+      const baseOptions = buildStreamingOptions(args);
+      const ownership = await deps.getMessageSendOwnershipToken?.({
+        conversationId: chatJid,
+        threadId: threadOptions.resolveThreadId(args.threadId) ?? null,
+      });
+      if (!ownership) return baseOptions;
+      return { ...baseOptions, ownership };
+    };
     const sendMessageToChannel = async (
       text: string,
       options?: MessageSendOptions,
@@ -176,8 +200,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       timezone: TIMEZONE,
       agentCommandNames: group.agentConfig?.plugins?.commands ?? [],
       deps: {
-        sendMessage: (text, options) =>
-          sendMessageToChannel(text, buildMessageOptions(options?.threadId)),
+        sendMessage: async (text, options) =>
+          sendMessageToChannel(
+            text,
+            await buildMessageOptions(options?.threadId),
+          ),
         setTyping: (typing) => deps.channelRuntime.setTyping(chatJid, typing),
         runAgent: (prompt, onOutput, options) =>
           runAgent(group, prompt, chatJid, queueJid, onOutput, {
@@ -479,14 +506,21 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     }
 
     const prompt = formatMessages(missedMessages, TIMEZONE);
+    const nextCursor = encodeGroupMessageCursor(
+      toGroupMessageCursor(missedMessages[missedMessages.length - 1]),
+    );
+    const continuationAccepted = deps.queue.sendMessage?.(queueJid, prompt, {
+      ...(activeThreadId ? { threadId: activeThreadId } : {}),
+      senderUserIds: resolveNonSelfSenderIds(missedMessages),
+    });
+    if (continuationAccepted) {
+      deps.setCursor(queueJid, nextCursor);
+      await deps.saveState();
+      return true;
+    }
     const recallQuery = buildMemoryRecallQueryFromMessages(missedMessages);
     const previousCursor = (await deps.getCursor(queueJid)) || '';
-    deps.setCursor(
-      queueJid,
-      encodeGroupMessageCursor(
-        toGroupMessageCursor(missedMessages[missedMessages.length - 1]),
-      ),
-    );
+    deps.setCursor(queueJid, nextCursor);
     await deps.saveState();
 
     logger.info(
@@ -508,7 +542,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           'Idle timeout, closing agent runner stdin',
         );
         deps.queue.closeStdin(queueJid);
-      }, IDLE_TIMEOUT);
+      }, RUNNER_IDLE_TIMEOUT_MS);
     };
 
     let typingActive = false;
@@ -678,11 +712,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       if (!text) return false;
       if (supportsStreamingChunks) {
         const settlement = await settleDeliveryAttempt(
-          () =>
+          async () =>
             deps.channelRuntime.sendStreamingChunk(
               chatJid,
               finalStreamDelta,
-              buildStreamingOptions({ done }),
+              await buildStreamingOptionsWithOwnership({ done }),
             ),
           { scope: 'runtime-streaming-output-final', target: chatJid },
         ).catch((err) => {
@@ -829,11 +863,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           const text = safeDelta;
           if (text) {
             const settlement = await settleDeliveryAttempt(
-              () =>
+              async () =>
                 deps.channelRuntime.sendStreamingChunk(
                   chatJid,
                   text,
-                  buildStreamingOptions({ done: false }),
+                  await buildStreamingOptionsWithOwnership({ done: false }),
                 ),
               { scope: 'runtime-streaming-output-live', target: chatJid },
             );

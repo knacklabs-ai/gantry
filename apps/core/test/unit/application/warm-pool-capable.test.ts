@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentExecutionAdapter } from '@core/application/agent-execution/agent-execution-adapter.js';
 import {
+  cacheShapeKeyOf,
   hasWarmPoolCapability,
   poolKeyOf,
   type WarmPoolKeyInput,
@@ -65,6 +66,35 @@ describe('warm-pool capability contract', () => {
     );
 
     expect(second).toBe(first);
+  });
+
+  it('builds cache shape keys from prompt-cache-affecting input only', () => {
+    const base = baseKeyInput();
+
+    expect(
+      cacheShapeKeyOf({
+        ...base,
+        resumeSessionId: 'claude-session-returning',
+      }),
+    ).toBe(cacheShapeKeyOf(base));
+    expect(cacheShapeKeyOf({ ...base, model: 'sonnet' })).not.toBe(
+      cacheShapeKeyOf(base),
+    );
+    expect(
+      cacheShapeKeyOf({
+        ...base,
+        credentialProfileRef: 'alternate-model-credential-profile',
+      }),
+    ).not.toBe(cacheShapeKeyOf(base));
+    expect(
+      cacheShapeKeyOf({
+        ...base,
+        toolSurface: { gantryMcp: ['send_message'], native: ['Read'] },
+      }),
+    ).not.toBe(cacheShapeKeyOf(base));
+    expect(
+      cacheShapeKeyOf({ ...base, systemPromptVersion: 'prompt-v2' }),
+    ).not.toBe(cacheShapeKeyOf(base));
   });
 
   it('detects adapters that implement the warm-pool verbs', () => {

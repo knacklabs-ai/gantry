@@ -21,6 +21,15 @@ export const coreOpenApiRouteDocs: RouteDoc[] = [
   ),
   doc(
     'get',
+    '/v1/runtime/workers',
+    'getRuntimeWorkers',
+    'System',
+    'Inspect runtime worker inventory',
+    'Returns local runtime worker, warm-pool, and inbound queue inventory with healthy aggregate totals.',
+    ['sessions:read'],
+  ),
+  doc(
+    'get',
     '/v1/models',
     'listModels',
     'Models',
