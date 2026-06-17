@@ -511,6 +511,12 @@ describe('Boondi regression scenarios', () => {
     expect(smoke).toContain("'/v1/runtime/workers'");
     expect(smoke).toContain('Authorization: `Bearer ${smokeEnv.controlToken}`');
     expect(smoke).toContain('workerInventory.healthyTotals.instances');
+    expect(smoke).toContain('const workerInventoryBefore');
+    expect(smoke).toContain('const workerInventoryAfter');
+    expect(smoke).toContain('function warmWorkerRss');
+    expect(smoke).toContain('--gantry-warm-pool-worker=');
+    expect(smoke).toContain('warmWorkerRssBefore');
+    expect(smoke).toContain('warmWorkerRssAfter');
     expect(smoke).toContain("'mcp.request'");
     expect(smoke).toContain("'mcp.response'");
     expect(smoke).toContain('Outbound dry-run: sent to listed test number');
@@ -534,6 +540,11 @@ describe('Boondi regression scenarios', () => {
     );
     expect(smoke).toContain(
       "guardrail: countFlowForChat(finalLog, chatJid, 'guardrail')",
+    );
+    expect(smoke).toContain('replyMs');
+    expect(smoke).toContain('modelRateLimit: latestRateLimitForChat');
+    expect(smoke).toContain(
+      "flowEntriesForChat(text, chatJid, 'model.rate_limit')",
     );
     expect(smoke).toContain(
       "hasFlowForChat(duplicateLog, chatJid, 'outbound')",
@@ -631,6 +642,9 @@ describe('Boondi regression scenarios', () => {
     expect(smoke).toContain(
       'workerInventory.instances.length < smokeEnv.expectedRuntimeInstances',
     );
+    expect(smoke).toContain('workerInventory: {');
+    expect(smoke).toContain('before: workerInventoryBefore.healthyTotals');
+    expect(smoke).toContain('after: workerInventoryAfter.healthyTotals');
   });
 
   it('keeps the latency measurement summary output parseable', () => {

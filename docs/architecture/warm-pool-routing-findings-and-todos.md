@@ -2672,6 +2672,34 @@ Evidence:
     T4 `7095ms`, and T5 `5823ms`. This confirms the latest local customer-side
     latency issue is not trace `gap`, runtime startup, or cache-prewarm
     attribution on this sample.
+  - `scripts/boondi-runtime-smoke.mjs` now prints capacity evidence in its
+    machine-readable JSON output: worker inventory healthy totals before and
+    after the smoke, warm-worker RSS totals and per-PID RSS, per-case `replyMs`,
+    and the latest model-rate-limit snapshot when the model emits one. This
+    keeps the provider-sizing gate attached to the signed-webhook runtime smoke
+    instead of a separate ad hoc checklist.
+  - Verification:
+    `node --check scripts/boondi-runtime-smoke.mjs` passed; focused
+    `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/repo/boondi-scenarios.test.ts --testNamePattern "basic runtime smoke|multi-instance worker inventory"`
+    passed.
+  - Fresh single-core runtime smoke with the capacity fields passed:
+    `GANTRY_RUNTIME_SMOKE_ENV=/tmp/gantry-runtime-smoke.env npm run smoke:boondi-runtime`
+    returned `ok: true`, one healthy runtime instance, before/after warm-worker
+    RSS snapshots, per-case `replyMs`, and `modelRateLimit: null` for all smoke
+    cases. Shopify primary, Shopify secondary, and CRM each still produced one
+    guardrail event, one MCP request, one MCP response, one outbound dry-run
+    event, and duplicate-inbound suppression.
+  - Fresh local three-worker runtime smoke passed against the same held stack:
+    `GANTRY_RUNTIME_SMOKE_ENV=/tmp/gantry-runtime-smoke.env SMOKE_CONCURRENCY=3 npm run smoke:boondi-runtime`
+    returned `ok: true`, `concurrency: 3`, one healthy runtime instance, and
+    before/after worker inventory with `genericAvailable: 6`,
+    `genericStarting: 0`, and `maxBoundWorkers: 3`. Per-case reply times were
+    Shopify primary `11868ms`, Shopify secondary `12239ms`, and CRM `6871ms`;
+    all three model-rate-limit snapshots were `null`. Warm-worker RSS was
+    captured before (`6` workers, `355344KB` total, `87216KB` max) and after
+    (`6` workers, `529984KB` total, `259856KB` max). This gives the local
+    provider-capacity gate concrete RSS/reply-time/rate-limit evidence for
+    concurrency `3` without asserting CRM or Shopify semantic behavior.
 Open follow-ups:
   - Continue Boondi latency measurement with `scripts/measure-latency.mjs` and
     boondi-admin `replySeconds` across multiple T1-T5 samples; the broad

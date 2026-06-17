@@ -13,6 +13,7 @@
 // Set SMOKE_CONCURRENCY=3 to exercise the local three-warm-worker runtime
 // hypothesis without enabling Boondi semantic assertions.
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 import { parseRuntimeSmokeEnv } from './lib/runtime-smoke-env.mjs';
 import { sendWebhook } from './lib/webhook.mjs';
@@ -126,12 +127,22 @@ function parseJsonLogLines(text) {
     });
 }
 
+function eventTimeMs(entry) {
+  const raw =
+    entry?.time ||
+    entry?.timestamp ||
+    entry?.context?.time ||
+    entry?.context?.timestamp;
+  const parsed = Date.parse(raw || '');
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 function logContextMatchesChat(context, chatJid) {
   return context?.chatJid === chatJid || context?.jid === chatJid;
 }
 
-function hasFlowForChat(text, chatJid, flow, serverName) {
-  return parseJsonLogLines(text).some((entry) => {
+function flowEntriesForChat(text, chatJid, flow, serverName) {
+  return parseJsonLogLines(text).filter((entry) => {
     const context = entry?.context;
     if (context?.flow !== flow) return false;
     if (!logContextMatchesChat(context, chatJid)) return false;
@@ -139,13 +150,31 @@ function hasFlowForChat(text, chatJid, flow, serverName) {
   });
 }
 
+function hasFlowForChat(text, chatJid, flow, serverName) {
+  return flowEntriesForChat(text, chatJid, flow, serverName).length > 0;
+}
+
 function countFlowForChat(text, chatJid, flow, serverName) {
-  return parseJsonLogLines(text).filter((entry) => {
-    const context = entry?.context;
-    if (context?.flow !== flow) return false;
-    if (!logContextMatchesChat(context, chatJid)) return false;
-    return serverName ? context.serverName === serverName : true;
-  }).length;
+  return flowEntriesForChat(text, chatJid, flow, serverName).length;
+}
+
+function latestRateLimitForChat(text, chatJid) {
+  const entries = flowEntriesForChat(text, chatJid, 'model.rate_limit');
+  const latest = entries[entries.length - 1]?.context;
+  if (!latest) return null;
+  return {
+    status: latest.status ?? null,
+    utilization: latest.utilization ?? null,
+    type: latest.rateLimitType ?? null,
+  };
+}
+
+function firstFlowTimeForChat(text, chatJid, flow, serverName) {
+  for (const entry of flowEntriesForChat(text, chatJid, flow, serverName)) {
+    const ms = eventTimeMs(entry);
+    if (ms !== null) return ms;
+  }
+  return null;
 }
 
 function hasLogMessageForChat(text, chatJid, message) {
@@ -217,6 +246,46 @@ async function runtimeWorkersHealth() {
   return workerInventory;
 }
 
+function warmWorkerRss() {
+  let pids = [];
+  try {
+    pids = execFileSync('ps', ['-axo', 'pid=,command='], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.includes('--gantry-warm-pool-worker='))
+      .map((line) => line.split(/\s+/, 1)[0])
+      .filter(Boolean);
+  } catch {
+    pids = [];
+  }
+  const workers = pids.flatMap((pid) => {
+    try {
+      const rssKb = Number(
+        execFileSync('ps', ['-p', pid, '-o', 'rss='], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .toString()
+          .trim(),
+      );
+      if (!Number.isFinite(rssKb)) return [];
+      return [{ pid, rssKb }];
+    } catch {
+      return [];
+    }
+  });
+  return {
+    count: workers.length,
+    totalRssKb: workers.reduce((acc, worker) => acc + worker.rssKb, 0),
+    maxRssKb: workers.length
+      ? Math.max(...workers.map((worker) => worker.rssKb))
+      : 0,
+    workers,
+  };
+}
+
 async function sendCheckedWebhook(input) {
   const result = await sendWebhook({ ...input, port: CORE_PORT });
   if (!result.ok) {
@@ -250,6 +319,7 @@ async function runCase(smokeCase) {
     text: smokeCase.text,
     name: 'Runtime Smoke',
   });
+  const turnSentAt = Date.now();
 
   const finalLog = await waitFor(
     `${smokeCase.name} MCP response and outbound`,
@@ -266,6 +336,8 @@ async function runCase(smokeCase) {
         'Outbound dry-run: sent to listed test number',
       ),
   );
+  const outboundAt = firstFlowTimeForChat(finalLog, chatJid, 'outbound');
+  const replyMs = outboundAt === null ? null : outboundAt - turnSentAt;
 
   const duplicateOffset = logSize();
   await sendCheckedWebhook({
@@ -306,6 +378,8 @@ async function runCase(smokeCase) {
     ),
     outbound: countFlowForChat(finalLog, chatJid, 'outbound'),
     duplicateInbound: true,
+    replyMs,
+    modelRateLimit: latestRateLimitForChat(finalLog, chatJid),
   };
 }
 
@@ -313,11 +387,30 @@ async function main() {
   await health(`http://127.0.0.1:${CORE_PORT}/`, 'core');
   await health('http://127.0.0.1:8081/healthz', 'shopify-api');
   await health('http://127.0.0.1:8082/healthz', 'boondi-crm');
-  await runtimeWorkersHealth();
+  const workerInventoryBefore = await runtimeWorkersHealth();
+  const warmWorkerRssBefore = warmWorkerRss();
 
   const results = await mapPool(cases, SMOKE_CONCURRENCY, runCase);
+  const workerInventoryAfter = await runtimeWorkersHealth();
+  const warmWorkerRssAfter = warmWorkerRss();
   console.log(
-    JSON.stringify({ ok: true, concurrency: SMOKE_CONCURRENCY, results }, null, 2),
+    JSON.stringify(
+      {
+        ok: true,
+        concurrency: SMOKE_CONCURRENCY,
+        workerInventory: {
+          before: workerInventoryBefore.healthyTotals,
+          after: workerInventoryAfter.healthyTotals,
+        },
+        warmWorkerRss: {
+          before: warmWorkerRssBefore,
+          after: warmWorkerRssAfter,
+        },
+        results,
+      },
+      null,
+      2,
+    ),
   );
 }
 
