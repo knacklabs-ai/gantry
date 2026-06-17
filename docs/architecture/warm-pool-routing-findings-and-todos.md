@@ -848,9 +848,23 @@ Evidence:
   - Hot-path impact: no new runtime work is added unless callers explicitly
     supply operational trace spans; trace save remains best-effort and payloads
     remain gated by payload tracing.
-Deferred external/admin follow-ups:
-  - boondi-admin type/UI rendering and lazy-payload e2e tests are outside this
-    repository and are deferred by the active worktree safety boundary.
+External/admin follow-ups completed in boondi-admin:
+  - `/Users/caw-d/Desktop/boondi-admin/lib/types.ts` now accepts the operational
+    section kinds emitted by the v2 Gantry timeline.
+  - `/Users/caw-d/Desktop/boondi-admin/components/LatencyReport.tsx` renders
+    cache prewarm/use and runtime operational sections, preserves lazy payload
+    loading, and can display the cache payload envelope when trace payloads are
+    enabled.
+  - `/Users/caw-d/Desktop/boondi-admin/app/runtime/page.tsx` and
+    `/Users/caw-d/Desktop/boondi-admin/app/api/runtime/workers/route.ts` add a
+    Runtime tab that reads `GET /v1/runtime/workers` through a server-side
+    proxy, keeping the Control API bearer token out of the browser.
+  - Verification:
+    `rm -rf .next && npm run build`
+  - Verification:
+    focused browser E2E run on port 3107 for `e2e/latency-report.spec.ts`
+    and `e2e/runtime-workers.spec.ts`.
+Remaining follow-ups:
   - Worker inventory persistence/dashboard wiring is not implemented yet; the
     current API reads the local instance only and does not write heartbeat rows.
 ```
@@ -1666,7 +1680,10 @@ Evidence:
     handles without that adapter marker still report an explicit skipped reason.
   - `GET /v1/runtime/workers` now exposes aggregate cache shape/status
     visibility from the warm-pool inventory so operators can see prewarm status
-    without exact payload capture or Boondi-admin UI changes.
+    without exact payload capture.
+  - boondi-admin now renders cache prewarm/use sections in the latency report,
+    lazy-loads cache payload envelopes only on expansion, and adds a Runtime tab
+    for the worker inventory endpoint.
   - Verification:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/runtime/warm-pool-manager.test.ts --testNamePattern "cache prewarm"`
   - Verification:
@@ -1680,8 +1697,9 @@ Evidence:
   - Verification:
     `npx tsc --noEmit --pretty false`
 Open follow-ups:
-  - Admin exact-payload visibility, read auditing, retention cleanup, and
-    boondi-admin UI rendering remain outside this runtime-only slice.
+  - Admin exact-payload read auditing, retention cleanup, and production auth
+    hardening remain open; the current boondi-admin slice covers local/dev UI
+    rendering and server-side Control API token handling.
   - TODO(deferred): non-Anthropic SDK/provider cache-prewarm and warm-worker
     behavior is out of scope for the current implementation. Keep the runtime
     contracts provider-neutral, but only the Anthropic SDK path is active until

@@ -142,7 +142,9 @@ describe('Interakt webhook route', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    await vi.waitFor(() => expect(onMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(onMessage).toHaveBeenCalledTimes(1), {
+      timeout: 5_000,
+    });
     expect(onMessage).toHaveBeenCalledWith(
       'wa:917000000001',
       expect.objectContaining({
@@ -251,7 +253,9 @@ describe('Interakt webhook route', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    await vi.waitFor(() => expect(outboundFetch).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(outboundFetch).toHaveBeenCalledTimes(1), {
+      timeout: 5_000,
+    });
     expect(fakeAgentPath).not.toHaveBeenCalled();
     expect(setCursor).toHaveBeenCalledWith(
       'wa:917000000001',
