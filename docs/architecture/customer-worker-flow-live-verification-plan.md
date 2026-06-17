@@ -2,7 +2,8 @@
 
 Date: 2026-06-18
 
-Status: execution in progress. Phase 0 and Phase 1 passed on 2026-06-18 IST.
+Status: execution in progress. Phase 0, Phase 1, and Phase 2 passed on
+2026-06-18 IST.
 
 ## Phase Status Tracker
 
@@ -10,19 +11,19 @@ Update this table after every phase. Do not mark a phase passed unless the
 phase acceptance criteria passed through live inbound requests plus admin/API
 evidence.
 
-| Phase | Scope | Scenario count | Status | Evidence | Notes |
-| --- | --- | ---: | --- | --- | --- |
-| Phase 0 | Harness and baseline | baseline gate | Passed | 2026-06-18 IST baseline: core 4710, admin 3000, Shopify MCP 8081, CRM MCP 8082; one healthy runtime, 51 stale rows excluded, generic available 3, active 0, pending 0. | Admin Runtime and Conversations pages render; latency trace API reachable. |
-| Phase 1 | Single customer, single core, cache prewarm off | 4 | Passed | 2026-06-18 IST live run `conversation:wa:000910000111`; inbound/outbound counts 4/4; outbound latency rows present; Shopify MCP requests succeeded on turns 1 and 3; current healthy runtime `runtime:32942` ended at generic available 3, bound active 0, active runs 0, pending 0. | Fixed stale retained-worker fallback: failed continuation now releases the pooled worker and clears stale idle cleanup before fallback. Follow-ups were answered through SDK session resume in fresh one-shot runners; post-turn same-process IPC continuation remains a known Phase 4/implementation gap. |
-| Phase 2 | Multiple customers, single core | 5 | Not started | TBD | Isolation, concurrency, capacity edge, duplicate provider redelivery. |
-| Phase 3 | Cache prewarm on | 2 | Not started | TBD | Prewarm complete before traffic and customer during prewarm. |
-| Phase 3.5 | MCP smoke | 1 | Not started | TBD | CRM and Shopify MCP live-traffic smoke. |
-| Phase 4 | Follow-up routing stress | 4 | Not started | TBD | Rapid follow-ups, active-run follow-up, cold resume, five-turn loop. |
-| Phase 5 | Two core processes | 5 | Not started | TBD | Ownership, distribution, restart, post-restart continuity. |
-| Phase 6 | Dashboard truth | dashboard gate | Not started | TBD | Must be checked across every scenario, then summarized here. |
-| Phase 7 | Failure recovery | 3 | Not started | TBD | Kill runner, MCP down/up, ungraceful core death. |
-| Phase 8 | Repeated-flow soak | soak gate | Not started | TBD | Five customers, five turns each, at least 10 minutes. |
-| Phase 9 | Final real-customer acceptance | customer gate | Not started | TBD | Real customer-facing channel proof after engineering verification. |
+| Phase     | Scope                                           | Scenario count | Status      | Evidence                                                                                                                                                                                                                                                                                                                                                                      | Notes                                                                                                                                                                                                                                                                                                      |
+| --------- | ----------------------------------------------- | -------------: | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0   | Harness and baseline                            |  baseline gate | Passed      | 2026-06-18 IST baseline: core 4710, admin 3000, Shopify MCP 8081, CRM MCP 8082; one healthy runtime, 51 stale rows excluded, generic available 3, active 0, pending 0.                                                                                                                                                                                                        | Admin Runtime and Conversations pages render; latency trace API reachable.                                                                                                                                                                                                                                 |
+| Phase 1   | Single customer, single core, cache prewarm off |              4 | Passed      | 2026-06-18 IST live run `conversation:wa:000910000111`; inbound/outbound counts 4/4; outbound latency rows present; Shopify MCP requests succeeded on turns 1 and 3; current healthy runtime `runtime:32942` ended at generic available 3, bound active 0, active runs 0, pending 0.                                                                                          | Fixed stale retained-worker fallback: failed continuation now releases the pooled worker and clears stale idle cleanup before fallback. Follow-ups were answered through SDK session resume in fresh one-shot runners; post-turn same-process IPC continuation remains a known Phase 4/implementation gap. |
+| Phase 2   | Multiple customers, single core                 |              5 | Passed      | 2026-06-18 IST live runs `conversation:wa:000920000210`/`211` for A/B marker isolation, `203`/`204` for concurrent traffic, `205`-`208` for capacity edge, and `209` for duplicate redelivery; all expected replies persisted, duplicate redelivery produced one inbound and one outbound, final runtime drained to active 0, pending 0, generic available 3, bound active 0. | First marker wording was rejected by Boondi scope guardrail; reran with Boondi-scoped reference-marker wording and passed.                                                                                                                                                                                 |
+| Phase 3   | Cache prewarm on                                |              2 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Prewarm complete before traffic and customer during prewarm.                                                                                                                                                                                                                                               |
+| Phase 3.5 | MCP smoke                                       |              1 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | CRM and Shopify MCP live-traffic smoke.                                                                                                                                                                                                                                                                    |
+| Phase 4   | Follow-up routing stress                        |              4 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Rapid follow-ups, active-run follow-up, cold resume, five-turn loop.                                                                                                                                                                                                                                       |
+| Phase 5   | Two core processes                              |              5 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Ownership, distribution, restart, post-restart continuity.                                                                                                                                                                                                                                                 |
+| Phase 6   | Dashboard truth                                 | dashboard gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Must be checked across every scenario, then summarized here.                                                                                                                                                                                                                                               |
+| Phase 7   | Failure recovery                                |              3 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Kill runner, MCP down/up, ungraceful core death.                                                                                                                                                                                                                                                           |
+| Phase 8   | Repeated-flow soak                              |      soak gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Five customers, five turns each, at least 10 minutes.                                                                                                                                                                                                                                                      |
+| Phase 9   | Final real-customer acceptance                  |  customer gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                                           | Real customer-facing channel proof after engineering verification.                                                                                                                                                                                                                                         |
 
 `Scenario count` is the named scenario count. Default live execution after
 Phase 0 is four turns inside the scenario's required conversation set. Do not
@@ -218,6 +219,101 @@ Implementation findings from Phase 1:
 - Current post-turn behavior still falls back to a resumed SDK session in a
   fresh one-shot runner after the SDK query has completed. Same-process
   post-turn IPC continuation is not proven yet and remains Phase 4 scope.
+
+## Phase 2 Evidence Log
+
+Status: passed on 2026-06-18 IST.
+
+Runtime setup:
+
+- Core: one dev core on `127.0.0.1:4710`.
+- Admin: `127.0.0.1:3000`.
+- MCPs: `shopify-api` healthy on `127.0.0.1:8081`; `boondi-crm` healthy on
+  `127.0.0.1:8082`.
+- Outbound: `GANTRY_OUTBOUND_DRYRUN=1`.
+- Warm pool: `size: 3`, `max_bound_workers: 3`, `cache_prewarm_enabled: false`,
+  `idle_timeout_ms: 30000`.
+
+Scenario 2.1 and 2.1b: two customers sequential plus cross-customer marker
+isolation.
+
+- Customer A: `conversation:wa:000920000210`.
+- Customer B: `conversation:wa:000920000211`.
+- Customer A inbound provider ids: `phase2-marker-a1`, `phase2-marker-a2`.
+- Customer A persisted outbound ids:
+  `message:wa:000920000210:outbound:787213c7-ebe4-40ac-b0f5-e552385af25a`
+  (`3.162 s`) and
+  `message:wa:000920000210:outbound:bfde5d67-bfdf-4706-8c77-9d77f7c4fca8`
+  (`4.033 s`).
+- Customer B inbound provider ids: `phase2-marker-b1`, `phase2-marker-b2`.
+- Customer B persisted outbound ids:
+  `message:wa:000920000211:outbound:1bd11c6d-22e5-445f-9cc6-57da041a0779`
+  (`2.175 s`) and
+  `message:wa:000920000211:outbound:89274634-f7c5-4ed1-b63b-cdfeb967fd13`
+  (`4.343 s`).
+- Isolation checks: Customer A recovered `ALPHA-P2-210` and did not receive
+  `BRAVO-P2-211`; Customer B recovered `BRAVO-P2-211` and did not receive
+  `ALPHA-P2-210`.
+- Transcript counts: Customer A `2` inbound and `2` outbound; Customer B `2`
+  inbound and `2` outbound.
+- Note: an earlier marker phrase without a Boondi-scoped delivery/order context
+  was correctly rejected by the Boondi scope guardrail, so the accepted evidence
+  uses Boondi-scoped reference-marker wording.
+
+Scenario 2.2: two customers concurrent.
+
+- Customers: `conversation:wa:000920000203` and
+  `conversation:wa:000920000204`.
+- Persisted outbound ids:
+  `message:wa:000920000203:outbound:c16db457-4e7b-4df7-87d8-2aa2446e6bf5`
+  (`3.642 s`) and
+  `message:wa:000920000204:outbound:f4e639ff-2293-43c6-b6c4-f99ce5dcaf2a`
+  (`2.757 s`).
+- Runtime snapshot during the overlap showed one active message run and zero
+  pending conversation keys; both conversations received exactly one reply.
+
+Scenario 2.3: capacity edge with four customers.
+
+- Customers: `conversation:wa:000920000205`,
+  `conversation:wa:000920000206`, `conversation:wa:000920000207`, and
+  `conversation:wa:000920000208`.
+- Inbound provider ids: `phase2-capacity-1`, `phase2-capacity-2`,
+  `phase2-capacity-3`, `phase2-capacity-4`.
+- Persisted outbound ids:
+  `message:wa:000920000205:outbound:b6744cee-7481-48e3-9482-743218c0a437`
+  (`2.705 s`),
+  `message:wa:000920000206:outbound:cd4a77ba-8983-42f5-be07-af0bffdd81a7`
+  (`6.940 s`),
+  `message:wa:000920000207:outbound:0fa4da30-f215-4e7a-84d0-eda9cd5bc78a`
+  (`7.706 s`), and
+  `message:wa:000920000208:outbound:4f7554ec-93fb-40d4-9744-8a90cd96c991`
+  (`6.999 s`).
+- Runtime snapshots during the run showed active work moving through the
+  `max_message_runs: 3` limit without stranded pending conversations. The
+  observed five-second snapshot was `activeMessageRuns=3`,
+  `pendingConversationKeys=0`, `genericAvailable=3`, `boundActive=3`.
+- All four conversations received exactly one outbound reply.
+
+Scenario 2.4: provider redelivery dedupe.
+
+- Customer: `conversation:wa:000920000209`.
+- Duplicate provider message id sent twice: `phase2-duplicate-1`.
+- Persisted outbound id:
+  `message:wa:000920000209:outbound:5f3af8cf-79ca-4de4-80f3-6323f0c281ec`
+  (`4.202 s`).
+- Admin transcript check after a post-reply wait: `1` inbound, `1` outbound,
+  new outbound count `1`.
+
+Final Phase 2 drain snapshot:
+
+- `activeMessageRuns=0`.
+- `pendingConversationKeys=0`.
+- `genericAvailable=3`.
+- `genericStarting=0`.
+- `boundActive=0`.
+- `boundIdle=0`.
+- `availableTarget=3`.
+- Cache prewarm summary: `pending=0`, `succeeded=0`, `skipped=3`, `failed=0`.
 
 ## Required Live Evidence Per Scenario
 
@@ -1131,14 +1227,16 @@ The complete plan passes only when live-flow evidence proves:
    - send time
    - post-reply cleanup/release when it affects the next turn
 10. Latency report shows message and routing identifiers:
-   - conversation id
-   - inbound provider message id
-   - persisted inbound message id
-   - outbound provider message id, when available
-   - persisted outbound message id
-   - runtime instance id
-   - run handle
-   - worker id, when applicable
+
+- conversation id
+- inbound provider message id
+- persisted inbound message id
+- outbound provider message id, when available
+- persisted outbound message id
+- runtime instance id
+- run handle
+- worker id, when applicable
+
 11. CRM and Shopify MCP smoke passes through live customer traffic and trace
     evidence.
 12. Duplicate provider redelivery produces exactly one customer-visible reply.
@@ -1165,16 +1263,16 @@ or ownership until the basic single-core flow is proven through live requests.
 
 This is a verification plan, not an implementation plan.
 
-| Surface | Status | Reason |
-| --- | --- | --- |
-| Runtime behavior | Read-only/observable | The plan verifies runner routing, queue state, and ownership through live traffic. |
-| `settings.yaml` | Read-only/observable | The plan changes config between scenarios but does not define new settings. |
-| Postgres/runtime projection | Read-only/observable | The plan inspects persisted messages, traces, runtime rows, and stale instances. |
-| Control/admin API | Read-only/observable | The plan requires API evidence but does not change API contracts. |
-| SDK/contracts | Read-only/observable | The plan verifies Anthropic SDK runner behavior but does not change SDK contracts. |
-| CLI | Not applicable | No CLI surface changes are planned. |
-| Gantry MCP tools/admin skill | Not applicable | The plan does not add or change Gantry MCP tools. |
-| Channel/provider adapters | Read-only/observable | The plan sends real inbound requests and observes outbound delivery. |
-| Docs/prompts | Changed | This document records the live verification plan. |
-| Audit/events | Read-only/observable | Existing traces/events are used as evidence. |
-| Tests/verification | Changed | Acceptance requires live-flow verification in addition to unit/integration tests. |
+| Surface                      | Status               | Reason                                                                             |
+| ---------------------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| Runtime behavior             | Read-only/observable | The plan verifies runner routing, queue state, and ownership through live traffic. |
+| `settings.yaml`              | Read-only/observable | The plan changes config between scenarios but does not define new settings.        |
+| Postgres/runtime projection  | Read-only/observable | The plan inspects persisted messages, traces, runtime rows, and stale instances.   |
+| Control/admin API            | Read-only/observable | The plan requires API evidence but does not change API contracts.                  |
+| SDK/contracts                | Read-only/observable | The plan verifies Anthropic SDK runner behavior but does not change SDK contracts. |
+| CLI                          | Not applicable       | No CLI surface changes are planned.                                                |
+| Gantry MCP tools/admin skill | Not applicable       | The plan does not add or change Gantry MCP tools.                                  |
+| Channel/provider adapters    | Read-only/observable | The plan sends real inbound requests and observes outbound delivery.               |
+| Docs/prompts                 | Changed              | This document records the live verification plan.                                  |
+| Audit/events                 | Read-only/observable | Existing traces/events are used as evidence.                                       |
+| Tests/verification           | Changed              | Acceptance requires live-flow verification in addition to unit/integration tests.  |
