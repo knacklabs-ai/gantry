@@ -75,6 +75,7 @@ export interface WarmWorkerHandle {
   readonly cacheShapeKey?: WarmPoolCacheShapeKey;
   readonly bornAt: number;
   readonly processName?: string;
+  readonly groupFolder?: string;
   readonly ipcDir?: string;
   readonly boundIdentityFile?: string;
   readonly memoryIpcAuthToken?: string;
@@ -97,6 +98,10 @@ export interface WarmBindDelivery {
   deliver(
     handle: WarmWorkerHandle,
     scope: ConversationBindScope,
+  ): Promise<boolean>;
+  waitUntilReady?(
+    handle: WarmWorkerHandle,
+    input: { groupFolder: string; timeoutMs?: number },
   ): Promise<boolean>;
 }
 

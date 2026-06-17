@@ -1246,6 +1246,76 @@ describe('agent-spawn timeout behavior', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it('prewarms caller-identity HTTP MCP shapes without requiring a customer JID', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 2,
+      idleTtlMs: 240_000,
+    });
+    const prewarm = vi.fn(async () => undefined);
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => null),
+      prewarm,
+      release: vi.fn(async () => undefined),
+    };
+    const warmHandle: WarmWorkerHandle = {
+      id: 'startup-warm-worker-caller-identity',
+      key: 'warm-key',
+      bornAt: 100,
+      bound: false,
+    };
+    const warmAdapter: WarmPoolCapable = {
+      ...testExecutionAdapter,
+      prewarm: vi.fn(async () => warmHandle),
+      recycle: vi.fn(),
+      bind: vi.fn(async () => ({
+        handle: warmHandle,
+        process: createFakeProcess() as unknown as ChildProcess,
+        runHandle: 'startup-warm-run',
+      })),
+    };
+    const repository = new SpawnMcpRepository([
+      mcpHttpRecord({
+        id: 'mcp:crm',
+        name: 'crm-api',
+        callerIdentity: {
+          mode: 'required',
+          headerName: 'x-caller-identity',
+          signingRef: 'CRM_IDENTITY_SECRET',
+          source: { kind: 'conversation_jid_phone', jidPrefix: 'wa:' },
+        },
+      }),
+    ]);
+
+    const result = await spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+        chatJid: 'wa:__interakt_default_agent__:boondi_support',
+        attachedMcpSourceIds: ['mcp:crm'],
+      },
+      vi.fn(),
+      undefined,
+      {
+        executionAdapter: warmAdapter,
+        warmPool,
+        warmPoolPrewarmOnly: true,
+        mcpServerRepository: repository,
+        capabilitySecretRepository: new SpawnCapabilitySecretRepository({}),
+        mcpContext: { appId: 'app-one', agentId: 'agent-one' },
+      },
+    );
+
+    expect(result).toEqual({ status: 'success', result: null });
+    expect(prewarm).toHaveBeenCalledTimes(1);
+    const [recipe] = prewarm.mock.calls[0] as [SharedBootRecipe, number];
+    expect(recipe.mcpSet).toEqual(['mcp:crm']);
+    expect(recipe.runnerEnv?.GANTRY_MCP_CONFIG_FILE).toBeUndefined();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('uses the warm pool for caller-identity HTTP MCPs routed through the Gantry facade', async () => {
     vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
       enabled: true,
@@ -1823,6 +1893,33 @@ describe('agent-spawn timeout behavior', () => {
       string
     >;
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6');
+  });
+
+  it('preserves the configured per-core IPC socket path in runner env', async () => {
+    const originalSocketPath = process.env.GANTRY_IPC_SOCKET_PATH;
+    process.env.GANTRY_IPC_SOCKET_PATH = '/tmp/gantry-core-1.sock';
+    try {
+      const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
+
+      await vi.advanceTimersByTimeAsync(10);
+      fakeProc.emit('close', 0);
+      await vi.advanceTimersByTimeAsync(10);
+      await resultPromise;
+
+      const spawnCalls = vi.mocked(spawn).mock.calls;
+      expect(spawnCalls.length).toBeGreaterThan(0);
+      const env = spawnCalls[spawnCalls.length - 1][2]?.env as Record<
+        string,
+        string
+      >;
+      expect(env.GANTRY_IPC_SOCKET_PATH).toBe('/tmp/gantry-core-1.sock');
+    } finally {
+      if (originalSocketPath === undefined) {
+        delete process.env.GANTRY_IPC_SOCKET_PATH;
+      } else {
+        process.env.GANTRY_IPC_SOCKET_PATH = originalSocketPath;
+      }
+    }
   });
 
   it('uses one-time defaults for scheduled manual job fallback', async () => {

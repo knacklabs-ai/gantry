@@ -315,6 +315,86 @@ describe('Anthropic warm pool adapter', () => {
     });
   });
 
+  it('does not return a prewarmed worker until its bind socket is connected', async () => {
+    const child = makeChild();
+    Object.defineProperty(child, 'exitCode', {
+      configurable: true,
+      value: null,
+    });
+    const socketDelivery: WarmBindDelivery = {
+      deliver: vi.fn(async () => true),
+      waitUntilReady: vi.fn(async () => true),
+    };
+    const controller = new AnthropicWarmPoolController({
+      spawn: vi.fn(() => child),
+      now: () => 1_000,
+    });
+    controller.setWarmBindDelivery(socketDelivery);
+
+    const handle = await prewarmReady(controller, makeRecipe(), child);
+
+    expect(socketDelivery.waitUntilReady).toHaveBeenCalledWith(
+      handle,
+      expect.objectContaining({ groupFolder: 'agent-1' }),
+    );
+    await expect(controller.healthCheck(handle)).resolves.toBe(true);
+  });
+
+  it('rejects prewarm when the generic worker never connects its bind socket', async () => {
+    const child = makeChild();
+    const socketDelivery: WarmBindDelivery = {
+      deliver: vi.fn(async () => true),
+      waitUntilReady: vi.fn(async () => false),
+    };
+    const controller = new AnthropicWarmPoolController({
+      spawn: vi.fn(() => child),
+      now: () => 1_000,
+    });
+    controller.setWarmBindDelivery(socketDelivery);
+
+    const prewarm = controller.prewarm(makeRecipe());
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledTimes(1));
+    child.stderr.emit(
+      'data',
+      Buffer.from(
+        '[agent-runner] Warm worker booted generic via startup(); awaiting bind\n',
+      ),
+    );
+
+    await expect(prewarm).rejects.toThrow(
+      'reached generic boot but did not connect its bind socket',
+    );
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('healthCheck fails a live warm worker whose bind socket disconnected', async () => {
+    const child = makeChild();
+    Object.defineProperty(child, 'exitCode', {
+      configurable: true,
+      value: null,
+    });
+    const waitUntilReady = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const socketDelivery: WarmBindDelivery = {
+      deliver: vi.fn(async () => true),
+      waitUntilReady,
+    };
+    const controller = new AnthropicWarmPoolController({
+      spawn: vi.fn(() => child),
+      now: () => 1_000,
+    });
+    controller.setWarmBindDelivery(socketDelivery);
+    const handle = await prewarmReady(controller, makeRecipe(), child);
+
+    await expect(controller.healthCheck(handle)).resolves.toBe(false);
+    expect(waitUntilReady).toHaveBeenLastCalledWith(handle, {
+      groupFolder: 'agent-1',
+      timeoutMs: 0,
+    });
+  });
+
   it('healthCheck reports whether the prewarmed child is still live', async () => {
     const child = makeChild();
     Object.defineProperty(child, 'exitCode', {

@@ -29,6 +29,7 @@ export interface StartupResult {
 const STARTUP_CREDENTIAL_BINDING_TIMEOUT_MS = 3_000;
 const DEFAULT_AGENT_FOLDER = 'main_agent';
 const INTERNAL_DEFAULT_AGENT_JID = 'app:default';
+const INTERAKT_DEFAULT_AGENT_PREWARM_PREFIX = 'wa:__interakt_default_agent__:';
 
 function makeDefaultDeps(): StartupDeps {
   return {
@@ -60,11 +61,85 @@ async function reapWarmPoolOrphans(
   }
 }
 
-function prewarmWarmPoolRoutes(
+function agentConfigForRuntimeAgent(agent: RuntimeSettings['agents'][string]):
+  | {
+      model?: string;
+      persona?: typeof agent.persona;
+      plugins?: typeof agent.plugins;
+      thinking?: typeof agent.thinking;
+      toolSurface?: typeof agent.toolSurface;
+    }
+  | undefined {
+  const agentConfig =
+    agent.model ||
+    agent.persona ||
+    agent.plugins ||
+    agent.thinking ||
+    agent.toolSurface
+      ? {
+          model: agent.model,
+          persona: agent.persona,
+          plugins: agent.plugins,
+          thinking: agent.thinking,
+          toolSurface: agent.toolSurface,
+        }
+      : undefined;
+  return agentConfig;
+}
+
+function interaktDefaultAgentPrewarmJid(agentFolder: string): string {
+  return `${INTERAKT_DEFAULT_AGENT_PREWARM_PREFIX}${agentFolder}`;
+}
+
+async function prewarmInteraktDefaultAgentRoute(
   app: RuntimeApp,
+  runtimeSettings: RuntimeSettings,
   logger: StartupDeps['logger'],
-): void {
+): Promise<void> {
   if (!app.warmPool?.prewarm) return;
+  const defaultAgentFolder = runtimeSettings.providers?.interakt?.defaultAgent;
+  if (!runtimeSettings.providers?.interakt?.enabled || !defaultAgentFolder) {
+    return;
+  }
+  const agent = runtimeSettings.agents?.[defaultAgentFolder];
+  if (!agent) return;
+  const chatJid = interaktDefaultAgentPrewarmJid(defaultAgentFolder);
+  const group = {
+    name: agent.name,
+    folder: agent.folder,
+    trigger: `@${agent.name}`,
+    added_at: nowIso(),
+    requiresTrigger: false,
+    conversationKind: 'dm' as const,
+    ...(agentConfigForRuntimeAgent(agent)
+      ? { agentConfig: agentConfigForRuntimeAgent(agent) }
+      : {}),
+  };
+  try {
+    await app.projectConversationRoute(chatJid, group);
+    await app.prewarmAgentForConversationRoute(chatJid);
+  } catch (err) {
+    logger.warn(
+      { err, chatJid, folder: agent.folder },
+      'Failed to prewarm Interakt default-agent warm-pool route during startup',
+    );
+  } finally {
+    await app.unregisterConversationRoute(chatJid).catch((err) => {
+      logger.warn(
+        { err, chatJid, folder: agent.folder },
+        'Failed to remove synthetic Interakt default-agent prewarm route',
+      );
+    });
+  }
+}
+
+export async function prewarmWarmPoolRoutes(
+  app: RuntimeApp,
+  runtimeSettings: RuntimeSettings,
+  logger: StartupDeps['logger'],
+): Promise<void> {
+  if (!app.warmPool?.prewarm) return;
+  await prewarmInteraktDefaultAgentRoute(app, runtimeSettings, logger);
   const routes = Object.keys(app.getConversationRoutes());
   for (const chatJid of routes) {
     void app.prewarmAgentForConversationRoute(chatJid).catch((err) => {
@@ -157,7 +232,6 @@ export async function runStartup(
     resolved.logger,
   );
   await waitForCredentialBindings(app, resolved.logger);
-  prewarmWarmPoolRoutes(app, resolved.logger);
 
   return {
     runtimeSettings,

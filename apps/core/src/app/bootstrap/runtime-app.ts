@@ -180,6 +180,7 @@ export interface RuntimeAppOptions {
   runtimeStartedAt?: Date;
   opsRepository?: RuntimeAppRepository;
   getMessageSendOwnershipToken?: GroupProcessingDeps['getMessageSendOwnershipToken'];
+  onMessageRunStart?: (groupJid: string) => (() => void) | void;
   /** Per-reply latency trace (best-effort). Injected at boot; absent in tests. */
   replyTrace?: GroupProcessingDeps['replyTrace'];
 }
@@ -227,7 +228,12 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   let providerSettingsByProvider: Record<string, RuntimeProviderSettings> = {};
   let agentSettingsByFolder: Record<string, RuntimeConfiguredAgent> = {};
 
-  const queue = options.queue ?? new GroupQueue(getRuntimeQueueConfig());
+  const queue =
+    options.queue ??
+    new GroupQueue({
+      ...getRuntimeQueueConfig(),
+      onMessageRunStart: options.onMessageRunStart,
+    });
   // Single guardrail classifier instance shared by both the spawn path
   // (group processor) and the continuation path (message loop), so the
   // guardrail behaves identically regardless of which path a message takes.

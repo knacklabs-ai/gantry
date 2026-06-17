@@ -6,7 +6,7 @@
 //   1. core, shopify-api MCP, and boondi-crm MCP are reachable;
 //   2. signed Interakt webhooks ACK;
 //   3. inbound reaches guardrail/agent processing;
-//   4. Gantry emits MCP proxy request/response events;
+//   4. Gantry emits MCP proxy request/response events for an agent MCP turn;
 //   5. outbound dry-run emits a customer-visible send event.
 //   6. duplicate provider message ids do not trigger duplicate runtime work.
 //   7. authenticated runtime worker inventory is reachable.
@@ -31,7 +31,7 @@ const SMOKE_CONCURRENCY = Math.max(
   Number(process.env.SMOKE_CONCURRENCY || 1),
 );
 
-const cases = [
+const allCases = [
   {
     name: 'shopify',
     phone: process.env.BOONDI_SMOKE_SHOPIFY_PHONE || '000000001',
@@ -51,8 +51,23 @@ const cases = [
     phone: process.env.BOONDI_SMOKE_CRM_PHONE || '000000050',
     text: process.env.BOONDI_SMOKE_CRM_TEXT || 'hi',
     serverName: 'boondi-crm',
+    expectAgentMcpFlow: false,
   },
 ];
+
+const SMOKE_CASES = (process.env.SMOKE_CASES || '')
+  .split(',')
+  .map((name) => name.trim())
+  .filter(Boolean);
+const cases =
+  SMOKE_CASES.length > 0
+    ? allCases.filter((smokeCase) => SMOKE_CASES.includes(smokeCase.name))
+    : allCases;
+if (cases.length === 0) {
+  throw new Error(
+    `SMOKE_CASES did not match any runtime smoke cases: ${SMOKE_CASES.join(', ')}`,
+  );
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -191,6 +206,14 @@ async function runtimeWorkersHealth() {
       `/v1/runtime/workers returned invalid inventory: ${JSON.stringify(workerInventory)}`,
     );
   }
+  if (
+    workerInventory.instances.length < smokeEnv.expectedRuntimeInstances ||
+    workerInventory.healthyTotals.instances < smokeEnv.expectedRuntimeInstances
+  ) {
+    throw new Error(
+      `/v1/runtime/workers did not expose ${smokeEnv.expectedRuntimeInstances} healthy runtime instances: ${JSON.stringify(workerInventory)}`,
+    );
+  }
   return workerInventory;
 }
 
@@ -233,8 +256,9 @@ async function runCase(smokeCase) {
     offset,
     (text) =>
       hasFlowForChat(text, chatJid, 'guardrail') &&
-      hasFlowForChat(text, chatJid, 'mcp.request', smokeCase.serverName) &&
-      hasFlowForChat(text, chatJid, 'mcp.response', smokeCase.serverName) &&
+      (smokeCase.expectAgentMcpFlow === false ||
+        (hasFlowForChat(text, chatJid, 'mcp.request', smokeCase.serverName) &&
+          hasFlowForChat(text, chatJid, 'mcp.response', smokeCase.serverName))) &&
       hasFlowForChat(text, chatJid, 'outbound') &&
       hasLogMessageForChat(
         text,

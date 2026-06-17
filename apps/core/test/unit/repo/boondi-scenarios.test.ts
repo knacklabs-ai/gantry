@@ -501,6 +501,7 @@ describe('Boondi regression scenarios', () => {
     );
     expect(smoke).toContain("serverName: 'shopify-api'");
     expect(smoke).toContain("serverName: 'boondi-crm'");
+    expect(smoke).toContain('expectAgentMcpFlow: false');
     expect(smoke).toContain("if (label === 'core') return response.status;");
     expect(smoke).toContain('await runtimeWorkersHealth();');
     expect(smoke).toContain("'/v1/runtime/workers'");
@@ -511,6 +512,10 @@ describe('Boondi regression scenarios', () => {
     expect(smoke).toContain('Outbound dry-run: sent to listed test number');
     expect(smoke).toContain('messageId: firstTurn.messageId');
     expect(smoke).toContain('duplicateInbound: true');
+    expect(smoke).toContain('const SMOKE_CASES =');
+    expect(smoke).toContain(
+      'SMOKE_CASES did not match any runtime smoke cases',
+    );
     expect(smoke).toContain('SMOKE_CONCURRENCY');
     expect(smoke).toContain('await mapPool(cases, SMOKE_CONCURRENCY');
     expect(smoke).toContain("name: 'shopify-secondary'");
@@ -519,6 +524,7 @@ describe('Boondi regression scenarios', () => {
     );
     expect(smoke).toContain('function hasFlowForChat');
     expect(smoke).toContain('function countFlowForChat');
+    expect(smoke).toContain('smokeCase.expectAgentMcpFlow === false');
     expect(smoke).toContain(
       "hasFlowForChat(text, chatJid, 'mcp.request', smokeCase.serverName)",
     );
@@ -569,6 +575,10 @@ describe('Boondi regression scenarios', () => {
     );
     expect(stack).toContain('BOONDI_CRM_RECONCILE_INTERVAL_MS');
     expect(stack).toContain('GANTRY_DEV_LOG');
+    expect(stack).toContain('GANTRY_EXPECTED_RUNTIME_INSTANCES');
+    expect(stack).toContain('GANTRY_CONTROL_API_KEYS_JSON');
+    expect(stack).toContain('GANTRY_SMOKE_CONTROL_TOKEN');
+    expect(stack).toContain('smoke_token_from_control_keys_json');
     expect(stack).toContain('http://127.0.0.1:8081/healthz');
     expect(stack).toContain('http://127.0.0.1:8082/healthz');
     expect(stack).not.toContain('CORE_URL');
@@ -594,5 +604,22 @@ describe('Boondi regression scenarios', () => {
     expect(stack).toContain('GANTRY_DEV_LOG="$core_log"');
     expect(stack).toContain('GANTRY_RUNTIME_SMOKE_ENV=$smoke_env');
     expect(stack).toContain('READY core_ports=${CORE_PORTS[*]}');
+  });
+
+  it('requires the runtime smoke to prove multi-instance worker inventory', () => {
+    const smoke = fs.readFileSync(runtimeSmokePath, 'utf-8');
+    const envParser = fs.readFileSync(
+      path.join(process.cwd(), 'scripts/lib/runtime-smoke-env.mjs'),
+      'utf-8',
+    );
+
+    expect(envParser).toContain('GANTRY_EXPECTED_RUNTIME_INSTANCES');
+    expect(smoke).toContain('expectedRuntimeInstances');
+    expect(smoke).toContain(
+      'workerInventory.healthyTotals.instances < smokeEnv.expectedRuntimeInstances',
+    );
+    expect(smoke).toContain(
+      'workerInventory.instances.length < smokeEnv.expectedRuntimeInstances',
+    );
   });
 });

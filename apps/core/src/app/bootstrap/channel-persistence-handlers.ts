@@ -364,13 +364,13 @@ export function createChannelPersistenceHandlers({
         !msg.is_bot_message &&
         storeResult?.status !== 'duplicate_existing_message'
       ) {
+        await prewarmAfterPersistence(chatJid, route);
         await publishPersistedInboundWorkNotification(
           chatJid,
           msg,
           storeResult,
         );
         if (publishConversationWorkNotification) return;
-        await prewarmAfterPersistence(chatJid, route);
         wakePersistedInboundMessageCheck(chatJid, route);
       }
     },

@@ -5,6 +5,7 @@ import type {
   ClaimConversationOwnerLeaseInput,
   ClaimConversationOwnerLeaseResult,
   ConversationOwnerLeaseRecord,
+  HeartbeatConversationOwnerLeaseInput,
 } from '@core/domain/ports/conversation-owner-lease-repository.js';
 
 describe('createConversationWorkClaimGate', () => {
@@ -288,5 +289,80 @@ describe('createConversationWorkClaimGate', () => {
       ownerInstanceId: 'runtime:1',
       leaseVersion: 5,
     });
+  });
+
+  it('heartbeats an acquired lease while an active message run is open', async () => {
+    vi.useFakeTimers();
+    const acquiredLease = lease({ leaseVersion: 12 });
+    const heartbeatLease = vi.fn(
+      async (
+        heartbeatInput: HeartbeatConversationOwnerLeaseInput,
+      ): Promise<ConversationOwnerLeaseRecord | null> => ({
+        ...acquiredLease,
+        leaseVersion: heartbeatInput.leaseVersion,
+        leaseExpiresAt: '2026-06-17T09:01:00.000Z',
+        heartbeatAt: '2026-06-17T09:00:15.000Z',
+      }),
+    );
+    const gate = createConversationWorkClaimGate({
+      claimLease: vi.fn(async () => ({
+        acquired: true,
+        lease: acquiredLease,
+      })),
+      heartbeatLease,
+    });
+
+    await gate.claimLease(input);
+    const stop = gate.startTrackedLeaseHeartbeat({
+      appId: 'default',
+      conversationId: 'wa:000000001',
+      threadId: null,
+      ownerInstanceId: 'runtime:1',
+      leaseTtlMs: 45_000,
+      intervalMs: 15_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(heartbeatLease).toHaveBeenCalledWith({
+      appId: 'default',
+      conversationId: 'wa:000000001',
+      threadId: null,
+      ownerInstanceId: 'runtime:1',
+      leaseVersion: 12,
+      leaseTtlMs: 45_000,
+    });
+
+    stop();
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(heartbeatLease).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('stops heartbeating when the repository says the lease is no longer owned', async () => {
+    vi.useFakeTimers();
+    const heartbeatLease = vi.fn(async () => null);
+    const gate = createConversationWorkClaimGate({
+      claimLease: vi.fn(async () => ({
+        acquired: true,
+        lease: lease({ leaseVersion: 13 }),
+      })),
+      heartbeatLease,
+    });
+
+    await gate.claimLease(input);
+    gate.startTrackedLeaseHeartbeat({
+      appId: 'default',
+      conversationId: 'wa:000000001',
+      threadId: null,
+      ownerInstanceId: 'runtime:1',
+      leaseTtlMs: 45_000,
+      intervalMs: 15_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(45_000);
+
+    expect(heartbeatLease).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });

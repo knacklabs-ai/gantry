@@ -554,7 +554,9 @@ export async function spawnAgent(
           })
         : [];
     const callerIdentityProjection = projectCallerIdentityHeaders({
-      capabilities: allMcpCapabilities,
+      capabilities: options?.warmPoolPrewarmOnly
+        ? allMcpCapabilities.filter(isSdkNativeMcpCapability)
+        : allMcpCapabilities,
       chatJid: input.chatJid,
       credentialEnv: mcpCredentialEnv,
     });
@@ -618,6 +620,9 @@ export async function spawnAgent(
       localCliCredentialPathHintsFromRuntimeAccess(input.runtimeAccess),
       process.env,
     );
+    const runnerIpcSocketPath =
+      process.env.GANTRY_IPC_SOCKET_PATH?.trim() ||
+      ipcSocketPathFor(path.join(DATA_DIR, 'ipc'));
     const env: NodeJS.ProcessEnv = {
       ...pickSafeHostEnv(process.env),
       ...pickPreparedExecutionEnv(preparedExecution.env),
@@ -647,7 +652,7 @@ export async function spawnAgent(
       ),
       GANTRY_IPC_DIR: hostRuntime.groupIpcDir,
       GANTRY_IPC_AUTH_TOKEN: ipcAuth.authToken,
-      GANTRY_IPC_SOCKET_PATH: ipcSocketPathFor(path.join(DATA_DIR, 'ipc')),
+      GANTRY_IPC_SOCKET_PATH: runnerIpcSocketPath,
       GANTRY_CHAT_JID: input.chatJid,
       ...(input.jobId ? { GANTRY_JOB_ID: input.jobId } : {}),
       ...(input.jobName ? { GANTRY_JOB_NAME: input.jobName } : {}),

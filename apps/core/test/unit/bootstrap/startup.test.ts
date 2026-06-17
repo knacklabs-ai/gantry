@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { runStartup } from '@core/app/bootstrap/startup.js';
+import {
+  prewarmWarmPoolRoutes,
+  runStartup,
+} from '@core/app/bootstrap/startup.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
 
 function makeApp(overrides: Partial<RuntimeApp> = {}): RuntimeApp {
@@ -121,9 +124,16 @@ describe('runStartup', () => {
     expect(reapOrphans).toHaveBeenCalledOnce();
   });
 
-  it('prewarms configured routes after startup credential bindings are ready', async () => {
+  it('prewarms configured routes when runtime services are ready', async () => {
     const prewarm = vi.fn(async () => true);
     const order: string[] = [];
+    const runtimeSettings = {
+      providers: {},
+      storage: {
+        postgres: { urlEnv: 'GANTRY_DATABASE_URL', schema: 'gantry' },
+      },
+      memory: {},
+    } as any;
     const app = makeApp({
       warmPool: {
         acquire: vi.fn(() => null),
@@ -146,41 +156,99 @@ describe('runStartup', () => {
           requiresTrigger: false,
         },
       })),
-      ensureCredentialBindingsForConversationRoutes: vi.fn(async () => {
-        order.push('credentials');
-      }),
       prewarmAgentForConversationRoute: vi.fn(async (chatJid) => {
         order.push(`prewarm:${chatJid}`);
         return prewarm(chatJid);
       }),
     });
 
-    await runStartup(app, {
-      ensureRuntimeLayoutDirectories: vi.fn(),
-      initializeRuntimeStorage: vi.fn(async () => ({}) as any),
-      loadRuntimeSettings: vi.fn(
-        () =>
-          ({
-            providers: {},
-            storage: {
-              postgres: { urlEnv: 'GANTRY_DATABASE_URL', schema: 'gantry' },
-            },
-            memory: {},
-          }) as any,
+    await prewarmWarmPoolRoutes(app, runtimeSettings, {
+      info: vi.fn(),
+      warn: vi.fn(),
+    });
+
+    expect(order).toEqual(['prewarm:app:default', 'prewarm:wa:customer']);
+    expect(prewarm).toHaveBeenCalledTimes(2);
+  });
+
+  it('prewarms providers.interakt.default_agent before any customer route exists', async () => {
+    const order: string[] = [];
+    const runtimeSettings = {
+      providers: {
+        interakt: { enabled: true, defaultAgent: 'boondi_support' },
+      },
+      agents: {
+        boondi_support: {
+          name: 'Boondi',
+          folder: 'boondi_support',
+          model: 'sonnet',
+          bindings: {},
+          sources: { skills: [], mcpServers: [] },
+          capabilities: [],
+        },
+      },
+      storage: {
+        postgres: { urlEnv: 'GANTRY_DATABASE_URL', schema: 'gantry' },
+      },
+      memory: {},
+    } as any;
+    const app = makeApp({
+      warmPool: {
+        acquire: vi.fn(() => null),
+        prewarm: vi.fn(async () => undefined),
+        release: vi.fn(async () => undefined),
+      },
+      getConversationRoutes: vi.fn(() => ({})),
+      getProviderSettings: vi.fn((providerId: string) =>
+        providerId === 'interakt'
+          ? { enabled: true, defaultAgent: 'boondi_support' }
+          : undefined,
       ),
-      logger: { info: vi.fn(), warn: vi.fn() },
+      getAgentSettings: vi.fn((folder: string) =>
+        folder === 'boondi_support'
+          ? {
+              name: 'Boondi',
+              folder: 'boondi_support',
+              model: 'sonnet',
+              bindings: {},
+              sources: { skills: [], mcpServers: [] },
+              capabilities: [],
+            }
+          : undefined,
+      ),
+      projectConversationRoute: vi.fn(async (chatJid: string) => {
+        order.push(`project:${chatJid}`);
+      }),
+      unregisterConversationRoute: vi.fn(async (chatJid: string) => {
+        order.push(`unregister:${chatJid}`);
+      }),
+      prewarmAgentForConversationRoute: vi.fn(async (chatJid: string) => {
+        order.push(`prewarm:${chatJid}`);
+        return true;
+      }),
+    });
+
+    await prewarmWarmPoolRoutes(app, runtimeSettings, {
+      info: vi.fn(),
+      warn: vi.fn(),
     });
 
     expect(order).toEqual([
-      'credentials',
-      'prewarm:app:default',
-      'prewarm:wa:customer',
+      'project:wa:__interakt_default_agent__:boondi_support',
+      'prewarm:wa:__interakt_default_agent__:boondi_support',
+      'unregister:wa:__interakt_default_agent__:boondi_support',
     ]);
-    expect(prewarm).toHaveBeenCalledTimes(2);
   });
 
   it('does not block runtime startup on warm-pool prewarm completion', async () => {
     const prewarmStarted = vi.fn();
+    const runtimeSettings = {
+      providers: {},
+      storage: {
+        postgres: { urlEnv: 'GANTRY_DATABASE_URL', schema: 'gantry' },
+      },
+      memory: {},
+    } as any;
     const app = makeApp({
       warmPool: {
         acquire: vi.fn(() => null),
@@ -203,20 +271,9 @@ describe('runStartup', () => {
     });
 
     const result = await Promise.race([
-      runStartup(app, {
-        ensureRuntimeLayoutDirectories: vi.fn(),
-        initializeRuntimeStorage: vi.fn(async () => ({}) as any),
-        loadRuntimeSettings: vi.fn(
-          () =>
-            ({
-              providers: {},
-              storage: {
-                postgres: { urlEnv: 'GANTRY_DATABASE_URL', schema: 'gantry' },
-              },
-              memory: {},
-            }) as any,
-        ),
-        logger: { info: vi.fn(), warn: vi.fn() },
+      prewarmWarmPoolRoutes(app, runtimeSettings, {
+        info: vi.fn(),
+        warn: vi.fn(),
       }).then(() => 'startup-returned' as const),
       new Promise<'timed-out'>((resolve) =>
         setTimeout(() => resolve('timed-out'), 50),

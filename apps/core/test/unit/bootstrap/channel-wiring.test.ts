@@ -745,6 +745,79 @@ describe('createChannelWiring', () => {
     );
   });
 
+  it('prewarms an auto-registered Interakt direct route before publishing event-pipe work', async () => {
+    const routes: Record<string, any> = {};
+    const app = makeApp(routes, {
+      providerSettings: {
+        interakt: { enabled: true, defaultAgent: 'boondi_support' },
+      },
+      agentSettings: {
+        boondi_support: {
+          name: 'Boondi',
+          folder: 'boondi_support',
+          bindings: {},
+          capabilities: { toolIds: [], skillIds: [], mcpServerIds: [] },
+        },
+      },
+    });
+    const order: string[] = [];
+    const storeMessage = vi.fn(async () => {
+      order.push('store');
+    });
+    const prewarmAgentForConversationRoute = vi.fn(async () => {
+      order.push('prewarm');
+      return true;
+    });
+    const publishConversationWorkNotification = vi.fn(async () => {
+      order.push('publish');
+    });
+    (app.prewarmAgentForConversationRoute as any) =
+      prewarmAgentForConversationRoute;
+    const handlers = createChannelPersistenceHandlers({
+      app,
+      resolved: {
+        providerIds: [],
+        loadSenderAllowlist: vi.fn(() => ({}) as any),
+        loadSenderControlAllowlist: vi.fn(() => ({}) as any),
+        shouldDropMessage: vi.fn(() => false),
+        isSenderAllowed: vi.fn(() => true),
+        isSenderControlAllowed: vi.fn(() => true),
+        shouldLogDenied: vi.fn(() => false),
+        asRemoteControlCommand: vi.fn(() => null),
+        handleRemoteControlCommand: vi.fn(async () => {}),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          debug: vi.fn(),
+          error: vi.fn(),
+        },
+        opsRepository: { storeMessage } as any,
+      },
+      ops: () => ({ storeMessage, storeChatMetadata: vi.fn() }) as any,
+      persistenceQueue: new AsyncTaskQueue(4, 100),
+      publishConversationWorkNotification,
+      eventPipeEnabled: true,
+    });
+
+    await handlers.onMessage('wa:918097570077', {
+      id: 'wa-msg-event-pipe',
+      chat_jid: 'wa:918097570077',
+      provider: 'interakt',
+      sender: '918097570077',
+      sender_name: 'New Customer',
+      content: 'Hello',
+      timestamp: '2026-05-22T11:45:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+    });
+
+    expect(order).toEqual(['store', 'prewarm', 'publish']);
+    expect(prewarmAgentForConversationRoute).toHaveBeenCalledWith(
+      'wa:918097570077',
+    );
+    expect(publishConversationWorkNotification).toHaveBeenCalledTimes(1);
+  });
+
   it('wakes an existing Interakt direct conversation after persisting an inbound message', async () => {
     const routes: Record<string, any> = {
       'wa:918097570001': {

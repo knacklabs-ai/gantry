@@ -133,6 +133,30 @@ describe('GroupQueue', () => {
     expect(maxActive).toBe(1);
   });
 
+  it('opens a message-run lifecycle handle only while processMessages is active', async () => {
+    const stopHeartbeat = vi.fn();
+    const onMessageRunStart = vi.fn(() => stopHeartbeat);
+    queue = new GroupQueue({ onMessageRunStart });
+    let finishRun: (() => void) | undefined;
+    queue.setProcessMessagesFn(async () => {
+      await new Promise<void>((resolve) => {
+        finishRun = resolve;
+      });
+      return true;
+    });
+
+    queue.enqueueMessageCheck('wa:000000001');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(onMessageRunStart).toHaveBeenCalledWith('wa:000000001');
+    expect(stopHeartbeat).not.toHaveBeenCalled();
+
+    finishRun?.();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(stopHeartbeat).toHaveBeenCalledTimes(1);
+  });
+
   // --- Tasks prioritized over messages ---
 
   it('drains tasks before messages for same group', async () => {

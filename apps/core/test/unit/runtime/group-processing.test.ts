@@ -1053,7 +1053,7 @@ describe('createGroupProcessor', () => {
   });
 
   describe('reply trace warm-bound first replies', () => {
-    it('persists cache prewarm payloads on the first warm-bound reply trace', async () => {
+    it('excludes cache prewarm from customer reply latency totals', async () => {
       const base = Date.now();
       const cachePrewarmTrace: OperationalTimelineSectionInput = {
         kind: 'cache_prewarm',
@@ -1122,18 +1122,10 @@ describe('createGroupProcessor', () => {
       const traceRow = saveTrace.mock.calls[0]?.[0];
       expect(
         traceRow?.timingsJson.sections.map((section) => section.kind),
-      ).toEqual(['cache_prewarm', 'llm', 'gap', 'send']);
-      expect(traceRow?.payloadsJson).toMatchObject({
-        0: {
-          cache: {
-            provider: 'anthropic',
-            modelAlias: 'opus',
-            promptShapeKey: 'shape-1',
-            input: { prompt: '', warmGenericBoot: true },
-            output: { status: 'succeeded', readyMarker: 'awaiting bind' },
-          },
-        },
-      });
+      ).toEqual(['queue', 'llm', 'gap', 'send']);
+      expect(JSON.stringify(traceRow?.payloadsJson ?? {})).not.toContain(
+        'warmGenericBoot',
+      );
     });
 
     it('routes a warm-bound first reply through dispatchedAt instead of startup', async () => {

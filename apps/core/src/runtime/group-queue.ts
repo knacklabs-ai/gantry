@@ -63,6 +63,7 @@ export interface GroupQueueOptions {
    * detached and left to next-boot recovery — today's exact behavior.
    */
   killStragglersAfterGrace?: boolean;
+  onMessageRunStart?: (groupJid: string) => (() => void) | void;
 }
 
 interface GroupState {
@@ -99,6 +100,9 @@ export class GroupQueue {
   private shuttingDown = false;
   private activeRuns = new Set<Promise<void>>();
   private readonly killStragglersAfterGrace: boolean;
+  private readonly onMessageRunStart?: (
+    groupJid: string,
+  ) => (() => void) | void;
 
   constructor(options: GroupQueueOptions = {}) {
     this.policy = {
@@ -117,6 +121,7 @@ export class GroupQueue {
     this.continuationDelivery =
       options.continuationDelivery ?? unavailableContinuationDelivery;
     this.killStragglersAfterGrace = options.killStragglersAfterGrace ?? false;
+    this.onMessageRunStart = options.onMessageRunStart;
   }
 
   getPolicy(): GroupQueuePolicy {
@@ -559,7 +564,9 @@ export class GroupQueue {
       'Starting agent run for group',
     );
 
+    let stopMessageRun: (() => void) | undefined;
     try {
+      stopMessageRun = this.onMessageRunStart?.(groupJid) ?? undefined;
       if (this.processMessagesFn) {
         const success = await this.processMessagesFn(groupJid);
         if (success) {
@@ -587,6 +594,11 @@ export class GroupQueue {
         !state.process.killed &&
         !state.pendingMessages &&
         state.pendingTasks.length === 0;
+      try {
+        stopMessageRun?.();
+      } catch (err) {
+        logger.warn({ groupJid, err }, 'Failed to stop message-run lifecycle');
+      }
       if (retainPooledContinuation) {
         this.drainWaiting();
         return;

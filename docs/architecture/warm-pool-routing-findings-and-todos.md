@@ -1709,12 +1709,21 @@ Evidence:
     handles without that adapter marker still report an explicit skipped reason.
   - When `GANTRY_TRACE_PAYLOADS=1`, warm generic Anthropic runners now emit a
     customer-free `cache_prewarm` payload from the actual SDK
-    `startup({ options })` boundary. The payload is attached to the first
-    warm-bound reply trace and remains gated by the existing lazy Control API
-    read, audit event, redaction, size limit, and retention policy.
+    `startup({ options })` boundary. The captured payload remains gated by the
+    existing lazy Control API read, audit event, redaction, size limit, and
+    retention policy, but it is no longer inserted into customer reply latency
+    sections.
   - `GET /v1/runtime/workers` now exposes aggregate cache shape/status
     visibility from the warm-pool inventory so operators can see prewarm status
     without exact payload capture.
+  - Customer reply latency traces no longer include `cache_prewarm` as a reply
+    section and no longer move the reply `windowStart` backward to the
+    prewarm timestamp. Cache prewarm is operational warmup work, not
+    customer-visible first-reply latency.
+  - For Interakt default-agent conversations, inbound persistence now runs the
+    route prewarm hook before publishing the event-pipe work notification. The
+    first reply path should see a prewarmed route shape when prewarm is enabled,
+    instead of admitting queue work before the route-specific warmup has run.
   - boondi-admin now renders cache prewarm/use sections in the latency report,
     lazy-loads cache payload envelopes only on expansion, and adds a Runtime tab
     for the worker inventory endpoint.
@@ -2443,6 +2452,52 @@ Evidence:
   - Verification:
     `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/repo/package-hygiene.test.ts --testNamePattern "runtime worker inventory"`
     passed after locking the package-script entry.
+  - Active message runs now heartbeat their tracked conversation-owner lease
+    while processing is in flight. This prevents long model/tool waits from
+    looking abandoned and being reclaimed by another core before the original
+    owner reaches the outbound send fence.
+  - Warm workers are now admitted to the pool only after the runner's bind
+    socket is reachable, and warm-pool health checks also require socket
+    readiness. A cache-ready-but-not-bind-ready process is no longer treated as
+    available capacity.
+  - Multi-core runner spawn now preserves the per-core
+    `GANTRY_IPC_SOCKET_PATH`, so core-specific workers connect to the matching
+    IPC socket instead of falling back to another core's default runtime-home
+    socket.
+  - Prewarm-only Anthropic runs now skip caller-identity projection for
+    HTTP/SSE MCP capabilities. The customer identity for those MCP calls is
+    signed through the Gantry facade at bind/live-run time; a generic
+    customer-free prewarm should not require a fake WhatsApp JID.
+  - The local runtime smoke now accepts `SMOKE_CASES` and validates that
+    `/v1/runtime/workers` exposes the expected number of healthy runtime
+    instances. The CRM smoke case remains an inbound/outbound health check
+    without requiring an agent MCP turn when the guardrail path can answer
+    directly.
+  - Local Control API bearer auth was added directly to
+    `/Users/caw-d/gantry/.env` as `GANTRY_SMOKE_CONTROL_TOKEN`, matching the
+    existing `local-dev-owner` key in `GANTRY_CONTROL_API_KEYS_JSON` with
+    `sessions:read` scope for runtime worker inventory probes.
+  - Focused verification after the bind-readiness, heartbeat, latency-trace,
+    and smoke-env updates passed:
+    `npx vitest run -c vitest.unit.config.ts --no-file-parallelism apps/core/test/unit/adapters/anthropic-warm-pool.test.ts apps/core/test/unit/runtime/warm-bind-delivery.test.ts apps/core/test/unit/bootstrap/startup.test.ts apps/core/test/unit/runtime/agent-spawn.test.ts apps/core/test/unit/runtime/conversation-work-claim-gate.test.ts apps/core/test/unit/runtime/group-queue.test.ts apps/core/test/unit/bootstrap/channel-wiring.test.ts apps/core/test/unit/runtime/group-processing.test.ts apps/core/test/unit/repo/boondi-scenarios.test.ts`
+    passed 9 files / 383 tests.
+  - Verification:
+    `npm run typecheck -- --pretty false` passed, and
+    `bash -n scripts/boondi-runtime-stack.sh && node --check scripts/boondi-runtime-smoke.mjs && node --check scripts/lib/runtime-smoke-env.mjs`
+    passed.
+  - Fresh two-core runtime-plumbing smoke passed against
+    `GANTRY_CORE_COUNT=2 npm run dev:boondi-runtime`. Core 4710 smoke with
+    `SMOKE_CASES=shopify,crm` and fresh phones `000000100`/`000000101` passed;
+    core 4711 smoke with fresh phones `000000102`/`000000103` also passed.
+    Shopify produced guardrail, agent MCP request/response, outbound dry-run,
+    and duplicate-inbound suppression on both cores. CRM produced guardrail,
+    outbound dry-run, and duplicate-inbound suppression on both cores.
+  - Reply-trace evidence for the fresh two-core smoke showed no
+    `cache_prewarm` or `startup` section in customer reply totals:
+    Shopify replies were about 9.254s and 10.297s with
+    `["queue","guardrail","llm","gap","tool","llm","gap"]` / send sections,
+    while CRM guardrail replies were about 0.043s and 0.037s with
+    `["queue","guardrail","gap"]`.
 Open follow-ups:
   - Measure Boondi latency separately with `scripts/measure-latency.mjs` and
     boondi-admin `replySeconds`; the broad regression harness is a correctness

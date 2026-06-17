@@ -73,10 +73,7 @@ import { createProgressChannelSender } from './group-progress-channel-sender.js'
 import { createGroupAgentRunner } from './group-agent-runner.js';
 import { screenBatchPreAgent } from './group-guardrail.js';
 import { persistReplyTrace } from './reply-trace-persist.js';
-import {
-  selectTurnTraceSlice,
-  type OperationalTimelineSectionInput,
-} from './reply-trace.js';
+import { selectTurnTraceSlice } from './reply-trace.js';
 import { createThreadOptionBuilders } from './group-thread-options.js';
 import { buildMemoryRecallQueryFromMessages } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
@@ -430,10 +427,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       const windowStart = drivingIngressIso
         ? new Date(drivingIngressIso).getTime()
         : undefined;
-      const operationalSections: OperationalTimelineSectionInput[] = [];
-      if (isFirstReply && traceWarmBound && traceCachePrewarm) {
-        operationalSections.push(traceCachePrewarm);
-      }
+      void isFirstReply;
+      void traceWarmBound;
+      void traceCachePrewarm;
       await persistReplyTrace({
         replyTrace: deps.replyTrace,
         kind: 'reply',
@@ -444,15 +440,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         ...(slice.guardrail ? { guardrail: slice.guardrail } : {}),
         llmTurns: slice.llmTurns,
         ...(runnerToolCalls.length > 0 ? { toolCalls: runnerToolCalls } : {}),
-        ...(windowStart !== undefined || traceCachePrewarm
-          ? {
-              windowStart:
-                traceCachePrewarm && windowStart !== undefined
-                  ? Math.min(windowStart, traceCachePrewarm.startedAt)
-                  : (windowStart ?? traceCachePrewarm?.startedAt),
-            }
-          : {}),
-        ...(operationalSections.length > 0 ? { operationalSections } : {}),
+        ...(windowStart !== undefined ? { windowStart } : {}),
         ...(cursor.sendCompletedAt
           ? { windowEnd: new Date(cursor.sendCompletedAt).getTime() }
           : {}),

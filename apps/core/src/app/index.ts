@@ -9,7 +9,7 @@ import { getDefaultRuntimeApp } from './bootstrap/runtime-app.js';
 import { createReplyTraceWiring } from './bootstrap/reply-trace-wiring.js';
 import { startRuntimeServices } from './bootstrap/runtime-services.js';
 import { installShutdownHandlers } from './bootstrap/shutdown.js';
-import { runStartup } from './bootstrap/startup.js';
+import { prewarmWarmPoolRoutes, runStartup } from './bootstrap/startup.js';
 import {
   closeRuntimeStorage,
   getRuntimeControlRepository,
@@ -49,6 +49,7 @@ import {
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import { defaultHostnameLookup } from '../infrastructure/network/hostname-lookup.js';
 import { PostgresMessageTraceRepository } from '../adapters/storage/postgres/repositories/message-trace-repository.postgres.js';
+import { parseThreadQueueKey } from '../shared/thread-queue-key.js';
 
 export { escapeXml, formatMessages } from '../messaging/router.js';
 export {
@@ -97,6 +98,8 @@ export async function startGantryRuntime(
   const conversationWorkClaimGate = createConversationWorkClaimGate({
     claimLease: (input) =>
       getRuntimeStorage().conversationOwnerLeases.claimLease(input),
+    heartbeatLease: (input) =>
+      getRuntimeStorage().conversationOwnerLeases.heartbeatLease(input),
   });
   const app = getDefaultRuntimeApp({
     mcpHostnameLookup: () => mcpHostnameLookup,
@@ -126,6 +129,17 @@ export async function startGantryRuntime(
         ownerInstanceId: claim.lease.ownerInstanceId,
         leaseVersion: claim.lease.leaseVersion,
       };
+    },
+    onMessageRunStart: (queueJid) => {
+      const parsed = parseThreadQueueKey(queueJid);
+      return conversationWorkClaimGate.startTrackedLeaseHeartbeat({
+        appId: 'default',
+        conversationId: parsed.chatJid,
+        threadId: parsed.threadId ?? null,
+        ownerInstanceId: instanceId,
+        leaseTtlMs: ownershipConfig.leaseTtlMs,
+        intervalMs: Math.max(1_000, Math.floor(ownershipConfig.leaseTtlMs / 3)),
+      });
     },
   });
   const publishConversationWorkNotification =
@@ -321,14 +335,6 @@ export async function startGantryRuntime(
       (await loadBrowserToolModule()).closeBrowserToolBackends(),
   });
 
-  await channelWiring.connectEnabledChannels(runtimeSettings);
-
-  if (!channelWiring.hasConnectedChannels()) {
-    logger.warn(
-      'No channels connected; runtime will continue without inbound/outbound channel delivery',
-    );
-  }
-
   await startRuntimeServices(
     {
       app,
@@ -383,6 +389,15 @@ export async function startGantryRuntime(
       recordReplyToolCall: replyTraceWiring.recordReplyToolCall,
     },
   );
+  await prewarmWarmPoolRoutes(app, runtimeSettings, logger);
+  await channelWiring.connectEnabledChannels(runtimeSettings);
+
+  if (!channelWiring.hasConnectedChannels()) {
+    logger.warn(
+      'No channels connected; runtime will continue without inbound/outbound channel delivery',
+    );
+  }
+
   controlServerRef.current = startControlServer({
     app,
     getBrowserStatus,

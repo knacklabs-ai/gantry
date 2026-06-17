@@ -49,6 +49,10 @@ generate_smoke_token() {
   node -e "import('node:crypto').then(({randomBytes})=>process.stdout.write(randomBytes(24).toString('base64url')))"
 }
 
+smoke_token_from_control_keys_json() {
+  CONTROL_API_KEYS_JSON="$1" node -e "const raw=process.env.CONTROL_API_KEYS_JSON||''; const keys=JSON.parse(raw); const key=keys.find((candidate)=>Array.isArray(candidate.scopes)&&candidate.scopes.includes('sessions:read')) || keys[0]; if (!key?.token) process.exit(1); process.stdout.write(key.token)"
+}
+
 control_keys_json_for_token() {
   SMOKE_CONTROL_TOKEN="$1" node -e "const token=process.env.SMOKE_CONTROL_TOKEN; process.stdout.write(JSON.stringify([{kid:'runtime-smoke',token,appId:'default',scopes:['sessions:read']}]))"
 }
@@ -76,10 +80,11 @@ write_smoke_env() {
   local core_port="$2"
   local core_log="$3"
   local token="$4"
-  printf 'GANTRY_CONTROL_PORT=%s\nGANTRY_DEV_LOG=%s\nGANTRY_SMOKE_CONTROL_TOKEN=%s\n' \
+  printf 'GANTRY_CONTROL_PORT=%s\nGANTRY_DEV_LOG=%s\nGANTRY_SMOKE_CONTROL_TOKEN=%s\nGANTRY_EXPECTED_RUNTIME_INSTANCES=%s\n' \
     "$core_port" \
     "$core_log" \
-    "$token" >"$smoke_env"
+    "$token" \
+    "$GANTRY_CORE_COUNT" >"$smoke_env"
   chmod 600 "$smoke_env"
 }
 
@@ -158,14 +163,25 @@ for idx in $(seq 1 "$GANTRY_CORE_COUNT"); do
   core_log="$(core_log_for_index "$idx")"
   smoke_env="$(smoke_env_for_index "$idx")"
   core_ipc_socket="$GANTRY_RUNTIME_IPC_DIR/core-${idx}.sock"
-  smoke_token="$(generate_smoke_token)" || {
-    echo "could not generate local smoke control token"
-    exit 1
-  }
-  control_api_keys_json="$(control_keys_json_for_token "$smoke_token")" || {
-    echo "could not build local smoke control key JSON"
-    exit 1
-  }
+  if [ -n "${GANTRY_CONTROL_API_KEYS_JSON:-}" ]; then
+    control_api_keys_json="$GANTRY_CONTROL_API_KEYS_JSON"
+    smoke_token="${GANTRY_SMOKE_CONTROL_TOKEN:-}"
+    if [ -z "$smoke_token" ]; then
+      smoke_token="$(smoke_token_from_control_keys_json "$control_api_keys_json")" || {
+        echo "could not read a sessions:read token from GANTRY_CONTROL_API_KEYS_JSON"
+        exit 1
+      }
+    fi
+  else
+    smoke_token="$(generate_smoke_token)" || {
+      echo "could not generate local smoke control token"
+      exit 1
+    }
+    control_api_keys_json="$(control_keys_json_for_token "$smoke_token")" || {
+      echo "could not build local smoke control key JSON"
+      exit 1
+    }
+  fi
   write_smoke_env "$smoke_env" "$core_port" "$core_log" "$smoke_token"
   CORE_PORTS+=("$core_port")
   CORE_LOGS+=("$core_log")

@@ -35,6 +35,14 @@ export function parseRuntimeSmokeEnv(
   file = process.env.GANTRY_RUNTIME_SMOKE_ENV || DEFAULT_SMOKE_ENV_FILE,
 ) {
   const fileValues = parseEnvFile(file);
+  const expectedRuntimeInstances = Math.max(
+    1,
+    Number(
+      process.env.GANTRY_EXPECTED_RUNTIME_INSTANCES ||
+        fileValues.GANTRY_EXPECTED_RUNTIME_INSTANCES ||
+        1,
+    ),
+  );
   return {
     controlPort:
       process.env.GANTRY_CONTROL_PORT || fileValues.GANTRY_CONTROL_PORT || '',
@@ -43,6 +51,7 @@ export function parseRuntimeSmokeEnv(
       fileValues.GANTRY_SMOKE_CONTROL_TOKEN ||
       '',
     gantryDevLog: process.env.GANTRY_DEV_LOG || fileValues.GANTRY_DEV_LOG || '',
+    expectedRuntimeInstances,
     path: file,
   };
 }

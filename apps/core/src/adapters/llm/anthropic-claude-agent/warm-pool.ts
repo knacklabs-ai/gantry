@@ -94,12 +94,17 @@ export class AnthropicWarmPoolController {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
     });
+    const groupFolder =
+      typeof runnerInput.groupFolder === 'string'
+        ? runnerInput.groupFolder
+        : undefined;
     const handle: WarmWorkerHandle = {
       id: processName,
       key: recipe.key,
       cacheShapeKey: cacheShapeKeyOf(recipe),
       bornAt: this.now(),
       processName,
+      ...(groupFolder ? { groupFolder } : {}),
       ...(env.GANTRY_IPC_DIR ? { ipcDir: env.GANTRY_IPC_DIR } : {}),
       ...(env.GANTRY_BOUND_IDENTITY_FILE
         ? { boundIdentityFile: env.GANTRY_BOUND_IDENTITY_FILE }
@@ -125,6 +130,17 @@ export class AnthropicWarmPoolController {
       process.stdin?.write(JSON.stringify(bootInput));
       process.stdin?.end();
       await ready;
+      if (groupFolder && this.socketBindDelivery?.waitUntilReady) {
+        const socketReady = await this.socketBindDelivery.waitUntilReady(
+          handle,
+          { groupFolder },
+        );
+        if (!socketReady) {
+          throw new Error(
+            `Warm worker ${handle.id} reached generic boot but did not connect its bind socket`,
+          );
+        }
+      }
       return handle;
     } catch (err) {
       this.workers.delete(handle.id);
@@ -190,9 +206,17 @@ export class AnthropicWarmPoolController {
 
   async healthCheck(handle: WarmWorkerHandle): Promise<boolean> {
     const worker = this.workers.get(handle.id);
-    return Boolean(
+    const childAlive = Boolean(
       worker && worker.process.exitCode === null && !worker.process.killed,
     );
+    if (!childAlive) return false;
+    if (handle.groupFolder && this.socketBindDelivery?.waitUntilReady) {
+      return this.socketBindDelivery.waitUntilReady(handle, {
+        groupFolder: handle.groupFolder,
+        timeoutMs: 0,
+      });
+    }
+    return true;
   }
 
   setWarmBindDelivery(delivery: WarmBindDelivery): void {
