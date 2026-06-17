@@ -639,8 +639,16 @@ describe('Boondi regression scenarios', () => {
     expect(latencyRunner).not.toContain('console.log(\n  console.log(');
     expect(latencyRunner).toContain("`\\n${pad('scenario', 28)}");
     expect(latencyRunner).toContain("${pad('spawn', 7)}");
+    expect(latencyRunner).toContain("${pad('llmSum', 7)}");
+    expect(latencyRunner).toContain("${pad('llmMax', 7)}");
     expect(latencyRunner).toContain(
       'spawn=${fmt(result.stages.spawnToLlmInputMs)}',
+    );
+    expect(latencyRunner).toContain(
+      'llmSum=${fmt(result.stages.llmRoundTotalMs)}',
+    );
+    expect(latencyRunner).toContain(
+      'llmMax=${fmt(result.stages.maxLlmRoundMs)}',
     );
   });
 

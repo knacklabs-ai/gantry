@@ -2651,6 +2651,27 @@ Evidence:
     fetch banner. Admin checks passed with `npm run build`, `npx tsc --noEmit`,
     and
     `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 npx playwright test e2e/runtime-workers.spec.ts e2e/leads-memory.spec.ts --project=chromium`.
+  - `scripts/measure-latency.mjs` now prints `llmSum` and `llmMax` beside
+    `spawn`, `mcp`, and `tail`, so provider/model wait is visible in the CLI
+    summary instead of hidden in the JSON detail or admin trace modal.
+  - Verification:
+    `npx vitest run -c vitest.unit.config.ts apps/core/test/unit/repo/boondi-scenarios.test.ts --testNamePattern "latency measurement summary"`
+    passed, and `node --check scripts/measure-latency.mjs` passed.
+  - Fresh single-core runtime-plumbing smoke passed against
+    `GANTRY_CORE_COUNT=1 GANTRY_DEV_LOG=/tmp/gantry-capture.log npm run dev:boondi-runtime`:
+    `GANTRY_RUNTIME_SMOKE_ENV=/tmp/gantry-runtime-smoke.env npm run smoke:boondi-runtime`
+    returned `ok: true`; Shopify primary, Shopify secondary, and CRM each had
+    one guardrail event, one MCP request, one MCP response, one outbound dry-run
+    event, and duplicate-inbound suppression.
+  - Fresh one-sample T1-T5 latency matrix against the same held stack passed:
+    `GANTRY_DEV_LOG=/tmp/gantry-capture.log LATENCY_TURN_TIMEOUT_MS=180000 node scripts/measure-latency.mjs --samples 1 --json /tmp/latency-suite-phase8-provider-columns-s1.json`.
+    Raw totals were T1 `61ms`, T2 `2349ms`, T3 `13360ms`, T4 `14893ms`, and
+    T5 `8849ms`. Spawn-to-LLM delay stayed low for all model turns (`101ms`,
+    `59ms`, `61ms`, `104ms`). Provider/model round time was the dominant
+    measured cost for model-backed turns: `llmSum` T2 `2059ms`, T3 `12575ms`,
+    T4 `7095ms`, and T5 `5823ms`. This confirms the latest local customer-side
+    latency issue is not trace `gap`, runtime startup, or cache-prewarm
+    attribution on this sample.
 Open follow-ups:
   - Continue Boondi latency measurement with `scripts/measure-latency.mjs` and
     boondi-admin `replySeconds` across multiple T1-T5 samples; the broad

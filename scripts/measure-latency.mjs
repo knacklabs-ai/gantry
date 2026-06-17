@@ -369,6 +369,20 @@ function roundsFromEntries(entries) {
   return rounds;
 }
 
+function sumRoundMs(rounds) {
+  const values = rounds
+    .map((round) => round.ms)
+    .filter((ms) => typeof ms === 'number' && Number.isFinite(ms));
+  return values.length ? values.reduce((acc, ms) => acc + ms, 0) : null;
+}
+
+function maxRoundMs(rounds) {
+  const values = rounds
+    .map((round) => round.ms)
+    .filter((ms) => typeof ms === 'number' && Number.isFinite(ms));
+  return values.length ? Math.max(...values) : null;
+}
+
 // ---------- per-turn measurement ----------
 
 function mcpSpans(events) {
@@ -444,6 +458,8 @@ async function measureTurn(scenario, ctx) {
       // lives here; F2 should collapse it to ~0.1s.
       postResultTailMs:
         reply && lastAssistantAt ? reply.t - lastAssistantAt : null,
+      llmRoundTotalMs: sumRoundMs(rounds),
+      maxLlmRoundMs: maxRoundMs(rounds),
     },
     mcp: spans,
     rounds: rounds.map(({ at, ...r }) => r),
@@ -508,6 +524,8 @@ function summarize(scenario, samples) {
       spawnToLlmInputMs: median(ok.map((s) => s.stages.spawnToLlmInputMs)),
       mcpTotalMs: median(ok.map((s) => s.stages.mcpTotalMs)),
       postResultTailMs: median(ok.map((s) => s.stages.postResultTailMs)),
+      llmRoundTotalMs: median(ok.map((s) => s.stages.llmRoundTotalMs)),
+      maxLlmRoundMs: median(ok.map((s) => s.stages.maxLlmRoundMs)),
     },
     medianRoundCount: median(ok.map((s) => s.roundCount)),
     medianFirstCacheRead: median(
@@ -527,12 +545,12 @@ const fmt = (x, suffix = '') => (x == null ? '—' : `${x}${suffix}`);
 function printSummary(rows) {
   const pad = (s, n) => String(s).padEnd(n);
   console.log(
-    `\n${pad('scenario', 28)} ${pad('n', 4)} ${pad('median', 9)} ${pad('guard', 7)} ${pad('spawn', 7)} ${pad('mcp', 7)} ${pad('tail', 7)} ${pad('rounds', 7)} ${pad('cW(first)', 10)} ${pad('cR(first)', 10)} util`,
+    `\n${pad('scenario', 28)} ${pad('n', 4)} ${pad('median', 9)} ${pad('guard', 7)} ${pad('spawn', 7)} ${pad('llmSum', 7)} ${pad('llmMax', 7)} ${pad('mcp', 7)} ${pad('tail', 7)} ${pad('rounds', 7)} ${pad('cW(first)', 10)} ${pad('cR(first)', 10)} util`,
   );
-  console.log('-'.repeat(118));
+  console.log('-'.repeat(134));
   for (const r of rows) {
     console.log(
-      `${pad(`${r.id} ${r.name}`, 28)} ${pad(`${r.succeeded}/${r.samples}`, 4)} ${pad(fmt(r.medianTotalMs, 'ms'), 9)} ${pad(fmt(r.medianStages.pickupGuardrailMs), 7)} ${pad(fmt(r.medianStages.spawnToLlmInputMs), 7)} ${pad(fmt(r.medianStages.mcpTotalMs), 7)} ${pad(fmt(r.medianStages.postResultTailMs), 7)} ${pad(fmt(r.medianRoundCount), 7)} ${pad(fmt(r.medianFirstCacheWrite), 10)} ${pad(fmt(r.medianFirstCacheRead), 10)} ${r.utilizations.map((u) => (u == null ? '—' : u)).join(',')}`,
+      `${pad(`${r.id} ${r.name}`, 28)} ${pad(`${r.succeeded}/${r.samples}`, 4)} ${pad(fmt(r.medianTotalMs, 'ms'), 9)} ${pad(fmt(r.medianStages.pickupGuardrailMs), 7)} ${pad(fmt(r.medianStages.spawnToLlmInputMs), 7)} ${pad(fmt(r.medianStages.llmRoundTotalMs), 7)} ${pad(fmt(r.medianStages.maxLlmRoundMs), 7)} ${pad(fmt(r.medianStages.mcpTotalMs), 7)} ${pad(fmt(r.medianStages.postResultTailMs), 7)} ${pad(fmt(r.medianRoundCount), 7)} ${pad(fmt(r.medianFirstCacheWrite), 10)} ${pad(fmt(r.medianFirstCacheRead), 10)} ${r.utilizations.map((u) => (u == null ? '—' : u)).join(',')}`,
     );
   }
   console.log('');
@@ -606,7 +624,7 @@ async function main() {
           ? ` util=${result.rateLimit.utilization ?? result.rateLimit.status}${result.rateLimit.carried ? '*' : ''}`
           : '';
         console.log(
-          `  ${scenario.id} ${result.ok ? `${result.totalMs}ms` : 'TIMEOUT'} rounds=${result.roundCount} spawn=${fmt(result.stages.spawnToLlmInputMs)} tail=${fmt(result.stages.postResultTailMs)} mcp=${fmt(result.stages.mcpTotalMs)}${util}`,
+          `  ${scenario.id} ${result.ok ? `${result.totalMs}ms` : 'TIMEOUT'} rounds=${result.roundCount} spawn=${fmt(result.stages.spawnToLlmInputMs)} llmSum=${fmt(result.stages.llmRoundTotalMs)} llmMax=${fmt(result.stages.maxLlmRoundMs)} tail=${fmt(result.stages.postResultTailMs)} mcp=${fmt(result.stages.mcpTotalMs)}${util}`,
         );
       }
     }
