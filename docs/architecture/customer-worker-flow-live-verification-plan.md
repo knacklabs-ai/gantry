@@ -2,13 +2,12 @@
 
 Date: 2026-06-18
 
-Status: execution in progress. Phase 0 passed on 2026-06-18 IST. Phase 1 passed
-after the retained warm-worker socket was rekeyed to the bound conversation run
-handle and the active-run counter double-decrement was fixed. Phase 2 still
-needs the multi-customer 4x4 rerun after that fix. The earlier `memory_save` IPC
-app-scope failure is covered by the IPC unit regression and Phase 1 now includes
-a successful `memory_save` live turn. Phase 3 remains reopened for the same
-natural 4x4 rerun under cache-prewarm-on config.
+Status: execution in progress. Phase 0 passed on 2026-06-18 IST. Phase 1 and
+Phase 2 passed after the retained warm-worker socket was rekeyed to the bound
+conversation run handle and the active-run counter double-decrement was fixed.
+The earlier `memory_save` IPC app-scope failure is covered by the IPC unit
+regression and Phase 1 includes a successful `memory_save` live turn. Phase 3
+remains reopened for the natural 4x4 rerun under cache-prewarm-on config.
 
 ## Phase Status Tracker
 
@@ -16,19 +15,19 @@ Update this table after every phase. Do not mark a phase passed unless the
 phase acceptance criteria passed through live inbound requests plus admin/API
 evidence.
 
-| Phase     | Scope                                           | Scenario count | Status      | Evidence                                                                                                                                                                                                                                                                                                                 | Notes                                                                                                                                                                                                                 |
-| --------- | ----------------------------------------------- | -------------: | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase 0   | Harness and baseline                            |  baseline gate | Passed      | 2026-06-18 IST baseline: core 4710, admin 3000, Shopify MCP 8081, CRM MCP 8082; one healthy runtime, 51 stale rows excluded, generic available 3, active 0, pending 0.                                                                                                                                                   | Admin Runtime and Conversations pages render; latency trace API reachable.                                                                                                                                            |
-| Phase 1   | Single customer, single core, cache prewarm off |              4 | Passed      | 2026-06-18 IST fixed rerun `conversation:wa:000960000102` persisted 4 inbound, 4 outbound, and 4 latency reports; turn 4 remembered marker `REKEY-MUMBAI-31`; no latency report included `assistant startup`; healthy runtime active 0, pending 0.                                                                       | Retained same-process bound-worker continuation is now proven for a natural 4x4 chat. The run also covered a successful `memory_save` tool call.                                                                      |
-| Phase 2   | Multiple customers, single core                 |              5 | Blocked     | 2026-06-18 IST rebuilt natural 4x4 rerun used `conversation:wa:000950000201` and `conversation:wa:000950000202`; both persisted 4 inbound, 4 outbound, and 4 trace rows; final replies remembered only their own markers `ALPHA-MUMBAI-30` and `BRAVO-DELHI-12`; final runtime active 0, pending 0, generic available 3. | Customer-visible isolation passed before the retained-worker fix, but follow-up traces showed `assistant startup`; rerun Phase 2 after Phase 1 fix.                                                                   |
-| Phase 3   | Cache prewarm on                                |              2 | Reopened    | 2026-06-18 IST plumbing evidence exists from `conversation:wa:000930000301` and `conversation:wa:000930000302`-`305`; final phase pass now requires natural 4x4 chat coverage under cache-prewarm-on config.                                                                                                             | Startup prewarm completes before the control HTTP server accepts webhooks, so customer-during-startup-prewarm is not externally reachable in this build; replacement/replenishment during traffic was tested instead. |
-| Phase 3.5 | MCP smoke                                       |              1 | Not started | TBD                                                                                                                                                                                                                                                                                                                      | CRM and Shopify MCP live-traffic smoke.                                                                                                                                                                               |
-| Phase 4   | Follow-up routing stress                        |              4 | Not started | TBD                                                                                                                                                                                                                                                                                                                      | Rapid follow-ups, active-run follow-up, cold resume, five-turn loop.                                                                                                                                                  |
-| Phase 5   | Two core processes                              |              5 | Not started | TBD                                                                                                                                                                                                                                                                                                                      | Ownership, distribution, restart, post-restart continuity.                                                                                                                                                            |
-| Phase 6   | Dashboard truth                                 | dashboard gate | Not started | TBD                                                                                                                                                                                                                                                                                                                      | Must be checked across every scenario, then summarized here.                                                                                                                                                          |
-| Phase 7   | Failure recovery                                |              3 | Not started | TBD                                                                                                                                                                                                                                                                                                                      | Kill runner, MCP down/up, ungraceful core death.                                                                                                                                                                      |
-| Phase 8   | Repeated-flow soak                              |      soak gate | Not started | TBD                                                                                                                                                                                                                                                                                                                      | Five customers, five turns each, at least 10 minutes.                                                                                                                                                                 |
-| Phase 9   | Final real-customer acceptance                  |  customer gate | Not started | TBD                                                                                                                                                                                                                                                                                                                      | Real customer-facing channel proof after engineering verification.                                                                                                                                                    |
+| Phase     | Scope                                           | Scenario count | Status      | Evidence                                                                                                                                                                                                                                                                                                                                            | Notes                                                                                                                                                                                                                 |
+| --------- | ----------------------------------------------- | -------------: | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0   | Harness and baseline                            |  baseline gate | Passed      | 2026-06-18 IST baseline: core 4710, admin 3000, Shopify MCP 8081, CRM MCP 8082; one healthy runtime, 51 stale rows excluded, generic available 3, active 0, pending 0.                                                                                                                                                                              | Admin Runtime and Conversations pages render; latency trace API reachable.                                                                                                                                            |
+| Phase 1   | Single customer, single core, cache prewarm off |              4 | Passed      | 2026-06-18 IST fixed rerun `conversation:wa:000960000102` persisted 4 inbound, 4 outbound, and 4 latency reports; turn 4 remembered marker `REKEY-MUMBAI-31`; no latency report included `assistant startup`; healthy runtime active 0, pending 0.                                                                                                  | Retained same-process bound-worker continuation is now proven for a natural 4x4 chat. The run also covered a successful `memory_save` tool call.                                                                      |
+| Phase 2   | Multiple customers, single core                 |              5 | Passed      | 2026-06-18 IST fixed rerun used `conversation:wa:000960000201` and `conversation:wa:000960000202`; both persisted 4 inbound and 4 outbound replies; final replies remembered only their own markers `ALPHA-REKEY-201` and `BRAVO-REKEY-202`; no latency report included `assistant startup`; post-idle runtime active 0, pending 0, bound active 0. | Retained same-process continuation and isolation are now proven for two simultaneous natural 4x4 customer chats. Prior Phase 2 capacity and duplicate-redelivery evidence remains valid.                              |
+| Phase 3   | Cache prewarm on                                |              2 | Reopened    | 2026-06-18 IST plumbing evidence exists from `conversation:wa:000930000301` and `conversation:wa:000930000302`-`305`; final phase pass now requires natural 4x4 chat coverage under cache-prewarm-on config.                                                                                                                                        | Startup prewarm completes before the control HTTP server accepts webhooks, so customer-during-startup-prewarm is not externally reachable in this build; replacement/replenishment during traffic was tested instead. |
+| Phase 3.5 | MCP smoke                                       |              1 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | CRM and Shopify MCP live-traffic smoke.                                                                                                                                                                               |
+| Phase 4   | Follow-up routing stress                        |              4 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Rapid follow-ups, active-run follow-up, cold resume, five-turn loop.                                                                                                                                                  |
+| Phase 5   | Two core processes                              |              5 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Ownership, distribution, restart, post-restart continuity.                                                                                                                                                            |
+| Phase 6   | Dashboard truth                                 | dashboard gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Must be checked across every scenario, then summarized here.                                                                                                                                                          |
+| Phase 7   | Failure recovery                                |              3 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Kill runner, MCP down/up, ungraceful core death.                                                                                                                                                                      |
+| Phase 8   | Repeated-flow soak                              |      soak gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Five customers, five turns each, at least 10 minutes.                                                                                                                                                                 |
+| Phase 9   | Final real-customer acceptance                  |  customer gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Real customer-facing channel proof after engineering verification.                                                                                                                                                    |
 
 `Scenario count` is the named scenario count. Default live execution after
 Phase 0 is four customer messages and four Boondi replies inside the scenario's
@@ -358,9 +357,8 @@ Fixed retained-worker rerun - 2026-06-18 IST:
 
 ## Phase 2 Evidence Log
 
-Status: original plumbing evidence passed on 2026-06-18 IST; natural 4x4
-customer-visible rerun passed on 2026-06-18 IST; runtime acceptance blocked by
-follow-up continuation and `memory_save` IPC scope behavior.
+Status: passed on 2026-06-18 IST after the retained-worker rekey and active-run
+counter fixes.
 
 Runtime setup:
 
@@ -561,6 +559,69 @@ Rebuilt natural 4x4 rerun - 2026-06-18 IST:
 - Blocking runtime finding: follow-up turns for both customers included
   `assistant startup`, so same-process retained bound-worker continuation is
   still not passing.
+
+Fixed retained-worker natural 4x4 rerun - 2026-06-18 IST:
+
+- Status: passed.
+- Runtime: `runtime:18519`, one healthy core, `cache_prewarm_enabled=false`,
+  `cachePrewarm.skipped=3` after idle drain.
+- Reason for rerun: Phase 2 customer-visible isolation had already passed, but
+  follow-up latency traces from the prior runs still contained
+  `assistant startup`. This rerun validates the same two-customer natural 4x4
+  flow after the retained-worker socket rekey and active-run counter fixes.
+- Customer A: `conversation:wa:000960000201`, marker `ALPHA-REKEY-201`.
+- Customer B: `conversation:wa:000960000202`, marker `BRAVO-REKEY-202`.
+- Each round sent both customers concurrently, then waited for both persisted
+  outbound replies before sending the next round.
+- Customer A inbound provider ids:
+  `phase2-rekey-A-1781742297117-1`,
+  `phase2-rekey-A-1781742297117-2`,
+  `phase2-rekey-A-1781742297117-3`,
+  `phase2-rekey-A-1781742297117-4`.
+- Customer A persisted outbound ids:
+  `message:wa:000960000201:outbound:7a766019-af61-44a8-81da-6c96a54dfff2`
+  (`9.516 s`),
+  `message:wa:000960000201:outbound:4417b394-d933-4119-825e-7af1acd47aa1`
+  (`10.238 s`),
+  `message:wa:000960000201:outbound:98315206-ddbb-474c-8497-471aac60bd1f`
+  (`4.147 s`), and
+  `message:wa:000960000201:outbound:78281594-e871-4a18-a62c-0d8d33cdab0f`
+  (`4.081 s`).
+- Customer B inbound provider ids:
+  `phase2-rekey-B-1781742297117-1`,
+  `phase2-rekey-B-1781742297117-2`,
+  `phase2-rekey-B-1781742297117-3`,
+  `phase2-rekey-B-1781742297117-4`.
+- Customer B persisted outbound ids:
+  `message:wa:000960000202:outbound:abd0700a-8af1-4d71-8a04-8c26513f2228`
+  (`12.088 s`),
+  `message:wa:000960000202:outbound:95930fa4-dd77-49cf-93c6-d3c0a6114566`
+  (`9.495 s`),
+  `message:wa:000960000202:outbound:fe87d2af-ba6a-4a57-8364-973b9982ef58`
+  (`3.602 s`), and
+  `message:wa:000960000202:outbound:38dc70de-980e-4456-91a1-3077f888f9e5`
+  (`3.784 s`).
+- Transcript checks: Customer A had `4` inbound and `4` outbound; Customer B
+  had `4` inbound and `4` outbound.
+- `assistant startup` check: all eight outbound latency reports had
+  `startupByTurn=false`.
+- Isolation checks: Customer A final reply contained `ALPHA-REKEY-201` and did
+  not contain `BRAVO-REKEY-202`; Customer B final reply contained
+  `BRAVO-REKEY-202` and did not contain `ALPHA-REKEY-201`.
+- MCP evidence: traces included `boondi-crm.get_open_records`,
+  `shopify-api.get_gifting_context`, and `shopify-api.search_products`.
+- Runtime overlap evidence: during round 1, the healthy runtime reached
+  `activeMessageRuns=2`, `pendingConversationKeys=0`, `genericAvailable=2`,
+  `genericStarting=1`, `boundActive=2`, `maxMessageRuns=3`.
+- Immediate post-run retained state: `activeMessageRuns=0`,
+  `pendingConversationKeys=0`, `genericAvailable=3`, `genericStarting=0`,
+  `boundActive=2`, `boundIdle=0`, `availableTarget=3`.
+- Post-idle drain snapshot after waiting past `idle_timeout_ms`:
+  `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=3`, `genericStarting=0`, `boundActive=0`,
+  `boundIdle=0`, `boundDraining=0`, `availableTarget=3`,
+  `cachePrewarm.pending=0`, `cachePrewarm.succeeded=0`,
+  `cachePrewarm.skipped=3`, `cachePrewarm.failed=0`.
 
 ## Phase 3 Evidence Log
 
