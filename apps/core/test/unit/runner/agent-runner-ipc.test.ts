@@ -36,7 +36,6 @@ interface RunnerRecord {
     promptKind: 'stream' | 'string';
     streamMessages?: unknown[];
     stringPrompt?: string;
-    systemPromptAppend?: string;
     closeExistsAtQueryStart?: boolean;
     streamEnded?: boolean;
     permissionRequest?: Record<string, unknown>;
@@ -54,9 +53,9 @@ interface RunnerRecord {
     persistSession?: boolean;
     resume?: unknown;
     resumeSessionAt?: unknown;
+    systemPrompt?: unknown;
     settingSources?: string[];
     strictMcpConfig?: boolean;
-    systemPromptExcludeDynamicSections?: boolean;
   }>;
 }
 
@@ -437,11 +436,9 @@ export async function* query({ prompt, options }) {
     persistSession: options?.persistSession,
     resume: options?.resume,
     resumeSessionAt: options?.resumeSessionAt,
+    systemPrompt: options?.systemPrompt,
     settingSources: options?.settingSources,
     strictMcpConfig: options?.strictMcpConfig,
-    systemPromptAppend: options?.systemPrompt?.append,
-    systemPromptExcludeDynamicSections:
-      options?.systemPrompt?.excludeDynamicSections,
     closeExistsAtQueryStart: fs.existsSync(
       path.join(process.env.GANTRY_IPC_INPUT_DIR, '_close'),
     ),
@@ -896,6 +893,12 @@ async function runRunner(
 
 function readRecord(recordPath: string): RunnerRecord {
   return JSON.parse(fs.readFileSync(recordPath, 'utf-8')) as RunnerRecord;
+}
+
+function systemPromptText(
+  call: RunnerRecord['calls'][number] | undefined,
+): string {
+  return JSON.stringify(call?.systemPrompt ?? '');
 }
 
 function readRunnerOutputs(stdout: string): Array<Record<string, unknown>> {
@@ -1597,7 +1600,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'keeps Claude Code git instructions only for developer persona',
+    'disables Claude Code git instructions for all personas',
     async () => {
       const developerFixture = createRunnerFixture();
       const developerResult = await runRunner(developerFixture, baseInput(), {
@@ -1605,10 +1608,15 @@ describe('agent-runner IPC lifecycle', () => {
       });
 
       expect(developerResult.exitCode).toBe(0);
-      expect(
-        readRecord(developerFixture.recordPath).calls[0]?.settings
-          ?.includeGitInstructions,
-      ).toBe(true);
+      const developerCall = readRecord(developerFixture.recordPath).calls[0];
+      expect(developerCall?.settings?.includeGitInstructions).toBe(false);
+      expect(systemPromptText(developerCall)).toContain(
+        'Configured working style: developer.',
+      );
+      expect(systemPromptText(developerCall)).toContain(
+        'compiled system profile',
+      );
+      expect(systemPromptText(developerCall)).not.toContain('claude_code');
 
       const assistantFixture = createRunnerFixture();
       const assistantResult = await runRunner(
@@ -1625,10 +1633,15 @@ describe('agent-runner IPC lifecycle', () => {
       );
 
       expect(assistantResult.exitCode).toBe(0);
-      expect(
-        readRecord(assistantFixture.recordPath).calls[0]?.settings
-          ?.includeGitInstructions,
-      ).toBe(false);
+      const assistantCall = readRecord(assistantFixture.recordPath).calls[0];
+      expect(assistantCall?.settings?.includeGitInstructions).toBe(false);
+      expect(systemPromptText(assistantCall)).toContain(
+        'Configured working style: generalist.',
+      );
+      expect(systemPromptText(assistantCall)).toContain(
+        'compiled system profile',
+      );
+      expect(systemPromptText(assistantCall)).not.toContain('claude_code');
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );
@@ -1697,8 +1710,12 @@ describe('agent-runner IPC lifecycle', () => {
       const call = readRecord(fixture.recordPath).calls[0];
       expect(call?.promptKind).toBe('string');
       expect(call?.stringPrompt).toBe('/model');
+      expect(systemPromptText(call)).toContain('Gantry-managed assistant');
+      expect(systemPromptText(call)).toContain('compiled system profile');
+      expect(systemPromptText(call)).not.toContain('claude_code');
       expect(call?.allowedTools).toEqual([]);
       expect(call?.skills).toEqual([]);
+      expect(call?.settings?.includeGitInstructions).toBe(false);
       expect(call?.settings?.skillOverrides).toEqual(
         SDK_NATIVE_SKILL_OVERRIDES,
       );
@@ -2025,8 +2042,8 @@ describe('agent-runner IPC lifecycle', () => {
       expect(call?.persistSession).toBe(false);
       expect(call?.resume).toBeUndefined();
       expect(call?.resumeSessionAt).toBeUndefined();
-      expect(call?.systemPromptAppend).toContain('compiled system profile');
-      expect(call?.systemPromptExcludeDynamicSections).toBe(true);
+      expect(systemPromptText(call)).toContain('compiled system profile');
+      expect(systemPromptText(call)).toContain('Run type: scheduled job.');
     },
     RUNNER_IPC_TEST_TIMEOUT_MS,
   );
@@ -2196,11 +2213,11 @@ describe('agent-runner IPC lifecycle', () => {
 
       expect(result.exitCode).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];
-      expect(call?.systemPromptAppend).toContain('compiled system profile');
-      expect(call?.systemPromptAppend).toContain(
+      expect(systemPromptText(call)).toContain('compiled system profile');
+      expect(systemPromptText(call)).toContain(
         'Gantry Durable Memory Boundary',
       );
-      expect(call?.systemPromptAppend).not.toContain('user prefers');
+      expect(systemPromptText(call)).not.toContain('user prefers');
       expect(call?.streamMessages).toHaveLength(1);
       expect(call?.streamMessages?.[0]).toEqual([
         {

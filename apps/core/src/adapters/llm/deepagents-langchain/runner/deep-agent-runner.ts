@@ -139,6 +139,7 @@ export async function runDeepAgentTurn(input: {
   const connected = await startupTiming.measureAsync('mcpConnectMs', () =>
     connectGantryAndThirdPartyMcpTools({
       configuredAllowedTools,
+      toolNetworkEnv: input.agentInput.toolNetworkEnv,
       hideAuthorityTools: input.agentInput.hideAuthorityTools === true,
       // The gated shell tool (when projected) runs commands as a child of this
       // already-sandboxed runner; thread the run-cancellation signal so an

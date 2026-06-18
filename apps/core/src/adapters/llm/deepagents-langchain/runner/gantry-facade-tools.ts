@@ -1,12 +1,14 @@
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import { isIP } from 'node:net';
 import path from 'node:path';
 
 import { tool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
-import { z } from 'zod';
 
 import {
   GANTRY_FACADE_EXACT_TOOL_NAMES,
+  GANTRY_FACADE_INPUT_SCHEMAS,
   type GantryFacadeExactToolName,
   validateGantryFacadeToolInput,
 } from '../../../../shared/gantry-tool-facades.js';
@@ -37,6 +39,7 @@ export interface GantryFacadeToolsConfig {
   workspaceFolder: string;
   memoryBlock: string;
   configuredAllowedTools: readonly string[];
+  toolNetworkEnv?: Record<string, string>;
   gateContext: ThirdPartyMcpGateConfig['gateContext'];
   permissionEnv: PermissionIpcRuntimeEnv;
   lockedAccessPreset: boolean;
@@ -47,24 +50,6 @@ const MAX_TEXT_OUTPUT_CHARS = 80_000;
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
 const MAX_SEARCH_ENTRIES = 10_000;
 const WEB_FETCH_TIMEOUT_MS = 20_000;
-
-const schemas = {
-  WebSearch: z.object({
-    query: z.string().min(1),
-    maxResults: z.number().int().min(1).max(50).optional(),
-  }),
-  WebRead: z.object({ url: z.string().url() }),
-  FileSearch: z.object({
-    mode: z.union([z.literal('path'), z.literal('content')]),
-    query: z.string().min(1),
-    include: z.union([z.string(), z.array(z.string())]).optional(),
-    exclude: z.union([z.string(), z.array(z.string())]).optional(),
-    maxResults: z.number().int().min(1).max(1000).optional(),
-  }),
-  FileRead: z.object({ path: z.string().min(1) }),
-  FileEdit: z.object({ path: z.string().min(1), patch: z.string().min(1) }),
-  FileWrite: z.object({ path: z.string().min(1), content: z.string() }),
-} satisfies Record<DeepAgentsFacadeToolName, z.ZodTypeAny>;
 
 export function createGantryFacadeTools(
   config: GantryFacadeToolsConfig,
@@ -132,7 +117,7 @@ function createOneFacadeTool(
     {
       name: toolName,
       description: facadeDescription(toolName),
-      schema: schemas[toolName] as never,
+      schema: GANTRY_FACADE_INPUT_SCHEMAS[toolName].schema as never,
     },
   ) as unknown as StructuredToolInterface;
 }
@@ -181,9 +166,10 @@ async function executeFacadeTool(
       return webSearch(
         String(record.query),
         numberOrDefault(record.maxResults, 8),
+        config,
       );
     case 'WebRead':
-      return webRead(String(record.url));
+      return webRead(String(record.url), config);
     case 'FileSearch':
       return fileSearch(record, config);
     case 'FileRead':
@@ -195,7 +181,13 @@ async function executeFacadeTool(
   }
 }
 
-async function webSearch(query: string, maxResults: number): Promise<string> {
+async function webSearch(
+  query: string,
+  maxResults: number,
+  config: GantryFacadeToolsConfig,
+): Promise<string> {
+  const blocker = auditedWebEgressBlocker(config.toolNetworkEnv);
+  if (blocker) return blocker;
   const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const html = await fetchText(url);
   const results = [
@@ -215,7 +207,14 @@ async function webSearch(query: string, maxResults: number): Promise<string> {
   return results.join('\n\n');
 }
 
-async function webRead(url: string): Promise<string> {
+async function webRead(
+  url: string,
+  config: GantryFacadeToolsConfig,
+): Promise<string> {
+  const blocker = auditedWebEgressBlocker(config.toolNetworkEnv);
+  if (blocker) return blocker;
+  const targetBlocker = webReadTargetBlocker(url);
+  if (targetBlocker) return targetBlocker;
   const raw = await fetchText(url);
   const text = htmlToText(raw);
   return truncateText(text.trim() || raw, MAX_TEXT_OUTPUT_CHARS);
@@ -226,6 +225,7 @@ async function fetchText(url: string): Promise<string> {
   const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
+      redirect: 'error',
       signal: controller.signal,
       headers: { 'User-Agent': 'Gantry/1.0 WebRead' },
     });
@@ -293,7 +293,7 @@ async function fileWrite(
 ): Promise<string> {
   const target = await resolveWritableWorkspacePath(relativePath, config);
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, content, 'utf-8');
+  await writeFileNoFollow(target, content);
   return `Wrote ${Buffer.byteLength(content, 'utf-8')} bytes to ${relativePath}.`;
 }
 
@@ -306,7 +306,7 @@ async function fileEdit(
   const current = await fs.readFile(target, 'utf-8');
   const edit = parseEditPatch(patch);
   if (!edit) {
-    return 'FileEdit patch must be JSON {"oldText":"...","newText":"..."} or a SEARCH/REPLACE block.';
+    return 'FileEdit patch must be JSON {"oldText":"...","newText":"..."}.';
   }
   if (!current.includes(edit.oldText)) {
     return 'FileEdit oldText was not found; read the file again before editing.';
@@ -328,13 +328,9 @@ function parseEditPatch(
       return { oldText: parsed.oldText, newText: parsed.newText };
     }
   } catch {
-    // Fall through to SEARCH/REPLACE.
+    return null;
   }
-  const match =
-    /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/.exec(
-      patch,
-    );
-  return match ? { oldText: match[1] ?? '', newText: match[2] ?? '' } : null;
+  return null;
 }
 
 async function workspaceRoot(config: GantryFacadeToolsConfig): Promise<string> {
@@ -364,10 +360,38 @@ async function resolveWritableWorkspacePath(
   const root = await workspaceRoot(config);
   const candidate = path.resolve(root, relativePath);
   ensureInsideRoot(root, candidate);
+  const existingTarget = await fs.lstat(candidate).catch(() => null);
+  if (existingTarget?.isSymbolicLink()) {
+    throw new Error('FileWrite refuses to follow symlink targets.');
+  }
+  if (existingTarget) {
+    const real = await fs.realpath(candidate);
+    ensureInsideRoot(root, real);
+    return real;
+  }
   const existingParent = await nearestExistingParent(path.dirname(candidate));
   const realParent = await fs.realpath(existingParent);
   ensureInsideRoot(root, realParent);
   return candidate;
+}
+
+async function writeFileNoFollow(
+  target: string,
+  content: string,
+): Promise<void> {
+  const handle = await fs.open(
+    target,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_TRUNC |
+      fsConstants.O_NOFOLLOW,
+    0o666,
+  );
+  try {
+    await handle.writeFile(content, 'utf-8');
+  } finally {
+    await handle.close();
+  }
 }
 
 async function nearestExistingParent(dir: string): Promise<string> {
@@ -443,14 +467,10 @@ function matchesFilters(
 }
 
 function globMatch(pattern: string, value: string): boolean {
-  const regex = new RegExp(
-    `^${pattern.split('*').map(escapeRegex).join('.*')}$`,
+  return (
+    path.matchesGlob(value, pattern) ||
+    (!pattern.includes('/') && path.matchesGlob(value, `**/${pattern}`))
   );
-  return regex.test(value);
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[\\^$+?.()|[\]{}]/g, '\\$&');
 }
 
 function decodeSearchHref(value: string): string {
@@ -493,6 +513,85 @@ function numberOrDefault(value: unknown, fallback: number): number {
     : fallback;
 }
 
+function auditedWebEgressBlocker(
+  toolNetworkEnv: Record<string, string> | undefined,
+): string | null {
+  const projectedProxy =
+    toolNetworkEnv?.HTTPS_PROXY?.trim() || toolNetworkEnv?.HTTP_PROXY?.trim();
+  if (!projectedProxy) return webEgressUnavailableMessage();
+  if (!isLoopbackHttpProxy(projectedProxy))
+    return webEgressUnavailableMessage();
+  const activeProxy =
+    process.env.HTTPS_PROXY?.trim() || process.env.HTTP_PROXY?.trim();
+  if (
+    process.env.NODE_USE_ENV_PROXY !== '1' ||
+    activeProxy !== projectedProxy
+  ) {
+    return webEgressUnavailableMessage();
+  }
+  return null;
+}
+
+function webEgressUnavailableMessage(): string {
+  return 'Web access is unavailable because Gantry audited tool networking was not projected for this run.';
+}
+
+function webReadTargetBlocker(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return 'WebRead requires a valid http(s) URL.';
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return 'WebRead supports only http(s) URLs.';
+  }
+  const hostname = parsed.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.+$/g, '');
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    isBlockedIpLiteral(hostname)
+  ) {
+    return 'WebRead cannot read loopback or private network URLs.';
+  }
+  return null;
+}
+
+function isLoopbackHttpProxy(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' ||
+        url.hostname === 'localhost' ||
+        url.hostname === '[::1]')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isBlockedIpLiteral(hostname: string): boolean {
+  const ipVersion = isIP(hostname);
+  if (ipVersion === 0) return false;
+  if (ipVersion === 6) return true;
+  const octets = hostname.split('.').map((part) => Number(part));
+  const [a, b] = octets as [number, number, number, number];
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a >= 224
+  );
+}
+
 function facadeDescription(toolName: DeepAgentsFacadeToolName): string {
   switch (toolName) {
     case 'WebSearch':
@@ -504,7 +603,7 @@ function facadeDescription(toolName: DeepAgentsFacadeToolName): string {
     case 'FileRead':
       return 'Read one approved host workspace file by exact safe relative path.';
     case 'FileEdit':
-      return 'Edit one approved host workspace file. Patch must be JSON {"oldText":"...","newText":"..."} or a SEARCH/REPLACE block.';
+      return 'Edit one approved host workspace file. Patch must be JSON {"oldText":"...","newText":"..."}.';
     case 'FileWrite':
       return 'Write one approved host workspace file by exact safe relative path.';
   }

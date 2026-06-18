@@ -118,7 +118,7 @@ export function registerTaskLifecycleTools(server: McpServer): void {
 
   server.tool(
     'delegate_task',
-    'Create bounded Gantry-owned background work when the AgentDelegation capability is selected. Non-blocking: returns a Gantry taskId immediately and the result arrives asynchronously, so poll with task_get instead of waiting inline and tell the user you started background work. Provider task ids are never public authority.',
+    'Request bounded Gantry-owned background work when the AgentDelegation capability is selected. Only report that work started when the tool returns a taskId; if it reports unavailable, continue without delegation or request setup. Provider task ids are never public authority.',
     {
       title: z.string().min(1).max(160),
       task: z.string().min(1).max(12000),

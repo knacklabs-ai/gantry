@@ -35,17 +35,28 @@ const PERMISSION_ENV: PermissionIpcRuntimeEnv = {
   resolveWorkspaceIpcDir: (folder: string) => `/tmp/ipc/${folder}`,
 };
 
+const TOOL_NETWORK_ENV: Record<string, string> = {
+  HTTP_PROXY: 'http://127.0.0.1:18080/',
+  HTTPS_PROXY: 'http://127.0.0.1:18080/',
+  NODE_USE_ENV_PROXY: '1',
+};
+
 function makeRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-facade-test-'));
   tempRoots.push(root);
   return root;
 }
 
-function makeTools(root: string, rules: string[] = []) {
+function makeTools(
+  root: string,
+  rules: string[] = [],
+  toolNetworkEnv?: Record<string, string>,
+) {
   return createGantryFacadeTools({
     workspaceFolder: 'main_agent',
     memoryBlock: '',
     configuredAllowedTools: rules,
+    toolNetworkEnv,
     gateContext: { conversationId: 'tg:group' },
     permissionEnv: PERMISSION_ENV,
     lockedAccessPreset: false,
@@ -71,6 +82,7 @@ describe('Gantry DeepAgents facade tools', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     for (const root of tempRoots.splice(0)) {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -92,6 +104,17 @@ describe('Gantry DeepAgents facade tools', () => {
     ]) {
       expect(names).not.toContain(raw);
     }
+  });
+
+  it('passes raw JSON schemas to LangChain tools', () => {
+    const root = makeRoot();
+    const webRead = makeTools(root).find((item) => item.name === 'WebRead');
+    expect(webRead?.schema).toMatchObject({
+      type: 'object',
+      required: ['url'],
+    });
+    expect(webRead?.schema).not.toHaveProperty('format');
+    expect(webRead?.schema).not.toHaveProperty('schema');
   });
 
   it('reads files when FileRead authority is selected without prompting', async () => {
@@ -171,17 +194,48 @@ describe('Gantry DeepAgents facade tools', () => {
     expect(result).toBe('beta\n');
   });
 
+  it('refuses FileWrite through a workspace symlink target', async () => {
+    const root = makeRoot();
+    const outside = makeRoot();
+    fs.writeFileSync(path.join(outside, 'target.txt'), 'outside', 'utf-8');
+    fs.symlinkSync(
+      path.join(outside, 'target.txt'),
+      path.join(root, 'link.txt'),
+    );
+    const tools = makeTools(root, ['FileWrite']);
+
+    await expect(
+      invoke(tools, 'FileWrite', {
+        path: 'link.txt',
+        content: 'escape',
+      }),
+    ).rejects.toThrow('FileWrite refuses to follow symlink targets.');
+    expect(fs.readFileSync(path.join(outside, 'target.txt'), 'utf-8')).toBe(
+      'outside',
+    );
+  });
+
   it('searches paths and content without exposing raw glob/grep tools', async () => {
     const root = makeRoot();
     fs.mkdirSync(path.join(root, 'src'));
     fs.writeFileSync(path.join(root, 'src', 'alpha.ts'), 'const needle = 1;\n');
+    fs.writeFileSync(path.join(root, 'src', 'skip.md'), 'needle\n');
     const tools = makeTools(root, ['FileSearch']);
     await expect(
       invoke(tools, 'FileSearch', {
         mode: 'path',
         query: 'alpha',
+        include: '*.ts',
       }),
     ).resolves.toContain('src/alpha.ts');
+    const contentResult = await invoke(tools, 'FileSearch', {
+      mode: 'content',
+      query: 'needle',
+      include: '*.ts',
+      exclude: '*.md',
+    });
+    expect(contentResult).toContain('src/alpha.ts:1');
+    expect(contentResult).not.toContain('skip.md');
     await expect(
       invoke(tools, 'FileSearch', {
         mode: 'content',
@@ -191,7 +245,11 @@ describe('Gantry DeepAgents facade tools', () => {
   });
 
   it('wraps WebRead and WebSearch behind public facade tools', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(init?.redirect).toBe('error');
+      expect(process.env.HTTP_PROXY).toBe(TOOL_NETWORK_ENV.HTTP_PROXY);
+      expect(process.env.HTTPS_PROXY).toBe(TOOL_NETWORK_ENV.HTTPS_PROXY);
+      expect(process.env.NODE_USE_ENV_PROXY).toBe('1');
       if (url.includes('duckduckgo')) {
         return new Response(
           '<a class="result__a" href="https://example.com">Example Result</a>',
@@ -205,7 +263,10 @@ describe('Gantry DeepAgents facade tools', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const root = makeRoot();
-    const tools = makeTools(root, ['WebRead', 'WebSearch']);
+    const tools = makeTools(root, ['WebRead', 'WebSearch'], TOOL_NETWORK_ENV);
+    vi.stubEnv('HTTP_PROXY', TOOL_NETWORK_ENV.HTTP_PROXY);
+    vi.stubEnv('HTTPS_PROXY', TOOL_NETWORK_ENV.HTTPS_PROXY);
+    vi.stubEnv('NODE_USE_ENV_PROXY', TOOL_NETWORK_ENV.NODE_USE_ENV_PROXY);
     await expect(
       invoke(tools, 'WebRead', { url: 'https://example.com' }),
     ).resolves.toContain('Example');
@@ -213,5 +274,58 @@ describe('Gantry DeepAgents facade tools', () => {
       invoke(tools, 'WebSearch', { query: 'example', maxResults: 1 }),
     ).resolves.toContain('Example Result');
     expect(requestPermissionApprovalViaIpc).not.toHaveBeenCalled();
+  });
+
+  it('fails WebRead/WebSearch closed when audited egress is unavailable', async () => {
+    const root = makeRoot();
+    const tools = makeTools(root, ['WebRead', 'WebSearch']);
+
+    await expect(
+      invoke(tools, 'WebRead', { url: 'https://example.com' }),
+    ).resolves.toContain('audited tool networking was not projected');
+    await expect(
+      invoke(tools, 'WebSearch', { query: 'example', maxResults: 1 }),
+    ).resolves.toContain('audited tool networking was not projected');
+  });
+
+  it.each([
+    'http://127.0.0.1:18080/internal',
+    'http://localhost:18080/internal',
+    'http://localhost.:18080/internal',
+    'http://foo.localhost.:18080/internal',
+    'http://10.0.0.1/internal',
+    'http://192.168.1.10/internal',
+    'http://[::1]/internal',
+  ])('refuses WebRead private target %s', async (url) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const root = makeRoot();
+    const tools = makeTools(root, ['WebRead'], TOOL_NETWORK_ENV);
+
+    vi.stubEnv('HTTP_PROXY', TOOL_NETWORK_ENV.HTTP_PROXY);
+    vi.stubEnv('HTTPS_PROXY', TOOL_NETWORK_ENV.HTTPS_PROXY);
+    vi.stubEnv('NODE_USE_ENV_PROXY', TOOL_NETWORK_ENV.NODE_USE_ENV_PROXY);
+    await expect(invoke(tools, 'WebRead', { url })).resolves.toContain(
+      'loopback or private network URLs',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fails WebRead closed when audited egress env is incomplete', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const root = makeRoot();
+    const tools = makeTools(root, ['WebRead'], {
+      HTTP_PROXY: TOOL_NETWORK_ENV.HTTP_PROXY,
+      HTTPS_PROXY: TOOL_NETWORK_ENV.HTTPS_PROXY,
+    });
+
+    vi.stubEnv('HTTP_PROXY', '');
+    vi.stubEnv('HTTPS_PROXY', '');
+    vi.stubEnv('NODE_USE_ENV_PROXY', '');
+    await expect(
+      invoke(tools, 'WebRead', { url: 'https://example.com' }),
+    ).resolves.toContain('audited tool networking was not projected');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

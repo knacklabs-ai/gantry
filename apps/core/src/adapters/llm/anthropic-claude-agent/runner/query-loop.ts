@@ -37,7 +37,6 @@ import {
 } from './runtime-env.js';
 import {
   buildRunnerSystemPrompt,
-  includeGitInstructionsForPersona,
   readMemoryContextBlock,
 } from './system-prompt.js';
 import type {
@@ -448,9 +447,7 @@ export async function runQuery(
       systemPrompt,
       settings: {
         autoMemoryEnabled: false,
-        includeGitInstructions: includeGitInstructionsForPersona(
-          agentInput.persona,
-        ),
+        includeGitInstructions: false,
         skillOverrides: SDK_NATIVE_SKILL_OVERRIDES,
       },
       skills: enabledSdkSkills,

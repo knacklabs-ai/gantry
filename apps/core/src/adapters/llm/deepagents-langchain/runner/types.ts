@@ -35,6 +35,7 @@ export interface DeepAgentRunnerInput {
   deepAgentCheckpointer?: DeepAgentCheckpointerConfig;
   deepAgentSkills?: DeepAgentSkillProjection;
   modelCredentialEnv?: Record<string, string>;
+  toolNetworkEnv?: Record<string, string>;
   // Auto-approve safety valve settings; the neutral gate's denylist backstop
   // runs even though the deepagents lane has no auto-approve surface in v1.
   yoloMode?: YoloModeSettings;

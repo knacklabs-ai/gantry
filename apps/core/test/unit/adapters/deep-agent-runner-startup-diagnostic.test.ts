@@ -129,9 +129,14 @@ describe('runDeepAgentTurn startup diagnostics', () => {
       await import('@core/adapters/llm/deepagents-langchain/runner/deep-agent-runner.js');
     const frames: unknown[] = [];
     const onToolStart = vi.fn();
+    const toolNetworkEnv = {
+      HTTP_PROXY: 'http://127.0.0.1:18790',
+      HTTPS_PROXY: 'http://127.0.0.1:18790',
+      NODE_USE_ENV_PROXY: '1',
+    };
 
     const turn = await runDeepAgentTurn({
-      agentInput: input(),
+      agentInput: input({ toolNetworkEnv }),
       provider: 'openai',
       modelId: 'gpt-test',
       newSessionId: 'session-one',
@@ -158,6 +163,9 @@ describe('runDeepAgentTurn startup diagnostics', () => {
         gatewayToken: 'gtw_secret_token',
         sessionId: 'session-one',
       }),
+    );
+    expect(mocks.connectTools).toHaveBeenCalledWith(
+      expect.objectContaining({ toolNetworkEnv }),
     );
     const diagnostic = turn.startupRuntimeEvents?.[0];
     expect(diagnostic).toMatchObject({

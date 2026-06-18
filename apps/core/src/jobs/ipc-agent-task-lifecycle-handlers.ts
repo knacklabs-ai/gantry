@@ -237,7 +237,7 @@ const todoUpdateHandler: TaskHandler = async (context) => {
 };
 
 const delegateTaskHandler: TaskHandler = async (context) => {
-  const { acceptData, reject } = responder(context);
+  const { reject } = responder(context);
   const conversationId = validateSameConversation(context);
   if (!conversationId) {
     reject(
@@ -253,52 +253,12 @@ const delegateTaskHandler: TaskHandler = async (context) => {
     );
     return;
   }
-  const repo = context.deps.getTaskLifecycleRepository?.();
-  if (!repo) {
-    reject('Task lifecycle storage is not ready.', 'preflight_failed');
-    return;
-  }
-  const payload = context.data.payload ?? {};
-  const title = toTrimmedString(payload.title, { maxLen: 160 });
-  const task = toTrimmedString(payload.task, { maxLen: 12000 });
-  const expectedOutput = toTrimmedString(payload.expectedOutput, {
-    maxLen: 4000,
-  });
-  const taskContext = toTrimmedString(payload.context, { maxLen: 12000 });
-  if (!title || !task || !expectedOutput) {
-    reject(
-      'delegate_task requires title, task, and expectedOutput.',
-      'invalid_request',
-    );
-    return;
-  }
-  const scope = buildScope(context, conversationId);
-  const result = await repo.launchDelegatedTask({
-    id: `task-${randomUUID()}`,
-    scope,
-    idempotencyKey: `delegate:${stringHash({
-      scope,
-      title,
-      task,
-      expectedOutput,
-      context: taskContext || null,
-    })}`,
-    capabilityScope: AGENT_DELEGATION_RULE,
-    ownerWorkerId: context.sourceAgentFolder,
-    fence: fenceFromContext(context),
-    title,
-    task,
-    expectedOutput,
-    context: taskContext || null,
-    now: nowIso(),
-  });
-  acceptData('Delegated work is running. I will keep you updated.', {
-    outcome: result.outcome,
-    taskId: result.task.id,
-    status: result.task.status,
-    title: result.task.title,
-    updatedAt: result.task.updatedAt,
-  });
+  // No host worker currently claims delegated task rows; fail closed instead
+  // of persisting a running task that cannot complete.
+  reject(
+    'Agent delegation is unavailable in this mode because no Gantry delegation executor is configured.',
+    'unavailable_in_mode',
+  );
 };
 
 const taskGetHandler: TaskHandler = async (context) => {
@@ -381,7 +341,10 @@ const taskCancelHandler: TaskHandler = async (context) => {
     return;
   }
   if (result.outcome === 'already_terminal') {
-    acceptData(receiptMessage(result.task), taskPublicData(result.task));
+    reject(
+      'Delegated task is already finished and cannot be cancelled.',
+      'already_terminal',
+    );
     return;
   }
   logger.info(

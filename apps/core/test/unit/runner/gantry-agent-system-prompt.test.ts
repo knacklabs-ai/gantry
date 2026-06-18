@@ -110,7 +110,7 @@ describe('buildGantryAgentSystemPrompt', () => {
     expect(prompt.prompt).toContain('Needs attention: <blocker or none>');
   });
 
-  it('uses the unified static/dynamic prompt path for Anthropic non-developer personas', () => {
+  it('uses the unified static/dynamic prompt path for Anthropic personas', () => {
     const input = {
       prompt: 'summarize the plan',
       workspaceFolder: 'main_agent',
@@ -136,7 +136,7 @@ describe('buildGantryAgentSystemPrompt', () => {
     expect(prompt[2]).not.toContain('Selected public tool hints: Read.');
   });
 
-  it('keeps the Anthropic Claude preset path for developer personas', () => {
+  it('keeps developer personas on the neutral Gantry prompt path', () => {
     const input = {
       prompt: 'edit the repo',
       workspaceFolder: 'main_agent',
@@ -147,20 +147,21 @@ describe('buildGantryAgentSystemPrompt', () => {
 
     const prompt = buildRunnerSystemPrompt(input, 'memory context');
 
-    expect(prompt).toMatchObject({
-      type: 'preset',
-      preset: 'claude_code',
-      append: expect.stringContaining('developer profile prompt'),
-      excludeDynamicSections: true,
-    });
+    expect(Array.isArray(prompt)).toBe(true);
+    if (!Array.isArray(prompt)) throw new Error('expected prompt array');
+    expect(prompt[0]).toContain('## Identity');
+    expect(prompt[0]).toContain('Configured working style: developer.');
+    expect(prompt[0]).toContain('developer profile prompt');
+    expect(prompt[0]).toContain('Gantry Durable Memory Boundary');
+    expect(prompt.join('\n')).not.toContain('claude_code');
   });
 
-  it('uses the same unified renderer for DeepAgents', () => {
+  it('uses the same unified renderer for DeepAgents developer personas', () => {
     const input = {
       prompt: 'summarize the plan',
       workspaceFolder: 'main_agent',
       chatJid: 'tg:team',
-      persona: 'generalist',
+      persona: 'developer',
       assistantName: 'Asha',
       promptMode: 'full',
       compiledSystemPrompt: 'custom profile prompt',
@@ -174,6 +175,7 @@ describe('buildGantryAgentSystemPrompt', () => {
       expect(prompt).toContain(section);
     }
     expect(prompt).toContain('custom profile prompt');
+    expect(prompt).toContain('Configured working style: developer.');
     expect(prompt).toContain('Gantry Durable Memory Boundary');
     expect(prompt).toContain('WebRead');
     expect(prompt).toContain('FileRead');

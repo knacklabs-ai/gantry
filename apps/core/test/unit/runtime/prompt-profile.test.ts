@@ -241,6 +241,11 @@ describe('PromptProfileService', () => {
     expect(prompt).toContain('request_access target.kind=capability');
     expect(prompt).toContain('Credential Center');
     expect(prompt).toContain('admin_permission_list');
+    expect(prompt).toContain('pending -> inProgress -> completed');
+    expect(prompt).toContain(
+      'If it reports unavailable in this mode, do not tell the user work started',
+    );
+    expect(prompt).not.toContain('pending -> in_progress -> completed');
 
     // No stale tool names leak into the compiled prompt.
     for (const stale of [

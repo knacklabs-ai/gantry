@@ -134,23 +134,22 @@ function capabilityGuidancePrompt(
   persona: AgentPersona,
   accessPreset: PromptAccessPreset,
 ): string {
-  const locked = accessPreset === 'locked';
   const baseline = [
     '# Capability guidance',
-    locked
+    accessPreset === 'locked'
       ? '- Memory is baseline for every persona. Browser control is available only when Gantry-owned browser_* tools are present.'
       : '- Memory is baseline for every persona. Browser control is available only when the canonical Browser capability is selected, through Gantry-owned browser_* tools.',
     '- Memory tools store durable evidence only; temporary task state does not belong in memory.',
-    '- Use todo_update for any multi-step task: publish a short plan and keep it current as items move pending -> in_progress -> completed. It renders as one live, in-place list per channel, so do not restate the same progress in separate messages. It is display-only, non-authority state and does not grant tools or trigger work.',
+    '- Use todo_update for any multi-step task: publish a short plan and keep it current as items move pending -> inProgress -> completed. It renders as one live, in-place list per channel, so do not restate the same progress in separate messages. It is display-only, non-authority state and does not grant tools or trigger work.',
     '- When AgentDelegation is available, use delegate_task, task_get, and task_cancel for bounded delegated work. Write a clear prompt with goal, context, constraints, and expected output.',
     '- Reach for delegate_task in two cases: (a) isolated exploration — research, reading across many files or sources, cross-checking — so the intermediate detail stays out of your main context and you keep only the conclusion; and (b) bounded, independent subtasks. For independent pieces, fan out several delegated tasks and gather each with task_get, then synthesize and sanity-check their results yourself before acting; the coordinating agent owns the user-facing answer.',
-    '- Delegation runs in the background and is non-blocking: delegate_task returns a task handle and the result arrives asynchronously. Keep working and check with task_get instead of waiting inline; tell the user you started background work; do not re-delegate the same work while it is still running. Use task_cancel to stop a task that is no longer needed.',
+    '- Delegation is non-blocking only after delegate_task returns a task handle. If it reports unavailable in this mode, do not tell the user work started; continue without delegation or request setup. Use task_get/task_cancel only for returned task ids.',
     '- Final answers that used delegation must include exactly: Completed: <short outcome>, Used: <tools/capabilities>, Changed: <files/accounts/channels or none>, Delegated: yes, Needs attention: <blocker or none>.',
     '- Do not delegate risky execution, secret handling, config edits, permission changes, or work requiring tools the parent run cannot use.',
   ];
   if (persona === 'developer') {
     baseline.push(
-      locked
+      accessPreset === 'locked'
         ? '- Developer capabilities may include workspace read/search and delegation.'
         : '- Developer capabilities may include workspace read/search and delegation. Shell, file writes, Git, PR, deploy, and runtime-admin actions still require explicit capability or permission.',
     );

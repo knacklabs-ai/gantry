@@ -225,7 +225,7 @@ describe('agent task lifecycle IPC handlers', () => {
     });
   });
 
-  it('creates delegated work with Gantry scope, idempotency, and lease fence', async () => {
+  it('denies delegate_task before repository launch when no Gantry executor is configured', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-task-ipc-'),
     );
@@ -234,52 +234,27 @@ describe('agent task lifecycle IPC handlers', () => {
     addLiveDelegationRule(ipcBaseDir);
     const { agentTaskLifecycleHandlers, taskData } =
       await loadTaskLifecycleHandlers(runtimeHome);
-    const launchDelegatedTask = vi.fn(async (input) => ({
-      outcome: 'replayed',
-      task: task({ id: input.id, idempotencyKey: input.idempotencyKey }),
-    }));
-    const data = taskData('delegate-ok', 'delegate_task', {
-      title: 'Research options',
-      task: 'Compare options',
-      expectedOutput: 'Decision notes',
-      context: 'Keep it short',
-    });
+    const launchDelegatedTask = vi.fn();
 
     await agentTaskLifecycleHandlers.delegate_task(
       contextFor({
-        data,
+        data: taskData('delegate-unavailable', 'delegate_task', {
+          title: 'Research options',
+          task: 'Compare options',
+          expectedOutput: 'Decision notes',
+          context: 'Keep it short',
+        }),
         ipcBaseDir,
         taskLifecycleRepository: { launchDelegatedTask },
       }),
     );
 
-    expect(launchDelegatedTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: {
-          appId: 'app:test',
-          agentId: 'agent:main',
-          principalId: 'sl:C123',
-          conversationId: 'sl:C123',
-          threadId: 'thread-1',
-          parentRunId: 'run-id-1',
-          runHandle: 'run-1',
-        },
-        capabilityScope: 'AgentDelegation',
-        ownerWorkerId: 'main_agent',
-        fence: { leaseToken: 'lease-1', fencingVersion: 7 },
-        title: 'Research options',
-        task: 'Compare options',
-        expectedOutput: 'Decision notes',
-        context: 'Keep it short',
-      }),
-    );
-    expect(launchDelegatedTask.mock.calls[0]?.[0].idempotencyKey).toMatch(
-      /^delegate:/,
-    );
-    expect(readResponse(runtimeHome, 'delegate-ok')).toMatchObject({
-      ok: true,
-      message: 'Delegated work is running. I will keep you updated.',
-      data: { outcome: 'replayed', status: 'running' },
+    expect(launchDelegatedTask).not.toHaveBeenCalled();
+    expect(readResponse(runtimeHome, 'delegate-unavailable')).toMatchObject({
+      ok: false,
+      code: 'unavailable_in_mode',
+      error:
+        'Agent delegation is unavailable in this mode because no Gantry delegation executor is configured.',
     });
   });
 
@@ -383,6 +358,46 @@ describe('agent task lifecycle IPC handlers', () => {
       ok: true,
       message: 'Delegated work was cancelled. Nothing else changed.',
       data: { status: 'cancelled' },
+    });
+  });
+
+  it('rejects task_cancel when the delegated task is already terminal', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-task-ipc-'),
+    );
+    runtimeHomes.push(runtimeHome);
+    const ipcBaseDir = path.join(runtimeHome, 'ipc');
+    addLiveDelegationRule(ipcBaseDir);
+    const { agentTaskLifecycleHandlers, taskData } =
+      await loadTaskLifecycleHandlers(runtimeHome);
+    const cancelDelegatedTask = vi.fn(async () => ({
+      outcome: 'already_terminal',
+      task: task({
+        status: 'completed',
+        terminalReceipt: {
+          completed: 'Already done.',
+          used: 'AgentDelegation',
+          changed: 'none',
+          delegated: 'yes',
+          needsAttention: 'none',
+        },
+      }),
+    }));
+
+    await agentTaskLifecycleHandlers.task_cancel(
+      contextFor({
+        data: taskData('task-cancel-terminal', 'task_cancel', {
+          taskId: 'task-1',
+        }),
+        ipcBaseDir,
+        taskLifecycleRepository: { cancelDelegatedTask },
+      }),
+    );
+
+    expect(readResponse(runtimeHome, 'task-cancel-terminal')).toMatchObject({
+      ok: false,
+      code: 'already_terminal',
+      error: 'Delegated task is already finished and cannot be cancelled.',
     });
   });
 });

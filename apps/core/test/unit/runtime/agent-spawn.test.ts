@@ -3702,6 +3702,37 @@ describe('agent-spawn timeout behavior', () => {
     expect(resolvedEntryId).toBe('groq:gpt-oss-120b');
   });
 
+  it('projects audited tool network env into direct DeepAgents runner process', async () => {
+    const writeSpy = vi.spyOn(fakeProc.stdin, 'write');
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt' },
+      () => {},
+      undefined,
+      { executionAdapter: testDeepAgentsExecutionAdapter },
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.HTTP_PROXY).toBe('http://127.0.0.1:18080/');
+    expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:18080/');
+    expect(env.NODE_USE_ENV_PROXY).toBe('1');
+    expect(env.HTTP_PROXY).not.toContain('aoc_');
+    expect(env.GANTRY_DEEPAGENTS_SHELL_ENABLED).toBeUndefined();
+    const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
+    expect(runnerInput.toolNetworkEnv.HTTP_PROXY).toBe(
+      'http://127.0.0.1:18080/',
+    );
+    expect(runnerInput.modelCredentialEnv?.HTTP_PROXY).toBeUndefined();
+  });
+
   it('A9: blocks a deepagents shell run under direct mode with the enforcing-sandbox copy (FAIL CLOSED)', async () => {
     // Default mocked runtime sandbox provider is 'direct' (non-enforcing), so a
     // DeepAgents run requesting shell authority fails closed before spawn — no

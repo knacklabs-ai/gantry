@@ -490,10 +490,14 @@ export async function spawnAgent(
         fs.mkdirSync(providerToolTempDir, { recursive: true, mode: 0o700 });
       }
     }
+    const runnerToolProcessEnv =
+      preparedExecution.providerId === 'deepagents:langchain'
+        ? toolNetworkEnv
+        : sandboxRuntimeToolProcessEnv(runnerSandboxProviderId, toolNetworkEnv);
     const env: NodeJS.ProcessEnv = {
       ...pickSafeHostEnv(process.env),
       ...pickPreparedExecutionEnv(preparedExecution.env),
-      ...sandboxRuntimeToolProcessEnv(runnerSandboxProviderId, toolNetworkEnv),
+      ...runnerToolProcessEnv,
       ...(runnerTempDir
         ? {
             TMPDIR: runnerTempDir,

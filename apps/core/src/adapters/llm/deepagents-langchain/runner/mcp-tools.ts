@@ -57,6 +57,7 @@ export interface ConnectedMcpTools {
 
 export interface ConnectGantryMcpInput {
   configuredAllowedTools: readonly string[];
+  toolNetworkEnv?: Record<string, string>;
   hideAuthorityTools: boolean;
   gate: Omit<ThirdPartyMcpGateConfig, 'configuredAllowedTools'>;
   // Run-cancellation signal threaded into the gated shell tool so a command in
@@ -125,6 +126,7 @@ export async function connectGantryAndThirdPartyMcpTools(
     workspaceFolder: input.gate.workspaceFolder,
     memoryBlock: input.gate.memoryBlock,
     configuredAllowedTools: input.configuredAllowedTools,
+    toolNetworkEnv: input.toolNetworkEnv,
     gateContext: input.gate.gateContext,
     permissionEnv: input.gate.permissionEnv,
     lockedAccessPreset: input.gate.lockedAccessPreset,
