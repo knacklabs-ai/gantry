@@ -250,33 +250,37 @@ export function createAgentTodoRenderer(input: {
     }
   };
 
-  const openWindow = (jid: string): void => {
+  const renderKey = (jid: string, render: AgentTodoRender): string =>
+    `${jid}:${render.threadId ?? ''}`;
+
+  const openWindow = (key: string, jid: string): void => {
     const timer = setTimeout(() => {
-      const entry = windows.get(jid);
+      const entry = windows.get(key);
       if (!entry) return;
       const next = entry.pending;
       if (next) {
         entry.pending = null;
-        openWindow(jid);
+        openWindow(key, jid);
         void flush(jid, next);
       } else {
-        windows.delete(jid);
+        windows.delete(key);
       }
     }, AGENT_TODO_RENDER_THROTTLE_MS);
     // Don't let a pending plan flush keep the process alive on shutdown.
     (timer as { unref?: () => void }).unref?.();
-    windows.set(jid, { pending: windows.get(jid)?.pending ?? null, timer });
+    windows.set(key, { pending: windows.get(key)?.pending ?? null, timer });
   };
 
   return async (jid: string, render: AgentTodoRender): Promise<void> => {
     if (!jid) return;
-    const existing = windows.get(jid);
+    const key = renderKey(jid, render);
+    const existing = windows.get(key);
     if (existing) {
       // Within the throttle window: keep only the latest plan; it flushes on close.
       existing.pending = render;
       return;
     }
-    openWindow(jid);
+    openWindow(key, jid);
     await flush(jid, render);
   };
 }

@@ -655,6 +655,58 @@ describe('Slack channel', () => {
     );
   });
 
+  it('renders Slack todo plans inside their source thread', async () => {
+    const channel = new SlackChannel(
+      'xoxb-token',
+      'xapp-token',
+      createOptsWithApproverHook(['U_APPROVER']) as any,
+    );
+    await channel.connect();
+    const postMessage = vi.mocked(appRef.current.client.chat.postMessage);
+    const update = vi.mocked(appRef.current.client.chat.update);
+    postMessage.mockClear();
+    update.mockClear();
+    postMessage
+      .mockResolvedValueOnce({ ok: true, ts: '1710000000.100201' })
+      .mockResolvedValueOnce({ ok: true, ts: '1710000000.100202' });
+
+    await channel.renderAgentTodo('sl:C1234567890', {
+      threadId: '1710000000.000111',
+      summary: 'Thread one',
+      items: [{ id: 'a', title: 'A', status: 'pending' }],
+    });
+    await channel.renderAgentTodo('sl:C1234567890', {
+      threadId: '1710000000.000222',
+      summary: 'Thread two',
+      items: [{ id: 'b', title: 'B', status: 'pending' }],
+    });
+    await channel.renderAgentTodo('sl:C1234567890', {
+      threadId: '1710000000.000111',
+      summary: 'Thread one updated',
+      items: [{ id: 'a', title: 'A', status: 'completed' }],
+    });
+
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(postMessage.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        channel: 'C1234567890',
+        thread_ts: '1710000000.000111',
+      }),
+    );
+    expect(postMessage.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        channel: 'C1234567890',
+        thread_ts: '1710000000.000222',
+      }),
+    );
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C1234567890',
+        ts: '1710000000.100201',
+      }),
+    );
+  });
+
   it('renders scheduler dead-letter action affordances as Slack buttons', async () => {
     const channel = new SlackChannel(
       'xoxb-token',

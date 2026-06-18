@@ -130,7 +130,9 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
     const text = render.summary?.trim()
       ? `📋 ${render.summary.trim()}`
       : '📋 Plan';
-    const existing = this.pendingTodos.get(jid);
+    const threadTs = slackThreadTsFromThreadId(render.threadId);
+    const todoKey = this.streamKey(jid, render.threadId ?? undefined);
+    const existing = this.pendingTodos.get(todoKey);
     if (existing) {
       try {
         await this.app.client.chat.update({
@@ -142,10 +144,10 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
         return;
       } catch (err) {
         logger.debug(
-          { jid, err },
+          { jid, threadId: render.threadId, err },
           'Slack todo update failed; sending a fresh message',
         );
-        this.pendingTodos.delete(jid);
+        this.pendingTodos.delete(todoKey);
       }
     }
     try {
@@ -153,9 +155,10 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
         channel: parsed.channelId,
         text,
         blocks: blocks as any,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       })) as { ts?: string };
       if (result.ts) {
-        this.pendingTodos.set(jid, {
+        this.pendingTodos.set(todoKey, {
           channel: parsed.channelId,
           ts: result.ts,
         });

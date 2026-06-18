@@ -28,6 +28,7 @@ export interface AgentTodoItem {
 export interface AgentTodoRender {
   summary: string | null;
   items: AgentTodoItem[];
+  threadId?: string | null;
   updatedAt?: string;
 }
 

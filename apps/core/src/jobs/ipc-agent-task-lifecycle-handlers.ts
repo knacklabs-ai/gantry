@@ -228,6 +228,7 @@ const todoUpdateHandler: TaskHandler = async (context) => {
       .renderAgentTodo(conversationId, {
         summary,
         items,
+        threadId: scope.threadId,
         updatedAt: update.update.createdAt,
       })
       .catch((err) => {
