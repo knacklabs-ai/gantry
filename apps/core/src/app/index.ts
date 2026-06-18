@@ -23,6 +23,7 @@ import { stopOutboundDeliveryRecoveryLoop } from '../jobs/outbound-delivery-reco
 import { publishBrowserJobActivityEvent } from '../jobs/browser-activity-events.js';
 import {
   GANTRY_HOME,
+  MAX_MESSAGES_PER_PROMPT,
   getRuntimeOwnershipConfig,
   getRuntimeTraceConfig,
   getRuntimeWarmPoolConfig,
@@ -49,7 +50,10 @@ import {
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import { defaultHostnameLookup } from '../infrastructure/network/hostname-lookup.js';
 import { PostgresMessageTraceRepository } from '../adapters/storage/postgres/repositories/message-trace-repository.postgres.js';
-import { parseThreadQueueKey } from '../shared/thread-queue-key.js';
+import {
+  makeThreadQueueKey,
+  parseThreadQueueKey,
+} from '../shared/thread-queue-key.js';
 
 export { escapeXml, formatMessages } from '../messaging/router.js';
 export {
@@ -130,6 +134,17 @@ export async function startGantryRuntime(
         leaseVersion: claim.lease.leaseVersion,
       };
     },
+    claimConversationWork: async ({ conversationId, threadId }) => {
+      const claim = await conversationWorkClaimGate.claimLease({
+        appId: 'default',
+        conversationId,
+        threadId,
+        ownerInstanceId: instanceId,
+        leaseTtlMs: ownershipConfig.leaseTtlMs,
+        reason: 'process_group_messages_start',
+      });
+      return claim.acquired;
+    },
     onMessageRunStart: (queueJid) => {
       const parsed = parseThreadQueueKey(queueJid);
       return conversationWorkClaimGate.startTrackedLeaseHeartbeat({
@@ -188,6 +203,20 @@ export async function startGantryRuntime(
 
   const { runtimeSettings } = await runStartup(app);
   const storage = getRuntimeStorage();
+  const hasPendingMessageWork = async (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }): Promise<boolean> => {
+    const queueKey = makeThreadQueueKey(input.conversationId, input.threadId);
+    const cursor = await app.getOrRecoverCursor(queueKey);
+    const pending = await storage.ops.getMessagesSince(
+      input.conversationId,
+      cursor,
+      MAX_MESSAGES_PER_PROMPT,
+      { threadId: input.threadId ?? null },
+    );
+    return pending.length > 0;
+  };
   const conversationWorkDispatcher = startConversationWorkDispatcher({
     instanceId,
     notifier: storage.conversationWorkNotifier,
@@ -236,6 +265,7 @@ export async function startGantryRuntime(
       ];
     },
     claimLease: conversationWorkClaimGate.claimLease,
+    hasPendingWork: hasPendingMessageWork,
     enqueueMessageCheck: (queueKey) => app.queue.enqueueMessageCheck(queueKey),
     logger,
   });
@@ -364,6 +394,17 @@ export async function startGantryRuntime(
           ownerInstanceId: instanceId,
           leaseTtlMs: ownershipConfig.leaseTtlMs,
           reason: 'recover_pending_messages',
+        });
+        return claim.acquired;
+      },
+      claimConversationWork: async ({ conversationId, threadId }) => {
+        const claim = await conversationWorkClaimGate.claimLease({
+          appId: 'default',
+          conversationId,
+          threadId,
+          ownerInstanceId: instanceId,
+          leaseTtlMs: ownershipConfig.leaseTtlMs,
+          reason: 'message_loop_accept',
         });
         return claim.acquired;
       },

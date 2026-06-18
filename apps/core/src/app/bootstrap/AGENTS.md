@@ -22,6 +22,11 @@
   before waiting on `GroupQueue`, release cleanly finished tracked owner leases
   after queue drain, then mark any remaining instance leases draining so another
   instance can take over if the process does not release cleanly.
+- Multi-core cursor state is shared durable router state. Before reading or
+  saving per-agent cursors such as `last_agent_timestamp`, merge local memory
+  with durable state and keep the newest cursor by timestamp/id so one runtime
+  cannot replay stale inbound work or clobber a fresher cursor from another
+  runtime.
 - Durable provider-send failures must keep sanitized diagnostics bounded while
   preserving provider-neutral retry metadata such as `retryAfterSeconds`.
   Redact secrets first, then fit the final stored `delivery_error` string

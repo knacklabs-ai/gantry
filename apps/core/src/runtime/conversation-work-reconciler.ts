@@ -37,6 +37,9 @@ export interface StartConversationWorkReconcilerInput {
   claimLease: (
     input: ClaimConversationOwnerLeaseInput,
   ) => Promise<ClaimConversationOwnerLeaseResult>;
+  hasPendingWork?: (
+    candidate: ConversationWorkReconcileCandidate,
+  ) => Promise<boolean> | boolean;
   enqueueMessageCheck: (queueKey: string) => void;
   now?: () => Date;
   logger?: {
@@ -125,6 +128,8 @@ async function claimAndEnqueueCandidate(
   });
   if (isClosed()) return;
   if (!claim.acquired) return;
+  if (input.hasPendingWork && !(await input.hasPendingWork(candidate))) return;
+  if (isClosed()) return;
   input.enqueueMessageCheck(
     makeThreadQueueKey(candidate.conversationId, candidate.threadId),
   );

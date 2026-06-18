@@ -115,13 +115,29 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const messageFilter = scopedQueue
       ? { threadId: queueThreadId ?? null }
       : undefined;
-    const missedMessages = await ops().getMessagesSince(
+    let cursor = await deps.getCursor(queueJid);
+    let missedMessages = await ops().getMessagesSince(
       chatJid,
-      await deps.getCursor(queueJid),
+      cursor,
       MAX_MESSAGES_PER_PROMPT,
       messageFilter,
     );
     if (missedMessages.length === 0) return true;
+    if (deps.claimConversationWork) {
+      const acquired = await deps.claimConversationWork({
+        conversationId: chatJid,
+        threadId: queueThreadId ?? null,
+      });
+      if (!acquired) return true;
+      cursor = await deps.getCursor(queueJid);
+      missedMessages = await ops().getMessagesSince(
+        chatJid,
+        cursor,
+        MAX_MESSAGES_PER_PROMPT,
+        messageFilter,
+      );
+      if (missedMessages.length === 0) return true;
+    }
     const latestMessage = missedMessages[missedMessages.length - 1];
     const activeThreadId = firstThreadQueueId(
       queueThreadId,

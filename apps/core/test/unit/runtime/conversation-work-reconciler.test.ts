@@ -256,6 +256,52 @@ describe('conversation work reconciler', () => {
     expect(enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
+  it('revalidates pending work after claiming before enqueueing', async () => {
+    const now = new Date('2026-06-17T00:00:00.000Z');
+    const candidate = {
+      appId: 'app:default',
+      conversationId: 'wa:918097570023',
+      threadId: null,
+      reason: 'missed_notification' as const,
+    };
+    const findCandidates = vi.fn(async () => [candidate]);
+    const claimLease = vi.fn(
+      async (input): Promise<ClaimConversationOwnerLeaseResult> => ({
+        acquired: true,
+        lease: makeLease({
+          appId: input.appId,
+          conversationId: input.conversationId,
+          threadId: input.threadId ?? null,
+          threadKey: input.threadId ?? '',
+          ownerInstanceId: input.ownerInstanceId,
+          leaseExpiresAt: '2026-06-17T00:00:45.000Z',
+          lastClaimReason: input.reason ?? null,
+        }),
+      }),
+    );
+    const hasPendingWork = vi.fn(async () => false);
+    const enqueueMessageCheck = vi.fn();
+
+    const reconciler = startConversationWorkReconciler({
+      instanceId: 'server-a',
+      leaseTtlMs: 45_000,
+      intervalMs: 10_000,
+      scanLimit: 10,
+      findCandidates,
+      claimLease,
+      hasPendingWork,
+      enqueueMessageCheck,
+      now: () => now,
+    });
+
+    await reconciler.runOnce();
+    reconciler.close();
+
+    expect(claimLease).toHaveBeenCalledTimes(1);
+    expect(hasPendingWork).toHaveBeenCalledWith(candidate);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
   it('does not claim work when closed while a scan is in flight', async () => {
     const now = new Date('2026-06-17T00:00:00.000Z');
     type TestCandidate = {

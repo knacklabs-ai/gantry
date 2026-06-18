@@ -79,6 +79,10 @@ interface Deps {
   writeGroupsSnapshot: typeof writeGroupsSnapshot;
   opsRepository: RuntimeBootstrapRepository;
   recoverPendingMessages: typeof recoverPendingMessages;
+  claimConversationWork?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) => Promise<boolean> | boolean;
   claimRecoveredConversationWork?: (input: {
     conversationId: string;
     threadId?: string | null;
@@ -441,6 +445,7 @@ export async function startRuntimeServices(
         }),
       guardrailClassifier: app.guardrailClassifier,
       queue: app.queue,
+      claimConversationWork: resolved.claimConversationWork,
       handleActiveControlCommand,
       claimRecoveredConversationWork: resolved.claimRecoveredConversationWork,
       opsRepository: resolved.opsRepository,

@@ -338,6 +338,32 @@ describe('createGroupProcessor', () => {
       expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
+    it('does not spawn when claimed queued work is no longer pending', async () => {
+      const group = makeGroup({ requiresTrigger: false });
+      const message = makeMessage();
+      const claimConversationWork = vi.fn().mockResolvedValue(true);
+      const deps = makeDeps({
+        channelRuntime: makeChannel(),
+        getGroup: vi.fn().mockReturnValue(group),
+        claimConversationWork,
+      });
+      mockGetMessagesSince
+        .mockReturnValueOnce([message])
+        .mockReturnValueOnce([]);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('group1@g.us');
+
+      expect(result).toBe(true);
+      expect(claimConversationWork).toHaveBeenCalledWith({
+        conversationId: 'group1@g.us',
+        threadId: null,
+      });
+      expect(mockGetMessagesSince).toHaveBeenCalledTimes(2);
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+      expect(deps.queue.registerProcess).not.toHaveBeenCalled();
+    });
+
     it('pipes persisted messages into an idle live run without spawning a new agent', async () => {
       const { deps, messages } = setupHappyPath();
       const sendMessage = vi.fn().mockReturnValue(true);

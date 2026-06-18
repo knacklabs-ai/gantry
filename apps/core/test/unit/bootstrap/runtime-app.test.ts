@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ConversationRoute } from '@core/domain/types.js';
+import type { RuntimeAppRepository } from '@core/app/bootstrap/runtime-app.js';
 import type { WarmPoolRuntime } from '@core/runtime/agent-spawn-types.js';
+
+function encodeCursor(timestamp: string, id: string): string {
+  return JSON.stringify({ timestamp, id });
+}
 
 function makeGroup(
   overrides: Partial<ConversationRoute> = {},
@@ -353,5 +358,78 @@ describe('runtime app credential binding', () => {
       conversationId: 'wa:918097570111',
       threadId: null,
     });
+  });
+
+  it('prefers a fresher durable agent cursor over stale local memory', async () => {
+    const { createRuntimeApp } = await loadRuntimeApp();
+    const staleCursor = encodeCursor(
+      '2026-06-18T02:25:52.952Z',
+      'message:old-outbound',
+    );
+    const freshCursor = encodeCursor(
+      '2026-06-18T02:26:36.822Z',
+      'phase8-soak-000960000801-1781749596820-3',
+    );
+    const opsRepository = {
+      getRouterState: vi.fn(async (key: string) =>
+        key === 'last_agent_timestamp'
+          ? JSON.stringify({ 'wa:000960000801': freshCursor })
+          : '',
+      ),
+      setRouterState: vi.fn(async () => undefined),
+      getAllConversationRoutes: vi.fn(async () => ({})),
+      getLastBotMessageCursor: vi.fn(async () => null),
+    } as unknown as RuntimeAppRepository;
+    const app = createRuntimeApp({ opsRepository });
+    app.setAgentCursor('wa:000960000801', staleCursor);
+
+    await expect(app.getOrRecoverCursor('wa:000960000801')).resolves.toBe(
+      freshCursor,
+    );
+    expect(opsRepository.getLastBotMessageCursor).not.toHaveBeenCalled();
+  });
+
+  it('merges durable agent cursors before saving local state', async () => {
+    const { createRuntimeApp } = await loadRuntimeApp();
+    const staleCursor = encodeCursor(
+      '2026-06-18T02:25:52.952Z',
+      'message:old-outbound',
+    );
+    const freshCursor = encodeCursor(
+      '2026-06-18T02:26:36.822Z',
+      'phase8-soak-000960000801-1781749596820-3',
+    );
+    const routerState = new Map<string, string>([
+      [
+        'last_agent_timestamp',
+        JSON.stringify({ 'wa:000960000801': freshCursor }),
+      ],
+    ]);
+    const opsRepository = {
+      getRouterState: vi.fn(async (key: string) => routerState.get(key) ?? ''),
+      setRouterState: vi.fn(async (key: string, value: string) => {
+        routerState.set(key, value);
+      }),
+      getAllConversationRoutes: vi.fn(async () => ({})),
+      getLastBotMessageCursor: vi.fn(async () => null),
+    } as unknown as RuntimeAppRepository;
+    const app = createRuntimeApp({ opsRepository });
+    app.setAgentCursor('wa:000960000801', staleCursor);
+    app.setAgentCursor(
+      'wa:000960000802',
+      encodeCursor('2026-06-18T02:27:00.000Z', 'message:new-local'),
+    );
+
+    await app.saveState();
+
+    expect(JSON.parse(routerState.get('last_agent_timestamp') ?? '{}')).toEqual(
+      {
+        'wa:000960000801': freshCursor,
+        'wa:000960000802': encodeCursor(
+          '2026-06-18T02:27:00.000Z',
+          'message:new-local',
+        ),
+      },
+    );
   });
 });

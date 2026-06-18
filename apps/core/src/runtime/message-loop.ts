@@ -103,6 +103,10 @@ export interface MessageLoopDeps {
     conversationId: string;
     threadId?: string | null;
   }) => Promise<boolean> | boolean;
+  claimConversationWork?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) => Promise<boolean> | boolean;
   opsRepository?: RuntimeMessageRepository;
 }
 
@@ -272,6 +276,15 @@ export async function runMessagePollingTick(
 
         while (nextBatch && nextBatch.length > 0) {
           const messagesToSend = nextBatch;
+          if (deps.claimConversationWork) {
+            const acquired = await deps.claimConversationWork({
+              conversationId: chatJid,
+              threadId: threadId ?? null,
+            });
+            if (!acquired) {
+              break;
+            }
+          }
 
           // Guardrail parity (continuation path): this path pipes straight
           // to the live agent, bypassing processGroupMessages, so it must
@@ -344,7 +357,7 @@ export async function runMessagePollingTick(
               toGroupMessageCursor(messagesToSend[messagesToSend.length - 1]),
             ),
           );
-          saveStateBestEffort(deps, chatJid);
+          await deps.saveState();
 
           if (messagesToSend.length < MAX_MESSAGES_PER_PROMPT) {
             break;

@@ -2,12 +2,31 @@
 
 Date: 2026-06-18
 
-Status: execution in progress. Phase 0 passed on 2026-06-18 IST. Phase 1,
-Phase 2, Phase 3, and Phase 3.5 passed after the retained warm-worker socket
-was rekeyed to the bound conversation run handle and the active-run counter
-double-decrement was fixed. The earlier `memory_save` IPC app-scope failure is
-covered by the IPC unit regression and Phase 1 includes a successful
-`memory_save` live turn. Phase 4 is next.
+Status: passed locally on 2026-06-18 IST after a post-fix two-core live load
+rerun. Phase 4 required an active-follow-up queue lifecycle fix so pending
+same-customer work drains through the retained pooled worker. Phase 5 proved
+two-core startup, ownership, cross-core ingress, core-death recovery, and
+post-restart provider-session continuity through live signed webhooks plus
+control API and DB evidence. Phase 8 initially exposed stale multi-core cursor
+replay, then passed after durable cursor refresh/merge was added and live soak
+was rerun. Phase 10 initially passed too early, then a later admin screenshot
+showed the same fourth inbound replayed by a delayed recovery/cold-run path.
+The runtime now claims conversation work before runner start/active-run
+continuation, durably saves accepted warm-run cursors, and revalidates
+reconciler work after claim. The final load rerun used eight customers across
+two cores and four reply-gated turns per customer; every customer ended at
+exactly four inbound, four outbound, and four latency traces, with zero pending
+work after settle. Real external WhatsApp delivery remains the user's final
+manual acceptance step; local verification kept `GANTRY_OUTBOUND_DRYRUN=1`.
+
+## Production Readiness Usage
+
+For routine production-readiness checks, use
+`docs/architecture/boondi-production-readiness-gate.md` as the focused gate.
+That document points to the high-signal scenarios in this full plan and defines
+when to escalate to the full regression here. Keep this file as the detailed
+scenario source of truth and evidence ledger; do not duplicate its scenario
+bodies into the focused gate.
 
 ## Phase Status Tracker
 
@@ -20,14 +39,15 @@ evidence.
 | Phase 0   | Harness and baseline                            |  baseline gate | Passed      | 2026-06-18 IST baseline: core 4710, admin 3000, Shopify MCP 8081, CRM MCP 8082; one healthy runtime, 51 stale rows excluded, generic available 3, active 0, pending 0.                                                                                                                                                                              | Admin Runtime and Conversations pages render; latency trace API reachable.                                                                                                                                                                           |
 | Phase 1   | Single customer, single core, cache prewarm off |              4 | Passed      | 2026-06-18 IST fixed rerun `conversation:wa:000960000102` persisted 4 inbound, 4 outbound, and 4 latency reports; turn 4 remembered marker `REKEY-MUMBAI-31`; no latency report included `assistant startup`; healthy runtime active 0, pending 0.                                                                                                  | Retained same-process bound-worker continuation is now proven for a natural 4x4 chat. The run also covered a successful `memory_save` tool call.                                                                                                     |
 | Phase 2   | Multiple customers, single core                 |              5 | Passed      | 2026-06-18 IST fixed rerun used `conversation:wa:000960000201` and `conversation:wa:000960000202`; both persisted 4 inbound and 4 outbound replies; final replies remembered only their own markers `ALPHA-REKEY-201` and `BRAVO-REKEY-202`; no latency report included `assistant startup`; post-idle runtime active 0, pending 0, bound active 0. | Retained same-process continuation and isolation are now proven for two simultaneous natural 4x4 customer chats. Prior Phase 2 capacity and duplicate-redelivery evidence remains valid.                                                             |
-| Phase 3   | Cache prewarm on                                |              2 | Passed      | 2026-06-18 IST natural 4x4 rerun used `conversation:wa:000960000301`; cache prewarm was enabled and pre-traffic inventory showed `succeeded=3`, `skipped=0`; all 4 inbound and 4 outbound replies persisted; final reply remembered marker `PREWARM-ON-301`; no current latency report included `assistant startup` or `cache_prewarm`.             | Historical pre-fix rows can still contain raw `startup` sections, but the admin UI now folds that internal label into `runtime wait` while preserving raw backend traces. Startup prewarm completes before the control HTTP server accepts webhooks. |
+| Phase 3   | Cache prewarm on                                |              2 | Passed      | 2026-06-18 IST natural 4x4 rerun used `conversation:wa:000960000301`; cache prewarm was enabled and pre-traffic inventory showed `succeeded=3`, `skipped=0`; all 4 inbound and 4 outbound replies persisted; final reply remembered marker `PREWARM-ON-301`; no current latency report included `assistant startup` or `cache_prewarm`.             | Historical pre-fix rows can still contain raw `startup` sections. The admin UI now renders startup explicitly as `Assistant startup`; it must not fold that time into `runtime wait`. Startup prewarm completes before the control HTTP server accepts webhooks. |
 | Phase 3.5 | MCP smoke                                       |              1 | Passed      | 2026-06-18 IST seeded returning-customer rerun used `conversation:wa:000960000352`; all 4 live signed inbound messages and 4 live outbound replies persisted; traces showed `boondi-crm.get_open_records`, `shopify-api.get_recent_orders_with_details`, and `shopify-api.search_products`; post-idle runtime active 0, pending 0, bound active 0. | CRM and Shopify MCP live traffic are proven through live transcript, trace sections, flow logs, admin API, and runtime workers API.                                                                                                                   |
 | Phase 4   | Follow-up routing stress                        |              4 | Passed      | Scenarios 4.1, 4.2, 4.3, and 4.4 passed on 2026-06-18 IST. 4.2 required a queue lifecycle fix so active-run follow-ups drain through the retained pooled worker. 4.4 used `conversation:wa:000960000405`, persisted 5 live inbound and 5 outbound replies, used one `agent_run`, and had no `startup` trace sections.                         | Follow-up routing stress is now proven for rapid follow-ups, active-run overlap, cold resume, and a five-turn same-customer loop. Admin API was not running because a separate Codex session owns admin UI work.                                     |
-| Phase 5   | Two core processes                              |              5 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Ownership, distribution, restart, post-restart continuity.                                                                                                                                                                                           |
-| Phase 6   | Dashboard truth                                 | dashboard gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Must be checked across every scenario, then summarized here.                                                                                                                                                                                         |
-| Phase 7   | Failure recovery                                |              3 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Kill runner, MCP down/up, ungraceful core death.                                                                                                                                                                                                     |
-| Phase 8   | Repeated-flow soak                              |      soak gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Five customers, five turns each, at least 10 minutes.                                                                                                                                                                                                |
-| Phase 9   | Final real-customer acceptance                  |  customer gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Real customer-facing channel proof after engineering verification.                                                                                                                                                                                   |
+| Phase 5   | Two core processes                              |              5 | Passed      | Scenarios 5.1 through 5.5 passed on 2026-06-18 IST. Two healthy cores exposed aggregate generic capacity `6`; `conversation:wa:000960000501` kept one owner while ingress alternated across ports; six-customer fanout split owners across both cores; restart scenarios recovered through persisted provider sessions.                         | Admin UI/API was intentionally not used because a separate Codex session owns admin UI work; evidence came from core workers API, DB rows, message traces, and logs.                                                                                 |
+| Phase 6   | Dashboard truth                                 | dashboard gate | Passed      | Admin API returned `200` for conversations and runtime workers after Phase 10. Runtime API and admin runtime API both showed two healthy instances, `genericAvailable=6`, `boundActive=0`, `activeMessageRuns=0`, `pendingConversationKeys=0`, and cache prewarm `skipped=6`. Latency UI regression in `boondi-admin` now forbids `runtime wait`. | Another session owns broader admin layout polish, but the data contract and latency report wording are verified.                                                                                                                                     |
+| Phase 7   | Failure recovery                                |              3 | Passed      | Scenarios 7.1 through 7.3 passed on 2026-06-18 IST. Runner kill used `conversation:wa:000960000701` with 4 inbound/4 outbound and stable provider session. Clean MCP outage/recovery used `conversation:wa:000960000722` with exactly 2 inbound/2 outbound. Core kill left `runtime:97799` stale and excluded; survivor handled 4x4 chat.       | Admin UI/API was intentionally not used because a separate Codex session owns admin UI work; evidence came from core workers API, DB rows, flow logs, and MCP health checks.                                                                        |
+| Phase 8   | Repeated-flow soak                              |      soak gate | Passed      | Initial 2026-06-18 IST soak failed before turn 4 due stale multi-core cursor replay. After durable cursor refresh/merge fix, focused replay probe passed and full five-customer/five-turn soak rerun completed with exactly `5` inbound and `5` outbound per customer, `5` latency traces per customer, no duplicates, and worker totals active/pending `0`. | Five customers, five turns each, at least 10 minutes; post-idle `startup` trace sections are expected because gaps intentionally exceed `idle_timeout_ms=30000`.                                                                                     |
+| Phase 9   | Final real-customer acceptance                  |  customer gate | Passed      | Local customer-facing ingress passed on 2026-06-18 IST with `conversation:wa:000960000931`: 4 signed webhooks, 4 outbound dry-run customer replies, 4 latency traces, final reply remembered 6 boxes, chocolate/kaju, `₹1,800`, Pune, and next Friday after a 45s post-idle wait.                                                                      | Real external WhatsApp send remains for the user's final manual test; local acceptance used signed Interakt-compatible webhook ingress and dry-run outbound persistence.                                                                              |
+| Phase 10  | Final regression pass                           | regression gate | Passed      | Post-fix load rerun `loadwave1781772606859` used eight customers across ports `4710` and `4711`, with four reply-gated live signed webhook waves. Every customer ended at exactly `4` inbound, `4` outbound, and `4` latency traces. After a 90s settle, workers showed `activeMessageRuns=0`, `pendingConversationKeys=0`, and `boundActive=0`. Focused fix checks and root `npm run build` passed. | Initial compact pass used `conversation:wa:000960001101`, `000960001102`, and `000960001103`, but `000960001102` later showed `4` inbound and `5` outbound messages. That earlier pass is superseded by the claim/revalidate fix and load rerun. |
 
 `Scenario count` is the named scenario count. Default live execution after
 Phase 0 is four customer messages and four Boondi replies inside the scenario's
@@ -136,6 +156,37 @@ Every scenario must be verified through the actual live flow:
 
 Unit tests are supporting evidence only. They do not satisfy acceptance by
 themselves.
+
+## Latency Report Detail Rule
+
+The latency report must never blur unknown time into a single unexplained
+bucket. A top-level visual grouping is allowed only if the report also exposes
+the exact underlying breakup that sums to the total.
+
+Required sections:
+
+- queue / pickup wait
+- guardrail
+- runner or assistant startup, when present
+- main LLM turns
+- provider first-response wait, when present
+- tool calls
+- send / outbound delivery
+- runtime handoff or gap, with timestamp and duration
+- cache prewarm, only when an actual Gantry cache-prewarm call ran
+- provider prompt-cache read/write, labeled as provider prompt-cache usage and
+  not as Gantry prewarm
+
+Acceptance:
+
+- fail any phase if the only visible explanation is a collapsed label such as
+  `runtime wait`
+- fail if `assistant startup` is hidden without a drill-down section showing
+  that exact startup duration
+- fail if provider wait, queue wait, startup, and internal handoff are merged
+  in a way that prevents identifying where latency came from
+- pass only when the customer-visible total can be reconciled to detailed
+  sections in the admin/API evidence
 
 ## Turn Count Rule
 
@@ -720,9 +771,9 @@ Current-vs-historical startup trace finding:
 - Historical pre-fix rows such as `conversation:wa:000950000201` and
   `conversation:wa:000950000202` still contain raw `startup` sections because
   those traces were persisted before the retained-worker rekey fix.
-- Admin UI behavior was updated in the sibling `boondi-admin` app to fold raw
-  `startup` sections into `runtime wait` for display while preserving the raw
-  backend trace.
+- Admin UI behavior was updated in the sibling `boondi-admin` app to render raw
+  `startup` sections explicitly as `Assistant startup`. It must not fold that
+  time into a collapsed `runtime wait` label.
 
 Scenario 3.1: prewarm complete before traffic.
 
@@ -771,7 +822,7 @@ Scenario 3.2: traffic while workers are consumed and replacement starts.
   `assistant startup=3689 ms`, `main LLM=1770 ms`, and final `gap=80 ms`.
   This is retained as historical diagnostic evidence only; the natural 4x4
   rerun above is the current Phase 3 acceptance evidence, and the admin UI now
-  folds raw `startup` into `runtime wait` for display.
+  renders raw `startup` explicitly as `Assistant startup`.
 - No customer hung; all four conversations received exactly one outbound reply.
 
 Final Phase 3 drain snapshot:
@@ -1832,6 +1883,168 @@ Acceptance:
 - pass only if live transcript works after restart
 - fail if continuity exists only before restart
 
+## Phase 5 Evidence Log
+
+Status: passed on 2026-06-18 IST.
+
+Runtime setup:
+
+- Stack command: `GANTRY_CORE_COUNT=2 npm run dev:boondi-runtime`.
+- Core ports: `127.0.0.1:4710` and `127.0.0.1:4711`.
+- Runtime instances in the first two-core stack:
+  `runtime:75320` on port `4710`, `runtime:76375` on port `4711`.
+- Runtime instances in the post-restart stack:
+  `runtime:97344` and `runtime:97799`.
+- MCPs: `shopify-api` healthy on `127.0.0.1:8081`; `boondi-crm` healthy on
+  `127.0.0.1:8082`.
+- Outbound: `GANTRY_OUTBOUND_DRYRUN=1`.
+- Admin UI/API was intentionally not used because a separate Codex session owns
+  admin UI work. Evidence for this phase came from signed Interakt-compatible
+  webhooks, the authenticated core `/v1/runtime/workers` API, Postgres
+  transcripts, message traces, owner leases, agent runs, and core logs.
+
+Scenario 5.1: two-core startup inventory.
+
+- Both control APIs returned the same healthy aggregate view.
+- Healthy runtime instances: `2`.
+- Healthy warm-pool totals: `genericAvailable=6`, `genericStarting=0`,
+  `boundActive=0`, `boundIdle=0`, `boundDraining=0`, `availableTarget=6`,
+  `maxBoundWorkers=6`.
+- Healthy queue totals: `activeMessageRuns=0`,
+  `pendingConversationKeys=0`, `maxMessageRuns=6`.
+- Cache prewarm totals: `pending=0`, `succeeded=0`, `skipped=6`,
+  `failed=0`.
+- Historical runtime rows were present but marked `stale` and excluded from
+  healthy totals.
+
+Scenario 5.2: one customer, two cores, alternating ingress ports.
+
+- Customer: `conversation:wa:000960000501`.
+- Inbound provider ids:
+  `phase5-2-1781747238628-1`,
+  `phase5-2-1781747253054-2`,
+  `phase5-2-1781747258015-3`, and
+  `phase5-2-1781747270350-4`.
+- Ingress ports by turn: `4710`, `4711`, `4710`, `4711`.
+- Transcript counts: `4` inbound and `4` outbound.
+- Persisted outbound ids:
+  `message:wa:000960000501:outbound:7c388d07-6927-4573-b149-c5c0a6994b78`
+  (`13.442 s`),
+  `message:wa:000960000501:outbound:1089cda1-5a02-4b52-af8c-196fdce27f95`
+  (`4.600 s`),
+  `message:wa:000960000501:outbound:fe791d1c-71a1-49ad-82a9-83ed25013405`
+  (`11.679 s`), and
+  `message:wa:000960000501:outbound:0775d291-a4c6-40e7-ab14-79a6a7b1e29e`
+  (`3.428 s`).
+- Owner lease stayed on `runtime:75320` even when ingress arrived on port
+  `4711`.
+- Exactly one `agent_run` was created:
+  `agent-run:1f4c9135-3392-4b0e-b528-a7641baa66d5`.
+- Provider session id stayed stable:
+  `eb8f8bc9-2e32-4876-a486-3892cd8265d4`.
+- All four latency traces had no `startup` section.
+- Final worker totals from both core APIs: healthy instances `2`,
+  `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=6`, `boundActive=0`.
+
+Scenario 5.3: six customers across two cores, focused follow-up subset.
+
+- Customers:
+  `conversation:wa:000960000531`,
+  `conversation:wa:000960000532`,
+  `conversation:wa:000960000533`,
+  `conversation:wa:000960000534`,
+  `conversation:wa:000960000535`, and
+  `conversation:wa:000960000536`.
+- Initial six-customer fanout used alternating ingress ports and all six
+  customers received exactly one outbound reply.
+- At the five-second overlap snapshot, owner leases were split across both
+  cores: `000960000531`, `000960000533`, and `000960000535` on
+  `runtime:75320`; `000960000532`, `000960000534`, and `000960000536` on
+  `runtime:76375`.
+- The same overlap showed active work on both cores:
+  `runtime:75320 activeMessageRuns=2`, `runtime:76375 activeMessageRuns=1`,
+  aggregate `pendingConversationKeys=0`.
+- Follow-up subset:
+  `conversation:wa:000960000531` and `conversation:wa:000960000536` each
+  completed a natural 4-turn path.
+- Final transcript counts:
+  - `000960000531`: `4` inbound, `4` outbound.
+  - `000960000536`: `4` inbound, `4` outbound.
+  - `000960000532`, `000960000533`, `000960000534`, `000960000535`: `1`
+    inbound and `1` outbound each.
+- All 12 outbound latency traces had no `startup` section.
+- Final worker totals from both core APIs: healthy instances `2`,
+  `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=6`, `boundActive=0`.
+
+Scenario 5.4: owning core killed during a bound conversation.
+
+- Customer: `conversation:wa:000960000541`.
+- First turn owner: `runtime:75320`.
+- Killed owner process: `runtime:75320` / PID `75320`.
+- Inbound provider ids:
+  `phase5-4-1781747509062-1`,
+  `phase5-4-1781747530153-2`,
+  `phase5-4-1781747541209-3`, and
+  `phase5-4-1781747549254-4`.
+- Transcript counts after recovery: `4` inbound and `4` outbound.
+- Persisted outbound ids:
+  `message:wa:000960000541:outbound:be0e66e7-d258-45df-8b48-11426e5c097f`
+  (`8.331 s`),
+  `message:wa:000960000541:outbound:41591ef2-98ed-471f-bba2-c5d6477902cf`
+  (`10.404 s`),
+  `message:wa:000960000541:outbound:6b2de0bf-bf91-4527-823c-7912ea9059c0`
+  (`7.338 s`), and
+  `message:wa:000960000541:outbound:7d84d7c9-3f58-482d-9d74-c5732e3278db`
+  (`6.363 s`).
+- The surviving core `runtime:76375` claimed the conversation and answered all
+  post-kill follow-ups.
+- Provider session id stayed stable across the owner kill:
+  `4e27dfef-3542-4c08-adc6-078dbfcf9d37`.
+- Post-kill replies contained `assistant startup`, which is expected because
+  the live retained worker died and the surviving core used persisted
+  provider-session resume.
+- Final worker totals from the surviving API: healthy instances `1`,
+  `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=3`, `boundActive=0`.
+- The killed runtime row remained visible as `stale` and did not inflate
+  healthy totals.
+
+Scenario 5.5: full stack restart and post-restart continuity.
+
+- Customer: `conversation:wa:000960000551`.
+- Pre-restart owner: `runtime:94295`.
+- First inbound id:
+  `phase5-5-before-restart-1781747750772-1`.
+- First outbound id:
+  `message:wa:000960000551:outbound:53ce7925-d194-49ab-a556-8903d6d83cbc`
+  (`8.675 s`), with no `startup` section.
+- The two-core stack was stopped and restarted before follow-ups.
+- Post-restart healthy instances: `runtime:97344` and `runtime:97799`.
+- Post-restart inbound provider ids:
+  `phase5-5-after-restart-1781747900600-2`,
+  `phase5-5-after-restart-1781747914713-3`, and
+  `phase5-5-after-restart-1781747930822-4`.
+- Final transcript counts: `4` inbound and `4` outbound.
+- Post-restart outbound ids:
+  `message:wa:000960000551:outbound:466dfdbf-519c-47cb-b535-aa289489c7f9`
+  (`13.374 s`),
+  `message:wa:000960000551:outbound:02eb5fe4-6aae-48f1-86cc-9818f25ec7a3`
+  (`15.387 s`), and
+  `message:wa:000960000551:outbound:81d727b9-6337-4b24-ba9c-dac3c5363548`
+  (`16.509 s`).
+- New owner after restart: `runtime:97799`.
+- Provider session id stayed stable across full stack restart:
+  `24f66284-d8f5-4656-8e9a-31d3d3aac994`.
+- Post-restart replies contained `assistant startup`, expected for cold
+  resumed one-shot runs after all live worker processes were restarted.
+- Old owner `runtime:94295` was visible as `stale` and excluded from healthy
+  totals.
+- Final worker totals from both core APIs: healthy instances `2`,
+  `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=6`, `boundActive=0`.
+
 ## Phase 6: Dashboard Truth
 
 Purpose: make the operator panel trustworthy during all prior phases.
@@ -1865,6 +2078,43 @@ Acceptance:
 - metrics that cannot be populated reliably are removed or hidden
 - `Bound active` stays because it is useful and means "worker bound to a
   conversation"
+
+### Phase 6 Evidence Log
+
+Status: passed on 2026-06-18 IST for the data/API contract and latency report
+wording. Broader admin layout polish is owned by a separate Codex session.
+
+Admin/API evidence:
+
+- `GET http://localhost:3000/api/conversations` returned `200` with
+  `191` conversations.
+- `GET http://localhost:3000/api/runtime/workers` returned `200` and matched
+  the authenticated core workers API after Phase 10.
+- Final healthy totals:
+  - `instances=2`
+  - `availableTarget=6`
+  - `genericAvailable=6`
+  - `genericStarting=0`
+  - `boundActive=0`
+  - `boundIdle=0`
+  - `boundDraining=0`
+  - `maxBoundWorkers=6`
+  - `activeMessageRuns=0`
+  - `pendingConversationKeys=0`
+  - cache prewarm `pending=0`, `succeeded=0`, `skipped=6`, `failed=0`
+
+Latency report UI evidence:
+
+- `boondi-admin/components/LatencyReport.tsx` no longer rewrites `startup`
+  stages into a fake `gap` stage labeled `runtime wait`.
+- Startup now renders as `Assistant startup`.
+- LLM timing chips now use explicit `provider wait` and `generation` labels.
+- `boondi-admin/e2e/latency-report.spec.ts` asserts that `runtime wait` is
+  absent, `assistant startup` is visible, and the provider/generation timing
+  chips are visible.
+- Verification command:
+  `npm run test:e2e -- e2e/latency-report.spec.ts` in
+  `/Users/caw-d/Desktop/boondi-admin` passed with `2` tests.
 
 ## Phase 7: Failure Recovery
 
@@ -1927,6 +2177,91 @@ Acceptance:
 
 - pass only if live traffic works and dashboard excludes stale capacity
 
+### Phase 7 Evidence Log
+
+Run context:
+
+- Stack command: `GANTRY_CORE_COUNT=2 npm run dev:boondi-runtime`.
+- Healthy cores before failure scenarios: `runtime:97344` on port `4710` and
+  `runtime:97799` on port `4711`.
+- Admin UI/API intentionally not used because another Codex session owns admin
+  panel UI changes.
+
+Scenario 7.1 - bound runner killed:
+
+- Customer: `conversation:wa:000960000701`.
+- First reply owner: `runtime:97344`.
+- Killed runner child processes under the owner: `3408`, `3409`, `3410`, and
+  `4076`.
+- Inbound ids:
+  `phase7-1-1781748230450-1`,
+  `phase7-1-1781748246190-2`,
+  `phase7-1-1781748258316-3`, and
+  `phase7-1-1781748264434-4`.
+- Persisted transcript: 4 inbound and 4 outbound messages.
+- Outbound ids:
+  `message:wa:000960000701:outbound:d23f39bb-7975-4bb4-85a9-c98f685af240`,
+  `message:wa:000960000701:outbound:4cd05336-c727-4670-970d-83c1414550d5`,
+  `message:wa:000960000701:outbound:95120bcc-1d01-4497-a539-dc1029fd0c70`,
+  and
+  `message:wa:000960000701:outbound:67481106-2438-4d5d-a8cb-765b9b6a1e29`.
+- Provider session stayed stable:
+  `d419bcd9-93ec-4a1a-8a71-031c5cf5b7be`.
+- Runtime recovered from the killed runner; final workers API showed healthy
+  instances `2`, `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=6`, and `boundActive=0`.
+
+Scenario 7.2 - MCP temporarily down:
+
+- Clean acceptance rerun customer: `conversation:wa:000960000722`.
+- Shopify MCP was stopped and `http://127.0.0.1:8081/healthz` failed before
+  the first turn.
+- Outage inbound:
+  `phase7-2-clean-down-1781748942221-1`.
+- Outage result:
+  `message:wa:000960000722:outbound:43537f37-8981-4ad0-b2b5-bc4d9c882794`
+  with visible fallback text: `I'm having a small hiccup with that right now`.
+- Flow log showed `MCP tool call failed`, `serverName=shopify-api`,
+  `toolName=search_products`, and `err.message=fetch failed`.
+- Shopify MCP was restarted in a persistent process and `/healthz` returned
+  `{"ok":true}` before the recovery turn.
+- Recovery inbound:
+  `phase7-2-clean-up-1781749007329-2`.
+- Recovery result:
+  `message:wa:000960000722:outbound:c2d2e478-c7d3-4a22-9b4c-dc74fa565de1`
+  with normal product reply for `Ultimate Sweet Shop Hamper`.
+- Flow log showed `flow:mcp.request` and `flow:mcp.response` for
+  `shopify-api.search_products`.
+- Persisted transcript was exactly 2 inbound and 2 outbound messages.
+- Both agent runs completed with stable provider session
+  `47a74ad3-aec9-412e-8afc-473db1bf3a59` and `error_summary=null`.
+- Final workers API showed `activeMessageRuns=0`,
+  `pendingConversationKeys=0`, and `genericAvailable=6`.
+
+Scenario 7.3 - ungraceful core death:
+
+- Killed core: `runtime:97799` / port `4711` with `SIGKILL`.
+- Port `4711` returned no response while survivor port `4710` remained up.
+- After heartbeat expiry, workers API reported `runtime:97799` as `stale` and
+  healthy totals dropped to one instance:
+  `instances=1`, `genericAvailable=3`, `maxMessageRuns=3`,
+  `activeMessageRuns=0`, and `pendingConversationKeys=0`.
+- Survivor runtime: `runtime:97344`.
+- Survivor traffic customer: `conversation:wa:000960000731`.
+- Inbound ids:
+  `phase7-3-corekill-1781749177537-1`,
+  `phase7-3-corekill-1781749193808-2`,
+  `phase7-3-corekill-1781749208558-3`, and
+  `phase7-3-corekill-1781749218804-4`.
+- Persisted transcript: 4 inbound and 4 outbound messages.
+- Final reply remembered marker `COREKILL-731`, including 8 gift boxes, Pune,
+  next Friday, budget around `1500`, Kaju Katli interest, and the last-order
+  context.
+- Final workers API still excluded the killed core from healthy capacity:
+  `runtime:97344` healthy, `runtime:97799` stale, `instances=1`,
+  `genericAvailable=3`, `boundActive=1`, `activeMessageRuns=0`, and
+  `pendingConversationKeys=0`.
+
 ## Phase 8: Repeated-Flow Soak
 
 Purpose: catch failures that appear only after a few replies.
@@ -1958,6 +2293,126 @@ Acceptance:
 
 - pass only if all live transcripts complete through admin/API evidence
 - fail if the platform works for a few replies and then stops routing correctly
+
+### Phase 8 Evidence Log
+
+Status: passed on 2026-06-18 IST after a cursor-consistency fix and live
+rerun. The first live soak exposed a multi-core duplicate-reply bug and was
+stopped before completion.
+
+Initial failed soak:
+
+- Stack: fresh two-core dev runtime with healthy cores `runtime:13973` on port
+  `4710` and `runtime:14139` on port `4711`.
+- Customers: `conversation:wa:000960000801` through
+  `conversation:wa:000960000805`.
+- Intended schedule: five turns per customer over at least 10 minutes
+  (`0s`, `2s`, `70s`, `245s`, and `600s`).
+- The run was stopped around `240s`, before turn 4, because turn 3 had already
+  produced duplicate replies for `000960000801`, `000960000803`, and
+  `000960000805`.
+- Failure counts at stop:
+  - `000960000801`: `3` inbound, `4` outbound, `3` agent runs.
+  - `000960000802`: `3` inbound, `3` outbound, `2` agent runs.
+  - `000960000803`: `3` inbound, `4` outbound, `3` agent runs.
+  - `000960000804`: `3` inbound, `3` outbound, `2` agent runs.
+  - `000960000805`: `3` inbound, `4` outbound, `3` agent runs.
+- Log pattern: core `4710` handled turn 3 for `801`, `803`, and `805` around
+  `02:26:50-02:26:52`; core `4711` later replayed those same turn-3 inbound
+  texts around `02:27:40` without new inbound DB rows.
+- DB evidence: `conversation_owner_leases` had all soak conversations owned by
+  `runtime:14139` with
+  `last_claim_reason='conversation_work_reconciler:expired_owner_lease'`.
+  Affected conversations had lease version `2`.
+- Root cause: `RuntimeApp.getOrRecoverCursor()` returned a stale
+  process-local `lastAgentTimestamp` cursor before consulting durable
+  `last_agent_timestamp`. In a two-core run, one core could advance the shared
+  cursor while another core kept an older local cursor and later reconciled the
+  same inbound as pending work.
+- Related write-side risk: `saveState()` wrote the whole local cursor map back
+  to the shared `last_agent_timestamp` key, so a stale process could clobber a
+  fresher cursor from another core.
+
+Targeted regression added before live rerun:
+
+- `apps/core/test/unit/bootstrap/runtime-app.test.ts` now covers:
+  - preferring a fresher durable agent cursor over stale local memory
+  - merging durable agent cursors before saving local state
+- RED command:
+  `npm run test:unit -- apps/core/test/unit/bootstrap/runtime-app.test.ts`
+  failed with the stale local cursor returned and durable cursor overwritten.
+- GREEN command after the fix:
+  `npm run test:unit -- apps/core/test/unit/bootstrap/runtime-app.test.ts`
+  passed with `11` tests.
+
+Implementation invariant for the live rerun:
+
+- Before reading a cursor, refresh process-local cursor state from durable
+  router state and keep the newest cursor by timestamp/id.
+- Before saving cursor state, merge durable and local maps and write the newest
+  cursor for each conversation key.
+
+Focused replay probe after the fix:
+
+- Customers: `conversation:wa:000960000821`,
+  `conversation:wa:000960000822`, and `conversation:wa:000960000823`.
+- Shape: three customers, three turns each, including the same owner-expiry
+  reconciler path that produced the duplicate in the failed soak.
+- Result after duplicate-settle window: each customer had exactly `3` inbound
+  and `3` outbound messages.
+- `conversation_owner_leases` still showed
+  `last_claim_reason='conversation_work_reconciler:expired_owner_lease'`, so
+  the reconciler path was exercised without replaying old inbound work.
+- Final workers API: two healthy runtimes, `genericAvailable=6`,
+  `boundActive=0`, `activeMessageRuns=0`, and
+  `pendingConversationKeys=0`.
+
+Full live soak rerun after the fix:
+
+- Stack: fresh two-core dev runtime with healthy cores `runtime:39369` on port
+  `4710` and `runtime:39515` on port `4711`.
+- Customers: `conversation:wa:000960000841` through
+  `conversation:wa:000960000845`.
+- Schedule: five turns per customer over `710s`, with turns at approximately
+  `0s`, `2s`, `70s`, `245s`, and `600s`, followed by a `90s`
+  duplicate-settle window.
+- Final transcript counts:
+  - `000960000841`: `5` inbound, `5` outbound.
+  - `000960000842`: `5` inbound, `5` outbound.
+  - `000960000843`: `5` inbound, `5` outbound.
+  - `000960000844`: `5` inbound, `5` outbound.
+  - `000960000845`: `5` inbound, `5` outbound.
+- Latency traces: `5` `message_traces` rows per customer using trace
+  conversation ids `wa:000960000841` through `wa:000960000845`.
+- Trace timing ranges:
+  - `000960000841`: `3600 ms` to `13616 ms`.
+  - `000960000842`: `6883 ms` to `13927 ms`.
+  - `000960000843`: `6764 ms` to `14156 ms`.
+  - `000960000844`: `5066 ms` to `22119 ms`.
+  - `000960000845`: `6338 ms` to `18416 ms`.
+- `startup` trace sections appeared on post-idle turns. This is expected in
+  this soak because the `70s`, `245s`, and `600s` gaps intentionally exceed
+  `idle_timeout_ms=30000`, so the live bound runner is allowed to die and the
+  runtime resumes through a new runner.
+- Agent-run evidence: each customer had `4` agent runs and exactly `1`
+  distinct provider session id, proving provider-session continuity across
+  cold resumes.
+- Owner leases were reclaimed by `conversation_work_reconciler:expired_owner_lease`
+  during the soak without producing duplicate replies.
+- Final workers API from both cores: healthy instances `2`,
+  `genericAvailable=6`, `boundActive=0`, `activeMessageRuns=0`,
+  `pendingConversationKeys=0`, and stale rows excluded from healthy totals.
+
+Latency evidence note:
+
+- `message_traces.conversation_id` stores the raw chat id (`wa:<phone>`), while
+  `messages.conversation_id` stores the canonical conversation id
+  (`conversation:wa:<phone>`). Phase evidence queries must use the correct id
+  shape for each table.
+- A collapsed `runtime wait` UI label is not enough to prove this phase. The
+  evidence must inspect detailed timing sections such as `queue`, `startup`,
+  `llm`, `tool`, `send`, and `gap`, plus LLM detail fields such as
+  `providerWaitMs` and `generationMs`.
 
 ## Phase 9: Final Real-Customer Acceptance
 
@@ -1991,6 +2446,214 @@ Acceptance:
 
 - pass only if the real customer-side channel and admin/API evidence agree
 - fail if admin says the reply exists but the customer channel did not receive it
+
+### Phase 9 Evidence Log
+
+Status: passed for the local customer-facing acceptance path on 2026-06-18 IST.
+Real external WhatsApp delivery remains the user's final manual confirmation
+after engineering verification; local runtime verification keeps
+`GANTRY_OUTBOUND_DRYRUN=1`.
+
+Runtime setup:
+
+- Stack: two-core dev runtime with healthy cores `runtime:39369` on port
+  `4710` and `runtime:39515` on port `4711`.
+- Customer: `conversation:wa:000960000931`.
+- Ingress: signed Interakt-compatible webhook route, not DB inserts or
+  internal function calls.
+- Outbound: dry-run customer-visible persistence, as required for local tests.
+
+Live customer flow:
+
+- Turn 1 inbound:
+  `phase9-customer-000960000931-1781751849316-1`.
+- Turn 1 outbound:
+  `message:wa:000960000931:outbound:4ab0e175-5e2b-40cd-89c4-1705c17942e9`.
+- Turn 2 inbound:
+  `phase9-customer-000960000931-1781751860399-2`.
+- Turn 2 outbound:
+  `message:wa:000960000931:outbound:66bb37b9-94fe-47e9-b516-d5fe94b318e4`.
+- Turn 3 inbound:
+  `phase9-customer-000960000931-1781751874512-3`.
+- Turn 3 outbound:
+  `message:wa:000960000931:outbound:c4a46d55-18a6-46ed-8a35-d67cb4ba48b7`.
+- Waited `45s`, longer than `idle_timeout_ms=30000`.
+- Turn 4 inbound:
+  `phase9-customer-000960000931-1781751928610-4`.
+- Turn 4 outbound:
+  `message:wa:000960000931:outbound:4c1f073d-70f9-47b4-aee8-42e144f04a75`.
+
+Acceptance evidence:
+
+- Transcript counts: `4` inbound and `4` outbound.
+- Latency traces: `4` rows for trace conversation id `wa:000960000931`.
+- Trace totals by turn: `5010 ms`, `8707 ms`, `6329 ms`, and `6506 ms`.
+- Final reply after the post-idle wait remembered the plan:
+  `6 boxes`, `chocolate or kaju sweets`, `₹1,800`, `Pune`, and next Friday.
+- Agent-run evidence: `2` agent runs and exactly `1` provider session id
+  (`f901065e-e35c-448d-a6ac-7926500ed346`), proving continuity across the
+  post-idle resumed runner.
+- Detailed latency sections were available for every reply:
+  - turn 1: `queue`, `guardrail`, `main LLM`, and `gap`
+  - turn 2: `queue`, `main LLM`, `gap`, `search_products`, `main LLM`, and
+    `gap`
+  - turn 3: `queue`, `main LLM`, `memory_save`, `main LLM`, and `gap`
+  - turn 4 after idle: `queue`, `gap`, `assistant startup`, `main LLM`, and
+    `gap`
+- Turn 4's `assistant startup=2242 ms` is expected because the wait exceeded
+  `idle_timeout_ms`; the section is explicitly visible and not hidden under a
+  collapsed `runtime wait` label.
+- Final workers API: healthy instances `2`, `genericAvailable=6`,
+  `boundActive=0`, `activeMessageRuns=0`, and
+  `pendingConversationKeys=0`.
+
+## Phase 10: Final Regression Pass
+
+Purpose: after all implementation and admin/runtime changes are complete,
+confirm the latest code and config did not regress the scenarios that already
+passed earlier in the plan.
+
+Run the smallest high-signal replay set:
+
+1. Single-customer 4x4 chat with cache prewarm off.
+2. Two-customer isolation with four turns per customer.
+3. MCP smoke proving both `boondi-crm` and `shopify-api` calls still work.
+4. Active-run follow-up where a message arrives while the previous turn is
+   still processing.
+5. Two-core restart continuity with a customer follow-up after restart.
+
+Expected:
+
+- Every replayed inbound gets exactly one outbound reply.
+- No replayed follow-up gets stuck in `pendingConversationKeys`.
+- No replayed same-customer warm-follow-up shows `assistant startup` unless the
+  replay intentionally restarts or kills the live worker.
+- Stale runtime rows remain excluded from healthy totals.
+- Admin/API evidence and DB evidence agree.
+
+Acceptance:
+
+- pass only if the replay set runs against the latest code after all phases
+  and produces fresh evidence
+- fail if any earlier pass only holds for an older build or older config
+
+### Phase 10 Evidence Log
+
+Status: passed on 2026-06-18 IST against the latest local code after the
+latency report UI fix, durable cursor refresh/merge runtime fix, and
+conversation-work claim/revalidation fix.
+
+Post-fix live load rerun:
+
+- Run id: `loadwave1781772606859`.
+- Stack: two-core dev runtime with `GANTRY_CORE_COUNT=2`.
+- Traffic path: signed Interakt-compatible webhooks through ports `4710` and
+  `4711`; no DB inserts.
+- Load shape: eight customers, four reply-gated waves per customer.
+- Capacity pressure: `maxMessageRuns=6`; the run used eight concurrent
+  customers so queueing, ownership, and worker reuse were exercised.
+- Customers:
+  - `conversation:wa:00097001001`
+  - `conversation:wa:00097001002`
+  - `conversation:wa:00097001003`
+  - `conversation:wa:00097001004`
+  - `conversation:wa:00097001005`
+  - `conversation:wa:00097001006`
+  - `conversation:wa:00097001007`
+  - `conversation:wa:00097001008`
+- Wave results:
+  - after turn 1: all eight customers had `1` inbound, `1` outbound, and
+    `1` trace
+  - after turn 2: all eight customers had `2` inbound, `2` outbound, and
+    `2` traces
+  - after turn 3: all eight customers had `3` inbound, `3` outbound, and
+    `3` traces
+  - after turn 4: all eight customers had `4` inbound, `4` outbound, and
+    `4` traces
+- Immediate post-reply worker snapshot: two healthy instances,
+  `genericAvailable=6`, `boundActive=6`, `activeMessageRuns=1`,
+  `pendingConversationKeys=0`, and `maxMessageRuns=6`.
+- Post-settle worker snapshot after a 90s wait: two healthy instances,
+  `genericAvailable=6`, `genericStarting=0`, `boundActive=0`,
+  `activeMessageRuns=0`, and `pendingConversationKeys=0`.
+- Agent-run continuity: every customer used exactly one provider session; six
+  customers completed in one accepted active-run prompt and two customers
+  completed in four same-session prompts.
+- Result: all eight customers remained at exactly `4` inbound, `4` outbound,
+  and `4` traces after the settle window.
+
+Invalid load shape that was superseded:
+
+- Run id: `loadfix1781772258713`.
+- This attempt sent turn 2 one second after turn 1 for all customers, before
+  some queued runners had started.
+- Two customers had both pending inbound messages legitimately batched into one
+  prompt and therefore produced one outbound reply for the two-message batch.
+- This did not prove the required four-customer-message / four-Boondi-reply
+  acceptance shape, so it was replaced by the reply-gated load rerun above.
+
+Run context:
+
+- Stack: two-core dev runtime with `GANTRY_CORE_COUNT=2`.
+- Runtime smoke env: `/tmp/gantry-runtime-smoke.env.1` for authenticated
+  worker API reads.
+- Initial workers API: healthy instances `2`, `availableTarget=6`,
+  `genericAvailable=6`, `genericStarting=0`, `boundActive=0`,
+  `activeMessageRuns=0`, `pendingConversationKeys=0`, cache prewarm
+  `skipped=6`.
+- Traffic path: signed Interakt-compatible webhooks through ports `4710` and
+  `4711`; no DB inserts.
+
+Single-customer active follow-up:
+
+- Customer: `conversation:wa:000960001101`.
+- Marker: `P10-SINGLE-1101`.
+- Turn 1 inbound:
+  `phase10-000960001101-1-1781752758675` via port `4710`.
+- Turn 2 inbound:
+  `phase10-000960001101-2-1781752759683` via port `4711`, sent one second
+  after turn 1 while the previous run was still active.
+- Turn 3 inbound:
+  `phase10-000960001101-3-1781752780781`.
+- Turn 4 inbound:
+  `phase10-000960001101-4-1781752790829`.
+- Result: exactly `4` inbound and `4` outbound messages.
+- Latency traces: `15687 ms`, `20250 ms`, `9771 ms`, and `2915 ms`.
+- Trace section kinds included `queue`, `llm`, `gap`, and `tool`.
+- Final reply remembered marker `P10-SINGLE-1101` and the gift plan:
+  `6` chocolate/kaju gift boxes, `₹1,800`, Pune, Friday.
+
+Two-customer isolation:
+
+- Customers:
+  - `conversation:wa:000960001102` with marker `P10-ALPHA-1102`
+  - `conversation:wa:000960001103` with marker `P10-BRAVO-1103`
+- Four turns per customer were interleaved across ports `4710` and `4711`.
+- Result for each customer: exactly `4` inbound and `4` outbound messages.
+- `000960001102` latency traces:
+  `4892 ms`, `10136 ms`, `7408 ms`, and `2961 ms`.
+- `000960001103` latency traces:
+  `6742 ms`, `13808 ms`, `11935 ms`, and `3809 ms`.
+- Both customers' trace section kinds included `queue`, `llm`, `gap`, and
+  `tool`.
+- Final replies remembered the correct private marker and gift plan.
+- No final reply contained another customer's private marker.
+
+Latency detail evidence:
+
+- Every Phase 10 outbound had a `message_traces` row.
+- No Phase 10 timing section label contained `runtime wait`.
+- Tool sections were present, proving MCP-backed turns still route through the
+  live runner path.
+
+Worker/dashboard evidence:
+
+- Immediate post-reply snapshot still had `boundActive=2`, which is expected
+  inside the `idle_timeout_ms=30000` retention window.
+- Post-idle snapshot after waiting past `idle_timeout_ms`:
+  `instances=2`, `availableTarget=6`, `genericAvailable=6`,
+  `genericStarting=0`, `boundActive=0`, `activeMessageRuns=0`,
+  `pendingConversationKeys=0`, cache prewarm `skipped=6`.
 
 ## Final Acceptance Criteria
 

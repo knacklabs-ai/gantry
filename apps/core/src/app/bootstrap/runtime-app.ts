@@ -17,7 +17,10 @@ import {
   MODEL_RUNTIME_CREDENTIAL_NAME,
 } from '../../domain/models/credentials.js';
 import type { AgentCredentialBroker } from '../../domain/ports/agent-credential-broker.js';
-import { encodeGroupMessageCursor } from '../../shared/message-cursor.js';
+import {
+  decodeGroupMessageCursor,
+  encodeGroupMessageCursor,
+} from '../../shared/message-cursor.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import {
   ConversationRoute,
@@ -180,6 +183,7 @@ export interface RuntimeAppOptions {
   runtimeStartedAt?: Date;
   opsRepository?: RuntimeAppRepository;
   getMessageSendOwnershipToken?: GroupProcessingDeps['getMessageSendOwnershipToken'];
+  claimConversationWork?: GroupProcessingDeps['claimConversationWork'];
   onMessageRunStart?: (groupJid: string) => (() => void) | void;
   /** Per-reply latency trace (best-effort). Injected at boot; absent in tests. */
   replyTrace?: GroupProcessingDeps['replyTrace'];
@@ -218,6 +222,58 @@ const EMPTY_WORKER_WARM_POOL_SNAPSHOT: WorkerInventoryWarmPoolSnapshot = {
   },
   cacheShapes: [],
 };
+
+function parseAgentTimestampState(
+  raw: string | undefined,
+): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function cursorTimeValue(timestamp: string): number | undefined {
+  if (!timestamp) return undefined;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function compareAgentCursors(left: string, right: string): number {
+  const leftCursor = decodeGroupMessageCursor(left);
+  const rightCursor = decodeGroupMessageCursor(right);
+  const leftTime = cursorTimeValue(leftCursor.timestamp);
+  const rightTime = cursorTimeValue(rightCursor.timestamp);
+  if (leftTime !== undefined && rightTime !== undefined) {
+    if (leftTime !== rightTime) return leftTime - rightTime;
+  } else if (leftCursor.timestamp !== rightCursor.timestamp) {
+    return leftCursor.timestamp.localeCompare(rightCursor.timestamp);
+  }
+  return leftCursor.id.localeCompare(rightCursor.id);
+}
+
+function mergeAgentTimestampState(
+  durable: Record<string, string>,
+  local: Record<string, string>,
+): Record<string, string> {
+  const merged = { ...durable };
+  for (const [key, localCursor] of Object.entries(local)) {
+    const durableCursor = merged[key];
+    if (!durableCursor || compareAgentCursors(localCursor, durableCursor) > 0) {
+      merged[key] = localCursor;
+    }
+  }
+  return merged;
+}
 
 export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   let lastTimestamp = '';
@@ -420,11 +476,9 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
       repository.getAllConversationRoutes(),
     ]);
     lastTimestamp = loadedLastTimestamp || '';
-    try {
-      lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
-    } catch {
+    lastAgentTimestamp = parseAgentTimestampState(agentTs);
+    if (agentTs && Object.keys(lastAgentTimestamp).length === 0) {
       logger.warn('Corrupted last_agent_timestamp in DB, resetting');
-      lastAgentTimestamp = {};
     }
     conversationRoutes = loadedRoutes;
     logger.info(
@@ -441,6 +495,13 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
       do {
         stateSaveDirty = false;
         const timestamp = lastTimestamp;
+        const durableAgentTimestamp = parseAgentTimestampState(
+          await ops().getRouterState('last_agent_timestamp'),
+        );
+        lastAgentTimestamp = mergeAgentTimestampState(
+          durableAgentTimestamp,
+          lastAgentTimestamp,
+        );
         const agentTimestampJson = JSON.stringify(lastAgentTimestamp);
         await Promise.all([
           ops().setRouterState('last_timestamp', timestamp),
@@ -454,7 +515,18 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     return stateSaveInFlight;
   }
 
+  async function refreshAgentTimestampState(): Promise<void> {
+    const durableAgentTimestamp = parseAgentTimestampState(
+      await ops().getRouterState('last_agent_timestamp'),
+    );
+    lastAgentTimestamp = mergeAgentTimestampState(
+      durableAgentTimestamp,
+      lastAgentTimestamp,
+    );
+  }
+
   async function getOrRecoverCursor(chatJid: string): Promise<string> {
+    await refreshAgentTimestampState();
     const existing = lastAgentTimestamp[chatJid];
     if (existing) return existing;
 
@@ -625,6 +697,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     opsRepository: options.opsRepository,
     getRuntimeRepository: ops,
     getMessageSendOwnershipToken: options.getMessageSendOwnershipToken,
+    claimConversationWork: options.claimConversationWork,
     replyTrace: options.replyTrace,
     queue: {
       closeStdin: (chatJid) => queue.closeStdin(chatJid),

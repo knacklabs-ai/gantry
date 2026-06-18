@@ -32,6 +32,10 @@
   dry-run outbound, and MCP request/response evidence. Treat CRM/Shopify
   semantic scenario gates as separate product regression checks unless the task
   explicitly asks for them.
+- For Boondi production-readiness docs, keep the focused readiness gate as an
+  index/profile over the full live verification plan. Do not duplicate long
+  scenario bodies across docs; point to the full plan phase or scenario and
+  state the readiness reason, pass evidence, and escalation path.
 - Boondi command docs should lead with purpose, when to use it, what data it
   changes, and LLM payload behavior. Keep code paths as short evidence refs, not
   the primary explanation.

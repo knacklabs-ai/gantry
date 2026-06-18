@@ -118,6 +118,10 @@ export interface GroupProcessingDeps {
     | Promise<MessageSendOwnershipToken | undefined>
     | MessageSendOwnershipToken
     | undefined;
+  claimConversationWork?: (input: {
+    conversationId: string;
+    threadId?: string | null;
+  }) => Promise<boolean> | boolean;
   queue: {
     closeStdin: (chatJid: string) => void;
     notifyIdle: (chatJid: string) => void;
