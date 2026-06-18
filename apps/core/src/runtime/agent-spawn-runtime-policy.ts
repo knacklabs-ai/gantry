@@ -296,6 +296,25 @@ export function sandboxAllowedNetworkHostsFromRuntimeAccess(
   return [...hosts].sort();
 }
 
+export function databaseNetworkHostFromUrl(
+  value: string | undefined,
+): string | undefined {
+  if (!value?.trim()) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+      return undefined;
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!host) return undefined;
+    const port = parsed.port || '5432';
+    const authorityHost = host.includes(':') ? `[${host}]` : host;
+    return `${authorityHost}:${port}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function loopbackAuthorityFromUrl(
   value: string | undefined,
 ): string | undefined {

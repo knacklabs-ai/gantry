@@ -64,6 +64,7 @@ import {
   PROTECTED_FILESYSTEM_DENY_READ_PATHS_ENV,
   PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_ENV,
   PROTECTED_FILESYSTEM_PATHS_ENV,
+  databaseNetworkHostFromUrl,
   resolveHomeRelativePaths,
   resolveRunnerMcpProjection,
   sandboxAllowedNetworkHostsFromRuntimeAccess,
@@ -388,8 +389,6 @@ export async function spawnAgent(
     const networkAttribution = egressNetworkAttributionFromRuntimeAccess(
       effectiveRuntimeAccess,
     );
-    const sandboxAllowedNetworkHosts =
-      sandboxAllowedNetworkHostsFromRuntimeAccess(effectiveRuntimeAccess);
     const memoryIpcAllowedActions = selectedMemoryIpcActionsFromToolRules(
       trustedToolPolicyRules ?? [],
       {
@@ -400,6 +399,13 @@ export async function spawnAgent(
       hostCredentials.proxy?.https || hostCredentials.proxy?.http;
     const runnerInputPatch = preparedExecution.runnerInputPatch ?? {};
     runnerInput.modelCredentialEnv = runnerInputPatch.modelCredentialEnv;
+    const checkpointerNetworkHost = databaseNetworkHostFromUrl(
+      runnerInputPatch.deepAgentCheckpointer?.databaseUrl,
+    );
+    const sandboxAllowedNetworkHosts = uniqueStrings([
+      ...sandboxAllowedNetworkHostsFromRuntimeAccess(effectiveRuntimeAccess),
+      ...(checkpointerNetworkHost ? [checkpointerNetworkHost] : []),
+    ]);
     const runtimeSandbox = getRuntimeSettingsForConfig().runtime.sandbox;
     const { runnerSandboxProviderId, sandboxWarmTemplate } =
       resolveRunnerSandboxStartup({

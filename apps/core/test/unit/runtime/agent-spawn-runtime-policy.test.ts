@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SANDBOX_RUNTIME_MODEL_GATEWAY_HOST,
+  databaseNetworkHostFromUrl,
   loopbackAuthorityFromUrl,
   pickPreparedExecutionEnv,
   projectSandboxRuntimeModelGatewayEnv,
@@ -78,6 +79,19 @@ describe('agent spawn runtime policy', () => {
     expect(loopbackAuthorityFromUrl('http://[::1]:4567/anthropic')).toBe(
       '[::1]:4567',
     );
+  });
+
+  it('normalizes Postgres database URLs into sandbox network hosts', () => {
+    expect(
+      databaseNetworkHostFromUrl('postgres://gantry:test@db.internal/gantry'),
+    ).toBe('db.internal:5432');
+    expect(
+      databaseNetworkHostFromUrl(
+        'postgresql://gantry:test@[2001:db8::1]:6543/gantry',
+      ),
+    ).toBe('[2001:db8::1]:6543');
+    expect(databaseNetworkHostFromUrl('https://db.internal')).toBeUndefined();
+    expect(databaseNetworkHostFromUrl('not a url')).toBeUndefined();
   });
 
   it('rewrites loopback model gateway env to a sandbox proxy-visible alias', () => {

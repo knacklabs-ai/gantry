@@ -1737,6 +1737,79 @@ describe('agent-spawn timeout behavior', () => {
     );
   });
 
+  it('projects DeepAgents checkpointer Postgres host into sandbox-runtime network access', async () => {
+    vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
+      permissions: {
+        yoloMode: {
+          enabled: true,
+          denylist: [],
+          denylistPaths: [],
+        },
+        egress: {
+          denylist: [],
+        },
+      },
+      runtime: {
+        sandbox: {
+          provider: 'sandbox_runtime',
+          resourceLimits: {
+            cpuSeconds: 0,
+            memoryMb: 0,
+            maxProcesses: 0,
+          },
+        },
+      },
+    } as any);
+    const start = vi.fn(() => fakeProc as any);
+    const runnerSandboxProvider: RunnerSandboxProvider = {
+      id: 'sandbox_runtime',
+      enforcing: true,
+      start,
+    };
+    const executionAdapter: AgentExecutionAdapter = {
+      id: 'deepagents:langchain',
+      async prepare() {
+        return {
+          providerId: 'deepagents:langchain' as const,
+          runnerPath: '/runner.js',
+          runnerArgs: ['/runner.js'],
+          env: {},
+          protectedFilesystemPaths: [],
+          runtimeDetails: [],
+          runnerInputPatch: {
+            deepAgentCheckpointer: {
+              databaseUrl: 'postgres://gantry:test@db.internal:6543/gantry',
+              schema: 'gantry_deepagents_checkpoints',
+            },
+          },
+          cleanup: vi.fn(),
+        };
+      },
+    };
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      { ...testInput, model: 'gpt' },
+      () => {},
+      undefined,
+      { runnerSandboxProvider, executionAdapter },
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const startInput = start.mock.calls[0]?.[0] as RunnerSandboxSpawnInput;
+    expect(startInput.allowedNetworkHosts).toEqual(
+      expect.arrayContaining(['db.internal:6543']),
+    );
+    expect(mockEnsureEgressGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowedNetworkHosts: expect.arrayContaining(['db.internal:6543']),
+      }),
+    );
+  });
+
   it('keeps sandbox-runtime projection compatible with stdio MCP, local CLI, and skill actions', async () => {
     vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
       permissions: {
