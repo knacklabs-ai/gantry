@@ -1,5 +1,6 @@
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import { isIP } from 'node:net';
 import path from 'node:path';
 
@@ -198,10 +199,10 @@ async function webSearch(
   maxResults: number,
   config: GantryFacadeToolsConfig,
 ): Promise<string> {
-  const blocker = auditedWebEgressBlocker(config.toolNetworkEnv);
-  if (blocker) return blocker;
+  const proxyUrl = auditedWebProxyUrl(config.toolNetworkEnv);
+  if (!proxyUrl) return webEgressUnavailableMessage();
   const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const html = await fetchText(url);
+  const html = await fetchText(url, proxyUrl);
   const results = [
     ...html.matchAll(
       /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
@@ -223,31 +224,83 @@ async function webRead(
   url: string,
   config: GantryFacadeToolsConfig,
 ): Promise<string> {
-  const blocker = auditedWebEgressBlocker(config.toolNetworkEnv);
-  if (blocker) return blocker;
+  const proxyUrl = auditedWebProxyUrl(config.toolNetworkEnv);
+  if (!proxyUrl) return webEgressUnavailableMessage();
   const targetBlocker = webReadTargetBlocker(url);
   if (targetBlocker) return targetBlocker;
-  const raw = await fetchText(url);
+  const raw = await fetchText(url, proxyUrl);
   const text = htmlToText(raw);
   return truncateText(text.trim() || raw, MAX_TEXT_OUTPUT_CHARS);
 }
 
-async function fetchText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      redirect: 'error',
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Gantry/1.0 WebRead' },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-    return await response.text();
-  } finally {
-    clearTimeout(timer);
+async function fetchText(url: string, proxyUrl: string): Promise<string> {
+  const target = new URL(url);
+  const proxy = new URL(proxyUrl);
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    };
+    const request = http.request(
+      {
+        protocol: proxy.protocol,
+        hostname: proxy.hostname,
+        port: proxy.port || '80',
+        method: 'GET',
+        path: target.toString(),
+        headers: {
+          Host: target.host,
+          'User-Agent': 'Gantry/1.0 WebRead',
+          Accept: 'text/html,text/plain;q=0.9,*/*;q=0.8',
+          'Accept-Encoding': 'identity',
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on('end', () => {
+          finish(() => {
+            const status = response.statusCode ?? 502;
+            if (status < 200 || status >= 300) {
+              reject(new Error(`HTTP ${status} ${response.statusMessage}`));
+              return;
+            }
+            resolve(Buffer.concat(chunks).toString('utf-8'));
+          });
+        });
+        response.on('error', (err) => finish(() => reject(err)));
+      },
+    );
+    timer = setTimeout(() => {
+      request.destroy(new Error('Web request timed out.'));
+    }, WEB_FETCH_TIMEOUT_MS);
+    request.on('error', (err) => finish(() => reject(err)));
+    request.end();
+  });
+}
+
+function auditedWebProxyUrl(
+  toolNetworkEnv: Record<string, string> | undefined,
+): string | null {
+  const projectedProxy =
+    toolNetworkEnv?.HTTPS_PROXY?.trim() || toolNetworkEnv?.HTTP_PROXY?.trim();
+  if (!projectedProxy) return null;
+  if (!isLoopbackHttpProxy(projectedProxy)) return null;
+  const activeProxy =
+    process.env.HTTPS_PROXY?.trim() || process.env.HTTP_PROXY?.trim();
+  if (
+    process.env.NODE_USE_ENV_PROXY !== '1' ||
+    activeProxy !== projectedProxy
+  ) {
+    return null;
   }
+  return projectedProxy;
 }
 
 async function fileSearch(

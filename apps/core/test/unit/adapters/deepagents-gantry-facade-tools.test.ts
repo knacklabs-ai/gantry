@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -75,6 +76,21 @@ async function invoke(
   if (!found) throw new Error(`missing tool ${name}`);
   const result = await found.invoke(input as never);
   return typeof result === 'string' ? result : JSON.stringify(result);
+}
+
+async function startProxyFixture(
+  handler: http.RequestListener,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('proxy fixture did not bind a TCP port');
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}/`,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
 }
 
 describe('Gantry DeepAgents facade tools', () => {
@@ -255,35 +271,47 @@ describe('Gantry DeepAgents facade tools', () => {
   });
 
   it('wraps WebRead and WebSearch behind public facade tools', async () => {
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(init?.redirect).toBe('error');
-      expect(process.env.HTTP_PROXY).toBe(TOOL_NETWORK_ENV.HTTP_PROXY);
-      expect(process.env.HTTPS_PROXY).toBe(TOOL_NETWORK_ENV.HTTPS_PROXY);
+    const proxyRequests: string[] = [];
+    const proxy = await startProxyFixture((req, res) => {
+      proxyRequests.push(req.url ?? '');
+      expect(process.env.HTTP_PROXY).toBe(proxy.url);
+      expect(process.env.HTTPS_PROXY).toBe(proxy.url);
       expect(process.env.NODE_USE_ENV_PROXY).toBe('1');
-      if (url.includes('duckduckgo')) {
-        return new Response(
+      if ((req.url ?? '').includes('duckduckgo')) {
+        res.end(
           '<a class="result__a" href="https://example.com">Example Result</a>',
-          { status: 200 },
         );
+        return;
       }
-      return new Response('<html><body><h1>Example</h1></body></html>', {
-        status: 200,
-      });
+      res.end('<html><body><h1>Example</h1></body></html>');
     });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const root = makeRoot();
-    const tools = makeTools(root, ['WebRead', 'WebSearch'], TOOL_NETWORK_ENV);
-    vi.stubEnv('HTTP_PROXY', TOOL_NETWORK_ENV.HTTP_PROXY);
-    vi.stubEnv('HTTPS_PROXY', TOOL_NETWORK_ENV.HTTPS_PROXY);
-    vi.stubEnv('NODE_USE_ENV_PROXY', TOOL_NETWORK_ENV.NODE_USE_ENV_PROXY);
-    await expect(
-      invoke(tools, 'WebRead', { url: 'https://example.com' }),
-    ).resolves.toContain('Example');
-    await expect(
-      invoke(tools, 'WebSearch', { query: 'example', maxResults: 1 }),
-    ).resolves.toContain('Example Result');
-    expect(requestPermissionApprovalViaIpc).not.toHaveBeenCalled();
+    try {
+      const toolNetworkEnv = {
+        HTTP_PROXY: proxy.url,
+        HTTPS_PROXY: proxy.url,
+        NODE_USE_ENV_PROXY: '1',
+      };
+      const root = makeRoot();
+      const tools = makeTools(root, ['WebRead', 'WebSearch'], toolNetworkEnv);
+      vi.stubEnv('HTTP_PROXY', proxy.url);
+      vi.stubEnv('HTTPS_PROXY', proxy.url);
+      vi.stubEnv('NODE_USE_ENV_PROXY', '1');
+      await expect(
+        invoke(tools, 'WebRead', { url: 'https://example.com' }),
+      ).resolves.toContain('Example');
+      await expect(
+        invoke(tools, 'WebSearch', { query: 'example', maxResults: 1 }),
+      ).resolves.toContain('Example Result');
+      expect(proxyRequests).toEqual(
+        expect.arrayContaining([
+          'https://example.com/',
+          expect.stringContaining('https://duckduckgo.com/html/?q=example'),
+        ]),
+      );
+      expect(requestPermissionApprovalViaIpc).not.toHaveBeenCalled();
+    } finally {
+      await proxy.close();
+    }
   });
 
   it('fails WebRead/WebSearch closed when audited egress is unavailable', async () => {
@@ -307,8 +335,6 @@ describe('Gantry DeepAgents facade tools', () => {
     'http://192.168.1.10/internal',
     'http://[::1]/internal',
   ])('refuses WebRead private target %s', async (url) => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
     const root = makeRoot();
     const tools = makeTools(root, ['WebRead'], TOOL_NETWORK_ENV);
 
@@ -318,12 +344,9 @@ describe('Gantry DeepAgents facade tools', () => {
     await expect(invoke(tools, 'WebRead', { url })).resolves.toContain(
       'loopback or private network URLs',
     );
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('fails WebRead closed when audited egress env is incomplete', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
     const root = makeRoot();
     const tools = makeTools(root, ['WebRead'], {
       HTTP_PROXY: TOOL_NETWORK_ENV.HTTP_PROXY,
@@ -336,6 +359,5 @@ describe('Gantry DeepAgents facade tools', () => {
     await expect(
       invoke(tools, 'WebRead', { url: 'https://example.com' }),
     ).resolves.toContain('audited tool networking was not projected');
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
