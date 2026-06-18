@@ -212,9 +212,10 @@ describe('Anthropic warm pool adapter', () => {
     const warmChild = makeChild();
     const probeChild = makeChild();
     const controller = new AnthropicWarmPoolController({
-      spawn: vi.fn().mockReturnValueOnce(warmChild).mockReturnValueOnce(
-        probeChild,
-      ),
+      spawn: vi
+        .fn()
+        .mockReturnValueOnce(warmChild)
+        .mockReturnValueOnce(probeChild),
       now: () => 1_000,
       readyTimeoutMs: 500,
     });
@@ -255,9 +256,10 @@ describe('Anthropic warm pool adapter', () => {
       configurable: true,
       value: 0,
     });
-    const spawn = vi.fn().mockReturnValueOnce(warmChild).mockReturnValueOnce(
-      probeChild,
-    );
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce(warmChild)
+      .mockReturnValueOnce(probeChild);
     const controller = new AnthropicWarmPoolController({
       spawn,
       now: () => 1_000,
@@ -269,7 +271,9 @@ describe('Anthropic warm pool adapter', () => {
     const prewarm = controller.prewarmCaches(handle);
     await vi.waitFor(() => expect(probeChild.stdin.write).toHaveBeenCalled());
 
-    const probeInput = JSON.parse(String(probeChild.stdin.write.mock.calls[0][0]));
+    const probeInput = JSON.parse(
+      String(probeChild.stdin.write.mock.calls[0][0]),
+    );
     expect(probeInput).toEqual(
       expect.objectContaining({
         compiledSystemPrompt: 'shared prompt',
@@ -327,9 +331,10 @@ describe('Anthropic warm pool adapter', () => {
     const warmChild = makeChild();
     const probeChild = makeChild();
     const controller = new AnthropicWarmPoolController({
-      spawn: vi.fn().mockReturnValueOnce(warmChild).mockReturnValueOnce(
-        probeChild,
-      ),
+      spawn: vi
+        .fn()
+        .mockReturnValueOnce(warmChild)
+        .mockReturnValueOnce(probeChild),
       now: () => 1_000,
       readyTimeoutMs: 500,
       cachePrewarmTimeoutMs: 20,

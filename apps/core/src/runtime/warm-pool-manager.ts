@@ -82,10 +82,7 @@ export class WarmPoolManager {
   private readonly prewarmWaiters: Array<() => void> = [];
   private activeCachePrewarms = 0;
   private readonly cachePrewarmWaiters: Array<() => void> = [];
-  private readonly cachePrewarmByShape = new Map<
-    string,
-    CachePrewarmRecord
-  >();
+  private readonly cachePrewarmByShape = new Map<string, CachePrewarmRecord>();
   private readonly cachePrewarmInFlightByShape = new Map<
     string,
     Promise<WarmWorkerCachePrewarmResult>

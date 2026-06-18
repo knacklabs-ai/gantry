@@ -16,10 +16,7 @@ import {
   type WarmWorkerCachePrewarmResult,
   type WarmWorkerHandle,
 } from '../../../application/agent-execution/warm-pool-capable.js';
-import {
-  OUTPUT_END_MARKER,
-  OUTPUT_START_MARKER,
-} from './runner/output.js';
+import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './runner/output.js';
 
 const READY_MARKER = 'awaiting bind';
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
@@ -469,9 +466,7 @@ export class AnthropicWarmPoolController {
   }
 }
 
-function parseRunnerOutputs(
-  stdout: string,
-): Array<{
+function parseRunnerOutputs(stdout: string): Array<{
   status?: string;
   usage?: { cacheReadTokens?: number; cacheWriteTokens?: number };
 }> {
