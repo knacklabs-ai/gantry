@@ -3,11 +3,11 @@
 Date: 2026-06-18
 
 Status: execution in progress. Phase 0 passed on 2026-06-18 IST. Phase 1,
-Phase 2, and Phase 3 passed after the retained warm-worker socket was rekeyed
-to the bound conversation run handle and the active-run counter
+Phase 2, Phase 3, and Phase 3.5 passed after the retained warm-worker socket
+was rekeyed to the bound conversation run handle and the active-run counter
 double-decrement was fixed. The earlier `memory_save` IPC app-scope failure is
 covered by the IPC unit regression and Phase 1 includes a successful
-`memory_save` live turn. Phase 3.5 is next.
+`memory_save` live turn. Phase 4 is next.
 
 ## Phase Status Tracker
 
@@ -21,7 +21,7 @@ evidence.
 | Phase 1   | Single customer, single core, cache prewarm off |              4 | Passed      | 2026-06-18 IST fixed rerun `conversation:wa:000960000102` persisted 4 inbound, 4 outbound, and 4 latency reports; turn 4 remembered marker `REKEY-MUMBAI-31`; no latency report included `assistant startup`; healthy runtime active 0, pending 0.                                                                                                  | Retained same-process bound-worker continuation is now proven for a natural 4x4 chat. The run also covered a successful `memory_save` tool call.                                                                                                     |
 | Phase 2   | Multiple customers, single core                 |              5 | Passed      | 2026-06-18 IST fixed rerun used `conversation:wa:000960000201` and `conversation:wa:000960000202`; both persisted 4 inbound and 4 outbound replies; final replies remembered only their own markers `ALPHA-REKEY-201` and `BRAVO-REKEY-202`; no latency report included `assistant startup`; post-idle runtime active 0, pending 0, bound active 0. | Retained same-process continuation and isolation are now proven for two simultaneous natural 4x4 customer chats. Prior Phase 2 capacity and duplicate-redelivery evidence remains valid.                                                             |
 | Phase 3   | Cache prewarm on                                |              2 | Passed      | 2026-06-18 IST natural 4x4 rerun used `conversation:wa:000960000301`; cache prewarm was enabled and pre-traffic inventory showed `succeeded=3`, `skipped=0`; all 4 inbound and 4 outbound replies persisted; final reply remembered marker `PREWARM-ON-301`; no current latency report included `assistant startup` or `cache_prewarm`.             | Historical pre-fix rows can still contain raw `startup` sections, but the admin UI now folds that internal label into `runtime wait` while preserving raw backend traces. Startup prewarm completes before the control HTTP server accepts webhooks. |
-| Phase 3.5 | MCP smoke                                       |              1 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | CRM and Shopify MCP live-traffic smoke.                                                                                                                                                                                                              |
+| Phase 3.5 | MCP smoke                                       |              1 | Passed      | 2026-06-18 IST seeded returning-customer rerun used `conversation:wa:000960000352`; all 4 live signed inbound messages and 4 live outbound replies persisted; traces showed `boondi-crm.get_open_records`, `shopify-api.get_recent_orders_with_details`, and `shopify-api.search_products`; post-idle runtime active 0, pending 0, bound active 0. | CRM and Shopify MCP live traffic are proven through live transcript, trace sections, flow logs, admin API, and runtime workers API.                                                                                                                   |
 | Phase 4   | Follow-up routing stress                        |              4 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Rapid follow-ups, active-run follow-up, cold resume, five-turn loop.                                                                                                                                                                                 |
 | Phase 5   | Two core processes                              |              5 | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Ownership, distribution, restart, post-restart continuity.                                                                                                                                                                                           |
 | Phase 6   | Dashboard truth                                 | dashboard gate | Not started | TBD                                                                                                                                                                                                                                                                                                                                                 | Must be checked across every scenario, then summarized here.                                                                                                                                                                                         |
@@ -784,6 +784,131 @@ Final Phase 3 drain snapshot:
 - `boundIdle=0`.
 - `availableTarget=3`.
 - Cache prewarm summary: `pending=0`, `succeeded=3`, `skipped=0`, `failed=0`.
+
+## Phase 3.5 Evidence Log
+
+Status: passed on 2026-06-18 IST.
+
+Runtime setup:
+
+- Core: one dev core on `127.0.0.1:4710`.
+- Runtime instance: `runtime:89545`.
+- Admin API: `127.0.0.1:3000` returned 200 for `/api/messages`,
+  `/api/conversations`, and `/api/runtime/workers` during evidence capture.
+- MCPs: `shopify-api` healthy on `127.0.0.1:8081`; `boondi-crm` healthy on
+  `127.0.0.1:8082`.
+- Outbound: `GANTRY_OUTBOUND_DRYRUN=1`.
+- Warm pool: `size: 3`, `max_bound_workers: 3`,
+  `cache_prewarm_enabled: false`, `cache_prewarm_concurrency: 1`,
+  `idle_timeout_ms: 30000`.
+
+Baseline runtime snapshot:
+
+- Healthy runtime instances: `1`.
+- Healthy warm-pool totals: `genericAvailable=3`, `genericStarting=0`,
+  `boundActive=0`, `boundIdle=0`, `boundDraining=0`, `availableTarget=3`,
+  `maxBoundWorkers=3`.
+- Healthy queue totals: `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `maxMessageRuns=3`.
+- Healthy cache-prewarm totals: `pending=0`, `succeeded=0`, `skipped=3`,
+  `failed=0`.
+- Cache shape included both MCP sources:
+  `mcpSet=["mcp:boondi-crm","mcp:shopify-api"]`.
+- Stale runtime rows were present in the inventory but excluded from
+  `healthyTotals`.
+
+Initial partial attempt:
+
+- Customer: `conversation:wa:000960000351`.
+- Result: four signed inbound messages and four outbound replies persisted, and
+  `shopify-api.get_recent_orders_with_details` appeared in the trace.
+- Reason not used as pass evidence: it proved Shopify live traffic but did not
+  produce a `boondi-crm` live tool call, so it did not satisfy the
+  CRM-and-Shopify smoke scope.
+
+Passing seeded returning-customer 4x4 rerun:
+
+- Customer: `conversation:wa:000960000352`.
+- Seed: `seedReturning(...)` inserted prior open corporate Diwali-gifting
+  context for the fake customer so a bare returning greeting should exercise
+  `boondi-crm.get_open_records`.
+- Scenario marker: `CRM-SHOP-352`.
+- Live signed inbound provider message ids:
+  `phase35-crm-shop-1781744919018-1`,
+  `phase35-crm-shop-1781744925085-2`,
+  `phase35-crm-shop-1781744932146-3`, and
+  `phase35-crm-shop-1781744943327-4`.
+- Persisted outbound message ids:
+  `message:wa:000960000352:outbound:36cdf2e6-83b6-4c7a-9f5c-fa9473c02381`
+  (`replySeconds=5.924`, `totalMs=5927`),
+  `message:wa:000960000352:outbound:c1272594-57c2-4778-adc0-2334582f7841`
+  (`replySeconds=6.331`, `totalMs=6332`),
+  `message:wa:000960000352:outbound:53bf528e-68b3-46bc-8f64-44d160cf9250`
+  (`replySeconds=10.591`, `totalMs=10593`), and
+  `message:wa:000960000352:outbound:800f992b-d719-4968-91d2-bcf620b50055`
+  (`replySeconds=3.771`, `totalMs=3771`).
+- Admin `/api/messages` evidence showed 10 total messages for the seeded
+  conversation: two seeded history messages plus four live inbound and four
+  live outbound messages.
+- Admin `/api/conversations` evidence showed
+  `conversation:wa:000960000352`, phone `000960000352`, `messageCount=10`,
+  `inboundCount=5`, `outboundCount=5`, and latest direction `outbound`.
+
+Trace and MCP evidence:
+
+- Turn 1 latency sections:
+  `queue`, `main LLM · turn 1`, `gap`, `get_open_records`,
+  `main LLM · turn 2`, `gap`, `send`.
+- Turn 1 tool evidence:
+  `boondi-crm.get_open_records`, `111 ms`.
+- Turn 1 flow-log evidence:
+  `flow:mcp.request` and `flow:mcp.response` for
+  `serverName=boondi-crm`, `toolName=get_open_records`.
+- Turn 2 latency sections:
+  `queue`, `main LLM · turn 1`, `gap`,
+  `get_recent_orders_with_details`, `main LLM · turn 2`, `gap`.
+- Turn 2 tool evidence:
+  `shopify-api.get_recent_orders_with_details`, `524 ms`.
+- Turn 2 flow-log evidence:
+  `flow:mcp.request` and `flow:mcp.response` for
+  `serverName=shopify-api`, `toolName=get_recent_orders_with_details`.
+- Turn 3 latency sections:
+  `queue`, `main LLM · turn 1`, `gap`, `search_products`,
+  `main LLM · turn 2`, `gap`.
+- Turn 3 tool evidence:
+  `shopify-api.search_products`, `810 ms`.
+- Turn 3 flow-log evidence:
+  `flow:mcp.request` and `flow:mcp.response` for
+  `serverName=shopify-api`, `toolName=search_products`.
+- Turn 4 latency sections:
+  `queue`, `main LLM · turn 1`, `gap`.
+- `assistant startup` check: all four outbound latency reports had no
+  `startup` section.
+- Customer-context check: final reply remembered the seeded Diwali team-gifting
+  context and the later 18-box, ₹1,500, Kaju Katli/chocolate gift-box plan from
+  the same conversation. No other customer's context appeared.
+
+Post-run worker and dashboard evidence:
+
+- During the run, the bound worker count temporarily rose while the conversation
+  was retained for follow-ups, and replacement generic workers started as
+  expected.
+- Post-idle core control API and admin `/api/runtime/workers` both showed:
+  `activeMessageRuns=0`, `pendingConversationKeys=0`,
+  `genericAvailable=3`, `genericStarting=0`, `boundActive=0`,
+  `boundIdle=0`, `boundDraining=0`, `availableTarget=3`,
+  `maxBoundWorkers=3`, cache prewarm `pending=0`, `succeeded=0`,
+  `skipped=3`, `failed=0`.
+
+Admin-dev note:
+
+- While collecting evidence, the sibling `boondi-admin` Next dev server briefly
+  served a generated `.next` missing-route fallback. Clearing the generated
+  `.next` cache and restarting the admin dev server restored the admin API long
+  enough to capture `/api/messages`, `/api/conversations`, and
+  `/api/runtime/workers` evidence.
+- A separate Codex session is now responsible for admin UI work; this phase did
+  not require any further `boondi-admin` source edits.
 
 ## Required Live Evidence Per Scenario
 
