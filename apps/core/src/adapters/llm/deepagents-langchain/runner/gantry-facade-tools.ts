@@ -58,6 +58,7 @@ export interface GantryFacadeToolsConfig {
 const MAX_TEXT_OUTPUT_CHARS = 80_000;
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
 const MAX_SEARCH_ENTRIES = 10_000;
+const MAX_WEB_RESPONSE_BYTES = 1_000_000;
 const WEB_FETCH_TIMEOUT_MS = 20_000;
 
 export function createGantryFacadeTools(
@@ -260,9 +261,36 @@ async function fetchText(url: string, proxyUrl: string): Promise<string> {
         },
       },
       (response) => {
+        const contentLength = Number(response.headers['content-length']);
+        if (
+          Number.isFinite(contentLength) &&
+          contentLength > MAX_WEB_RESPONSE_BYTES
+        ) {
+          response.resume();
+          finish(() =>
+            reject(
+              new Error(
+                `Web response exceeded ${MAX_WEB_RESPONSE_BYTES} bytes.`,
+              ),
+            ),
+          );
+          return;
+        }
         const chunks: Buffer[] = [];
+        let totalBytes = 0;
         response.on('data', (chunk: Buffer | string) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          totalBytes += buffer.length;
+          if (totalBytes > MAX_WEB_RESPONSE_BYTES) {
+            const err = new Error(
+              `Web response exceeded ${MAX_WEB_RESPONSE_BYTES} bytes.`,
+            );
+            response.destroy(err);
+            request.destroy(err);
+            finish(() => reject(err));
+            return;
+          }
+          chunks.push(buffer);
         });
         response.on('end', () => {
           finish(() => {
@@ -356,7 +384,11 @@ async function fileWrite(
   content: string,
   config: GantryFacadeToolsConfig,
 ): Promise<string> {
-  const target = await resolveWritableWorkspacePath(relativePath, config);
+  const target = await resolveWritableWorkspacePath(
+    relativePath,
+    config,
+    'FileWrite',
+  );
   await fs.mkdir(path.dirname(target), { recursive: true });
   await writeFileNoFollow(target, content);
   return `Wrote ${Buffer.byteLength(content, 'utf-8')} bytes to ${relativePath}.`;
@@ -367,7 +399,11 @@ async function fileEdit(
   patch: string,
   config: GantryFacadeToolsConfig,
 ): Promise<string> {
-  const target = await resolveExistingWorkspacePath(relativePath, config);
+  const target = await resolveWritableWorkspacePath(
+    relativePath,
+    config,
+    'FileEdit',
+  );
   const current = await fs.readFile(target, 'utf-8');
   const edit = parseEditPatch(patch);
   if (!edit) {
@@ -377,7 +413,7 @@ async function fileEdit(
     return 'FileEdit oldText was not found; read the file again before editing.';
   }
   const next = current.replace(edit.oldText, edit.newText);
-  await fs.writeFile(target, next, 'utf-8');
+  await writeFileNoFollow(target, next);
   return `Edited ${relativePath}.`;
 }
 
@@ -421,13 +457,14 @@ async function resolveExistingWorkspacePath(
 async function resolveWritableWorkspacePath(
   relativePath: string,
   config: GantryFacadeToolsConfig,
+  toolName: 'FileWrite' | 'FileEdit',
 ): Promise<string> {
   const root = await workspaceRoot(config);
   const candidate = path.resolve(root, relativePath);
   ensureInsideRoot(root, candidate);
   const existingTarget = await fs.lstat(candidate).catch(() => null);
   if (existingTarget?.isSymbolicLink()) {
-    throw new Error('FileWrite refuses to follow symlink targets.');
+    throw new Error(`${toolName} refuses to follow symlink targets.`);
   }
   if (existingTarget) {
     const real = await fs.realpath(candidate);

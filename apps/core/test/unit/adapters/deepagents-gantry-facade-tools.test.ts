@@ -241,6 +241,27 @@ describe('Gantry DeepAgents facade tools', () => {
     );
   });
 
+  it('refuses FileEdit through a workspace symlink target', async () => {
+    const root = makeRoot();
+    const outside = makeRoot();
+    fs.writeFileSync(path.join(outside, 'target.txt'), 'outside', 'utf-8');
+    fs.symlinkSync(
+      path.join(outside, 'target.txt'),
+      path.join(root, 'link.txt'),
+    );
+    const tools = makeTools(root, ['FileEdit']);
+
+    await expect(
+      invoke(tools, 'FileEdit', {
+        path: 'link.txt',
+        patch: JSON.stringify({ oldText: 'outside', newText: 'edited' }),
+      }),
+    ).rejects.toThrow('FileEdit refuses to follow symlink targets.');
+    expect(fs.readFileSync(path.join(outside, 'target.txt'), 'utf-8')).toBe(
+      'outside',
+    );
+  });
+
   it('searches paths and content without exposing raw glob/grep tools', async () => {
     const root = makeRoot();
     fs.mkdirSync(path.join(root, 'src'));
@@ -324,6 +345,57 @@ describe('Gantry DeepAgents facade tools', () => {
     await expect(
       invoke(tools, 'WebSearch', { query: 'example', maxResults: 1 }),
     ).resolves.toContain('audited tool networking was not projected');
+  });
+
+  it('rejects oversized WebRead responses before buffering them', async () => {
+    const proxy = await startProxyFixture((_req, res) => {
+      res.writeHead(200, { 'content-length': '1000001' });
+      res.end('too large');
+    });
+    try {
+      const toolNetworkEnv = {
+        HTTP_PROXY: proxy.url,
+        HTTPS_PROXY: proxy.url,
+        NODE_USE_ENV_PROXY: '1',
+      };
+      const root = makeRoot();
+      const tools = makeTools(root, ['WebRead'], toolNetworkEnv);
+      vi.stubEnv('HTTP_PROXY', proxy.url);
+      vi.stubEnv('HTTPS_PROXY', proxy.url);
+      vi.stubEnv('NODE_USE_ENV_PROXY', '1');
+
+      await expect(
+        invoke(tools, 'WebRead', { url: 'https://example.com' }),
+      ).rejects.toThrow('Web response exceeded 1000000 bytes.');
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('stops streaming WebRead responses past the byte limit', async () => {
+    const proxy = await startProxyFixture((_req, res) => {
+      res.writeHead(200);
+      res.write('x'.repeat(1_000_001));
+      res.end();
+    });
+    try {
+      const toolNetworkEnv = {
+        HTTP_PROXY: proxy.url,
+        HTTPS_PROXY: proxy.url,
+        NODE_USE_ENV_PROXY: '1',
+      };
+      const root = makeRoot();
+      const tools = makeTools(root, ['WebRead'], toolNetworkEnv);
+      vi.stubEnv('HTTP_PROXY', proxy.url);
+      vi.stubEnv('HTTPS_PROXY', proxy.url);
+      vi.stubEnv('NODE_USE_ENV_PROXY', '1');
+
+      await expect(
+        invoke(tools, 'WebRead', { url: 'https://example.com' }),
+      ).rejects.toThrow('Web response exceeded 1000000 bytes.');
+    } finally {
+      await proxy.close();
+    }
   });
 
   it.each([

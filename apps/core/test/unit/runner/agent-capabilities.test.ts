@@ -639,9 +639,9 @@ describe('agent capability composition', () => {
     });
 
     expect(profile.allowedTools).not.toContain('Agent');
-    expect(profile.allowedTools).toContain('mcp__gantry__delegate_task');
-    expect(profile.allowedTools).toContain('mcp__gantry__task_get');
-    expect(profile.allowedTools).toContain('mcp__gantry__task_cancel');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__delegate_task');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__task_get');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__task_cancel');
     expect(profile.allowedTools).not.toContain('Browser');
     expect(profile.allowedTools).not.toContain('ToolName(scope-pattern)');
     expect(profile.allowedTools).not.toContain('AgentDelegation');

@@ -71,6 +71,9 @@ export const DELEGATION_GANTRY_MCP_TOOL_NAMES = [
   'task_get',
   'task_cancel',
 ] as const;
+const UNAVAILABLE_GANTRY_MCP_TOOL_NAME_SET = new Set<string>(
+  DELEGATION_GANTRY_MCP_TOOL_NAMES,
+);
 
 const REVIEWER_MEMORY_REVIEW_GANTRY_MCP_TOOL_NAMES = [
   'memory_review_pending',
@@ -155,15 +158,11 @@ export function selectedGantryMcpToolNames(
       names.add(toolName);
     }
   }
-  if (configuredTools.some((tool) => tool.trim() === 'AgentDelegation')) {
-    for (const toolName of DELEGATION_GANTRY_MCP_TOOL_NAMES) {
-      names.add(toolName);
-    }
-  }
   for (const configuredTool of configuredTools) {
     const name = gantryMcpToolNameFromFullName(configuredTool);
     if (
       name &&
+      !UNAVAILABLE_GANTRY_MCP_TOOL_NAME_SET.has(name) &&
       !(GATED_GANTRY_MCP_TOOL_NAMES as readonly string[]).includes(name)
     ) {
       names.add(name);
@@ -233,6 +232,7 @@ export function parseEnabledGantryMcpToolNames(
     for (const item of parsed) {
       const toolName = typeof item === 'string' ? item.trim() : '';
       if (!ALL_GANTRY_MCP_TOOL_NAME_SET.has(toolName)) continue;
+      if (UNAVAILABLE_GANTRY_MCP_TOOL_NAME_SET.has(toolName)) continue;
       if (
         options.lockedPreset &&
         (NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET.has(toolName) ||
