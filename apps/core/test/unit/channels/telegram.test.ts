@@ -282,6 +282,7 @@ async function triggerCallbackQuery(ctx: {
   };
   chat?: { id: number };
   from?: { id: number; first_name?: string; username?: string };
+  api?: { sendMessage: ReturnType<typeof vi.fn> };
   answerCallbackQuery: ReturnType<typeof vi.fn>;
 }) {
   const handlers = currentBot().filterHandlers.get('callback_query:data') || [];
@@ -2525,7 +2526,9 @@ describe('TelegramChannel', () => {
       expect(calls[1][2].reply_markup.inline_keyboard.length).toBeGreaterThan(
         0,
       );
-      expect(calls[1][1]).toContain('🔐 Allow exact command access?');
+      expect(calls[1][1]).toContain(
+        '🔐 Allow Whatsapp Main to use exact command access?',
+      );
 
       await triggerCallbackQuery({
         callbackQuery: { data: 'perm:allow_once:perm-fb' },
@@ -2624,7 +2627,9 @@ describe('TelegramChannel', () => {
 
       expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
         '100200300',
-        expect.stringContaining('🔐 Allow exact command access?'),
+        expect.stringContaining(
+          '🔐 Allow Whatsapp Main to use exact command access?',
+        ),
         expect.objectContaining({
           reply_markup: expect.objectContaining({
             inline_keyboard: expect.any(Array),
@@ -2932,6 +2937,73 @@ describe('TelegramChannel', () => {
 
       const response = await responsePromise;
       expect(response.answers['Approve rollout?']).toBe('No');
+      expect(response.answeredBy).toBe('Admin');
+    });
+
+    it('consumes unauthorized Other replies without normal message ingress', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const responsePromise = channel.requestUserAnswer('tg:100200300', {
+        requestId: 'userq-other-auth',
+        sourceAgentFolder: 'whatsapp_main',
+        questions: [
+          {
+            question: 'What should we tell the customer?',
+            header: 'Reply',
+            options: [{ label: 'Use template', description: 'Default reply' }],
+            multiSelect: false,
+          },
+        ],
+      });
+      await flushPromises();
+
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'userq:other:userq-other-auth:0' },
+        chat: { id: 100200300 },
+        from: { id: 222, first_name: 'Admin' },
+        api: currentBot().api,
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+
+      currentBot().api.sendMessage.mockClear();
+      await triggerTextMessage(
+        createTextCtx({
+          text: 'malicious normal message',
+          fromId: 111,
+          firstName: 'Visitor',
+          messageId: 1000,
+          reply_to_message: {
+            message_id: 987,
+            text: 'Reply to this message with your answer.',
+          },
+        }),
+      );
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        'Only a conversation control approver can answer.',
+      );
+
+      await triggerTextMessage(
+        createTextCtx({
+          text: 'Use the custom account update.',
+          fromId: 222,
+          firstName: 'Admin',
+          messageId: 1001,
+          reply_to_message: {
+            message_id: 987,
+            text: 'Reply to this message with your answer.',
+          },
+        }),
+      );
+
+      const response = await responsePromise;
+      expect(response.answers['What should we tell the customer?']).toBe(
+        'Use the custom account update.',
+      );
       expect(response.answeredBy).toBe('Admin');
     });
 

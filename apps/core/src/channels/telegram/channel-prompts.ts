@@ -448,10 +448,20 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
       : false;
     if (!authorized) {
       // Leave the prompt active so a control approver can still reply.
-      return false;
+      await this.sendUserQuestionOtherReplyNotice(
+        input.chatId,
+        'Only a conversation control approver can answer.',
+      );
+      return true;
     }
     const answer = input.text.trim();
-    if (!answer) return false;
+    if (!answer) {
+      await this.sendUserQuestionOtherReplyNotice(
+        input.chatId,
+        'Answer cannot be empty.',
+      );
+      return true;
+    }
     this.pendingUserQuestionOtherPrompts.delete(key);
     const selection: string | string[] = pending.multiSelect
       ? [
@@ -469,6 +479,21 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
       'answered via Telegram',
     );
     return true;
+  }
+
+  private async sendUserQuestionOtherReplyNotice(
+    chatId: string,
+    text: string,
+  ): Promise<void> {
+    if (!this.bot) return;
+    try {
+      await this.bot.api.sendMessage(chatId, text);
+    } catch (err) {
+      logger.debug(
+        { chatId, err: this.sanitizeErrorMessage(err) },
+        'Failed to send Telegram user question reply notice',
+      );
+    }
   }
 
   protected startPolling(): void {
