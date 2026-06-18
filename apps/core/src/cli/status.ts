@@ -136,8 +136,9 @@ function collectSandboxWarmTemplate(
   settings: ReturnType<typeof ensureRuntimeSettings>,
 ): RunnerSandboxWarmTemplateStatus {
   return (
-    createDefaultRunnerSandboxProvider(settings.runtime.sandbox).warmTemplate?.() ??
-    {
+    createDefaultRunnerSandboxProvider(
+      settings.runtime.sandbox,
+    ).warmTemplate?.() ?? {
       available: false,
       cacheHit: false,
       authorityFree: true,
@@ -264,8 +265,7 @@ async function readRuntimeCapacityFromStorage(
           used: liveSlotsUsed,
           capacity: liveCapacity,
           backlog: liveBacklog.rows[0]?.count ?? 0,
-          oldestBacklogSeconds:
-            liveBacklog.rows[0]?.oldest_age_seconds ?? 0,
+          oldestBacklogSeconds: liveBacklog.rows[0]?.oldest_age_seconds ?? 0,
           warmSpare: liveCapacity > liveSlotsUsed ? 'available' : 'missing',
         },
         backgroundJobs: {
@@ -299,22 +299,22 @@ export function formatRuntimeStatus(summary: RuntimeStatusSummary): string {
   const output = summary.readModel
     ? formatControlPlaneStatus(summary.readModel, summary.service)
     : formatControlPlaneStatus(
-      buildControlPlaneReadModelFromSettings({
-        settings: summary.settings,
-        workspaceKey: 'default',
-        runtimeBlocked:
-          !summary.doctor.ok && summary.doctor.blockingFailures > 0,
-        modelCredentialReady: summary.modelCredentialReady,
-        providers: summary.channels.map((channel) => ({
-          id: channel.id,
-          label: channel.label,
-          ready: channel.enabled && channel.missingEnvKeys.length === 0,
-        })),
-        accessNeedsApprovalCount: summary.accessNeedsApprovalCount,
-        memoryStatus: summary.memoryStatus,
-      }),
-      summary.service,
-    );
+        buildControlPlaneReadModelFromSettings({
+          settings: summary.settings,
+          workspaceKey: 'default',
+          runtimeBlocked:
+            !summary.doctor.ok && summary.doctor.blockingFailures > 0,
+          modelCredentialReady: summary.modelCredentialReady,
+          providers: summary.channels.map((channel) => ({
+            id: channel.id,
+            label: channel.label,
+            ready: channel.enabled && channel.missingEnvKeys.length === 0,
+          })),
+          accessNeedsApprovalCount: summary.accessNeedsApprovalCount,
+          memoryStatus: summary.memoryStatus,
+        }),
+        summary.service,
+      );
   return insertRuntimeCapacityStatus(withSandbox(output), summary);
 }
 

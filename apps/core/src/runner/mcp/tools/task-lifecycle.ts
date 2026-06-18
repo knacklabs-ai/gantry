@@ -118,7 +118,7 @@ export function registerTaskLifecycleTools(server: McpServer): void {
 
   server.tool(
     'delegate_task',
-    'Request bounded Gantry-owned background work when the AgentDelegation capability is selected. Only report that work started when the tool returns a taskId; if it reports unavailable, continue without delegation or request setup. Provider task ids are never public authority.',
+    'Request bounded Gantry-owned delegated work when the AgentDelegation capability is selected. Only report that work started when the tool returns a taskId; if it reports unavailable, continue without delegation or request setup. Provider task ids are never public authority.',
     {
       title: z.string().min(1).max(160),
       task: z.string().min(1).max(12000),
@@ -145,7 +145,7 @@ export function registerTaskLifecycleTools(server: McpServer): void {
 
   server.tool(
     'task_get',
-    'Check the status and result of one Gantry-owned delegated (background) task by taskId within the current run/conversation scope.',
+    'Check the status and result of one Gantry-owned delegated task by taskId within the current run/conversation scope.',
     {
       taskId: z.string().min(1).max(160),
     },
