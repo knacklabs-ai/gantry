@@ -15,6 +15,29 @@ export class McpToolResultValidationError extends Error {
   }
 }
 
+const SUPPORTED_SCHEMA_KEYS = new Set([
+  '$schema',
+  'additionalProperties',
+  'const',
+  'description',
+  'enum',
+  'items',
+  'properties',
+  'required',
+  'title',
+  'type',
+]);
+
+const SUPPORTED_JSON_TYPES = new Set([
+  'array',
+  'boolean',
+  'integer',
+  'null',
+  'number',
+  'object',
+  'string',
+]);
+
 export function prepareMcpToolResultValidation(input: {
   serverName: string;
   toolName: string;
@@ -71,14 +94,93 @@ function assertSupportedOutputSchema(input: {
   toolName: string;
   outputSchema: unknown;
 }): void {
-  if (
-    typeof input.outputSchema !== 'boolean' &&
-    !asRecord(input.outputSchema)
-  ) {
+  assertSupportedJsonSchema(
+    input.outputSchema,
+    '',
+    input.serverName,
+    input.toolName,
+  );
+}
+
+function assertSupportedJsonSchema(
+  schema: unknown,
+  path: string,
+  serverName: string,
+  toolName: string,
+): void {
+  if (typeof schema === 'boolean') return;
+  const record = asRecord(schema);
+  if (!record) {
     throw new McpToolResultValidationError(
-      `MCP tool ${input.serverName}.${input.toolName} provided an invalid outputSchema.`,
+      `MCP tool ${serverName}.${toolName} provided an invalid outputSchema.`,
     );
   }
+  for (const key of Object.keys(record)) {
+    if (!SUPPORTED_SCHEMA_KEYS.has(key)) {
+      throw unsupportedSchemaKeyword(serverName, toolName, path, key);
+    }
+  }
+  assertSupportedSchemaType(record.type, path, serverName, toolName);
+  if (
+    record.additionalProperties !== undefined &&
+    typeof record.additionalProperties !== 'boolean'
+  ) {
+    throw unsupportedSchemaKeyword(
+      serverName,
+      toolName,
+      path,
+      'additionalProperties',
+    );
+  }
+  const properties = asRecord(record.properties);
+  if (properties) {
+    for (const [key, childSchema] of Object.entries(properties)) {
+      assertSupportedJsonSchema(
+        childSchema,
+        joinPath(path, key),
+        serverName,
+        toolName,
+      );
+    }
+  }
+  if (record.items !== undefined) {
+    assertSupportedJsonSchema(
+      record.items,
+      joinPath(path, 'items'),
+      serverName,
+      toolName,
+    );
+  }
+}
+
+function assertSupportedSchemaType(
+  type: unknown,
+  path: string,
+  serverName: string,
+  toolName: string,
+): void {
+  if (type === undefined) return;
+  const types = Array.isArray(type) ? type : [type];
+  if (
+    types.length === 0 ||
+    types.some(
+      (candidate) =>
+        typeof candidate !== 'string' || !SUPPORTED_JSON_TYPES.has(candidate),
+    )
+  ) {
+    throw unsupportedSchemaKeyword(serverName, toolName, path, 'type');
+  }
+}
+
+function unsupportedSchemaKeyword(
+  serverName: string,
+  toolName: string,
+  path: string,
+  key: string,
+): McpToolResultValidationError {
+  return new McpToolResultValidationError(
+    `MCP tool ${serverName}.${toolName} outputSchema uses unsupported keyword ${displayPath(joinPath(path, key))}.`,
+  );
 }
 
 function isMcpToolErrorResult(result: unknown): boolean {

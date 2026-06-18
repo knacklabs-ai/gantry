@@ -389,7 +389,6 @@ async function fileWrite(
     config,
     'FileWrite',
   );
-  await fs.mkdir(path.dirname(target), { recursive: true });
   await writeFileNoFollow(target, content);
   return `Wrote ${Buffer.byteLength(content, 'utf-8')} bytes to ${relativePath}.`;
 }
@@ -466,15 +465,21 @@ async function resolveWritableWorkspacePath(
   if (existingTarget?.isSymbolicLink()) {
     throw new Error(`${toolName} refuses to follow symlink targets.`);
   }
+  if (!existingTarget && toolName === 'FileEdit') {
+    throw new Error('FileEdit target does not exist.');
+  }
   if (existingTarget) {
+    await assertNoSymlinkPathComponents(root, candidate, toolName);
     const real = await fs.realpath(candidate);
     ensureInsideRoot(root, real);
     return real;
   }
-  const existingParent = await nearestExistingParent(path.dirname(candidate));
-  const realParent = await fs.realpath(existingParent);
+  const parent = path.dirname(candidate);
+  await fs.mkdir(parent, { recursive: true });
+  await assertNoSymlinkPathComponents(root, candidate, toolName);
+  const realParent = await fs.realpath(parent);
   ensureInsideRoot(root, realParent);
-  return candidate;
+  return path.join(realParent, path.basename(candidate));
 }
 
 async function writeFileNoFollow(
@@ -496,17 +501,19 @@ async function writeFileNoFollow(
   }
 }
 
-async function nearestExistingParent(dir: string): Promise<string> {
-  for (;;) {
-    try {
-      const stat = await fs.stat(dir);
-      if (stat.isDirectory()) return dir;
-    } catch {
-      // Keep walking up.
+async function assertNoSymlinkPathComponents(
+  root: string,
+  target: string,
+  toolName: 'FileWrite' | 'FileEdit',
+): Promise<void> {
+  let current = root;
+  const relative = path.relative(root, target);
+  for (const part of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    const stat = await fs.lstat(current).catch(() => null);
+    if (stat?.isSymbolicLink()) {
+      throw new Error(`${toolName} refuses to follow symlink path components.`);
     }
-    const next = path.dirname(dir);
-    if (next === dir) return dir;
-    dir = next;
   }
 }
 
@@ -613,25 +620,6 @@ function numberOrDefault(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(1, Math.floor(value))
     : fallback;
-}
-
-function auditedWebEgressBlocker(
-  toolNetworkEnv: Record<string, string> | undefined,
-): string | null {
-  const projectedProxy =
-    toolNetworkEnv?.HTTPS_PROXY?.trim() || toolNetworkEnv?.HTTP_PROXY?.trim();
-  if (!projectedProxy) return webEgressUnavailableMessage();
-  if (!isLoopbackHttpProxy(projectedProxy))
-    return webEgressUnavailableMessage();
-  const activeProxy =
-    process.env.HTTPS_PROXY?.trim() || process.env.HTTP_PROXY?.trim();
-  if (
-    process.env.NODE_USE_ENV_PROXY !== '1' ||
-    activeProxy !== projectedProxy
-  ) {
-    return webEgressUnavailableMessage();
-  }
-  return null;
 }
 
 function webEgressUnavailableMessage(): string {

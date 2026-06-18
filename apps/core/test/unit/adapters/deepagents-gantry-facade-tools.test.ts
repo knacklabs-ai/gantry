@@ -262,6 +262,21 @@ describe('Gantry DeepAgents facade tools', () => {
     );
   });
 
+  it('refuses FileWrite through a workspace symlink parent', async () => {
+    const root = makeRoot();
+    const outside = makeRoot();
+    fs.symlinkSync(outside, path.join(root, 'link-dir'), 'dir');
+    const tools = makeTools(root, ['FileWrite']);
+
+    await expect(
+      invoke(tools, 'FileWrite', {
+        path: 'link-dir/target.txt',
+        content: 'escape',
+      }),
+    ).rejects.toThrow('FileWrite refuses to follow symlink path components.');
+    expect(fs.existsSync(path.join(outside, 'target.txt'))).toBe(false);
+  });
+
   it('searches paths and content without exposing raw glob/grep tools', async () => {
     const root = makeRoot();
     fs.mkdirSync(path.join(root, 'src'));

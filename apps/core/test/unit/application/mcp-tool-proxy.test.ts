@@ -1631,6 +1631,53 @@ describe('McpToolProxy', () => {
     );
   });
 
+  it('rejects unsupported MCP outputSchema constraints before invoking the tool', async () => {
+    vi.useFakeTimers();
+    const appendAuditEvent = vi.fn(async () => undefined);
+    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: 'create_issue',
+          outputSchema: {
+            type: 'object',
+            required: ['url'],
+            properties: { url: { type: 'string', minLength: 1 } },
+          },
+        },
+      ],
+    });
+    const proxy = new McpToolProxy(
+      mcpRepository({ remote: true, appendAuditEvent }),
+      {
+        tools: emptyToolRepository(),
+        liveToolRules: ['mcp__github__create_issue'],
+        lookupHostname: vi.fn(async () => [
+          { address: '93.184.216.34', family: 4 as const },
+        ]),
+      },
+    );
+
+    await expect(
+      proxy.callTool({
+        appId: 'app-one' as never,
+        agentId: 'agent-one' as never,
+        serverName: 'github',
+        toolName: 'create_issue',
+      }),
+    ).rejects.toThrow(/unsupported keyword \/url\/minLength/);
+    expect(mcpSdkMocks.client.callTool).not.toHaveBeenCalled();
+    expect(appendAuditEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          resultClass: 'failure',
+          error: expect.objectContaining({
+            name: 'McpToolResultValidationError',
+          }),
+        }),
+      }),
+    );
+  });
+
   it('intersects reviewed actions with the per-agent source tool scope', async () => {
     const proxy = new McpToolProxy(
       mcpRepository({ bindingAllowedToolPatterns: ['read_*'] }),
