@@ -303,29 +303,16 @@ describe('assertMcpNetworkHostAllowed', () => {
       assertMcpNetworkHostAllowed({
         serverName: 'github',
         url: 'https://api.github.com/mcp',
-        networkHosts: ['api.github.com:443'],
         denylist: [],
       }),
     ).not.toThrow();
   });
 
-  it('allows an undeclared host because MCP networkHosts are metadata', () => {
+  it('allows alternate ports when they are not denylisted', () => {
     expect(() =>
       assertMcpNetworkHostAllowed({
         serverName: 'github',
         url: 'https://api.github.com:8443/mcp',
-        networkHosts: ['api.github.com:443'],
-        denylist: [],
-      }),
-    ).not.toThrow();
-  });
-
-  it('allows an explicit non-default port when it is not denylisted', () => {
-    expect(() =>
-      assertMcpNetworkHostAllowed({
-        serverName: 'github',
-        url: 'https://api.github.com:80/mcp',
-        networkHosts: ['api.github.com:443'],
         denylist: [],
       }),
     ).not.toThrow();
@@ -336,7 +323,6 @@ describe('assertMcpNetworkHostAllowed', () => {
       assertMcpNetworkHostAllowed({
         serverName: 'github',
         url: 'https://evil.example.com/mcp',
-        networkHosts: ['api.github.com:443'],
         denylist: [],
       }),
     ).not.toThrow();
@@ -347,7 +333,6 @@ describe('assertMcpNetworkHostAllowed', () => {
       assertMcpNetworkHostAllowed({
         serverName: 'github',
         url: 'https://api.github.com/mcp',
-        networkHosts: ['api.github.com:443'],
         denylist: ['api.github.com'],
       }),
     ).toThrow(/matches the egress denylist/);
@@ -1151,6 +1136,7 @@ describe('McpToolProxy', () => {
     vi.useFakeTimers();
     const publishRuntimeEvent = vi.fn(async () => undefined);
     const appendAuditEvent = vi.fn(async () => undefined);
+    mockCreateIssueToolDetail();
     const proxy = new McpToolProxy(
       mcpRepository({ remote: true, appendAuditEvent }),
       {
@@ -1164,10 +1150,6 @@ describe('McpToolProxy', () => {
         runHandle: 'run-1',
       },
     );
-    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
-      tools: [{ name: 'create_issue' }],
-    });
-
     await expect(
       proxy.callTool({
         appId: 'app-one' as never,
@@ -1182,6 +1164,7 @@ describe('McpToolProxy', () => {
       undefined,
       { timeout: 60_000 },
     );
+    expect(mcpSdkMocks.client.listTools).toHaveBeenCalledTimes(1);
     expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         appId: 'app-one',
@@ -1306,6 +1289,7 @@ describe('McpToolProxy', () => {
       .fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('runtime event store unavailable'));
+    mockCreateIssueToolDetail();
     const proxy = new McpToolProxy(
       mcpRepository({ remote: true, appendAuditEvent }),
       {
@@ -1319,10 +1303,6 @@ describe('McpToolProxy', () => {
         runHandle: 'run-1',
       },
     );
-    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
-      tools: [{ name: 'create_issue' }],
-    });
-
     await expect(
       proxy.callTool({
         appId: 'app-one' as never,
@@ -1347,15 +1327,13 @@ describe('McpToolProxy', () => {
 
   it('bounds untrusted MCP tool results before returning them to IPC', async () => {
     vi.useFakeTimers();
+    mockCreateIssueToolDetail();
     const proxy = new McpToolProxy(mcpRepository({ remote: true }), {
       tools: emptyToolRepository(),
       liveToolRules: ['mcp__github__create_issue'],
       lookupHostname: vi.fn(async () => [
         { address: '93.184.216.34', family: 4 as const },
       ]),
-    });
-    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
-      tools: [{ name: 'create_issue' }],
     });
     mcpSdkMocks.client.callTool.mockResolvedValueOnce({
       content: [
@@ -1378,12 +1356,49 @@ describe('McpToolProxy', () => {
     });
   });
 
+  it('does not raw stringify structured MCP tool results before bounding them', async () => {
+    vi.useFakeTimers();
+    mockCreateIssueToolDetail();
+    const proxy = new McpToolProxy(mcpRepository({ remote: true }), {
+      tools: emptyToolRepository(),
+      liveToolRules: ['mcp__github__create_issue'],
+      lookupHostname: vi.fn(async () => [
+        { address: '93.184.216.34', family: 4 as const },
+      ]),
+    });
+    const toJSON = vi.fn(() => {
+      throw new Error('raw stringify should not run');
+    });
+    mcpSdkMocks.client.callTool.mockResolvedValueOnce({
+      content: [
+        { type: 'text', text: 'x'.repeat(MAX_MCP_TOOL_RESULT_CHARS + 1) },
+      ],
+      toJSON,
+    });
+
+    await expect(
+      proxy.callTool({
+        appId: 'app-one' as never,
+        agentId: 'agent-one' as never,
+        serverName: 'github',
+        toolName: 'create_issue',
+      }),
+    ).resolves.toMatchObject({
+      type: 'mcp_tool_result_truncated',
+      truncated: true,
+      maxChars: MAX_MCP_TOOL_RESULT_CHARS,
+      preview: expect.stringContaining('[truncated MCP tool result]'),
+    });
+    expect(toJSON).not.toHaveBeenCalled();
+  });
+
   it('does not turn a completed MCP side effect into a retryable failure when durable audit append fails', async () => {
     vi.useFakeTimers();
     const appendAuditEvent = vi
       .fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('audit store unavailable'));
+    mockCreateIssueToolDetail();
     const proxy = new McpToolProxy(
       mcpRepository({ remote: true, appendAuditEvent }),
       {
@@ -1394,10 +1409,6 @@ describe('McpToolProxy', () => {
         ]),
       },
     );
-    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
-      tools: [{ name: 'create_issue' }],
-    });
-
     await expect(
       proxy.callTool({
         appId: 'app-one' as never,
@@ -1444,6 +1455,7 @@ describe('McpToolProxy', () => {
         ]),
       },
     );
+    await describeCreateIssue(proxy);
 
     await expect(
       proxy.callTool({
@@ -1490,12 +1502,10 @@ describe('McpToolProxy', () => {
 
     publishRuntimeEvent.mockClear();
     vi.useFakeTimers();
+    mockCreateIssueToolDetail();
     mcpSdkMocks.client.callTool.mockRejectedValueOnce(
       new Error('upstream token=secret-value failure'),
     );
-    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
-      tools: [{ name: 'create_issue' }],
-    });
     const failedProxy = new McpToolProxy(mcpRepository({ remote: true }), {
       tools: emptyToolRepository(),
       liveToolRules: ['mcp__github__create_issue'],
@@ -1532,6 +1542,53 @@ describe('McpToolProxy', () => {
     );
   });
 
+  it('validates MCP outputSchema on a first direct call without prior describe', async () => {
+    vi.useFakeTimers();
+    const appendAuditEvent = vi.fn(async () => undefined);
+    mockCreateIssueToolDetail({
+      outputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['url'],
+        properties: { url: { type: 'string' } },
+      },
+    });
+    mcpSdkMocks.client.callTool.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'secret-value' }],
+    });
+    const proxy = new McpToolProxy(
+      mcpRepository({ remote: true, appendAuditEvent }),
+      {
+        tools: emptyToolRepository(),
+        liveToolRules: ['mcp__github__create_issue'],
+        lookupHostname: vi.fn(async () => [
+          { address: '93.184.216.34', family: 4 as const },
+        ]),
+      },
+    );
+
+    await expect(
+      proxy.callTool({
+        appId: 'app-one' as never,
+        agentId: 'agent-one' as never,
+        serverName: 'github',
+        toolName: 'create_issue',
+      }),
+    ).rejects.toThrow(
+      /declared outputSchema but returned no structuredContent/,
+    );
+    expect(mcpSdkMocks.client.listTools).toHaveBeenCalledTimes(1);
+    expect(mcpSdkMocks.client.callTool).toHaveBeenCalledTimes(1);
+    expect(appendAuditEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          resultClass: 'failure',
+          selectedToolRule: 'mcp__github__create_issue',
+        }),
+      }),
+    );
+  });
+
   it('validates MCP structuredContent against outputSchema before success audit', async () => {
     vi.useFakeTimers();
     const appendAuditEvent = vi.fn(async () => undefined);
@@ -1562,6 +1619,7 @@ describe('McpToolProxy', () => {
         ]),
       },
     );
+    await describeCreateIssue(proxy);
 
     await expect(
       proxy.callTool({
@@ -1583,6 +1641,7 @@ describe('McpToolProxy', () => {
         }),
       }),
     );
+    expect(mcpSdkMocks.client.listTools).toHaveBeenCalledTimes(1);
   });
 
   it('rejects and audits invalid MCP structuredContent without logging raw values', async () => {
@@ -1617,6 +1676,7 @@ describe('McpToolProxy', () => {
         publishRuntimeEvent,
       },
     );
+    await describeCreateIssue(proxy);
 
     await expect(
       proxy.callTool({
@@ -1676,6 +1736,7 @@ describe('McpToolProxy', () => {
         publishRuntimeEvent,
       },
     );
+    await describeCreateIssue(proxy);
 
     await expect(
       proxy.callTool({
@@ -1728,6 +1789,7 @@ describe('McpToolProxy', () => {
         ]),
       },
     );
+    await describeCreateIssue(proxy);
 
     await expect(
       proxy.callTool({
@@ -1751,7 +1813,7 @@ describe('McpToolProxy', () => {
     );
   });
 
-  it('treats unsupported MCP outputSchema constraints as unvalidated audit', async () => {
+  it('validates MCP outputSchema constraints through JSON Schema', async () => {
     vi.useFakeTimers();
     const appendAuditEvent = vi.fn(async () => undefined);
     mcpSdkMocks.client.listTools.mockResolvedValueOnce({
@@ -1780,6 +1842,7 @@ describe('McpToolProxy', () => {
         ]),
       },
     );
+    await describeCreateIssue(proxy);
 
     await expect(
       proxy.callTool({
@@ -1788,15 +1851,16 @@ describe('McpToolProxy', () => {
         serverName: 'github',
         toolName: 'create_issue',
       }),
-    ).resolves.toMatchObject({ structuredContent: { url: '' } });
+    ).rejects.toThrow(/structuredContent failed outputSchema validation/);
     expect(mcpSdkMocks.client.callTool).toHaveBeenCalledTimes(1);
     expect(appendAuditEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
-          resultClass: 'success',
-          outputSchemaPresent: true,
-          structuredResultValidated: false,
-          toolResultError: false,
+          resultClass: 'failure',
+          selectedToolRule: 'mcp__github__create_issue',
+          error: expect.objectContaining({
+            name: 'McpToolResultValidationError',
+          }),
         }),
       }),
     );
@@ -1851,6 +1915,21 @@ describe('McpToolProxy', () => {
     expect(mcpSdkMocks.Client).toHaveBeenCalledTimes(1);
   });
 });
+
+async function describeCreateIssue(proxy: McpToolProxy) {
+  await proxy.describeTool({
+    appId: 'app-one' as never,
+    agentId: 'agent-one' as never,
+    serverName: 'github',
+    toolName: 'create_issue',
+  });
+}
+
+function mockCreateIssueToolDetail(tool: Record<string, unknown> = {}) {
+  mcpSdkMocks.client.listTools.mockResolvedValueOnce({
+    tools: [{ name: 'create_issue', ...tool }],
+  });
+}
 
 function mcpRepository(input?: {
   bindingAllowedToolPatterns?: string[];

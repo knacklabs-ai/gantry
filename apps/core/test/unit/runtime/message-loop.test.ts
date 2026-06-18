@@ -15,6 +15,7 @@ const mockFormatMessages = vi.fn();
 
 vi.mock('@core/config/index.js', () => ({
   getTriggerPattern: (...args: unknown[]) => mockGetTriggerPattern(...args),
+  MAX_MESSAGES_PER_PROMPT: 10,
   POLL_INTERVAL: 100,
   MESSAGE_FETCH_PAGE_SIZE: 50,
   TIMEZONE: 'UTC',
@@ -388,22 +389,22 @@ describe('thread queue routing', () => {
       }),
     ).resolves.toBe('completed');
 
-    expect(mockGetMessagesSince).toHaveBeenCalledTimes(20);
+    expect(mockGetMessagesSince).toHaveBeenCalledTimes(1);
     expect(mockFormatMessages).toHaveBeenCalledWith(
-      messages.slice(0, 1_000),
+      messages.slice(0, 10),
       'UTC',
     );
     expect(sendMessage).toHaveBeenCalledOnce();
     expect(sendMessage.mock.calls[0][2]).toMatchObject({
       cursorAfter: JSON.stringify({
-        timestamp: '2024-01-01T00:16:40.000Z',
-        id: '1000',
+        timestamp: '2024-01-01T00:00:10.000Z',
+        id: '10',
       }),
     });
     expect(deps.cursors['group@g.us']).toBe(
       JSON.stringify({
-        timestamp: '2024-01-01T00:16:40.000Z',
-        id: '1000',
+        timestamp: '2024-01-01T00:00:10.000Z',
+        id: '10',
       }),
     );
     expect(deps.enqueued).toEqual(['group@g.us']);
@@ -540,12 +541,12 @@ describe('thread queue routing', () => {
       }),
     ).resolves.toBe('completed');
 
-    expect(mockGetMessagesSince).toHaveBeenCalledTimes(20);
+    expect(mockGetMessagesSince).toHaveBeenCalledTimes(1);
     expect(deps.sentTo).toHaveLength(0);
     expect(deps.enqueued).toEqual(['group@g.us']);
     expect(decodeGroupMessageCursor(deps.cursors['group@g.us'])).toEqual({
-      timestamp: '2024-01-01T00:16:40.000Z',
-      id: '1000',
+      timestamp: '2024-01-01T00:00:10.000Z',
+      id: '10',
     });
     expect(saveState).toHaveBeenCalledOnce();
   });
@@ -717,6 +718,64 @@ describe('thread queue routing', () => {
         cursorAfter: expect.any(String),
       },
     );
+  });
+
+  it('checks the replay window for triggers before advancing a stale cursor', async () => {
+    const trigger = {
+      id: '2',
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      content: '@Andy please handle this',
+      timestamp: '2024-01-01T00:00:02.000Z',
+      is_from_me: false,
+      message_id: 'msg-2',
+      reply_to_message_id: null,
+      reply_to_content: null,
+      sender_name: 'User',
+    };
+    const latest = {
+      ...trigger,
+      id: '3',
+      content: 'additional context',
+      timestamp: '2024-01-01T00:00:03.000Z',
+      message_id: 'msg-3',
+    };
+    mockGetNewMessages.mockReturnValueOnce({
+      messages: [latest],
+      newTimestamp: '2024-01-01T00:00:03.000Z',
+    });
+    mockGetMessagesSince.mockReturnValueOnce([trigger, latest]);
+    mockGetTriggerPattern.mockReturnValue(/^@Andy\b/i);
+
+    const sendMessage = vi.fn(() => true);
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        'group@g.us': {
+          name: 'Team',
+          folder: 'team',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: true,
+        },
+      }),
+      getOrRecoverCursor: () => '2024-01-01T00:00:00.000Z',
+      queue: {
+        ...makeDeps().queue,
+        sendMessage,
+      },
+    });
+    const { runMessagePollingTick } =
+      await import('@core/runtime/message-loop.js');
+
+    await runMessagePollingTick(deps);
+
+    expect(mockGetMessagesSince).toHaveBeenCalledOnce();
+    expect(mockFormatMessages).toHaveBeenCalledWith([trigger, latest], 'UTC');
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(decodeGroupMessageCursor(deps.cursors['group@g.us'])).toEqual({
+      timestamp: '2024-01-01T00:00:03.000Z',
+      id: '3',
+    });
   });
 
   it('allows untagged messages inside an already-started thread queue', async () => {

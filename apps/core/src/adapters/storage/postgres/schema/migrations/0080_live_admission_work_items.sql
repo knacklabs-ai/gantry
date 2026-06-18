@@ -19,6 +19,7 @@ CREATE TABLE "live_admission_work_items" (
   "claim_expires_at" timestamp with time zone,
   "fencing_version" integer DEFAULT 0 NOT NULL,
   "retry_count" integer DEFAULT 0 NOT NULL,
+  "failure_count" integer DEFAULT 0 NOT NULL,
   "defer_until" timestamp with time zone,
   "deferred_reason" text,
   "created_at" timestamp with time zone NOT NULL,
@@ -30,19 +31,21 @@ CREATE TABLE "live_admission_work_items" (
 CREATE UNIQUE INDEX "uq_live_admission_work_items_idempotency"
   ON "live_admission_work_items" ("idempotency_key");
 
-CREATE INDEX "idx_live_admission_work_items_due"
-  ON "live_admission_work_items" ("state", "defer_until", "created_at");
+CREATE INDEX "idx_live_admission_work_items_queued_fifo"
+  ON "live_admission_work_items" ("app_id", "created_at", "id")
+  WHERE "state" = 'queued';
 
-CREATE INDEX "idx_live_admission_work_items_claim_expiry"
-  ON "live_admission_work_items" ("state", "claim_expires_at");
+CREATE INDEX "idx_live_admission_work_items_deferred_due"
+  ON "live_admission_work_items" ("app_id", "defer_until", "created_at", "id")
+  WHERE "state" = 'deferred'
+    AND "defer_until" IS NOT NULL;
 
-CREATE INDEX "idx_live_admission_work_items_conversation"
-  ON "live_admission_work_items" (
-    "app_id",
-    "conversation_id",
-    "thread_id",
-    "created_at"
-  );
+CREATE INDEX "idx_live_admission_work_items_deferred_null_fifo"
+  ON "live_admission_work_items" ("app_id", "created_at", "id")
+  WHERE "state" = 'deferred'
+    AND "defer_until" IS NULL;
 
-CREATE INDEX "idx_live_admission_work_items_agent"
-  ON "live_admission_work_items" ("app_id", "agent_id", "created_at");
+CREATE INDEX "idx_live_admission_work_items_claimed_expired"
+  ON "live_admission_work_items" ("app_id", "claim_expires_at", "created_at", "id")
+  WHERE "state" = 'claimed'
+    AND "claim_expires_at" IS NOT NULL;

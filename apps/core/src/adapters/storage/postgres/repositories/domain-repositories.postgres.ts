@@ -101,8 +101,6 @@ import type {
   SettingsRevisionRepository,
   StaleRuntimeDependencyLister,
 } from '../../../../domain/ports/fleet-capability-state.js';
-import { PostgresTaskLifecycleRepository } from './task-lifecycle-repository.postgres.js';
-import type { TaskLifecycleRepository } from '../../../../domain/ports/task-lifecycle.js';
 export interface PostgresDomainRepositoryBundle {
   apps: AppRepository;
   agents: AgentRepository;
@@ -130,7 +128,6 @@ export interface PostgresDomainRepositoryBundle {
   runtimeDependencies: RuntimeDependencyRepository &
     StaleRuntimeDependencyLister;
   settingsRevisions: SettingsRevisionRepository;
-  taskLifecycle: TaskLifecycleRepository;
 }
 type JsonRecord = Record<string, unknown>;
 function encodeJson(value: unknown): string {
@@ -1699,6 +1696,5 @@ export function createPostgresDomainRepositories(
     liveTurns: new PostgresLiveTurnRepository(db),
     runtimeDependencies: new PostgresRuntimeDependencyRepository(db),
     settingsRevisions: new PostgresSettingsRevisionRepository(db),
-    taskLifecycle: new PostgresTaskLifecycleRepository(db),
   };
 }

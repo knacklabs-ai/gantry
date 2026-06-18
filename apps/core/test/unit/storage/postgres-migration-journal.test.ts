@@ -1121,30 +1121,25 @@ describe('Postgres migration journal', () => {
     expect(migration).toContain("'{toolAccessRequirements}'");
   });
 
-  it('registers live admission branch claim index migration and schema', () => {
+  it('registers live admission work-item migration and branch indexes', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
     );
     const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
       entries: Array<{ idx: number; tag: string }>;
     };
-    const branchIndexes = journal.entries.find(
-      (entry) => entry.tag === '0081_live_admission_claim_branch_indexes',
+    const workItems = journal.entries.find(
+      (entry) => entry.tag === '0080_live_admission_work_items',
     );
-    expect(branchIndexes).toMatchObject({ idx: 81 });
+    expect(workItems).toMatchObject({ idx: 80 });
 
     const migration = fs.readFileSync(
       path.resolve(
-        'apps/core/src/adapters/storage/postgres/schema/migrations/0081_live_admission_claim_branch_indexes.sql',
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0080_live_admission_work_items.sql',
       ),
       'utf8',
     );
-    expect(migration).toContain(
-      'DROP INDEX IF EXISTS "idx_live_admission_work_items_due"',
-    );
-    expect(migration).toContain(
-      'DROP INDEX IF EXISTS "idx_live_admission_work_items_claim_expiry"',
-    );
+    expect(migration).toContain('"failure_count" integer DEFAULT 0 NOT NULL');
     expect(migration).toContain(
       'CREATE INDEX "idx_live_admission_work_items_queued_fifo"',
     );

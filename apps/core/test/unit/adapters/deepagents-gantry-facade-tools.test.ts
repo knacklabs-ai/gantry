@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -91,6 +92,12 @@ async function startProxyFixture(
     url: `http://127.0.0.1:${address.port}/`,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
+}
+
+function readdirEntryName(entry: unknown): string {
+  return entry && typeof entry === 'object' && 'name' in entry
+    ? String((entry as { name: unknown }).name)
+    : String(entry);
 }
 
 describe('Gantry DeepAgents facade tools', () => {
@@ -332,6 +339,36 @@ describe('Gantry DeepAgents facade tools', () => {
         query: 'needle',
       }),
     ).resolves.toContain('src/alpha.ts:1');
+  });
+
+  it('stops FileSearch traversal after the result cap', async () => {
+    const root = makeRoot();
+    fs.writeFileSync(path.join(root, 'a-hit.txt'), 'needle\n');
+    fs.mkdirSync(path.join(root, 'z-late'));
+    fs.writeFileSync(path.join(root, 'z-late', 'late.txt'), 'needle\n');
+    let lateDirectoryReads = 0;
+    const originalReaddir = fsPromises.readdir.bind(fsPromises);
+    vi.spyOn(fsPromises, 'readdir').mockImplementation((async (
+      ...args: Parameters<typeof fsPromises.readdir>
+    ) => {
+      const directory = String(args[0]);
+      if (path.basename(directory) === 'z-late') lateDirectoryReads += 1;
+      const entries = await originalReaddir(...args);
+      return Array.isArray(entries)
+        ? ([...entries].sort((left, right) =>
+            readdirEntryName(left).localeCompare(readdirEntryName(right)),
+          ) as Awaited<ReturnType<typeof fsPromises.readdir>>)
+        : entries;
+    }) as typeof fsPromises.readdir);
+
+    const result = await invoke(makeTools(root, ['FileSearch']), 'FileSearch', {
+      mode: 'content',
+      query: 'needle',
+      maxResults: 1,
+    });
+
+    expect(result).toContain('a-hit.txt:1');
+    expect(lateDirectoryReads).toBe(0);
   });
 
   it('wraps WebRead and WebSearch behind public facade tools', async () => {

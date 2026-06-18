@@ -1,4 +1,3 @@
-import { App } from '@slack/bolt';
 import { PERMISSION_APPROVAL_TIMEOUT_MS } from '../../config/index.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import {
@@ -24,8 +23,6 @@ import {
   permissionButtonLabel,
   permissionDecisionOptions,
 } from '../permission-interaction.js';
-import { buildPermissionPromptContentBlocks } from './permission-blocks.js';
-import { slackPermissionDecisionActionId } from './permission-action-id.js';
 import {
   disconnectSlackDelivery,
   loadPersistedSlackProgress,
@@ -46,9 +43,11 @@ import {
 } from './text-limits.js';
 import type { PendingUserQuestionState } from './channel-state.js';
 import type { AgentTodoRender } from '../../domain/ports/task-lifecycle.js';
-import { buildAgentTodoBlocks } from './agent-todo-blocks.js';
 import { nowMs as currentTimeMs } from '../../shared/time/datetime.js';
 import { slackThreadTsFromThreadId } from './thread-ts.js';
+import { renderSlackAgentTodo } from './agent-todo-delivery.js';
+import { connectSlackApp } from './channel-connect.js';
+import { requestSlackPermissionApproval } from './permission-approval-delivery.js';
 const SLACK_STREAM_SNIPPET_FALLBACK_MIN_PARTS = 4;
 export abstract class SlackChannelDelivery extends SlackChannelInteractions {
   private interactionCallbacksEnabled = true;
@@ -64,40 +63,18 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
     const interactionCallbacksEnabled =
       options.interactionCallbacks ?? inboundEnabled;
     this.interactionCallbacksEnabled = interactionCallbacksEnabled;
-    this.app = new App({
-      token: this.botToken,
+    const connected = await connectSlackApp({
+      botToken: this.botToken,
       appToken: this.appToken,
-      socketMode: true,
+      inboundEnabled,
+      interactionCallbacksEnabled,
+      registerBoltHandlers: (app) => {
+        this.app = app;
+        this.registerBoltHandlers({ inbound: inboundEnabled });
+      },
     });
-    if (inboundEnabled || interactionCallbacksEnabled) {
-      this.registerBoltHandlers({ inbound: inboundEnabled });
-      this.app.error(async (error: Error) =>
-        logger.error({ err: error }, 'Slack app error'),
-      );
-      await this.app.start();
-    }
-    try {
-      const auth = (await this.app.client.auth.test()) as {
-        ok?: boolean;
-        user_id?: string;
-        user?: string;
-        team?: string;
-      };
-      this.botUserId = auth.user_id || auth.user || null;
-      logger.info(
-        {
-          team: auth.team,
-          botUserId: this.botUserId,
-          inbound: inboundEnabled,
-          interactionCallbacks: interactionCallbacksEnabled,
-        },
-        !inboundEnabled
-          ? 'Slack outbound delivery client initialized'
-          : 'Slack Socket Mode connected',
-      );
-    } catch (err) {
-      logger.warn({ err }, 'Slack auth.test failed after Socket Mode start');
-    }
+    this.app = connected.app;
+    this.botUserId = connected.botUserId;
   }
   supportsInteractionCallbacks(): boolean {
     return this.interactionCallbacksEnabled;
@@ -126,46 +103,15 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
     if (!this.app) return;
     const parsed = this.parseJid(jid);
     if (!parsed) return;
-    const blocks = buildAgentTodoBlocks(render);
-    const text = render.summary?.trim()
-      ? `📋 ${render.summary.trim()}`
-      : '📋 Plan';
-    const threadTs = slackThreadTsFromThreadId(render.threadId);
     const todoKey = this.streamKey(jid, render.threadId ?? undefined);
-    const existing = this.pendingTodos.get(todoKey);
-    if (existing) {
-      try {
-        await this.app.client.chat.update({
-          channel: existing.channel,
-          ts: existing.ts,
-          text,
-          blocks: blocks as any,
-        });
-        return;
-      } catch (err) {
-        logger.debug(
-          { jid, threadId: render.threadId, err },
-          'Slack todo update failed; sending a fresh message',
-        );
-        this.pendingTodos.delete(todoKey);
-      }
-    }
-    try {
-      const result = (await this.app.client.chat.postMessage({
-        channel: parsed.channelId,
-        text,
-        blocks: blocks as any,
-        ...(threadTs ? { thread_ts: threadTs } : {}),
-      })) as { ts?: string };
-      if (result.ts) {
-        this.pendingTodos.set(todoKey, {
-          channel: parsed.channelId,
-          ts: result.ts,
-        });
-      }
-    } catch (err) {
-      logger.warn({ jid, err }, 'Failed to send Slack todo message');
-    }
+    await renderSlackAgentTodo({
+      app: this.app,
+      jid,
+      channelId: parsed.channelId,
+      render,
+      todoKey,
+      pendingTodos: this.pendingTodos,
+    });
   }
 
   async sendStreamingChunk(
@@ -523,90 +469,17 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
 
     const timeoutMs = PERMISSION_APPROVAL_TIMEOUT_MS;
     const promptText = this.formatPermissionPromptText(request, timeoutMs);
-    const contentBlocks = buildPermissionPromptContentBlocks(
-      buildPermissionPromptParts(request, timeoutMs),
-    );
-
-    const actionsBlock = {
-      type: 'actions',
-      elements: permissionDecisionOptions(request).map((mode) => ({
-        type: 'button',
-        action_id: slackPermissionDecisionActionId(mode),
-        text: {
-          type: 'plain_text',
-          text: permissionButtonLabel(mode, request),
-        },
-        ...(mode === 'cancel'
-          ? { style: 'danger' as const }
-          : { style: 'primary' as const }),
-        value: JSON.stringify({
-          requestId: request.requestId,
-          decision: mode,
-        }),
-      })),
-    };
-    const threadTs = slackThreadTsFromThreadId(request.threadId);
-    const threadPayload = threadTs ? { thread_ts: threadTs } : {};
-    const postPrompt = (blocks: unknown[]) =>
-      this.app!.client.chat.postMessage({
-        channel: parsed.channelId,
-        text: promptText,
-        ...threadPayload,
-        blocks: blocks as any,
-      }) as Promise<{ ts?: string }>;
-    try {
-      let response: { ts?: string };
-      try {
-        response = await postPrompt([...contentBlocks, actionsBlock]);
-      } catch (blocksErr) {
-        logger.warn(
-          { jid, requestId: request.requestId, err: blocksErr },
-          'Slack native permission blocks rejected; retrying with simple layout',
-        );
-        response = await postPrompt([
-          { type: 'section', text: { type: 'mrkdwn', text: promptText } },
-          actionsBlock,
-        ]);
-      }
-      const messageTs = response.ts;
-      if (!messageTs) {
-        return {
-          approved: false,
-          reason: 'Slack did not accept the approval prompt.',
-        };
-      }
-
-      return await new Promise<PermissionApprovalDecision>((resolve) => {
-        const timer = setTimeout(() => {
-          void this.resolvePermissionPrompt(request.requestId, {
-            approved: false,
-            decidedBy: 'system',
-            reason: 'timed out',
-          });
-        }, timeoutMs);
-
-        this.pendingPermissionPrompts.set(request.requestId, {
-          channelId: parsed.channelId,
-          sourceAgentFolder: request.sourceAgentFolder,
-          decisionPolicy: request.decisionPolicy,
-          approvalContextJid: request.approvalContextJid,
-          request,
-          messageTs,
-          timer,
-          resolve,
-          settled: false,
-        });
-      });
-    } catch (err) {
-      logger.error(
-        { jid, requestId: request.requestId, err },
-        'Failed to send Slack permission prompt',
-      );
-      return {
-        approved: false,
-        reason: 'Failed to send approval prompt to Slack',
-      };
-    }
+    return requestSlackPermissionApproval({
+      app: this.app,
+      jid,
+      channelId: parsed.channelId,
+      request,
+      timeoutMs,
+      promptText,
+      pendingPermissionPrompts: this.pendingPermissionPrompts,
+      resolvePermissionPrompt: (requestId, decision) =>
+        this.resolvePermissionPrompt(requestId, decision),
+    });
   }
 
   private loadPersistedProgress(): void {

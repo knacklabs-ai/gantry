@@ -350,16 +350,18 @@ async function fileSearch(
   let visited = 0;
 
   await walk(root, '', async (absolute, relative, entry) => {
-    if (results.length >= maxResults || visited >= MAX_SEARCH_ENTRIES) return;
+    if (results.length >= maxResults || visited >= MAX_SEARCH_ENTRIES) {
+      return false;
+    }
     visited += 1;
-    if (entry.isDirectory()) return;
-    if (!matchesFilters(relative, include, exclude)) return;
+    if (entry.isDirectory()) return true;
+    if (!matchesFilters(relative, include, exclude)) return true;
     if (input.mode === 'path') {
       if (relative.toLowerCase().includes(queryLower)) results.push(relative);
-      return;
+      return results.length < maxResults && visited < MAX_SEARCH_ENTRIES;
     }
     const stat = await fs.stat(absolute).catch(() => null);
-    if (!stat || stat.size > MAX_SEARCH_FILE_BYTES) return;
+    if (!stat || stat.size > MAX_SEARCH_FILE_BYTES) return true;
     const text = await fs.readFile(absolute, 'utf-8').catch(() => '');
     const lineIndex = text
       .split(/\r?\n/)
@@ -368,6 +370,7 @@ async function fileSearch(
       const preview = text.split(/\r?\n/)[lineIndex]?.trim() ?? '';
       results.push(`${relative}:${lineIndex + 1}: ${preview}`);
     }
+    return results.length < maxResults && visited < MAX_SEARCH_ENTRIES;
   });
 
   return results.length
@@ -465,8 +468,8 @@ async function walk(
     absolute: string,
     relative: string,
     entry: import('node:fs').Dirent,
-  ) => Promise<void>,
-): Promise<void> {
+  ) => Promise<boolean>,
+): Promise<boolean> {
   const absoluteDir = path.join(root, relativeDir);
   const entries = await fs
     .readdir(absoluteDir, { withFileTypes: true })
@@ -476,11 +479,14 @@ async function walk(
     if (entry.name === '.git' || entry.name === 'node_modules') continue;
     const relative = toPosix(path.join(relativeDir, entry.name));
     const absolute = path.join(root, relative);
-    await visit(absolute, relative, entry);
+    const shouldContinue = await visit(absolute, relative, entry);
+    if (!shouldContinue) return false;
     if (entry.isDirectory()) {
-      await walk(root, relative, visit);
+      const childShouldContinue = await walk(root, relative, visit);
+      if (!childShouldContinue) return false;
     }
   }
+  return true;
 }
 
 function filters(value: unknown): string[] {

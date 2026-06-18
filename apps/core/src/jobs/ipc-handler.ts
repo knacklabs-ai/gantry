@@ -173,15 +173,6 @@ export async function processTaskIpc(
           return undefined;
         }
       }),
-    getTaskLifecycleRepository:
-      deps.getTaskLifecycleRepository ??
-      (() => {
-        try {
-          return getRuntimeStorage().repositories.taskLifecycle;
-        } catch {
-          return undefined;
-        }
-      }),
     getJobControl:
       deps.getJobControl ??
       (() => adaptJobControl(getRuntimeControlRepository())),

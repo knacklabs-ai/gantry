@@ -1,11 +1,11 @@
-const DEFAULT_ASSISTANT_NAME = 'Gantry';
+import { DEFAULT_AGENT_NAME } from './default-agent.js';
 
-function escapeRegex(str: string): string {
+export function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function defaultTriggerForAgentName(name?: string | null): string {
-  return `@${name?.trim() || DEFAULT_ASSISTANT_NAME}`;
+  return `@${name?.trim() || DEFAULT_AGENT_NAME}`;
 }
 
 export function triggerForRoute(input: {
@@ -17,9 +17,10 @@ export function triggerForRoute(input: {
 
 export function buildTriggerPattern(trigger: string): RegExp {
   const normalizedTrigger = trigger.trim();
-  const pattern = escapeRegex(normalizedTrigger);
-  return new RegExp(
-    `(?:^|\\s)${pattern}(?:\\b|(?=\\s|[,.!?;:，。！？、；：]|$))`,
-    'i',
-  );
+  const slackMentionMatch = normalizedTrigger.match(/^<@([A-Z0-9]+)>?$/i);
+  if (slackMentionMatch) {
+    const mention = `<@${escapeRegex(slackMentionMatch[1])}>?`;
+    return new RegExp(`(?:^|\\s)${mention}(?=\\s|$|[,.!?;:])`, 'i');
+  }
+  return new RegExp(`^${escapeRegex(normalizedTrigger)}\\b`, 'i');
 }

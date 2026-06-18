@@ -2,9 +2,7 @@ import { logger } from '../../infrastructure/logging/logger.js';
 import {
   PermissionApprovalDecision,
   PermissionApprovalRequest,
-  type MessageActionAffordanceKind,
 } from '../../domain/types.js';
-import { PartialMessageDeliveryError } from '../../domain/messages/partial-delivery.js';
 import {
   findDurablePermissionInteractionByRequestId,
   findDurableQuestionInteractionByRequestId,
@@ -31,20 +29,14 @@ import {
 import { SLACK_PERMISSION_DECISION_ACTION_IDS } from './permission-action-id.js';
 import { nowIso } from '../../shared/time/datetime.js';
 import {
-  clampSlackRetryDelayMs,
-  slackRateLimitRetryDelayMs,
-} from './channel-retry-delay.js';
-const SCHEDULER_MESSAGE_ACTION_KINDS = new Set<MessageActionAffordanceKind>([
-  'scheduler_run_now',
-  'scheduler_pause_job',
-  'scheduler_open',
-]);
+  tryNativeStreamAppend,
+  tryNativeStreamStart,
+  tryNativeStreamStop,
+} from './native-stream.js';
+import { registerSlackMessageActionHandler } from './channel-message-action-handler.js';
+import { registerSlackUtilityHandlers } from './channel-utility-handlers.js';
+
 export abstract class SlackChannelInteractions extends SlackChannelState {
-  private async waitForRetry(delayMs: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, clampSlackRetryDelayMs(delayMs));
-    });
-  }
   protected async ingestSlackMessage(
     event: SlackMessageLike,
     options: { forceOwnedTopLevel?: boolean } = {},
@@ -115,121 +107,20 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     threadId: string | undefined,
     text: string,
   ): Promise<string | undefined> {
-    if (!this.app) return undefined;
-    try {
-      const result = (await this.app.client.apiCall('chat.startStream', {
-        channel: channelId,
-        ...(threadId ? { thread_ts: threadId } : {}),
-        markdown_text: text,
-      })) as { ok?: boolean; ts?: string; stream_ts?: string };
-      if (!result.ok) return undefined;
-      return result.stream_ts || result.ts;
-    } catch {
-      return undefined;
-    }
+    return tryNativeStreamStart({ app: this.app, channelId, threadId, text });
   }
   protected async tryNativeStreamAppend(
     channelId: string,
     streamTs: string,
     text: string,
   ): Promise<{ completed: boolean; sentPrefix: string }> {
-    if (!this.app || !text.trim()) {
-      return { completed: true, sentPrefix: '' };
-    }
-    const chunks = splitSlackTextByCodeUnits(
-      text,
-      SLACK_NATIVE_APPEND_MAX_LENGTH,
-    );
-    if (chunks.length > 1) {
-      logger.warn(
-        {
-          channelId,
-          streamTs,
-          parts: chunks.length,
-          limit: SLACK_NATIVE_APPEND_MAX_LENGTH,
-        },
-        'Slack streaming append split to respect payload limits',
-      );
-    }
-    let sentPrefix = '';
-    let appendedChunks = 0;
-    for (const chunk of chunks) {
-      let appended = false;
-      let lastFailure: unknown;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          const result = (await this.app.client.apiCall('chat.appendStream', {
-            channel: channelId,
-            ts: streamTs,
-            markdown_text: chunk,
-          })) as { ok?: boolean; error?: string; retry_after?: number };
-          if (result.ok === true) {
-            appended = true;
-            break;
-          }
-          const retryDelayMs = slackRateLimitRetryDelayMs(result);
-          if (retryDelayMs === null || attempt >= 2) {
-            lastFailure = result;
-            break;
-          }
-          logger.warn(
-            { channelId, streamTs, attempt: attempt + 1, retryDelayMs },
-            'Slack append stream rate-limited; retrying',
-          );
-          await this.waitForRetry(retryDelayMs);
-        } catch (err) {
-          const retryDelayMs = slackRateLimitRetryDelayMs(err);
-          if (retryDelayMs === null || attempt >= 2) {
-            lastFailure = err;
-            break;
-          }
-          logger.warn(
-            { channelId, streamTs, attempt: attempt + 1, retryDelayMs },
-            'Slack append stream errored with rate limit; retrying',
-          );
-          await this.waitForRetry(retryDelayMs);
-        }
-      }
-      if (!appended) {
-        if (appendedChunks > 0) {
-          const partial = new PartialMessageDeliveryError({
-            cause:
-              lastFailure ?? new Error('Slack native stream append failed'),
-            deliveredChunks: appendedChunks,
-            name: 'PartialSlackNativeStreamAppendDeliveryError',
-            message: `Slack native stream append partially delivered (${appendedChunks}/${chunks.length} chunks)`,
-            totalChunks: chunks.length,
-          });
-          Object.assign(partial, {
-            provider: 'slack',
-            deliveredParts: appendedChunks,
-            totalParts: chunks.length,
-            sentPrefix,
-            warnings: ['slack.native_stream_append_partial_delivery'],
-          });
-          throw partial;
-        }
-        return { completed: false, sentPrefix };
-      }
-      sentPrefix += chunk;
-      appendedChunks += 1;
-    }
-    return { completed: true, sentPrefix };
+    return tryNativeStreamAppend({ app: this.app, channelId, streamTs, text });
   }
   protected async tryNativeStreamStop(
     channelId: string,
     streamTs: string,
   ): Promise<boolean> {
-    if (!this.app) return true;
-    try {
-      const result = (await this.app.client.apiCall('chat.stopStream', {
-        channel: channelId,
-        ts: streamTs,
-      })) as { ok?: boolean };
-      return result.ok === true;
-    } catch {
-      return false;
-    }
+    return tryNativeStreamStop({ app: this.app, channelId, streamTs });
   }
   protected async canDecidePermission(
     userId: string,
@@ -296,91 +187,7 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
           forceOwnedTopLevel: true,
         });
       });
-      this.app.event('app_home_opened', async (args: any) => {
-        const event = args.event as { user?: string };
-        if (!event.user) return;
-        const blocks: Array<Record<string, unknown>> = [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: '*Gantry Slack Channel*\\nUse threaded replies for the best agent UX.',
-            },
-          },
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: 'Use `gantry agent add sl:<channel-id>` to bind additional Slack chats.',
-            },
-          },
-        ];
-        try {
-          await this.app?.client.views.publish({
-            user_id: event.user,
-            view: {
-              type: 'home',
-              blocks: blocks as any,
-            },
-          });
-        } catch (err) {
-          logger.debug({ err }, 'Failed to publish Slack App Home');
-        }
-      });
-      this.app.shortcut('gantry_open_home', async (args: any) => {
-        await args.ack();
-        const triggerId = args.shortcut?.trigger_id as string | undefined;
-        if (!triggerId) return;
-        try {
-          await this.app?.client.views.open({
-            trigger_id: triggerId,
-            view: {
-              type: 'modal',
-              title: {
-                type: 'plain_text',
-                text: 'Gantry',
-              },
-              close: {
-                type: 'plain_text',
-                text: 'Close',
-              },
-              blocks: [
-                {
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: 'Use `gantry agent add sl:<channel-id>` to bind new Slack chats.',
-                  },
-                },
-              ],
-            },
-          });
-        } catch (err) {
-          logger.debug({ err }, 'Failed to open Slack shortcut modal');
-        }
-      });
-      this.app.shortcut('gantry_reply_with_context', async (args: any) => {
-        await args.ack();
-        const shortcut = args.shortcut as {
-          channel?: { id?: string };
-          message?: { thread_ts?: string; ts?: string };
-          user?: { id?: string };
-        };
-        const channelId = shortcut.channel?.id;
-        const userId = shortcut.user?.id;
-        if (!channelId || !userId) return;
-        try {
-          await this.app?.client.chat.postEphemeral({
-            channel: channelId,
-            user: userId,
-            text: shortcut.message?.thread_ts
-              ? 'Reply in this thread to continue with Gantry context.'
-              : 'Start a thread first, then reply to keep context grouped.',
-          });
-        } catch (err) {
-          logger.debug({ err }, 'Failed to respond to Slack message shortcut');
-        }
-      });
+      registerSlackUtilityHandlers(this.app);
     }
     const handlePermissionDecision = async (args: any) => {
       await args.ack();
@@ -788,46 +595,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       }
       await this.finalizeUserQuestionPrompt(pending, text, answeredBy);
     });
-    this.app.action('gantry_message_action', async (args: any) => {
-      await args.ack();
-      const action = args.action as { value?: string };
-      const body = args.body as {
-        channel?: { id?: string };
-        user?: { id?: string };
-      };
-      let payload:
-        | {
-            kind?: unknown;
-            jobId?: unknown;
-          }
-        | undefined;
-      try {
-        payload = action.value ? JSON.parse(action.value) : undefined;
-      } catch {
-        return;
-      }
-      if (
-        !payload ||
-        typeof payload.kind !== 'string' ||
-        !SCHEDULER_MESSAGE_ACTION_KINDS.has(
-          payload.kind as MessageActionAffordanceKind,
-        ) ||
-        typeof payload.jobId !== 'string' ||
-        payload.jobId.trim().length === 0 ||
-        !body.channel?.id ||
-        !body.user?.id
-      ) {
-        return;
-      }
-      try {
-        await this.app?.client.chat.postEphemeral({
-          channel: body.channel.id,
-          user: body.user.id,
-          text: 'Scheduler action buttons are visible hints only in this channel. Open the scheduler surface or use scheduler tools to run this action.',
-        });
-      } catch {
-        // ignore callback feedback failures
-      }
-    });
+    registerSlackMessageActionHandler(this.app);
   }
 }

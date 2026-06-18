@@ -49,7 +49,7 @@ export async function fetchAndCacheMcpToolDetail(input: {
   );
 }
 
-export async function lookupMcpToolOutputSchema(input: {
+export async function resolveMcpToolOutputSchema(input: {
   request: {
     appId: AppId;
     agentId: AgentId;

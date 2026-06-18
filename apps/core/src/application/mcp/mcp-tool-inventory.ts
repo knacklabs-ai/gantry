@@ -270,7 +270,6 @@ function mcpInventoryCacheKey(
     config: capability.config,
     allowedToolPatterns: capability.allowedToolPatterns,
     allowedToolNames: capability.allowedToolNames,
-    reviewedToolNames: capability.reviewedToolNames,
   });
 }
 
@@ -280,7 +279,11 @@ function mcpToolDetailCacheKey(
   toolName: string,
 ): string {
   return JSON.stringify({
-    inventoryKey: mcpInventoryCacheKey(input, capability),
+    appId: input.appId,
+    agentId: input.agentId,
+    serverName: capability.name,
+    sourceRevision: capability.sourceRevision,
+    config: capability.config,
     toolName,
   });
 }
@@ -301,15 +304,7 @@ function parseInventoryCacheKey(
   key: string,
 ): { serverName?: unknown; config?: unknown } | undefined {
   try {
-    const parsed = JSON.parse(key) as {
-      inventoryKey?: unknown;
-      serverName?: unknown;
-      config?: unknown;
-    };
-    if (typeof parsed.inventoryKey === 'string') {
-      return parseInventoryCacheKey(parsed.inventoryKey);
-    }
-    return parsed;
+    return JSON.parse(key) as { serverName?: unknown; config?: unknown };
   } catch {
     return undefined;
   }

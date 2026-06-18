@@ -3,6 +3,7 @@ import {
   getRuntimeSettingsForConfig,
   getTriggerPattern,
   IDLE_TIMEOUT,
+  MAX_MESSAGES_PER_PROMPT,
   MESSAGE_FETCH_PAGE_SIZE,
   TIMEZONE,
 } from '../config/index.js';
@@ -83,7 +84,6 @@ import { collectPendingMessagesSince } from './pending-message-replay.js';
 let streamingGenerationCounter = 0;
 const PERMISSION_BACKGROUND_DEMOTE_MS = 120_000;
 const DEFAULT_TURN_APP_ID = 'default';
-const PENDING_MESSAGE_REPLAY_MAX_MESSAGES = MESSAGE_FETCH_PAGE_SIZE * 20;
 type ProgressHeartbeat = ReturnType<typeof startGroupProgressHeartbeats>;
 type ActiveTurnUiCleanup = { token: symbol; cancel: () => void };
 const activeTurnUiCleanupByQueue = new Map<string, ActiveTurnUiCleanup>();
@@ -125,7 +125,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         chatJid,
         sinceCursor: await deps.getCursor(queueJid),
         pageSize: MESSAGE_FETCH_PAGE_SIZE,
-        maxMessages: PENDING_MESSAGE_REPLAY_MAX_MESSAGES,
+        maxMessages: MAX_MESSAGES_PER_PROMPT,
         options: scopedQueue ? { threadId: queueThreadId ?? null } : undefined,
       });
     if (missedMessages.length === 0) return true;

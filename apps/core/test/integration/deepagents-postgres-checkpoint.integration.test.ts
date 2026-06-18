@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -12,10 +10,19 @@ import {
   DeepAgentSessionStore,
   MISSING_DEEPAGENTS_SESSION_MARKER,
 } from '@core/adapters/llm/deepagents-langchain/runner/session-store.js';
+import { ensureDeepAgentsCheckpointSchema } from '@core/adapters/llm/deepagents-langchain/checkpoint-setup.js';
+
 import {
-  DEEPAGENTS_CHECKPOINT_PACKAGE_NAME,
-  ensureDeepAgentsCheckpointSchema,
-} from '@core/adapters/llm/deepagents-langchain/checkpoint-setup.js';
+  collectBufferFields,
+  collectObservedIndexes,
+  collectPlanNodes,
+  collectScanNodes,
+  normalizeExplainPayload,
+  planNumber,
+  redactExplainPlan,
+  redactSqlWhitespace,
+  sumBuffers,
+} from '../harness/postgres-explain.js';
 
 const databaseUrl = process.env.GANTRY_TEST_DATABASE_URL;
 const maybeDescribe = databaseUrl ? describe : describe.skip;
@@ -30,28 +37,7 @@ const ROW_VOLUME_SAMPLE_CONCURRENCY = 24;
 const CHECKPOINT_TIMING_GATE_MS = 250;
 const ROWS_SCANNED_TO_RETURNED_RATIO_GATE = 20;
 const CHECKPOINT_BENCHMARK_RUN_ID = 'deepagents-checkpoint-postgres-itest';
-const CHECKPOINT_ARTIFACT_NAME = 'deepagents-checkpoint-plan.json';
 const CHECKPOINT_NS = '';
-
-type ExplainPlanNode = Record<string, unknown> & {
-  Plans?: ExplainPlanNode[];
-};
-
-interface ScanNodeEvidence {
-  nodeType: string;
-  relationName?: string;
-  indexName?: string;
-  actualRows?: number;
-  actualLoops?: number;
-  rowsRemovedByFilter?: number;
-  buffers: Record<string, number>;
-}
-
-interface PlanNodeEvidence {
-  nodeType: string;
-  actualRows?: number;
-  actualLoops?: number;
-}
 
 function quoteIdent(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
@@ -127,25 +113,16 @@ maybeDescribe(
     });
 
     it('writes official PostgresSaver row-volume evidence at 10k checkpoint threads', async () => {
+      if (process.env.GANTRY_POSTGRES_HOT_PATH !== '1') return;
       if (!pool || !databaseUrl) {
         throw new Error('GANTRY_TEST_DATABASE_URL is required');
       }
-      const artifactPath = path.join(
-        process.cwd(),
-        '.factory',
-        'benchmarks',
-        'postgres-hot-paths',
-        CHECKPOINT_BENCHMARK_RUN_ID,
-        CHECKPOINT_ARTIFACT_NAME,
-      );
       const checkpointTables = {
         checkpoint_migrations: tableRef(schema, 'checkpoint_migrations'),
         checkpoints: tableRef(schema, 'checkpoints'),
         checkpoint_blobs: tableRef(schema, 'checkpoint_blobs'),
         checkpoint_writes: tableRef(schema, 'checkpoint_writes'),
       };
-      const packageVersion = readCheckpointPackageVersion();
-
       await seedCheckpointRowVolume({
         databaseUrl,
         schema,
@@ -450,10 +427,6 @@ maybeDescribe(
         planName: 'deepagents_checkpoint_postgres_saver',
         benchmarkRunId: CHECKPOINT_BENCHMARK_RUN_ID,
         generatedAt: new Date().toISOString(),
-        package: {
-          name: DEEPAGENTS_CHECKPOINT_PACKAGE_NAME,
-          version: packageVersion,
-        },
         setup: {
           schema,
           usedEnsureDeepAgentsCheckpointSchema: true,
@@ -475,7 +448,10 @@ maybeDescribe(
         },
         payloadShape: {
           smallPayloadBytes: checkpointPayloadBytes(
-            checkpointPayload({ index: 1, checkpointId: seedCheckpointId(1) }),
+            checkpointPayload({
+              index: 1,
+              checkpointId: seedCheckpointId(1),
+            }),
           ),
           largePayloadBytes: checkpointPayloadBytes(
             checkpointPayload({
@@ -517,10 +493,7 @@ maybeDescribe(
         },
       };
 
-      fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-      fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
-
-      const artifactText = fs.readFileSync(artifactPath, 'utf8');
+      const artifactText = JSON.stringify(artifact);
       expect(artifactText).not.toContain(databaseUrl);
       expect(artifactText).not.toContain('checkpoint-message-');
       expect(artifactText).not.toContain('large-payload-');
@@ -529,15 +502,10 @@ maybeDescribe(
       expect(artifactText).not.toContain('write-checkpoint-');
       expect(artifactText).not.toContain('explain-checkpoint-');
       expect(artifactText).not.toContain('task-explain-');
-      const writtenArtifact = JSON.parse(artifactText);
-      expect(writtenArtifact).toMatchObject({
+      expect(artifact).toMatchObject({
         schemaVersion: 1,
         planName: 'deepagents_checkpoint_postgres_saver',
         benchmarkRunId: CHECKPOINT_BENCHMARK_RUN_ID,
-        package: {
-          name: DEEPAGENTS_CHECKPOINT_PACKAGE_NAME,
-          version: packageVersion,
-        },
         rowVolume: {
           threadCount: ROW_VOLUME_THREAD_COUNT,
           sampleCount: ROW_VOLUME_SAMPLE_COUNT,
@@ -552,14 +520,14 @@ maybeDescribe(
         },
         verdict: { status: 'acceptable_evidence' },
       });
-      expect(writtenArtifact.metrics.checkpointLoadMs.p95).toBeLessThanOrEqual(
+      expect(artifact.metrics.checkpointLoadMs.p95).toBeLessThanOrEqual(
         CHECKPOINT_TIMING_GATE_MS,
       );
-      expect(writtenArtifact.metrics.checkpointWriteMs.p95).toBeLessThanOrEqual(
+      expect(artifact.metrics.checkpointWriteMs.p95).toBeLessThanOrEqual(
         CHECKPOINT_TIMING_GATE_MS,
       );
-      expect(writtenArtifact.plans).toHaveLength(explainCases.length);
-      for (const item of writtenArtifact.plans) {
+      expect(artifact.plans).toHaveLength(explainCases.length);
+      for (const item of artifact.plans) {
         for (const indexName of item.expectedIndexes) {
           expect(item.observedIndexes).toContain(indexName);
         }
@@ -645,60 +613,45 @@ async function seedCheckpointRowVolume(input: {
   });
   const saver = createDeepAgentCheckpointSaverFromPool(seedPool, input.schema);
   try {
-    await mapWithConcurrency(
-      Array.from({ length: input.threadCount }, (_, index) => index),
-      ROW_VOLUME_SEED_CONCURRENCY,
-      async (index) => {
-        const sessionId = checkpointThreadId(index);
-        const config = await saver.put(
-          {
-            configurable: {
-              thread_id: sessionId,
-              checkpoint_ns: CHECKPOINT_NS,
+    for (
+      let start = 0;
+      start < input.threadCount;
+      start += ROW_VOLUME_SEED_CONCURRENCY
+    ) {
+      const end = Math.min(
+        start + ROW_VOLUME_SEED_CONCURRENCY,
+        input.threadCount,
+      );
+      await Promise.all(
+        Array.from({ length: end - start }, async (_, offset) => {
+          const index = start + offset;
+          const sessionId = checkpointThreadId(index);
+          const config = await saver.put(
+            {
+              configurable: {
+                thread_id: sessionId,
+                checkpoint_ns: CHECKPOINT_NS,
+              },
             },
-          },
-          checkpointPayload({
-            index,
-            checkpointId: seedCheckpointId(index),
-            largePayload: index < 5,
-          }),
-          { source: 'row-volume-seed' },
-          checkpointVersions(index),
-        );
-        await saver.putWrites(
-          config,
-          [['messages', { status: 'seeded', sample: index }]],
-          `task-seed-${index}`,
-        );
-      },
-    );
+            checkpointPayload({
+              index,
+              checkpointId: seedCheckpointId(index),
+              largePayload: index < 5,
+            }),
+            { source: 'row-volume-seed' },
+            checkpointVersions(index),
+          );
+          await saver.putWrites(
+            config,
+            [['messages', { status: 'seeded', sample: index }]],
+            `task-seed-${index}`,
+          );
+        }),
+      );
+    }
   } finally {
     await saver.end().catch(() => {});
   }
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    async () => {
-      while (nextIndex < items.length) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-        results[currentIndex] = await worker(
-          items[currentIndex] as T,
-          currentIndex,
-        );
-      }
-    },
-  );
-  await Promise.all(workers);
-  return results;
 }
 
 async function measureMs(work: () => Promise<void>): Promise<number> {
@@ -858,153 +811,4 @@ function checkpointSelectSql(
     ) AS pending_writes
   FROM ${checkpoints} cp
   ${input.where}`;
-}
-
-function normalizeExplainPayload(payload: unknown): Record<string, unknown> & {
-  Plan: ExplainPlanNode;
-} {
-  if (!Array.isArray(payload) || typeof payload[0] !== 'object') {
-    throw new Error('Unexpected EXPLAIN JSON payload');
-  }
-  const root = payload[0] as Record<string, unknown>;
-  if (!root.Plan || typeof root.Plan !== 'object') {
-    throw new Error('EXPLAIN payload is missing a Plan');
-  }
-  return root as Record<string, unknown> & { Plan: ExplainPlanNode };
-}
-
-const EXPLAIN_LITERAL_FIELDS = new Set([
-  'Filter',
-  'Hash Cond',
-  'Index Cond',
-  'Join Filter',
-  'Merge Cond',
-  'One-Time Filter',
-  'Recheck Cond',
-]);
-
-function redactExplainPlan(value: unknown, key?: string): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => redactExplainPlan(item));
-  }
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([entryKey, entryValue]) => [
-        entryKey,
-        redactExplainPlan(entryValue, entryKey),
-      ]),
-    );
-  }
-  if (typeof value === 'string' && key && EXPLAIN_LITERAL_FIELDS.has(key)) {
-    return value.replace(/'(?:''|[^'])*'/g, "'<redacted>'");
-  }
-  return value;
-}
-
-function collectPlanNodes(node: ExplainPlanNode): PlanNodeEvidence[] {
-  const output: PlanNodeEvidence[] = [];
-  walkPlan(node, (current) => {
-    output.push({
-      nodeType: String(current['Node Type'] ?? 'unknown'),
-      actualRows: planNumber(current, 'Actual Rows'),
-      actualLoops: planNumber(current, 'Actual Loops'),
-    });
-  });
-  return output;
-}
-
-function collectScanNodes(node: ExplainPlanNode): ScanNodeEvidence[] {
-  const output: ScanNodeEvidence[] = [];
-  walkPlan(node, (current) => {
-    const nodeType = String(current['Node Type'] ?? 'unknown');
-    if (!nodeType.includes('Scan')) return;
-    output.push({
-      nodeType,
-      relationName:
-        typeof current['Relation Name'] === 'string'
-          ? current['Relation Name']
-          : undefined,
-      indexName:
-        typeof current['Index Name'] === 'string'
-          ? current['Index Name']
-          : undefined,
-      actualRows: planNumber(current, 'Actual Rows'),
-      actualLoops: planNumber(current, 'Actual Loops'),
-      rowsRemovedByFilter: planNumber(current, 'Rows Removed by Filter'),
-      buffers: collectBufferFields(current),
-    });
-  });
-  return output;
-}
-
-function collectObservedIndexes(node: ExplainPlanNode): string[] {
-  const indexes = new Set<string>();
-  walkPlan(node, (current) => {
-    if (typeof current['Index Name'] === 'string') {
-      indexes.add(current['Index Name']);
-    }
-    const arbiterIndexes = current['Conflict Arbiter Indexes'];
-    if (Array.isArray(arbiterIndexes)) {
-      for (const indexName of arbiterIndexes) {
-        if (typeof indexName === 'string') indexes.add(indexName);
-      }
-    }
-  });
-  return [...indexes].sort();
-}
-
-function walkPlan(
-  node: ExplainPlanNode,
-  visitor: (node: ExplainPlanNode) => void,
-): void {
-  visitor(node);
-  for (const child of node.Plans ?? []) {
-    walkPlan(child, visitor);
-  }
-}
-
-function planNumber(
-  node: Record<string, unknown>,
-  key: string,
-): number | undefined {
-  const value = node[key];
-  return typeof value === 'number' ? value : undefined;
-}
-
-function collectBufferFields(
-  node: Record<string, unknown>,
-): Record<string, number> {
-  const buffers: Record<string, number> = {};
-  for (const [key, value] of Object.entries(node)) {
-    if (key.includes('Block') && typeof value === 'number') {
-      buffers[key] = value;
-    }
-  }
-  return buffers;
-}
-
-function sumBuffers(nodes: ScanNodeEvidence[]): Record<string, number> {
-  return nodes.reduce<Record<string, number>>((totals, node) => {
-    for (const [key, value] of Object.entries(node.buffers)) {
-      totals[key] = (totals[key] ?? 0) + value;
-    }
-    return totals;
-  }, {});
-}
-
-function redactSqlWhitespace(sql: string): string {
-  return sql.replace(/\s+/g, ' ').trim();
-}
-
-function readCheckpointPackageVersion(): string {
-  const packageJsonPath = path.join(
-    process.cwd(),
-    'node_modules',
-    ...DEEPAGENTS_CHECKPOINT_PACKAGE_NAME.split('/'),
-    'package.json',
-  );
-  const raw = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
-    version?: unknown;
-  };
-  return typeof raw.version === 'string' ? raw.version : 'unknown';
 }

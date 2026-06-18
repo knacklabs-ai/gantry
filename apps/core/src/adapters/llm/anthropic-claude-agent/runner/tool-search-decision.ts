@@ -52,17 +52,20 @@ export function decideClaudeSdkToolSearch(input: {
     input.sdkEnv.ANTHROPIC_BASE_URL,
     input.sdkEnv[ANTHROPIC_API_KEY_ENV],
   );
+  const metrics = {
+    availableToolCount,
+    allowedToolCount,
+    disallowedToolCount,
+    mcpServerCount,
+    serializedToolConfigBytes,
+    anthropicBaseUrlKind,
+  };
 
   if (availableToolCount === 0 && mcpServerCount === 0) {
     return {
       enableToolSearch: 'false',
       reason: 'no_registered_tools',
-      availableToolCount,
-      allowedToolCount,
-      disallowedToolCount,
-      mcpServerCount,
-      serializedToolConfigBytes,
-      anthropicBaseUrlKind,
+      ...metrics,
     };
   }
 
@@ -70,12 +73,7 @@ export function decideClaudeSdkToolSearch(input: {
     return {
       enableToolSearch: 'false',
       reason: 'non_first_party_base_url_tool_reference_unproven',
-      availableToolCount,
-      allowedToolCount,
-      disallowedToolCount,
-      mcpServerCount,
-      serializedToolConfigBytes,
-      anthropicBaseUrlKind,
+      ...metrics,
     };
   }
 
@@ -83,12 +81,7 @@ export function decideClaudeSdkToolSearch(input: {
     return {
       enableToolSearch: 'false',
       reason: 'invalid_base_url_tool_reference_unproven',
-      availableToolCount,
-      allowedToolCount,
-      disallowedToolCount,
-      mcpServerCount,
-      serializedToolConfigBytes,
-      anthropicBaseUrlKind,
+      ...metrics,
     };
   }
 
@@ -98,12 +91,7 @@ export function decideClaudeSdkToolSearch(input: {
       anthropicBaseUrlKind === 'gantry_loopback'
         ? 'gantry_gateway_tool_reference_pass_through'
         : 'official_auto_threshold',
-    availableToolCount,
-    allowedToolCount,
-    disallowedToolCount,
-    mcpServerCount,
-    serializedToolConfigBytes,
-    anthropicBaseUrlKind,
+    ...metrics,
   };
 }
 

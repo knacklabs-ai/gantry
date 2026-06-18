@@ -66,12 +66,6 @@ export const REVIEWED_GANTRY_MCP_TOOL_NAMES = [
   'memory_review_decision',
 ] as const;
 
-export const DELEGATION_GANTRY_MCP_TOOL_NAMES = [
-  'delegate_task',
-  'task_get',
-  'task_cancel',
-] as const;
-
 const REVIEWER_MEMORY_REVIEW_GANTRY_MCP_TOOL_NAMES = [
   'memory_review_pending',
   'memory_review_decision',
@@ -81,7 +75,6 @@ export const NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES = [
   ...AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAMES,
   ...OPTIONAL_GANTRY_MCP_TOOL_NAMES,
   ...REVIEWED_GANTRY_MCP_TOOL_NAMES,
-  ...DELEGATION_GANTRY_MCP_TOOL_NAMES,
 ] as const;
 
 const AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAME_SET = new Set<string>(
@@ -93,10 +86,6 @@ const NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET = new Set<string>(
 );
 
 const ADMIN_MCP_TOOL_NAME_SET = new Set<string>(ADMIN_MCP_TOOL_NAMES);
-const DELEGATION_GANTRY_MCP_TOOL_NAME_SET = new Set<string>(
-  DELEGATION_GANTRY_MCP_TOOL_NAMES,
-);
-
 export function isAuthorityChangingGantryMcpToolName(value: string): boolean {
   return AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAME_SET.has(value);
 }
@@ -121,7 +110,6 @@ export const DEFAULT_GANTRY_MCP_TOOL_NAMES = [
 export const ALL_GANTRY_MCP_TOOL_NAMES = [
   ...DEFAULT_GANTRY_MCP_TOOL_NAMES,
   ...GATED_GANTRY_MCP_TOOL_NAMES,
-  ...DELEGATION_GANTRY_MCP_TOOL_NAMES,
   ...REVIEWED_GANTRY_MCP_TOOL_NAMES,
   ...ADMIN_MCP_TOOL_NAMES,
 ] as const;
@@ -162,8 +150,7 @@ export function selectedGantryMcpToolNames(
     const name = gantryMcpToolNameFromFullName(configuredTool);
     if (
       name &&
-      !(GATED_GANTRY_MCP_TOOL_NAMES as readonly string[]).includes(name) &&
-      !DELEGATION_GANTRY_MCP_TOOL_NAME_SET.has(name)
+      !(GATED_GANTRY_MCP_TOOL_NAMES as readonly string[]).includes(name)
     ) {
       names.add(name);
     }
@@ -232,7 +219,6 @@ export function parseEnabledGantryMcpToolNames(
     for (const item of parsed) {
       const toolName = typeof item === 'string' ? item.trim() : '';
       if (!ALL_GANTRY_MCP_TOOL_NAME_SET.has(toolName)) continue;
-      if (DELEGATION_GANTRY_MCP_TOOL_NAME_SET.has(toolName)) continue;
       if (
         options.lockedPreset &&
         (NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET.has(toolName) ||

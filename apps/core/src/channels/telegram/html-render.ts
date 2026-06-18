@@ -1,8 +1,6 @@
 import type { UserQuestionRequest } from '../../domain/types.js';
-import type {
-  AgentTodoItem,
-  AgentTodoStatus,
-} from '../../domain/ports/task-lifecycle.js';
+import type { AgentTodoItem } from '../../domain/ports/task-lifecycle.js';
+import { formatAgentTodoLine } from '../agent-todo-render.js';
 import {
   PERMISSION_GLYPH,
   type PermissionPromptParts,
@@ -119,13 +117,6 @@ export function renderUserQuestionPromptHtml(
   return lines.join('\n');
 }
 
-const AGENT_TODO_STATUS_EMOJI: Record<AgentTodoStatus, string> = {
-  completed: '✅',
-  inProgress: '🔄',
-  pending: '⬜',
-  blocked: '🚫',
-};
-
 // Telegram messages cap at 4096 chars; keep a margin for the header and tags.
 const AGENT_TODO_MAX_LENGTH = 3800;
 
@@ -147,11 +138,7 @@ export function renderAgentTodoHtml(render: {
   let dropped = 0;
   for (let index = 0; index < render.items.length; index += 1) {
     const item = render.items[index];
-    const emoji = AGENT_TODO_STATUS_EMOJI[item.status];
-    const note = item.note?.trim()
-      ? ` (${escapeTelegramHtml(item.note.trim())})`
-      : '';
-    const line = `${emoji} ${escapeTelegramHtml(item.title)}${note}`;
+    const line = formatAgentTodoLine(item, escapeTelegramHtml);
     if (used + line.length + 1 > AGENT_TODO_MAX_LENGTH) {
       dropped = render.items.length - index;
       break;

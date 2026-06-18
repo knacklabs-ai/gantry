@@ -1,5 +1,6 @@
 import {
   getTriggerPattern,
+  MAX_MESSAGES_PER_PROMPT,
   MESSAGE_FETCH_PAGE_SIZE,
   POLL_INTERVAL,
   TIMEZONE,
@@ -37,8 +38,6 @@ import {
   collectPendingMessagesSince,
 } from './pending-message-replay.js';
 import { resolveNonSelfSenderIds } from './session-resume-runtime.js';
-
-const PENDING_MESSAGE_REPLAY_MAX_MESSAGES = MESSAGE_FETCH_PAGE_SIZE * 20;
 
 export interface MessageLoopDeps {
   getConversationRoutes: () => Record<string, ConversationRoute>;
@@ -177,10 +176,25 @@ async function processQueueMessages(
     return enqueueMessageCheck(deps, queueJid);
   }
 
+  const replay =
+    preloadedInitialReplay ??
+    (await collectPendingMessagesSince({
+      getMessagesSince: opsRepository.getMessagesSince,
+      chatJid,
+      sinceCursor: recoveredCursor,
+      pageSize: MESSAGE_FETCH_PAGE_SIZE,
+      maxMessages: MAX_MESSAGES_PER_PROMPT,
+      options: { threadId: threadId ?? null },
+    }));
+  let initialBatch = replay.messages;
+  if (initialBatch.length === 0) {
+    initialBatch = groupMessages;
+  }
+
   const needsTrigger = group.requiresTrigger !== false;
   if (needsTrigger) {
     const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = groupMessages.some(
+    const hasTrigger = initialBatch.some(
       (m) =>
         triggerPattern.test(m.content.trim()) &&
         (m.is_from_me ||
@@ -189,33 +203,23 @@ async function processQueueMessages(
     const isContinuationThread =
       threadId !== undefined && recoveredCursor.trim().length > 0;
     if (!hasTrigger && !isContinuationThread) {
-      const cursorAfter =
-        preloadedInitialReplay?.cursorAfter ??
-        encodeGroupMessageCursor(
-          toGroupMessageCursor(groupMessages[groupMessages.length - 1]),
-        );
-      deps.setAgentCursor(queueJid, cursorAfter);
-      saveStateBestEffort(deps, chatJid);
-      if (preloadedInitialReplay?.hasMore) {
+      const lastMessage = initialBatch[initialBatch.length - 1];
+      const cursorAfter = replay.cursorAfter
+        ? replay.cursorAfter
+        : lastMessage
+          ? encodeGroupMessageCursor(toGroupMessageCursor(lastMessage))
+          : null;
+      if (cursorAfter) {
+        deps.setAgentCursor(queueJid, cursorAfter);
+        saveStateBestEffort(deps, chatJid);
+      }
+      if (replay.hasMore) {
         return enqueueMessageCheck(deps, queueJid);
       }
       return 'completed';
     }
   }
 
-  const replay =
-    preloadedInitialReplay ??
-    (await collectPendingMessagesSince({
-      getMessagesSince: opsRepository.getMessagesSince,
-      chatJid,
-      sinceCursor: recoveredCursor,
-      pageSize: MESSAGE_FETCH_PAGE_SIZE,
-      options: { threadId: threadId ?? null },
-    }));
-  let initialBatch = replay.messages;
-  if (initialBatch.length === 0) {
-    initialBatch = groupMessages;
-  }
   if (initialBatch.length === 0) return 'completed';
 
   const formatted = formatMessages(initialBatch, TIMEZONE);
@@ -285,7 +289,7 @@ export async function processLiveAdmissionWorkItem(
     chatJid,
     sinceCursor: recoveredCursor,
     pageSize: MESSAGE_FETCH_PAGE_SIZE,
-    maxMessages: PENDING_MESSAGE_REPLAY_MAX_MESSAGES,
+    maxMessages: MAX_MESSAGES_PER_PROMPT,
     options: { threadId: threadId ?? null },
   });
   const messages = replay.messages;

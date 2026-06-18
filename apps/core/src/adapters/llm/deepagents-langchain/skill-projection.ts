@@ -14,6 +14,11 @@ import {
   skillMaterializationCollisions,
 } from '../../../domain/skills/skill-identity.js';
 import type { DeepAgentSkillProjection } from '../../../application/agent-execution/agent-execution-adapter.js';
+import {
+  cleanSkillMetadataText,
+  normalizeSkillAssetPath,
+  parseSkillFrontmatter,
+} from '../skill-artifact-helpers.js';
 
 const DEEPAGENTS_SKILLS_SOURCE = '/skills/';
 const SKILL_MD = 'SKILL.md';
@@ -112,7 +117,7 @@ async function projectSkillFiles(input: {
   );
   const assets = bundle.assets
     .map((asset) => ({
-      path: normalizeAssetPath(asset.path),
+      path: normalizeSkillAssetPath(asset.path),
       contentType: asset.contentType,
       content: asset.content,
     }))
@@ -179,8 +184,8 @@ function validateDeepAgentSkillMetadata(input: {
     );
   }
   const frontmatter = parseSkillFrontmatter(input.skillText);
-  const name = cleanMetadataText(frontmatter.name);
-  const description = cleanMetadataText(frontmatter.description);
+  const name = cleanSkillMetadataText(frontmatter.name);
+  const description = cleanSkillMetadataText(frontmatter.description);
   if (!name || !description) {
     throw new Error(
       `DeepAgents selected skill "${input.skill.id}" SKILL.md must declare frontmatter name and description.`,
@@ -209,59 +214,6 @@ function isDeepAgentSkillName(value: string): boolean {
     value.length <= MAX_SKILL_NAME_LENGTH &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
   );
-}
-
-function parseSkillFrontmatter(content: string): Record<string, string> {
-  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) {
-    return {};
-  }
-  const normalized = content.replace(/\r\n/g, '\n');
-  const end = normalized.indexOf('\n---', 4);
-  if (end < 0) return {};
-  const lines = normalized.slice(4, end).split('\n');
-  const metadata: Record<string, string> = {};
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const match = /^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/.exec(line);
-    if (!match) continue;
-    const key = match[1];
-    const rawValue = match[2];
-    if (rawValue === '|') {
-      const block: string[] = [];
-      while (i + 1 < lines.length && /^\s+/.test(lines[i + 1])) {
-        i += 1;
-        block.push(lines[i].replace(/^\s{2}/, ''));
-      }
-      metadata[key] = block.join('\n').trim();
-      continue;
-    }
-    metadata[key] = rawValue.replace(/^['"]|['"]$/g, '').trim();
-  }
-  return metadata;
-}
-
-function cleanMetadataText(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed || undefined;
-}
-
-function normalizeAssetPath(value: string): string {
-  const normalized = value.replace(/\\/g, '/');
-  const parts = normalized.split('/');
-  if (
-    !normalized ||
-    normalized.startsWith('/') ||
-    /^[A-Za-z]:\//.test(normalized) ||
-    path.posix.isAbsolute(normalized) ||
-    normalized.includes('\0') ||
-    parts.some(
-      (part) =>
-        part === '..' || part === '.' || part === '' || part.startsWith('.'),
-    )
-  ) {
-    throw new Error(`Invalid skill asset path: ${value}`);
-  }
-  return parts.join('/');
 }
 
 function decodeUtf8Asset(input: {

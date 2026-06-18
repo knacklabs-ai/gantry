@@ -48,7 +48,7 @@ const PUBLIC_CATALOG = [
   'Skills: selected skills and skill request tools',
   'MCP/apps: mcp_list_tools, mcp_describe_tool, mcp_call_tool, request_mcp_server',
   'Commands: RunCommand(<argv pattern>)',
-  'Tasks: todo_update, delegate_task, task_get, task_cancel',
+  'Tasks: todo_update',
   'Scheduler: scheduler_*',
   'Admin: settings, permission, restart, register-agent tools',
 ];
@@ -150,7 +150,7 @@ function toolingSection(mode: GantryAgentPromptMode): string {
           'Use WebSearch for discovery and WebRead for exact source reading.',
           'Use FileSearch, FileRead, FileEdit, and FileWrite for approved host file work. Use file only for Gantry FileArtifacts.',
           'Use MCP tools through mcp_list_tools, mcp_describe_tool, and mcp_call_tool.',
-          'Use Gantry delegation only; never raw harness subagents.',
+          'Never use raw harness subagents. Gantry delegation tools are unavailable until Gantry mounts a real delegated-task executor.',
           'Do not describe raw provider or harness tool names to users unless the user asks for runtime internals.',
         ];
   return ['## Tooling', ...compactCatalog].join('\n');
@@ -186,7 +186,7 @@ function gantryControlSection(): string {
     '## Gantry Control',
     'Use send_message for channel-visible updates and ask_user_question for decision-blocking questions.',
     'Use request_access for reviewed semantic capabilities, Browser, exact Gantry admin tools, provider/channel permissions, or scoped RunCommand(<argv pattern>) fallback.',
-    'Use todo_update for visible task state. Use delegate_task/task_get/task_cancel only when Gantry mounts them with an executor; if unavailable, continue without delegation or request setup.',
+    'Use todo_update for visible task state. Delegation is not a current runtime tool unless Gantry explicitly mounts a delegated-task executor.',
   ].join('\n');
 }
 

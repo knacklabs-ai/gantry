@@ -34,19 +34,31 @@ const baseItem: LiveAdmissionWorkItem = {
   endedAt: null,
 };
 
+const replayMessage = {
+  id: 1,
+  chat_jid: 'group@g.us',
+  sender: 'user@s.whatsapp.net',
+  content: 'hello',
+  timestamp: '2024-01-01T00:00:01.000Z',
+  is_from_me: false,
+  message_id: 'msg-1',
+  reply_to_message_id: null,
+  reply_to_content: null,
+  sender_name: 'User',
+};
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
 function makeDeps(enqueueMessageCheck: () => boolean): MessageLoopDeps {
-  const message = {
-    id: 1,
-    chat_jid: 'group@g.us',
-    sender: 'user@s.whatsapp.net',
-    content: 'hello',
-    timestamp: '2024-01-01T00:00:01.000Z',
-    is_from_me: false,
-    message_id: 'msg-1',
-    reply_to_message_id: null,
-    reply_to_content: null,
-    sender_name: 'User',
-  };
   return {
     getConversationRoutes: () => ({
       'group@g.us': {
@@ -73,7 +85,7 @@ function makeDeps(enqueueMessageCheck: () => boolean): MessageLoopDeps {
     opsRepository: {
       storeMessage: vi.fn(),
       getNewMessages: vi.fn(),
-      getMessagesSince: vi.fn(async () => [message]),
+      getMessagesSince: vi.fn(async () => [replayMessage]),
       getMessageThreadIds: vi.fn(),
       getLastBotMessageCursor: vi.fn(),
       getLastBotMessageTimestamp: vi.fn(),
@@ -120,6 +132,50 @@ describe('startLiveAdmissionWorkLoop', () => {
         workerInstanceId: 'worker-1',
       }),
     );
+    loop.stop();
+    await loop.done;
+  });
+
+  it('renews a claimed work item while processing is still in flight', async () => {
+    const settleLiveAdmissionWorkItem = vi.fn(async () => true);
+    const renewLiveAdmissionWorkItemClaim = vi.fn(async () => true);
+    const replay = deferred<(typeof replayMessage)[]>();
+    const deps = makeDeps(() => true);
+    deps.opsRepository.getMessagesSince = vi.fn(() => replay.promise);
+    const loop = startLiveAdmissionWorkLoop({
+      liveAdmissions: {
+        claimLiveAdmissionWorkItems: vi.fn(async () => [baseItem]),
+        renewLiveAdmissionWorkItemClaim,
+        deferLiveAdmissionWorkItem: vi.fn(),
+        settleLiveAdmissionWorkItem,
+        enqueueLiveAdmissionWorkItem: vi.fn(),
+      },
+      appId: 'default',
+      workerInstanceId: 'worker-1',
+      messageLoopDeps: deps,
+      claimTtlMs: 60,
+      claimRenewalIntervalMs: 5,
+      intervalMs: 60_000,
+      maxBatchesPerWake: 1,
+      warn: vi.fn(),
+    });
+
+    await vi.waitFor(() =>
+      expect(renewLiveAdmissionWorkItemClaim.mock.calls.length).toBeGreaterThan(
+        1,
+      ),
+    );
+    replay.resolve([replayMessage]);
+    await vi.waitFor(() =>
+      expect(settleLiveAdmissionWorkItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'admission-1',
+          workerInstanceId: 'worker-1',
+          state: 'completed',
+        }),
+      ),
+    );
+
     loop.stop();
     await loop.done;
   });

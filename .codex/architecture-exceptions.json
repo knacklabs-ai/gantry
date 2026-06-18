@@ -1074,6 +1074,13 @@
     "removeByPhase": "canonical-boundary-cleanup-phase"
   },
   {
+    "file": "apps/core/src/application/mcp/mcp-output-schema-validator.ts",
+    "rule": "forbidden_external_import_by_layer",
+    "reason": "MCP outputSchema validation uses the installed JSON Schema validator until MCP proxy execution is split behind an adapter-owned validation port; capped to the single validator import.",
+    "removeByPhase": "canonical-boundary-cleanup-phase",
+    "maxViolations": 1
+  },
+  {
     "file": "apps/core/src/application/mcp/mcp-tool-proxy.ts",
     "rule": "forbidden_external_import_by_layer",
     "reason": "Current MCP proxy owns direct MCP SDK transport calls until the MCP proxy is split behind an adapter port; capped so additional SDK imports fail.",

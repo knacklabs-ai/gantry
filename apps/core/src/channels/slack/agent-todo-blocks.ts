@@ -1,17 +1,11 @@
-import type {
-  AgentTodoRender,
-  AgentTodoStatus,
-} from '../../domain/ports/task-lifecycle.js';
+import type { AgentTodoRender } from '../../domain/ports/task-lifecycle.js';
+import {
+  countCompletedAgentTodos,
+  formatAgentTodoLine,
+} from '../agent-todo-render.js';
 import { truncateSlackText } from './channel-user-question-utils.js';
 
 type SlackBlock = Record<string, unknown>;
-
-const AGENT_TODO_STATUS_EMOJI: Record<AgentTodoStatus, string> = {
-  completed: '✅',
-  inProgress: '🔄',
-  pending: '⬜',
-  blocked: '🚫',
-};
 
 // Slack section `mrkdwn` text caps at 3000 chars; keep a margin for the
 // "(N more)" tail so a long plan never trips the Block Kit limit.
@@ -38,11 +32,7 @@ export function buildAgentTodoBlocks(render: AgentTodoRender): SlackBlock[] {
   let dropped = 0;
   for (let index = 0; index < render.items.length; index += 1) {
     const item = render.items[index];
-    const emoji = AGENT_TODO_STATUS_EMOJI[item.status];
-    const note = item.note?.trim()
-      ? ` (${escapeSlackMrkdwn(item.note.trim())})`
-      : '';
-    const line = `${emoji} ${escapeSlackMrkdwn(item.title)}${note}`;
+    const line = formatAgentTodoLine(item, escapeSlackMrkdwn);
     if (used + line.length + 1 > AGENT_TODO_SECTION_MAX) {
       dropped = render.items.length - index;
       break;
@@ -51,9 +41,7 @@ export function buildAgentTodoBlocks(render: AgentTodoRender): SlackBlock[] {
     used += line.length + 1;
   }
   if (dropped > 0) lines.push(`… (${dropped} more)`);
-  const done = render.items.filter(
-    (item) => item.status === 'completed',
-  ).length;
+  const done = countCompletedAgentTodos(render);
   return [
     {
       type: 'header',

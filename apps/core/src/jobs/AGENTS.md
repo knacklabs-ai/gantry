@@ -13,12 +13,11 @@
   the signed host IPC boundary. Do not open Postgres repositories, artifact
   stores, or runtime storage directly from the MCP subprocess; add a typed IPC
   handler and inject runtime stores through `IpcDeps`.
-- Agent task lifecycle IPC (`todo_update`, `delegate_task`, `task_get`,
-  `task_cancel`) must recheck same-conversation scope and the canonical
-  `AgentDelegation` rule at the parent boundary. MCP-side tool mounting is only
-  defense-in-depth. `delegate_task` must fail unavailable until a real executor
-  claims and runs delegated work; do not return success for a durable row that
-  no worker can complete.
+- Agent task lifecycle IPC currently owns `todo_update` only as an ephemeral
+  channel render signal. Do not add Postgres lifecycle rows for display-only
+  todo state, and do not add `delegate_task`, `task_get`, or `task_cancel`
+  handlers until a real delegated executor can claim, run, and finish the work;
+  dormant unavailable handlers are not a product surface.
 - Scheduler terminal notifications are user-facing lifecycle receipts. Format
   job reports, system maintenance results, and next-run times into readable
   product copy before delivery; never surface raw queue bookkeeping JSON,

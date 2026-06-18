@@ -2,9 +2,9 @@ import { isValidControlId } from './control-id.js';
 
 const APP_CONVERSATION_JID_PREFIX = 'app:';
 
-export function appConversationPartsFromJid(
+export function appIdFromConversationJid(
   conversationJid: string,
-): { appId: string; conversationId: string } | null {
+): string | null {
   if (!conversationJid.startsWith(APP_CONVERSATION_JID_PREFIX)) return null;
   const rest = conversationJid.slice(APP_CONVERSATION_JID_PREFIX.length);
   const delimiterIndex = rest.indexOf(':');
@@ -16,11 +16,5 @@ export function appConversationPartsFromJid(
   if (!isValidControlId(appId) || !isValidControlId(conversationId)) {
     return null;
   }
-  return { appId, conversationId };
-}
-
-export function appIdFromConversationJid(
-  conversationJid: string,
-): string | null {
-  return appConversationPartsFromJid(conversationJid)?.appId ?? null;
+  return appId;
 }

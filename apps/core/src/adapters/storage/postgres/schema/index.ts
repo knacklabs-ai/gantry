@@ -22,6 +22,5 @@ export * from './runs.js';
 export * from './sandbox.js';
 export * from './sessions.js';
 export * from './skills.js';
-export * from './task-lifecycle.js';
 export * from './tools.js';
 export * from './worker-coordination.js';

@@ -36,7 +36,7 @@ export async function collectPendingMessagesSince(input: {
   let cursor = input.sinceCursor;
 
   while (messages.length < maxMessages) {
-    const limit = Math.min(pageSize, maxMessages - messages.length);
+    const limit = pageSize;
     const batch = await input.getMessagesSince(
       input.chatJid,
       cursor,
@@ -51,15 +51,28 @@ export async function collectPendingMessagesSince(input: {
       };
     }
 
-    messages.push(...batch);
+    const remaining = maxMessages - messages.length;
+    const acceptedBatch = batch.slice(0, remaining);
+    messages.push(...acceptedBatch);
+    const lastAcceptedMessage = acceptedBatch[acceptedBatch.length - 1];
+    if (!lastAcceptedMessage) {
+      return {
+        messages,
+        hasMore: true,
+        cursorAfter: messagesCursor(messages),
+      };
+    }
     const nextCursor = encodeGroupMessageCursor(
-      toGroupMessageCursor(batch[batch.length - 1]),
+      toGroupMessageCursor(lastAcceptedMessage),
     );
     if (nextCursor === cursor) {
       throw new Error('Pending message replay cursor did not advance');
     }
     cursor = nextCursor;
 
+    if (acceptedBatch.length < batch.length) {
+      return { messages, hasMore: true, cursorAfter: cursor };
+    }
     if (batch.length < limit) {
       return { messages, hasMore: false, cursorAfter: cursor };
     }

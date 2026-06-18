@@ -3,12 +3,10 @@ import type { HostnameLookup } from '../../domain/network/public-address-policy.
 import { evaluateEgressDenylist } from '../../shared/egress-policy.js';
 import { createDnsPinnedMcpFetch } from '../../shared/dns-pinned-fetch.js';
 import { ApplicationError } from '../common/application-error.js';
-import type { RemoteMcpDnsValidationCache } from './mcp-server-policy.js';
 
 export function assertMcpNetworkHostAllowed(input: {
   serverName: string;
   url: string;
-  networkHosts: readonly string[];
   denylist: readonly string[];
 }): void {
   const parsed = new URL(input.url);
@@ -32,7 +30,6 @@ export function assertMcpNetworkHostAllowed(input: {
 export function createGuardedMcpFetch(input: {
   allowLoopbackHttp?: boolean;
   lookupHostname?: HostnameLookup;
-  dnsValidationCache?: RemoteMcpDnsValidationCache;
 }): typeof fetch {
   const remoteFetch = createDnsPinnedMcpFetch({
     lookupHostname: input.lookupHostname,

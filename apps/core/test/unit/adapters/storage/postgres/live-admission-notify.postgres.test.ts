@@ -6,11 +6,10 @@ import {
   LIVE_ADMISSION_CHANNEL,
   PostgresLiveAdmissionNotifier,
   PostgresLiveAdmissionWakeupSource,
-  parseLiveAdmissionWakeup,
 } from '@core/adapters/storage/postgres/live-admission-notify.postgres.js';
 
 describe('live admission Postgres wakeups', () => {
-  it('publishes only app and work-item ids', async () => {
+  it('publishes a wakeup without work-item payload data', async () => {
     const query = vi.fn(async () => undefined);
     const notifier = new PostgresLiveAdmissionNotifier({ query } as any);
 
@@ -21,31 +20,11 @@ describe('live admission Postgres wakeups', () => {
 
     expect(query).toHaveBeenCalledWith('SELECT pg_notify($1, $2)', [
       LIVE_ADMISSION_CHANNEL,
-      JSON.stringify({
-        appId: 'default',
-        workItemId: 'live-admission:default:message-1',
-      }),
+      '',
     ]);
-    expect(JSON.stringify(query.mock.calls)).not.toContain('sensitive body');
-  });
-
-  it('parses only valid live admission wakeup payloads', () => {
-    expect(
-      parseLiveAdmissionWakeup(
-        JSON.stringify({
-          appId: 'default',
-          workItemId: 'live-admission:default:message-1',
-        }),
-      ),
-    ).toEqual({
-      appId: 'default',
-      workItemId: 'live-admission:default:message-1',
-    });
-    expect(parseLiveAdmissionWakeup(undefined)).toBeNull();
-    expect(parseLiveAdmissionWakeup('{')).toBeNull();
-    expect(
-      parseLiveAdmissionWakeup(JSON.stringify({ appId: 'default' })),
-    ).toBeNull();
+    expect(JSON.stringify(query.mock.calls)).not.toContain(
+      'live-admission:default:message-1',
+    );
   });
 
   it('wakes subscribers on LISTEN notification and unsubscribes cleanly', async () => {

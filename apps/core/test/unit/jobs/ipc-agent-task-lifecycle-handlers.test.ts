@@ -4,9 +4,6 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { DelegatedTask } from '@core/domain/ports/task-lifecycle.js';
-import { appendLiveToolRules } from '@core/shared/live-tool-rules.js';
-
 const runtimeHomes: string[] = [];
 
 async function loadTaskLifecycleHandlers(runtimeHome: string) {
@@ -58,63 +55,21 @@ function readResponse(runtimeHome: string, taskId: string) {
   );
 }
 
-function task(overrides: Partial<DelegatedTask> = {}): DelegatedTask {
-  return {
-    id: 'task-1',
-    appId: 'app:test',
-    agentId: 'agent:main',
-    principalId: 'sl:C123',
-    conversationId: 'sl:C123',
-    threadId: 'thread-1',
-    parentRunId: 'run-id-1',
-    runHandle: 'run-1',
-    idempotencyKey: 'delegate:key',
-    capabilityScope: 'AgentDelegation',
-    ownerWorkerId: 'main_agent',
-    leaseToken: 'lease-1',
-    fencingVersion: 7,
-    status: 'running',
-    providerCorrelation: {},
-    progressCursor: null,
-    title: 'Research options',
-    task: 'Compare options',
-    expectedOutput: 'Decision notes',
-    context: null,
-    resultSummary: null,
-    errorSummary: null,
-    terminalReceipt: null,
-    cancelReason: null,
-    createdAt: '2026-06-17T00:00:00.000Z',
-    updatedAt: '2026-06-17T00:00:00.000Z',
-    startedAt: '2026-06-17T00:00:00.000Z',
-    endedAt: null,
-    ...overrides,
-  };
-}
-
 function contextFor(input: {
   data: Record<string, unknown>;
-  ipcBaseDir?: string;
-  taskLifecycleRepository: Record<string, ReturnType<typeof vi.fn>>;
+  renderAgentTodo?: ReturnType<typeof vi.fn>;
 }) {
   return {
     data: input.data,
     sourceAgentFolder: 'main_agent',
-    ipcBaseDir: input.ipcBaseDir,
     deps: {
-      getTaskLifecycleRepository: () => input.taskLifecycleRepository,
+      ...(input.renderAgentTodo
+        ? { renderAgentTodo: input.renderAgentTodo }
+        : {}),
     },
     conversationBindings: {},
     sourceAgentFolderJids: ['sl:C123'],
   } as never;
-}
-
-function addLiveDelegationRule(ipcBaseDir: string) {
-  appendLiveToolRules({
-    ipcDir: path.join(ipcBaseDir, 'main_agent'),
-    runHandle: 'run-1',
-    rules: ['AgentDelegation'],
-  });
 }
 
 afterEach(() => {
@@ -125,30 +80,14 @@ afterEach(() => {
 });
 
 describe('agent task lifecycle IPC handlers', () => {
-  it('persists bounded todo state and returns stable user copy', async () => {
+  it('renders bounded todo state and returns stable user copy', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-task-ipc-'),
     );
     runtimeHomes.push(runtimeHome);
     const { agentTaskLifecycleHandlers, taskData } =
       await loadTaskLifecycleHandlers(runtimeHome);
-    const recordTodoUpdate = vi.fn(async (input) => ({
-      outcome: 'created',
-      update: {
-        id: 'todo-1',
-        appId: input.scope.appId,
-        agentId: input.scope.agentId,
-        principalId: input.scope.principalId,
-        conversationId: input.scope.conversationId,
-        threadId: input.scope.threadId,
-        parentRunId: input.scope.parentRunId,
-        runHandle: input.scope.runHandle,
-        seq: 1,
-        summary: input.summary,
-        items: input.items,
-        createdAt: '2026-06-17T00:00:00.000Z',
-      },
-    }));
+    const renderAgentTodo = vi.fn(async () => undefined);
 
     await agentTaskLifecycleHandlers.todo_update(
       contextFor({
@@ -163,21 +102,13 @@ describe('agent task lifecycle IPC handlers', () => {
             },
           ],
         }),
-        taskLifecycleRepository: { recordTodoUpdate },
+        renderAgentTodo,
       }),
     );
 
-    expect(recordTodoUpdate).toHaveBeenCalledWith(
+    expect(renderAgentTodo).toHaveBeenCalledWith(
+      'sl:C123',
       expect.objectContaining({
-        scope: {
-          appId: 'app:test',
-          agentId: 'agent:main',
-          principalId: 'sl:C123',
-          conversationId: 'sl:C123',
-          threadId: 'thread-1',
-          parentRunId: 'run-id-1',
-          runHandle: 'run-1',
-        },
         summary: 'Current plan',
         items: [
           {
@@ -187,256 +118,39 @@ describe('agent task lifecycle IPC handlers', () => {
             note: 'Checking surface',
           },
         ],
-        fence: { leaseToken: 'lease-1', fencingVersion: 7 },
-        fencingVersion: 7,
+        threadId: 'thread-1',
       }),
     );
     expect(readResponse(runtimeHome, 'todo-ok')).toMatchObject({
       ok: true,
       message: 'Plan updated.',
-      data: { outcome: 'created', todoUpdateId: 'todo-1' },
     });
   });
 
-  it('rejects stale-fenced todo_update before channel render', async () => {
+  it('rejects invalid todo_update before channel render', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-task-ipc-'),
     );
     runtimeHomes.push(runtimeHome);
     const { agentTaskLifecycleHandlers, taskData } =
       await loadTaskLifecycleHandlers(runtimeHome);
-    const recordTodoUpdate = vi.fn(async () => ({
-      outcome: 'stale_fence',
-    }));
     const renderAgentTodo = vi.fn();
 
-    await agentTaskLifecycleHandlers.todo_update({
-      ...contextFor({
+    await agentTaskLifecycleHandlers.todo_update(
+      contextFor({
         data: taskData('todo-stale', 'todo_update', {
-          items: [{ id: 'step-1', title: 'Validate', status: 'pending' }],
+          items: [{ id: 'step-1', title: 'Validate', status: 'invalid' }],
         }),
-        taskLifecycleRepository: { recordTodoUpdate },
-      }),
-      deps: {
-        getTaskLifecycleRepository: () => ({ recordTodoUpdate }),
         renderAgentTodo,
-      },
-    } as never);
-
-    expect(recordTodoUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fence: { leaseToken: 'lease-1', fencingVersion: 7 },
       }),
     );
+
     expect(renderAgentTodo).not.toHaveBeenCalled();
     expect(readResponse(runtimeHome, 'todo-stale')).toMatchObject({
       ok: false,
-      code: 'stale_fence',
-      error: 'Plan update rejected because the run lease is no longer active.',
-    });
-  });
-
-  it('denies delegate_task before repository launch when AgentDelegation is absent', async () => {
-    const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'gantry-task-ipc-'),
-    );
-    runtimeHomes.push(runtimeHome);
-    const { agentTaskLifecycleHandlers, taskData } =
-      await loadTaskLifecycleHandlers(runtimeHome);
-    const launchDelegatedTask = vi.fn();
-
-    await agentTaskLifecycleHandlers.delegate_task(
-      contextFor({
-        data: taskData('delegate-denied', 'delegate_task', {
-          title: 'Research options',
-          task: 'Compare options',
-          expectedOutput: 'Decision notes',
-        }),
-        taskLifecycleRepository: { launchDelegatedTask },
-      }),
-    );
-
-    expect(launchDelegatedTask).not.toHaveBeenCalled();
-    expect(readResponse(runtimeHome, 'delegate-denied')).toMatchObject({
-      ok: false,
-      code: 'missing_capability',
-      error: 'Agent delegation is not approved for this agent.',
-    });
-  });
-
-  it('rejects delegate_task until a delegated-task executor is configured', async () => {
-    const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'gantry-task-ipc-'),
-    );
-    runtimeHomes.push(runtimeHome);
-    const ipcBaseDir = path.join(runtimeHome, 'ipc');
-    addLiveDelegationRule(ipcBaseDir);
-    const { agentTaskLifecycleHandlers, taskData } =
-      await loadTaskLifecycleHandlers(runtimeHome);
-    const launchDelegatedTask = vi.fn();
-
-    await agentTaskLifecycleHandlers.delegate_task(
-      contextFor({
-        data: taskData('delegate-created', 'delegate_task', {
-          title: 'Research options',
-          task: 'Compare options',
-          expectedOutput: 'Decision notes',
-          context: 'Keep it short',
-        }),
-        ipcBaseDir,
-        taskLifecycleRepository: { launchDelegatedTask },
-      }),
-    );
-
-    expect(launchDelegatedTask).not.toHaveBeenCalled();
-    expect(readResponse(runtimeHome, 'delegate-created')).toMatchObject({
-      ok: false,
-      code: 'unavailable',
+      code: 'invalid_request',
       error:
-        'Agent delegation is unavailable until Gantry has a delegated-task executor configured.',
-    });
-  });
-
-  it('returns terminal receipt lines from task_get', async () => {
-    const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'gantry-task-ipc-'),
-    );
-    runtimeHomes.push(runtimeHome);
-    const ipcBaseDir = path.join(runtimeHome, 'ipc');
-    addLiveDelegationRule(ipcBaseDir);
-    const { agentTaskLifecycleHandlers, taskData } =
-      await loadTaskLifecycleHandlers(runtimeHome);
-    const getDelegatedTask = vi.fn(async () => ({
-      outcome: 'found',
-      task: task({
-        status: 'completed',
-        resultSummary: 'Picked option A',
-        terminalReceipt: {
-          completed: 'Picked option A',
-          used: 'FileRead, WebRead',
-          changed: 'none',
-          delegated: 'yes',
-          needsAttention: 'none',
-        },
-      }),
-    }));
-
-    await agentTaskLifecycleHandlers.task_get(
-      contextFor({
-        data: taskData('task-get', 'task_get', { taskId: 'task-1' }),
-        ipcBaseDir,
-        taskLifecycleRepository: { getDelegatedTask },
-      }),
-    );
-
-    expect(getDelegatedTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-1',
-        fence: { leaseToken: 'lease-1', fencingVersion: 7 },
-      }),
-    );
-    expect(readResponse(runtimeHome, 'task-get')).toMatchObject({
-      ok: true,
-      message:
-        'Completed: Picked option A\nUsed: FileRead, WebRead\nChanged: none\nDelegated: yes\nNeeds attention: none',
-      data: {
-        receipt: {
-          Completed: 'Picked option A',
-          Used: 'FileRead, WebRead',
-          Changed: 'none',
-          Delegated: 'yes',
-          'Needs attention': 'none',
-        },
-      },
-    });
-  });
-
-  it('writes cancellation through Gantry lifecycle before reporting success', async () => {
-    const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'gantry-task-ipc-'),
-    );
-    runtimeHomes.push(runtimeHome);
-    const ipcBaseDir = path.join(runtimeHome, 'ipc');
-    addLiveDelegationRule(ipcBaseDir);
-    const { agentTaskLifecycleHandlers, taskData } =
-      await loadTaskLifecycleHandlers(runtimeHome);
-    const cancelDelegatedTask = vi.fn(async () => ({
-      outcome: 'cancelled',
-      task: task({
-        status: 'cancelled',
-        cancelReason: 'No longer needed',
-        terminalReceipt: {
-          completed: 'Cancelled before provider output.',
-          used: 'AgentDelegation',
-          changed: 'none',
-          delegated: 'yes',
-          needsAttention: 'none',
-        },
-      }),
-    }));
-
-    await agentTaskLifecycleHandlers.task_cancel(
-      contextFor({
-        data: taskData('task-cancel', 'task_cancel', {
-          taskId: 'task-1',
-          reason: 'No longer needed',
-        }),
-        ipcBaseDir,
-        taskLifecycleRepository: { cancelDelegatedTask },
-      }),
-    );
-
-    expect(cancelDelegatedTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-1',
-        fence: { leaseToken: 'lease-1', fencingVersion: 7 },
-        reason: 'No longer needed',
-      }),
-    );
-    expect(readResponse(runtimeHome, 'task-cancel')).toMatchObject({
-      ok: true,
-      message: 'Delegated work was cancelled. Nothing else changed.',
-      data: { status: 'cancelled' },
-    });
-  });
-
-  it('rejects task_cancel when the delegated task is already terminal', async () => {
-    const runtimeHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'gantry-task-ipc-'),
-    );
-    runtimeHomes.push(runtimeHome);
-    const ipcBaseDir = path.join(runtimeHome, 'ipc');
-    addLiveDelegationRule(ipcBaseDir);
-    const { agentTaskLifecycleHandlers, taskData } =
-      await loadTaskLifecycleHandlers(runtimeHome);
-    const cancelDelegatedTask = vi.fn(async () => ({
-      outcome: 'already_terminal',
-      task: task({
-        status: 'completed',
-        terminalReceipt: {
-          completed: 'Already done.',
-          used: 'AgentDelegation',
-          changed: 'none',
-          delegated: 'yes',
-          needsAttention: 'none',
-        },
-      }),
-    }));
-
-    await agentTaskLifecycleHandlers.task_cancel(
-      contextFor({
-        data: taskData('task-cancel-terminal', 'task_cancel', {
-          taskId: 'task-1',
-        }),
-        ipcBaseDir,
-        taskLifecycleRepository: { cancelDelegatedTask },
-      }),
-    );
-
-    expect(readResponse(runtimeHome, 'task-cancel-terminal')).toMatchObject({
-      ok: false,
-      code: 'already_terminal',
-      error: 'Delegated task is already finished and cannot be cancelled.',
+        'todo_update requires 1-50 unique items with id, title, and status.',
     });
   });
 });

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import type { LiveAdmissionWorkItemRepository } from '../domain/ports/live-turns.js';
+import type {
+  LiveAdmissionWorkItem,
+  LiveAdmissionWorkItemRepository,
+} from '../domain/ports/live-turns.js';
 import { nowMs, toIso } from '../shared/time/datetime.js';
 import {
   processLiveAdmissionWorkItem,
@@ -26,6 +29,7 @@ export interface StartLiveAdmissionWorkLoopInput {
   messageLoopDeps: MessageLoopDeps;
   claimLimit?: number;
   claimTtlMs?: number;
+  claimRenewalIntervalMs?: number;
   intervalMs?: number;
   maxBatchesPerWake?: number;
   maxRetryCount?: number;
@@ -57,6 +61,10 @@ export function startLiveAdmissionWorkLoop(
 ): LiveAdmissionWorkLoopHandle {
   const claimLimit = input.claimLimit ?? DEFAULT_CLAIM_LIMIT;
   const claimTtlMs = input.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS;
+  const claimRenewalIntervalMs =
+    input.claimRenewalIntervalMs !== undefined
+      ? Math.max(1, input.claimRenewalIntervalMs)
+      : Math.max(1_000, Math.floor(claimTtlMs / 3));
   const intervalMs = input.intervalMs ?? DEFAULT_INTERVAL_MS;
   const maxBatchesPerWake =
     input.maxBatchesPerWake ?? DEFAULT_MAX_BATCHES_PER_WAKE;
@@ -154,6 +162,60 @@ export function startLiveAdmissionWorkLoop(
     );
   };
 
+  const processWithClaimRenewal = async (
+    item: LiveAdmissionWorkItem,
+    claimToken: string,
+  ): Promise<{
+    result: MessageAdmissionProcessingResult;
+    claimLost: boolean;
+  }> => {
+    const itemId = item.id;
+    let claimLost = false;
+    let stoppedRenewing = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let renewalInFlight: Promise<void> | undefined;
+
+    const scheduleRenewal = (): void => {
+      timer = setTimeout(() => {
+        timer = undefined;
+        renewalInFlight = (async () => {
+          try {
+            const ok = await renewClaim(itemId, claimToken);
+            if (!ok) {
+              claimLost = true;
+              input.warn(
+                { itemId },
+                'Live admission work item claim was lost during processing',
+              );
+              return;
+            }
+          } catch (err) {
+            input.warn(
+              { err, itemId },
+              'Failed to renew live admission work item claim during processing',
+            );
+          }
+          if (!stoppedRenewing) scheduleRenewal();
+        })();
+        void renewalInFlight;
+      }, claimRenewalIntervalMs);
+    };
+
+    scheduleRenewal();
+    let result: MessageAdmissionProcessingResult | undefined;
+    try {
+      result = await processLiveAdmissionWorkItem(input.messageLoopDeps, item);
+    } finally {
+      stoppedRenewing = true;
+      if (timer) clearTimeout(timer);
+      await renewalInFlight;
+    }
+    if (result === undefined) {
+      throw new Error('Live admission processing finished without a result.');
+    }
+    return { result, claimLost };
+  };
+
   const drainOnce = async (): Promise<void> => {
     for (let batch = 0; batch < maxBatchesPerWake && !stopped; batch++) {
       const claimToken = `live-admission:${input.workerInstanceId}:${randomUUID()}`;
@@ -184,10 +246,11 @@ export function startLiveAdmissionWorkLoop(
         }
         inFlightClaims.delete(item.id);
         try {
-          const result = await processLiveAdmissionWorkItem(
-            input.messageLoopDeps,
+          const { result, claimLost } = await processWithClaimRenewal(
             item,
+            claimToken,
           );
+          if (claimLost) continue;
           if (result === 'completed') {
             const ok = await input.liveAdmissions.settleLiveAdmissionWorkItem({
               id: item.id,

@@ -43,7 +43,7 @@ import {
   runFamilyFailoverLoop,
   publishRunFailoverEvent,
 } from './failover-candidate-loop.js';
-import { runtimeLogger } from './group-runtime-logger.js';
+import { logger, redactString } from '../infrastructure/logging/logger.js';
 const DEFAULT_ASSISTANT_NAME = 'Gantry';
 const DEFAULT_MODEL_ALIAS = 'opus';
 const DEFAULT_TURN_APP_ID = 'default';
@@ -57,6 +57,10 @@ function isMissingProviderSessionError(error: string | undefined): boolean {
   return /\bprovider session\b.*\b(?:missing|expired|not found)\b/i.test(
     error ?? '',
   );
+}
+
+function redactRuntimeError(error: string | undefined): string | undefined {
+  return error ? redactString(error) : undefined;
 }
 
 function isStoppedByRequest(output: AgentOutput): boolean {
@@ -252,7 +256,7 @@ export function createGroupAgentRunner(input: {
             : {}),
         })
         .catch((err) => {
-          runtimeLogger.warn(
+          logger.warn(
             { err, group: group.name, runId: runState.runId },
             'Failed to update runtime run provider metadata',
           );
@@ -287,7 +291,7 @@ export function createGroupAgentRunner(input: {
         },
       );
       if (persisted === false) {
-        runtimeLogger.warn(
+        logger.warn(
           { group: group.name },
           'Provider session update skipped because turn ownership changed',
         );
@@ -381,7 +385,7 @@ export function createGroupAgentRunner(input: {
           agentSessionId: turnContext.agentSessionId,
           collectMemory: collectSessionMemory,
           defaultScope: defaultMemoryScope,
-          logger: runtimeLogger,
+          logger,
           context: { group: group.name },
         });
       }
@@ -429,7 +433,7 @@ export function createGroupAgentRunner(input: {
       latestProviderSessionId = undefined;
       resumeProviderSessionId = undefined;
       resumeExternalSessionId = undefined;
-      runtimeLogger.warn(
+      logger.warn(
         {
           group: group.name,
           agentId: turnContext.agentId,
@@ -493,8 +497,8 @@ export function createGroupAgentRunner(input: {
         });
         latestProviderSessionId = undefined;
         await updateRunProviderMetadata({ providerSessionId: null });
-        runtimeLogger.warn(
-          { group: group.name, reason },
+        logger.warn(
+          { group: group.name, reason: redactString(reason) },
           'Expired stale provider session and retrying without resume',
         );
         return true;
@@ -624,15 +628,13 @@ export function createGroupAgentRunner(input: {
           });
           return fromProviderId;
         },
-        log: (message) => runtimeLogger.warn({ group: group.name }, message),
+        log: (message) =>
+          logger.warn({ group: group.name }, redactString(message)),
       });
       await forwardRuntimeEvents(output);
       if (output.status === 'error') {
         if (isStoppedByRequest(output)) {
-          runtimeLogger.warn(
-            { group: group.name },
-            'Agent runner stopped by request',
-          );
+          logger.warn({ group: group.name }, 'Agent runner stopped by request');
           if (!liveRunFenced) {
             await completeFailedRuntimeSessionRun({
               ops: ops(),
@@ -642,8 +644,8 @@ export function createGroupAgentRunner(input: {
           }
           return 'stopped';
         }
-        runtimeLogger.error(
-          { group: group.name, error: output.error },
+        logger.error(
+          { group: group.name, error: redactRuntimeError(output.error) },
           'Agent runner error',
         );
         if (!liveRunFenced) {
@@ -674,7 +676,7 @@ export function createGroupAgentRunner(input: {
       }
       return 'success';
     } catch (err) {
-      runtimeLogger.error({ group: group.name, err }, 'Agent error');
+      logger.error({ group: group.name, err }, 'Agent error');
       if (!liveRunFenced) {
         await completeFailedRuntimeSessionRun({
           ops: ops(),

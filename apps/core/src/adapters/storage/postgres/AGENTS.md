@@ -67,7 +67,6 @@
   provider-native rows such as `Read`, `Write`, `Bash`, `Agent`, `Glob`,
   `Grep`, or `WebFetch`; those belong inside execution adapter per-run harness
   projections.
-- Agent task/todo lifecycle rows are durable runtime state, not desired state
-  and not permission authority. Keep provider task ids in private correlation
-  JSON only, scope public reads/cancels by app, agent, principal,
-  conversation/thread, parent run/run handle, and fence live-owner writes.
+- Display-only agent todo state is not Postgres lifecycle state. Do not add
+  `todo_update` tables, delegated-task tables, provider task id correlation, or
+  read/cancel indexes until a real delegated executor and read model exist.

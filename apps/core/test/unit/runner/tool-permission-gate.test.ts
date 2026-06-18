@@ -953,7 +953,7 @@ describe('createCanUseToolCallback', () => {
   it('does not auto-allow native Agent without the Gantry wrapper path', async () => {
     permissionMock.requestPermissionApproval.mockResolvedValueOnce({
       approved: false,
-      reason: 'Use delegate_task instead.',
+      reason: 'Delegation executor unavailable.',
       decidedBy: 'user',
     });
     const canUseTool = makeCallback({
@@ -989,7 +989,7 @@ describe('createCanUseToolCallback', () => {
     expect(decision).toEqual(
       expect.objectContaining({
         behavior: 'deny',
-        message: expect.stringContaining('Use delegate_task instead.'),
+        message: expect.stringContaining('Delegation executor unavailable.'),
       }),
     );
     expect(permissionMock.requestPermissionApproval).toHaveBeenCalledWith(

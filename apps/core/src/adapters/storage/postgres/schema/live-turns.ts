@@ -206,16 +206,5 @@ export const liveAdmissionWorkItemsPostgres = pgTable(
       .where(
         sql`${table.state} = 'claimed' AND ${table.claimExpiresAt} IS NOT NULL`,
       ),
-    conversationIdx: index('idx_live_admission_work_items_conversation').on(
-      table.appId,
-      table.conversationId,
-      table.threadId,
-      table.createdAt,
-    ),
-    agentIdx: index('idx_live_admission_work_items_agent').on(
-      table.appId,
-      table.agentId,
-      table.createdAt,
-    ),
   }),
 );

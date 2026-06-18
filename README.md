@@ -687,8 +687,7 @@ from the selected model provider: Claude/Anthropic models use
 OpenRouter, Bedrock, and Vertex use `deepagents` through the Gantry Model
 Gateway. Explicit incompatible harness/model pairings fail before runner spawn.
 
-Harness-selection work is documented in [Agent Harness Selection](docs/decisions/2026-06-14-agent-harness-selection.md)
-and the [DeepAgents handoff plan](docs/architecture/deepagents-agent-engine-handoff-plan.md).
+Harness-selection work is documented in [Agent Harness Selection](docs/decisions/2026-06-14-agent-harness-selection.md).
 
 - `gantry agent list` and `gantry agent info <id>` display the selected
   `agentHarness`; `gantry model why <alias> --agent <id>` shows the model

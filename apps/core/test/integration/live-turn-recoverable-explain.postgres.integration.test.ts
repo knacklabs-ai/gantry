@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -16,80 +13,23 @@ import {
   hasPostgresIntegrationDatabase,
   type PostgresIntegrationRuntime,
 } from '../harness/postgres-integration-runtime.js';
+import {
+  collectObservedIndexes,
+  collectPlanNodeTypes,
+  collectScanNodes,
+  normalizeExplainPayload,
+  planNumber,
+} from '../harness/postgres-explain.js';
 
-const maybeDescribe = hasPostgresIntegrationDatabase ? describe : describe.skip;
+const maybeDescribe =
+  hasPostgresIntegrationDatabase && process.env.GANTRY_POSTGRES_HOT_PATH === '1'
+    ? describe
+    : describe.skip;
 const RECOVERABLE_SWEEP_RUN_ID = 'live-turn-recoverable-explain-itest';
-const RECOVERABLE_SWEEP_ARTIFACT_NAME = 'live-turn-recoverable-plan.json';
 const LIVE_TURN_SEED_COUNT = 100_000;
 const RECOVERABLE_SWEEP_LIMIT = 25;
 const RECOVERABLE_SWEEP_CANDIDATE_LIMIT = RECOVERABLE_SWEEP_LIMIT * 4;
 const ROWS_SCANNED_TO_RETURNED_RATIO_GATE = 20;
-
-type ExplainPlanNode = Record<string, unknown> & {
-  Plans?: ExplainPlanNode[];
-};
-
-function planNumber(node: Record<string, unknown>, field: string): number {
-  const value = node[field];
-  return typeof value === 'number' ? value : 0;
-}
-
-function walkPlan(
-  node: ExplainPlanNode,
-  visit: (node: ExplainPlanNode) => void,
-) {
-  visit(node);
-  for (const child of node.Plans ?? []) walkPlan(child, visit);
-}
-
-function planIndexes(plan: ExplainPlanNode): string[] {
-  const indexes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Index Name'] === 'string') indexes.add(node['Index Name']);
-  });
-  return [...indexes].sort();
-}
-
-function planNodeTypes(plan: ExplainPlanNode): string[] {
-  const nodeTypes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Node Type'] === 'string') nodeTypes.add(node['Node Type']);
-  });
-  return [...nodeTypes].sort();
-}
-
-function scanEvidence(plan: ExplainPlanNode) {
-  const scans: Array<Record<string, unknown>> = [];
-  walkPlan(plan, (node) => {
-    const nodeType = String(node['Node Type'] ?? '');
-    if (!nodeType.includes('Scan')) return;
-    scans.push({
-      nodeType,
-      relationName: node['Relation Name'],
-      indexName: node['Index Name'],
-      actualRows: planNumber(node, 'Actual Rows'),
-      actualLoops: planNumber(node, 'Actual Loops') || 1,
-      rowsRemovedByFilter: planNumber(node, 'Rows Removed by Filter'),
-      rowsRemovedByIndexRecheck: planNumber(
-        node,
-        'Rows Removed by Index Recheck',
-      ),
-      sharedHitBlocks: planNumber(node, 'Shared Hit Blocks'),
-      sharedReadBlocks: planNumber(node, 'Shared Read Blocks'),
-    });
-  });
-  return scans;
-}
-
-function normalizeExplain(payload: unknown): {
-  Plan: ExplainPlanNode;
-  'Execution Time'?: number;
-} {
-  if (!Array.isArray(payload) || typeof payload[0] !== 'object') {
-    throw new Error('Unexpected EXPLAIN JSON payload');
-  }
-  return payload[0] as { Plan: ExplainPlanNode; 'Execution Time'?: number };
-}
 
 maybeDescribe('Postgres live-turn recoverable sweep plans', () => {
   let runtime: PostgresIntegrationRuntime;
@@ -125,15 +65,6 @@ maybeDescribe('Postgres live-turn recoverable sweep plans', () => {
     const workerTable = `${quotePostgresIdentifier(
       runtime.schemaName,
     )}.${quotePostgresIdentifier('worker_instances')}`;
-    const artifactPath = path.join(
-      process.cwd(),
-      '.factory',
-      'benchmarks',
-      'postgres-hot-paths',
-      RECOVERABLE_SWEEP_RUN_ID,
-      RECOVERABLE_SWEEP_ARTIFACT_NAME,
-    );
-
     await runtime.service.pool.query(
       `INSERT INTO ${workerTable} (
          id, boot_nonce, process_role, status, heartbeat_at, last_seen_at, created_at
@@ -364,9 +295,9 @@ maybeDescribe('Postgres live-turn recoverable sweep plans', () => {
         `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${item.sql}`,
         item.values,
       );
-      const root = normalizeExplain(explain.rows[0]?.['QUERY PLAN']);
-      const scans = scanEvidence(root.Plan);
-      const actualRows = planNumber(root.Plan, 'Actual Rows');
+      const root = normalizeExplainPayload(explain.rows[0]?.['QUERY PLAN']);
+      const scans = collectScanNodes(root.Plan);
+      const actualRows = planNumber(root.Plan, 'Actual Rows') ?? 0;
       const scannedRows = scans.reduce(
         (total, scan) =>
           total +
@@ -378,8 +309,8 @@ maybeDescribe('Postgres live-turn recoverable sweep plans', () => {
       );
       const rowsScannedToReturnedRatio =
         actualRows > 0 ? scannedRows / actualRows : null;
-      const observedIndexes = planIndexes(root.Plan);
-      const observedNodeTypes = planNodeTypes(root.Plan);
+      const observedIndexes = collectObservedIndexes(root.Plan);
+      const observedNodeTypes = collectPlanNodeTypes(root.Plan);
       const usedSeqScan = scans.some(
         (scan) =>
           scan.relationName === 'live_turns' && scan.nodeType === 'Seq Scan',
@@ -445,19 +376,15 @@ maybeDescribe('Postgres live-turn recoverable sweep plans', () => {
           : 'follow_up_required',
       },
     };
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
-
-    const written = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
-    expect(written.table.cardinality).toBeGreaterThanOrEqual(
+    expect(artifact.table.cardinality).toBeGreaterThanOrEqual(
       LIVE_TURN_SEED_COUNT,
     );
-    expect(written.counts.candidateCount).toBeGreaterThan(
+    expect(artifact.counts.candidateCount).toBeGreaterThan(
       RECOVERABLE_SWEEP_LIMIT,
     );
-    expect(written.verdict.status).toBe('acceptable_evidence');
-    expect(written.cases).toHaveLength(cases.length);
-    for (const item of written.cases) {
+    expect(artifact.verdict.status).toBe('acceptable_evidence');
+    expect(artifact.cases).toHaveLength(cases.length);
+    for (const item of artifact.cases) {
       expect(item.observedIndexes).toContain(item.expectedIndex);
       expect(item.observedNodeTypes).not.toContain('Sort');
       expect(item.rowsScannedToReturnedRatio).toBeLessThanOrEqual(

@@ -112,6 +112,10 @@ correct-by-construction:
   (unit-tested without network). `session-store.ts` is the adapter-private
   LangGraph checkpoint projection for live resume. `deep-agent-runner.ts` wires
   `createDeepAgent`.
+- Resumed live sessions must still inject the current host-provided
+  `memoryContextBlock` on the first turn of each runner process. LangGraph
+  checkpoints preserve old messages, not newly retrieved durable memory for the
+  current turn.
 - `runner/mcp-tools.ts` — connects Gantry-owned MCP authority via
   `@langchain/mcp-adapters` `MultiServerMCPClient`: it spawns the Gantry facade
   stdio server (`GANTRY_MCP_SERVER_PATH`) with the projected env block, filters

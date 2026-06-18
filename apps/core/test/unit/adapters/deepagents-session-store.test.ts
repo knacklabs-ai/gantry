@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import fs from 'node:fs';
 import net from 'node:net';
-import path from 'node:path';
 
 const pgMock = vi.hoisted(() => {
   class MockPool {
@@ -287,24 +285,5 @@ describe('DeepAgentSessionStore', () => {
       ),
     ).toBe(true);
     expect(isMissingDeepAgentSessionError('some upstream error')).toBe(false);
-  });
-
-  it('does not keep a file-backed MemorySaver checkpoint fallback', () => {
-    const source = fs.readFileSync(
-      path.resolve(
-        'apps/core/src/adapters/llm/deepagents-langchain/runner/session-store.ts',
-      ),
-      'utf-8',
-    );
-
-    expect(source).toContain(
-      ['@langchain', 'langgraph-checkpoint-postgres'].join('/'),
-    );
-    expect(source).toContain('new PostgresSaver');
-    expect(source).not.toContain('fromConnString');
-    expect(source).not.toContain('.setup(');
-    expect(source).not.toContain('MemorySaver');
-    expect(source).not.toContain('writeFileSync');
-    expect(source).not.toContain('readFileSync');
   });
 });

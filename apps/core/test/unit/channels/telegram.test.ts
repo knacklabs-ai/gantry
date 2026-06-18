@@ -105,6 +105,7 @@ import {
   TelegramChannel,
   TelegramChannelOpts,
 } from '@core/channels/telegram.js';
+import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 import { writeTelegramFetchResponseToFile } from '@core/channels/telegram-file-download.js';
 import { logger } from '@core/infrastructure/logging/logger.js';
 
@@ -278,7 +279,7 @@ async function triggerCallbackQuery(ctx: {
   callbackQuery: {
     data: string;
     from?: { id: number; first_name?: string; username?: string };
-    message?: { chat?: { id: number } };
+    message?: { chat?: { id: number }; message_thread_id?: number };
   };
   chat?: { id: number };
   from?: { id: number; first_name?: string; username?: string };
@@ -317,6 +318,7 @@ describe('TelegramChannel', () => {
   });
 
   afterEach(() => {
+    configurePendingInteractionDurability(null);
     if (savedGantryHome === undefined) delete process.env.GANTRY_HOME;
     else process.env.GANTRY_HOME = savedGantryHome;
     vi.restoreAllMocks();
@@ -3046,6 +3048,107 @@ describe('TelegramChannel', () => {
         'Use the custom account update.',
       );
       expect(response.answeredBy).toBe('Admin');
+    });
+
+    it('resolves durable Other replies after pending prompt memory is gone', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const pending = {
+        id: 'pending-question-telegram-other',
+        appId: 'default',
+        runId: null,
+        kind: 'question',
+        status: 'pending',
+        payload: {
+          sourceAgentFolder: 'whatsapp_main',
+          requestId: 'userq-durable-other',
+          targetJid: 'tg:100200300',
+          request: {
+            requestId: 'userq-durable-other',
+            sourceAgentFolder: 'whatsapp_main',
+            questions: [
+              {
+                question: 'What should we tell the customer?',
+                header: 'Reply',
+                options: [
+                  { label: 'Use template', description: 'Default reply' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+        },
+        callbackRoute: null,
+        idempotencyKey: 'question:whatsapp_main:userq-durable-other',
+        approverRef: null,
+        resolution: null,
+        createdAt: '2026-06-18T00:00:00.000Z',
+        expiresAt: '2026-06-19T00:00:00.000Z',
+        resolvedAt: null,
+      };
+      const repository = {
+        listPendingInteractions: vi.fn(async () => [pending]),
+        resolvePendingInteraction: vi.fn(async () => true),
+      };
+      configurePendingInteractionDurability({
+        repository: repository as never,
+      });
+
+      const callbackCtx = {
+        callbackQuery: {
+          data: 'userq:other:userq-durable-other:0',
+          message: { chat: { id: 100200300 }, message_thread_id: 77 },
+        },
+        chat: { id: 100200300 },
+        from: { id: 222, first_name: 'Admin' },
+        api: currentBot().api,
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(callbackCtx);
+
+      expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Reply with your answer.',
+      });
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        'Reply to this message with your answer.',
+        expect.objectContaining({
+          message_thread_id: 77,
+          reply_markup: expect.objectContaining({ force_reply: true }),
+        }),
+      );
+
+      currentBot().api.sendMessage.mockClear();
+      await triggerTextMessage(
+        createTextCtx({
+          text: 'Use the custom account update.',
+          fromId: 222,
+          firstName: 'Admin',
+          messageId: 1001,
+          reply_to_message: {
+            message_id: 987,
+            text: 'Reply to this message with your answer.',
+          },
+        }),
+      );
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(repository.resolvePendingInteraction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKey: 'question:whatsapp_main:userq-durable-other',
+          status: 'resolved',
+          resolution: {
+            answers: {
+              'What should we tell the customer?':
+                'Use the custom account update.',
+            },
+          },
+          approverRef: 'Admin',
+        }),
+      );
+      expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
     });
 
     it('resolves multi-select question when Done is pressed', async () => {

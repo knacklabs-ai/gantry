@@ -9,7 +9,6 @@ import {
 } from '../../../shared/admin-mcp-tools.js';
 import {
   BASELINE_GANTRY_MCP_TOOL_NAMES,
-  DELEGATION_GANTRY_MCP_TOOL_NAMES,
   NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES,
   gantryMcpFullToolName,
   gantryMcpToolNameFromFullName,
@@ -116,7 +115,6 @@ const RUNNER_SUPPRESSED_GANTRY_MCP_TOOL_NAME_SET = new Set<string>([
 ]);
 const DEFAULT_ALLOWED_GANTRY_MCP_TOOL_NAME_SET = new Set<string>([
   ...BASELINE_GANTRY_MCP_TOOL_NAMES,
-  ...DELEGATION_GANTRY_MCP_TOOL_NAMES,
 ]);
 
 function gantryMcpAllowedTools(input: {
@@ -128,10 +126,7 @@ function gantryMcpAllowedTools(input: {
       excludeAuthorityTools: input.hideAuthorityTools === true,
     }),
   );
-  return [
-    ...BASELINE_GANTRY_MCP_TOOL_NAMES,
-    ...DELEGATION_GANTRY_MCP_TOOL_NAMES,
-  ]
+  return [...BASELINE_GANTRY_MCP_TOOL_NAMES]
     .filter((toolName) => selectedNames.has(toolName))
     .filter((toolName) =>
       DEFAULT_ALLOWED_GANTRY_MCP_TOOL_NAME_SET.has(toolName),

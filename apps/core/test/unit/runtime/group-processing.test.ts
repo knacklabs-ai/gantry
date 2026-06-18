@@ -19,6 +19,7 @@ vi.mock('@core/config/index.js', () => ({
   ASSISTANT_NAME: 'Andy',
   IDLE_TIMEOUT: 1_800_000,
   MEMORY_MAINTENANCE_MAX_PENDING: 5_000,
+  MAX_MESSAGES_PER_PROMPT: 10,
   MESSAGE_FETCH_PAGE_SIZE: 50,
   TIMEZONE: 'UTC',
   getRuntimeSettingsForConfig: () => ({
@@ -36,13 +37,15 @@ vi.mock('@core/config/index.js', () => ({
     trigger ? new RegExp(`^@${trigger}\\b`, 'i') : /^@Andy\b/i,
 }));
 
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
 vi.mock('@core/infrastructure/logging/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
+  logger: mockLogger,
+  redactString: (value: string) => value,
 }));
 
 const mockRunDreamingSweep = vi.fn();
@@ -449,9 +452,9 @@ describe('createGroupProcessor', () => {
       const result = await processGroupMessages('group1@g.us');
 
       expect(result).toBe(true);
-      expect(mockGetMessagesSince).toHaveBeenCalledTimes(20);
+      expect(mockGetMessagesSince).toHaveBeenCalledTimes(1);
       expect(mockFormatMessages).toHaveBeenCalledWith(
-        messages.slice(0, 1_000),
+        messages.slice(0, 10),
         'UTC',
       );
       expect(mockSpawnAgent).toHaveBeenCalled();
@@ -461,8 +464,8 @@ describe('createGroupProcessor', () => {
       const setCursorCalls = (deps.setCursor as ReturnType<typeof vi.fn>).mock
         .calls;
       expect(decodeGroupMessageCursor(setCursorCalls[0][1])).toEqual({
-        timestamp: '1700001000',
-        id: '1000',
+        timestamp: '1700000010',
+        id: '10',
       });
     });
   });
@@ -510,8 +513,8 @@ describe('createGroupProcessor', () => {
       expect(setCursorCalls).toHaveLength(1);
       expect(setCursorCalls[0][0]).toBe('group1@g.us');
       expect(decodeGroupMessageCursor(setCursorCalls[0][1])).toEqual({
-        timestamp: '1700001000',
-        id: '1000',
+        timestamp: '1700000010',
+        id: '10',
       });
       expect(deps.saveState).toHaveBeenCalled();
       expect(mockSpawnAgent).not.toHaveBeenCalled();
@@ -1058,35 +1061,26 @@ describe('createGroupProcessor', () => {
       const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage({ timestamp: '1700000001' })];
       const { deps } = setupHappyPath({ group, messages });
-      const consoleError = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => undefined);
 
-      try {
-        mockSpawnAgent.mockRejectedValue(new Error('spawn failed'));
-        (deps.getCursor as ReturnType<typeof vi.fn>).mockReturnValue(
-          'prev-cursor',
-        );
+      mockSpawnAgent.mockRejectedValue(new Error('spawn failed'));
+      (deps.getCursor as ReturnType<typeof vi.fn>).mockReturnValue(
+        'prev-cursor',
+      );
 
-        const { processGroupMessages } = createGroupProcessor(deps);
-        const result = await processGroupMessages('group1@g.us');
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('group1@g.us');
 
-        // runAgent catches the error and returns 'error', no output was sent
-        expect(result).toBe(false);
-        expect(consoleError).toHaveBeenCalledWith(
-          'Agent error',
-          expect.objectContaining({
-            err: expect.objectContaining({
-              type: 'Error',
-              name: 'Error',
-              message: 'spawn failed',
-              stack: expect.stringContaining('spawn failed'),
-            }),
+      // runAgent catches the error and returns 'error', no output was sent.
+      expect(result).toBe(false);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          group: 'TestGroup',
+          err: expect.objectContaining({
+            message: 'spawn failed',
           }),
-        );
-      } finally {
-        consoleError.mockRestore();
-      }
+        }),
+        'Agent error',
+      );
     });
   });
 

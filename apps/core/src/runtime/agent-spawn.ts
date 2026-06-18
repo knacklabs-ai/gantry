@@ -36,10 +36,6 @@ import {
   revokeIpcResponseSigningKey,
 } from './ipc-auth.js';
 import { getContinuationInputDir } from './continuation-input.js';
-import {
-  PromptProfileService,
-  promptProfileAgentIdForFolder,
-} from '../application/agents/prompt-profile-service.js';
 import { executeRunnerProcess } from './agent-spawn-process.js';
 import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
 import { buildToolNetworkEnv } from '../shared/tool-network-env.js';
@@ -84,6 +80,7 @@ import { publishRunnerHostStartupDiagnosticFromSpawn } from './agent-spawn-start
 import { resolveSelectedSkillEnvForSpawn } from './agent-spawn-selected-skill-env.js';
 import { validateAgentPreSpawnAdmission } from './agent-spawn-admission.js';
 import { resolveSpawnModel } from './agent-spawn-model-resolution.js';
+import { compileSpawnSystemPrompt } from './agent-spawn-prompt.js';
 import {
   cleanupRunnerMcpConfigFile,
   cleanupRunnerTempDir,
@@ -97,6 +94,7 @@ import {
   resolveRunnerSandboxStartup,
   uniqueStrings,
   buildRunnerSandboxSpawnInput,
+  buildBaseRunnerEnv,
   buildAndLogRunnerRuntimeDetails,
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
@@ -169,35 +167,19 @@ export async function spawnAgent(
   if (preSpawnAdmissionError) {
     return { status: 'error', result: null, error: preSpawnAdmissionError };
   }
-  const promptProfileService = new PromptProfileService({
-    fileArtifactStore: () => getRuntimeFileArtifactStore(),
-  });
   const agentIdentifier = group.folder.toLowerCase().replace(/_/g, '-');
-  // The instruction projection follows the same resolved access policy as the
-  // tool surface: locked agents get the locked prompt fragments.
   const agentAccessPolicy = resolveAgentAccessPolicy(
     runtimeSettings.agents?.[group.folder]?.accessPreset,
   );
   const isLockedAgent = agentAccessPolicy.preset === 'locked';
-  let compiledSystemPrompt = '';
-  try {
-    compiledSystemPrompt = await hostStartup.measureAsync(
-      'promptCompileMs',
-      () =>
-        promptProfileService.compileSystemPrompt({
-          agentFolder: group.folder,
-          persona: input.persona ?? group.agentConfig?.persona,
-          appId: input.appId || DEFAULT_RUNNER_APP_ID,
-          agentId: input.agentId || promptProfileAgentIdForFolder(group.folder),
-          accessPreset: agentAccessPolicy.preset,
-        }),
-    );
-  } catch (err) {
-    logger.warn(
-      { err, agentFolder: group.folder },
-      'Failed to compile prompt profile; continuing without custom system prompt',
-    );
-  }
+  const compiledSystemPrompt = await compileSpawnSystemPrompt({
+    group,
+    agentInput: input,
+    appId: input.appId || DEFAULT_RUNNER_APP_ID,
+    accessPreset: agentAccessPolicy.preset,
+    fileArtifactStore: () => getRuntimeFileArtifactStore(),
+    measureAsync: (name, fn) => hostStartup.measureAsync(name, fn),
+  });
   const browserProfileName = resolveConversationBrowserProfile({
     agentId: group.folder,
     workspaceKey: group.folder,
@@ -521,55 +503,39 @@ export async function spawnAgent(
       preparedExecution.providerId === 'deepagents:langchain'
         ? toolNetworkEnv
         : sandboxRuntimeToolProcessEnv(runnerSandboxProviderId, toolNetworkEnv);
-    const env: NodeJS.ProcessEnv = {
-      ...pickSafeHostEnv(process.env),
-      ...pickPreparedExecutionEnv(preparedExecution.env),
-      ...runnerToolProcessEnv,
-      ...(runnerTempDir
-        ? {
-            TMPDIR: runnerTempDir,
-            TMP: runnerTempDir,
-            TEMP: runnerTempDir,
-            ...(preparedExecution.sandboxRuntime?.tempEnv?.(runnerTempDir) ??
-              {}),
-          }
-        : {}),
-      TZ: TIMEZONE,
-      GANTRY_MCP_SERVER_PATH: mcpServerPath,
-      GANTRY_WORKSPACE_GROUP_DIR: hostRuntime.groupDir,
-      GANTRY_WORKSPACE_GLOBAL_DIR: '',
-      GANTRY_WORKSPACE_KEY: group.folder,
-      GANTRY_APP_ID: runnerAppId,
-      ...(input.agentId ? { GANTRY_AGENT_ID: input.agentId } : {}),
-      GANTRY_AGENT_RUN_HANDLE: processName,
-      GANTRY_WORKSPACE_EXTRA_DIR: workspaceExtraDir,
-      GANTRY_IPC_DIR: hostRuntime.workspaceIpcDir,
-      GANTRY_IPC_INPUT_DIR: ipcInputDir,
-      GANTRY_IPC_AUTH_TOKEN: ipcAuth.authToken,
-      GANTRY_CHAT_JID: input.chatJid,
-      ...(input.jobId ? { GANTRY_JOB_ID: input.jobId } : {}),
-      ...(input.jobName ? { GANTRY_JOB_NAME: input.jobName } : {}),
-      ...(input.runId ? { GANTRY_JOB_RUN_ID: input.runId } : {}),
-      ...(input.runLeaseToken
-        ? { GANTRY_JOB_RUN_LEASE_TOKEN: input.runLeaseToken }
-        : {}),
-      ...(typeof input.runLeaseFencingVersion === 'number'
-        ? {
-            GANTRY_JOB_RUN_LEASE_FENCING_VERSION: String(
-              input.runLeaseFencingVersion,
-            ),
-          }
-        : {}),
-      ...(browserIpcEnabled
-        ? {
-            GANTRY_BROWSER_IPC_AUTH_TOKEN: computeBrowserIpcAuthToken(
-              group.folder,
-              input.chatJid,
-              input.threadId,
-            ),
-          }
-        : {}),
-      GANTRY_MEMORY_IPC_AUTH_TOKEN: computeMemoryIpcAuthToken(group.folder, {
+    const env = buildBaseRunnerEnv({
+      hostEnv: process.env,
+      preparedEnv: preparedExecution.env,
+      runnerToolProcessEnv,
+      runnerTempDir,
+      preparedTempEnv: runnerTempDir
+        ? preparedExecution.sandboxRuntime?.tempEnv?.(runnerTempDir)
+        : undefined,
+      timezone: TIMEZONE,
+      mcpServerPath,
+      hostRuntimeGroupDir: hostRuntime.groupDir,
+      workspaceKey: group.folder,
+      runnerAppId,
+      agentId: input.agentId,
+      processName,
+      workspaceExtraDir,
+      workspaceIpcDir: hostRuntime.workspaceIpcDir,
+      ipcInputDir,
+      ipcAuthToken: ipcAuth.authToken,
+      chatJid: input.chatJid,
+      jobId: input.jobId,
+      jobName: input.jobName,
+      runId: input.runId,
+      runLeaseToken: input.runLeaseToken,
+      runLeaseFencingVersion: input.runLeaseFencingVersion,
+      browserIpcAuthToken: browserIpcEnabled
+        ? computeBrowserIpcAuthToken(
+            group.folder,
+            input.chatJid,
+            input.threadId,
+          )
+        : undefined,
+      memoryIpcAuthToken: computeMemoryIpcAuthToken(group.folder, {
         chatJid: input.chatJid,
         userId: input.memoryUserId,
         defaultScope: input.memoryDefaultScope || 'group',
@@ -577,40 +543,34 @@ export async function spawnAgent(
         allowedActions: memoryIpcAllowedActions,
         reviewerIsControlApprover: input.memoryReviewerIsControlApprover,
       }),
-      GANTRY_MEMORY_IPC_ACTIONS_JSON: JSON.stringify(memoryIpcAllowedActions),
-      GANTRY_IPC_RESPONSE_VERIFY_KEY: ipcAuth.responseVerifyKey,
-      GANTRY_IPC_RESPONSE_KEY_ID: ipcAuth.responseKeyId,
-      GANTRY_THREAD_ID: input.threadId || '',
-      GANTRY_MEMORY_USER_ID: input.memoryUserId || '',
-      GANTRY_MEMORY_DEFAULT_SCOPE: input.memoryDefaultScope || 'group',
-      GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
-        input.memoryReviewerIsControlApprover ? '1' : '',
-      GANTRY_NO_PERMISSION_TOOLS: hideAuthorityTools ? '1' : '',
-      GANTRY_AGENT_ACCESS_PRESET: agentAccessPolicy.preset,
-      GANTRY_DEPLOYMENT_MODE: getDeploymentMode(),
-      GANTRY_INTERACTIVE_PERMISSION_TIMEOUT_MS: String(
-        PERMISSION_APPROVAL_TIMEOUT_MS,
-      ),
-      GANTRY_PERMISSION_TIMEOUT_MS: String(PERMISSION_APPROVAL_TIMEOUT_MS),
-      GANTRY_EGRESS_PROXY_URL: egressGateway.proxyUrl,
-      ...(runnerSandboxProviderId === 'sandbox_runtime'
-        ? { GANTRY_SANDBOX_RUNTIME_PROXY: '1' }
-        : {}),
-      // DeepAgents shell-tool flag, derived from the pre-spawn guard inputs (see
-      // deepAgentsShellEnabledEnv); only '1' on the allowed sandbox path.
-      ...deepAgentsShellEnabledEnv({
+      memoryIpcAllowedActions,
+      responseVerifyKey: ipcAuth.responseVerifyKey,
+      responseKeyId: ipcAuth.responseKeyId,
+      threadId: input.threadId,
+      memoryUserId: input.memoryUserId,
+      memoryDefaultScope: input.memoryDefaultScope,
+      memoryReviewerIsControlApprover: input.memoryReviewerIsControlApprover,
+      hideAuthorityTools,
+      agentAccessPreset: agentAccessPolicy.preset,
+      deploymentMode: getDeploymentMode(),
+      permissionTimeoutMs: PERMISSION_APPROVAL_TIMEOUT_MS,
+      egressProxyUrl: egressGateway.proxyUrl,
+      sandboxRuntimeProxy: runnerSandboxProviderId === 'sandbox_runtime',
+      deepAgentsShellEnv: deepAgentsShellEnabledEnv({
         engine: agentEngine,
         toolPolicyRules: trustedToolPolicyRules,
         securityEnv: process.env,
         sandboxProvider: runnerSandboxProviderId,
       }),
-      ...deepAgentsFilesystemEnabledEnv({
+      deepAgentsFilesystemEnv: deepAgentsFilesystemEnabledEnv({
         engine: agentEngine,
         toolPolicyRules: trustedToolPolicyRules,
         securityEnv: process.env,
         sandboxProvider: runnerSandboxProviderId,
       }),
-    };
+      pickSafeHostEnv,
+      pickPreparedExecutionEnv,
+    });
     applyAgentEgressNoProxyEnv(env, { externalBypass: false });
     hostStartup.finish('runnerEnvMs', runnerEnvStarted);
     // Job-level model overrides group-level model.

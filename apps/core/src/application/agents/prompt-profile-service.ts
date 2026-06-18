@@ -1,3 +1,4 @@
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import { FileArtifactNotFoundError } from '../../domain/file-artifacts/file-artifact.js';
 import { PROMPT_PROFILE_VIRTUAL_SCOPE } from '../../domain/file-artifacts/protected-virtual-path.js';
 import type { FileArtifactStore } from '../../domain/ports/file-artifact-store.js';
@@ -80,28 +81,28 @@ function personaPrompt(
       return [
         '# Generalist persona',
         '- Help with planning, reminders, coordination, lightweight research, and cross-functional workflows.',
-        '- Use delegate_task (when AgentDelegation is available) for isolated research, summarization, comparison, planning, or second-pass review when it reduces clutter for the user.',
+        '- Do not use raw harness subagents; Gantry delegation is unavailable until a delegated-task executor is mounted.',
         '- Avoid developer, repository, shell, Git, deployment, PR, and runtime-admin assumptions unless the user explicitly asks and host capabilities allow it.',
       ].join('\n');
     case 'sales':
       return [
         '# Sales persona',
         '- Help with customer context, account follow-up, scheduling, messaging, and approved CRM-backed workflows.',
-        '- Use delegate_task (when AgentDelegation is available) for bounded account research, meeting prep, follow-up critique, or synthesis; keep customer-facing output owned by the coordinating agent.',
+        '- Do not use raw harness subagents; Gantry delegation is unavailable until a delegated-task executor is mounted.',
         '- Do not assume repository, shell, Git, deployment, PR, or runtime-admin work by default.',
       ].join('\n');
     case 'marketing':
       return [
         '# Marketing persona',
         '- Help with campaign context, messaging, content review, research, and approved analytics/content workflows.',
-        '- Use delegate_task (when AgentDelegation is available) for audience research, copy critique, channel comparison, and campaign synthesis; do not delegate brand judgment blindly.',
+        '- Do not use raw harness subagents; Gantry delegation is unavailable until a delegated-task executor is mounted.',
         '- Do not assume repository, shell, Git, deployment, PR, or runtime-admin work by default.',
       ].join('\n');
     case 'operations':
       return [
         '# Operations persona',
         '- Help with coordination, runbook-style status, scheduling, messaging, and approved operational workflows.',
-        '- Use delegate_task (when AgentDelegation is available) for runbook checks, status summarization, incident context gathering, and blocker analysis.',
+        '- Do not use raw harness subagents; Gantry delegation is unavailable until a delegated-task executor is mounted.',
         '- If an approved operational source is already connected or capability_status shows it as ready, use the approved tools directly; do not tell the user approval is needed unless the tool response says access is missing or denied.',
         '- When the user names an external operational source, inspect connected MCP sources with mcp_list_tools and fetch one-tool details with mcp_describe_tool when schema is needed before saying the source is unavailable or asking for another access path.',
         '- When listing operational choices for a human, prefer concise channel-native bullets with display names only.',
@@ -117,14 +118,14 @@ function personaPrompt(
       return [
         '# Research persona',
         '- Help with browsing, source-backed research, comparison, synthesis, and citations.',
-        '- Use delegate_task for source finding, cross-checking, citation review, and synthesis critique only when AgentDelegation is available.',
+        '- Do not use raw harness subagents; Gantry delegation is unavailable until a delegated-task executor is mounted.',
         '- Do not assume repository, shell, Git, deployment, PR, or runtime-admin work by default.',
       ].join('\n');
     case 'developer':
     default:
       return [
         '# Developer persona',
-        '- Help with code, architecture, tests, review, local workspace context, and safe delegate_task use when AgentDelegation is available.',
+        '- Help with code, architecture, tests, review, and local workspace context.',
         '- Use developer tools only when the current request needs them and host permissions allow them.',
       ].join('\n');
   }
@@ -141,17 +142,15 @@ function capabilityGuidancePrompt(
       : '- Memory is baseline for every persona. Browser control is available only when the canonical Browser capability is selected, through Gantry-owned browser_* tools.',
     '- Memory tools store durable evidence only; temporary task state does not belong in memory.',
     '- Use todo_update for any multi-step task: publish a short plan and keep it current as items move pending -> inProgress -> completed. It renders as one live, in-place list per channel, so do not restate the same progress in separate messages. It is display-only, non-authority state and does not grant tools or trigger work.',
-    '- When AgentDelegation is available, use delegate_task, task_get, and task_cancel for bounded delegated work. Write a clear prompt with goal, context, constraints, and expected output.',
-    '- Reach for delegate_task in two cases: (a) isolated exploration — research, reading across many files or sources, cross-checking — so the intermediate detail stays out of your main context and you keep only the conclusion; and (b) bounded, independent subtasks. For independent pieces, fan out several delegated tasks and gather each with task_get, then synthesize and sanity-check their results yourself before acting; the coordinating agent owns the user-facing answer.',
-    '- Delegation is non-blocking only after delegate_task returns a task handle. If it reports unavailable in this mode, do not tell the user work started; continue without delegation or request setup. Use task_get/task_cancel only for returned task ids.',
+    '- Gantry delegation is unavailable until a delegated-task executor is mounted. Do not claim delegated work started unless a real Gantry delegation tool returns a handle.',
     '- Final answers that used delegation must include exactly: Completed: <short outcome>, Used: <tools/capabilities>, Changed: <files/accounts/channels or none>, Delegated: yes, Needs attention: <blocker or none>.',
     '- Do not delegate risky execution, secret handling, config edits, permission changes, or work requiring tools the parent run cannot use.',
   ];
   if (persona === 'developer') {
     baseline.push(
       accessPreset === 'locked'
-        ? '- Developer capabilities may include workspace read/search and delegation.'
-        : '- Developer capabilities may include workspace read/search and delegation. Shell, file writes, Git, PR, deploy, and runtime-admin actions still require explicit capability or permission.',
+        ? '- Developer capabilities may include workspace read/search.'
+        : '- Developer capabilities may include workspace read/search. Shell, file writes, Git, PR, deploy, and runtime-admin actions still require explicit capability or permission.',
     );
   } else {
     baseline.push(
@@ -660,9 +659,8 @@ export class PromptProfileService {
   }
 }
 
-export function promptProfileAgentIdForFolder(agentFolder: string): string {
-  return `agent:${agentFolder}`;
-}
+export const promptProfileAgentIdForFolder = (agentFolder: string): string =>
+  agentIdForFolder(agentFolder);
 
 export function defaultAgentsPromptMarkdown(
   agentName: string,

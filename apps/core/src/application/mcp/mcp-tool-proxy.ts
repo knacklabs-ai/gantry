@@ -1,7 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import type { AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
@@ -66,9 +65,15 @@ import { prepareMcpToolResultValidation } from './mcp-tool-result-validation.js'
 import { fetchMcpToolListPages } from './mcp-tool-list-fetch.js';
 import {
   fetchAndCacheMcpToolDetail,
-  lookupMcpToolOutputSchema,
+  resolveMcpToolOutputSchema,
 } from './mcp-tool-detail-fetch.js';
 import { boundMcpToolResultForReturn } from './mcp-tool-output-bounds.js';
+import {
+  cacheMcpClient,
+  closeCachedMcpClient,
+  readCachedMcpClient,
+  scheduleMcpClientIdleClose,
+} from './mcp-tool-proxy-client-cache.js';
 
 export { clearMcpToolProxyInventoryCache } from './mcp-tool-inventory.js';
 export {
@@ -77,14 +82,6 @@ export {
 } from './mcp-tool-proxy-network.js';
 
 const MCP_PROXY_TIMEOUT_MS = 60_000;
-const MCP_PROXY_CLIENT_IDLE_MS = 120_000;
-
-type CachedMcpClient = {
-  client: Client;
-  idleTimer: ReturnType<typeof setTimeout>;
-};
-
-const clientCache = new Map<string, CachedMcpClient>();
 
 export class McpToolProxy {
   constructor(
@@ -287,7 +284,7 @@ export class McpToolProxy {
         },
       };
     } finally {
-      scheduleClientIdleClose(capability);
+      scheduleMcpClientIdleClose(capability);
     }
   }
 
@@ -357,7 +354,7 @@ export class McpToolProxy {
       }
       const client = await this.connect(capability);
       try {
-        const outputSchema = await lookupMcpToolOutputSchema({
+        const outputSchema = await resolveMcpToolOutputSchema({
           request: input,
           capability,
           client,
@@ -389,10 +386,10 @@ export class McpToolProxy {
         }
         return boundMcpToolResultForReturn(result);
       } catch (err) {
-        await closeCachedClient(capability);
+        await closeCachedMcpClient(capability);
         throw err;
       } finally {
-        scheduleClientIdleClose(capability);
+        scheduleMcpClientIdleClose(capability);
       }
     } catch (err) {
       if (!finalized) {
@@ -442,7 +439,7 @@ export class McpToolProxy {
         remoteListTruncated: tools.truncated,
       });
     } finally {
-      scheduleClientIdleClose(capability);
+      scheduleMcpClientIdleClose(capability);
     }
   }
 
@@ -606,12 +603,8 @@ export class McpToolProxy {
     capability: MaterializedMcpCapability,
   ): Promise<Client> {
     this.assertNetworkAllowedForCapability(capability);
-    const cacheKey = mcpClientCacheKey(capability);
-    const cached = clientCache.get(cacheKey);
-    if (cached) {
-      clearTimeout(cached.idleTimer);
-      return cached.client;
-    }
+    const cached = readCachedMcpClient(capability) as Client | null;
+    if (cached) return cached;
     const client = new Client(
       { name: 'gantry-mcp-proxy', version: '1.0.0' },
       {
@@ -629,16 +622,11 @@ export class McpToolProxy {
     );
     const transport = await this.createTransport(capability);
     await client.connect(transport, { timeout: MCP_PROXY_TIMEOUT_MS });
-    clientCache.set(cacheKey, {
-      client,
-      idleTimer: createClientIdleTimer(capability),
-    });
+    cacheMcpClient(capability, client);
     return client;
   }
 
-  private async createTransport(
-    capability: MaterializedMcpCapability,
-  ): Promise<Transport> {
+  private async createTransport(capability: MaterializedMcpCapability) {
     const config = capability.config;
     if (config.type === 'http' || config.type === 'sse') {
       if (!isLocalLoopbackHttpMcpUrl(new URL(config.url))) {
@@ -652,7 +640,6 @@ export class McpToolProxy {
       const fetch = createGuardedMcpFetch({
         allowLoopbackHttp,
         lookupHostname: this.options.lookupHostname,
-        dnsValidationCache: this.options.dnsValidationCache,
       });
       const requestInit: RequestInit = {
         redirect: 'error',
@@ -682,41 +669,7 @@ export class McpToolProxy {
     assertMcpNetworkHostAllowed({
       serverName: capability.name,
       url: config.url,
-      networkHosts: capability.networkHosts,
       denylist: this.options.egressDenylist ?? [],
     });
   }
-}
-
-function mcpClientCacheKey(capability: MaterializedMcpCapability): string {
-  return `${capability.name}:${JSON.stringify(capability.config)}`;
-}
-
-function scheduleClientIdleClose(capability: MaterializedMcpCapability): void {
-  const cacheKey = mcpClientCacheKey(capability);
-  const cached = clientCache.get(cacheKey);
-  if (!cached) return;
-  clearTimeout(cached.idleTimer);
-  cached.idleTimer = createClientIdleTimer(capability);
-}
-
-function createClientIdleTimer(
-  capability: MaterializedMcpCapability,
-): ReturnType<typeof setTimeout> {
-  const timer = setTimeout(() => {
-    void closeCachedClient(capability);
-  }, MCP_PROXY_CLIENT_IDLE_MS);
-  (timer as { unref?: () => void }).unref?.();
-  return timer;
-}
-
-async function closeCachedClient(
-  capability: MaterializedMcpCapability,
-): Promise<void> {
-  const cacheKey = mcpClientCacheKey(capability);
-  const cached = clientCache.get(cacheKey);
-  if (!cached) return;
-  clientCache.delete(cacheKey);
-  clearTimeout(cached.idleTimer);
-  await cached.client.close();
 }

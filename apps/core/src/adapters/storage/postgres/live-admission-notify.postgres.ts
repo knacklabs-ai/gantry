@@ -14,24 +14,6 @@ export interface LiveAdmissionWakeup {
   workItemId: string;
 }
 
-export function parseLiveAdmissionWakeup(
-  payload: string | undefined,
-): LiveAdmissionWakeup | null {
-  if (!payload) return null;
-  try {
-    const parsed = JSON.parse(payload) as Partial<LiveAdmissionWakeup>;
-    if (
-      typeof parsed.appId !== 'string' ||
-      typeof parsed.workItemId !== 'string'
-    ) {
-      return null;
-    }
-    return { appId: parsed.appId, workItemId: parsed.workItemId };
-  } catch {
-    return null;
-  }
-}
-
 export class PostgresLiveAdmissionNotifier implements LiveAdmissionWorkItemNotifier {
   constructor(
     private readonly pool: Pool,
@@ -42,14 +24,10 @@ export class PostgresLiveAdmissionNotifier implements LiveAdmissionWorkItemNotif
   ) {}
 
   async notifyLiveAdmissionWorkItem(input: LiveAdmissionWakeup): Promise<void> {
-    const payload = JSON.stringify({
-      appId: input.appId,
-      workItemId: input.workItemId,
-    });
     try {
       await this.pool.query('SELECT pg_notify($1, $2)', [
         LIVE_ADMISSION_CHANNEL,
-        payload,
+        '',
       ]);
     } catch (err) {
       this.logWarn?.(

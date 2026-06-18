@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildRunnerHostStartupDiagnosticEvent,
   countJsonStringArray,
-  publishRunnerHostStartupDiagnostic,
+  publishRunnerHostStartupDiagnosticFromSpawn,
 } from '@core/runtime/agent-spawn-startup-diagnostic.js';
 
 const baseDiagnostic = {
@@ -113,10 +113,50 @@ describe('agent-spawn startup diagnostics', () => {
     const logger = { warn: vi.fn() };
 
     await expect(
-      publishRunnerHostStartupDiagnostic({
+      publishRunnerHostStartupDiagnosticFromSpawn({
         publishRuntimeEvent,
         logger,
-        diagnostic: baseDiagnostic,
+        agentInput: {
+          agentId: baseDiagnostic.agentId,
+          runId: baseDiagnostic.runId,
+          jobId: baseDiagnostic.jobId,
+          chatJid: baseDiagnostic.conversationId,
+          threadId: baseDiagnostic.threadId,
+          attachedSkillSourceIds: [],
+          selectedSkillDisplays: [],
+        } as never,
+        runnerAppId: baseDiagnostic.appId,
+        agentEngine: baseDiagnostic.agentEngine,
+        executionProviderId: baseDiagnostic.executionProviderId,
+        hostPhases: baseDiagnostic.hostPhases,
+        snapshot: {
+          preparedEnv: {},
+          attachedMcpSourceIds: [],
+          projectedMcpSourceIds: [],
+          selectedMcpServerNames: [],
+          allMcpCapabilities: [],
+          runnerVisibleMcpServerNames: [],
+          reviewedMcpToolNames: [],
+          selectedSkillEnv: { env: {} },
+          runnerInput: {},
+          effectiveRuntimeAccess: [],
+          browserIpcEnabled: false,
+          memoryIpcAllowedActions: [],
+          runnerSandboxProviderId: 'none',
+          runnerSandboxEnforcing: false,
+          finalAllowedNetworkHosts: [],
+          sandboxProtectedReadPaths: [],
+          sandboxProtectedWritePaths: [],
+          localCliCredentialPaths: [],
+          sandboxWarmTemplate: { available: false, cacheHit: false },
+          egressProxyConfigured: false,
+          upstreamProxyConfigured: false,
+          hostCredentials: {
+            brokerApplied: false,
+            credentialProviders: {},
+          },
+          compiledSystemPrompt: '',
+        } as never,
       }),
     ).resolves.toBeUndefined();
 

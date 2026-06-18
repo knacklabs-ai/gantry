@@ -142,31 +142,6 @@ export function buildRunnerHostStartupDiagnosticEvent(
   };
 }
 
-export async function publishRunnerHostStartupDiagnostic(input: {
-  publishRuntimeEvent?: RunAgentOptions['publishRuntimeEvent'];
-  logger: {
-    warn: (context: Record<string, unknown>, message: string) => void;
-  };
-  diagnostic: RunnerHostStartupDiagnosticInput;
-}): Promise<void> {
-  if (!input.publishRuntimeEvent) return;
-  try {
-    await input.publishRuntimeEvent(
-      buildRunnerHostStartupDiagnosticEvent(input.diagnostic),
-    );
-  } catch (err) {
-    input.logger.warn(
-      {
-        err,
-        appId: input.diagnostic.appId,
-        agentId: input.diagnostic.agentId,
-        runId: input.diagnostic.runId,
-      },
-      'Runner host startup diagnostic persistence failed',
-    );
-  }
-}
-
 export async function publishRunnerHostStartupDiagnosticFromSpawn(input: {
   publishRuntimeEvent?: RunAgentOptions['publishRuntimeEvent'];
   logger: {
@@ -179,77 +154,87 @@ export async function publishRunnerHostStartupDiagnosticFromSpawn(input: {
   hostPhases: RunnerStartupHostPhaseTimings;
   snapshot: RunnerHostStartupDiagnosticSnapshot;
 }): Promise<void> {
+  if (!input.publishRuntimeEvent) return;
   const snapshot = input.snapshot;
-  await publishRunnerHostStartupDiagnostic({
-    publishRuntimeEvent: input.publishRuntimeEvent,
-    logger: input.logger,
-    diagnostic: {
-      appId: input.runnerAppId,
-      ...(input.agentInput.agentId
-        ? { agentId: input.agentInput.agentId }
-        : {}),
-      ...(input.agentInput.runId ? { runId: input.agentInput.runId } : {}),
-      ...(input.agentInput.jobId ? { jobId: input.agentInput.jobId } : {}),
-      conversationId: input.agentInput.chatJid,
-      ...(input.agentInput.threadId
-        ? { threadId: input.agentInput.threadId }
-        : {}),
-      agentEngine: input.agentEngine,
-      executionProviderId: input.executionProviderId,
-      hostPhases: input.hostPhases,
-      toolPolicyRuleCount: snapshot.trustedToolPolicyRules?.length ?? 0,
-      gantryMcpToolCount: countJsonStringArray(
-        snapshot.preparedEnv.GANTRY_MCP_TOOL_NAMES_JSON,
-      ),
-      attachedMcpSourceCount: snapshot.attachedMcpSourceIds.length,
-      projectedMcpSourceCount: snapshot.projectedMcpSourceIds.length,
-      selectedMcpServerCount: snapshot.selectedMcpServerNames.length,
-      materializedMcpServerCount: snapshot.allMcpCapabilities.length,
-      runnerVisibleMcpServerCount: snapshot.runnerVisibleMcpServerNames.length,
-      reviewedMcpToolCount: snapshot.reviewedMcpToolNames.length,
-      mcpConfigProjected: snapshot.mcpConfigPath !== undefined,
-      mcpTransportCounts: mcpTransportCounts(snapshot.allMcpCapabilities),
-      selectedSkillSourceCount:
-        input.agentInput.attachedSkillSourceIds?.length ?? 0,
-      selectedSkillDisplayCount:
-        input.agentInput.selectedSkillDisplays?.length ?? 0,
-      selectedSkillSecretEnvCount: Object.keys(snapshot.selectedSkillEnv.env)
-        .length,
-      semanticCapabilityCount:
-        snapshot.runnerInput.semanticCapabilities?.length ?? 0,
-      runtimeAccessCount: snapshot.effectiveRuntimeAccess.length,
-      browserIpcEnabled: snapshot.browserIpcEnabled,
-      memoryIpcActionCount: snapshot.memoryIpcAllowedActions.length,
-      deepAgentCheckpointerConfigured:
-        snapshot.runnerInput.deepAgentCheckpointer !== undefined,
-      sandbox: {
-        provider: snapshot.runnerSandboxProviderId,
-        enforcing: snapshot.runnerSandboxEnforcing,
-        allowedNetworkHostCount: snapshot.finalAllowedNetworkHosts.length,
-        protectedReadPathCount: snapshot.sandboxProtectedReadPaths.length,
-        protectedWritePathCount: snapshot.sandboxProtectedWritePaths.length,
-        localCliCredentialPathCount: snapshot.localCliCredentialPaths.length,
-        warmTemplateAvailable: snapshot.sandboxWarmTemplate.available,
-        warmTemplateCacheHit: snapshot.sandboxWarmTemplate.cacheHit,
-      },
-      egress: {
-        proxyConfigured: snapshot.egressProxyConfigured,
-        upstreamProxyConfigured: snapshot.upstreamProxyConfigured,
-      },
-      credentials: {
-        brokerApplied: snapshot.hostCredentials.brokerApplied,
-        credentialProviderCount: Object.keys(
-          snapshot.hostCredentials.credentialProviders,
-        ).length,
-        modelCredentialEnvKeyCount: Object.keys(
-          snapshot.runnerInput.modelCredentialEnv ?? {},
-        ).length,
-      },
-      prompt: {
-        compiledSystemPromptChars: snapshot.compiledSystemPrompt.length,
-      },
+  const diagnostic: RunnerHostStartupDiagnosticInput = {
+    appId: input.runnerAppId,
+    ...(input.agentInput.agentId ? { agentId: input.agentInput.agentId } : {}),
+    ...(input.agentInput.runId ? { runId: input.agentInput.runId } : {}),
+    ...(input.agentInput.jobId ? { jobId: input.agentInput.jobId } : {}),
+    conversationId: input.agentInput.chatJid,
+    ...(input.agentInput.threadId
+      ? { threadId: input.agentInput.threadId }
+      : {}),
+    agentEngine: input.agentEngine,
+    executionProviderId: input.executionProviderId,
+    hostPhases: input.hostPhases,
+    toolPolicyRuleCount: snapshot.trustedToolPolicyRules?.length ?? 0,
+    gantryMcpToolCount: countJsonStringArray(
+      snapshot.preparedEnv.GANTRY_MCP_TOOL_NAMES_JSON,
+    ),
+    attachedMcpSourceCount: snapshot.attachedMcpSourceIds.length,
+    projectedMcpSourceCount: snapshot.projectedMcpSourceIds.length,
+    selectedMcpServerCount: snapshot.selectedMcpServerNames.length,
+    materializedMcpServerCount: snapshot.allMcpCapabilities.length,
+    runnerVisibleMcpServerCount: snapshot.runnerVisibleMcpServerNames.length,
+    reviewedMcpToolCount: snapshot.reviewedMcpToolNames.length,
+    mcpConfigProjected: snapshot.mcpConfigPath !== undefined,
+    mcpTransportCounts: mcpTransportCounts(snapshot.allMcpCapabilities),
+    selectedSkillSourceCount:
+      input.agentInput.attachedSkillSourceIds?.length ?? 0,
+    selectedSkillDisplayCount:
+      input.agentInput.selectedSkillDisplays?.length ?? 0,
+    selectedSkillSecretEnvCount: Object.keys(snapshot.selectedSkillEnv.env)
+      .length,
+    semanticCapabilityCount:
+      snapshot.runnerInput.semanticCapabilities?.length ?? 0,
+    runtimeAccessCount: snapshot.effectiveRuntimeAccess.length,
+    browserIpcEnabled: snapshot.browserIpcEnabled,
+    memoryIpcActionCount: snapshot.memoryIpcAllowedActions.length,
+    deepAgentCheckpointerConfigured:
+      snapshot.runnerInput.deepAgentCheckpointer !== undefined,
+    sandbox: {
+      provider: snapshot.runnerSandboxProviderId,
+      enforcing: snapshot.runnerSandboxEnforcing,
+      allowedNetworkHostCount: snapshot.finalAllowedNetworkHosts.length,
+      protectedReadPathCount: snapshot.sandboxProtectedReadPaths.length,
+      protectedWritePathCount: snapshot.sandboxProtectedWritePaths.length,
+      localCliCredentialPathCount: snapshot.localCliCredentialPaths.length,
+      warmTemplateAvailable: snapshot.sandboxWarmTemplate.available,
+      warmTemplateCacheHit: snapshot.sandboxWarmTemplate.cacheHit,
     },
-  });
+    egress: {
+      proxyConfigured: snapshot.egressProxyConfigured,
+      upstreamProxyConfigured: snapshot.upstreamProxyConfigured,
+    },
+    credentials: {
+      brokerApplied: snapshot.hostCredentials.brokerApplied,
+      credentialProviderCount: Object.keys(
+        snapshot.hostCredentials.credentialProviders,
+      ).length,
+      modelCredentialEnvKeyCount: Object.keys(
+        snapshot.runnerInput.modelCredentialEnv ?? {},
+      ).length,
+    },
+    prompt: {
+      compiledSystemPromptChars: snapshot.compiledSystemPrompt.length,
+    },
+  };
+  try {
+    await input.publishRuntimeEvent(
+      buildRunnerHostStartupDiagnosticEvent(diagnostic),
+    );
+  } catch (err) {
+    input.logger.warn(
+      {
+        err,
+        appId: diagnostic.appId,
+        agentId: diagnostic.agentId,
+        runId: diagnostic.runId,
+      },
+      'Runner host startup diagnostic persistence failed',
+    );
+  }
 }
 
 export interface RunnerHostStartupDiagnosticSnapshot {

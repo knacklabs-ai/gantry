@@ -243,7 +243,7 @@ describe('PromptProfileService', () => {
     expect(prompt).toContain('admin_permission_list');
     expect(prompt).toContain('pending -> inProgress -> completed');
     expect(prompt).toContain(
-      'If it reports unavailable in this mode, do not tell the user work started',
+      'Gantry delegation is unavailable until a delegated-task executor is mounted. Do not claim delegated work started unless a real Gantry delegation tool returns a handle.',
     );
     expect(prompt).not.toContain('pending -> in_progress -> completed');
 

@@ -53,6 +53,112 @@ export type RunnerAgentInput = Omit<AgentInput, 'toolPolicyRules'> & {
     proxyUrl?: string;
   };
 };
+export function buildBaseRunnerEnv(input: {
+  hostEnv: NodeJS.ProcessEnv;
+  preparedEnv: NodeJS.ProcessEnv;
+  runnerToolProcessEnv: Record<string, string>;
+  runnerTempDir?: string;
+  preparedTempEnv?: NodeJS.ProcessEnv;
+  timezone: string;
+  mcpServerPath: string;
+  hostRuntimeGroupDir: string;
+  workspaceKey: string;
+  runnerAppId: string;
+  agentId?: string;
+  processName: string;
+  workspaceExtraDir: string;
+  workspaceIpcDir: string;
+  ipcInputDir: string;
+  ipcAuthToken: string;
+  chatJid: string;
+  jobId?: string;
+  jobName?: string;
+  runId?: string;
+  runLeaseToken?: string;
+  runLeaseFencingVersion?: number;
+  browserIpcAuthToken?: string;
+  memoryIpcAuthToken: string;
+  memoryIpcAllowedActions: readonly string[];
+  responseVerifyKey: string;
+  responseKeyId: string;
+  threadId?: string;
+  memoryUserId?: string;
+  memoryDefaultScope?: string;
+  memoryReviewerIsControlApprover?: boolean;
+  hideAuthorityTools: boolean;
+  agentAccessPreset: string;
+  deploymentMode: string;
+  permissionTimeoutMs: number;
+  egressProxyUrl: string;
+  sandboxRuntimeProxy: boolean;
+  deepAgentsShellEnv: Record<string, string>;
+  deepAgentsFilesystemEnv: Record<string, string>;
+  pickSafeHostEnv: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+  pickPreparedExecutionEnv: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  return {
+    ...input.pickSafeHostEnv(input.hostEnv),
+    ...input.pickPreparedExecutionEnv(input.preparedEnv),
+    ...input.runnerToolProcessEnv,
+    ...(input.runnerTempDir
+      ? {
+          TMPDIR: input.runnerTempDir,
+          TMP: input.runnerTempDir,
+          TEMP: input.runnerTempDir,
+          ...(input.preparedTempEnv ?? {}),
+        }
+      : {}),
+    TZ: input.timezone,
+    GANTRY_MCP_SERVER_PATH: input.mcpServerPath,
+    GANTRY_WORKSPACE_GROUP_DIR: input.hostRuntimeGroupDir,
+    GANTRY_WORKSPACE_GLOBAL_DIR: '',
+    GANTRY_WORKSPACE_KEY: input.workspaceKey,
+    GANTRY_APP_ID: input.runnerAppId,
+    ...(input.agentId ? { GANTRY_AGENT_ID: input.agentId } : {}),
+    GANTRY_AGENT_RUN_HANDLE: input.processName,
+    GANTRY_WORKSPACE_EXTRA_DIR: input.workspaceExtraDir,
+    GANTRY_IPC_DIR: input.workspaceIpcDir,
+    GANTRY_IPC_INPUT_DIR: input.ipcInputDir,
+    GANTRY_IPC_AUTH_TOKEN: input.ipcAuthToken,
+    GANTRY_CHAT_JID: input.chatJid,
+    ...(input.jobId ? { GANTRY_JOB_ID: input.jobId } : {}),
+    ...(input.jobName ? { GANTRY_JOB_NAME: input.jobName } : {}),
+    ...(input.runId ? { GANTRY_JOB_RUN_ID: input.runId } : {}),
+    ...(input.runLeaseToken
+      ? { GANTRY_JOB_RUN_LEASE_TOKEN: input.runLeaseToken }
+      : {}),
+    ...(typeof input.runLeaseFencingVersion === 'number'
+      ? {
+          GANTRY_JOB_RUN_LEASE_FENCING_VERSION: String(
+            input.runLeaseFencingVersion,
+          ),
+        }
+      : {}),
+    ...(input.browserIpcAuthToken
+      ? { GANTRY_BROWSER_IPC_AUTH_TOKEN: input.browserIpcAuthToken }
+      : {}),
+    GANTRY_MEMORY_IPC_AUTH_TOKEN: input.memoryIpcAuthToken,
+    GANTRY_MEMORY_IPC_ACTIONS_JSON: JSON.stringify(
+      input.memoryIpcAllowedActions,
+    ),
+    GANTRY_IPC_RESPONSE_VERIFY_KEY: input.responseVerifyKey,
+    GANTRY_IPC_RESPONSE_KEY_ID: input.responseKeyId,
+    GANTRY_THREAD_ID: input.threadId || '',
+    GANTRY_MEMORY_USER_ID: input.memoryUserId || '',
+    GANTRY_MEMORY_DEFAULT_SCOPE: input.memoryDefaultScope || 'group',
+    GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
+      input.memoryReviewerIsControlApprover ? '1' : '',
+    GANTRY_NO_PERMISSION_TOOLS: input.hideAuthorityTools ? '1' : '',
+    GANTRY_AGENT_ACCESS_PRESET: input.agentAccessPreset,
+    GANTRY_DEPLOYMENT_MODE: input.deploymentMode,
+    GANTRY_INTERACTIVE_PERMISSION_TIMEOUT_MS: String(input.permissionTimeoutMs),
+    GANTRY_PERMISSION_TIMEOUT_MS: String(input.permissionTimeoutMs),
+    GANTRY_EGRESS_PROXY_URL: input.egressProxyUrl,
+    ...(input.sandboxRuntimeProxy ? { GANTRY_SANDBOX_RUNTIME_PROXY: '1' } : {}),
+    ...input.deepAgentsShellEnv,
+    ...input.deepAgentsFilesystemEnv,
+  };
+}
 type WarnLogger = (metadata: Record<string, unknown>, message: string) => void;
 type SandboxRuntimeGatewayOptions = {
   allowedNetworkHosts?: string[];

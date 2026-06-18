@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { performance } from 'node:perf_hooks';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -49,10 +46,19 @@ import {
   hasPostgresIntegrationDatabase,
   type PostgresIntegrationRuntime,
 } from '../harness/postgres-integration-runtime.js';
+import {
+  collectObservedIndexes,
+  collectPlanNodeTypes,
+  collectScanNodes,
+  normalizeExplainPayload,
+  planNumber,
+} from '../harness/postgres-explain.js';
 
-const maybeDescribe = hasPostgresIntegrationDatabase ? describe : describe.skip;
+const maybeDescribe =
+  hasPostgresIntegrationDatabase && process.env.GANTRY_POSTGRES_HOT_PATH === '1'
+    ? describe
+    : describe.skip;
 const MCP_RUN_ID = 'mcp-inventory-audit-explain-itest';
-const MCP_ARTIFACT_NAME = 'mcp-inventory-audit-plan.json';
 const SERVER_COUNT = 1_000;
 const DISTRACTOR_SERVER_COUNT = 20_000;
 const HOT_SELECTED_SERVER_COUNT = 120;
@@ -71,10 +77,6 @@ const HOT_SERVER_ID = 'mcp-hot-server-3';
 const HOT_SERVER_NAME = 'server_000001';
 const HOT_TOOL_NAME = 'tool_001';
 
-type ExplainPlanNode = Record<string, unknown> & {
-  Plans?: ExplainPlanNode[];
-};
-
 type QueryCase = {
   name: string;
   method: string;
@@ -91,73 +93,6 @@ function quotedTable(
   table: string,
 ): string {
   return `${quotePostgresIdentifier(runtime.schemaName)}.${quotePostgresIdentifier(table)}`;
-}
-
-function planNumber(node: Record<string, unknown>, field: string): number {
-  const value = node[field];
-  return typeof value === 'number' ? value : 0;
-}
-
-function walkPlan(
-  node: ExplainPlanNode,
-  visit: (node: ExplainPlanNode) => void,
-): void {
-  visit(node);
-  for (const child of node.Plans ?? []) walkPlan(child, visit);
-}
-
-function planIndexes(plan: ExplainPlanNode): string[] {
-  const indexes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Index Name'] === 'string') indexes.add(node['Index Name']);
-  });
-  return [...indexes].sort();
-}
-
-function planNodeTypes(plan: ExplainPlanNode): string[] {
-  const nodeTypes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Node Type'] === 'string') nodeTypes.add(node['Node Type']);
-  });
-  return [...nodeTypes].sort();
-}
-
-function scanEvidence(plan: ExplainPlanNode): Array<Record<string, unknown>> {
-  const scans: Array<Record<string, unknown>> = [];
-  walkPlan(plan, (node) => {
-    const nodeType = String(node['Node Type'] ?? '');
-    if (!nodeType.includes('Scan')) return;
-    scans.push({
-      nodeType,
-      relationName: node['Relation Name'],
-      indexName: node['Index Name'],
-      actualRows: planNumber(node, 'Actual Rows'),
-      actualLoops: planNumber(node, 'Actual Loops') || 1,
-      rowsRemovedByFilter: planNumber(node, 'Rows Removed by Filter'),
-      rowsRemovedByIndexRecheck: planNumber(
-        node,
-        'Rows Removed by Index Recheck',
-      ),
-      sharedHitBlocks: planNumber(node, 'Shared Hit Blocks'),
-      sharedReadBlocks: planNumber(node, 'Shared Read Blocks'),
-    });
-  });
-  return scans;
-}
-
-function normalizeExplain(payload: unknown): {
-  Plan: ExplainPlanNode;
-  'Planning Time'?: number;
-  'Execution Time'?: number;
-} {
-  if (!Array.isArray(payload) || typeof payload[0] !== 'object') {
-    throw new Error('Unexpected EXPLAIN JSON payload');
-  }
-  return payload[0] as {
-    Plan: ExplainPlanNode;
-    'Planning Time'?: number;
-    'Execution Time'?: number;
-  };
 }
 
 function percentile(values: number[], p: number): number {
@@ -199,7 +134,7 @@ async function explainQuery(
     `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${item.sql}`,
     item.values,
   );
-  return normalizeExplain(explain.rows[0]?.['QUERY PLAN']);
+  return normalizeExplainPayload(explain.rows[0]?.['QUERY PLAN']);
 }
 
 function planVerdict(input: {
@@ -283,14 +218,6 @@ maybeDescribe('Postgres MCP inventory and audit plans', () => {
     const serversTable = quotedTable(runtime, 'mcp_servers');
     const bindingsTable = quotedTable(runtime, 'agent_mcp_server_bindings');
     const auditTable = quotedTable(runtime, 'mcp_server_audit_events');
-    const artifactPath = path.join(
-      process.cwd(),
-      '.factory',
-      'benchmarks',
-      'postgres-hot-paths',
-      MCP_RUN_ID,
-      MCP_ARTIFACT_NAME,
-    );
     const now = '2026-06-17T00:00:00.000Z';
 
     await runtime.service.pool.query(
@@ -639,8 +566,8 @@ maybeDescribe('Postgres MCP inventory and audit plans', () => {
     const plans = [];
     for (const item of queryCases) {
       const root = await explainQuery(runtime, item);
-      const scanNodes = scanEvidence(root.Plan);
-      const actualRows = planNumber(root.Plan, 'Actual Rows');
+      const scanNodes = collectScanNodes(root.Plan);
+      const actualRows = planNumber(root.Plan, 'Actual Rows') ?? 0;
       const scannedRows = scanNodes.reduce(
         (total, scan) =>
           total +
@@ -652,7 +579,7 @@ maybeDescribe('Postgres MCP inventory and audit plans', () => {
       );
       const rowsScannedToReturnedRatio =
         actualRows > 0 ? Number((scannedRows / actualRows).toFixed(2)) : null;
-      const observedIndexes = planIndexes(root.Plan);
+      const observedIndexes = collectObservedIndexes(root.Plan);
       const verdict = planVerdict({
         item,
         observedIndexes,
@@ -669,7 +596,7 @@ maybeDescribe('Postgres MCP inventory and audit plans', () => {
         expectedIndexes: item.expectedIndexes,
         expectedAnyIndex: item.expectedAnyIndex,
         observedIndexes,
-        observedNodeTypes: planNodeTypes(root.Plan),
+        observedNodeTypes: collectPlanNodeTypes(root.Plan),
         actualRows,
         rowsScannedToReturnedRatio,
         rowsScannedToReturnedRatioGate: ROWS_SCANNED_TO_RETURNED_RATIO_GATE,
@@ -1026,9 +953,6 @@ maybeDescribe('Postgres MCP inventory and audit plans', () => {
         externalNetworkRequired: false,
       },
     };
-
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
 
     expect(artifact.verdict.status).toBe('acceptable_evidence');
     expect(coldList.diagnostics).toMatchObject({

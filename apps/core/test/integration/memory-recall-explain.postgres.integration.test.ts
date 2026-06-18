@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -12,10 +10,19 @@ import {
   hasPostgresIntegrationDatabase,
   type PostgresIntegrationRuntime,
 } from '../harness/postgres-integration-runtime.js';
+import {
+  collectObservedIndexes,
+  collectPlanNodeTypes,
+  collectScanNodes,
+  normalizeExplainPayload,
+  planNumber,
+} from '../harness/postgres-explain.js';
 
-const maybeDescribe = hasPostgresIntegrationDatabase ? describe : describe.skip;
+const maybeDescribe =
+  hasPostgresIntegrationDatabase && process.env.GANTRY_POSTGRES_HOT_PATH === '1'
+    ? describe
+    : describe.skip;
 const MEMORY_RECALL_RUN_ID = 'memory-recall-explain-itest';
-const MEMORY_RECALL_ARTIFACT_NAME = 'memory-recall-plan.json';
 const MEMORY_ITEM_COUNT = 100_000;
 const MEMORY_EMBEDDING_COUNT = 100_000;
 const RECALL_LIMIT = 20;
@@ -30,10 +37,6 @@ const PROVIDER = 'openai';
 const MODEL = 'text-embedding-3-small';
 const DIMENSIONS = 1536;
 const QUERY = 'launchalpha';
-
-type ExplainPlanNode = Record<string, unknown> & {
-  Plans?: ExplainPlanNode[];
-};
 
 type QueryCase = {
   name: string;
@@ -55,73 +58,6 @@ function vectorLiteral(activeDimension: 0 | 1): string {
   const values = new Array(DIMENSIONS).fill(0);
   values[activeDimension] = 1;
   return `[${values.join(',')}]`;
-}
-
-function planNumber(node: Record<string, unknown>, field: string): number {
-  const value = node[field];
-  return typeof value === 'number' ? value : 0;
-}
-
-function walkPlan(
-  node: ExplainPlanNode,
-  visit: (node: ExplainPlanNode) => void,
-) {
-  visit(node);
-  for (const child of node.Plans ?? []) walkPlan(child, visit);
-}
-
-function planIndexes(plan: ExplainPlanNode): string[] {
-  const indexes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Index Name'] === 'string') indexes.add(node['Index Name']);
-  });
-  return [...indexes].sort();
-}
-
-function planNodeTypes(plan: ExplainPlanNode): string[] {
-  const nodeTypes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Node Type'] === 'string') nodeTypes.add(node['Node Type']);
-  });
-  return [...nodeTypes].sort();
-}
-
-function scanEvidence(plan: ExplainPlanNode) {
-  const scans: Array<Record<string, unknown>> = [];
-  walkPlan(plan, (node) => {
-    const nodeType = String(node['Node Type'] ?? '');
-    if (!nodeType.includes('Scan')) return;
-    scans.push({
-      nodeType,
-      relationName: node['Relation Name'],
-      indexName: node['Index Name'],
-      actualRows: planNumber(node, 'Actual Rows'),
-      actualLoops: planNumber(node, 'Actual Loops') || 1,
-      rowsRemovedByFilter: planNumber(node, 'Rows Removed by Filter'),
-      rowsRemovedByIndexRecheck: planNumber(
-        node,
-        'Rows Removed by Index Recheck',
-      ),
-      sharedHitBlocks: planNumber(node, 'Shared Hit Blocks'),
-      sharedReadBlocks: planNumber(node, 'Shared Read Blocks'),
-    });
-  });
-  return scans;
-}
-
-function normalizeExplain(payload: unknown): {
-  Plan: ExplainPlanNode;
-  'Planning Time'?: number;
-  'Execution Time'?: number;
-} {
-  if (!Array.isArray(payload) || typeof payload[0] !== 'object') {
-    throw new Error('Unexpected EXPLAIN JSON payload');
-  }
-  return payload[0] as {
-    Plan: ExplainPlanNode;
-    'Planning Time'?: number;
-    'Execution Time'?: number;
-  };
 }
 
 function percentile(values: number[], p: number): number {
@@ -173,7 +109,7 @@ async function explainQuery(
       `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${item.sql}`,
       item.values,
     );
-    return normalizeExplain(explain.rows[0]?.['QUERY PLAN']);
+    return normalizeExplainPayload(explain.rows[0]?.['QUERY PLAN']);
   }
   const client = await runtime.service.pool.connect();
   try {
@@ -185,7 +121,7 @@ async function explainQuery(
       `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${item.sql}`,
       item.values,
     );
-    return normalizeExplain(explain.rows[0]?.['QUERY PLAN']);
+    return normalizeExplainPayload(explain.rows[0]?.['QUERY PLAN']);
   } finally {
     await client.query('ROLLBACK').catch(() => undefined);
     client.release();
@@ -211,14 +147,6 @@ maybeDescribe('Postgres memory recall plans', () => {
     const memoryEmbeddingsTable = quotedTable(
       runtime,
       'memory_item_embeddings',
-    );
-    const artifactPath = path.join(
-      process.cwd(),
-      '.factory',
-      'benchmarks',
-      'postgres-hot-paths',
-      MEMORY_RECALL_RUN_ID,
-      MEMORY_RECALL_ARTIFACT_NAME,
     );
     const now = '2026-06-17T00:00:00.000Z';
     const commonSubjectId = subjectIdFor({
@@ -661,8 +589,8 @@ maybeDescribe('Postgres memory recall plans', () => {
     const plans = [];
     for (const item of queryCases) {
       const root = await explainQuery(runtime, item);
-      const scans = scanEvidence(root.Plan);
-      const actualRows = planNumber(root.Plan, 'Actual Rows');
+      const scans = collectScanNodes(root.Plan);
+      const actualRows = planNumber(root.Plan, 'Actual Rows') ?? 0;
       const scannedRows = scans.reduce(
         (total, scan) =>
           total +
@@ -674,8 +602,8 @@ maybeDescribe('Postgres memory recall plans', () => {
       );
       const rowsScannedToReturnedRatio =
         actualRows > 0 ? Number((scannedRows / actualRows).toFixed(2)) : null;
-      const observedIndexes = planIndexes(root.Plan);
-      const observedNodeTypes = planNodeTypes(root.Plan);
+      const observedIndexes = collectObservedIndexes(root.Plan);
+      const observedNodeTypes = collectPlanNodeTypes(root.Plan);
       const planIndexUsed = item.expectedIndexes.every((indexName) =>
         observedIndexes.includes(indexName),
       );
@@ -810,9 +738,6 @@ maybeDescribe('Postgres memory recall plans', () => {
         databaseUrlIncluded: false,
       },
     };
-
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
 
     expect(artifact.verdict.status).toBe('acceptable_evidence');
     const artifactText = JSON.stringify(artifact);

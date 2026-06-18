@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -18,83 +15,22 @@ import {
   hasPostgresIntegrationDatabase,
   type PostgresIntegrationRuntime,
 } from '../harness/postgres-integration-runtime.js';
+import {
+  collectObservedIndexes,
+  collectPlanNodeTypes,
+  collectScanNodes,
+  normalizeExplainPayload,
+  planNumber,
+} from '../harness/postgres-explain.js';
 
 const maybeDescribe = hasPostgresIntegrationDatabase ? describe : describe.skip;
 const RUNTIME_EVENT_REPLAY_RUN_ID = 'runtime-event-replay-explain-itest';
-const RUNTIME_EVENT_REPLAY_ARTIFACT_NAME = 'runtime-event-replay-plan.json';
 const RUNTIME_EVENT_SEED_COUNT = 1_000_000;
 const RUNTIME_EVENT_REPLAY_LIMIT = 25;
 const EVENT_BUS_OUTBOX_CLAIM_RUN_ID = 'event-bus-outbox-claim-explain-itest';
-const EVENT_BUS_OUTBOX_CLAIM_ARTIFACT_NAME = 'event-bus-outbox-claim-plan.json';
 const EVENT_BUS_OUTBOX_SEED_COUNT = 1_000_000;
 const EVENT_BUS_OUTBOX_CLAIM_LIMIT = 25;
 const ROWS_SCANNED_TO_RETURNED_RATIO_GATE = 20;
-
-type ExplainPlanNode = Record<string, unknown> & {
-  Plans?: ExplainPlanNode[];
-};
-
-function planNumber(node: Record<string, unknown>, field: string): number {
-  const value = node[field];
-  return typeof value === 'number' ? value : 0;
-}
-
-function walkPlan(
-  node: ExplainPlanNode,
-  visit: (node: ExplainPlanNode) => void,
-) {
-  visit(node);
-  for (const child of node.Plans ?? []) walkPlan(child, visit);
-}
-
-function planIndexes(plan: ExplainPlanNode): string[] {
-  const indexes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Index Name'] === 'string') indexes.add(node['Index Name']);
-  });
-  return [...indexes].sort();
-}
-
-function planNodeTypes(plan: ExplainPlanNode): string[] {
-  const nodeTypes = new Set<string>();
-  walkPlan(plan, (node) => {
-    if (typeof node['Node Type'] === 'string') nodeTypes.add(node['Node Type']);
-  });
-  return [...nodeTypes].sort();
-}
-
-function scanEvidence(plan: ExplainPlanNode) {
-  const scans: Array<Record<string, unknown>> = [];
-  walkPlan(plan, (node) => {
-    const nodeType = String(node['Node Type'] ?? '');
-    if (!nodeType.includes('Scan')) return;
-    scans.push({
-      nodeType,
-      relationName: node['Relation Name'],
-      indexName: node['Index Name'],
-      actualRows: planNumber(node, 'Actual Rows'),
-      actualLoops: planNumber(node, 'Actual Loops') || 1,
-      rowsRemovedByFilter: planNumber(node, 'Rows Removed by Filter'),
-      rowsRemovedByIndexRecheck: planNumber(
-        node,
-        'Rows Removed by Index Recheck',
-      ),
-      sharedHitBlocks: planNumber(node, 'Shared Hit Blocks'),
-      sharedReadBlocks: planNumber(node, 'Shared Read Blocks'),
-    });
-  });
-  return scans;
-}
-
-function normalizeExplain(payload: unknown): {
-  Plan: ExplainPlanNode;
-  'Execution Time'?: number;
-} {
-  if (!Array.isArray(payload) || typeof payload[0] !== 'object') {
-    throw new Error('Unexpected EXPLAIN JSON payload');
-  }
-  return payload[0] as { Plan: ExplainPlanNode; 'Execution Time'?: number };
-}
 
 maybeDescribe('Postgres runtime event outbox', () => {
   let runtime: PostgresIntegrationRuntime;
@@ -251,14 +187,6 @@ maybeDescribe('Postgres runtime event outbox', () => {
     const tableName = `${quotePostgresIdentifier(
       runtime.schemaName,
     )}.${quotePostgresIdentifier('runtime_events')}`;
-    const artifactPath = path.join(
-      process.cwd(),
-      '.factory',
-      'benchmarks',
-      'postgres-hot-paths',
-      RUNTIME_EVENT_REPLAY_RUN_ID,
-      RUNTIME_EVENT_REPLAY_ARTIFACT_NAME,
-    );
 
     await runtime.service.pool.query(
       `INSERT INTO apps (id, slug, name, status, created_at, updated_at)
@@ -413,9 +341,9 @@ maybeDescribe('Postgres runtime event outbox', () => {
         `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${item.sql}`,
         item.values,
       );
-      const root = normalizeExplain(explain.rows[0]?.['QUERY PLAN']);
-      const scans = scanEvidence(root.Plan);
-      const actualRows = planNumber(root.Plan, 'Actual Rows');
+      const root = normalizeExplainPayload(explain.rows[0]?.['QUERY PLAN']);
+      const scans = collectScanNodes(root.Plan);
+      const actualRows = planNumber(root.Plan, 'Actual Rows') ?? 0;
       const scannedRows = scans.reduce(
         (total, scan) =>
           total +
@@ -427,8 +355,8 @@ maybeDescribe('Postgres runtime event outbox', () => {
       );
       const rowsScannedToReturnedRatio =
         actualRows > 0 ? scannedRows / actualRows : null;
-      const observedIndexes = planIndexes(root.Plan);
-      const observedNodeTypes = planNodeTypes(root.Plan);
+      const observedIndexes = collectObservedIndexes(root.Plan);
+      const observedNodeTypes = collectPlanNodeTypes(root.Plan);
       const usedSeqScan = scans.some(
         (scan) =>
           scan.relationName === 'runtime_events' &&
@@ -479,16 +407,12 @@ maybeDescribe('Postgres runtime event outbox', () => {
           : 'follow_up_required',
       },
     };
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
-
-    const written = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
-    expect(written.table.cardinality).toBeGreaterThanOrEqual(
+    expect(artifact.table.cardinality).toBeGreaterThanOrEqual(
       RUNTIME_EVENT_SEED_COUNT,
     );
-    expect(written.verdict.status).toBe('acceptable_evidence');
-    expect(written.cases).toHaveLength(cases.length);
-    for (const item of written.cases) {
+    expect(artifact.verdict.status).toBe('acceptable_evidence');
+    expect(artifact.cases).toHaveLength(cases.length);
+    for (const item of artifact.cases) {
       expect(item.observedIndexes).toContain(item.expectedIndex);
       expect(item.rowsScannedToReturnedRatio).toBeLessThanOrEqual(
         ROWS_SCANNED_TO_RETURNED_RATIO_GATE,
@@ -504,14 +428,6 @@ maybeDescribe('Postgres runtime event outbox', () => {
     const tableName = `${quotePostgresIdentifier(
       runtime.schemaName,
     )}.${quotePostgresIdentifier('event_bus_outbox')}`;
-    const artifactPath = path.join(
-      process.cwd(),
-      '.factory',
-      'benchmarks',
-      'postgres-hot-paths',
-      EVENT_BUS_OUTBOX_CLAIM_RUN_ID,
-      EVENT_BUS_OUTBOX_CLAIM_ARTIFACT_NAME,
-    );
 
     await runtime.service.pool.query(
       `INSERT INTO event_bus_outbox (
@@ -613,9 +529,9 @@ maybeDescribe('Postgres runtime event outbox', () => {
           `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${item.sql}`,
           item.values,
         );
-        const root = normalizeExplain(explain.rows[0]?.['QUERY PLAN']);
-        const scans = scanEvidence(root.Plan);
-        const actualRows = planNumber(root.Plan, 'Actual Rows');
+        const root = normalizeExplainPayload(explain.rows[0]?.['QUERY PLAN']);
+        const scans = collectScanNodes(root.Plan);
+        const actualRows = planNumber(root.Plan, 'Actual Rows') ?? 0;
         const scannedRows = scans.reduce(
           (total, scan) =>
             total +
@@ -627,8 +543,8 @@ maybeDescribe('Postgres runtime event outbox', () => {
         );
         const rowsScannedToReturnedRatio =
           actualRows > 0 ? scannedRows / actualRows : null;
-        const observedIndexes = planIndexes(root.Plan);
-        const observedNodeTypes = planNodeTypes(root.Plan);
+        const observedIndexes = collectObservedIndexes(root.Plan);
+        const observedNodeTypes = collectPlanNodeTypes(root.Plan);
         const usedSeqScan = scans.some(
           (scan) =>
             scan.relationName === 'event_bus_outbox' &&
@@ -689,17 +605,15 @@ maybeDescribe('Postgres runtime event outbox', () => {
           : 'follow_up_required',
       },
     };
-    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-    fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
-
-    const written = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
-    expect(written.table.cardinality).toBeGreaterThanOrEqual(
+    expect(artifact.table.cardinality).toBeGreaterThanOrEqual(
       EVENT_BUS_OUTBOX_SEED_COUNT,
     );
-    expect(written.dispatcherStatus).toBe('future_dispatcher_claim_shape_only');
-    expect(written.verdict.status).toBe('acceptable_evidence');
-    expect(written.cases).toHaveLength(cases.length);
-    for (const item of written.cases) {
+    expect(artifact.dispatcherStatus).toBe(
+      'future_dispatcher_claim_shape_only',
+    );
+    expect(artifact.verdict.status).toBe('acceptable_evidence');
+    expect(artifact.cases).toHaveLength(cases.length);
+    for (const item of artifact.cases) {
       expect(item.observedIndexes).toContain(item.expectedIndex);
       expect(item.rowsScannedToReturnedRatio).toBeLessThanOrEqual(
         ROWS_SCANNED_TO_RETURNED_RATIO_GATE,

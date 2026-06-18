@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import path from 'path';
 
 import { resolveWorkspaceFolderPath } from '../../platform/workspace-folder.js';
@@ -23,9 +22,8 @@ import {
   renderUserQuestionPromptHtml,
 } from './html-render.js';
 
-import { TelegramChannelState } from './channel-state.js';
+import { TelegramChannelPolling } from './channel-polling.js';
 
-const TELEGRAM_POLL_LEASE_HASH_CHARS = 24;
 import {
   PendingUserQuestionState,
   TELEGRAM_INLINE_BUTTON_TEXT_MAX_BYTES,
@@ -33,13 +31,17 @@ import {
   splitTelegramTextByCodeUnits,
   truncateUtf8ToByteLimit,
 } from './channel-shared.js';
+import {
+  resolveDurableTelegramUserQuestionOtherReply,
+  sendTelegramUserQuestionOtherReplyNotice,
+} from './user-question-other-recovery.js';
 
 export interface TelegramDownloadedFile {
   filePath: string;
   storageRef: string;
 }
 
-export abstract class TelegramChannelPrompts extends TelegramChannelState {
+export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
   protected pendingUserQuestionKey(
     requestId: string,
     questionIndex: number,
@@ -435,8 +437,21 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
       this.pendingUserQuestionKey(entry.requestId, entry.questionIndex),
     );
     if (!pending) {
-      // The question already resolved or expired; consume the stale reply.
-      this.pendingUserQuestionOtherPrompts.delete(key);
+      const recovered = await resolveDurableTelegramUserQuestionOtherReply({
+        chatId: input.chatId,
+        requestId: entry.requestId,
+        questionIndex: entry.questionIndex,
+        text: input.text,
+        userId: input.userId,
+        answeredBy: input.answeredBy,
+        isApproverAuthorized: (chatId, userId, sourceAgentFolder) =>
+          this.isTelegramApproverAuthorized(chatId, userId, sourceAgentFolder),
+        sendNotice: (chatId, text) =>
+          this.sendUserQuestionOtherReplyNotice(chatId, text),
+      });
+      if (recovered.deletePrompt) {
+        this.pendingUserQuestionOtherPrompts.delete(key);
+      }
       return true;
     }
     const authorized = input.userId
@@ -485,132 +500,12 @@ export abstract class TelegramChannelPrompts extends TelegramChannelState {
     chatId: string,
     text: string,
   ): Promise<void> {
-    if (!this.bot) return;
-    try {
-      await this.bot.api.sendMessage(chatId, text);
-    } catch (err) {
-      logger.debug(
-        { chatId, err: this.sanitizeErrorMessage(err) },
-        'Failed to send Telegram user question reply notice',
-      );
-    }
-  }
-
-  protected startPolling(): void {
-    if (!this.bot || this.isStopping) return;
-    void this.startPollingWithLease();
-  }
-
-  private async startPollingWithLease(): Promise<void> {
-    if (
-      !this.bot ||
-      this.isStopping ||
-      this.pollingLease ||
-      this.pollingStartInFlight
-    ) {
-      return;
-    }
-    this.pollingStartInFlight = true;
-    if (!this.botToken.trim()) {
-      this.pollingStartInFlight = false;
-      logger.error('Telegram polling cannot start without a bot token');
-      return;
-    }
-    const leaseKey = `telegram:poll:${createHash('sha256').update(this.botToken).digest('hex').slice(0, TELEGRAM_POLL_LEASE_HASH_CHARS)}`;
-    let lease;
-    try {
-      lease = await this.opts.runtimeLease?.tryAcquire(leaseKey);
-    } catch (err) {
-      this.pollingStartInFlight = false;
-      logger.warn(
-        { err, leaseKey },
-        'Telegram polling lease acquisition failed; scheduling retry',
-      );
-      this.schedulePollingRetry();
-      return;
-    }
-    if (!lease && this.opts.runtimeLease) {
-      this.pollingStartInFlight = false;
-      logger.warn(
-        { leaseKey },
-        'Telegram polling lease is held by another runtime; skipping poller start',
-      );
-      this.schedulePollingRetry();
-      return;
-    }
-    this.pollingLease = lease ?? null;
-    lease?.onLost?.((err) => {
-      if (this.pollingLease !== lease) return;
-      this.pollingLease = null;
-      if (this.isStopping) return;
-      logger.warn(
-        { err, leaseKey },
-        'Telegram polling lease connection was lost; scheduling retry',
-      );
-      this.schedulePollingRetry();
+    await sendTelegramUserQuestionOtherReplyNotice({
+      bot: this.bot,
+      chatId,
+      text,
+      sanitizeErrorMessage: (err) => this.sanitizeErrorMessage(err),
     });
-
-    if (this.isTelegramBotRunning()) {
-      this.pollingStartInFlight = false;
-      logger.info(
-        { leaseKey },
-        'Telegram poller already running; retaining polling lease',
-      );
-      return;
-    }
-
-    const pollingRun = this.bot.start({
-      onStart: (botInfo) => {
-        logger.info(
-          { username: botInfo.username, id: botInfo.id },
-          'Telegram bot connected',
-        );
-        logger.info(
-          {
-            username: botInfo.username,
-            hint: 'Send /chatid to the bot to get a chat registration ID',
-          },
-          'Telegram bot connection hint',
-        );
-      },
-    });
-    if (!pollingRun || typeof pollingRun.then !== 'function') {
-      this.pollingStartInFlight = false;
-      return;
-    }
-
-    Promise.resolve(pollingRun)
-      .then(() => {
-        this.pollingStartInFlight = false;
-        if (this.isTelegramBotRunning()) {
-          logger.info(
-            { leaseKey },
-            'Telegram poller remains active after duplicate start; retaining polling lease',
-          );
-          return;
-        }
-        void this.releasePollingLease();
-        if (this.isStopping) return;
-        logger.warn('Telegram polling stopped unexpectedly');
-        this.schedulePollingRetry();
-      })
-      .catch((err) => {
-        this.pollingStartInFlight = false;
-        void this.releasePollingLease();
-        if (this.isStopping) return;
-        logger.error({ err }, 'Telegram polling failed');
-        this.schedulePollingRetry();
-      });
-  }
-
-  protected async releasePollingLease(): Promise<void> {
-    const lease = this.pollingLease;
-    this.pollingLease = null;
-    await lease?.release();
-  }
-
-  private isTelegramBotRunning(): boolean {
-    return this.bot?.isRunning?.() ?? false;
   }
 
   /**
