@@ -250,9 +250,13 @@ async function readRuntimeCapacityFromStorage(
            WHERE state = 'queued'`,
         ),
         storage.service.pool.query<{ count: number }>(
-          `SELECT count(*)::int AS count
-           FROM run_slots
-           WHERE slot_key NOT LIKE $1 AND expires_at > now()`,
+          `SELECT coalesce(max(slot_count), 0)::int AS count
+           FROM (
+             SELECT count(*)::int AS slot_count
+             FROM run_slots
+             WHERE slot_key NOT LIKE $1 AND expires_at > now()
+             GROUP BY slot_key
+           ) active_job_slots`,
           [livePattern],
         ),
       ]);

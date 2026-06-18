@@ -245,7 +245,7 @@ function makeMetricsDeps(overrides: Partial<MetricsDeps> = {}): MetricsDeps {
       }
       // Live gauges: distinguish per-query so each gets its own count.
       if (sql.includes('run_slots') && sql.includes('NOT LIKE')) {
-        return [{ count: 1 }] as never[];
+        return [{ slot_key: 'tg:team', count: 1 }] as never[];
       }
       if (sql.includes('run_slots')) return [{ count: 4 }] as never[];
       if (sql.includes('live_admission_work_items')) {
@@ -303,7 +303,9 @@ describe('renderMetrics', () => {
     expect(body).toContain('gantry_live_oldest_waiting_seconds 42');
     expect(body).toContain('gantry_live_admission_backlog 2');
     expect(body).toContain('gantry_live_admission_backlog_oldest_seconds 33');
-    expect(body).toContain('gantry_background_job_slots_used 1');
+    expect(body).toContain(
+      'gantry_background_job_slots_used{slot_key="tg:team"} 1',
+    );
     expect(body).toContain('gantry_background_job_slots_capacity 4');
     expect(body).not.toContain('available worker');
   });

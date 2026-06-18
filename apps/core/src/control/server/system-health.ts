@@ -247,6 +247,11 @@ interface BacklogRow {
   oldest_age_seconds: number;
 }
 
+interface JobSlotRow {
+  slot_key: string;
+  count: number;
+}
+
 /**
  * Starvation threshold for the `gantry_capability_starved_runs` gauge, in
  * seconds. Kept as a code constant (no settings key) and aligned with the
@@ -508,17 +513,23 @@ export async function renderMetrics(deps: MetricsDeps): Promise<string> {
   }
 
   try {
-    const rows = await deps.query<CountRow>(
-      `SELECT count(*)::int AS count
+    const rows = await deps.query<JobSlotRow>(
+      `SELECT slot_key, count(*)::int AS count
        FROM run_slots
        WHERE slot_key NOT LIKE ${quoteSqlLiteral(`${LIVE_TURN_SLOT_KEY_PREFIX}%`)}
-         AND expires_at > now()`,
+         AND expires_at > now()
+       GROUP BY slot_key
+       ORDER BY slot_key`,
     );
-    gauge(
-      'gantry_background_job_slots_used',
-      'Unexpired non-live run slots held by background jobs.',
-      rows[0]?.count ?? 0,
+    lines.push(
+      '# HELP gantry_background_job_slots_used Unexpired non-live run slots held by background jobs per slot key.',
     );
+    lines.push('# TYPE gantry_background_job_slots_used gauge');
+    for (const row of rows) {
+      lines.push(
+        `gantry_background_job_slots_used${renderLabels({ slot_key: row.slot_key })} ${row.count}`,
+      );
+    }
     gauge(
       'gantry_background_job_slots_capacity',
       'Configured per-workspace background job capacity.',

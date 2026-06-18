@@ -669,6 +669,9 @@ describe('PgBossSchedulerEngine', () => {
         slotKey: 'tg:team',
       }),
     );
+    expect(acquireRunSlot.mock.calls[0]?.[0].slotKey).not.toMatch(
+      /^live:messages:/,
+    );
     expect(requestSync).toHaveBeenCalledWith();
   });
 

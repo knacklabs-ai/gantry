@@ -60,8 +60,9 @@ describe('startWaitingStatusMonitor', () => {
 
   it('uses user-facing copy without worker or capacity jargon', () => {
     expect(WAITING_STATUS_TEXT).toBe('Still starting this request.');
-    expect(WAITING_STATUS_TEXT.toLowerCase()).not.toContain('worker');
-    expect(WAITING_STATUS_TEXT.toLowerCase()).not.toContain('capacity');
+    expect(WAITING_STATUS_TEXT).not.toMatch(
+      /worker|capacity|slot|saturat|admission/i,
+    );
   });
 
   it('sends the visible status once per waiting episode past the threshold', async () => {
