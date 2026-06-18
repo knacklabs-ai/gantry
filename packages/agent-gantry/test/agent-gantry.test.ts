@@ -2,9 +2,12 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   buildExternalNotificationAdaptiveCard,
+  createAnthropicStructuredModelProvider,
   createBotFrameworkTeamsTransport,
   createFirecrawlCrawlProvider,
+  createFirecrawlDiscoveryToolProviderSet,
   createFirecrawlFetchProvider,
+  createFirecrawlMapProvider,
   createFirecrawlSearchProvider,
   createHttpFetchProvider,
   createGantryClient,
@@ -55,10 +58,12 @@ describe('@cawstudios/agent-gantry', () => {
   });
 
   it('maps Firecrawl search responses into structured search results', async () => {
+    let requestBody: Record<string, unknown> | null = null;
     const provider = createFirecrawlSearchProvider({
       apiKey: 'test-key',
-      fetchImpl: async () =>
-        new Response(
+      fetchImpl: async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
           JSON.stringify({
             data: [
               {
@@ -69,7 +74,8 @@ describe('@cawstudios/agent-gantry', () => {
             ],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
+        );
+      },
     });
 
     await expect(
@@ -84,6 +90,79 @@ describe('@cawstudios/agent-gantry', () => {
         },
       ],
     });
+    expect(requestBody).toEqual({ query: 'karnataka tenders', limit: 1 });
+  });
+
+  it('maps Firecrawl map responses into structured link results', async () => {
+    const provider = createFirecrawlMapProvider({
+      apiKey: 'test-key',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            links: [
+              'https://example.gov/tenders',
+              { url: 'https://example.gov/procurement', title: 'Procurement' },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    await expect(
+      provider.map({ url: 'https://example.gov', limit: 2 }),
+    ).resolves.toMatchObject({
+      startUrl: 'https://example.gov',
+      provider: 'firecrawl-map',
+      links: [
+        { url: 'https://example.gov/tenders' },
+        { url: 'https://example.gov/procurement', title: 'Procurement' },
+      ],
+    });
+  });
+
+  it('creates source discovery providers with search, map, http fetch, and crawl', () => {
+    const tools = createFirecrawlDiscoveryToolProviderSet({
+      apiKey: 'test-key',
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    expect(tools.search).toBeDefined();
+    expect(tools.map).toBeDefined();
+    expect(tools.fetch).toBeDefined();
+    expect(tools.crawl).toBeDefined();
+  });
+
+  it('maps Anthropic message responses into structured JSON model output', async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      taskModels: { 'task.test': 'claude-task' },
+      fetchImpl: async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: '{"status":"completed"}' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'task.test',
+        instructions: 'Return JSON.',
+        input: { value: 1 },
+        correlationId: 'corr-1',
+      }),
+    ).resolves.toEqual({ status: 'completed' });
+    expect(requestBody).toMatchObject({
+      model: 'claude-task',
+      max_tokens: 4096,
+      messages: [{ role: 'user' }],
+    });
+    expect(JSON.stringify(requestBody)).not.toContain('test-key');
   });
 
   it('fetches and summarizes HTTP pages with blocking signals', async () => {
