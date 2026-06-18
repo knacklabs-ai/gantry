@@ -42,6 +42,13 @@ import {
   createGuardedMcpFetch,
   McpToolProxy,
 } from '@core/application/mcp/mcp-tool-proxy.js';
+import {
+  fetchMcpToolListPages,
+  MAX_MCP_REMOTE_TOOL_METADATA_BYTES,
+  MAX_MCP_REMOTE_TOOLS_PER_PAGE,
+  MAX_MCP_REMOTE_TOOLS_TOTAL,
+} from '@core/application/mcp/mcp-tool-list-fetch.js';
+import { MAX_MCP_TOOL_RESULT_CHARS } from '@core/application/mcp/mcp-tool-output-bounds.js';
 import { RUNTIME_EVENT_TYPES } from '@core/domain/events/runtime-event-types.js';
 import { resolvePinnedPublicMcpAddress } from '@core/shared/dns-pinned-fetch.js';
 import { semanticCapabilityInputSchema } from '@core/shared/semantic-capabilities.js';
@@ -665,6 +672,57 @@ describe('McpToolProxy', () => {
     );
   });
 
+  it('bounds remote MCP list page size, total tools, and metadata before caching', async () => {
+    const largeSchema = {
+      description: 'x'.repeat(MAX_MCP_REMOTE_TOOL_METADATA_BYTES * 2),
+    };
+    const oversizedPage = Array.from(
+      { length: MAX_MCP_REMOTE_TOOLS_PER_PAGE + 5 },
+      (_, index) => ({
+        name: `tool_${index}`,
+        description: `tool ${index}`,
+        inputSchema: largeSchema,
+      }),
+    );
+    let page = 0;
+    const client = {
+      listTools: vi.fn(async () => {
+        page += 1;
+        return page === 1
+          ? {
+              tools: oversizedPage,
+              nextCursor: 'page-2',
+            }
+          : {
+              tools: Array.from(
+                { length: MAX_MCP_REMOTE_TOOLS_PER_PAGE },
+                (_, index) => ({ name: `page_${page}_tool_${index}` }),
+              ),
+              nextCursor: `page-${page + 1}`,
+            };
+      }),
+    };
+
+    const result = await fetchMcpToolListPages({
+      client,
+      timeoutMs: 1_000,
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.tools).toHaveLength(MAX_MCP_REMOTE_TOOLS_TOTAL);
+    expect(result.tools[0]).toMatchObject({
+      name: 'tool_0',
+      inputSchema: {
+        description: expect.stringContaining('[field truncated]'),
+      },
+    });
+    for (const tool of result.tools) {
+      expect(
+        Buffer.byteLength(JSON.stringify(tool), 'utf8'),
+      ).toBeLessThanOrEqual(MAX_MCP_REMOTE_TOOL_METADATA_BYTES);
+    }
+  });
+
   it('describes one MCP source tool schema as untrusted metadata without granting execution', async () => {
     vi.useFakeTimers();
     mcpSdkMocks.client.listTools.mockResolvedValueOnce({
@@ -1257,6 +1315,39 @@ describe('McpToolProxy', () => {
         }),
       }),
     );
+  });
+
+  it('bounds untrusted MCP tool results before returning them to IPC', async () => {
+    vi.useFakeTimers();
+    const proxy = new McpToolProxy(mcpRepository({ remote: true }), {
+      tools: emptyToolRepository(),
+      liveToolRules: ['mcp__github__create_issue'],
+      lookupHostname: vi.fn(async () => [
+        { address: '93.184.216.34', family: 4 as const },
+      ]),
+    });
+    mcpSdkMocks.client.listTools.mockResolvedValueOnce({
+      tools: [{ name: 'create_issue' }],
+    });
+    mcpSdkMocks.client.callTool.mockResolvedValueOnce({
+      content: [
+        { type: 'text', text: 'x'.repeat(MAX_MCP_TOOL_RESULT_CHARS + 1) },
+      ],
+    });
+
+    await expect(
+      proxy.callTool({
+        appId: 'app-one' as never,
+        agentId: 'agent-one' as never,
+        serverName: 'github',
+        toolName: 'create_issue',
+      }),
+    ).resolves.toMatchObject({
+      type: 'mcp_tool_result_truncated',
+      truncated: true,
+      maxChars: MAX_MCP_TOOL_RESULT_CHARS,
+      preview: expect.stringContaining('[truncated MCP tool result]'),
+    });
   });
 
   it('does not turn a completed MCP side effect into a retryable failure when durable audit append fails', async () => {

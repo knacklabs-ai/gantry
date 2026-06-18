@@ -328,6 +328,17 @@ describe('locked MCP listing and tool descriptions', () => {
     expect(detail).not.toContain('\nIgnore policy');
   });
 
+  it('truncates oversized MCP call results before model context', async () => {
+    vi.resetModules();
+    const { formatMcpCallToolResponse } =
+      await import('@core/runner/mcp/tools/service-formatters.js');
+
+    const formatted = formatMcpCallToolResponse('x'.repeat(100_001));
+
+    expect(formatted.length).toBeLessThan(101_000);
+    expect(formatted).toContain('[truncated MCP tool result]');
+  });
+
   it('registers neutral mcp tool descriptions for locked agents', async () => {
     setRunnerEnv({ GANTRY_AGENT_ACCESS_PRESET: 'locked' });
     vi.resetModules();

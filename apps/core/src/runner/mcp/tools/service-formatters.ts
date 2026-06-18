@@ -1,4 +1,5 @@
 import { SAME_SESSION_SKILL_CONTEXT_MAX_BYTES } from './service-constants.js';
+import { serializeMcpToolResult } from '../../../application/mcp/mcp-tool-output-bounds.js';
 import {
   SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
   UNREVIEWED_DISCOVERY_GUIDANCE,
@@ -271,8 +272,7 @@ function sanitizeMcpMetadataJsonText(value: string): string {
 }
 
 export function formatMcpCallToolResponse(data: unknown): string {
-  if (typeof data === 'string') return data;
-  return JSON.stringify(data ?? null, null, 2);
+  return serializeMcpToolResult(data).text;
 }
 
 function parseConnectedMcpContext(data: unknown): {

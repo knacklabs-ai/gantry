@@ -68,6 +68,7 @@ import {
   fetchAndCacheMcpToolDetail,
   lookupMcpToolOutputSchema,
 } from './mcp-tool-detail-fetch.js';
+import { boundMcpToolResultForReturn } from './mcp-tool-output-bounds.js';
 
 export { clearMcpToolProxyInventoryCache } from './mcp-tool-inventory.js';
 export {
@@ -379,7 +380,7 @@ export class McpToolProxy {
           // A remote MCP tool already returned. Do not make completed external
           // side effects look retryable because the post-call audit append failed.
         }
-        return result;
+        return boundMcpToolResultForReturn(result);
       } catch (err) {
         await closeCachedClient(capability);
         throw err;
