@@ -543,9 +543,7 @@ describe('GroupQueue', () => {
         return true;
       }
 
-      expect(queue.sendMessage('group1@g.us', 'queued-before-idle')).toBe(
-        true,
-      );
+      expect(queue.sendMessage('group1@g.us', 'queued-before-idle')).toBe(true);
       return true;
     });
 
@@ -572,12 +570,7 @@ describe('GroupQueue', () => {
     });
 
     const processMessages = vi.fn(async () => {
-      queue.registerProcess(
-        'group1@g.us',
-        proc as any,
-        'run-1',
-        'test-group',
-      );
+      queue.registerProcess('group1@g.us', proc as any, 'run-1', 'test-group');
       queue.notifyIdle('group1@g.us');
       return true;
     });

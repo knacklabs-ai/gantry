@@ -36,3 +36,11 @@
   Boondi prompts should use the message sender/customer name naturally,
   including dev labels, and must not ask customers to repeat name or phone for
   gifting handoffs.
+- For any sub-25 gifting conversation, the website/self-serve route comes first.
+  Customisation or serviceability questions should not erase that route; mention
+  the website path first, then route only feasibility confirmation to the team.
+- Keep `SOUL.md` and `CLAUDE.md` generic for Boondi support. Gifting,
+  customisation, or campaign behavior may appear only as compact scenario rules;
+  these files must not become gift/customisation-specific prompts.
+- Do not hard-code customisation examples in prompt files. Say
+  `customisation` generically unless the customer used the specific term.
