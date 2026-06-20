@@ -7,20 +7,28 @@ Updated: 2026-06-20.
 Template alignment: reviewed against
 `agents/boondi_support/docs/plan-guiding-template.md`.
 
-Testing level decision: not approved yet. This plan proposes minimal focused
-live proof first. Full live regression must be approved by the user before it is
-planned or run.
+Testing level decision: minimal focused live proof first, then an ultimate full
+live Template_BA and scaling phase after all earlier phases pass. The user has
+approved adding the final all-scenario phase to the plan, but not running it
+before the prerequisite phases are complete.
+
+Commit policy: do not commit or stage any change made during this plan unless
+the user explicitly asks.
 
 ## Goal
 
 - In scope: replace the selected monolithic runtime skill `boondi-kb` with
-  multiple Boondi-owned, progressive, domain-specific SDK skills.
+  multiple Boondi-owned, progressive, domain-specific SDK skills; make surgical
+  code, MCP, skill, KB, prompt, and eval-harness changes when evidence proves
+  they are needed.
 - Out of scope: rewriting Gantry skill materialization architecture,
-  broadening MCP behavior, changing Boondi tone policy, or running full live
-  Template_BA regression without explicit user approval.
+  broadening MCP behavior without an evidence-backed defect, changing Boondi
+  tone policy without Template_BA/domain-doc support, or running the ultimate
+  full live phase before the earlier gates pass.
 - Success means: live payloads expose the domain skills, the always-on prompt
-  stays free of full skill bodies, relevant live replies remain correct, and
-  `boondi-kb` is no longer selected.
+  stays free of full skill bodies, relevant live replies remain correct,
+  `boondi-kb` is no longer selected, and the final all-59-scenario live/load
+  phase passes.
 - Non-goals: exact LLM wording matches, hard-coding Boondi skill names into
   Gantry core, or maintaining two runtime sources of truth.
 
@@ -94,8 +102,13 @@ Assumptions not yet proven:
 
 Open questions:
 
-- Whether full live Template_BA regression is required after focused proof. This
-  must be decided by the user before any full live run is planned or executed.
+- The exact multi-core launch command and evidence collection flow for 5 cores
+  x 12 warm workers must be verified from current code before the final phase
+  runs.
+- The current `run-template-ba-live.ts` sends selected scenarios sequentially.
+  The final phase must either enhance it for safe parallel execution or use a
+  proven existing orchestrator that can distribute all 59 scenarios across the
+  5-core runtime.
 
 ## Source Of Truth
 
@@ -103,7 +116,13 @@ Open questions:
   selection, and SDK payload shape.
 - Live signed webhook behavior is the acceptance proof for customer-facing
   behavior.
-- Docs, MD files, Excel sheets, and prior notes are references, not proof.
+- Boondi domain expected behavior comes from
+  `/Users/caw-d/Downloads/Boondi_Intent_Scenario_Template.xlsx#Template_BA`,
+  `/Users/caw-d/Downloads/BSS Boondi User Flow.html`,
+  `/Users/caw-d/Downloads/Boondi_SoulDoc (2).html`, and
+  `/Users/caw-d/Downloads/Boondi System Orchestration Blueprint (1).html`.
+- Docs, MD files, Excel sheets, and prior notes define requirements and review
+  expectations, but they are not proof that runtime behavior is working.
 - If docs disagree with code or observed behavior, update the docs after proof.
 
 ## Target Architecture
@@ -207,15 +226,15 @@ Detailed rules:
   and Skill tool openings for each live proof row.
 - Output/reply checks: inspect customer-visible replies for correctness,
   warmth-sensitive regressions, unsupported promises, and leakage.
-- Full live Template_BA regression: not approved yet. Ask the user whether the
-  plan needs full live testing or minimal focused live testing before planning
-  or running any full live regression.
+- Full live Template_BA regression: do not run it early. The user has requested
+  it only as the ultimate final phase after prerequisite phases pass.
 
 ## Migration Phases
 
 Default phase statuses are `Pending`, `In progress`, `Blocked`, and `Done`.
 Do not move to the next phase until evidence is recorded and the reviewer
-decision is updated.
+decision is updated. Phase 7 is the ultimate final gate and must not start
+until Phases 0-6 pass.
 
 ### Phase 0: Freeze Current Evidence
 
@@ -388,6 +407,78 @@ Any remaining match must be classified:
 - test fixture intentionally covering legacy behavior
 - stale active reference to remove
 
+### Phase 7: Ultimate Full Template_BA Live And Scaling Gate
+
+- Status: Pending.
+- Objective: prove the completed architecture against all 59 Template_BA
+  scenarios while exercising low-scale production-style concurrency: 5 runtime
+  cores, each with 12 warm workers.
+- Changes allowed:
+  - Start and configure the required 5-core local runtime only after all earlier
+    phases pass.
+  - Enhance the Template_BA eval harness or add a small orchestrator if current
+    tooling cannot safely distribute all 59 scenarios in parallel.
+  - Make surgical fixes across code, MCPs, skills, KBs, prompts, eval harness,
+    runtime config, or docs only when a live failure proves the need.
+  - Rerun the smallest affected subset after each fix, then rerun this full
+    phase once the defect is fixed.
+- Evidence required:
+  - Confirm manifest count is 59 from
+    `agents/boondi_support/evals/template-ba-live-scenarios.json`, whose source
+    is `/Users/caw-d/Downloads/Boondi_Intent_Scenario_Template.xlsx#Template_BA`.
+  - Confirm the review sources are available:
+    `/Users/caw-d/Downloads/BSS Boondi User Flow.html`,
+    `/Users/caw-d/Downloads/Boondi_SoulDoc (2).html`, and
+    `/Users/caw-d/Downloads/Boondi System Orchestration Blueprint (1).html`.
+  - Verify the multi-core launch path from current code before starting it; do
+    not trust old docs or memory.
+  - Run 5 cores x 12 warm workers, then send all 59 scenarios with isolated
+    customer phones and reply-gated evidence collection.
+  - Record one evidence row per scenario with webhook status, runtime/core
+    ownership, payload path, trace path, reply text/path, tool stages, opened
+    Skill id when applicable, latency, and reviewer decision.
+  - Run the strict Template_BA evidence reviewer with `--expect-count 59`.
+  - Human-review the replies against Template_BA sample lines, Shreya
+    suggestions, and the Boondi user-flow/soul/system docs for semantic
+    closeness, warmth, helpfulness, and detail level.
+  - Inspect `llm-sdk-query-args.json` or equivalent per-call payload capture to
+    prove domain skills are selected, `boondi-kb` is absent, and full skill
+    bodies are not in always-on prompt context.
+  - After the run settles, confirm no delayed duplicate replies, missing
+    outbound replies, cross-customer context leaks, queue ownership failures, or
+    worker/runtime crashes.
+  - Stop all servers and verify local ports are free.
+- Regression risk: high. This phase intentionally stresses both behavior and
+  scaling architecture. Any failure must be classified before fixing so a
+  scenario-specific change does not break another scenario.
+- Reviewer decision: Pending.
+
+Phase 7 failure classification:
+
+- Tone/semantic gap
+- Missing source data
+- Unsupported promise
+- MCP/tool contract gap
+- Prompt/router issue
+- Skill/KB content issue
+- Customer-output sanitizer issue
+- Runtime queue/worker/core ownership issue
+- Eval harness/evidence collection issue
+
+Phase 7 acceptance requires:
+
+- All 59 scenarios receive exactly one customer-safe reply.
+- Strict reviewer passes with `--expect-count 59`.
+- Human review passes or records accepted tradeoffs for warmth/semantics.
+- No internal/process/source leakage.
+- No unsupported promises.
+- No broad unnecessary MCP/tool fanout.
+- No cross-customer context leakage.
+- No duplicate outbound replies after settle.
+- 5-core x 12-worker runtime remains stable during and after the run.
+- Evidence paths and reviewer decisions are recorded in this plan or the main
+  Boondi evidence doc.
+
 ## Surface Impact Matrix
 
 | Surface | Impact | Reason |
@@ -404,7 +495,7 @@ Any remaining match must be classified:
 | Channel/provider adapters | Unchanged by design | Same signed Interakt webhook proof path. |
 | Docs/prompts | Changed | Update Boondi evidence docs and remove monolithic-skill guidance. |
 | Audit/events | Read-only/observable | Live traces should show `Skill` usage and selected skill ids. |
-| Tests/verification | Changed | Add focused unit tests and live payload/reply evidence. |
+| Tests/verification | Changed | Add focused unit tests, live payload/reply evidence, and the final all-59-scenario load-style gate. |
 
 ## Token, Cost, And Rate-Limit Discipline
 
@@ -414,7 +505,10 @@ Any remaining match must be classified:
   examples into always-on prompt context.
 - Prefer deterministic static/unit checks before LLM/API calls.
 - Cap live testing to the minimal focused pack until payload shape is proven.
-- Ask the user before planning or running full live Template_BA regression.
+- Run the all-59-scenario live/load gate only once earlier phases pass, then
+  rerun full only after meaningful final-batch fixes. For small fixes discovered
+  during Phase 7, rerun the smallest affected subset before repeating the full
+  gate.
 
 ## Risk Controls
 
@@ -427,6 +521,8 @@ Any remaining match must be classified:
 - Do not claim success from static tests. Live signed webhook payload and reply
   evidence is required.
 - Keep live test batches small until payload shape is correct.
+- Use Phase 7 concurrency only after focused proof passes; a 60-worker run must
+  not be the first place basic skill wiring is debugged.
 - Stop all local servers after live tests and verify ports are free.
 
 ## Rollback And Cleanup
@@ -494,6 +590,29 @@ npx tsx agents/boondi_support/evals/run-template-ba-live.ts \
 After live runs, inspect `llm-sdk-query-args.json` and stop the runtime. Verify
 ports `4710`, `8081`, and `8082` are free.
 
+Ultimate full Template_BA and scaling gate:
+
+```bash
+node -e "const m=require('./agents/boondi_support/evals/template-ba-live-scenarios.json'); if (m.scenarioCount !== 59 || m.scenarios.length !== 59) throw new Error('Template_BA count mismatch'); console.log('Template_BA scenarios:', m.scenarioCount)"
+
+npx tsx agents/boondi_support/evals/run-template-ba-live.ts \
+  --dry-run \
+  --all
+```
+
+Before executing Phase 7, verify or add the parallel orchestration path. The
+current `run-template-ba-live.ts` sends scenarios sequentially, so 5 cores x 12
+workers requires either a proven external orchestrator or an eval-harness
+enhancement that safely distributes all 59 scenarios and merges evidence.
+
+After the Phase 7 evidence file exists:
+
+```bash
+npx tsx agents/boondi_support/evals/review-template-ba-evidence.ts \
+  --evidence /tmp/boondi-template-ba-full-live-evidence.json \
+  --expect-count 59
+```
+
 ## Self-Review
 
 Findings from self-review:
@@ -533,6 +652,7 @@ The migration is accepted only when all are true:
 - Full domain skill bodies are absent from always-on prompt payload.
 - Relevant live replies pass strict review and human warmth/semantics review.
 - Focused cross-regression passes.
+- Ultimate all-59-scenario live/load gate passes after Phases 0-6 pass.
 - No internal/process/source leakage.
 - No unsupported promises.
 - No broad MCP/tool fanout.
@@ -547,6 +667,7 @@ Evidence table:
 | `del-01-order-status` | Pending | Pending | Pending | Pending |
 | `cafe-02-nearest-store` or `agg-04-bill` | Pending | Pending | Pending | Pending |
 | `misc-03-franchise` or `misc-02-repeat-opt-out` | Pending | Pending | Pending | Pending |
+| Phase 7 all 59 Template_BA scenarios | Pending | Pending | Pending | Pending |
 
 ## Final Reviewer Decision
 
@@ -554,5 +675,6 @@ Evidence table:
 - Approved with changes: Pending.
 - Blocked: Pending.
 - Reason: Pending live and static proof.
-- Next action: reviewer must approve execution scope, including whether live
-  testing remains minimal focused or expands to full live regression.
+- Next action: execute only after reviewer approval. Use minimal focused live
+  proof first; reserve the full all-59-scenario live/load gate for the ultimate
+  final phase.

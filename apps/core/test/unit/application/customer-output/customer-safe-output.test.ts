@@ -145,7 +145,9 @@ describe('guardCustomerVisibleOutput', () => {
     expect(
       findInternalLeak("The knowledge base doesn't have prices filled in yet."),
     ).toBeDefined();
-    expect(findInternalLeak("The Bandra timings aren't in the KB yet.")).toBeDefined();
+    expect(
+      findInternalLeak("The Bandra timings aren't in the KB yet."),
+    ).toBeDefined();
     expect(
       findInternalLeak('You can look it up in the admin dashboard.'),
     ).toBeDefined();
@@ -293,7 +295,7 @@ describe('stripLeadingNarration', () => {
   it('trims a leading KB-confirmation preamble before the customer answer', () => {
     expect(
       stripLeadingNarration(
-        "The KB confirms that discount-window questions need the exact code. Which offer or code are you trying to use?",
+        'The KB confirms that discount-window questions need the exact code. Which offer or code are you trying to use?',
       ),
     ).toBe('Which offer or code are you trying to use?');
   });
@@ -301,7 +303,7 @@ describe('stripLeadingNarration', () => {
   it('trims a leading KB-confirmation preamble even when it mentions team confirmation', () => {
     expect(
       stripLeadingNarration(
-        "The KB confirms that storage guidance needs team confirmation. Product-specific storage guidance needs team confirmation.",
+        'The KB confirms that storage guidance needs team confirmation. Product-specific storage guidance needs team confirmation.',
       ),
     ).toBe('Product-specific storage guidance needs team confirmation.');
   });
@@ -723,7 +725,7 @@ describe('normalizeUnsupportedMiscPolicyWording', () => {
 
     expect(
       normalizeUnsupportedMiscPolicyWording(
-        "The contact details here will be shared with the right person to action it.",
+        'The contact details here will be shared with the right person to action it.',
       ),
     ).toBe(
       'The contact details here will be shared with the right person for review.',
@@ -749,9 +751,7 @@ describe('normalizeUnsupportedMiscPolicyWording', () => {
       normalizeUnsupportedMiscPolicyWording(
         "I'll pass it along to ensure you're reviewed for removal from our messaging list.",
       ),
-    ).toBe(
-      "I'll pass it along for team review of the opt-out request.",
-    );
+    ).toBe("I'll pass it along for team review of the opt-out request.");
 
     expect(
       normalizeUnsupportedMiscPolicyWording(
@@ -771,17 +771,13 @@ describe('normalizeUnsupportedMiscPolicyWording', () => {
       normalizeUnsupportedMiscPolicyWording(
         'They can check what happened and make sure the messages stop.',
       ),
-    ).toBe(
-      'They can check what happened and confirm the next step.',
-    );
+    ).toBe('They can check what happened and confirm the next step.');
 
     expect(
       normalizeUnsupportedMiscPolicyWording(
         'They can check what happened and stop the messages.',
       ),
-    ).toBe(
-      'They can check what happened and confirm the next step.',
-    );
+    ).toBe('They can check what happened and confirm the next step.');
 
     expect(
       normalizeUnsupportedMiscPolicyWording(
@@ -795,9 +791,7 @@ describe('normalizeUnsupportedMiscPolicyWording', () => {
       normalizeUnsupportedMiscPolicyWording(
         'The team can check what happened and make sure your request is actioned.',
       ),
-    ).toBe(
-      'The team can check what happened and confirm the next step.',
-    );
+    ).toBe('The team can check what happened and confirm the next step.');
   });
 
   it('uses Interakt contact context instead of asking for phone again', () => {

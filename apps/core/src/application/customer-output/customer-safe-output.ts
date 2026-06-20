@@ -56,8 +56,10 @@ function sentenceRegex(): RegExp {
 }
 
 function capitalizeFirstLetter(text: string): string {
-  return text.replace(/^(\s*)([a-z])/, (_match, spaces: string, letter: string) =>
-    `${spaces}${letter.toUpperCase()}`,
+  return text.replace(
+    /^(\s*)([a-z])/,
+    (_match, spaces: string, letter: string) =>
+      `${spaces}${letter.toUpperCase()}`,
   );
 }
 
@@ -143,9 +145,7 @@ export function stripUnsafeSpeculation(text: string): string {
     const sentence = match[0];
     if (!UNSAFE_SPECULATION_SENTENCE_RE.test(sentence)) continue;
     const before = text.slice(0, match.index).replace(/\s+$/, '');
-    const after = text
-      .slice(match.index + sentence.length)
-      .replace(/^\s+/, '');
+    const after = text.slice(match.index + sentence.length).replace(/^\s+/, '');
     if (!after) return text;
     return before ? `${before} ${after}` : after;
   }
@@ -171,7 +171,10 @@ export function replaceUnsafeTravelPromise(text: string): string {
 }
 
 export function normalizeAvailabilityWording(text: string): string {
-  return text.replace(/what['’]?s available right now/gi, 'the currently confirmed options');
+  return text.replace(
+    /what['’]?s available right now/gi,
+    'the currently confirmed options',
+  );
 }
 
 export function normalizeOrderLookupIdentityRequest(text: string): string {
@@ -224,7 +227,10 @@ export function normalizeUnsupportedPolicyWording(text: string): string {
 export function normalizeCustomerHandoffWording(text: string): string {
   return text
     .replace(/\broute\s+this\s+to\s+the\s+team\b/gi, 'pass this to the team')
-    .replace(/\brouting\s+this\s+to\s+the\s+team\b/gi, 'passing this to the team')
+    .replace(
+      /\brouting\s+this\s+to\s+the\s+team\b/gi,
+      'passing this to the team',
+    )
     .replace(/\broute\s+to\s+the\s+team\b/gi, 'pass it to the team')
     .replace(/\brouting\s+to\s+the\s+team\b/gi, 'passing it to the team')
     .replace(/\bhelp\s+route\s+this\b/gi, 'help pass this to the team')
@@ -266,10 +272,7 @@ export function normalizeUnsupportedMiscPolicyWording(text: string): string {
       /\bI['’]?d\s+suggest\s+reaching\s+out\s+to\s+the\s+BSS\s+team\s+directly\s+with\s+the\s+BSS\s+team\b/gi,
       'The team can confirm the right hiring contact or next step',
     )
-    .replace(
-      /\breview\s+and\s+action\b/gi,
-      'review',
-    )
+    .replace(/\breview\s+and\s+action\b/gi, 'review')
     .replace(
       /\bthey['’]?ll\s+review\s+it\s+and\s+action\s+it\s+on\s+their\s+end\b/gi,
       'They can review it',
@@ -302,18 +305,12 @@ export function normalizeUnsupportedMiscPolicyWording(text: string): string {
       /\b(?:so\s+)?(?:they|the\s+team)\s+can\s+action\s+(?:the\s+)?(?:request|opt-out|this)\b/gi,
       'so the team can review the request',
     )
-    .replace(
-      /\bmake\s+sure\s+it['’]?s\s+sorted\b/gi,
-      'confirm the next step',
-    )
+    .replace(/\bmake\s+sure\s+it['’]?s\s+sorted\b/gi, 'confirm the next step')
     .replace(
       /\bmake\s+sure\s+the\s+messages\s+stop\b/gi,
       'confirm the next step',
     )
-    .replace(
-      /\bstop\s+the\s+messages\b/gi,
-      'confirm the next step',
-    )
+    .replace(/\bstop\s+the\s+messages\b/gi, 'confirm the next step')
     .replace(
       /\bmake\s+sure\s+your\s+preference\s+is\s+applied\b/gi,
       'confirm the next step',
@@ -330,10 +327,7 @@ export function normalizeUnsupportedMiscPolicyWording(text: string): string {
       /\bmake\s+sure\s+(?:your\s+opt-out|the\s+opt-out|this\s+opt-out)\s+is\s+actioned(?:\s+properly)?\b/gi,
       'confirm the next step',
     )
-    .replace(
-      /\bsort\s+(?:this|it)\s+out\b/gi,
-      'confirm the next step',
-    )
+    .replace(/\bsort\s+(?:this|it)\s+out\b/gi, 'confirm the next step')
     .replace(
       /\bCould\s+you\s+confirm\s+the\s+phone\s+number\s+you['’]?re\s+receiving\s+these\s+messages\s+on\?\s*That['’]?ll\s+help\s+the\s+team\s+trace\s+it\s+quickly\.?/gi,
       "I'll pass this chat's contact details to the team so they can trace it.",

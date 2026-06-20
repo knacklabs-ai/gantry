@@ -4,9 +4,9 @@ import { claudeSdkToolsForEnabledSkills } from '@core/adapters/llm/anthropic-cla
 
 describe('native SDK skills', () => {
   it('exposes the native Skill tool when SDK skills are enabled under a restricted tool surface', () => {
-    expect(claudeSdkToolsForEnabledSkills(['ToolSearch'], ['boondi-kb'])).toEqual(
-      ['ToolSearch', 'Skill'],
-    );
+    expect(
+      claudeSdkToolsForEnabledSkills(['ToolSearch'], ['boondi-kb']),
+    ).toEqual(['ToolSearch', 'Skill']);
   });
 
   it('does not expose Skill when no SDK skills are enabled', () => {

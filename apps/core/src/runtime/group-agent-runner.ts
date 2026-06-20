@@ -456,10 +456,11 @@ export function createGroupAgentRunner(input: {
       skillArtifactStore: deps.getSkillArtifactStore?.(),
       turnContext,
     });
-    const agentFolderSkillContextBlock = await buildAgentFolderSkillContextBlock({
-      agentFolderPath: resolveGroupFolderPath(group.folder),
-      skillIds: group.agentConfig?.plugins?.skills,
-    });
+    const agentFolderSkillContextBlock =
+      await buildAgentFolderSkillContextBlock({
+        agentFolderPath: resolveGroupFolderPath(group.folder),
+        skillIds: group.agentConfig?.plugins?.skills,
+      });
     const [configuredToolPolicy, selectedSkillContext, semanticCapabilities] =
       await Promise.all([
         resolveTurnToolPolicy(deps, turnContext),

@@ -16,7 +16,9 @@ import {
 
 describe('session-resume-runtime', () => {
   it('summarizes progressive agent-folder skills without injecting their body', async () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gantry-agent-skill-context-'));
+    const tempRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-agent-skill-context-'),
+    );
     try {
       const skillDir = path.join(tempRoot, 'skills', 'boondi-kb');
       fs.mkdirSync(skillDir, { recursive: true });
@@ -45,8 +47,12 @@ describe('session-resume-runtime', () => {
       expect(block).toContain('provider-native Skill(boondi-kb) tool');
       expect(block).toContain('do not answer from general memory');
       expect(block).toContain('selected skills are not MCP servers');
-      expect(block).toContain('Do not use Gantry mcp_list_tools, mcp_call_tool');
-      expect(block).not.toContain('PRE-06 to PRE-09 runtime gifting projection');
+      expect(block).toContain(
+        'Do not use Gantry mcp_list_tools, mcp_call_tool',
+      );
+      expect(block).not.toContain(
+        'PRE-06 to PRE-09 runtime gifting projection',
+      );
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

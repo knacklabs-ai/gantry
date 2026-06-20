@@ -41,8 +41,8 @@ describe('writeSdkQueryArgsPayloadLogs', () => {
       capturedAt: 'second',
       prompt: 'second prompt',
     });
-    expect(fs.readFileSync(historyPath, 'utf8').trim().split('\n')).toHaveLength(
-      2,
-    );
+    expect(
+      fs.readFileSync(historyPath, 'utf8').trim().split('\n'),
+    ).toHaveLength(2);
   });
 });
