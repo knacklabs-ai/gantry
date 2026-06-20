@@ -27,7 +27,7 @@ describe('agent plugins settings (plugins.*)', () => {
           '        unresolved: inline',
           '      memory_extraction: MEMORY_EXTRACTION.md',
           '      skills:',
-          '        - boondi-kb',
+          '        - boondi-gifting',
           '        - returns-kb',
         ].join('\n'),
       ),
@@ -40,8 +40,42 @@ describe('agent plugins settings (plugins.*)', () => {
         unresolved: 'inline',
       },
       memoryExtraction: 'MEMORY_EXTRACTION.md',
-      skills: ['boondi-kb', 'returns-kb'],
+      skills: ['boondi-gifting', 'returns-kb'],
     });
+  });
+
+  it('parses and renders multiple Boondi domain skill ids without collapsing them', () => {
+    const domainSkillIds = [
+      'boondi-gifting',
+      'boondi-product-care',
+      'boondi-orders',
+      'boondi-store-aggregator',
+      'boondi-misc-policy',
+    ];
+    const parsed = parseRuntimeSettings(
+      agentYaml(
+        [
+          '    plugins:',
+          '      skills:',
+          ...domainSkillIds.map((skillId) => `        - ${skillId}`),
+        ].join('\n'),
+      ),
+    );
+
+    expect(parsed.agents.boondi_support.plugins?.skills).toEqual(
+      domainSkillIds,
+    );
+
+    const yaml = renderRuntimeSettingsYaml(parsed);
+    for (const skillId of domainSkillIds) {
+      expect(yaml).toContain(`- ${skillId}`);
+    }
+    expect(yaml).not.toContain('- boondi-kb');
+
+    const reparsed = parseRuntimeSettings(yaml);
+    expect(reparsed.agents.boondi_support.plugins?.skills).toEqual(
+      domainSkillIds,
+    );
   });
 
   it('leaves plugins undefined when the block is absent (no implicit activation)', () => {
@@ -60,7 +94,7 @@ describe('agent plugins settings (plugins.*)', () => {
           '        mode: classifier',
           '      memory_extraction: MEMORY_EXTRACTION.md',
           '      skills:',
-          '        - boondi-kb',
+          '        - boondi-gifting',
         ].join('\n'),
       ),
     );
@@ -70,13 +104,13 @@ describe('agent plugins settings (plugins.*)', () => {
     expect(yaml).toContain('file: guardrail.ts');
     expect(yaml).toContain('mode: classifier');
     expect(yaml).toContain('memory_extraction: MEMORY_EXTRACTION.md');
-    expect(yaml).toContain('- boondi-kb');
+    expect(yaml).toContain('- boondi-gifting');
 
     const reparsed = parseRuntimeSettings(yaml);
     expect(reparsed.agents.boondi_support.plugins).toEqual({
       guardrail: { file: 'guardrail.ts', model: 'haiku', mode: 'classifier' },
       memoryExtraction: 'MEMORY_EXTRACTION.md',
-      skills: ['boondi-kb'],
+      skills: ['boondi-gifting'],
     });
   });
 

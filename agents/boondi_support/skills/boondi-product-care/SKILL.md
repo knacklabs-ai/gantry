@@ -1,6 +1,6 @@
 ---
 name: boondi-product-care
-description: Use for Bombay Sweet Shop shelf life, storage, refrigeration, travel suitability, pincode/serviceability, pre-order delivery ETA, piece count, box contents, custom pack size, sugar-free or diabetic-friendly questions, allergens, Jain/nut-free/gluten-free asks, ingredients, nutrition, discount codes, and offer-window questions.
+description: Use for Bombay Sweet Shop shelf life, storage, refrigeration, travel suitability, pincode/serviceability, delivery ETA, counts, contents, pack size, dietary/allergen questions, ingredients, nutrition, discount codes, and offer-window questions.
 disclosure: progressive
 user_invocable: false
 ---
@@ -89,8 +89,12 @@ channel sender identity is already available.
 - Do not explain general offer-window behavior unless the source confirms that
   exact code/offer rule.
 - If the code/offer name is missing, ask for it or route to team/source
-  confirmation. Do not say "most offers", "usually checkout date applies",
-  "some offers apply on order date", or "others apply on delivery date".
+  confirmation. Do not say "most offers" or "usually checkout date applies".
+  Never put both "order date" and "delivery date" in the customer reply. Also
+  avoid paraphrases such as "locks in on..." or "whether the offer applies on
+  ...". Keep the customer reply to this shape: ask for the discount code or
+  offer name, then say the source/team can confirm whether it applies to the
+  requested future delivery.
 - For an "offer ends today but delivery next week" question without a code,
   ask for the discount code or offer name and say the exact terms need
   confirmation. Do not add any general order-date/delivery-date rules,
@@ -100,7 +104,8 @@ channel sender identity is already available.
 
 - Use Shopify/source MCP for current product, variant, price, availability,
   delivery, and discount facts.
-- Use a discount validation tool/source when a specific code is involved.
+- Use `shopify-api.validate_discount_code` when a specific discount code is
+  involved. Pass the customer code in the `code` input field.
 - Known source routes for live checks are `shopify-api.search_products`,
   `shopify-api.get_product`, and `shopify-api.validate_discount_code`.
 - Do not use `shopify-api.search_products` for pincode, serviceability, or

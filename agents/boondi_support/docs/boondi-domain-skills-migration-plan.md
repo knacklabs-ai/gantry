@@ -1,6 +1,7 @@
 # Boondi Domain Skills Migration Plan
 
-Status: Draft plan, read-only code review complete. No implementation started.
+Status: Implemented end to end. Phase 7 passed after fixing the live
+warm-worker fallback defect found by the 5-core scaling gate.
 
 Updated: 2026-06-20.
 
@@ -8,9 +9,9 @@ Template alignment: reviewed against
 `agents/boondi_support/docs/plan-guiding-template.md`.
 
 Testing level decision: minimal focused live proof first, then an ultimate full
-live Template_BA and scaling phase after all earlier phases pass. The user has
-approved adding the final all-scenario phase to the plan, but not running it
-before the prerequisite phases are complete.
+live Template_BA and scaling phase after all earlier phases pass. The user
+approved the final all-scenario phase; it was attempted after Phases 0-6 passed
+and is now blocked by runtime delivery stability.
 
 Commit policy: do not commit or stage any change made during this plan unless
 the user explicitly asks.
@@ -229,6 +230,113 @@ Detailed rules:
 - Full live Template_BA regression: do not run it early. The user has requested
   it only as the ultimate final phase after prerequisite phases pass.
 
+## Execution Record
+
+Completed on 2026-06-20:
+
+- Phase 0 captured the starting state: active local runtime config selected
+  `boondi-kb`, `boondi-kb/SKILL.md` was 3032 words, and ports `4710`, `8081`,
+  and `8082` were free before editing.
+- Phase 1 created five real progressive SDK skill folders:
+  `boondi-gifting`, `boondi-product-care`, `boondi-orders`,
+  `boondi-store-aggregator`, and `boondi-misc-policy`.
+- Final skill word counts are: gifting 664, product-care 1011, orders 1036,
+  store-aggregator 855, and misc-policy 402.
+- Phase 2 added regression coverage for settings parse/render, skill
+  materialization, progressive pointers, native `Skill` exposure, runner SDK
+  options, and Boondi domain-skill content constraints.
+- Phase 3 updated active `/Users/caw-d/gantry/settings.yaml` so
+  `agents.boondi_support.plugins.skills` selects the five domain skills and no
+  longer selects `boondi-kb`.
+- Phase 4 focused live proof passed with isolated phones and evidence files:
+  `/tmp/boondi-domain-skills-gifting-rerun.json`,
+  `/tmp/boondi-domain-skills-product-care-rerun.json`,
+  `/tmp/boondi-domain-skills-orders-rerun.json`,
+  `/tmp/boondi-domain-skills-store-rerun.json`, and
+  `/tmp/boondi-domain-skills-misc-rerun.json`.
+- Phase 4 payload evidence showed selected skills
+  `boondi-gifting`, `boondi-misc-policy`, `boondi-orders`,
+  `boondi-product-care`, `boondi-store-aggregator`, and `gantry-admin`; it did
+  not include `boondi-kb`. The always-on prompt contained progressive skill
+  pointers and did not contain the full domain skill bodies or the old
+  `Customer Care Knowledge Base` body.
+- Phase 5 focused cross-regression passed after two targeted skill-content
+  fixes. Final evidence:
+  `/tmp/boondi-domain-skills-cross-regression-merged-rerun2.json`.
+- Phase 5 strict reviewer command passed with 8 rows, 8 passed, 0 failed:
+  `npx tsx agents/boondi_support/evals/review-template-ba-evidence.ts --evidence /tmp/boondi-domain-skills-cross-regression-merged-rerun2.json --expect-count 8`.
+- Phase 6 removed the old monolithic runtime skill folder and duplicate
+  `agents/boondi_support/kb/*.md` migration sources.
+
+Focused cross-regression rows:
+
+| Scenario | Reply | Tool evidence |
+| --- | --- | --- |
+| `pre-03-custom-pack-size` | Yes | No tool required |
+| `pre-05-missed-window` | Yes | `sdk:Skill` |
+| `pre-08-gst-logo` | Yes | `sdk:Skill` |
+| `del-01-order-status` | Yes | `shopify-api.get_recent_orders_with_details` |
+| `post-02-card-missing` | Yes | No tool required |
+| `cafe-02-nearest-store` | Yes | `sdk:Skill` |
+| `misc-02-repeat-opt-out` | Yes | No tool required |
+| `agg-04-bill` | Yes | `sdk:Skill` |
+
+Phase 6 cleanup classification:
+
+- Historical evidence only:
+  `agents/boondi_support/docs/boondi-kb-skill-architecture-plan.md`.
+- Migration doc only: this file.
+- Intentional legacy-negative test fixtures:
+  `apps/core/test/unit/adapters/claude-config-materializer.test.ts`,
+  `apps/core/test/unit/runtime/session-resume-runtime.test.ts`,
+  `apps/core/test/unit/runner/agent-runner-ipc.test.ts`, and
+  `apps/core/test/unit/config/agent-plugins-settings.test.ts`.
+- Stale active references: none found in active settings or runtime skill
+  folders.
+
+Phase 7 execution:
+
+- Confirmed Template_BA manifest count is 59.
+- Confirmed source review files exist under `/Users/caw-d/Downloads/`.
+- Verified current code supports `GANTRY_CORE_COUNT` in
+  `scripts/boondi-runtime-stack.sh`.
+- Started 5 local cores on ports `4710`-`4714` and temporarily set active
+  warm-pool size and `max_bound_workers` to 12 for the run. After live testing,
+  local warm-pool settings were restored to 3.
+- The first 5-core run exposed a runtime defect: when the warm pool was empty,
+  `runWarmPrewarm()` could throw before a worker was acquired, and the exception
+  escaped before the existing cold-spawn fallback. Customer webhooks were
+  accepted but some turns rolled back with no reply.
+- Added the red/green regression
+  `falls back cold when empty-pool prewarm fails before a worker is acquired`
+  in `apps/core/test/unit/runtime/agent-spawn.test.ts`.
+- Fixed `apps/core/src/runtime/agent-spawn.ts` so empty-pool prewarm failures
+  are logged and then fall through to the cold-spawn path.
+- Focused replay of previously failing rows passed:
+  `/tmp/boondi-phase7-retry-gifting.json`,
+  `/tmp/boondi-phase7-retry-product-care.json`,
+  `/tmp/boondi-phase7-retry-orders.json`,
+  `/tmp/boondi-phase7-retry-store.json`, and
+  `/tmp/boondi-phase7-retry-misc.json`.
+- Full 59-scenario sharded evidence was merged into
+  `/tmp/boondi-template-ba-full-live-evidence.json`; all 59 scenario ids and
+  phones were unique and all rows received replies.
+- Strict reviewer initially found three tool-policy issues. Two were reviewer
+  allow-list mismatches with the scenario contracts; the real product defect was
+  `pre-05-apply-discount`, where the model called `validate_discount_code` with
+  `discount_code` instead of the MCP schema field `code`.
+- Updated the product-care skill to specify the `code` input field, replayed
+  `pre-05-apply-discount` on a clean runtime, and replaced that row with
+  `/tmp/boondi-template-ba-discount-rerun-clean.json`.
+- Final strict reviewer passed with 59 rows, 59 passed, 0 failed:
+  `npx tsx agents/boondi_support/evals/review-template-ba-evidence.ts --evidence /tmp/boondi-template-ba-full-live-evidence.json --expect-count 59`.
+- Payload evidence from `llm-sdk-query-args.json` and
+  `/tmp/gantry-llm-sdk-query-args.jsonl` showed the five domain skills plus
+  `gantry-admin`, no `boondi-kb`, and no checked full skill-body markers in the
+  always-on prompt.
+- Runtime cleanup verified ports `4710`-`4714`, `8081`, and `8082` were free
+  after stopping the test stacks.
+
 ## Migration Phases
 
 Default phase statuses are `Pending`, `In progress`, `Blocked`, and `Done`.
@@ -238,7 +346,7 @@ until Phases 0-6 pass.
 
 ### Phase 0: Freeze Current Evidence
 
-- Status: Pending.
+- Status: Done.
 - Objective: preserve the current monolithic proof before removing
   `boondi-kb`.
 - Changes allowed: evidence capture only; no code, prompt, config, or live
@@ -252,11 +360,11 @@ until Phases 0-6 pass.
   - Add the evidence entry to this plan or the main Boondi evidence plan.
 - Regression risk: none from this phase because it is read-only evidence
   capture.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 ### Phase 1: Create Real Domain Skill Folders
 
-- Status: Pending.
+- Status: Done.
 - Objective: convert each runtime-facing KB into a real SDK skill package.
 - Changes allowed:
   - Create `agents/boondi_support/skills/boondi-gifting/SKILL.md`.
@@ -274,7 +382,7 @@ until Phases 0-6 pass.
     table rows inside runtime skill bodies.
 - Regression risk: content migration can drop operational guidance or warmth
   semantics even if payload wiring is correct.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 Content source rules:
 
@@ -287,7 +395,7 @@ Content source rules:
 
 ### Phase 2: Add Regression Tests For Skill Split
 
-- Status: Pending.
+- Status: Done.
 - Objective: prove the architecture cannot silently fall back to one monolithic
   skill or lose progressive behavior.
 - Changes allowed: focused unit/regression tests for settings parsing,
@@ -309,11 +417,11 @@ Content source rules:
   - `npm run typecheck` passes.
 - Regression risk: test expectations may accidentally encode Boondi behavior in
   Gantry core. Keep Boondi ids as fixtures only; no production hard-coding.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 ### Phase 3: Deactivate Monolith And Select Domain Skills
 
-- Status: Pending.
+- Status: Done.
 - Objective: make the runtime expose domain skills instead of `boondi-kb`.
 - Changes allowed:
   - Replace `agents.boondi_support.plugins.skills: [boondi-kb]` with the five
@@ -328,11 +436,11 @@ Content source rules:
   - No live success claim is made in this phase; live proof is Phase 4.
 - Regression risk: wrong active settings source can make static proof pass while
   live runtime still selects `boondi-kb`.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 ### Phase 4: Live Payload Proof
 
-- Status: Pending.
+- Status: Done.
 - Objective: prove the live runtime payload is modular and progressive.
 - Changes allowed: minimal focused signed webhook tests only; not the full
   Template_BA pack unless the user separately approves full live testing.
@@ -355,11 +463,11 @@ Content source rules:
     directory.
 - Regression risk: payload shape can be correct while reply quality regresses,
   so Phase 5 must still run.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 ### Phase 5: Focused Cross-Regression
 
-- Status: Pending.
+- Status: Done.
 - Objective: prove splitting skills did not break nearby scenarios.
 - Changes allowed: focused cross-regression only; no broad prompt or MCP edits
   unless this phase finds a specific defect and reviewer approves a fix batch.
@@ -373,11 +481,11 @@ Content source rules:
   - Payload proof still shows modular skills and no `boondi-kb`.
 - Regression risk: a fix for one domain skill can shift another domain's
   behavior. Fix only classified defects, then rerun the affected focused pack.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 ### Phase 6: Remove Or Retire `boondi-kb`
 
-- Status: Pending.
+- Status: Done.
 - Objective: eliminate the workaround and avoid future accidental use.
 - Changes allowed:
   - Delete `agents/boondi_support/skills/boondi-kb/` after all live checks pass.
@@ -391,7 +499,7 @@ Content source rules:
   - Any remaining `boondi-kb` match is classified.
 - Regression risk: stale active references can silently reselect the monolithic
   skill later.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed.
 
 Required cleanup check:
 
@@ -409,7 +517,7 @@ Any remaining match must be classified:
 
 ### Phase 7: Ultimate Full Template_BA Live And Scaling Gate
 
-- Status: Pending.
+- Status: Done.
 - Objective: prove the completed architecture against all 59 Template_BA
   scenarios while exercising low-scale production-style concurrency: 5 runtime
   cores, each with 12 warm workers.
@@ -451,7 +559,9 @@ Any remaining match must be classified:
 - Regression risk: high. This phase intentionally stresses both behavior and
   scaling architecture. Any failure must be classified before fixing so a
   scenario-specific change does not break another scenario.
-- Reviewer decision: Pending.
+- Reviewer decision: Passed after runtime fallback fix and focused discount
+  replay. Final evidence:
+  `/tmp/boondi-template-ba-full-live-evidence.json`.
 
 Phase 7 failure classification:
 
@@ -462,7 +572,8 @@ Phase 7 failure classification:
 - Prompt/router issue
 - Skill/KB content issue
 - Customer-output sanitizer issue
-- Runtime queue/worker/core ownership issue
+- Runtime queue/worker/core ownership issue: found and fixed for empty-pool
+  prewarm failures before cold fallback.
 - Eval harness/evidence collection issue
 
 Phase 7 acceptance requires:
@@ -662,19 +773,24 @@ Evidence table:
 
 | Scenario | Runtime evidence | Payload/log evidence | Output evidence | Decision |
 | --- | --- | --- | --- | --- |
-| `pre-06-gift-budget` | Pending | Pending | Pending | Pending |
-| `pre-04-allergen-jain` | Pending | Pending | Pending | Pending |
-| `del-01-order-status` | Pending | Pending | Pending | Pending |
-| `cafe-02-nearest-store` or `agg-04-bill` | Pending | Pending | Pending | Pending |
-| `misc-03-franchise` or `misc-02-repeat-opt-out` | Pending | Pending | Pending | Pending |
-| Phase 7 all 59 Template_BA scenarios | Pending | Pending | Pending | Pending |
+| `pre-06-gift-budget` | `/tmp/boondi-domain-skills-gifting-rerun.json` | Domain skills selected, no `boondi-kb` | Reply received | Passed |
+| `pre-04-allergen-jain` | `/tmp/boondi-domain-skills-product-care-rerun.json` | Domain skills selected, no `boondi-kb` | Reply received | Passed |
+| `del-01-order-status` | `/tmp/boondi-domain-skills-orders-rerun.json` | Domain skills selected, no `boondi-kb` | Reply received | Passed |
+| `cafe-02-nearest-store` / `agg-04-bill` | `/tmp/boondi-domain-skills-store-rerun.json`; `/tmp/boondi-domain-skills-cross-regression-merged-rerun2.json` | `sdk:Skill` evidence where applicable | Replies received | Passed |
+| `misc-03-franchise` / `misc-02-repeat-opt-out` | `/tmp/boondi-domain-skills-misc-rerun.json`; `/tmp/boondi-domain-skills-cross-regression-merged-rerun2.json` | `sdk:Skill` avoided for opt-out repeat | Replies received | Passed |
+| Phase 7 all 59 Template_BA scenarios | `/tmp/boondi-template-ba-full-live-evidence.json`; shard files `/tmp/boondi-template-ba-full-live-shard-1.json` through `/tmp/boondi-template-ba-full-live-shard-5.json`; focused rerun `/tmp/boondi-template-ba-discount-rerun-clean.json` | Five domain skills selected, `boondi-kb` absent, full skill-body markers absent from checked always-on prompt payloads; `validate_discount_code` rerun used `{code:"BSSDIWALI20"}` | 59 replies received, no duplicate scenario ids or phones, strict reviewer 59/59 | Passed |
 
 ## Final Reviewer Decision
 
-- Approved: Pending.
-- Approved with changes: Pending.
-- Blocked: Pending.
-- Reason: Pending live and static proof.
-- Next action: execute only after reviewer approval. Use minimal focused live
-  proof first; reserve the full all-59-scenario live/load gate for the ultimate
-  final phase.
+- Approved: Yes.
+- Approved with changes: No.
+- Blocked: No.
+- Reason: Phases 0-7 passed. The final all-59 Template_BA live/load gate passed
+  after the empty-pool warm-worker fallback fix and a focused discount-tool
+  schema guidance fix. Final strict reviewer result: 59 rows, 59 passed,
+  0 failed.
+- Follow-up: the clean replay still logged a post-output warning
+  (`Agent error after output was sent, skipping cursor rollback to prevent
+  duplicates`) after durable outbound evidence existed. This did not create a
+  duplicate or missing reply in the acceptance evidence, but it is worth a
+  separate runtime-noise cleanup task.

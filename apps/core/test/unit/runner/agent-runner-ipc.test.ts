@@ -589,6 +589,13 @@ describe('agent-runner IPC lifecycle', () => {
     'keeps the Skill tool available when enabled SDK skills meet a restricted native surface',
     async () => {
       const fixture = createRunnerFixture();
+      const domainSkillIds = [
+        'boondi-gifting',
+        'boondi-product-care',
+        'boondi-orders',
+        'boondi-store-aggregator',
+        'boondi-misc-policy',
+      ];
 
       const result = await runRunner(
         fixture,
@@ -598,13 +605,14 @@ describe('agent-runner IPC lifecycle', () => {
         }),
         {
           TEST_EXIT_AFTER_QUERY: '1',
-          [GANTRY_CLAUDE_SDK_SKILLS_ENV]: JSON.stringify(['boondi-kb']),
+          [GANTRY_CLAUDE_SDK_SKILLS_ENV]: JSON.stringify(domainSkillIds),
         },
       );
 
       expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];
-      expect(call?.skills).toEqual(['boondi-kb']);
+      expect(call?.skills).toEqual([...domainSkillIds].sort());
+      expect(call?.skills).not.toContain('boondi-kb');
       expect(call?.tools).toEqual(['ToolSearch', 'Skill']);
       expect(call?.allowedTools).toContain('ToolSearch');
       expect(call?.allowedTools).not.toContain('Skill');

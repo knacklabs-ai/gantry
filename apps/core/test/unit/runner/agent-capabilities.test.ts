@@ -254,7 +254,7 @@ describe('agent capability composition', () => {
       groupFolder: 'boondi_support',
       persona: 'sales',
       nativeToolSurface: ['ToolSearch'],
-      attachedSkillSourceIds: ['boondi-kb'],
+      attachedSkillSourceIds: ['boondi-gifting'],
     });
 
     expect(profile.availableTools).toContain('Skill');

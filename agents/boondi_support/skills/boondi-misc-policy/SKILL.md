@@ -1,6 +1,6 @@
 ---
 name: boondi-misc-policy
-description: Use for Bombay Sweet Shop spam or non-customer messages, opt-out or unsubscribe requests, repeated promotional-message complaints, franchise or partnership asks, and jobs or hiring questions.
+description: Use for Bombay Sweet Shop franchise, partnership, jobs, careers, and non-customer policy questions. Do not use for opt-out, unsubscribe, repeated promotional-message complaints, or obvious spam.
 disclosure: progressive
 user_invocable: false
 ---

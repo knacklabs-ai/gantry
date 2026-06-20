@@ -77,7 +77,7 @@ data into `references/*.md` and link to them so the always-on prompt stays lean.
 ## 3. gantry.skill.json — privileged actions (optional)
 
 Only needed if the skill must **run commands** that use capability secrets (a
-knowledge-base skill like `boondi-kb` does **not** need this). Action
+knowledge-base skill like `boondi-gifting` does **not** need this). Action
 permissions are declared here, **not** in frontmatter:
 
 ```json
@@ -119,7 +119,7 @@ agents:
         mode: both
       skills:
         - my-skill        # ← the folder id; must match skills/my-skill/
-        - boondi-kb
+        - boondi-gifting
 ```
 
 `plugins.guardrail` activates one exact agent-owned guardrail file. `mode` may

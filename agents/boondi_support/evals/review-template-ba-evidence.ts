@@ -117,6 +117,7 @@ const ALWAYS_FORBIDDEN_TOOLS: RegExp[] = [
 ];
 
 const SHOPIFY_ALLOWED_BY_SCENARIO: Record<string, RegExp[]> = {
+  'pre-01-shelf-life': [/^shopify-api:search_products$/, /^shopify-api:get_product$/],
   'pre-03-piece-count': [/^shopify-api:search_products$/, /^shopify-api:get_product$/],
   'pre-03-custom-pack-size': [/^shopify-api:search_products$/],
   'pre-05-apply-discount': [/^shopify-api:validate_discount_code$/],
@@ -342,7 +343,7 @@ const CHECKS: Record<string, Check> = {
   'misc-04-jobs': {
     any: [/hiring|job|team|role|guide|confirm/i],
     none: [/\b(?:apply on|careers link|vacancy is open)\b/i],
-    allowTools: [],
+    allowTools: [/^sdk:Skill$/],
   },
   'agg-01-quality': { any: [/sorry|Swiggy|order number|quality|photo|team/i] },
   'agg-02-missing-item': { any: [/Zomato|missing|item|order number|team/i] },

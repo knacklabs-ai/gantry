@@ -606,6 +606,35 @@ describe('AgentBundledClaudeSkillSource', () => {
     ]);
   });
 
+  it('materializes multiple declared Boondi domain skills and leaves boondi-kb inert', async () => {
+    const domainSkillIds = [
+      'boondi-gifting',
+      'boondi-product-care',
+      'boondi-orders',
+      'boondi-store-aggregator',
+      'boondi-misc-policy',
+    ];
+    for (const skillId of [...domainSkillIds, 'boondi-kb']) {
+      writeAgentSkill(skillId);
+    }
+
+    const skillsDir = path.join(tempRoot, 'run', 'claude', 'skills');
+    const materialized = await materializeClaudeSkills({
+      skillsDir,
+      skillSource: new AgentBundledClaudeSkillSource(agentDir, domainSkillIds),
+    });
+
+    expect(materialized.map((skill) => skill.id)).toEqual(
+      [...domainSkillIds].sort(),
+    );
+    for (const skillId of domainSkillIds) {
+      expect(fs.existsSync(path.join(skillsDir, skillId, 'SKILL.md'))).toBe(
+        true,
+      );
+    }
+    expect(fs.existsSync(path.join(skillsDir, 'boondi-kb'))).toBe(false);
+  });
+
   it('leaves undeclared folder skills inert (folder presence alone does nothing)', async () => {
     writeAgentSkill('agent-kb');
     writeAgentSkill('second-kb');

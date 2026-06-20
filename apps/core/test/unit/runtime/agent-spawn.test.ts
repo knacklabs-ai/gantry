@@ -1558,6 +1558,68 @@ describe('agent-spawn timeout behavior', () => {
     expect(spawn).toHaveBeenCalledTimes(1);
   });
 
+  it('falls back cold when empty-pool prewarm fails before a worker is acquired', async () => {
+    vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
+      enabled: true,
+      size: 12,
+      idleTtlMs: 240_000,
+    });
+    const prewarm = vi.fn(async () => {
+      throw new Error('warm worker startup timed out');
+    });
+    const warmHandle: WarmWorkerHandle = {
+      id: 'warm-worker-never-acquired',
+      key: 'warm-key',
+      bornAt: 100,
+      bound: false,
+    };
+    const warmPool: WarmPoolRuntime = {
+      acquire: vi.fn(() => null),
+      prewarm,
+      release: vi.fn(async () => undefined),
+    };
+    const warmAdapter: WarmPoolCapable = {
+      ...testExecutionAdapter,
+      prewarm: vi.fn(async () => warmHandle),
+      recycle: vi.fn(),
+      bind: vi.fn(async () => {
+        throw new Error('bind should not run without an acquired worker');
+      }),
+    };
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        appId: 'app-one',
+        agentId: 'agent-one',
+      },
+      vi.fn(),
+      undefined,
+      {
+        executionAdapter: warmAdapter,
+        warmPool,
+      },
+    );
+
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'prewarm failure cold',
+    });
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: 'prewarm failure cold',
+    });
+    expect(warmPool.acquire).toHaveBeenCalledTimes(2);
+    expect(prewarm).toHaveBeenCalledTimes(1);
+    expect(warmAdapter.bind).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
   it('does not acquire from the pool when the adapter is not warm-capable', async () => {
     vi.mocked(getRuntimeWarmPoolConfig).mockReturnValue({
       enabled: true,

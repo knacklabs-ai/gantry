@@ -1134,7 +1134,19 @@ export async function spawnAgent(
           },
           'Warm pool empty; prewarming before run',
         );
-        await runWarmPrewarm();
+        try {
+          await runWarmPrewarm();
+        } catch (err) {
+          logger.warn(
+            {
+              err,
+              group: group.name,
+              chatJid: input.chatJid,
+              poolKey: warmPoolKeyFingerprint(key),
+            },
+            'Warm pool prewarm failed before run; falling back to cold spawn',
+          );
+        }
         handle = warmPool.acquire(key);
       }
       if (handle) {

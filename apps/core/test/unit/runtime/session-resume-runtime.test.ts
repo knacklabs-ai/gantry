@@ -20,13 +20,13 @@ describe('session-resume-runtime', () => {
       path.join(os.tmpdir(), 'gantry-agent-skill-context-'),
     );
     try {
-      const skillDir = path.join(tempRoot, 'skills', 'boondi-kb');
+      const skillDir = path.join(tempRoot, 'skills', 'boondi-gifting');
       fs.mkdirSync(skillDir, { recursive: true });
       fs.writeFileSync(
         path.join(skillDir, 'SKILL.md'),
         [
           '---',
-          'name: boondi-kb',
+          'name: boondi-gifting',
           'description: Use for gifting recommendations.',
           'disclosure: progressive',
           '---',
@@ -38,13 +38,13 @@ describe('session-resume-runtime', () => {
 
       const block = await buildAgentFolderSkillContextBlock({
         agentFolderPath: tempRoot,
-        skillIds: ['boondi-kb'],
+        skillIds: ['boondi-gifting'],
       });
 
       expect(block).toContain('[[AGENT_FOLDER_SKILLS_AVAILABLE_THIS_SESSION]]');
-      expect(block).toContain('id: boondi-kb');
+      expect(block).toContain('id: boondi-gifting');
       expect(block).toContain('description: Use for gifting recommendations.');
-      expect(block).toContain('provider-native Skill(boondi-kb) tool');
+      expect(block).toContain('provider-native Skill(boondi-gifting) tool');
       expect(block).toContain('do not answer from general memory');
       expect(block).toContain('selected skills are not MCP servers');
       expect(block).toContain(
@@ -53,6 +53,64 @@ describe('session-resume-runtime', () => {
       expect(block).not.toContain(
         'PRE-06 to PRE-09 runtime gifting projection',
       );
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('summarizes multiple progressive agent-folder skills without injecting bodies', async () => {
+    const tempRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-agent-skill-context-'),
+    );
+    try {
+      const skillSpecs = [
+        {
+          id: 'boondi-gifting',
+          description: 'Use for BSS gifting recommendations.',
+          body: 'PRE-06 to PRE-09 runtime gifting projection',
+        },
+        {
+          id: 'boondi-orders',
+          description: 'Use for BSS order status and complaints.',
+          body: 'DEL-01 runtime orders projection',
+        },
+        {
+          id: 'boondi-store-aggregator',
+          description: 'Use for BSS stores and aggregator orders.',
+          body: 'CAFE and AGG runtime store projection',
+        },
+      ];
+
+      for (const skill of skillSpecs) {
+        const skillDir = path.join(tempRoot, 'skills', skill.id);
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(skillDir, 'SKILL.md'),
+          [
+            '---',
+            `name: ${skill.id}`,
+            `description: ${skill.description}`,
+            'disclosure: progressive',
+            '---',
+            '',
+            `# ${skill.id}`,
+            skill.body,
+          ].join('\n'),
+        );
+      }
+
+      const block = await buildAgentFolderSkillContextBlock({
+        agentFolderPath: tempRoot,
+        skillIds: skillSpecs.map((skill) => skill.id),
+      });
+
+      for (const skill of skillSpecs) {
+        expect(block).toContain(`id: ${skill.id}`);
+        expect(block).toContain(skill.description);
+        expect(block).toContain(`provider-native Skill(${skill.id}) tool`);
+        expect(block).not.toContain(skill.body);
+      }
+      expect(block).not.toContain('boondi-kb');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
