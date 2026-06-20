@@ -346,10 +346,7 @@ async function readRuntimeCapacityFromStorage(
 }
 
 async function readActiveAsyncTaskCount(pool: {
-  query<T = unknown>(
-    text: string,
-    values?: unknown[],
-  ): Promise<{ rows: T[] }>;
+  query<T = unknown>(text: string, values?: unknown[]): Promise<{ rows: T[] }>;
 }): Promise<number> {
   const table = await pool.query<{ exists: boolean }>(
     `SELECT to_regclass('agent_async_tasks') IS NOT NULL AS exists`,
