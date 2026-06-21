@@ -107,14 +107,21 @@ export interface AgentPluginsConfig {
 }
 
 /**
- * Per-agent memory tuning (the `agents.<folder>.memory` block). Opt-in: omit the
- * whole block to keep default behaviour (durable memory captured only at /new,
- * compact, or job boundaries). Presence of `idleEndMinutes` additionally enables
- * idle-triggered extraction — when a customer goes quiet for that many minutes the
- * runtime treats the chat as ended and extracts durable memory in the background.
+ * Per-agent memory tuning (the `agents.<folder>.memory` block). Agents that
+ * declare a custom memory extractor must explicitly configure whether the
+ * background digest and short-memory watcher is enabled.
  */
+export type DigestAndShortMemoryWatcherConfig =
+  | { enabled: false }
+  | {
+      enabled: true;
+      conversationIdleAfterMs: number;
+      pollIntervalMs: number;
+      model: string;
+    };
+
 export interface AgentMemoryConfig {
-  idleEndMinutes?: number;
+  digestAndShortMemoryWatcher?: DigestAndShortMemoryWatcherConfig;
 }
 
 /**

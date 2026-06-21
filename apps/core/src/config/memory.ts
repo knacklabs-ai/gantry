@@ -128,6 +128,25 @@ function resolveMemoryLlmModelSlot(
   };
 }
 
+export function resolveMemoryExtractorModelOverride(model: string): {
+  runnerModel: string;
+  modelProfile?: MemoryLlmModelProfile;
+} {
+  const profile = resolveMemoryLlmModelProfile(model, 'memory_extractor');
+  if (!profile) {
+    const resolved = resolveModelSelectionForWorkload(model, 'memory_extractor');
+    throw new Error(
+      resolved.ok
+        ? `Memory extractor model "${model}" is not usable for memory_extractor.`
+        : `Memory extractor model "${model}" is invalid: ${resolved.message}`,
+    );
+  }
+  return {
+    runnerModel: profile.runnerModel,
+    modelProfile: profile,
+  };
+}
+
 function readCurrentMemoryModelSettings(): RuntimeMemorySettingsSnapshot {
   return readRuntimeMemorySettingsSnapshot(MEMORY_CONFIG_HOME);
 }

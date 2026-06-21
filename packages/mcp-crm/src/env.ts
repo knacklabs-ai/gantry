@@ -1,8 +1,13 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 // Environment for the boondi-crm MCP server. Mirrors mcp-shopify/src/env.ts in
 // shape (typed config, fail-fast on missing required values). The identity
 // SECRET is shared with the runtime (MCP_IDENTITY_SECRET) so the signed
 // X-Caller-Identity verifies here exactly as it does for Shopify; everything
-// else is boondi-crm-specific (its own port, DB url, reconciler cadence).
+// else is boondi-crm-specific (its own port, DB url, schemas). Watcher runtime
+// behavior is read from Gantry settings.yaml, not env.
 //
 // Credential note: the connector resolves its Anthropic credential from core's
 // Credential Center (the gantry schema's model_credentials table) via
@@ -26,19 +31,14 @@ export interface BoondiCrmEnv {
   identityMaxAgeSec: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error' | 'fatal';
   logFormat: 'json' | 'text';
-  // Digest watcher: how often to poll gantry.agent_session_digests for new
-  // session-end digests, and which agent's sessions to scope to. (The env keys
-  // keep their historical BOONDI_CRM_RECONCILE_INTERVAL_MS / BOONDI_CRM_AGENT_ID
-  // names for backward compatibility.)
-  reconcileIntervalMs: number;
+  crmLeadQueryExtractionWatcher:
+    | { enabled: false }
+    | { enabled: true; pollIntervalMs: number; model: string };
   reconcileAgentId: string;
   // The Gantry APP id that owns the model_credentials row the connector decrypts
   // its Anthropic credential from (model_credentials.app_id). Defaults to core's
   // default app. (Distinct from reconcileAgentId, which is an AGENT id.)
   modelAppId: string;
-  // Extraction model for the background opportunity extractor.
-  extractorModel: string;
-  disableDigestWatcher: boolean;
   anthropicApiKey?: string;
 }
 
@@ -55,6 +55,13 @@ type LogLevel = BoondiCrmEnv['logLevel'];
 function required(name: string, value: string | undefined): string {
   if (!value || value.trim() === '') {
     throw new Error(`Missing required env var: ${name}`);
+  }
+  return value;
+}
+
+function requiredSettingsField(name: string, value: string | undefined): string {
+  if (!value || value.trim() === '') {
+    throw new Error(`Missing required settings.yaml field: ${name}`);
   }
   return value;
 }
@@ -95,6 +102,156 @@ function parsePositiveInt(
     throw new Error(`Invalid ${name}: ${raw}`);
   }
   return value;
+}
+
+function expandHome(input: string): string {
+  if (input === '~') return os.homedir();
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
+
+function settingsPath(source: NodeJS.ProcessEnv): string {
+  const raw = source.GANTRY_HOME?.trim() || path.join(os.homedir(), 'gantry');
+  return path.join(path.resolve(expandHome(raw)), 'settings.yaml');
+}
+
+function stripInlineComment(raw: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    if (ch === '"' && !inSingle) inDouble = !inDouble;
+    if (ch === '#' && !inSingle && !inDouble) {
+      return raw.slice(0, i).trimEnd();
+    }
+  }
+  return raw.trimEnd();
+}
+
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function readScalarMapUnder(
+  yaml: string,
+  pathParts: string[],
+): Record<string, string> | null {
+  const lines = yaml.split(/\r?\n/);
+  let index = 0;
+  let expectedIndent = 0;
+  for (const part of pathParts) {
+    const matchIndex = lines.findIndex((line, lineIndex) => {
+      if (lineIndex < index) return false;
+      const stripped = stripInlineComment(line);
+      if (!stripped.trim()) return false;
+      const indent = stripped.match(/^ */)?.[0].length ?? 0;
+      if (indent !== expectedIndent) return false;
+      const trimmed = stripped.trim();
+      return trimmed === `${part}:` || unquote(trimmed.slice(0, -1)) === part;
+    });
+    if (matchIndex < 0) return null;
+    index = matchIndex + 1;
+    expectedIndent += 2;
+  }
+  const out: Record<string, string> = {};
+  for (let i = index; i < lines.length; i += 1) {
+    const stripped = stripInlineComment(lines[i] ?? '');
+    if (!stripped.trim()) continue;
+    const indent = stripped.match(/^ */)?.[0].length ?? 0;
+    if (indent < expectedIndent) break;
+    if (indent !== expectedIndent) continue;
+    const trimmed = stripped.trim();
+    const colon = trimmed.indexOf(':');
+    if (colon <= 0) continue;
+    const key = unquote(trimmed.slice(0, colon));
+    const value = trimmed.slice(colon + 1).trim();
+    if (value) out[key] = unquote(value);
+  }
+  return out;
+}
+
+function parseWatcherBool(value: string | undefined, pathPrefix: string): boolean {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`${pathPrefix}.enabled must be true/false`);
+}
+
+function parseWatcherPositiveMs(
+  value: string | undefined,
+  pathPrefix: string,
+): number {
+  if (!value || !/^[0-9]+$/.test(value)) {
+    throw new Error(`${pathPrefix} must be an integer between 1 and 86400000`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < 1 || parsed > 86_400_000) {
+    throw new Error(`${pathPrefix} must be an integer between 1 and 86400000`);
+  }
+  return parsed;
+}
+
+function rejectUnsupportedSettingsKeys(
+  map: Record<string, string>,
+  pathPrefix: string,
+  supported: readonly string[],
+): void {
+  const supportedSet = new Set(supported);
+  const supportedText =
+    supported.length > 1
+      ? `${supported.slice(0, -1).join(', ')}, or ${supported.at(-1)}`
+      : (supported[0] ?? '');
+  for (const key of Object.keys(map)) {
+    if (!supportedSet.has(key)) {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure ${supportedText}.`,
+      );
+    }
+  }
+}
+
+function readCrmLeadQueryExtractionWatcher(source: NodeJS.ProcessEnv):
+  | BoondiCrmEnv['crmLeadQueryExtractionWatcher'] {
+  const pathPrefix =
+    'mcp_servers.mcp:boondi-crm.crm_lead_query_extraction_watcher';
+  const filePath = settingsPath(source);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`${pathPrefix} is required`);
+  }
+  const map = readScalarMapUnder(fs.readFileSync(filePath, 'utf8'), [
+    'mcp_servers',
+    'mcp:boondi-crm',
+    'crm_lead_query_extraction_watcher',
+  ]);
+  if (!map) throw new Error(`${pathPrefix} is required`);
+  const enabled = parseWatcherBool(map.enabled, pathPrefix);
+  if (!enabled) {
+    return { enabled: false };
+  }
+  const pollIntervalMs = parseWatcherPositiveMs(
+    map.poll_interval_ms,
+    `${pathPrefix}.poll_interval_ms`,
+  );
+  const model = requiredSettingsField(`${pathPrefix}.model`, map.model);
+  rejectUnsupportedSettingsKeys(map, pathPrefix, [
+    'enabled',
+    'poll_interval_ms',
+    'model',
+  ]);
+  return {
+    enabled: true,
+    pollIntervalMs,
+    model,
+  };
 }
 
 function parseLogLevel(raw: string | undefined): LogLevel {
@@ -163,20 +320,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BoondiCrmEnv {
     identityMaxAgeSec: identity.mode === 'disabled' ? 120 : identity.maxAgeSec,
     logLevel: parseLogLevel(source.LOG_LEVEL),
     logFormat: source.LOG_FORMAT === 'text' ? 'text' : 'json',
-    reconcileIntervalMs: parsePositiveInt(
-      'BOONDI_CRM_RECONCILE_INTERVAL_MS',
-      source.BOONDI_CRM_RECONCILE_INTERVAL_MS,
-      240_000,
-    ),
+    crmLeadQueryExtractionWatcher:
+      readCrmLeadQueryExtractionWatcher(source),
     reconcileAgentId:
       source.BOONDI_CRM_AGENT_ID?.trim() || 'agent:boondi_support',
     modelAppId: source.BOONDI_CRM_MODEL_APP_ID?.trim() || 'default',
-    extractorModel:
-      source.BOONDI_CRM_EXTRACTOR_MODEL?.trim() || 'claude-sonnet-4-6',
-    disableDigestWatcher: parseBool(
-      source.BOONDI_CRM_DISABLE_DIGEST_WATCHER,
-      false,
-    ),
     anthropicApiKey: source.ANTHROPIC_API_KEY?.trim() || undefined,
   };
 }

@@ -59,10 +59,13 @@ async function startTestServer(envOverrides: Partial<BoondiCrmEnv> = {}) {
     identityMaxAgeSec: 120,
     logLevel: 'fatal',
     logFormat: 'json',
-    reconcileIntervalMs: 1,
+    crmLeadQueryExtractionWatcher: {
+      enabled: true,
+      pollIntervalMs: 1,
+      model: 'test-model',
+    },
     reconcileAgentId: 'agent:boondi_support',
     modelAppId: 'default',
-    extractorModel: 'test-model',
     anthropicApiKey: 'test-key',
   };
   Object.assign(env, envOverrides);

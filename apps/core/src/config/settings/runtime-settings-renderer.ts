@@ -326,6 +326,19 @@ function renderMcpServersYaml(
         `    sandbox_profile_id: ${quoteYamlString(server.sandboxProfileId)}`,
       );
     }
+    if (server.crmLeadQueryExtractionWatcher) {
+      const watcher = server.crmLeadQueryExtractionWatcher;
+      lines.push(
+        '    crm_lead_query_extraction_watcher:',
+        `      enabled: ${watcher.enabled ? 'true' : 'false'}`,
+      );
+      if (watcher.enabled) {
+        lines.push(
+          `      poll_interval_ms: ${watcher.pollIntervalMs}`,
+          `      model: ${quoteYamlString(watcher.model)}`,
+        );
+      }
+    }
   }
   lines.push('');
 }
@@ -420,8 +433,19 @@ function renderAgentMemoryYaml(
   agent: RuntimeConfiguredAgent,
 ): void {
   const memory = agent.memory;
-  if (!memory || typeof memory.idleEndMinutes !== 'number') return;
-  lines.push('    memory:', `      idle_end_minutes: ${memory.idleEndMinutes}`);
+  const watcher = memory?.digestAndShortMemoryWatcher;
+  if (!watcher) return;
+  lines.push(
+    '    memory:',
+    '      digest_and_short_memory_watcher:',
+    `        enabled: ${watcher.enabled ? 'true' : 'false'}`,
+  );
+  if (!watcher.enabled) return;
+  lines.push(
+    `        conversation_idle_after_ms: ${watcher.conversationIdleAfterMs}`,
+    `        poll_interval_ms: ${watcher.pollIntervalMs}`,
+    `        model: ${quoteYamlString(watcher.model)}`,
+  );
 }
 
 function renderAgentSourceListYaml(

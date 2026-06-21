@@ -404,6 +404,10 @@ export async function runManualConversationExtraction(
 }
 
 export function startDigestWatcher(deps: WatcherDeps): () => void {
+  if (!deps.env.crmLeadQueryExtractionWatcher.enabled) {
+    deps.logger.info({}, 'digest_watcher_disabled');
+    return () => undefined;
+  }
   if (!deps.llm) {
     deps.logger.warn({}, 'extractor_disabled_no_key');
     return () => undefined;
@@ -427,13 +431,16 @@ export function startDigestWatcher(deps: WatcherDeps): () => void {
   };
   deps.logger.info(
     {
-      intervalMs: deps.env.reconcileIntervalMs,
-      model: deps.env.extractorModel,
+      intervalMs: deps.env.crmLeadQueryExtractionWatcher.pollIntervalMs,
+      model: deps.env.crmLeadQueryExtractionWatcher.model,
     },
     'digest_watcher_started',
   );
   void tick();
-  const handle = setInterval(() => void tick(), deps.env.reconcileIntervalMs);
+  const handle = setInterval(
+    () => void tick(),
+    deps.env.crmLeadQueryExtractionWatcher.pollIntervalMs,
+  );
   return () => {
     stopped = true;
     clearInterval(handle);

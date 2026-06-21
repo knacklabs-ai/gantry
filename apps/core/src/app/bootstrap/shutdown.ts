@@ -20,6 +20,7 @@ export interface InstallShutdownHandlersOptions {
   closeScheduler?: () => Promise<void>;
   closeOutboundDeliveryRecovery?: () => Promise<void>;
   closeConversationWorkReconciler?: () => void;
+  closeIdleSessionSweepLoop?: () => void;
   closeWorkerInventoryHeartbeat?: () => void;
   closeMessageTracePayloadRetention?: () => void;
   releaseConversationOwnerLeases?: () => Promise<void>;
@@ -63,6 +64,7 @@ export function installShutdownHandlers(
     shutdownStarted = true;
     resolved.logger.info({ signal }, 'Shutdown signal received');
     options.closeConversationWorkReconciler?.();
+    options.closeIdleSessionSweepLoop?.();
     options.closeWorkerInventoryHeartbeat?.();
     options.closeMessageTracePayloadRetention?.();
     await options.queue.shutdown(10000);

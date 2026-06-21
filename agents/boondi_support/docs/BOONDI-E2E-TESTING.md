@@ -401,9 +401,10 @@ conversation JID, test override §2 applies) and enforces
 
 ### 6c. Background extraction (CRM + memory) and dreaming
 
-Session end = `memory.idle_end_minutes` of silence (settings.yaml; currently
-**5**, temp-lowered for testing — prod value 30). An idle sweep (every 30 s)
-then writes a digest row: `gantry.agent_session_digests` with
+Session end = `agents.<agent>.memory.digest_and_short_memory_watcher.conversation_idle_after_ms`
+of silence. The digest watcher polls on
+`agents.<agent>.memory.digest_and_short_memory_watcher.poll_interval_ms`, then
+writes a digest row: `gantry.agent_session_digests` with
 `trigger='session-end'`. That digest fans out to:
 
 1. **Memory facts** (core): extraction prompt
@@ -412,8 +413,8 @@ then writes a digest row: `gantry.agent_session_digests` with
    `user_id=<phone>`). View: admin panel right pane or
    `/api/memory?phone=<phone>`.
 2. **CRM opportunities** (mcp-crm digest-watcher): polls digests behind cursor
-  `boondi_crm.boondi_digest_cursor` (interval
-   `BOONDI_CRM_RECONCILE_INTERVAL_MS`, default 240 s, test setup uses 10 s),
+  `boondi_crm.boondi_digest_cursor` using
+   `mcp_servers."mcp:boondi-crm".crm_lead_query_extraction_watcher.poll_interval_ms`,
    runs one Agent-SDK extraction per digest →
    `boondi_crm.boondi_business_records` (status ladder
    query→qualifying→lead, bands P5–P1). View: `/leads` page or `/api/records`.
@@ -430,7 +431,7 @@ These are the commands the Boondi workflow uses:
 | Command                  | What it does                                                                                                                                                                                                                                                                                                                                                                                             | Reply to expect                                                                                                                                         |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | `/new`                   | **Starts a fresh session** for this conversation: archives and clears the current agent session, so the next message begins with a clean context window (also the recovery path when a persisted session is corrupted; older queued messages are not replayed). The DB transcript and admin-panel history are NOT touched. Use between scenarios — never as teardown (transcripts are review artifacts). | `Started a fresh session.` (on failure: `/new failed. The session is unchanged.`)                                                                       |
-| `/digest-session`        | Forces the **session digest + memory-fact extraction NOW** (same collector the idle sweep uses — no waiting for `idle_end_minutes`). The digest row is what the CRM watcher's automatic run consumes.                                                                                                                                                                                                    | `Digest processed. New digest: yes`                                                                                                                     | `no new customer turns`. `Memory facts saved: N.` |
+| `/digest-session`        | Forces the **session digest + memory-fact extraction NOW** (same collector the digest watcher uses — no waiting for the idle watcher). The digest row is what the CRM watcher's automatic run consumes.                                                                                                                                                                                                  | `Digest processed. New digest: yes`                                                                                                                     | `no new customer turns`. `Memory facts saved: N.` |
 | `/extract-leads-queries` | Runs **CRM lead/query extraction for THIS conversation immediately** (agent-declared command → POST to mcp-crm `/admin/extract-leads-queries`). Reads the transcript directly, so it does NOT need a digest first — that's the difference from the automatic path, where the watcher only runs after a session-end digest exists.                                                                        | ack `Running lead/query extraction…`, then `Lead/query extraction processed. Extracted: N. Created: N. Updated: N. Skipped: N.` (wait up to 2 min — §5) |
 | `/commands`              | Lists the commands available in this conversation — useful to discover what's active.                                                                                                                                                                                                                                                                                                                    | the help list (built-ins + agent commands)                                                                                                              |
 

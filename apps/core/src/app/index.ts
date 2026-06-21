@@ -5,7 +5,10 @@ import {
 import { createChannelWiring } from './bootstrap/channel-wiring.js';
 import { createOutboundOwnershipVerifier } from './bootstrap/outbound-ownership-verifier.js';
 import { projectInteraktDefaultAgentRoute } from './bootstrap/channel-persistence-handlers.js';
-import { getDefaultRuntimeApp } from './bootstrap/runtime-app.js';
+import {
+  collectRuntimeSessionMemory,
+  getDefaultRuntimeApp,
+} from './bootstrap/runtime-app.js';
 import { createReplyTraceWiring } from './bootstrap/reply-trace-wiring.js';
 import { startRuntimeServices } from './bootstrap/runtime-services.js';
 import { installShutdownHandlers } from './bootstrap/shutdown.js';
@@ -36,6 +39,11 @@ import { startSettingsReloadWatcher } from '../runtime/settings-reload-watcher.j
 import { startWarmPoolMaintenance } from '../runtime/warm-pool-maintenance.js';
 import { startWorkerInventoryHeartbeat } from '../runtime/worker-inventory-heartbeat.js';
 import { startMessageTracePayloadRetention } from '../runtime/message-trace-payload-retention.js';
+import {
+  createIdleSessionSweeper,
+  resolveDigestAndShortMemoryWatcherPollIntervalMs,
+  startIdleSessionSweepLoop,
+} from '../runtime/idle-session-sweep.js';
 import { startConversationWorkDispatcher } from '../runtime/conversation-work-dispatcher.js';
 import { createConversationWorkClaimGate } from '../runtime/conversation-work-claim-gate.js';
 import {
@@ -302,6 +310,18 @@ export async function startGantryRuntime(
       messageTracePayloadRepository.clearPayloadsOlderThan(input),
     logger,
   });
+  const digestWatcherPollIntervalMs =
+    resolveDigestAndShortMemoryWatcherPollIntervalMs();
+  const idleSessionSweepLoop =
+    digestWatcherPollIntervalMs === undefined
+      ? { close: () => undefined }
+      : startIdleSessionSweepLoop({
+          runSweep: createIdleSessionSweeper({
+            collectSessionMemory: collectRuntimeSessionMemory,
+          }),
+          intervalMs: digestWatcherPollIntervalMs,
+          logger,
+        });
   const browserToolModulePath = [
     '..',
     'adapters',
@@ -339,6 +359,7 @@ export async function startGantryRuntime(
       conversationWorkReconciler.close();
       conversationWorkDispatcher.close();
     },
+    closeIdleSessionSweepLoop: idleSessionSweepLoop.close,
     closeWorkerInventoryHeartbeat: workerInventoryHeartbeat.close,
     closeMessageTracePayloadRetention: messageTracePayloadRetention.close,
     releaseConversationOwnerLeases: async () => {

@@ -139,6 +139,7 @@ export async function collectDurableMemoryFromRepositories(input: {
   defaultScope?: MemoryBoundaryDefaultScope;
   additionalTurns?: MemoryBoundaryTurn[];
   excludeMessageIds?: string[];
+  model?: string;
   nowIso?: () => string;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -303,6 +304,7 @@ export async function collectDurableMemoryFromRepositories(input: {
             trigger: input.trigger,
             userId: session.userId,
             retrievedItems: promptPayload.retrievedItems,
+            ...(input.model ? { model: input.model } : {}),
             signal,
             timeoutMs: extractionTimeoutMs,
             ...(extractionSystemPrompt ? { extractionSystemPrompt } : {}),

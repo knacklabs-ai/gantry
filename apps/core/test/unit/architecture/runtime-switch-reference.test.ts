@@ -41,7 +41,7 @@ describe('runtime switch reference', () => {
       'GANTRY_OUTBOUND_DRYRUN',
       'GANTRY_TEST_OPERATOR_PHONE',
       'GANTRY_TEST_CALLER_IDENTITY_PHONE',
-      'BOONDI_CRM_RECONCILE_INTERVAL_MS',
+      'mcp_servers."mcp:boondi-crm".crm_lead_query_extraction_watcher.poll_interval_ms',
       'GANTRY_TRACE_PAYLOADS',
       'GANTRY_CONTROL_API_KEYS_JSON',
       'messages:admin',

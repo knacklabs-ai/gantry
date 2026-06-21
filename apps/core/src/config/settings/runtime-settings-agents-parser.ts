@@ -404,28 +404,75 @@ function parseConfiguredAgentMemory(
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'idle_end_minutes') {
+    if (key !== 'digest_and_short_memory_watcher') {
       throw new Error(
-        `${pathPrefix}.${key} is not supported. Configure idle_end_minutes.`,
+        `${pathPrefix}.${key} is not supported. Configure digest_and_short_memory_watcher.`,
       );
     }
   }
   const memory: RuntimeConfiguredAgentMemory = {};
-  if (map.idle_end_minutes !== undefined) {
-    const value = map.idle_end_minutes;
-    if (
-      typeof value !== 'number' ||
-      !Number.isInteger(value) ||
-      value < 1 ||
-      value > 1440
-    ) {
-      throw new Error(
-        `${pathPrefix}.idle_end_minutes must be an integer between 1 and 1440 (minutes).`,
-      );
-    }
-    memory.idleEndMinutes = value;
+  if (map.digest_and_short_memory_watcher !== undefined) {
+    memory.digestAndShortMemoryWatcher = parseDigestAndShortMemoryWatcher(
+      map.digest_and_short_memory_watcher,
+      `${pathPrefix}.digest_and_short_memory_watcher`,
+    );
   }
   return Object.keys(memory).length > 0 ? memory : undefined;
+}
+
+function parsePositiveMilliseconds(raw: unknown, pathPrefix: string): number {
+  if (
+    typeof raw !== 'number' ||
+    !Number.isInteger(raw) ||
+    raw < 1 ||
+    raw > 86_400_000
+  ) {
+    throw new Error(`${pathPrefix} must be an integer between 1 and 86400000`);
+  }
+  return raw;
+}
+
+function parseDigestAndShortMemoryWatcher(
+  raw: unknown,
+  pathPrefix: string,
+): NonNullable<RuntimeConfiguredAgentMemory['digestAndShortMemoryWatcher']> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${pathPrefix} must be a mapping`);
+  }
+  const map = raw as Record<string, unknown>;
+  const enabled = parseBooleanValue(map.enabled, `${pathPrefix}.enabled`);
+  if (!enabled) {
+    return { enabled: false };
+  }
+  for (const key of Object.keys(map)) {
+    if (
+      key !== 'enabled' &&
+      key !== 'conversation_idle_after_ms' &&
+      key !== 'poll_interval_ms' &&
+      key !== 'model'
+    ) {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure enabled, conversation_idle_after_ms, poll_interval_ms, or model.`,
+      );
+    }
+  }
+  const model = parseStringValue(map.model, `${pathPrefix}.model`);
+  const resolved = resolveModelSelectionForWorkload(model, 'memory_extractor');
+  if (!resolved.ok) {
+    throw new Error(`${pathPrefix}.model is invalid: ${resolved.message}`);
+  }
+  return {
+    enabled: true,
+    conversationIdleAfterMs: parsePositiveMilliseconds(
+      map.conversation_idle_after_ms,
+      `${pathPrefix}.conversation_idle_after_ms`,
+    ),
+    pollIntervalMs: parsePositiveMilliseconds(
+      map.poll_interval_ms,
+      `${pathPrefix}.poll_interval_ms`,
+    ),
+    model,
+  };
 }
 
 function parseConfiguredAgentToolSurface(
@@ -729,7 +776,7 @@ export function parseConfiguredAgents(
         key !== 'capabilities'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, prompt_surface, model, job model defaults, thinking, plugins (guardrail/memory_extraction/skills/commands/pre_run_context), memory (idle_end_minutes), tool_surface (gantry_mcp), bindings, sources, or capabilities.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, prompt_surface, model, job model defaults, thinking, plugins (guardrail/memory_extraction/skills/commands/pre_run_context), memory (digest_and_short_memory_watcher), tool_surface (gantry_mcp), bindings, sources, or capabilities.`,
         );
       }
     }
@@ -781,6 +828,19 @@ export function parseConfiguredAgents(
         );
       }
     }
+    const plugins = parseConfiguredAgentPlugins(
+      map.plugins,
+      `${pathPrefix}.plugins`,
+    );
+    const memory = parseConfiguredAgentMemory(
+      map.memory,
+      `${pathPrefix}.memory`,
+    );
+    if (plugins?.memoryExtraction && !memory?.digestAndShortMemoryWatcher) {
+      throw new Error(
+        `${pathPrefix}.memory.digest_and_short_memory_watcher is required when plugins.memory_extraction is configured`,
+      );
+    }
     result[folder] = {
       name: parseStringValue(map.name, `${pathPrefix}.name`),
       folder,
@@ -796,11 +856,8 @@ export function parseConfiguredAgents(
         map.thinking,
         `${pathPrefix}.thinking`,
       ),
-      plugins: parseConfiguredAgentPlugins(
-        map.plugins,
-        `${pathPrefix}.plugins`,
-      ),
-      memory: parseConfiguredAgentMemory(map.memory, `${pathPrefix}.memory`),
+      plugins,
+      memory,
       toolSurface: parseConfiguredAgentToolSurface(
         map.tool_surface,
         `${pathPrefix}.tool_surface`,

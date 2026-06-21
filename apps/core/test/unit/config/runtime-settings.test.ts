@@ -125,6 +125,10 @@ mcp_servers:
     risk_class: medium
     allowed_tool_patterns: ["record_*"]
     auto_approve_tool_patterns: ["record_*"]
+    crm_lead_query_extraction_watcher:
+      enabled: true
+      poll_interval_ms: 30000
+      model: sonnet
 `);
 
     expect(parsed.mcpServers['mcp:boondi-crm']).toMatchObject({
@@ -134,6 +138,116 @@ mcp_servers:
     });
     // Cleanup safety: the connector still round-trips through the renderer.
     expect(renderRuntimeSettingsYaml(parsed)).toContain('mcp:boondi-crm');
+  });
+
+  it('parses CRM lead query extraction watcher config on the MCP server', () => {
+    const parsed = parseRuntimeSettings(`
+mcp_servers:
+  "mcp:boondi-crm":
+    name: boondi-crm
+    transport: http
+    url: http://127.0.0.1:8082/mcp
+    risk_class: medium
+    allowed_tool_patterns: ["record_*"]
+    auto_approve_tool_patterns: ["record_*"]
+    crm_lead_query_extraction_watcher:
+      enabled: true
+      poll_interval_ms: 30000
+      model: sonnet
+`);
+
+    expect(
+      parsed.mcpServers['mcp:boondi-crm']?.crmLeadQueryExtractionWatcher,
+    ).toEqual({
+      enabled: true,
+      pollIntervalMs: 30000,
+      model: 'sonnet',
+    });
+  });
+
+  it('parses and renders the digest and short-memory watcher config', () => {
+    const parsed = parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    plugins:
+      memory_extraction: memory_extractor/memory_extractor.md
+    memory:
+      digest_and_short_memory_watcher:
+        enabled: true
+        conversation_idle_after_ms: 120000
+        poll_interval_ms: 30000
+        model: sonnet
+`);
+
+    expect(
+      parsed.agents.boondi_support.memory?.digestAndShortMemoryWatcher,
+    ).toEqual({
+      enabled: true,
+      conversationIdleAfterMs: 120000,
+      pollIntervalMs: 30000,
+      model: 'sonnet',
+    });
+
+    const rendered = renderRuntimeSettingsYaml(parsed);
+    expect(rendered).toContain('digest_and_short_memory_watcher:');
+    expect(rendered).toContain('conversation_idle_after_ms: 120000');
+    expect(rendered).toContain('poll_interval_ms: 30000');
+    expect(rendered).toContain('model: sonnet');
+  });
+
+  it('requires digest watcher config when a custom memory extractor is configured', () => {
+    expect(() =>
+      parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    plugins:
+      memory_extraction: memory_extractor/memory_extractor.md
+`),
+    ).toThrow(
+      'agents.boondi_support.memory.digest_and_short_memory_watcher is required when plugins.memory_extraction is configured',
+    );
+  });
+
+  it('ignores digest watcher timing and model fields when disabled', () => {
+    const parsed = parseRuntimeSettings(`
+agents:
+  boondi_support:
+    name: Boondi
+    plugins:
+      memory_extraction: memory_extractor/memory_extractor.md
+    memory:
+      digest_and_short_memory_watcher:
+        enabled: false
+        conversation_idle_after_ms: 120000
+        poll_interval_ms: 30000
+        model: haiku
+`);
+    expect(
+      parsed.agents.boondi_support.memory?.digestAndShortMemoryWatcher,
+    ).toEqual({ enabled: false });
+  });
+
+  it('ignores CRM watcher timing and model fields when disabled', () => {
+    const parsed = parseRuntimeSettings(`
+mcp_servers:
+  "mcp:boondi-crm":
+    name: boondi-crm
+    transport: http
+    url: http://127.0.0.1:8082/mcp
+    risk_class: medium
+    allowed_tool_patterns: ["record_*"]
+    auto_approve_tool_patterns: ["record_*"]
+    crm_lead_query_extraction_watcher:
+      enabled: false
+      poll_interval_ms: 30000
+      model: haiku
+`);
+
+    expect(
+      parsed.mcpServers['mcp:boondi-crm']?.crmLeadQueryExtractionWatcher,
+    ).toEqual({ enabled: false });
   });
 
   it('renders and parses the configured agent guardrail plugin (file + model)', () => {

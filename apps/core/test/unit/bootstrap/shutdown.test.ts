@@ -53,6 +53,9 @@ describe('installShutdownHandlers', () => {
         closeConversationWorkReconciler: vi.fn(() => {
           order.push('closeConversationWorkReconciler');
         }),
+        closeIdleSessionSweepLoop: vi.fn(() => {
+          order.push('closeIdleSessionSweepLoop');
+        }),
         closeWorkerInventoryHeartbeat: vi.fn(() => {
           order.push('closeWorkerInventoryHeartbeat');
         }),
@@ -95,6 +98,7 @@ describe('installShutdownHandlers', () => {
     expect(order).toEqual([
       'log-signal',
       'closeConversationWorkReconciler',
+      'closeIdleSessionSweepLoop',
       'closeWorkerInventoryHeartbeat',
       'closeMessageTracePayloadRetention',
       'queue.shutdown',

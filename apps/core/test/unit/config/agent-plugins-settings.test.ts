@@ -14,6 +14,12 @@ function agentYaml(pluginsBlock = ''): string {
   ].join('\n');
 }
 
+const disabledDigestWatcherBlock = [
+  '    memory:',
+  '      digest_and_short_memory_watcher:',
+  '        enabled: false',
+].join('\n');
+
 describe('agent plugins settings (plugins.*)', () => {
   it('parses guardrail, memory_extraction, and folder skills declarations', () => {
     const parsed = parseRuntimeSettings(
@@ -29,6 +35,7 @@ describe('agent plugins settings (plugins.*)', () => {
           '      skills:',
           '        - boondi-gifting',
           '        - returns-kb',
+          disabledDigestWatcherBlock,
         ].join('\n'),
       ),
     );
@@ -95,6 +102,7 @@ describe('agent plugins settings (plugins.*)', () => {
           '      memory_extraction: MEMORY_EXTRACTION.md',
           '      skills:',
           '        - boondi-gifting',
+          disabledDigestWatcherBlock,
         ].join('\n'),
       ),
     );

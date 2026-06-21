@@ -389,15 +389,15 @@ export function runDoctor(
   });
   if (settings) {
     for (const [folder, agent] of Object.entries(settings.agents)) {
-      const idleMinutes = agent.memory?.idleEndMinutes;
-      const idleEnabled = typeof idleMinutes === 'number';
+      const watcher = agent.memory?.digestAndShortMemoryWatcher;
+      const watcherEnabled = watcher?.enabled === true;
       add(checks, {
         id: `agent:${folder}:memory_idle`,
-        title: `Memory Idle Extraction (${folder})`,
+        title: `Digest And Short-Memory Watcher (${folder})`,
         status: 'pass',
-        message: idleEnabled
-          ? `Idle memory extraction is ON (after ${idleMinutes} min of silence).`
-          : 'Idle memory extraction is not enabled (set memory.idle_end_minutes to turn it on).',
+        message: watcherEnabled
+          ? `Digest and short-memory watcher is ON (after ${watcher.conversationIdleAfterMs} ms of silence).`
+          : 'Digest and short-memory watcher is not enabled.',
       });
       const declaredExtractor = agent.plugins?.memoryExtraction;
       if (!declaredExtractor) continue;
@@ -409,13 +409,13 @@ export function runDoctor(
           message: `Declared memory_extraction file "${declaredExtractor}" was not found in the agent folder.`,
           nextAction: `Add ${declaredExtractor} to the ${folder} agent folder, or remove the plugins.memory_extraction declaration.`,
         });
-      } else if (!idleEnabled) {
+      } else if (!watcherEnabled) {
         add(checks, {
           id: `agent:${folder}:memory_extraction`,
           title: `Memory Extractor (${folder})`,
           status: 'warn',
           message: `Custom extractor "${declaredExtractor}" is configured, but no idle trigger is set — durable memory is only captured on /new, compaction, or jobs, which customer-facing chats rarely hit.`,
-          nextAction: `Set agents.${folder}.memory.idle_end_minutes so memory is captured when customers go quiet.`,
+          nextAction: `Set agents.${folder}.memory.digest_and_short_memory_watcher so memory is captured when customers go quiet.`,
         });
       } else {
         add(checks, {

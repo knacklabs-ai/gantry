@@ -12,7 +12,6 @@ import type { SessionMemoryCollector } from '../domain/ports/session-memory-coll
 import { logger } from '../infrastructure/logging/logger.js';
 import { drainBatches } from './idle-sweep-drain.js';
 
-const MS_PER_MINUTE = 60_000;
 const DEFAULT_MAX_PER_SWEEP = 25;
 
 // Single-flight across instances: only one runtime sweeps at a time. Prevents the
@@ -30,33 +29,51 @@ const RETRY_BACKOFF_BASE_MS = 60_000;
 const RETRY_BACKOFF_MAX_MS = 30 * 60_000;
 
 /**
- * How often the poll loop should run a sweep. The detection latency for an idle
- * chat is at most one interval, so this is kept well under the smallest sensible
- * `idle_end_minutes`. The query itself is a single indexed lookup, so a 30s
- * cadence is cheap even with a 30-minute production window.
+ * Map of opt-in agentId -> watcher config. Empty when no enabled watcher is
+ * configured, which makes the sweep a no-op.
  */
-export const IDLE_SWEEP_INTERVAL_MS = 30_000;
-
-/**
- * Map of opt-in agentId -> idle cutoff in ms. Empty when no agent declared
- * `memory.idle_end_minutes`, which makes the whole sweep a no-op.
- */
-function resolveIdleExtractionAgents(): Map<string, number> {
-  const result = new Map<string, number>();
+function resolveDigestAndShortMemoryWatcherAgents(): Map<
+  string,
+  { conversationIdleAfterMs: number; model: string }
+> {
+  const result = new Map<
+    string,
+    { conversationIdleAfterMs: number; model: string }
+  >();
   let agents: ReturnType<typeof getRuntimeSettingsForConfig>['agents'];
   try {
     agents = getRuntimeSettingsForConfig().agents;
-    // eslint-disable-next-line no-catch-all/no-catch-all -- Unreadable settings means "no opt-in agents"; the sweep simply does nothing.
+    // eslint-disable-next-line no-catch-all/no-catch-all -- Unreadable settings means "no enabled watchers"; the sweep simply does nothing.
   } catch {
     return result;
   }
   for (const [folder, agent] of Object.entries(agents)) {
-    const minutes = agent.memory?.idleEndMinutes;
-    if (typeof minutes === 'number' && minutes > 0) {
-      result.set(agentIdForFolder(folder), minutes * MS_PER_MINUTE);
+    const watcher = agent.memory?.digestAndShortMemoryWatcher;
+    if (watcher?.enabled) {
+      result.set(agentIdForFolder(folder), {
+        conversationIdleAfterMs: watcher.conversationIdleAfterMs,
+        model: watcher.model,
+      });
     }
   }
   return result;
+}
+
+export function resolveDigestAndShortMemoryWatcherPollIntervalMs():
+  | number
+  | undefined {
+  let agents: ReturnType<typeof getRuntimeSettingsForConfig>['agents'];
+  try {
+    agents = getRuntimeSettingsForConfig().agents;
+    // eslint-disable-next-line no-catch-all/no-catch-all -- Unreadable settings means "no enabled watchers".
+  } catch {
+    return undefined;
+  }
+  const intervals = Object.values(agents).flatMap((agent) => {
+    const watcher = agent.memory?.digestAndShortMemoryWatcher;
+    return watcher?.enabled ? [watcher.pollIntervalMs] : [];
+  });
+  return intervals.length > 0 ? Math.min(...intervals) : undefined;
 }
 
 interface IdleCandidateRow {
@@ -124,6 +141,41 @@ export interface IdleSweepDeps {
   now?: () => number;
 }
 
+export interface IdleSessionSweepLoopHandle {
+  close(): void;
+}
+
+export function startIdleSessionSweepLoop(input: {
+  runSweep: () => Promise<void>;
+  intervalMs: number;
+  logger: Pick<typeof logger, 'warn'>;
+}): IdleSessionSweepLoopHandle {
+  let closed = false;
+  let running = false;
+  const runOnce = async (): Promise<void> => {
+    if (closed || running) return;
+    running = true;
+    try {
+      await input.runSweep();
+    } catch (err) {
+      input.logger.warn({ err }, 'Idle session sweep tick failed');
+    } finally {
+      running = false;
+    }
+  };
+
+  void runOnce();
+  const interval = setInterval(() => void runOnce(), input.intervalMs);
+  interval.unref?.();
+
+  return {
+    close: () => {
+      closed = true;
+      clearInterval(interval);
+    },
+  };
+}
+
 /**
  * Builds the idle-session sweeper used by the poll loop. The returned function
  * runs one pass: find idle opt-in sessions and run the existing session-end
@@ -146,17 +198,24 @@ export function createIdleSessionSweeper(
     { failures: number; nextEligibleAt: number }
   >();
 
-  // Startup visibility: announce which agents have idle extraction on (and N).
-  // Nothing is logged when no agent opted in, so silent-off is observable.
-  for (const [agentId, cutoffMs] of resolveIdleExtractionAgents()) {
+  // Startup visibility: announce which agents have the watcher enabled.
+  // Nothing is logged when no watcher is enabled, so silent-off is observable.
+  for (const [
+    agentId,
+    watcher,
+  ] of resolveDigestAndShortMemoryWatcherAgents()) {
     logger.info(
-      { agentId, idleEndMinutes: cutoffMs / MS_PER_MINUTE },
-      'Idle memory extraction enabled',
+      {
+        agentId,
+        conversationIdleAfterMs: watcher.conversationIdleAfterMs,
+        model: watcher.model,
+      },
+      'Digest and short-memory watcher enabled',
     );
   }
 
   return async function runIdleSessionSweep(): Promise<void> {
-    const optIn = resolveIdleExtractionAgents();
+    const optIn = resolveDigestAndShortMemoryWatcherAgents();
     if (optIn.size === 0) return;
 
     // Single-flight across instances. If another runtime holds the lease, skip
@@ -166,8 +225,11 @@ export function createIdleSessionSweeper(
     try {
       const nowMs = now();
       let minCutoffMs = Number.POSITIVE_INFINITY;
-      for (const cutoff of optIn.values()) {
-        minCutoffMs = Math.min(minCutoffMs, cutoff);
+      for (const watcher of optIn.values()) {
+        minCutoffMs = Math.min(
+          minCutoffMs,
+          watcher.conversationIdleAfterMs,
+        );
       }
       const idleBeforeIso = new Date(nowMs - minCutoffMs).toISOString();
       const agentIds = [...optIn.keys()];
@@ -197,12 +259,14 @@ export function createIdleSessionSweeper(
         const eligible: IdleCandidateRow[] = [];
         for (const row of rows) {
           if (eligible.length >= maxPerSweep) break;
-          const cutoffMs = optIn.get(row.agent_id);
-          if (cutoffMs === undefined) continue;
+          const watcher = optIn.get(row.agent_id);
+          if (!watcher) continue;
           const lastActivityMs = Date.parse(row.last_activity_at);
           if (!Number.isFinite(lastActivityMs)) continue;
           // Precise per-agent idle check (the SQL used the loosest cutoff).
-          if (nowMs - lastActivityMs < cutoffMs) continue;
+          if (nowMs - lastActivityMs < watcher.conversationIdleAfterMs) {
+            continue;
+          }
           // Bounded retry: skip a session still inside its failure back-off window.
           const prior = backoff.get(row.agent_session_id);
           if (prior && nowMs < prior.nextEligibleAt) continue;
@@ -221,6 +285,7 @@ export function createIdleSessionSweeper(
             // DM customer agents (the opt-in case today) are user-scoped. A
             // channel/group agent that opts in later would need kind-based scope.
             defaultScope: 'user',
+            model: optIn.get(row.agent_id)?.model,
             timeoutMs: extractionTimeoutMs,
           });
           backoff.delete(row.agent_session_id);

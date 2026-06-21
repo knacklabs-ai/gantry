@@ -67,6 +67,9 @@ export interface RuntimeConfiguredMcpServer {
   autoApproveToolPatterns: string[];
   credentialRefs: McpCredentialRef[];
   sandboxProfileId?: string;
+  crmLeadQueryExtractionWatcher?:
+    | { enabled: false }
+    | { enabled: true; pollIntervalMs: number; model: string };
 }
 
 export type EmbeddingProviderName = string;

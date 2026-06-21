@@ -6,8 +6,11 @@ import { pendingDigestsSql } from '../src/watcher/digest-source.js';
 const env = {
   gantrySchema: 'gantry',
   reconcileAgentId: 'agent:boondi_support',
-  reconcileIntervalMs: 1,
-  extractorModel: 'x',
+  crmLeadQueryExtractionWatcher: {
+    enabled: true,
+    pollIntervalMs: 1,
+    model: 'x',
+  },
   anthropicApiKey: 'x',
 } as any;
 const logger = {

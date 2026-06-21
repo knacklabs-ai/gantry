@@ -1,4 +1,5 @@
 import type { RuntimeConfiguredMcpServer } from './runtime-settings-types.js';
+import { resolveModelSelectionForWorkload } from '../../shared/model-catalog.js';
 
 function parseStringValue(
   raw: unknown,
@@ -34,6 +35,62 @@ function parseStringArrayValue(raw: unknown, pathPrefix: string): string[] {
       }),
     ),
   ];
+}
+
+function parseBooleanValue(raw: unknown, pathPrefix: string): boolean {
+  if (typeof raw !== 'boolean') {
+    throw new Error(`${pathPrefix} must be true/false`);
+  }
+  return raw;
+}
+
+function parsePositiveMilliseconds(raw: unknown, pathPrefix: string): number {
+  if (
+    typeof raw !== 'number' ||
+    !Number.isInteger(raw) ||
+    raw < 1 ||
+    raw > 86_400_000
+  ) {
+    throw new Error(`${pathPrefix} must be an integer between 1 and 86400000`);
+  }
+  return raw;
+}
+
+function parseCrmLeadQueryExtractionWatcher(
+  raw: unknown,
+  pathPrefix: string,
+): NonNullable<RuntimeConfiguredMcpServer['crmLeadQueryExtractionWatcher']> {
+  if (raw === undefined) {
+    throw new Error(`${pathPrefix} is required`);
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${pathPrefix} must be a mapping`);
+  }
+  const map = raw as Record<string, unknown>;
+  const enabled = parseBooleanValue(map.enabled, `${pathPrefix}.enabled`);
+  if (!enabled) {
+    return { enabled: false };
+  }
+  for (const key of Object.keys(map)) {
+    if (key !== 'enabled' && key !== 'poll_interval_ms' && key !== 'model') {
+      throw new Error(
+        `${pathPrefix}.${key} is not supported. Configure enabled, poll_interval_ms, or model.`,
+      );
+    }
+  }
+  const model = parseStringValue(map.model, `${pathPrefix}.model`);
+  const resolved = resolveModelSelectionForWorkload(model, 'memory_extractor');
+  if (!resolved.ok) {
+    throw new Error(`${pathPrefix}.model is invalid: ${resolved.message}`);
+  }
+  return {
+    enabled: true,
+    pollIntervalMs: parsePositiveMilliseconds(
+      map.poll_interval_ms,
+      `${pathPrefix}.poll_interval_ms`,
+    ),
+    model,
+  };
 }
 
 function parseMcpServerTransport(
@@ -149,6 +206,27 @@ export function parseMcpServers(
       throw new Error(`${pathPrefix} must be a mapping`);
     }
     const map = serverRaw as Record<string, unknown>;
+    for (const key of Object.keys(map)) {
+      if (
+        key !== 'name' &&
+        key !== 'display_name' &&
+        key !== 'description' &&
+        key !== 'transport' &&
+        key !== 'url' &&
+        key !== 'template_id' &&
+        key !== 'args' &&
+        key !== 'callerIdentity' &&
+        key !== 'caller_identity' &&
+        key !== 'risk_class' &&
+        key !== 'allowed_tool_patterns' &&
+        key !== 'auto_approve_tool_patterns' &&
+        key !== 'credential_refs' &&
+        key !== 'sandbox_profile_id' &&
+        key !== 'crm_lead_query_extraction_watcher'
+      ) {
+        throw new Error(`${pathPrefix}.${key} is not supported`);
+      }
+    }
     const transport = parseMcpServerTransport(
       map.transport,
       `${pathPrefix}.transport`,
@@ -207,6 +285,15 @@ export function parseMcpServers(
         map.sandbox_profile_id,
         `${pathPrefix}.sandbox_profile_id`,
       ),
+      ...(serverId === 'mcp:boondi-crm'
+        ? {
+            crmLeadQueryExtractionWatcher:
+              parseCrmLeadQueryExtractionWatcher(
+                map.crm_lead_query_extraction_watcher,
+                `${pathPrefix}.crm_lead_query_extraction_watcher`,
+              ),
+          }
+        : {}),
     };
   }
   return servers;

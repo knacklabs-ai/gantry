@@ -2,6 +2,7 @@ import {
   getMemoryModelRuntimeConfig,
   MEMORY_EXTRACTOR_MAX_FACTS,
   MEMORY_EXTRACTOR_MIN_CONFIDENCE,
+  resolveMemoryExtractorModelOverride,
 } from '../config/index.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { sleep } from '../shared/time/datetime.js';
@@ -339,8 +340,15 @@ export class LlmMemoryExtractionProvider implements MemoryExtractionProvider {
   async extractFactsWithOutcome(
     input: ArcExtractionInput,
   ): Promise<MemoryExtractionResult> {
-    const { extractor: modelExtractor, modelProfiles } =
-      getMemoryModelRuntimeConfig();
+    const runtimeModelConfig = getMemoryModelRuntimeConfig();
+    const modelOverride = input.model
+      ? resolveMemoryExtractorModelOverride(input.model)
+      : undefined;
+    const modelExtractor =
+      modelOverride?.runnerModel ?? runtimeModelConfig.extractor;
+    const modelProfile =
+      modelOverride?.modelProfile ??
+      runtimeModelConfig.modelProfiles?.extractor;
     const turns = Array.isArray(input.turns) ? input.turns : [];
     if (!turns.length) return extractionResult([]);
     const memoryLlm = getMemoryLlmClient();
@@ -438,7 +446,7 @@ export class LlmMemoryExtractionProvider implements MemoryExtractionProvider {
         const text = await memoryLlm.query({
           appId: input.appId,
           model: modelExtractor,
-          modelProfile: modelProfiles?.extractor,
+          modelProfile,
           prompt: promptParts.plainPrompt,
           systemPrompt: promptParts.systemPrompt,
           userBlocks: [

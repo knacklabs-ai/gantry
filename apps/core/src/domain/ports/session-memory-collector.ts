@@ -12,6 +12,7 @@ export type SessionMemoryCollector = (input: {
   defaultScope?: MemoryBoundaryDefaultScope;
   additionalTurns?: MemoryBoundaryTurn[];
   excludeMessageIds?: string[];
+  model?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   statementTimeoutMs?: number;
