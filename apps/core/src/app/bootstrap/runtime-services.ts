@@ -76,11 +76,8 @@ import {
 import { splitLiveSendProfileText } from './runtime-services-live-send-segmentation.js';
 import { createDurableOutboundAttempt } from './runtime-services-durable-outbound-attempt.js';
 import { handleActiveNewSessionCommand } from './runtime-services-active-new.js';
-import {
-  nowIso,
-  nowMs as currentTimeMs,
-  toIso,
-} from '../../shared/time/datetime.js';
+// prettier-ignore
+import { nowIso, nowMs as currentTimeMs, toIso } from '../../shared/time/datetime.js';
 import { LiveTurnAuthority } from '../../runtime/live-turn-authority.js';
 import type { LiveTurnRecoveryLoop } from '../../runtime/live-turn-recovery.js';
 import { configurePendingInteractionPermissionPersistence } from '../../application/interactions/pending-interaction-durability.js';
@@ -95,6 +92,10 @@ import {
 import { startWaitingStatusMonitor } from './live-execution-waiting-status.js';
 import type { ProcessRole } from './roles/process-role.js';
 import { buildLiveTurnRecoveryCapabilityGate } from './live-turn-recovery-capability-gate.js';
+import {
+  ASYNC_TASK_STALE_AFTER_MS,
+  AsyncCommandTaskService,
+} from '../../jobs/async-command-task-service.js';
 type RuntimeBootstrapRepository = RuntimeAppRepository & RuntimeJobRepository;
 interface Deps {
   startSchedulerLoop: typeof startSchedulerLoop;
@@ -108,6 +109,7 @@ interface Deps {
   collectSessionMemory: SessionMemoryCollector;
   getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
   getSkillRepository?: () => SkillCatalogRepository | undefined;
+  getAsyncTaskRepository?: IpcDeps['getAsyncTaskRepository'];
   getMcpServerRepository?: () => McpServerRepository | undefined;
   getCapabilitySecretRepository?: () => CapabilitySecretRepository | undefined;
   runApprovedCommand?: IpcDeps['runApprovedCommand'];
@@ -126,7 +128,6 @@ interface Deps {
   getRuntimeDependencyRepository?: () =>
     | RuntimeDependencyRepository
     | undefined;
-  /** Injectable for tests; defaults to the settings-backed deployment mode. */
   getDeploymentMode: typeof getDeploymentMode;
   startOutboundDeliveryRecoveryLoop: typeof startOutboundDeliveryRecoveryLoop;
   callBrowserTool: IpcDeps['callBrowserTool'];
@@ -214,6 +215,46 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
       });
   };
 }
+async function recoverStaleAsyncCommandTasks(
+  appId: string,
+  deps: Deps,
+): Promise<void> {
+  const repository = deps.getAsyncTaskRepository?.();
+  if (!repository) return;
+  const service = new AsyncCommandTaskService(repository, {
+    run: async () => ({ errorSummary: 'async command runner unavailable' }),
+  });
+  try {
+    const recovered = await service.recoverStaleTasks({
+      appId,
+      staleAfterMs: ASYNC_TASK_STALE_AFTER_MS,
+    });
+    if (recovered > 0) {
+      deps.logger.warn({ recovered }, 'Recovered stale async command tasks');
+    }
+  } catch (err) {
+    deps.logger.warn({ err }, 'Failed to recover stale async command tasks');
+  }
+}
+
+const ASYNC_TASK_RECOVERY_INTERVAL_MS = 30_000;
+
+let activeAsyncTaskRecoveryLoop: NodeJS.Timeout | undefined;
+
+function startAsyncTaskRecoveryLoop(appId: string, deps: Deps): void {
+  stopAsyncTaskRecoveryLoop();
+  activeAsyncTaskRecoveryLoop = setInterval(() => {
+    void recoverStaleAsyncCommandTasks(appId, deps);
+  }, ASYNC_TASK_RECOVERY_INTERVAL_MS);
+  activeAsyncTaskRecoveryLoop.unref?.();
+}
+
+export function stopAsyncTaskRecoveryLoop(): void {
+  if (!activeAsyncTaskRecoveryLoop) return;
+  clearInterval(activeAsyncTaskRecoveryLoop);
+  activeAsyncTaskRecoveryLoop = undefined;
+}
+
 let activeLiveTurnRecoveryLoop: LiveTurnRecoveryLoop | undefined;
 let activeLiveTurnAuthority: LiveTurnAuthority | undefined;
 let activeMessagePollingLoop: MessagePollingLoopHandle | undefined;
@@ -330,6 +371,11 @@ export async function startRuntimeServices(
       warn: (context, message) => resolved.logger.warn(context, message),
     });
   const syncGroupSnapshots = createGroupSnapshotSync(app, resolved);
+  await recoverStaleAsyncCommandTasks(
+    String(channelWiring.getRuntimeAppId()),
+    resolved,
+  );
+  startAsyncTaskRecoveryLoop(String(channelWiring.getRuntimeAppId()), resolved);
   const onSchedulerChanged = (jobId?: string) => requestSchedulerSync(jobId);
   const startScheduler = () =>
     resolved.startSchedulerLoop({
@@ -369,6 +415,7 @@ export async function startRuntimeServices(
       getMcpDnsValidationCache: resolved.getMcpDnsValidationCache,
       getSkillArtifactStore: resolved.getSkillArtifactStore,
       getToolRepository: resolved.getToolRepository,
+      getAsyncTaskRepository: resolved.getAsyncTaskRepository,
       getBrowserStatus,
       openBrowserSession: (profileName) => ensureBrowserReady({ profileName }),
       executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
@@ -423,11 +470,19 @@ export async function startRuntimeServices(
     onSchedulerChanged,
     opsRepository: resolved.opsRepository,
     getToolRepository: resolved.getToolRepository,
+    getSkillRepository: resolved.getSkillRepository,
+    getAsyncTaskRepository: resolved.getAsyncTaskRepository,
     getMcpServerRepository: resolved.getMcpServerRepository,
     getCapabilitySecretRepository: resolved.getCapabilitySecretRepository,
+    getSkillArtifactStore: resolved.getSkillArtifactStore,
+    getMcpDnsValidationCache: resolved.getMcpDnsValidationCache,
+    executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
+    executionAdapters: resolved.executionAdapters ?? app.executionAdapters,
+    runnerSandboxProvider: resolved.runnerSandboxProvider,
     runApprovedCommand: resolved.runApprovedCommand,
     getPermissionRepository: resolved.getPermissionRepository,
     publishRuntimeEvent: resolved.publishRuntimeEvent,
+    getEgressSettings: () => getRuntimeSettingsForConfig().permissions.egress,
     mirrorAgentToolRulesToSettings,
     reloadRuntimeState: () => app.loadState(),
     getCredentialBroker: app.getCredentialBroker,

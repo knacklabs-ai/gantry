@@ -35,7 +35,10 @@ import {
   revokeBrowserIpcAuthorization,
   revokeIpcResponseSigningKey,
 } from './ipc-auth.js';
-import { getContinuationInputDir } from './continuation-input.js';
+import {
+  getContinuationInputDir,
+  taskContinuationThreadId,
+} from './continuation-input.js';
 import { executeRunnerProcess } from './agent-spawn-process.js';
 import { applyAgentEgressNoProxyEnv } from '../shared/no-proxy.js';
 import { buildToolNetworkEnv } from '../shared/tool-network-env.js';
@@ -52,18 +55,15 @@ import { resolveMcpCredentialEnvForAgent } from '../application/capability-secre
 import {
   attachMcpSourceNetworkHosts,
   egressNetworkAttributionFromRuntimeAccess,
-  LOCAL_CLI_CREDENTIAL_DIRS_ENV,
   localCliCredentialPathHintsFromRuntimeAccess,
   pickPreparedExecutionEnv,
   pickSafeHostEnv,
   pickSelectedCapabilityEnv,
-  PROTECTED_FILESYSTEM_DENY_READ_PATHS_ENV,
-  PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_ENV,
-  PROTECTED_FILESYSTEM_PATHS_ENV,
   databaseNetworkHostFromUrl,
   resolveHomeRelativePaths,
   resolveRunnerMcpProjection,
   sandboxAllowedNetworkHostsFromRuntimeAccess,
+  writeProtectedFilesystemEnv,
 } from './agent-spawn-runtime-policy.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 import {
@@ -78,6 +78,7 @@ import { withStdioMcpEgressEnv } from './agent-spawn-mcp-egress-env.js';
 import { createRunnerHostStartupTiming } from './agent-spawn-startup-timing.js';
 import { publishRunnerHostStartupDiagnosticFromSpawn } from './agent-spawn-startup-diagnostic.js';
 import { resolveSelectedSkillEnvForSpawn } from './agent-spawn-selected-skill-env.js';
+import { configureSpawnAsyncCommandSandboxPolicy } from './async-command-sandbox-policy.js';
 import { validateAgentPreSpawnAdmission } from './agent-spawn-admission.js';
 import { resolveSpawnModel } from './agent-spawn-model-resolution.js';
 import { compileSpawnSystemPrompt } from './agent-spawn-prompt.js';
@@ -98,13 +99,9 @@ import {
   buildAndLogRunnerRuntimeDetails,
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
-const DEFAULT_RUNNER_APP_ID = 'default';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
-export type {
-  AvailableGroup,
-  AgentInput,
-  AgentOutput,
-} from './agent-spawn-types.js';
+// prettier-ignore
+export type { AvailableGroup, AgentInput, AgentOutput } from './agent-spawn-types.js';
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -133,7 +130,7 @@ export async function spawnAgent(
   const { modelWorkload, resolvedModel } = await resolveSpawnModel({
     group,
     agentInput: input,
-    appId: input.appId || DEFAULT_RUNNER_APP_ID,
+    appId: input.appId || 'default',
     modelConfig,
     agentHarness: getSelectedAgentHarness(group.folder),
     modelFamilyOrder: runtimeSettings.modelFamilies,
@@ -150,10 +147,6 @@ export async function spawnAgent(
   const agentEngine = resolvedModel.value.agentEngine;
   const effectiveModel = resolvedModel.value.runnerModel;
   const effectiveModelEntry = resolvedModel.value.modelEntry;
-  // Pre-spawn tool-rule admission: invalid runner tool rules, plus DeepAgents
-  // shell/filesystem authority (disabled in v1; the future enablement path also
-  // requires an enforcing sandbox under production/remote posture). Engine and
-  // resolved tool rules are both known here, so these fail closed before spawn.
   const preSpawnAdmissionError = hostStartup.measure(
     'preSpawnAdmissionMs',
     () =>
@@ -175,7 +168,7 @@ export async function spawnAgent(
   const compiledSystemPrompt = await compileSpawnSystemPrompt({
     group,
     agentInput: input,
-    appId: input.appId || DEFAULT_RUNNER_APP_ID,
+    appId: input.appId || 'default',
     accessPreset: agentAccessPolicy.preset,
     fileArtifactStore: () => getRuntimeFileArtifactStore(),
     measureAsync: (name, fn) => hostStartup.measureAsync(name, fn),
@@ -295,14 +288,17 @@ export async function spawnAgent(
     | Awaited<ReturnType<typeof ensureEgressGateway>>
     | undefined;
   const ipcAuth = createIpcAuthEnvelope(group.folder, input.threadId, {
-    appId: input.appId || DEFAULT_RUNNER_APP_ID,
+    appId: input.appId || 'default',
     agentId: input.agentId,
   });
   try {
     const command = process.execPath;
     const args = preparedExecution.runnerArgs;
-    const ipcInputDir = getContinuationInputDir(group.folder, input.threadId);
-    const runnerAppId = input.appId || DEFAULT_RUNNER_APP_ID;
+    const ipcInputDir = getContinuationInputDir(
+      group.folder,
+      taskContinuationThreadId(input.threadId, input.parentTaskId),
+    );
+    const runnerAppId = input.appId || 'default';
     const mcpServerPath = path.join(
       hostRuntime.runnerDistDir,
       'mcp',
@@ -526,6 +522,7 @@ export async function spawnAgent(
       jobId: input.jobId,
       jobName: input.jobName,
       runId: input.runId,
+      parentTaskId: input.parentTaskId,
       runLeaseToken: input.runLeaseToken,
       runLeaseFencingVersion: input.runLeaseFencingVersion,
       browserIpcAuthToken: browserIpcEnabled
@@ -571,6 +568,14 @@ export async function spawnAgent(
       pickSafeHostEnv,
       pickPreparedExecutionEnv,
     });
+    if (
+      options?.runnerSandboxProvider?.enforcing === true &&
+      options.asyncTaskRepositoryAvailable === true
+    ) {
+      env.GANTRY_ASYNC_TASK_TOOLS_ENABLED = '1';
+    } else {
+      delete env.GANTRY_ASYNC_TASK_TOOLS_ENABLED;
+    }
     applyAgentEgressNoProxyEnv(env, { externalBypass: false });
     hostStartup.finish('runnerEnvMs', runnerEnvStarted);
     // Job-level model overrides group-level model.
@@ -652,20 +657,12 @@ export async function spawnAgent(
       protectedFilesystemDenyWritePaths,
       providerConfigDir,
     );
-    env[PROTECTED_FILESYSTEM_DENY_READ_PATHS_ENV] = JSON.stringify(
-      protectedFilesystemDenyReadPaths,
-    );
-    env[PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_ENV] = JSON.stringify(
-      protectedFilesystemDenyWritePaths,
-    );
-    env[PROTECTED_FILESYSTEM_PATHS_ENV] = JSON.stringify(
-      protectedFilesystemDenyWritePaths,
-    );
-    if (localCliCredentialPaths.length > 0) {
-      env[LOCAL_CLI_CREDENTIAL_DIRS_ENV] = JSON.stringify(
-        localCliCredentialPaths,
-      );
-    }
+    writeProtectedFilesystemEnv({
+      env,
+      protectedReadPaths: protectedFilesystemDenyReadPaths,
+      protectedWritePaths: protectedFilesystemDenyWritePaths,
+      localCliCredentialPaths,
+    });
     if (browserIpcEnabled) {
       registerBrowserIpcAuthorization({
         workspaceKey: group.folder,
@@ -681,13 +678,23 @@ export async function spawnAgent(
       path.dirname(args[0] ?? hostRuntime.runnerDistDir),
     );
     hostStartup.finish('sandboxSpecMs', sandboxSpecStarted);
-    // Keep the DeepAgents checkpointer DB out of the sandbox's direct network
-    // allowlist. In sandbox_runtime, the child receives the checkpointer
-    // proxyUrl and pg opens the connection through the Gantry egress gateway
-    // instead; the gateway is what owns the private DB host authority.
-    const finalAllowedNetworkHosts =
-      sandboxRuntimeGateway.gatewayOptions.allowedNetworkHosts ??
-      sandboxAllowedNetworkHosts;
+    const finalAllowedNetworkHosts = configureSpawnAsyncCommandSandboxPolicy({
+      env,
+      sourceAgentFolder: group.folder,
+      runHandle: processName,
+      appId: runnerAppId,
+      agentId: input.agentId,
+      conversationId: input.chatJid,
+      threadId: input.threadId,
+      runId: input.runId,
+      jobId: input.jobId,
+      protectedReadPaths: protectedFilesystemDenyReadPaths,
+      protectedWritePaths: protectedFilesystemDenyWritePaths,
+      gatewayAllowedNetworkHosts:
+        sandboxRuntimeGateway.gatewayOptions.allowedNetworkHosts,
+      fallbackAllowedNetworkHosts: sandboxAllowedNetworkHosts,
+      resourceLimits: runtimeSandbox.resourceLimits,
+    });
     await publishRunnerHostStartupDiagnosticFromSpawn({
       publishRuntimeEvent: options?.publishRuntimeEvent,
       logger,

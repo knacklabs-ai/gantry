@@ -387,6 +387,7 @@ export async function runQuery(
     jobId: agentInput.jobId,
     runHandle: process.env.GANTRY_AGENT_RUN_HANDLE,
     runId: agentInput.runId,
+    parentTaskId: agentInput.parentTaskId,
     runLeaseToken: agentInput.runLeaseToken,
     runLeaseFencingVersion: agentInput.runLeaseFencingVersion,
     memoryUserId: agentInput.memoryUserId,
@@ -400,6 +401,8 @@ export async function runQuery(
     attachedMcpSourceIds: agentInput.attachedMcpSourceIds,
     semanticCapabilities: agentInput.semanticCapabilities,
     hideAuthorityTools: agentInput.hideAuthorityTools === true,
+    asyncTaskToolsEnabled: process.env.GANTRY_ASYNC_TASK_TOOLS_ENABLED === '1',
+    memoryBlock,
     accessPreset:
       process.env.GANTRY_AGENT_ACCESS_PRESET === 'locked' ? 'locked' : 'full',
     ipcDir: process.env.GANTRY_IPC_DIR,
