@@ -52,6 +52,8 @@ export const MemorySearchRequestSchema = z.object({
 });
 export type MemorySearchRequest = z.infer<typeof MemorySearchRequestSchema>;
 
+export * from './pattern-candidates.js';
+
 export const MemoryItemResponseSchema = z.object({
   id: z.string(),
   appId: z.string(),

@@ -221,6 +221,25 @@ describe('runAppMemoryDreamPass guardrails', () => {
     );
   });
 
+  it('does not write pattern candidates during dry-run dreaming', async () => {
+    const { db } = createDb([[evidenceRow()], []]);
+    const detectPatternCandidates = vi.fn();
+
+    await runAppMemoryDreamPass({
+      db: db as never,
+      runId: 'mdr-pattern-dry-run',
+      subject,
+      phase: 'deep',
+      dryRun: true,
+      listItems: vi.fn(async () => []),
+      save: vi.fn(),
+      retire: vi.fn(async () => ({ deleted: true })),
+      detectPatternCandidates,
+    });
+
+    expect(detectPatternCandidates).not.toHaveBeenCalled();
+  });
+
   it('does not stage raw evidence text during light dreaming', async () => {
     const { db, inserted } = createDb([
       [evidenceRow({ text: 'Ravi prefers raw transcript snippets.' })],

@@ -660,6 +660,22 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
+  it('preserves memory user ids from signed task requests', () => {
+    const payload = signedPayload({
+      requestId: 'task-memory-user-id',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'pattern_candidate_decision',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
+      memoryUserId: 'sl:U123',
+    });
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'pattern_candidate_decision',
+      memoryUserId: 'sl:U123',
+    });
+  });
+
   it('rejects response-bearing IPC requests that omit the run response key id', () => {
     const payload = signedPayload({
       requestId: 'task-missing-response-key',

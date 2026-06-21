@@ -36,6 +36,15 @@
       "removeByPlan": "myclaw-architecture-gates-20260517-provider-boundary-sentinels"
     },
     {
+      "file": "apps/core/test/unit/jobs/async-command-sandbox-runner.test.ts",
+      "matches": {
+        "ANTHROPIC_": 2,
+        "CLAUDE_CODE_OAUTH_TOKEN": 2
+      },
+      "reason": "Existing provider credential scrub test names provider env vars explicitly; keep count-exact until provider-boundary sentinel cleanup moves fixtures behind approved boundaries.",
+      "removeByPlan": "myclaw-architecture-gates-20260517-provider-boundary-sentinels"
+    },
+    {
       "file": "apps/core/src/config/index.ts",
       "matches": {
         "ANTHROPIC_": 7

@@ -19,6 +19,7 @@ export const BASELINE_GANTRY_MCP_TOOL_NAMES = [
   'procedure_save',
   'request_skill_install',
   'request_skill_proposal',
+  'pattern_candidate_decision',
   'request_skill_dependency_install',
   'request_mcp_server',
   'request_access',
