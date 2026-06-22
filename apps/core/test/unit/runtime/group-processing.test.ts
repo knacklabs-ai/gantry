@@ -1128,6 +1128,47 @@ describe('createGroupProcessor', () => {
       });
     });
 
+    it('reads channel pattern candidates with the resolved memory agent id', async () => {
+      const group = makeGroup({
+        requiresTrigger: false,
+        folder: 'lead-agent',
+        conversationKind: 'channel',
+      });
+      const patternCandidateRepository = {
+        listEligible: vi.fn(async () => []),
+      };
+      const { deps } = setupHappyPath({ group });
+      deps.getPatternCandidateRepository = vi.fn(
+        () => patternCandidateRepository as never,
+      );
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'default',
+          agentId: 'agent:lead-agent',
+          agentSessionId: 'agent-session:1',
+          providerSessionAccessFingerprint: EMPTY_ACCESS_FINGERPRINT,
+          memoryContextBlock:
+            '<gantry_memory_context>memory</gantry_memory_context>',
+        });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us', {
+        memoryContext: { userId: 'user-1', source: 'message' },
+      });
+
+      expect(patternCandidateRepository.listEligible).toHaveBeenCalledWith({
+        subject: {
+          appId: 'default',
+          agentId: 'agent:lead-agent',
+          folder: 'lead-agent',
+          subjectType: 'channel',
+          subjectId: 'conversation:group1@g.us',
+        },
+        limit: 1,
+      });
+    });
+
     it('adds selected skill metadata to runtime context without injecting full skill bodies', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const skillRepository = {

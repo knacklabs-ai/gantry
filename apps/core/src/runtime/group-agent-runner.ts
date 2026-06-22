@@ -38,6 +38,11 @@ import { resolveExecutionRoute } from '../shared/model-execution-route.js';
 import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
 import { appIdFromConversationJid } from '../shared/app-conversation-jid.js';
 import {
+  loadPatternsContext,
+  markPatternsContextSurfaced,
+} from '../shared/pattern-candidate-block.js';
+import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
+import {
   executionProviderIdForCandidate,
   resolveTurnFailoverCandidates,
   runFamilyFailoverLoop,
@@ -451,8 +456,19 @@ export function createGroupAgentRunner(input: {
         'Expired provider session because runtime access projection changed',
       );
     }
+    const patternCandidateRepo = deps.getPatternCandidateRepository?.();
+    const patternsContext = await loadPatternsContext(patternCandidateRepo, {
+      appId: runtimeAppId,
+      agentId:
+        turnContext?.agentId ?? memoryAgentIdForWorkspaceFolder(group.folder),
+      folder: group.folder,
+      conversationId: chatJid,
+      conversationKind: group.conversationKind,
+      userId: options?.memoryContext?.userId,
+    });
     const memoryContextBlock = [
       turnContext?.memoryContextBlock,
+      patternsContext.block,
       approvedSkillContextBlock,
     ]
       .filter((block): block is string => Boolean(block?.trim()))
@@ -684,6 +700,10 @@ export function createGroupAgentRunner(input: {
               : summarizeRuntimeResultForPersistence(output.result),
         });
       }
+      await markPatternsContextSurfaced(
+        patternCandidateRepo,
+        patternsContext.surfacedCandidateIds,
+      );
       return 'success';
     } catch (err) {
       logger.error({ group: group.name, err }, 'Agent error');

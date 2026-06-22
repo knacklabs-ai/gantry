@@ -64,6 +64,10 @@ import {
   requestSkillProposalHandler,
 } from './ipc-skill-install-handlers.js';
 import {
+  configurePatternCandidateIpcHandlers,
+  patternCandidateDecisionHandler,
+} from './pattern-candidate-ipc-handlers.js';
+import {
   credentialRefsForRequestedMcp,
   headerNameForCredentialNeed,
 } from './ipc-mcp-server-request-credentials.js';
@@ -86,6 +90,9 @@ configureSkillInstallHandlers({
   logInfo: (context, message) => logger.info(context, message),
   logError: (context, message) => logger.error(context, message),
   syncApprovedCapabilitySettings,
+});
+configurePatternCandidateIpcHandlers({
+  getStorage: getRuntimeStorage,
 });
 function createContextTaskResponder(context: TaskContext) {
   return createTaskResponder(
@@ -388,7 +395,7 @@ const adminPermissionRevokeHandler: TaskHandler = async (context) => {
   }
 };
 // prettier-ignore
-export const adminTaskHandlers: Record<string, TaskHandler> = { refresh_groups: refreshGroupsHandler, register_agent: registerAgentHandler, service_restart: serviceRestartHandler, settings_desired_state: settingsDesiredStateHandler, guided_action_preview: guidedActionPreviewHandler, request_settings_update: requestSettingsUpdateHandler, admin_permission_revoke: adminPermissionRevokeHandler, request_skill_install: requestSkillInstallHandler, request_skill_dependency_install: requestOnlyCapabilityHandler, request_permission: requestOnlyCapabilityHandler, request_skill_proposal: requestSkillProposalHandler, request_mcp_server: requestMcpServerHandler, mcp_list_tools: mcpListToolsHandler, mcp_describe_tool: mcpDescribeToolHandler, mcp_call_tool: mcpCallToolHandler };
+export const adminTaskHandlers: Record<string, TaskHandler> = { refresh_groups: refreshGroupsHandler, register_agent: registerAgentHandler, service_restart: serviceRestartHandler, settings_desired_state: settingsDesiredStateHandler, guided_action_preview: guidedActionPreviewHandler, request_settings_update: requestSettingsUpdateHandler, admin_permission_revoke: adminPermissionRevokeHandler, request_skill_install: requestSkillInstallHandler, request_skill_dependency_install: requestOnlyCapabilityHandler, request_permission: requestOnlyCapabilityHandler, request_skill_proposal: requestSkillProposalHandler, pattern_candidate_decision: patternCandidateDecisionHandler, request_mcp_server: requestMcpServerHandler, mcp_list_tools: mcpListToolsHandler, mcp_describe_tool: mcpDescribeToolHandler, mcp_call_tool: mcpCallToolHandler };
 // prettier-ignore
 function validateSameChannelApprovalTarget(input: { data: Parameters<TaskHandler>[0]['data']; sourceAgentFolderJids: string[]; requestKind: string; reject: (error: string, code?: string, details?: string[]) => void }): string | null {
   const requestedTargetJid = toTrimmedString(input.data.chatJid, { maxLen: 512 });

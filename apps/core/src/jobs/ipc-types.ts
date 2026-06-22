@@ -52,6 +52,7 @@ export interface TaskIpcData {
   workspaceFolder?: string;
   chatJid?: string;
   targetJid?: string;
+  memoryUserId?: string;
   jid?: string;
   folder?: string;
   trigger?: string;

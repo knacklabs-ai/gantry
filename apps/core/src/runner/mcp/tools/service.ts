@@ -8,6 +8,7 @@ import {
   currentConfiguredAllowedTools,
   deploymentMode,
   isAdminMcpToolEnabled,
+  memoryUserId,
   TASKS_DIR,
   threadId,
 } from '../context.js';
@@ -32,6 +33,46 @@ export function registerServiceTools(server: McpServer): void {
     server,
     'request_skill_proposal',
     'Request skill source setup for an agent-created or modified skill bundle. Approval makes the skill available as inventory; risky actions still require reviewed capability access.',
+  );
+  server.tool(
+    'pattern_candidate_decision',
+    'Record the user decision for a pattern_id from [[PATTERNS_NOTICED]]. Use this only after the user explicitly says not now or do not suggest again.',
+    {
+      patternCandidateId: z
+        .string()
+        .describe('pattern_id from the pattern block'),
+      choice: z.enum(['not_now', 'dismiss']),
+    },
+    async (args) => {
+      const taskId = makeIpcId('pattern-candidate-decision');
+      writeIpcFile(TASKS_DIR, {
+        type: 'pattern_candidate_decision',
+        taskId,
+        targetJid: chatJid,
+        chatJid,
+        memoryUserId,
+        authThreadId: threadId,
+        payload: {
+          patternCandidateId: args.patternCandidateId,
+          choice: args.choice,
+        },
+        timestamp: nowIso(),
+      });
+      const response = await waitForTaskResponse(taskId, 10_000);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              response?.message ||
+              (response?.ok
+                ? 'Pattern decision recorded.'
+                : 'Pattern decision was not recorded.'),
+          },
+        ],
+        ...(response?.ok ? {} : { isError: true }),
+      };
+    },
   );
   registerSettingsTools(server, { isAdminToolEnabled: isAdminMcpToolEnabled });
   registerAdminPermissionTools(server, {
@@ -277,6 +318,7 @@ export function registerServiceTools(server: McpServer): void {
         taskId,
         targetJid: chatJid,
         chatJid,
+        memoryUserId,
         authThreadId: threadId,
         payload: {
           name: args.name,
@@ -657,6 +699,10 @@ function registerSkillProposalTool(
           'Skill files. Must include SKILL.md with name and description frontmatter.',
         ),
       reason: z.string().describe('Why this skill is needed'),
+      patternCandidateId: z
+        .string()
+        .optional()
+        .describe('Optional pattern_id from [[PATTERNS_NOTICED]].'),
     },
     async (args) => {
       const taskId = makeIpcId('request-skill');
@@ -665,10 +711,12 @@ function registerSkillProposalTool(
         taskId,
         targetJid: chatJid,
         chatJid,
+        memoryUserId,
         authThreadId: threadId,
         payload: {
           files: args.files,
           reason: args.reason,
+          patternCandidateId: args.patternCandidateId,
         },
         timestamp: nowIso(),
       });

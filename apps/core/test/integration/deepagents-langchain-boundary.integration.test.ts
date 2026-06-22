@@ -808,7 +808,7 @@ maybeDescribe('DeepAgents (LangChain) runner boundary integration', () => {
         gateway.requests.some((request) =>
           request.body.includes('fresh resumed memory'),
         ),
-      ).toBe(false);
+      ).toBe(true);
     } finally {
       await gateway.close();
     }

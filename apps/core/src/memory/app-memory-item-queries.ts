@@ -2,6 +2,13 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import * as pgSchema from '../adapters/storage/postgres/schema/schema.js';
+import type { PatternCandidateSubject } from '../domain/ports/pattern-candidates.js';
+import {
+  detectPatternCandidates,
+  type PatternCandidateDraft,
+  type PatternTranscriptTurn,
+} from '../shared/pattern-candidate-detection.js';
+import { PATTERN_INTENSIFY_DELTA } from '../shared/pattern-candidate-policy.js';
 import {
   itemMatchesSubjectBoundary,
   parseJsonObject,
@@ -202,3 +209,88 @@ export async function demoteDreamingPromotedMemoryItem(input: {
 export type OwnedMemoryItemLookupInput = {
   id: string;
 } & Partial<MemoryBoundaryContext>;
+
+const patternCandidatesTable = pgSchema.patternCandidatesPostgres;
+
+/**
+ * The pattern-candidate detection pass, run inside the dreaming deep phase.
+ * Detects repeated work (pure heuristic) and upserts candidates by signature.
+ * It only writes `detected` candidates — it never creates, edits, or proposes a
+ * skill. Returns the number of candidates upserted.
+ */
+export async function detectAndUpsertPatternCandidates(input: {
+  db: Db;
+  subject: PatternCandidateSubject;
+  transcriptTurns: PatternTranscriptTurn[];
+  windowStart: string;
+  windowEnd: string;
+  nowIso: string;
+}): Promise<number> {
+  const drafts = detectPatternCandidates({
+    transcriptTurns: input.transcriptTurns,
+  });
+  // Reset a snoozed candidate to detected only when its snooze elapsed or it
+  // intensified; never resurrect a dismissed or accepted one. Evaluated against
+  // the OLD row inside the atomic upsert.
+  const resetSnooze = sql`${patternCandidatesTable.candidateStatus} = 'snoozed' and (${patternCandidatesTable.snoozedUntil} <= ${input.nowIso} or excluded.occurrences - ${patternCandidatesTable.occurrences} >= ${PATTERN_INTENSIFY_DELTA})`;
+  for (const draft of drafts) {
+    await input.db
+      .insert(patternCandidatesTable)
+      .values(buildDetectedRowValues(input.subject, draft, input))
+      .onConflictDoUpdate({
+        target: [
+          patternCandidatesTable.appId,
+          patternCandidatesTable.agentId,
+          patternCandidatesTable.subjectType,
+          patternCandidatesTable.subjectId,
+          patternCandidatesTable.signature,
+        ],
+        set: {
+          occurrences: sql`excluded.occurrences`,
+          windowEnd: sql`excluded.window_end`,
+          lastDetectedAt: sql`excluded.last_detected_at`,
+          updatedAt: sql`case when ${patternCandidatesTable.candidateStatus} = 'suggested' and not (${resetSnooze}) then ${patternCandidatesTable.updatedAt} else excluded.updated_at end`,
+          outcomeLabel: sql`excluded.outcome_label`,
+          shortAsk: sql`excluded.short_ask`,
+          evidenceRefsJson: sql`excluded.evidence_refs`,
+          candidateStatus: sql`case when ${resetSnooze} then 'detected' else ${patternCandidatesTable.candidateStatus} end`,
+          snoozedUntil: sql`case when ${resetSnooze} then null else ${patternCandidatesTable.snoozedUntil} end`,
+        },
+      });
+  }
+  return drafts.length;
+}
+
+/**
+ * Pure row builder for a newly detected candidate. The id is derived from the
+ * unique key so a re-detection maps to the same row (idempotent). Always
+ * `detected` with no proposal — the batch path can never start a proposal (the
+ * invariant). Exported for testing.
+ */
+export function buildDetectedRowValues(
+  subject: PatternCandidateSubject,
+  draft: PatternCandidateDraft,
+  window: { windowStart: string; windowEnd: string; nowIso: string },
+): typeof patternCandidatesTable.$inferInsert {
+  return {
+    id: `pc:${subject.appId}:${subject.agentId}:${subject.subjectType}:${subject.subjectId}:${draft.signature}`,
+    appId: subject.appId,
+    agentId: subject.agentId,
+    folder: subject.folder,
+    subjectType: subject.subjectType,
+    subjectId: subject.subjectId,
+    signature: draft.signature,
+    outcomeLabel: draft.outcomeLabel,
+    shortAsk: draft.shortAsk,
+    occurrences: draft.occurrences,
+    windowStart: window.windowStart,
+    windowEnd: window.windowEnd,
+    lastDetectedAt: window.nowIso,
+    candidateStatus: 'detected',
+    proposalStatus: null,
+    snoozedUntil: null,
+    evidenceRefsJson: draft.evidenceRefs,
+    createdAt: window.nowIso,
+    updatedAt: window.nowIso,
+  };
+}

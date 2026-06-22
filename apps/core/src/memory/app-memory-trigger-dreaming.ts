@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AppId } from '../domain/app/app.js';
 
@@ -17,7 +17,9 @@ import {
   isMemoryOperationTimeoutError,
   normalizeMemoryTimeoutMs,
 } from '../shared/memory-dreaming-timeout.js';
+import { PATTERN_DETECTION_WINDOW_DAYS } from '../shared/pattern-candidate-policy.js';
 import { runAppMemoryDreamPass } from './app-memory-dreaming.js';
+import { detectAndUpsertPatternCandidates } from './app-memory-item-queries.js';
 import { normalizeSubject } from './app-memory-boundaries.js';
 import {
   DREAM_EMBEDDING_DEADLINE_MS,
@@ -49,6 +51,7 @@ import type {
 } from './memory-types.js';
 
 type Db = NodePgDatabase<typeof pgSchema>;
+type MemoryEvidenceRow = typeof pgSchema.memoryEvidencePostgres.$inferSelect;
 
 const APP_MEMORY_TRIGGER_RECALL_DEPS = {
   schema: {
@@ -66,6 +69,52 @@ function boundedRemainingTimeoutMs(
     return undefined;
   }
   return Math.max(1, Math.floor(Math.min(remainingMs, maxMs)));
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function structuredPatternIntentFromEvidence(
+  row: MemoryEvidenceRow,
+): string | null {
+  const metadata = parseJsonObject(row.metadataJson);
+  const candidate = metadata.memoryCandidate;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return null;
+  }
+  const record = candidate as Record<string, unknown>;
+  const safety = record.safety;
+  if (!safety || typeof safety !== 'object' || Array.isArray(safety)) {
+    return null;
+  }
+  if ((safety as Record<string, unknown>).status !== 'safe') return null;
+  const kind = typeof record.kind === 'string' ? record.kind.trim() : '';
+  const key = typeof record.key === 'string' ? record.key.trim() : '';
+  const value = typeof record.value === 'string' ? record.value.trim() : '';
+  if (!kind || !key || !value) return null;
+  return `${kind}:${key}:${value}`;
+}
+
+export function patternTranscriptTurnsFromEvidence(
+  evidence: MemoryEvidenceRow[],
+) {
+  return evidence
+    .map((row) => ({
+      intent: structuredPatternIntentFromEvidence(row),
+      messageId: row.id,
+    }))
+    .filter(
+      (turn): turn is { intent: string; messageId: string } =>
+        typeof turn.intent === 'string' && turn.intent.length > 0,
+    );
 }
 
 export async function triggerAppMemoryDreaming(input: {
@@ -264,6 +313,52 @@ export async function triggerAppMemoryDreaming(input: {
       },
       save: input.save,
       retire: input.retire,
+      detectPatternCandidates: async ({ subject: dreamSubject }) => {
+        dreamDeadline.throwIfExpired();
+        const windowStart = new Date(
+          new Date(now).getTime() -
+            PATTERN_DETECTION_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+        ).toISOString();
+        const windowedEvidence = await db
+          .select()
+          .from(pgSchema.memoryEvidencePostgres)
+          .where(
+            and(
+              eq(pgSchema.memoryEvidencePostgres.appId, dreamSubject.appId),
+              eq(pgSchema.memoryEvidencePostgres.agentId, dreamSubject.agentId),
+              eq(
+                pgSchema.memoryEvidencePostgres.subjectType,
+                dreamSubject.subjectType,
+              ),
+              eq(
+                pgSchema.memoryEvidencePostgres.subjectId,
+                dreamSubject.subjectId,
+              ),
+              gte(pgSchema.memoryEvidencePostgres.createdAt, windowStart),
+            ),
+          )
+          .orderBy(desc(pgSchema.memoryEvidencePostgres.createdAt))
+          .limit(500);
+        // Transcript-intent signal: use structured boundary-extraction metadata,
+        // never raw memory_evidence.text.
+        const transcriptTurns =
+          patternTranscriptTurnsFromEvidence(windowedEvidence);
+        await detectAndUpsertPatternCandidates({
+          db,
+          subject: {
+            appId: dreamSubject.appId,
+            agentId: dreamSubject.agentId,
+            // folder is a denormalized label; queries use (app, agent, subject).
+            folder: dreamSubject.agentId,
+            subjectType: dreamSubject.subjectType,
+            subjectId: dreamSubject.subjectId,
+          },
+          transcriptTurns,
+          windowStart,
+          windowEnd: now,
+          nowIso: now,
+        });
+      },
       storeDreamEmbedding: async (value) => {
         if (!embeddingProvider) return { status: 'disabled' as const };
         dreamDeadline.throwIfExpired();

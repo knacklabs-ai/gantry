@@ -557,6 +557,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     getCredentialBroker,
     getToolRepository: () => getRuntimeStorage().repositories.tools,
     getAsyncTaskRepository: () => getRuntimeStorage().repositories.asyncTasks,
+    getPatternCandidateRepository: () =>
+      getRuntimeStorage().repositories.patternCandidates,
     getSkillRepository: () => getRuntimeStorage().repositories.skills,
     getMcpServerRepository: () => getRuntimeStorage().repositories.mcpServers,
     getCapabilitySecretRepository: () =>

@@ -186,6 +186,17 @@ export async function runAppMemoryDreamPass(input: {
     activeItems: MemoryItemRow[];
   }) => Promise<MemoryLifecycleProposal[]>;
   createPendingReview?: CreatePendingReview;
+  /**
+   * Optional detection pass (the pattern-candidate loop). Runs on the deep
+   * phase after consolidation; detects repeated work and upserts pattern
+   * candidates. It only writes `detected` candidates — never proposes a skill.
+   */
+  detectPatternCandidates?: (input: {
+    subject: NormalizedMemorySubject;
+    evidence: (typeof pgSchema.memoryEvidencePostgres.$inferSelect)[];
+    db: Db;
+    signal?: AbortSignal;
+  }) => Promise<void>;
 }): Promise<Array<{ action: DreamDecisionAction }>> {
   const { db, runId, subject, phase, dryRun } = input;
   input.signal?.throwIfAborted();
@@ -354,6 +365,15 @@ export async function runAppMemoryDreamPass(input: {
       (await input.proposeConsolidation?.({
         activeItems: activeItems.map((item) => item.row),
       })) || [];
+    input.signal?.throwIfAborted();
+    if (!dryRun) {
+      await input.detectPatternCandidates?.({
+        subject,
+        evidence: safeRecentEvidence,
+        db,
+        signal: input.signal,
+      });
+    }
     input.signal?.throwIfAborted();
     for (const proposal of [
       ...llmDreamingProposals,

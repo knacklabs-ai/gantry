@@ -589,6 +589,13 @@
       "when": 1777295400000,
       "tag": "0086_ensure_agent_async_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1777299000000,
+      "tag": "0087_pattern_candidate",
+      "breakpoints": true
     }
   ]
 }

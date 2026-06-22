@@ -1009,21 +1009,26 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
   it('submits agent-created skills as host-reviewed proposal tasks', async () => {
     const fixture = createMcpFixture();
 
-    const result = await runMcpFixture(fixture, 'request_skill_proposal', {
-      files: [
-        {
-          path: 'SKILL.md',
-          content: [
-            '---',
-            'name: LinkedIn Posting',
-            'description: Draft LinkedIn posts',
-            '---',
-            '# LinkedIn Posting',
-          ].join('\n'),
-        },
-      ],
-      reason: 'Reuse a posting workflow.',
-    });
+    const result = await runMcpFixture(
+      fixture,
+      'request_skill_proposal',
+      {
+        files: [
+          {
+            path: 'SKILL.md',
+            content: [
+              '---',
+              'name: LinkedIn Posting',
+              'description: Draft LinkedIn posts',
+              '---',
+              '# LinkedIn Posting',
+            ].join('\n'),
+          },
+        ],
+        reason: 'Reuse a posting workflow.',
+      },
+      { GANTRY_MEMORY_USER_ID: 'tg:user-1' },
+    );
 
     expect(result.exitCode, result.stderr).toBe(0);
     const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
@@ -1038,6 +1043,7 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
       type: 'request_skill_proposal',
       targetJid: 'tg:team',
       chatJid: 'tg:team',
+      memoryUserId: 'tg:user-1',
       payload: {
         reason: 'Reuse a posting workflow.',
         files: [
