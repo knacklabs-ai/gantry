@@ -8,6 +8,7 @@ import { createAnthropicExtractorLlm } from './extractor/llm-client.js';
 import { bootstrapGantryCredentials } from './gantry-credentials.js';
 import { resolveBackgroundToken } from './background-token.js';
 import { createPool } from './db/pool.js';
+import { bootstrapFirstAdminUser } from './admin-bootstrap.js';
 
 // Public surface (also used by tests / the migrate + smoke scripts).
 export { loadEnv } from './env.js';
@@ -86,7 +87,15 @@ if (isEntry) {
       gantrySchema: env.gantrySchema,
       logger,
     })
-      .then(() => startHttpServer({ env, logger }))
+      .then(async () => {
+        const pool = createPool(
+          env.databaseUrl,
+          env.dbSchema,
+          env.crmLeadQueryExtractionWatcher.dbPoolSize,
+        );
+        await bootstrapFirstAdminUser({ env, pool, logger });
+        return startHttpServer({ env, logger, pool });
+      })
       .then(
         (running) => {
           // Digest watcher: LLM extraction from session-end digests.

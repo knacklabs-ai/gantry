@@ -13,6 +13,7 @@ import {
   RecordsRepository,
   ResponseCommentTargetError,
 } from './db/records-repository.js';
+import { AdminUsersRepository } from './db/admin-users-repository.js';
 import {
   IDENTITY_HEADER_NAME,
   verifyIdentityHeader,
@@ -21,6 +22,13 @@ import { runWithIdentity } from './identity/identity-context.js';
 import { registerAllTools } from './tools/index.js';
 import { runManualConversationExtraction } from './watcher/index.js';
 import { createAnthropicExtractorLlm } from './extractor/llm-client.js';
+import {
+  hashAdminPassword,
+  normalizeAdminEmail,
+  parseAdminRole,
+  parseAdminStatus,
+  verifyAdminPassword,
+} from './admin-auth.js';
 
 function readHeader(req: IncomingMessage, name: string): string | undefined {
   const raw = req.headers[name.toLowerCase()];
@@ -93,6 +101,60 @@ function parseResponseCommentRequest(body: unknown): ResponseCommentRequest {
     throw new Error('comment must be 4000 characters or fewer.');
   }
   return { action, messageId, conversationId, comment };
+}
+
+function parseLoginRequest(body: unknown): { email: string; password: string } {
+  if (body == null || typeof body !== 'object') {
+    throw new Error('Request body must be an object.');
+  }
+  const record = body as Record<string, unknown>;
+  const email =
+    typeof record.email === 'string' ? normalizeAdminEmail(record.email) : '';
+  const password = typeof record.password === 'string' ? record.password : '';
+  if (!email || !password) throw new Error('email and password are required.');
+  return { email, password };
+}
+
+function parseCreateUserRequest(body: unknown): {
+  email: string;
+  password: string;
+  role: ReturnType<typeof parseAdminRole>;
+} {
+  if (body == null || typeof body !== 'object') {
+    throw new Error('Request body must be an object.');
+  }
+  const record = body as Record<string, unknown>;
+  const email =
+    typeof record.email === 'string' ? normalizeAdminEmail(record.email) : '';
+  const password = typeof record.password === 'string' ? record.password : '';
+  if (!email || !password) throw new Error('email and password are required.');
+  return { email, password, role: parseAdminRole(record.role) };
+}
+
+function parseUpdateUserRequest(body: unknown): {
+  role?: ReturnType<typeof parseAdminRole>;
+  status?: ReturnType<typeof parseAdminStatus>;
+} {
+  if (body == null || typeof body !== 'object') {
+    throw new Error('Request body must be an object.');
+  }
+  const record = body as Record<string, unknown>;
+  const role =
+    record.role === undefined ? undefined : parseAdminRole(record.role);
+  const status =
+    record.status === undefined ? undefined : parseAdminStatus(record.status);
+  if (!role && !status) throw new Error('role or status is required.');
+  return { role, status };
+}
+
+function parsePasswordRequest(body: unknown): { password: string } {
+  if (body == null || typeof body !== 'object') {
+    throw new Error('Request body must be an object.');
+  }
+  const record = body as Record<string, unknown>;
+  const password = typeof record.password === 'string' ? record.password : '';
+  if (!password) throw new Error('password is required.');
+  return { password };
 }
 
 function verifiedIdentityForRequest(
@@ -175,14 +237,166 @@ export async function startHttpServer(
       env.databaseUrl,
       env.dbSchema,
       env.crmLeadQueryExtractionWatcher.dbPoolSize,
-    );
+  );
   const repo = new RecordsRepository(pool);
+  const adminUsers = new AdminUsersRepository(pool);
 
   const httpServer = createServer(
     async (req: IncomingMessage, res: ServerResponse) => {
       const path = parseUrlPath(req.url);
       if (path === '/healthz') {
         sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (path === '/admin/auth/login') {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { error: 'method_not_allowed' });
+          return;
+        }
+        const bodyResult = await readRequestBody(req);
+        if (!bodyResult.ok || !bodyResult.body) {
+          sendJson(res, 400, { error: 'malformed_json_body' });
+          return;
+        }
+        let body: ReturnType<typeof parseLoginRequest>;
+        try {
+          body = parseLoginRequest(bodyResult.body);
+        } catch {
+          sendJson(res, 400, { error: 'invalid_request' });
+          return;
+        }
+        const user = await adminUsers.findByEmail(body.email);
+        if (
+          !user ||
+          user.status !== 'active' ||
+          !(await verifyAdminPassword(body.password, user.passwordHash))
+        ) {
+          sendJson(res, 401, { error: 'invalid_credentials' });
+          return;
+        }
+        await adminUsers.markLogin(user.id);
+        const { passwordHash: _passwordHash, ...publicUser } = user;
+        sendJson(res, 200, { ok: true, user: publicUser });
+        return;
+      }
+
+      const userPasswordMatch = path?.match(
+        /^\/admin\/users\/([^/]+)\/password$/,
+      );
+      const userMatch = path?.match(/^\/admin\/users\/([^/]+)$/);
+      if (path === '/admin/users' || userMatch || userPasswordMatch) {
+        const identity = verifiedIdentityForRequest(req, env, logger);
+        if (!identity.ok) {
+          sendJson(res, identity.status, identity.payload);
+          return;
+        }
+        if (
+          identity.identity.kind !== 'ok' ||
+          !identity.identity.identity.email
+        ) {
+          sendJson(res, 401, { error: { code: 'IDENTITY_REQUIRED' } });
+          return;
+        }
+        const caller = await adminUsers.findPublicByEmail(
+          identity.identity.identity.email,
+        );
+        if (
+          !caller ||
+          caller.status !== 'active' ||
+          caller.role !== 'super_admin'
+        ) {
+          sendJson(res, 403, { error: 'super_admin_required' });
+          return;
+        }
+
+        if (path === '/admin/users' && req.method === 'GET') {
+          sendJson(res, 200, { users: await adminUsers.listUsers() });
+          return;
+        }
+
+        if (path === '/admin/users' && req.method === 'POST') {
+          const bodyResult = await readRequestBody(req);
+          if (!bodyResult.ok || !bodyResult.body) {
+            sendJson(res, 400, { error: 'malformed_json_body' });
+            return;
+          }
+          let body: ReturnType<typeof parseCreateUserRequest>;
+          try {
+            body = parseCreateUserRequest(bodyResult.body);
+          } catch (err) {
+            sendJson(res, 400, {
+              error: 'invalid_request',
+              detail: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
+          const user = await adminUsers.createUser({
+            email: body.email,
+            passwordHash: await hashAdminPassword(body.password),
+            role: body.role,
+          });
+          sendJson(res, 200, { ok: true, user });
+          return;
+        }
+
+        if (userMatch && req.method === 'PATCH') {
+          const bodyResult = await readRequestBody(req);
+          if (!bodyResult.ok || !bodyResult.body) {
+            sendJson(res, 400, { error: 'malformed_json_body' });
+            return;
+          }
+          let body: ReturnType<typeof parseUpdateUserRequest>;
+          try {
+            body = parseUpdateUserRequest(bodyResult.body);
+          } catch (err) {
+            sendJson(res, 400, {
+              error: 'invalid_request',
+              detail: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
+          const user = await adminUsers.updateUser({
+            id: userMatch[1],
+            ...body,
+          });
+          if (!user) {
+            sendJson(res, 404, { error: 'admin_user_not_found' });
+            return;
+          }
+          sendJson(res, 200, { ok: true, user });
+          return;
+        }
+
+        if (userPasswordMatch && req.method === 'POST') {
+          const bodyResult = await readRequestBody(req);
+          if (!bodyResult.ok || !bodyResult.body) {
+            sendJson(res, 400, { error: 'malformed_json_body' });
+            return;
+          }
+          let body: ReturnType<typeof parsePasswordRequest>;
+          try {
+            body = parsePasswordRequest(bodyResult.body);
+          } catch (err) {
+            sendJson(res, 400, {
+              error: 'invalid_request',
+              detail: err instanceof Error ? err.message : String(err),
+            });
+            return;
+          }
+          const user = await adminUsers.updatePassword({
+            id: userPasswordMatch[1],
+            passwordHash: await hashAdminPassword(body.password),
+          });
+          if (!user) {
+            sendJson(res, 404, { error: 'admin_user_not_found' });
+            return;
+          }
+          sendJson(res, 200, { ok: true, user });
+          return;
+        }
+
+        sendJson(res, 405, { error: 'method_not_allowed' });
         return;
       }
 

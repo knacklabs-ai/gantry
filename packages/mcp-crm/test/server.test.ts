@@ -406,3 +406,189 @@ describe('Boondi CRM response comment route', () => {
     });
   });
 });
+
+describe('Boondi CRM admin auth routes', () => {
+  let closeCurrent: (() => Promise<void>) | undefined;
+
+  afterEach(async () => {
+    if (closeCurrent) {
+      await closeCurrent();
+      closeCurrent = undefined;
+    }
+  });
+
+  it('logs in an active admin user with a valid password', async () => {
+    const { hashAdminPassword } = await import('../src/admin-auth.js');
+    const passwordHash = await hashAdminPassword('correct horse battery');
+    const { pool } = makeFakePool((sql, params) => {
+      if (sql.includes('FROM boondi_admin_users')) {
+        return {
+          rows: [
+            {
+              id: 'admin_user_1',
+              email: params?.[0],
+              password_hash: passwordHash,
+              role: 'admin',
+              status: 'active',
+              created_at: '2026-06-23T00:00:00.000Z',
+              updated_at: '2026-06-23T00:00:00.000Z',
+              last_login_at: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const server = await startTestServer();
+    await server.running.close();
+    const running = await startHttpServer({
+      env: server.env,
+      logger: makeLogger(),
+      pool,
+    });
+    closeCurrent = running.close;
+
+    const response = await fetch(`${server.url}/admin/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'Admin@Boondi.Local',
+        password: 'correct horse battery',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      user: {
+        id: 'admin_user_1',
+        email: 'admin@boondi.local',
+        role: 'admin',
+        status: 'active',
+        createdAt: '2026-06-23T00:00:00.000Z',
+        updatedAt: '2026-06-23T00:00:00.000Z',
+        lastLoginAt: null,
+      },
+    });
+  });
+
+  it('rejects user management when caller is not super_admin', async () => {
+    const { pool } = makeFakePool((sql, params) => {
+      if (sql.includes('FROM boondi_admin_users')) {
+        return {
+          rows: [
+            {
+              id: 'admin_user_2',
+              email: params?.[0],
+              role: 'admin',
+              status: 'active',
+              created_at: '2026-06-23T00:00:00.000Z',
+              updated_at: '2026-06-23T00:00:00.000Z',
+              last_login_at: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const server = await startTestServer({
+      identity: { mode: 'required', secret: 'test-secret', maxAgeSec: 120 },
+      requireVerifiedIdentity: true,
+    } as Partial<BoondiCrmEnv>);
+    await server.running.close();
+    const running = await startHttpServer({
+      env: server.env,
+      logger: makeLogger(),
+      pool,
+    });
+    closeCurrent = running.close;
+
+    const response = await fetch(`${server.url}/admin/users`, {
+      headers: {
+        'X-Caller-Identity': signedEmailHeader('admin@boondi.local'),
+      },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'super_admin_required' });
+  });
+
+  it('lets super_admin create users without returning password hashes', async () => {
+    let insertParams: unknown[] | undefined;
+    const { pool } = makeFakePool((sql, params) => {
+      if (sql.includes('FROM boondi_admin_users')) {
+        return {
+          rows: [
+            {
+              id: 'admin_user_owner',
+              email: params?.[0],
+              role: 'super_admin',
+              status: 'active',
+              created_at: '2026-06-23T00:00:00.000Z',
+              updated_at: '2026-06-23T00:00:00.000Z',
+              last_login_at: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes('INSERT INTO boondi_admin_users')) {
+        insertParams = params;
+        return {
+          rows: [
+            {
+              id: 'admin_user_new',
+              email: params?.[1],
+              role: params?.[3],
+              status: 'active',
+              created_at: '2026-06-23T01:00:00.000Z',
+              updated_at: '2026-06-23T01:00:00.000Z',
+              last_login_at: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const server = await startTestServer({
+      identity: { mode: 'required', secret: 'test-secret', maxAgeSec: 120 },
+      requireVerifiedIdentity: true,
+    } as Partial<BoondiCrmEnv>);
+    await server.running.close();
+    const running = await startHttpServer({
+      env: server.env,
+      logger: makeLogger(),
+      pool,
+    });
+    closeCurrent = running.close;
+
+    const response = await fetch(`${server.url}/admin/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Caller-Identity': signedEmailHeader('owner@boondi.local'),
+      },
+      body: JSON.stringify({
+        email: 'New.Admin@Boondi.Local',
+        password: 'temporary password',
+        role: 'viewer',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      ok: true,
+      user: {
+        id: 'admin_user_new',
+        email: 'new.admin@boondi.local',
+        role: 'viewer',
+        status: 'active',
+        createdAt: '2026-06-23T01:00:00.000Z',
+        updatedAt: '2026-06-23T01:00:00.000Z',
+        lastLoginAt: null,
+      },
+    });
+    expect(String(insertParams?.[2])).toMatch(/^scrypt\$/);
+    expect(JSON.stringify(body)).not.toContain('passwordHash');
+  });
+});

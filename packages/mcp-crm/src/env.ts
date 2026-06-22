@@ -50,6 +50,8 @@ export interface BoondiCrmEnv {
   // default app. (Distinct from reconcileAgentId, which is an AGENT id.)
   modelAppId: string;
   anthropicApiKey?: string;
+  adminBootstrapEmail?: string;
+  adminBootstrapPassword?: string;
 }
 
 const VALID_LOG_LEVELS = new Set([
@@ -389,6 +391,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BoondiCrmEnv {
     reconcileAgentId:
       source.BOONDI_CRM_AGENT_ID?.trim() || 'agent:boondi_support',
     modelAppId: source.BOONDI_CRM_MODEL_APP_ID?.trim() || 'default',
+    adminBootstrapEmail: source.BOONDI_ADMIN_BOOTSTRAP_EMAIL?.trim() || undefined,
+    adminBootstrapPassword:
+      source.BOONDI_ADMIN_BOOTSTRAP_PASSWORD?.trim() || undefined,
     anthropicApiKey: source.ANTHROPIC_API_KEY?.trim() || undefined,
   };
 }
