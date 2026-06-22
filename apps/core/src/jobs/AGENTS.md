@@ -13,6 +13,15 @@
   the signed host IPC boundary. Do not open Postgres repositories, artifact
   stores, or runtime storage directly from the MCP subprocess; add a typed IPC
   handler and inject runtime stores through `IpcDeps`.
+- Agent task lifecycle IPC owns `todo_update` as an ephemeral channel render
+  signal; do not add Postgres lifecycle rows for display-only todo state. Async
+  command task IPC may exist only when it is backed by the full durable
+  `agent_async_tasks` lifecycle: admission before execution, a real host
+  executor, scoped read/list/cancel, abort propagation, terminal receipts, and
+  restart recovery. `delegate_task` uses the same durable row before spawning a
+  child Gantry agent run; `task_message` persists steering before delivering it
+  through runner continuation input. Dormant unavailable handlers are not a
+  product surface.
 - Scheduler terminal notifications are user-facing lifecycle receipts. Format
   job reports, system maintenance results, and next-run times into readable
   product copy before delivery; never surface raw queue bookkeeping JSON,
@@ -25,6 +34,9 @@
   timeout constants in the registration signature so existing canonical jobs are
   updated, and pass the remaining deadline through maintenance queues into the
   actual subsystem instead of relying on stale-lease recovery as the timeout.
+- `__system:` prompts and `system:` job ids are host-reserved. User and agent
+  job create/update paths must reject them, and scheduler admission/execution
+  must use trusted system job identity instead of prompt text alone.
 - `request_skill_install` has two distinct IPC outcomes: staged `files` go
   through same-channel approval and, on approval, immediately install, bind,
   sync settings, and return immediate skill context; `installCommandArgv`
@@ -36,6 +48,10 @@
   then give one next action only when needed. Keep raw tool ids, task ids,
   queue diagnostics, exact repair commands, and logs in details/audit paths
   instead of the primary channel message.
+- Runner startup diagnostics (`run.startup_diagnostic`) are details/audit data
+  for operators. Scheduled jobs may forward and summarize them into terminal
+  run diagnostics, but notification copy must not dump raw timing payloads,
+  prompts, URLs, tokens, tool args, or queue bookkeeping.
 - Memory dreaming job notifications must keep pending memory reviews visible
   and actionable with user-facing review guidance, even when the dream run times
   out or fails after creating review rows. Keep raw tool ids such as

@@ -1,4 +1,9 @@
 import type { Job, JobScheduleType } from '../../domain/types.js';
+import { appIdFromConversationJid } from '../../shared/app-conversation-jid.js';
+import {
+  isReservedSystemJobId,
+  isReservedSystemJobPrompt,
+} from '../../shared/system-job-identity.js';
 import { ApplicationError } from '../common/application-error.js';
 import type { Clock } from '../common/clock.js';
 import type {
@@ -41,18 +46,6 @@ export interface JobNotificationRouteApprovalDeps {
   ) => Promise<JobNotificationRouteApprovalDecision>;
 }
 
-export function appIdFromConversationJid(
-  conversationJid: string,
-): string | null {
-  if (!conversationJid.startsWith('app:')) return null;
-  const rest = conversationJid.slice('app:'.length);
-  const delimiterIndex = rest.indexOf(':');
-  if (delimiterIndex <= 0 || rest.indexOf(':', delimiterIndex + 1) !== -1) {
-    return null;
-  }
-  return rest.slice(0, delimiterIndex);
-}
-
 export async function resolveCanonicalAppSessionForOrigin(input: {
   access: SchedulerJobAccess;
   control?: JobControlPort;
@@ -88,6 +81,24 @@ export function normalizeScheduleType(raw: unknown): JobScheduleType {
     return raw;
   }
   throw new ApplicationError('INVALID_SCHEDULE', 'Unsupported schedule type.');
+}
+
+export function assertPublicJobNamespace(input: {
+  jobId?: string | null;
+  prompt?: string | null;
+}): void {
+  if (input.jobId && isReservedSystemJobId(input.jobId)) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'Job id uses a reserved Gantry system namespace.',
+    );
+  }
+  if (input.prompt && isReservedSystemJobPrompt(input.prompt)) {
+    throw new ApplicationError(
+      'INVALID_REQUEST',
+      'Job prompt uses a reserved Gantry system namespace.',
+    );
+  }
 }
 
 export function resolveLimit(raw: unknown, fallback: number): number {

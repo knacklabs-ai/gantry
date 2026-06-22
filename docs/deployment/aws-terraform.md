@@ -38,9 +38,10 @@ public-access block enabled.
 ## Part A — Local Fleet Rehearsal (≤ 15 min)
 
 Exercises the role-differentiated fleet topology on one machine: Postgres + MinIO
-+ one `control` process + N `live-worker` + N `job-worker`, all from the same
-built runtime image (differentiated by `GANTRY_PROCESS_ROLE`), health-checked on
-`/readyz`. The root `docker-compose.yml` (Postgres-only dev) is untouched.
+
+- one `control` process + N `live-worker` + N `job-worker`, all from the same
+  built runtime image (differentiated by `GANTRY_PROCESS_ROLE`), health-checked on
+  `/readyz`. The root `docker-compose.yml` (Postgres-only dev) is untouched.
 
 From the repo root:
 
@@ -63,19 +64,20 @@ collide — and are reached on the internal network or via
 The `settings-seed` one-shot service runs first: it writes a fleet-marked
 `settings.yaml` (`runtime.deployment_mode: fleet`) into the shared
 `gantry-fleet-home` volume, **migrates the schema**, and appends settings
-**revision 1** via `gantry settings import --fleet`. Every role `depend_on`s it
-completing, so they boot in fleet mode with desired state already seeded and
-`/readyz` can go green (a fleet worker with no revision stays red and logs the
-seed command). The `control` service is the single explicit migrator
-(`GANTRY_SKIP_MIGRATIONS=0`); workers skip the explicit pass. The entrypoint
-advisory lock makes concurrent migration safe regardless, so this is a deliberate
-"one owner" choice, not a correctness requirement.
+**revision 1** with `ops/docker/fleet-settings-seed.mjs` through the normal
+container entrypoint. Every role `depend_on`s it completing, so they boot in
+fleet mode with desired state already seeded and `/readyz` can go green (a
+fleet worker with no revision stays red and logs the seed command). The
+`settings-seed` service runs the required first migration/import
+(`GANTRY_SKIP_MIGRATIONS=0`); `control` also runs the idempotent entrypoint
+migration pass, and workers skip the explicit pass. The entrypoint advisory lock
+makes concurrent migration safe regardless.
 
 Expected sequence in the logs:
 
 ```
 gantry-fleet-postgres      | ... database system is ready to accept connections
-gantry-fleet-settings-seed | ... Appended fleet settings revision 1.
+gantry-fleet-settings-seed | ... fleet settings revision 1 seeded
 gantry-fleet-control-1     | <ts> [entrypoint] running migrations (GANTRY_DATABASE_URL)
 gantry-fleet-control-1     | <ts> [entrypoint] migrations complete
 gantry-fleet-control-1     | <ts> [entrypoint] starting runtime: node dist/index.js
@@ -383,7 +385,7 @@ the secrets created in B.2 separately if no longer needed.
 > this section covers the AWS-side mechanics.
 
 **Memory model (process-per-turn).** The parent runtime process idles around
-~200 MB. Each *active* turn spawns a runner subprocess costing roughly
+~200 MB. Each _active_ turn spawns a runner subprocess costing roughly
 150–400 MB depending on tools and context size. Sessions are Postgres rows —
 an idle session costs nothing on the worker, only active turns consume memory.
 Rough capacity guidance per worker: **4 GB ≈ 8–12 concurrent turns, 8 GB ≈
@@ -409,6 +411,10 @@ concurrent turns, not load average.
   size + `control_autoscaling_enabled` only if the API surface itself is the
   bottleneck (rare).
 
+If multiple Gantry runtime processes are ever co-located on one EC2 instance,
+give them the same `GANTRY_HOST_ID`; the default ASG profile is one runtime role
+per instance, so the instance hostname is already the host identity.
+
 The scaling policy owns desired capacity once enabled; steer a running pool via
 its `*_min_size`/`*_max_size`, not `*_desired_capacity`.
 
@@ -426,8 +432,8 @@ directly. Scale out with `live_worker_max_size`; scale per-box with a bigger
 `live_worker_instance_type` plus a higher `runtime.queue.max_message_runs`. The
 horizontal-scale signal is `gantry_live_oldest_waiting_seconds` /
 `gantry_live_slots_used_cluster` (see deployment-profiles.md, Health/Readiness,
-and Metrics), and the user-visible backpressure is the "Waiting for an available
-worker" status.
+and Metrics), and the user-visible backpressure after the wait threshold is the
+"Still starting this request." status.
 
 **Always-on floor.** The live pool minimum is two instances
 (`live_worker_min_size >= 2`); control and job pools default to one each.

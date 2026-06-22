@@ -12,12 +12,14 @@ import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-reference
 export const BASELINE_GANTRY_MCP_TOOL_NAMES = [
   'send_message',
   'ask_user_question',
+  'todo_update',
   'memory_search',
   'memory_save',
   'continuity_summary',
   'procedure_save',
   'request_skill_install',
   'request_skill_proposal',
+  'pattern_candidate_decision',
   'request_skill_dependency_install',
   'request_mcp_server',
   'request_access',
@@ -25,7 +27,20 @@ export const BASELINE_GANTRY_MCP_TOOL_NAMES = [
   'agent_profile_read',
   'request_agent_profile_update',
   'mcp_list_tools',
+  'mcp_describe_tool',
   'mcp_call_tool',
+] as const;
+
+export const ASYNC_TASK_GANTRY_MCP_TOOL_NAMES = [
+  'async_run_command',
+  'task_cancel',
+  'task_get',
+  'task_list',
+] as const;
+
+export const DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES = [
+  'delegate_task',
+  'task_message',
 ] as const;
 
 // Authority-changing Gantry tools let an agent request new install/setup/access
@@ -71,6 +86,8 @@ const REVIEWER_MEMORY_REVIEW_GANTRY_MCP_TOOL_NAMES = [
 
 export const NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES = [
   ...AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAMES,
+  ...ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+  ...DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
   ...OPTIONAL_GANTRY_MCP_TOOL_NAMES,
   ...REVIEWED_GANTRY_MCP_TOOL_NAMES,
 ] as const;
@@ -84,7 +101,6 @@ const NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET = new Set<string>(
 );
 
 const ADMIN_MCP_TOOL_NAME_SET = new Set<string>(ADMIN_MCP_TOOL_NAMES);
-
 export function isAuthorityChangingGantryMcpToolName(value: string): boolean {
   return AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAME_SET.has(value);
 }
@@ -108,6 +124,8 @@ export const DEFAULT_GANTRY_MCP_TOOL_NAMES = [
 
 export const ALL_GANTRY_MCP_TOOL_NAMES = [
   ...DEFAULT_GANTRY_MCP_TOOL_NAMES,
+  ...ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+  ...DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
   ...GATED_GANTRY_MCP_TOOL_NAMES,
   ...REVIEWED_GANTRY_MCP_TOOL_NAMES,
   ...ADMIN_MCP_TOOL_NAMES,
@@ -119,6 +137,10 @@ export interface GantryMcpToolSelectionOptions extends MemoryIpcActionSelectionO
   // When true, omit authority-changing request tools from the projected surface
   // (fixed-image worker / no-permission-tools mode).
   excludeAuthorityTools?: boolean;
+  // Async command task tools require a durable task repository and an enforcing
+  // runner sandbox. They are projected only when the host says that executor is
+  // available for this run.
+  asyncTaskToolsEnabled?: boolean;
 }
 
 export function gantryMcpFullToolName(toolName: string): string {
@@ -137,6 +159,14 @@ export function selectedGantryMcpToolNames(
   options: GantryMcpToolSelectionOptions = {},
 ): string[] {
   const names = new Set<string>(DEFAULT_GANTRY_MCP_TOOL_NAMES);
+  if (options.asyncTaskToolsEnabled && !options.excludeAuthorityTools) {
+    for (const toolName of ASYNC_TASK_GANTRY_MCP_TOOL_NAMES)
+      names.add(toolName);
+    if (configuredTools.includes('AgentDelegation')) {
+      for (const toolName of DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES)
+        names.add(toolName);
+    }
+  }
   if (isBrowserSelected(configuredTools)) {
     for (const toolName of GATED_GANTRY_MCP_TOOL_NAMES) names.add(toolName);
   }
@@ -149,6 +179,11 @@ export function selectedGantryMcpToolNames(
     const name = gantryMcpToolNameFromFullName(configuredTool);
     if (
       name &&
+      (options.asyncTaskToolsEnabled ||
+        ![
+          ...ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+          ...DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
+        ].includes(name as never)) &&
       !(GATED_GANTRY_MCP_TOOL_NAMES as readonly string[]).includes(name)
     ) {
       names.add(name);

@@ -288,6 +288,64 @@ describe('executeRunnerProcess', () => {
         'test-runner sandbox provider failed',
       );
     });
+
+    it('does not spawn when the run is already aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const sandboxProvider = {
+        id: 'direct' as const,
+        enforcing: false,
+        start: vi.fn(() => fakeProc),
+      };
+      const onProcess = vi.fn();
+      const spec = makeSpec({
+        onProcess,
+        options: {
+          runnerSandboxProvider: sandboxProvider,
+          signal: controller.signal,
+        },
+      });
+
+      const result = await executeRunnerProcess(spec);
+
+      expect(sandboxProvider.start).not.toHaveBeenCalled();
+      expect(onProcess).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        status: 'error',
+        result: null,
+        error: 'test-runner stopped because the run was aborted',
+      });
+    });
+
+    it('binds abort before writing runner input', async () => {
+      const controller = new AbortController();
+      const stdinWrite = vi.spyOn(fakeProc.stdin, 'write');
+      const sandboxProvider = {
+        id: 'direct' as const,
+        enforcing: false,
+        start: vi.fn(() => {
+          controller.abort();
+          return fakeProc;
+        }),
+      };
+      const spec = makeSpec({
+        options: {
+          runnerSandboxProvider: sandboxProvider,
+          signal: controller.signal,
+        },
+      });
+      const resultP = executeRunnerProcess(spec);
+
+      fakeProc.emit('close', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(10);
+
+      await expect(resultP).resolves.toMatchObject({
+        status: 'error',
+        error: 'test-runner stopped because the run was aborted',
+      });
+      expect(stdinWrite).not.toHaveBeenCalled();
+      expect(fakeProc.kill).toHaveBeenCalledWith('SIGTERM');
+    });
   });
 
   /* ============================================================== */
@@ -557,6 +615,45 @@ describe('executeRunnerProcess', () => {
       expect(mockWriteFileSync).toHaveBeenCalled();
       const [, logContent] = mockWriteFileSync.mock.calls[0];
       expect(logContent).toContain('TIMEOUT');
+      expect(logContent).toContain('Had Streaming Output: false');
+    });
+
+    it('does not treat runtime-event-only output as idle-cleanup success after timeout', async () => {
+      const onOutput = vi.fn(async () => {});
+      const spec = makeSpec({ onOutput });
+      const resultP = executeRunnerProcess(spec);
+
+      const json = JSON.stringify({
+        status: 'success',
+        result: null,
+        newSessionId: 'sess-event-only',
+        runtimeEventOnly: true,
+        runtimeEvents: [
+          {
+            eventType: 'task.progress',
+            actor: 'runner',
+            payload: { taskId: 'task-1' },
+          },
+        ],
+      });
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      await vi.advanceTimersByTimeAsync(35_050);
+
+      expect(fakeProc.kill).toHaveBeenCalledWith('SIGKILL');
+      fakeProc.emit('close', 137);
+      await vi.advanceTimersByTimeAsync(10);
+
+      const result = await resultP;
+      expect(result.status).toBe('error');
+      expect(result.newSessionId).toBe('sess-event-only');
+      expect(onOutput).toHaveBeenCalledWith(
+        expect.objectContaining({ runtimeEventOnly: true }),
+      );
+      const [, logContent] = mockWriteFileSync.mock.calls[0];
       expect(logContent).toContain('Had Streaming Output: false');
     });
 
@@ -906,8 +1003,18 @@ describe('executeRunnerProcess', () => {
 
     it('distinguishes session init from first visible output in startup timing', async () => {
       const onOutput = vi.fn(async () => {});
+      const publishRuntimeEvent = vi.fn(async () => undefined);
       const spec = makeSpec({
+        input: {
+          prompt: 'Hello there',
+          workspaceFolder: 'test-group',
+          chatJid: 'test@g.us',
+          appId: 'default',
+          agentId: 'agent:test',
+          runId: 'agent-run:test-visible',
+        },
         onOutput,
+        options: { publishRuntimeEvent },
         startupHostPhases: {
           adapterPrepareMs: 7,
           mcpProjectionMs: 11,
@@ -980,6 +1087,43 @@ describe('executeRunnerProcess', () => {
       expect(logContent).toContain('First Visible Output: 80ms');
       expect(logContent).toContain('Host Phase - Adapter Prepare: 7ms');
       expect(logContent).toContain('Host Phase - MCP Projection: 11ms');
+      expect(publishRuntimeEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appId: 'default',
+          agentId: 'agent:test',
+          runId: 'agent-run:test-visible',
+          conversationId: 'test@g.us',
+          eventType: 'run.startup_diagnostic',
+          actor: 'runtime',
+          responseMode: 'none',
+          payload: expect.objectContaining({
+            provider: 'host',
+            diagnostic: 'runner_process_timing',
+            sandbox: {
+              provider: 'direct',
+              enforcing: false,
+            },
+            exit: {
+              code: 0,
+              signal: null,
+              timedOut: false,
+              hadStreamingOutput: true,
+            },
+            startupTiming: expect.objectContaining({
+              firstStructuredOutputMs: 25,
+              providerSessionMs: 25,
+              firstVisibleOutputMs: 80,
+              hostPhases: expect.objectContaining({
+                adapterPrepareMs: 7,
+                mcpProjectionMs: 11,
+              }),
+            }),
+          }),
+        }),
+      );
+      expect(JSON.stringify(publishRuntimeEvent.mock.calls)).not.toContain(
+        '/tmp/test-workspace',
+      );
     });
 
     it('treats SIGTERM after streamed output as closed, not failed', async () => {
@@ -1017,6 +1161,43 @@ describe('executeRunnerProcess', () => {
           signal: 'SIGTERM',
         }),
         'test-runner closed after streamed output',
+      );
+    });
+
+    it('treats SIGTERM after runtime-event-only output as failed', async () => {
+      const onOutput = vi.fn(async () => {});
+      const spec = makeSpec({ onOutput });
+      const resultP = executeRunnerProcess(spec);
+
+      const json = JSON.stringify({
+        status: 'success',
+        result: null,
+        newSessionId: 'sess-event-only',
+        runtimeEventOnly: true,
+        runtimeEvents: [
+          {
+            eventType: 'task.progress',
+            actor: 'runner',
+            payload: { taskId: 'task-1' },
+          },
+        ],
+      });
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      fakeProc.emit('close', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const result = await resultP;
+      expect(result.status).toBe('error');
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'test-runner closed after streamed output',
+      );
+      expect(onOutput).toHaveBeenCalledWith(
+        expect.objectContaining({ runtimeEventOnly: true }),
       );
     });
 

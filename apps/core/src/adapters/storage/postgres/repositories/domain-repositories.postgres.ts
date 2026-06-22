@@ -96,11 +96,15 @@ import { PostgresLiveTurnRepository } from './live-turn-repository.postgres.js';
 import type { LiveTurnCoordinationRepository } from '../../../../domain/ports/live-turns.js';
 import { PostgresRuntimeDependencyRepository } from './runtime-dependency-repository.postgres.js';
 import { PostgresSettingsRevisionRepository } from './settings-revision-repository.postgres.js';
+import { PostgresAsyncTaskRepository } from './async-task-repository.postgres.js';
+import { PostgresPatternCandidateRepository } from './pattern-candidate-repository.postgres.js';
 import type {
   RuntimeDependencyRepository,
   SettingsRevisionRepository,
   StaleRuntimeDependencyLister,
 } from '../../../../domain/ports/fleet-capability-state.js';
+import type { AsyncTaskRepository } from '../../../../domain/ports/async-tasks.js';
+import type { PatternCandidateRepository } from '../../../../domain/ports/pattern-candidates.js';
 export interface PostgresDomainRepositoryBundle {
   apps: AppRepository;
   agents: AgentRepository;
@@ -128,6 +132,8 @@ export interface PostgresDomainRepositoryBundle {
   runtimeDependencies: RuntimeDependencyRepository &
     StaleRuntimeDependencyLister;
   settingsRevisions: SettingsRevisionRepository;
+  asyncTasks: AsyncTaskRepository;
+  patternCandidates: PatternCandidateRepository;
 }
 type JsonRecord = Record<string, unknown>;
 function encodeJson(value: unknown): string {
@@ -1696,5 +1702,7 @@ export function createPostgresDomainRepositories(
     liveTurns: new PostgresLiveTurnRepository(db),
     runtimeDependencies: new PostgresRuntimeDependencyRepository(db),
     settingsRevisions: new PostgresSettingsRevisionRepository(db),
+    asyncTasks: new PostgresAsyncTaskRepository(db),
+    patternCandidates: new PostgresPatternCandidateRepository(db),
   };
 }

@@ -42,10 +42,15 @@ export function startSkillPermissionReview(input: {
   totalSizeBytes: number;
   reason: string;
   requestToolName: 'request_skill_install' | 'request_skill_proposal';
+  onReviewStarted?: () => Promise<void>;
+  onApproved?: () => Promise<void>;
+  onRejected?: () => Promise<void>;
+  onBlocked?: () => Promise<void>;
   onSettled?: () => void;
 }): void {
   void completeSkillPermissionReview(input)
-    .catch((err) => {
+    .catch(async (err) => {
+      await notifyLifecycle(input.onBlocked);
       input.responder.reject(
         err instanceof Error ? err.message : 'Skill permission review failed.',
         'permission_review_failed',
@@ -59,6 +64,7 @@ export function startSkillPermissionReview(input: {
 async function completeSkillPermissionReview(
   input: Parameters<typeof startSkillPermissionReview>[0],
 ): Promise<void> {
+  await notifyLifecycle(input.onReviewStarted);
   const decision = await input.deps.requestPermissionApproval({
     requestId: `skill-${globalThis.crypto.randomUUID()}`,
     appId: input.appId,
@@ -99,13 +105,17 @@ async function completeSkillPermissionReview(
       activation: 'current_and_future_sessions',
     },
   });
-  if (!decision.approved)
+  if (!decision.approved) {
+    await notifyLifecycle(input.onRejected);
     return rejectSkillRequestFromPermission(input, decision.reason);
-  if (!decision.decidedBy)
+  }
+  if (!decision.decidedBy) {
+    await notifyLifecycle(input.onRejected);
     return rejectSkillRequestFromPermission(
       input,
       'missing approving principal',
     );
+  }
 
   let installedSkillId: string | undefined;
   let installedSkill: SkillCatalogItem | undefined;
@@ -134,12 +144,14 @@ async function completeSkillPermissionReview(
         skillId: installedSkillId as never,
       });
     }
+    await notifyLifecycle(input.onBlocked);
     throw err;
   }
   const sameSessionContext = buildInstalledSkillSameSessionContext(
     input,
     installedSkill,
   );
+  await notifyLifecycle(input.onApproved);
   const action = 'Installed';
   await input.deps.sendMessage(
     input.targetJid,
@@ -159,6 +171,16 @@ async function completeSkillPermissionReview(
     sameSessionContext,
     'skill_installed',
   );
+}
+
+async function notifyLifecycle(
+  callback: (() => Promise<void>) | undefined,
+): Promise<void> {
+  try {
+    await callback?.();
+  } catch {
+    // Candidate proposal-status bookkeeping must not break the skill review flow.
+  }
 }
 
 async function rejectSkillRequestFromPermission(

@@ -8,8 +8,9 @@ import {
   isGantryMcpWildcardRule,
 } from '../../../shared/admin-mcp-tools.js';
 import {
+  ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
   BASELINE_GANTRY_MCP_TOOL_NAMES,
-  DEFAULT_GANTRY_MCP_TOOL_NAMES,
+  DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
   NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES,
   gantryMcpFullToolName,
   gantryMcpToolNameFromFullName,
@@ -40,7 +41,9 @@ export interface AgentCapabilityContext {
   workspaceFolder: string;
   threadId?: string;
   jobId?: string;
+  runHandle?: string;
   runId?: string;
+  parentTaskId?: string;
   runLeaseToken?: string;
   runLeaseFencingVersion?: number;
   memoryUserId?: string;
@@ -54,6 +57,8 @@ export interface AgentCapabilityContext {
   attachedMcpSourceIds?: readonly string[];
   semanticCapabilities?: readonly SemanticCapabilityDefinition[];
   hideAuthorityTools?: boolean;
+  asyncTaskToolsEnabled?: boolean;
+  memoryBlock?: string;
   // Locked agents auto-deny permission prompts and never mount authority/admin
   // tools. Default 'full' preserves today's behavior.
   accessPreset?: 'full' | 'locked';
@@ -113,19 +118,36 @@ const RUNNER_SUPPRESSED_GANTRY_MCP_TOOL_NAME_SET = new Set<string>([
   'memory_dream',
   'memory_consolidate',
 ]);
-
 function gantryMcpAllowedTools(input: {
+  configuredTools?: readonly string[];
   hideAuthorityTools?: boolean;
+  asyncTaskToolsEnabled?: boolean;
 }): string[] {
-  return BASELINE_GANTRY_MCP_TOOL_NAMES.filter(
-    (toolName) =>
-      input.hideAuthorityTools !== true ||
-      !NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAME_SET.has(toolName),
-  ).map(gantryMcpFullToolName);
+  const selectedNames = new Set(
+    selectedGantryMcpToolNames(input.configuredTools ?? [], {
+      excludeAuthorityTools: input.hideAuthorityTools === true,
+      asyncTaskToolsEnabled: input.asyncTaskToolsEnabled === true,
+    }),
+  );
+  const defaultAllowedNames = [
+    ...BASELINE_GANTRY_MCP_TOOL_NAMES,
+    ...(input.asyncTaskToolsEnabled === true
+      ? ASYNC_TASK_GANTRY_MCP_TOOL_NAMES
+      : []),
+    ...(input.asyncTaskToolsEnabled === true &&
+    (input.configuredTools ?? []).includes('AgentDelegation')
+      ? DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES
+      : []),
+  ];
+  return defaultAllowedNames
+    .filter((toolName) => selectedNames.has(toolName))
+    .map(gantryMcpFullToolName);
 }
 
 function defaultAllowedTools(input: {
+  configuredTools?: readonly string[];
   hideAuthorityTools?: boolean;
+  asyncTaskToolsEnabled?: boolean;
 }): string[] {
   return [...SAFE_NATIVE_SDK_TOOLS, ...gantryMcpAllowedTools(input)];
 }
@@ -180,11 +202,15 @@ const sdkToolsProvider: AgentCapabilityProvider = {
           ? [
               ...DEVELOPER_NATIVE_SDK_TOOLS,
               ...defaultAllowedTools({
+                configuredTools: ctx.configuredAllowedTools,
                 hideAuthorityTools: ctx.hideAuthorityTools,
+                asyncTaskToolsEnabled: ctx.asyncTaskToolsEnabled,
               }),
             ]
           : defaultAllowedTools({
+              configuredTools: ctx.configuredAllowedTools,
               hideAuthorityTools: ctx.hideAuthorityTools,
+              asyncTaskToolsEnabled: ctx.asyncTaskToolsEnabled,
             }),
       availableTools: baseAvailableTools,
       disallowedTools: UNSUPPORTED_CLAUDE_CODE_BUILTIN_TOOLS,
@@ -209,8 +235,10 @@ const gantryMcpProvider: AgentCapabilityProvider = {
       GANTRY_CHAT_JID: ctx.chatJid,
       GANTRY_WORKSPACE_KEY: ctx.workspaceFolder,
       GANTRY_THREAD_ID: ctx.threadId || '',
+      ...(ctx.runHandle ? { GANTRY_AGENT_RUN_HANDLE: ctx.runHandle } : {}),
       ...(ctx.jobId ? { GANTRY_JOB_ID: ctx.jobId } : {}),
       ...(ctx.runId ? { GANTRY_JOB_RUN_ID: ctx.runId } : {}),
+      ...(ctx.parentTaskId ? { GANTRY_PARENT_TASK_ID: ctx.parentTaskId } : {}),
       ...(ctx.runLeaseToken
         ? { GANTRY_JOB_RUN_LEASE_TOKEN: ctx.runLeaseToken }
         : {}),
@@ -225,6 +253,9 @@ const gantryMcpProvider: AgentCapabilityProvider = {
       GANTRY_MEMORY_DEFAULT_SCOPE: ctx.memoryDefaultScope || 'group',
       GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
         ctx.memoryReviewerIsControlApprover ? '1' : '',
+      ...(ctx.asyncTaskToolsEnabled && ctx.memoryBlock
+        ? { GANTRY_MEMORY_CONTEXT_BLOCK: ctx.memoryBlock }
+        : {}),
       GANTRY_BROWSER_PROFILE_NAME: ctx.browserProfileName || '',
       GANTRY_ADMIN_MCP_TOOLS_JSON: JSON.stringify(
         selectedAdminMcpToolNames(ctx.configuredAllowedTools ?? []),
@@ -247,8 +278,12 @@ const gantryMcpProvider: AgentCapabilityProvider = {
       GANTRY_MCP_TOOL_NAMES_JSON: JSON.stringify(
         selectedGantryMcpToolNames(ctx.configuredAllowedTools ?? [], {
           excludeAuthorityTools: ctx.hideAuthorityTools === true,
+          asyncTaskToolsEnabled: ctx.asyncTaskToolsEnabled === true,
         }),
       ),
+      ...(ctx.asyncTaskToolsEnabled
+        ? { GANTRY_ASYNC_TASK_TOOLS_ENABLED: '1' }
+        : {}),
       GANTRY_MEMORY_IPC_ACTIONS_JSON: JSON.stringify(
         selectedMemoryIpcActions(ctx.configuredAllowedTools ?? [], {
           memoryReviewerIsControlApprover: ctx.memoryReviewerIsControlApprover,

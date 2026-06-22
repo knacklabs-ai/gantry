@@ -5,7 +5,7 @@ import type { BrowserBackendAction } from '../../shared/browser-backend-actions.
 import {
   nowMs,
   nowMs as currentTimeMs,
-  sleep,
+  toIso,
 } from '../../shared/time/datetime.js';
 import { formatDuration } from '../../shared/human-format.js';
 import {
@@ -41,6 +41,7 @@ import {
   writePrivateFileSync,
 } from '../../shared/private-fs.js';
 import { makeIpcId, makeIpcJsonFilename } from './ipc-ids.js';
+import { waitForIpcResponseFile } from '../ipc-response-wait.js';
 
 function removeStaleRequestFile(filePath: string): void {
   try {
@@ -124,7 +125,7 @@ export async function requestMemoryAction(
       allowedActions: memoryIpcAllowedActions,
       reviewerIsControlApprover: memoryReviewerIsControlApprover,
     },
-    expiresAt: new Date(currentTimeMs() + timeoutMs).toISOString(),
+    expiresAt: toIso(currentTimeMs() + timeoutMs),
   };
   const requestEnvelope = createSignedIpcRequestEnvelope(
     MEMORY_IPC_AUTH_TOKEN,
@@ -136,57 +137,53 @@ export async function requestMemoryAction(
   const deadline = nowMs() + timeoutMs;
   const responsePath = path.join(MEMORY_RESPONSES_DIR, `${requestId}.json`);
 
-  while (nowMs() < deadline) {
-    if (fs.existsSync(responsePath)) {
-      try {
-        const raw = JSON.parse(
-          fs.readFileSync(responsePath, 'utf-8'),
-        ) as Record<string, unknown>;
-        const responseRequestId =
-          typeof raw.requestId === 'string' ? raw.requestId : '';
-        if (responseRequestId !== requestId) {
-          throw new Error('Mismatched memory response requestId');
-        }
-        const data = {
-          ok: Boolean(raw.ok),
-          ...(typeof raw.provider === 'string'
-            ? { provider: raw.provider }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(raw, 'data')
-            ? { data: raw.data }
-            : {}),
-          ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
-        };
-        const payload: Record<string, unknown> = {
-          ok: data.ok,
-          requestId,
-          ...(data.provider ? { provider: data.provider } : {}),
-          ...(Object.prototype.hasOwnProperty.call(data, 'data')
-            ? { data: data.data }
-            : {}),
-          ...(data.error ? { error: data.error } : {}),
-        };
-        if (!hasValidIpcResponseSignature(raw, payload)) {
-          throw new Error('Invalid memory response signature');
-        }
-        fs.unlinkSync(responsePath);
-        return data;
-      } catch (err) {
-        try {
-          fs.unlinkSync(responsePath);
-        } catch {
-          // ignore
-        }
-        return {
-          ok: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Failed to parse memory response',
-        };
+  if (await waitForIpcResponseFile({ responsePath, deadlineMs: deadline })) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(responsePath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      const responseRequestId =
+        typeof raw.requestId === 'string' ? raw.requestId : '';
+      if (responseRequestId !== requestId) {
+        throw new Error('Mismatched memory response requestId');
       }
+      const data = {
+        ok: Boolean(raw.ok),
+        ...(typeof raw.provider === 'string' ? { provider: raw.provider } : {}),
+        ...(Object.prototype.hasOwnProperty.call(raw, 'data')
+          ? { data: raw.data }
+          : {}),
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+      };
+      const payload: Record<string, unknown> = {
+        ok: data.ok,
+        requestId,
+        ...(data.provider ? { provider: data.provider } : {}),
+        ...(Object.prototype.hasOwnProperty.call(data, 'data')
+          ? { data: data.data }
+          : {}),
+        ...(data.error ? { error: data.error } : {}),
+      };
+      if (!hasValidIpcResponseSignature(raw, payload)) {
+        throw new Error('Invalid memory response signature');
+      }
+      fs.unlinkSync(responsePath);
+      return data;
+    } catch (err) {
+      try {
+        fs.unlinkSync(responsePath);
+      } catch {
+        // ignore
+      }
+      return {
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to parse memory response',
+      };
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   removeStaleRequestFile(reqPath);
@@ -231,7 +228,7 @@ export async function requestBrowserAction(
         : {}),
       ...(IPC_RESPONSE_KEY_ID ? { responseKeyId: IPC_RESPONSE_KEY_ID } : {}),
     },
-    expiresAt: new Date(currentTimeMs() + timeoutMs).toISOString(),
+    expiresAt: toIso(currentTimeMs() + timeoutMs),
   };
   const requestEnvelope = createSignedIpcRequestEnvelope(
     BROWSER_IPC_AUTH_TOKEN,
@@ -243,53 +240,51 @@ export async function requestBrowserAction(
   const deadline = nowMs() + timeoutMs;
   const responsePath = path.join(BROWSER_RESPONSES_DIR, `${requestId}.json`);
 
-  while (nowMs() < deadline) {
-    if (fs.existsSync(responsePath)) {
-      try {
-        const raw = JSON.parse(
-          fs.readFileSync(responsePath, 'utf-8'),
-        ) as Record<string, unknown>;
-        const responseRequestId =
-          typeof raw.requestId === 'string' ? raw.requestId : '';
-        if (responseRequestId !== requestId) {
-          throw new Error('Mismatched browser response requestId');
-        }
-        const data = {
-          ok: Boolean(raw.ok),
-          ...(Object.prototype.hasOwnProperty.call(raw, 'data')
-            ? { data: raw.data }
-            : {}),
-          ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
-        };
-        const payload: Record<string, unknown> = {
-          ok: data.ok,
-          requestId,
-          ...(Object.prototype.hasOwnProperty.call(data, 'data')
-            ? { data: data.data }
-            : {}),
-          ...(data.error ? { error: data.error } : {}),
-        };
-        if (!hasValidIpcResponseSignature(raw, payload)) {
-          throw new Error('Invalid browser response signature');
-        }
-        fs.unlinkSync(responsePath);
-        return data;
-      } catch (err) {
-        try {
-          fs.unlinkSync(responsePath);
-        } catch {
-          // ignore
-        }
-        return {
-          ok: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Failed to parse browser response',
-        };
+  if (await waitForIpcResponseFile({ responsePath, deadlineMs: deadline })) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(responsePath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      const responseRequestId =
+        typeof raw.requestId === 'string' ? raw.requestId : '';
+      if (responseRequestId !== requestId) {
+        throw new Error('Mismatched browser response requestId');
       }
+      const data = {
+        ok: Boolean(raw.ok),
+        ...(Object.prototype.hasOwnProperty.call(raw, 'data')
+          ? { data: raw.data }
+          : {}),
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+      };
+      const payload: Record<string, unknown> = {
+        ok: data.ok,
+        requestId,
+        ...(Object.prototype.hasOwnProperty.call(data, 'data')
+          ? { data: data.data }
+          : {}),
+        ...(data.error ? { error: data.error } : {}),
+      };
+      if (!hasValidIpcResponseSignature(raw, payload)) {
+        throw new Error('Invalid browser response signature');
+      }
+      fs.unlinkSync(responsePath);
+      return data;
+    } catch (err) {
+      try {
+        fs.unlinkSync(responsePath);
+      } catch {
+        // ignore
+      }
+      return {
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to parse browser response',
+      };
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   removeStaleRequestFile(reqPath);
@@ -351,53 +346,48 @@ export async function waitForTaskResponse(
   ensurePrivateDirSync(TASK_RESPONSES_DIR);
   const responsePath = path.join(TASK_RESPONSES_DIR, `task-${taskId}.json`);
   const deadline = nowMs() + timeoutMs;
-  while (nowMs() < deadline) {
-    if (fs.existsSync(responsePath)) {
-      try {
-        const parsedEnvelope = parseTaskResponseEnvelope(
-          JSON.parse(fs.readFileSync(responsePath, 'utf-8')),
-        );
-        fs.unlinkSync(responsePath);
-        if (!parsedEnvelope) {
-          return {
-            taskId,
-            ok: false,
-            error: 'Invalid task response payload',
-          };
-        }
-        const payload = parsedEnvelope.payload as unknown as Record<
-          string,
-          unknown
-        >;
-        if (
-          !hasValidIpcResponseSignature(parsedEnvelope.raw, {
-            ...payload,
-          })
-        ) {
-          return {
-            taskId,
-            ok: false,
-            error: 'Invalid task response signature',
-          };
-        }
-        return parsedEnvelope.payload;
-      } catch (err) {
-        try {
-          fs.unlinkSync(responsePath);
-        } catch {
-          // ignore
-        }
+  if (await waitForIpcResponseFile({ responsePath, deadlineMs: deadline })) {
+    try {
+      const parsedEnvelope = parseTaskResponseEnvelope(
+        JSON.parse(fs.readFileSync(responsePath, 'utf-8')),
+      );
+      fs.unlinkSync(responsePath);
+      if (!parsedEnvelope) {
         return {
           taskId,
           ok: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Failed to parse task response',
+          error: 'Invalid task response payload',
         };
       }
+      const payload = parsedEnvelope.payload as unknown as Record<
+        string,
+        unknown
+      >;
+      if (
+        !hasValidIpcResponseSignature(parsedEnvelope.raw, {
+          ...payload,
+        })
+      ) {
+        return {
+          taskId,
+          ok: false,
+          error: 'Invalid task response signature',
+        };
+      }
+      return parsedEnvelope.payload;
+    } catch (err) {
+      try {
+        fs.unlinkSync(responsePath);
+      } catch {
+        // ignore
+      }
+      return {
+        taskId,
+        ok: false,
+        error:
+          err instanceof Error ? err.message : 'Failed to parse task response',
+      };
     }
-    await sleep(150);
   }
   return null;
 }

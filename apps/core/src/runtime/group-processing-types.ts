@@ -31,6 +31,9 @@ import type { AgentExecutionAdapter } from '../application/agent-execution/agent
 import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import type { RunnerSandboxProvider } from '../shared/runner-sandbox-provider.js';
 import type { FamilyOrderOverrides } from '../shared/model-families.js';
+import type { AgentHarness } from '../shared/agent-engine.js';
+import type { AsyncTaskRepository } from '../domain/ports/async-tasks.js';
+import type { PatternCandidateRepository } from '../domain/ports/pattern-candidates.js';
 
 export type GroupProcessingRepository = RuntimeAgentSessionRepository &
   RuntimeMessageRepository;
@@ -88,6 +91,7 @@ export interface GroupProcessingDeps {
     workspaceFolder: string,
     threadId?: string | null,
     metadata?: {
+      appId?: string;
       conversationJid?: string;
       conversationKind?: 'dm' | 'channel';
       memoryUserId?: string;
@@ -107,6 +111,7 @@ export interface GroupProcessingDeps {
   getAvailableGroups: () => Promise<AvailableGroup[]> | AvailableGroup[];
   getRegisteredJids: () => Set<string>;
   queue: {
+    enqueueMessageCheck: (chatJid: string) => boolean | void;
     closeStdin: (chatJid: string) => void;
     notifyIdle: (chatJid: string) => void;
     stopGroup?: (chatJid: string) => boolean;
@@ -128,6 +133,8 @@ export interface GroupProcessingDeps {
   runAgent?: typeof spawnAgent;
   getCredentialBroker?: () => Promise<AgentCredentialBroker | undefined>;
   getToolRepository?: () => ToolCatalogRepository | undefined;
+  getAsyncTaskRepository?: () => AsyncTaskRepository | undefined;
+  getPatternCandidateRepository?: () => PatternCandidateRepository | undefined;
   getSkillRepository?: () => SkillCatalogRepository | undefined;
   getMcpServerRepository?: () => McpServerRepository | undefined;
   getCapabilitySecretRepository?: () => CapabilitySecretRepository | undefined;
@@ -146,6 +153,7 @@ export interface GroupProcessingDeps {
   // injected test runner) failover degrades to a single candidate.
   getConfiguredModelProviders?: (appId: string) => Promise<Set<string>>;
   getModelFamilyOrder?: () => FamilyOrderOverrides | undefined;
+  getSelectedAgentHarness: (agentFolder?: string) => AgentHarness;
   opsRepository?: GroupProcessingRepository;
   getRuntimeRepository?: () => GroupProcessingRepository;
 }
