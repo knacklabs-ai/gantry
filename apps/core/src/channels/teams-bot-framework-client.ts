@@ -21,7 +21,7 @@ import {
   type TeamsSdkOutboundMessage,
   type TeamsSdkSendResult,
   type TeamsSdkStartInput,
-} from './teams.js';
+} from './teams-types.js';
 import {
   PostgresTeamsConversationReferenceStore,
   type TeamsConversationReferenceStore,

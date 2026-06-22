@@ -4,6 +4,7 @@ import { IpcDeps } from '../runtime/ipc-domain-types.js';
 export interface TaskIpcData {
   type: string;
   appId?: string;
+  agentId?: string;
   authThreadId?: string;
   responseKeyId?: string;
   taskId?: string;
@@ -41,6 +42,9 @@ export interface TaskIpcData {
   statuses?: string[];
   kind?: 'manual' | 'once' | 'recurring';
   runId?: string;
+  parentTaskId?: string;
+  runLeaseToken?: string;
+  runLeaseFencingVersion?: number;
   eventType?: string;
   sinceId?: number;
   since?: string;
@@ -48,6 +52,7 @@ export interface TaskIpcData {
   workspaceFolder?: string;
   chatJid?: string;
   targetJid?: string;
+  memoryUserId?: string;
   jid?: string;
   folder?: string;
   trigger?: string;

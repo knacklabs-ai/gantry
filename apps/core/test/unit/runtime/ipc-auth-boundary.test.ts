@@ -644,6 +644,38 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
+  it('preserves delegated parent task ids from IPC task requests', () => {
+    const payload = signedPayload({
+      requestId: 'task-parent-task-id',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'async_run_command',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
+      parentTaskId: 'task_parent',
+    });
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'async_run_command',
+      parentTaskId: 'task_parent',
+    });
+  });
+
+  it('preserves memory user ids from signed task requests', () => {
+    const payload = signedPayload({
+      requestId: 'task-memory-user-id',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'pattern_candidate_decision',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
+      memoryUserId: 'sl:U123',
+    });
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'pattern_candidate_decision',
+      memoryUserId: 'sl:U123',
+    });
+  });
+
   it('rejects response-bearing IPC requests that omit the run response key id', () => {
     const payload = signedPayload({
       requestId: 'task-missing-response-key',

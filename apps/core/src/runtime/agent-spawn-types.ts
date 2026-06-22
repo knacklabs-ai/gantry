@@ -18,7 +18,10 @@ import type { AgentPersona } from '../shared/agent-persona.js';
 import type { YoloModeSettings } from '../shared/yolo-mode-policy.js';
 import type { CapabilityRuntimeAccess } from '../shared/capability-runtime-access.js';
 import type { RuntimeEventPublishInput } from '../domain/events/events.js';
-import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
+import type {
+  AgentExecutionAdapter,
+  DeepAgentSkillProjection,
+} from '../application/agent-execution/agent-execution-adapter.js';
 import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import type { SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
 import type { RunnerStartupHostPhaseTimings } from './agent-spawn-startup-timing.js';
@@ -52,6 +55,7 @@ export interface AgentInput {
   jobId?: string;
   jobName?: string;
   runId?: string;
+  parentTaskId?: string;
   runLeaseToken?: string;
   runLeaseFencingVersion?: number;
   jobModelUseKind?: 'oneTimeJob' | 'recurringJob';
@@ -61,6 +65,7 @@ export interface AgentInput {
   memoryContextBlock?: string;
   yoloMode?: YoloModeSettings;
   runtimeAccess?: CapabilityRuntimeAccess[];
+  deepAgentSkills?: DeepAgentSkillProjection;
 }
 
 export interface AgentOutput {
@@ -73,6 +78,8 @@ export interface AgentOutput {
   // mistaken for turn completion. The session id still persists via
   // providerSessionExternalSessionId (reads newSessionId).
   sessionInit?: boolean;
+  // Runtime-event-only frames carry observable events without completing a turn.
+  runtimeEventOnly?: boolean;
   compactBoundary?: boolean;
   interactionBoundary?: 'user_interaction';
   continuedByFollowup?: boolean;
@@ -102,6 +109,7 @@ export interface AgentOutputRuntimeEvent {
 
 export interface RunAgentOptions {
   timeoutMs?: number;
+  signal?: AbortSignal;
   credentialBroker?: AgentCredentialBroker;
   skillRepository?: SkillCatalogRepository;
   skillArtifactStore?: SkillArtifactStore;
@@ -123,6 +131,7 @@ export interface RunAgentOptions {
   executionAdapter?: AgentExecutionAdapter;
   executionAdapters?: AgentExecutionAdapterRegistry;
   runnerSandboxProvider: RunnerSandboxProvider;
+  asyncTaskRepositoryAvailable?: boolean;
 }
 
 export interface HostRuntimeContext {

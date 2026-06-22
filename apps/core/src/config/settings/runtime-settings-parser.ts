@@ -8,7 +8,10 @@ import {
   listChannelProviders,
   normalizeProviderId,
 } from '../../channels/provider-registry.js';
-import { resolveModelSelectionForWorkload } from '../../shared/model-catalog.js';
+import {
+  resolveModelSelectionForWorkload,
+  withCustomModelCatalogEntries,
+} from '../../shared/model-catalog.js';
 import { parseSenderAllowlistConfig } from './sender-allowlist.js';
 import { parseSimpleYamlObject } from './yaml.js';
 import { normalizeCompactRuntimeSettingsRoot } from './runtime-settings-compact.js';
@@ -43,22 +46,19 @@ import { parseBrowserSettings } from './runtime-settings-browser-parser.js';
 import { parsePermissionSettings } from './runtime-settings-permissions-parser.js';
 import { parseLimitsSettings } from './runtime-settings-limits-parser.js';
 import { parseModelFamilies } from './runtime-settings-model-families-parser.js';
-
-function parseStringArrayValue(raw: unknown, pathPrefix: string): string[] {
-  if (!Array.isArray(raw)) {
-    throw new Error(`${pathPrefix} must be a string array`);
-  }
-  return [
-    ...new Set(
-      raw.map((item, index) => {
-        if (typeof item !== 'string' || item.trim().length === 0) {
-          throw new Error(`${pathPrefix}[${index}] must be a non-empty string`);
-        }
-        return item.trim();
-      }),
-    ),
-  ];
-}
+import {
+  modelAliasesToCatalogEntries,
+  parseModelAliases,
+} from './runtime-settings-model-aliases-parser.js';
+import {
+  containsControlCharacter,
+  parseBooleanValue,
+  parseNonNegativeIntegerValue,
+  parseOptionalStringValue,
+  parsePositiveIntegerValue,
+  parseStringArrayValue,
+  parseStringValue,
+} from './runtime-settings-parse-primitives.js';
 
 function parseAgentHarnessValue(
   raw: unknown,
@@ -72,14 +72,6 @@ function parseAgentHarnessValue(
     );
   }
   return raw;
-}
-
-function parseOptionalStringValue(
-  raw: unknown,
-  pathPrefix: string,
-): string | undefined {
-  if (raw === undefined) return undefined;
-  return parseStringValue(raw, pathPrefix);
 }
 
 function parseProviderSettings(
@@ -219,14 +211,6 @@ function parseProviderConnections(
   }
 
   return connections;
-}
-
-function containsControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }
 
 function parseSenderPolicy(
@@ -470,54 +454,6 @@ function parseConfiguredBindings(
     };
   }
   return bindings;
-}
-
-function parseStringValue(
-  raw: unknown,
-  pathPrefix: string,
-  fallback?: string,
-): string {
-  if (raw === undefined && fallback !== undefined) return fallback;
-  if (typeof raw !== 'string' || raw.trim().length === 0) {
-    throw new Error(`${pathPrefix} must be a non-empty string`);
-  }
-  return raw.trim();
-}
-
-function parseBooleanValue(
-  raw: unknown,
-  pathPrefix: string,
-  fallback?: boolean,
-): boolean {
-  if (raw === undefined && fallback !== undefined) return fallback;
-  if (typeof raw !== 'boolean') {
-    throw new Error(`${pathPrefix} must be true/false`);
-  }
-  return raw;
-}
-
-function parsePositiveIntegerValue(
-  raw: unknown,
-  pathPrefix: string,
-  fallback: number,
-): number {
-  if (raw === undefined) return fallback;
-  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) {
-    throw new Error(`${pathPrefix} must be a positive integer`);
-  }
-  return raw;
-}
-
-function parseNonNegativeIntegerValue(
-  raw: unknown,
-  pathPrefix: string,
-  fallback: number,
-): number {
-  if (raw === undefined) return fallback;
-  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0) {
-    throw new Error(`${pathPrefix} must be a non-negative integer`);
-  }
-  return raw;
 }
 
 function parsePostgresSchema(
@@ -1093,61 +1029,68 @@ export function parseRuntimeSettingsObject(
       key !== 'browser' &&
       key !== 'permissions' &&
       key !== 'limits' &&
-      key !== 'model_families'
+      key !== 'model_families' &&
+      key !== 'model_aliases'
     ) {
       throw new Error(
-        `${key} is not supported. Supported root keys are defaults, desired_state, providers, provider_connections, conversations, bindings, agents, storage, agent, model_access, memory, runtime, browser, permissions, limits, and model_families.`,
+        `${key} is not supported. Supported root keys are defaults, desired_state, providers, provider_connections, conversations, bindings, agents, storage, agent, model_access, memory, runtime, browser, permissions, limits, model_families, and model_aliases.`,
       );
     }
   }
 
-  const desiredState = parseDesiredStateSettings(root.desired_state);
-  const providers = parseProviderSettings(root.providers);
-  const providerConnections = parseProviderConnections(
-    root.provider_connections,
-    providers,
-  );
-  const conversations = parseConversations(
-    root.conversations,
-    providerConnections,
-  );
-  const storage = parseStorageSettings(root.storage);
-  const parsedAgents = parseConfiguredAgents(root.agents);
-  const bindings = parseConfiguredBindings(
-    root.bindings,
-    parsedAgents,
-    conversations,
-  );
-  const agents = deriveAgentBindingsFromDesiredState({
-    agents: parsedAgents,
-    providerConnections,
-    conversations,
-    bindings,
-  });
-  const agent = parseAgentSettings(root.agent);
-  const credentialBroker = parseModelAccessSettings(root.model_access);
-  const memory = parseMemorySettings(root.memory);
-  const runtime = parseRuntimeProcessSettings(root.runtime);
-  const browser = parseBrowserSettings(root.browser);
-  const permissions = parsePermissionSettings(root.permissions);
-  const limits = parseLimitsSettings(root.limits);
-  const modelFamilies = parseModelFamilies(root.model_families);
+  const modelAliases = parseModelAliases(root.model_aliases);
+  const customModelEntries = modelAliasesToCatalogEntries(modelAliases);
 
-  return {
-    desiredState,
-    providers,
-    providerConnections,
-    conversations,
-    bindings,
-    agents,
-    storage,
-    agent,
-    credentialBroker,
-    memory,
-    runtime,
-    browser,
-    permissions,
-    limits,
-    modelFamilies,
-  };
+  return withCustomModelCatalogEntries(customModelEntries, () => {
+    const desiredState = parseDesiredStateSettings(root.desired_state);
+    const providers = parseProviderSettings(root.providers);
+    const providerConnections = parseProviderConnections(
+      root.provider_connections,
+      providers,
+    );
+    const conversations = parseConversations(
+      root.conversations,
+      providerConnections,
+    );
+    const storage = parseStorageSettings(root.storage);
+    const parsedAgents = parseConfiguredAgents(root.agents);
+    const bindings = parseConfiguredBindings(
+      root.bindings,
+      parsedAgents,
+      conversations,
+    );
+    const agents = deriveAgentBindingsFromDesiredState({
+      agents: parsedAgents,
+      providerConnections,
+      conversations,
+      bindings,
+    });
+    const agent = parseAgentSettings(root.agent);
+    const credentialBroker = parseModelAccessSettings(root.model_access);
+    const memory = parseMemorySettings(root.memory);
+    const runtime = parseRuntimeProcessSettings(root.runtime);
+    const browser = parseBrowserSettings(root.browser);
+    const permissions = parsePermissionSettings(root.permissions);
+    const limits = parseLimitsSettings(root.limits);
+    const modelFamilies = parseModelFamilies(root.model_families);
+
+    return {
+      desiredState,
+      providers,
+      providerConnections,
+      conversations,
+      bindings,
+      agents,
+      storage,
+      agent,
+      credentialBroker,
+      memory,
+      runtime,
+      browser,
+      permissions,
+      limits,
+      modelFamilies,
+      modelAliases,
+    };
+  });
 }

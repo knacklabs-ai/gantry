@@ -6,7 +6,9 @@ import {
   type AgentCapabilityProvider,
 } from '@core/adapters/llm/anthropic-claude-agent/agent-capabilities.js';
 import {
+  ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
   BASELINE_GANTRY_MCP_TOOL_NAMES,
+  DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
   DEFAULT_GANTRY_MCP_TOOL_NAMES,
   NO_PERMISSION_HIDDEN_GANTRY_MCP_TOOL_NAMES,
   gantryMcpFullToolName,
@@ -15,7 +17,6 @@ import {
 } from '@agent-runner-src/gantry-mcp-tool-surface.js';
 
 const SAFE_DEFAULT_ALLOWED_TOOLS = [
-  'Agent',
   'WebSearch',
   'WebFetch',
   'ToolSearch',
@@ -44,10 +45,16 @@ const DANGEROUS_DEFAULT_TOOLS = [
   'Edit',
   'NotebookEdit',
   'Config',
+  'Agent',
   'AskUserQuestion',
   'SendMessage',
+  'Task',
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
   'TaskOutput',
   'TaskStop',
+  'TaskUpdate',
   'EnterWorktree',
   'ExitWorktree',
   'mcp__gantry__list_models',
@@ -66,10 +73,16 @@ const UNAVAILABLE_DEFAULT_TOOLS = [
   'NotebookEdit',
   'Browser',
   'Config',
+  'Agent',
   'AskUserQuestion',
   'SendMessage',
+  'Task',
+  'TaskCreate',
+  'TaskGet',
+  'TaskList',
   'TaskOutput',
   'TaskStop',
+  'TaskUpdate',
   'EnterWorktree',
   'ExitWorktree',
   'mcp__gantry__list_models',
@@ -77,7 +90,6 @@ const UNAVAILABLE_DEFAULT_TOOLS = [
 ] as const;
 
 const DEFAULT_AVAILABLE_TOOLS = [
-  'Agent',
   'WebSearch',
   'WebFetch',
   'ToolSearch',
@@ -94,7 +106,6 @@ const DEVELOPER_AVAILABLE_TOOLS = [
   'LS',
   'MultiEdit',
   'NotebookEdit',
-  'Agent',
   'WebSearch',
   'WebFetch',
   'ToolSearch',
@@ -242,6 +253,7 @@ describe('agent capability composition', () => {
       ),
     ).toContain('request_access');
     expect(profile.allowedTools).toContain('mcp__gantry__mcp_list_tools');
+    expect(profile.allowedTools).toContain('mcp__gantry__mcp_describe_tool');
     expect(profile.allowedTools).toContain('mcp__gantry__mcp_call_tool');
   });
 
@@ -268,6 +280,7 @@ describe('agent capability composition', () => {
       ),
     ).toContain('request_access');
     expect(profile.allowedTools).toContain('mcp__gantry__mcp_list_tools');
+    expect(profile.allowedTools).toContain('mcp__gantry__mcp_describe_tool');
     expect(profile.allowedTools).toContain('mcp__gantry__mcp_call_tool');
   });
 
@@ -373,7 +386,7 @@ describe('agent capability composition', () => {
 
     expect(profile.allowedTools).toEqual(DEVELOPER_ALLOWED_TOOLS);
     expect(profile.availableTools).toEqual(DEVELOPER_AVAILABLE_TOOLS);
-    expect(profile.allowedTools).toContain('Agent');
+    expect(profile.allowedTools).not.toContain('Agent');
     expect(profile.allowedTools).not.toContain(
       'mcp__gantry__settings_desired_state',
     );
@@ -393,7 +406,7 @@ describe('agent capability composition', () => {
 
     expect(profile.allowedTools).toEqual(DEVELOPER_ALLOWED_TOOLS);
     expect(profile.availableTools).toEqual(DEVELOPER_AVAILABLE_TOOLS);
-    expect(profile.allowedTools).toContain('Agent');
+    expect(profile.allowedTools).not.toContain('Agent');
     expect(profile.allowedTools).toContain('Read');
     expect(profile.allowedTools).toContain('mcp__gantry__memory_search');
     expect(profile.allowedTools).not.toContain('Browser');
@@ -410,7 +423,7 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).toEqual(SAFE_DEFAULT_ALLOWED_TOOLS);
     expect(profile.availableTools).toEqual(DEVELOPER_AVAILABLE_TOOLS);
     expect(profile.allowedTools).not.toContain('Read');
-    expect(profile.allowedTools).toContain('Agent');
+    expect(profile.allowedTools).not.toContain('Agent');
     expect(profile.allowedTools).toContain('mcp__gantry__memory_search');
     expect(profile.allowedTools).not.toContain('Browser');
   });
@@ -440,7 +453,7 @@ describe('agent capability composition', () => {
     expect(profile.allowedTools).not.toContain('Read');
     expect(profile.allowedTools).not.toContain('Glob');
     expect(profile.allowedTools).not.toContain('Grep');
-    expect(profile.allowedTools).toContain('Agent');
+    expect(profile.allowedTools).not.toContain('Agent');
     expect(profile.allowedTools).not.toContain('Bash');
     expect(profile.allowedTools).not.toContain('mcp__gantry__service_restart');
     expect(profile.allowedTools).not.toContain('mcp__gantry__register_agent');
@@ -578,7 +591,6 @@ describe('agent capability composition', () => {
     );
     expect(profile.availableTools).toEqual(
       expect.arrayContaining([
-        'Agent',
         'WebSearch',
         'WebFetch',
         'ToolSearch',
@@ -628,7 +640,8 @@ describe('agent capability composition', () => {
       ],
     });
 
-    expect(profile.allowedTools).toContain('Agent');
+    expect(profile.allowedTools).not.toContain('Agent');
+    expect(profile.allowedTools).not.toContain('mcp__gantry__delegate_task');
     expect(profile.allowedTools).not.toContain('Browser');
     expect(profile.allowedTools).not.toContain('ToolName(scope-pattern)');
     expect(profile.allowedTools).not.toContain('AgentDelegation');
@@ -663,6 +676,55 @@ describe('agent capability composition', () => {
     expect(
       profile.mcpServers.gantry?.env?.GANTRY_SELECTED_SKILL_DISPLAYS_JSON,
     ).toBe(JSON.stringify([]));
+  });
+
+  it('allows mounted async task tools when the runtime enables them', () => {
+    const profile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      appId: 'app-main',
+      agentId: 'agent:telegram_team',
+      chatJid: 'tg:team',
+      workspaceFolder: 'telegram_team',
+      ipcDir: '/tmp/ipc/team',
+      ipcAuthToken: 'token',
+      memoryIpcAuthToken: 'memory-token',
+      ipcResponseVerifyKey: 'verify-key',
+      ipcResponseKeyId: 'verify-key-id',
+      asyncTaskToolsEnabled: true,
+    });
+
+    for (const toolName of ASYNC_TASK_GANTRY_MCP_TOOL_NAMES) {
+      expect(profile.allowedTools).toContain(gantryMcpFullToolName(toolName));
+    }
+    for (const toolName of DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES) {
+      expect(profile.allowedTools).not.toContain(
+        gantryMcpFullToolName(toolName),
+      );
+    }
+    expect(profile.mcpServers.gantry?.env?.GANTRY_MCP_TOOL_NAMES_JSON).toBe(
+      JSON.stringify(
+        selectedGantryMcpToolNames([], { asyncTaskToolsEnabled: true }),
+      ),
+    );
+
+    const delegatedProfile = composeAgentCapabilities({
+      mcpServerPath: '/tmp/ipc-mcp-stdio.js',
+      appId: 'app-main',
+      agentId: 'agent:telegram_team',
+      chatJid: 'tg:team',
+      workspaceFolder: 'telegram_team',
+      parentTaskId: 'task_parent',
+      configuredAllowedTools: ['AgentDelegation'],
+      asyncTaskToolsEnabled: true,
+    });
+    for (const toolName of DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES) {
+      expect(delegatedProfile.allowedTools).toContain(
+        gantryMcpFullToolName(toolName),
+      );
+    }
+    expect(delegatedProfile.mcpServers.gantry?.env?.GANTRY_PARENT_TASK_ID).toBe(
+      'task_parent',
+    );
   });
 
   it('projects selected skills and MCP servers into capability_status environment', () => {

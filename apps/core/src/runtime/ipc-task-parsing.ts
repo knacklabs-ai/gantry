@@ -346,11 +346,13 @@ export function parseTaskIpcData(
   const createdByRaw = toTrimmedString(raw.createdBy, { maxLen: 16 });
   const statuses = toOptionalStringArray(raw.statuses, 50, 64);
   const runId = toTrimmedString(raw.runId, { maxLen: 128 });
+  const parentTaskId = toTrimmedString(raw.parentTaskId, { maxLen: 160 });
   const eventType = toTrimmedString(raw.eventType, { maxLen: 128 });
   const since = toTrimmedString(raw.since, { maxLen: 128 });
   const workspaceFolder = toTrimmedString(raw.workspaceFolder, { maxLen: 128 });
   const chatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
   const targetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
+  const memoryUserId = toTrimmedString(raw.memoryUserId, { maxLen: 255 });
   const jid = toTrimmedString(raw.jid, { maxLen: 255 });
   const name = toTrimmedString(raw.name, { maxLen: 255 });
   const folder = toTrimmedString(raw.folder, { maxLen: 128 });
@@ -411,6 +413,9 @@ export function parseTaskIpcData(
   if (threadBinding.appId) {
     parsed.appId = threadBinding.appId;
   }
+  if (threadBinding.agentId) {
+    parsed.agentId = threadBinding.agentId;
+  }
   if (threadBinding.responseKeyId) {
     parsed.responseKeyId = threadBinding.responseKeyId;
   }
@@ -425,11 +430,22 @@ export function parseTaskIpcData(
   }
   if (statuses !== undefined) parsed.statuses = statuses;
   if (runId) parsed.runId = runId;
+  if (parentTaskId) parsed.parentTaskId = parentTaskId;
+  const runLeaseToken = toTrimmedString(raw.runLeaseToken, { maxLen: 255 });
+  if (runLeaseToken) parsed.runLeaseToken = runLeaseToken;
+  const runLeaseFencingVersion = toOptionalNumber(raw.runLeaseFencingVersion, {
+    min: 0,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+  if (runLeaseFencingVersion !== undefined) {
+    parsed.runLeaseFencingVersion = Math.round(runLeaseFencingVersion);
+  }
   if (eventType) parsed.eventType = eventType;
   if (since) parsed.since = since;
   if (workspaceFolder) parsed.workspaceFolder = workspaceFolder;
   if (chatJid) parsed.chatJid = chatJid;
   if (targetJid) parsed.targetJid = targetJid;
+  if (memoryUserId) parsed.memoryUserId = memoryUserId;
   if (jid) parsed.jid = jid;
   if (name) parsed.name = name;
   if (folder) parsed.folder = folder;

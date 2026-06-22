@@ -1,5 +1,7 @@
 import path from 'path';
 import {
+  ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+  DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
   gantryMcpFullToolName,
   parseEnabledGantryMcpToolNames,
 } from '../gantry-mcp-tool-surface.js';
@@ -90,6 +92,12 @@ export const enabledGantryMcpTools = parseEnabledGantryMcpToolNames(
   process.env.GANTRY_MCP_TOOL_NAMES_JSON,
   { lockedPreset: lockedAccessPreset },
 );
+const asyncTaskToolNameSet = new Set<string>([
+  ...ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+  ...DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
+]);
+const asyncTaskToolsEnabled =
+  process.env.GANTRY_ASYNC_TASK_TOOLS_ENABLED === '1';
 export const configuredAllowedTools = parseConfiguredAllowedTools(
   process.env.GANTRY_CONFIGURED_ALLOWED_TOOLS_JSON,
 );
@@ -210,7 +218,9 @@ export function capabilityStatusText(): string {
       ? selectedSkillDisplays
       : attachedSkillSourceIds;
   const availableToolNames = [...enabledGantryMcpTools].filter(
-    (toolName) => !isAdminMcpToolName(toolName),
+    (toolName) =>
+      !isAdminMcpToolName(toolName) &&
+      (asyncTaskToolsEnabled || !asyncTaskToolNameSet.has(toolName)),
   );
   for (const adminToolName of currentAdminTools) {
     availableToolNames.push(adminToolName);
@@ -219,6 +229,13 @@ export function capabilityStatusText(): string {
     (toolName) =>
       toolName === 'send_message' ||
       toolName === 'ask_user_question' ||
+      toolName === 'async_run_command' ||
+      toolName === 'delegate_task' ||
+      toolName === 'task_cancel' ||
+      toolName === 'task_get' ||
+      toolName === 'task_list' ||
+      toolName === 'task_message' ||
+      toolName === 'todo_update' ||
       toolName === 'memory_search' ||
       toolName === 'memory_save' ||
       toolName === 'continuity_summary' ||
@@ -310,13 +327,13 @@ export function capabilityStatusText(): string {
                     `  selected capabilities: ${selectedCapabilities.join(', ')}`,
                   ]
                 : []),
-              `  use: mcp_list_tools with serverName="${sourceName}", then mcp_call_tool with serverName="${sourceName}"`,
+              `  use: mcp_list_tools with serverName="${sourceName}", mcp_describe_tool for one tool schema if needed, then mcp_call_tool with serverName="${sourceName}"`,
             ];
           })
       : ['- none connected yet']),
     ...(attachedMcpSourceIds.length > 0
       ? [
-          'MCP source rule: ready sources are already attached. Inspect them with mcp_list_tools and call approved actions through mcp_call_tool. Do not request the same MCP capability again unless the tool response says access is missing or denied.',
+          'MCP source rule: ready sources are already attached. Inspect them with mcp_list_tools, fetch one-tool schema/details with mcp_describe_tool when needed, and call approved actions through mcp_call_tool. Do not request the same MCP capability again unless the tool response says access is missing or denied.',
         ]
       : []),
     ...(requestableBrowserTools.length > 0

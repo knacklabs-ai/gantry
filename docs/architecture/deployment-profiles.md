@@ -16,7 +16,7 @@ This doc is the operator view; the decisions behind it are the ADRs:
 - [Settings Authority](../decisions/2026-06-11-settings-authority.md) — one
   desired-state service, two surfaces (YAML watcher vs control API).
 - [Locked Preset](../decisions/2026-06-11-locked-preset.md) — `access.preset:
-  locked`, parent-side enforcement, isolation tiers.
+locked`, parent-side enforcement, isolation tiers.
 - [Delivery Vehicle](../decisions/2026-06-11-delivery-vehicle.md) — Terraform/
   AWS-first.
 
@@ -92,7 +92,7 @@ process boots. The workstation default is `all`.
   does not register as a `worker_instances` row (it executes nothing). Channels
   connect outbound-only.
 - **`live-worker`** runs distributed live admission/execution + provider inbound
-  + chat delivery. No scheduler, no bakes.
+  - chat delivery. No scheduler, no bakes.
 - **`job-worker`** runs the scheduler + bakes + job-notification delivery.
   Channels outbound-only; no live admission, no provider inbound.
 - **`all`** is everything in one process — the workstation and minimal
@@ -205,7 +205,7 @@ agent that must not depend on a (now durable) browser profile at all.
 
 Each worker is one parent Node process that spawns a child runner process per
 active agent turn. Sessions are Postgres rows and cost nothing while idle; the
-configuration below bounds what an *active* sandboxed child may consume and what
+configuration below bounds what an _active_ sandboxed child may consume and what
 the host must provide for the sandbox to exist at all.
 
 Recommended fleet worker desired state (settings; the process role itself is the
@@ -215,16 +215,16 @@ deployment env `GANTRY_PROCESS_ROLE`, **not** a settings key):
 runtime:
   deployment_mode: fleet
   queue:
-    max_message_runs: 6      # PER live worker: concurrent live turns on one box.
-                             # Cluster live capacity ≈ this × live-worker count.
-    max_job_runs: 4          # concurrent scheduled-job runners (per job worker)
+    max_message_runs: 6 # PER live worker: concurrent live turns on one box.
+    # Cluster live capacity ≈ this × live-worker count.
+    max_job_runs: 4 # concurrent scheduled-job runners (per job worker)
     drain_deadline_ms: 120000
   sandbox:
     provider: sandbox_runtime # whole-runner OS sandbox (bubblewrap on Linux)
     resource_limits:
-      cpu_seconds: 900        # hard CPU budget per child runner
-      memory_mb: 512          # hard memory cap per child runner
-      max_processes: 64       # runner + SDK subagents + tool subprocesses
+      cpu_seconds: 900 # hard CPU budget per child runner
+      memory_mb: 512 # hard memory cap per child runner
+      max_processes: 64 # runner + SDK subagents + tool subprocesses
   artifact_store:
     driver: s3
 ```
@@ -234,6 +234,11 @@ Sizing rule: instance memory ≥ 1 GB (parent + OS headroom) +
 above fits a 7–8 GB instance. Subagents run inside their parent turn's runner and
 share its caps — `max_processes` is the fan-out bound (see the subagent slot
 weighting item in [TODOS.md](../../TODOS.md)).
+
+Host execution slots use `GANTRY_HOST_ID` when present, falling back to the OS
+hostname. If multiple runtime processes share one machine, set the same
+`GANTRY_HOST_ID` for all of them so status and slot accounting describe one host.
+The local fleet compose file does this for the co-located rehearsal stack.
 
 Host/container requirements for `sandbox_runtime` on fleet workers:
 
@@ -259,24 +264,24 @@ bigger instances and higher per-worker concurrency (`runtime.queue`,
 `runtime.sandbox.resource_limits`). **Horizontal** = more workers in the
 autoscaled pool. Start from the symptom, not the axis:
 
-| What is actually growing / hurting                                                                               | Scale                                                                                                                       | Levers                                                                                                                                                                        |
-| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live conversations: turns wait behind per-worker `max_message_runs`, users see "Waiting for an available worker" | **Horizontal (live pool)** — every live worker admits turns; cluster live capacity ≈ `max_message_runs` × live-worker count | Raise `live_worker_max_size` / `live_worker_desired_capacity`, or bigger `live_worker_instance_type` + higher `runtime.queue.max_message_runs` per box. Both add capacity now |
-| Scheduled jobs, bakes: queue depth grows, job-worker CPU sustained high                                          | **Horizontal (job pool)** — jobs are claimable by any job worker                                                            | Raise `job_worker_max_size`, tune `job_worker_cpu_target`                                                                                                                     |
-| Admin/API latency (control plane): `/v1/*` slow, SDK calls back up                                               | **Vertical (control), then horizontal** — control runs no execution, so this is rare                                        | Bigger `control_instance_type`; raise `control_max_size` + set `control_autoscaling_enabled` if genuinely API-bound                                                           |
-| Single turns are too heavy: worker memory pressure, OOM-killed runners, subagent-dense turns                     | **Vertical** — more workers do not shrink one turn's footprint                                                              | Bigger instance, or cap harder via `resource_limits` (memory_mb / max_processes); see the sizing rule in Worker Configuration above                                           |
-| Availability: live failover tolerance, deploy safety                                                             | **Horizontal floor** — independent of throughput                                                                            | `live_worker_min_size >= 2` (enforced); recovery-coordinator failover RTO ≈ lease TTL (~30s); other live workers keep serving during a single worker's drain                  |
-| Everything is slow but workers are idle                                                                          | **Neither** — look at the database                                                                                          | RDS instance class, RDS Proxy pool, `pgboss` queue health                                                                                                                     |
-| Cost at idle                                                                                                     | **Neither** — scale down to the floor, never to zero                                                                        | Fleet floor: ≥2 live workers + 1 control + 1 job worker; support stack floor 1; per-turn runner compute is already zero at idle                                               |
+| What is actually growing / hurting                                                                            | Scale                                                                                                                       | Levers                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live conversations: turns wait behind per-worker `max_message_runs`, users see "Still starting this request." | **Horizontal (live pool)** — every live worker admits turns; cluster live capacity ≈ `max_message_runs` × live-worker count | Raise `live_worker_max_size` / `live_worker_desired_capacity`, or bigger `live_worker_instance_type` + higher `runtime.queue.max_message_runs` per box. Both add capacity now |
+| Scheduled jobs, bakes: queue depth grows, job-worker CPU sustained high                                       | **Horizontal (job pool)** — jobs are claimable by any job worker                                                            | Raise `job_worker_max_size`, tune `job_worker_cpu_target`                                                                                                                     |
+| Admin/API latency (control plane): `/v1/*` slow, SDK calls back up                                            | **Vertical (control), then horizontal** — control runs no execution, so this is rare                                        | Bigger `control_instance_type`; raise `control_max_size` + set `control_autoscaling_enabled` if genuinely API-bound                                                           |
+| Single turns are too heavy: worker memory pressure, OOM-killed runners, subagent-dense turns                  | **Vertical** — more workers do not shrink one turn's footprint                                                              | Bigger instance, or cap harder via `resource_limits` (memory_mb / max_processes); see the sizing rule in Worker Configuration above                                           |
+| Availability: live failover tolerance, deploy safety                                                          | **Horizontal floor** — independent of throughput                                                                            | `live_worker_min_size >= 2` (enforced); recovery-coordinator failover RTO ≈ lease TTL (~30s); other live workers keep serving during a single worker's drain                  |
+| Everything is slow but workers are idle                                                                       | **Neither** — look at the database                                                                                          | RDS instance class, RDS Proxy pool, `pgboss` queue health                                                                                                                     |
+| Cost at idle                                                                                                  | **Neither** — scale down to the floor, never to zero                                                                        | Fleet floor: ≥2 live workers + 1 control + 1 job worker; support stack floor 1; per-turn runner compute is already zero at idle                                               |
 
 Signals to read before choosing (`/metrics` + CLI):
 
 - Job-queue depth rising while job-worker CPU is high → horizontal job pool (the
   autoscaler should already be reacting; check `job_worker_max_size`).
-- Live turns waiting (`gantry_live_oldest_waiting_seconds` climbing, users see
-  "Waiting for an available worker") while `gantry_live_slots_used_cluster` is at
-  capacity → horizontal live pool (more `live-worker` instances) and/or higher
-  per-worker `max_message_runs`.
+- Live turns waiting (`gantry_live_oldest_waiting_seconds` or
+  `gantry_live_admission_backlog` climbing, with `gantry_live_warm_spare` = 0)
+  while live workers report saturated local capacity → horizontal live pool
+  (more `live-worker` instances) and/or higher per-worker `max_message_runs`.
 - `gantry_capability_starved_runs` > 0 → neither axis: a capability is missing
   (bake failed/pending, or no eligible worker) — `gantry bake status`.
 - Worker memory headroom shrinking with stable turn counts → vertical, or
@@ -309,19 +314,27 @@ ALB never exposes them. They are role-aware:
 - **`/metrics`** adds:
   - `gantry_process_role{role}` — the process's role.
   - `gantry_live_turns_active` — live turns this process currently owns.
-  - `gantry_live_slots_used_cluster` — cluster-wide live slots in use (capacity ≈
-    `max_message_runs` × live-worker count).
+  - `gantry_live_slots_used_cluster` — cluster-wide live-worker slots in use.
+  - `gantry_live_slots_used_local` — interactive host slots in use on this
+    runtime host.
+  - `gantry_live_slots_capacity_local` — host-clamped live capacity on this
+    runtime host.
+  - `gantry_live_warm_spare` — 1 when this runtime host has a free live slot.
   - `gantry_live_turns_recoverable` — live turns awaiting recovery.
   - `gantry_live_oldest_waiting_seconds` — age of the oldest waiting live turn
     (the horizontal-live-pool scale signal).
+  - `gantry_live_admission_backlog` and
+    `gantry_live_admission_backlog_oldest_seconds` — queued live-admission work.
+  - `gantry_background_job_slots_used` and
+    `gantry_background_job_slots_capacity` — background job slot usage.
 - **`/v1/health`** (authenticated, `sessions:read`) carries **`processRole`**.
 - `gantry status` shows the process role.
 
 **Overload UX.** Inbound is accepted durably; nothing is dropped. When a turn
-waits past a threshold for an available live worker, the user sees the literal
-status **"Waiting for an available worker"** (sent once per waiting episode by the
-recovery coordinator). Recovery keeps the existing message: **"Run recovered:
-previous worker lost its lease; Gantry safely retried this run."**
+waits past a threshold, the user sees the literal status **"Still starting this
+request."** (sent once per waiting episode by the recovery coordinator). Worker
+capacity language stays operator-only. Recovery keeps the existing message: **"Run
+recovered: previous worker lost its lease; Gantry safely retried this run."**
 
 ## Runbook Index
 

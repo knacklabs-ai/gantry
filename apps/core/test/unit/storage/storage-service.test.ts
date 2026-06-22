@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PostgresStorageService,
   createStorageService,
   postgresMigrationsFolder,
+  resolvePostgresPoolConfig,
 } from '@core/adapters/storage/postgres/storage-service.js';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('storage-service', () => {
   it('points migrations at the packaged schema migrations directory', () => {
@@ -31,11 +36,52 @@ describe('storage-service', () => {
     await service.close();
   });
 
+  it('reserves enough pool headroom for listeners, leases, live turns, and jobs', () => {
+    const config = resolvePostgresPoolConfig(
+      'postgres://user:pass@127.0.0.1:5432/gantry',
+      'gantry',
+    );
+
+    expect(config.max).toBeGreaterThanOrEqual(20);
+  });
+
   it('constructs postgres storage with custom runtime schema', async () => {
     const service = createStorageService({
       postgresUrl: 'postgres://user:pass@127.0.0.1:5432/gantry',
       postgresUrlEnv: 'GANTRY_DATABASE_URL',
       postgresSchema: 'other_schema',
+    });
+    expect(service).toBeInstanceOf(PostgresStorageService);
+    await service.close();
+  });
+
+  it('rejects docker compose postgres service hostname without an explicit plaintext allowlist', () => {
+    expect(() =>
+      createStorageService({
+        postgresUrl: 'postgres://user:pass@postgres:5432/gantry',
+        postgresUrlEnv: 'GANTRY_DATABASE_URL',
+        postgresSchema: 'gantry',
+      }),
+    ).toThrow(/sslmode=require/i);
+  });
+
+  it('accepts the first-party docker compose postgres service hostname when allowlisted', async () => {
+    const service = createStorageService({
+      postgresUrl: 'postgres://user:pass@postgres:5432/gantry',
+      postgresUrlEnv: 'GANTRY_DATABASE_URL',
+      postgresSchema: 'gantry',
+      postgresPlaintextHostAllowlist: ['postgres'],
+    });
+    expect(service).toBeInstanceOf(PostgresStorageService);
+    await service.close();
+  });
+
+  it('accepts an env-configured local postgres hostname', async () => {
+    vi.stubEnv('GANTRY_LOCAL_POSTGRES_HOSTS', 'postgres.local');
+    const service = createStorageService({
+      postgresUrl: 'postgres://user:pass@postgres.local:5432/gantry',
+      postgresUrlEnv: 'GANTRY_DATABASE_URL',
+      postgresSchema: 'gantry',
     });
     expect(service).toBeInstanceOf(PostgresStorageService);
     await service.close();

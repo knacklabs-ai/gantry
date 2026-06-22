@@ -49,6 +49,10 @@
 - Shared Postgres schema files must not carry provider-specific default values.
   Runtime insertion paths should pass the resolved execution provider id
   explicitly, while historical migrations may backfill concrete old values.
+- Plaintext Docker service host exceptions must be explicit and env-scoped.
+  Do not add Compose hostnames to global local-host detection; pass the same
+  allowlist through URL validation, runtime config, doctor/readiness checks, and
+  migration/storage construction.
 - Conversation route projection must preserve the canonical conversation kind:
   `direct`/`dm` rows return runtime `conversationKind: "dm"` and group/channel
   rows return `conversationKind: "channel"`. Do not infer DM-vs-group memory
@@ -67,3 +71,9 @@
   provider-native rows such as `Read`, `Write`, `Bash`, `Agent`, `Glob`,
   `Grep`, or `WebFetch`; those belong inside execution adapter per-run harness
   projections.
+- Display-only agent todo state is not Postgres lifecycle state. Do not add
+  `todo_update` tables. Durable async command task rows are allowed only when
+  paired with row-before-run admission, a real host executor, scoped read/list/
+  cancel, abort propagation, terminal receipts, and restart recovery. Delegated
+  agent task rows and provider task id correlation still require a real
+  delegated-agent executor and read model.

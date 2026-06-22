@@ -27,6 +27,28 @@ export const LOCAL_CLI_CREDENTIAL_DIRS_ENV =
 export const SANDBOX_RUNTIME_MODEL_GATEWAY_HOST =
   'model-gateway.gantry.internal';
 
+export function writeProtectedFilesystemEnv(input: {
+  env: NodeJS.ProcessEnv;
+  protectedReadPaths: readonly string[];
+  protectedWritePaths: readonly string[];
+  localCliCredentialPaths: readonly string[];
+}): void {
+  input.env[PROTECTED_FILESYSTEM_DENY_READ_PATHS_ENV] = JSON.stringify(
+    input.protectedReadPaths,
+  );
+  input.env[PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_ENV] = JSON.stringify(
+    input.protectedWritePaths,
+  );
+  input.env[PROTECTED_FILESYSTEM_PATHS_ENV] = JSON.stringify(
+    input.protectedWritePaths,
+  );
+  if (input.localCliCredentialPaths.length > 0) {
+    input.env[LOCAL_CLI_CREDENTIAL_DIRS_ENV] = JSON.stringify(
+      input.localCliCredentialPaths,
+    );
+  }
+}
+
 export interface SandboxRuntimeModelGatewayProjection {
   modelCredentialEnv?: Record<string, string>;
   allowedNetworkHosts: string[];
@@ -61,6 +83,10 @@ const PREPARED_EXECUTION_GANTRY_ENV_ALLOWLIST = new Set([
   'GANTRY_EFFECTIVE_MODEL_SOURCE',
   'GANTRY_CLAUDE_SDK_SKILLS_JSON',
   'GANTRY_SKILL_ACTIONS_JSON',
+  'GANTRY_DEEPAGENTS_MODEL_ID',
+  'GANTRY_DEEPAGENTS_MODEL_PROVIDER',
+  'GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL',
+  'GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS',
 ]);
 const PREPARED_EXECUTION_ENV_SUFFIX_ALLOWLIST = ['_CONFIG_DIR', '_MODEL'];
 const PREPARED_EXECUTION_SECRET_ENV_PATTERN =
@@ -290,6 +316,25 @@ export function sandboxAllowedNetworkHostsFromRuntimeAccess(
     }
   }
   return [...hosts].sort();
+}
+
+export function databaseNetworkHostFromUrl(
+  value: string | undefined,
+): string | undefined {
+  if (!value?.trim()) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+      return undefined;
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!host) return undefined;
+    const port = parsed.port || '5432';
+    const authorityHost = host.includes(':') ? `[${host}]` : host;
+    return `${authorityHost}:${port}`;
+  } catch {
+    return undefined;
+  }
 }
 
 export function loopbackAuthorityFromUrl(

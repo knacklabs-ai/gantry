@@ -1,5 +1,6 @@
 export * from './apps.js';
 export * from './agents.js';
+export * from './async-tasks.js';
 export * from './browser.js';
 export * from './capability-secrets.js';
 export * from './providers.js';
@@ -17,6 +18,7 @@ export * from './model-credentials.js';
 export * from './mcp-servers.js';
 export * from './external-platform-events.js';
 export * from './outbound-delivery.js';
+export * from './pattern-candidates.js';
 export * from './pending-access-requests.js';
 export * from './permissions.js';
 export * from './runs.js';

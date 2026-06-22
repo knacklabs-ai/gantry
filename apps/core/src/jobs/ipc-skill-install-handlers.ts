@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
 import { SkillService } from '../application/skills/skill-service.js';
 import type { AgentId } from '../domain/agent/agent.js';
 import type { AppId } from '../domain/app/app.js';
+import type { PatternCandidateRepository } from '../domain/ports/pattern-candidates.js';
 import type { SkillCatalogItem } from '../domain/skills/skills.js';
 import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
 import {
@@ -19,7 +19,7 @@ import {
   skillInstallCommandDisplayName,
 } from './skill-install-display.js';
 import { parseSkillPackageAssets } from './skill-package-ipc.js';
-
+import { claimPatternCandidateForSkillProposal } from './pattern-candidate-skill-proposal.js';
 const pendingSkillInstallCommandReviews = new Set<string>();
 const pendingSkillPackageReviews = new Set<string>();
 
@@ -27,6 +27,7 @@ type SkillInstallRuntimeDeps = {
   getStorage: () => {
     repositories: {
       skills: ConstructorParameters<typeof SkillService>[0];
+      patternCandidates?: PatternCandidateRepository;
     };
     skillArtifacts: ConstructorParameters<typeof SkillService>[1];
   };
@@ -38,7 +39,6 @@ type SkillInstallRuntimeDeps = {
 type ApprovedCommandRunner = NonNullable<
   Parameters<TaskHandler>[0]['deps']['runApprovedCommand']
 >;
-
 let runtimeDeps: SkillInstallRuntimeDeps | null = null;
 
 export function configureSkillInstallHandlers(deps: SkillInstallRuntimeDeps) {
@@ -396,6 +396,26 @@ const requestSkillPackageHandler = async (
 
   try {
     const storage = getRuntimeDeps().getStorage();
+    const patternCandidateId = toTrimmedString(payload.patternCandidateId, {
+      maxLen: 512,
+    });
+    let patternLifecycle: Record<string, () => Promise<void>> | undefined;
+    if (patternCandidateId && storage.repositories.patternCandidates) {
+      const claim = await claimPatternCandidateForSkillProposal({
+        repo: storage.repositories.patternCandidates,
+        candidateId: patternCandidateId,
+        appId: data.appId,
+        sourceAgentFolder,
+        targetJid: requestedTargetJid,
+        memoryUserId: data.memoryUserId,
+      });
+      if (!claim.ok) {
+        pendingSkillPackageReviews.delete(pendingKey);
+        reject(claim.error, claim.code);
+        return;
+      }
+      patternLifecycle = claim.lifecycle;
+    }
     const service = new SkillService(
       storage.repositories.skills,
       storage.skillArtifacts,
@@ -438,6 +458,7 @@ const requestSkillPackageHandler = async (
       totalSizeBytes: parsed.totalSizeBytes,
       reason,
       requestToolName: input.requestToolName,
+      ...patternLifecycle,
       onSettled: () => {
         pendingSkillPackageReviews.delete(pendingKey);
       },

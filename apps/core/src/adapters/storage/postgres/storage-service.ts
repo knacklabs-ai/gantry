@@ -19,6 +19,7 @@ export const postgresMigrationsFolder = path.join(
 );
 const PGCRYPTO_EXTENSION_LOCK_NAMESPACE = 1_340_193_180;
 const PGCRYPTO_EXTENSION_LOCK_KEY = 1;
+const RUNTIME_POSTGRES_POOL_MAX = 20;
 // Cross-instance "run gantry migrations" lock. One identity serializes EVERY
 // migrator — the container entrypoint (ops/docker/migrate.mjs) and the
 // runtime's boot-time migrate() — so concurrent boots cannot race the drizzle
@@ -50,6 +51,11 @@ export interface ResolvedStorageConfig {
   postgresUrl: string | null;
   postgresUrlEnv: string;
   postgresSchema: string;
+  postgresPlaintextHostAllowlist?: readonly string[];
+}
+
+export interface PostgresConnectionSecurityOptions {
+  plaintextHostAllowlist?: readonly string[];
 }
 
 export function quotePostgresIdentifier(identifier: string): string {
@@ -64,13 +70,17 @@ export function quotePostgresIdentifier(identifier: string): string {
 export function resolvePostgresPoolConfig(
   url: string,
   schema: string,
+  security: PostgresConnectionSecurityOptions = {},
 ): PoolConfig {
   const parsed = parsePostgresConnectionUrl(url);
   const sslMode = parsed.searchParams.get('sslmode')?.trim().toLowerCase();
-  const options = `-c search_path=${quotePostgresIdentifier(schema)},public`;
-  parsed.searchParams.set('options', options);
+  const searchPathOptions = `-c search_path=${quotePostgresIdentifier(schema)},public`;
+  parsed.searchParams.set('options', searchPathOptions);
   const connectionString = parsed.toString();
-  const isLocal = isLocalPostgresHost(parsed.hostname);
+  const isLocal = isLocalPostgresHost(
+    parsed.hostname,
+    security.plaintextHostAllowlist,
+  );
   if (!isLocal) {
     if (
       !sslMode ||
@@ -84,11 +94,16 @@ export function resolvePostgresPoolConfig(
     }
     return {
       connectionString,
-      options,
+      options: searchPathOptions,
+      max: RUNTIME_POSTGRES_POOL_MAX,
       ssl: { rejectUnauthorized: true },
     };
   }
-  return { connectionString, options };
+  return {
+    connectionString,
+    options: searchPathOptions,
+    max: RUNTIME_POSTGRES_POOL_MAX,
+  };
 }
 
 export class PostgresStorageService implements StorageService {
@@ -98,8 +113,9 @@ export class PostgresStorageService implements StorageService {
   constructor(
     private readonly url: string,
     private readonly schemaName: string,
+    private readonly security: PostgresConnectionSecurityOptions = {},
   ) {
-    this.pool = new Pool(resolvePostgresPoolConfig(url, schemaName));
+    this.pool = new Pool(resolvePostgresPoolConfig(url, schemaName, security));
     this.db = drizzlePg(this.pool, { schema: pgSchema });
   }
 
@@ -177,7 +193,11 @@ export class PostgresStorageService implements StorageService {
   }
 
   private async migratePgBoss(): Promise<void> {
-    const poolConfig = resolvePostgresPoolConfig(this.url, this.schemaName);
+    const poolConfig = resolvePostgresPoolConfig(
+      this.url,
+      this.schemaName,
+      this.security,
+    );
     const boss = new PgBoss({
       connectionString: poolConfig.connectionString,
       schema: 'pgboss',
@@ -345,5 +365,7 @@ export function createStorageService(
   if (!config.postgresUrl?.trim()) {
     throw new Error(`${config.postgresUrlEnv} is required for runtime storage`);
   }
-  return new PostgresStorageService(config.postgresUrl, config.postgresSchema);
+  return new PostgresStorageService(config.postgresUrl, config.postgresSchema, {
+    plaintextHostAllowlist: config.postgresPlaintextHostAllowlist,
+  });
 }

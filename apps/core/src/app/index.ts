@@ -8,6 +8,7 @@ import {
   startRuntimeServices,
   beginDrainingLiveTurnAdmission,
   shutdownLiveTurnAuthority,
+  stopAsyncTaskRecoveryLoop,
   stopLiveTurnRecoveryLoop,
   stopMessagePollingLoop,
 } from './bootstrap/runtime-services.js';
@@ -88,6 +89,7 @@ export async function startGantryRuntime(
   logger.info({ processRole, capabilities: roleCaps }, 'Resolved process role');
 
   const app = getDefaultRuntimeApp({
+    processRole,
     mcpHostnameLookup: () => mcpHostnameLookup,
     publishRuntimeEvent: async (event) => {
       await getRuntimeEventExchange().publish(event);
@@ -215,6 +217,9 @@ export async function startGantryRuntime(
     closeLiveTurnRecovery: async () => {
       stopLiveTurnRecoveryLoop();
     },
+    closeAsyncTaskRecovery: async () => {
+      stopAsyncTaskRecoveryLoop();
+    },
     closeLiveTurnAuthority: shutdownLiveTurnAuthority,
     closeSettingsWatcher: settingsWatcher.close,
     closeLiveRecoveryCoordinatorLease: async () => {
@@ -268,6 +273,7 @@ export async function startGantryRuntime(
         opsRepository: storage.ops,
         getToolRepository: () => storage.repositories.tools,
         getSkillRepository: () => storage.repositories.skills,
+        getAsyncTaskRepository: () => storage.repositories.asyncTasks,
         getMcpServerRepository: () => storage.repositories.mcpServers,
         getCapabilitySecretRepository: () =>
           storage.repositories.capabilitySecrets,
@@ -281,6 +287,7 @@ export async function startGantryRuntime(
         getWorkerCoordinationRepository: () =>
           storage.repositories.workerCoordination,
         getLiveTurnRepository: () => storage.repositories.liveTurns,
+        getLiveAdmissionWakeupSource: () => storage.liveAdmissionWakeupSource,
         getRuntimeDependencyRepository: () =>
           storage.repositories.runtimeDependencies,
         publishRuntimeEvent: async (event) => {
@@ -370,7 +377,7 @@ export async function startGantryRuntime(
       currentWorkerInstanceId,
       isSchedulerReady,
       oldestWaitingLiveAdmissionSeconds: getOldestWaitingLiveAdmissionSeconds,
-      liveCapacityLimit: () => runtimeSettings.runtime.queue.maxMessageRuns,
+      liveCapacityLimit: () => app.queue.getPolicy().maxMessageRuns,
       sendConversationIngressProjection: async (input) => {
         await channelWiring.sendMessage(input.conversationJid, input.text, {
           durability: 'required',
