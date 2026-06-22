@@ -73,6 +73,7 @@ RUN apt-get update \
       bubblewrap \
       socat \
       ripgrep \
+      gosu \
     && rm -rf /var/lib/apt/lists/*
 # bubblewrap backs runtime.sandbox.provider=sandbox_runtime (the whole-runner
 # OS sandbox on Linux). Creating its namespaces inside Docker additionally
@@ -87,7 +88,9 @@ RUN apt-get update \
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Non-root runtime user. The base image already ships a `node` user (uid 1000);
-# create a dedicated home and a writable runtime-state dir owned by it.
+# create the default runtime-state dir owned by it. The entrypoint also prepares
+# runtime-mounted GANTRY_HOME values such as /srv/reagent/home before dropping
+# privileges, which ECS/EBS mounts need because they arrive root-owned.
 RUN install -d -o node -g node "${GANTRY_HOME}"
 
 WORKDIR /app
@@ -106,8 +109,6 @@ COPY ops/docker/migrate.mjs ./ops/docker/migrate.mjs
 COPY ops/docker/fleet-settings-seed.mjs ./ops/docker/fleet-settings-seed.mjs
 COPY ops/docker/entrypoint.sh /usr/local/bin/gantry-entrypoint
 RUN chmod +x /usr/local/bin/gantry-entrypoint
-
-USER node
 
 # Control port (liveness /healthz, readiness /readyz, internal /metrics) is
 # set by the deployment via GANTRY_CONTROL_PORT; documented, not hardcoded.

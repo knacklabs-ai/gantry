@@ -14,6 +14,18 @@ log() {
   printf '%s [entrypoint] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
 }
 
+prepare_runtime_home_and_drop_privileges() {
+  runtime_home="${GANTRY_HOME:-/var/lib/gantry}"
+  if [ "$(id -u)" != "0" ]; then
+    return
+  fi
+
+  mkdir -p "$runtime_home"
+  chown -R node:node "$runtime_home"
+  log "prepared runtime home ${runtime_home} for node user"
+  exec gosu node "$0" "$@"
+}
+
 rand_base64_32() {
   node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"
 }
@@ -119,6 +131,8 @@ load_or_create_rehearsal_secrets() {
   rmdir "$lock_dir"
   trap - EXIT INT TERM
 }
+
+prepare_runtime_home_and_drop_privileges "$@"
 
 if [ "${GANTRY_FLEET_REHEARSAL_AUTO_SECRETS:-0}" = "1" ]; then
   load_or_create_rehearsal_secrets
