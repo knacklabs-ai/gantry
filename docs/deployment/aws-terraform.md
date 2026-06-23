@@ -81,7 +81,7 @@ runtime image first-bootstraps a minimal workstation `settings.yaml` when
 command is `node dist/index.js`. The bootstrap writes to `GANTRY_HOME`
 (`/var/lib/gantry` by default), derives the Postgres schema from
 `GANTRY_SETTINGS_POSTGRES_SCHEMA`, the `schema=` query parameter in
-`GANTRY_DATABASE_URL`, or `GANTRY_DB_SCHEMA`, falling back to `reagent`. The
+`GANTRY_DATABASE_URL`, or `GANTRY_DB_SCHEMA`, falling back to `gantry`. The
 explicit migration pass uses the same schema precedence. Existing mounted
 `settings.yaml` files are left untouched. A fresh workstation bootstrap imports
 the generated file through the normal workstation settings path after

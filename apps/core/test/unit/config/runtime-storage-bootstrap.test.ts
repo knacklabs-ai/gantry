@@ -68,7 +68,7 @@ describe('runtime storage bootstrap', () => {
     });
   });
 
-  it('defaults bootstrap settings to workstation mode and the reagent Postgres schema', () => {
+  it('defaults bootstrap settings to workstation mode and the Gantry Postgres schema', () => {
     withCleanEnv(() => {
       const runtimeHome = fs.mkdtempSync(
         path.join(os.tmpdir(), 'gantry-storage-bootstrap-'),
@@ -79,13 +79,13 @@ describe('runtime storage bootstrap', () => {
 
       const config = resolveRuntimeStorageConfig(runtimeHome, runtimeHome);
 
-      expect(config.postgresSchema).toBe('reagent');
+      expect(config.postgresSchema).toBe('gantry');
       expect(config.postgresUrl).toBeNull();
       expect(fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8')).toContain(
         'deployment_mode: workstation',
       );
       expect(fs.readFileSync(settingsFilePath(runtimeHome), 'utf-8')).toContain(
-        'schema: reagent',
+        'schema: gantry',
       );
     });
   });

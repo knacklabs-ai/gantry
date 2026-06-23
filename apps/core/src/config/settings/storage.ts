@@ -111,5 +111,5 @@ function resolveBootstrapSettingsSchema(): string {
       // Let the normal Postgres URL validation report malformed URLs.
     }
   }
-  return runtimeEnvValueDynamic('GANTRY_DB_SCHEMA').trim() || 'reagent';
+  return runtimeEnvValueDynamic('GANTRY_DB_SCHEMA').trim() || 'gantry';
 }

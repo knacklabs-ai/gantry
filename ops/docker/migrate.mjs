@@ -30,7 +30,7 @@
 //   GANTRY_SETTINGS_POSTGRES_SCHEMA
 //   schema= query parameter in MIGRATION_DATABASE_URL / GANTRY_DATABASE_URL
 //   GANTRY_DB_SCHEMA
-//   "reagent"
+//   "gantry" (matches DEFAULT_STORAGE_POSTGRES_SCHEMA)
 
 import { PostgresStorageService } from '../../dist/adapters/storage/postgres/storage-service.js';
 import { fleetRehearsalPlaintextPostgresHosts } from '../../dist/adapters/storage/postgres/url.js';
@@ -58,7 +58,7 @@ function resolveSchema(url) {
     // Let PostgresStorageService report malformed URLs below.
   }
 
-  return process.env.GANTRY_DB_SCHEMA?.trim() || 'reagent';
+  return process.env.GANTRY_DB_SCHEMA?.trim() || 'gantry';
 }
 
 async function main() {

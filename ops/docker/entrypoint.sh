@@ -53,7 +53,7 @@ if (url) {
     // Fall through to env/default; migrate.mjs will report malformed URLs.
   }
 }
-process.stdout.write(process.env.GANTRY_DB_SCHEMA?.trim() || 'reagent');
+process.stdout.write(process.env.GANTRY_DB_SCHEMA?.trim() || 'gantry');
 NODE
 }
 
