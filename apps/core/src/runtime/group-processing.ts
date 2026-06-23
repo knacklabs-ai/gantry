@@ -625,7 +625,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           sentAnyTurnDoneProgress &&
           !activeGenerationHasOutput
         )
-          resetActiveElapsed();
+          startUserVisibleTurn();
         if (!typingActive) {
           await setTypingState(true);
         }

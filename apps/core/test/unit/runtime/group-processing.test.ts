@@ -1984,6 +1984,74 @@ describe('createGroupProcessor', () => {
       await processing;
     });
 
+    it('starts fresh progress when follow-up output arrives after a completed turn', async () => {
+      const group = makeGroup({ requiresTrigger: false });
+      const messages = [makeMessage()];
+      const channel = makeChannel({
+        sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath({ group, messages });
+      deps.channelRuntime = channel;
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: ConversationRoute,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({ status: 'success', result: 'first turn' });
+          await onOutput?.({ status: 'success', result: null });
+          await onOutput?.({ status: 'success', result: 'follow-up turn' });
+          await onOutput?.({ status: 'success', result: null });
+          return { status: 'success', result: null } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      const progressCalls = (
+        channel.sendProgressUpdate as ReturnType<typeof vi.fn>
+      ).mock.calls;
+      const indexedProgressCalls = progressCalls.map((call, index) => ({
+        call,
+        index,
+      }));
+      const doneCalls = indexedProgressCalls.filter(
+        ({ call }) =>
+          typeof call[1] === 'string' && call[1].startsWith('✅ Done · '),
+      );
+      expect(doneCalls).toHaveLength(2);
+
+      const firstDone = doneCalls[0];
+      const secondDone = doneCalls[1];
+      const followUpWorking = indexedProgressCalls.find(
+        ({ call, index }) =>
+          firstDone !== undefined &&
+          secondDone !== undefined &&
+          index > firstDone.index &&
+          index < secondDone.index &&
+          call[1] === '⏳ Working',
+      );
+      const followUpGeneration = followUpWorking?.call[2]?.generation;
+
+      expect(followUpGeneration).toEqual(expect.any(Number));
+      expect(followUpWorking?.call[2]?.actionAffordances).toContainEqual(
+        expect.objectContaining({
+          kind: 'live_turn_stop',
+          label: 'Stop',
+        }),
+      );
+      expect(followUpGeneration).not.toBe(firstDone?.call[2]?.generation);
+      expect(secondDone?.call[2]).toEqual(
+        expect.objectContaining({
+          done: true,
+          generation: followUpGeneration,
+        }),
+      );
+    });
+
     it('resets elapsed progress after an idle turn boundary inside the same agent process', async () => {
       const group = makeGroup({ requiresTrigger: false });
       const messages = [makeMessage()];
