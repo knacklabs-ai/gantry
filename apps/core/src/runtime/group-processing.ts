@@ -392,6 +392,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     let activeGenerationHasOutput = false;
     let sentAnyTurnDoneProgress = false;
     let sentTurnDoneProgressGeneration: number | null = null;
+    let userVisibleTurnProgressReady: Promise<void> | null = null;
     const sendTurnDoneProgress = async (state: FinalProgressState) => {
       if (
         !activeGenerationHasOutput ||
@@ -403,7 +404,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       sentAnyTurnDoneProgress = true;
       await sendDoneProgress(state);
     };
-    const startUserVisibleTurn = () => {
+    const startUserVisibleTurn = async () => {
       progressGeneration = streamGeneration = streamingGenerationCounter += 1;
       activeGenerationHasOutput = false;
       resetActiveElapsed();
@@ -414,7 +415,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         .catch((err) =>
           logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
         );
-      void sendRunningProgress();
+      const progressReady = sendRunningProgress().finally(() => {
+        if (userVisibleTurnProgressReady === progressReady) {
+          userVisibleTurnProgressReady = null;
+        }
+      });
+      userVisibleTurnProgressReady = progressReady;
+      await progressReady;
     };
     const sendWaitingForUserResponseProgress = async () => {
       if (!supportsProgress) return;
@@ -455,7 +462,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     });
     ({ typingHeartbeatTimer, progressTimer } = progressHeartbeat);
     const unregisterContinuationHandler =
-      deps.queue.registerContinuationHandler?.(queueJid, startUserVisibleTurn);
+      deps.queue.registerContinuationHandler?.(queueJid, () => {
+        void startUserVisibleTurn();
+      });
     const cancelTurnUiTimers = () => {
       if (typingHeartbeatTimer) {
         clearInterval(typingHeartbeatTimer);
@@ -624,8 +633,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           !typingActive &&
           sentAnyTurnDoneProgress &&
           !activeGenerationHasOutput
-        )
-          startUserVisibleTurn();
+        ) {
+          await startUserVisibleTurn();
+        } else if (sentAnyTurnDoneProgress && !activeGenerationHasOutput) {
+          await userVisibleTurnProgressReady;
+        }
         if (!typingActive) {
           await setTypingState(true);
         }
