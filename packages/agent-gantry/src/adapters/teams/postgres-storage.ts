@@ -23,7 +23,7 @@ export function createPgGantryRuntimeStorage(
           input.messageId,
           input.senderId ?? null,
           input.text ?? null,
-          JSON.stringify(input.payload ?? {}),
+          input.payload ?? {},
           input.occurredAt,
         ],
       );
@@ -38,9 +38,9 @@ export function createPgGantryRuntimeStorage(
           input.taskType,
           input.correlationId ?? null,
           input.status,
-          JSON.stringify(input.input),
-          JSON.stringify(input.output ?? {}),
-          JSON.stringify(input.validationReport ?? {}),
+          input.input,
+          input.output ?? {},
+          input.validationReport ?? {},
           input.error ?? null,
           input.occurredAt,
         ],
@@ -98,7 +98,7 @@ export function createPgGantryRuntimeStorage(
           key.conversationScopeType,
           key.conversationScopeId,
           input.summaryText ?? '',
-          JSON.stringify(input.stateJson ?? {}),
+          normalizeStateJsonForWrite(input.stateJson),
           input.lastSubjectId ?? null,
           input.lastSeenAt,
           input.expiresAt,
@@ -123,7 +123,12 @@ export function createPgGantryRuntimeStorage(
               when "${schema}"."user_conversation_state".summary_text = '' then excluded.summary_text
               else left("${schema}"."user_conversation_state".summary_text || E'\n' || excluded.summary_text, 2000)
             end,
-            state_json = "${schema}"."user_conversation_state".state_json || excluded.state_json,
+            state_json = case
+              when jsonb_typeof("${schema}"."user_conversation_state".state_json) = 'object'
+                and jsonb_typeof(excluded.state_json) = 'object'
+              then "${schema}"."user_conversation_state".state_json || excluded.state_json
+              else excluded.state_json
+            end,
             last_subject_id = coalesce(excluded.last_subject_id, "${schema}"."user_conversation_state".last_subject_id),
             last_seen_at = greatest("${schema}"."user_conversation_state".last_seen_at, excluded.last_seen_at),
             expires_at = greatest("${schema}"."user_conversation_state".expires_at, excluded.expires_at),
@@ -138,7 +143,7 @@ export function createPgGantryRuntimeStorage(
           key.conversationScopeType,
           key.conversationScopeId,
           input.summaryText ?? '',
-          JSON.stringify(input.stateJson ?? {}),
+          normalizeStateJsonForWrite(input.stateJson),
           input.lastSubjectId ?? null,
           input.lastSeenAt,
           input.expiresAt,
@@ -303,7 +308,7 @@ function mapUserConversationStateRow(
     conversationScopeType: String(row.conversation_scope_type ?? ''),
     conversationScopeId: String(row.conversation_scope_id ?? ''),
     summaryText: typeof row.summary_text === 'string' ? row.summary_text : '',
-    stateJson: asRecord(row.state_json) ?? {},
+    stateJson: normalizeStateJsonForRead(row.state_json),
     lastSubjectId:
       typeof row.last_subject_id === 'string' ? row.last_subject_id : null,
     lastSeenAt: normalizeDateLike(row.last_seen_at),
@@ -311,6 +316,41 @@ function mapUserConversationStateRow(
     createdAt: normalizeDateLike(row.created_at),
     updatedAt: normalizeDateLike(row.updated_at),
   };
+}
+
+function normalizeStateJsonForWrite(
+  value: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  return asRecord(value) ?? {};
+}
+
+function normalizeStateJsonForRead(value: unknown): Record<string, unknown> {
+  const direct = asRecord(value);
+  if (direct) {
+    return direct;
+  }
+  if (typeof value === 'string') {
+    return parseStateJsonRecord(value) ?? {};
+  }
+  if (Array.isArray(value)) {
+    for (const item of [...value].reverse()) {
+      const parsed = typeof item === 'string'
+        ? parseStateJsonRecord(item)
+        : asRecord(item);
+      if (parsed) {
+        return parsed;
+      }
+    }
+  }
+  return {};
+}
+
+function parseStateJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    return asRecord(JSON.parse(value) as unknown);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeDateLike(value: unknown): string {

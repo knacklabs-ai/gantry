@@ -1208,8 +1208,15 @@ describe('@cawstudios/agent-gantry', () => {
     expect(String(calls[0]?.[0])).toContain(
       '"gantry_runtime"."user_conversation_state"',
     );
+    expect((calls[0]?.[1] as unknown[] | undefined)?.[7]).toEqual({
+      last_intent: 'document_qa',
+    });
     expect(String(calls[1]?.[0])).toContain('expires_at > now()');
     expect(String(calls[2]?.[0])).toContain('state_json');
+    expect(String(calls[2]?.[0])).toContain('jsonb_typeof');
+    expect((calls[2]?.[1] as unknown[] | undefined)?.[7]).toEqual({
+      last_answered: true,
+    });
     expect(calls[1]?.[1]).toEqual([
       'teams',
       'tenant-1',
@@ -1218,6 +1225,49 @@ describe('@cawstudios/agent-gantry', () => {
       'teams_thread',
       'reply-1',
     ]);
+  });
+
+  it('normalizes legacy pg-backed conversation state JSON shapes on read', async () => {
+    const storage = createPgGantryRuntimeStorage({
+      pool: {
+        query: async () => ({
+          rows: [
+            {
+              provider: 'teams',
+              tenant_id: 'tenant-1',
+              user_id: 'user-1',
+              conversation_id: 'conversation-1',
+              conversation_scope_type: 'teams_thread',
+              conversation_scope_id: 'reply-1',
+              summary_text: 'Safe UX summary',
+              state_json: [
+                '{"last_intent":"older"}',
+                '{"last_intent":"document_qa","last_answered":true}',
+              ],
+              last_subject_id: 'subject-1',
+              last_seen_at: '2026-06-01T00:00:00.000Z',
+              expires_at: '2026-07-01T00:00:00.000Z',
+              created_at: '2026-06-01T00:00:00.000Z',
+              updated_at: '2026-06-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      },
+    });
+
+    await expect(
+      storage.getUserConversationState?.({
+        provider: 'teams',
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        conversationId: 'conversation-1',
+        conversationScopeType: 'teams_thread',
+        conversationScopeId: 'reply-1',
+      }),
+    ).resolves.toMatchObject({
+      stateJson: { last_intent: 'document_qa', last_answered: true },
+      lastSubjectId: 'subject-1',
+    });
   });
 
   it('runs structured model tasks and records audit state', async () => {
