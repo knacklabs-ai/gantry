@@ -124,6 +124,7 @@ const expectedControlRoutes = [
   'POST /v1/webhooks/{webhookId}/purge-dead-letter',
   'POST /v1/webhooks/{webhookId}/replay-dead-letter',
   'POST /v1/webhooks/{webhookId}/test',
+  'GET /livez',
 ].sort();
 
 type TestResponse = ServerResponse & {
@@ -342,6 +343,13 @@ describe('control OpenAPI documentation', () => {
     expect(
       spec.paths['/v1/credentials/models']?.get['x-gantry-required-scopes'],
     ).toEqual(['credentials:read']);
+    expect(spec.paths['/livez']?.get).toMatchObject({
+      operationId: 'getLiveness',
+    });
+    expect(spec.paths['/livez']?.get.security).toBeUndefined();
+    expect(
+      spec.paths['/livez']?.get['x-gantry-required-scopes'],
+    ).toBeUndefined();
     expect(
       spec.paths['/v1/credentials/models/{providerId}']?.put.parameters,
     ).toEqual([

@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fixedClock } from '@core/shared/time/datetime.js';
@@ -188,6 +192,50 @@ describe('logger', () => {
     l.warn('emit warn');
     expect(records).toHaveLength(1);
     expect(records[0]?.level).toBe('warn');
+  });
+
+  it('loads default logger level and format from runtime env file', async () => {
+    const originalHome = process.env.GANTRY_HOME;
+    const originalLevel = process.env.LOG_LEVEL;
+    const originalFormat = process.env.LOG_FORMAT;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-logger-'),
+    );
+    fs.writeFileSync(
+      path.join(runtimeHome, '.env'),
+      'LOG_LEVEL=warn\nLOG_FORMAT=json\n',
+    );
+    process.env.GANTRY_HOME = runtimeHome;
+    delete process.env.LOG_LEVEL;
+    delete process.env.LOG_FORMAT;
+    vi.resetModules();
+
+    try {
+      const imported = await import('@core/infrastructure/logging/logger.js');
+      imported.logger.info('skip info from runtime env');
+      imported.logger.warn('warn as json from runtime env');
+
+      const stdout = stdoutWriteSpy.mock.calls
+        .map((call: unknown[]) => String(call[0]))
+        .join('');
+      const stderr = stderrWriteSpy.mock.calls
+        .map((call: unknown[]) => String(call[0]))
+        .join('')
+        .trim();
+      expect(stdout).toBe('');
+      const parsed = JSON.parse(stderr) as LogRecord;
+      expect(parsed.level).toBe('warn');
+      expect(parsed.message).toBe('warn as json from runtime env');
+    } finally {
+      if (originalHome === undefined) delete process.env.GANTRY_HOME;
+      else process.env.GANTRY_HOME = originalHome;
+      if (originalLevel === undefined) delete process.env.LOG_LEVEL;
+      else process.env.LOG_LEVEL = originalLevel;
+      if (originalFormat === undefined) delete process.env.LOG_FORMAT;
+      else process.env.LOG_FORMAT = originalFormat;
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+      vi.resetModules();
+    }
   });
 
   it('does not install process handlers on module import', async () => {

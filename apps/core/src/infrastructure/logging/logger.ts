@@ -5,6 +5,7 @@ import {
   toIso,
 } from '../../shared/time/datetime.js';
 import { isPlainObject } from '../../shared/object.js';
+import { runtimeEnvValueDynamic } from '../../config/env/index.js';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -218,7 +219,8 @@ function normalizeLevel(raw?: string): LogLevel {
 }
 
 export function createLogger(options: CreateLoggerOptions = {}): Logger {
-  const level = options.level || normalizeLevel(process.env.LOG_LEVEL);
+  const level =
+    options.level || normalizeLevel(runtimeEnvValueDynamic('LOG_LEVEL'));
   const clock = options.clock || systemClock;
   const redact = options.redact || defaultRedact;
   const baseContext = options.context;
@@ -278,7 +280,7 @@ export function createLogger(options: CreateLoggerOptions = {}): Logger {
 }
 
 export const logger = createLogger({
-  format: process.env.LOG_FORMAT === 'json' ? 'json' : 'text',
+  format: runtimeEnvValueDynamic('LOG_FORMAT') === 'json' ? 'json' : 'text',
 });
 
 type MarkedUncaughtExceptionHandler = ((err: Error) => void) & {

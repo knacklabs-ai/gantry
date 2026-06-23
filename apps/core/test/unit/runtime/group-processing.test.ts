@@ -617,8 +617,8 @@ describe('createGroupProcessor', () => {
     });
 
     it('does not send non-final LLM progress output when the Boondi progress flag is off', async () => {
-      const previous = process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
-      delete process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
+      const previous = process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
+      delete process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
       try {
         const agentOutput: AgentOutput = {
           status: 'success',
@@ -650,16 +650,16 @@ describe('createGroupProcessor', () => {
         );
       } finally {
         if (previous === undefined) {
-          delete process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
+          delete process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
         } else {
-          process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = previous;
+          process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = previous;
         }
       }
     });
 
     it('sends guarded non-final LLM output as a progress message when enabled', async () => {
-      const previous = process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
-      process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = '1';
+      const previous = process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
+      process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = '1';
       try {
         const agentOutput: AgentOutput = {
           status: 'success',
@@ -697,16 +697,16 @@ describe('createGroupProcessor', () => {
         expect(channel.sendMessage).toHaveBeenCalledTimes(2);
       } finally {
         if (previous === undefined) {
-          delete process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
+          delete process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
         } else {
-          process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = previous;
+          process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = previous;
         }
       }
     });
 
     it('sends text-only non-final LLM progress before the final reply returns', async () => {
-      const previous = process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
-      process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = '1';
+      const previous = process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
+      process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = '1';
       try {
         const allowFinal = deferred<AgentOutput>();
         const progressHandled = deferred();
@@ -769,16 +769,16 @@ describe('createGroupProcessor', () => {
         expect(channel.sendMessage).toHaveBeenCalledTimes(2);
       } finally {
         if (previous === undefined) {
-          delete process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
+          delete process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
         } else {
-          process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = previous;
+          process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = previous;
         }
       }
     });
 
     it('skips non-final LLM progress output longer than 160 characters', async () => {
-      const previous = process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
-      process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = '1';
+      const previous = process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
+      process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = '1';
       try {
         const agentOutput: AgentOutput = {
           status: 'success',
@@ -810,9 +810,9 @@ describe('createGroupProcessor', () => {
         );
       } finally {
         if (previous === undefined) {
-          delete process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES;
+          delete process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES;
         } else {
-          process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES = previous;
+          process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES = previous;
         }
       }
     });

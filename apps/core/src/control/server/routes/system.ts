@@ -16,6 +16,11 @@ export async function handleSystemRoutes(
   ctx: ControlRouteContext,
   pathname: string,
 ): Promise<boolean> {
+  if (pathname === '/livez' && req.method === 'GET') {
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   if (pathname === '/v1/health' && req.method === 'GET') {
     if (!authorizeControlRequest(req, res, ctx.keys, ['sessions:read'])) {
       return true;

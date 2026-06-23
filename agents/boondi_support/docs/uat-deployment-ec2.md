@@ -39,8 +39,9 @@ to `127.0.0.1`.
 **UAT input loop (no real WhatsApp yet):** your admin dashboard injects a test
 customer message into core's Control API over localhost → the agent runs *for
 real* (real guardrail, real model call, real Shopify lookups) → reply is
-generated and persisted → `GANTRY_OUTBOUND_DRYRUN=1` skips the actual WhatsApp
-send → your dashboard reads the transcript and shows the conversation. Real
+generated and persisted → `GANTRY_OUTBOUND_DRYRUN=1` holds back every customer
+WhatsApp send (only your own `GANTRY_TEST_OPERATOR_PHONE` numbers deliver) → your
+dashboard reads the transcript and shows the conversation. Real
 product behaviour, zero WhatsApp plumbing. Flip to real WhatsApp later (§10).
 
 ---
@@ -158,6 +159,18 @@ SHOPIFY_MCP_REQUIRE_VERIFIED_IDENTITY=true
 # Background extractor token seam (optional; falls back to the shared
 # Gantry model credential when unset — fine for UAT)
 GANTRY_BACKGROUND_ANTHROPIC_TOKEN=
+
+# ===== DEV / TEST FLAGS — UAT keeps DRYRUN ON; flip off only at §10 (go live) =
+# Boolean flags compare the RAW string "1": keep a BARE 1, NO trailing comment.
+# Dry-run ("1" = on): persist every reply to Postgres (the admin dashboard shows
+# them), but only SEND to WhatsApp when the chat's number is in
+# GANTRY_TEST_OPERATOR_PHONE below. Real customers are NEVER sent to. Set 0 only
+# for real production sends to every customer (see §10).
+GANTRY_OUTBOUND_DRYRUN=1
+# Number(s) that DO receive real WhatsApp while DRYRUN=1 (comma/space separated,
+# digits only). Leave EMPTY = pure dashboard UAT (nothing sent, replies only
+# persist). Put YOUR OWN test WhatsApp here to watch replies arrive live.
+GANTRY_TEST_OPERATOR_PHONE=
 ```
 
 > Confirm the exact mcp-crm env keys in `packages/mcp-crm/src/env.ts` (it opens its
@@ -204,8 +217,8 @@ Validate: `node dist/cli/index.js settings validate`
 ## 8. Run the stack (pm2)
 
 Mirrors `scripts/boondi-runtime-stack.sh` launch order, **productionized**: no
-dry-run-test scaffolding, control bound to localhost, pm2 for restart-on-crash +
-start-on-boot. Create `/opt/boondi/ecosystem.config.js`:
+dev capture-harness scaffolding (DRYRUN stays ON for UAT via `.env` §5), control bound to localhost, pm2 for restart-on-crash +
+start-on-boot. Create `/opt/boondi/ecosystem.config.cjs`:
 
 ```js
 const cwd = '/opt/boondi/Agent.Gantry'
@@ -221,10 +234,9 @@ module.exports = {
       kill_timeout: 30000,           // give core time to drain in-flight chats on reload
       env: {
         GANTRY_HOME: '/home/ubuntu/gantry',
-        GANTRY_CONTROL_HOST: '127.0.0.1',
-        GANTRY_CONTROL_PORT: '4710',
+        // CONTROL_HOST/_PORT + OUTBOUND_DRYRUN now live in .env (§5); keep only
+        // the bootstrap pointer + the IPC socket path here.
         GANTRY_IPC_SOCKET_PATH: '/run/gantry/core.sock',
-        GANTRY_OUTBOUND_DRYRUN: '1',  // UAT: generate+persist replies, skip real WhatsApp send
       } },
     { name: 'boondi-admin', cwd: '/opt/boondi/admin', script: 'npm', args: 'start',
       env: { PORT: '3000',
@@ -236,7 +248,7 @@ module.exports = {
 
 ```bash
 mkdir -p /run/gantry
-pm2 start /opt/boondi/ecosystem.config.js
+pm2 start /opt/boondi/ecosystem.config.cjs
 pm2 save && pm2 startup     # run the printed command so it survives reboot
 pm2 logs                    # watch boot
 ```
@@ -244,7 +256,7 @@ pm2 logs                    # watch boot
 Health check (all should answer):
 
 ```bash
-curl -s localhost:4710/ -o /dev/null -w '%{http_code}\n'   # core
+curl -s localhost:4710/openapi.json -o /dev/null -w '%{http_code}\n'   # core -> 200 (root `/` is 404)
 curl -s localhost:8081/healthz                              # shopify -> {"ok":true}
 curl -s localhost:8082/healthz                              # crm     -> {"ok":true}
 ```
@@ -370,7 +382,7 @@ Interakt requires a **3-second ACK** and **disables the webhook after 5 fails in
 set -euo pipefail
 APP_DIR="${UAT_APP_DIR:-/opt/boondi/Agent.Gantry}"
 ADMIN_DIR="${UAT_ADMIN_DIR:-/opt/boondi/admin}"
-ECOSYSTEM="${UAT_ECOSYSTEM:-/opt/boondi/ecosystem.config.js}"
+ECOSYSTEM="${UAT_ECOSYSTEM:-/opt/boondi/ecosystem.config.cjs}"
 BRANCH="${UAT_BRANCH:-UAT}"
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -462,7 +474,7 @@ Deploys the instant you push, still no inbound ports (the runner dials out).
   changes are safe — avoid destructive column drops in a UAT deploy.
 - **Rollback:** the deploy log prints the previous SHA. To revert:
   ```bash
-  cd /opt/boondi/Agent.Gantry && git reset --hard <PREV_SHA> && npm run build && pm2 reload /opt/boondi/ecosystem.config.js
+  cd /opt/boondi/Agent.Gantry && git reset --hard <PREV_SHA> && npm run build && pm2 reload /opt/boondi/ecosystem.config.cjs
   ```
 - **Bulletproof upgrade (optional):** release-dir + symlink deploys (build each release
   in `/opt/boondi/releases/<sha>`, atomically repoint a `current` symlink, reload) give

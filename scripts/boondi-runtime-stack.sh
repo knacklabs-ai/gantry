@@ -51,7 +51,7 @@ generate_smoke_token() {
 }
 
 smoke_token_from_control_keys_json() {
-  CONTROL_API_KEYS_JSON="$1" node -e "const raw=(process.env.CONTROL_API_KEYS_JSON||'').trim(); const json=((raw.startsWith('\\\"')&&raw.endsWith('\\\"'))||(raw.startsWith(\"'\")&&raw.endsWith(\"'\"))) ? raw.slice(1,-1) : raw; const keys=JSON.parse(json); const key=keys.find((candidate)=>Array.isArray(candidate.scopes)&&candidate.scopes.includes('sessions:read')) || keys[0]; if (!key?.token) process.exit(1); process.stdout.write(key.token)"
+  CONTROL_API_KEYS_JSON="$1" node -e "const raw=(process.env.CONTROL_API_KEYS_JSON||'').trim(); const json=((raw.startsWith('\\\"')&&raw.endsWith('\\\"'))||(raw.startsWith(\"'\")&&raw.endsWith(\"'\"))) ? raw.slice(1,-1) : raw; const keys=JSON.parse(json); const key=keys.find((candidate)=>Array.isArray(candidate.scopes)&&candidate.scopes.includes('sessions:read')); if (!key?.token) process.exit(1); process.stdout.write(key.token)"
 }
 
 control_keys_json_for_token() {
@@ -102,14 +102,21 @@ write_smoke_env() {
   chmod 600 "$smoke_env"
 }
 
+core_health_code() {
+  local core_port="$1"
+
+  curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+    "http://127.0.0.1:${core_port}/livez" 2>/dev/null || true
+}
+
 wait_for_core_port() {
   local core_port="$1"
   local core_log="$2"
   local core_pid="$3"
 
   for _ in $(seq 1 "$GANTRY_CORE_READY_TIMEOUT_SECONDS"); do
-    core=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:${core_port}/" 2>/dev/null || true)
-    if [ -n "$core" ] && [ "$core" != "000" ]; then
+    core="$(core_health_code "$core_port")"
+    if [ "$core" = "200" ]; then
       return 0
     fi
     if ! kill -0 "$core_pid" 2>/dev/null; then
@@ -233,9 +240,9 @@ for _ in $(seq 1 60); do
   core_ready=1
   core_codes=()
   for core_port in "${CORE_PORTS[@]}"; do
-    core=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:${core_port}/" 2>/dev/null || true)
+    core="$(core_health_code "$core_port")"
     core_codes+=("$core")
-    if [ -z "$core" ] || [ "$core" = "000" ]; then
+    if [ "$core" != "200" ]; then
       core_ready=0
     fi
   done

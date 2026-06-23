@@ -127,6 +127,22 @@ describe('system control routes', () => {
     vi.useRealTimers();
   });
 
+  it('returns unauthenticated liveness without runtime details', async () => {
+    const res = responseRecorder();
+
+    const handled = await handleSystemRoutes(
+      request({ method: 'GET', authorization: null }),
+      res,
+      mockContext(),
+      '/livez',
+    );
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('application/json');
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+  });
+
   it('returns the local runtime worker inventory snapshot and healthy totals', async () => {
     const res = responseRecorder();
 

@@ -3,6 +3,14 @@ import { doc, ids, query, type RouteDoc } from './openapi-route-helpers.js';
 export const coreOpenApiRouteDocs: RouteDoc[] = [
   doc(
     'get',
+    '/livez',
+    'getLiveness',
+    'System',
+    'Check unauthenticated process liveness',
+    'Returns a minimal liveness response without runtime details or control API authorization.',
+  ),
+  doc(
+    'get',
     '/v1/health',
     'getHealth',
     'System',

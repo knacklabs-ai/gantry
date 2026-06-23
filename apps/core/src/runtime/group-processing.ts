@@ -90,8 +90,12 @@ type ActiveTurnUiCleanup = { token: symbol; cancel: () => void };
 const activeTurnUiCleanupByQueue = new Map<string, ActiveTurnUiCleanup>();
 const idleRunnerCleanupByQueue = new Map<string, () => void>();
 
-function boondiLlmProgressMessagesEnabled(): boolean {
-  return process.env.BOONDI_SEND_LLM_PROGRESS_MESSAGES?.trim() === '1';
+// Opt-in: send each non-final LLM turn's preamble ("let me look that up…") as an
+// early progress message so the customer isn't left waiting through tool calls.
+// Generic runtime feature (agent-agnostic); hydrated from $GANTRY_HOME/.env via
+// the allowlist in app/index.ts so it works under any launcher (dev or PM2).
+function llmProgressMessagesEnabled(): boolean {
+  return process.env.GANTRY_SEND_LLM_PROGRESS_MESSAGES?.trim() === '1';
 }
 
 export function createGroupProcessor(deps: GroupProcessingDeps) {
@@ -409,7 +413,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     let lastPersistedTraceCursorId: string | undefined;
     let progressDeliveredTurnCount = 0;
     const sendLlmProgressText = async (rawText: string): Promise<void> => {
-      if (!boondiLlmProgressMessagesEnabled()) return;
+      if (!llmProgressMessagesEnabled()) return;
       const raw = rawText.trim();
       if (!raw || raw.length > LLM_PROGRESS_MAX_CHARS) return;
       const guarded = guardCustomerVisibleOutput({
@@ -435,7 +439,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const sendLlmProgressMessages = async (
       turns: NonNullable<AgentOutput['turns']>,
     ): Promise<void> => {
-      if (!boondiLlmProgressMessagesEnabled()) {
+      if (!llmProgressMessagesEnabled()) {
         progressDeliveredTurnCount = turns.length;
         return;
       }
@@ -986,7 +990,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         }
         resetIdleTimer();
         if (
-          boondiLlmProgressMessagesEnabled() &&
+          llmProgressMessagesEnabled() &&
           result.llmTurnOutput &&
           result.llmTurnOutput.stopReason !== 'end_turn'
         ) {

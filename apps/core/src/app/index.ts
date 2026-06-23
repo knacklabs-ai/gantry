@@ -90,10 +90,15 @@ export async function startGantryRuntime(
     // tree exists); settable from .env so dev runs don't need a rebuild per
     // runner-side edit.
     'GANTRY_CHILD_RUNNER_FROM_SOURCE',
+    'GANTRY_CHILD_RUNNER_INSPECT_PORT',
     // Dev-only: when '1', the per-reply latency trace also persists full
     // request/response + LLM input/output payloads (payloads_json). Timings are
     // always captured; only payload capture is gated. Off in production.
     'GANTRY_TRACE_PAYLOADS',
+    // Opt-in: send each non-final LLM turn's preamble as an early progress
+    // message (see group-processing.ts). Hydrated here so it works under any
+    // launcher (PM2/build, npm run dev) without exporting it in the shell.
+    'GANTRY_SEND_LLM_PROGRESS_MESSAGES',
   ]);
   if (!options.skipPreflight) {
     const validation = await validateRuntimePreflightWithStorage(GANTRY_HOME);

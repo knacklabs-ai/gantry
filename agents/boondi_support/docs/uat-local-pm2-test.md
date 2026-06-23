@@ -75,7 +75,7 @@ pm2 logs            # watch boot; Ctrl-C to stop tailing
 ## 4. Verify
 
 ```bash
-curl -s localhost:4710/openapi.json -o /dev/null -w 'core %{http_code}\n'
+curl -s localhost:4710/livez
 curl -s localhost:8081/healthz; echo      # {"ok":true}
 curl -s localhost:8082/healthz; echo      # {"ok":true}
 ```
@@ -95,6 +95,7 @@ Back to normal dev (`npm run dev`) whenever you want.
 
 - **No `pm2 startup`** locally (dev-mode rule; it writes a launchd plist).
 - If the agent ever uses the wrong/personal token, that's injected model env —
-  relaunch pm2 from a clean Terminal.
+relaunch pm2 from a clean Terminal.
 - Only paths differ from EC2: `~/gantry` vs `/home/ubuntu/gantry`, your repo path
-  vs `/opt/boondi/Agent.Gantry`.
+vs `/opt/boondi/Agent.Gantry`.
+
