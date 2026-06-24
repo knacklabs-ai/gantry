@@ -69,4 +69,114 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
       exported,
     );
   });
+
+  it('mirrors persistent tool-rule grants through fleet settings revisions', async () => {
+    const previousSettings = {
+      runtime: { deploymentMode: 'fleet' },
+      agents: {
+        main: {
+          sources: { mcpServers: [] },
+          capabilities: [],
+        },
+      },
+    };
+    const importWorkstationSettings = vi.fn(async () => ({ revision: 4 }));
+    vi.doMock('@core/config/settings/runtime-settings.js', () => ({
+      loadRuntimeSettings: vi.fn(() => previousSettings),
+      saveRuntimeSettings: vi.fn(),
+      activateRuntimeModelAliases: vi.fn(),
+      addAgentToolRulesToRuntimeSettings: vi.fn(
+        (settings, agentFolder, rules) => {
+          settings.agents[agentFolder].capabilities.push(...rules);
+        },
+      ),
+      removeAgentToolRulesFromRuntimeSettings: vi.fn(),
+      withRuntimeModelAliases: vi.fn((_settings, fn) => fn()),
+    }));
+    vi.doMock('@core/config/settings/settings-import-service.js', () => ({
+      importWorkstationSettings,
+    }));
+    vi.doMock('@core/config/settings/desired-state-service.js', () => ({
+      SettingsDesiredStateService: class {},
+    }));
+    vi.doMock(
+      '@core/config/settings/configured-capability-normalization.js',
+      () => ({
+        normalizeConfiguredCapabilitiesInSettings: vi.fn(),
+      }),
+    );
+    vi.doMock('@core/config/settings/runtime-settings-validation.js', () => ({
+      validateLoadedRuntimeSettings: vi.fn(),
+    }));
+
+    const { addAgentToolRulesToSyncedRuntimeSettings } =
+      await import('@core/config/settings/restart-sync.js');
+    const settingsRevisions = {
+      getLatestSettingsRevision: vi.fn(async () => null),
+    } as never;
+    await addAgentToolRulesToSyncedRuntimeSettings({
+      runtimeHome: '/tmp/gantry-test',
+      agentFolder: 'main',
+      rules: ['Browser'],
+      ops: {} as never,
+      repositories: {
+        mcpServers: { listAgentBindings: vi.fn(async () => []) },
+      } as never,
+      appId: 'app:test' as never,
+      settingsRevisions,
+    });
+
+    expect(importWorkstationSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'app:test',
+        previousSettings,
+        revisionMirror: expect.objectContaining({
+          settingsRevisions,
+          createdBy: 'permission:persistent-tool-rule',
+        }),
+        revisionMirrorRequired: true,
+      }),
+      expect.objectContaining({
+        runtime: { deploymentMode: 'fleet' },
+        agents: expect.objectContaining({
+          main: expect.objectContaining({
+            capabilities: ['Browser'],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('fails closed when a fleet tool-rule grant has no settings revision repository', async () => {
+    vi.doMock('@core/config/settings/runtime-settings.js', () => ({
+      loadRuntimeSettings: vi.fn(() => ({
+        runtime: { deploymentMode: 'fleet' },
+        agents: {
+          main: { sources: { mcpServers: [] }, capabilities: [] },
+        },
+      })),
+      saveRuntimeSettings: vi.fn(),
+      activateRuntimeModelAliases: vi.fn(),
+      addAgentToolRulesToRuntimeSettings: vi.fn(),
+      removeAgentToolRulesFromRuntimeSettings: vi.fn(),
+      withRuntimeModelAliases: vi.fn((_settings, fn) => fn()),
+    }));
+
+    const { addAgentToolRulesToSyncedRuntimeSettings } =
+      await import('@core/config/settings/restart-sync.js');
+    await expect(
+      addAgentToolRulesToSyncedRuntimeSettings({
+        runtimeHome: '/tmp/gantry-test',
+        agentFolder: 'main',
+        rules: ['Browser'],
+        ops: {} as never,
+        repositories: {
+          mcpServers: { listAgentBindings: vi.fn(async () => []) },
+        } as never,
+        appId: 'app:test' as never,
+      }),
+    ).rejects.toThrow(
+      'Fleet tool-rule settings mutation requires the settings revisions repository.',
+    );
+  });
 });
