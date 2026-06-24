@@ -20,7 +20,9 @@ export async function forwardExternalTeamsReply(
   const nonce = randomUUID();
   const secret = resolveTeamsReplyHookSecret();
   if (!secret) {
-    logger.warn('External Teams reply hook is configured without a signing secret');
+    logger.warn(
+      'External Teams reply hook is configured without a signing secret',
+    );
     return true;
   }
 

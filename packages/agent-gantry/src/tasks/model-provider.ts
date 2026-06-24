@@ -36,7 +36,7 @@ export function createAnthropicStructuredModelProvider(
   const timeoutMs = Math.max(1_000, config.timeoutMs ?? 60_000);
   const maxRetries = Math.max(1, config.maxRetries ?? 3);
   const maxTokens = Math.max(1, config.maxTokens ?? 4096);
-  const temperature = config.temperature ?? 0;
+  const temperature = config.temperature;
   const apiVersion = config.apiVersion ?? '2023-06-01';
 
   return {
@@ -58,7 +58,7 @@ export function createAnthropicStructuredModelProvider(
               body: JSON.stringify({
                 model,
                 max_tokens: maxTokens,
-                temperature,
+                ...(temperature === undefined ? {} : { temperature }),
                 system: buildAnthropicSystemPrompt(input.instructions),
                 messages: [
                   {

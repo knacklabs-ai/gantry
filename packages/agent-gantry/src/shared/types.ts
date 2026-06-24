@@ -115,6 +115,71 @@ export interface GantryAgentTaskInput {
   readonly onStep?: (step: GantryAgentTaskStep) => Promise<void> | void;
 }
 
+export type GantryAgentGoalEvaluationStatus =
+  | 'passed'
+  | 'failed'
+  | 'partial'
+  | 'not_evaluated';
+
+export interface GantryAgentPreviousGoalEvaluation {
+  readonly goal: string | null;
+  readonly status: GantryAgentGoalEvaluationStatus;
+  readonly evidenceRefs: readonly string[];
+  readonly reason: string;
+}
+
+export type GantryAgentFailedActionRetryPolicy =
+  | 'do_not_repeat'
+  | 'retry_after_new_evidence'
+  | 'safe_to_retry';
+
+export interface GantryAgentFailedAction {
+  readonly step: number;
+  readonly toolName?: string | null;
+  readonly fingerprint?: string | null;
+  readonly reason: string;
+  readonly retryPolicy: GantryAgentFailedActionRetryPolicy;
+}
+
+export interface GantryAgentNextGoal {
+  readonly goal: string;
+  readonly requiredEvidence: readonly string[];
+  readonly recommendedTool?: string | null;
+}
+
+export type GantryAgentBrowserVisualFreshness =
+  | 'current'
+  | 'previous'
+  | 'missing'
+  | 'mismatch';
+
+export interface GantryAgentCurrentBrowserState {
+  readonly step?: number | null;
+  readonly toolName?: string | null;
+  readonly url?: string | null;
+  readonly title?: string | null;
+  readonly snapshotId?: string | null;
+  readonly screenshotRef?: string | null;
+  readonly visualFreshness: GantryAgentBrowserVisualFreshness;
+  readonly openSurfaces?: readonly Record<string, unknown>[];
+  readonly activeSurface?: Record<string, unknown> | null;
+  readonly blockingOverlay?: Record<string, unknown> | null;
+  readonly selectedAction?: Record<string, unknown> | null;
+  readonly lastActionResult?: Record<string, unknown> | null;
+  readonly actionCandidates?: readonly Record<string, unknown>[];
+}
+
+export interface GantryAgentMemory {
+  readonly mainGoal: string;
+  readonly currentGoal: string;
+  readonly previousGoalEvaluation: GantryAgentPreviousGoalEvaluation;
+  readonly durableFacts: Record<string, unknown>;
+  readonly failedActions: readonly GantryAgentFailedAction[];
+  readonly nextGoal: GantryAgentNextGoal;
+  readonly currentBrowserState?: GantryAgentCurrentBrowserState | null;
+  readonly compactionEvents?: readonly Record<string, unknown>[];
+}
+
 export interface GantryAgentTaskAttachment {
   readonly label?: string | null;
   readonly mimeType: string;
@@ -133,20 +198,6 @@ export interface GantryAgentTaskCancellationRequest {
   readonly toolName?: string | null;
 }
 
-export interface GantryAgentTaskAttachmentRequest {
-  readonly taskType: string;
-  readonly correlationId?: string | null;
-  readonly step: number;
-  readonly state: Record<string, unknown>;
-}
-
-export interface GantryAgentTaskStepInstructionsRequest {
-  readonly taskType: string;
-  readonly correlationId?: string | null;
-  readonly step: number;
-  readonly state: Record<string, unknown>;
-}
-
 export interface GantryAgentTaskFinalValidationRequest {
   readonly taskType: string;
   readonly correlationId?: string | null;
@@ -162,6 +213,20 @@ export interface GantryAgentTaskFinalValidationResult {
   readonly reason?: string | null;
   readonly instruction?: string | null;
   readonly details?: Record<string, unknown> | null;
+}
+
+export interface GantryAgentTaskAttachmentRequest {
+  readonly taskType: string;
+  readonly correlationId?: string | null;
+  readonly step: number;
+  readonly state: Record<string, unknown>;
+}
+
+export interface GantryAgentTaskStepInstructionsRequest {
+  readonly taskType: string;
+  readonly correlationId?: string | null;
+  readonly step: number;
+  readonly state: Record<string, unknown>;
 }
 
 export interface GantryAgentTaskStep {
@@ -185,6 +250,9 @@ export interface GantryAgentTaskStep {
   readonly whyThisAction?: string | null;
   readonly expectedStateChange?: string | null;
   readonly fallbackIfWrong?: string | null;
+  readonly previousGoalEvaluation?: Record<string, unknown> | null;
+  readonly memoryUpdate?: Record<string, unknown> | null;
+  readonly nextGoal?: Record<string, unknown> | null;
 }
 
 export interface GantryAgentTaskResult {
@@ -200,6 +268,7 @@ export type GantryBrowserGatewayToolName =
   | 'browser_open'
   | 'browser_inspect'
   | 'browser_act'
+  | 'browser_verify_document_action'
   | 'browser_close';
 
 export type GantryBrowserGatewayInspectMode =
@@ -252,6 +321,17 @@ export interface GantryBrowserGatewayActRequest extends GantryBrowserGatewayRequ
   readonly reason?: string | null;
 }
 
+export interface GantryBrowserGatewayVerifyDocumentActionRequest extends GantryBrowserGatewayRequest {
+  readonly tabId?: string | null;
+  readonly selector?: string | null;
+  readonly ref?: string | null;
+  readonly snapshotId?: string | null;
+  readonly text?: string | null;
+  readonly label?: string | null;
+  readonly payload?: Record<string, unknown>;
+  readonly reason?: string | null;
+}
+
 export interface GantryBrowserGatewayToolProvider {
   status(
     input: GantryBrowserGatewayRequest,
@@ -264,6 +344,9 @@ export interface GantryBrowserGatewayToolProvider {
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
   act(
     input: GantryBrowserGatewayActRequest,
+  ): Promise<Record<string, unknown>> | Record<string, unknown>;
+  verifyDocumentAction?(
+    input: GantryBrowserGatewayVerifyDocumentActionRequest,
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
   close(
     input: GantryBrowserGatewayRequest,

@@ -10,6 +10,7 @@ import {
   createFirecrawlMapProvider,
   createFirecrawlSearchProvider,
   createHttpFetchProvider,
+  createGantryBrowserGatewayAgentTools,
   createGantryClient,
   createGantryRuntime,
   createPgGantryRuntimeStorage,
@@ -23,8 +24,17 @@ import {
   verifyWebhookSignature,
   type BotFrameworkAdapterLike,
 } from '../src/index.js';
+import {
+  normalizeAgentMaxSteps,
+  summarizeAgentObservation,
+} from '../src/tasks/agent-task-runner-helpers.js';
 
 describe('@cawstudios/agent-gantry', () => {
+  it('allows generic agent loops to run up to 100 steps', () => {
+    expect(normalizeAgentMaxSteps(100)).toBe(100);
+    expect(normalizeAgentMaxSteps(101)).toBe(100);
+  });
+
   it('maps Tavily search responses into structured search results', async () => {
     const provider = createTavilySearchProvider({
       apiKey: 'test-key',
@@ -162,6 +172,7 @@ describe('@cawstudios/agent-gantry', () => {
       max_tokens: 4096,
       messages: [{ role: 'user' }],
     });
+    expect(requestBody).not.toHaveProperty('temperature');
     expect(JSON.stringify(requestBody)).not.toContain('test-key');
   });
 
@@ -1529,6 +1540,461 @@ describe('@cawstudios/agent-gantry', () => {
           toolName: 'set_value',
           error: 'value_required',
         }),
+        agentMemory: expect.objectContaining({
+          failedActions: expect.arrayContaining([
+            expect.objectContaining({
+              toolName: 'set_value',
+              reason: 'value_required',
+            }),
+          ]),
+        }),
+      }),
+    });
+  });
+
+  it('preserves early durable agent memory after raw observations compact out', async () => {
+    const modelStates: Array<Record<string, unknown>> = [];
+    let modelStep = 0;
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async (input) => {
+          modelStep += 1;
+          modelStates.push(input.input as Record<string, unknown>);
+          if (modelStep <= 8) {
+            return {
+              action: 'call_tool',
+              toolName: 'observe_page',
+              input: { step: modelStep },
+              previousGoalEvaluation: {
+                goal: modelStep === 1 ? null : `observe page ${modelStep - 1}`,
+                status: modelStep === 1 ? 'not_evaluated' : 'passed',
+                evidenceRefs: [`snapshot-${modelStep - 1}`],
+                reason: 'Recorded page evidence.',
+              },
+              memoryUpdate: {
+                durableFacts:
+                  modelStep === 1
+                    ? { firstRouteProof: 'Latest Tenders route was found.' }
+                    : { [`step${modelStep}Observed`]: true },
+              },
+              nextGoal: {
+                goal: `observe page ${modelStep}`,
+                requiredEvidence: ['page snapshot'],
+                recommendedTool: 'observe_page',
+              },
+            };
+          }
+          return {
+            action: 'final',
+            output: { status: 'completed', value: 'done' },
+            previousGoalEvaluation: {
+              goal: 'observe page 8',
+              status: 'passed',
+              evidenceRefs: ['snapshot-8'],
+              reason: 'All observations completed.',
+            },
+            memoryUpdate: { durableFacts: { finalReady: true } },
+            nextGoal: {
+              goal: 'finalize',
+              requiredEvidence: [],
+              recommendedTool: null,
+            },
+          };
+        },
+      },
+    });
+
+    await expect(
+      runner.runAgentTask?.({
+        taskType: 'generic.memory',
+        instructions: 'Preserve durable memory while observing pages.',
+        input: {},
+        tools: [
+          {
+            name: 'observe_page',
+            execute: (input) => ({
+              status: 'completed',
+              snapshot: {
+                url: `https://example.test/page-${input.step}`,
+                title: `Page ${input.step}`,
+                snapshotId: `snapshot-${input.step}`,
+              },
+              screenshotRef: `browser-screenshot:file:/tmp/page-${input.step}.png`,
+            }),
+          },
+        ],
+        maxSteps: 10,
+      }),
+    ).resolves.toMatchObject({ status: 'completed' });
+
+    const finalModelState = modelStates[8]?.state as Record<string, unknown>;
+    expect(finalModelState).toMatchObject({
+      agentMemory: expect.objectContaining({
+        durableFacts: expect.objectContaining({
+          firstRouteProof: 'Latest Tenders route was found.',
+        }),
+      }),
+      compactionSummary: expect.objectContaining({
+        originalObservationCount: 8,
+        retainedObservationCount: 6,
+        droppedObservationCount: 2,
+      }),
+    });
+  });
+
+  it('compacts oversized observations into semantic summaries instead of first-only excerpts', () => {
+    const summarized = summarizeAgentObservation({
+      status: 'completed',
+      snapshot: {
+        url: 'https://example.test/tenders',
+        title: 'Tender Listing',
+        snapshotId: 'snapshot-large',
+        visibleText: 'x'.repeat(9_000),
+        interactive: [
+          {
+            ref: 'p1',
+            snapshotId: 'snapshot-large',
+            selector: 'button#moreTenders',
+            text: 'More Tenders',
+            onclick: 'clickForMoreTender()',
+          },
+          {
+            ref: 'p2',
+            snapshotId: 'snapshot-large',
+            selector: 'a.page-2',
+            text: '2',
+            onclick: 'gotoPage(2)',
+          },
+        ],
+        documentControls: [
+          {
+            ref: 'd1',
+            snapshotId: 'snapshot-large',
+            selector: 'button.download',
+            text: 'Download NIT',
+          },
+        ],
+        tables: [
+          {
+            tableIndex: 0,
+            headers: ['Tender No', 'Title', 'Action'],
+            rows: [
+              {
+                rowIndex: 1,
+                cells: ['NIT-1', 'Road work', 'View'],
+                actionRefs: [
+                  {
+                    ref: 'r1',
+                    snapshotId: 'snapshot-large',
+                    selector: 'button.view',
+                    text: 'View Detail',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      screenshotRef: 'browser-screenshot:file:/tmp/large.png',
+    });
+
+    expect(summarized).toMatchObject({
+      compacted: true,
+      semanticSummary: expect.objectContaining({
+        currentPage: expect.objectContaining({
+          url: 'https://example.test/tenders',
+          title: 'Tender Listing',
+          snapshotId: 'snapshot-large',
+        }),
+        evidenceRefs: expect.arrayContaining(['snapshot-large']),
+        currentBrowserState: expect.objectContaining({
+          actionCandidates: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'pagination_action',
+              text: 'More Tenders',
+            }),
+            expect.objectContaining({ type: 'pagination_action', text: '2' }),
+            expect.objectContaining({
+              type: 'document_action',
+              text: 'Download NIT',
+            }),
+            expect.objectContaining({
+              type: 'row_detail_action',
+              text: 'View Detail',
+            }),
+            expect.objectContaining({ type: 'table_rows' }),
+          ]),
+        }),
+      }),
+    });
+    expect(summarized).not.toHaveProperty('excerpt');
+  });
+
+  it('marks old screenshots as previous when a newer browser snapshot has no image', async () => {
+    const modelStates: Array<Record<string, unknown>> = [];
+    let modelStep = 0;
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async (input) => {
+          modelStep += 1;
+          modelStates.push(input.input as Record<string, unknown>);
+          if (modelStep === 1) {
+            return {
+              action: 'call_tool',
+              toolName: 'browser_inspect',
+              input: { mode: 'screenshot' },
+              previousGoalEvaluation: {
+                goal: null,
+                status: 'not_evaluated',
+                evidenceRefs: [],
+                reason: 'Start.',
+              },
+              memoryUpdate: {},
+              nextGoal: {
+                goal: 'capture screenshot',
+                requiredEvidence: ['screenshot'],
+                recommendedTool: 'browser_inspect',
+              },
+            };
+          }
+          if (modelStep === 2) {
+            return {
+              action: 'call_tool',
+              toolName: 'browser_inspect',
+              input: { mode: 'snapshot' },
+              previousGoalEvaluation: {
+                goal: 'capture screenshot',
+                status: 'passed',
+                evidenceRefs: ['old-shot'],
+                reason: 'Screenshot captured.',
+              },
+              memoryUpdate: {},
+              nextGoal: {
+                goal: 'inspect modal DOM',
+                requiredEvidence: ['snapshot'],
+                recommendedTool: 'browser_inspect',
+              },
+            };
+          }
+          return {
+            action: 'final',
+            output: { status: 'needs_review', reason: 'state captured' },
+            previousGoalEvaluation: {
+              goal: 'inspect modal DOM',
+              status: 'passed',
+              evidenceRefs: ['snapshot-modal'],
+              reason: 'Snapshot captured.',
+            },
+            memoryUpdate: {},
+            nextGoal: {
+              goal: 'finish',
+              requiredEvidence: [],
+              recommendedTool: null,
+            },
+          };
+        },
+      },
+    });
+    const tools = createGantryBrowserGatewayAgentTools({
+      status: () => ({ status: 'open' }),
+      open: () => ({ status: 'open' }),
+      inspect: (request) =>
+        request.mode === 'screenshot'
+          ? {
+              status: 'completed',
+              mode: 'screenshot',
+              currentUrl: 'https://example.test/tenders',
+              title: 'Tender Listing',
+              screenshotRef: 'browser-screenshot:file:/tmp/old-listing.png',
+            }
+          : {
+              status: 'completed',
+              mode: 'snapshot',
+              selectorEvidence: {
+                modals: [
+                  {
+                    id: 'detail',
+                    role: 'dialog',
+                    open: true,
+                    selector: '#detail',
+                    text: 'Tender No 123 NIT document Download',
+                  },
+                ],
+              },
+              snapshot: {
+                url: 'https://example.test/tenders',
+                title: 'Tender Listing',
+                snapshotId: 'snapshot-modal',
+                visibleText: 'Tender listing with detail modal open',
+                interactive: [
+                  {
+                    ref: 'p2',
+                    snapshotId: 'snapshot-modal',
+                    selector: 'a.page-2',
+                    text: '2',
+                    onclick: 'gotoPage(2)',
+                  },
+                ],
+              },
+            },
+      act: () => ({ status: 'completed' }),
+      close: () => ({ status: 'closed' }),
+    });
+
+    await expect(
+      runner.runAgentTask?.({
+        taskType: 'generic.browser-state',
+        instructions: 'Track current browser state.',
+        input: {},
+        tools,
+        maxSteps: 3,
+      }),
+    ).resolves.toMatchObject({ status: 'needs_review' });
+
+    const thirdInputState = modelStates[2]?.state as Record<string, unknown>;
+    expect(thirdInputState).toMatchObject({
+      currentBrowserState: expect.objectContaining({
+        snapshotId: 'snapshot-modal',
+        screenshotRef: 'browser-screenshot:file:/tmp/old-listing.png',
+        visualFreshness: 'previous',
+        openSurfaces: expect.arrayContaining([
+          expect.objectContaining({ selector: '#detail' }),
+        ]),
+        actionCandidates: expect.arrayContaining([
+          expect.objectContaining({ type: 'pagination_action', text: '2' }),
+        ]),
+      }),
+      agentMemory: expect.objectContaining({
+        currentBrowserState: expect.objectContaining({
+          visualFreshness: 'previous',
+        }),
+      }),
+    });
+  });
+
+  it('exposes optional browser document-action verifier when the provider supports it', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const tools = createGantryBrowserGatewayAgentTools({
+      status: () => ({ status: 'open' }),
+      open: () => ({ status: 'open' }),
+      inspect: () => ({ status: 'completed' }),
+      act: () => ({ status: 'completed' }),
+      verifyDocumentAction: (request) => {
+        calls.push(request);
+        return {
+          status: 'completed',
+          documentActionProof: {
+            status: 'download_observed',
+            verified: true,
+          },
+        };
+      },
+      close: () => ({ status: 'closed' }),
+    });
+    const tool = tools.find(
+      (entry) => entry.name === 'browser_verify_document_action',
+    );
+
+    await expect(
+      tool?.execute(
+        {
+          selector: 'button.download-nit',
+          reason: 'Verify row document download',
+        },
+        {
+          taskType: 'test',
+          correlationId: 'verify-doc',
+          step: 7,
+          state: {},
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 'completed',
+      documentActionProof: {
+        status: 'download_observed',
+      },
+    });
+    expect(calls[0]).toMatchObject({
+      toolName: 'browser_verify_document_action',
+      selector: 'button.download-nit',
+      reason: 'Verify row document download',
+    });
+  });
+
+  it('keeps failed action fingerprints in agent memory across the next step', async () => {
+    const modelStates: Array<Record<string, unknown>> = [];
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async (input) => {
+          modelStates.push(input.input as Record<string, unknown>);
+          if (modelStates.length === 1) {
+            return {
+              action: 'call_tool',
+              toolName: 'click_button',
+              input: { target: { fingerprint: 'click:latest-tenders' } },
+              previousGoalEvaluation: {
+                goal: null,
+                status: 'not_evaluated',
+                evidenceRefs: [],
+                reason: 'First action.',
+              },
+              memoryUpdate: {},
+              nextGoal: {
+                goal: 'open listing',
+                requiredEvidence: ['state change'],
+                recommendedTool: 'click_button',
+              },
+            };
+          }
+          return {
+            action: 'final',
+            output: { status: 'needs_review', reason: 'no progress click' },
+            previousGoalEvaluation: {
+              goal: 'open listing',
+              status: 'failed',
+              evidenceRefs: [],
+              reason: 'The click made no progress.',
+            },
+            memoryUpdate: {},
+            nextGoal: {
+              goal: 'recover with a different route',
+              requiredEvidence: ['new browser inspection'],
+              recommendedTool: 'browser_inspect',
+            },
+          };
+        },
+      },
+    });
+
+    await runner.runAgentTask?.({
+      taskType: 'generic.failed-action-memory',
+      instructions: 'Do not repeat no-progress clicks.',
+      input: {},
+      tools: [
+        {
+          name: 'click_button',
+          execute: () => ({
+            status: 'completed',
+            pageTransition: {
+              outcome: 'no_progress',
+              reason: 'same page fingerprint',
+              selectedAction: { fingerprint: 'click:latest-tenders' },
+            },
+          }),
+        },
+      ],
+      maxSteps: 2,
+    });
+
+    const secondState = modelStates[1]?.state as Record<string, unknown>;
+    expect(secondState).toMatchObject({
+      agentMemory: expect.objectContaining({
+        failedActions: expect.arrayContaining([
+          expect.objectContaining({
+            fingerprint: 'click:latest-tenders',
+            retryPolicy: 'do_not_repeat',
+          }),
+        ]),
       }),
     });
   });

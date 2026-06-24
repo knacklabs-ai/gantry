@@ -121,7 +121,8 @@ function buildTeamsAction(
     readOptionalString(card.subjectId) ??
     readOptionalString(envelope.payload.subjectId);
   const scopeId =
-    readOptionalString(card.scopeId) ?? readOptionalString(envelope.payload.scopeId);
+    readOptionalString(card.scopeId) ??
+    readOptionalString(envelope.payload.scopeId);
   const sourceConversationId =
     readOptionalString(card.sourceConversationId) ??
     readOptionalString(envelope.target?.teamsChannelId) ??
@@ -157,7 +158,9 @@ function buildTeamsAction(
   };
 }
 
-function readNotificationFacts(value: unknown): { title: string; value: string }[] {
+function readNotificationFacts(
+  value: unknown,
+): { title: string; value: string }[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
