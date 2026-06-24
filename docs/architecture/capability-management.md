@@ -454,7 +454,8 @@ wholesale. Provider settings files are not partially parsed for "safe" keys;
 agents must use reviewed Gantry request tools because future provider settings
 can become execution or permission policy.
 
-Installed skill bytes live outside catalog rows:
+Installed skill bytes live outside catalog rows. With the local artifact
+backend, they use:
 
 ```text
 artifacts/skills/<skill-directory>/SKILL.md
@@ -466,9 +467,9 @@ only. Skill files remain readable for review. Catalog, URL, CLI-command, and
 uploaded installs all converge into the same installed local skill package after
 review.
 
-Local storage uses the same readable layout as object storage. Object storage
-keys must remain human-readable and API-readable; one installed skill name maps
-to one readable source folder, for example `artifacts/skills/linkedin-posting`.
+Object storage mirrors the same readable layout as keys. Object storage keys
+must remain human-readable and API-readable; one installed skill name maps to
+one readable source folder, for example `skills/linkedin-posting`.
 A local skill can be inspected with normal filesystem tools, and the API can
 list/read individual files under `skills:read`.
 

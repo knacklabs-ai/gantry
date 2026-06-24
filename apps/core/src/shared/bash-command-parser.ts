@@ -168,6 +168,31 @@ export function formatBashArgv(argv: readonly string[]): string {
   return argv.map(quoteBashArg).join(' ');
 }
 
+/**
+ * Best-effort, human-readable gist of which programs a command runs, for
+ * permission prompts ("npm, git"). Returns the ordered distinct program names,
+ * or undefined when the command can't be parsed safely (the caller then falls
+ * back to showing the raw command block instead).
+ */
+export function summarizeBashCommandPrograms(
+  command: string,
+): string | undefined {
+  const parsed = parseBashCommand(command);
+  if (!parsed.ok || parsed.leaves.length === 0) return undefined;
+  const programs: string[] = [];
+  for (const leaf of parsed.leaves) {
+    const name = executableName(leaf.argv[0] ?? '');
+    if (name && programs.at(-1) !== name) programs.push(name);
+  }
+  if (programs.length === 0) return undefined;
+  const shown = programs.slice(0, 4);
+  const overflow =
+    programs.length > shown.length
+      ? `, +${programs.length - shown.length} more`
+      : '';
+  return `${shown.join(', ')}${overflow}`;
+}
+
 function parseSegment(command: string): BashCommandParseResult {
   const leaves: BashCommandLeaf[] = [];
   let tokens: string[] = [];

@@ -36,7 +36,7 @@ support, and measured sandbox/load gates.
   job, delegated agent, or async bash task. Running sandboxes are not reused
   across users.
 - Gantry now has 38 Bedrock OpenAI-compatible chat/job catalog entries routed
-  through the existing `bedrock_api_key` credential lane and regional
+  through the Bedrock Model Access modes and regional
   `bedrock-runtime.<region>.amazonaws.com/v1` Chat Completions endpoint.
 - AWS CLI discovery confirms `ap-south-1` currently returns 42 ON_DEMAND
   text-output foundation models for this account. The catalog includes the 38
@@ -114,8 +114,9 @@ AWS ECS docs checked on 2026-06-22:
   location, or Bedrock-style credential region.
 - Benchmark current sandbox startup before adding reusable warm sandbox pools.
 - Do not reuse running sandboxes across users.
-- Do not add SigV4, default AWS credential-chain support, Bedrock Converse, or
-  Claude-on-Bedrock in this production-readiness pass.
+- Current Bedrock OpenAI-compatible support includes host-side SigV4 through
+  the AWS default credential chain. Do not add raw static AWS access-key mode,
+  Bedrock Converse, or Claude-on-Bedrock in this production-readiness pass.
 
 ## Acceptance Criteria
 
@@ -318,7 +319,7 @@ AWS ECS docs checked on 2026-06-22:
      focused model tests, docs.
    - Dependency: successful CLI evidence.
    - Acceptance: the 38 AP South 1 general chat/job entries resolve through
-     `modelRoute.id === "bedrock"` and existing `bedrock_api_key` mode;
+     `modelRoute.id === "bedrock"` and the supported Bedrock Model Access modes;
      representative aliases include `bedrock-kimi`, `bedrock-kimi-thinking`,
      `bedrock-qwen-coder`, `bedrock-minimax`, `bedrock-glm`,
      `bedrock-mistral-large-3`, `bedrock-nemotron-super-120b`, `bedrock-oss`,

@@ -704,6 +704,22 @@ Gateway. Explicit incompatible harness/model pairings fail before runner spawn.
 
 Harness-selection work is documented in [Agent Harness Selection](docs/decisions/2026-06-14-agent-harness-selection.md).
 
+- Model Access setup is one command per provider. Use
+  `gantry credentials model set bedrock` and choose AWS role/profile
+  (preferred), Bedrock API key in AWS Secrets Manager, or Bedrock API key. Use
+  `gantry credentials model set vertex` and choose Google ADC/workload identity
+  (preferred), service-account JSON in Google Secret Manager, or
+  service-account JSON.
+- Contributor map for model providers: model aliases live in
+  `apps/core/src/shared/model-catalog*.ts`, credential modes and upstream
+  routing live in `apps/core/src/shared/model-provider-registry*.ts`, host
+  gateway auth lives in
+  `apps/core/src/adapters/llm/anthropic-claude-agent/gantry-model-gateway-*.ts`,
+  CLI prompts live in `apps/core/src/cli/credentials.ts` and
+  `apps/core/src/cli/setup-credentials.ts`, and Control API docs live in
+  `apps/core/src/control/server/openapi-model-credential-schemas.ts`. For
+  AWS/Google-style credentials, update the gateway auth/tests as well as the
+  registry; they are not API-key-only providers.
 - `gantry agent list` and `gantry agent info <id>` display the selected
   `agentHarness`; `gantry model why <alias> --agent <id>` shows the model
   alias, response family, credential profile, selected harness, diagnostic

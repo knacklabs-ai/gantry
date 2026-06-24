@@ -11,6 +11,7 @@ function skill(input: {
   id: string;
   name: string;
   storageRef?: string;
+  storageType?: NonNullable<SkillCatalogItem['storage']>['storageType'];
   status?: SkillCatalogItem['status'];
 }): SkillCatalogItem {
   return {
@@ -26,7 +27,7 @@ function skill(input: {
     ...(input.storageRef
       ? {
           storage: {
-            storageType: 'local-filesystem' as const,
+            storageType: input.storageType ?? 'local-filesystem',
             storageRef: input.storageRef,
             contentHash: `sha256:${input.storageRef}`,
             sizeBytes: 1,
@@ -107,6 +108,7 @@ describe('DeepAgents selected skill projection', () => {
         skill({
           id: 'skill:release',
           name: 'release-writer',
+          storageType: 'object-store',
           storageRef: 'skill-release',
         }),
         skill({

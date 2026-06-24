@@ -18,8 +18,9 @@ This inventory classifies local filesystem state by durability.
 
 ## Temporary Local State
 
-- Per-run Claude `CLAUDE_CONFIG_DIR` directories under the OS temp directory.
-  These include generated `settings.json` and materialized `skills/`.
+- Per-run model-harness config directories under `.llm-runtime` or the OS temp
+  directory. Claude projections include generated `settings.json` and
+  materialized `skills/`; DeepAgents projections use virtual `/skills/**` files.
 - Packaged or explicitly configured local skill folders are copied into per-run
   Claude config as scratch input. They are not durable source-selection
   identity.

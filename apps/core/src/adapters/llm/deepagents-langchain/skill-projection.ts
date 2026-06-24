@@ -1,24 +1,17 @@
 import path from 'path';
 
-import type { AgentId } from '../../../domain/agent/agent.js';
-import type { AppId } from '../../../domain/app/app.js';
 import type { SkillArtifactStore } from '../../../domain/ports/skill-artifact-store.js';
 import type { SkillCatalogRepository } from '../../../domain/ports/repositories.js';
-import type { SkillCatalogItem } from '../../../domain/skills/skills.js';
-import {
-  isSkillMaterializableLocally,
-  materializedSkillDirectoryNameFor,
-} from '../../../domain/skills/skills.js';
-import {
-  formatSkillMaterializationCollision,
-  skillMaterializationCollisions,
-} from '../../../domain/skills/skill-identity.js';
+import { materializedSkillDirectoryNameFor } from '../../../domain/skills/skills.js';
 import type { DeepAgentSkillProjection } from '../../../application/agent-execution/agent-execution-adapter.js';
 import {
+  resolveSelectedSkillProjection,
+  type SelectedSkillProjectionItem,
+} from '../../../application/skills/selected-skill-projection.js';
+import {
   cleanSkillMetadataText,
-  normalizeSkillAssetPath,
   parseSkillFrontmatter,
-} from '../skill-artifact-helpers.js';
+} from '../../../shared/skill-artifact-helpers.js';
 
 const DEEPAGENTS_SKILLS_SOURCE = '/skills/';
 const SKILL_MD = 'SKILL.md';
@@ -35,51 +28,20 @@ export async function resolveDeepAgentSkillProjection(input: {
 }): Promise<DeepAgentSkillProjection | undefined> {
   const selectedSkillIds = uniqueStrings(input.selectedSkillIds ?? []);
   if (selectedSkillIds.length === 0) return undefined;
-  if (
-    !input.skillRepository ||
-    !input.skillArtifactStore ||
-    !input.skillContext
-  ) {
-    throw new Error(
-      'DeepAgents selected skills require configured Gantry skill storage before runner spawn. Unselect the skill or restart Gantry with skill storage configured.',
-    );
-  }
-
-  const enabledSkills = await input.skillRepository.listEnabledSkillsForAgent({
-    appId: input.skillContext.appId as AppId,
-    agentId: input.skillContext.agentId as AgentId,
+  const projection = await resolveSelectedSkillProjection({
+    selectedSkillIds,
+    skillRepository: input.skillRepository,
+    skillArtifactStore: input.skillArtifactStore,
+    skillContext: input.skillContext,
   });
-  const enabledById = new Map(
-    enabledSkills.map((skill) => [String(skill.id), skill]),
-  );
-  const selectedSkills = selectedSkillIds.map((skillId) => {
-    const skill = enabledById.get(skillId);
-    if (!skill) {
-      throw new Error(
-        `DeepAgents selected skill "${skillId}" is not enabled for this agent. Unselect it or install and bind the skill before using DeepAgents.`,
-      );
-    }
-    if (!isSkillMaterializableLocally(skill) || !skill.storage) {
-      throw new Error(
-        `DeepAgents selected skill "${skillId}" is not installed with a materializable artifact. Unselect or reinstall the skill before using DeepAgents.`,
-      );
-    }
-    return skill;
-  });
-  const collisions = skillMaterializationCollisions(selectedSkills);
-  if (collisions.length > 0) {
-    throw new Error(
-      `DeepAgents selected skills cannot be projected: ${formatSkillMaterializationCollision(collisions[0])}`,
-    );
-  }
+  if (!projection) return undefined;
 
   const now = input.nowIso?.() ?? new Date().toISOString();
   const files: DeepAgentSkillProjection['files'] = {};
   let contentBytes = 0;
-  for (const skill of selectedSkills) {
+  for (const skill of projection.skills) {
     const skillFiles = await projectSkillFiles({
       skill,
-      artifactStore: input.skillArtifactStore,
       now,
     });
     for (const [filePath, fileData] of Object.entries(skillFiles.files)) {
@@ -91,47 +53,22 @@ export async function resolveDeepAgentSkillProjection(input: {
   return {
     sources: [DEEPAGENTS_SKILLS_SOURCE],
     files,
-    selectedSkillIds,
-    skillCount: selectedSkills.length,
+    selectedSkillIds: projection.selectedSkillIds,
+    skillCount: projection.skillCount,
     fileCount: Object.keys(files).length,
     contentBytes,
   };
 }
 
 async function projectSkillFiles(input: {
-  skill: SkillCatalogItem;
-  artifactStore: SkillArtifactStore;
+  skill: SelectedSkillProjectionItem;
   now: string;
 }): Promise<{
   files: DeepAgentSkillProjection['files'];
   contentBytes: number;
 }> {
-  if (!input.skill.storage) {
-    throw new Error(
-      `DeepAgents selected skill "${input.skill.id}" is missing artifact storage.`,
-    );
-  }
   const targetName = materializedSkillDirectoryNameFor(input.skill.name);
-  const bundle = await input.artifactStore.getSkillArtifact(
-    input.skill.storage.storageRef,
-  );
-  const assets = bundle.assets
-    .map((asset) => ({
-      path: normalizeSkillAssetPath(asset.path),
-      contentType: asset.contentType,
-      content: asset.content,
-    }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-  const paths = new Set<string>();
-  for (const asset of assets) {
-    if (paths.has(asset.path)) {
-      throw new Error(
-        `DeepAgents selected skill "${input.skill.id}" has duplicate artifact path "${asset.path}".`,
-      );
-    }
-    paths.add(asset.path);
-  }
-  const skillMd = assets.find((asset) => asset.path === SKILL_MD);
+  const skillMd = input.skill.assets.find((asset) => asset.path === SKILL_MD);
   if (!skillMd) {
     throw new Error(
       `DeepAgents selected skill "${input.skill.id}" artifact must include SKILL.md.`,
@@ -150,7 +87,7 @@ async function projectSkillFiles(input: {
 
   const files: DeepAgentSkillProjection['files'] = {};
   let contentBytes = 0;
-  for (const asset of assets) {
+  for (const asset of input.skill.assets) {
     const mimeType = asset.contentType ?? contentTypeForPath(asset.path);
     if (!isTextMimeType(mimeType)) {
       throw new Error(
@@ -174,7 +111,7 @@ async function projectSkillFiles(input: {
 }
 
 function validateDeepAgentSkillMetadata(input: {
-  skill: SkillCatalogItem;
+  skill: SelectedSkillProjectionItem;
   targetName: string;
   skillText: string;
 }): void {
@@ -223,9 +160,10 @@ function decodeUtf8Asset(input: {
 }): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(input.content);
-  } catch {
+  } catch (error) {
     throw new Error(
       `DeepAgents selected skill "${input.skillId}" asset "${input.assetPath}" must be UTF-8 text.`,
+      { cause: error },
     );
   }
 }

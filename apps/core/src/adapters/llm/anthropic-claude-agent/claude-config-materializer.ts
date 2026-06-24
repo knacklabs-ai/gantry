@@ -3,10 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { getClaudeProjectDirName } from '../../../shared/gantry-home.js';
-import type {
-  RuntimeMaterialization,
-  RuntimeMaterializationCleanupPolicy,
-} from '../../../domain/runtime/runtime-materialization.js';
+import type { RuntimeMaterialization } from '../../../domain/runtime/runtime-materialization.js';
 import type { ClaudeSettingsRenderInput } from './claude-settings-renderer.js';
 import {
   renderClaudeSettings,
@@ -46,7 +43,6 @@ export interface ClaudeRuntimeMaterializationInput {
   managedSkillArtifactRoots?: string[];
   runId?: string;
   baseTempDir?: string;
-  cleanupPolicy?: RuntimeMaterializationCleanupPolicy;
   settings?: Omit<ClaudeSettingsRenderInput, 'cliEntryPoint'>;
   skillSource?: SkillSource;
   enabledSkillIds?: string[];
@@ -74,7 +70,6 @@ export async function materializeClaudeRuntime(
   const ownsBaseTempDir = !input.baseTempDir;
   const baseTempDir =
     input.baseTempDir ?? createDefaultBaseTempDir(input.groupDir);
-  const cleanupPolicy = input.cleanupPolicy ?? 'delete-after-run';
   const claudeConfigDir = path.join(baseTempDir, 'claude');
   const skillsDir = path.join(claudeConfigDir, 'skills');
   const projectDir = path.join(
@@ -141,11 +136,8 @@ export async function materializeClaudeRuntime(
     protectedFilesystemDenyReadPaths,
     protectedFilesystemDenyWritePaths,
     materializedSkills,
-    cleanupPolicy,
     cleanup: () => {
-      if (cleanupPolicy === 'delete-after-run') {
-        fs.rmSync(baseTempDir, { recursive: true, force: true });
-      }
+      fs.rmSync(baseTempDir, { recursive: true, force: true });
     },
   };
 }

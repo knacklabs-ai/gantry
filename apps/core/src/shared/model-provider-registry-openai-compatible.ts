@@ -178,6 +178,55 @@ function openAiCompatibleProvider(input: {
 
 const BEDROCK_CREDENTIAL_MODES = [
   {
+    id: 'aws_default_chain',
+    label: 'AWS role or profile',
+    helpText:
+      'Use the host AWS credential chain for SigV4 Bedrock Chat Completions. In production, prefer an ECS task role, EC2 instance profile, EKS IRSA, or assumed role.',
+    version: 1,
+    fields: [
+      {
+        name: 'region',
+        label: 'AWS region',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'profile',
+        label: 'AWS profile (optional)',
+        secret: false,
+        required: false,
+      },
+    ],
+    gatewayAuth: {
+      strategy: 'aws_sdk_default_chain',
+    },
+  },
+  {
+    id: 'bedrock_api_key_ref',
+    label: 'Bedrock API key in AWS Secrets Manager',
+    helpText:
+      'Resolve an Amazon Bedrock API key from AWS Secrets Manager at gateway time.',
+    version: 1,
+    fields: [
+      {
+        name: 'region',
+        label: 'AWS region',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'apiKeyRef',
+        label: 'AWS Secrets Manager ref (aws-sm:...)',
+        secret: false,
+        required: true,
+      },
+    ],
+    gatewayAuth: {
+      strategy: 'aws_bedrock_api_key_ref',
+      field: 'apiKeyRef',
+    },
+  },
+  {
     id: 'bedrock_api_key',
     label: 'Bedrock API key',
     helpText:
@@ -206,6 +255,61 @@ const BEDROCK_CREDENTIAL_MODES = [
 
 const VERTEX_CREDENTIAL_MODES = [
   {
+    id: 'google_adc',
+    label: 'Google ADC or workload identity',
+    helpText:
+      'Use Google Application Default Credentials to mint a host-side OAuth token for Vertex AI.',
+    version: 1,
+    fields: [
+      {
+        name: 'region',
+        label: 'Google Cloud location (currently global)',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'projectId',
+        label: 'Google Cloud project ID',
+        secret: false,
+        required: true,
+      },
+    ],
+    gatewayAuth: {
+      strategy: 'google_adc',
+    },
+  },
+  {
+    id: 'service_account_ref',
+    label: 'Service account JSON in Google Secret Manager',
+    helpText:
+      'Resolve a Google service account JSON key from Google Secret Manager at gateway time.',
+    version: 1,
+    fields: [
+      {
+        name: 'region',
+        label: 'Google Cloud location (currently global)',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'projectId',
+        label: 'Google Cloud project ID',
+        secret: false,
+        required: true,
+      },
+      {
+        name: 'serviceAccountJsonRef',
+        label: 'Google Secret Manager ref (gcp-sm:...)',
+        secret: false,
+        required: true,
+      },
+    ],
+    gatewayAuth: {
+      strategy: 'vertex_service_account_ref',
+      field: 'serviceAccountJsonRef',
+    },
+  },
+  {
     id: 'service_account',
     label: 'Service account',
     helpText:
@@ -214,7 +318,7 @@ const VERTEX_CREDENTIAL_MODES = [
     fields: [
       {
         name: 'region',
-        label: 'Google Cloud location',
+        label: 'Google Cloud location (currently global)',
         secret: false,
         required: true,
       },
@@ -265,7 +369,11 @@ function resolveBedrockUpstream(input: {
   authMode: string;
   payload: ModelCredentialPayload;
 }) {
-  if (input.authMode !== 'bedrock_api_key') {
+  if (
+    !['aws_default_chain', 'bedrock_api_key_ref', 'bedrock_api_key'].includes(
+      input.authMode,
+    )
+  ) {
     throw new Error(
       `Unsupported Amazon Bedrock credential mode ${input.authMode}.`,
     );
@@ -404,7 +512,11 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
       sdkProjection: openAiCompatibleSdkProjection('bedrock'),
     },
     cacheSupport: NO_CACHE_SUPPORT,
-    executionRoute: deepAgentsExecutionRoute(['bedrock_api_key']),
+    executionRoute: deepAgentsExecutionRoute([
+      'aws_default_chain',
+      'bedrock_api_key_ref',
+      'bedrock_api_key',
+    ]),
   },
   {
     id: 'vertex',
@@ -423,6 +535,10 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
       sdkProjection: openAiCompatibleSdkProjection('vertex'),
     },
     cacheSupport: NO_CACHE_SUPPORT,
-    executionRoute: deepAgentsExecutionRoute(['service_account']),
+    executionRoute: deepAgentsExecutionRoute([
+      'google_adc',
+      'service_account_ref',
+      'service_account',
+    ]),
   },
 ] as const satisfies readonly ModelProviderDefinition[];

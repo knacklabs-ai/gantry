@@ -9,9 +9,9 @@ Local files are allowed only when their durability is explicit.
   `local-filesystem` backend is selected for single-node or shared-volume
   deployments.
 - Readable reviewed skill artifacts under `<runtime-home>/artifacts/skills/...`
-  after approval. Postgres owns exact `skill:<id>` selection identity, metadata,
-  status, hash, audit, and bindings; artifact folders own only non-secret
-  reviewable files.
+  after approval when the local artifact backend is selected. Postgres owns
+  exact `skill:<id>` selection identity, metadata, status, hash, audit, and
+  bindings; artifact folders own only non-secret reviewable files.
 - Credential adapter files owned by their credential adapter.
 
 ## Temporary

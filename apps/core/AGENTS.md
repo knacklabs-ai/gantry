@@ -27,6 +27,11 @@
 - Execution adapters may project provider process metadata such as `modelCredentialEnv`, but must not patch host-owned authority or continuity fields such as allowed tools, selected MCP servers, session id, chat id, or thread id after runtime validation.
 - Claude runtime materialization owns generated Claude config paths and protected-path projection; host spawn code should consume the execution adapter result instead of naming `.claude` settings or skills as durable inputs.
 - Anthropic Claude runtime materialization must receive the exact selected Gantry skill ids for the run. No selected skills means `query({ options: { skills: [] } })`; Browser may add only the generated `gantry-browser` skill when the canonical Browser capability is selected. Do not materialize bundled or artifact skills merely because they exist on disk or are enabled elsewhere.
+- Anthropic and DeepAgents selected-skill runs must both resolve installed skill
+  artifacts through `apps/core/src/application/skills/selected-skill-projection.ts`.
+  Adapters may only translate that projection into runner-native scratch input:
+  Claude `CLAUDE_CONFIG_DIR/skills` or DeepAgents virtual `/skills/**`. Generated
+  `.llm-runtime` paths are disposable and must not be used as install truth.
 - Claude Agent SDK boundary env assertions must include `GANTRY_MEMORY_IPC_ACTIONS_JSON` in MCP server env (capability allowlist projection) and keep it out of top-level SDK process env.
 - Control HTTP route changes must have route-level coverage for encoded ids, app ownership checks, and pre-mutation authorization.
 - Control API bearer auth is JSON-only: use `GANTRY_CONTROL_API_KEYS_JSON` entries with explicit `kid`, `token`, `appId`, and `scopes`; do not reintroduce `GANTRY_CONTROL_API_KEY` or implicit all-scope local auth.
@@ -45,6 +50,18 @@
 - Host spawn must treat `selectedMcpServerIds` as the per-run third-party MCP allowlist. If the list is empty, do not resolve MCP Gantry Credentials or materialize active MCP bindings from storage.
 - Broker model proxy values must not be projected into tool subprocesses. The SDK process receives model credentials only through `modelCredentialEnv`; approved Bash, skill, local CLI, script, and MCP stdio tool calls receive loopback egress proxy and neutral TLS trust aliases through provider-neutral `toolNetworkEnv`. Keep provider tokens and broker proxies out of tool subprocesses. `NO_PROXY` is compatibility only, not a safety boundary.
 - Model-provider credentials are shared Model Access credentials. Resolve chat runs, subagents, memory, and jobs through the reserved `gantry-model-access` broker profile with `purpose=model_runtime`; do not add per-agent or `main-agent` fallback model credential bindings. Tool/API credentials must use `purpose=tool_capability` with explicit agent/capability context.
+- Cloud Model Access modes such as Bedrock role/profile, Bedrock Secrets
+  Manager refs, Vertex ADC, and Vertex Secret Manager refs are not simple API
+  keys. Add them through registry credential modes, explicit gateway auth
+  strategies, host-side signing/token/secret-ref resolution, and gateway tests
+  as documented in `docs/architecture/credential-management.md`; never project
+  AWS or Google raw credentials into runner/tool env or `settings.yaml`. Update
+  focused coverage where behavior changes: `core/model-provider-registry.test.ts`,
+  `core/model-credential-service.test.ts`, `core/gantry-model-gateway.test.ts`,
+  `control/credentials-routes.test.ts`, `control/openapi.test.ts`,
+  `cli/setup-credentials.test.ts`,
+  `adapters/deepagents-credential-validation.test.ts`, and
+  `adapters/deepagents-model-factory.test.ts`.
 - Agent-facing broker failures must include a short cause, broker health/recovery guidance, and avoid leaking raw credential values; browser launch/status may expose broker health metadata only for broker-backed semantic capabilities.
 - Browser is one durable capability: `Browser`. Runtime projects it into first-party Gantry MCP gateway tools: `mcp__gantry__browser_status`, `mcp__gantry__browser_open`, `mcp__gantry__browser_inspect`, `mcp__gantry__browser_act`, and `mcp__gantry__browser_close`; do not persist concrete browser subtool names as authority.
 - Host spawn must fail closed on host-private browser backend allowed-tool rules and projected `mcp__gantry__browser_*` allowed-tool rules inherited from persistence; do not silently strip or canonicalize stale browser grants. Browser actions go through signed per-tool Browser IPC.
