@@ -1,7 +1,9 @@
 import type { AppId } from '../../domain/app/app.js';
 import type { SettingsRevisionRepository } from '../../domain/ports/fleet-capability-state.js';
-import { applyRuntimeSettingsDesiredState } from './restart-sync.js';
-import { saveRuntimeSettings } from './runtime-settings.js';
+import {
+  loadRuntimeSettings,
+  saveRuntimeSettings,
+} from './runtime-settings.js';
 import {
   importWorkstationSettings,
   type SettingsRevisionMirror,
@@ -33,12 +35,11 @@ export function configureDesiredSettingsStorageProvider(
 }
 
 /**
- * Single desired-state write path that gracefully degrades.
+ * Single desired-state write path.
  *
- * When runtime storage is reachable, workstation settings are reconciled through
- * the owner (`applyRuntimeSettingsDesiredState`) and fleet settings append the
- * settings revision that workers boot from. When storage is absent (offline CLI,
- * no Postgres), only workstation settings may fall back to settings.yaml.
+ * Postgres `settings_revisions` is the durable authority for managed runtime
+ * settings. The local `settings.yaml` file is updated by the shared import path
+ * after the revision append succeeds.
  */
 export async function writeDesiredRuntimeSettings(input: {
   runtimeHome: string;
@@ -47,16 +48,16 @@ export async function writeDesiredRuntimeSettings(input: {
   appId?: AppId;
   createdBy?: string;
 }): Promise<{ reconciled: boolean }> {
-  const storage = storageProvider ? await storageProvider() : undefined;
   const deploymentMode = input.settings.runtime.deploymentMode;
-  if (deploymentMode === 'fleet' && !storage) {
-    throw new Error(
-      'Fleet settings mutation requires runtime storage so settings_revisions can be durably appended.',
-    );
-  }
-  if (!storage) {
+  if (!storageProvider) {
     saveRuntimeSettings(input.runtimeHome, input.settings);
     return { reconciled: false };
+  }
+  const storage = await storageProvider();
+  if (!storage) {
+    throw new Error(
+      'Settings mutation requires runtime storage so settings_revisions can be durably appended.',
+    );
   }
   if (!deploymentMode) {
     await storage.close?.();
@@ -64,41 +65,32 @@ export async function writeDesiredRuntimeSettings(input: {
       'Settings mutation requires runtime.deploymentMode when runtime storage is available.',
     );
   }
-  if (deploymentMode === 'fleet' && !storage.settingsRevisions) {
+  if (!storage.settingsRevisions) {
     await storage.close?.();
     throw new Error(
-      'Fleet settings mutation requires the settings revisions repository.',
+      'Settings mutation requires the settings revisions repository.',
     );
   }
   try {
-    if (deploymentMode === 'fleet') {
-      const appId = input.appId ?? ('default' as AppId);
-      await importWorkstationSettings(
-        {
-          runtimeHome: input.runtimeHome,
-          ops: storage.ops,
-          repositories: storage.repositories,
-          appId,
-          previousSettings: input.previousSettings,
-          revisionMirror: {
-            settingsRevisions: storage.settingsRevisions!,
-            pool: storage.pool,
-            createdBy: input.createdBy ?? 'cli:desired-settings-write',
-          },
-          revisionMirrorRequired: true,
+    const appId = input.appId ?? ('default' as AppId);
+    const previousSettings =
+      input.previousSettings ?? loadRuntimeSettings(input.runtimeHome);
+    await importWorkstationSettings(
+      {
+        runtimeHome: input.runtimeHome,
+        ops: storage.ops,
+        repositories: storage.repositories,
+        appId,
+        previousSettings,
+        revisionMirror: {
+          settingsRevisions: storage.settingsRevisions,
+          pool: storage.pool,
+          createdBy: input.createdBy ?? 'cli:desired-settings-write',
         },
-        input.settings,
-      );
-      return { reconciled: true };
-    }
-    await applyRuntimeSettingsDesiredState({
-      runtimeHome: input.runtimeHome,
-      settings: input.settings,
-      previousSettings: input.previousSettings,
-      appId: input.appId ?? ('default' as AppId),
-      ops: storage.ops,
-      repositories: storage.repositories,
-    });
+        revisionMirrorRequired: true,
+      },
+      input.settings,
+    );
     return { reconciled: true };
   } finally {
     await storage.close?.();

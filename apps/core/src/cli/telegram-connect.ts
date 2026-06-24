@@ -1,10 +1,6 @@
 import * as p from '@clack/prompts';
 import '../channels/register-builtins.js';
-import { upsertEnvFile } from '../config/env/file.js';
-import {
-  envFilePath,
-  ensureRuntimeLayout,
-} from '../config/settings/runtime-home.js';
+import { ensureRuntimeLayout } from '../config/settings/runtime-home.js';
 import { listTelegramRecentChats } from './telegram-chat-discovery.js';
 import {
   ensureConfiguredConversationBinding,
@@ -18,6 +14,8 @@ import {
   validateTelegramBotToken,
   verifyTelegramChatAccess,
 } from './telegram.js';
+import { gantryRuntimeSecretRef } from '../domain/ports/runtime-secret-provider.js';
+import { storeRuntimeSecretInput } from './credentials.js';
 
 type TelegramChatChoice =
   | {
@@ -264,12 +262,29 @@ export async function runTelegramConnectCommand(
     );
   }
 
-  upsertEnvFile(envFilePath(runtimeHome), {
-    TELEGRAM_BOT_TOKEN: tokenInput,
+  await storeRuntimeSecretInput({
+    runtimeHome,
+    name: 'TELEGRAM_BOT_TOKEN',
+    value: tokenInput,
+    actor: 'cli:telegram-connect',
   });
   const settings = loadRuntimeSettings(runtimeHome);
   const previousSettings = structuredClone(settings);
   settings.providers.telegram.enabled = true;
+  const providerConnectionId =
+    settings.providers.telegram.defaultConnection || 'telegram_default';
+  settings.providers.telegram.defaultConnection = providerConnectionId;
+  settings.providerConnections[providerConnectionId] = {
+    provider: 'telegram',
+    label:
+      settings.providerConnections[providerConnectionId]?.label ||
+      'Telegram Default',
+    runtimeSecretRefs: {
+      ...(settings.providerConnections[providerConnectionId]
+        ?.runtimeSecretRefs || {}),
+      bot_token: gantryRuntimeSecretRef('TELEGRAM_BOT_TOKEN'),
+    },
+  };
   if (registeredFolder) {
     const approverIds = parseTelegramApproverIds(
       approverInput || adminSenderId || '',
@@ -301,10 +316,10 @@ export async function runTelegramConnectCommand(
   });
 
   if (normalizedChatJid) {
-    p.outro('Telegram conversation is configured and ready.');
+    p.outro('Telegram connected. Secret stored encrypted in Gantry.');
   } else {
     p.outro(
-      'Telegram token saved. Next: run `gantry provider connect telegram` to register a conversation.',
+      'Telegram connected. Secret stored encrypted in Gantry. Next: run `gantry provider connect telegram` to register a conversation.',
     );
   }
 

@@ -11,7 +11,6 @@ import {
 } from '../config/settings/desired-state-service.js';
 import {
   importWorkstationSettings,
-  settingsMatchesLatestRevision,
   settingsToRevisionDocument,
   stableJson,
   type SettingsRevisionMirror,
@@ -81,18 +80,24 @@ export function startSettingsReloadWatcher(
       }
 
       let matchesLatestRevision = false;
+      let latestRevision = 0;
       if (options.settingsRevisions) {
         try {
-          matchesLatestRevision = await settingsMatchesLatestRevision({
-            appId: options.appId ?? ('default' as AppId),
-            settings,
-            settingsRevisions: options.settingsRevisions,
-          });
+          const latest =
+            await options.settingsRevisions.getLatestSettingsRevision(
+              options.appId ?? ('default' as AppId),
+            );
+          latestRevision = latest?.revision ?? 0;
+          matchesLatestRevision = latest
+            ? stableJson(latest.settingsDocument) ===
+              stableJson(settingsToRevisionDocument(settings))
+            : false;
         } catch (err) {
           logger.warn(
             { err, filePath },
-            'settings revision lookup failed; continuing with local settings.yaml reload',
+            'settings revision lookup failed; keeping last good settings',
           );
+          return;
         }
       }
 
@@ -118,6 +123,11 @@ export function startSettingsReloadWatcher(
                       logger.warn(context, message),
                   }
                 : undefined,
+            revisionMirrorRequired:
+              options.settingsRevisions !== undefined && !matchesLatestRevision,
+            expectedRevision: !matchesLatestRevision
+              ? latestRevision
+              : undefined,
           },
           settings,
         );

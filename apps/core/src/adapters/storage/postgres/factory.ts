@@ -10,11 +10,11 @@ import {
 } from './repositories/domain-repositories.postgres.js';
 import {
   ARTIFACTS_DIR,
-  STORAGE_POSTGRES_PLAINTEXT_HOST_ALLOWLIST,
-  STORAGE_POSTGRES_SCHEMA,
-  STORAGE_POSTGRES_URL,
-  STORAGE_POSTGRES_URL_ENV,
+  GANTRY_HOME,
+  createDefaultRuntimeSettings,
   getRuntimeSettingsForConfig,
+  resolveRuntimeStorageConfig,
+  type RuntimeSettings,
 } from '../../../config/index.js';
 import { LocalFileArtifactBytes } from '../../artifacts/files/local-file-artifact-bytes.js';
 import { LocalSkillArtifactStore } from '../../artifacts/skills/local-skill-artifact-store.js';
@@ -97,11 +97,13 @@ export interface StorageRuntimeOptions {
 }
 
 export function resolveStorageConfigFromRuntime(): ResolvedStorageConfig {
+  const runtimeHome = process.env.GANTRY_HOME?.trim() || GANTRY_HOME;
+  const config = resolveRuntimeStorageConfig(runtimeHome, runtimeHome);
   return {
-    postgresUrl: STORAGE_POSTGRES_URL,
-    postgresUrlEnv: STORAGE_POSTGRES_URL_ENV,
-    postgresSchema: STORAGE_POSTGRES_SCHEMA,
-    postgresPlaintextHostAllowlist: STORAGE_POSTGRES_PLAINTEXT_HOST_ALLOWLIST,
+    postgresUrl: config.postgresUrl,
+    postgresUrlEnv: config.postgresUrlEnv,
+    postgresSchema: config.postgresSchema,
+    postgresPlaintextHostAllowlist: config.postgresPlaintextHostAllowlist,
   };
 }
 
@@ -110,7 +112,8 @@ export function createStorageRuntime(
   options: StorageRuntimeOptions = {},
 ): StorageRuntime {
   const service = createStorageService(config);
-  const sessionSettings = getRuntimeSettingsForConfig().agent.sessions;
+  const runtimeSettings = getRuntimeSettingsForStorageRuntime();
+  const sessionSettings = runtimeSettings.agent.sessions;
   const control = new PostgresControlPlaneRepository(service.db);
   const liveTurnCommandNotifier = new PostgresLiveTurnCommandNotifier(
     service.pool,
@@ -150,7 +153,7 @@ export function createStorageRuntime(
       path.join(ARTIFACTS_DIR, FILE_ARTIFACTS_DIR_NAME),
     ),
   );
-  const skillArtifacts = createSkillArtifactStore();
+  const skillArtifacts = createSkillArtifactStore(runtimeSettings);
   const browserProfileSnapshots = new PostgresBrowserProfileSnapshotRepository(
     service.db,
   );
@@ -169,8 +172,10 @@ export function createStorageRuntime(
   };
 }
 
-function createSkillArtifactStore(): SkillArtifactStore {
-  const artifactStore = getRuntimeSettingsForConfig().runtime.artifactStore;
+function createSkillArtifactStore(
+  runtimeSettings = getRuntimeSettingsForStorageRuntime(),
+): SkillArtifactStore {
+  const artifactStore = runtimeSettings.runtime.artifactStore;
   if (artifactStore.driver === 's3') {
     const { client, bucket } = createS3ArtifactClient({
       bucket: artifactStore.bucket ?? '',
@@ -185,7 +190,8 @@ function createSkillArtifactStore(): SkillArtifactStore {
 
 export function createRuntimeBrowserProfileArtifactStore(): BrowserProfileArtifactStore &
   BrowserProfileArtifactMaterializer {
-  const artifactStore = getRuntimeSettingsForConfig().runtime.artifactStore;
+  const artifactStore =
+    getRuntimeSettingsForStorageRuntime().runtime.artifactStore;
   if (artifactStore.driver === 's3') {
     const { client, bucket } = createS3ArtifactClient({
       bucket: artifactStore.bucket ?? '',
@@ -196,4 +202,12 @@ export function createRuntimeBrowserProfileArtifactStore(): BrowserProfileArtifa
     return new S3BrowserProfileArtifactStore(client, bucket);
   }
   return new LocalBrowserProfileArtifactStore(ARTIFACTS_DIR);
+}
+
+function getRuntimeSettingsForStorageRuntime(): RuntimeSettings {
+  try {
+    return getRuntimeSettingsForConfig();
+  } catch {
+    return createDefaultRuntimeSettings();
+  }
 }

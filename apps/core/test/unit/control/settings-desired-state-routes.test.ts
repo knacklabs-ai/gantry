@@ -37,8 +37,8 @@ vi.mock('@core/config/settings/settings-import-service.js', async () => {
   return {
     ...actual,
     importFleetSettingsRevision: vi.fn(async () => importOutcome.current),
-    importWorkstationSettings: vi.fn(async (_deps, settings) => {
-      workstationImports.push(settings);
+    importWorkstationSettings: vi.fn(async (deps, settings) => {
+      workstationImports.push({ deps, settings });
       return { revision: 11 };
     }),
   };
@@ -188,7 +188,7 @@ describe('settings desired-state control routes', () => {
     expect(workstationImports).toHaveLength(1);
   });
 
-  it('rejects revision guards in workstation mode', async () => {
+  it('accepts revision guards in workstation mode', async () => {
     const res = await invoke(
       'PUT',
       '/v1/settings/desired-state',
@@ -198,9 +198,15 @@ describe('settings desired-state control routes', () => {
       },
       { deploymentMode: 'workstation' },
     );
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error.code).toBe('INVALID_REQUEST');
-    expect(workstationImports).toHaveLength(0);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ revision: 11 });
+    expect(workstationImports).toHaveLength(1);
+    expect(workstationImports[0]).toMatchObject({
+      deps: {
+        revisionMirrorRequired: true,
+        expectedRevision: 3,
+      },
+    });
   });
 
   it('rejects a non-integer expectedRevision', async () => {

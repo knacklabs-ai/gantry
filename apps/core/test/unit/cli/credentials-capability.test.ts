@@ -220,6 +220,47 @@ describe('credentials capability CLI', () => {
     );
   });
 
+  it('bootstraps runtime settings before storing a runtime secret', async () => {
+    const { repository, upsertSecret } = makeSecretRepository();
+    const ensureRuntimeSettings = vi.fn();
+    vi.doMock('@core/config/settings/runtime-settings.js', () => ({
+      ensureRuntimeSettings,
+    }));
+    vi.doMock('@core/adapters/storage/postgres/factory.js', () => ({
+      createStorageRuntime: () => ({
+        service: {
+          migrate: vi.fn(async () => undefined),
+          close: vi.fn(async () => undefined),
+        },
+        runtimeEventNotifier: { close: vi.fn(async () => undefined) },
+        runtimeEvents: { publish: vi.fn(async () => undefined) },
+        repositories: {
+          capabilitySecrets: repository,
+          modelCredentials: makeModelCredentialRepository(),
+        },
+      }),
+    }));
+
+    const { storeRuntimeSecretInput } =
+      await import('@core/cli/credentials.js');
+
+    await storeRuntimeSecretInput({
+      runtimeHome: '/tmp/gantry-fresh-provider-connect',
+      name: 'TELEGRAM_BOT_TOKEN',
+      value: 'token',
+      actor: 'cli:test',
+    });
+
+    expect(ensureRuntimeSettings).toHaveBeenCalledWith(
+      '/tmp/gantry-fresh-provider-connect',
+    );
+    expect(upsertSecret).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'TELEGRAM_BOT_TOKEN',
+      }),
+    );
+  });
+
   it('keeps browser credential namespace limited to status', async () => {
     const error = vi.fn();
     const runBrowserCommand = vi.fn(async () => 0);

@@ -10,6 +10,7 @@ import {
   CURRENT_SETTINGS_READER_VERSION,
   importFleetSettingsRevision,
   importWorkstationSettings,
+  SettingsRevisionConflictError,
   settingsFromRevisionDocument,
   settingsToRevisionDocument,
 } from '@core/config/settings/settings-import-service.js';
@@ -269,7 +270,45 @@ describe('importFleetSettingsRevision', () => {
     expect(repo.rows).toHaveLength(2);
   });
 
-  it('treats post-append local apply failure as committed for required mirror', async () => {
+  it('required workstation mirror rejects stale expected revisions', async () => {
+    capabilityErrors = [];
+    const previousSettings = createDefaultRuntimeSettings();
+    const nextSettings = createDefaultRuntimeSettings();
+    nextSettings.agent.name = 'new';
+    const repo = new FakeRevisionRepo();
+    await repo.appendSettingsRevision({
+      appId: 'default',
+      settingsDocument: settingsToRevisionDocument(previousSettings),
+      minReaderVersion: CURRENT_SETTINGS_READER_VERSION,
+      createdBy: 'seed',
+    });
+
+    await expect(
+      importWorkstationSettings(
+        {
+          runtimeHome: '/tmp/gantry-import-test',
+          ops: {} as never,
+          repositories: {} as never,
+          appId: 'default' as never,
+          previousSettings,
+          expectedRevision: 0,
+          revisionMirror: {
+            settingsRevisions: repo,
+            createdBy: 'test:workstation',
+          },
+          revisionMirrorRequired: true,
+        },
+        nextSettings,
+      ),
+    ).rejects.toMatchObject({
+      name: 'SettingsRevisionConflictError',
+      expectedRevision: 0,
+      actualRevision: 1,
+    } satisfies Partial<SettingsRevisionConflictError>);
+    expect(repo.rows).toHaveLength(1);
+  });
+
+  it('reports post-append local apply failure for required mirror', async () => {
     capabilityErrors = [];
     const previousSettings = createDefaultRuntimeSettings();
     const nextSettings = createDefaultRuntimeSettings();
@@ -297,11 +336,12 @@ describe('importFleetSettingsRevision', () => {
         },
         nextSettings,
       ),
-    ).resolves.toEqual({ revision: 1 });
+    ).rejects.toThrow('local apply failed');
     expect(logWarn).toHaveBeenCalledWith(
       { err: expect.any(Error), revision: 1 },
       'settings revision appended but local apply failed',
     );
+    expect(repo.rows).toHaveLength(1);
   });
 
   it('appends a revision stamped with the current reader version', async () => {

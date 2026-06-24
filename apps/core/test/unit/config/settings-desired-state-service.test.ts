@@ -177,7 +177,7 @@ function makeRepositories(overrides: Record<string, unknown> = {}) {
         label: id,
         status: 'active',
         config: {},
-        runtimeSecretRefs: [],
+        runtimeSecretRefs: {},
         createdAt: '2026-05-02T00:00:00.000Z',
         updatedAt: '2026-05-02T00:00:00.000Z',
       })),
@@ -1341,7 +1341,7 @@ describe('SettingsDesiredStateService', () => {
       label: 'Telegram Default',
       status: 'active',
       config: {},
-      runtimeSecretRefs: ['TELEGRAM_BOT_TOKEN'],
+      runtimeSecretRefs: { bot_token: 'env:TELEGRAM_BOT_TOKEN' },
       createdAt: '2026-05-02T00:00:00.000Z',
       updatedAt: '2026-05-02T00:00:00.000Z',
     };
@@ -1419,7 +1419,7 @@ describe('SettingsDesiredStateService', () => {
       expect.objectContaining({
         id: 'telegram_default',
         providerId: 'telegram',
-        runtimeSecretRefs: ['TELEGRAM_BOT_TOKEN'],
+        runtimeSecretRefs: { bot_token: 'env:TELEGRAM_BOT_TOKEN' },
       }),
     );
     expect(conversations.saveConversation).toHaveBeenCalledWith(
@@ -1567,7 +1567,7 @@ describe('SettingsDesiredStateService', () => {
           label: id,
           status: 'active',
           config: {},
-          runtimeSecretRefs: [],
+          runtimeSecretRefs: {},
           createdAt: '2026-05-02T00:00:00.000Z',
           updatedAt: '2026-05-02T00:00:00.000Z',
         })),
@@ -2093,7 +2093,10 @@ describe('SettingsDesiredStateService', () => {
             label: 'Slack Workspace',
             status: 'active',
             config: {},
-            runtimeSecretRefs: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'],
+            runtimeSecretRefs: {
+              bot_token: 'env:SLACK_BOT_TOKEN',
+              app_token: 'env:SLACK_APP_TOKEN',
+            },
             createdAt: '2026-05-01T00:00:00.000Z',
             updatedAt: '2026-05-01T00:00:00.000Z',
           },
@@ -2223,8 +2226,8 @@ describe('SettingsDesiredStateService', () => {
       provider: 'slack',
       label: 'Slack Workspace',
       runtimeSecretRefs: {
-        bot_token: 'SLACK_BOT_TOKEN',
-        app_token: 'SLACK_APP_TOKEN',
+        bot_token: 'env:SLACK_BOT_TOKEN',
+        app_token: 'env:SLACK_APP_TOKEN',
       },
     });
     expect(exported.conversations.sales).toEqual(

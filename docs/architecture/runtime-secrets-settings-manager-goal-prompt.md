@@ -18,6 +18,20 @@ The product model is:
 This must be a single cut. Do not add compatibility shims, legacy aliases, or a
 second settings authority.
 
+Use this file as the `/goal` prompt for implementation. Keep runtime secret
+management and settings management in the same PR. Do not split a settings-only
+or secrets-only PR unless the user explicitly redirects.
+
+Required implementation skills:
+
+- Use `ponytail` in full mode throughout. Ship the smallest root-cause change
+  that satisfies the contract; no speculative provider registries, secret
+  backends, new tables, or helper layers unless repo inspection proves they are
+  necessary.
+- Use `autoreview` at closeout. If it reports an accepted actionable issue, fix
+  it, rerun the focused checks, and rerun autoreview until clean.
+- End by committing, pushing, and creating or updating the PR with test evidence.
+
 ## Problem
 
 Provider setup currently mixes three concerns:
@@ -147,11 +161,11 @@ Provider setup writes non-secret setup state to the central desired-state path:
 - triggers
 - agent bindings
 
-Fleet desired state must append a `settings_revisions` row. A fleet mutation that
-cannot append a durable revision must fail closed.
+Managed desired state must append a `settings_revisions` row. A workstation or
+fleet mutation that cannot append a durable revision must fail closed.
 
-Workstation may keep unmanaged `settings.yaml` behavior, but managed UI/API
-flows should use the same desired-state service as fleet.
+`settings.yaml` remains the canonical readable copy and bootstrap/import/export
+surface, but managed UI/API/CLI flows use the revisioned desired-state service.
 
 ### Setup paths
 
@@ -181,19 +195,19 @@ If either step fails, setup fails with a clear recovery action.
 
 ## Surface Impact Matrix
 
-| Surface | Impact | Reason |
-| --- | --- | --- |
-| Runtime behavior | Changed | Runtime secrets resolve through a unified reference boundary. |
-| `settings.yaml` | Changed | It stores refs only and is not fleet/workspace authority. |
-| Postgres/runtime projection | Changed | Add encrypted runtime secret storage and keep desired state versioned. |
-| Control API | Changed | Provider setup/status must manage secret refs and desired state. |
-| SDK/contracts | Changed | Expose provider setup/status fields only if needed for UI/API. |
-| CLI | Changed | Setup chooses a secret source and writes through the central manager. |
-| Gantry MCP tools/admin skill | Changed | Admin tools must use the same desired-state and secret-ref paths. |
-| Channel/provider adapters | Unchanged by design | Adapters consume resolved secret values, not storage details. |
-| Docs/prompts | Changed | Replace env-first setup guidance with secret-provider guidance. |
-| Audit/events | Changed | Audit metadata changes only, never secret values. |
-| Tests/verification | Changed | Add persistence, no-leak, and restart/redeploy coverage. |
+| Surface                      | Impact              | Reason                                                                 |
+| ---------------------------- | ------------------- | ---------------------------------------------------------------------- |
+| Runtime behavior             | Changed             | Runtime secrets resolve through a unified reference boundary.          |
+| `settings.yaml`              | Changed             | It stores refs only and is not fleet/workspace authority.              |
+| Postgres/runtime projection  | Changed             | Add encrypted runtime secret storage and keep desired state versioned. |
+| Control API                  | Changed             | Provider setup/status must manage secret refs and desired state.       |
+| SDK/contracts                | Changed             | Expose provider setup/status fields only if needed for UI/API.         |
+| CLI                          | Changed             | Setup chooses a secret source and writes through the central manager.  |
+| Gantry MCP tools/admin skill | Changed             | Admin tools must use the same desired-state and secret-ref paths.      |
+| Channel/provider adapters    | Unchanged by design | Adapters consume resolved secret values, not storage details.          |
+| Docs/prompts                 | Changed             | Replace env-first setup guidance with secret-provider guidance.        |
+| Audit/events                 | Changed             | Audit metadata changes only, never secret values.                      |
+| Tests/verification           | Changed             | Add persistence, no-leak, and restart/redeploy coverage.               |
 
 ## Task Decomposition
 
@@ -250,10 +264,12 @@ Write scope:
 
 Acceptance:
 
-- workstation unmanaged path still writes `settings.yaml`
-- fleet path appends `settings_revisions`
-- fleet path cannot fall back to YAML-only persistence
+- bootstrap may still create initial `settings.yaml`
+- workstation and fleet paths append `settings_revisions`
+- managed paths cannot fall back to YAML-only persistence
 - provider/agent/conversation mutations use this path
+- if a separate settings-authority goal prompt exists, merge its current
+  requirements into this goal and remove the duplicate in the same PR
 
 ### 5. Provider setup cleanup
 
@@ -308,11 +324,19 @@ Closeout:
 ```bash
 python3 .codex/scripts/check_architecture.py
 python3 .codex/scripts/check_task_completion.py
-.agents/skills/autoreview/scripts/autoreview --mode local
+python3 /Users/ravikiranvemula/.codex/skills/autoreview/scripts/autoreview --mode local
 ```
 
 If autoreview finds an accepted issue, fix it, rerun focused tests, then rerun
 autoreview until clean.
+
+PR closeout:
+
+- commit the complete runtime-secret/settings-management cut
+- push the branch
+- open or update the PR
+- include the focused tests, architecture check, task completion check, cleanup
+  search evidence, and clean autoreview result in the PR body
 
 ## No-Legacy Cleanup Rules
 

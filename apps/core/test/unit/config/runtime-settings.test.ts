@@ -808,7 +808,7 @@ agents:
   telegram:
     enabled: true
     label: Compact Telegram
-    bot_token_env: TELEGRAM_COMPACT_BOT_TOKEN
+    bot_token_ref: TELEGRAM_COMPACT_BOT_TOKEN
 
 provider_connections:
   telegram_default:
@@ -820,8 +820,18 @@ provider_connections:
 
     expect(parsed.providerConnections.telegram_default).toMatchObject({
       label: 'Explicit Telegram',
-      runtimeSecretRefs: { bot_token: 'TELEGRAM_EXPLICIT_BOT_TOKEN' },
+      runtimeSecretRefs: { bot_token: 'env:TELEGRAM_EXPLICIT_BOT_TOKEN' },
     });
+  });
+
+  it('rejects compact provider env keys', () => {
+    expect(() =>
+      parseRuntimeSettings(`providers:
+  telegram:
+    enabled: true
+    bot_token_env: TELEGRAM_BOT_TOKEN
+`),
+    ).toThrow('providers.telegram.bot_token_env is not supported');
   });
 
   it('accepts durable provider connection ids exported from runtime storage', () => {
@@ -912,7 +922,7 @@ agents:
       parseRuntimeSettings(`providers:
   slack:
     enabled: true
-    bot_token_env: SLACK_BOT_TOKEN
+    bot_token_ref: SLACK_BOT_TOKEN
 
 provider_connections:
   slack_default:
@@ -1670,7 +1680,7 @@ agents:
     const parsed = parseRuntimeSettings(`providers:
   telegram:
     enabled: true
-    bot_token_env: TELEGRAM_BOT_TOKEN
+    bot_token_ref: TELEGRAM_BOT_TOKEN
 
 agents:
   main_agent:
@@ -1707,7 +1717,7 @@ conversations:
       parseRuntimeSettings(`providers:
   telegram:
     enabled: true
-    bot_token_env: TELEGRAM_BOT_TOKEN
+    bot_token_ref: TELEGRAM_BOT_TOKEN
 
 agents:
   main_agent:
@@ -1729,7 +1739,7 @@ conversations:
       parseRuntimeSettings(`providers:
   telegram:
     enabled: true
-    bot_token_env: TELEGRAM_BOT_TOKEN
+    bot_token_ref: TELEGRAM_BOT_TOKEN
 
 provider_connections:
   telegram_default:
@@ -1761,10 +1771,10 @@ bindings:
     const parsed = parseRuntimeSettings(`providers:
   slack:
     enabled: true
-    bot_token_env: SLACK_BOT_TOKEN
+    bot_token_ref: SLACK_BOT_TOKEN
   teams:
     enabled: true
-    client_id_env: TEAMS_CLIENT_ID
+    client_id_ref: TEAMS_CLIENT_ID
 
 agents:
   main_agent:

@@ -95,12 +95,7 @@ export async function syncRuntimeSettingsFromProjection(input: {
     appId: input.appId,
   });
   const exported = await service.exportCurrent(settings);
-  if (exported.runtime.deploymentMode === 'fleet') {
-    if (!input.settingsRevisions) {
-      throw new Error(
-        'Fleet settings projection sync requires the settings revisions repository.',
-      );
-    }
+  if (input.settingsRevisions) {
     const appId = input.appId ?? ('default' as AppId);
     const { importWorkstationSettings } =
       await import('./settings-import-service.js');
@@ -122,6 +117,11 @@ export async function syncRuntimeSettingsFromProjection(input: {
       exported,
     );
     return;
+  }
+  if (exported.runtime.deploymentMode === 'fleet') {
+    throw new Error(
+      'Fleet settings projection sync requires the settings revisions repository.',
+    );
   }
   await applyRuntimeSettingsDesiredState({
     ...input,
@@ -155,12 +155,7 @@ export async function addAgentToolRulesToSyncedRuntimeSettings(input: {
     repositories: input.repositories,
     appId: input.appId ?? ('default' as AppId),
   });
-  if (nextSettings.runtime.deploymentMode === 'fleet') {
-    if (!input.settingsRevisions) {
-      throw new Error(
-        'Fleet tool-rule settings mutation requires the settings revisions repository.',
-      );
-    }
+  if (input.settingsRevisions) {
     const appId = input.appId ?? ('default' as AppId);
     const { importWorkstationSettings } =
       await import('./settings-import-service.js');
@@ -182,6 +177,11 @@ export async function addAgentToolRulesToSyncedRuntimeSettings(input: {
       nextSettings,
     );
     return;
+  }
+  if (nextSettings.runtime.deploymentMode === 'fleet') {
+    throw new Error(
+      'Fleet tool-rule settings mutation requires the settings revisions repository.',
+    );
   }
   await applyRuntimeSettingsDesiredState({
     runtimeHome: input.runtimeHome,
@@ -257,12 +257,7 @@ export async function removeAgentToolRulesFromSyncedRuntimeSettings(input: {
     input.agentFolder,
     input.rules,
   );
-  if (nextSettings.runtime.deploymentMode === 'fleet') {
-    if (!input.settingsRevisions) {
-      throw new Error(
-        'Fleet tool-rule settings mutation requires the settings revisions repository.',
-      );
-    }
+  if (input.settingsRevisions) {
     const appId = input.appId ?? ('default' as AppId);
     const { importWorkstationSettings } =
       await import('./settings-import-service.js');
@@ -284,6 +279,11 @@ export async function removeAgentToolRulesFromSyncedRuntimeSettings(input: {
       nextSettings,
     );
     return;
+  }
+  if (nextSettings.runtime.deploymentMode === 'fleet') {
+    throw new Error(
+      'Fleet tool-rule settings mutation requires the settings revisions repository.',
+    );
   }
   await applyRuntimeSettingsDesiredState({
     runtimeHome: input.runtimeHome,

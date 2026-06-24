@@ -52,6 +52,25 @@ export interface SettingsRevisionMirror {
   logWarn?: (context: Record<string, unknown>, message: string) => void;
 }
 
+export class SettingsRevisionConflictError extends Error {
+  readonly expectedRevision: number;
+  readonly actualRevision: number;
+
+  constructor(input: {
+    expectedRevision: number;
+    actualRevision: number;
+    message?: string;
+  }) {
+    super(
+      input.message ??
+        `settings revision conflicted: expected revision ${input.expectedRevision}, actual revision ${input.actualRevision}`,
+    );
+    this.name = 'SettingsRevisionConflictError';
+    this.expectedRevision = input.expectedRevision;
+    this.actualRevision = input.actualRevision;
+  }
+}
+
 /**
  * The single validation path shared by every settings mutation surface (YAML
  * watcher auto-import, CLI `settings import`, and the control-API desired-state
@@ -84,9 +103,10 @@ export async function validateSettingsForImport(
 
 /**
  * Workstation import: validate, then write `settings.yaml` and reconcile through
- * the existing desired-state apply path (unchanged behavior). `settings.yaml`
- * remains the restart source of truth for workstation (AGENTS.md). Throws a
- * combined path-level error message on validation failure.
+ * the existing desired-state apply path. When a required revision mirror is
+ * provided, append the `settings_revisions` row before the local file/projection
+ * update so Postgres is the durable source of truth and `settings.yaml` is the
+ * canonical local copy.
  */
 export async function importWorkstationSettings(
   deps: SettingsImportServiceDeps & {
@@ -94,6 +114,7 @@ export async function importWorkstationSettings(
     reloadRuntimeState?: () => Promise<void>;
     revisionMirror?: SettingsRevisionMirror;
     revisionMirrorRequired?: boolean;
+    expectedRevision?: number | null;
   },
   settings: RuntimeSettings,
 ): Promise<{ revision?: number }> {
@@ -102,7 +123,7 @@ export async function importWorkstationSettings(
     (!deps.previousSettings || !deps.revisionMirror)
   ) {
     throw new Error(
-      'Fleet settings mutation requires previous settings for stale revision protection.',
+      'Settings mutation requires previous settings and a settings revision mirror for stale revision protection.',
     );
   }
   const validation = await validateSettingsForImport(deps, settings);
@@ -124,13 +145,24 @@ export async function importWorkstationSettings(
       await deps.revisionMirror.settingsRevisions.getLatestSettingsRevision(
         appId,
       );
+    const actualRevision = latest?.revision ?? 0;
+    if (
+      deps.expectedRevision !== undefined &&
+      deps.expectedRevision !== null &&
+      deps.expectedRevision !== actualRevision
+    ) {
+      throw new SettingsRevisionConflictError({
+        expectedRevision: deps.expectedRevision,
+        actualRevision,
+      });
+    }
     if (
       latest &&
       stableJson(latest.settingsDocument) !==
         stableJson(settingsToRevisionDocument(deps.previousSettings!))
     ) {
       throw new Error(
-        'Fleet settings mutation is based on stale settings; reload latest desired state and retry.',
+        'Settings mutation is based on stale settings; reload latest desired state and retry.',
       );
     }
     if (
@@ -163,7 +195,7 @@ export async function importWorkstationSettings(
       },
       revisionSettings,
       {
-        expectedRevision: latest?.revision ?? 0,
+        expectedRevision: deps.expectedRevision ?? actualRevision,
         note: deps.revisionMirror.note ?? null,
       },
     );
@@ -173,9 +205,7 @@ export async function importWorkstationSettings(
       );
     }
     if (outcome.status === 'conflict') {
-      throw new Error(
-        `settings revision conflicted: expected revision ${outcome.expectedRevision}, actual revision ${outcome.actualRevision}`,
-      );
+      throw new SettingsRevisionConflictError(outcome);
     }
     try {
       await applyRuntimeSettingsDesiredState({
@@ -193,6 +223,7 @@ export async function importWorkstationSettings(
         { err, revision: outcome.revision },
         'settings revision appended but local apply failed',
       );
+      if (deps.revisionMirrorRequired) throw err;
     }
     return { revision: outcome.revision };
   }

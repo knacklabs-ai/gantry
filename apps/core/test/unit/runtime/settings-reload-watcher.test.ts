@@ -210,7 +210,7 @@ describe('settings reload watcher', () => {
     }
   });
 
-  it('reloads local settings when the best-effort revision lookup fails', async () => {
+  it('keeps last good settings when the revision lookup fails', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-settings-watch-'),
     );
@@ -235,9 +235,10 @@ describe('settings reload watcher', () => {
       next.agent.defaultModel = 'sonnet';
       saveRuntimeSettings(runtimeHome, next);
 
-      await waitFor(() => deps.app.loadState.mock.calls.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 80));
 
-      expect(repo.appended).toHaveLength(1);
+      expect(deps.app.loadState).not.toHaveBeenCalled();
+      expect(repo.appended).toHaveLength(0);
     } finally {
       watcher.close();
     }

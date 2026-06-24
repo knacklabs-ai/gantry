@@ -109,4 +109,38 @@ describe('runtime storage bootstrap', () => {
       );
     });
   });
+
+  it('uses env storage settings when settings.yaml is invalid and Postgres is available', () => {
+    withCleanEnv(() => {
+      const runtimeHome = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'gantry-storage-bootstrap-'),
+      );
+      homes.push(runtimeHome);
+
+      fs.writeFileSync(settingsFilePath(runtimeHome), '{');
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://user:pass@127.0.0.1:5432/gantry?schema=revision_authority';
+
+      const config = resolveRuntimeStorageConfig(runtimeHome, runtimeHome);
+
+      expect(config.postgresUrlEnv).toBe('GANTRY_DATABASE_URL');
+      expect(config.postgresUrl).toBe(process.env.GANTRY_DATABASE_URL);
+      expect(config.postgresSchema).toBe('revision_authority');
+    });
+  });
+
+  it('fails invalid settings.yaml when no env storage is available', () => {
+    withCleanEnv(() => {
+      const runtimeHome = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'gantry-storage-bootstrap-'),
+      );
+      homes.push(runtimeHome);
+
+      fs.writeFileSync(settingsFilePath(runtimeHome), '{');
+
+      expect(() =>
+        resolveRuntimeStorageConfig(runtimeHome, runtimeHome),
+      ).toThrow('Invalid runtime storage settings');
+    });
+  });
 });

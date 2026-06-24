@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { runStartup } from '@core/app/bootstrap/startup.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
+import {
+  createDefaultRuntimeSettings,
+  type RuntimeSettings,
+} from '@core/config/settings/runtime-settings.js';
+import { settingsToRevisionDocument } from '@core/config/settings/settings-import-service.js';
 
 function makeApp(overrides: Partial<RuntimeApp> = {}): RuntimeApp {
   return {
@@ -75,9 +80,9 @@ describe('runStartup', () => {
 
     expect(order).toEqual([
       'layout',
-      'load-settings',
       'init-storage',
       'log-db-init',
+      'load-settings',
       'load-state',
       'ensure-credentials',
     ]);
@@ -310,5 +315,94 @@ describe('runStartup', () => {
     });
 
     expect(initializeRuntimeStorage).toHaveBeenCalledOnce();
+  });
+
+  it('imports changed settings.yaml as the next revision during revision-authority startup', async () => {
+    const revisionSettings = createDefaultRuntimeSettings();
+    revisionSettings.agent.name = 'Revision Agent';
+    const fileSettings = structuredClone(revisionSettings) as RuntimeSettings;
+    fileSettings.agent.name = 'File Agent';
+    const latestRevision = {
+      revision: 1,
+      settingsDocument: settingsToRevisionDocument(revisionSettings),
+    };
+    const settingsRevisions = {
+      getLatestSettingsRevision: vi.fn(async () => latestRevision),
+    };
+    const importWorkstationSettings = vi.fn(async () => ({ revision: 2 }));
+
+    const result = await runStartup(makeApp(), {
+      ensureRuntimeLayoutDirectories: vi.fn(),
+      initializeRuntimeStorage: vi.fn(
+        async () =>
+          ({
+            ops: {},
+            repositories: { settingsRevisions },
+            service: { pool: undefined },
+          }) as any,
+      ),
+      settingsAuthority: 'revision',
+      settingsFileExists: vi.fn(() => true),
+      loadRuntimeSettings: vi.fn(() => fileSettings),
+      importWorkstationSettings,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(importWorkstationSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revisionMirrorRequired: true,
+        expectedRevision: 1,
+      }),
+      fileSettings,
+    );
+    expect(
+      importWorkstationSettings.mock.calls[0]?.[0].previousSettings.agent.name,
+    ).toBe('Revision Agent');
+    expect(result.runtimeSettings.agent.name).toBe('File Agent');
+  });
+
+  it('keeps booting from the latest revision when settings.yaml is invalid', async () => {
+    const revisionSettings = createDefaultRuntimeSettings();
+    revisionSettings.agent.name = 'Revision Agent';
+    const latestRevision = {
+      revision: 1,
+      settingsDocument: settingsToRevisionDocument(revisionSettings),
+    };
+    const settingsRevisions = {
+      getLatestSettingsRevision: vi.fn(async () => latestRevision),
+    };
+    const importWorkstationSettings = vi.fn(async () => ({}));
+    const warn = vi.fn();
+
+    const result = await runStartup(makeApp(), {
+      ensureRuntimeLayoutDirectories: vi.fn(),
+      initializeRuntimeStorage: vi.fn(
+        async () =>
+          ({
+            ops: {},
+            repositories: { settingsRevisions },
+            service: { pool: undefined },
+          }) as any,
+      ),
+      settingsAuthority: 'revision',
+      settingsFileExists: vi.fn(() => true),
+      loadRuntimeSettings: vi.fn(() => {
+        throw new Error('invalid yaml');
+      }),
+      importWorkstationSettings,
+      logger: { info: vi.fn(), warn },
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 1 }),
+      'settings.yaml is invalid; using latest settings revision',
+    );
+    expect(importWorkstationSettings).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        agent: expect.objectContaining({ name: 'Revision Agent' }),
+      }),
+    );
+    expect(result.runtimeSettings.agent.name).toBe('Revision Agent');
   });
 });

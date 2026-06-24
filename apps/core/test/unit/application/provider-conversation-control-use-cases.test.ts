@@ -21,7 +21,7 @@ describe('ProviderConnectionControlService', () => {
       label: 'Telegram',
       status: 'active',
       config: {},
-      runtimeSecretRefs: ['TELEGRAM_BOT_TOKEN'],
+      runtimeSecretRefs: { bot_token: 'env:TELEGRAM_BOT_TOKEN' },
       createdAt: iso,
       updatedAt: iso,
     };
@@ -51,6 +51,51 @@ describe('ProviderConnectionControlService', () => {
       }),
     );
   });
+
+  it('rejects provider runtime refs that alias unrelated secrets', async () => {
+    const providerConnection = {
+      id: 'providerConnection-1',
+      appId: 'default',
+      providerId: 'slack',
+      externalInstallationRef: undefined,
+      label: 'Slack',
+      status: 'active',
+      config: {},
+      runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    const service = new ProviderConnectionControlService({
+      providerConnections: {
+        getProviderConnection: vi.fn(async () => providerConnection),
+        updateProviderConnection: vi.fn(),
+      } as never,
+      providers: {
+        listProviders: vi.fn(async () => [
+          {
+            id: 'slack',
+            displayName: 'Slack',
+            allowedRuntimeSecretKeys: ['bot_token', 'app_token'],
+          },
+        ]),
+      } as never,
+      ids: { generate: vi.fn(() => 'id-1') },
+      clock: { now: () => iso },
+    });
+
+    await expect(
+      service.update({
+        appId: 'default' as never,
+        providerConnectionId: 'providerConnection-1' as never,
+        patch: {
+          runtimeSecretRefs: { bot_token: 'env:SECRET_ENCRYPTION_KEY' },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('canonical slack credential'),
+    });
+  });
 });
 
 describe('DiscoverProviderConversationsService', () => {
@@ -64,7 +109,7 @@ describe('DiscoverProviderConversationsService', () => {
           label: 'Slack',
           status: 'active',
           config: {},
-          runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
+          runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
           createdAt: iso,
           updatedAt: iso,
         })),

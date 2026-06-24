@@ -39,9 +39,11 @@ export {
   syncRuntimeSettingsFromProjection,
 } from './settings/restart-sync.js';
 export {
+  createDefaultRuntimeSettings,
   loadRuntimeSettings,
   loadRuntimeSettingsFromPath,
 } from './settings/runtime-settings.js';
+export { resolveRuntimeStorageConfig } from './settings/storage.js';
 export type { RuntimeSettings } from './settings/runtime-settings-types.js';
 export type ControlEnvKey =
   | 'GANTRY_CONTROL_API_KEYS_JSON'
@@ -236,9 +238,6 @@ const normModel = resolveModelAlias;
 export function getConfiguredDefaultModel(): string {
   return normModel(getRuntimeSettingsForConfig().agent.defaultModel) || '';
 }
-export const TELEGRAM_BOT_TOKEN = envValue('TELEGRAM_BOT_TOKEN');
-export const SLACK_BOT_TOKEN = envValue('SLACK_BOT_TOKEN');
-export const SLACK_APP_TOKEN = envValue('SLACK_APP_TOKEN');
 export const GANTRY_IPC_AUTH_SECRET = envValue('GANTRY_IPC_AUTH_SECRET');
 export const LOG_LEVEL = envValue('LOG_LEVEL') || 'info';
 export const HOST_CREDENTIAL_ENV_KEYS = [
@@ -266,15 +265,6 @@ export function getHostCredentialEnv(
     if (value) env[key] = value;
   }
   return env;
-}
-export function getTelegramBotToken(): string {
-  return runtimeEnvValue('TELEGRAM_BOT_TOKEN');
-}
-export function getSlackBotToken(): string {
-  return runtimeEnvValue('SLACK_BOT_TOKEN');
-}
-export function getSlackAppToken(): string {
-  return runtimeEnvValue('SLACK_APP_TOKEN');
 }
 export type ClaudeAuthMode = 'broker' | 'none';
 export interface ClaudeAuthState {

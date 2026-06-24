@@ -25,12 +25,23 @@ export function resolveRuntimeStorageConfig(
     bootstrapStorageSettingsIfMissing(gantryHome);
     settings = readRuntimeStorageSettingsSnapshot(gantryHome);
   } catch (err) {
+    settings = fallbackStorageSettingsFromEnv();
+    if (settings) {
+      return resolveRuntimeStorageConfigFromSettings(settings);
+    }
     const storageError = err instanceof Error ? err : new Error(String(err));
     throw new Error(
       `Invalid runtime storage settings: ${storageError.message}`,
       { cause: err },
     );
   }
+  return resolveRuntimeStorageConfigFromSettings(settings);
+}
+
+function resolveRuntimeStorageConfigFromSettings(settings: {
+  postgresUrlEnv?: string;
+  postgresSchema?: string;
+}): RuntimeStorageConfig {
   const postgresUrlEnv = settings.postgresUrlEnv || 'GANTRY_DATABASE_URL';
   const postgresUrl = runtimeEnvValueDynamic(postgresUrlEnv).trim() || null;
   const postgresPlaintextHostAllowlist = fleetRehearsalPlaintextPostgresHosts({
@@ -57,6 +68,17 @@ export function resolveRuntimeStorageConfig(
     postgresUrl,
     postgresSchema: settings.postgresSchema || 'gantry',
     postgresPlaintextHostAllowlist,
+  };
+}
+
+function fallbackStorageSettingsFromEnv(): {
+  postgresUrlEnv: string;
+  postgresSchema: string;
+} | null {
+  if (!runtimeEnvValueDynamic('GANTRY_DATABASE_URL').trim()) return null;
+  return {
+    postgresUrlEnv: 'GANTRY_DATABASE_URL',
+    postgresSchema: resolveBootstrapSettingsSchema(),
   };
 }
 

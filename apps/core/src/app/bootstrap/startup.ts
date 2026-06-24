@@ -1,12 +1,22 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import {
   RuntimeSettings,
   loadRuntimeSettings,
 } from '../../config/settings/runtime-settings.js';
 import { GANTRY_HOME } from '../../config/index.js';
+import type { AppId } from '../../domain/app/app.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import { ensureRuntimeLayoutDirectories } from '../../platform/runtime-layout.js';
 import { initializeRuntimeStorage } from '../../adapters/storage/postgres/runtime-store.js';
 import { SettingsDesiredStateService } from '../../config/settings/desired-state-service.js';
+import {
+  importWorkstationSettings,
+  settingsFromRevisionDocument,
+  settingsToRevisionDocument,
+  stableJson,
+} from '../../config/settings/settings-import-service.js';
 import { loadSessionAppMemoryItems } from '../../memory/app-memory-session-hydration.js';
 import { RuntimeApp } from './runtime-app.js';
 import { nowIso } from '../../shared/time/datetime.js';
@@ -15,7 +25,10 @@ interface StartupDeps {
   ensureRuntimeLayoutDirectories: typeof ensureRuntimeLayoutDirectories;
   initializeRuntimeStorage: typeof initializeRuntimeStorage;
   loadRuntimeSettings: typeof loadRuntimeSettings;
+  importWorkstationSettings: typeof importWorkstationSettings;
+  settingsFileExists: (runtimeHome: string) => boolean;
   logger: Pick<typeof logger, 'info' | 'warn'>;
+  settingsAuthority: 'file' | 'revision';
 }
 
 export interface StartupResult {
@@ -31,7 +44,11 @@ function makeDefaultDeps(): StartupDeps {
     ensureRuntimeLayoutDirectories,
     initializeRuntimeStorage,
     loadRuntimeSettings,
+    importWorkstationSettings,
+    settingsFileExists: (runtimeHome) =>
+      fs.existsSync(path.join(runtimeHome, 'settings.yaml')),
     logger,
+    settingsAuthority: 'file',
   };
 }
 
@@ -45,12 +62,24 @@ export async function runStartup(
   };
 
   resolved.ensureRuntimeLayoutDirectories(GANTRY_HOME);
-  const runtimeSettings = resolved.loadRuntimeSettings(GANTRY_HOME);
   const storage = await resolved.initializeRuntimeStorage({
     loadSessionAppMemoryItems: loadSessionAppMemoryItems,
   });
   resolved.logger.info('Database initialized');
+  const runtimeSettings =
+    resolved.settingsAuthority === 'revision'
+      ? await loadRevisionAuthoritySettings({
+          runtimeHome: GANTRY_HOME,
+          storage,
+          app,
+          loadRuntimeSettings: resolved.loadRuntimeSettings,
+          importWorkstationSettings: resolved.importWorkstationSettings,
+          settingsFileExists: resolved.settingsFileExists,
+          logger: resolved.logger,
+        })
+      : resolved.loadRuntimeSettings(GANTRY_HOME);
   if (
+    resolved.settingsAuthority === 'file' &&
     runtimeSettings.desiredState &&
     runtimeSettings.agents &&
     process.env.GANTRY_SKIP_RECONCILE_ON_STARTUP !== '1'
@@ -91,6 +120,110 @@ export async function runStartup(
   return {
     runtimeSettings,
   };
+}
+
+async function loadRevisionAuthoritySettings(input: {
+  runtimeHome: string;
+  storage: Awaited<ReturnType<typeof initializeRuntimeStorage>>;
+  app: RuntimeApp;
+  loadRuntimeSettings: typeof loadRuntimeSettings;
+  importWorkstationSettings: typeof importWorkstationSettings;
+  settingsFileExists: (runtimeHome: string) => boolean;
+  logger: StartupDeps['logger'];
+}): Promise<RuntimeSettings> {
+  const appId = 'default' as AppId;
+  const latest =
+    await input.storage.repositories.settingsRevisions.getLatestSettingsRevision(
+      appId,
+    );
+  if (latest) {
+    const settings = settingsFromRevisionDocument(latest.settingsDocument);
+    if (input.settingsFileExists(input.runtimeHome)) {
+      let fileSettings: RuntimeSettings | null = null;
+      try {
+        fileSettings = input.loadRuntimeSettings(input.runtimeHome);
+      } catch (err) {
+        input.logger.warn(
+          { err, appId, revision: latest.revision },
+          'settings.yaml is invalid; using latest settings revision',
+        );
+      }
+      if (
+        fileSettings &&
+        stableJson(settingsToRevisionDocument(fileSettings)) !==
+          stableJson(latest.settingsDocument)
+      ) {
+        const outcome = await input.importWorkstationSettings(
+          {
+            runtimeHome: input.runtimeHome,
+            ops: input.storage.ops,
+            repositories: input.storage.repositories,
+            appId,
+            previousSettings: settings,
+            revisionMirror: {
+              settingsRevisions: input.storage.repositories.settingsRevisions,
+              pool: input.storage.service.pool,
+              createdBy: 'startup:settings.yaml-import',
+              note: 'Imported settings.yaml change observed during startup.',
+              logWarn: (context, message) =>
+                input.logger.warn(context, message),
+            },
+            revisionMirrorRequired: true,
+            expectedRevision: latest.revision,
+          },
+          fileSettings,
+        );
+        input.logger.info(
+          {
+            appId,
+            previousRevision: latest.revision,
+            revision: outcome.revision ?? latest.revision,
+          },
+          'Imported changed settings.yaml as settings revision',
+        );
+        return input.loadRuntimeSettings(input.runtimeHome);
+      }
+    }
+    await input.importWorkstationSettings(
+      {
+        runtimeHome: input.runtimeHome,
+        ops: input.storage.ops,
+        repositories: input.storage.repositories,
+        appId,
+      },
+      settings,
+    );
+    input.logger.info(
+      { appId, revision: latest.revision },
+      'Loaded workstation settings from settings revision',
+    );
+    return settings;
+  }
+
+  const settings = input.loadRuntimeSettings(input.runtimeHome);
+  const outcome = await input.importWorkstationSettings(
+    {
+      runtimeHome: input.runtimeHome,
+      ops: input.storage.ops,
+      repositories: input.storage.repositories,
+      appId,
+      previousSettings: settings,
+      revisionMirror: {
+        settingsRevisions: input.storage.repositories.settingsRevisions,
+        pool: input.storage.service.pool,
+        createdBy: 'startup:settings.yaml-bootstrap',
+        logWarn: (context, message) => input.logger.warn(context, message),
+      },
+      revisionMirrorRequired: true,
+      expectedRevision: 0,
+    },
+    settings,
+  );
+  input.logger.info(
+    { appId, revision: outcome.revision ?? 0 },
+    'Seeded workstation settings revision from settings.yaml',
+  );
+  return settings;
 }
 
 async function ensureFreshRuntimeHasDefaultAgent(

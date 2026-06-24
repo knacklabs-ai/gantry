@@ -81,6 +81,7 @@ async function withCredentialServices<T>(
     capability: CapabilitySecretService;
   }) => Promise<T>,
 ): Promise<T> {
+  ensureRuntimeSettings(runtimeHome);
   process.env.GANTRY_HOME = runtimeHome;
   const { createStorageRuntime } =
     await import('../adapters/storage/postgres/factory.js');
@@ -117,6 +118,23 @@ export async function storeModelCredentialInput(input: {
       authMode: input.authMode,
       payload: input.payload,
       actor: 'cli',
+    }),
+  );
+}
+
+export async function storeRuntimeSecretInput(input: {
+  runtimeHome: string;
+  name: string;
+  value: string;
+  actor?: string;
+}): Promise<void> {
+  const name = normalizeCapabilitySecretName(input.name);
+  await withCredentialServices(input.runtimeHome, ({ capability }) =>
+    capability.set({
+      appId: DEFAULT_APP_ID,
+      name,
+      value: input.value,
+      actor: input.actor ?? 'cli',
     }),
   );
 }

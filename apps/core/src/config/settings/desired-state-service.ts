@@ -71,6 +71,7 @@ import type {
   RuntimeSettings,
 } from './runtime-settings-types.js';
 import { resolveAgentToolReference } from '../../domain/tools/agent-tool-catalog-references.js';
+import { normalizeRuntimeSecretRefString } from '../../domain/ports/runtime-secret-provider.js';
 import { nowIso } from '../../shared/time/datetime.js';
 
 export class SettingsDesiredStateService {
@@ -306,7 +307,10 @@ export class SettingsDesiredStateService {
         label: connectionSettings.label,
         status: 'active',
         config: {},
-        runtimeSecretRefs: Object.values(connectionSettings.runtimeSecretRefs),
+        runtimeSecretRefs: normalizeRuntimeSecretRefs({
+          refs: connectionSettings.runtimeSecretRefs,
+          pathPrefix: `provider_connections.${input.conversation.providerConnection}.runtime_secret_refs`,
+        }),
         createdAt: input.now,
         updatedAt: input.now,
       } satisfies ProviderConnection);
@@ -596,4 +600,16 @@ function normalizeUserIds(userIds: string[]): string[] {
 
 function isValidExternalUserId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/.test(value);
+}
+
+function normalizeRuntimeSecretRefs(input: {
+  refs: Record<string, string>;
+  pathPrefix: string;
+}): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(input.refs).map(([key, value]) => [
+      key,
+      normalizeRuntimeSecretRefString(value, `${input.pathPrefix}.${key}`),
+    ]),
+  );
 }
