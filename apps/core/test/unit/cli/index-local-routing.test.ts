@@ -20,6 +20,8 @@ afterEach(() => {
   vi.doUnmock('@core/adapters/storage/postgres/storage-service.js');
   vi.doUnmock('@core/cli/provider.js');
   vi.doUnmock('@core/cli/local.js');
+  vi.doUnmock('@core/app/index.js');
+  vi.doUnmock('@core/config/preflight.js');
   vi.doUnmock('@clack/prompts');
   for (const runtimeHome of runtimeHomes.splice(0)) {
     fs.rmSync(runtimeHome, { recursive: true, force: true });
@@ -125,6 +127,42 @@ describe('CLI local routing', () => {
       expect.stringContaining('docker-compose.yml'),
       'Local Status',
     );
+  });
+
+  it('lets runtime startup handle revision authority before start preflight', async () => {
+    const runtimeHome = makeRuntimeHome();
+    fs.writeFileSync(
+      path.join(runtimeHome, 'settings.yaml'),
+      'agent:\n  name: broken\nagent:\n  name: duplicate\n',
+    );
+    const startGantryRuntime = vi.fn(async () => undefined);
+    const validateRuntimePreflightWithStorage = vi.fn(() => {
+      throw new Error('CLI start should not preflight settings.yaml directly');
+    });
+    vi.doMock('@core/app/index.js', () => ({ startGantryRuntime }));
+    vi.doMock('@core/config/preflight.js', () => ({
+      validateRuntimePreflightWithStorage,
+      formatRuntimePreflightFailure: vi.fn(),
+    }));
+    vi.doMock('@clack/prompts', () => ({
+      isCancel: () => false,
+      note: vi.fn(),
+      log: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), success: vi.fn() },
+      select: vi.fn(),
+      text: vi.fn(),
+      spinner: vi.fn(() => ({
+        start: vi.fn(),
+        stop: vi.fn(),
+        message: vi.fn(),
+      })),
+    }));
+
+    const { main } = await import('@core/cli/index.js');
+    const code = await main(['--runtime-home', runtimeHome, 'start']);
+
+    expect(code).toBe(0);
+    expect(startGantryRuntime).toHaveBeenCalledWith();
+    expect(validateRuntimePreflightWithStorage).not.toHaveBeenCalled();
   });
 
   it('does not stop local Docker services from the Gantry CLI', async () => {

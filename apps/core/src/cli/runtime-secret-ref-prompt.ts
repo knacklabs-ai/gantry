@@ -152,14 +152,25 @@ function writeRuntimeEnvValue(
   const env = readRuntimeEnvFile(runtimeHome);
   env[name.trim().toUpperCase()] = value;
   fs.mkdirSync(runtimeHome, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(runtimeHome, 0o700);
+  } catch {
+    // Best effort: some filesystems do not support POSIX modes.
+  }
+  const filePath = path.join(runtimeHome, '.env');
   fs.writeFileSync(
-    path.join(runtimeHome, '.env'),
+    filePath,
     `${Object.keys(env)
       .sort((a, b) => a.localeCompare(b))
       .map((key) => `${key}=${encodeRuntimeEnvValue(env[key] ?? '')}`)
       .join('\n')}\n`,
     { encoding: 'utf-8', mode: 0o600 },
   );
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Best effort: some filesystems do not support POSIX modes.
+  }
 }
 
 function encodeRuntimeEnvValue(value: string): string {

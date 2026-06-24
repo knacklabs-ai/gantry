@@ -76,6 +76,9 @@ describe('runtime secret ref prompt', () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-secret-ref-test-'),
     );
+    fs.writeFileSync(path.join(runtimeHome, '.env'), 'EXISTING=1\n', {
+      mode: 0o644,
+    });
     const envPlan = await planRuntimeSecretInput({
       runtimeHome,
       name: 'SLACK_BOT_TOKEN',
@@ -95,6 +98,9 @@ describe('runtime secret ref prompt', () => {
     await awsPlan?.persist();
     expect(fs.readFileSync(path.join(runtimeHome, '.env'), 'utf-8')).toContain(
       'SLACK_TOKEN_FROM_ENV=xoxb-token',
+    );
+    expect(fs.statSync(path.join(runtimeHome, '.env')).mode & 0o777).toBe(
+      0o600,
     );
     expect(storeRuntimeSecretInput).not.toHaveBeenCalled();
   });
