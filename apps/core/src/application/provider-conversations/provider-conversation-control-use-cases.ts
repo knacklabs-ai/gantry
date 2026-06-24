@@ -26,7 +26,11 @@ import type { Clock } from '../common/clock.js';
 import { ApplicationError } from '../common/application-error.js';
 import type { IdGenerator } from '../common/id-generator.js';
 import type { ProviderCatalogPort } from './provider-catalog-ports.js';
-import { normalizeRuntimeSecretRefString } from '../../domain/ports/runtime-secret-provider.js';
+import {
+  isForbiddenRuntimeSecretEnvName,
+  normalizeRuntimeSecretRefString,
+  parseRuntimeSecretRefString,
+} from '../../domain/ports/runtime-secret-provider.js';
 import { isProviderRuntimeSecretRefTarget } from '../../domain/provider/provider-runtime-secret-keys.js';
 
 export interface ProviderConnectionPatch {
@@ -117,6 +121,15 @@ function assertAllowedRuntimeSecretRefs(
       if (!isProviderRuntimeSecretRefTarget(provider.id, key, normalized)) {
         throw new Error(
           `runtimeSecretRefs.${key} must point to the canonical ${provider.id} credential for ${key}.`,
+        );
+      }
+      const parsed = parseRuntimeSecretRefString(normalized);
+      if (
+        parsed.source === 'env' &&
+        isForbiddenRuntimeSecretEnvName(parsed.name)
+      ) {
+        throw new Error(
+          `${parsed.name} is not allowed for provider '${provider.id}' runtime secret ref ${normalized}. Use a channel runtime secret name, not model/provider credential authority.`,
         );
       }
       refs[key] = normalized;
