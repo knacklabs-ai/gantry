@@ -72,7 +72,7 @@ export async function handleExternalCardAction(input: {
       canonicalTeamsConversationId(conversationId);
     if (
       !canonicalConversationId ||
-        canonicalConversationId !==
+      canonicalConversationId !==
         canonicalTeamsConversationId(action.sourceConversationId)
     ) {
       throw new Error(

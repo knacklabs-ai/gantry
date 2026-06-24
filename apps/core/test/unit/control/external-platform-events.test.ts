@@ -57,7 +57,10 @@ const cardEnvelope = {
         { label: 'Published', value: '2026-05-18' },
       ],
       links: [
-        { label: 'notice.pdf', url: 'https://example.test/documents/notice.pdf' },
+        {
+          label: 'notice.pdf',
+          url: 'https://example.test/documents/notice.pdf',
+        },
       ],
       actions: [
         {
@@ -170,7 +173,9 @@ describe('External platform event adapter helpers', () => {
     expect(buildExternalPlatformMessage(cardEnvelope)).toContain(
       'Organization: External Hospital',
     );
-    expect(buildExternalPlatformMessage(cardEnvelope)).not.toContain('Reference');
+    expect(buildExternalPlatformMessage(cardEnvelope)).not.toContain(
+      'Reference',
+    );
   });
 
   it('builds thread-targeted Teams text for generic message notifications', () => {

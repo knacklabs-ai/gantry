@@ -743,7 +743,9 @@ function resolveTargetJid(envelope: PlatformEventEnvelope): string | null {
   return null;
 }
 
-function resolveExternalThreadId(envelope: PlatformEventEnvelope): string | null {
+function resolveExternalThreadId(
+  envelope: PlatformEventEnvelope,
+): string | null {
   return (
     readOptionalString(envelope.payload.threadId) ??
     readOptionalString(envelope.payload.replyToId) ??

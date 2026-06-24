@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import type {
   GantryAgentTaskCancellationRequest,
   GantryAgentTaskInput,
@@ -11,11 +13,14 @@ import { asRecord, parseJsonRecord } from '../shared/helpers.js';
 import {
   buildAgentStepInstructions,
   buildAgentPromptMetrics,
+  createInitialAgentMemory,
   buildGenericAgentActionSchema,
   cloneJsonRecord,
   compactAgentLoopState,
+  mergeModelProgressIntoAgentMemory,
   normalizeAgentMaxSteps,
   parseGenericAgentAction,
+  recordAgentMemoryObservation,
   readAgentStepAttachments,
   readOptionalString,
   readValidationReport,
@@ -38,40 +43,12 @@ export async function runGenericAgentTask(
   const warnings: string[] = [];
   const toolMap = new Map(input.tools.map((tool) => [tool.name, tool]));
   const repeatedFailures = new Map<string, number>();
+  const traceDir = resolveAgentModelTraceDir(input);
   const state: Record<string, unknown> = {
     input: input.input,
     observations: [],
-  };
-
-  const validateFinalOutput = async (request: {
-    readonly step: number;
-    readonly output: Record<string, unknown>;
-    readonly source: 'model_final' | 'tool_final_output';
-    readonly toolName?: string | null;
-  }): Promise<boolean> => {
-    if (!input.validateFinal) return true;
-    const validation = await input.validateFinal({
-      taskType: input.taskType,
-      correlationId: input.correlationId,
-      step: request.step,
-      state,
-      output: request.output,
-      source: request.source,
-      toolName: request.toolName ?? null,
-    });
-    if (validation.accepted) return true;
-    const feedback = {
-      source: request.source,
-      toolName: request.toolName ?? null,
-      reason: validation.reason ?? 'agent_final_output_rejected',
-      instruction:
-        validation.instruction ??
-        'Continue gathering evidence before returning final output.',
-      details: validation.details ?? null,
-    };
-    state.finalValidationFeedback = feedback;
-    warnings.push(`agent_final_output_rejected:${feedback.reason}`);
-    return false;
+    semanticObservationHistory: [],
+    agentMemory: createInitialAgentMemory(input),
   };
 
   const recordStep = async (stepEntry: GantryAgentTaskStep): Promise<void> => {
@@ -101,6 +78,95 @@ export async function runGenericAgentTask(
         toolName: toolName ?? null,
       }),
     );
+  };
+
+  const validateFinalOutput = async (inputArgs: {
+    readonly step: number;
+    readonly output: Record<string, unknown>;
+    readonly source: 'model_final' | 'tool_final_output';
+    readonly toolName?: string | null;
+  }): Promise<{
+    readonly accepted: boolean;
+    readonly reason?: string | null;
+    readonly instruction?: string | null;
+    readonly details?: Record<string, unknown> | null;
+  }> => {
+    if (!input.validateFinal) return { accepted: true };
+    try {
+      const result = await input.validateFinal({
+        taskType: input.taskType,
+        correlationId: input.correlationId,
+        step: inputArgs.step,
+        state,
+        output: inputArgs.output,
+        source: inputArgs.source,
+        toolName: inputArgs.toolName ?? null,
+      });
+      return result ?? { accepted: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        accepted: false,
+        reason: 'final_validation_exception',
+        instruction:
+          'The final output validation hook failed. Continue by gathering explicit evidence and calling readiness validation before finalizing again.',
+        details: { error: message },
+      };
+    }
+  };
+
+  const applyFinalValidationRejection = (inputArgs: {
+    readonly step: number;
+    readonly source: 'model_final' | 'tool_final_output';
+    readonly toolName?: string | null;
+    readonly validation: {
+      readonly accepted: boolean;
+      readonly reason?: string | null;
+      readonly instruction?: string | null;
+      readonly details?: Record<string, unknown> | null;
+    };
+  }): Record<string, unknown> => {
+    const reason = inputArgs.validation.reason ?? 'final_validation_rejected';
+    const instruction =
+      inputArgs.validation.instruction ??
+      'Do not finalize yet. Use the validation details to gather the missing proof, repair the builder state, and validate readiness again.';
+    state.recoveryHint = {
+      error: 'final_validation_rejected',
+      reason,
+      instruction,
+      source: inputArgs.source,
+      toolName: inputArgs.toolName ?? null,
+      details: inputArgs.validation.details ?? null,
+    };
+    const observations = Array.isArray(state.observations)
+      ? [...state.observations]
+      : [];
+    observations.push({
+      step: inputArgs.step,
+      toolName: inputArgs.toolName ?? inputArgs.source,
+      input: null,
+      observation: {
+        status: 'failed',
+        error: 'final_validation_rejected',
+        finalValidation: inputArgs.validation,
+      },
+      auditNote: 'Final output rejected by task-specific validator.',
+    });
+    state.observations = observations;
+    state.lastObservation = {
+      status: 'failed',
+      error: 'final_validation_rejected',
+      finalValidation: inputArgs.validation,
+    };
+    recordAgentMemoryObservation(state, {
+      step: inputArgs.step,
+      toolName: inputArgs.toolName ?? inputArgs.source,
+      actionInput: null,
+      observation: state.lastObservation as Record<string, unknown>,
+      status: 'failed',
+      error: reason,
+    });
+    return state.lastObservation as Record<string, unknown>;
   };
 
   const finish = async (
@@ -201,6 +267,24 @@ export async function runGenericAgentTask(
         outputSchema: actionSchema,
         attachments,
       });
+      const traceAttachments = await persistTraceAttachments(
+        traceDir,
+        step,
+        attachments,
+      );
+      await writeAgentModelTrace(traceDir, {
+        kind: 'model_input',
+        taskRunId,
+        taskType: input.taskType,
+        correlationId: input.correlationId ?? null,
+        step,
+        createdAt: new Date().toISOString(),
+        instructions,
+        modelInput,
+        outputSchema: actionSchema,
+        attachments: traceAttachments,
+        promptMetrics,
+      });
       const generated = await runWithOptionalTimeout(
         config.model.generateJson({
           taskType: input.taskType,
@@ -219,8 +303,37 @@ export async function runGenericAgentTask(
         typeof generated === 'string'
           ? parseJsonRecord(generated)
           : (generated as Record<string, unknown>);
+      await writeAgentModelTrace(traceDir, {
+        kind: 'model_output',
+        taskRunId,
+        taskType: input.taskType,
+        correlationId: input.correlationId ?? null,
+        step,
+        createdAt: new Date().toISOString(),
+        rawOutput: generated,
+        parsedAction: action,
+        promptMetrics,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await writeAgentModelTrace(traceDir, {
+        kind: 'model_error',
+        taskRunId,
+        taskType: input.taskType,
+        correlationId: input.correlationId ?? null,
+        step,
+        createdAt: new Date().toISOString(),
+        error: message,
+        promptMetrics,
+      });
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: 'model',
+        actionInput: null,
+        observation: { status: 'failed', error: message },
+        status: 'failed',
+        error: message,
+      });
       await recordStep({
         step,
         actionType: 'model',
@@ -240,24 +353,63 @@ export async function runGenericAgentTask(
     }
 
     const parsed = parseGenericAgentAction(action);
+    mergeModelProgressIntoAgentMemory(state, step, parsed);
+    const progressTrace = {
+      previousGoalEvaluation: parsed.previousGoalEvaluation ?? null,
+      memoryUpdate: parsed.memoryUpdate ?? null,
+      nextGoal: parsed.nextGoal ?? null,
+    };
     if (parsed.action === 'final') {
       const output = parsed.output;
-      const finalAccepted = await validateFinalOutput({
+      const finalValidation = await validateFinalOutput({
         step,
         output,
         source: 'model_final',
       });
+      if (!finalValidation.accepted) {
+        const validationObservation = applyFinalValidationRejection({
+          step,
+          source: 'model_final',
+          validation: finalValidation,
+        });
+        await recordStep({
+          step,
+          actionType: 'final',
+          status: 'failed',
+          startedAt: stepStartedIso,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - stepStartedAt,
+          error: finalValidation.reason ?? 'final_validation_rejected',
+          observation: validationObservation,
+          promptMetrics,
+          auditNote: parsed.auditNote,
+          whyThisStep: parsed.whyThisStep,
+          expectedOutcome: parsed.expectedOutcome,
+          nextIfFails: parsed.nextIfFails,
+          visualSummary: parsed.visualSummary,
+          visibleTarget: parsed.visibleTarget,
+          whyThisAction: parsed.whyThisAction,
+          expectedStateChange: parsed.expectedStateChange,
+          fallbackIfWrong: parsed.fallbackIfWrong,
+          ...progressTrace,
+        });
+        continue;
+      }
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: 'model_final',
+        actionInput: null,
+        observation: output,
+        status: 'completed',
+      });
       await recordStep({
         step,
         actionType: 'final',
-        status: finalAccepted ? 'completed' : 'failed',
+        status: 'completed',
         startedAt: stepStartedIso,
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - stepStartedAt,
         observation: summarizeAgentObservation(output),
-        error: finalAccepted
-          ? undefined
-          : 'agent_final_output_rejected',
         promptMetrics,
         auditNote: parsed.auditNote,
         whyThisStep: parsed.whyThisStep,
@@ -268,8 +420,8 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
-      if (!finalAccepted) continue;
       const status =
         output.status === 'needs_review' || output.status === 'failed'
           ? output.status
@@ -296,6 +448,7 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
       return await finish('needs_review', {
         status: 'needs_review',
@@ -305,6 +458,14 @@ export async function runGenericAgentTask(
 
     if (parsed.action !== 'call_tool') {
       const message = `Unsupported agent action: ${parsed.action}`;
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: parsed.action,
+        actionInput: null,
+        observation: { status: 'failed', error: message },
+        status: 'failed',
+        error: message,
+      });
       await recordStep({
         step,
         actionType: parsed.action,
@@ -323,6 +484,7 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
       return await finish(
         'failed',
@@ -335,6 +497,14 @@ export async function runGenericAgentTask(
     const tool = parsed.toolName ? toolMap.get(parsed.toolName) : undefined;
     if (!tool) {
       const message = `Unknown agent tool: ${parsed.toolName ?? ''}`;
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: parsed.toolName ?? 'unknown_tool',
+        actionInput: parsed.input,
+        observation: { status: 'failed', error: message },
+        status: 'failed',
+        error: message,
+      });
       await recordStep({
         step,
         actionType: 'call_tool',
@@ -355,6 +525,7 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
       return await finish(
         'failed',
@@ -365,6 +536,16 @@ export async function runGenericAgentTask(
     }
 
     if (await isCancelled(step, 'before_tool', tool.name)) {
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: tool.name,
+        actionInput: parsed.input,
+        observation: {
+          status: 'cancelled',
+          reason: 'agent_task_cancelled_before_tool',
+        },
+        status: 'skipped',
+      });
       await recordStep({
         step,
         actionType: 'call_tool',
@@ -388,6 +569,7 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
       return await finish(
         'failed',
@@ -398,6 +580,17 @@ export async function runGenericAgentTask(
     }
 
     try {
+      await writeAgentModelTrace(traceDir, {
+        kind: 'tool_input',
+        taskRunId,
+        taskType: input.taskType,
+        correlationId: input.correlationId ?? null,
+        step,
+        createdAt: new Date().toISOString(),
+        toolName: tool.name,
+        input: parsed.input,
+        progressTrace,
+      });
       const observation = await runWithOptionalTimeout(
         Promise.resolve(
           tool.execute(parsed.input, {
@@ -410,7 +603,29 @@ export async function runGenericAgentTask(
         input.stepTimeoutMs ?? remainingMs,
         `agent_tool_timeout:${tool.name}`,
       );
+      await writeAgentModelTrace(traceDir, {
+        kind: 'tool_output',
+        taskRunId,
+        taskType: input.taskType,
+        correlationId: input.correlationId ?? null,
+        step,
+        createdAt: new Date().toISOString(),
+        toolName: tool.name,
+        input: parsed.input,
+        observation,
+        compactObservation: summarizeAgentObservation(observation),
+      });
       if (await isCancelled(step, 'after_tool', tool.name)) {
+        recordAgentMemoryObservation(state, {
+          step,
+          toolName: tool.name,
+          actionInput: parsed.input,
+          observation: {
+            status: 'cancelled',
+            reason: 'agent_task_cancelled_after_tool',
+          },
+          status: 'skipped',
+        });
         await recordStep({
           step,
           actionType: 'call_tool',
@@ -434,6 +649,7 @@ export async function runGenericAgentTask(
           whyThisAction: parsed.whyThisAction,
           expectedStateChange: parsed.expectedStateChange,
           fallbackIfWrong: parsed.fallbackIfWrong,
+          ...progressTrace,
         });
         return await finish(
           'failed',
@@ -443,6 +659,13 @@ export async function runGenericAgentTask(
         );
       }
       const compactObservation = summarizeAgentObservation(observation);
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: tool.name,
+        actionInput: parsed.input,
+        observation,
+        status: 'completed',
+      });
       const observationRecord = asRecord(compactObservation) ?? {};
       const readinessObservation =
         asRecord(observationRecord.readinessValidation) ??
@@ -450,19 +673,23 @@ export async function runGenericAgentTask(
         null;
       if (readinessObservation) state.latestReadiness = readinessObservation;
       const toolError = readOptionalString(observationRecord.error);
-      if (toolError) {
-        const repeatKey = `${tool.name}:${toolError}`;
+      const noProgressReason = readNoProgressReason(observationRecord);
+      if (toolError || noProgressReason) {
+        const repeatKey = `${tool.name}:${toolError ?? noProgressReason}`;
         const repeatCount = (repeatedFailures.get(repeatKey) ?? 0) + 1;
         repeatedFailures.set(repeatKey, repeatCount);
         state.recoveryHint = {
           repeatKey,
           repeatCount,
           toolName: tool.name,
-          error: toolError,
+          error: toolError ?? null,
+          noProgressReason: noProgressReason ?? null,
           instruction:
             repeatCount >= 2
-              ? 'Do not repeat the same failing tool payload. Use the last observation/readiness guidance to gather the missing evidence or call the required setter with corrected evidence.'
-              : 'If this tool failed, correct the payload using the tool observation before retrying.',
+              ? 'Do not repeat the same failing or no-progress tool payload. Use the last observation/readiness guidance to gather the missing evidence or choose a different route/action.'
+              : toolError
+                ? 'If this tool failed, correct the payload using the tool observation before retrying.'
+                : 'This tool made no useful progress. Inspect the current state, choose a different safe action, or call a probe/recovery tool before retrying.',
         };
       } else {
         state.recoveryHint = null;
@@ -505,16 +732,47 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
       const finalOutput = asRecord(observation.finalOutput);
       if (finalOutput) {
-        const finalAccepted = await validateFinalOutput({
+        const finalValidation = await validateFinalOutput({
           step,
           output: finalOutput,
           source: 'tool_final_output',
           toolName: tool.name,
         });
-        if (!finalAccepted) continue;
+        if (!finalValidation.accepted) {
+          const validationObservation = applyFinalValidationRejection({
+            step,
+            source: 'tool_final_output',
+            toolName: tool.name,
+            validation: finalValidation,
+          });
+          await recordStep({
+            step,
+            actionType: 'final_validation',
+            toolName: tool.name,
+            status: 'failed',
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            durationMs: 0,
+            error: finalValidation.reason ?? 'final_validation_rejected',
+            observation: validationObservation,
+            promptMetrics: null,
+            actionInput: null,
+            auditNote: 'Tool final output rejected by task-specific validator.',
+            ...progressTrace,
+          });
+          continue;
+        }
+        recordAgentMemoryObservation(state, {
+          step,
+          toolName: tool.name,
+          actionInput: parsed.input,
+          observation: finalOutput,
+          status: 'completed',
+        });
         const status =
           finalOutput.status === 'needs_review' ||
           finalOutput.status === 'failed'
@@ -524,6 +782,25 @@ export async function runGenericAgentTask(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await writeAgentModelTrace(traceDir, {
+        kind: 'tool_error',
+        taskRunId,
+        taskType: input.taskType,
+        correlationId: input.correlationId ?? null,
+        step,
+        createdAt: new Date().toISOString(),
+        toolName: tool.name,
+        input: parsed.input,
+        error: message,
+      });
+      recordAgentMemoryObservation(state, {
+        step,
+        toolName: tool.name,
+        actionInput: parsed.input,
+        observation: { status: 'failed', error: message },
+        status: 'failed',
+        error: message,
+      });
       await recordStep({
         step,
         actionType: 'call_tool',
@@ -544,6 +821,7 @@ export async function runGenericAgentTask(
         whyThisAction: parsed.whyThisAction,
         expectedStateChange: parsed.expectedStateChange,
         fallbackIfWrong: parsed.fallbackIfWrong,
+        ...progressTrace,
       });
       return await finish(
         'failed',
@@ -564,6 +842,195 @@ export async function runGenericAgentTask(
     null,
     'agent_task_max_steps_exceeded',
   );
+}
+
+function readNoProgressReason(
+  observationRecord: Record<string, unknown>,
+): string | null {
+  const directReason =
+    readOptionalString(observationRecord.noProgressReason) ??
+    readOptionalString(observationRecord.no_progress_reason);
+  if (observationRecord.noProgress === true) {
+    return directReason ?? 'tool_reported_no_progress';
+  }
+  const progress = asRecord(observationRecord.progress);
+  const progressStatus =
+    readOptionalString(progress?.status) ??
+    readOptionalString(progress?.outcome);
+  if (progressStatus === 'no_progress') {
+    return (
+      readOptionalString(progress?.reason) ??
+      directReason ??
+      'tool_reported_no_progress'
+    );
+  }
+  const transition =
+    asRecord(observationRecord.pageTransition) ??
+    asRecord(observationRecord.page_transition);
+  const transitionOutcome =
+    readOptionalString(transition?.outcome) ??
+    readOptionalString(transition?.status);
+  if (transitionOutcome === 'no_progress') {
+    return (
+      readOptionalString(transition?.reason) ??
+      readOptionalString(transition?.summary) ??
+      directReason ??
+      'page_action_no_progress'
+    );
+  }
+  if (
+    transition &&
+    transition.changed === false &&
+    readOptionalString(transition.expectedStateChange)
+  ) {
+    return (
+      readOptionalString(transition.reason) ??
+      'page_action_did_not_reach_expected_state'
+    );
+  }
+  return null;
+}
+
+function resolveAgentModelTraceDir(input: GantryAgentTaskInput): string | null {
+  const baseDir = process.env.AGENT_GANTRY_MODEL_TRACE_DIR?.trim();
+  if (!baseDir) return null;
+  const safeTask = sanitizeTracePathSegment(input.taskType || 'agent-task');
+  const safeCorrelation = sanitizeTracePathSegment(
+    input.correlationId ?? randomUUID(),
+  );
+  return path.resolve(baseDir, safeTask, safeCorrelation);
+}
+
+async function writeAgentModelTrace(
+  traceDir: string | null,
+  event: Record<string, unknown>,
+): Promise<void> {
+  if (!traceDir) return;
+  try {
+    await mkdir(traceDir, { recursive: true });
+    const step = typeof event.step === 'number' ? event.step : 0;
+    const kind = readOptionalString(event.kind) ?? 'event';
+    const prefix = `step-${String(step).padStart(3, '0')}-${sanitizeTracePathSegment(kind)}`;
+    await appendFile(
+      path.join(traceDir, 'events.jsonl'),
+      `${JSON.stringify(event)}\n`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(traceDir, `${prefix}.json`),
+      `${JSON.stringify(event, null, 2)}\n`,
+      'utf8',
+    );
+    if (kind === 'model_input') {
+      await writeFile(
+        path.join(traceDir, `${prefix}.md`),
+        formatModelInputTraceMarkdown(event),
+        'utf8',
+      );
+    }
+  } catch {
+    // Tracing must never change agent behavior.
+  }
+}
+
+async function persistTraceAttachments(
+  traceDir: string | null,
+  step: number,
+  attachments: readonly unknown[] | undefined,
+): Promise<readonly Record<string, unknown>[]> {
+  const records = (attachments ?? []).flatMap((attachment) => {
+    const record = asRecord(attachment);
+    return record ? [record] : [];
+  });
+  return await Promise.all(
+    records.map(async (record, index) => {
+      const base64 = readOptionalString(record.base64);
+      const summary: Record<string, unknown> = {
+        label: readOptionalString(record.label),
+        mimeType: readOptionalString(record.mimeType),
+        purpose: readOptionalString(record.purpose),
+        sourceStep: record.sourceStep ?? null,
+        hasBase64: Boolean(base64),
+        base64Chars: base64?.length ?? 0,
+        localPath: readOptionalString(record.localPath),
+      };
+      if (!traceDir || !base64) return summary;
+      const mimeType = readOptionalString(record.mimeType) ?? '';
+      const extension = traceAttachmentExtension(mimeType);
+      const filename = `step-${String(step).padStart(3, '0')}-attachment-${String(index + 1).padStart(2, '0')}${extension}`;
+      try {
+        await mkdir(traceDir, { recursive: true });
+        await writeFile(
+          path.join(traceDir, filename),
+          Buffer.from(base64, 'base64'),
+        );
+        return {
+          ...summary,
+          traceFile: filename,
+        };
+      } catch {
+        return summary;
+      }
+    }),
+  );
+}
+
+function traceAttachmentExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes('png')) return '.png';
+  if (normalized.includes('jpeg') || normalized.includes('jpg')) return '.jpg';
+  if (normalized.includes('webp')) return '.webp';
+  if (normalized.includes('gif')) return '.gif';
+  if (normalized.includes('json')) return '.json';
+  if (normalized.startsWith('text/')) return '.txt';
+  return '.bin';
+}
+
+function formatModelInputTraceMarkdown(event: Record<string, unknown>): string {
+  const instructions = readOptionalString(event.instructions) ?? '';
+  const modelInput = asRecord(event.modelInput) ?? {};
+  const outputSchema = asRecord(event.outputSchema) ?? {};
+  const attachments = Array.isArray(event.attachments) ? event.attachments : [];
+  const promptMetrics = asRecord(event.promptMetrics) ?? {};
+  return [
+    `# Agent Model Input Step ${event.step ?? ''}`,
+    '',
+    `- Task: ${event.taskType ?? ''}`,
+    `- Correlation: ${event.correlationId ?? ''}`,
+    `- Created: ${event.createdAt ?? ''}`,
+    '',
+    '## Prompt Metrics',
+    '',
+    fencedJson(promptMetrics),
+    '',
+    '## Instructions',
+    '',
+    '```text',
+    instructions,
+    '```',
+    '',
+    '## Model Input JSON',
+    '',
+    fencedJson(modelInput),
+    '',
+    '## Output Schema JSON',
+    '',
+    fencedJson(outputSchema),
+    '',
+    '## Attachment Metadata',
+    '',
+    fencedJson(attachments),
+    '',
+  ].join('\n');
+}
+
+function fencedJson(value: unknown): string {
+  return ['```json', JSON.stringify(value, null, 2), '```'].join('\n');
+}
+
+function sanitizeTracePathSegment(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 160);
+  return sanitized || 'trace';
 }
 
 export { summarizeAgentObservation } from './agent-task-runner-helpers.js';

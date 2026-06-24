@@ -334,9 +334,8 @@ function normalizeStateJsonForRead(value: unknown): Record<string, unknown> {
   }
   if (Array.isArray(value)) {
     for (const item of [...value].reverse()) {
-      const parsed = typeof item === 'string'
-        ? parseStateJsonRecord(item)
-        : asRecord(item);
+      const parsed =
+        typeof item === 'string' ? parseStateJsonRecord(item) : asRecord(item);
       if (parsed) {
         return parsed;
       }

@@ -155,12 +155,15 @@ function buildTeamsSubmitAction(
   };
 }
 
-function readNotificationFacts(value: unknown): { title: string; value: string }[] {
+function readNotificationFacts(
+  value: unknown,
+): { title: string; value: string }[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const record = entry as Record<string, unknown>;
-    const title = readOptionalString(record.label) ?? readOptionalString(record.title);
+    const title =
+      readOptionalString(record.label) ?? readOptionalString(record.title);
     const factValue = readOptionalString(record.value);
     return title && factValue ? [{ title, value: factValue }] : [];
   });
