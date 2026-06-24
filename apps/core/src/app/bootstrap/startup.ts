@@ -246,36 +246,10 @@ async function loadRevisionAuthoritySettings(input: {
         stableJson(settingsToRevisionDocument(fileSettings)) !==
           stableJson(latest.settingsDocument)
       ) {
-        assertSettingsImportPreflight(input);
-        const outcome = await input.importWorkstationSettings(
-          {
-            runtimeHome: input.runtimeHome,
-            ops: input.storage.ops,
-            repositories: input.storage.repositories,
-            appId,
-            previousSettings: settings,
-            revisionMirror: {
-              settingsRevisions: input.storage.repositories.settingsRevisions,
-              pool: input.storage.service.pool,
-              createdBy: 'startup:settings.yaml-import',
-              note: 'Imported settings.yaml change observed during startup.',
-              logWarn: (context, message) =>
-                input.logger.warn(context, message),
-            },
-            revisionMirrorRequired: true,
-            expectedRevision: latest.revision,
-          },
-          fileSettings,
+        input.logger.warn(
+          { appId, revision: latest.revision },
+          'settings.yaml differs from latest settings revision; restoring revision-authority mirror',
         );
-        input.logger.info(
-          {
-            appId,
-            previousRevision: latest.revision,
-            revision: outcome.revision ?? latest.revision,
-          },
-          'Imported changed settings.yaml as settings revision',
-        );
-        return input.loadRuntimeSettings(input.runtimeHome);
       }
     }
     await input.importWorkstationSettings(

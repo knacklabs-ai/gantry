@@ -31,7 +31,7 @@ import type {
  * applied) by an older worker until it is upgraded (ADR-3 skew safety contract).
  * Bump this whenever a settings-schema change would break older readers.
  */
-export const CURRENT_SETTINGS_READER_VERSION = 3;
+export const CURRENT_SETTINGS_READER_VERSION = 4;
 
 export interface SettingsImportValidationResult {
   ok: boolean;

@@ -351,7 +351,7 @@ describe('runStartup', () => {
     expect(result.runtimeSettings.runtime.deploymentMode).toBe('fleet');
   });
 
-  it('imports changed settings.yaml as the next revision during revision-authority startup', async () => {
+  it('restores the latest revision when settings.yaml differs during revision-authority startup', async () => {
     const revisionSettings = createDefaultRuntimeSettings();
     revisionSettings.agent.name = 'Revision Agent';
     const fileSettings = structuredClone(revisionSettings) as RuntimeSettings;
@@ -363,7 +363,8 @@ describe('runStartup', () => {
     const settingsRevisions = {
       getLatestSettingsRevision: vi.fn(async () => latestRevision),
     };
-    const importWorkstationSettings = vi.fn(async () => ({ revision: 2 }));
+    const importWorkstationSettings = vi.fn(async () => ({}));
+    const warn = vi.fn();
     const initializeRuntimeStorage = vi.fn(
       async () =>
         ({
@@ -385,42 +386,37 @@ describe('runStartup', () => {
       validateSettingsImportPreflight: vi.fn(() => ({ ok: true })),
       loadRuntimeSettings: vi.fn(() => fileSettings),
       importWorkstationSettings,
-      logger: { info: vi.fn(), warn: vi.fn() },
+      logger: { info: vi.fn(), warn },
     });
 
     expect(importWorkstationSettings).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({
-        revisionMirrorRequired: true,
-        expectedRevision: 1,
+        agent: expect.objectContaining({ name: 'Revision Agent' }),
       }),
-      fileSettings,
     );
-    expect(
-      importWorkstationSettings.mock.calls[0]?.[0].previousSettings.agent.name,
-    ).toBe('Revision Agent');
+    expect(warn).toHaveBeenCalledWith(
+      { appId: 'default', revision: 1 },
+      'settings.yaml differs from latest settings revision; restoring revision-authority mirror',
+    );
     expect(initializeRuntimeStorage).toHaveBeenCalledTimes(2);
     expect(initializeRuntimeStorage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         runtimeSettings: expect.objectContaining({
-          agent: expect.objectContaining({ name: 'File Agent' }),
+          agent: expect.objectContaining({ name: 'Revision Agent' }),
         }),
       }),
     );
-    expect(result.runtimeSettings.agent.name).toBe('File Agent');
+    expect(result.runtimeSettings.agent.name).toBe('Revision Agent');
   });
 
-  it('rejects changed settings.yaml before appending a settings revision when preflight fails', async () => {
-    const revisionSettings = createDefaultRuntimeSettings();
-    revisionSettings.agent.name = 'Revision Agent';
-    const fileSettings = structuredClone(revisionSettings) as RuntimeSettings;
+  it('rejects initial local settings promotion when preflight fails', async () => {
+    const fileSettings = createDefaultRuntimeSettings();
     fileSettings.agent.name = 'Unsafe File Agent';
     const settingsRevisions = {
-      getLatestSettingsRevision: vi.fn(async () => ({
-        revision: 1,
-        settingsDocument: settingsToRevisionDocument(revisionSettings),
-      })),
+      getLatestSettingsRevision: vi.fn(async () => null),
     };
-    const importWorkstationSettings = vi.fn(async () => ({ revision: 2 }));
+    const importWorkstationSettings = vi.fn(async () => ({ revision: 1 }));
 
     await expect(
       runStartup(makeApp(), {
