@@ -355,18 +355,19 @@ function validateProviderCredentialRef(input: {
     };
   }
 
-  if (!isProviderRuntimeSecretRefTarget(input.providerId, refKey, normalized)) {
-    return {
-      ok: false,
-      message: `provider_connections.${connectionId}.runtime_secret_refs.${refKey} must point to ${input.envKey}.`,
-    };
-  }
-
   if (source === 'env') {
     if (isForbiddenRuntimeSecretEnvName(refName)) {
       return {
         ok: false,
         message: `${refName} is not allowed for provider '${input.providerId}' runtime secret ref ${normalized}. Use a channel runtime secret name, not model/provider credential authority.`,
+      };
+    }
+    if (
+      !isProviderRuntimeSecretRefTarget(input.providerId, refKey, normalized)
+    ) {
+      return {
+        ok: false,
+        message: `provider_connections.${connectionId}.runtime_secret_refs.${refKey} must point to ${input.envKey}.`,
       };
     }
     if (input.env[refName]?.trim() || process.env[refName]?.trim()) {
@@ -375,6 +376,13 @@ function validateProviderCredentialRef(input: {
     return {
       ok: false,
       message: `${refName} is required because provider '${input.providerId}' runtime secret ref ${normalized} resolves from env.`,
+    };
+  }
+
+  if (!isProviderRuntimeSecretRefTarget(input.providerId, refKey, normalized)) {
+    return {
+      ok: false,
+      message: `provider_connections.${connectionId}.runtime_secret_refs.${refKey} must point to ${input.envKey}.`,
     };
   }
 

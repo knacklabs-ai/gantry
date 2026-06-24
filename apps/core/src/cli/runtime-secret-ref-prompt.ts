@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import * as p from '@clack/prompts';
 
 import {
@@ -5,6 +7,8 @@ import {
   envRuntimeSecretRef,
   gantryRuntimeSecretRef,
 } from '../domain/ports/runtime-secret-provider.js';
+import { parseEnvContent } from '../shared/env-file.js';
+import { hasValidEncryptionSecret } from '../shared/security-posture.js';
 import { storeRuntimeSecretInput } from './credentials.js';
 
 export interface RuntimeSecretInputPlan {
@@ -36,31 +40,45 @@ export async function planRuntimeSecretInput(input: {
   label?: string;
 }): Promise<RuntimeSecretInputPlan | null> {
   const label = input.label ?? input.name;
+  const gantryStorageAvailable = hasGantryRuntimeSecretStorage(
+    input.runtimeHome,
+  );
+  const sourceOptions = [
+    ...(gantryStorageAvailable
+      ? [
+          {
+            value: 'gantry',
+            label: 'Store in Gantry',
+            hint: 'encrypted in runtime storage',
+          },
+        ]
+      : []),
+    {
+      value: 'aws-sm',
+      label: 'Use AWS Secrets Manager',
+      hint: 'save an aws-sm ref',
+    },
+    {
+      value: 'env',
+      label: 'Use environment variable',
+      hint: 'save an env ref',
+    },
+  ];
+  const initialValue = gantryStorageAvailable ? 'gantry' : 'env';
   const source =
     typeof p.select === 'function'
       ? await p.select({
           message: `Where should Gantry resolve ${label}?`,
-          options: [
-            {
-              value: 'gantry',
-              label: 'Store in Gantry',
-              hint: 'encrypted in runtime storage',
-            },
-            {
-              value: 'aws-sm',
-              label: 'Use AWS Secrets Manager',
-              hint: 'save an aws-sm ref',
-            },
-            {
-              value: 'env',
-              label: 'Use environment variable',
-              hint: 'save an env ref',
-            },
-          ],
-          initialValue: 'gantry',
+          options: sourceOptions,
+          initialValue,
         })
-      : 'gantry';
+      : initialValue;
   if (typeof p.isCancel === 'function' && p.isCancel(source)) return null;
+  if (source === 'gantry' && !gantryStorageAvailable) {
+    throw new Error(
+      'Gantry runtime secret storage requires SECRET_ENCRYPTION_KEY or SECRET_ENCRYPTION_KEYRING_JSON.',
+    );
+  }
   if (source === 'env') {
     const envName = await promptForValue({
       message: `${label} environment variable`,
@@ -97,4 +115,26 @@ export async function planRuntimeSecretInput(input: {
       });
     },
   };
+}
+
+function hasGantryRuntimeSecretStorage(runtimeHome: string): boolean {
+  const env = readRuntimeEnvFile(runtimeHome);
+  return hasValidEncryptionSecret({
+    SECRET_ENCRYPTION_KEY:
+      process.env.SECRET_ENCRYPTION_KEY?.trim() ||
+      env.SECRET_ENCRYPTION_KEY?.trim(),
+    SECRET_ENCRYPTION_KEYRING_JSON:
+      process.env.SECRET_ENCRYPTION_KEYRING_JSON?.trim() ||
+      env.SECRET_ENCRYPTION_KEYRING_JSON?.trim(),
+  });
+}
+
+function readRuntimeEnvFile(runtimeHome: string): Record<string, string> {
+  try {
+    return parseEnvContent(
+      fs.readFileSync(path.join(runtimeHome, '.env'), 'utf-8'),
+    );
+  } catch {
+    return {};
+  }
 }

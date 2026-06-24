@@ -196,6 +196,55 @@ describe('ProviderConnectionControlService', () => {
     });
     expect(providerConnections.updateProviderConnection).not.toHaveBeenCalled();
   });
+
+  it('rejects unrelated env runtime refs before saving provider connections', async () => {
+    const providerConnection = {
+      id: 'providerConnection-1',
+      appId: 'default',
+      providerId: 'slack',
+      externalInstallationRef: undefined,
+      label: 'Slack',
+      status: 'active',
+      config: {},
+      runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    const providerConnections = {
+      getProviderConnection: vi.fn(async () => providerConnection),
+      updateProviderConnection: vi.fn(async () => providerConnection),
+    };
+    const service = new ProviderConnectionControlService({
+      providerConnections: providerConnections as never,
+      providers: {
+        listProviders: vi.fn(async () => [
+          {
+            id: 'slack',
+            displayName: 'Slack',
+            allowedRuntimeSecretKeys: ['bot_token', 'app_token'],
+          },
+        ]),
+      } as never,
+      ids: { generate: vi.fn(() => 'id-1') },
+      clock: { now: () => iso },
+    });
+
+    await expect(
+      service.update({
+        appId: 'default' as never,
+        providerConnectionId: 'providerConnection-1' as never,
+        patch: {
+          runtimeSecretRefs: { bot_token: 'env:SECRET_ENCRYPTION_KEY' },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining(
+        'must point to the canonical slack credential for bot_token',
+      ),
+    });
+    expect(providerConnections.updateProviderConnection).not.toHaveBeenCalled();
+  });
 });
 
 describe('DiscoverProviderConversationsService', () => {

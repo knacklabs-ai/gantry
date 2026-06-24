@@ -1127,7 +1127,9 @@ conversations:
       settings.providerConnections.telegram_default = {
         provider: 'telegram',
         label: 'Telegram Default',
-        runtimeSecretRefs: { bot_token: 'gantry-secret:CUSTOM_TELEGRAM_TOKEN' },
+        runtimeSecretRefs: {
+          bot_token: 'gantry-secret:CUSTOM_TELEGRAM_BOT_TOKEN',
+        },
       };
 
       const result = validateLoadedRuntimeSettings(runtimeHome, settings);

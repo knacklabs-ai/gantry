@@ -29,8 +29,11 @@ export function isProviderRuntimeSecretRefTarget(
 ): boolean {
   const expectedEnv = expectedRuntimeSecretEnvForKey(providerId, key);
   if (!expectedEnv) return false;
-  parseRuntimeSecretRefString(normalizeRuntimeSecretRefString(ref));
-  return true;
+  const parsed = parseRuntimeSecretRefString(
+    normalizeRuntimeSecretRefString(ref),
+  );
+  if (parsed.source === 'aws-sm') return true;
+  return isProviderScopedSecretName(providerId, key, parsed.name, expectedEnv);
 }
 
 function providerEnvPrefix(providerId: string): string {
@@ -38,4 +41,23 @@ function providerEnvPrefix(providerId: string): string {
     .trim()
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .toUpperCase();
+}
+
+function isProviderScopedSecretName(
+  providerId: string,
+  key: string,
+  name: string,
+  expectedEnv: string,
+): boolean {
+  if (name === expectedEnv) return true;
+  const providerPrefix = escapeRegExp(providerEnvPrefix(providerId));
+  const normalizedKey = key.trim().toUpperCase();
+  return (
+    new RegExp(`(^|_)${providerPrefix}_`).test(name) &&
+    name.endsWith(`_${normalizedKey}`)
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

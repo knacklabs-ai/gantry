@@ -118,11 +118,6 @@ function assertAllowedRuntimeSecretRefs(
         ref,
         `runtimeSecretRefs.${key}`,
       );
-      if (!isProviderRuntimeSecretRefTarget(provider.id, key, normalized)) {
-        throw new Error(
-          `runtimeSecretRefs.${key} must point to the canonical ${provider.id} credential for ${key}.`,
-        );
-      }
       const parsed = parseRuntimeSecretRefString(normalized);
       if (
         parsed.source === 'env' &&
@@ -130,6 +125,11 @@ function assertAllowedRuntimeSecretRefs(
       ) {
         throw new Error(
           `${parsed.name} is not allowed for provider '${provider.id}' runtime secret ref ${normalized}. Use a channel runtime secret name, not model/provider credential authority.`,
+        );
+      }
+      if (!isProviderRuntimeSecretRefTarget(provider.id, key, normalized)) {
+        throw new Error(
+          `runtimeSecretRefs.${key} must point to the canonical ${provider.id} credential for ${key}.`,
         );
       }
       refs[key] = normalized;
