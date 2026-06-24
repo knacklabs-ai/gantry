@@ -851,6 +851,7 @@ agents:
     ).toMatchObject({
       provider: 'telegram',
       label: 'Telegram',
+      runtimeSecretRefs: { bot_token: 'TELEGRAM_BOT_TOKEN' },
     });
     expect(parsed.conversations.main_telegram_group.providerConnection).toBe(
       'channel-providerConnection:default:telegram',
@@ -882,10 +883,28 @@ agents:
     expect(parsed.providerConnections['providerConnection/1']).toMatchObject({
       provider: 'slack',
       label: 'Slack',
+      runtimeSecretRefs: {
+        bot_token: 'SLACK_BOT_TOKEN',
+        app_token: 'SLACK_APP_TOKEN',
+      },
     });
     expect(parsed.conversations.team.providerConnection).toBe(
       'providerConnection/1',
     );
+  });
+
+  it('normalizes explicit empty Slack provider connection refs to defaults', () => {
+    const parsed = parseRuntimeSettings(`provider_connections:
+  slack_default:
+    provider: slack
+    label: Slack
+    runtime_secret_refs: {}
+`);
+
+    expect(parsed.providerConnections.slack_default.runtimeSecretRefs).toEqual({
+      bot_token: 'SLACK_BOT_TOKEN',
+      app_token: 'SLACK_APP_TOKEN',
+    });
   });
 
   it('validates model defaults against the model catalog', () => {

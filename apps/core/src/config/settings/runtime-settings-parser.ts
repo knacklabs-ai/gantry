@@ -14,6 +14,7 @@ import {
 } from '../../shared/model-catalog.js';
 import { parseSenderAllowlistConfig } from './sender-allowlist.js';
 import { parseSimpleYamlObject } from './yaml.js';
+import { defaultRuntimeSecretRefs } from './desired-state-provider-conversations.js';
 import { normalizeCompactRuntimeSettingsRoot } from './runtime-settings-compact.js';
 import {
   parseConfiguredAgents,
@@ -174,7 +175,10 @@ function parseProviderConnections(
     ) {
       throw new Error(`${pathPrefix}.runtime_secret_refs must be a mapping`);
     }
-    const runtimeSecretRefs: Record<string, string> = {};
+    const runtimeSecretRefs: Record<string, string> =
+      Object.keys(refsRaw as Record<string, unknown>).length === 0
+        ? { ...defaultRuntimeSecretRefs(provider) }
+        : {};
     for (const [key, value] of Object.entries(
       refsRaw as Record<string, unknown>,
     )) {
