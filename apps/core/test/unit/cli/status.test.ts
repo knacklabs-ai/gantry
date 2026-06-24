@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { formatRuntimeStatus } from '@core/cli/status.js';
+import { unresolvedProviderIdsFromRuntimeSecretDetails } from '@core/cli/runtime-secret-status.js';
 import type { RuntimeStatusSummary } from '@core/cli/status.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
 
 describe('status command formatting', () => {
+  it('maps unresolved runtime secret readiness details back to blocked providers', () => {
+    expect(
+      unresolvedProviderIdsFromRuntimeSecretDetails([
+        'providers.slack.bot_token runtime secret ref gantry-secret:SLACK_BOT_TOKEN did not resolve.',
+        'providers.slack.app_token runtime secret ref gantry-secret:SLACK_APP_TOKEN did not resolve.',
+        'unrelated detail',
+      ]),
+    ).toEqual(new Set(['slack']));
+  });
+
   it('renders the unified operator status without storage internals', () => {
     const settings = createDefaultRuntimeSettings();
     settings.providers.telegram = { enabled: true };

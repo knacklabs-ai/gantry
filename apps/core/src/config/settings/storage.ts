@@ -21,11 +21,14 @@ export function resolveRuntimeStorageConfig(
   _runtimeRoot: string,
 ): RuntimeStorageConfig {
   let settings;
+  const filePath = settingsFilePath(gantryHome);
   try {
     bootstrapStorageSettingsIfMissing(gantryHome);
     settings = readRuntimeStorageSettingsSnapshot(gantryHome);
   } catch (err) {
-    settings = fallbackStorageSettingsFromEnv();
+    settings = !fs.existsSync(filePath)
+      ? fallbackStorageSettingsFromEnv()
+      : null;
     if (settings) {
       return resolveRuntimeStorageConfigFromSettings(settings);
     }
@@ -38,7 +41,12 @@ export function resolveRuntimeStorageConfig(
   return resolveRuntimeStorageConfigFromSettings(settings);
 }
 
-function resolveRuntimeStorageConfigFromSettings(settings: {
+export function resolveRuntimeBootstrapStorageConfigFromEnv(): RuntimeStorageConfig | null {
+  const settings = fallbackStorageSettingsFromEnv();
+  return settings ? resolveRuntimeStorageConfigFromSettings(settings) : null;
+}
+
+export function resolveRuntimeStorageConfigFromSettings(settings: {
   postgresUrlEnv?: string;
   postgresSchema?: string;
 }): RuntimeStorageConfig {

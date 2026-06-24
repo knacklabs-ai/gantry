@@ -52,7 +52,7 @@ describe('ProviderConnectionControlService', () => {
     );
   });
 
-  it('rejects provider runtime refs that alias unrelated secrets', async () => {
+  it('accepts AWS Secrets Manager runtime refs with deployment-owned names', async () => {
     const providerConnection = {
       id: 'providerConnection-1',
       appId: 'default',
@@ -65,11 +65,12 @@ describe('ProviderConnectionControlService', () => {
       createdAt: iso,
       updatedAt: iso,
     };
+    const providerConnections = {
+      getProviderConnection: vi.fn(async () => providerConnection),
+      updateProviderConnection: vi.fn(async () => providerConnection),
+    };
     const service = new ProviderConnectionControlService({
-      providerConnections: {
-        getProviderConnection: vi.fn(async () => providerConnection),
-        updateProviderConnection: vi.fn(),
-      } as never,
+      providerConnections: providerConnections as never,
       providers: {
         listProviders: vi.fn(async () => [
           {
@@ -83,18 +84,70 @@ describe('ProviderConnectionControlService', () => {
       clock: { now: () => iso },
     });
 
-    await expect(
-      service.update({
-        appId: 'default' as never,
-        providerConnectionId: 'providerConnection-1' as never,
-        patch: {
-          runtimeSecretRefs: { bot_token: 'env:SECRET_ENCRYPTION_KEY' },
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: 'INVALID_REQUEST',
-      message: expect.stringContaining('canonical slack credential'),
+    await service.update({
+      appId: 'default' as never,
+      providerConnectionId: 'providerConnection-1' as never,
+      patch: {
+        runtimeSecretRefs: { bot_token: 'aws-sm:prod/slack/bot' },
+      },
     });
+
+    expect(providerConnections.updateProviderConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patch: expect.objectContaining({
+          runtimeSecretRefs: { bot_token: 'aws-sm:prod/slack/bot' },
+        }),
+      }),
+    );
+  });
+
+  it('accepts custom env runtime refs for provider secret slots', async () => {
+    const providerConnection = {
+      id: 'providerConnection-1',
+      appId: 'default',
+      providerId: 'slack',
+      externalInstallationRef: undefined,
+      label: 'Slack',
+      status: 'active',
+      config: {},
+      runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
+      createdAt: iso,
+      updatedAt: iso,
+    };
+    const providerConnections = {
+      getProviderConnection: vi.fn(async () => providerConnection),
+      updateProviderConnection: vi.fn(async () => providerConnection),
+    };
+    const service = new ProviderConnectionControlService({
+      providerConnections: providerConnections as never,
+      providers: {
+        listProviders: vi.fn(async () => [
+          {
+            id: 'slack',
+            displayName: 'Slack',
+            allowedRuntimeSecretKeys: ['bot_token', 'app_token'],
+          },
+        ]),
+      } as never,
+      ids: { generate: vi.fn(() => 'id-1') },
+      clock: { now: () => iso },
+    });
+
+    await service.update({
+      appId: 'default' as never,
+      providerConnectionId: 'providerConnection-1' as never,
+      patch: {
+        runtimeSecretRefs: { bot_token: 'env:CUSTOM_SLACK_BOT_TOKEN' },
+      },
+    });
+
+    expect(providerConnections.updateProviderConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patch: expect.objectContaining({
+          runtimeSecretRefs: { bot_token: 'env:CUSTOM_SLACK_BOT_TOKEN' },
+        }),
+      }),
+    );
   });
 });
 

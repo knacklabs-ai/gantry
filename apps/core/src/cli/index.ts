@@ -30,7 +30,7 @@ import {
   ensureRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
 
-configureDesiredSettingsStorageProvider(async () => {
+configureDesiredSettingsStorageProvider(async (input) => {
   const {
     getRuntimeStorage,
     initializeRuntimeStorage,
@@ -48,7 +48,24 @@ configureDesiredSettingsStorageProvider(async () => {
     // CLI invocations usually run outside the runtime process.
   }
   try {
-    const storage = await initializeRuntimeStorage();
+    const storageSettings = input?.settings
+      ? {
+          postgresUrlEnv: input.settings.storage.postgres.urlEnv,
+          postgresUrl:
+            process.env[input.settings.storage.postgres.urlEnv]?.trim() || null,
+          postgresSchema: input.settings.storage.postgres.schema,
+        }
+      : undefined;
+    const storage = await initializeRuntimeStorage({
+      runtimeSettings: input?.settings,
+      storageConfig: storageSettings
+        ? {
+            postgresUrl: storageSettings.postgresUrl,
+            postgresUrlEnv: storageSettings.postgresUrlEnv,
+            postgresSchema: storageSettings.postgresSchema,
+          }
+        : undefined,
+    });
     return {
       ops: storage.ops,
       repositories: storage.repositories,

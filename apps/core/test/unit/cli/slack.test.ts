@@ -500,6 +500,7 @@ describe('cli slack helpers', () => {
         .fn()
         .mockResolvedValueOnce('xoxb-valid-token')
         .mockResolvedValueOnce('xapp-valid-token'),
+      select: vi.fn(async () => 'gantry'),
       text: vi.fn(),
       outro,
       log: {
@@ -577,6 +578,7 @@ describe('cli slack helpers', () => {
         .fn()
         .mockResolvedValueOnce('xoxb-valid-token')
         .mockResolvedValueOnce('xapp-valid-token'),
+      select: vi.fn(async () => 'gantry'),
       text: vi.fn().mockResolvedValueOnce('U123'),
       outro: vi.fn(),
       log: {

@@ -41,6 +41,7 @@ export function startSettingsReloadWatcher(
   let lastGoodSettings: ReturnType<typeof loadRuntimeSettings> | undefined;
   let reloadInFlight: Promise<void> | undefined;
   let reloadQueued = false;
+  let retryTimer: NodeJS.Timeout | undefined;
 
   try {
     lastGoodSettings = loadRuntimeSettings(options.runtimeHome);
@@ -50,6 +51,17 @@ export function startSettingsReloadWatcher(
       'Initial settings snapshot unavailable for reload watcher',
     );
   }
+
+  const scheduleReloadRetry = () => {
+    if (retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      void reload().catch((err) =>
+        logger.warn({ err, filePath }, 'retried settings.yaml reload failed'),
+      );
+    }, options.pollIntervalMs ?? 5000);
+    retryTimer.unref?.();
+  };
 
   const reload = async () => {
     if (reloadInFlight) {
@@ -97,6 +109,7 @@ export function startSettingsReloadWatcher(
             { err, filePath },
             'settings revision lookup failed; keeping last good settings',
           );
+          scheduleReloadRetry();
           return;
         }
       }
@@ -175,6 +188,10 @@ export function startSettingsReloadWatcher(
       ) {
         return;
       }
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
       void reload().catch((err) =>
         logger.warn({ err, filePath }, 'settings.yaml reload failed'),
       );
@@ -183,6 +200,7 @@ export function startSettingsReloadWatcher(
 
   return {
     close: () => {
+      if (retryTimer) clearTimeout(retryTimer);
       fs.unwatchFile(filePath);
     },
   };

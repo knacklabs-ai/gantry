@@ -43,7 +43,10 @@ export {
   loadRuntimeSettings,
   loadRuntimeSettingsFromPath,
 } from './settings/runtime-settings.js';
-export { resolveRuntimeStorageConfig } from './settings/storage.js';
+export {
+  resolveRuntimeBootstrapStorageConfigFromEnv,
+  resolveRuntimeStorageConfig,
+} from './settings/storage.js';
 export type { RuntimeSettings } from './settings/runtime-settings-types.js';
 export type ControlEnvKey =
   | 'GANTRY_CONTROL_API_KEYS_JSON'

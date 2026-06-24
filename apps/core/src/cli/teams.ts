@@ -27,8 +27,7 @@ import {
   createProfileFileMirrorExists,
   createProfileFileMirrorWriter,
 } from '../platform/profile-file-mirror.js';
-import { gantryRuntimeSecretRef } from '../domain/ports/runtime-secret-provider.js';
-import { storeRuntimeSecretInput } from './credentials.js';
+import { planRuntimeSecretInput } from './runtime-secret-ref-prompt.js';
 
 type TeamsChannelChoice =
   | { type: 'selected'; channel: TeamsDiscoveredChannel }
@@ -266,6 +265,40 @@ export async function runTeamsConnectCommand(
   }
   p.log.success(validation.message);
 
+  const clientIdSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'TEAMS_CLIENT_ID',
+    value: credentials.clientId,
+    actor: 'cli:teams-connect',
+    label: 'Teams client ID',
+  });
+  if (!clientIdSecret) {
+    p.outro('Teams connect cancelled.');
+    return 1;
+  }
+  const clientSecretRef = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'TEAMS_CLIENT_SECRET',
+    value: credentials.clientSecret,
+    actor: 'cli:teams-connect',
+    label: 'Teams client secret',
+  });
+  if (!clientSecretRef) {
+    p.outro('Teams connect cancelled.');
+    return 1;
+  }
+  const tenantIdSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'TEAMS_TENANT_ID',
+    value: credentials.tenantId,
+    actor: 'cli:teams-connect',
+    label: 'Teams tenant ID',
+  });
+  if (!tenantIdSecret) {
+    p.outro('Teams connect cancelled.');
+    return 1;
+  }
+
   const channelChoice = await chooseTeamsChannelForConnect(
     credentials,
     discoveryClient,
@@ -319,24 +352,9 @@ export async function runTeamsConnectCommand(
   }
 
   await Promise.all([
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'TEAMS_CLIENT_ID',
-      value: credentials.clientId,
-      actor: 'cli:teams-connect',
-    }),
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'TEAMS_CLIENT_SECRET',
-      value: credentials.clientSecret,
-      actor: 'cli:teams-connect',
-    }),
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'TEAMS_TENANT_ID',
-      value: credentials.tenantId,
-      actor: 'cli:teams-connect',
-    }),
+    clientIdSecret.persist(),
+    clientSecretRef.persist(),
+    tenantIdSecret.persist(),
   ]);
   const settings = loadRuntimeSettings(runtimeHome);
   const previousSettings = structuredClone(settings);
@@ -352,9 +370,9 @@ export async function runTeamsConnectCommand(
     runtimeSecretRefs: {
       ...(settings.providerConnections[providerConnectionId]
         ?.runtimeSecretRefs || {}),
-      client_id: gantryRuntimeSecretRef('TEAMS_CLIENT_ID'),
-      client_secret: gantryRuntimeSecretRef('TEAMS_CLIENT_SECRET'),
-      tenant_id: gantryRuntimeSecretRef('TEAMS_TENANT_ID'),
+      client_id: clientIdSecret.ref,
+      client_secret: clientSecretRef.ref,
+      tenant_id: tenantIdSecret.ref,
     },
   };
   if (registeredFolder) {

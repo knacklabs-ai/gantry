@@ -15,6 +15,15 @@ import {
 } from '../../shared/model-catalog.js';
 import { hasValidEncryptionSecret } from '../../shared/security-posture.js';
 import { validateDurableAccessRule } from '../../shared/durable-access-policy.js';
+import {
+  isForbiddenRuntimeSecretEnvName,
+  normalizeRuntimeSecretRefString,
+  parseRuntimeSecretRefString,
+} from '../../domain/ports/runtime-secret-provider.js';
+import {
+  isProviderRuntimeSecretRefTarget,
+  runtimeSecretKeyForEnv,
+} from '../../domain/provider/provider-runtime-secret-keys.js';
 import { envFilePath, settingsFilePath } from './runtime-home.js';
 import type {
   RuntimeSettings,
@@ -130,10 +139,14 @@ export function validateLoadedRuntimeSettings(
     }
 
     for (const envKey of provider.setup.envKeys) {
-      if (!env[envKey]?.trim() && !process.env[envKey]?.trim()) {
-        details.push(
-          `${envKey} is required when provider '${provider.id}' is enabled.`,
-        );
+      const credential = validateProviderCredentialRef({
+        settings,
+        env,
+        providerId: provider.id,
+        envKey,
+      });
+      if (!credential.ok) {
+        details.push(credential.message);
       }
     }
   }
@@ -272,6 +285,74 @@ function validateCredentialEncryptionSecret(env: {
     message:
       'SECRET_ENCRYPTION_KEY or SECRET_ENCRYPTION_KEYRING_JSON must provide a strong base64-encoded 32-byte active key for Gantry credential encryption.',
   };
+}
+
+function validateProviderCredentialRef(input: {
+  settings: RuntimeSettings;
+  env: Record<string, string | undefined>;
+  providerId: string;
+  envKey: string;
+}): { ok: true } | { ok: false; message: string } {
+  const connectionId =
+    input.settings.providers[input.providerId]?.defaultConnection;
+  const refKey = runtimeSecretKeyForEnv(input.providerId, input.envKey);
+  const ref = connectionId
+    ? input.settings.providerConnections[connectionId]?.runtimeSecretRefs[
+        refKey
+      ]
+    : undefined;
+  const value = ref?.trim();
+  if (!value) {
+    if (input.env[input.envKey]?.trim() || process.env[input.envKey]?.trim()) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      message: `${input.envKey} is required when provider '${input.providerId}' is enabled.`,
+    };
+  }
+
+  let normalized: string;
+  let source: ReturnType<typeof parseRuntimeSecretRefString>['source'];
+  let refName: string;
+  try {
+    normalized = normalizeRuntimeSecretRefString(value);
+    const parsed = parseRuntimeSecretRefString(normalized);
+    source = parsed.source;
+    refName = parsed.name;
+  } catch (err) {
+    return {
+      ok: false,
+      message: `provider_connections.${connectionId}.runtime_secret_refs.${refKey} is invalid: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+
+  if (!isProviderRuntimeSecretRefTarget(input.providerId, refKey, normalized)) {
+    return {
+      ok: false,
+      message: `provider_connections.${connectionId}.runtime_secret_refs.${refKey} must point to ${input.envKey}.`,
+    };
+  }
+
+  if (source === 'env') {
+    if (isForbiddenRuntimeSecretEnvName(refName)) {
+      return {
+        ok: false,
+        message: `${refName} is not allowed for provider '${input.providerId}' runtime secret ref ${normalized}. Use a channel runtime secret name, not model/provider credential authority.`,
+      };
+    }
+    if (input.env[refName]?.trim() || process.env[refName]?.trim()) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      message: `${refName} is required because provider '${input.providerId}' runtime secret ref ${normalized} resolves from env.`,
+    };
+  }
+
+  return { ok: true };
 }
 
 function explicitProviderIdForExternalId(value: string): string | null {

@@ -7,6 +7,10 @@ import { getServiceStatus } from '../infrastructure/service/manager.js';
 import { envFilePath } from '../config/settings/runtime-home.js';
 import { ensureRuntimeSettings } from '../config/settings/runtime-settings.js';
 import { runtimeSecretKeyForEnv } from '../domain/provider/provider-runtime-secret-keys.js';
+import {
+  collectUnresolvedRuntimeSecretProviderIds,
+  isMissingRuntimeCredential,
+} from './runtime-secret-status.js';
 import { inspectMemoryHealth } from './memory-health.js';
 import { isStorageUnavailableError } from '../adapters/storage/postgres/runtime-store.js';
 import {
@@ -102,6 +106,8 @@ export async function collectRuntimeStatus(
       (connection) => connection.provider,
     ),
   );
+  const unresolvedRuntimeSecretProviderIds =
+    await collectUnresolvedRuntimeSecretProviderIds(runtimeHome, settings);
 
   const channels = listConnectableChannelProviders()
     .filter(
@@ -117,7 +123,15 @@ export async function collectRuntimeStatus(
         : undefined;
       for (const envKey of provider.setup.envKeys) {
         const refKey = runtimeSecretKeyForEnv(provider.id, envKey);
-        if (!refs?.[refKey]?.trim() && !env[envKey]?.trim()) {
+        if (
+          isMissingRuntimeCredential({
+            providerId: provider.id,
+            envKey,
+            rawRef: refs?.[refKey],
+            env,
+            unresolvedRuntimeSecretProviderIds,
+          })
+        ) {
           missingCredentialKeys.push(envKey);
         }
       }

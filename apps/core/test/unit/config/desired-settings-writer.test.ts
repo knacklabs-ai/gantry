@@ -81,11 +81,12 @@ describe('writeDesiredRuntimeSettings', () => {
     const settingsRevisions = {
       getLatestSettingsRevision: vi.fn(async () => null),
     } as never;
-    configureDesiredSettingsStorageProvider(async () => ({
+    const storageProvider = vi.fn(async () => ({
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions,
     }));
+    configureDesiredSettingsStorageProvider(storageProvider);
 
     await expect(
       writeDesiredRuntimeSettings({
@@ -107,6 +108,11 @@ describe('writeDesiredRuntimeSettings', () => {
       }),
       expect.objectContaining({ runtime: { deploymentMode: 'fleet' } }),
     );
+    expect(storageProvider).toHaveBeenCalledWith({
+      settings: expect.objectContaining({
+        runtime: expect.objectContaining({ deploymentMode: 'fleet' }),
+      }),
+    });
   });
 
   it('defaults settings revisions to the default app for CLI callers', async () => {

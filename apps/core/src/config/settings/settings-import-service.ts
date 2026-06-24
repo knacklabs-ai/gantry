@@ -20,6 +20,10 @@ import {
   PostgresSettingsRevisionNotifier,
   type SettingsRevisionWakeup,
 } from './settings-revision-notify.js';
+import type {
+  ProviderConnectionId,
+  ProviderId,
+} from '../../domain/provider/provider.js';
 
 /**
  * Reader version of the settings-revision contract this build understands. A
@@ -104,9 +108,10 @@ export async function validateSettingsForImport(
 /**
  * Workstation import: validate, then write `settings.yaml` and reconcile through
  * the existing desired-state apply path. When a required revision mirror is
- * provided, append the `settings_revisions` row before the local file/projection
- * update so Postgres is the durable source of truth and `settings.yaml` is the
- * canonical local copy.
+ * provided, append the `settings_revisions` row before mutating local runtime
+ * projection. Fleet authority is the revision log; a failed local projection can
+ * be retried from that committed revision without accepting an uncommitted file
+ * change.
  */
 export async function importWorkstationSettings(
   deps: SettingsImportServiceDeps & {
@@ -182,6 +187,11 @@ export async function importWorkstationSettings(
       activateRuntimeModelAliases(revisionSettings);
       return {};
     }
+    await validateProjectionPreconditions({
+      settings: revisionSettings,
+      repositories: deps.repositories,
+      appId,
+    });
     const outcome = await importFleetSettingsRevision(
       {
         runtimeHome: deps.runtimeHome,
@@ -207,24 +217,16 @@ export async function importWorkstationSettings(
     if (outcome.status === 'conflict') {
       throw new SettingsRevisionConflictError(outcome);
     }
-    try {
-      await applyRuntimeSettingsDesiredState({
-        runtimeHome: deps.runtimeHome,
-        settings: revisionSettings,
-        ops: deps.ops,
-        repositories: deps.repositories,
-        appId: deps.appId,
-        previousSettings: deps.previousSettings,
-        reloadRuntimeState: deps.reloadRuntimeState,
-      });
-      activateRuntimeModelAliases(revisionSettings);
-    } catch (err) {
-      deps.revisionMirror.logWarn?.(
-        { err, revision: outcome.revision },
-        'settings revision appended but local apply failed',
-      );
-      if (deps.revisionMirrorRequired) throw err;
-    }
+    const appliedSettings = await applyRuntimeSettingsDesiredState({
+      runtimeHome: deps.runtimeHome,
+      settings: revisionSettings,
+      ops: deps.ops,
+      repositories: deps.repositories,
+      appId: deps.appId,
+      previousSettings: deps.previousSettings,
+      reloadRuntimeState: deps.reloadRuntimeState,
+    });
+    activateRuntimeModelAliases(appliedSettings);
     return { revision: outcome.revision };
   }
   const appliedSettings = await applyRuntimeSettingsDesiredState({
@@ -481,6 +483,33 @@ export function stableJson(value: unknown): string {
       .join(',')}}`;
   }
   return JSON.stringify(value);
+}
+
+async function validateProjectionPreconditions(input: {
+  settings: RuntimeSettings;
+  repositories: SettingsDesiredStateRepositories;
+  appId: AppId;
+}): Promise<void> {
+  const providerConnections = input.repositories.providerConnections;
+  if (!providerConnections) return;
+  for (const [connectionId, connection] of Object.entries(
+    input.settings.providerConnections,
+  )) {
+    const existing = await providerConnections.getProviderConnection(
+      connectionId as ProviderConnectionId,
+    );
+    if (!existing) continue;
+    if (existing.appId !== input.appId) {
+      throw new Error(
+        `provider_connections.${connectionId} already belongs to another app`,
+      );
+    }
+    if (existing.providerId !== (connection.provider as ProviderId)) {
+      throw new Error(
+        `provider_connections.${connectionId}.provider cannot change from ${existing.providerId} to ${connection.provider}; use a new provider connection id.`,
+      );
+    }
+  }
 }
 
 function mapRecord<T>(

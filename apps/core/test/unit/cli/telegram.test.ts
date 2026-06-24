@@ -490,6 +490,7 @@ describe('cli telegram helpers', () => {
       isCancel: () => false,
       note: vi.fn(),
       password: vi.fn(async () => 'telegram-token'),
+      select: vi.fn(async () => 'gantry'),
       text,
       outro,
       log: {

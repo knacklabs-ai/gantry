@@ -69,7 +69,6 @@ import type {
 } from '../../../../domain/sandbox/sandbox.js';
 import type { AgentSession } from '../../../../domain/sessions/sessions.js';
 import { assertSafeExecutionProviderId } from '../../../../domain/sessions/execution-provider-id.js';
-import { normalizeRuntimeSecretRefString } from '../../../../domain/ports/runtime-secret-provider.js';
 import type { ExternalRef } from '../../../../shared/ids/branded-id.js';
 import * as pgSchema from '../schema/schema.js';
 import {
@@ -184,35 +183,12 @@ function parseJsonArray<T extends string>(value: unknown): T[] {
     ? (parsed.filter((v) => typeof v === 'string') as T[])
     : [];
 }
-function legacyRuntimeSecretKey(providerId: string, ref: string): string {
-  const separator = ref.indexOf(':');
-  const rawName = separator > 0 ? ref.slice(separator + 1) : ref;
-  const envName = rawName.trim().toUpperCase();
-  const prefix = `${providerId.toUpperCase()}_`;
-  const key = envName.startsWith(prefix)
-    ? envName.slice(prefix.length)
-    : envName;
-  return key.toLowerCase();
-}
 function parseRuntimeSecretRefsJson(
   value: unknown,
-  providerId: string,
+  _providerId: string,
 ): Record<string, string> {
   const parsed = parseJson<unknown>(value, {});
-  if (Array.isArray(parsed)) {
-    const refs: Record<string, string> = {};
-    for (const item of parsed) {
-      if (typeof item !== 'string' || !item.trim()) continue;
-      try {
-        refs[legacyRuntimeSecretKey(providerId, item)] =
-          normalizeRuntimeSecretRefString(item);
-      } catch {
-        // Legacy rows were best-effort arrays; malformed entries stay ignored.
-      }
-    }
-    return refs;
-  }
-  if (!parsed || typeof parsed !== 'object') return {};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   return Object.fromEntries(
     Object.entries(parsed).filter(
       (entry): entry is [string, string] => typeof entry[1] === 'string',

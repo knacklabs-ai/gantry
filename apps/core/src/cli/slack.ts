@@ -29,8 +29,7 @@ import {
   createProfileFileMirrorExists,
   createProfileFileMirrorWriter,
 } from '../platform/profile-file-mirror.js';
-import { gantryRuntimeSecretRef } from '../domain/ports/runtime-secret-provider.js';
-import { storeRuntimeSecretInput } from './credentials.js';
+import { planRuntimeSecretInput } from './runtime-secret-ref-prompt.js';
 
 export interface SlackTokenValidation {
   ok: boolean;
@@ -501,6 +500,29 @@ export async function runSlackConnectCommand(
   }
   p.log.success(appValidation.message);
 
+  const botSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'SLACK_BOT_TOKEN',
+    value: botTokenInput,
+    actor: 'cli:slack-connect',
+    label: 'Slack bot token',
+  });
+  if (!botSecret) {
+    p.outro('Slack connect cancelled.');
+    return 1;
+  }
+  const appSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'SLACK_APP_TOKEN',
+    value: appTokenInput,
+    actor: 'cli:slack-connect',
+    label: 'Slack app token',
+  });
+  if (!appSecret) {
+    p.outro('Slack connect cancelled.');
+    return 1;
+  }
+
   const chatChoice = await chooseSlackChatForConnect(botTokenInput);
   if (chatChoice.type === 'cancel') {
     p.outro('Slack connect cancelled.');
@@ -552,20 +574,7 @@ export async function runSlackConnectCommand(
     );
   }
 
-  await Promise.all([
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'SLACK_BOT_TOKEN',
-      value: botTokenInput,
-      actor: 'cli:slack-connect',
-    }),
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'SLACK_APP_TOKEN',
-      value: appTokenInput,
-      actor: 'cli:slack-connect',
-    }),
-  ]);
+  await Promise.all([botSecret.persist(), appSecret.persist()]);
   const settings = loadRuntimeSettings(runtimeHome);
   const previousSettings = structuredClone(settings);
   settings.providers.slack.enabled = true;
@@ -580,8 +589,8 @@ export async function runSlackConnectCommand(
     runtimeSecretRefs: {
       ...(settings.providerConnections[providerConnectionId]
         ?.runtimeSecretRefs || {}),
-      bot_token: gantryRuntimeSecretRef('SLACK_BOT_TOKEN'),
-      app_token: gantryRuntimeSecretRef('SLACK_APP_TOKEN'),
+      bot_token: botSecret.ref,
+      app_token: appSecret.ref,
     },
   };
   if (registeredFolder) {

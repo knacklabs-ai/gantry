@@ -317,6 +317,40 @@ describe('runStartup', () => {
     expect(initializeRuntimeStorage).toHaveBeenCalledOnce();
   });
 
+  it('does not promote local fleet settings when no settings revision exists', async () => {
+    const fileSettings = createDefaultRuntimeSettings();
+    fileSettings.runtime.deploymentMode = 'fleet';
+    const settingsRevisions = {
+      getLatestSettingsRevision: vi.fn(async () => null),
+    };
+    const importWorkstationSettings = vi.fn(async () => ({ revision: 1 }));
+    const warn = vi.fn();
+
+    const result = await runStartup(makeApp(), {
+      ensureRuntimeLayoutDirectories: vi.fn(),
+      initializeRuntimeStorage: vi.fn(
+        async () =>
+          ({
+            ops: {},
+            repositories: { settingsRevisions },
+            service: { pool: undefined },
+          }) as any,
+      ),
+      settingsAuthority: 'revision',
+      settingsFileExists: vi.fn(() => true),
+      loadRuntimeSettings: vi.fn(() => fileSettings),
+      importWorkstationSettings,
+      logger: { info: vi.fn(), warn },
+    });
+
+    expect(importWorkstationSettings).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      { appId: 'default' },
+      'No settings revision exists; fleet startup will not promote local settings.yaml to durable authority',
+    );
+    expect(result.runtimeSettings.runtime.deploymentMode).toBe('fleet');
+  });
+
   it('imports changed settings.yaml as the next revision during revision-authority startup', async () => {
     const revisionSettings = createDefaultRuntimeSettings();
     revisionSettings.agent.name = 'Revision Agent';
@@ -330,17 +364,22 @@ describe('runStartup', () => {
       getLatestSettingsRevision: vi.fn(async () => latestRevision),
     };
     const importWorkstationSettings = vi.fn(async () => ({ revision: 2 }));
+    const initializeRuntimeStorage = vi.fn(
+      async () =>
+        ({
+          ops: {},
+          repositories: { settingsRevisions },
+          runtimeEventNotifier: { close: vi.fn(async () => undefined) },
+          service: {
+            pool: undefined,
+            close: vi.fn(async () => undefined),
+          },
+        }) as any,
+    );
 
     const result = await runStartup(makeApp(), {
       ensureRuntimeLayoutDirectories: vi.fn(),
-      initializeRuntimeStorage: vi.fn(
-        async () =>
-          ({
-            ops: {},
-            repositories: { settingsRevisions },
-            service: { pool: undefined },
-          }) as any,
-      ),
+      initializeRuntimeStorage,
       settingsAuthority: 'revision',
       settingsFileExists: vi.fn(() => true),
       loadRuntimeSettings: vi.fn(() => fileSettings),
@@ -358,10 +397,20 @@ describe('runStartup', () => {
     expect(
       importWorkstationSettings.mock.calls[0]?.[0].previousSettings.agent.name,
     ).toBe('Revision Agent');
+    expect(initializeRuntimeStorage).toHaveBeenCalledTimes(2);
+    expect(initializeRuntimeStorage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        runtimeSettings: expect.objectContaining({
+          agent: expect.objectContaining({ name: 'File Agent' }),
+        }),
+      }),
+    );
     expect(result.runtimeSettings.agent.name).toBe('File Agent');
   });
 
   it('keeps booting from the latest revision when settings.yaml is invalid', async () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSettingsSchema = process.env.GANTRY_SETTINGS_POSTGRES_SCHEMA;
     const revisionSettings = createDefaultRuntimeSettings();
     revisionSettings.agent.name = 'Revision Agent';
     const latestRevision = {
@@ -373,36 +422,67 @@ describe('runStartup', () => {
     };
     const importWorkstationSettings = vi.fn(async () => ({}));
     const warn = vi.fn();
-
-    const result = await runStartup(makeApp(), {
-      ensureRuntimeLayoutDirectories: vi.fn(),
-      initializeRuntimeStorage: vi.fn(
-        async () =>
-          ({
-            ops: {},
-            repositories: { settingsRevisions },
-            service: { pool: undefined },
-          }) as any,
-      ),
-      settingsAuthority: 'revision',
-      settingsFileExists: vi.fn(() => true),
-      loadRuntimeSettings: vi.fn(() => {
-        throw new Error('invalid yaml');
-      }),
-      importWorkstationSettings,
-      logger: { info: vi.fn(), warn },
-    });
-
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ revision: 1 }),
-      'settings.yaml is invalid; using latest settings revision',
+    const initializeRuntimeStorage = vi.fn(
+      async () =>
+        ({
+          ops: {},
+          repositories: { settingsRevisions },
+          runtimeEventNotifier: { close: vi.fn(async () => undefined) },
+          service: {
+            pool: undefined,
+            close: vi.fn(async () => undefined),
+          },
+        }) as any,
     );
-    expect(importWorkstationSettings).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({
-        agent: expect.objectContaining({ name: 'Revision Agent' }),
-      }),
-    );
-    expect(result.runtimeSettings.agent.name).toBe('Revision Agent');
+
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@127.0.0.1:5432/gantry_test';
+      process.env.GANTRY_SETTINGS_POSTGRES_SCHEMA = 'revision_authority';
+
+      const result = await runStartup(makeApp(), {
+        ensureRuntimeLayoutDirectories: vi.fn(),
+        initializeRuntimeStorage,
+        settingsAuthority: 'revision',
+        settingsFileExists: vi.fn(() => true),
+        loadRuntimeSettings: vi.fn(() => {
+          throw new Error('invalid yaml');
+        }),
+        importWorkstationSettings,
+        logger: { info: vi.fn(), warn },
+      });
+
+      expect(initializeRuntimeStorage).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          storageConfig: expect.objectContaining({
+            postgresUrlEnv: 'GANTRY_DATABASE_URL',
+            postgresSchema: 'revision_authority',
+          }),
+        }),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ revision: 1 }),
+        'settings.yaml is invalid; using latest settings revision',
+      );
+      expect(importWorkstationSettings).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          agent: expect.objectContaining({ name: 'Revision Agent' }),
+        }),
+      );
+      expect(result.runtimeSettings.agent.name).toBe('Revision Agent');
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSettingsSchema === undefined) {
+        delete process.env.GANTRY_SETTINGS_POSTGRES_SCHEMA;
+      } else {
+        process.env.GANTRY_SETTINGS_POSTGRES_SCHEMA = originalSettingsSchema;
+      }
+    }
   });
 });

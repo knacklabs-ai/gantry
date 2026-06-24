@@ -31,6 +31,11 @@ export function gantryRuntimeSecretRef(name: string): string {
   return `gantry-secret:${normalized}`;
 }
 
+export function awsSecretsManagerRuntimeSecretRef(name: string): string {
+  const parsed = parseRuntimeSecretRefString(`aws-sm:${name}`);
+  return `aws-sm:${parsed.name}`;
+}
+
 export function parseRuntimeSecretRefString(
   value: string,
   path = 'runtime secret ref',
@@ -79,6 +84,15 @@ export function runtimeSecretRefTarget(
       : { source: 'env', name: normalizeRuntimeEnvName(trimmed) };
   }
   throw new Error('Runtime secret ref is required.');
+}
+
+export function isForbiddenRuntimeSecretEnvName(key: string): boolean {
+  const normalized = key.trim().toUpperCase();
+  return (
+    normalized.includes('API_KEY') ||
+    normalized.includes('OAUTH_TOKEN') ||
+    normalized.endsWith('_AUTH_TOKEN')
+  );
 }
 
 export async function getOptionalRuntimeSecret(

@@ -58,10 +58,6 @@ export async function persistOnboardingConfig(
     : randomBytes(32).toString('base64');
 
   upsertEnvFile(envPath, {
-    TELEGRAM_BOT_TOKEN: null,
-    SLACK_BOT_TOKEN: null,
-    SLACK_APP_TOKEN: null,
-    SLACK_PERMISSION_APPROVER_IDS: null,
     CLAUDE_CODE_OAUTH_TOKEN: null,
     ANTHROPIC_API_KEY: null,
     ANTHROPIC_AUTH_TOKEN: null,
@@ -100,6 +96,20 @@ export async function persistOnboardingConfig(
     throw new Error(
       `Selected model alias "${model.alias}" belongs to ${modelPresetId}, not ${preset}.`,
     );
+  }
+  let previousSettingsForFinalWrite = previousSettings;
+  const storesRuntimeSecrets = Boolean(
+    input.telegramBotToken?.trim() ||
+    (input.slackBotToken?.trim() && input.slackAppToken?.trim()),
+  );
+  if (storesRuntimeSecrets) {
+    await writeDesiredRuntimeSettings({
+      runtimeHome: input.runtimeHome,
+      settings,
+      previousSettings,
+      createdBy: 'cli:onboarding',
+    });
+    previousSettingsForFinalWrite = structuredClone(settings);
   }
   applyModelPreset(settings, preset);
   if (model.alias) {
@@ -187,8 +197,14 @@ export async function persistOnboardingConfig(
   await writeDesiredRuntimeSettings({
     runtimeHome: input.runtimeHome,
     settings,
-    previousSettings,
+    previousSettings: previousSettingsForFinalWrite,
     createdBy: 'cli:onboarding',
+  });
+  upsertEnvFile(envPath, {
+    TELEGRAM_BOT_TOKEN: null,
+    SLACK_BOT_TOKEN: null,
+    SLACK_APP_TOKEN: null,
+    SLACK_PERMISSION_APPROVER_IDS: null,
   });
 }
 

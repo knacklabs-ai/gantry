@@ -329,39 +329,6 @@ maybeDescribe('Postgres domain repositories', () => {
     });
   });
 
-  it('reads legacy provider runtime secret ref arrays as keyed env refs', async () => {
-    const legacyConnectionId =
-      'channel-providerConnection:test:legacy-array' as ProviderConnectionId;
-    await repositories.providerConnections.saveProviderConnection({
-      id: legacyConnectionId,
-      appId,
-      providerId,
-      externalInstallationRef: {
-        kind: 'provider_connection',
-        value: 'TLEGACY',
-      },
-      label: 'Legacy Slack',
-      status: 'active',
-      config: { workspace: 'legacy' },
-      runtimeSecretRefs: {},
-      createdAt: now,
-      updatedAt: now,
-    });
-    await service.pool.query(
-      'update provider_connections set runtime_secret_refs_json = $1 where id = $2',
-      [JSON.stringify(['SLACK_BOT_TOKEN']), legacyConnectionId],
-    );
-
-    const loaded =
-      await repositories.providerConnections.getProviderConnection(
-        legacyConnectionId,
-      );
-
-    expect(loaded?.runtimeSecretRefs).toEqual({
-      bot_token: 'env:SLACK_BOT_TOKEN',
-    });
-  });
-
   it('disables omitted agent capability bindings during replacement', async () => {
     const updatedAt = '2026-05-02T00:00:00.000Z';
 

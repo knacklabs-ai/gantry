@@ -970,6 +970,247 @@ conversations:
     );
   });
 
+  it('accepts enabled providers with stored runtime secret refs', () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    const originalTelegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-provider-secret-validation-'),
+    );
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@localhost:5432/gantry_test';
+      process.env.SECRET_ENCRYPTION_KEY = Buffer.from(
+        '00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f',
+        'hex',
+      ).toString('base64');
+      delete process.env.TELEGRAM_BOT_TOKEN;
+
+      const settings = createDefaultRuntimeSettings();
+      settings.providers.telegram.enabled = true;
+      settings.providers.telegram.defaultConnection = 'telegram_default';
+      settings.providerConnections.telegram_default = {
+        provider: 'telegram',
+        label: 'Telegram Default',
+        runtimeSecretRefs: { bot_token: 'gantry-secret:TELEGRAM_BOT_TOKEN' },
+      };
+
+      expect(
+        validateLoadedRuntimeSettings(runtimeHome, settings),
+      ).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
+      if (originalTelegramBotToken === undefined) {
+        delete process.env.TELEGRAM_BOT_TOKEN;
+      } else {
+        process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
+      }
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts AWS Secrets Manager provider refs with deployment-owned names', () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-provider-secret-aws-ref-'),
+    );
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@localhost:5432/gantry_test';
+      process.env.SECRET_ENCRYPTION_KEY = Buffer.from(
+        '00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f',
+        'hex',
+      ).toString('base64');
+
+      const settings = createDefaultRuntimeSettings();
+      settings.providers.telegram.enabled = true;
+      settings.providers.telegram.defaultConnection = 'telegram_default';
+      settings.providerConnections.telegram_default = {
+        provider: 'telegram',
+        label: 'Telegram Default',
+        runtimeSecretRefs: { bot_token: 'aws-sm:prod/telegram/bot' },
+      };
+
+      expect(
+        validateLoadedRuntimeSettings(runtimeHome, settings),
+      ).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts configured provider refs before env fallback', () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    const originalTelegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-provider-secret-validation-'),
+    );
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@localhost:5432/gantry_test';
+      process.env.SECRET_ENCRYPTION_KEY = Buffer.from(
+        '00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f',
+        'hex',
+      ).toString('base64');
+      process.env.TELEGRAM_BOT_TOKEN = 'legacy-env-token';
+
+      const settings = createDefaultRuntimeSettings();
+      settings.providers.telegram.enabled = true;
+      settings.providers.telegram.defaultConnection = 'telegram_default';
+      settings.providerConnections.telegram_default = {
+        provider: 'telegram',
+        label: 'Telegram Default',
+        runtimeSecretRefs: { bot_token: 'gantry-secret:CUSTOM_TELEGRAM_TOKEN' },
+      };
+
+      const result = validateLoadedRuntimeSettings(runtimeHome, settings);
+
+      expect(result.ok).toBe(true);
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
+      if (originalTelegramBotToken === undefined) {
+        delete process.env.TELEGRAM_BOT_TOKEN;
+      } else {
+        process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
+      }
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts provider env refs that use custom variable names', () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    const originalCustomTelegramBotToken =
+      process.env.CUSTOM_TELEGRAM_BOT_TOKEN;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-provider-secret-validation-'),
+    );
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@localhost:5432/gantry_test';
+      process.env.SECRET_ENCRYPTION_KEY = Buffer.from(
+        '00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f',
+        'hex',
+      ).toString('base64');
+      process.env.CUSTOM_TELEGRAM_BOT_TOKEN = 'custom-token';
+
+      const settings = createDefaultRuntimeSettings();
+      settings.providers.telegram.enabled = true;
+      settings.providers.telegram.defaultConnection = 'telegram_default';
+      settings.providerConnections.telegram_default = {
+        provider: 'telegram',
+        label: 'Telegram Default',
+        runtimeSecretRefs: { bot_token: 'env:CUSTOM_TELEGRAM_BOT_TOKEN' },
+      };
+
+      const result = validateLoadedRuntimeSettings(runtimeHome, settings);
+
+      expect(result.ok).toBe(true);
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
+      if (originalCustomTelegramBotToken === undefined) {
+        delete process.env.CUSTOM_TELEGRAM_BOT_TOKEN;
+      } else {
+        process.env.CUSTOM_TELEGRAM_BOT_TOKEN = originalCustomTelegramBotToken;
+      }
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects provider env refs that use model credential authority names', () => {
+    const originalDatabaseUrl = process.env.GANTRY_DATABASE_URL;
+    const originalSecretEncryptionKey = process.env.SECRET_ENCRYPTION_KEY;
+    const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-provider-secret-validation-'),
+    );
+    try {
+      process.env.GANTRY_DATABASE_URL =
+        'postgres://gantry:gantry@localhost:5432/gantry_test';
+      process.env.SECRET_ENCRYPTION_KEY = Buffer.from(
+        '00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f',
+        'hex',
+      ).toString('base64');
+      process.env.OPENAI_API_KEY = 'wrong-lane-token';
+
+      const settings = createDefaultRuntimeSettings();
+      settings.providers.telegram.enabled = true;
+      settings.providers.telegram.defaultConnection = 'telegram_default';
+      settings.providerConnections.telegram_default = {
+        provider: 'telegram',
+        label: 'Telegram Default',
+        runtimeSecretRefs: { bot_token: 'env:OPENAI_API_KEY' },
+      };
+
+      const result = validateLoadedRuntimeSettings(runtimeHome, settings);
+
+      expect(result.ok).toBe(false);
+      expect(result.failure?.details.join('\n')).toContain(
+        "OPENAI_API_KEY is not allowed for provider 'telegram' runtime secret ref env:OPENAI_API_KEY.",
+      );
+    } finally {
+      if (originalDatabaseUrl === undefined) {
+        delete process.env.GANTRY_DATABASE_URL;
+      } else {
+        process.env.GANTRY_DATABASE_URL = originalDatabaseUrl;
+      }
+      if (originalSecretEncryptionKey === undefined) {
+        delete process.env.SECRET_ENCRYPTION_KEY;
+      } else {
+        process.env.SECRET_ENCRYPTION_KEY = originalSecretEncryptionKey;
+      }
+      if (originalOpenAiApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+      }
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
   it('renders and parses local desired-state agents', () => {
     const settings = createDefaultRuntimeSettings();
     settings.desiredState.authoritative = true;

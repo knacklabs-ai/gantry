@@ -23,12 +23,16 @@ export interface DesiredSettingsWriteStorage {
 }
 
 let storageProvider:
-  | (() => Promise<DesiredSettingsWriteStorage | undefined>)
+  | ((input?: {
+      settings?: RuntimeSettings;
+    }) => Promise<DesiredSettingsWriteStorage | undefined>)
   | undefined;
 
 export function configureDesiredSettingsStorageProvider(
   provider:
-    | (() => Promise<DesiredSettingsWriteStorage | undefined>)
+    | ((input?: {
+        settings?: RuntimeSettings;
+      }) => Promise<DesiredSettingsWriteStorage | undefined>)
     | undefined,
 ): void {
   storageProvider = provider;
@@ -53,7 +57,7 @@ export async function writeDesiredRuntimeSettings(input: {
     saveRuntimeSettings(input.runtimeHome, input.settings);
     return { reconciled: false };
   }
-  const storage = await storageProvider();
+  const storage = await storageProvider({ settings: input.settings });
   if (!storage) {
     throw new Error(
       'Settings mutation requires runtime storage so settings_revisions can be durably appended.',

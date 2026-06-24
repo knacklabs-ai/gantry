@@ -29,21 +29,8 @@ export function isProviderRuntimeSecretRefTarget(
 ): boolean {
   const expectedEnv = expectedRuntimeSecretEnvForKey(providerId, key);
   if (!expectedEnv) return false;
-  const parsed = parseRuntimeSecretRefString(
-    normalizeRuntimeSecretRefString(ref),
-  );
-  if (parsed.source === 'aws-sm') {
-    return awsSecretNameMatchesEnv(parsed.name, expectedEnv);
-  }
-  return parsed.name === expectedEnv;
-}
-
-function awsSecretNameMatchesEnv(secretNameOrArn: string, expectedEnv: string) {
-  const secretId = secretNameOrArn.includes(':secret:')
-    ? (secretNameOrArn.split(':secret:')[1] ?? secretNameOrArn)
-    : secretNameOrArn;
-  const leaf = secretId.split('/').pop() || secretId;
-  return leaf === expectedEnv || leaf.startsWith(`${expectedEnv}-`);
+  parseRuntimeSecretRefString(normalizeRuntimeSecretRefString(ref));
+  return true;
 }
 
 function providerEnvPrefix(providerId: string): string {

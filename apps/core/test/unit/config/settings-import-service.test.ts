@@ -5,6 +5,8 @@ import type {
   SettingsRevision,
   SettingsRevisionRepository,
 } from '@core/domain/ports/fleet-capability-state.js';
+import type { ProviderConnectionRepository } from '@core/domain/ports/repositories.js';
+import type { ProviderConnection } from '@core/domain/provider/provider.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings-defaults.js';
 import {
   CURRENT_SETTINGS_READER_VERSION,
@@ -38,6 +40,7 @@ let capabilityErrors: string[] = [];
 class FakeRevisionRepo implements SettingsRevisionRepository {
   rows: SettingsRevision[] = [];
   appendError: Error | null = null;
+  appendConflictRevision: SettingsRevision | null = null;
   lastAppendExpectedRevision: number | null | undefined;
 
   async appendSettingsRevision(input: {
@@ -50,6 +53,14 @@ class FakeRevisionRepo implements SettingsRevisionRepository {
   }): Promise<AppendSettingsRevisionResult> {
     this.lastAppendExpectedRevision = input.expectedRevision;
     if (this.appendError) throw this.appendError;
+    if (this.appendConflictRevision) {
+      this.rows.push(this.appendConflictRevision);
+      return {
+        status: 'conflict',
+        expectedRevision: input.expectedRevision ?? 0,
+        actualRevision: this.appendConflictRevision.revision,
+      };
+    }
     const currentRevision = this.rows.at(-1)?.revision ?? 0;
     if (
       input.expectedRevision !== undefined &&
@@ -308,8 +319,9 @@ describe('importFleetSettingsRevision', () => {
     expect(repo.rows).toHaveLength(1);
   });
 
-  it('reports post-append local apply failure for required mirror', async () => {
+  it('keeps the required mirror revision when local apply fails after append', async () => {
     capabilityErrors = [];
+    applyRuntimeSettingsDesiredState.mockReset();
     const previousSettings = createDefaultRuntimeSettings();
     const nextSettings = createDefaultRuntimeSettings();
     nextSettings.agent.name = 'committed';
@@ -337,11 +349,160 @@ describe('importFleetSettingsRevision', () => {
         nextSettings,
       ),
     ).rejects.toThrow('local apply failed');
-    expect(logWarn).toHaveBeenCalledWith(
-      { err: expect.any(Error), revision: 1 },
-      'settings revision appended but local apply failed',
-    );
+    expect(logWarn).not.toHaveBeenCalled();
     expect(repo.rows).toHaveLength(1);
+    expect(
+      (repo.rows[0]?.settingsDocument.agent as { name?: string }).name,
+    ).toBe('committed');
+  });
+
+  it('does not apply local projection when required mirror append fails', async () => {
+    capabilityErrors = [];
+    applyRuntimeSettingsDesiredState.mockReset();
+    applyRuntimeSettingsDesiredState.mockImplementation(
+      async (input: { settings: unknown }) => {
+        return input.settings;
+      },
+    );
+    const previousSettings = createDefaultRuntimeSettings();
+    previousSettings.agent.name = 'previous';
+    const nextSettings = createDefaultRuntimeSettings();
+    nextSettings.agent.name = 'next';
+    const repo = new FakeRevisionRepo();
+    repo.appendError = new Error('settings revisions unavailable');
+
+    await expect(
+      importWorkstationSettings(
+        {
+          runtimeHome: '/tmp/gantry-import-test',
+          ops: {} as never,
+          repositories: {} as never,
+          appId: 'default' as never,
+          previousSettings,
+          revisionMirror: {
+            settingsRevisions: repo,
+            createdBy: 'test:fleet',
+          },
+          revisionMirrorRequired: true,
+        },
+        nextSettings,
+      ),
+    ).rejects.toThrow('settings revisions unavailable');
+    expect(applyRuntimeSettingsDesiredState).not.toHaveBeenCalled();
+    expect(repo.rows).toHaveLength(0);
+  });
+
+  it('does not apply local projection when a required mirror append conflicts', async () => {
+    capabilityErrors = [];
+    applyRuntimeSettingsDesiredState.mockReset();
+    applyRuntimeSettingsDesiredState.mockImplementation(
+      async (input: { settings: unknown }) => {
+        return input.settings;
+      },
+    );
+    const previousSettings = createDefaultRuntimeSettings();
+    previousSettings.agent.name = 'previous';
+    const nextSettings = createDefaultRuntimeSettings();
+    nextSettings.agent.name = 'next';
+    const winningSettings = createDefaultRuntimeSettings();
+    winningSettings.agent.name = 'winner';
+    const repo = new FakeRevisionRepo();
+    repo.rows.push({
+      appId: 'default',
+      revision: 1,
+      settingsDocument: settingsToRevisionDocument(previousSettings),
+      minReaderVersion: CURRENT_SETTINGS_READER_VERSION,
+      createdBy: 'test:fleet',
+      note: null,
+      createdAt: new Date().toISOString(),
+    });
+    repo.appendConflictRevision = {
+      appId: 'default',
+      revision: 2,
+      settingsDocument: settingsToRevisionDocument(winningSettings),
+      minReaderVersion: CURRENT_SETTINGS_READER_VERSION,
+      createdBy: 'test:other-writer',
+      note: null,
+      createdAt: new Date().toISOString(),
+    };
+
+    await expect(
+      importWorkstationSettings(
+        {
+          runtimeHome: '/tmp/gantry-import-test',
+          ops: {} as never,
+          repositories: {} as never,
+          appId: 'default' as never,
+          previousSettings,
+          expectedRevision: 1,
+          revisionMirror: {
+            settingsRevisions: repo,
+            createdBy: 'test:fleet',
+          },
+          revisionMirrorRequired: true,
+        },
+        nextSettings,
+      ),
+    ).rejects.toMatchObject({
+      name: 'SettingsRevisionConflictError',
+      expectedRevision: 1,
+      actualRevision: 2,
+    } satisfies Partial<SettingsRevisionConflictError>);
+    expect(applyRuntimeSettingsDesiredState).not.toHaveBeenCalled();
+  });
+
+  it('rejects provider connection provider changes before appending a required mirror revision', async () => {
+    capabilityErrors = [];
+    applyRuntimeSettingsDesiredState.mockReset();
+    const previousSettings = createDefaultRuntimeSettings();
+    const nextSettings = createDefaultRuntimeSettings();
+    nextSettings.providers.slack = {
+      enabled: true,
+      defaultConnection: 'workspace',
+    };
+    nextSettings.providerConnections.workspace = {
+      provider: 'slack',
+      label: 'Slack',
+      runtimeSecretRefs: {},
+    };
+    const repo = new FakeRevisionRepo();
+    const providerConnections = {
+      async getProviderConnection() {
+        return {
+          id: 'workspace',
+          appId: 'default',
+          providerId: 'telegram',
+          label: 'Telegram',
+          status: 'active',
+          config: {},
+          runtimeSecretRefs: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } satisfies ProviderConnection;
+      },
+    } as Pick<ProviderConnectionRepository, 'getProviderConnection'>;
+
+    await expect(
+      importWorkstationSettings(
+        {
+          runtimeHome: '/tmp/gantry-import-test',
+          ops: {} as never,
+          repositories: { providerConnections } as never,
+          appId: 'default' as never,
+          previousSettings,
+          revisionMirror: {
+            settingsRevisions: repo,
+            createdBy: 'test:fleet',
+          },
+          revisionMirrorRequired: true,
+        },
+        nextSettings,
+      ),
+    ).rejects.toThrow(
+      'provider_connections.workspace.provider cannot change from telegram to slack; use a new provider connection id.',
+    );
+    expect(repo.rows).toHaveLength(0);
+    expect(applyRuntimeSettingsDesiredState).not.toHaveBeenCalled();
   });
 
   it('appends a revision stamped with the current reader version', async () => {

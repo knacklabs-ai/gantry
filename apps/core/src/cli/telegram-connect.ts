@@ -14,8 +14,7 @@ import {
   validateTelegramBotToken,
   verifyTelegramChatAccess,
 } from './telegram.js';
-import { gantryRuntimeSecretRef } from '../domain/ports/runtime-secret-provider.js';
-import { storeRuntimeSecretInput } from './credentials.js';
+import { planRuntimeSecretInput } from './runtime-secret-ref-prompt.js';
 
 type TelegramChatChoice =
   | {
@@ -213,6 +212,18 @@ export async function runTelegramConnectCommand(
   }
   p.log.success(validation.message);
 
+  const tokenSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'TELEGRAM_BOT_TOKEN',
+    value: tokenInput,
+    actor: 'cli:telegram-connect',
+    label: 'Telegram bot token',
+  });
+  if (!tokenSecret) {
+    p.outro('Telegram connect cancelled.');
+    return 1;
+  }
+
   const chatChoice = await chooseChatFromDiscovery(tokenInput);
   if (chatChoice.type === 'cancel') {
     p.outro('Telegram connect cancelled.');
@@ -262,12 +273,7 @@ export async function runTelegramConnectCommand(
     );
   }
 
-  await storeRuntimeSecretInput({
-    runtimeHome,
-    name: 'TELEGRAM_BOT_TOKEN',
-    value: tokenInput,
-    actor: 'cli:telegram-connect',
-  });
+  await tokenSecret.persist();
   const settings = loadRuntimeSettings(runtimeHome);
   const previousSettings = structuredClone(settings);
   settings.providers.telegram.enabled = true;
@@ -282,7 +288,7 @@ export async function runTelegramConnectCommand(
     runtimeSecretRefs: {
       ...(settings.providerConnections[providerConnectionId]
         ?.runtimeSecretRefs || {}),
-      bot_token: gantryRuntimeSecretRef('TELEGRAM_BOT_TOKEN'),
+      bot_token: tokenSecret.ref,
     },
   };
   if (registeredFolder) {

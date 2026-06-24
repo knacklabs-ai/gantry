@@ -6,7 +6,10 @@ import type {
   RuntimeSecretProvider,
   RuntimeSecretRef,
 } from '../../domain/ports/runtime-secret-provider.js';
-import { runtimeSecretRefTarget } from '../../domain/ports/runtime-secret-provider.js';
+import {
+  isForbiddenRuntimeSecretEnvName,
+  runtimeSecretRefTarget,
+} from '../../domain/ports/runtime-secret-provider.js';
 import { getGantryHome } from '../../shared/gantry-home.js';
 import { parseEnvContent } from '../../shared/env-file.js';
 
@@ -17,15 +20,6 @@ let cachedRuntimeEnv:
       values: Map<string, string>;
     }
   | undefined;
-
-function isForbiddenRuntimeSecretEnvName(key: string): boolean {
-  const normalized = key.trim().toUpperCase();
-  return (
-    normalized.includes('API_KEY') ||
-    normalized.includes('OAUTH_TOKEN') ||
-    normalized.endsWith('_AUTH_TOKEN')
-  );
-}
 
 function readRuntimeHomeEnvValues(): Map<string, string> {
   const envPath = path.join(getGantryHome(), '.env');

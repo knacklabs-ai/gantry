@@ -27,8 +27,7 @@ import {
   createProfileFileMirrorExists,
   createProfileFileMirrorWriter,
 } from '../platform/profile-file-mirror.js';
-import { gantryRuntimeSecretRef } from '../domain/ports/runtime-secret-provider.js';
-import { storeRuntimeSecretInput } from './credentials.js';
+import { planRuntimeSecretInput } from './runtime-secret-ref-prompt.js';
 
 type DiscordChannelChoice =
   | { type: 'selected'; channel: DiscordDiscoveredChannel }
@@ -190,6 +189,23 @@ export async function runDiscordConnectCommand(
   }
   p.log.success(validation.message);
 
+  const botSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'DISCORD_BOT_TOKEN',
+    value: credentials.botToken,
+    actor: 'cli:discord-connect',
+    label: 'Discord bot token',
+  });
+  if (!botSecret) return 1;
+  const applicationSecret = await planRuntimeSecretInput({
+    runtimeHome,
+    name: 'DISCORD_APPLICATION_ID',
+    value: credentials.applicationId,
+    actor: 'cli:discord-connect',
+    label: 'Discord application ID',
+  });
+  if (!applicationSecret) return 1;
+
   const channelChoice = await chooseDiscordChannelForConnect(
     credentials,
     discoveryClient,
@@ -247,20 +263,7 @@ export async function runDiscordConnectCommand(
     );
   }
 
-  await Promise.all([
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'DISCORD_BOT_TOKEN',
-      value: credentials.botToken,
-      actor: 'cli:discord-connect',
-    }),
-    storeRuntimeSecretInput({
-      runtimeHome,
-      name: 'DISCORD_APPLICATION_ID',
-      value: credentials.applicationId,
-      actor: 'cli:discord-connect',
-    }),
-  ]);
+  await Promise.all([botSecret.persist(), applicationSecret.persist()]);
   const settings = loadRuntimeSettings(runtimeHome);
   const previousSettings = structuredClone(settings);
   const previousDiscordEnabled = settings.providers.discord?.enabled ?? false;
@@ -278,8 +281,8 @@ export async function runDiscordConnectCommand(
     runtimeSecretRefs: {
       ...(settings.providerConnections[providerConnectionId]
         ?.runtimeSecretRefs || {}),
-      bot_token: gantryRuntimeSecretRef('DISCORD_BOT_TOKEN'),
-      application_id: gantryRuntimeSecretRef('DISCORD_APPLICATION_ID'),
+      bot_token: botSecret.ref,
+      application_id: applicationSecret.ref,
     },
   };
   if (registeredFolder) {

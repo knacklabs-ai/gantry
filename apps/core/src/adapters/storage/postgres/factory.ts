@@ -80,6 +80,8 @@ export interface StorageRuntime {
 }
 
 export interface StorageRuntimeOptions {
+  storageConfig?: ResolvedStorageConfig;
+  runtimeSettings?: RuntimeSettings;
   loadSessionAppMemoryItems?: (input: {
     session: AgentSession;
     limit: number;
@@ -108,11 +110,14 @@ export function resolveStorageConfigFromRuntime(): ResolvedStorageConfig {
 }
 
 export function createStorageRuntime(
-  config: ResolvedStorageConfig = resolveStorageConfigFromRuntime(),
+  config?: ResolvedStorageConfig,
   options: StorageRuntimeOptions = {},
 ): StorageRuntime {
-  const service = createStorageService(config);
-  const runtimeSettings = getRuntimeSettingsForStorageRuntime();
+  const service = createStorageService(
+    options.storageConfig ?? config ?? resolveStorageConfigFromRuntime(),
+  );
+  const runtimeSettings =
+    options.runtimeSettings ?? getRuntimeSettingsForStorageRuntime();
   const sessionSettings = runtimeSettings.agent.sessions;
   const control = new PostgresControlPlaneRepository(service.db);
   const liveTurnCommandNotifier = new PostgresLiveTurnCommandNotifier(

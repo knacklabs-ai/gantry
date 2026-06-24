@@ -5,7 +5,10 @@ import {
   RuntimeSettings,
   loadRuntimeSettings,
 } from '../../config/settings/runtime-settings.js';
-import { GANTRY_HOME } from '../../config/index.js';
+import {
+  GANTRY_HOME,
+  resolveRuntimeBootstrapStorageConfigFromEnv,
+} from '../../config/index.js';
 import type { AppId } from '../../domain/app/app.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import { ensureRuntimeLayoutDirectories } from '../../platform/runtime-layout.js';
@@ -62,22 +65,37 @@ export async function runStartup(
   };
 
   resolved.ensureRuntimeLayoutDirectories(GANTRY_HOME);
-  const storage = await resolved.initializeRuntimeStorage({
+  let storage = await resolved.initializeRuntimeStorage({
     loadSessionAppMemoryItems: loadSessionAppMemoryItems,
+    storageConfig:
+      resolved.settingsAuthority === 'revision'
+        ? (resolveRuntimeBootstrapStorageConfigFromEnv() ?? undefined)
+        : undefined,
   });
   resolved.logger.info('Database initialized');
-  const runtimeSettings =
-    resolved.settingsAuthority === 'revision'
-      ? await loadRevisionAuthoritySettings({
-          runtimeHome: GANTRY_HOME,
-          storage,
-          app,
-          loadRuntimeSettings: resolved.loadRuntimeSettings,
-          importWorkstationSettings: resolved.importWorkstationSettings,
-          settingsFileExists: resolved.settingsFileExists,
-          logger: resolved.logger,
-        })
-      : resolved.loadRuntimeSettings(GANTRY_HOME);
+  const runtimeSettings = await (async () => {
+    if (resolved.settingsAuthority !== 'revision') {
+      return resolved.loadRuntimeSettings(GANTRY_HOME);
+    }
+    const revisionSettings = await loadRevisionAuthoritySettings({
+      runtimeHome: GANTRY_HOME,
+      storage,
+      app,
+      loadRuntimeSettings: resolved.loadRuntimeSettings,
+      importWorkstationSettings: resolved.importWorkstationSettings,
+      settingsFileExists: resolved.settingsFileExists,
+      logger: resolved.logger,
+    });
+    await closeStartupStorage(storage);
+    storage = await resolved.initializeRuntimeStorage({
+      loadSessionAppMemoryItems: loadSessionAppMemoryItems,
+      runtimeSettings: revisionSettings,
+    });
+    resolved.logger.info(
+      'Database initialized with authoritative settings revision',
+    );
+    return revisionSettings;
+  })();
   if (
     resolved.settingsAuthority === 'file' &&
     runtimeSettings.desiredState &&
@@ -120,6 +138,13 @@ export async function runStartup(
   return {
     runtimeSettings,
   };
+}
+
+async function closeStartupStorage(
+  storage: Awaited<ReturnType<typeof initializeRuntimeStorage>>,
+): Promise<void> {
+  await storage.runtimeEventNotifier?.close?.().catch(() => undefined);
+  await storage.service?.close?.().catch(() => undefined);
 }
 
 async function loadRevisionAuthoritySettings(input: {
@@ -201,6 +226,13 @@ async function loadRevisionAuthoritySettings(input: {
   }
 
   const settings = input.loadRuntimeSettings(input.runtimeHome);
+  if (settings.runtime.deploymentMode === 'fleet') {
+    input.logger.warn(
+      { appId },
+      'No settings revision exists; fleet startup will not promote local settings.yaml to durable authority',
+    );
+    return settings;
+  }
   const outcome = await input.importWorkstationSettings(
     {
       runtimeHome: input.runtimeHome,
