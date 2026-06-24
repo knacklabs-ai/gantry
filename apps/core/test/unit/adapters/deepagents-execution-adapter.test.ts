@@ -31,6 +31,7 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => true),
       mkdirSync: vi.fn(),
+      rmSync: vi.fn(),
     },
   };
 });
@@ -45,6 +46,8 @@ beforeEach(() => {
   checkpointSetupMock.ensureDeepAgentsCheckpointSchema.mockClear();
   vi.mocked(fs.existsSync).mockReset();
   vi.mocked(fs.existsSync).mockReturnValue(true);
+  vi.mocked(fs.mkdirSync).mockReset();
+  vi.mocked(fs.rmSync).mockReset();
 });
 
 function catalogEntry(alias: string): ModelCatalogEntry {
@@ -192,6 +195,34 @@ describe('DeepAgentsLangChainExecutionAdapter', () => {
     // gpt-5.5 has a real library profile, so the catalog declares no curated
     // window and the host must NOT project the max-input-tokens env.
     expect(prepared.env.GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS).toBeUndefined();
+  });
+
+  it('uses a disposable per-run DeepAgents runtime config dir', async () => {
+    const adapter = new DeepAgentsLangChainExecutionAdapter();
+    const prepared = await adapter.prepare(
+      prepareInput({
+        input: {
+          prompt: 'hello',
+          chatJid: 'tg:test',
+          runId: 'run/123',
+        },
+      }),
+    );
+
+    expect(prepared.runtimeConfigDir).toBe(
+      '/tmp/gantry/agents/test-agent/.llm-runtime/deepagents-run_123',
+    );
+    expect(fs.mkdirSync).toHaveBeenCalledWith(prepared.runtimeConfigDir, {
+      recursive: true,
+      mode: 0o700,
+    });
+
+    prepared.cleanup();
+
+    expect(fs.rmSync).toHaveBeenCalledWith(prepared.runtimeConfigDir, {
+      recursive: true,
+      force: true,
+    });
   });
 
   it('projects the curated context window for an empty-profile openai-lane model', async () => {

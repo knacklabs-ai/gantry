@@ -557,6 +557,8 @@ External systems that should not hold a control API key use signed external ingr
 
 Gantry currently supports a single runtime mode: host execution.
 Use `npm run dev` for local development and `npm start` for production start.
+`npm start` runs `npm run db:migrate` before the runtime process starts; service
+and container entrypoints run the same explicit migrator.
 
 Gantry deploys three ways from one image — **workstation** (single machine),
 **fleet** (role-differentiated pools behind an ALB), and the **locked support
@@ -702,6 +704,22 @@ Gateway. Explicit incompatible harness/model pairings fail before runner spawn.
 
 Harness-selection work is documented in [Agent Harness Selection](docs/decisions/2026-06-14-agent-harness-selection.md).
 
+- Model Access setup is one command per provider. Use
+  `gantry credentials model set bedrock` and choose AWS role/profile
+  (preferred), Bedrock API key in AWS Secrets Manager, or Bedrock API key. Use
+  `gantry credentials model set vertex` and choose Google ADC/workload identity
+  (preferred), service-account JSON in Google Secret Manager, or
+  service-account JSON.
+- Contributor map for model providers: model aliases live in
+  `apps/core/src/shared/model-catalog*.ts`, credential modes and upstream
+  routing live in `apps/core/src/shared/model-provider-registry*.ts`, host
+  gateway auth lives in
+  `apps/core/src/adapters/llm/anthropic-claude-agent/gantry-model-gateway-*.ts`,
+  CLI prompts live in `apps/core/src/cli/credentials.ts` and
+  `apps/core/src/cli/setup-credentials.ts`, and Control API docs live in
+  `apps/core/src/control/server/openapi-model-credential-schemas.ts`. For
+  AWS/Google-style credentials, update the gateway auth/tests as well as the
+  registry; they are not API-key-only providers.
 - `gantry agent list` and `gantry agent info <id>` display the selected
   `agentHarness`; `gantry model why <alias> --agent <id>` shows the model
   alias, response family, credential profile, selected harness, diagnostic

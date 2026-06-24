@@ -13,8 +13,7 @@ run. The directory contains:
 - `skills/` materialized from the active skill source
 - `projects/<project>/` as an SDK scratch directory for the current run
 
-The temp directory is removed after the run unless explicit debug retention is
-enabled by the caller.
+The temp directory is removed after the run.
 
 The Claude Agent SDK exposes `settingSources` and `skills` as separate session
 inputs. An empty `settingSources` list loads no filesystem settings, while
@@ -33,7 +32,7 @@ Durable state stays outside Claude runtime files:
   permission policy, sessions, messages, and runs.
 - `FileArtifactStore` owns durable agent file bytes by storage ref; Postgres
   stores metadata, ownership, virtual path, scope, version, hash, and policy.
-- `SkillArtifactStore` owns installed local skill source bytes by storage ref;
+- `SkillArtifactStore` owns installed skill source bytes by storage ref;
   Postgres stores metadata, status, storage pointers, bindings, and credential
   refs.
 - Postgres owns current MCP server definitions, agent bindings, Gantry
@@ -105,8 +104,8 @@ catalog name, temp directory, and declared SDK skill name must agree.
 
 Agent-created or admin-uploaded skills enter Gantry as packages containing
 `SKILL.md`. Gantry parses display metadata from that file and stores the
-normalized installed package under runtime-home
-`artifacts/skills/<skill-directory>/`. Admin
+normalized installed package in the configured `SkillArtifactStore`; the local
+backend uses runtime-home `artifacts/skills/<skill-directory>/`. Admin
 CLI/API installation installs immediately. Agent requests create a same-channel
 review request; a positive decision installs the current package and binds it
 to the requesting agent, while rejection records only the request outcome.

@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AnthropicClaudeAgentExecutionAdapter } from '@core/adapters/llm/anthropic-claude-agent/execution-adapter.js';
 import type { AgentExecutionAdapterPrepareInput } from '@core/application/agent-execution/agent-execution-adapter.js';
+import type { SkillArtifactStore } from '@core/domain/ports/skill-artifact-store.js';
+import type { SkillCatalogRepository } from '@core/domain/ports/repositories.js';
+import type { SkillCatalogItem } from '@core/domain/skills/skills.js';
 import {
   type ModelCatalogEntry,
   resolveModelSelection,
@@ -76,6 +79,28 @@ function catalogEntry(alias: string): ModelCatalogEntry {
   return resolved.entry;
 }
 
+function installedSkill(): SkillCatalogItem {
+  return {
+    id: 'skill:release' as never,
+    appId: 'app:test' as never,
+    agentId: 'agent:test' as never,
+    name: 'release-writer',
+    source: 'admin_uploaded',
+    status: 'installed',
+    promptRefs: [],
+    toolIds: [],
+    workflowRefs: [],
+    storage: {
+      storageType: 'local-filesystem',
+      storageRef: 'skill-release',
+      contentHash: 'sha256:release',
+      sizeBytes: 1,
+    },
+    createdAt: '2026-06-16T00:00:00.000Z',
+    updatedAt: '2026-06-16T00:00:00.000Z',
+  };
+}
+
 describe('AnthropicClaudeAgentExecutionAdapter', () => {
   it('passes the host-validated Gantry MCP server path to the relocated runner', async () => {
     const adapter = new AnthropicClaudeAgentExecutionAdapter();
@@ -87,7 +112,7 @@ describe('AnthropicClaudeAgentExecutionAdapter', () => {
     );
   });
 
-  it('keeps Claude config in a stable session store', async () => {
+  it('uses disposable per-run Claude config projection', async () => {
     mockMaterializeClaudeRuntime.mockClear();
     const adapter = new AnthropicClaudeAgentExecutionAdapter();
 
@@ -95,9 +120,9 @@ describe('AnthropicClaudeAgentExecutionAdapter', () => {
 
     const materializeInput = mockMaterializeClaudeRuntime.mock.calls[0]?.[0];
     expect(materializeInput).toMatchObject({
-      baseTempDir: '/tmp/gantry/agents/test-agent/.llm-runtime',
-      cleanupPolicy: 'retain-for-debug',
+      groupDir: '/tmp/gantry/agents/test-agent',
     });
+    expect(materializeInput.baseTempDir).toBeUndefined();
   });
 
   it('declares Claude runtime paths through the adapter boundary', async () => {
@@ -177,6 +202,71 @@ describe('AnthropicClaudeAgentExecutionAdapter', () => {
     expect(mockMaterializeClaudeRuntime.mock.calls[0]?.[0]).toMatchObject({
       enabledSkillIds: ['gantry-browser', 'skill:release'],
     });
+  });
+
+  it('feeds selected artifact skills to Claude through the Gantry projection', async () => {
+    mockMaterializeClaudeRuntime.mockClear();
+    const repo = {
+      listEnabledSkillsForAgent: vi.fn(async () => [installedSkill()]),
+    } as Partial<SkillCatalogRepository> as SkillCatalogRepository;
+    const artifacts = {
+      getSkillArtifact: vi.fn(async () => ({
+        assets: [
+          {
+            path: 'SKILL.md',
+            content: Buffer.from(`---
+name: release-writer
+description: Use this skill for release notes.
+---
+
+# Release Writer
+`),
+            contentType: 'text/markdown',
+          },
+        ],
+      })),
+    } as Partial<SkillArtifactStore> as SkillArtifactStore;
+    const adapter = new AnthropicClaudeAgentExecutionAdapter();
+
+    await adapter.prepare(
+      prepareInput({
+        input: {
+          prompt: 'hello',
+          chatJid: 'tg:test',
+          attachedSkillSourceIds: ['skill:release'],
+        },
+        options: {
+          skillRepository: repo,
+          skillArtifactStore: artifacts,
+          skillContext: {
+            appId: 'app:test',
+            agentId: 'agent:test',
+          },
+        },
+      }),
+    );
+
+    const skillSource =
+      mockMaterializeClaudeRuntime.mock.calls[0]?.[0].skillSource;
+    const skills = await skillSource.listSkills({
+      enabledSkillIds: ['skill:release'],
+    });
+    expect(
+      skills.filter((skill: { enabled: boolean }) => skill.enabled),
+    ).toMatchObject([
+      {
+        id: 'skill:release',
+        name: 'release-writer',
+        sourceType: 'artifact',
+        contentHash: 'sha256:release',
+        enabled: true,
+      },
+    ]);
+    expect(repo.listEnabledSkillsForAgent).toHaveBeenCalledWith({
+      appId: 'app:test',
+      agentId: 'agent:test',
+    });
+    expect(artifacts.getSkillArtifact).toHaveBeenCalledWith('skill-release');
   });
 
   it('passes an empty SDK skill allowlist when no skills are selected', async () => {

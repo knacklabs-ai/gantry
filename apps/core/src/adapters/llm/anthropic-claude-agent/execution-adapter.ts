@@ -80,8 +80,6 @@ export class AnthropicClaudeAgentExecutionAdapter implements AgentExecutionAdapt
     const skillSources = this.skillSources(input, packageRoot);
     const materialization = await materializeClaudeRuntime({
       groupDir: input.groupDir,
-      baseTempDir: path.join(input.groupDir, '.llm-runtime'),
-      cleanupPolicy: 'retain-for-debug',
       cliEntryPoint: path.join(packageRoot, 'dist', 'cli', 'index.js'),
       packageRoot,
       runtimeSettingsPath: RUNTIME_SETTINGS_PATH,

@@ -1,5 +1,8 @@
 import type { PermissionApprovalRequest } from '../domain/types.js';
-import { firstDestructiveRedirectTarget } from '../shared/bash-command-parser.js';
+import {
+  firstDestructiveRedirectTarget,
+  summarizeBashCommandPrograms,
+} from '../shared/bash-command-parser.js';
 import { generatedRuntimeSkillPathDisplay } from '../shared/generated-runtime-paths.js';
 import { escapeMarkdownFenceDelimiters } from './permission-fenced-content.js';
 

@@ -49,7 +49,11 @@ describe('validateDeepAgentCredentialProjection (A3 fail-closed)', () => {
   });
 
   it.each([
+    ['bedrock-oss', 'aws_default_chain'],
+    ['bedrock-oss', 'bedrock_api_key_ref'],
     ['bedrock-oss', 'bedrock_api_key'],
+    ['vertex', 'google_adc'],
+    ['vertex', 'service_account_ref'],
     ['vertex', 'service_account'],
   ])('passes for %s with its supported %s credential mode', (alias, mode) => {
     expect(() =>

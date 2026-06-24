@@ -364,8 +364,6 @@ const testExecutionAdapter: AgentExecutionAdapter = {
     }
     const materialization = await mockMaterializeClaudeRuntime({
       groupDir: input.groupDir,
-      baseTempDir: `${input.groupDir}/.llm-runtime`,
-      cleanupPolicy: 'retain-for-debug',
       cliEntryPoint: `${packageRoot}/dist/cli/index.js`,
       packageRoot,
       runtimeSettingsPath: '/tmp/gantry-config/settings.yaml',

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 import type {
   AgentExecutionAdapter,
@@ -121,13 +122,13 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
       );
     }
 
-    // Adapter-owned runtime config dir is retained for sandbox/read path parity.
+    // Adapter-owned runtime config dir is scratch only.
     // Live continuity is not file-backed: the runner uses LangGraph's official
     // PostgresSaver keyed by the Gantry provider session id.
+    const runtimeScratchRoot = path.join(input.groupDir, '.llm-runtime');
     const runtimeConfigDir = path.join(
-      input.groupDir,
-      '.llm-runtime',
-      'deepagents',
+      runtimeScratchRoot,
+      `deepagents-${safePathSegment(input.input.runId ?? randomUUID())}`,
     );
     fs.mkdirSync(runtimeConfigDir, { recursive: true, mode: 0o700 });
 
@@ -226,10 +227,14 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
         `checkpointSchema=${deepAgentsCheckpointSchema(input.runtimeStorage?.postgresSchema ?? 'gantry')}`,
       ],
       cleanup: () => {
-        /* retain session projection across live turns; no per-run temp to clean */
+        fs.rmSync(runtimeConfigDir, { recursive: true, force: true });
       },
     };
   }
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
 export function createDeepAgentsLangChainExecutionAdapter(): AgentExecutionAdapter {

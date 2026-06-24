@@ -24,9 +24,12 @@ export type ModelGatewayAuthStrategy =
   | 'header'
   | 'claude_code_oauth'
   | 'aws_bedrock_api_key'
+  | 'aws_bedrock_api_key_ref'
   | 'aws_sigv4'
   | 'aws_sdk_default_chain'
   | 'vertex_service_account'
+  | 'vertex_service_account_ref'
+  | 'google_adc'
   | 'azure_api_key'
   | 'azure_entra_default_credential';
 
@@ -629,28 +632,28 @@ function indexProviderDefinitionsByGatewayPath(
 const AWS_REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d$/;
 const GOOGLE_VERTEX_LOCATION_PATTERN = /^global$/;
 const GOOGLE_PROJECT_PATTERN = /^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|\d{6,})$/;
+const AWS_SECRET_MANAGER_REF_PATTERN = /^aws-sm:[^\r\n]+$/;
+const GCP_SECRET_MANAGER_REF_PATTERN =
+  /^gcp-sm:projects\/[^/\r\n]+\/(?:locations\/[^/\r\n]+\/)?secrets\/[^/\r\n]+\/versions\/[^/\r\n]+$/;
+const CLOUD_PROFILE_PATTERN = /^[^\r\n]{1,256}$/;
+const CREDENTIAL_FIELD_PATTERNS: Record<string, RegExp> = {
+  'bedrock:region': AWS_REGION_PATTERN,
+  'bedrock:apiKeyRef': AWS_SECRET_MANAGER_REF_PATTERN,
+  'bedrock:profile': CLOUD_PROFILE_PATTERN,
+  'vertex:region': GOOGLE_VERTEX_LOCATION_PATTERN,
+  'vertex:projectId': GOOGLE_PROJECT_PATTERN,
+  'vertex:serviceAccountJsonRef': GCP_SECRET_MANAGER_REF_PATTERN,
+};
 function validateCredentialFieldValue(
   provider: ModelProviderDefinition,
   modeId: string,
   field: string,
   value: string,
 ): void {
-  if (provider.id === 'bedrock' && field === 'region') {
-    if (!AWS_REGION_PATTERN.test(value)) {
+  const pattern = CREDENTIAL_FIELD_PATTERNS[`${provider.id}:${field}`];
+  if (pattern) {
+    if (!pattern.test(value))
       throw invalidCredentialField(provider.id, modeId, field);
-    }
-    return;
-  }
-  if (provider.id === 'vertex' && field === 'region') {
-    if (!GOOGLE_VERTEX_LOCATION_PATTERN.test(value)) {
-      throw invalidCredentialField(provider.id, modeId, field);
-    }
-    return;
-  }
-  if (provider.id === 'vertex' && field === 'projectId') {
-    if (!GOOGLE_PROJECT_PATTERN.test(value)) {
-      throw invalidCredentialField(provider.id, modeId, field);
-    }
     return;
   }
   if (provider.id === 'vertex' && field === 'serviceAccountJson') {
