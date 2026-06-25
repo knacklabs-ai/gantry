@@ -1,12 +1,12 @@
 import type { PatternCandidateRepository } from '../domain/ports/pattern-candidates.js';
 import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
+import { canonicalConversationIdForMemory } from '../memory/app-memory-subject-resolver.js';
 import { applyPatternCandidateChoice } from '../memory/pattern-candidate-decision.js';
 import {
   PATTERN_ACTION_KIND_TOOL,
   type PatternActionKind,
 } from '../shared/pattern-candidate-action-kind.js';
 import { nowIso } from '../shared/time/datetime.js';
-import { candidateBelongsToRequest } from './pattern-candidate-ipc-handlers.js';
 
 type ProposalStatus =
   | 'proposal_pending_review'
@@ -23,6 +23,29 @@ type AcceptPatternCandidateResult =
       lifecycle?: PatternCandidateLifecycle;
     }
   | { ok: false; error: string; code: string };
+
+export function candidateBelongsToRequest(input: {
+  candidate: Awaited<ReturnType<PatternCandidateRepository['getById']>>;
+  appId: string;
+  agentId: string;
+  targetJid: string;
+  memoryUserId?: string;
+}): boolean {
+  const candidate = input.candidate;
+  if (!candidate) return false;
+  if (candidate.appId !== input.appId || candidate.agentId !== input.agentId) {
+    return false;
+  }
+  const channelSubjectId = canonicalConversationIdForMemory(input.targetJid);
+  return (
+    (candidate.subjectType === 'channel' &&
+      candidate.subjectId === channelSubjectId) ||
+    (candidate.subjectType === 'user' &&
+      (candidate.subjectId === input.memoryUserId ||
+        candidate.subjectId === input.targetJid)) ||
+    candidate.subjectId === input.targetJid
+  );
+}
 
 export async function acceptPatternCandidateForAction(input: {
   repo: PatternCandidateRepository;

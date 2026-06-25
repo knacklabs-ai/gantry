@@ -184,13 +184,27 @@ describe('formatPatternsBlock', () => {
     expect(block).toContain('Never start an action from a pattern alone');
     expect(block).toContain('pattern_candidate_decision');
     expect(block).toContain(PATTERN_ACTION_KIND_TOOL.scheduler_job);
-    expect(block).toContain('action kind scheduler_job');
+    expect(block).toContain('choice accept, and actionKind scheduler_job');
+    expect(block).toContain(
+      `${PATTERN_ACTION_KIND_TOOL.scheduler_job} without patternCandidateId or actionKind`,
+    );
     expect(block).toContain(PATTERN_ACTION_KIND_TOOL.durable_capability);
-    expect(block).toContain('action kind durable_capability');
+    expect(block).toContain('choice accept, and actionKind durable_capability');
+    expect(block).toContain(
+      `${PATTERN_ACTION_KIND_TOOL.durable_capability} target.kind=capability without patternCandidateId or actionKind`,
+    );
     expect(block).toContain(PATTERN_ACTION_KIND_TOOL.skill);
-    expect(block).toContain('action kind skill');
+    expect(block).toContain(
+      `${PATTERN_ACTION_KIND_TOOL.skill} with patternCandidateId from pattern_id`,
+    );
     expect(block).toContain(PATTERN_ACTION_KIND_TOOL.memory_update);
-    expect(block).toContain('action kind memory_update');
+    expect(block).toContain('choice accept, and actionKind memory_update');
+    expect(block).toContain(
+      `${PATTERN_ACTION_KIND_TOOL.memory_update} without patternCandidateId or actionKind`,
+    );
+    expect(block).not.toContain(
+      'call the matching reviewed tool with patternCandidateId',
+    );
   });
 
   it('quotes and escapes candidate text before injecting it into context', () => {

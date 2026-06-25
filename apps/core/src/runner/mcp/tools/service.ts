@@ -37,12 +37,16 @@ export function registerServiceTools(server: McpServer): void {
   );
   server.tool(
     'pattern_candidate_decision',
-    'Record the user decision for a pattern_id from [[PATTERNS_NOTICED]]. Use this only after the user explicitly says not now or do not suggest again.',
+    'Record the user decision for a pattern_id from [[PATTERNS_NOTICED]]. Use accept only after the user agrees to a scheduler_job, durable_capability, or memory_update fix; skill fixes go through request_skill_proposal.',
     {
       patternCandidateId: z
         .string()
         .describe('pattern_id from the pattern block'),
-      choice: z.enum(['not_now', 'dismiss']),
+      choice: z.enum(['accept', 'not_now', 'dismiss']),
+      actionKind: z
+        .enum(['scheduler_job', 'durable_capability', 'memory_update'])
+        .optional()
+        .describe('Required only when choice is accept.'),
     },
     async (args) => {
       const taskId = makeIpcId('pattern-candidate-decision');
@@ -56,6 +60,7 @@ export function registerServiceTools(server: McpServer): void {
         payload: {
           patternCandidateId: args.patternCandidateId,
           choice: args.choice,
+          actionKind: args.actionKind,
         },
         timestamp: nowIso(),
       });
