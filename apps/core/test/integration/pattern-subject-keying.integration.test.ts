@@ -93,6 +93,9 @@ function transcriptTurns(label: string, outcomeLabel: string) {
     { intent: outcomeLabel, messageId: `${label}-m1` },
     { intent: outcomeLabel, messageId: `${label}-m2` },
     { intent: outcomeLabel, messageId: `${label}-m3` },
+    // >= PATTERN_VALUE_FLOOR_MIN_OCCURRENCES (4) so the candidate clears the
+    // recurrence value floor; this test exercises subject keying, not the floor.
+    { intent: outcomeLabel, messageId: `${label}-m4` },
   ];
 }
 
