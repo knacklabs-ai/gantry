@@ -5,6 +5,10 @@ import {
   patternSubjectForScope,
   type PatternSubjectScope,
 } from './pattern-candidate-subject.js';
+import {
+  classifyPromptInjectionMemoryMaterial,
+  sanitizeOutboundLlmText,
+} from './sensitive-material.js';
 import { nowIso } from './time/datetime.js';
 
 /**
@@ -18,14 +22,23 @@ import { nowIso } from './time/datetime.js';
 export const PATTERN_BLOCK_OPEN = '[[PATTERNS_NOTICED]]';
 export const PATTERN_BLOCK_CLOSE = '[[/PATTERNS_NOTICED]]';
 const MAX_PATTERN_TEXT_CHARS = 160;
+const HOST_SUGGESTION_PREFIX = 'We have done ';
+const HOST_SUGGESTION_SUFFIX = ' times - want me to make it a reusable skill?';
 
 function safePatternText(value: string): string {
-  return value
+  const text = value
     .replace(/\[\[/g, '[ [')
     .replace(/\]\]/g, '] ]')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_PATTERN_TEXT_CHARS);
+    .trim();
+  const safeText = classifyPromptInjectionMemoryMaterial(text)
+    ? '[REDACTED_INSTRUCTION]'
+    : sanitizeOutboundLlmText(text).text;
+  return safeText.slice(0, MAX_PATTERN_TEXT_CHARS);
+}
+
+function renderHostSuggestion(candidate: PatternCandidate): string {
+  return `${HOST_SUGGESTION_PREFIX}${safePatternText(candidate.outcomeLabel)} ${candidate.occurrences}${HOST_SUGGESTION_SUFFIX}`;
 }
 
 export function formatPatternsBlock(candidates: PatternCandidate[]): string {
@@ -46,6 +59,7 @@ export function formatPatternsBlock(candidates: PatternCandidate[]): string {
         candidate_status: candidate.candidateStatus,
         outcome: safePatternText(candidate.outcomeLabel),
         short_ask: safePatternText(candidate.shortAsk),
+        suggestion: renderHostSuggestion(candidate),
         occurrences: candidate.occurrences,
       }),
     );
