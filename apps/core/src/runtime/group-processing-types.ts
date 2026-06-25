@@ -45,6 +45,7 @@ export interface GroupProcessor {
       existingRunLeaseToken?: string;
       existingRunLeaseWorkerInstanceId?: string;
       existingRunLeaseFencingVersion?: number;
+      finalRetry?: boolean;
       onRunResult?: (result: 'success' | 'error' | 'stopped') => void;
     },
   ) => Promise<boolean>;

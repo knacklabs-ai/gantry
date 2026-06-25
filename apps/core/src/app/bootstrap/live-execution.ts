@@ -5,6 +5,7 @@ import type {
   LiveTurn,
   LiveTurnScope,
 } from '../../domain/ports/live-turns.js';
+import type { GroupMessageRunContext } from '../../runtime/group-queue-types.js';
 import type { RunLease } from '../../domain/ports/worker-coordination.js';
 import type { RuntimeLease } from '../../domain/ports/runtime-lease.js';
 import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
@@ -150,6 +151,7 @@ interface AdmissionApp {
       existingRunLeaseToken?: string;
       existingRunLeaseWorkerInstanceId?: string;
       existingRunLeaseFencingVersion?: number;
+      finalRetry?: boolean;
       onRunResult?: (result: 'success' | 'error' | 'stopped' | null) => void;
     },
   ) => Promise<boolean>;
@@ -184,7 +186,7 @@ export function buildLiveAdmissionProcessor(input: {
   enqueueMessageCheck: (queueJid: string) => void;
   warn: WarnLog;
   finalizeBrowserForLiveTurn?: LiveTurnBrowserFinalizer;
-}): (queueJid: string) => Promise<boolean> {
+}): (queueJid: string, context?: GroupMessageRunContext) => Promise<boolean> {
   const {
     liveTurnAuthority,
     app,
@@ -222,9 +224,15 @@ export function buildLiveAdmissionProcessor(input: {
         opsRepository.completeSessionAgentRun?.bind(opsRepository),
     });
 
-  return async (queueJid: string): Promise<boolean> => {
+  return async (
+    queueJid: string,
+    context?: GroupMessageRunContext,
+  ): Promise<boolean> => {
     if (!liveTurnAuthority) {
-      return app.processGroupMessages(queueJid, { queued: true });
+      return app.processGroupMessages(queueJid, {
+        queued: true,
+        finalRetry: context?.finalRetry === true,
+      });
     }
     let liveRunId = liveTurnAuthority.ownedRunId(queueJid) ?? undefined;
     let liveRunFence = liveTurnAuthority.ownedFence(queueJid);
@@ -313,6 +321,7 @@ export function buildLiveAdmissionProcessor(input: {
       let liveRunResult: 'success' | 'error' | 'stopped' | null = null;
       const success = await app.processGroupMessages(queueJid, {
         queued: true,
+        finalRetry: context?.finalRetry === true,
         existingRunId: liveRunId,
         ...(liveRunFence
           ? {
