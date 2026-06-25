@@ -601,5 +601,27 @@ function formatKnownToolInputFields(
     }
     lines.push('Applies on the next run.');
   }
+  if (toolName === 'request_settings_update') {
+    add('Why', input.reason, 280);
+    add('Expected revision', input.expectedRevision, 96);
+    if (typeof input.authoritative === 'boolean') {
+      lines.push(`Authoritative: ${input.authoritative ? 'yes' : 'no'}`);
+    }
+    if (typeof input.agentCount === 'number') {
+      lines.push(`Agents: ${input.agentCount}`);
+    }
+    addList('Providers', input.providerIds);
+    if (Array.isArray(input.diffSummary) && input.diffSummary.length > 0) {
+      lines.push(
+        'Change summary:',
+        ...input.diffSummary
+          .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+          .filter(Boolean)
+          .slice(0, 12)
+          .map((entry) => `  ${sanitizePermissionText(entry, 260, 80)}`),
+      );
+    }
+    lines.push('Applies to settings.yaml after approval.');
+  }
   return lines;
 }

@@ -474,14 +474,12 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
     }
 
     const timeoutMs = PERMISSION_APPROVAL_TIMEOUT_MS;
-    const promptText = this.formatPermissionPromptText(request, timeoutMs);
     return requestSlackPermissionApproval({
       app: this.app,
       jid,
       channelId: parsed.channelId,
       request,
       timeoutMs,
-      promptText,
       approverUserIds: this.slackControlApproverIds(parsed.channelId),
       pendingPermissionPrompts: this.pendingPermissionPrompts,
       resolvePermissionPrompt: (requestId, decision) =>

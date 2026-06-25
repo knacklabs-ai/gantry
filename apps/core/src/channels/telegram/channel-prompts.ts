@@ -11,7 +11,7 @@ import {
 import { writeTelegramFetchResponseToFile } from '../telegram-file-download.js';
 import {
   buildPermissionPromptParts,
-  formatPermissionPromptText,
+  formatPermissionPromptPartsText,
   formatPermissionReceiptText,
   permissionButtonLabel,
   permissionDecisionOptions,
@@ -31,10 +31,13 @@ import {
   splitTelegramTextByCodeUnits,
   truncateUtf8ToByteLimit,
 } from './channel-shared.js';
+import { sendTelegramDocuments } from './file-delivery.js';
 import {
   resolveDurableTelegramUserQuestionOtherReply,
   sendTelegramUserQuestionOtherReplyNotice,
 } from './user-question-other-recovery.js';
+
+const TELEGRAM_PERMISSION_FULL_VIEW_INLINE_MAX = 3200;
 
 export interface TelegramDownloadedFile {
   filePath: string;
@@ -118,7 +121,41 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
   }): Promise<{ message_id: number }> {
     if (!this.bot) throw new Error('Telegram bot is not connected');
     const parts = buildPermissionPromptParts(input.request, input.timeoutMs);
-    const promptHtml = renderPermissionPromptHtml(parts);
+    const promptHtmlWithFullView = renderPermissionPromptHtml(parts, {
+      includeFullView: Boolean(parts.fullView),
+    });
+    const includeInlineFullView = Boolean(
+      parts.fullView &&
+      parts.fullView.content.length <=
+        TELEGRAM_PERMISSION_FULL_VIEW_INLINE_MAX &&
+      promptHtmlWithFullView.length <= TELEGRAM_MESSAGE_MAX_LENGTH,
+    );
+    const fullViewSent =
+      parts.fullView && !includeInlineFullView
+        ? await this.sendPermissionFullViewDocument({
+            chatId: input.chatId,
+            request: input.request,
+            fullView: parts.fullView,
+          })
+        : false;
+    const promptParts =
+      parts.fullView && !includeInlineFullView
+        ? {
+            ...parts,
+            bodyLines: [
+              ...parts.bodyLines,
+              `${parts.fullView.label}: ${
+                fullViewSent
+                  ? 'sent to approver DM.'
+                  : 'too large for inline full view.'
+              }`,
+            ],
+            fullView: undefined,
+          }
+        : parts;
+    const promptHtml = includeInlineFullView
+      ? promptHtmlWithFullView
+      : renderPermissionPromptHtml(promptParts);
     const replyMarkup = {
       inline_keyboard: permissionDecisionOptions(input.request).map((mode) => [
         {
@@ -130,8 +167,7 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     if (promptHtml.length > TELEGRAM_MESSAGE_MAX_LENGTH) {
       await this.sendSplitPermissionReviewMessages({
         chatId: input.chatId,
-        request: input.request,
-        timeoutMs: input.timeoutMs,
+        promptText: formatPermissionPromptPartsText(promptParts),
         threadOpts: input.threadOpts,
       });
       return this.bot.api.sendMessage(
@@ -163,15 +199,11 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
           },
           'Telegram HTML permission prompt failed; retrying as plain text',
         );
-        const plainPrompt = formatPermissionPromptText(
-          input.request,
-          input.timeoutMs,
-        );
-        if (plainPrompt.length > TELEGRAM_MESSAGE_MAX_LENGTH) {
+        const plainPromptText = formatPermissionPromptPartsText(promptParts);
+        if (plainPromptText.length > TELEGRAM_MESSAGE_MAX_LENGTH) {
           return this.sendSplitPermissionReviewMessages({
             chatId: input.chatId,
-            request: input.request,
-            timeoutMs: input.timeoutMs,
+            promptText: plainPromptText,
             threadOpts: input.threadOpts,
           }).then(() =>
             this.bot!.api.sendMessage(
@@ -181,7 +213,7 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
             ),
           );
         }
-        return this.bot!.api.sendMessage(input.chatId, plainPrompt, {
+        return this.bot!.api.sendMessage(input.chatId, plainPromptText, {
           ...input.threadOpts,
           reply_markup: replyMarkup,
         });
@@ -190,18 +222,12 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
 
   private async sendSplitPermissionReviewMessages(input: {
     chatId: string;
-    request: PermissionApprovalRequest;
-    timeoutMs: number;
+    promptText: string;
     threadOpts: { message_thread_id?: number };
   }): Promise<void> {
     if (!this.bot) throw new Error('Telegram bot is not connected');
-    const promptText = formatPermissionPromptText(
-      input.request,
-      input.timeoutMs,
-      { budget: Number.POSITIVE_INFINITY },
-    );
     for (const chunk of splitTelegramTextByCodeUnits(
-      promptText,
+      input.promptText,
       TELEGRAM_MESSAGE_MAX_LENGTH,
     )) {
       await this.bot.api.sendMessage(input.chatId, chunk, {
@@ -209,6 +235,58 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
         link_preview_options: { is_disabled: true },
       });
     }
+  }
+
+  private async sendPermissionFullViewDocument(input: {
+    chatId: string;
+    request: PermissionApprovalRequest;
+    fullView: NonNullable<
+      ReturnType<typeof buildPermissionPromptParts>['fullView']
+    >;
+  }): Promise<boolean> {
+    if (!this.bot) throw new Error('Telegram bot is not connected');
+    const targets = this.telegramFullViewDocumentChatIds(
+      input.chatId,
+      input.request,
+    );
+    if (targets.length === 0) return false;
+    const content = Buffer.from(input.fullView.content, 'utf8');
+    const sent = await Promise.all(
+      targets.map((chatId) =>
+        sendTelegramDocuments({
+          api: this.bot!.api,
+          chatId,
+          files: [
+            {
+              filename: input.fullView.filename,
+              contentType: telegramFullViewContentType(input.fullView.filename),
+              sizeBytes: content.byteLength,
+              content,
+            },
+          ],
+        }),
+      ),
+    );
+    return sent.some((ids) => ids.length > 0);
+  }
+
+  private telegramFullViewDocumentChatIds(
+    chatId: string,
+    request: PermissionApprovalRequest,
+  ): string[] {
+    if (!chatId.startsWith('-')) return [chatId];
+    const settings = this.opts.runtimeSettings?.();
+    const binding = settings
+      ? Object.values(settings.bindings || {}).find(
+          (entry) => entry.agent === request.sourceAgentFolder,
+        )
+      : undefined;
+    const conversation = binding
+      ? settings?.conversations[binding.conversation]
+      : undefined;
+    // ponytail: group payload files go only to configured approver IDs; if no
+    // list is available, keep the group prompt inline-only rather than broadcasting.
+    return [...new Set(conversation?.controlApprovers || [])].filter(Boolean);
   }
 
   protected async sendUserQuestionPromptMessage(input: {
@@ -587,4 +665,12 @@ function formatTelegramUserQuestionPlainText(
         `${optionIndex + 1}. ${option.label}${option.description ? ` — ${option.description}` : ''}`,
     ),
   ].join('\n');
+}
+
+function telegramFullViewContentType(filename: string): string {
+  if (filename.endsWith('.diff')) return 'text/x-diff';
+  if (filename.endsWith('.yaml') || filename.endsWith('.yml')) {
+    return 'application/x-yaml';
+  }
+  return 'text/plain';
 }

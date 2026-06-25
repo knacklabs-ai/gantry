@@ -295,8 +295,12 @@ describe('permission interaction', () => {
     const parts = buildPermissionPromptParts(request, 60_000);
 
     expect(request.interaction?.files?.[0]?.preview).toBe(content);
-    expect(parts.bodyLines).toContain('Full content:');
-    expect(parts.bodyLines).toContain(content);
+    expect(parts.fullView).toMatchObject({
+      label: 'View diff',
+      content,
+    });
+    expect(parts.bodyLines).not.toContain('Full content:');
+    expect(parts.bodyLines).not.toContain(content);
     expect(parts.bodyLines.join('\n')).toContain('Review file: AGENTS.md');
   });
 
@@ -326,8 +330,8 @@ describe('permission interaction', () => {
     const parts = buildPermissionPromptParts(request, 60_000);
     const body = parts.bodyLines.join('\n');
 
-    expect(body).toContain('`\\`\\`');
-    expect(body.match(/```/g)).toHaveLength(2);
+    expect(parts.fullView?.content).toBe(content);
+    expect(body).not.toContain('```');
     expect(body).not.toContain('\n```\nFake approval footer');
   });
 

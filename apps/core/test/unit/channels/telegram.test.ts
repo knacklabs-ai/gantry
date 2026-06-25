@@ -2867,9 +2867,15 @@ describe('TelegramChannel', () => {
       expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
         '100200300',
         expect.stringContaining(
-          'Command:\n<pre>rm -rf /tmp/old-cache &amp;&amp; npm install</pre>',
+          '<b>View full command</b>\n<blockquote expandable>rm -rf /tmp/old-cache &amp;&amp; npm install</blockquote>',
         ),
         expect.objectContaining({ message_thread_id: 42, parse_mode: 'HTML' }),
+      );
+      expect(currentBot().api.sendMessage.mock.calls[0]?.[1]).toContain(
+        'Runs: rm, npm',
+      );
+      expect(currentBot().api.sendMessage.mock.calls[0]?.[1]).not.toContain(
+        'Command:',
       );
 
       const callbackCtx = {
@@ -2924,7 +2930,7 @@ describe('TelegramChannel', () => {
       expect(decision.approved).toBe(true);
     });
 
-    it('splits oversized permission review text before sending the decision buttons', async () => {
+    it('DMs oversized permission full view files to approvers instead of the group', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -2932,7 +2938,7 @@ describe('TelegramChannel', () => {
       const proposed = `${'x'.repeat(7000)}${tail}`;
 
       const decisionPromise = channel.requestPermissionApproval(
-        'tg:100200300',
+        'tg:-100200300',
         {
           requestId: 'perm-profile-large',
           sourceAgentFolder: 'whatsapp_main',
@@ -2963,6 +2969,69 @@ describe('TelegramChannel', () => {
       await flushPromises();
 
       const calls = currentBot().api.sendMessage.mock.calls;
+      expect(currentBot().api.sendDocument).toHaveBeenCalled();
+      for (const call of currentBot().api.sendDocument.mock.calls) {
+        expect(call[0]).not.toBe('-100200300');
+      }
+      const uploaded = currentBot()
+        .api.sendDocument.mock.calls.map((call) =>
+          String((call[1] as any).data),
+        )
+        .join('');
+      expect(uploaded).toContain(tail);
+      const promptCall = calls.at(-1);
+      expect(promptCall?.[0]).toBe('-100200300');
+      expect(promptCall?.[1]).toContain('View diff: sent to approver DM.');
+      expect(promptCall?.[2]).toMatchObject({
+        parse_mode: 'HTML',
+        reply_markup: expect.objectContaining({
+          inline_keyboard: expect.any(Array),
+        }),
+      });
+
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'perm:allow_once:perm-profile-large' },
+        chat: { id: -100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+      const decision = await decisionPromise;
+      expect(decision.approved).toBe(true);
+    });
+
+    it('splits an oversized intent-only review prompt before sending the decision buttons', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      const details = Array.from({ length: 90 }, (_, index) => ({
+        label: `Field${index}`,
+        value: 'v'.repeat(150),
+      }));
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: 'perm-mcp-large',
+          sourceAgentFolder: 'whatsapp_main',
+          toolName: 'request_mcp_server',
+          title: 'Connect MCP',
+          interaction: {
+            id: 'perm-mcp-large',
+            title: 'Connect MCP',
+            body: 'short body',
+            details,
+            requestContext: {
+              requestId: 'perm-mcp-large',
+              sourceAgentFolder: 'whatsapp_main',
+              targetJid: 'tg:100200300',
+              toolName: 'request_mcp_server',
+            },
+          },
+        },
+      );
+      await flushPromises();
+
+      const calls = currentBot().api.sendMessage.mock.calls;
       expect(calls.length).toBeGreaterThan(1);
       const reviewCalls = calls.slice(0, -1);
       const finalCall = calls.at(-1);
@@ -2971,7 +3040,7 @@ describe('TelegramChannel', () => {
         expect(call[2]).not.toHaveProperty('reply_markup');
         expect(call[2]).not.toHaveProperty('parse_mode');
       }
-      expect(reviewCalls.map((call) => call[1]).join('')).toContain(tail);
+      expect(currentBot().api.sendDocument).not.toHaveBeenCalled();
       expect(finalCall?.[1]).toContain(
         'Review the approval details above before choosing.',
       );
@@ -2983,7 +3052,7 @@ describe('TelegramChannel', () => {
       });
 
       await triggerCallbackQuery({
-        callbackQuery: { data: 'perm:allow_once:perm-profile-large' },
+        callbackQuery: { data: 'perm:allow_once:perm-mcp-large' },
         chat: { id: 100200300 },
         from: { id: 12345, first_name: 'Ravi' },
         answerCallbackQuery: vi.fn().mockResolvedValue(undefined),

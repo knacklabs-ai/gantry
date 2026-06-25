@@ -1431,7 +1431,9 @@ describe('Slack channel', () => {
     expect(postCall?.text).toContain(
       'Approval applies to the parent conversation.',
     );
-    expect(postCall?.text).toContain('Command:\n```\ngit status --short\n```');
+    expect(JSON.stringify(postCall?.blocks || [])).not.toContain(
+      'git status --short',
+    );
     const actionsBlock = postCall?.blocks?.find(
       (block: any) => block.type === 'actions',
     ) as { elements?: Array<{ action_id?: string }> } | undefined;
@@ -1439,11 +1441,43 @@ describe('Slack channel', () => {
       (element) => element.action_id,
     );
     expect(new Set(actionIds).size).toBe(actionIds.length);
+    expect(actionIds).toContain('gantry_perm_full_view');
     expect(actionIds).toContain('gantry_perm_decision_allow_once');
 
     for (const actionId of SLACK_PERMISSION_DECISION_ACTION_IDS) {
       expect(appRef.current.actionHandlers.has(actionId)).toBe(true);
     }
+    const fullViewHandler = appRef.current.actionHandlers.get(
+      'gantry_perm_full_view',
+    );
+    await fullViewHandler?.({
+      ack: vi.fn().mockResolvedValue(undefined),
+      body: {
+        channel: { id: 'C123' },
+        trigger_id: 'trigger-full-view',
+        user: { id: 'U_APPROVER' },
+      },
+      action: {
+        value: JSON.stringify({
+          requestId: 'perm-cmd',
+        }),
+      },
+    });
+    expect(appRef.current.client.views.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger_id: 'trigger-full-view',
+        view: expect.objectContaining({
+          callback_id: 'gantry_perm_full_view_modal',
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('git status --short'),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
     const actionHandler = appRef.current.actionHandlers.get(
       'gantry_perm_decision_allow_once',
     );
