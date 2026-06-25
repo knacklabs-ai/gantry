@@ -1813,7 +1813,7 @@ describe('agent-spawn timeout behavior', () => {
     );
   });
 
-  it('does not leak the host egress proxy into sandbox-runtime DeepAgents process env', async () => {
+  it('projects the audited egress proxy into sandbox-runtime DeepAgents process env', async () => {
     vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
       permissions: {
         yoloMode: {
@@ -1889,16 +1889,19 @@ describe('agent-spawn timeout behavior', () => {
 
     const startInput = start.mock.calls[0]?.[0] as RunnerSandboxSpawnInput;
     const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
-    expect(startInput.env.HTTP_PROXY).toBeUndefined();
-    expect(startInput.env.HTTPS_PROXY).toBeUndefined();
-    expect(startInput.env.http_proxy).toBeUndefined();
-    expect(startInput.env.https_proxy).toBeUndefined();
-    expect(startInput.env.ALL_PROXY).toBeUndefined();
-    expect(startInput.env.all_proxy).toBeUndefined();
-    expect(startInput.env.GRPC_PROXY).toBeUndefined();
-    expect(startInput.env.grpc_proxy).toBeUndefined();
-    expect(startInput.env.NODE_USE_ENV_PROXY).toBeUndefined();
-    expect(startInput.env.GANTRY_EGRESS_PROXY_URL).toBeUndefined();
+    expect(startInput.env.HTTP_PROXY).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.HTTPS_PROXY).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.http_proxy).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.https_proxy).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.ALL_PROXY).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.all_proxy).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.GRPC_PROXY).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.grpc_proxy).toBe('http://127.0.0.1:18080/');
+    expect(startInput.env.NODE_USE_ENV_PROXY).toBe('1');
+    expect(startInput.env.GANTRY_EGRESS_PROXY_URL).toBe(
+      'http://127.0.0.1:18080/',
+    );
+    expect(startInput.env.HTTP_PROXY).not.toContain('aoc_');
     expect(runnerInput.toolNetworkEnv).toMatchObject({
       HTTP_PROXY: 'http://127.0.0.1:18080/',
       HTTPS_PROXY: 'http://127.0.0.1:18080/',

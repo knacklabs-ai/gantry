@@ -93,7 +93,6 @@ import {
   sandboxRuntimeToolNetworkEnv,
   prepareRunnerWorkspace,
   resolveRunnerSandboxStartup,
-  stripDeepAgentsSandboxHostProxyEnv,
   uniqueStrings,
   buildRunnerSandboxSpawnInput,
   buildBaseRunnerEnv,
@@ -485,16 +484,15 @@ export async function spawnAgent(
         fs.mkdirSync(providerToolTempDir, { recursive: true, mode: 0o700 });
       }
     }
+    // DeepAgents model traffic runs inside the runner process. In
+    // sandbox_runtime, OpenRouter uses raw fetch rather than an SDK client, so
+    // the runner process itself needs the Gantry egress proxy to reach the
+    // sandbox-private model-gateway alias. Child shell/tool envs still receive
+    // only the separately sanitized toolNetworkEnv projection.
     const runnerToolProcessEnv =
-      preparedExecution.providerId === 'deepagents:langchain' &&
-      runnerSandboxProviderId === 'sandbox_runtime'
-        ? {}
-        : preparedExecution.providerId === 'deepagents:langchain'
-          ? toolNetworkEnv
-          : sandboxRuntimeToolProcessEnv(
-              runnerSandboxProviderId,
-              toolNetworkEnv,
-            );
+      preparedExecution.providerId === 'deepagents:langchain'
+        ? toolNetworkEnv
+        : sandboxRuntimeToolProcessEnv(runnerSandboxProviderId, toolNetworkEnv);
     const env = buildBaseRunnerEnv({
       hostEnv: process.env,
       preparedEnv: preparedExecution.env,
@@ -563,11 +561,6 @@ export async function spawnAgent(
       }),
       pickSafeHostEnv,
       pickPreparedExecutionEnv,
-    });
-    stripDeepAgentsSandboxHostProxyEnv({
-      env,
-      executionProviderId: preparedExecution.providerId,
-      sandboxProviderId: runnerSandboxProviderId,
     });
     if (
       options?.runnerSandboxProvider?.enforcing === true &&
