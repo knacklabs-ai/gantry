@@ -281,6 +281,7 @@ export class AsyncCommandTaskService {
     if (this.repository.createTaskWithAdmission) {
       return this.repository.createTaskWithAdmission(input, {
         activeStatuses: ACTIVE_TASK_STATUSES,
+        kind: input.kind,
         maxActivePerApp: MAX_ACTIVE_ASYNC_COMMANDS_PER_APP,
         maxActivePerAgent: MAX_ACTIVE_ASYNC_COMMANDS_PER_AGENT,
       });
@@ -289,12 +290,14 @@ export class AsyncCommandTaskService {
       const [appActive, agentActive] = await Promise.all([
         this.repository.listTasks({
           appId: input.appId,
+          kind: input.kind,
           statuses: ACTIVE_TASK_STATUSES,
           limit: MAX_ACTIVE_ASYNC_COMMANDS_PER_APP,
         }),
         this.repository.listTasks({
           appId: input.appId,
           agentId: input.agentId,
+          kind: input.kind,
           statuses: ACTIVE_TASK_STATUSES,
           limit: MAX_ACTIVE_ASYNC_COMMANDS_PER_AGENT,
         }),
