@@ -496,9 +496,15 @@ export async function spawnAgent(
       }
     }
     const runnerToolProcessEnv =
-      preparedExecution.providerId === 'deepagents:langchain'
-        ? toolNetworkEnv
-        : sandboxRuntimeToolProcessEnv(runnerSandboxProviderId, toolNetworkEnv);
+      preparedExecution.providerId === 'deepagents:langchain' &&
+      runnerSandboxProviderId === 'sandbox_runtime'
+        ? {}
+        : preparedExecution.providerId === 'deepagents:langchain'
+          ? toolNetworkEnv
+          : sandboxRuntimeToolProcessEnv(
+              runnerSandboxProviderId,
+              toolNetworkEnv,
+            );
     const env = buildBaseRunnerEnv({
       hostEnv: process.env,
       preparedEnv: preparedExecution.env,
