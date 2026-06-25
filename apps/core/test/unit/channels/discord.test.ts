@@ -467,6 +467,80 @@ describe('DiscordChannel', () => {
     fetchMock.mockRestore();
   });
 
+  it('streams Discord output by editing one active message at the provider interval', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'stream-1' }))
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    try {
+      await channel.sendStreamingChunk('dc:channel-1', 'Hello');
+      await channel.sendStreamingChunk('dc:channel-1', ' world');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1200);
+      await channel.sendStreamingChunk('dc:channel-1', '!');
+      await channel.sendStreamingChunk('dc:channel-1', '', { done: true });
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        'https://discord.com/api/v10/channels/channel-1/messages',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        'https://discord.com/api/v10/channels/channel-1/messages/stream-1',
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+      const finalBody = JSON.parse(
+        String(fetchMock.mock.calls[2]?.[1]?.body || '{}'),
+      );
+      expect(finalBody).toEqual(
+        expect.objectContaining({
+          content: 'Hello world!',
+          components: [],
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('retries Discord REST calls after rate-limit headers', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('{}', {
+          status: 429,
+          headers: { 'x-ratelimit-reset-after': '0.001' },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ id: 'message-1' }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    try {
+      const sendPromise = channel.sendMessage('dc:channel-1', 'Working');
+      await Promise.resolve();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(sendPromise).resolves.toMatchObject({
+        externalMessageId: 'message-1',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      fetchMock.mockRestore();
+    }
+  });
+
   it('identifies on gateway hello and routes message create events', async () => {
     let socket!: FakeWebSocket;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>

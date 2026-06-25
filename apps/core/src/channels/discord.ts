@@ -4,9 +4,11 @@ import {
   PermissionApprovalDecision,
   PermissionApprovalRequest,
   ProgressUpdateOptions,
+  StreamingChunkOptions,
   UserQuestionRequest,
   UserQuestionResponse,
 } from '../domain/types.js';
+import { isPartialMessageDeliveryError } from '../domain/messages/partial-delivery.js';
 import type { AgentTodoRender } from '../domain/ports/task-lifecycle.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import {
@@ -42,7 +44,9 @@ import {
 import { sendDiscordProgressUpdate } from './discord-progress.js';
 import { DiscordGatewayConnection } from './discord-gateway.js';
 import { agentTodoStopActions } from './agent-todo-render.js';
+import { CHANNEL_STREAM_UPDATE_INTERVAL_MS } from './channel-provider.js';
 import { getProviderRuntimeSecret } from './provider-runtime-secrets.js';
+import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 import type {
   DiscordInteraction,
   DiscordInteractionOption,
@@ -57,6 +61,8 @@ export const DISCORD_JID_PREFIX = 'dc:';
 const DISCORD_API_ROOT = 'https://discord.com/api/v10';
 const DISCORD_INTERACTION_TIMEOUT_MS = 10 * 60 * 1000;
 const DISCORD_GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
+const DISCORD_RETRY_DELAY_FALLBACK_MS = 1000;
+const DISCORD_RETRY_DELAY_MAX_MS = 5000;
 
 export function normalizeDiscordJid(raw: string): string | null {
   const trimmed = raw.trim();
@@ -77,6 +83,39 @@ function discordHeaders(token: string): Record<string, string> {
     accept: 'application/json',
     'content-type': 'application/json',
   };
+}
+
+function discordRateLimitRetryDelayMs(response: Response): number | null {
+  if (response.status !== 429) return null;
+  const retryAfter =
+    response.headers.get('retry-after') ??
+    response.headers.get('x-ratelimit-reset-after');
+  if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(
+        DISCORD_RETRY_DELAY_MAX_MS,
+        Math.max(1, Math.round(seconds * 1000)),
+      );
+    }
+  }
+  const resetSeconds = Number.parseFloat(
+    response.headers.get('x-ratelimit-reset') ?? '',
+  );
+  if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
+    const delayMs = resetSeconds * 1000 - Date.now();
+    if (delayMs > 0) {
+      return Math.min(DISCORD_RETRY_DELAY_MAX_MS, Math.round(delayMs));
+    }
+  }
+  return DISCORD_RETRY_DELAY_FALLBACK_MS;
+}
+
+async function waitDiscordRetryDelay(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    timer.unref?.();
+  });
 }
 
 function userName(user: DiscordUser | undefined, fallback = 'unknown'): string {
@@ -106,6 +145,15 @@ export class DiscordChannel implements ChannelAdapter {
   private gateway: DiscordGatewayConnection | null = null;
   private botUserId = '';
   private activeProgressMessages = new Map<string, string>();
+  private activeStreams = new Map<
+    string,
+    {
+      channelId: string;
+      messageId?: string;
+      rawBuffer: string;
+      lastFlushAt: number;
+    }
+  >();
   private pendingPermissions = new Map<
     string,
     {
@@ -201,6 +249,77 @@ export class DiscordChannel implements ChannelAdapter {
         }),
       edit: (messageId, body) => this.patchMessage(channelId, messageId, body),
     });
+  }
+
+  async sendStreamingChunk(
+    jid: string,
+    text: string,
+    options: StreamingChunkOptions = {},
+  ): Promise<boolean> {
+    const channelId = options.threadId || discordChannelIdFromJid(jid);
+    if (!channelId) return false;
+    const key = `${jid}\n${options.threadId ?? ''}`;
+    let state = this.activeStreams.get(key);
+    if (!state) {
+      state = { channelId, rawBuffer: '', lastFlushAt: 0 };
+      this.activeStreams.set(key, state);
+    }
+    if (text) state.rawBuffer += text;
+    if (!state.rawBuffer.trim() && options.done) {
+      this.activeStreams.delete(key);
+      return false;
+    }
+    const now = currentTimeMs();
+    const shouldFlush =
+      options.done ||
+      !state.messageId ||
+      now - state.lastFlushAt >= CHANNEL_STREAM_UPDATE_INTERVAL_MS.discord;
+    if (!shouldFlush) return Boolean(state.messageId);
+
+    const parts = splitDiscordText(state.rawBuffer);
+    const headText = parts[0] ?? ' ';
+    try {
+      const body = {
+        content: headText,
+        allowed_mentions: { parse: [] },
+        components: options.done ? [] : undefined,
+      };
+      if (state.messageId) {
+        await this.patchMessage(state.channelId, state.messageId, body);
+      } else {
+        const posted = await this.postMessage(state.channelId, body);
+        state.messageId = posted.id;
+      }
+      state.lastFlushAt = now;
+      if (options.done) {
+        this.activeStreams.delete(key);
+        const overflowParts = parts.slice(1).filter((part) => part.length > 0);
+        if (overflowParts.length > 0) {
+          await postDiscordMessageParts({
+            channelId: state.channelId,
+            parts: overflowParts,
+            post: (target, body) => this.postMessage(target, body),
+          });
+        }
+      } else {
+        this.activeStreams.set(key, state);
+      }
+      return true;
+    } catch (err) {
+      if (isPartialMessageDeliveryError(err)) throw err;
+      logger.warn(
+        { jid, err },
+        'Discord streaming update failed; preserving current stream state',
+      );
+      if (options.done) this.activeStreams.delete(key);
+      return Boolean(state.messageId);
+    }
+  }
+
+  resetStreaming(jid: string): void {
+    for (const key of this.activeStreams.keys()) {
+      if (key.startsWith(`${jid}\n`)) this.activeStreams.delete(key);
+    }
   }
 
   async renderAgentTodo(
@@ -327,14 +446,38 @@ export class DiscordChannel implements ChannelAdapter {
     });
   }
 
+  private async requestJson<T>(
+    path: string,
+    init: RequestInit,
+    errorMessage: string,
+    parseJson = true,
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await fetch(`${DISCORD_API_ROOT}${path}`, init);
+      if (response.ok) {
+        return parseJson ? ((await response.json()) as T) : (undefined as T);
+      }
+      const retryDelayMs = discordRateLimitRetryDelayMs(response);
+      if (retryDelayMs === null || attempt >= 2) throw new Error(errorMessage);
+      logger.warn(
+        { path, attempt: attempt + 1, retryDelayMs },
+        'Discord REST request rate-limited; retrying',
+      );
+      await waitDiscordRetryDelay(retryDelayMs);
+    }
+    throw new Error(errorMessage);
+  }
+
   private async postJson<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${DISCORD_API_ROOT}${path}`, {
-      method: 'POST',
-      headers: discordHeaders(this.botToken),
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) throw new Error(`Discord REST request failed: ${path}`);
-    return (await response.json()) as T;
+    return this.requestJson<T>(
+      path,
+      {
+        method: 'POST',
+        headers: discordHeaders(this.botToken),
+        body: JSON.stringify(body),
+      },
+      `Discord REST request failed: ${path}`,
+    );
   }
 
   private async postMessage(
@@ -352,15 +495,16 @@ export class DiscordChannel implements ChannelAdapter {
     messageId: string,
     body: Record<string, unknown>,
   ): Promise<void> {
-    const response = await fetch(
-      `${DISCORD_API_ROOT}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,
+    await this.requestJson<void>(
+      `/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,
       {
         method: 'PATCH',
         headers: discordHeaders(this.botToken),
         body: JSON.stringify(body),
       },
+      'Discord message edit failed',
+      false,
     );
-    if (!response.ok) throw new Error('Discord message edit failed');
   }
 
   private async sendDiscordPrompt(

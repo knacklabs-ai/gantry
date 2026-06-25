@@ -2135,6 +2135,42 @@ describe('TelegramChannel', () => {
       );
     });
 
+    it('retries Telegram group edits after retry_after rate limits', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot()
+        .api.editMessageText.mockRejectedValueOnce({
+          error_code: 429,
+          parameters: { retry_after: 0.001 },
+          message: 'Too Many Requests',
+        })
+        .mockResolvedValueOnce(undefined);
+
+      try {
+        await channel.sendStreamingChunk('tg:-1001234567890', 'group update');
+        await vi.advanceTimersByTimeAsync(950);
+        const updatePromise = channel.sendStreamingChunk(
+          'tg:-1001234567890',
+          ' more',
+        );
+        await Promise.resolve();
+
+        expect(currentBot().api.editMessageText).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await updatePromise;
+
+        expect(currentBot().api.editMessageText).toHaveBeenCalledTimes(2);
+        expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('does not duplicate final group message when edit returns "message is not modified"', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);

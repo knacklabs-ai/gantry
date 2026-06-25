@@ -127,6 +127,7 @@ vi.mock('@slack/bolt', () => ({
 }));
 
 import { createSlackChannel, SlackChannel } from '@core/channels/slack.js';
+import { slackRateLimitRetryDelayMs } from '@core/channels/slack/channel-retry-delay.js';
 import {
   buildPermissionPromptContentBlocks,
   buildPermissionReceiptBlocks,
@@ -980,6 +981,15 @@ describe('Slack channel', () => {
         warnings: ['slack.rate_limited_retry'],
       }),
     );
+  });
+
+  it('adds bounded jitter to Slack rate-limit retry delays', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+
+    const retryDelayMs = slackRateLimitRetryDelayMs({ status: 429 });
+
+    expect(retryDelayMs).toBeGreaterThan(1000);
+    expect(retryDelayMs).toBeLessThanOrEqual(1250);
   });
 
   it('clamps Slack outbound retry_after waits to a bounded maximum', async () => {
