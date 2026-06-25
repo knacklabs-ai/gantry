@@ -1892,7 +1892,14 @@ describe('agent-spawn timeout behavior', () => {
     const runnerInput = JSON.parse(String(writeSpy.mock.calls[0]?.[0]));
     expect(startInput.env.HTTP_PROXY).toBeUndefined();
     expect(startInput.env.HTTPS_PROXY).toBeUndefined();
+    expect(startInput.env.http_proxy).toBeUndefined();
+    expect(startInput.env.https_proxy).toBeUndefined();
+    expect(startInput.env.ALL_PROXY).toBeUndefined();
+    expect(startInput.env.all_proxy).toBeUndefined();
+    expect(startInput.env.GRPC_PROXY).toBeUndefined();
+    expect(startInput.env.grpc_proxy).toBeUndefined();
     expect(startInput.env.NODE_USE_ENV_PROXY).toBeUndefined();
+    expect(startInput.env.GANTRY_EGRESS_PROXY_URL).toBeUndefined();
     expect(runnerInput.toolNetworkEnv).toMatchObject({
       HTTP_PROXY: 'http://127.0.0.1:18080/',
       HTTPS_PROXY: 'http://127.0.0.1:18080/',

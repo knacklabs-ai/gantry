@@ -102,6 +102,20 @@ import {
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
 // prettier-ignore
 export type { AvailableGroup, AgentInput, AgentOutput } from './agent-spawn-types.js';
+
+const DEEPAGENTS_SANDBOX_PROXY_ENV_KEYS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+  'GRPC_PROXY',
+  'grpc_proxy',
+  'NODE_USE_ENV_PROXY',
+  'GANTRY_EGRESS_PROXY_URL',
+] as const;
+
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -574,6 +588,14 @@ export async function spawnAgent(
       pickSafeHostEnv,
       pickPreparedExecutionEnv,
     });
+    if (
+      preparedExecution.providerId === 'deepagents:langchain' &&
+      runnerSandboxProviderId === 'sandbox_runtime'
+    ) {
+      for (const key of DEEPAGENTS_SANDBOX_PROXY_ENV_KEYS) {
+        delete env[key];
+      }
+    }
     if (
       options?.runnerSandboxProvider?.enforcing === true &&
       options.asyncTaskRepositoryAvailable === true
