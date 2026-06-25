@@ -39,11 +39,8 @@ describe('job status formatting', () => {
     expect(message).toContain('**📝 Needs memory review**');
     expect(message).toContain('· Memory Dreaming');
     expect(message).toContain(
-      'Completed: Memory dreaming completed: 3 promoted, 4 sent to review.',
+      'Done: Memory dreaming completed: 3 promoted, 4 sent to review.',
     );
-    expect(message).toContain('Used: scheduler job');
-    expect(message).toContain('Changed: not reported');
-    expect(message).toContain('Delegated: no');
     expect(message).toContain(
       'Needs attention: 4 memory changes need your review.',
     );
@@ -65,6 +62,9 @@ describe('job status formatting', () => {
 
     expect(message).toContain('**⏱️ Timed out**');
     expect(message).toContain('· Memory Dreaming');
+    expect(message).toContain(
+      'Timed out: memory dreaming deadline exceeded. 2 pending memory reviews need review.',
+    );
     expect(message).toContain(
       'Needs attention: 2 memory changes need your review.',
     );

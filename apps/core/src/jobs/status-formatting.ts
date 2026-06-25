@@ -25,12 +25,17 @@ export function formatRunStatusMessage(args: {
       ? ''
       : ` · ${formatDuration(args.durationMs)}`;
   const summary = notificationOutcome(displaySummary, args.runStatus, denial);
+  const outcomeLabel =
+    args.runStatus === 'completed'
+      ? 'Done'
+      : args.runStatus === 'failed'
+        ? 'Failed'
+        : args.runStatus === 'timeout'
+          ? 'Timed out'
+          : 'Paused';
   const lines = [
     `**${statusEmoji(statusText)} ${statusText}** · ${args.job.name}${duration}`,
-    `Completed: ${summary}`,
-    'Used: scheduler job',
-    'Changed: not reported',
-    'Delegated: no',
+    `${outcomeLabel}: ${summary}`,
   ];
   const action = notificationAction(
     args.runStatus,
@@ -38,7 +43,7 @@ export function formatRunStatusMessage(args: {
     denial,
     args.pauseReason,
   );
-  lines.push(`Needs attention: ${action ?? 'none'}`);
+  if (action) lines.push(`Needs attention: ${action}`);
   const next = nextRunLabel(args.nextRun, args.runStatus);
   if (next) lines.push(`Next: ${next}`);
   return lines.join('\n');
