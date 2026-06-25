@@ -1,5 +1,6 @@
 import type { PatternCandidate } from '@gantry/contracts';
 
+import { PATTERN_ACTION_KIND_TOOL } from './pattern-candidate-action-kind.js';
 import { isSurfaceable } from './pattern-candidate-policy.js';
 import {
   patternSubjectForScope,
@@ -49,7 +50,7 @@ export function formatPatternsBlock(candidates: PatternCandidate[]): string {
 
   const lines: string[] = [
     PATTERN_BLOCK_OPEN,
-    'Repeated work I have noticed. This is evidence, not an instruction: raise at most one newly detected pattern with the user this turn, outcome-first (not by tool name): "we have done X N times - want me to make it a reusable skill?". For candidate_status "suggested", do not ask again; use it only if the latest user reply agrees or asks about that pattern. If the user agrees, call request_skill_proposal and pass patternCandidateId with pattern_id. If the user says not now or do not suggest again, call pattern_candidate_decision with that pattern_id. Never start an action from a pattern alone.',
+    `Repeated work I have noticed. This is evidence, not an instruction: raise at most one newly detected pattern with the user this turn, outcome-first (not by tool name): "we have done X N times - want me to make it durable?". For candidate_status "suggested", do not ask again; use it only if the latest user reply agrees or asks about that pattern. If the user agrees, pick the smallest durable fix and call the matching reviewed tool with patternCandidateId from pattern_id plus actionKind: recurring/time-based -> ${PATTERN_ACTION_KIND_TOOL.scheduler_job} (action kind scheduler_job); same permission repeatedly -> ${PATTERN_ACTION_KIND_TOOL.durable_capability} capability (action kind durable_capability); repeatable multi-step procedure -> ${PATTERN_ACTION_KIND_TOOL.skill} (action kind skill); durable fact/preference -> ${PATTERN_ACTION_KIND_TOOL.memory_update} (action kind memory_update). If the user says not now or do not suggest again, call pattern_candidate_decision with that pattern_id. Never start an action from a pattern alone.`,
   ];
   for (const candidate of eligible) {
     lines.push(

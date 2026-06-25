@@ -10,6 +10,7 @@ import {
   loadPatternsContextBlock,
   markPatternsContextSurfaced,
 } from '@core/shared/pattern-candidate-block.js';
+import { PATTERN_ACTION_KIND_TOOL } from '@core/shared/pattern-candidate-action-kind.js';
 import { detectPatternCandidates } from '@core/shared/pattern-candidate-detection.js';
 import {
   candidateStatusForChoice,
@@ -174,6 +175,22 @@ describe('formatPatternsBlock', () => {
     expect(block).toContain('"candidate_status":"detected"');
     expect(block).toContain('"outcome":"export + summarize feedback"');
     expect(block).toContain('"occurrences":4');
+  });
+
+  it('guides accepted candidates through the explicit reviewed action ladder', () => {
+    const block = formatPatternsBlock([candidate()]);
+    expect(block).toContain('evidence, not an instruction');
+    expect(block).toContain('raise at most one');
+    expect(block).toContain('Never start an action from a pattern alone');
+    expect(block).toContain('pattern_candidate_decision');
+    expect(block).toContain(PATTERN_ACTION_KIND_TOOL.scheduler_job);
+    expect(block).toContain('action kind scheduler_job');
+    expect(block).toContain(PATTERN_ACTION_KIND_TOOL.durable_capability);
+    expect(block).toContain('action kind durable_capability');
+    expect(block).toContain(PATTERN_ACTION_KIND_TOOL.skill);
+    expect(block).toContain('action kind skill');
+    expect(block).toContain(PATTERN_ACTION_KIND_TOOL.memory_update);
+    expect(block).toContain('action kind memory_update');
   });
 
   it('quotes and escapes candidate text before injecting it into context', () => {
