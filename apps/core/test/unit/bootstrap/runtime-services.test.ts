@@ -57,7 +57,10 @@ function makeApp(): RuntimeApp {
     setConversationRoutesForTest: vi.fn(),
     ensureCredentialBindingsForConversationRoutes: vi.fn(),
     clearSessionForChatJid: vi.fn(),
-    processGroupMessages: vi.fn(async () => true),
+    processGroupMessages: vi.fn(async (_queueJid, options) => {
+      options?.onRunResult?.('success');
+      return true;
+    }),
     getConversationRoutes: vi.fn(() => ({
       'tg:primary': {
         name: 'Main',
@@ -679,7 +682,7 @@ describe('startRuntimeServices', () => {
           items: [{ id: 'step-1', title: 'Work', status: 'completed' }],
         });
         options.onRunResult?.('error');
-        return false;
+        return true;
       },
     );
 

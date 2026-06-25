@@ -175,6 +175,8 @@ export class DiscordChannel implements ChannelAdapter {
       lastFlushAt: number;
     }
   >();
+  private readonly streamGenerationByJid = new Map<string, number>();
+  private readonly sealedStreamGenerationByJid = new Map<string, number>();
   private pendingPermissions = new Map<
     string,
     {
@@ -306,6 +308,7 @@ export class DiscordChannel implements ChannelAdapter {
   ): Promise<boolean> {
     const channelId = options.threadId || discordChannelIdFromJid(jid);
     if (!channelId) return false;
+    if (!this.shouldAcceptStreamingChunk(jid, options.generation)) return false;
     const key = `${jid}\n${options.threadId ?? ''}`;
     let state = this.activeStreams.get(key);
     if (!state) {
@@ -315,6 +318,7 @@ export class DiscordChannel implements ChannelAdapter {
     if (text) state.rawBuffer += text;
     if (!state.rawBuffer.trim() && options.done) {
       this.activeStreams.delete(key);
+      this.markStreamingGenerationDone(jid, options.generation);
       return false;
     }
     const now = currentTimeMs();
@@ -340,7 +344,6 @@ export class DiscordChannel implements ChannelAdapter {
       }
       state.lastFlushAt = now;
       if (options.done) {
-        this.activeStreams.delete(key);
         const overflowParts = parts.slice(1).filter((part) => part.length > 0);
         if (overflowParts.length > 0) {
           await postDiscordMessageParts({
@@ -349,6 +352,8 @@ export class DiscordChannel implements ChannelAdapter {
             post: (target, body) => this.postMessage(target, body),
           });
         }
+        this.activeStreams.delete(key);
+        this.markStreamingGenerationDone(jid, options.generation);
       } else {
         this.activeStreams.set(key, state);
       }
@@ -359,14 +364,56 @@ export class DiscordChannel implements ChannelAdapter {
         { jid, err },
         'Discord streaming update failed; preserving current stream state',
       );
-      if (options.done) this.activeStreams.delete(key);
+      if (options.done) return false;
       return Boolean(state.messageId);
     }
   }
 
   resetStreaming(jid: string): void {
+    this.sealStreamingGenerationOnReset(jid);
+    this.clearStreamingStateForJid(jid);
+  }
+
+  private clearStreamingStateForJid(jid: string): void {
     for (const key of this.activeStreams.keys()) {
       if (key.startsWith(`${jid}\n`)) this.activeStreams.delete(key);
+    }
+  }
+
+  private shouldAcceptStreamingChunk(
+    jid: string,
+    generation?: number,
+  ): boolean {
+    if (generation === undefined) return true;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed !== undefined && generation <= sealed) return false;
+    const latest = this.streamGenerationByJid.get(jid);
+    if (latest === undefined) {
+      this.streamGenerationByJid.set(jid, generation);
+      return true;
+    }
+    if (generation < latest) return false;
+    if (generation > latest) {
+      this.clearStreamingStateForJid(jid);
+      this.streamGenerationByJid.set(jid, generation);
+    }
+    return true;
+  }
+
+  private markStreamingGenerationDone(jid: string, generation?: number): void {
+    if (generation === undefined) return;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed === undefined || generation > sealed) {
+      this.sealedStreamGenerationByJid.set(jid, generation);
+    }
+  }
+
+  private sealStreamingGenerationOnReset(jid: string): void {
+    const latest = this.streamGenerationByJid.get(jid);
+    if (latest === undefined) return;
+    const sealed = this.sealedStreamGenerationByJid.get(jid);
+    if (sealed === undefined || latest > sealed) {
+      this.sealedStreamGenerationByJid.set(jid, latest);
     }
   }
 
@@ -443,7 +490,7 @@ export class DiscordChannel implements ChannelAdapter {
       },
     );
     if (sent.externalMessageId) {
-      void bindPendingPermissionInteractionMessage({
+      await bindPendingPermissionInteractionMessage({
         sourceAgentFolder: request.sourceAgentFolder,
         requestId: request.requestId,
         appId: request.appId,
@@ -451,6 +498,7 @@ export class DiscordChannel implements ChannelAdapter {
         provider: 'discord',
         conversationId: discordChannelIdFromJid(jid) || jid,
         ...(request.threadId ? { threadId: request.threadId } : {}),
+        fullView: parts.fullView,
       });
     }
     return new Promise((resolve) => {
@@ -758,27 +806,56 @@ export class DiscordChannel implements ChannelAdapter {
       );
       return;
     }
-    const request = this.pendingPermissions.get(requestId)?.request;
+    const pending = this.pendingPermissions.get(requestId);
     const user = interaction.member?.user || interaction.user;
-    const allowed =
-      request &&
-      (await this.isInteractionApproverAllowed(
+    let fullView: PermissionPromptFullView | undefined;
+    if (pending) {
+      const allowed = await this.isInteractionApproverAllowed(
         interaction,
         user?.id,
-        request.sourceAgentFolder,
-        request.decisionPolicy,
-      ));
-    if (!allowed) {
-      await this.ackInteraction(
-        interaction,
-        'You are not allowed to view this approval payload.',
+        pending.request.sourceAgentFolder,
+        pending.request.decisionPolicy,
       );
-      return;
+      if (!allowed) {
+        await this.ackInteraction(
+          interaction,
+          'You are not allowed to view this approval payload.',
+        );
+        return;
+      }
+      fullView = buildPermissionPromptParts(
+        pending.request,
+        DISCORD_INTERACTION_TIMEOUT_MS,
+      ).fullView;
+    } else {
+      const durable = await findDurablePermissionInteractionByRequestId({
+        requestId,
+      });
+      if (
+        !durable ||
+        durable.targetJid !== `${DISCORD_JID_PREFIX}${interaction.channel_id}`
+      ) {
+        await this.ackInteraction(
+          interaction,
+          'This approval is no longer active.',
+        );
+        return;
+      }
+      const allowed = await this.isInteractionApproverAllowed(
+        interaction,
+        user?.id,
+        durable.sourceAgentFolder,
+        durable.decisionPolicy as PermissionApprovalRequest['decisionPolicy'],
+      );
+      if (!allowed) {
+        await this.ackInteraction(
+          interaction,
+          'You are not allowed to view this approval payload.',
+        );
+        return;
+      }
+      fullView = durable.fullView;
     }
-    const fullView = buildPermissionPromptParts(
-      request,
-      DISCORD_INTERACTION_TIMEOUT_MS,
-    ).fullView;
     if (!fullView) {
       await this.ackInteraction(
         interaction,

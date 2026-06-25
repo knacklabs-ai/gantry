@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { NewMessage } from '../../domain/types.js';
 import type {
   Conversation,
@@ -119,10 +121,19 @@ export class ConversationMessageIngressModule {
     const publicThreadId = thread.publicThreadId;
     const runtimeThreadId = thread.runtimeThreadId;
     const now = this.deps.now();
-    const messageId = this.deps.createId();
     const senderId = input.senderId?.trim() || 'external-ingress';
     const senderName = input.senderName?.trim() || 'External System';
     const provider = this.deps.providerForConversationJid(conversationJid);
+    const externalMessageId =
+      input.messageRef?.trim() || `external-ingress:${input.invocationId}`;
+    const messageId = input.messageRef?.trim()
+      ? stableExternalIngressMessageId([
+          input.appId,
+          conversation.id,
+          publicThreadId ?? '',
+          externalMessageId,
+        ])
+      : this.deps.createId();
     const message: NewMessage = {
       id: messageId,
       chat_jid: conversationJid,
@@ -133,8 +144,7 @@ export class ConversationMessageIngressModule {
       timestamp: now,
       is_from_me: false,
       is_bot_message: false,
-      external_message_id:
-        input.messageRef?.trim() || `external-ingress:${input.invocationId}`,
+      external_message_id: externalMessageId,
       thread_id: runtimeThreadId ?? undefined,
     };
 
@@ -320,4 +330,11 @@ function resolveRuntimeThreadIdFromCanonical(
   if (!threadId.startsWith(prefix)) return null;
   const runtimeThreadId = threadId.slice(prefix.length).trim();
   return runtimeThreadId ? runtimeThreadId : null;
+}
+
+function stableExternalIngressMessageId(parts: string[]): string {
+  return `external-ingress:${createHash('sha256')
+    .update(parts.join('\0'))
+    .digest('base64url')
+    .slice(0, 32)}`;
 }

@@ -3,6 +3,8 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { ChatOpenRouterInput } from '@langchain/openrouter';
 import { GantryChatOpenRouter } from './gantry-chat-openrouter.js';
 
+const SANDBOX_RUNTIME_MODEL_GATEWAY_HOST = 'model-gateway.gantry.internal';
+
 // Builds the LangChain chat-model instance the DeepAgents graph runs on. Model
 // construction is PROVIDER-DRIVEN, not env-sniffing: the host projects the
 // resolved model's provider string (GANTRY_DEEPAGENTS_MODEL_PROVIDER) plus the
@@ -167,7 +169,8 @@ function assertLoopbackGatewayUrl(value: string, label: string): void {
     (hostname === '127.0.0.1' ||
       hostname === 'localhost' ||
       hostname === '::1' ||
-      hostname === '[::1]');
+      hostname === '[::1]' ||
+      hostname === SANDBOX_RUNTIME_MODEL_GATEWAY_HOST);
   if (!loopback) {
     throw new Error(
       `DeepAgents runner ${label} must be a loopback Gantry gateway URL.`,

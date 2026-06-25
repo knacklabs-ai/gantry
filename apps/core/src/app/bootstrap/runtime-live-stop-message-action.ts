@@ -1,4 +1,12 @@
+import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+
 import { processTaskIpc } from '../../runtime/ipc.js';
+import {
+  createIpcAuthEnvelope,
+  revokeIpcResponseSigningKey,
+} from '../../runtime/ipc-auth.js';
+import { taskIpcResponsePath } from '../../jobs/ipc-shared.js';
 import type { IpcDeps } from '../../runtime/ipc-domain-types.js';
 import { requestSchedulerSync } from '../../jobs/scheduler.js';
 import { makeThreadQueueKey } from '../../shared/thread-queue-key.js';
@@ -46,36 +54,84 @@ async function runSchedulerNowThroughIpc(
   },
   channelWiring: ChannelWiring,
 ): Promise<string> {
-  await processTaskIpc(
-    {
-      type: 'scheduler_run_now',
-      jobId: input.jobId,
-      chatJid: input.originConversationJid,
-      targetJid: input.originConversationJid,
-      authThreadId: input.authThreadId,
-    },
+  const taskId = `scheduler-run-now-${randomUUID()}`;
+  const ipcAuth = createIpcAuthEnvelope(
     input.sourceAgentFolder,
-    {
-      sendMessage: (jid: string, text: string, options?: MessageSendOptions) =>
-        channelWiring.sendMessage(jid, text, {
-          durability: 'required',
-          ...(options ? { messageOptions: options } : {}),
-        }),
-      conversationRoutes: () => input.conversationBindings,
-      registerGroup: () => {},
-      syncGroups: () => {},
-      getAvailableGroups: () => [],
-      writeGroupsSnapshot: () => {},
-      onSchedulerChanged: requestSchedulerSync,
-      requestPermissionApproval: async () => {
-        throw new Error('Permission callbacks are unavailable here.');
-      },
-      requestUserAnswer: async () => {
-        throw new Error('Question callbacks are unavailable here.');
-      },
-    } as unknown as IpcDeps,
+    input.authThreadId,
   );
-  return `Scheduler retry requested (${input.jobId}).`;
+  const responsePath = taskIpcResponsePath(input.sourceAgentFolder, taskId);
+  try {
+    await processTaskIpc(
+      {
+        type: 'scheduler_run_now',
+        taskId,
+        jobId: input.jobId,
+        chatJid: input.originConversationJid,
+        targetJid: input.originConversationJid,
+        authThreadId: input.authThreadId,
+        responseKeyId: ipcAuth.responseKeyId,
+      },
+      input.sourceAgentFolder,
+      {
+        sendMessage: (
+          jid: string,
+          text: string,
+          options?: MessageSendOptions,
+        ) =>
+          channelWiring.sendMessage(jid, text, {
+            durability: 'required',
+            ...(options ? { messageOptions: options } : {}),
+          }),
+        conversationRoutes: () => input.conversationBindings,
+        registerGroup: () => {},
+        syncGroups: () => {},
+        getAvailableGroups: () => [],
+        writeGroupsSnapshot: () => {},
+        onSchedulerChanged: requestSchedulerSync,
+        requestPermissionApproval: async () => {
+          throw new Error('Permission callbacks are unavailable here.');
+        },
+        requestUserAnswer: async () => {
+          throw new Error('Question callbacks are unavailable here.');
+        },
+      } as unknown as IpcDeps,
+    );
+    const result = await readSchedulerRunNowIpcResult(responsePath);
+    if (!result) return `Scheduler retry result unavailable (${input.jobId}).`;
+    if (!result.ok) {
+      return result.error || `Scheduler retry failed (${input.jobId}).`;
+    }
+    return result.message || `Scheduler job queued (${input.jobId}).`;
+  } finally {
+    await fs.unlink(responsePath).catch(() => undefined);
+    revokeIpcResponseSigningKey(
+      ipcAuth.responseKeyId,
+      input.sourceAgentFolder,
+      input.authThreadId,
+    );
+  }
+}
+
+async function readSchedulerRunNowIpcResult(
+  responsePath: string,
+): Promise<{ ok: boolean; message?: string; error?: string } | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(responsePath, 'utf8')) as {
+      ok?: unknown;
+      message?: unknown;
+      error?: unknown;
+    };
+    if (typeof parsed.ok !== 'boolean') return null;
+    return {
+      ok: parsed.ok,
+      ...(typeof parsed.message === 'string'
+        ? { message: parsed.message }
+        : {}),
+      ...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function registerLiveStopMessageAction(input: {

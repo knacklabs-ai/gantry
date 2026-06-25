@@ -351,7 +351,8 @@ export function buildLiveAdmissionProcessor(input: {
             .addReaction?.(jid, messageRef, 'running')
             .catch(() => undefined),
       });
-      const terminalSuccess = success && liveRunResult !== 'stopped';
+      const terminalSuccess =
+        success && (liveRunResult === 'success' || liveRunResult === null);
       // Snapshot the browser profile (if used) BEFORE finalizing the live turn,
       // while this worker still owns the run lease fence.
       await finalizeBrowserForLiveTurn?.({
@@ -385,7 +386,7 @@ export function buildLiveAdmissionProcessor(input: {
           );
         });
       }
-      return success && finalized;
+      return terminalSuccess && finalized;
     } catch (err) {
       // Snapshot on failure too: the browser may have persisted new cookies/
       // logins before the turn errored. Best-effort; never mask the original err.

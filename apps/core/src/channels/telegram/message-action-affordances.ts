@@ -20,7 +20,7 @@ function telegramSchedulerActionCallback(
   if (action.kind !== 'scheduler_run_now') {
     return `dl:${TELEGRAM_ACTION_CALLBACK_BY_KIND[action.kind]}`;
   }
-  const callbackData = `dl:retry:${encodeURIComponent(action.jobId)}`;
+  const callbackData = `r:${encodeURIComponent(action.jobId)}`;
   return Buffer.byteLength(callbackData, 'utf8') <=
     TELEGRAM_CALLBACK_DATA_MAX_BYTES
     ? callbackData

@@ -197,6 +197,23 @@ function createTestOpts(
   };
 }
 
+function createTelegramGroupApprovalOpts(): TelegramChannelOpts {
+  const base = createTestOpts();
+  const settings = base.runtimeSettings!();
+  return createTestOpts({
+    runtimeSettings: vi.fn(() => ({
+      ...settings,
+      conversations: {
+        ...settings.conversations,
+        whatsapp_main_conversation: {
+          ...settings.conversations.whatsapp_main_conversation,
+          externalId: '-100200300',
+        },
+      },
+    })),
+  });
+}
+
 function createTextCtx(overrides: {
   chatId?: number;
   chatType?: string;
@@ -1646,7 +1663,7 @@ describe('TelegramChannel', () => {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: 'Retry now', callback_data: 'dl:retry:job-1' },
+                { text: 'Retry now', callback_data: 'r:job-1' },
                 { text: 'Pause job', callback_data: 'dl:pause' },
               ],
               [{ text: 'Open in scheduler', callback_data: 'dl:open' }],
@@ -1656,13 +1673,32 @@ describe('TelegramChannel', () => {
       );
     });
 
+    it('keeps Telegram retry buttons for long generated job ids', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      const jobId = `job-${'a'.repeat(40)}-${'b'.repeat(12)}`;
+
+      await channel.sendMessage('tg:100200300', 'Paused after failures', {
+        actionAffordances: [
+          { kind: 'scheduler_run_now', label: 'Retry now', jobId },
+        ],
+      });
+
+      const callbackData =
+        currentBot().api.sendMessage.mock.calls[0]?.[2]?.reply_markup
+          ?.inline_keyboard?.[0]?.[0]?.callback_data;
+      expect(callbackData).toBe(`r:${jobId}`);
+      expect(Buffer.byteLength(callbackData, 'utf8')).toBeLessThanOrEqual(64);
+    });
+
     it('routes Telegram scheduler run-now action buttons through the message action callback', async () => {
       const opts = createTestOpts({ onMessageAction: vi.fn() } as any);
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
       const callbackCtx = {
         callbackQuery: {
-          data: 'dl:retry:job-1',
+          data: 'r:job-1',
           message: {
             chat: { id: 100200300 },
             message_thread_id: 42,
@@ -1683,7 +1719,7 @@ describe('TelegramChannel', () => {
         jobId: 'job-1',
       });
       expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Retry queued.',
+        text: 'Checking retry request.',
       });
     });
 
@@ -2948,7 +2984,7 @@ describe('TelegramChannel', () => {
     });
 
     it('DMs oversized permission full view files to approvers instead of the group', async () => {
-      const opts = createTestOpts();
+      const opts = createTelegramGroupApprovalOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
       const tail = 'review-tail-after-shared-budget';
@@ -3014,6 +3050,134 @@ describe('TelegramChannel', () => {
       });
       const decision = await decisionPromise;
       expect(decision.approved).toBe(true);
+    });
+
+    it('sends oversized permission full view files only to that Telegram conversation approvers', async () => {
+      const base = createTestOpts().runtimeSettings!();
+      const opts = createTestOpts({
+        runtimeSettings: vi.fn(() => ({
+          ...base,
+          conversations: {
+            wrong_conversation: {
+              ...base.conversations.whatsapp_main_conversation,
+              externalId: '-100999',
+              controlApprovers: ['999'],
+            },
+            right_conversation: {
+              ...base.conversations.whatsapp_main_conversation,
+              externalId: '-100200300',
+              controlApprovers: ['12345'],
+            },
+          },
+          bindings: {
+            wrong_binding: {
+              ...base.bindings.whatsapp_main_binding,
+              conversation: 'wrong_conversation',
+            },
+            right_binding: {
+              ...base.bindings.whatsapp_main_binding,
+              conversation: 'right_conversation',
+            },
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:-100200300',
+        {
+          requestId: 'perm-profile-right-approvers',
+          sourceAgentFolder: 'whatsapp_main',
+          toolName: 'request_agent_profile_update',
+          title: 'Update AGENTS.md',
+          interaction: {
+            id: 'perm-profile-right-approvers',
+            title: 'Update AGENTS.md',
+            body: 's'.repeat(1000),
+            requestContext: {
+              requestId: 'perm-profile-right-approvers',
+              sourceAgentFolder: 'whatsapp_main',
+              targetJid: 'tg:-100200300',
+              toolName: 'request_agent_profile_update',
+            },
+            files: [
+              {
+                path: 'AGENTS.md',
+                preview: 'x'.repeat(7000),
+                truncated: false,
+                sizeBytes: 7000,
+                contentHash: 'abc123',
+              },
+            ],
+          },
+        },
+      );
+      await flushPromises();
+
+      const targets = currentBot().api.sendDocument.mock.calls.map(
+        (call) => call[0],
+      );
+      expect(targets).toEqual(['12345']);
+      expect(targets).not.toContain('999');
+
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'perm:allow_once:perm-profile-right-approvers' },
+        chat: { id: -100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+      await decisionPromise;
+    });
+
+    it('fails closed when oversized permission full view delivery fails', async () => {
+      const opts = createTelegramGroupApprovalOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      currentBot().api.sendDocument.mockRejectedValue(
+        new Error('upload failed'),
+      );
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:-100200300',
+        {
+          requestId: 'perm-profile-undelivered',
+          sourceAgentFolder: 'whatsapp_main',
+          toolName: 'request_agent_profile_update',
+          title: 'Update AGENTS.md',
+          interaction: {
+            id: 'perm-profile-undelivered',
+            title: 'Update AGENTS.md',
+            body: 's'.repeat(1000),
+            requestContext: {
+              requestId: 'perm-profile-undelivered',
+              sourceAgentFolder: 'whatsapp_main',
+              targetJid: 'tg:100200300',
+              toolName: 'request_agent_profile_update',
+            },
+            files: [
+              {
+                path: 'AGENTS.md',
+                preview: 'x'.repeat(7000),
+                truncated: false,
+                sizeBytes: 7000,
+                contentHash: 'abc123',
+              },
+            ],
+          },
+        },
+      );
+      await flushPromises();
+
+      const promptCall = currentBot().api.sendMessage.mock.calls.at(-1);
+      expect(promptCall?.[0]).toBe('-100200300');
+      expect(promptCall?.[1]).toContain(
+        'Approval unavailable until the full details can be reviewed.',
+      );
+      expect(promptCall?.[2]).not.toHaveProperty('reply_markup');
+
+      const decision = await decisionPromise;
+      expect(decision.approved).toBe(false);
     });
 
     it('splits an oversized intent-only review prompt before sending the decision buttons', async () => {

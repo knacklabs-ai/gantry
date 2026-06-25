@@ -131,7 +131,7 @@ export async function requestSlackPermissionApproval(input: {
         reason: 'Slack did not accept the approval prompt.',
       };
     }
-    void bindPendingPermissionInteractionMessage({
+    await bindPendingPermissionInteractionMessage({
       sourceAgentFolder: input.request.sourceAgentFolder,
       requestId: input.request.requestId,
       appId: input.request.appId,
@@ -139,6 +139,7 @@ export async function requestSlackPermissionApproval(input: {
       provider: 'slack',
       conversationId: input.channelId,
       ...(input.request.threadId ? { threadId: input.request.threadId } : {}),
+      fullView: parts.fullView,
     });
 
     return await new Promise<PermissionApprovalDecision>((resolve) => {

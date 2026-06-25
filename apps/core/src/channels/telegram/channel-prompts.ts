@@ -1,4 +1,5 @@
 import path from 'path';
+import { InputFile } from 'grammy';
 
 import { resolveWorkspaceFolderPath } from '../../platform/workspace-folder.js';
 import { logger } from '../../infrastructure/logging/logger.js';
@@ -31,7 +32,6 @@ import {
   splitTelegramTextByCodeUnits,
   truncateUtf8ToByteLimit,
 } from './channel-shared.js';
-import { sendTelegramDocuments } from './file-delivery.js';
 import {
   resolveDurableTelegramUserQuestionOtherReply,
   sendTelegramUserQuestionOtherReplyNotice,
@@ -138,6 +138,41 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
             fullView: parts.fullView,
           })
         : false;
+    if (parts.fullView && !includeInlineFullView && !fullViewSent) {
+      const blockedParts = {
+        ...parts,
+        bodyLines: [
+          ...parts.bodyLines,
+          `${parts.fullView.label}: could not be delivered for review.`,
+          'Approval unavailable until the full details can be reviewed.',
+        ],
+        fullView: undefined,
+      };
+      const blockedText = formatPermissionPromptPartsText(blockedParts);
+      if (blockedText.length > TELEGRAM_MESSAGE_MAX_LENGTH) {
+        await this.sendSplitPermissionReviewMessages({
+          chatId: input.chatId,
+          promptText: blockedText,
+          threadOpts: input.threadOpts,
+        });
+        await this.bot.api.sendMessage(
+          input.chatId,
+          'Approval unavailable: the full details could not be delivered for review.',
+          {
+            ...input.threadOpts,
+            link_preview_options: { is_disabled: true },
+          },
+        );
+      } else {
+        await this.bot.api.sendMessage(input.chatId, blockedText, {
+          ...input.threadOpts,
+          link_preview_options: { is_disabled: true },
+        });
+      }
+      throw new Error(
+        'Telegram approval full view could not be delivered for review',
+      );
+    }
     const promptParts =
       parts.fullView && !includeInlineFullView
         ? {
@@ -252,22 +287,20 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     if (targets.length === 0) return false;
     const content = Buffer.from(input.fullView.content, 'utf8');
     const sent = await Promise.all(
-      targets.map((chatId) =>
-        sendTelegramDocuments({
-          api: this.bot!.api,
-          chatId,
-          files: [
-            {
-              filename: input.fullView.filename,
-              contentType: telegramFullViewContentType(input.fullView.filename),
-              sizeBytes: content.byteLength,
-              content,
-            },
-          ],
-        }),
-      ),
+      targets.map(async (chatId) => {
+        try {
+          const result = await this.bot!.api.sendDocument(
+            chatId,
+            new InputFile(content, input.fullView.filename),
+            { caption: input.fullView.filename },
+          );
+          return result.message_id !== undefined;
+        } catch {
+          return false;
+        }
+      }),
     );
-    return sent.some((ids) => ids.length > 0);
+    return sent.some(Boolean);
   }
 
   private telegramFullViewDocumentChatIds(
@@ -278,7 +311,13 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     const settings = this.opts.runtimeSettings?.();
     const binding = settings
       ? Object.values(settings.bindings || {}).find(
-          (entry) => entry.agent === request.sourceAgentFolder,
+          (entry) =>
+            entry.agent === request.sourceAgentFolder &&
+            this.telegramConversationMatchesChat(
+              settings.conversations[entry.conversation],
+              settings.providerConnections,
+              chatId,
+            ),
         )
       : undefined;
     const conversation = binding
@@ -287,6 +326,20 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     // ponytail: group payload files go only to configured approver IDs; if no
     // list is available, keep the group prompt inline-only rather than broadcasting.
     return [...new Set(conversation?.controlApprovers || [])].filter(Boolean);
+  }
+
+  private telegramConversationMatchesChat(
+    conversation:
+      | { providerConnection: string; externalId: string }
+      | undefined,
+    providerConnections: Record<string, { provider: string } | undefined>,
+    chatId: string,
+  ): boolean {
+    if (!conversation) return false;
+    const connection = providerConnections[conversation.providerConnection];
+    if (connection?.provider !== 'telegram') return false;
+    const externalId = conversation.externalId.trim();
+    return externalId === chatId || externalId === `tg:${chatId}`;
   }
 
   protected async sendUserQuestionPromptMessage(input: {
@@ -363,7 +416,13 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     const settings = this.opts.runtimeSettings?.();
     const binding = settings
       ? Object.values(settings.bindings || {}).find(
-          (entry) => entry.agent === sourceAgentFolder,
+          (entry) =>
+            entry.agent === sourceAgentFolder &&
+            this.telegramConversationMatchesChat(
+              settings.conversations[entry.conversation],
+              settings.providerConnections,
+              chatId,
+            ),
         )
       : undefined;
     const conversation = binding
@@ -665,12 +724,4 @@ function formatTelegramUserQuestionPlainText(
         `${optionIndex + 1}. ${option.label}${option.description ? ` — ${option.description}` : ''}`,
     ),
   ].join('\n');
-}
-
-function telegramFullViewContentType(filename: string): string {
-  if (filename.endsWith('.diff')) return 'text/x-diff';
-  if (filename.endsWith('.yaml') || filename.endsWith('.yml')) {
-    return 'application/x-yaml';
-  }
-  return 'text/plain';
 }

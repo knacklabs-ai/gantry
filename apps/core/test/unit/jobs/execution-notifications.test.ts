@@ -170,14 +170,7 @@ describe('jobs/execution-notifications', () => {
     expect(message).not.toContain('*Mode*');
     expect(message).not.toContain('T08:35:00.000Z');
     expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
-      actionAffordances: [
-        {
-          kind: 'scheduler_run_now',
-          label: 'Run again',
-          jobId: 'job-1',
-          runId: 'run-1',
-        },
-      ],
+      actionAffordances: [],
     });
   });
 
@@ -231,14 +224,7 @@ describe('jobs/execution-notifications', () => {
       ),
       expect.objectContaining({
         threadId: 'thread-1',
-        actionAffordances: [
-          {
-            kind: 'scheduler_run_now',
-            label: 'Run again',
-            jobId: 'job-1',
-            runId: 'run-1',
-          },
-        ],
+        actionAffordances: [],
       }),
     );
     const message = String(sendMessage.mock.calls[0]?.[1]);
@@ -389,12 +375,6 @@ describe('jobs/execution-notifications', () => {
       threadId: 'thread-1',
       actionAffordances: [
         {
-          kind: 'scheduler_run_now',
-          label: 'Retry now',
-          jobId: 'job-1',
-          runId: 'run-1',
-        },
-        {
           kind: 'scheduler_pause_job',
           label: 'Pause job',
           jobId: 'job-1',
@@ -492,12 +472,6 @@ describe('jobs/execution-notifications', () => {
     expect(message).not.toContain('Narrow the job scope');
     expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
       actionAffordances: [
-        {
-          kind: 'scheduler_run_now',
-          label: 'Retry now',
-          jobId: 'job-1',
-          runId: 'run-1',
-        },
         {
           kind: 'scheduler_pause_job',
           label: 'Pause job',

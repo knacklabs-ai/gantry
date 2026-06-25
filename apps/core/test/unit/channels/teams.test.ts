@@ -178,7 +178,7 @@ describe('Teams Adaptive Card payloads', () => {
 });
 
 describe('TeamsChannel adapter scaffold', () => {
-  it('falls back to visible Teams reaction text idempotently', async () => {
+  it('does not post visible Teams reaction text', async () => {
     const sdkClient: TeamsSdkClient = {
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
@@ -198,11 +198,7 @@ describe('TeamsChannel adapter scaffold', () => {
     await channel.addReaction('teams:19:abc@thread.v2', 'message-1', 'running');
     await channel.addReaction('teams:19:abc@thread.v2', 'message-1', 'running');
 
-    expect(sdkClient.sendMessage).toHaveBeenCalledTimes(1);
-    expect(sdkClient.sendMessage).toHaveBeenCalledWith({
-      conversationId: '19:abc@thread.v2',
-      text: 'Running.',
-    });
+    expect(sdkClient.sendMessage).not.toHaveBeenCalled();
   });
 
   it('renders todo cards in the active Teams thread', async () => {

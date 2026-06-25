@@ -298,13 +298,20 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         return;
       }
 
-      const deadLetterActionMatch =
-        TELEGRAM_DEAD_LETTER_ACTION_CALLBACK_PATTERN.exec(data);
-      if (deadLetterActionMatch) {
-        if (deadLetterActionMatch[1] === 'retry' && deadLetterActionMatch[2]) {
+      const compactRetryJobId = data.startsWith('r:') ? data.slice(2) : '';
+      const deadLetterActionMatch = compactRetryJobId
+        ? null
+        : TELEGRAM_DEAD_LETTER_ACTION_CALLBACK_PATTERN.exec(data);
+      if (compactRetryJobId || deadLetterActionMatch) {
+        if (
+          compactRetryJobId ||
+          (deadLetterActionMatch?.[1] === 'retry' && deadLetterActionMatch[2])
+        ) {
           let jobId: string;
           try {
-            jobId = decodeURIComponent(deadLetterActionMatch[2]);
+            jobId = decodeURIComponent(
+              compactRetryJobId || deadLetterActionMatch![2],
+            );
           } catch {
             await ctx.answerCallbackQuery({
               text: 'Invalid scheduler action.',
@@ -333,7 +340,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             userId: ctx.from?.id?.toString(),
             jobId,
           });
-          await ctx.answerCallbackQuery({ text: 'Retry queued.' });
+          await ctx.answerCallbackQuery({ text: 'Checking retry request.' });
           return;
         }
         await ctx.answerCallbackQuery({

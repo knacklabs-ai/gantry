@@ -373,33 +373,60 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         return;
       }
       if (!payload.requestId) return;
-      const pending = this.pendingPermissionPrompts.get(payload.requestId);
-      if (!pending || pending.settled) return;
       const callbackChannelId =
         body.channel?.id ||
         body.container?.channel_id ||
         body.message?.channel ||
         '';
-      if (
-        !(await this.canDecidePermission(
-          userId,
-          pending.sourceAgentFolder,
-          pending.decisionPolicy,
-          pending.approvalContextJid || `sl:${pending.channelId}`,
-        ))
-      ) {
-        try {
-          await this.app?.client.chat.postEphemeral({
-            channel: callbackChannelId || pending.channelId,
-            user: userId,
-            text: 'You are not allowed to view this permission payload.',
-          });
-        } catch {
-          // ignore
+      const pending = this.pendingPermissionPrompts.get(payload.requestId);
+      let fullView: ReturnType<typeof buildPermissionPromptFullView>;
+      if (pending && !pending.settled) {
+        if (
+          !(await this.canDecidePermission(
+            userId,
+            pending.sourceAgentFolder,
+            pending.decisionPolicy,
+            pending.approvalContextJid || `sl:${pending.channelId}`,
+          ))
+        ) {
+          try {
+            await this.app?.client.chat.postEphemeral({
+              channel: callbackChannelId || pending.channelId,
+              user: userId,
+              text: 'You are not allowed to view this permission payload.',
+            });
+          } catch {
+            // ignore
+          }
+          return;
         }
-        return;
+        fullView = buildPermissionPromptFullView(pending.request);
+      } else {
+        const durable = await findDurablePermissionInteractionByRequestId({
+          requestId: payload.requestId,
+        });
+        if (!durable || durable.targetJid !== `sl:${callbackChannelId}`) return;
+        if (
+          !(await this.canDecidePermission(
+            userId,
+            durable.sourceAgentFolder,
+            durable.decisionPolicy as PermissionApprovalRequest['decisionPolicy'],
+            durable.targetJid,
+          ))
+        ) {
+          try {
+            await this.app?.client.chat.postEphemeral({
+              channel: callbackChannelId,
+              user: userId,
+              text: 'You are not allowed to view this permission payload.',
+            });
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        fullView = durable.fullView;
       }
-      const fullView = buildPermissionPromptFullView(pending.request);
       if (!fullView) return;
       try {
         await this.app?.client.views.open({

@@ -71,12 +71,6 @@ import {
   type TeamsSdkClient,
 } from './teams-types.js';
 
-function teamsReactionText(emoji: string): string {
-  if (emoji === 'seen') return 'Seen.';
-  if (emoji === 'running') return 'Running.';
-  return emoji;
-}
-
 interface TeamsStreamingState {
   conversationId: string;
   messageId?: string;
@@ -122,7 +116,6 @@ export class TeamsChannel implements ChannelAdapter {
   private readonly activeStreams = new Map<string, TeamsStreamingState>();
   private readonly streamGenerationByJid = new Map<string, number>();
   private readonly sealedStreamGenerationByJid = new Map<string, number>();
-  private readonly reactionKeys = new Set<string>();
   private readonly pendingUserQuestions = new Map<
     string,
     PendingTeamsUserQuestion
@@ -219,20 +212,7 @@ export class TeamsChannel implements ChannelAdapter {
     });
   }
 
-  async addReaction(
-    jid: string,
-    messageRef: string,
-    emoji: string,
-  ): Promise<void> {
-    if (!this.outboundReady) return;
-    const conversationId = teamsConversationIdFromJid(jid);
-    if (!conversationId || !messageRef.trim()) return;
-    const text = teamsReactionText(emoji);
-    const key = `${conversationId}:${messageRef}:${text}`;
-    if (this.reactionKeys.has(key)) return;
-    await this.sdkClient.sendMessage({ conversationId, text });
-    this.reactionKeys.add(key);
-  }
+  async addReaction(): Promise<void> {}
 
   async sendProgressUpdate(
     jid: string,

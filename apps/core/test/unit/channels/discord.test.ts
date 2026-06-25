@@ -186,6 +186,27 @@ describe('DiscordChannel', () => {
     fetchMock.mockRestore();
   });
 
+  it('skips Discord scheduler retry buttons when the job id cannot fit custom_id', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => jsonResponse({ id: 'message-1' }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    await channel.sendMessage('dc:channel-1', 'Paused after failures', {
+      actionAffordances: [
+        {
+          kind: 'scheduler_run_now',
+          label: 'Retry now',
+          jobId: 'j'.repeat(90),
+        },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body || '{}'));
+    expect(body.components).toBeUndefined();
+    fetchMock.mockRestore();
+  });
+
   it('adds Discord reactions idempotently', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
@@ -574,6 +595,50 @@ describe('DiscordChannel', () => {
     }
   });
 
+  it('drops stale Discord streaming chunks after reset seals the generation', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => jsonResponse({ id: 'stream-1' }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    await expect(
+      channel.sendStreamingChunk('dc:channel-1', 'old', { generation: 1 }),
+    ).resolves.toBe(true);
+    channel.resetStreaming('dc:channel-1');
+    await expect(
+      channel.sendStreamingChunk('dc:channel-1', 'stale', { generation: 1 }),
+    ).resolves.toBe(false);
+    await expect(
+      channel.sendStreamingChunk('dc:channel-1', 'new', { generation: 2 }),
+    ).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map((call) =>
+      JSON.parse(String((call[1] as RequestInit).body)),
+    );
+    expect(bodies.map((body) => body.content)).toEqual(['old', 'new']);
+    fetchMock.mockRestore();
+  });
+
+  it('reports final Discord streaming overflow failure for retry', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'stream-1' }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    await expect(
+      channel.sendStreamingChunk('dc:channel-1', `${'a'.repeat(2000)}b`),
+    ).resolves.toBe(true);
+    await expect(
+      channel.sendStreamingChunk('dc:channel-1', '', { done: true }),
+    ).resolves.toBe(false);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    fetchMock.mockRestore();
+  });
+
   it('retries Discord REST calls after rate-limit headers', async () => {
     vi.useFakeTimers();
     const fetchMock = vi
@@ -952,6 +1017,73 @@ describe('DiscordChannel', () => {
       approved: false,
       mode: 'cancel',
     });
+    vi.restoreAllMocks();
+  });
+
+  it('shows durable Discord full permission payload after channel restart', async () => {
+    let socket!: FakeWebSocket;
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        jsonResponse({ url: 'wss://gateway.discord.test' }),
+      )
+      .mockResolvedValue(jsonResponse({ id: 'message-1' }));
+    durabilityMocks.findDurablePermissionInteractionByRequestId.mockResolvedValue(
+      {
+        sourceAgentFolder: 'main_agent',
+        targetJid: 'dc:channel-1',
+        decisionPolicy: 'same_channel',
+        fullView: {
+          label: 'View full command',
+          title: 'Full command',
+          filename: 'permission-command.txt',
+          content: 'git status --short',
+        },
+      },
+    );
+    const channel = new DiscordChannel(
+      'bot-token',
+      'app-id',
+      opts({ isControlApproverAllowed: vi.fn(async () => true) }),
+      (url) => {
+        socket = new FakeWebSocket(url);
+        return socket;
+      },
+    );
+
+    await channel.connect();
+    socket.receive({
+      op: 0,
+      t: 'INTERACTION_CREATE',
+      d: {
+        id: 'interaction-full-view',
+        token: 'token-full-view',
+        type: 3,
+        channel_id: 'channel-1',
+        data: { custom_id: 'gantry:perm_full:permission-1' },
+        member: { user: { id: 'user-1', username: 'Ravi' } },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const fullViewCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes(
+        '/interactions/interaction-full-view/token-full-view/callback',
+      ),
+    );
+    expect(fullViewCall).toBeTruthy();
+    expect(JSON.parse(String((fullViewCall?.[1] as RequestInit).body))).toEqual(
+      {
+        type: 4,
+        data: {
+          content: 'Full command\n```\ngit status --short\n```',
+          flags: 64,
+          allowed_mentions: { parse: [] },
+        },
+      },
+    );
+
+    await channel.disconnect();
     vi.restoreAllMocks();
   });
 

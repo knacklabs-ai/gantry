@@ -130,6 +130,7 @@ vi.mock('@slack/bolt', () => ({
 }));
 
 import { createSlackChannel, SlackChannel } from '@core/channels/slack.js';
+import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 import { slackRateLimitRetryDelayMs } from '@core/channels/slack/channel-retry-delay.js';
 import {
   buildPermissionPromptContentBlocks,
@@ -227,6 +228,7 @@ describe('Slack channel', () => {
   afterEach(() => {
     if (savedGantryHome === undefined) delete process.env.GANTRY_HOME;
     else process.env.GANTRY_HOME = savedGantryHome;
+    configurePendingInteractionDurability(null);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1516,6 +1518,79 @@ describe('Slack channel', () => {
 
     await expect(approvalPromise).resolves.toEqual(
       expect.objectContaining({ approved: true }),
+    );
+  });
+
+  it('opens durable Slack permission full-view payloads after channel restart', async () => {
+    configurePendingInteractionDurability({
+      repository: {
+        listPendingInteractions: vi.fn(async () => [
+          {
+            id: 'pending-slack-full-view',
+            appId: 'default',
+            runId: 'run-1',
+            kind: 'permission',
+            status: 'pending',
+            payload: {
+              requestId: 'perm-durable-full-view',
+              sourceAgentFolder: 'slack_main',
+              conversationId: 'sl:C123',
+              decisionPolicy: 'same_channel',
+              permissionFullView: {
+                label: 'View full command',
+                title: 'Full command',
+                filename: 'permission-command.txt',
+                content: 'git status --short',
+              },
+            },
+            callbackRoute: null,
+            idempotencyKey: 'permission:slack_main:perm-durable-full-view',
+            approverRef: null,
+            resolution: null,
+            createdAt: '2026-06-23T00:00:00.000Z',
+            expiresAt: '2026-06-24T00:00:00.000Z',
+            resolvedAt: null,
+          },
+        ]),
+      } as never,
+    });
+    const channel = new SlackChannel(
+      'xoxb-token',
+      'xapp-token',
+      createOptsWithApproverHook(['U_APPROVER']) as any,
+    );
+    await channel.connect();
+
+    const fullViewHandler = appRef.current.actionHandlers.get(
+      'gantry_perm_full_view',
+    );
+    await fullViewHandler?.({
+      ack: vi.fn().mockResolvedValue(undefined),
+      body: {
+        channel: { id: 'C123' },
+        trigger_id: 'trigger-full-view',
+        user: { id: 'U_APPROVER' },
+      },
+      action: {
+        value: JSON.stringify({
+          requestId: 'perm-durable-full-view',
+        }),
+      },
+    });
+
+    expect(appRef.current.client.views.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger_id: 'trigger-full-view',
+        view: expect.objectContaining({
+          blocks: expect.arrayContaining([
+            expect.objectContaining({
+              text: expect.objectContaining({
+                text: expect.stringContaining('git status --short'),
+              }),
+            }),
+          ]),
+        }),
+      }),
     );
   });
 

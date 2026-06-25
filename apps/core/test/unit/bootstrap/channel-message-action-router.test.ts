@@ -1,9 +1,31 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const processTaskIpcMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@core/runtime/ipc.js', () => ({
+  processTaskIpc: processTaskIpcMock,
+}));
+
+import { DATA_DIR } from '@core/config/index.js';
 import { createChannelMessageActionRouter } from '@core/app/bootstrap/channel-message-action-router.js';
-import { registerLiveStopMessageAction } from '@core/app/bootstrap/runtime-live-stop-message-action.js';
+import {
+  registerLiveStopMessageAction,
+  registerRuntimeLiveStopMessageAction,
+} from '@core/app/bootstrap/runtime-live-stop-message-action.js';
+import { writeTaskIpcResponse } from '@core/jobs/ipc-shared.js';
 
 describe('createChannelMessageActionRouter', () => {
+  afterEach(() => {
+    processTaskIpcMock.mockReset();
+    fs.rmSync(path.join(DATA_DIR, 'ipc', 'main_agent', 'task-responses'), {
+      recursive: true,
+      force: true,
+    });
+  });
+
   it('routes live stop callbacks to the registered handler', async () => {
     const router = createChannelMessageActionRouter();
     const handler = vi.fn();
@@ -127,6 +149,74 @@ describe('createChannelMessageActionRouter', () => {
         durability: 'required',
         messageOptions: { threadId: 'thread-1' },
       },
+    );
+  });
+
+  it('reports scheduler run-now IPC rejection instead of a blind success', async () => {
+    processTaskIpcMock.mockImplementation(
+      async (
+        data: {
+          taskId?: string;
+          authThreadId?: string;
+          responseKeyId?: string;
+        },
+        sourceAgentFolder: string,
+      ) => {
+        writeTaskIpcResponse(
+          sourceAgentFolder,
+          data.taskId,
+          {
+            ok: false,
+            code: 'conflict',
+            error:
+              'scheduler_run_now requires an active job; current status is paused.',
+          },
+          data.authThreadId,
+          data.responseKeyId,
+        );
+      },
+    );
+    const sendMessage = vi.fn(async () => undefined);
+    let handler: any;
+    const channelWiring = {
+      setMessageActionHandler: vi.fn((next) => {
+        handler = next;
+      }),
+      isControlApproverAllowed: vi.fn(async () => true),
+      sendMessage,
+    };
+
+    registerRuntimeLiveStopMessageAction(
+      channelWiring as any,
+      {
+        getConversationRoutes: () => ({
+          'sl:C123': { folder: 'main_agent' },
+        }),
+      },
+      { stopGroup: vi.fn() },
+    );
+
+    await handler?.({
+      kind: 'scheduler_run_now',
+      conversationJid: 'sl:C123',
+      userId: 'U123',
+      jobId: 'job-1',
+    });
+
+    expect(processTaskIpcMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'scheduler_run_now',
+        jobId: 'job-1',
+        taskId: expect.any(String),
+        responseKeyId: expect.any(String),
+      }),
+      'main_agent',
+      expect.any(Object),
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      'sl:C123',
+      'scheduler_run_now requires an active job; current status is paused.',
+      { durability: 'required' },
     );
   });
 });
