@@ -101,7 +101,11 @@ import {
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
-export type { AvailableGroup, AgentInput, AgentOutput } from './agent-spawn-types.js';
+export type {
+  AvailableGroup,
+  AgentInput,
+  AgentOutput,
+} from './agent-spawn-types.js';
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -194,7 +198,6 @@ export async function spawnAgent(
     compiledSystemPrompt,
     yoloMode: effectiveYoloModeSettings(runtimeSettings.permissions.yoloMode),
   };
-
   const hostRuntime = prepareHostRuntimeContext(group);
   ensureWorkspaceIpcLayout(hostRuntime.workspaceIpcDir);
   let executionAdapter: NonNullable<RunAgentOptions['executionAdapter']>;
@@ -279,7 +282,6 @@ export async function spawnAgent(
         `LLM runtime materialization failed: ${errorText}`,
     };
   }
-
   let mcpConfigPath: string | undefined;
   let sandboxConfigPath: string | undefined;
   let runnerTempDir: string | undefined;
@@ -459,9 +461,8 @@ export async function spawnAgent(
     if (runnerInputPatch.semanticCapabilities) {
       runnerInput.semanticCapabilities = runnerInputPatch.semanticCapabilities;
     }
-    if (runnerInputPatch.deepAgentCheckpointer) {
-      runnerInput.deepAgentCheckpointer = runnerInputPatch.deepAgentCheckpointer;
-    }
+    const checkpointer = runnerInputPatch.deepAgentCheckpointer;
+    if (checkpointer) runnerInput.deepAgentCheckpointer = checkpointer;
     runnerInput.deepAgentSkills = runnerInputPatch.deepAgentSkills;
     const localCliCredentialPaths = resolveHomeRelativePaths(
       localCliCredentialPathHintsFromRuntimeAccess(effectiveRuntimeAccess),
@@ -580,7 +581,6 @@ export async function spawnAgent(
     hostStartup.finish('runnerEnvMs', runnerEnvStarted);
     // Job-level model overrides group-level model.
     const effectiveModelSource = input.model ? 'job.model' : modelConfig.source;
-
     const runtimeDetails = buildAndLogRunnerRuntimeDetails({
       logger,
       groupName: group.name,
@@ -600,7 +600,6 @@ export async function spawnAgent(
       effectiveModelSource,
       systemPromptChars: compiledSystemPrompt.length,
     });
-
     const logsDir = path.join(groupDir, 'logs');
     fs.mkdirSync(logsDir, { recursive: true });
     const selectedSkillEnv = await hostStartup.measureAsync(
