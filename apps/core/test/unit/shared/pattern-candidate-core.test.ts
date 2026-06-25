@@ -14,6 +14,7 @@ import { detectPatternCandidates } from '@core/shared/pattern-candidate-detectio
 import {
   candidateStatusForChoice,
   isSurfaceable,
+  meetsRecurrenceValueFloor,
   shouldResetSnooze,
   snoozeUntil,
 } from '@core/shared/pattern-candidate-policy.js';
@@ -83,6 +84,22 @@ describe('pattern-candidate policy', () => {
     for (const status of ['accepted', 'snoozed', 'dismissed'] as const) {
       expect(isSurfaceable(status)).toBe(false);
     }
+  });
+
+  it('requires recurring value across enough days', () => {
+    const base = {
+      occurrences: 4,
+      windowStart: '2026-01-01T00:00:00.000Z',
+      windowEnd: '2026-01-03T00:00:00.000Z',
+    };
+    expect(meetsRecurrenceValueFloor(base)).toBe(true);
+    expect(meetsRecurrenceValueFloor({ ...base, occurrences: 3 })).toBe(false);
+    expect(
+      meetsRecurrenceValueFloor({
+        ...base,
+        windowEnd: '2026-01-02T23:59:59.999Z',
+      }),
+    ).toBe(false);
   });
 
   it('resets a snooze when it elapses or the pattern intensifies', () => {
