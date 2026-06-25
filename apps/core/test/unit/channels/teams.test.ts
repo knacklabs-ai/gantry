@@ -436,6 +436,93 @@ describe('TeamsChannel adapter scaffold', () => {
     });
   });
 
+  it('routes Teams scheduler retry card actions through the neutral message action callback', async () => {
+    let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined =
+      undefined;
+    const onMessageAction = vi.fn(async () => {});
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async (input) => {
+        startInput = input;
+      }),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'teams-retry-card',
+      })),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      { ...makeOpts(), onMessageAction },
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendMessage(
+      'teams:19:abc@thread.v2',
+      'Paused after failures',
+      {
+        threadId: 'root-message',
+        actionAffordances: [
+          { kind: 'scheduler_run_now', label: 'Retry now', jobId: 'job-1' },
+          { kind: 'scheduler_pause_job', label: 'Pause job', jobId: 'job-1' },
+          {
+            kind: 'scheduler_open',
+            label: 'Open in scheduler',
+            jobId: 'job-1',
+          },
+        ],
+      },
+    );
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        threadId: 'root-message',
+        card: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              type: 'Action.Execute',
+              verb: 'gantry.scheduler.run_now',
+              data: expect.objectContaining({
+                action: 'message_action',
+                kind: 'scheduler_run_now',
+                jobId: 'job-1',
+                targetJid: 'teams:19:abc@thread.v2',
+                threadId: 'root-message',
+              }),
+            }),
+          ],
+        }),
+      }),
+    );
+
+    await startInput?.onMessage({
+      conversationId: '19:abc@thread.v2',
+      from: { id: 'teams-user-1', name: 'Team Admin' },
+      value: {
+        data: {
+          action: 'message_action',
+          kind: 'scheduler_run_now',
+          jobId: 'job-1',
+          targetJid: 'teams:19:abc@thread.v2',
+          threadId: 'root-message',
+        },
+      },
+    });
+
+    expect(onMessageAction).toHaveBeenCalledWith({
+      kind: 'scheduler_run_now',
+      conversationJid: 'teams:19:abc@thread.v2',
+      threadId: 'root-message',
+      userId: 'teams-user-1',
+      jobId: 'job-1',
+    });
+  });
+
   it('updates Teams progress cards and clears stop actions when done', async () => {
     const sdkClient: TeamsSdkClient = {
       start: vi.fn(async () => {}),

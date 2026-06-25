@@ -6,6 +6,7 @@ import type {
 } from '../domain/types.js';
 
 export const LIVE_STOP_CUSTOM_ID_PREFIX = 'gantry:live_stop:';
+export const SCHEDULER_RUN_NOW_CUSTOM_ID_PREFIX = 'gantry:scheduler_run_now:';
 export const PERMISSION_CUSTOM_ID_PREFIX = 'gantry:perm:';
 export const QUESTION_CUSTOM_ID_PREFIX = 'gantry:q:';
 
@@ -15,14 +16,27 @@ export function discordActionComponents(
   const stopAction = options?.actionAffordances?.find(
     (action) => action.kind === 'live_turn_stop',
   );
-  if (stopAction?.kind !== 'live_turn_stop') return undefined;
-  return buttonRows([
-    {
+  const runNowAction = options?.actionAffordances?.find(
+    (action) => action.kind === 'scheduler_run_now' && action.jobId.trim(),
+  );
+  const buttons: Array<{ label: string; style: number; custom_id: string }> =
+    [];
+  if (stopAction?.kind === 'live_turn_stop') {
+    buttons.push({
       style: 4,
       label: stopAction.label,
       custom_id: `${LIVE_STOP_CUSTOM_ID_PREFIX}${stopAction.actionToken}`,
-    },
-  ]);
+    });
+  }
+  if (runNowAction?.kind === 'scheduler_run_now') {
+    // ponytail: only scheduler_run_now is wired here; add pause/open when they share a callback path.
+    buttons.push({
+      style: 1,
+      label: runNowAction.label,
+      custom_id: `${SCHEDULER_RUN_NOW_CUSTOM_ID_PREFIX}${encodeURIComponent(runNowAction.jobId)}`,
+    });
+  }
+  return buttons.length ? buttonRows(buttons) : undefined;
 }
 
 export function buttonRows(

@@ -37,6 +37,7 @@ import {
   permissionCustomId,
   QUESTION_CUSTOM_ID_PREFIX,
   questionComponents,
+  SCHEDULER_RUN_NOW_CUSTOM_ID_PREFIX,
 } from './discord-components.js';
 import {
   formatDiscordAgentTodo,
@@ -642,6 +643,18 @@ export class DiscordChannel implements ChannelAdapter {
           conversationJid: `${DISCORD_JID_PREFIX}${interaction.channel_id}`,
           userId: interaction.member?.user?.id || interaction.user?.id,
           actionToken: customId.slice(LIVE_STOP_CUSTOM_ID_PREFIX.length),
+        });
+        return;
+      }
+      if (customId.startsWith(SCHEDULER_RUN_NOW_CUSTOM_ID_PREFIX)) {
+        await this.ackInteraction(interaction, 'Checking retry request.');
+        await this.opts.onMessageAction?.({
+          kind: 'scheduler_run_now',
+          conversationJid: `${DISCORD_JID_PREFIX}${interaction.channel_id}`,
+          userId: interaction.member?.user?.id || interaction.user?.id,
+          jobId: decodeURIComponent(
+            customId.slice(SCHEDULER_RUN_NOW_CUSTOM_ID_PREFIX.length),
+          ),
         });
         return;
       }

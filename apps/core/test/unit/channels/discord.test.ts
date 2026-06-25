@@ -140,6 +140,52 @@ describe('DiscordChannel', () => {
     fetchMock.mockRestore();
   });
 
+  it('sends messages through Discord REST with scheduler retry buttons', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => jsonResponse({ id: 'message-1' }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    await expect(
+      channel.sendMessage('dc:channel-1', 'Paused after failures', {
+        actionAffordances: [
+          { kind: 'scheduler_run_now', label: 'Retry now', jobId: 'job-1' },
+          { kind: 'scheduler_pause_job', label: 'Pause job', jobId: 'job-1' },
+          {
+            kind: 'scheduler_open',
+            label: 'Open in scheduler',
+            jobId: 'job-1',
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({ externalMessageId: 'message-1' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/channels/channel-1/messages',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          content: 'Paused after failures',
+          allowed_mentions: { parse: [] },
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 2,
+                  style: 1,
+                  label: 'Retry now',
+                  custom_id: 'gantry:scheduler_run_now:job-1',
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it('adds Discord reactions idempotently', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
@@ -704,6 +750,18 @@ describe('DiscordChannel', () => {
         member: { user: { id: 'user-1', username: 'Ravi' } },
       },
     });
+    socket.receive({
+      op: 0,
+      t: 'INTERACTION_CREATE',
+      d: {
+        id: 'interaction-3',
+        token: 'token-3',
+        type: 3,
+        channel_id: 'channel-1',
+        data: { custom_id: 'gantry:scheduler_run_now:job-1' },
+        member: { user: { id: 'user-1', username: 'Ravi' } },
+      },
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(onMessage).toHaveBeenCalledWith(
@@ -716,6 +774,12 @@ describe('DiscordChannel', () => {
       userId: 'user-1',
       actionToken: 'stop-token',
     });
+    expect(onMessageAction).toHaveBeenCalledWith({
+      kind: 'scheduler_run_now',
+      conversationJid: 'dc:channel-1',
+      userId: 'user-1',
+      jobId: 'job-1',
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       'https://discord.com/api/v10/interactions/interaction-2/token-2/callback',
       expect.objectContaining({
@@ -723,6 +787,19 @@ describe('DiscordChannel', () => {
           type: 4,
           data: {
             content: 'Checking stop request.',
+            flags: 64,
+            allowed_mentions: { parse: [] },
+          },
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/interactions/interaction-3/token-3/callback',
+      expect.objectContaining({
+        body: JSON.stringify({
+          type: 4,
+          data: {
+            content: 'Checking retry request.',
             flags: 64,
             allowed_mentions: { parse: [] },
           },
