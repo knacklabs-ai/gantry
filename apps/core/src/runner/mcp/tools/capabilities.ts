@@ -183,6 +183,63 @@ export function registerAccessRequestTool(
               'target.name is required when target.kind=tool.',
             );
           }
+          const mcpToolCapability = await semanticCapabilityForMcpTool(
+            options,
+            target.name,
+          );
+          if (mcpToolCapability) {
+            if (
+              options.isCapabilitySelected?.(mcpToolCapability.capabilityId)
+            ) {
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: [
+                      `Capability "${mcpToolCapability.displayName}" is already selected for this run.`,
+                      'Use mcp_list_tools to inspect the ready source, mcp_describe_tool when schema is needed, then mcp_call_tool to call the approved action.',
+                    ].join('\n'),
+                  },
+                ],
+              };
+            }
+            return submitCapabilityReviewTask(
+              'request_permission',
+              'Capability',
+              {
+                permissionKind: 'tool',
+                capabilityRequestSource: 'request_access',
+                capabilityId: mcpToolCapability.capabilityId,
+                capabilityDisplayName: mcpToolCapability.displayName,
+                accountLabel: mcpToolCapability.accountLabel,
+                can: mcpToolCapability.can,
+                cannot: mcpToolCapability.cannot,
+                credentialSource: mcpToolCapability.credentialSource,
+                risk: mcpToolCapability.risk,
+                ...(mcpToolCapability.networkHosts?.length
+                  ? { networkHosts: mcpToolCapability.networkHosts }
+                  : {}),
+                temporaryOnly: args.temporaryOnly ?? false,
+                broadAccess: args.broadAccess,
+                riskClass: args.riskClass,
+                reason: args.reason,
+              },
+            );
+          }
+          if (isThirdPartyMcpToolName(target.name)) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: [
+                    `Exact MCP tool "${target.name}" is not durable request_access authority by itself.`,
+                    'Request the reviewed semantic capability that covers this MCP source or tool with target.kind=capability, then retry after approval.',
+                    SOURCE_INVENTORY_AUTHORITY_GUIDANCE,
+                  ].join('\n'),
+                },
+              ],
+            };
+          }
           const toolName = normalizeExactRequestableToolName(target.name);
           if (!toolName) {
             return {
@@ -272,6 +329,28 @@ async function availableSemanticCapabilities(options: {
     const validation = validateSemanticCapabilityDefinition(capability);
     return validation.ok;
   });
+}
+
+async function semanticCapabilityForMcpTool(
+  options: { listCapabilities?: SemanticCapabilityProvider },
+  toolName: string,
+): Promise<SemanticCapabilityDefinition | null> {
+  const normalized = toolName.trim();
+  if (!isThirdPartyMcpToolName(normalized)) return null;
+  const capabilities = await availableSemanticCapabilities(options);
+  return (
+    capabilities.find((capability) =>
+      capability.implementationBindings.some(
+        (binding) =>
+          binding.kind === 'mcp_tool' && binding.mcpTool === normalized,
+      ),
+    ) ?? null
+  );
+}
+
+function isThirdPartyMcpToolName(value: string): boolean {
+  const trimmed = value.trim();
+  return /^mcp__(?!gantry__)[A-Za-z0-9._-]+__[A-Za-z0-9._-]+$/.test(trimmed);
 }
 
 function requestAccessInputError(message: string): ToolResponse {

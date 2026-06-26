@@ -1639,6 +1639,69 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
     });
   });
 
+  it('maps request_access exact third-party MCP tool targets to reviewed semantic capabilities', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'request_access',
+      {
+        target: {
+          kind: 'tool',
+          name: 'mcp__caw-ats__ats_list_client_projects',
+        },
+        reason: 'Need to list client projects through caw-ats.',
+      },
+      {
+        GANTRY_SEMANTIC_CAPABILITIES_JSON: JSON.stringify([
+          cawAtsMcpCapability('mcp__caw-ats__ats_list_client_projects'),
+        ]),
+      },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const taskFiles = fs.readdirSync(path.join(fixture.ipcDir, 'tasks'));
+    expect(taskFiles).toHaveLength(1);
+    const task = JSON.parse(
+      fs.readFileSync(
+        path.join(fixture.ipcDir, 'tasks', taskFiles[0]),
+        'utf-8',
+      ),
+    );
+    expect(task).toMatchObject({
+      type: 'request_permission',
+      payload: {
+        capabilityRequestSource: 'request_access',
+        permissionKind: 'tool',
+        capabilityId: 'mcp.caw-ats.access',
+      },
+    });
+  });
+
+  it('returns recoverable guidance for exact MCP tool targets without a reviewed capability', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(fixture, 'request_access', {
+      target: {
+        kind: 'tool',
+        name: 'mcp__caw-ats__ats_list_client_projects',
+      },
+      reason: 'Need to list client projects through caw-ats.',
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
+    expect(record.result.isError).not.toBe(true);
+    expect(record.result.content[0].text).toContain(
+      'Exact MCP tool "mcp__caw-ats__ats_list_client_projects" is not durable request_access authority by itself.',
+    );
+    expect(record.result.content[0].text).toContain(
+      'Request the reviewed semantic capability',
+    );
+    const taskDir = path.join(fixture.ipcDir, 'tasks');
+    expect(fs.existsSync(taskDir) ? fs.readdirSync(taskDir) : []).toEqual([]);
+  });
+
   it('rejects unknown exact Gantry tool requests before queuing review', async () => {
     const fixture = createMcpFixture();
 
