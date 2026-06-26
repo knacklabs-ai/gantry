@@ -9,9 +9,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import * as pgSchema from '@core/adapters/storage/postgres/schema/index.js';
 import type { AgentExecutionAdapter } from '@core/application/agent-execution/agent-execution-adapter.js';
+import { resolveSelectedSkillProjection } from '@core/application/skills/selected-skill-projection.js';
 import { RUNTIME_EVENT_TYPES } from '@core/domain/events/runtime-event-types.js';
 import type { JobUpsertInput } from '@core/domain/repositories/ops-repo.js';
 import type { ConversationRoute } from '@core/domain/types.js';
+import { processBrowserIpcRequest } from '@core/runtime/ipc-browser-handler.js';
+import { validateAgentToolRuntimeRules } from '@core/application/agents/agent-tool-runtime-rules.js';
 import { nowIso } from '@core/shared/time/datetime.js';
 
 import { createFakeChannelRuntime } from '../harness/fake-channel.js';
@@ -304,6 +307,81 @@ async function removeLiveTempRuntime(temp: LiveTempRuntime): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
+}
+
+async function seedBoundaryAgent(
+  runtime: PostgresIntegrationRuntime,
+  agentId: string,
+): Promise<{
+  appId: 'default';
+  agentId: string;
+  configVersionId: string;
+  llmProfileId: string;
+}> {
+  const now = nowIso();
+  const llmProfileId = `llm-profile:${agentId}`;
+  const configVersionId = `agent-config:${agentId}:1`;
+  await runtime.repositories.agents.saveAgent({
+    id: agentId as never,
+    appId: 'default' as never,
+    name: agentId,
+    status: 'active',
+    currentConfigVersionId: configVersionId as never,
+    createdAt: now as never,
+    updatedAt: now as never,
+  });
+  await runtime.service.db
+    .insert(pgSchema.llmProfilesPostgres)
+    .values({
+      id: llmProfileId,
+      appId: 'default',
+      purpose: 'chat',
+      modelAlias: 'opus',
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
+  await runtime.service.db
+    .insert(pgSchema.agentConfigVersionsPostgres)
+    .values({
+      id: configVersionId,
+      appId: 'default',
+      agentId,
+      version: 1,
+      promptProfileRef: `prompt:${agentId}`,
+      llmProfileId,
+      toolIdsJson: '[]',
+      skillIdsJson: '[]',
+      permissionPolicyIdsJson: '[]',
+      runtimeLimitsJson: '{}',
+      createdAt: now,
+    })
+    .onConflictDoNothing();
+  return { appId: 'default', agentId, configVersionId, llmProfileId };
+}
+
+async function seedBoundaryRun(
+  runtime: PostgresIntegrationRuntime,
+  input: { runId: string; agentId: string },
+): Promise<void> {
+  const seeded = await seedBoundaryAgent(runtime, input.agentId);
+  const now = nowIso();
+  await runtime.service.db
+    .insert(pgSchema.agentRunsPostgres)
+    .values({
+      id: input.runId,
+      appId: seeded.appId,
+      agentId: seeded.agentId,
+      configVersionId: seeded.configVersionId,
+      llmProfileId: seeded.llmProfileId,
+      executionProviderId: 'test:e2e',
+      cause: 'e2e',
+      status: 'running',
+      permissionDecisionIdsJson: '[]',
+      createdAt: now,
+      startedAt: now,
+    })
+    .onConflictDoNothing();
 }
 
 maybeDescribe('live turn real runner (Postgres)', () => {
@@ -601,4 +679,423 @@ maybeDescribe('live turn real runner (Postgres)', () => {
       ]),
     );
   }, 60_000);
+});
+
+maybeDescribe('agent capability boundary slices (Postgres)', () => {
+  let runtime: PostgresIntegrationRuntime;
+
+  beforeAll(async () => {
+    runtime = await createPostgresIntegrationRuntime({
+      schemaPrefix: 'capability_boundary',
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await runtime?.cleanup();
+  });
+
+  it('persists permission prompts before channel approval and keeps transient grants lease-scoped', async () => {
+    const appId = 'default' as never;
+    const runId = 'run-permission-e2e';
+    const workerId = 'worker-permission-e2e';
+    await seedBoundaryRun(runtime, {
+      runId,
+      agentId: 'agent:permission-e2e',
+    });
+    await runtime.repositories.workerCoordination.registerWorker({
+      id: workerId,
+      bootNonce: 'permission-e2e',
+    });
+    const lease = await runtime.repositories.workerCoordination.claimRunLease({
+      runId,
+      workerInstanceId: workerId,
+      ttlMs: 30_000,
+    });
+    expect(lease).not.toBeNull();
+
+    const idempotencyKey = 'permission:capability-e2e:req-1';
+    await runtime.repositories.workerCoordination.createPendingInteraction({
+      id: 'pending-permission-e2e',
+      appId,
+      runId,
+      kind: 'permission',
+      payload: {
+        requestId: 'req-1',
+        toolName: 'RunCommand(npm test)',
+      },
+      callbackRoute: { chatJid: 'tg:permission-e2e' },
+      idempotencyKey,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    let pendingWasVisibleDuringPrompt = false;
+    const fakeChannel = createFakeChannelRuntime(
+      (jid) => jid === 'tg:permission-e2e',
+      {
+        permissionDecision: async () => {
+          const pending =
+            await runtime.repositories.workerCoordination.listPendingInteractions(
+              { appId, runId },
+            );
+          pendingWasVisibleDuringPrompt = pending.some(
+            (row) =>
+              row.idempotencyKey === idempotencyKey && row.status === 'pending',
+          );
+          return {
+            approved: true,
+            mode: 'allow_once',
+            decidedBy: 'test-approver',
+          };
+        },
+      },
+    );
+
+    const decision = await fakeChannel.runtime.requestPermissionApproval(
+      'tg:permission-e2e',
+      {
+        requestId: 'req-1',
+        permissionKind: 'tool',
+        toolName: 'RunCommand(npm test)',
+        reason: 'exercise permission e2e',
+      },
+    );
+    expect(decision.approved).toBe(true);
+    expect(pendingWasVisibleDuringPrompt).toBe(true);
+
+    await expect(
+      runtime.repositories.workerCoordination.resolvePendingInteraction({
+        idempotencyKey,
+        status: 'resolved',
+        approverRef: 'test-approver',
+        resolution: { approved: true, mode: 'allow_once' },
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      runtime.repositories.workerCoordination.createTransientGrant({
+        id: 'transient-grant-permission-e2e',
+        appId,
+        runId,
+        leaseToken: lease?.leaseToken ?? '',
+        grant: { toolName: 'RunCommand(npm test)' },
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      runtime.repositories.workerCoordination.listActiveTransientGrants({
+        runId,
+      }),
+    ).resolves.toHaveLength(1);
+
+    await runtime.repositories.workerCoordination.settleRunLease({
+      runId,
+      leaseToken: lease?.leaseToken ?? '',
+      workerInstanceId: workerId,
+      fencingVersion: lease?.fencingVersion,
+      outcome: 'completed',
+    });
+    await expect(
+      runtime.repositories.workerCoordination.listActiveTransientGrants({
+        runId,
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('materializes reviewed MCP bindings and records durable MCP evidence', async () => {
+    const now = nowIso();
+    const appId = 'default' as never;
+    const agentId = 'agent:mcp-e2e' as never;
+    const serverId = 'mcp:e2e-linear' as never;
+    await seedBoundaryAgent(runtime, agentId);
+    await runtime.repositories.mcpServers.saveServer({
+      id: serverId,
+      appId,
+      name: 'e2e-linear',
+      displayName: 'E2E Linear',
+      status: 'active',
+      createdSource: 'admin',
+      riskClass: 'medium',
+      transport: 'stdio_template',
+      config: { transport: 'stdio_template', templateId: 'fake-linear' },
+      allowedToolPatterns: ['search_issues', 'create_issue'],
+      autoApproveToolPatterns: [],
+      credentialRefs: [],
+      networkHosts: [],
+      sandboxProfileId: 'sandbox:e2e-linear' as never,
+      createdAt: now as never,
+      updatedAt: now as never,
+    });
+    await runtime.repositories.mcpServers.saveAgentBinding({
+      id: 'agent-mcp-binding:e2e' as never,
+      appId,
+      agentId,
+      serverId,
+      status: 'active',
+      required: true,
+      permissionPolicyIds: [],
+      allowedToolPatterns: ['search_issues'],
+      createdAt: now as never,
+      updatedAt: now as never,
+    });
+
+    const materialized =
+      await runtime.repositories.mcpServers.listMaterializedServersForAgent({
+        appId,
+        agentId,
+      });
+    expect(materialized).toHaveLength(1);
+    expect(materialized[0]?.definition).toEqual(
+      expect.objectContaining({
+        id: serverId,
+        name: 'e2e-linear',
+        transport: 'stdio_template',
+      }),
+    );
+    expect(materialized[0]?.binding.allowedToolPatterns).toEqual([
+      'search_issues',
+    ]);
+
+    await runtime.repositories.mcpServers.appendAuditEvent({
+      id: 'mcp-audit:e2e-tool-activity' as never,
+      appId,
+      agentId,
+      serverId,
+      bindingId: 'agent-mcp-binding:e2e' as never,
+      eventType: 'tool_activity',
+      actorId: 'mcp-e2e',
+      metadata: {
+        requestedToolRule: 'mcp__e2e-linear__search_issues',
+        resultClass: 'success',
+      },
+      createdAt: now as never,
+    });
+    await expect(
+      runtime.repositories.mcpServers.listAuditEvents({ appId, serverId }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        eventType: 'tool_activity',
+        metadata: expect.objectContaining({
+          requestedToolRule: 'mcp__e2e-linear__search_issues',
+        }),
+      }),
+    ]);
+  });
+
+  it('projects only installed and bound skill artifacts for a selected agent skill', async () => {
+    const now = nowIso();
+    const appId = 'default' as never;
+    const agentId = 'agent:skill-e2e' as never;
+    const skillId = 'skill:e2e-release-notes' as never;
+    await seedBoundaryAgent(runtime, agentId);
+    const storage =
+      await runtime.storageRuntime.skillArtifacts.putSkillArtifact({
+        appId,
+        skillId,
+        skillName: 'Release Notes',
+        bundle: {
+          assets: [
+            {
+              path: 'SKILL.md',
+              content: new TextEncoder().encode(
+                '---\nname: release-notes\ndescription: Test skill\n---\n',
+              ),
+            },
+            {
+              path: 'prompts/main.md',
+              content: new TextEncoder().encode('Draft concise release notes.'),
+            },
+          ],
+        },
+      });
+    await runtime.repositories.skills.saveSkill({
+      id: skillId,
+      appId,
+      agentId,
+      name: 'Release Notes',
+      description: 'Test skill',
+      source: 'admin_uploaded',
+      status: 'installed',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      storage,
+      createdAt: now as never,
+      updatedAt: now as never,
+    });
+    await runtime.repositories.skills.saveAgentSkillBinding({
+      id: 'agent-skill-binding:e2e-release-notes' as never,
+      appId,
+      agentId,
+      skillId,
+      status: 'active',
+      createdAt: now as never,
+      updatedAt: now as never,
+    });
+
+    const projection = await resolveSelectedSkillProjection({
+      selectedSkillIds: [skillId],
+      skillRepository: runtime.repositories.skills,
+      skillArtifactStore: runtime.storageRuntime.skillArtifacts,
+      skillContext: { appId, agentId },
+    });
+    expect(projection).toEqual(
+      expect.objectContaining({
+        selectedSkillIds: [skillId],
+        skillCount: 1,
+        fileCount: 2,
+      }),
+    );
+    expect(projection?.skills[0]).toEqual(
+      expect.objectContaining({
+        id: skillId,
+        name: 'Release Notes',
+        contentHash: storage.contentHash,
+      }),
+    );
+    expect(projection?.skills[0]?.assets.map((asset) => asset.path)).toEqual([
+      'prompts/main.md',
+      'SKILL.md',
+    ]);
+  });
+
+  it('keeps Browser as the durable capability and fails closed without Browser IPC authorization', async () => {
+    const now = nowIso();
+    const appId = 'default' as never;
+    const agentId = 'agent:browser-e2e' as never;
+    await seedBoundaryAgent(runtime, agentId);
+    await runtime.repositories.tools.saveTool({
+      id: 'tool:Browser' as never,
+      appId,
+      name: 'Browser',
+      kind: 'browser',
+      provider: 'gantry',
+      displayName: 'Browser',
+      category: 'web',
+      risk: 'medium',
+      selectable: true,
+      status: 'active',
+      adapterRef: 'gantry-browser',
+      createdAt: now as never,
+      updatedAt: now as never,
+    });
+    await runtime.repositories.tools.saveAgentToolBinding({
+      id: 'agent-tool-binding:browser-e2e' as never,
+      appId,
+      agentId,
+      toolId: 'tool:Browser' as never,
+      status: 'active',
+      createdAt: now as never,
+      updatedAt: now as never,
+    });
+
+    await expect(
+      runtime.repositories.tools.listAgentToolBindings({ appId, agentId }),
+    ).resolves.toEqual([
+      expect.objectContaining({ toolId: 'tool:Browser', status: 'active' }),
+    ]);
+    expect(() =>
+      validateAgentToolRuntimeRules({
+        rules: ['Browser'],
+        errorSubject: 'browser e2e rule',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateAgentToolRuntimeRules({
+        rules: ['mcp__gantry__browser_act'],
+        errorSubject: 'browser e2e rule',
+      }),
+    ).toThrow('Gantry browser tools are runtime projections');
+
+    await expect(
+      processBrowserIpcRequest(
+        {
+          requestId: 'browser-e2e-click',
+          action: 'click',
+          payload: { selector: '#submit' },
+          appId,
+          agentId,
+          publicToolName: 'browser_act',
+        },
+        {
+          sourceAgentFolder: 'browser_e2e',
+          browserIpcAuthorized: false,
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      error:
+        'Browser IPC is not authorized for this run. Select the canonical Browser capability before using browser actions.',
+    });
+  });
+
+  it('recovers an expired live-run lease under a higher fencing version', async () => {
+    const runId = 'run-recovery-e2e';
+    await seedBoundaryRun(runtime, {
+      runId,
+      agentId: 'agent:recovery-e2e',
+    });
+    await runtime.repositories.workerCoordination.registerWorker({
+      id: 'worker-recovery-a',
+      bootNonce: 'recovery-a',
+    });
+    await runtime.repositories.workerCoordination.registerWorker({
+      id: 'worker-recovery-b',
+      bootNonce: 'recovery-b',
+    });
+    const first = await runtime.repositories.workerCoordination.claimRunLease({
+      runId,
+      workerInstanceId: 'worker-recovery-a',
+      ttlMs: 1,
+      now: '2026-06-26T00:00:00.000Z',
+    });
+    expect(first?.fencingVersion).toBe(1);
+
+    const recovered =
+      await runtime.repositories.workerCoordination.recoverExpiredRunLeases({
+        now: '2026-06-26T00:00:10.000Z',
+      });
+    expect(recovered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId,
+          fencingVersion: 1,
+          workerInstanceId: 'worker-recovery-a',
+        }),
+      ]),
+    );
+
+    const second = await runtime.repositories.workerCoordination.claimRunLease({
+      runId,
+      workerInstanceId: 'worker-recovery-b',
+      ttlMs: 120_000,
+    });
+    expect(second?.fencingVersion).toBe(2);
+    await expect(
+      runtime.repositories.workerCoordination.getActiveRunLease({ runId }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        leaseToken: second?.leaseToken,
+        workerInstanceId: 'worker-recovery-b',
+        fencingVersion: 2,
+      }),
+    );
+    await expect(
+      runtime.repositories.workerCoordination.settleRunLease({
+        runId,
+        leaseToken: first?.leaseToken ?? '',
+        workerInstanceId: 'worker-recovery-a',
+        fencingVersion: first?.fencingVersion,
+        outcome: 'completed',
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      runtime.repositories.workerCoordination.settleRunLease({
+        runId,
+        leaseToken: second?.leaseToken ?? '',
+        workerInstanceId: 'worker-recovery-b',
+        fencingVersion: second?.fencingVersion,
+        outcome: 'failed',
+      }),
+    ).resolves.toBe(true);
+  });
 });
