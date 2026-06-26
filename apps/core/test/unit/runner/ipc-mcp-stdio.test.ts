@@ -462,8 +462,16 @@ export class McpServer {
         fs.mkdirSync(responseDir, { recursive: true });
         const responsePayload = {
           taskId,
-          ok: true,
-          message: 'Scheduler task confirmed.',
+          ok: process.env.TEST_MCP_TASK_RESPONSE_OK === '0' ? false : true,
+          ...(process.env.TEST_MCP_TASK_RESPONSE_CODE
+            ? { code: process.env.TEST_MCP_TASK_RESPONSE_CODE }
+            : {}),
+          ...(process.env.TEST_MCP_TASK_RESPONSE_ERROR
+            ? { error: process.env.TEST_MCP_TASK_RESPONSE_ERROR }
+            : { message: 'Scheduler task confirmed.' }),
+          ...(process.env.TEST_MCP_TASK_RESPONSE_DETAILS
+            ? { details: JSON.parse(process.env.TEST_MCP_TASK_RESPONSE_DETAILS) }
+            : {}),
           ...(process.env.TEST_MCP_TASK_RESPONSE_DATA
             ? { data: JSON.parse(process.env.TEST_MCP_TASK_RESPONSE_DATA) }
             : {}),
@@ -835,6 +843,37 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
         arguments: { title: 'Bug' },
       },
     });
+  });
+
+  it('returns missing MCP capability denials as recoverable guidance', async () => {
+    const fixture = createMcpFixture();
+
+    const result = await runMcpFixture(
+      fixture,
+      'mcp_call_tool',
+      {
+        serverName: 'caw-ats',
+        toolName: 'ats_list_client_projects',
+        arguments: { clientName: 'Manipal' },
+      },
+      {
+        TEST_MCP_AUTO_RESPOND_TASKS: '1',
+        TEST_MCP_TASK_RESPONSE_OK: '0',
+        TEST_MCP_TASK_RESPONSE_CODE: 'missing_capability',
+        TEST_MCP_TASK_RESPONSE_ERROR:
+          'MCP tool is not approved for this agent: mcp__caw-ats__ats_list_client_projects',
+      },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
+    expect(record.result.isError).not.toBe(true);
+    expect(record.result.content[0].text).toContain(
+      'MCP tool is not approved for this agent',
+    );
+    expect(record.result.content[0].text).toContain(
+      'request_access target.kind=capability',
+    );
   });
 
   it('writes MCP tool detail requests through IPC without execution arguments', async () => {

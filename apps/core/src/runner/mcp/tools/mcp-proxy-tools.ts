@@ -71,6 +71,17 @@ export function registerMcpProxyTools(server: McpServer): void {
       });
       const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
       if (!response?.ok) {
+        const recoverable = formatRecoverableMcpAccessDenial(response);
+        if (recoverable) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: recoverable,
+              },
+            ],
+          };
+        }
         return {
           content: [
             {
@@ -132,6 +143,17 @@ export function registerMcpProxyTools(server: McpServer): void {
       });
       const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
       if (!response?.ok) {
+        const recoverable = formatRecoverableMcpAccessDenial(response);
+        if (recoverable) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: recoverable,
+              },
+            ],
+          };
+        }
         return {
           content: [
             {
@@ -202,6 +224,17 @@ export function registerMcpProxyTools(server: McpServer): void {
       });
       const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
       if (!response?.ok) {
+        const recoverable = formatRecoverableMcpAccessDenial(response);
+        if (recoverable) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: recoverable,
+              },
+            ],
+          };
+        }
         return {
           content: [
             {
@@ -265,6 +298,17 @@ export function registerMcpProxyTools(server: McpServer): void {
       });
       const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
       if (!response?.ok) {
+        const recoverable = formatRecoverableMcpAccessDenial(response);
+        if (recoverable) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: recoverable,
+              },
+            ],
+          };
+        }
         return {
           content: [
             {
@@ -285,4 +329,23 @@ export function registerMcpProxyTools(server: McpServer): void {
       };
     },
   );
+}
+
+function formatRecoverableMcpAccessDenial(
+  response?: {
+    code?: string;
+    details?: string[];
+    error?: string;
+  } | null,
+): string | null {
+  if (response?.code !== 'missing_capability') return null;
+  const lines = [
+    response.error || 'MCP access is missing for this tool.',
+    '',
+    'This is recoverable: request reviewed access with request_access target.kind=capability, then retry the MCP tool after approval.',
+  ];
+  if (response.details && response.details.length > 0) {
+    lines.push('', ...response.details.map((item) => `- ${item}`));
+  }
+  return lines.join('\n');
 }
