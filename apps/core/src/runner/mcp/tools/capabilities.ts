@@ -121,8 +121,18 @@ export function registerAccessRequestTool(
                 submitCapabilityReviewTask,
               });
             }
+            const mcpCapability = await semanticCapabilityForGuessedMcpAccess(
+              options,
+              target.id,
+            );
+            if (mcpCapability) {
+              return submitSemanticCapabilityRequest({
+                capability: mcpCapability,
+                args,
+                submitCapabilityReviewTask,
+              });
+            }
             return {
-              isError: true,
               content: [
                 {
                   type: 'text' as const,
@@ -203,28 +213,11 @@ export function registerAccessRequestTool(
                 ],
               };
             }
-            return submitCapabilityReviewTask(
-              'request_permission',
-              'Capability',
-              {
-                permissionKind: 'tool',
-                capabilityRequestSource: 'request_access',
-                capabilityId: mcpToolCapability.capabilityId,
-                capabilityDisplayName: mcpToolCapability.displayName,
-                accountLabel: mcpToolCapability.accountLabel,
-                can: mcpToolCapability.can,
-                cannot: mcpToolCapability.cannot,
-                credentialSource: mcpToolCapability.credentialSource,
-                risk: mcpToolCapability.risk,
-                ...(mcpToolCapability.networkHosts?.length
-                  ? { networkHosts: mcpToolCapability.networkHosts }
-                  : {}),
-                temporaryOnly: args.temporaryOnly ?? false,
-                broadAccess: args.broadAccess,
-                riskClass: args.riskClass,
-                reason: args.reason,
-              },
-            );
+            return submitSemanticCapabilityRequest({
+              capability: mcpToolCapability,
+              args,
+              submitCapabilityReviewTask,
+            });
           }
           if (isThirdPartyMcpToolName(target.name)) {
             return {
@@ -348,6 +341,45 @@ async function semanticCapabilityForMcpTool(
   );
 }
 
+async function semanticCapabilityForGuessedMcpAccess(
+  options: { listCapabilities?: SemanticCapabilityProvider },
+  capabilityId: string,
+): Promise<SemanticCapabilityDefinition | null> {
+  const normalized = normalizeCapabilityGuess(capabilityId);
+  if (!normalized) return null;
+  const capabilities = await availableSemanticCapabilities(options);
+  const matches = capabilities.filter((capability) =>
+    mcpSourceNamesForCapability(capability).some(
+      (sourceName) => normalizeCapabilityGuess(sourceName) === normalized,
+    ),
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function mcpSourceNamesForCapability(
+  capability: SemanticCapabilityDefinition,
+): string[] {
+  const names = new Set<string>();
+  for (const binding of capability.implementationBindings) {
+    if (binding.kind !== 'mcp_tool' || !binding.mcpTool) continue;
+    const match = /^mcp__(.+?)__/.exec(binding.mcpTool);
+    if (match?.[1]?.trim()) names.add(match[1].trim());
+  }
+  return [...names];
+}
+
+function normalizeCapabilityGuess(value: string): string {
+  const parts = value
+    .trim()
+    .toLowerCase()
+    .replace(/^mcp[._:-]+/, '')
+    .split(/[._:-]+/)
+    .filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
+  return parts[0];
+}
+
 function isThirdPartyMcpToolName(value: string): boolean {
   const trimmed = value.trim();
   return /^mcp__(?!gantry__)[A-Za-z0-9._-]+__[A-Za-z0-9._-]+$/.test(trimmed);
@@ -358,6 +390,36 @@ function requestAccessInputError(message: string): ToolResponse {
     isError: true,
     content: [{ type: 'text' as const, text: message }],
   };
+}
+
+function submitSemanticCapabilityRequest(input: {
+  capability: SemanticCapabilityDefinition;
+  args: {
+    temporaryOnly?: boolean;
+    broadAccess?: boolean;
+    riskClass?: 'low' | 'medium' | 'high' | 'critical';
+    reason: string;
+  };
+  submitCapabilityReviewTask: CapabilityReviewSubmitter;
+}): Promise<ToolResponse> {
+  return input.submitCapabilityReviewTask('request_permission', 'Capability', {
+    permissionKind: 'tool',
+    capabilityRequestSource: 'request_access',
+    capabilityId: input.capability.capabilityId,
+    capabilityDisplayName: input.capability.displayName,
+    accountLabel: input.capability.accountLabel,
+    can: input.capability.can,
+    cannot: input.capability.cannot,
+    credentialSource: input.capability.credentialSource,
+    risk: input.capability.risk,
+    ...(input.capability.networkHosts?.length
+      ? { networkHosts: input.capability.networkHosts }
+      : {}),
+    temporaryOnly: input.args.temporaryOnly ?? false,
+    broadAccess: input.args.broadAccess,
+    riskClass: input.args.riskClass,
+    reason: input.args.reason,
+  });
 }
 
 function submitExactToolRequest(input: {
