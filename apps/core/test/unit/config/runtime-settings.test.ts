@@ -178,8 +178,8 @@ describe('runtime settings', () => {
           maxMemoryContextChars: 14000,
         },
       },
-      modelAccess: {
-        enabled: true,
+      credentialBroker: {
+        mode: 'gantry',
         gateway: { bindHost: '127.0.0.1' },
       },
       memory: {
@@ -308,6 +308,7 @@ describe('runtime settings', () => {
     ]);
     expect(settings.runtime.deploymentMode).toBe('fleet');
     expect(settings.runtime.queue.maxMessageRuns).toBe(3);
+    expect(settings.credentialBroker.mode).toBe('gantry');
     expect(settings.memory.embeddings.dailyLimit).toBe(500);
     expect(settings.browser.usage.windowMs).toBe(60000);
     expect(settings.permissions.yoloMode.denylistPaths).toEqual(['/etc/*']);

@@ -304,6 +304,27 @@ function normalizeCompactAgents(
   normalized.agents = agents;
 }
 
+function normalizeTypedCredentialBroker(
+  normalized: Record<string, unknown>,
+  root: Record<string, unknown>,
+): void {
+  if (normalized.model_access !== undefined || !isRecord(root.credentialBroker)) {
+    delete normalized.credentialBroker;
+    return;
+  }
+  const credentialBroker = root.credentialBroker;
+  const gateway = isRecord(credentialBroker.gateway)
+    ? credentialBroker.gateway
+    : {};
+  normalized.model_access = {
+    enabled: credentialBroker.mode === 'gantry',
+    gateway: {
+      bind_host: gateway.bind_host,
+    },
+  };
+  delete normalized.credentialBroker;
+}
+
 function normalizeCompactConversations(
   normalized: Record<string, unknown>,
   root: Record<string, unknown>,
@@ -424,10 +445,12 @@ function normalizeCompactConversations(
 export function normalizeCompactRuntimeSettingsRoot(
   root: Record<string, unknown>,
 ): Record<string, unknown> {
-  const normalizedRoot = normalizeStoredRevisionAliases(
-    root,
-  ) as Record<string, unknown>;
+  const normalizedRoot = normalizeStoredRevisionAliases(root) as Record<
+    string,
+    unknown
+  >;
   const normalized: Record<string, unknown> = { ...normalizedRoot };
+  normalizeTypedCredentialBroker(normalized, normalizedRoot);
   normalizeCompactDefaults(normalized, normalizedRoot);
   normalizeCompactProviders(normalized, normalizedRoot);
   normalizeCompactAgents(normalized, normalizedRoot);
