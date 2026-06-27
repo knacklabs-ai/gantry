@@ -34,6 +34,87 @@ function firstDefined(...values: unknown[]): unknown {
   return values.find((value) => value !== undefined);
 }
 
+const STORED_REVISION_KEY_ALIASES = new Map<string, string>([
+  ['addedAt', 'added_at'],
+  ['agentHarness', 'agent_harness'],
+  ['accessPreset', 'access_preset'],
+  ['artifactStore', 'artifact_store'],
+  ['baseRetryMs', 'base_retry_ms'],
+  ['batchSize', 'batch_size'],
+  ['bindHost', 'bind_host'],
+  ['controlApprovers', 'control_approvers'],
+  ['contextWindowTokens', 'context_window_tokens'],
+  ['cpuSeconds', 'cpu_seconds'],
+  ['dailyLimit', 'daily_limit'],
+  ['defaultConnection', 'default_connection'],
+  ['defaultModel', 'default_model'],
+  ['denylistPaths', 'denylist_paths'],
+  ['desiredState', 'desired_state'],
+  ['deploymentMode', 'deployment_mode'],
+  ['displayName', 'display_name'],
+  ['drainDeadlineMs', 'drain_deadline_ms'],
+  ['externalId', 'external_id'],
+  ['extractorMaxFacts', 'extractor_max_facts'],
+  ['extractorMinConfidence', 'extractor_min_confidence'],
+  ['forcePathStyle', 'force_path_style'],
+  ['inputUsdPerMillionTokens', 'input_usd_per_million_tokens'],
+  ['liveTurns', 'live_turns'],
+  ['maxActionsPerWindow', 'max_actions_per_window'],
+  ['maxConcurrentPerSite', 'max_concurrent_per_site'],
+  ['maxItemsPerRun', 'max_items_per_run'],
+  ['maxJobRuns', 'max_job_runs'],
+  ['maxMemoryContextChars', 'max_memory_context_chars'],
+  ['maxMessageBacklog', 'max_message_backlog'],
+  ['maxMessageRuns', 'max_message_runs'],
+  ['maxOutputTokens', 'max_output_tokens'],
+  ['maxPending', 'max_pending'],
+  ['maxProcesses', 'max_processes'],
+  ['maxRetries', 'max_retries'],
+  ['maxTaskBacklog', 'max_task_backlog'],
+  ['memoryItemLimit', 'memory_item_limit'],
+  ['memoryMb', 'memory_mb'],
+  ['memoryScope', 'memory_scope'],
+  ['mcpServers', 'mcp_servers'],
+  ['modelAccess', 'model_access'],
+  ['modelAliases', 'model_aliases'],
+  ['modelFamilies', 'model_families'],
+  ['oneTimeJobDefaultModel', 'one_time_job_default_model'],
+  ['outputUsdPerMillionTokens', 'output_usd_per_million_tokens'],
+  ['providerBatchMinItems', 'provider_batch_min_items'],
+  ['providerConnection', 'provider_connection'],
+  ['providerConnections', 'provider_connections'],
+  ['providerModelId', 'provider_model_id'],
+  ['recurringJobDefaultModel', 'recurring_job_default_model'],
+  ['recommendedAlias', 'recommended_alias'],
+  ['relationshipMode', 'relationship_mode'],
+  ['requestsPerMinute', 'requests_per_minute'],
+  ['requiresTrigger', 'requires_trigger'],
+  ['resourceLimits', 'resource_limits'],
+  ['runtimeSecretRefs', 'runtime_secret_refs'],
+  ['senderPolicy', 'sender_policy'],
+  ['supportedWorkloads', 'supported_workloads'],
+  ['supportsThinking', 'supports_thinking'],
+  ['supportsTools', 'supports_tools'],
+  ['urlEnv', 'url_env'],
+  ['verifiedAt', 'verified_at'],
+  ['windowMs', 'window_ms'],
+  ['yoloMode', 'yolo_mode'],
+]);
+
+function normalizeStoredRevisionAliases(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeStoredRevisionAliases);
+  if (!isRecord(value)) return value;
+  const normalized: Record<string, unknown> = {};
+  for (const [key, rawItem] of Object.entries(value)) {
+    const normalizedKey = STORED_REVISION_KEY_ALIASES.get(key) ?? key;
+    if (normalized[normalizedKey] !== undefined && normalizedKey !== key) {
+      continue;
+    }
+    normalized[normalizedKey] = normalizeStoredRevisionAliases(rawItem);
+  }
+  return normalized;
+}
+
 function compactProviderToVerbose(
   providerId: string,
   raw: unknown,
@@ -188,9 +269,28 @@ function normalizeCompactAgents(
         'recurring_job_default_model',
       ]),
     );
-    const { jobs: _jobs, ...verboseAgent } = agentRaw;
+    const typedAccess =
+      !isRecord(agentRaw.access) &&
+      (isRecord(agentRaw.sources) ||
+        Array.isArray(agentRaw.capabilities) ||
+        agentRaw.access_preset !== undefined)
+        ? {
+            sources: agentRaw.sources,
+            selections: agentRaw.capabilities,
+            preset: agentRaw.access_preset,
+          }
+        : undefined;
+    const {
+      jobs: _jobs,
+      folder: _folder,
+      sources: _sources,
+      capabilities: _capabilities,
+      access_preset: _accessPreset,
+      ...verboseAgent
+    } = agentRaw;
     agents[agentId] = {
       ...verboseAgent,
+      access: agentRaw.access ?? typedAccess,
       one_time_job_default_model:
         agentRaw.one_time_job_default_model ??
         jobs.one_time_model ??
@@ -324,10 +424,13 @@ function normalizeCompactConversations(
 export function normalizeCompactRuntimeSettingsRoot(
   root: Record<string, unknown>,
 ): Record<string, unknown> {
-  const normalized: Record<string, unknown> = { ...root };
-  normalizeCompactDefaults(normalized, root);
-  normalizeCompactProviders(normalized, root);
-  normalizeCompactAgents(normalized, root);
-  normalizeCompactConversations(normalized, root);
+  const normalizedRoot = normalizeStoredRevisionAliases(
+    root,
+  ) as Record<string, unknown>;
+  const normalized: Record<string, unknown> = { ...normalizedRoot };
+  normalizeCompactDefaults(normalized, normalizedRoot);
+  normalizeCompactProviders(normalized, normalizedRoot);
+  normalizeCompactAgents(normalized, normalizedRoot);
+  normalizeCompactConversations(normalized, normalizedRoot);
   return normalized;
 }
