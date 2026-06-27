@@ -50,6 +50,67 @@ describe('runtime settings', () => {
     expect(rendered).not.toContain('defaultConnection');
   });
 
+  it('accepts camelCase conversation fields from stored revision documents', () => {
+    const settings = parseRuntimeSettingsObject({
+      providers: {
+        slack: {
+          enabled: true,
+          defaultConnection: 'slack_default',
+        },
+      },
+      provider_connections: {
+        slack_default: {
+          provider: 'slack',
+          runtime_secret_refs: {
+            app_token: 'SLACK_APP_TOKEN',
+            bot_token: 'SLACK_BOT_TOKEN',
+          },
+        },
+      },
+      agents: {
+        main_agent: {
+          name: 'ReAgent',
+        },
+      },
+      conversations: {
+        slack_default_c123: {
+          provider: 'slack',
+          providerConnection: 'slack_default',
+          externalId: 'C123',
+          kind: 'channel',
+          displayName: 'agent-gantry-test',
+          senderPolicy: { allow: '*', mode: 'trigger' },
+          controlApprovers: ['U123'],
+          agent: 'main_agent',
+          trigger: '@reagent',
+          addedAt: '2026-06-23T14:54:36.468Z',
+          requiresTrigger: true,
+          memoryScope: 'conversation',
+        },
+      },
+    });
+
+    expect(settings.conversations.slack_default_c123).toMatchObject({
+      providerConnection: 'slack_default',
+      externalId: 'C123',
+      displayName: 'agent-gantry-test',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: ['U123'],
+    });
+    expect(settings.bindings.slack_default_c123).toMatchObject({
+      agent: 'main_agent',
+      trigger: '@reagent',
+      addedAt: '2026-06-23T14:54:36.468Z',
+      requiresTrigger: true,
+      memoryScope: 'conversation',
+    });
+
+    const rendered = renderRuntimeSettingsYaml(settings);
+    expect(rendered).toContain('id: C123');
+    expect(rendered).not.toContain('externalId');
+    expect(rendered).not.toContain('requiresTrigger');
+  });
+
   it('adds active MCP source refs before desired-state mirroring reconciles settings', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.main_agent = {

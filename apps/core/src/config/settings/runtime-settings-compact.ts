@@ -30,6 +30,10 @@ function defaultConnectionIdForProvider(providerId: string): string {
   return `${providerId}_default`;
 }
 
+function firstDefined(...values: unknown[]): unknown {
+  return values.find((value) => value !== undefined);
+}
+
 function compactProviderToVerbose(
   providerId: string,
   raw: unknown,
@@ -227,19 +231,27 @@ function normalizeCompactConversations(
       new Set([
         'provider',
         'provider_connection',
+        'providerConnection',
         'id',
         'external_id',
+        'externalId',
         'type',
         'kind',
         'display_name',
+        'displayName',
         'sender_policy',
+        'senderPolicy',
         'approvers',
         'control_approvers',
+        'controlApprovers',
         'agent',
         'trigger',
         'added_at',
+        'addedAt',
         'requires_trigger',
+        'requiresTrigger',
         'memory_scope',
+        'memoryScope',
         'model',
       ]),
     );
@@ -252,26 +264,55 @@ function normalizeCompactConversations(
         ? (providers[providerId] as Record<string, unknown>)
         : undefined;
     const providerConnection =
-      conversationRaw.provider_connection ??
+      firstDefined(
+        conversationRaw.provider_connection,
+        conversationRaw.providerConnection,
+      ) ??
       provider?.default_connection ??
       (providerId ? defaultConnectionIdForProvider(providerId) : undefined);
+    const externalId = firstDefined(
+      conversationRaw.id,
+      conversationRaw.external_id,
+      conversationRaw.externalId,
+    );
+    const kind = firstDefined(conversationRaw.type, conversationRaw.kind);
+    const displayName = firstDefined(
+      conversationRaw.display_name,
+      conversationRaw.displayName,
+    );
+    const senderPolicy = firstDefined(
+      conversationRaw.sender_policy,
+      conversationRaw.senderPolicy,
+    );
+    const controlApprovers = firstDefined(
+      conversationRaw.approvers,
+      conversationRaw.control_approvers,
+      conversationRaw.controlApprovers,
+    );
     conversations[conversationId] = {
       provider_connection: providerConnection,
-      external_id: conversationRaw.id ?? conversationRaw.external_id,
-      kind: conversationRaw.type ?? conversationRaw.kind,
-      display_name: conversationRaw.display_name,
-      sender_policy: conversationRaw.sender_policy,
-      control_approvers:
-        conversationRaw.approvers ?? conversationRaw.control_approvers,
+      external_id: externalId,
+      kind,
+      display_name: displayName,
+      sender_policy: senderPolicy,
+      control_approvers: controlApprovers,
     };
     if (conversationRaw.agent !== undefined) {
       bindings[conversationId] = {
         agent: conversationRaw.agent,
         conversation: conversationId,
         trigger: conversationRaw.trigger,
-        added_at: conversationRaw.added_at ?? new Date(0).toISOString(),
-        requires_trigger: conversationRaw.requires_trigger,
-        memory_scope: conversationRaw.memory_scope,
+        added_at:
+          firstDefined(conversationRaw.added_at, conversationRaw.addedAt) ??
+          new Date(0).toISOString(),
+        requires_trigger: firstDefined(
+          conversationRaw.requires_trigger,
+          conversationRaw.requiresTrigger,
+        ),
+        memory_scope: firstDefined(
+          conversationRaw.memory_scope,
+          conversationRaw.memoryScope,
+        ),
         model: conversationRaw.model,
       };
     }
