@@ -38,20 +38,21 @@ export async function hydrateTeamsConversationContext(
     };
   }
 
-  if (
-    (request.threadId && !sdkClient.listChannelMessageReplies) ||
-    (!request.threadId && !sdkClient.listChannelMessages)
-  ) {
+  if (request.threadId) {
+    if (!sdkClient.getChannelMessage && !sdkClient.listChannelMessageReplies) {
+      return skippedTeamsHydration(request);
+    }
+  } else if (!sdkClient.listChannelMessages) {
     return skippedTeamsHydration(request);
   }
 
   try {
     const rawMessages = request.threadId
-      ? await sdkClient.listChannelMessageReplies!({
+      ? await hydrateTeamsThreadMessages({
+          request,
           conversationId,
-          messageId: request.threadId,
-          beforeMessageId: request.latestMessage.external_message_id,
           limit,
+          sdkClient,
         })
       : await sdkClient.listChannelMessages!({
           conversationId,
@@ -93,6 +94,52 @@ export async function hydrateTeamsConversationContext(
       reason: 'provider_error',
       messages: [],
     };
+  }
+}
+
+async function hydrateTeamsThreadMessages(input: {
+  request: ConversationContextHydrationRequest;
+  conversationId: string;
+  limit: number;
+  sdkClient: TeamsSdkClient;
+}): Promise<TeamsContextMessage[]> {
+  const rootMessage = input.sdkClient.getChannelMessage
+    ? await fetchTeamsThreadRootMessage(input)
+    : null;
+  const replyLimit = Math.max(0, input.limit - (rootMessage ? 1 : 0));
+  if (replyLimit <= 0 || !input.sdkClient.listChannelMessageReplies) {
+    return rootMessage ? [rootMessage] : [];
+  }
+  const replies = await input.sdkClient.listChannelMessageReplies({
+    conversationId: input.conversationId,
+    messageId: input.request.threadId!,
+    beforeMessageId: input.request.latestMessage.external_message_id,
+    limit: replyLimit,
+  });
+  return rootMessage ? [rootMessage, ...replies] : replies;
+}
+
+async function fetchTeamsThreadRootMessage(input: {
+  request: ConversationContextHydrationRequest;
+  conversationId: string;
+  sdkClient: TeamsSdkClient;
+}): Promise<TeamsContextMessage | null> {
+  try {
+    return await input.sdkClient.getChannelMessage!({
+      conversationId: input.conversationId,
+      messageId: input.request.threadId!,
+    });
+  } catch (err) {
+    logger.debug(
+      {
+        providerId: 'teams',
+        conversationJid: input.request.conversationJid,
+        threadId: input.request.threadId,
+        errorName: err instanceof Error ? err.name : typeof err,
+      },
+      'Teams thread root message hydration failed',
+    );
+    return null;
   }
 }
 

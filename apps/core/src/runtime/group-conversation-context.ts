@@ -8,6 +8,8 @@ import {
   shouldDropMessage,
 } from '../platform/sender-allowlist.js';
 import type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
   GroupProcessingDeps,
   GroupProcessingRepository,
 } from './group-processing-types.js';
@@ -15,6 +17,8 @@ import {
   buildConversationContextPacket,
   CONVERSATION_CONTEXT_LIMITS,
 } from './conversation-context.js';
+
+const CONVERSATION_CONTEXT_HYDRATION_TIMEOUT_MS = 2_500;
 
 export async function buildGroupTurnConversationContext(input: {
   deps: GroupProcessingDeps;
@@ -34,28 +38,19 @@ export async function buildGroupTurnConversationContext(input: {
     repository: input.repository,
   });
   const hydration = shouldHydrateConversationContext(conversationContext)
-    ? await input.deps.channelRuntime
-        .hydrateConversationContext?.({
+    ? await hydrateConversationContextWithDeadline({
+        hydrate: input.deps.channelRuntime.hydrateConversationContext,
+        request: {
           conversationJid: input.chatJid,
           threadId: input.activeThreadId,
           latestMessage: input.latestMessage,
           limits: CONVERSATION_CONTEXT_LIMITS,
-        })
-        .catch((err) => {
-          logger.warn(
-            {
-              hydrationError: hydrationErrorDiagnostics(err),
-              providerId: input.latestMessage.provider,
-              chatJid: input.chatJid,
-              threadId: input.activeThreadId,
-            },
-            'Conversation context hydration failed',
-          );
-          return undefined;
-        })
+        },
+        providerId: input.latestMessage.provider,
+      })
     : undefined;
   const rawHydratedMessages = hydration?.messages ?? [];
-  const hydratedMessages = filterHydratedMessagesBySenderPolicy({
+  const hydratedMessages = filterHydratedMessagesForPersistence({
     chatJid: input.chatJid,
     agentFolder: input.agentFolder,
     messages: rawHydratedMessages,
@@ -70,7 +65,7 @@ export async function buildGroupTurnConversationContext(input: {
         messageCount: rawHydratedMessages.length,
         droppedCount: droppedHydratedMessages,
       },
-      'Conversation context hydration dropped messages by sender policy',
+      'Conversation context hydration dropped messages before persistence',
     );
   }
   let storedHydratedMessageCount = 0;
@@ -135,6 +130,53 @@ export async function buildGroupTurnConversationContext(input: {
   };
 }
 
+async function hydrateConversationContextWithDeadline(input: {
+  hydrate: GroupProcessingDeps['channelRuntime']['hydrateConversationContext'];
+  request: ConversationContextHydrationRequest;
+  providerId: string | undefined;
+}): Promise<ConversationContextHydrationResult | undefined> {
+  const hydrate = input.hydrate;
+  if (!hydrate) return undefined;
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const hydration = Promise.resolve()
+    .then(() => hydrate(input.request))
+    .catch((err) => {
+      if (!timedOut) {
+        logger.warn(
+          {
+            hydrationError: hydrationErrorDiagnostics(err),
+            providerId: input.providerId,
+            chatJid: input.request.conversationJid,
+            threadId: input.request.threadId,
+          },
+          'Conversation context hydration failed',
+        );
+      }
+      return undefined;
+    });
+  const deadline = new Promise<undefined>((resolve) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      logger.warn(
+        {
+          providerId: input.providerId,
+          chatJid: input.request.conversationJid,
+          threadId: input.request.threadId,
+          timeoutMs: CONVERSATION_CONTEXT_HYDRATION_TIMEOUT_MS,
+        },
+        'Conversation context hydration timed out',
+      );
+      resolve(undefined);
+    }, CONVERSATION_CONTEXT_HYDRATION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([hydration, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function shouldHydrateConversationContext(
   context: Awaited<ReturnType<typeof buildConversationContextPacket>>,
 ) {
@@ -147,7 +189,7 @@ function shouldHydrateConversationContext(
   return !context.metadata.recentChannelWindowComplete;
 }
 
-function filterHydratedMessagesBySenderPolicy(input: {
+function filterHydratedMessagesForPersistence(input: {
   chatJid: string;
   agentFolder: string;
   messages: NewMessage[];
@@ -155,7 +197,9 @@ function filterHydratedMessagesBySenderPolicy(input: {
   if (input.messages.length === 0) return input.messages;
   const allowlistCfg = loadSenderAllowlist();
   return input.messages.filter((message) => {
-    if (message.is_from_me) return true;
+    if (message.is_from_me === true || message.is_bot_message === true) {
+      return false;
+    }
     if (!shouldDropMessage(input.chatJid, allowlistCfg, input.agentFolder)) {
       return true;
     }

@@ -78,6 +78,13 @@ const DISCORD_GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 const DISCORD_RETRY_DELAY_FALLBACK_MS = 1000;
 const DISCORD_RETRY_DELAY_MAX_MS = 5000;
 const DISCORD_PERMISSION_FULL_VIEW_PREFIX = 'gantry:perm_full:';
+const DISCORD_MESSAGE_CHANNEL_CACHE_TTL_MS = 10 * 60 * 1000;
+const DISCORD_MESSAGE_CHANNEL_CACHE_MAX_ENTRIES = 5000;
+
+type DiscordMessageChannelCacheEntry = {
+  channelId: string;
+  expiresAtMs: number;
+};
 const DISCORD_EPHEMERAL_MESSAGE_LIMIT = 1900;
 
 export function normalizeDiscordJid(raw: string): string | null {
@@ -211,6 +218,10 @@ export class DiscordChannel implements ChannelAdapter {
     { channelId: string; messageId: string }
   >();
   private readonly reactionKeys = new Set<string>();
+  private readonly messageChannelIds = new Map<
+    string,
+    DiscordMessageChannelCacheEntry
+  >();
   private readonly channelContextCache: DiscordConversationContextCache =
     new Map();
 
@@ -270,7 +281,10 @@ export class DiscordChannel implements ChannelAdapter {
     messageRef: string,
     emoji: string,
   ): Promise<void> {
-    const channelId = discordChannelIdFromJid(jid);
+    const parentChannelId = discordChannelIdFromJid(jid);
+    const channelId =
+      this.resolveMessageChannelId(this.messageChannelKey(jid, messageRef)) ||
+      parentChannelId;
     if (!channelId || !messageRef.trim()) return;
     const reaction = discordReactionEmoji(emoji);
     const key = `${channelId}:${messageRef}:${reaction}`;
@@ -312,8 +326,18 @@ export class DiscordChannel implements ChannelAdapter {
   ): Promise<void> {
     const channelId = options.threadId || discordChannelIdFromJid(jid);
     if (!channelId) return;
+    const generationKey = `${jid}\n${options.threadId ?? ''}\n${options.generation ?? ''}`;
+    const controlKey = `${jid}\n${options.threadId ?? ''}\ncontrol`;
+    const hasStopAction = options.actionAffordances?.some(
+      (action) => action.kind === 'live_turn_stop',
+    );
+    const progressKey =
+      hasStopAction ||
+      (options.done && this.activeProgressMessages.has(controlKey))
+        ? controlKey
+        : generationKey;
     await sendDiscordProgressUpdate({
-      key: `${jid}\n${options.threadId ?? ''}\n${options.generation ?? ''}`,
+      key: progressKey,
       activeMessages: this.activeProgressMessages,
       text,
       options,
@@ -685,6 +709,13 @@ export class DiscordChannel implements ChannelAdapter {
     const context = await this.resolveInteractionConversationContext(
       message.channel_id,
     );
+    if (context.threadId) {
+      this.rememberMessageChannelId(
+        context.conversationJid,
+        message.id,
+        message.channel_id,
+      );
+    }
     await this.opts.onChatMetadata(
       context.conversationJid,
       message.timestamp || new Date().toISOString(),
@@ -709,6 +740,48 @@ export class DiscordChannel implements ChannelAdapter {
       reply_to_sender_name: userName(message.referenced_message?.author, ''),
       ...(attachments.length > 0 ? { attachments } : {}),
     });
+  }
+
+  private messageChannelKey(jid: string, messageRef: string): string {
+    return `${jid.trim()}:${messageRef.trim()}`;
+  }
+
+  private rememberMessageChannelId(
+    jid: string,
+    messageRef: string,
+    channelId: string,
+  ): void {
+    const now = currentTimeMs();
+    const key = this.messageChannelKey(jid, messageRef);
+    this.messageChannelIds.delete(key);
+    this.messageChannelIds.set(key, {
+      channelId,
+      expiresAtMs: now + DISCORD_MESSAGE_CHANNEL_CACHE_TTL_MS,
+    });
+    this.pruneMessageChannelIds(now);
+  }
+
+  private resolveMessageChannelId(key: string): string | undefined {
+    const entry = this.messageChannelIds.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAtMs <= currentTimeMs()) {
+      this.messageChannelIds.delete(key);
+      return undefined;
+    }
+    return entry.channelId;
+  }
+
+  private pruneMessageChannelIds(now: number): void {
+    for (const [key, entry] of this.messageChannelIds) {
+      if (entry.expiresAtMs <= now) this.messageChannelIds.delete(key);
+    }
+    while (
+      this.messageChannelIds.size > DISCORD_MESSAGE_CHANNEL_CACHE_MAX_ENTRIES
+    ) {
+      const oldestKey = this.messageChannelIds.keys().next().value;
+      if (!oldestKey) break;
+      this.messageChannelIds.delete(oldestKey);
+    }
   }
 
   private async handleInteraction(interaction: DiscordInteraction) {

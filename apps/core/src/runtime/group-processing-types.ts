@@ -2,12 +2,15 @@ import type { ChildProcess } from 'child_process';
 
 import type {
   MessageSendOptions,
-  NewMessage,
   ProgressUpdateOptions,
   ConversationRoute,
   StreamingChunkOptions,
   ThinkingOverride,
 } from '../domain/types.js';
+import type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
+} from '../domain/ports/conversation-context-hydration.js';
 import type {
   RuntimeAgentSessionRepository,
   RuntimeMessageRepository,
@@ -34,27 +37,10 @@ import type { AsyncTaskRepository } from '../domain/ports/async-tasks.js';
 import type { PatternCandidateRepository } from '../domain/ports/pattern-candidates.js';
 import type { AgentTodoRender } from '../domain/ports/task-lifecycle.js';
 
-export interface ConversationContextHydrationRequest {
-  conversationJid: string;
-  threadId?: string | null;
-  latestMessage: Pick<
-    NewMessage,
-    'id' | 'timestamp' | 'external_message_id' | 'thread_id'
-  >;
-  limits: {
-    channelMessages: number;
-    threadMessages: number;
-  };
-}
-
-export interface ConversationContextHydrationResult {
-  providerId: string;
-  attempted: boolean;
-  skipped?: boolean;
-  failed?: boolean;
-  reason?: string;
-  messages?: NewMessage[];
-}
+export type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
+};
 
 export type GroupProcessingRepository = RuntimeAgentSessionRepository &
   RuntimeMessageRepository;
@@ -74,6 +60,7 @@ export interface GroupProcessor {
         jid: string;
         messageRef: string;
       }) => Promise<void> | void;
+      onLiveStopActionToken?: (token: string) => Promise<void> | void;
     },
   ) => Promise<boolean>;
 }

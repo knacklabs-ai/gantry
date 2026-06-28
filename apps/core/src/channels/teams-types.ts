@@ -53,6 +53,11 @@ export interface TeamsSdkMessageListInput {
   limit: number;
 }
 
+export interface TeamsSdkMessageGetInput {
+  conversationId: string;
+  messageId: string;
+}
+
 export interface TeamsSdkReplyListInput extends TeamsSdkMessageListInput {
   messageId: string;
 }
@@ -94,6 +99,9 @@ export interface TeamsSdkClient {
   listChannelMessages?(
     input: TeamsSdkMessageListInput,
   ): Promise<TeamsContextMessage[]>;
+  getChannelMessage?(
+    input: TeamsSdkMessageGetInput,
+  ): Promise<TeamsContextMessage>;
   listChannelMessageReplies?(
     input: TeamsSdkReplyListInput,
   ): Promise<TeamsContextMessage[]>;

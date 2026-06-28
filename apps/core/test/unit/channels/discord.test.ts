@@ -368,6 +368,7 @@ describe('DiscordChannel', () => {
       headline: 'Done',
       status: 'done',
       elapsed: '2m 20s',
+      stop: { label: 'Stop', actionToken: 'stale-stop-token' },
       items: [{ id: '1', title: 'First', status: 'completed' }],
     });
 
@@ -379,6 +380,7 @@ describe('DiscordChannel', () => {
     );
     const updated = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(updated.content).toContain('✅ Done · 2m 20s');
+    expect(updated.components).toEqual([]);
   });
 
   it('omits broken Stop buttons on threaded todo messages', async () => {
@@ -508,6 +510,38 @@ describe('DiscordChannel', () => {
     );
     const doneBody = JSON.parse(
       String(fetchMock.mock.calls[2]?.[1]?.body || '{}'),
+    );
+    expect(doneBody).toMatchObject({ content: 'Done', components: [] });
+    fetchMock.mockRestore();
+  });
+
+  it('settles the Discord Stop progress message across generation rollover', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'progress-1' }))
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const channel = new DiscordChannel('bot-token', 'app-id', opts());
+
+    await channel.sendProgressUpdate('dc:channel-1', '', {
+      generation: 1,
+      actionOnly: true,
+      actionAffordances: [
+        { kind: 'live_turn_stop', label: 'Stop', actionToken: 'token-1' },
+      ],
+    });
+    await channel.sendProgressUpdate('dc:channel-1', 'Done', {
+      generation: 2,
+      done: true,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://discord.com/api/v10/channels/channel-1/messages/progress-1',
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+    const doneBody = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body || '{}'),
     );
     expect(doneBody).toMatchObject({ content: 'Done', components: [] });
     fetchMock.mockRestore();
@@ -808,16 +842,43 @@ describe('DiscordChannel', () => {
 
   it('normalizes Discord thread channel events to the parent conversation', async () => {
     let socket!: FakeWebSocket;
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        jsonResponse({ url: 'wss://gateway.discord.test' }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ id: 'thread-1', type: 11, parent_id: 'parent-1' }),
-      );
-    const onMessage = vi.fn();
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === 'https://discord.com/api/v10/gateway/bot') {
+          return jsonResponse({ url: 'wss://gateway.discord.test' });
+        }
+        if (url === 'https://discord.com/api/v10/channels/thread-1') {
+          return jsonResponse({
+            id: 'thread-1',
+            type: 11,
+            parent_id: 'parent-1',
+          });
+        }
+        if (
+          url ===
+          'https://discord.com/api/v10/channels/thread-1/messages/message-2/reactions/%F0%9F%91%80/@me'
+        ) {
+          return jsonResponse({});
+        }
+        return new Response('{}', { status: 404 });
+      });
+    let channel!: DiscordChannel;
+    const onMessage = vi.fn(
+      async (
+        jid: string,
+        message: { external_message_id?: string; id: string },
+      ) => {
+        await channel.addReaction(
+          jid,
+          message.external_message_id || message.id,
+          'seen',
+        );
+      },
+    );
     const onChatMetadata = vi.fn();
-    const channel = new DiscordChannel(
+    channel = new DiscordChannel(
       'bot-token',
       'app-id',
       opts({ onMessage, onChatMetadata }),
@@ -859,8 +920,73 @@ describe('DiscordChannel', () => {
         external_message_id: 'message-2',
       }),
     );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/channels/thread-1/messages/message-2/reactions/%F0%9F%91%80/@me',
+      expect.objectContaining({ method: 'PUT' }),
+    );
     await channel.disconnect();
     vi.restoreAllMocks();
+  });
+
+  it('expires Discord thread message channel ids used for reactions', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(0);
+    let socket!: FakeWebSocket;
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === 'https://discord.com/api/v10/gateway/bot') {
+          return jsonResponse({ url: 'wss://gateway.discord.test' });
+        }
+        if (url === 'https://discord.com/api/v10/channels/thread-1') {
+          return jsonResponse({
+            id: 'thread-1',
+            type: 11,
+            parent_id: 'parent-1',
+          });
+        }
+        if (
+          url ===
+          'https://discord.com/api/v10/channels/parent-1/messages/message-2/reactions/%F0%9F%91%80/@me'
+        ) {
+          return jsonResponse({});
+        }
+        return new Response('{}', { status: 404 });
+      });
+    const channel = new DiscordChannel('bot-token', 'app-id', opts(), (url) => {
+      socket = new FakeWebSocket(url);
+      return socket;
+    });
+
+    await channel.connect();
+    socket.receive({ op: 10, d: { heartbeat_interval: 60_000 } });
+    socket.receive({ op: 0, t: 'READY', s: 1, d: { user: { id: 'bot-1' } } });
+    socket.receive({
+      op: 0,
+      t: 'MESSAGE_CREATE',
+      s: 2,
+      d: {
+        id: 'message-2',
+        channel_id: 'thread-1',
+        content: 'thread reply',
+        timestamp: '2026-06-22T00:00:00.000Z',
+        author: { id: 'user-1', username: 'Ravi' },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    nowSpy.mockReturnValue(11 * 60 * 1000);
+    await channel.addReaction('dc:parent-1', 'message-2', 'seen');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/channels/parent-1/messages/message-2/reactions/%F0%9F%91%80/@me',
+      expect.objectContaining({ method: 'PUT' }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'https://discord.com/api/v10/channels/thread-1/messages/message-2/reactions/%F0%9F%91%80/@me',
+      expect.anything(),
+    );
+    await channel.disconnect();
   });
 
   it('hydrates Discord attachment-only messages with provider metadata only', async () => {
@@ -1058,6 +1184,15 @@ describe('DiscordChannel', () => {
         ]),
       )
       .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'thread-1',
+          channel_id: 'thread-1',
+          content: 'thread root',
+          timestamp: '2026-06-22T00:00:00.000Z',
+          author: { id: 'user-root', username: 'Root' },
+        }),
+      )
+      .mockResolvedValueOnce(
         jsonResponse({ id: 'thread-1', type: 11, parent_id: 'parent-1' }),
       );
     const channel = new DiscordChannel('bot-token', 'app-id', opts());
@@ -1071,15 +1206,20 @@ describe('DiscordChannel', () => {
         external_message_id: 'message-3',
         thread_id: 'thread-1',
       },
-      limits: { channelMessages: 30, threadMessages: 2 },
+      limits: { channelMessages: 30, threadMessages: 3 },
     });
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      'https://discord.com/api/v10/channels/thread-1/messages?limit=2&before=message-3',
+      'https://discord.com/api/v10/channels/thread-1/messages?limit=3&before=message-3',
       expect.objectContaining({ method: 'GET' }),
     );
     expect(result.messages).toEqual([
+      expect.objectContaining({
+        chat_jid: 'dc:parent-1',
+        external_message_id: 'thread-1',
+        thread_id: 'thread-1',
+      }),
       expect.objectContaining({
         chat_jid: 'dc:parent-1',
         external_message_id: 'message-1',
@@ -1303,7 +1443,7 @@ describe('DiscordChannel', () => {
     fetchMock.mockRestore();
   });
 
-  it('keeps Discord thread hydration on latest messages when root fetch fails', async () => {
+  it('hydrates Discord thread replies when root fetch fails', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockImplementation(async (input) => {
@@ -1377,7 +1517,15 @@ describe('DiscordChannel', () => {
           },
         ]),
       )
-      .mockRejectedValueOnce(new Error('temporary root failure'))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'thread-1',
+          channel_id: 'thread-1',
+          content: 'thread root',
+          timestamp: '2026-06-22T00:00:00.000Z',
+          author: { id: 'user-root', username: 'Root' },
+        }),
+      )
       .mockRejectedValueOnce(new Error('temporary lookup failure'))
       .mockResolvedValueOnce(
         jsonResponse([
@@ -1390,7 +1538,15 @@ describe('DiscordChannel', () => {
           },
         ]),
       )
-      .mockRejectedValueOnce(new Error('temporary root failure'))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'thread-1',
+          channel_id: 'thread-1',
+          content: 'thread root',
+          timestamp: '2026-06-22T00:00:00.000Z',
+          author: { id: 'user-root', username: 'Root' },
+        }),
+      )
       .mockResolvedValueOnce(
         jsonResponse({ id: 'thread-1', type: 11, parent_id: 'parent-1' }),
       );
@@ -1411,18 +1567,24 @@ describe('DiscordChannel', () => {
       await channel.hydrateConversationContext(request);
     const retryResult = await channel.hydrateConversationContext(request);
 
-    expect(failedLookupResult.messages).toEqual([
-      expect.objectContaining({
-        chat_jid: 'dc:parent-1',
-        thread_id: 'thread-1',
-      }),
-    ]);
-    expect(retryResult.messages).toEqual([
-      expect.objectContaining({
-        chat_jid: 'dc:parent-1',
-        thread_id: 'thread-1',
-      }),
-    ]);
+    expect(failedLookupResult.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chat_jid: 'dc:parent-1',
+          external_message_id: 'thread-1',
+          thread_id: 'thread-1',
+        }),
+      ]),
+    );
+    expect(retryResult.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chat_jid: 'dc:parent-1',
+          external_message_id: 'thread-1',
+          thread_id: 'thread-1',
+        }),
+      ]),
+    );
     expect(fetchMock).toHaveBeenNthCalledWith(
       6,
       'https://discord.com/api/v10/channels/thread-1',

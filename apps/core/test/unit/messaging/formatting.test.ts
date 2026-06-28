@@ -7,6 +7,7 @@ import {
   TRIGGER_PATTERN,
 } from '@core/config/index.js';
 import {
+  CONVERSATION_CONTEXT_RENDER_LIMITS,
   escapeXml,
   findChannel,
   formatConversationContextMessages,
@@ -308,6 +309,123 @@ describe('formatConversationContextMessages', () => {
     );
     expect(result).not.toContain('externalId');
     expect(result).not.toContain('provider-file-123');
+    expect(result.trim().endsWith('</current_message>')).toBe(true);
+  });
+
+  it('truncates long historical message content and quoted content after XML escaping remains safe', () => {
+    const result = formatConversationContextMessages(
+      {
+        recentChannelContext: [
+          makeMsg({
+            id: 'recent',
+            content: `${'<content>'.repeat(
+              CONVERSATION_CONTEXT_RENDER_LIMITS.messageContentBytes,
+            )}CONTENT_TAIL`,
+            reply_to_message_id: 'root',
+            reply_to_sender_name: 'Root',
+            reply_to_message_content: `${'<quote>'.repeat(
+              CONVERSATION_CONTEXT_RENDER_LIMITS.quotedMessageContentBytes,
+            )}QUOTE_TAIL`,
+          }),
+        ],
+        activeThreadContext: [],
+        currentMessages: [
+          makeMsg({
+            id: 'current',
+            content: '@Gantry use this instruction',
+          }),
+        ],
+      },
+      TZ,
+    );
+
+    expect(result).toContain('...[truncated]');
+    expect(result).not.toContain('CONTENT_TAIL');
+    expect(result).not.toContain('QUOTE_TAIL');
+    expect(result).not.toContain('<content>');
+    expect(result).not.toContain('<quote>');
+    expect(result).toContain('&lt;content&gt;');
+    expect(result).toContain('&lt;quote&gt;');
+    expect(result.trim().endsWith('</current_message>')).toBe(true);
+  });
+
+  it('preserves full current-turn message content', () => {
+    const result = formatConversationContextMessages(
+      {
+        recentChannelContext: [],
+        activeThreadContext: [],
+        currentMessages: [
+          makeMsg({
+            id: 'current',
+            content: `CURRENT ${'y'.repeat(
+              CONVERSATION_CONTEXT_RENDER_LIMITS.messageContentBytes * 2,
+            )} CURRENT_TAIL`,
+          }),
+        ],
+      },
+      TZ,
+    );
+
+    expect(result).toContain('CURRENT_TAIL');
+    expect(result.trim().endsWith('</current_message>')).toBe(true);
+  });
+
+  it('caps total rendered context while preserving current_message as the final section', () => {
+    const recentChannelContext = Array.from({ length: 80 }, (_, index) =>
+      makeMsg({
+        id: `recent-${index}`,
+        content: `recent-${index} ${'x'.repeat(1200)}`,
+      }),
+    );
+
+    const result = formatConversationContextMessages(
+      {
+        recentChannelContext,
+        activeThreadContext: [],
+        currentMessages: [
+          makeMsg({ id: 'current', content: '@Gantry use this instruction' }),
+        ],
+      },
+      TZ,
+    );
+
+    expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(
+      CONVERSATION_CONTEXT_RENDER_LIMITS.renderedContextBytes,
+    );
+    expect(result).not.toContain('recent-0 ');
+    expect(result).toContain('@Gantry use this instruction');
+    expect(result.trim().endsWith('</current_message>')).toBe(true);
+  });
+
+  it('drops historical context but does not drop current-turn messages for the context budget', () => {
+    const recentChannelContext = Array.from({ length: 80 }, (_, index) =>
+      makeMsg({
+        id: `recent-${index}`,
+        content: `recent-${index} ${'x'.repeat(1200)}`,
+      }),
+    );
+    const currentMessages = Array.from({ length: 8 }, (_, index) =>
+      makeMsg({
+        id: `current-${index}`,
+        content: `CURRENT_${index} ${'y'.repeat(5000)} TAIL_${index}`,
+        timestamp: `2024-01-01T00:${String(index).padStart(2, '0')}:00.000Z`,
+      }),
+    );
+
+    const result = formatConversationContextMessages(
+      {
+        recentChannelContext,
+        activeThreadContext: [],
+        currentMessages,
+      },
+      TZ,
+    );
+
+    expect(result).not.toContain('recent-0 ');
+    for (const message of currentMessages) {
+      expect(result).toContain(message.id.replace('current-', 'CURRENT_'));
+      expect(result).toContain(message.id.replace('current-', 'TAIL_'));
+    }
     expect(result.trim().endsWith('</current_message>')).toBe(true);
   });
 });

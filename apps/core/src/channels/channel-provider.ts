@@ -21,6 +21,15 @@ import type { RuntimeSettings } from '../config/settings/runtime-settings.js';
 import type { RuntimeLeasePort } from '../domain/ports/runtime-lease.js';
 import type { RuntimeSecretProvider } from '../domain/ports/runtime-secret-provider.js';
 import type { AgentTodoSink } from '../domain/ports/task-lifecycle.js';
+import type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
+} from '../domain/ports/conversation-context-hydration.js';
+
+export type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
+} from '../domain/ports/conversation-context-hydration.js';
 
 export const CHANNEL_STREAM_UPDATE_INTERVAL_MS = {
   slack: 550,
@@ -48,28 +57,6 @@ export interface ChannelOpts {
     sourceAgentFolder: string;
     decisionPolicy?: PermissionApprovalRequest['decisionPolicy'];
   }) => Promise<boolean>;
-}
-
-export interface ConversationContextHydrationRequest {
-  conversationJid: string;
-  threadId?: string | null;
-  latestMessage: Pick<
-    NewMessage,
-    'id' | 'timestamp' | 'external_message_id' | 'thread_id'
-  >;
-  limits: {
-    channelMessages: number;
-    threadMessages: number;
-  };
-}
-
-export interface ConversationContextHydrationResult {
-  providerId: string;
-  attempted: boolean;
-  skipped?: boolean;
-  failed?: boolean;
-  reason?: string;
-  messages?: NewMessage[];
 }
 
 export type MaybePromise<T> = T | Promise<T>;

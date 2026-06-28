@@ -73,7 +73,10 @@ let streamingGenerationCounter = 0;
 const DEFAULT_TURN_APP_ID = 'default',
   PERMISSION_BACKGROUND_DEMOTE_MS = 120_000;
 type ProgressHeartbeat = ReturnType<typeof startGroupProgressHeartbeats>;
-type ActiveTurnUiCleanup = { token: symbol; cancel: () => void };
+type ActiveTurnUiCleanup = {
+  token: symbol;
+  cancel: () => void | Promise<void>;
+};
 const activeTurnUiCleanupByQueue = new Map<string, ActiveTurnUiCleanup>();
 export function createGroupProcessor(deps: GroupProcessingDeps) {
   const collectSessionMemory = deps.collectSessionMemory;
@@ -98,6 +101,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         jid: string;
         messageRef: string;
       }) => Promise<void> | void;
+      onLiveStopActionToken?: (token: string) => Promise<void> | void;
     } = {},
   ): Promise<boolean> {
     const { chatJid, threadId: queueThreadId } = parseThreadQueueKey(queueJid);
@@ -130,6 +134,17 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       queueThreadId,
       latestMessage.thread_id,
     );
+    let firstProgressNotified = false;
+    const notifyFirstProgress = async () => {
+      if (firstProgressNotified || !latestMessageReactionRef) return;
+      firstProgressNotified = true;
+      await options
+        .onFirstProgress?.({
+          jid: chatJid,
+          messageRef: latestMessageReactionRef,
+        })
+        ?.catch(() => undefined);
+    };
     let streamGeneration = (streamingGenerationCounter += 1);
     let progressGeneration = streamGeneration;
     const turnOptions = createGroupTurnOptionBuilders({
@@ -304,6 +319,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       if (missedMessagesRemain) deps.queue.enqueueMessageCheck(queueJid);
       return true;
     }
+    await notifyFirstProgress();
     const { prompt, recallQuery } =
       await buildGroupProcessingConversationContext({
         deps,
@@ -371,22 +387,16 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     let backgroundDemoted = false;
     const turnUiToken = Symbol(queueJid);
     const supportsProgress = deps.channelRuntime.supportsProgress(chatJid);
-    let firstProgressNotified = false;
-    const notifyFirstProgress = async () => {
-      if (firstProgressNotified || !latestMessageReactionRef) return;
-      firstProgressNotified = true;
-      await options
-        .onFirstProgress?.({
-          jid: chatJid,
-          messageRef: latestMessageReactionRef,
-        })
-        ?.catch(() => undefined);
+    const sendControlOnlyProgress = async () => {
+      if (!supportsProgress) return;
+      await sendProgressToChannel('', {
+        ...buildProgressOptions(),
+        actionOnly: true,
+      }).catch(() => undefined);
     };
     const sendRunningProgress = async () => {
-      if (!supportsProgress) return;
-      await sendProgressToChannel('⏳ Working', buildProgressOptions())
-        .then(() => notifyFirstProgress())
-        .catch(() => undefined);
+      await sendControlOnlyProgress();
+      await notifyFirstProgress();
     };
     const sendDoneProgress = async (state: progress.FinalProgressState) => {
       if (!supportsProgress) return;
@@ -406,10 +416,24 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       });
     };
     let activeGenerationHasOutput = false;
+    let sentAnyTurnDoneProgress = false;
+    let sentTurnDoneProgressGeneration: number | null = null;
+    const sendTrackedDoneProgress = async (
+      state: progress.FinalProgressState,
+    ) => {
+      const generation = progressGeneration;
+      await sendDoneProgress(state);
+      if (supportsProgress) {
+        sentAnyTurnDoneProgress = true;
+        sentTurnDoneProgressGeneration = generation;
+      }
+    };
     let userVisibleTurnProgressReady: Promise<void> | null = null;
     const startUserVisibleTurn = async () => {
       progressGeneration = streamGeneration = streamingGenerationCounter += 1;
       activeGenerationHasOutput = false;
+      sentAnyTurnDoneProgress = false;
+      sentTurnDoneProgressGeneration = null;
       resetActiveElapsed();
       typingActive = true;
       progressHeartbeat?.resume();
@@ -429,7 +453,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const sendWaitingForUserResponseProgress = async () => {
       if (!supportsProgress) return;
       await sendProgressToChannel(
-        `Waiting for your response (${formatElapsed(activeElapsedMs())}).`,
+        'Waiting for your input.',
         buildProgressOptions({ replaceOnly: true }),
       ).catch(() => undefined);
     };
@@ -441,7 +465,15 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       sendMessageToChannel,
       sendProgressToChannel,
     });
-    activeTurnUiCleanupByQueue.get(queueJid)?.cancel();
+    await options
+      .onLiveStopActionToken?.(turnOptions.liveStopActionToken)
+      ?.catch((err) =>
+        logger.warn(
+          { err, chatJid, group: group.name },
+          'Failed to register live Stop action token before progress render',
+        ),
+      );
+    void activeTurnUiCleanupByQueue.get(queueJid)?.cancel();
     activeTurnUiCleanupByQueue.delete(queueJid);
     const initialProgress = startInitialGroupProgress({
       supportsProgress,
@@ -469,7 +501,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       deps.queue.registerContinuationHandler?.(queueJid, () => {
         void startUserVisibleTurn();
       });
-    const cancelTurnUiTimers = () => {
+    const cancelTurnUiTimers = async () => {
       if (typingHeartbeatTimer) {
         clearInterval(typingHeartbeatTimer);
         typingHeartbeatTimer = null;
@@ -479,7 +511,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         progressTimer = null;
       }
       clearBackgroundDemoteTimer();
-      void initialProgress.cancel();
+      await initialProgress.cancel();
     };
     activeTurnUiCleanupByQueue.set(queueJid, {
       token: turnUiToken,
@@ -626,7 +658,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     let output: GroupAgentRunResult = 'error';
     const handleAgentOutput = async (result: AgentOutput) => {
       lastAgentProgressAt = currentTimeMs();
-      if (awaitingResponseReceipt && !result.interactionBoundary) {
+      const isTurnCompleteMarker = isAgentTurnCompleteMarker(result);
+      const wasAwaitingResponseReceipt = awaitingResponseReceipt;
+      if (
+        awaitingResponseReceipt &&
+        !result.interactionBoundary &&
+        !isTurnCompleteMarker
+      ) {
         awaitingResponseReceipt = false;
         await resumeActiveElapsed();
         startNextContentStream();
@@ -677,12 +715,32 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         awaitingResponseReceipt = true;
         resetIdleTimer();
       }
-      if (isAgentTurnCompleteMarker(result)) {
+      if (isTurnCompleteMarker) {
         await finalizeStreamingOutput('success-marker');
         if (result.continuedByFollowup) {
           startNextContentStream();
           resetIdleTimer();
           return;
+        }
+        const markerProgressState = resolveGroupTurnFinalProgressState({
+          output: 'success',
+          hadError,
+          sawDeliveryIncomplete,
+          sawTerminalDeliveryFailure,
+          outputSentToUser,
+        });
+        if (
+          shouldSendTurnFinalProgress({
+            finalProgressState: markerProgressState,
+            awaitingResponseReceipt:
+              wasAwaitingResponseReceipt || awaitingResponseReceipt,
+            sentAnyTurnDoneProgress,
+            activeGenerationHasOutput,
+            sentTurnDoneProgressGeneration,
+            progressGeneration,
+          })
+        ) {
+          await sendTrackedDoneProgress(markerProgressState);
         }
         startNextStreamingMessage();
         resetIdleTimer();
@@ -749,7 +807,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       if (output === 'success' && pendingIdleBoundary) {
         notifyTurnIdle();
       }
-      cancelTurnUiTimers();
+      await cancelTurnUiTimers();
       unregisterContinuationHandler?.();
       const activeCleanup = activeTurnUiCleanupByQueue.get(queueJid);
       if (activeCleanup?.token === turnUiToken) {
@@ -810,13 +868,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       shouldSendTurnFinalProgress({
         finalProgressState,
         awaitingResponseReceipt,
-        sentAnyTurnDoneProgress: false,
+        sentAnyTurnDoneProgress,
         activeGenerationHasOutput,
-        sentTurnDoneProgressGeneration: null,
+        sentTurnDoneProgressGeneration,
         progressGeneration,
       })
     ) {
-      await sendDoneProgress(finalProgressState);
+      await sendTrackedDoneProgress(finalProgressState);
     }
     await setTypingState(false);
     if (resultOk && missedMessagesRemain)

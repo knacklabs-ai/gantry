@@ -39,22 +39,26 @@ export async function buildConversationContextPacket(input: {
   >;
 }): Promise<ConversationContextPacket> {
   const currentMessages = dedupeMessages(input.currentMessages);
-  const recentChannelContext =
-    await input.repository.getRecentTopLevelMessagesBefore(
+  const activeThreadId = input.activeThreadId?.trim() || null;
+  const recentChannelContextPromise =
+    input.repository.getRecentTopLevelMessagesBefore(
       input.conversationJid,
       input.latestMessage,
       CHANNEL_CONTEXT_LIMIT,
     );
-  const activeThreadId = input.activeThreadId?.trim() || null;
-  const threadSelection = activeThreadId
-    ? await selectThreadContext({
+  const threadSelectionPromise = activeThreadId
+    ? selectThreadContext({
         conversationJid: input.conversationJid,
         threadId: activeThreadId,
         latestMessage: input.latestMessage,
         currentMessages,
         repository: input.repository,
       })
-    : { messages: [], rootPresent: false };
+    : Promise.resolve({ messages: [] as NewMessage[], rootPresent: false });
+  const [recentChannelContext, threadSelection] = await Promise.all([
+    recentChannelContextPromise,
+    threadSelectionPromise,
+  ]);
   const activeThreadContext = excludeMessages(
     threadSelection.messages,
     currentMessages,

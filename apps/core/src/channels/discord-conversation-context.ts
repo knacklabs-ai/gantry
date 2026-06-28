@@ -80,7 +80,7 @@ export async function hydrateDiscordConversationContext(input: {
       input.request.threadId && limit > 0
         ? Math.min(
             DISCORD_THREAD_FIRST_REPLY_LIMIT,
-            Math.max(0, limit - latestLimit - 1),
+            Math.max(0, limit - latestLimit - (threadRootMessage ? 1 : 0)),
           )
         : 0;
     const firstReplyMessages =
