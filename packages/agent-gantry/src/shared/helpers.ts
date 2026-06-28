@@ -159,10 +159,27 @@ export function readOptionalNumberOrString(
 }
 
 export function parseJsonRecord(value: string): Record<string, unknown> {
-  const parsed = JSON.parse(value) as unknown;
+  const parsed = JSON.parse(stripOuterJsonFence(value)) as unknown;
   const record = asRecord(parsed);
   if (!record) {
     throw new Error('Structured task model output must be a JSON object.');
   }
   return record;
+}
+
+function stripOuterJsonFence(value: string): string {
+  const trimmed = value.trim();
+  const fenced = /^```(?:json|JSON)?\s*\r?\n?([\s\S]*?)\r?\n?```$/u.exec(trimmed);
+  if (!fenced) return value;
+
+  const inner = fenced[1]?.trim() ?? '';
+  if (!isJsonShaped(inner)) return value;
+  return inner;
+}
+
+function isJsonShaped(value: string): boolean {
+  return (
+    (value.startsWith('{') && value.endsWith('}')) ||
+    (value.startsWith('[') && value.endsWith(']'))
+  );
 }

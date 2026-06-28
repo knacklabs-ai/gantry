@@ -61,6 +61,53 @@ describe('@cawstudios/agent-gantry', () => {
     });
   });
 
+  it('accepts markdown-fenced JSON from structured model task final output', async () => {
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async () =>
+          [
+            '```json',
+            JSON.stringify({ action: 'final', output: { status: 'ok' } }),
+            '```',
+          ].join('\n'),
+      },
+    });
+
+    const result = await runner.runAgentTask?.({
+      taskType: 'task.fenced-json',
+      instructions: 'Return raw JSON.',
+      input: {},
+      tools: [],
+      maxSteps: 1,
+    });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      output: { status: 'ok' },
+    });
+  });
+
+  it('still rejects non-JSON prose from structured model task final output', async () => {
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async () => 'Here is the answer: {"action":"final","output":{"status":"ok"}}',
+      },
+    });
+
+    const result = await runner.runAgentTask?.({
+      taskType: 'task.prose-json',
+      instructions: 'Return raw JSON.',
+      input: {},
+      tools: [],
+      maxSteps: 1,
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+    });
+    expect(String(result?.output.error)).toContain('Unexpected token');
+  });
+
   it('can retry a timed-out model step with projected state', async () => {
     let calls = 0;
     const seenInputSizes: number[] = [];
