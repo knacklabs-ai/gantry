@@ -50,6 +50,28 @@ export interface ChannelOpts {
   }) => Promise<boolean>;
 }
 
+export interface ConversationContextHydrationRequest {
+  conversationJid: string;
+  threadId?: string | null;
+  latestMessage: Pick<
+    NewMessage,
+    'id' | 'timestamp' | 'external_message_id' | 'thread_id'
+  >;
+  limits: {
+    channelMessages: number;
+    threadMessages: number;
+  };
+}
+
+export interface ConversationContextHydrationResult {
+  providerId: string;
+  attempted: boolean;
+  skipped?: boolean;
+  failed?: boolean;
+  reason?: string;
+  messages?: NewMessage[];
+}
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export type ChannelAdapter = ChannelLifecyclePort &
@@ -64,8 +86,15 @@ export type ChannelAdapter = ChannelLifecyclePort &
       GroupDiscoverySource &
       InteractionSurface &
       PlanReviewSurface &
-      AgentTodoSink
+      AgentTodoSink &
+      ConversationContextHydrationSink
   >;
+
+export interface ConversationContextHydrationSink {
+  hydrateConversationContext(
+    request: ConversationContextHydrationRequest,
+  ): Promise<ConversationContextHydrationResult>;
+}
 
 export type ChannelFactory = (
   opts: ChannelOpts,

@@ -351,6 +351,12 @@ describe('TelegramChannel', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does not expose a conversation context hydration hook', () => {
+    const channel = new TelegramChannel('token', createTestOpts());
+
+    expect('hydrateConversationContext' in channel).toBe(false);
+  });
+
   it('adds Telegram reactions idempotently', async () => {
     const channel = new TelegramChannel('token', createTestOpts());
     await channel.connect({ inbound: false });

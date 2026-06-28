@@ -69,21 +69,30 @@ vi.mock('@core/memory/app-memory-service.js', () => ({
 }));
 
 const mockFormatMessages = vi.fn();
+const mockFormatConversationContextMessages = vi.fn();
 const mockFormatOutboundForChannel = vi.fn();
 vi.mock('@core/messaging/router.js', () => ({
   formatMessages: (...args: unknown[]) => mockFormatMessages(...args),
+  formatConversationContextMessages: (...args: unknown[]) =>
+    mockFormatConversationContextMessages(...args),
   formatOutboundForChannel: (...args: unknown[]) =>
     mockFormatOutboundForChannel(...args),
 }));
 
 const mockIsTriggerAllowed = vi.fn();
+const mockIsSenderAllowed = vi.fn();
+const mockShouldDropMessage = vi.fn();
+const mockShouldLogDenied = vi.fn();
 const mockIsSenderControlAllowed = vi.fn();
 const mockLoadSenderAllowlist = vi.fn();
 const mockLoadSenderControlAllowlist = vi.fn();
 vi.mock('@core/platform/sender-allowlist.js', () => ({
+  isSenderAllowed: (...args: unknown[]) => mockIsSenderAllowed(...args),
   isTriggerAllowed: (...args: unknown[]) => mockIsTriggerAllowed(...args),
   isSenderControlAllowed: (...args: unknown[]) =>
     mockIsSenderControlAllowed(...args),
+  shouldDropMessage: (...args: unknown[]) => mockShouldDropMessage(...args),
+  shouldLogDenied: (...args: unknown[]) => mockShouldLogDenied(...args),
   loadSenderAllowlist: (...args: unknown[]) => mockLoadSenderAllowlist(...args),
   loadSenderControlAllowlist: (...args: unknown[]) =>
     mockLoadSenderControlAllowlist(...args),
@@ -222,6 +231,9 @@ function makeDeps(
       mockListRecentJobEvents(...args),
     getAllChats: vi.fn().mockResolvedValue([]),
     storeMessage: vi.fn().mockResolvedValue(undefined),
+    getRecentTopLevelMessagesBefore: vi.fn().mockResolvedValue([]),
+    getFirstThreadMessages: vi.fn().mockResolvedValue([]),
+    getLatestThreadMessages: vi.fn().mockResolvedValue([]),
     expireProviderSession: vi.fn(),
     setSession: vi.fn(),
     updateAgentRunProviderMetadata: vi.fn().mockResolvedValue(undefined),
@@ -288,6 +300,7 @@ function setupHappyPath(
   mockGetMessagesSince.mockReturnValue(messages);
   mockHandleSessionCommand.mockResolvedValue({ handled: false });
   mockFormatMessages.mockReturnValue('formatted prompt');
+  mockFormatConversationContextMessages.mockReturnValue('formatted prompt');
   mockFormatOutboundForChannel.mockImplementation((raw: string) =>
     raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim(),
   );
@@ -305,6 +318,9 @@ function setupHappyPath(
   mockLoadSenderAllowlist.mockReturnValue({});
   mockLoadSenderControlAllowlist.mockReturnValue({});
   mockIsTriggerAllowed.mockReturnValue(true);
+  mockIsSenderAllowed.mockReturnValue(true);
+  mockShouldDropMessage.mockReturnValue(false);
+  mockShouldLogDenied.mockReturnValue(true);
   mockIsSenderControlAllowed.mockReturnValue(false);
 
   // spawnAgent: by default calls onOutput with a successful result then returns it
@@ -463,8 +479,8 @@ describe('createGroupProcessor', () => {
 
       expect(result).toBe(true);
       expect(mockGetMessagesSince).toHaveBeenCalledTimes(1);
-      expect(mockFormatMessages).toHaveBeenCalledWith(
-        messages.slice(0, 10),
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({ currentMessages: messages.slice(0, 10) }),
         'UTC',
       );
       expect(mockSpawnAgent).toHaveBeenCalled();
@@ -499,6 +515,39 @@ describe('createGroupProcessor', () => {
 
       expect(result).toBe(true);
       expect(mockSpawnAgent).not.toHaveBeenCalled();
+      expect(
+        (deps.opsRepository as any).getRecentTopLevelMessagesBefore,
+      ).not.toHaveBeenCalled();
+      expect(mockFormatConversationContextMessages).not.toHaveBeenCalled();
+    });
+
+    it('keeps requiresTrigger enforced for Telegram-style conversations before context selection', async () => {
+      const group = makeGroup({
+        requiresTrigger: true,
+        trigger: 'Gantry',
+      });
+      const messages = [
+        makeMessage({
+          chat_jid: 'tg:-100123',
+          content: 'stored Telegram topic message without trigger',
+          thread_id: '42',
+        }),
+      ];
+      const { deps } = setupHappyPath({ group, messages });
+      mockIsTriggerAllowed.mockReturnValue(true);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('tg:-100123::thread:42');
+
+      expect(result).toBe(true);
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+      expect(mockGetMessagesSince).toHaveBeenCalledWith('tg:-100123', '0', 50, {
+        threadId: '42',
+      });
+      expect(
+        (deps.opsRepository as any).getRecentTopLevelMessagesBefore,
+      ).not.toHaveBeenCalled();
+      expect(mockFormatConversationContextMessages).not.toHaveBeenCalled();
     });
 
     it('requeues when a no-trigger replay fills the bounded pending replay', async () => {
@@ -4289,6 +4338,704 @@ describe('createGroupProcessor', () => {
         memoryUserId: 'user1@s.whatsapp.net',
         hydrationMode: 'first_visible',
         query: 'hello',
+      });
+    });
+
+    it('formats selected conversation context and uses it for bounded recall', async () => {
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        content: '@Andy what did we decide?',
+        thread_id: 'thread-1',
+        timestamp: '2024-01-01T00:04:00.000Z',
+      });
+      const recent = makeMessage({
+        id: 'recent',
+        content: 'channel decision',
+        timestamp: '2024-01-01T00:01:00.000Z',
+      });
+      const root = makeMessage({
+        id: 'root',
+        content: 'thread root',
+        thread_id: 'thread-1',
+        timestamp: '2024-01-01T00:02:00.000Z',
+      });
+      const priorReply = makeMessage({
+        id: 'reply',
+        content: 'thread reply',
+        thread_id: 'thread-1',
+        timestamp: '2024-01-01T00:03:00.000Z',
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([recent]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValue([root]);
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValue([root, priorReply, current]);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recentChannelContext: [recent],
+          activeThreadContext: [root, priorReply],
+          currentMessages: [current],
+        }),
+        'UTC',
+      );
+      const query = (deps.opsRepository as any).getAgentTurnContext.mock
+        .calls[0][0].query;
+      expect(query).toContain('channel decision');
+      expect(query).toContain('thread root');
+      expect(query).toContain('thread reply');
+      expect(query).toContain('what did we decide?');
+    });
+
+    it('persists provider hydration and rebuilds incomplete selected conversation context', async () => {
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        chat_jid: 'tg:-100123',
+        content: '@Andy use the topic context',
+        thread_id: '42',
+        timestamp: '2024-01-01T00:04:00.000Z',
+      });
+      const hydratedRoot = makeMessage({
+        id: 'hydrated-root',
+        chat_jid: 'tg:-100123',
+        external_message_id: '42',
+        content: 'stored hydrated root',
+        thread_id: '42',
+        timestamp: '2024-01-01T00:01:00.000Z',
+      });
+      const hydratedReply = makeMessage({
+        id: 'hydrated-reply',
+        chat_jid: 'tg:-100123',
+        content: 'stored hydrated reply',
+        thread_id: '42',
+        timestamp: '2024-01-01T00:02:00.000Z',
+      });
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockResolvedValue({
+          providerId: 'telegram',
+          attempted: true,
+          messages: [hydratedRoot, hydratedReply],
+        }),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([hydratedRoot]);
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValueOnce([current])
+        .mockResolvedValue([hydratedRoot, hydratedReply, current]);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('tg:-100123::thread:42');
+
+      expect(channel.hydrateConversationContext).toHaveBeenCalledWith({
+        conversationJid: 'tg:-100123',
+        threadId: '42',
+        latestMessage: current,
+        limits: { channelMessages: 30, threadMessages: 50 },
+      });
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenNthCalledWith(
+        1,
+        hydratedRoot,
+      );
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenNthCalledWith(
+        2,
+        hydratedReply,
+      );
+      expect(
+        (deps.opsRepository as any).getFirstThreadMessages.mock
+          .invocationCallOrder[0],
+      ).toBeLessThan(
+        (channel.hydrateConversationContext as ReturnType<typeof vi.fn>).mock
+          .invocationCallOrder[0],
+      );
+      expect(
+        (deps.opsRepository as any).storeMessage.mock.invocationCallOrder[1],
+      ).toBeLessThan(
+        (deps.opsRepository as any).getFirstThreadMessages.mock
+          .invocationCallOrder[1],
+      );
+      expect(
+        (deps.opsRepository as any).storeMessage.mock.invocationCallOrder[1],
+      ).toBeLessThan(
+        mockFormatConversationContextMessages.mock.invocationCallOrder[0],
+      );
+      expect(
+        (deps.opsRepository as any).getFirstThreadMessages,
+      ).toHaveBeenCalledTimes(2);
+      expect(
+        (deps.opsRepository as any).getLatestThreadMessages,
+      ).toHaveBeenCalledTimes(2);
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeThreadContext: [hydratedRoot, hydratedReply],
+          currentMessages: [current],
+        }),
+        'UTC',
+      );
+      const query = (deps.opsRepository as any).getAgentTurnContext.mock
+        .calls[0][0].query;
+      expect(query).toContain('stored hydrated root');
+      expect(query).toContain('stored hydrated reply');
+      expect(query).toContain('use the topic context');
+    });
+
+    it('continues after hydrated outbound duplicates fail persistence and rebuilds context', async () => {
+      const rawHydratedDuplicateText = 'RAW HYDRATED DUPLICATE OUTBOUND TEXT';
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        chat_jid: 'tg:-100123',
+        content: '@Andy continue from stored context',
+        thread_id: '42',
+        timestamp: '2024-01-01T00:04:00.000Z',
+      });
+      const hydratedOutboundDuplicate = makeMessage({
+        id: 'provider-outbound-42',
+        chat_jid: 'tg:-100123',
+        sender: 'gantry-bot',
+        external_message_id: 'provider-outbound-42',
+        content: rawHydratedDuplicateText,
+        thread_id: '42',
+        timestamp: '2024-01-01T00:01:00.000Z',
+        is_from_me: true,
+        is_bot_message: true,
+      });
+      const existingOutboundDuplicate = makeMessage({
+        ...hydratedOutboundDuplicate,
+        id: 'generated-stored-outbound-id',
+        content: 'existing stored outbound context',
+      });
+      const hydratedReply = makeMessage({
+        id: 'hydrated-reply',
+        chat_jid: 'tg:-100123',
+        content: 'stored after duplicate failure',
+        thread_id: '42',
+        timestamp: '2024-01-01T00:02:00.000Z',
+      });
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockResolvedValue({
+          providerId: 'telegram',
+          attempted: true,
+          messages: [hydratedOutboundDuplicate, hydratedReply],
+        }),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).storeMessage = vi
+        .fn()
+        .mockImplementation((message: NewMessage) => {
+          if (message.id === hydratedOutboundDuplicate.id) {
+            return Promise.reject(
+              new Error(
+                `duplicate provider message: ${rawHydratedDuplicateText}`,
+              ),
+            );
+          }
+          return Promise.resolve(undefined);
+        });
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([existingOutboundDuplicate]);
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValueOnce([current])
+        .mockResolvedValue([existingOutboundDuplicate, hydratedReply, current]);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('tg:-100123::thread:42');
+
+      expect(result).toBe(true);
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenCalledWith(
+        hydratedOutboundDuplicate,
+      );
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenCalledWith(
+        hydratedReply,
+      );
+      expect(
+        (deps.opsRepository as any).getFirstThreadMessages,
+      ).toHaveBeenCalledTimes(2);
+      expect(
+        (deps.opsRepository as any).getLatestThreadMessages,
+      ).toHaveBeenCalledTimes(2);
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeThreadContext: [existingOutboundDuplicate, hydratedReply],
+          currentMessages: [current],
+        }),
+        'UTC',
+      );
+      expect(mockSpawnAgent).toHaveBeenCalledWith(
+        group,
+        expect.objectContaining({ prompt: 'formatted prompt' }),
+        expect.any(Function),
+        expect.any(Function),
+        expect.any(Object),
+      );
+      const query = (deps.opsRepository as any).getAgentTurnContext.mock
+        .calls[0][0].query;
+      expect(query).toContain('existing stored outbound context');
+      expect(query).toContain('stored after duplicate failure');
+      expect(query).not.toContain(rawHydratedDuplicateText);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: 'telegram',
+          chatJid: 'tg:-100123',
+          threadId: '42',
+          messageId: 'provider-outbound-42',
+          externalMessageId: 'provider-outbound-42',
+          messageThreadId: '42',
+          isFromMe: true,
+          isBotMessage: true,
+          storeError: { errorName: 'Error' },
+        }),
+        'Conversation context hydration message persistence failed',
+      );
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.any(Object),
+          hydration: expect.objectContaining({
+            providerId: 'telegram',
+            messageCount: 2,
+            storeAttemptedMessageCount: 2,
+            storedMessageCount: 1,
+            storeFailedMessageCount: 1,
+          }),
+        }),
+        'Processing messages with conversation context',
+      );
+      const loggerCalls = [
+        ...mockLogger.warn.mock.calls,
+        ...mockLogger.info.mock.calls,
+        ...mockLogger.debug.mock.calls,
+        ...mockLogger.error.mock.calls,
+      ];
+      expect(JSON.stringify(loggerCalls)).not.toContain(
+        rawHydratedDuplicateText,
+      );
+    });
+
+    it('logs only bounded diagnostics when provider context hydration rejects', async () => {
+      const providerSecret = 'sk-proj-provider-secret';
+      const providerPayload = 'raw provider response body';
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        chat_jid: 'tg:-100123',
+        content: '@Andy continue from stored context',
+        thread_id: '42',
+        timestamp: '2024-01-01T00:04:00.000Z',
+        provider: 'telegram',
+      });
+      const hydrationError = Object.assign(
+        new Error(`hydration failed with token ${providerSecret}`),
+        {
+          name: 'ProviderHydrationError',
+          code: 'provider_hydration_failed',
+          headers: { authorization: `Bearer ${providerSecret}` },
+          response: { body: providerPayload },
+          request: { metadata: { token: providerSecret } },
+        },
+      );
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockRejectedValue(hydrationError),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValue([current]);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const result = await processGroupMessages('tg:-100123::thread:42');
+
+      expect(result).toBe(true);
+      expect(channel.hydrateConversationContext).toHaveBeenCalledWith({
+        conversationJid: 'tg:-100123',
+        threadId: '42',
+        latestMessage: current,
+        limits: { channelMessages: 30, threadMessages: 50 },
+      });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        {
+          hydrationError: {
+            errorName: 'ProviderHydrationError',
+            errorCode: 'provider_hydration_failed',
+          },
+          providerId: 'telegram',
+          chatJid: 'tg:-100123',
+          threadId: '42',
+        },
+        'Conversation context hydration failed',
+      );
+      const hydrationWarnContext = mockLogger.warn.mock.calls.find(
+        ([, message]) => message === 'Conversation context hydration failed',
+      )?.[0] as Record<string, unknown> | undefined;
+      expect(hydrationWarnContext).not.toHaveProperty('err');
+      const loggerCalls = [
+        ...mockLogger.warn.mock.calls,
+        ...mockLogger.info.mock.calls,
+        ...mockLogger.debug.mock.calls,
+        ...mockLogger.error.mock.calls,
+      ];
+      const serializedLoggerCalls = JSON.stringify(loggerCalls);
+      expect(serializedLoggerCalls).toContain('ProviderHydrationError');
+      expect(serializedLoggerCalls).toContain('provider_hydration_failed');
+      expect(serializedLoggerCalls).not.toContain(providerSecret);
+      expect(serializedLoggerCalls).not.toContain(providerPayload);
+      expect(serializedLoggerCalls).not.toContain('authorization');
+      expect(serializedLoggerCalls).not.toContain('raw provider response');
+    });
+
+    it('drops non-allowlisted hydrated bot messages before storing or recall but keeps self messages', async () => {
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        chat_jid: 'sl:C123',
+        sender: 'allowed-user',
+        content: '@Andy use the safe context',
+        thread_id: '1710000000.000000',
+        timestamp: '2024-01-01T00:04:00.000Z',
+      });
+      const allowedHydrated = makeMessage({
+        id: 'hydrated-allowed',
+        chat_jid: 'sl:C123',
+        sender: 'allowed-user',
+        content: 'allowed hydrated history',
+        thread_id: '1710000000.000000',
+        timestamp: '2024-01-01T00:01:00.000Z',
+      });
+      const disallowedHydrated = makeMessage({
+        id: 'hydrated-disallowed',
+        chat_jid: 'sl:C123',
+        sender: 'blocked-user',
+        content: 'blocked hydrated history',
+        thread_id: '1710000000.000000',
+        timestamp: '2024-01-01T00:02:00.000Z',
+        is_bot_message: true,
+      });
+      const gantrySelfHydrated = makeMessage({
+        id: 'hydrated-self',
+        chat_jid: 'sl:C123',
+        sender: 'gantry-bot',
+        content: 'gantry self hydrated history',
+        thread_id: '1710000000.000000',
+        timestamp: '2024-01-01T00:03:00.000Z',
+        is_from_me: true,
+        is_bot_message: true,
+      });
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockResolvedValue({
+          providerId: 'slack',
+          attempted: true,
+          messages: [allowedHydrated, disallowedHydrated, gantrySelfHydrated],
+        }),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      mockShouldDropMessage.mockReturnValue(true);
+      mockIsSenderAllowed.mockImplementation(
+        (_chatJid, sender) => sender === 'allowed-user',
+      );
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([allowedHydrated, gantrySelfHydrated]);
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValueOnce([current])
+        .mockResolvedValue([allowedHydrated, gantrySelfHydrated, current]);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:C123::thread:1710000000.000000');
+
+      expect(mockShouldDropMessage).toHaveBeenCalledWith(
+        'sl:C123',
+        {},
+        'my-group',
+      );
+      expect(mockIsSenderAllowed).toHaveBeenCalledWith(
+        'sl:C123',
+        'blocked-user',
+        {},
+        'my-group',
+      );
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenCalledTimes(2);
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenNthCalledWith(
+        1,
+        allowedHydrated,
+      );
+      expect((deps.opsRepository as any).storeMessage).toHaveBeenNthCalledWith(
+        2,
+        gantrySelfHydrated,
+      );
+      expect((deps.opsRepository as any).storeMessage).not.toHaveBeenCalledWith(
+        disallowedHydrated,
+      );
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeThreadContext: [allowedHydrated, gantrySelfHydrated],
+          currentMessages: [current],
+        }),
+        'UTC',
+      );
+      const formattedContext =
+        mockFormatConversationContextMessages.mock.calls[0][0];
+      expect(formattedContext.activeThreadContext).not.toContain(
+        disallowedHydrated,
+      );
+      const query = (deps.opsRepository as any).getAgentTurnContext.mock
+        .calls[0][0].query;
+      expect(query).toContain('allowed hydrated history');
+      expect(query).toContain('gantry self hydrated history');
+      expect(query).not.toContain('blocked hydrated history');
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        {
+          chatJid: 'sl:C123',
+          providerId: 'slack',
+          messageCount: 3,
+          droppedCount: 1,
+        },
+        'Conversation context hydration dropped messages by sender policy',
+      );
+    });
+
+    it('does not hydrate when stored channel context already has the full local window', async () => {
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        content: '@Andy use stored channel context',
+        timestamp: '2024-01-01T00:31:00.000Z',
+      });
+      const storedChannelMessages = Array.from({ length: 30 }, (_, index) =>
+        makeMessage({
+          id: `stored-channel-${index + 1}`,
+          content: `stored channel ${index + 1}`,
+          timestamp: `2024-01-01T00:${String(index + 1).padStart(
+            2,
+            '0',
+          )}:00.000Z`,
+        }),
+      );
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockResolvedValue({
+          providerId: 'slack',
+          attempted: true,
+          messages: [],
+        }),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue(storedChannelMessages);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(channel.hydrateConversationContext).not.toHaveBeenCalled();
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recentChannelContext: storedChannelMessages,
+          currentMessages: [current],
+        }),
+        'UTC',
+      );
+    });
+
+    it('does not hydrate when stored active thread context already has the full local window and root', async () => {
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        chat_jid: 'sl:C123',
+        content: '@Andy use stored thread context',
+        external_message_id: '1710000050.000000',
+        thread_id: '1710000000.000000',
+        timestamp: '2024-01-01T00:51:00.000Z',
+      });
+      const storedThreadMessages = Array.from({ length: 50 }, (_, index) =>
+        makeMessage({
+          id: `stored-thread-${index + 1}`,
+          chat_jid: 'sl:C123',
+          content: `stored thread ${index + 1}`,
+          external_message_id:
+            index === 0
+              ? '1710000000.000000'
+              : `17100000${String(index).padStart(2, '0')}.000000`,
+          thread_id: '1710000000.000000',
+          timestamp: `2024-01-01T00:${String(index + 1).padStart(
+            2,
+            '0',
+          )}:00.000Z`,
+        }),
+      );
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockResolvedValue({
+          providerId: 'slack',
+          attempted: true,
+          messages: [],
+        }),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValue(storedThreadMessages.slice(0, 11));
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValue(storedThreadMessages);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:C123::thread:1710000000.000000');
+
+      expect(channel.hydrateConversationContext).not.toHaveBeenCalled();
+      expect(mockFormatConversationContextMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeThreadContext: storedThreadMessages,
+          currentMessages: [current],
+        }),
+        'UTC',
+      );
+    });
+
+    it('hydrates when stored active thread context has a full local window but no explicit root', async () => {
+      const group = makeGroup({
+        folder: 'my-group',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const current = makeMessage({
+        id: 'current',
+        chat_jid: 'dc:thread-1',
+        content: '@Andy use stored thread context',
+        external_message_id: 'discord-current',
+        thread_id: 'discord-thread-1',
+        timestamp: '2024-01-01T00:51:00.000Z',
+      });
+      const storedThreadReplies = Array.from({ length: 50 }, (_, index) =>
+        makeMessage({
+          id: `stored-reply-${index + 1}`,
+          chat_jid: 'dc:thread-1',
+          content: `stored reply ${index + 1}`,
+          external_message_id: `discord-reply-${index + 1}`,
+          thread_id: 'discord-thread-1',
+          timestamp: `2024-01-01T00:${String(index + 1).padStart(
+            2,
+            '0',
+          )}:00.000Z`,
+        }),
+      );
+      const channel = makeChannel({
+        hydrateConversationContext: vi.fn().mockResolvedValue({
+          providerId: 'discord',
+          attempted: true,
+          messages: [],
+        }),
+      });
+      const { deps } = setupHappyPath({ group, messages: [current] });
+      deps.channelRuntime = channel;
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue(undefined);
+      (deps.opsRepository as any).getRecentTopLevelMessagesBefore = vi
+        .fn()
+        .mockResolvedValue([]);
+      (deps.opsRepository as any).getFirstThreadMessages = vi
+        .fn()
+        .mockResolvedValue(storedThreadReplies.slice(0, 11));
+      (deps.opsRepository as any).getLatestThreadMessages = vi
+        .fn()
+        .mockResolvedValue(storedThreadReplies);
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('dc:thread-1::thread:discord-thread-1');
+
+      expect(channel.hydrateConversationContext).toHaveBeenCalledWith({
+        conversationJid: 'dc:thread-1',
+        threadId: 'discord-thread-1',
+        latestMessage: current,
+        limits: { channelMessages: 30, threadMessages: 50 },
       });
     });
 

@@ -60,7 +60,6 @@ import {
   createGroupAgentRunner,
   type GroupAgentRunResult,
 } from './group-agent-runner.js';
-import { buildMemoryRecallQueryFromMessages } from '../memory/app-memory-recall-query.js';
 import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 import { appIdFromConversationJid } from '../shared/app-conversation-jid.js';
 import {
@@ -69,11 +68,10 @@ import {
 } from './model-access-auth-failure.js';
 import { createGroupTurnOptionBuilders } from './group-turn-options.js';
 import { collectPendingMessagesSince } from './pending-message-replay.js';
+import { buildGroupProcessingConversationContext } from './group-processing-context.js';
 let streamingGenerationCounter = 0;
-const PERMISSION_BACKGROUND_DEMOTE_MS = 120_000;
-const DEFAULT_TURN_APP_ID = 'default';
-const MISSING_REPOSITORY_MESSAGE =
-  'Group processor requires runtime repositories';
+const DEFAULT_TURN_APP_ID = 'default',
+  PERMISSION_BACKGROUND_DEMOTE_MS = 120_000;
 type ProgressHeartbeat = ReturnType<typeof startGroupProgressHeartbeats>;
 type ActiveTurnUiCleanup = { token: symbol; cancel: () => void };
 const activeTurnUiCleanupByQueue = new Map<string, ActiveTurnUiCleanup>();
@@ -81,7 +79,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
   const collectSessionMemory = deps.collectSessionMemory;
   const ops = () => {
     const repository = deps.opsRepository ?? deps.getRuntimeRepository?.();
-    if (!repository) throw new Error(MISSING_REPOSITORY_MESSAGE);
+    if (!repository)
+      throw new Error('Group processor requires runtime repositories');
     return repository;
   };
   const runAgent = createGroupAgentRunner({ deps, ops });
@@ -305,8 +304,18 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       if (missedMessagesRemain) deps.queue.enqueueMessageCheck(queueJid);
       return true;
     }
-    const prompt = formatMessages(missedMessages, config.TIMEZONE);
-    const recallQuery = buildMemoryRecallQueryFromMessages(missedMessages);
+    const { prompt, recallQuery } =
+      await buildGroupProcessingConversationContext({
+        deps,
+        repository: opsRepository,
+        groupName: group.name,
+        agentFolder: group.folder,
+        chatJid,
+        activeThreadId,
+        latestMessage,
+        currentMessages: missedMessages,
+        timezone: config.TIMEZONE,
+      });
     const previousCursor = (await deps.getCursor(queueJid)) || '';
     deps.setCursor(
       queueJid,
@@ -315,10 +324,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       ),
     );
     await deps.saveState();
-    logger.info(
-      { group: group.name, messageCount: missedMessages.length },
-      'Processing messages',
-    );
     resetGroupStreamingForTurn({
       chatJid,
       groupName: group.name,
@@ -643,13 +648,12 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         pendingOutputVisible.append(raw);
         if (supportsStreamingChunks) {
           const safeDelta = streamSanitizer.append(raw);
-          const text = safeDelta;
-          if (text) {
+          if (safeDelta) {
             const settlement = await settleDeliveryAttempt(
               () =>
                 deps.channelRuntime.sendStreamingChunk(
                   chatJid,
-                  text,
+                  safeDelta,
                   buildStreamingOptions({ done: false }),
                 ),
               { scope: 'runtime-streaming-output-live', target: chatJid },
