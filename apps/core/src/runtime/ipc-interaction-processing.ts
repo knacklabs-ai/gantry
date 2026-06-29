@@ -50,7 +50,7 @@ import {
 } from './ipc-permission-telemetry.js';
 
 type LogContext = Record<string, unknown>;
-type IpcInteractionLogger = {
+export type IpcInteractionLogger = {
   info?(context: LogContext, message: string): void;
   warn(context: LogContext, message: string): void;
   error(context: LogContext, message: string): void;
@@ -72,7 +72,7 @@ class StaleScheduledQuestionLeaseError extends Error {
 
 export function interactionInFlightKey(input: {
   sourceAgentFolder: string;
-  kind: 'permission' | 'user-question';
+  kind: 'permission' | 'rich-interaction' | 'user-question';
   threadId?: string;
   requestId: string;
 }): string {

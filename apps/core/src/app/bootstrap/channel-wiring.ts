@@ -41,6 +41,7 @@ import {
   asMessageReactionSink,
   asPermissionApprovalSurface,
   asProgressSink,
+  asRichInteractionSurface,
   asStreamingSink,
   asStreamingStateSink,
   asTypingSink,
@@ -63,6 +64,7 @@ import { createChannelPersistenceHandlers } from './channel-persistence-handlers
 import {
   createAgentTodoRenderer,
   createPermissionApprovalRequester,
+  createRichInteractionRenderer,
   createUserQuestionResponder,
 } from './channel-wiring-interactions.js';
 import {
@@ -79,9 +81,7 @@ import { createChannelMessageActionRouter } from './channel-message-action-route
 import { createChannelProgressSender } from './channel-progress-sender.js';
 import { hydrateChannelConversationContext } from './channel-wiring-conversation-context.js';
 export type { ChannelWiring } from './channel-wiring-types.js';
-
 const PROVIDER_INBOUND_LEASE_PREFIX = 'runtime:provider-inbound';
-
 export function createChannelWiring(
   app: RuntimeApp,
   deps: Partial<ChannelWiringDeps> = {},
@@ -99,7 +99,6 @@ export function createChannelWiring(
     runtimeSecrets: new EnvRuntimeSecretProvider(),
     ...deps,
   };
-
   const connectedChannels: ChannelAdapter[] = [];
   const connectedChannelLeases: RuntimeLease[] = [];
   let enqueueRetryTailRecovery: RetryTailRecoveryEnqueue | undefined;
@@ -118,7 +117,6 @@ export function createChannelWiring(
       return undefined;
     }
   };
-
   let currentRuntimeSettings: RuntimeSettings;
   function findBoundChannel(jid: string): ChannelAdapter | undefined {
     return findChannel(connectedChannels, jid);
@@ -171,6 +169,17 @@ export function createChannelWiring(
       asAgentTodoSurface(channel as ChannelAdapter),
     logger: resolved.logger,
   });
+  const richInteractionRenderer = createRichInteractionRenderer({
+    findBoundChannel,
+    asRichInteractionSurface: (channel) =>
+      asRichInteractionSurface(channel as ChannelAdapter),
+    sendMessage: (jid, text, options) =>
+      sendMessage(jid, text, {
+        durability: 'best_effort',
+        messageOptions: options,
+      }),
+    logger: resolved.logger,
+  });
   const sendProgressUpdate = createChannelProgressSender({
     findBoundChannel,
     messageActionRouter,
@@ -198,7 +207,6 @@ export function createChannelWiring(
     options?: { providerInbound?: boolean },
   ): Promise<void> {
     currentRuntimeSettings = runtimeSettings;
-    // Inbound needs the live-turns flag AND a role that admits inbound.
     const inboundEnabled =
       runtimeSettings.runtime.liveTurns.enabled &&
       (options?.providerInbound ?? true);
@@ -523,7 +531,6 @@ export function createChannelWiring(
       });
       throw thrownError;
     }
-
     if (options.durability === 'required' && durableAttempt) {
       const ambiguousSentSettlementError =
         'Provider send succeeded but durable sent-status persistence failed. Delivery may already be visible and cannot be blindly retried.';
@@ -574,7 +581,6 @@ export function createChannelWiring(
         });
       }
     }
-
     try {
       await outboundOps?.storeMessage({
         ...baseMessage,
@@ -627,19 +633,16 @@ export function createChannelWiring(
     });
     return result;
   }
-
   function setRetryTailRecoveryEnqueue(
     enqueue: RetryTailRecoveryEnqueue | undefined,
   ): void {
     enqueueRetryTailRecovery = enqueue;
   }
-
   function setDurableOutboundAttemptFactory(
     factory: DurableOutboundAttemptFactory | undefined,
   ): void {
     durableOutboundAttemptFactory = factory;
   }
-
   async function sendStreamingChunk(
     jid: string,
     rawText: string,
@@ -657,7 +660,6 @@ export function createChannelWiring(
     if (provider?.canStreamToJid?.(jid) === false) return false;
     const text = stripInternalTagsPreserveWhitespace(rawText);
     if (!text && !options?.done) return false;
-
     const sink = asStreamingSink(channel);
     if (!sink) return false;
     return sink.sendStreamingChunk(jid, text, options);
@@ -669,7 +671,6 @@ export function createChannelWiring(
     const stateSink = asStreamingStateSink(channel);
     stateSink?.resetStreaming(jid);
   }
-
   async function setTyping(jid: string, isTyping: boolean): Promise<void> {
     const channel = findBoundChannel(jid);
     if (!channel) return;
@@ -677,7 +678,6 @@ export function createChannelWiring(
     if (!typingSink) return;
     await typingSink.setTyping(jid, isTyping);
   }
-
   async function addReaction(
     jid: string,
     messageRef: string,
@@ -689,14 +689,12 @@ export function createChannelWiring(
     if (!reactionSink) return;
     await reactionSink.addReaction(jid, messageRef, emoji);
   }
-
   async function syncGroups(force: boolean): Promise<void> {
     const syncSources = connectedChannels
       .map(asGroupDiscoverySource)
       .filter((source): source is GroupDiscoverySource => source !== undefined);
     await Promise.all(syncSources.map((source) => source.syncGroups(force)));
   }
-
   async function disconnectChannels(): Promise<void> {
     const drained = await persistenceQueue.waitForIdle(5_000);
     if (!drained) {
@@ -740,6 +738,7 @@ export function createChannelWiring(
     requestPermissionApproval,
     requestUserAnswer: userQuestionResponder.requestUserAnswer,
     renderAgentTodo: agentTodoRenderer,
+    renderRichInteraction: richInteractionRenderer,
     hydrateConversationContext: (request) =>
       hydrateChannelConversationContext(
         request,
