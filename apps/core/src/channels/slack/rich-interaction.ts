@@ -104,14 +104,7 @@ function slackRichPayloadBlocks(
     case 'status':
       return [
         ...bodyBlocks,
-        slackSection(
-          [
-            slackStatusLabel(payload.status ?? payload.state),
-            scalarText(payload.body),
-          ]
-            .filter(Boolean)
-            .join('\n'),
-        ),
+        slackStatusBlock(payload.status ?? payload.state, payload.body),
       ];
     case 'facts':
       return [
@@ -127,31 +120,17 @@ function slackRichPayloadBlocks(
     case 'list':
       return [
         ...bodyBlocks,
-        slackSection(
-          richArrayItems(payload.items)
-            .slice(0, 30)
-            .map((listItem, index) =>
-              slackListLine(listItem, index, payload.ordered === true),
-            )
-            .filter(Boolean)
-            .join('\n'),
-        ),
+        slackListBlock(richArrayItems(payload.items), payload.ordered === true),
       ];
     case 'table':
-      return [...bodyBlocks, slackSection(slackTable(payload))];
+      return [...bodyBlocks, slackTableBlock(payload)];
     case 'progress':
       return [
         ...bodyBlocks,
-        slackSection(
-          [
-            scalarText(payload.label),
-            slackProgressBar(
-              typeof payload.value === 'number' ? payload.value : undefined,
-              payload.done === true,
-            ),
-          ]
-            .filter(Boolean)
-            .join('\n'),
+        slackProgressBlock(
+          scalarText(payload.label),
+          typeof payload.value === 'number' ? payload.value : undefined,
+          payload.done === true,
         ),
       ];
     case 'media':
@@ -248,73 +227,150 @@ function scalarText(value: unknown): string {
     : '';
 }
 
-function slackStatusLabel(value: unknown): string {
-  const status = scalarText(value);
-  if (!status) return '';
-  const icon =
-    status === 'success'
-      ? ':white_check_mark:'
-      : status === 'warning'
-        ? ':warning:'
-        : status === 'error'
-          ? ':x:'
-          : ':information_source:';
-  return `${icon} *${status}*`;
+function slackStatusBlock(
+  statusValue: unknown,
+  bodyValue: unknown,
+): Record<string, unknown> {
+  const status = scalarText(statusValue);
+  const body = scalarText(bodyValue);
+  const elements: Array<Record<string, unknown>> = [];
+  if (status) {
+    elements.push(
+      { type: 'emoji', name: slackStatusEmojiName(status) },
+      { type: 'text', text: ` ${status}`, style: { bold: true } },
+    );
+  }
+  if (body)
+    elements.push({ type: 'text', text: `${status ? '\n' : ''}${body}` });
+  return slackRichTextSectionBlock(elements);
 }
 
-function slackListLine(
-  item: Record<string, unknown>,
-  index: number,
+function slackStatusEmojiName(status: string): string {
+  return status === 'success'
+    ? 'white_check_mark'
+    : status === 'warning'
+      ? 'warning'
+      : status === 'error'
+        ? 'x'
+        : 'information_source';
+}
+
+function slackListBlock(
+  items: Array<Record<string, unknown>>,
   ordered: boolean,
-): string {
+): Record<string, unknown> {
+  const elements = items.slice(0, 30).map(slackListItem).filter(Boolean);
+  if (!elements.length) return slackSection('-');
+  return {
+    type: 'rich_text',
+    elements: [
+      {
+        type: 'rich_text_list',
+        style: ordered ? 'ordered' : 'bullet',
+        elements,
+      },
+    ],
+  };
+}
+
+function slackListItem(
+  item: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   const title = scalarText(item.text) || scalarText(item.title);
   const detail = scalarText(item.detail) || scalarText(item.description);
-  if (!title && !detail) return '';
-  const prefix = ordered ? `${index + 1}.` : '•';
-  return detail
-    ? `${prefix} *${title || 'Item'}* — ${detail}`
-    : `${prefix} ${title}`;
+  if (!title && !detail) return undefined;
+  const elements: Array<Record<string, unknown>> = [];
+  if (title) {
+    elements.push({
+      type: 'text',
+      text: richTruncate(title, 300),
+      ...(detail ? { style: { bold: true } } : {}),
+    });
+  }
+  if (detail) {
+    elements.push({
+      type: 'text',
+      text: richTruncate(title ? ` - ${detail}` : detail, 500),
+    });
+  }
+  return { type: 'rich_text_section', elements };
 }
 
-function slackTable(payload: Record<string, unknown>): string {
+function slackTableBlock(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
   const columns = richArrayItems(payload.columns).slice(0, 6);
   const rows = richArrayItems(payload.rows).slice(0, 12);
-  const keys = columns
-    .map((column) => scalarText(column.key))
-    .filter((key): key is string => Boolean(key));
-  if (!keys.length || !rows.length) return '-';
-  const labels = columns.map((column, index) => ({
-    key: keys[index],
-    label: scalarText(column.label) || keys[index],
-  }));
-  const tableRows = [
-    labels.map((column) => column.label),
-    ...rows.map((row) => labels.map((column) => scalarText(row[column.key]))),
-  ];
-  const widths = labels.map((_, columnIndex) =>
-    Math.min(
-      24,
-      Math.max(...tableRows.map((row) => (row[columnIndex] ?? '').length)),
-    ),
-  );
-  const lines = tableRows.map((row) =>
-    row
-      .map((cell, columnIndex) =>
-        richTruncate(cell || '-', widths[columnIndex]).padEnd(
-          widths[columnIndex],
-        ),
-      )
-      .join('  '),
-  );
-  lines.splice(1, 0, widths.map((width) => ''.padEnd(width, '-')).join('  '));
-  return ['```', ...lines, '```'].join('\n');
+  const labels = columns
+    .map((column) => {
+      const key = scalarText(column.key);
+      return key ? { key, label: scalarText(column.label) || key } : undefined;
+    })
+    .filter((column): column is { key: string; label: string } =>
+      Boolean(column),
+    );
+  if (!labels.length || !rows.length) return slackSection('-');
+  return {
+    type: 'table',
+    column_settings: labels.map((column) => ({
+      is_wrapped: true,
+      ...(rows.every((row) => typeof row[column.key] === 'number')
+        ? { align: 'right' }
+        : {}),
+    })),
+    rows: [
+      labels.map((column) => slackRawTextCell(column.label)),
+      ...rows.map((row) =>
+        labels.map((column) => slackTableCell(row[column.key])),
+      ),
+    ],
+  };
 }
 
-function slackProgressBar(value: number | undefined, done: boolean): string {
+function slackRawTextCell(value: string): Record<string, unknown> {
+  return { type: 'raw_text', text: richTruncate(value || '-', 300) };
+}
+
+function slackTableCell(value: unknown): Record<string, unknown> {
+  return slackRawTextCell(scalarText(value) || '-');
+}
+
+function slackProgressBlock(
+  label: string,
+  value: number | undefined,
+  done: boolean,
+): Record<string, unknown> {
   const normalized = done ? 100 : Math.max(0, Math.min(100, value ?? 0));
   const filled = Math.round(normalized / 10);
   const empty = 10 - filled;
-  return `${'█'.repeat(filled)}${'░'.repeat(empty)} ${normalized}%`;
+  const elements: Array<Record<string, unknown>> = [];
+  if (label) elements.push({ type: 'text', text: `${label}\n` });
+  for (let index = 0; index < filled; index += 1) {
+    elements.push({ type: 'emoji', name: 'large_green_square' });
+  }
+  for (let index = 0; index < empty; index += 1) {
+    elements.push({ type: 'emoji', name: 'white_large_square' });
+  }
+  elements.push({
+    type: 'text',
+    text: ` ${normalized}%`,
+    style: { bold: true },
+  });
+  return slackRichTextSectionBlock(elements);
+}
+
+function slackRichTextSectionBlock(
+  elements: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  return {
+    type: 'rich_text',
+    elements: [
+      {
+        type: 'rich_text_section',
+        elements: elements.length ? elements : [{ type: 'text', text: '-' }],
+      },
+    ],
+  };
 }
 
 export async function renderSlackRichInteraction(input: {

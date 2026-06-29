@@ -67,10 +67,21 @@ describe('rich interaction provider renderers', () => {
       },
     };
 
-    const slackTablePayload = JSON.stringify(
-      buildSlackRichInteractionBlocks(tableRequest),
+    const slackTableBlocks = buildSlackRichInteractionBlocks(tableRequest);
+    const slackTablePayload = JSON.stringify(slackTableBlocks);
+    expect(slackTableBlocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'table',
+          rows: expect.arrayContaining([
+            expect.arrayContaining([
+              expect.objectContaining({ type: 'raw_text', text: 'Name' }),
+            ]),
+          ]),
+        }),
+      ]),
     );
-    expect(slackTablePayload).toContain('```');
+    expect(slackTablePayload).not.toContain('```');
     expect(slackTablePayload).toContain('Name');
     expect(slackTablePayload).toContain('Acme');
     expect(renderTelegramRichInteractionHtml(tableRequest).text).toContain(
@@ -101,9 +112,14 @@ describe('rich interaction provider renderers', () => {
       },
     };
 
-    expect(
-      JSON.stringify(buildSlackRichInteractionBlocks(listRequest)),
-    ).toContain('• *Call Ravi* — Tomorrow morning');
+    const slackListPayload = JSON.stringify(
+      buildSlackRichInteractionBlocks(listRequest),
+    );
+    expect(slackListPayload).toContain('"type":"rich_text_list"');
+    expect(slackListPayload).toContain('"style":"bullet"');
+    expect(slackListPayload).toContain('Call Ravi');
+    expect(slackListPayload).toContain('Tomorrow morning');
+    expect(slackListPayload).not.toContain('• *Call Ravi*');
   });
 
   it('renders Slack rich payloads as distinct component blocks', () => {
@@ -190,13 +206,20 @@ describe('rich interaction provider renderers', () => {
     );
     expect(
       JSON.stringify(buildSlackRichInteractionBlocks(listRequest)),
-    ).toContain('• First item');
-    expect(
-      JSON.stringify(buildSlackRichInteractionBlocks(tableRequest)),
-    ).toContain('```');
-    expect(
-      JSON.stringify(buildSlackRichInteractionBlocks(progressRequest)),
-    ).toContain('██████░░░░ 60%');
+    ).toContain('"type":"rich_text_list"');
+    const tablePayload = JSON.stringify(
+      buildSlackRichInteractionBlocks(tableRequest),
+    );
+    expect(tablePayload).toContain('"type":"table"');
+    expect(tablePayload).toContain('"text":"1"');
+    expect(tablePayload).not.toContain('raw_number');
+    expect(tablePayload).not.toContain('```');
+    const progressPayload = JSON.stringify(
+      buildSlackRichInteractionBlocks(progressRequest),
+    );
+    expect(progressPayload).toContain('large_green_square');
+    expect(progressPayload).toContain('white_large_square');
+    expect(progressPayload).toContain('60%');
   });
 
   it('renders status payload body and provider form fields', () => {
