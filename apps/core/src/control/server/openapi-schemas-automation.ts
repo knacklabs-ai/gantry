@@ -235,6 +235,7 @@ export const automationOpenApiSchemas: Record<string, JsonSchema> = {
       kind: { type: 'string', enum: ['conversation_message'] },
       conversationId: { type: 'string' },
       threadId: { type: 'string' },
+      agentId: { type: 'string' },
       message: { type: 'string' },
       senderId: { type: 'string' },
       senderName: { type: 'string' },

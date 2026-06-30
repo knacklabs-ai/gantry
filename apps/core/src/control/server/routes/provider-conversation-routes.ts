@@ -65,6 +65,7 @@ import {
   providerToResponse,
   threadToResponse,
 } from './provider-conversation-mappers.js';
+import { makeAgentThreadQueueKey } from '../../../shared/thread-queue-key.js';
 
 interface RuntimeConversationRouteState {
   name: string;
@@ -646,7 +647,10 @@ async function removeBindingFromRuntime(
     String(providerConnection.providerId),
     externalConversationId,
   );
-  await removeRoute.call(ctx.app, jid);
+  await removeRoute.call(
+    ctx.app,
+    makeAgentThreadQueueKey(jid, binding.agentId),
+  );
 }
 
 function routeStateForBinding(input: {

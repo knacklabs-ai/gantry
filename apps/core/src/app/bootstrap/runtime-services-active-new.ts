@@ -5,7 +5,6 @@ import {
   encodeGroupMessageCursor,
   toGroupMessageCursor,
 } from '../../shared/message-cursor.js';
-import { makeThreadQueueKey } from '../../shared/thread-queue-key.js';
 import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provider-id.js';
 import type { AgentExecutionAdapter } from '../../application/agent-execution/agent-execution-adapter.js';
 import type { ChannelWiring } from './channel-wiring.js';
@@ -68,7 +67,7 @@ export async function handleActiveNewSessionCommand(input: {
   }
   if (!app.queue.stopGroup(queueJid)) return false;
   try {
-    await app.clearSessionForChatJid(chatJid, threadId, { memoryUserId });
+    await app.clearSessionForChatJid(queueJid, threadId, { memoryUserId });
   } catch (err) {
     logger.warn(
       { err, chatJid, threadId },
@@ -97,7 +96,7 @@ export async function handleActiveNewSessionCommand(input: {
     });
   }
   app.setAgentCursor(
-    makeThreadQueueKey(chatJid, threadId),
+    queueJid,
     encodeGroupMessageCursor(toGroupMessageCursor(message)),
   );
   await app.saveState();

@@ -21,7 +21,8 @@ import { settleDeliveryAttempt } from '../jobs/delivery.js';
 import { resolveMemoryUserId } from './session-resume-runtime.js';
 import {
   firstThreadQueueId,
-  parseThreadQueueKey,
+  makeAgentThreadQueueKey,
+  parseAgentThreadQueueKey,
 } from '../shared/thread-queue-key.js';
 import { formatElapsed } from './time-format.js';
 import { createRuntimeModelStatusAccess } from './model-status-store.js';
@@ -104,15 +105,20 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     queueJid: string,
     options: GroupProcessOptions = {},
   ): Promise<boolean> {
-    const { chatJid, threadId: queueThreadId } = parseThreadQueueKey(queueJid);
+    const { chatJid, threadId, agentId } = parseAgentThreadQueueKey(queueJid);
+    const routeKey = makeAgentThreadQueueKey(chatJid, agentId, threadId);
     const turnAppId = appIdFromConversationJid(chatJid) ?? DEFAULT_TURN_APP_ID;
-    const group = deps.getGroup(chatJid);
+    const group = deps.getGroup(chatJid, threadId, agentId);
     if (!group) return true;
+    const commandOverrideRouteKey =
+      threadId && agentId && !deps.getRegisteredJids().has(routeKey)
+        ? makeAgentThreadQueueKey(chatJid, agentId)
+        : routeKey;
     if (!deps.channelRuntime.hasChannel(chatJid)) {
       logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
       return true;
     }
-    const scopedQueue = options.queued === true || queueThreadId !== undefined;
+    const scopedQueue = options.queued === true || threadId !== undefined;
     const opsRepository = ops();
     const { messages: missedMessages, hasMore: missedMessagesRemain } =
       await collectPendingMessagesSince({
@@ -121,7 +127,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         sinceCursor: await deps.getCursor(queueJid),
         pageSize: config.MESSAGE_FETCH_PAGE_SIZE,
         maxMessages: config.MAX_MESSAGES_PER_PROMPT,
-        options: scopedQueue ? { threadId: queueThreadId ?? null } : undefined,
+        options: scopedQueue ? { threadId: threadId ?? null } : undefined,
       });
     if (missedMessages.length === 0) return true;
     const latestMessage = missedMessages[missedMessages.length - 1];
@@ -131,7 +137,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         ? latestMessage.external_message_id
         : null;
     const activeThreadId = firstThreadQueueId(
-      queueThreadId,
+      threadId,
       latestMessage.thread_id,
     );
     let firstProgressNotified = false;
@@ -234,13 +240,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           config.getRuntimeSettingsForConfig().modelFamilies,
         getGroupModelOverride: () => group.agentConfig?.model,
         setGroupModelOverride: async (value) =>
-          deps.setGroupModelOverride(chatJid, value),
+          deps.setGroupModelOverride(commandOverrideRouteKey, value),
         getModelStatus: modelStatus.getStatus,
         getBrowserStatus: () => getGroupBrowserStatus({ group, chatJid }),
         updateModelStatusSelection: modelStatus.updateSelection,
         getGroupThinkingOverride: () => group.agentConfig?.thinking,
         setGroupThinkingOverride: async (value) =>
-          deps.setGroupThinkingOverride(chatJid, value),
+          deps.setGroupThinkingOverride(commandOverrideRouteKey, value),
         ...createSessionArchiveHandlers({
           ops,
           appId: turnAppId,

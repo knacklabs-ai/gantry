@@ -5,6 +5,7 @@ import {
   SettingsDesiredStateService,
 } from '@core/config/settings/desired-state-service.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 import { ConversationAdministrationService } from '@core/application/provider-conversations/conversation-administration-service.js';
 import {
   semanticCapabilityInputSchema,
@@ -909,7 +910,7 @@ describe('SettingsDesiredStateService', () => {
 
     expect(result.invalidReferences).toEqual([]);
     expect(ops.setConversationRoute).toHaveBeenCalledWith(
-      'tg:100',
+      makeAgentThreadQueueKey('tg:100', 'agent:main_agent'),
       expect.objectContaining({ folder: 'main_agent', trigger: '@main' }),
     );
     expect(ops.deleteConversationRoute).not.toHaveBeenCalled();
@@ -957,7 +958,7 @@ describe('SettingsDesiredStateService', () => {
 
     expect(result.invalidReferences).toEqual([]);
     expect(ops.setConversationRoute).toHaveBeenCalledWith(
-      'sl:C123',
+      makeAgentThreadQueueKey('sl:C123', 'agent:main_agent'),
       expect.objectContaining({
         name: 'Main',
         folder: 'main_agent',
@@ -1431,6 +1432,45 @@ describe('SettingsDesiredStateService', () => {
     await service.reconcile(settings);
 
     expect(ops.deleteConversationRoute).toHaveBeenCalledWith('tg:old');
+  });
+
+  it('removes stale bare routes for configured agent bindings in authoritative mode', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.desiredState.authoritative = true;
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {
+        primary: {
+          jid: 'tg:100',
+          trigger: '@main',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          requiresTrigger: true,
+        },
+      },
+      sources: emptySources(),
+      capabilities: [],
+    };
+    const ops = makeOps({
+      'tg:100': {
+        name: 'Main',
+        folder: 'main_agent',
+        trigger: '@main',
+        added_at: '2026-05-02T00:00:00.000Z',
+      },
+    });
+    const service = new SettingsDesiredStateService({
+      ops,
+      repositories: makeRepositories(),
+    });
+
+    await service.reconcile(settings);
+
+    expect(ops.setConversationRoute).toHaveBeenCalledWith(
+      makeAgentThreadQueueKey('tg:100', 'agent:main_agent'),
+      expect.objectContaining({ folder: 'main_agent' }),
+    );
+    expect(ops.deleteConversationRoute).toHaveBeenCalledWith('tg:100');
   });
 
   it('clears empty capability selections in authoritative mode', async () => {

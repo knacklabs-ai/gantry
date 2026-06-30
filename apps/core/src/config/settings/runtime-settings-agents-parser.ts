@@ -488,16 +488,15 @@ export function parseConfiguredAgents(
       ...parseConfiguredAgentAccess(map.access, `${pathPrefix}.access`),
     };
   }
-  const seenJids = new Map<string, string>();
   for (const [folder, agent] of Object.entries(result)) {
+    const seenJids = new Set<string>();
     for (const binding of Object.values(agent.bindings)) {
-      const existing = seenJids.get(binding.jid);
-      if (existing) {
+      if (seenJids.has(binding.jid)) {
         throw new Error(
-          `agents.${folder}.bindings contains duplicate jid ${binding.jid}; already configured by agents.${existing}`,
+          `agents.${folder}.bindings contains duplicate jid ${binding.jid}`,
         );
       }
-      seenJids.set(binding.jid, folder);
+      seenJids.add(binding.jid);
     }
   }
   return result;

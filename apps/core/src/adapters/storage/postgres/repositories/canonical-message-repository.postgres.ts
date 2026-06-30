@@ -21,7 +21,7 @@ import {
   encodeGroupMessageCursor,
   toGroupMessageCursor,
 } from '../../../../shared/message-cursor.js';
-import { makeThreadQueueKey } from '../../../../shared/thread-queue-key.js';
+import { makeAgentThreadQueueKey } from '../../../../shared/thread-queue-key.js';
 import * as pgSchema from '../schema/schema.js';
 import { enqueueLiveAdmissionWorkItem } from './live-admission-work-item-repository.postgres.js';
 import {
@@ -171,19 +171,30 @@ function storageRefForIncomingAttachment(
   );
 }
 
-function liveAdmissionWorkItemId(appId: string, canonicalMessageId: string) {
-  return `live-admission:${appId}:${canonicalMessageId}`;
+function liveAdmissionWorkItemId(
+  appId: string,
+  canonicalMessageId: string,
+  agentId?: string | null,
+) {
+  return [
+    'live-admission',
+    appId,
+    agentId?.trim() || 'default-agent',
+    canonicalMessageId,
+  ].join(':');
 }
 
 function liveAdmissionIdempotencyKey(
   msg: NewMessage,
   appId: string,
   providerId: string,
+  agentId?: string | null,
 ): string {
   const providerMessageId = msg.external_message_id?.trim() || msg.id;
   return [
     'live-admission',
     appId,
+    agentId?.trim() || 'default-agent',
     providerId,
     msg.chat_jid,
     msg.thread_id?.trim() || 'main',
@@ -390,16 +401,17 @@ export class PostgresCanonicalMessageRepository {
       return undefined;
     }
     const admission = options.liveAdmission;
+    const agentId = admission.agentId
+      ? normalizeAgentIdForFolder(admission.agentId)
+      : null;
     return enqueueLiveAdmissionWorkItem(tx, {
-      id: liveAdmissionWorkItemId(admission.appId, canonicalMessageId),
+      id: liveAdmissionWorkItemId(admission.appId, canonicalMessageId, agentId),
       appId: admission.appId,
-      agentId: admission.agentId
-        ? normalizeAgentIdForFolder(admission.agentId)
-        : null,
+      agentId,
       agentSessionId: admission.agentSessionId,
       conversationId: msg.chat_jid,
       threadId: msg.thread_id ?? null,
-      queueJid: makeThreadQueueKey(msg.chat_jid, msg.thread_id),
+      queueJid: makeAgentThreadQueueKey(msg.chat_jid, agentId, msg.thread_id),
       messageId: canonicalMessageId,
       messageCursor: encodeGroupMessageCursor(toGroupMessageCursor(msg)),
       senderUserId: msg.sender,
@@ -408,6 +420,7 @@ export class PostgresCanonicalMessageRepository {
         msg,
         admission.appId,
         providerId,
+        agentId,
       ),
       triggerDecision: admission.triggerDecision,
       now: admission.now ?? msg.timestamp,

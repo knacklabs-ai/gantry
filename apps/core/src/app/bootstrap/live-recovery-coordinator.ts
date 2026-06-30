@@ -5,7 +5,11 @@ import type { NewMessage } from '../../domain/types.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provider-id.js';
 import { collectPendingMessagesSince } from '../../runtime/pending-message-replay.js';
-import { parseThreadQueueKey } from '../../shared/thread-queue-key.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
+import {
+  findConversationRouteForQueue,
+  parseAgentThreadQueueKey,
+} from '../../shared/thread-queue-key.js';
 import { buildLiveTurnContinuation } from './live-turn-continuation.js';
 
 /**
@@ -244,8 +248,12 @@ export async function liveTurnScopeForQueue(input: {
   queueJid: string;
 }): Promise<LiveTurnScope | null> {
   const { app, opsRepository, executionAdapter, queueJid } = input;
-  const { chatJid, threadId } = parseThreadQueueKey(queueJid);
-  const route = app.getConversationRoutes()[chatJid];
+  const { chatJid, threadId } = parseAgentThreadQueueKey(queueJid);
+  const route = findConversationRouteForQueue(
+    app.getConversationRoutes(),
+    queueJid,
+    (candidate) => agentIdForFolder(candidate.folder),
+  );
   if (!route) return null;
   const executionProviderId =
     resolveRuntimeExecutionProviderId(executionAdapter);

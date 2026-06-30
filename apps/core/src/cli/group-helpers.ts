@@ -20,6 +20,7 @@ import { ensureRuntimeLayout } from '../config/settings/runtime-home.js';
 import { RuntimeGroupDb, openRuntimeGroupDb } from './runtime-group-db.js';
 import { normalizeTelegramChatJid } from './telegram.js';
 import { providerForJid } from '../channels/provider-registry.js';
+import { parseAgentThreadQueueKey } from '../shared/thread-queue-key.js';
 
 export { formatAgentHarnessLine } from './group-engine.js';
 
@@ -263,6 +264,26 @@ function resolveGroup(
   };
 }
 
+function resolveBareJidRoute(
+  groups: Record<string, ConversationRoute>,
+  rawSelector: string,
+  bareJid: string,
+): { found: { jid: string; group: ConversationRoute } | null; error?: string } {
+  const matches = Object.entries(groups).filter(
+    ([jid]) =>
+      jid !== bareJid && parseAgentThreadQueueKey(jid).chatJid === bareJid,
+  );
+  if (matches.length === 0) return { found: null };
+  if (matches.length > 1) {
+    return {
+      found: null,
+      error: `Selector "${rawSelector}" is ambiguous: conversation "${bareJid}" has multiple agent routes. Use the folder/agent selector.`,
+    };
+  }
+  const [jid, group] = matches[0]!;
+  return { found: { jid, group } };
+}
+
 export function resolveGroupSelector(
   groups: Record<string, ConversationRoute>,
   rawSelector: string,
@@ -298,6 +319,12 @@ export function resolveGroupSelector(
 
   if (folderMatch) return { found: folderMatch };
   if (telegramMatch) return { found: telegramMatch };
+  const bareJid = normalizeGroupAddSelector(selector);
+  const bareRouteMatch = bareJid
+    ? resolveBareJidRoute(groups, selector, bareJid)
+    : { found: null };
+  if (bareRouteMatch.error) return bareRouteMatch;
+  if (bareRouteMatch.found) return { found: bareRouteMatch.found };
   return { found: null };
 }
 

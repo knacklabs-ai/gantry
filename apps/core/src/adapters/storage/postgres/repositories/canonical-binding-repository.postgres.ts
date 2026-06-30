@@ -3,6 +3,7 @@ import { and, asc, eq, isNull, like } from 'drizzle-orm';
 import type { ConversationRoute } from '../../../../domain/repositories/domain-types.js';
 import { nowIso as currentIso } from '../../../../shared/time/datetime.js';
 import * as pgSchema from '../schema/schema.js';
+import { parseAgentThreadQueueKey } from '../../../../shared/thread-queue-key.js';
 import {
   CANONICAL_APP_ID,
   type CanonicalDb,
@@ -55,9 +56,10 @@ export class PostgresCanonicalBindingRepository {
     jid: string,
     group: ConversationRoute,
   ): Promise<void> {
+    const { chatJid } = parseAgentThreadQueueKey(jid);
     await this.db.transaction(async (tx) => {
       const conversationId = await this.graph.ensureConversation(
-        jid,
+        chatJid,
         {
           name: group.name,
           isGroup:
@@ -170,7 +172,12 @@ export function bindingRowToGroup(
   const routeSubject = parseJson<{
     route?: { agentConfig?: ConversationRoute['agentConfig'] };
   }>(row.memorySubjectJson, {});
+  const bindingIdRouteKey = row.id.slice(
+    CONVERSATION_ROUTE_BINDING_ID_PREFIX.length,
+  );
+  const bindingQueueInfo = parseAgentThreadQueueKey(bindingIdRouteKey);
   const jid =
+    (bindingQueueInfo.agentId && bindingIdRouteKey) ||
     externalRef.jid ||
     (row.conversationId.startsWith('conversation:')
       ? row.conversationId.slice('conversation:'.length)

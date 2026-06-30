@@ -369,6 +369,22 @@ describe('createGroupProcessor', () => {
       expect(deps.channelRuntime.hasChannel).not.toHaveBeenCalled();
     });
 
+    it('passes the agent id from an agent-qualified queue key to route lookup', async () => {
+      const getGroup = vi.fn().mockReturnValue(undefined);
+      const deps = makeDeps({ getGroup });
+      const { processGroupMessages } = createGroupProcessor(deps);
+
+      await processGroupMessages(
+        'sl:C123::thread:1700.1::agent:agent%3Atriage',
+      );
+
+      expect(getGroup).toHaveBeenCalledWith(
+        'sl:C123',
+        '1700.1',
+        'agent:triage',
+      );
+    });
+
     it('returns true when channel is not found for the JID', async () => {
       const group = makeGroup();
       const deps = makeDeps({
@@ -5442,6 +5458,7 @@ describe('createGroupProcessor', () => {
         group?: ConversationRoute;
         messages?: NewMessage[];
         queueJid?: string;
+        registeredJids?: string[];
       } = {},
     ) {
       const group = opts.group ?? makeGroup({ folder: 'grp-folder' });
@@ -5451,6 +5468,9 @@ describe('createGroupProcessor', () => {
       const deps = makeDeps({
         channelRuntime: channel,
         getGroup: vi.fn().mockReturnValue(group),
+        getRegisteredJids: vi
+          .fn()
+          .mockReturnValue(new Set(opts.registeredJids ?? [])),
       });
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
@@ -5571,13 +5591,93 @@ describe('createGroupProcessor', () => {
       const { capturedDeps, deps } = await captureSessionDeps();
       const setGroupModelOverride = capturedDeps.setGroupModelOverride as (
         v: string | undefined,
-      ) => void;
+      ) => Promise<void>;
 
-      setGroupModelOverride('sonnet');
+      await setGroupModelOverride('sonnet');
 
       expect(deps.setGroupModelOverride).toHaveBeenCalledWith(
         'group1@g.us',
         'sonnet',
+      );
+    });
+
+    it('model and thinking overrides use the selected agent route key', async () => {
+      const routeKey = 'group1@g.us::agent:agent%3Atriage';
+      const { capturedDeps, deps } = await captureSessionDeps({
+        queueJid: routeKey,
+      });
+      const setGroupModelOverride = capturedDeps.setGroupModelOverride as (
+        v: string | undefined,
+      ) => Promise<void>;
+      const setGroupThinkingOverride =
+        capturedDeps.setGroupThinkingOverride as (v: unknown) => Promise<void>;
+
+      await setGroupModelOverride('sonnet');
+      await setGroupThinkingOverride({ mode: 'disabled' });
+
+      expect(deps.setGroupModelOverride).toHaveBeenCalledWith(
+        routeKey,
+        'sonnet',
+      );
+      expect(deps.setGroupThinkingOverride).toHaveBeenCalledWith(routeKey, {
+        mode: 'disabled',
+      });
+    });
+
+    it('threaded override commands stay scoped to the selected route', async () => {
+      const routeKey = 'group1@g.us::thread:thread-1::agent:agent%3Atriage';
+      const { capturedDeps, deps } = await captureSessionDeps({
+        queueJid: routeKey,
+        registeredJids: [routeKey],
+      });
+      const setGroupModelOverride = capturedDeps.setGroupModelOverride as (
+        v: string | undefined,
+      ) => Promise<void>;
+      const setGroupThinkingOverride =
+        capturedDeps.setGroupThinkingOverride as (v: unknown) => Promise<void>;
+
+      await setGroupModelOverride('sonnet');
+      await setGroupThinkingOverride({ mode: 'disabled' });
+
+      expect(deps.setGroupModelOverride).toHaveBeenCalledWith(
+        routeKey,
+        'sonnet',
+      );
+      expect(deps.setGroupThinkingOverride).toHaveBeenCalledWith(routeKey, {
+        mode: 'disabled',
+      });
+    });
+
+    it('threaded /model and /thinking overrides update the whole-conversation agent route when matched by fallback', async () => {
+      const wholeRouteKey = 'sl:C123::agent:agent%3Atriage';
+      const threadedQueueKey = 'sl:C123::thread:1700.1::agent:agent%3Atriage';
+      const { capturedDeps, deps } = await captureSessionDeps({
+        queueJid: threadedQueueKey,
+        messages: [
+          makeMessage({
+            chat_jid: 'sl:C123',
+            content: '/model sonnet',
+            thread_id: '1700.1',
+          }),
+        ],
+        registeredJids: [wholeRouteKey],
+      });
+      const setGroupModelOverride = capturedDeps.setGroupModelOverride as (
+        v: string | undefined,
+      ) => Promise<void>;
+      const setGroupThinkingOverride =
+        capturedDeps.setGroupThinkingOverride as (v: unknown) => Promise<void>;
+
+      await setGroupModelOverride('sonnet');
+      await setGroupThinkingOverride({ mode: 'disabled' });
+
+      expect(deps.setGroupModelOverride).toHaveBeenCalledWith(
+        wholeRouteKey,
+        'sonnet',
+      );
+      expect(deps.setGroupThinkingOverride).toHaveBeenCalledWith(
+        wholeRouteKey,
+        { mode: 'disabled' },
       );
     });
 
@@ -5595,9 +5695,9 @@ describe('createGroupProcessor', () => {
     it('setGroupThinkingOverride delegates to deps', async () => {
       const { capturedDeps, deps } = await captureSessionDeps();
       const setGroupThinkingOverride =
-        capturedDeps.setGroupThinkingOverride as (v: unknown) => void;
+        capturedDeps.setGroupThinkingOverride as (v: unknown) => Promise<void>;
 
-      setGroupThinkingOverride({ mode: 'disabled' });
+      await setGroupThinkingOverride({ mode: 'disabled' });
 
       expect(deps.setGroupThinkingOverride).toHaveBeenCalledWith(
         'group1@g.us',

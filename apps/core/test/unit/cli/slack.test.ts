@@ -18,6 +18,8 @@ import {
   saveRuntimeSettings,
 } from '@core/config/settings/runtime-settings.js';
 import { listSlackRecentChats } from '@core/cli/slack-chat-discovery.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
+import { resolveGroupSelector } from '@core/cli/group-helpers.js';
 
 const groupsStore = vi.hoisted(() => new Map<string, any>());
 const fileArtifacts = vi.hoisted(() => new Map<string, string>());
@@ -161,6 +163,26 @@ describe('cli slack helpers', () => {
     expect(normalizeSlackChatJid('')).toBeNull();
     expect(normalizeSlackChatJid('abc')).toBeNull();
     expect(normalizeSlackChatJid('sl:bad id')).toBeNull();
+  });
+
+  it('resolves a bare Slack JID to one agent-qualified route', () => {
+    const routeKey = makeAgentThreadQueueKey(
+      'sl:C0123456789',
+      'agent:main_agent',
+    );
+    const group = {
+      name: 'Kai Slack',
+      folder: 'main_agent',
+      trigger: '',
+      added_at: '2026-04-24T00:00:00.000Z',
+      requiresTrigger: false,
+    };
+
+    expect(
+      resolveGroupSelector({ [routeKey]: group }, 'sl:C0123456789'),
+    ).toEqual({
+      found: { jid: routeKey, group },
+    });
   });
 
   it('validates Slack bot token with auth.test', async () => {
@@ -787,5 +809,146 @@ describe('cli slack helpers', () => {
     expect(settings.conversations.slack_default_c0123456789.displayName).toBe(
       'recruiting-demo',
     );
+  });
+
+  it('updates desired settings when the selected route key is agent-qualified', async () => {
+    const runtimeHome = makeRuntimeHome();
+
+    const result = await registerSlackMainGroup({
+      runtimeHome,
+      chatJid: 'sl:C0123456789',
+      displayName: 'Kai Slack',
+      conversationDisplayName: 'recruiting-demo',
+      approverIds: ['U123'],
+    });
+
+    const routeKey = makeAgentThreadQueueKey(
+      'sl:C0123456789',
+      'agent:main_agent',
+    );
+    const sourceRoute = groupsStore.get('sl:C0123456789');
+    expect(sourceRoute).toEqual(
+      expect.objectContaining({
+        name: 'Kai Slack',
+        folder: 'main_agent',
+      }),
+    );
+    groupsStore.set(routeKey, { ...sourceRoute, requiresTrigger: true });
+
+    const staleSettings = loadRuntimeSettings(runtimeHome);
+    const bindingId = Object.entries(staleSettings.bindings).find(
+      ([, binding]) => binding.agent === result.folder,
+    )?.[0];
+    expect(bindingId).toBeTruthy();
+
+    const { runAgentCommand } = await import('@core/cli/group.js');
+    const code = await runAgentCommand(runtimeHome, [
+      'trigger',
+      routeKey,
+      '@reagent',
+    ]);
+
+    expect(code).toBe(0);
+    const settings = loadRuntimeSettings(runtimeHome);
+    expect(settings.bindings[bindingId!]).toMatchObject({
+      trigger: '@reagent',
+      requiresTrigger: true,
+    });
+    expect(settings.agents[result.folder].bindings[bindingId!]).toMatchObject({
+      trigger: '@reagent',
+      requiresTrigger: true,
+    });
+    expect(groupsStore.get(routeKey)).toMatchObject({
+      trigger: '@reagent',
+      requiresTrigger: true,
+    });
+    expect(Object.values(settings.conversations)).not.toContainEqual(
+      expect.objectContaining({
+        externalId: expect.stringContaining('::agent:'),
+      }),
+    );
+  });
+
+  it('updates sender policy without storing agent-qualified route keys in settings', async () => {
+    const runtimeHome = makeRuntimeHome();
+
+    const result = await registerSlackMainGroup({
+      runtimeHome,
+      chatJid: 'sl:C0123456789',
+      displayName: 'Kai Slack',
+      conversationDisplayName: 'recruiting-demo',
+      approverIds: ['U123'],
+    });
+
+    const routeKey = makeAgentThreadQueueKey(
+      'sl:C0123456789',
+      'agent:main_agent',
+    );
+    const sourceRoute = groupsStore.get('sl:C0123456789');
+    groupsStore.set(routeKey, { ...sourceRoute, requiresTrigger: true });
+
+    const { runAgentCommand } = await import('@core/cli/group.js');
+    const code = await runAgentCommand(runtimeHome, [
+      'policy',
+      routeKey,
+      '--allow',
+      'U123,U456',
+      '--mode',
+      'drop',
+    ]);
+
+    expect(code).toBe(0);
+    const settings = loadRuntimeSettings(runtimeHome);
+    const bindingId = Object.entries(settings.bindings).find(
+      ([, binding]) => binding.agent === result.folder,
+    )?.[0];
+    expect(bindingId).toBeTruthy();
+    expect(settings.agents[result.folder].bindings[bindingId!].jid).toBe(
+      'sl:C0123456789',
+    );
+    expect(
+      settings.conversations.slack_default_c0123456789.senderPolicy,
+    ).toEqual({ allow: ['U123', 'U456'], mode: 'drop' });
+    expect(Object.values(settings.conversations)).not.toContainEqual(
+      expect.objectContaining({
+        externalId: expect.stringContaining('::agent:'),
+      }),
+    );
+  });
+
+  it('removes desired settings for an agent-qualified route key', async () => {
+    const runtimeHome = makeRuntimeHome();
+
+    const result = await registerSlackMainGroup({
+      runtimeHome,
+      chatJid: 'sl:C0123456789',
+      displayName: 'Kai Slack',
+      conversationDisplayName: 'recruiting-demo',
+      approverIds: ['U123'],
+    });
+
+    const routeKey = makeAgentThreadQueueKey(
+      'sl:C0123456789',
+      'agent:main_agent',
+    );
+    const sourceRoute = groupsStore.get('sl:C0123456789');
+    groupsStore.set(routeKey, { ...sourceRoute, requiresTrigger: true });
+
+    const { runAgentCommand } = await import('@core/cli/group.js');
+    const code = await runAgentCommand(runtimeHome, [
+      'remove',
+      routeKey,
+      '--yes',
+    ]);
+
+    expect(code).toBe(0);
+    expect(groupsStore.has(routeKey)).toBe(false);
+    const settings = loadRuntimeSettings(runtimeHome);
+    expect(
+      Object.values(settings.bindings).some(
+        (binding) => binding.agent === result.folder,
+      ),
+    ).toBe(false);
+    expect(settings.agents[result.folder]?.bindings ?? {}).toEqual({});
   });
 });

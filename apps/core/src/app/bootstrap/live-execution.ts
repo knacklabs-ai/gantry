@@ -16,9 +16,11 @@ import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
 import type { NewMessage } from '../../domain/types.js';
 import type { ProcessRole } from './roles/process-role.js';
 import {
-  parseThreadQueueKey,
+  findConversationRouteForQueue,
+  parseAgentThreadQueueKey,
   makeThreadQueueKey,
 } from '../../shared/thread-queue-key.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provider-id.js';
 import type { LiveTurnAuthority } from '../../runtime/live-turn-authority.js';
 import type { LiveTurnLeaseDeps } from '../../application/live-turns/live-turn-lease-service.js';
@@ -197,11 +199,15 @@ export function buildLiveAdmissionProcessor(input: {
         finalRetry: context?.finalRetry === true,
       });
     }
-    const { chatJid, threadId } = parseThreadQueueKey(queueJid);
+    const { chatJid, threadId } = parseAgentThreadQueueKey(queueJid);
     let liveRunId = liveTurnAuthority.ownedRunId(queueJid) ?? undefined;
     let liveRunFence = liveTurnAuthority.ownedFence(queueJid);
     if (!liveTurnAuthority.ownsQueue(queueJid)) {
-      const route = app.getConversationRoutes()[chatJid];
+      const route = findConversationRouteForQueue(
+        app.getConversationRoutes(),
+        queueJid,
+        (candidate) => agentIdForFolder(candidate.folder),
+      );
       if (!route) return false;
       const executionProviderId =
         resolveRuntimeExecutionProviderId(executionAdapter);
@@ -629,10 +635,16 @@ async function resumeRecoveredTurn(input: {
 }): Promise<void> {
   const { turn, lease, app, liveTurnAuthority, liveTurnLeaseDeps, warn } =
     input;
-  const queueJid = makeThreadQueueKey(
-    turn.conversationId,
-    turn.threadId ?? undefined,
-  );
+  const pendingMessage =
+    turn.pendingMessage &&
+    typeof turn.pendingMessage === 'object' &&
+    !Array.isArray(turn.pendingMessage)
+      ? turn.pendingMessage
+      : null;
+  const queueJid =
+    typeof pendingMessage?.queueJid === 'string'
+      ? pendingMessage.queueJid
+      : makeThreadQueueKey(turn.conversationId, turn.threadId ?? undefined);
   liveTurnAuthority.adoptRecoveredTurn({
     queueJid,
     turn,
@@ -642,12 +654,6 @@ async function resumeRecoveredTurn(input: {
       fencingVersion: lease.fencingVersion,
     },
   });
-  const pendingMessage =
-    turn.pendingMessage &&
-    typeof turn.pendingMessage === 'object' &&
-    !Array.isArray(turn.pendingMessage)
-      ? turn.pendingMessage
-      : null;
   const replayQueueJid =
     pendingMessage?.queueJid === queueJid ? queueJid : null;
   const cursorBefore =

@@ -40,6 +40,7 @@ vi.mock('@core/messaging/router.js', () => ({
 
 import {
   MessageLoopDeps,
+  processLiveAdmissionWorkItem,
   recoverPendingMessages,
 } from '@core/runtime/message-loop.js';
 import {
@@ -47,7 +48,9 @@ import {
   encodeGroupMessageCursor,
   toGroupMessageCursor,
 } from '@core/shared/message-cursor.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 import { ConversationRoute } from '@core/domain/types.js';
+import type { LiveAdmissionWorkItem } from '@core/domain/ports/live-turns.js';
 
 function makeDeps(overrides: Partial<MessageLoopDeps> = {}): MessageLoopDeps & {
   enqueued: string[];
@@ -142,6 +145,41 @@ function makePendingMessage(index: number) {
   };
 }
 
+function makeAdmissionItem(
+  overrides: Partial<LiveAdmissionWorkItem> = {},
+): LiveAdmissionWorkItem {
+  return {
+    id: 'admission-1',
+    appId: 'default',
+    agentId: null,
+    agentSessionId: null,
+    conversationId: 'group@g.us',
+    threadId: null,
+    queueJid: 'group@g.us',
+    messageId: 'message:group@g.us:1',
+    messageCursor: '2024-01-01T00:00:01.000Z::1',
+    senderUserId: 'user@s.whatsapp.net',
+    senderDisplayName: 'User',
+    idempotencyKey: 'provider:msg-1',
+    state: 'claimed',
+    sourceKind: 'message',
+    triggerDecision: {},
+    claimWorkerInstanceId: 'worker-1',
+    claimToken: 'claim-1',
+    claimExpiresAt: '2024-01-01T00:01:00.000Z',
+    fencingVersion: 1,
+    retryCount: 1,
+    failureCount: 0,
+    deferUntil: null,
+    deferredReason: null,
+    createdAt: '2024-01-01T00:00:01.000Z',
+    updatedAt: '2024-01-01T00:00:01.000Z',
+    claimedAt: '2024-01-01T00:00:01.000Z',
+    endedAt: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetMessagesSince.mockReturnValue([]);
@@ -181,7 +219,7 @@ describe('recoverPendingMessages', () => {
     const deps = makeDeps();
     await recoverPendingMessages(deps);
 
-    expect(deps.enqueued).toContain('group@g.us');
+    expect(deps.enqueued).toContain('group@g.us::agent:agent%3Ateam');
   });
 
   it('keeps the repository receiver when replaying pending messages', async () => {
@@ -211,7 +249,7 @@ describe('recoverPendingMessages', () => {
     const deps = makeDeps({ opsRepository: repo });
     await recoverPendingMessages(deps);
 
-    expect(deps.enqueued).toContain('group@g.us');
+    expect(deps.enqueued).toContain('group@g.us::agent:agent%3Ateam');
   });
 
   it('does not enqueue when no pending messages exist', async () => {
@@ -256,7 +294,9 @@ describe('recoverPendingMessages', () => {
     });
     await recoverPendingMessages(deps);
 
-    expect(deps.enqueued).toEqual(['group@g.us::thread:topic-1']);
+    expect(deps.enqueued).toEqual([
+      'group@g.us::thread:topic-1::agent:agent%3Ateam',
+    ]);
   });
 
   it('checks all registered groups', async () => {
@@ -295,7 +335,174 @@ describe('recoverPendingMessages', () => {
     });
 
     await recoverPendingMessages(deps);
-    expect(deps.enqueued).toEqual(['group1@g.us', 'group2@g.us']);
+    expect(deps.enqueued).toEqual([
+      'group1@g.us::agent:agent%3Ateam1',
+      'group2@g.us::agent:agent%3Ateam2',
+    ]);
+  });
+
+  it('does not collapse different bare chat routes for the same agent', async () => {
+    mockGetMessagesSince.mockReturnValue([
+      {
+        id: 1,
+        chat_jid: 'group@g.us',
+        sender: 'user@s.whatsapp.net',
+        content: 'hello',
+        timestamp: '2024-01-01T00:00:01.000Z',
+        is_from_me: false,
+        message_id: 'msg-1',
+        reply_to_message_id: null,
+        reply_to_content: null,
+        sender_name: 'User',
+      },
+    ]);
+
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        [makeAgentThreadQueueKey('group1@g.us', 'agent:team')]: {
+          name: 'Team 1',
+          folder: 'team',
+          trigger: '@Team1',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+        [makeAgentThreadQueueKey('group2@g.us', 'agent:team')]: {
+          name: 'Team 2',
+          folder: 'team',
+          trigger: '@Team2',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+
+    await recoverPendingMessages(deps);
+
+    expect(deps.enqueued).toEqual([
+      makeAgentThreadQueueKey('group1@g.us', 'agent:team'),
+      makeAgentThreadQueueKey('group2@g.us', 'agent:team'),
+    ]);
+  });
+
+  it('deduplicates legacy bare and agent-qualified routes during recovery', async () => {
+    mockGetMessagesSince.mockReturnValue([
+      {
+        id: 1,
+        chat_jid: 'group@g.us',
+        sender: 'user@s.whatsapp.net',
+        content: 'hello',
+        timestamp: '2024-01-01T00:00:01.000Z',
+        is_from_me: false,
+        message_id: 'msg-1',
+        reply_to_message_id: null,
+        reply_to_content: null,
+        sender_name: 'User',
+      },
+    ]);
+
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        'group@g.us': {
+          name: 'Legacy',
+          folder: 'team',
+          trigger: '@Legacy',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+        [makeAgentThreadQueueKey('group@g.us', 'agent:team')]: {
+          name: 'Team',
+          folder: 'team',
+          trigger: '@Team',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+
+    await recoverPendingMessages(deps);
+
+    expect(deps.enqueued).toEqual([
+      makeAgentThreadQueueKey('group@g.us', 'agent:team'),
+    ]);
+  });
+
+  it('only recovers the exact thread for a thread-scoped route', async () => {
+    mockGetMessageThreadIds.mockReturnValue(['thread-1', 'thread-2']);
+    mockGetMessagesSince.mockReturnValue([
+      {
+        ...makePendingMessage(1),
+        thread_id: 'thread-1',
+      },
+    ]);
+
+    const routeKey = makeAgentThreadQueueKey(
+      'group@g.us',
+      'agent:team',
+      'thread-1',
+    );
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        [routeKey]: {
+          name: 'Thread Team',
+          folder: 'team',
+          trigger: '@Thread',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+
+    await recoverPendingMessages(deps);
+
+    expect(mockGetMessageThreadIds).not.toHaveBeenCalled();
+    expect(mockGetMessagesSince).toHaveBeenCalledOnce();
+    expect(mockGetMessagesSince).toHaveBeenCalledWith(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      50,
+      { threadId: 'thread-1' },
+    );
+    expect(deps.enqueued).toEqual([routeKey]);
+  });
+
+  it('shadows whole-conversation recovery when another agent owns the exact thread', async () => {
+    mockGetMessageThreadIds.mockReturnValue(['thread-1']);
+    mockGetMessagesSince.mockReturnValue([
+      {
+        ...makePendingMessage(1),
+        thread_id: 'thread-1',
+      },
+    ]);
+
+    const wholeRouteKey = makeAgentThreadQueueKey('group@g.us', 'agent:whole');
+    const threadRouteKey = makeAgentThreadQueueKey(
+      'group@g.us',
+      'agent:thread',
+      'thread-1',
+    );
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        [wholeRouteKey]: {
+          name: 'Whole Team',
+          folder: 'whole',
+          trigger: '@Whole',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+        [threadRouteKey]: {
+          name: 'Thread Team',
+          folder: 'thread',
+          trigger: '@Thread',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+
+    await recoverPendingMessages(deps);
+
+    expect(mockGetMessagesSince).toHaveBeenCalledOnce();
+    expect(deps.enqueued).toEqual([threadRouteKey]);
   });
 });
 
@@ -435,6 +642,154 @@ describe('thread queue routing', () => {
       folder: 'main',
     });
     expect(deps.sentTo).toEqual(['app:app-one:conv-new']);
+  });
+
+  it('selects the agent route from an agent-qualified live admission queue', async () => {
+    const queueJid = makeAgentThreadQueueKey('group@g.us', 'agent:team2');
+    const msg = {
+      id: 'sdk-msg-1',
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      content: 'hello',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      is_from_me: false,
+      message_id: 'sdk-msg-1',
+      reply_to_message_id: null,
+      reply_to_content: null,
+      sender_name: 'User',
+    };
+    mockGetMessagesSince.mockReturnValueOnce([msg]);
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        [makeAgentThreadQueueKey('group@g.us', 'agent:team1')]: {
+          name: 'Team 1',
+          folder: 'team1',
+          trigger: '@Team1',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+        [queueJid]: {
+          name: 'Team 2',
+          folder: 'team2',
+          trigger: '@Team2',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+    const { processLiveAdmissionWorkItem } =
+      await import('@core/runtime/message-loop.js');
+
+    await expect(
+      processLiveAdmissionWorkItem(deps, {
+        id: 'admission-team2',
+        appId: 'default',
+        agentId: 'agent:team2',
+        agentSessionId: null,
+        conversationId: 'group@g.us',
+        threadId: null,
+        queueJid,
+        messageId: 'message:group@g.us:sdk-msg-1',
+        messageCursor: '2024-01-01T00:00:01.000Z::sdk-msg-1',
+        senderUserId: 'user@s.whatsapp.net',
+        senderDisplayName: 'User',
+        idempotencyKey: 'external-ingress:sdk-msg-1:team2',
+        state: 'claimed',
+        sourceKind: 'message',
+        triggerDecision: {},
+        claimWorkerInstanceId: 'worker-1',
+        claimToken: 'claim-1',
+        claimExpiresAt: '2024-01-01T00:01:00.000Z',
+        fencingVersion: 1,
+        retryCount: 1,
+        failureCount: 0,
+        deferUntil: null,
+        deferredReason: null,
+        createdAt: '2024-01-01T00:00:01.000Z',
+        updatedAt: '2024-01-01T00:00:01.000Z',
+        claimedAt: '2024-01-01T00:00:01.000Z',
+        endedAt: null,
+      }),
+    ).resolves.toBe('completed');
+
+    expect(mockGetTriggerPattern).toHaveBeenCalledWith('@Team2');
+    expect(deps.sentTo).toEqual([queueJid]);
+    expect(mockGetMessagesSince).toHaveBeenCalledWith(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+      50,
+      { threadId: null },
+    );
+  });
+
+  it('does not select a route scoped to another thread', async () => {
+    const queueJid = makeAgentThreadQueueKey(
+      'group@g.us',
+      'agent:team',
+      'thread-2',
+    );
+    mockGetMessagesSince.mockReturnValueOnce([
+      {
+        ...makePendingMessage(1),
+        thread_id: 'thread-2',
+      },
+    ]);
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        [makeAgentThreadQueueKey('group@g.us', 'agent:team', 'thread-1')]: {
+          name: 'Thread 1',
+          folder: 'team',
+          trigger: '@Thread1',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+
+    await expect(
+      processLiveAdmissionWorkItem(
+        deps,
+        makeAdmissionItem({
+          id: 'admission-thread-2',
+          agentId: 'agent:team',
+          queueJid,
+          threadId: 'thread-2',
+        }),
+      ),
+    ).resolves.toBe('listener_degraded');
+
+    expect(deps.sentTo).toEqual([]);
+    expect(mockGetTriggerPattern).not.toHaveBeenCalled();
+  });
+
+  it('does not select a thread-scoped route for a top-level queue', async () => {
+    const queueJid = makeAgentThreadQueueKey('group@g.us', 'agent:team');
+    mockGetMessagesSince.mockReturnValueOnce([makePendingMessage(1)]);
+    const deps = makeDeps({
+      getConversationRoutes: () => ({
+        [makeAgentThreadQueueKey('group@g.us', 'agent:team', 'thread-1')]: {
+          name: 'Thread 1',
+          folder: 'team',
+          trigger: '@Thread1',
+          added_at: '2024-01-01T00:00:00.000Z',
+          requiresTrigger: false,
+        },
+      }),
+    });
+
+    await expect(
+      processLiveAdmissionWorkItem(
+        deps,
+        makeAdmissionItem({
+          id: 'admission-root',
+          agentId: 'agent:team',
+          queueJid,
+        }),
+      ),
+    ).resolves.toBe('listener_degraded');
+
+    expect(deps.sentTo).toEqual([]);
+    expect(mockGetTriggerPattern).not.toHaveBeenCalled();
   });
 
   it('routes one bounded durable pending-message window and schedules the next pass', async () => {

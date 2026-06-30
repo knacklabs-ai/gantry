@@ -5,6 +5,7 @@ import {
   CANONICAL_APP_ID,
   type CanonicalExecutor,
   type CanonicalDb,
+  agentIdForFolder,
   conversationIdForJid,
   json,
   jsonb,
@@ -305,8 +306,11 @@ export class PostgresCanonicalSessionRepository {
     },
     executor: CanonicalExecutor,
   ): Promise<string> {
-    const boundAgentId = await this.findBoundAgentId(input, executor);
-    if (boundAgentId) return boundAgentId;
+    const selectedBindingAgentId = await this.findBoundAgentId(
+      { ...input, agentId: agentIdForFolder(input.folder) },
+      executor,
+    );
+    if (selectedBindingAgentId) return selectedBindingAgentId;
 
     return this.graph.ensureAgent(input.folder, input.folder, executor);
   }
@@ -316,25 +320,22 @@ export class PostgresCanonicalSessionRepository {
       appId: string;
       conversationId: string;
       threadId: string | null;
+      agentId?: string;
     },
     executor: CanonicalExecutor,
   ): Promise<string | undefined> {
+    const b = pgSchema.agentConversationBindingsPostgres;
     if (input.threadId) {
       const [threadBinding] = await executor
-        .select({ agentId: pgSchema.agentConversationBindingsPostgres.agentId })
-        .from(pgSchema.agentConversationBindingsPostgres)
+        .select({ agentId: b.agentId })
+        .from(b)
         .where(
           and(
-            eq(pgSchema.agentConversationBindingsPostgres.appId, input.appId),
-            eq(
-              pgSchema.agentConversationBindingsPostgres.conversationId,
-              input.conversationId,
-            ),
-            eq(
-              pgSchema.agentConversationBindingsPostgres.threadId,
-              input.threadId,
-            ),
-            eq(pgSchema.agentConversationBindingsPostgres.status, 'active'),
+            eq(b.appId, input.appId),
+            eq(b.conversationId, input.conversationId),
+            eq(b.threadId, input.threadId),
+            input.agentId ? eq(b.agentId, input.agentId) : undefined,
+            eq(b.status, 'active'),
           ),
         )
         .limit(1);
@@ -342,17 +343,15 @@ export class PostgresCanonicalSessionRepository {
     }
 
     const [conversationBinding] = await executor
-      .select({ agentId: pgSchema.agentConversationBindingsPostgres.agentId })
-      .from(pgSchema.agentConversationBindingsPostgres)
+      .select({ agentId: b.agentId })
+      .from(b)
       .where(
         and(
-          eq(pgSchema.agentConversationBindingsPostgres.appId, input.appId),
-          eq(
-            pgSchema.agentConversationBindingsPostgres.conversationId,
-            input.conversationId,
-          ),
-          isNull(pgSchema.agentConversationBindingsPostgres.threadId),
-          eq(pgSchema.agentConversationBindingsPostgres.status, 'active'),
+          eq(b.appId, input.appId),
+          eq(b.conversationId, input.conversationId),
+          isNull(b.threadId),
+          input.agentId ? eq(b.agentId, input.agentId) : undefined,
+          eq(b.status, 'active'),
         ),
       )
       .limit(1);

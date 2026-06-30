@@ -1,4 +1,9 @@
 import { nowIso } from '../../shared/time/datetime.js';
+import { findConversationRoutesForChat } from '../../shared/thread-queue-key.js';
+import {
+  buildTriggerPattern,
+  triggerForRoute,
+} from '../../shared/trigger-pattern.js';
 import type { ChannelOpts } from '../channel-provider.js';
 
 type SlackSlashCommandOpts = Pick<
@@ -31,10 +36,25 @@ export async function ingestSlackSlashCommand(input: {
     'slack',
     input.isLikelyGroupConversation(channelId),
   );
-  const group = input.opts.conversationRoutes()[jid];
-  if (!group && input.isLikelyGroupConversation(channelId)) return;
+  const routeMatches = findConversationRoutesForChat(
+    input.opts.conversationRoutes(),
+    jid,
+  );
   const text = input.command.text?.trim();
-  const content = text ? `/gantry ${text}` : '/gantry';
+  let content = text ? `/gantry ${text}` : '/gantry';
+  if (input.isLikelyGroupConversation(channelId)) {
+    if (routeMatches.length === 0) return;
+    if (routeMatches.length > 1) {
+      if (!text) return;
+      const selector = text.split(/\s+/, 1)[0]!;
+      const selected = routeMatches.filter(([, route]) =>
+        buildTriggerPattern(triggerForRoute(route)).test(selector),
+      );
+      if (selected.length !== 1) return;
+      const rest = text.slice(selector.length).trim();
+      content = `${triggerForRoute(selected[0]![1])} /gantry${rest ? ` ${rest}` : ''}`;
+    }
+  }
   const id =
     input.command.command_id ||
     input.command.trigger_id ||

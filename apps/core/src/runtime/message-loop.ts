@@ -14,6 +14,7 @@ import {
   ProgressUpdateOptions,
   ConversationRoute,
 } from '../domain/types.js';
+import { agentIdForFolder } from '../domain/agent/agent-folder-id.js';
 import type {
   RuntimeConversationRouteRepository,
   RuntimeMessageRepository,
@@ -32,8 +33,10 @@ import {
 } from '../session/session-commands.js';
 import type { SessionCommand } from '../session/session-commands.js';
 import {
-  makeThreadQueueKey,
-  parseThreadQueueKey,
+  findConversationRoutesForChat,
+  makeAgentThreadQueueKey,
+  normalizeThreadQueueId,
+  parseAgentThreadQueueKey,
 } from '../shared/thread-queue-key.js';
 import {
   buildPendingMessagesContinuationIdempotencyKey,
@@ -98,16 +101,99 @@ function resolveMessageRepository(
 async function resolveConversationRoute(
   deps: MessageLoopDeps,
   chatJid: string,
+  agentId?: string | null,
+  threadId?: string | null,
 ): Promise<ConversationRoute | undefined> {
   const conversationRoutes = deps.getConversationRoutes();
-  const route = conversationRoutes[chatJid];
-  if (route) return route;
-  const persistedRoute =
-    await deps.opsRepository?.getConversationRoute?.(chatJid);
-  if (persistedRoute) {
-    conversationRoutes[chatJid] = persistedRoute;
+  const selectedAgentId = agentId ? agentIdForFolder(agentId) : null;
+  const selectedRoute = selectConversationRouteEntry(
+    conversationRoutes,
+    chatJid,
+    selectedAgentId,
+    threadId,
+  );
+  if (selectedRoute) return selectedRoute[1];
+
+  for (const routeKey of persistedRouteLookupKeys(
+    chatJid,
+    selectedAgentId,
+    threadId,
+  )) {
+    const persistedRoute =
+      await deps.opsRepository?.getConversationRoute?.(routeKey);
+    if (
+      persistedRoute &&
+      (!selectedAgentId ||
+        agentIdForFolder(persistedRoute.folder) === selectedAgentId)
+    ) {
+      conversationRoutes[routeKey] = persistedRoute;
+      return persistedRoute;
+    }
   }
-  return persistedRoute;
+  return undefined;
+}
+
+function selectConversationRouteEntry(
+  conversationRoutes: Record<string, ConversationRoute>,
+  chatJid: string,
+  selectedAgentId?: string | null,
+  threadId?: string | null,
+): [string, ConversationRoute] | undefined {
+  const requestedThreadId = normalizeThreadQueueId(threadId);
+  const exactThreadRoutes: Array<[string, ConversationRoute]> = [];
+  const wholeConversationRoutes: Array<[string, ConversationRoute]> = [];
+
+  for (const entry of Object.entries(conversationRoutes)) {
+    const [key, route] = entry;
+    const parsed = parseAgentThreadQueueKey(key);
+    if (parsed.chatJid !== chatJid) continue;
+    if (selectedAgentId && agentIdForFolder(route.folder) !== selectedAgentId) {
+      continue;
+    }
+    if (parsed.threadId) {
+      if (requestedThreadId && parsed.threadId === requestedThreadId) {
+        exactThreadRoutes.push(entry);
+      }
+      continue;
+    }
+    wholeConversationRoutes.push(entry);
+  }
+
+  return preferAgentQualifiedRoute(
+    requestedThreadId && exactThreadRoutes.length > 0
+      ? exactThreadRoutes
+      : wholeConversationRoutes,
+  );
+}
+
+function preferAgentQualifiedRoute(
+  routes: Array<[string, ConversationRoute]>,
+): [string, ConversationRoute] | undefined {
+  let fallback: [string, ConversationRoute] | undefined;
+  for (const entry of routes) {
+    if (parseAgentThreadQueueKey(entry[0]).agentId) return entry;
+    fallback ??= entry;
+  }
+  return fallback;
+}
+
+function persistedRouteLookupKeys(
+  chatJid: string,
+  selectedAgentId?: string | null,
+  threadId?: string | null,
+): string[] {
+  const keys: string[] = [];
+  if (selectedAgentId && normalizeThreadQueueId(threadId)) {
+    keys.push(makeAgentThreadQueueKey(chatJid, selectedAgentId, threadId));
+  }
+  if (normalizeThreadQueueId(threadId)) {
+    keys.push(makeAgentThreadQueueKey(chatJid, null, threadId));
+  }
+  if (selectedAgentId) {
+    keys.push(makeAgentThreadQueueKey(chatJid, selectedAgentId));
+  }
+  keys.push(chatJid);
+  return [...new Set(keys)];
 }
 
 function saveStateBestEffort(deps: MessageLoopDeps, chatJid: string): void {
@@ -167,8 +253,13 @@ async function processQueueMessages(
   },
 ): Promise<MessageAdmissionProcessingResult> {
   const opsRepository = resolveMessageRepository(deps);
-  const { chatJid, threadId } = parseThreadQueueKey(queueJid);
-  const group = await resolveConversationRoute(deps, chatJid);
+  const { chatJid, threadId, agentId } = parseAgentThreadQueueKey(queueJid);
+  const group = await resolveConversationRoute(
+    deps,
+    chatJid,
+    agentId,
+    threadId,
+  );
   if (!group) return 'listener_degraded';
 
   if (!deps.hasChannel(chatJid)) {
@@ -321,10 +412,15 @@ export async function processLiveAdmissionWorkItem(
   item: LiveAdmissionWorkItem,
 ): Promise<MessageAdmissionProcessingResult> {
   const opsRepository = resolveMessageRepository(deps);
-  const { chatJid, threadId } = parseThreadQueueKey(item.queueJid);
+  const { chatJid, threadId, agentId } = parseAgentThreadQueueKey(
+    item.queueJid,
+  );
+  const parsedAgentId = agentId ? agentIdForFolder(agentId) : null;
+  const itemAgentId = item.agentId ? agentIdForFolder(item.agentId) : null;
   if (
     chatJid !== item.conversationId ||
-    (threadId ?? null) !== (item.threadId ?? null)
+    (threadId ?? null) !== (item.threadId ?? null) ||
+    parsedAgentId !== itemAgentId
   ) {
     logger.warn(
       {
@@ -356,12 +452,50 @@ export async function recoverPendingMessages(
   deps: MessageLoopDeps,
 ): Promise<void> {
   const opsRepository = resolveMessageRepository(deps);
-  for (const [chatJid, group] of Object.entries(deps.getConversationRoutes())) {
+  const routesByChatAgentThread = new Map<
+    string,
+    [string, ConversationRoute]
+  >();
+  for (const [routeKey, group] of Object.entries(
+    deps.getConversationRoutes(),
+  )) {
+    const parsed = parseAgentThreadQueueKey(routeKey);
+    const routeAgentId = parsed.agentId || agentIdForFolder(group.folder);
+    const dedupeKey = `${parsed.chatJid}::${parsed.threadId ?? ''}::${routeAgentId}`;
+    if (!routesByChatAgentThread.has(dedupeKey) || parsed.agentId) {
+      routesByChatAgentThread.set(dedupeKey, [routeKey, group]);
+    }
+  }
+  const dedupedRoutes = Object.fromEntries(routesByChatAgentThread.values());
+  for (const [routeKey, group] of routesByChatAgentThread.values()) {
+    const parsedRoute = parseAgentThreadQueueKey(routeKey);
+    const { chatJid } = parsedRoute;
+    const routeAgentId = parsedRoute.agentId || agentIdForFolder(group.folder);
     const queuedThreads = new Set<string>();
     let pendingCount = 0;
 
-    for (const threadId of await opsRepository.getMessageThreadIds(chatJid)) {
-      const queueJid = makeThreadQueueKey(chatJid, threadId);
+    const threadIds = parsedRoute.threadId
+      ? [parsedRoute.threadId]
+      : await opsRepository.getMessageThreadIds(chatJid);
+    for (const threadId of threadIds) {
+      const globallySelectedRouteKeys = new Set(
+        findConversationRoutesForChat(dedupedRoutes, chatJid, threadId).map(
+          ([key]) => key,
+        ),
+      );
+      if (!globallySelectedRouteKeys.has(routeKey)) continue;
+      const selectedRoute = selectConversationRouteEntry(
+        dedupedRoutes,
+        chatJid,
+        routeAgentId,
+        threadId,
+      );
+      if (selectedRoute?.[0] !== routeKey) continue;
+      const queueJid = makeAgentThreadQueueKey(
+        chatJid,
+        agentIdForFolder(group.folder),
+        threadId,
+      );
       const pending = await collectPendingMessagesSince({
         getMessagesSince: opsRepository.getMessagesSince.bind(opsRepository),
         chatJid,

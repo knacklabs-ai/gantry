@@ -1877,7 +1877,7 @@ conversations:
     expect(parsed.conversations.work?.providerConnection).toBe('telegram_work');
   });
 
-  it('rejects duplicate desired-state conversation bindings', () => {
+  it('allows different agents to bind the same desired-state conversation', () => {
     const yaml = `defaults:
   model: opus
 
@@ -1898,8 +1898,31 @@ agents:
         added_at: 2026-05-02T00:00:00.000Z
 `;
 
+    const parsed = parseRuntimeSettings(yaml);
+    expect(parsed.agents.one.bindings.primary?.jid).toBe('tg:100');
+    expect(parsed.agents.two.bindings.primary?.jid).toBe('tg:100');
+  });
+
+  it('rejects duplicate desired-state conversation bindings in one agent', () => {
+    const yaml = `defaults:
+  model: opus
+
+agents:
+  one:
+    name: One
+    bindings:
+      primary:
+        jid: tg:100
+        trigger: '@one'
+        added_at: 2026-05-02T00:00:00.000Z
+      secondary:
+        jid: tg:100
+        trigger: '@one2'
+        added_at: 2026-05-02T00:00:00.000Z
+`;
+
     expect(() => parseRuntimeSettings(yaml)).toThrow(
-      'agents.two.bindings contains duplicate jid tg:100; already configured by agents.one',
+      'agents.one.bindings contains duplicate jid tg:100',
     );
   });
 

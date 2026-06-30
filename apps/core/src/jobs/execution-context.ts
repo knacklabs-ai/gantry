@@ -4,8 +4,14 @@ import type {
 } from '../domain/types.js';
 import type { RuntimeAgentSessionRepository } from '../domain/repositories/ops-repo.js';
 import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
+import { agentIdForJobWorkspaceKey } from '../application/jobs/job-tool-policy.js';
 import { resolveJobNotificationRoutes } from './job-notification-routes.js';
 import { buildBoundedMemoryRecallQuery } from '../memory/app-memory-recall-query.js';
+import {
+  findConversationRouteForQueue,
+  findSingleConversationRouteForChat,
+  makeAgentThreadQueueKey,
+} from '../shared/thread-queue-key.js';
 
 export function resolveExecutionContext(
   job: Job,
@@ -20,7 +26,33 @@ export function resolveExecutionContext(
     job.execution_context?.conversationJid,
   );
   if (!executionConversation) return null;
-  const group = groups[executionConversation];
+  const executionThreadId = normalizeOptional(job.execution_context?.threadId);
+  const explicitAgentId = normalizeOptional(
+    (job.execution_context as Record<string, unknown> | undefined)?.agentId,
+  );
+  const workspaceKey =
+    normalizeOptional(job.execution_context?.workspaceKey) ??
+    normalizeOptional(job.workspace_key);
+  const executionAgentId = explicitAgentId
+    ? explicitAgentId
+    : workspaceKey
+      ? agentIdForJobWorkspaceKey(workspaceKey)
+      : undefined;
+  const group = executionAgentId
+    ? findConversationRouteForQueue(
+        groups,
+        makeAgentThreadQueueKey(
+          executionConversation,
+          executionAgentId,
+          executionThreadId,
+        ),
+        (route) => agentIdForJobWorkspaceKey(route.folder),
+      )
+    : findSingleConversationRouteForChat(
+        groups,
+        executionConversation,
+        executionThreadId,
+      );
   if (!group) return null;
   const notificationRoutes = resolveJobNotificationRoutes(job);
   const primaryExecutionRoute = notificationRoutes.find(
@@ -35,10 +67,7 @@ export function resolveExecutionContext(
   return {
     group,
     executionJid: executionConversation,
-    threadId:
-      normalizeOptional(job.execution_context?.threadId) ??
-      primaryExecutionRoute?.threadId ??
-      null,
+    threadId: executionThreadId ?? primaryExecutionRoute?.threadId ?? null,
     stopAliasJids,
   };
 }

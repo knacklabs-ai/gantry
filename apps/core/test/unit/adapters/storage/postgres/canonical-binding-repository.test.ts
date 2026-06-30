@@ -1,8 +1,41 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { bindingRowToGroup } from '@core/adapters/storage/postgres/repositories/canonical-binding-repository.postgres.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
+import {
+  PostgresCanonicalBindingRepository,
+  bindingRowToGroup,
+} from '@core/adapters/storage/postgres/repositories/canonical-binding-repository.postgres.js';
+import type { ConversationRoute } from '@core/domain/types.js';
 
 describe('canonical binding repository route projection', () => {
+  it('reconstructs agent-qualified binding ids as persisted route keys', () => {
+    const routeKey = makeAgentThreadQueueKey('tg:100', 'agent:main_agent');
+    const row = {
+      id: `conversation-route:${routeKey}`,
+      agentId: 'agent:main_agent',
+      conversationId: 'conversation:tg:100',
+      threadId: null,
+      status: 'active',
+      conversationExternalRefJson: JSON.stringify({
+        kind: 'conversation',
+        value: '100',
+        jid: 'tg:100',
+      }),
+      conversationKind: 'group',
+      memorySubjectJson: JSON.stringify({
+        kind: 'conversation',
+        appId: 'default',
+        conversationId: 'conversation:tg:100',
+      }),
+      displayName: 'Main Telegram',
+      triggerPattern: '@main',
+      requiresTrigger: false,
+      createdAt: '2026-05-06T00:00:00.000Z',
+    };
+
+    expect(bindingRowToGroup(row)).toMatchObject({ jid: routeKey });
+  });
+
   it('reconstructs registered groups from binding columns instead of memory-subject route blobs', () => {
     const row = {
       id: 'conversation-route:tg:100',
@@ -168,5 +201,64 @@ describe('canonical binding repository route projection', () => {
     expect(bindingRowToGroup(channelRow)?.group.conversationKind).toBe(
       'channel',
     );
+  });
+
+  it('normalizes route keys to bare JIDs before ensuring conversations', async () => {
+    const routeKey = makeAgentThreadQueueKey('tg:100', 'agent:main_agent');
+    const insertedRows: unknown[] = [];
+    const tx = {
+      insert: vi.fn(() => ({
+        values: (value: unknown) => {
+          insertedRows.push(value);
+          return { onConflictDoUpdate: vi.fn(async () => undefined) };
+        },
+      })),
+    } as any;
+    const db = {
+      transaction: vi.fn(async (callback: any) => callback(tx)),
+    } as any;
+    const ensureConversation = vi.fn(
+      async (jid: string) => `conversation:${jid}`,
+    );
+    const ensureAgent = vi.fn(async () => 'agent:main_agent');
+    const getConversationInstallationId = vi.fn(
+      async () => 'channel-providerConnection:default:tg',
+    );
+
+    const repo = new PostgresCanonicalBindingRepository(db);
+    (repo as any).graph = {
+      ensureConversation,
+      ensureAgent,
+      getConversationInstallationId,
+    };
+
+    await repo.saveConversationRoute(routeKey, {
+      name: 'Main',
+      folder: 'main_agent',
+      trigger: '@main',
+      added_at: '2026-06-01T00:00:00.000Z',
+      requiresTrigger: true,
+      conversationKind: 'channel',
+    } as ConversationRoute);
+
+    expect(ensureConversation).toHaveBeenCalledOnce();
+    expect(ensureConversation).toHaveBeenCalledWith(
+      'tg:100',
+      expect.objectContaining({ isGroup: true }),
+      tx,
+    );
+    expect(ensureConversation).not.toHaveBeenCalledWith(
+      'tg:100::agent:agent%3Amain_agent',
+      expect.anything(),
+      tx,
+    );
+    expect(ensureAgent).toHaveBeenCalledWith('main_agent', 'Main', tx);
+    expect(insertedRows).toHaveLength(1);
+    expect(
+      insertedRows[0] as { id: string; conversationId: string },
+    ).toMatchObject({
+      id: `conversation-route:${routeKey}`,
+      conversationId: 'conversation:tg:100',
+    });
   });
 });

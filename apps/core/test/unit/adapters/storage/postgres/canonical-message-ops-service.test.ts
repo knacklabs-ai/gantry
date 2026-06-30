@@ -566,6 +566,74 @@ describe('CanonicalMessageOpsService', () => {
     expect(tx.insert).toHaveBeenCalledTimes(2);
   });
 
+  it('agent-qualifies live admission work item identity and queue jid', async () => {
+    const insertedValues: unknown[] = [];
+    const tx = {
+      select: vi.fn(),
+      insert: vi.fn(() => ({
+        values: vi.fn((values: unknown) => {
+          insertedValues.push(values);
+          if (
+            values &&
+            typeof values === 'object' &&
+            String((values as Record<string, unknown>).id).startsWith(
+              'live-admission:',
+            )
+          ) {
+            return {
+              onConflictDoNothing: vi.fn(() => ({
+                returning: vi.fn(async () => [values]),
+              })),
+            };
+          }
+          return { onConflictDoUpdate: vi.fn(async () => undefined) };
+        }),
+      })),
+      delete: vi.fn(),
+    };
+    const repository = new PostgresCanonicalMessageRepository({} as never);
+    Object.assign(repository, {
+      graph: {
+        ensureConversation: vi.fn(async () => 'conversation:sl:C123'),
+        ensureThread: vi.fn(async () => 'thread:sl:C123:thread-1'),
+        getConversationInstallationId: vi.fn(async () => null),
+        ensureParticipant: vi.fn(async () => undefined),
+      },
+    });
+
+    await repository.saveMessageWithExecutor(
+      tx as never,
+      {
+        id: '1710000001.000100',
+        chat_jid: 'sl:C123',
+        provider: 'slack',
+        sender: 'U123',
+        sender_name: 'Ravi',
+        content: '@Alpha hello',
+        timestamp: '2026-05-06T00:00:00.000Z',
+        thread_id: 'thread-1',
+      },
+      { liveAdmission: { appId: 'app-one', agentId: 'alpha' } },
+    );
+
+    const admissionRow = insertedValues.find(
+      (value): value is Record<string, unknown> =>
+        !!value &&
+        typeof value === 'object' &&
+        String((value as Record<string, unknown>).id).startsWith(
+          'live-admission:',
+        ),
+    );
+
+    expect(admissionRow).toMatchObject({
+      id: 'live-admission:app-one:agent:alpha:message:sl:C123:1710000001.000100',
+      agentId: 'agent:alpha',
+      queueJid: 'sl:C123::thread:thread-1::agent:agent%3Aalpha',
+      idempotencyKey:
+        'live-admission:app-one:agent:alpha:slack:sl:C123:thread-1:1710000001.000100',
+    });
+  });
+
   it('preserves stored attachment refs when replacing hydrated attachment rows', async () => {
     const insertedValues: unknown[] = [];
     const tx = {

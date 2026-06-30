@@ -26,13 +26,9 @@ import {
   buildTriggerPattern,
   triggerForRoute,
 } from '../../shared/trigger-pattern.js';
+import { findConversationRoutesForChat } from '../../shared/thread-queue-key.js';
 import { SLACK_PERMISSION_DECISION_ACTION_IDS } from './permission-action-id.js';
 import { nowIso } from '../../shared/time/datetime.js';
-import {
-  tryNativeStreamAppend,
-  tryNativeStreamStart,
-  tryNativeStreamStop,
-} from './native-stream.js';
 import { registerSlackMessageActionHandler } from './channel-message-action-handler.js';
 import { registerSlackUtilityHandlers } from './channel-utility-handlers.js';
 import { ingestSlackSlashCommand as ingestSlackSlashCommandEvent } from './slash-command-ingest.js';
@@ -74,9 +70,15 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       'slack',
       this.isLikelyGroupConversation(event.channel),
     );
-    const group = this.opts.conversationRoutes()[jid];
     const isGroupConversation = this.isLikelyGroupConversation(event.channel);
-    if (!group && isGroupConversation) {
+    const routeMatches = findConversationRoutesForChat(
+      this.opts.conversationRoutes(),
+      jid,
+      event.thread_ts,
+    );
+    const singleRoute =
+      routeMatches.length === 1 ? routeMatches[0]?.[1] : undefined;
+    if (routeMatches.length < 1 && isGroupConversation) {
       logger.debug(
         { jid, chatName },
         'Message from unregistered Slack conversation',
@@ -86,20 +88,36 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     const enriched = await this.enrichMessage(jid, event);
     const rawContent = enriched.text;
     const content =
-      this.botUserId && group
+      this.botUserId && singleRoute
         ? rawContent.replace(
             new RegExp(`^<@${this.botUserId}>\\s+`),
-            `${triggerForRoute(group)} `,
+            `${triggerForRoute(singleRoute)} `,
           )
-        : rawContent;
+        : this.botUserId && routeMatches.length > 1
+          ? rawContent.replace(new RegExp(`^<@${this.botUserId}>\\s*`), '')
+          : rawContent;
     if (!content) return;
+    const triggeredRoutes =
+      routeMatches.length > 1
+        ? routeMatches.filter(([, route]) =>
+            buildTriggerPattern(triggerForRoute(route)).test(content.trim()),
+          )
+        : [];
+    const group =
+      singleRoute ??
+      (triggeredRoutes.length === 1 ? triggeredRoutes[0]?.[1] : undefined);
+    const attachments =
+      group && routeMatches.length > 1 && Array.isArray(event.files)
+        ? (await this.enrichMessage(jid, event, group.folder)).attachments
+        : enriched.attachments;
     const sender = event.user || 'unknown';
     const senderName = await this.resolveUserName(event.user);
     const ownsTopLevelMessage =
-      Boolean(group) &&
-      (options.forceOwnedTopLevel ||
-        group.requiresTrigger === false ||
-        buildTriggerPattern(triggerForRoute(group)).test(content.trim()));
+      options.forceOwnedTopLevel ||
+      (group
+        ? group.requiresTrigger === false ||
+          buildTriggerPattern(triggerForRoute(group)).test(content.trim())
+        : false);
     const threadId =
       event.thread_ts ||
       (isGroupConversation && ownsTopLevelMessage ? event.ts : undefined);
@@ -114,32 +132,12 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       is_from_me: this.botUserId ? sender === this.botUserId : false,
       external_message_id: event.ts,
       thread_id: threadId,
-      attachments: enriched.attachments,
+      attachments,
       reply_to_message_id:
         event.thread_ts && event.thread_ts !== event.ts
           ? event.thread_ts
           : undefined,
     });
-  }
-  protected async tryNativeStreamStart(
-    channelId: string,
-    threadId: string | undefined,
-    text: string,
-  ): Promise<string | undefined> {
-    return tryNativeStreamStart({ app: this.app, channelId, threadId, text });
-  }
-  protected async tryNativeStreamAppend(
-    channelId: string,
-    streamTs: string,
-    text: string,
-  ): Promise<{ completed: boolean; sentPrefix: string }> {
-    return tryNativeStreamAppend({ app: this.app, channelId, streamTs, text });
-  }
-  protected async tryNativeStreamStop(
-    channelId: string,
-    streamTs: string,
-  ): Promise<boolean> {
-    return tryNativeStreamStop({ app: this.app, channelId, streamTs });
   }
   protected async canDecidePermission(
     userId: string,

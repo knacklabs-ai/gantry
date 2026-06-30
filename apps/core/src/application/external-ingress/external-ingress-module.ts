@@ -515,6 +515,7 @@ export class ExternalIngressModule {
       invocationId,
       conversationId,
       threadId: readOptionalString(target, 'threadId'),
+      agentId: readOptionalString(target, 'agentId'),
       message,
       senderId: readOptionalString(target, 'senderId'),
       senderName,

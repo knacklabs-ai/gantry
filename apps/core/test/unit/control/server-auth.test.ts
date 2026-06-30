@@ -25,6 +25,7 @@ import { getControlEnvValue } from '@core/config/index.js';
 import { signExternalIngressRequest } from '@core/application/external-ingress/signature.js';
 import { preflightModelPreset } from '@core/adapters/llm/model-preset-preflight.js';
 import { listSlackRecentChats } from '@core/cli/slack-chat-discovery.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 vi.mock('@core/adapters/llm/model-preset-preflight.js', () => ({
   preflightModelPreset: vi.fn(async () => ({
@@ -1952,15 +1953,32 @@ describe('control server runtime hardening', () => {
     }
   });
 
-  it('accepts signed external ingress conversation messages with Gantry ids only in the response', async () => {
+  it('prefers exact thread routes for signed external ingress conversation messages', async () => {
     const port = await reservePort();
     process.env.GANTRY_CONTROL_PORT = String(port);
+    const wholeRouteKey = makeAgentThreadQueueKey(
+      'tg:-100',
+      'agent:main_agent',
+    );
+    const threadRouteKey = makeAgentThreadQueueKey(
+      'tg:-100',
+      'agent:triage_agent',
+      '42',
+    );
     const app = {
       registerGroup: vi.fn(async () => undefined),
       getConversationRoutes: vi.fn(() => ({
-        'tg:-100': {
+        [wholeRouteKey]: {
           name: 'Team Topic',
           folder: 'main_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+          requiresTrigger: false,
+          conversationKind: 'channel',
+        },
+        [threadRouteKey]: {
+          name: 'Triage Topic',
+          folder: 'triage_agent',
           trigger: '',
           added_at: '2026-04-24T00:00:00.000Z',
           requiresTrigger: false,
@@ -2077,9 +2095,245 @@ describe('control server runtime hardening', () => {
         }),
       );
       expect(app.queue.enqueueMessageCheck).toHaveBeenCalledWith(
-        'tg:-100::thread:42',
+        makeAgentThreadQueueKey('tg:-100', 'agent:triage_agent', '42'),
       );
       expect(app.registerGroup).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects conversation_message ingress when multiple routes match without target.agentId', async () => {
+    const port = await reservePort();
+    process.env.GANTRY_CONTROL_PORT = String(port);
+    const mainRouteKey = makeAgentThreadQueueKey('tg:-100', 'agent:main_agent');
+    const triageRouteKey = makeAgentThreadQueueKey(
+      'tg:-100',
+      'agent:triage_agent',
+    );
+    const app = {
+      registerGroup: vi.fn(async () => undefined),
+      getConversationRoutes: vi.fn(() => ({
+        [mainRouteKey]: {
+          name: 'Main',
+          folder: 'main_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+          requiresTrigger: false,
+          conversationKind: 'channel',
+        },
+        [triageRouteKey]: {
+          name: 'Triage',
+          folder: 'triage_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+          requiresTrigger: false,
+          conversationKind: 'channel',
+        },
+      })),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    controlRepo.getExternalIngressById.mockResolvedValue({
+      ingressId: 'ingress-1',
+      appId: 'app-one',
+      name: 'ingress-main',
+      secret: 'ingress-secret',
+      enabled: true,
+      metadata: {
+        targetPolicy: {
+          allowedTargetKinds: ['conversation_message'],
+          conversationIds: ['conversation:tg:-100'],
+        },
+      },
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    domainRepositories.conversations.getConversation.mockResolvedValue({
+      id: 'conversation:tg:-100',
+      appId: 'app-one',
+      providerConnectionId: 'channel-providerConnection:app-one:telegram',
+      externalRef: { kind: 'conversation', value: '-100' },
+      kind: 'group',
+      title: 'Team Topic',
+      status: 'active',
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    domainRepositories.conversations.getThread.mockResolvedValue({
+      id: 'thread:tg:-100:42',
+      appId: 'app-one',
+      conversationId: 'conversation:tg:-100',
+      externalRef: { kind: 'conversation_thread', value: '42' },
+      title: 'Topic',
+      status: 'active',
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    const handle = startControlServer({ app: app as any });
+    const path = '/v1/ingresses/ingress-1/invoke';
+    const rawBody = JSON.stringify({
+      target: {
+        kind: 'conversation_message',
+        conversationId: 'conversation:tg:-100',
+        threadId: 'thread:tg:-100:42',
+        message: 'run the test',
+      },
+      idempotencyKey: 'idem-ingress-conversation-message-ambiguous',
+    });
+    const signed = signIngressRequest({
+      ingressId: 'ingress-1',
+      path,
+      rawBody,
+      nonce: 'nonce-ingress-conversation-message-ambiguous',
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}${path}`,
+        '',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-gantry-ingress-timestamp': signed.timestamp,
+            'x-gantry-ingress-nonce': signed.nonce,
+            'x-gantry-ingress-signature': signed.signature,
+          },
+          body: rawBody,
+        },
+      );
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'CONFLICT',
+          message:
+            'Multiple agent routes match this conversation/thread; provide target.agentId.',
+        },
+      });
+      expect(opsRepo.storeChatMetadata).not.toHaveBeenCalled();
+      expect(opsRepo.storeMessage).not.toHaveBeenCalled();
+      expect(runtimeEvents.publish).not.toHaveBeenCalled();
+      expect(app.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('accepts conversation_message ingress for the explicit matching target.agentId', async () => {
+    const port = await reservePort();
+    process.env.GANTRY_CONTROL_PORT = String(port);
+    const mainRouteKey = makeAgentThreadQueueKey('tg:-100', 'agent:main_agent');
+    const triageRouteKey = makeAgentThreadQueueKey(
+      'tg:-100',
+      'agent:triage_agent',
+    );
+    const app = {
+      registerGroup: vi.fn(async () => undefined),
+      getConversationRoutes: vi.fn(() => ({
+        [mainRouteKey]: {
+          name: 'Main',
+          folder: 'main_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+          requiresTrigger: false,
+          conversationKind: 'channel',
+        },
+        [triageRouteKey]: {
+          name: 'Triage',
+          folder: 'triage_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+          requiresTrigger: false,
+          conversationKind: 'channel',
+        },
+      })),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    controlRepo.getExternalIngressById.mockResolvedValue({
+      ingressId: 'ingress-1',
+      appId: 'app-one',
+      name: 'ingress-main',
+      secret: 'ingress-secret',
+      enabled: true,
+      metadata: {
+        targetPolicy: {
+          allowedTargetKinds: ['conversation_message'],
+          conversationIds: ['conversation:tg:-100'],
+          allowedAgentIds: ['agent:triage_agent'],
+        },
+      },
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    domainRepositories.conversations.getConversation.mockResolvedValue({
+      id: 'conversation:tg:-100',
+      appId: 'app-one',
+      providerConnectionId: 'channel-providerConnection:app-one:telegram',
+      externalRef: { kind: 'conversation', value: '-100' },
+      kind: 'group',
+      title: 'Team Topic',
+      status: 'active',
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    domainRepositories.conversations.getThread.mockResolvedValue({
+      id: 'thread:tg:-100:42',
+      appId: 'app-one',
+      conversationId: 'conversation:tg:-100',
+      externalRef: { kind: 'conversation_thread', value: '42' },
+      title: 'Topic',
+      status: 'active',
+      createdAt: '2026-04-24T00:00:00.000Z',
+      updatedAt: '2026-04-24T00:00:00.000Z',
+    });
+    const handle = startControlServer({ app: app as any });
+    const path = '/v1/ingresses/ingress-1/invoke';
+    const rawBody = JSON.stringify({
+      target: {
+        kind: 'conversation_message',
+        conversationId: 'conversation:tg:-100',
+        threadId: 'thread:tg:-100:42',
+        agentId: 'agent:triage_agent',
+        message: 'run the test',
+      },
+      idempotencyKey: 'idem-ingress-conversation-message-agent',
+    });
+    const signed = signIngressRequest({
+      ingressId: 'ingress-1',
+      path,
+      rawBody,
+      nonce: 'nonce-ingress-conversation-message-agent',
+    });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}${path}`,
+        '',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-gantry-ingress-timestamp': signed.timestamp,
+            'x-gantry-ingress-nonce': signed.nonce,
+            'x-gantry-ingress-signature': signed.signature,
+          },
+          body: rawBody,
+        },
+      );
+
+      expect(response.status).toBe(202);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        duplicate: false,
+        targetKind: 'conversation_message',
+        conversationId: 'conversation:tg:-100',
+        threadId: 'thread:tg:-100:42',
+      });
+      expect(body).not.toHaveProperty('enqueue');
+      expect(app.queue.enqueueMessageCheck).toHaveBeenCalledWith(
+        makeAgentThreadQueueKey('tg:-100', 'agent:triage_agent', '42'),
+      );
     } finally {
       await handle.close();
     }

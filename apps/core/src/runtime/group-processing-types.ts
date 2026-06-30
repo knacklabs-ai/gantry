@@ -111,7 +111,11 @@ export interface GroupProcessingDeps {
       decisionPolicy?: 'same_channel';
     }) => Promise<boolean>;
   };
-  getGroup: (chatJid: string) => ConversationRoute | undefined;
+  getGroup: (
+    chatJid: string,
+    threadId?: string | null,
+    agentId?: string | null,
+  ) => ConversationRoute | undefined;
   clearSession: (
     workspaceFolder: string,
     threadId?: string | null,

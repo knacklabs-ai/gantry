@@ -117,6 +117,7 @@ import {
 import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 import { writeTelegramFetchResponseToFile } from '@core/channels/telegram-file-download.js';
 import { logger } from '@core/infrastructure/logging/logger.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 // --- Test helpers ---
 
@@ -223,6 +224,7 @@ function createTextCtx(overrides: {
   firstName?: string;
   username?: string;
   messageId?: number;
+  messageThreadId?: number;
   date?: number;
   entities?: any[];
   reply_to_message?: any;
@@ -244,6 +246,7 @@ function createTextCtx(overrides: {
       text: overrides.text,
       date: overrides.date ?? Math.floor(Date.now() / 1000),
       message_id: overrides.messageId ?? 1,
+      message_thread_id: overrides.messageThreadId,
       entities: overrides.entities ?? [],
       reply_to_message: overrides.reply_to_message,
     },
@@ -516,6 +519,78 @@ describe('TelegramChannel', () => {
           sender_name: 'Alice',
           content: 'Hello everyone',
           is_from_me: false,
+        }),
+      );
+    });
+
+    it('delivers message for an agent-qualified group route', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage')]: {
+            name: 'Test Group',
+            folder: 'test-group',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerTextMessage(createTextCtx({ text: 'Hello agent route' }));
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          chat_jid: 'tg:100200300',
+          content: 'Hello agent route',
+        }),
+      );
+    });
+
+    it('does not treat a Telegram topic route as a whole group route', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage', '77')]: {
+            name: 'Test Topic',
+            folder: 'test-topic',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerTextMessage(createTextCtx({ text: 'Hello group' }));
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers Telegram topic messages for exact agent-qualified topic routes', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage', '77')]: {
+            name: 'Test Topic',
+            folder: 'test-topic',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerTextMessage(
+        createTextCtx({ text: 'Hello topic', messageThreadId: 77 }),
+      );
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          chat_jid: 'tg:100200300',
+          content: 'Hello topic',
+          thread_id: '77',
         }),
       );
     });
@@ -954,6 +1029,245 @@ describe('TelegramChannel', () => {
           attachments: [
             expect.objectContaining({ storageRef: 'attachments/photo_1.jpg' }),
           ],
+        }),
+      );
+    });
+
+    it('downloads media for an agent-qualified group route', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage')]: {
+            name: 'Test Group',
+            folder: 'test-group',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMediaMessage(
+        'message:photo',
+        createMediaCtx({
+          extra: { photo: [{ file_id: 'photo_id', width: 800 }] },
+        }),
+      );
+      await flushPromises();
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo] (attachments/photo_1.jpg)',
+        }),
+      );
+    });
+
+    it('does not download media when multiple matching group route folders exist', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage')]: {
+            name: 'Triage',
+            folder: 'test-triage',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:ops')]: {
+            name: 'Ops',
+            folder: 'test-ops',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMediaMessage(
+        'message:photo',
+        createMediaCtx({
+          extra: { photo: [{ file_id: 'photo_id', width: 800 }] },
+        }),
+      );
+      await flushPromises();
+
+      expect(currentBot().api.getFile).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo]',
+          attachments: [
+            expect.objectContaining({
+              externalId: 'photo_id',
+              kind: 'image',
+            }),
+          ],
+        }),
+      );
+      const delivered = vi.mocked(opts.onMessage).mock.calls[0]![1];
+      expect(delivered.attachments[0]).not.toHaveProperty('storageRef');
+    });
+
+    it('downloads media for the selected multi-agent route', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage')]: {
+            name: 'Triage',
+            folder: 'test-triage',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:ops')]: {
+            name: 'Ops',
+            folder: 'test-ops',
+            trigger: '@Ops',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMediaMessage(
+        'message:photo',
+        createMediaCtx({
+          caption: '@Andy see file',
+          extra: { photo: [{ file_id: 'photo_id', width: 800 }] },
+        }),
+      );
+      await flushPromises();
+
+      expect(currentBot().api.getFile).toHaveBeenCalledWith('photo_id');
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
+        '/tmp/test-groups/test-triage/attachments/photo_1.jpg',
+        expect.any(Buffer),
+        { mode: 0o600 },
+      );
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo] (attachments/photo_1.jpg) @Andy see file',
+          attachments: [
+            expect.objectContaining({
+              externalId: 'photo_id',
+              kind: 'image',
+              storageRef: 'attachments/photo_1.jpg',
+            }),
+          ],
+        }),
+      );
+    });
+
+    it('does not download media when multiple matching topic route folders exist', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage', '77')]: {
+            name: 'Triage',
+            folder: 'test-triage',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:ops', '77')]: {
+            name: 'Ops',
+            folder: 'test-ops',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMediaMessage(
+        'message:photo',
+        createMediaCtx({
+          extra: {
+            message_thread_id: 77,
+            photo: [{ file_id: 'photo_id', width: 800 }],
+          },
+        }),
+      );
+      await flushPromises();
+
+      expect(currentBot().api.getFile).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo]',
+          thread_id: '77',
+          attachments: [
+            expect.objectContaining({
+              externalId: 'photo_id',
+              kind: 'image',
+            }),
+          ],
+        }),
+      );
+      const delivered = vi.mocked(opts.onMessage).mock.calls[0]![1];
+      expect(delivered.attachments[0]).not.toHaveProperty('storageRef');
+    });
+
+    it('does not download media through a Telegram topic route for whole-group media', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage', '77')]: {
+            name: 'Test Topic',
+            folder: 'test-topic',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMediaMessage(
+        'message:photo',
+        createMediaCtx({
+          extra: { photo: [{ file_id: 'photo_id', width: 800 }] },
+        }),
+      );
+      await flushPromises();
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(currentBot().api.getFile).not.toHaveBeenCalled();
+    });
+
+    it('downloads media for exact Telegram topic agent routes', async () => {
+      const opts = createTestOpts({
+        conversationRoutes: vi.fn(() => ({
+          [makeAgentThreadQueueKey('tg:100200300', 'agent:triage', '77')]: {
+            name: 'Test Topic',
+            folder: 'test-topic',
+            trigger: '@Andy',
+            added_at: '2024-01-01T00:00:00.000Z',
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMediaMessage(
+        'message:photo',
+        createMediaCtx({
+          extra: {
+            message_thread_id: 77,
+            photo: [{ file_id: 'photo_id', width: 800 }],
+          },
+        }),
+      );
+      await flushPromises();
+
+      expect(currentBot().api.getFile).toHaveBeenCalledWith('photo_id');
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo] (attachments/photo_1.jpg)',
+          thread_id: '77',
         }),
       );
     });

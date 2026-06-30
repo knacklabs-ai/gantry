@@ -10,6 +10,11 @@ function makeModule(overrides?: {
   messageReactions?: Record<string, unknown>;
   routable?: boolean;
   liveAdmissionAppId?: string | null;
+  resolveRoute?: (input: {
+    conversationJid: string;
+    threadId: string | null;
+    agentId?: string | null;
+  }) => { agentId?: string | null; queueKey: string } | null;
   createId?: () => string;
 }) {
   const conversations = {
@@ -65,6 +70,7 @@ function makeModule(overrides?: {
       jid.startsWith('tg:') ? 'telegram' : 'app',
     makeQueueKey: (jid, threadId) =>
       threadId ? `${jid}::thread:${threadId}` : jid,
+    resolveRoute: overrides?.resolveRoute,
     now: () => '2026-04-24T00:00:00.000Z',
     createId: overrides?.createId ?? (() => 'message-1'),
   });
@@ -301,6 +307,55 @@ describe('ConversationMessageIngressModule', () => {
     ]);
     expect(publish).not.toHaveBeenCalled();
     expect(accepted.enqueue.durableAdmissionCreated).toBe(true);
+  });
+
+  it('uses the resolved agent route for live admission and enqueue', async () => {
+    const publishWithLiveAdmissionMessage = vi.fn(async (_event, admission) => {
+      expect(admission).toMatchObject({
+        liveAdmission: {
+          appId: 'default',
+          agentId: 'agent:main_agent',
+        },
+      });
+      return {
+        event: { eventId: 77 },
+        liveAdmissionResult: {
+          outcome: 'enqueued',
+          item: {
+            id: 'admission-conversation-1',
+            state: 'queued',
+          },
+        },
+      };
+    });
+    const resolveRoute = vi.fn(() => ({
+      agentId: 'agent:main_agent',
+      queueKey: 'tg:-100::thread:42::agent:agent%3Amain_agent',
+    }));
+    const { module } = makeModule({
+      liveAdmissionAppId: 'default',
+      resolveRoute,
+      runtimeEvents: {
+        publishWithLiveAdmissionMessage,
+      },
+    });
+
+    const accepted = await module.acceptMessage({
+      appId: 'app-one',
+      invocationId: 'invocation-1',
+      conversationId: 'conversation:tg:-100',
+      threadId: 'thread:tg:-100:42',
+      message: 'Run this',
+    });
+
+    expect(resolveRoute).toHaveBeenCalledWith({
+      conversationJid: 'tg:-100',
+      threadId: '42',
+      agentId: null,
+    });
+    expect(accepted.enqueue.queueKey).toBe(
+      'tg:-100::thread:42::agent:agent%3Amain_agent',
+    );
   });
 
   it('rejects conversations that are not active runtime routes', async () => {

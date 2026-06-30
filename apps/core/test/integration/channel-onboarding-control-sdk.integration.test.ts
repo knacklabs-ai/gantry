@@ -11,6 +11,7 @@ import {
   ProviderListResponseSchema,
 } from '@gantry/contracts';
 import { syncRuntimeSettingsFromProjection } from '@core/config/index.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 const state = vi.hoisted(() => ({
   providerConnections: new Map<string, any>(),
@@ -271,7 +272,10 @@ describe('provider conversation onboarding control SDK integration', () => {
           registered.set(jid, group);
         }),
         projectConversationRoute: vi.fn(async (jid: string, group: any) => {
-          registered.set(jid, group);
+          registered.set(
+            makeAgentThreadQueueKey(jid, `agent:${group.folder}`),
+            group,
+          );
         }),
         unregisterConversationRoute: vi.fn(async (jid: string) => {
           registered.delete(jid);
@@ -449,7 +453,11 @@ describe('provider conversation onboarding control SDK integration', () => {
           triggerMode: 'always',
         },
       );
-      expect(runtimeApp.registered.has('sl:C999')).toBe(true);
+      expect(
+        runtimeApp.registered.has(
+          makeAgentThreadQueueKey('sl:C999', 'agent:one'),
+        ),
+      ).toBe(true);
       expect(runtimeApp.app.projectConversationRoute).toHaveBeenCalledWith(
         'sl:C999',
         expect.objectContaining({
@@ -465,9 +473,13 @@ describe('provider conversation onboarding control SDK integration', () => {
         conversationId,
       );
       expect(runtimeApp.app.unregisterConversationRoute).toHaveBeenCalledWith(
-        'sl:C999',
+        makeAgentThreadQueueKey('sl:C999', 'agent:one'),
       );
-      expect(runtimeApp.registered.has('sl:C999')).toBe(false);
+      expect(
+        runtimeApp.registered.has(
+          makeAgentThreadQueueKey('sl:C999', 'agent:one'),
+        ),
+      ).toBe(false);
     } finally {
       await server.close();
     }

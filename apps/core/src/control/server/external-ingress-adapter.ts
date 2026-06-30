@@ -8,10 +8,17 @@ import {
 
 import { ConversationMessageIngressModule } from '../../application/external-ingress/conversation-message-ingress.js';
 import { providerIdForJid } from '../../channels/provider-registry.js';
+import { ApplicationError } from '../../application/common/application-error.js';
 import { DEFAULT_JOB_RUNTIME_APP_ID } from '../../application/jobs/job-access.js';
 import { ExternalIngressModule } from '../../application/external-ingress/external-ingress-module.js';
 import { EXTERNAL_INGRESS_RUNTIME_DISPATCH } from '../../application/external-ingress/runtime-dispatch.js';
-import { makeThreadQueueKey } from '../../shared/thread-queue-key.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
+import {
+  findConversationRoutesForChat,
+  makeAgentThreadQueueKey,
+  makeThreadQueueKey,
+  parseAgentThreadQueueKey,
+} from '../../shared/thread-queue-key.js';
 import { SessionInteractionModule } from '../../application/sessions/session-interaction-module.js';
 import {
   getRuntimeControlRepository,
@@ -27,6 +34,86 @@ import {
 } from './rate-limit.js';
 import { adaptSessionControlPort } from './session-control-port.js';
 import { createJobManagementService } from './routes/jobs.js';
+
+function hasRouteForConversation(
+  routes: Record<string, unknown>,
+  conversationJid: string,
+): boolean {
+  return Object.keys(routes).some(
+    (key) => parseAgentThreadQueueKey(key).chatJid === conversationJid,
+  );
+}
+
+function resolveConversationMessageRoute(
+  routes: Record<string, unknown>,
+  conversationJid: string,
+  threadId: string | null,
+  agentId?: string | null,
+): { agentId?: string | null; queueKey: string } | null {
+  const normalizedAgentId = agentId?.trim() || null;
+  const matches = findConversationRoutesForChat(
+    routes,
+    conversationJid,
+    threadId,
+  ).map(([key, route]) => {
+    const parsed = parseAgentThreadQueueKey(key);
+    return {
+      parsed,
+      agentId: parsed.agentId ?? routeAgentId(route),
+    };
+  });
+  if (matches.length === 0) return null;
+  if (normalizedAgentId) {
+    if (!matches.some((match) => match.agentId === normalizedAgentId)) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'target.agentId does not match an active route for this conversation/thread',
+      );
+    }
+    return {
+      agentId: normalizedAgentId,
+      queueKey: makeAgentThreadQueueKey(
+        conversationJid,
+        normalizedAgentId,
+        threadId,
+      ),
+    };
+  }
+
+  const agentIds = new Set(
+    matches
+      .map((match) => match.agentId)
+      .filter((value): value is string => !!value),
+  );
+  if (agentIds.size > 1) {
+    throw new ApplicationError(
+      'CONFLICT',
+      'Multiple agent routes match this conversation/thread; provide target.agentId.',
+    );
+  }
+  const [resolvedAgentId] = [...agentIds];
+  return resolvedAgentId
+    ? {
+        agentId: resolvedAgentId,
+        queueKey: makeAgentThreadQueueKey(
+          conversationJid,
+          resolvedAgentId,
+          threadId,
+        ),
+      }
+    : {
+        agentId: null,
+        queueKey: makeThreadQueueKey(conversationJid, threadId),
+      };
+}
+
+function routeAgentId(route: unknown): string | null {
+  if (!route || typeof route !== 'object' || Array.isArray(route)) return null;
+  const folder = (route as { folder?: unknown }).folder;
+  return typeof folder === 'string' && folder.trim()
+    ? agentIdForFolder(folder)
+    : null;
+}
 
 export function createExternalIngressModule(
   ctx: ControlRouteContext,
@@ -50,13 +137,17 @@ export function createExternalIngressModule(
     runtimeEvents: getRuntimeEventExchange(),
     liveAdmissionAppId,
     isConversationRoutable: (conversationJid) =>
-      Object.prototype.hasOwnProperty.call(
-        ctx.app.getConversationRoutes(),
-        conversationJid,
-      ),
+      hasRouteForConversation(ctx.app.getConversationRoutes(), conversationJid),
     providerForConversationJid: (conversationJid) =>
       providerIdForJid(conversationJid, 'app'),
     makeQueueKey: makeThreadQueueKey,
+    resolveRoute: ({ conversationJid, threadId, agentId }) =>
+      resolveConversationMessageRoute(
+        ctx.app.getConversationRoutes(),
+        conversationJid,
+        threadId,
+        agentId,
+      ),
     messageReactions: ctx.addMessageReaction
       ? { addReaction: ctx.addMessageReaction }
       : undefined,

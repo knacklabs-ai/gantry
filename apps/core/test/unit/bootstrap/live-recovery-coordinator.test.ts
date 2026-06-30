@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   LIVE_RECOVERY_COORDINATOR_LEASE_KEY,
+  liveTurnScopeForQueue,
   routeScopeActiveLiveTurnAdmission,
   routeScopeActiveLiveTurnAdmissionFromCursor,
   startLiveRecoveryCoordinatorLeaseAcquisition,
 } from '@core/app/bootstrap/live-recovery-coordinator.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 interface ScheduledTimer {
   fn: () => void;
@@ -304,6 +306,62 @@ describe('live-turn host lease acquisition', () => {
     expect(manager.getLease()).toBe(secondLease);
 
     await manager.stop();
+  });
+
+  it('resolves live-turn scope from the exact thread route', async () => {
+    const getAgentTurnContext = vi.fn(async () => ({
+      appId: 'default',
+      agentSessionId: 'session-thread',
+    }));
+
+    await expect(
+      liveTurnScopeForQueue({
+        app: {
+          getConversationRoutes: () => ({
+            [makeAgentThreadQueueKey('sl:C123', 'agent:alpha')]: {
+              folder: 'alpha',
+              conversationKind: 'channel',
+            },
+            [makeAgentThreadQueueKey('sl:C123', 'agent:alpha', 'T1')]: {
+              folder: 'alpha',
+              conversationKind: 'dm',
+            },
+          }),
+        },
+        opsRepository: { getAgentTurnContext },
+        executionAdapter: { id: 'anthropic:claude-agent-sdk' },
+        queueJid: makeAgentThreadQueueKey('sl:C123', 'agent:alpha', 'T1'),
+      }),
+    ).resolves.toEqual({
+      appId: 'default',
+      agentSessionId: 'session-thread',
+      conversationId: 'sl:C123',
+      threadId: 'T1',
+    });
+    expect(getAgentTurnContext).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationKind: 'dm' }),
+    );
+  });
+
+  it('does not resolve a thread route for a top-level live-turn queue', async () => {
+    const getAgentTurnContext = vi.fn();
+
+    await expect(
+      liveTurnScopeForQueue({
+        app: {
+          getConversationRoutes: () => ({
+            [makeAgentThreadQueueKey('sl:C123', 'agent:alpha', 'T1')]: {
+              folder: 'alpha',
+              conversationKind: 'channel',
+            },
+          }),
+        },
+        opsRepository: { getAgentTurnContext },
+        executionAdapter: { id: 'anthropic:claude-agent-sdk' },
+        queueJid: makeAgentThreadQueueKey('sl:C123', 'agent:alpha'),
+      }),
+    ).resolves.toBeNull();
+    expect(getAgentTurnContext).not.toHaveBeenCalled();
   });
 
   it('routes scope-active pending messages to the owning live turn', async () => {

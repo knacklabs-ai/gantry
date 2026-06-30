@@ -1,4 +1,5 @@
 const THREAD_QUEUE_MARKER = '::thread:';
+const AGENT_QUEUE_MARKER = '::agent:';
 
 export function normalizeThreadQueueId(
   threadId?: string | null,
@@ -16,18 +17,32 @@ export function makeThreadQueueKey(
   return `${chatJid}${THREAD_QUEUE_MARKER}${encodeURIComponent(normalized)}`;
 }
 
+export function makeAgentThreadQueueKey(
+  chatJid: string,
+  agentId?: string | null,
+  threadId?: string | null,
+): string {
+  const base = makeThreadQueueKey(chatJid, threadId);
+  const normalizedAgentId = agentId?.trim();
+  if (!normalizedAgentId) return base;
+  return `${base}${AGENT_QUEUE_MARKER}${encodeURIComponent(normalizedAgentId)}`;
+}
+
 export function parseThreadQueueKey(queueJid: string): {
   chatJid: string;
   threadId?: string;
 } {
-  const markerIndex = queueJid.lastIndexOf(THREAD_QUEUE_MARKER);
-  if (markerIndex < 0) return { chatJid: queueJid };
+  const agentMarkerIndex = queueJid.lastIndexOf(AGENT_QUEUE_MARKER);
+  const threadQueueJid =
+    agentMarkerIndex < 0 ? queueJid : queueJid.slice(0, agentMarkerIndex);
+  const markerIndex = threadQueueJid.lastIndexOf(THREAD_QUEUE_MARKER);
+  if (markerIndex < 0) return { chatJid: threadQueueJid };
 
-  const chatJid = queueJid.slice(0, markerIndex);
-  const encodedThreadId = queueJid.slice(
+  const chatJid = threadQueueJid.slice(0, markerIndex);
+  const encodedThreadId = threadQueueJid.slice(
     markerIndex + THREAD_QUEUE_MARKER.length,
   );
-  if (!chatJid || !encodedThreadId) return { chatJid: queueJid };
+  if (!chatJid || !encodedThreadId) return { chatJid: threadQueueJid };
 
   try {
     return {
@@ -35,8 +50,108 @@ export function parseThreadQueueKey(queueJid: string): {
       threadId: normalizeThreadQueueId(decodeURIComponent(encodedThreadId)),
     };
   } catch {
-    return { chatJid: queueJid };
+    return { chatJid: threadQueueJid };
   }
+}
+
+export function parseAgentThreadQueueKey(queueJid: string): {
+  chatJid: string;
+  threadId?: string;
+  agentId?: string;
+} {
+  const agentMarkerIndex = queueJid.lastIndexOf(AGENT_QUEUE_MARKER);
+  const parsed = parseThreadQueueKey(queueJid);
+  if (agentMarkerIndex < 0) return parsed;
+  const encodedAgentId = queueJid.slice(
+    agentMarkerIndex + AGENT_QUEUE_MARKER.length,
+  );
+  if (!encodedAgentId) return parsed;
+  try {
+    const agentId = decodeURIComponent(encodedAgentId).trim();
+    return agentId ? { ...parsed, agentId } : parsed;
+  } catch {
+    return parsed;
+  }
+}
+
+export function findConversationRoutesForChat<T>(
+  routes: Record<string, T>,
+  chatJid: string,
+  threadId?: string | null,
+): Array<[string, T]> {
+  const normalizedThreadId = normalizeThreadQueueId(threadId);
+  const wholeConversationRoutes: Array<[string, T]> = [];
+  const threadRoutes: Array<[string, T]> = [];
+  for (const entry of Object.entries(routes)) {
+    const parsed = parseAgentThreadQueueKey(entry[0]);
+    if (parsed.chatJid !== chatJid) continue;
+    if (parsed.threadId) {
+      if (normalizedThreadId && parsed.threadId === normalizedThreadId) {
+        threadRoutes.push(entry);
+      }
+      continue;
+    }
+    wholeConversationRoutes.push(entry);
+  }
+  return threadRoutes.length > 0 ? threadRoutes : wholeConversationRoutes;
+}
+
+export function findSingleConversationRouteForChat<T>(
+  routes: Record<string, T>,
+  chatJid: string,
+  threadId?: string | null,
+): T | undefined {
+  const matches = findConversationRoutesForChat(routes, chatJid, threadId);
+  return matches.length === 1 ? matches[0]?.[1] : undefined;
+}
+
+export function findConversationRouteForQueue<T>(
+  routes: Record<string, T>,
+  queueJid: string,
+  agentIdForRoute: (route: T) => string,
+): T | undefined {
+  const queue = parseAgentThreadQueueKey(queueJid);
+  const queueThreadId = normalizeThreadQueueId(queue.threadId);
+  const queueAgentId = queue.agentId?.trim();
+  const candidates: Array<{
+    route: T;
+    routeThreadId?: string;
+    routeAgentId: string;
+    routeKeyHasAgent: boolean;
+  }> = [];
+
+  for (const [key, route] of Object.entries(routes)) {
+    const parsed = parseAgentThreadQueueKey(key);
+    if (parsed.chatJid !== queue.chatJid) continue;
+    const routeAgentId = parsed.agentId ?? agentIdForRoute(route);
+    if (queueAgentId && routeAgentId !== queueAgentId) continue;
+    candidates.push({
+      route,
+      routeThreadId: parsed.threadId,
+      routeAgentId,
+      routeKeyHasAgent: Boolean(parsed.agentId),
+    });
+  }
+
+  const exactThreadRoutes = queueThreadId
+    ? candidates.filter(
+        (candidate) => candidate.routeThreadId === queueThreadId,
+      )
+    : [];
+  const wholeConversationRoutes = candidates.filter(
+    (candidate) => !candidate.routeThreadId,
+  );
+  const matches =
+    queueThreadId && exactThreadRoutes.length > 0
+      ? exactThreadRoutes
+      : wholeConversationRoutes;
+  if (queueAgentId) {
+    return (
+      matches.find((candidate) => candidate.routeKeyHasAgent)?.route ??
+      matches[0]?.route
+    );
+  }
+  return matches.length === 1 ? matches[0]?.route : undefined;
 }
 
 export function firstThreadQueueId(

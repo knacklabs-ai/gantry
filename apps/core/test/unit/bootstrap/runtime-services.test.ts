@@ -7,6 +7,7 @@ import {
   stopLiveAdmissionLoop,
   stopLiveTurnRecoveryLoop,
 } from '@core/app/bootstrap/runtime-services.js';
+import { buildLiveTurnRecoveryCapabilityGate } from '@core/app/bootstrap/live-turn-recovery-capability-gate.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
 import { ChannelWiring } from '@core/app/bootstrap/channel-wiring.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
@@ -132,6 +133,97 @@ function makeChannelWiring(): ChannelWiring {
     isControlApproverAllowed: vi.fn(async () => true),
   };
 }
+
+describe('buildLiveTurnRecoveryCapabilityGate', () => {
+  it('uses the conversation route when recovered turn has no queue metadata', async () => {
+    const app = makeApp();
+    const listAgentSkillBindings = vi.fn(async () => [
+      { skillId: 'sk-1', status: 'active' },
+    ]);
+    const gate = buildLiveTurnRecoveryCapabilityGate({
+      app,
+      workerCoordination: {
+        getWorker: vi.fn(async () => ({ capabilities: [] })),
+      } as any,
+      liveTurnLeaseDeps: { workerInstanceId: 'worker-new' } as any,
+      getDeploymentMode: () => 'fleet',
+      getSkillRepository: () => ({ listAgentSkillBindings }) as any,
+      agentIdForFolder: (folder) => `agent:${folder}`,
+      nowMs: () => 0,
+      warn: vi.fn(),
+    });
+
+    await expect(
+      gate.isEligibleToRecoverLiveTurn({
+        appId: 'default',
+        conversationId: 'tg:primary',
+        threadId: null,
+        pendingMessage: null,
+      } as any),
+    ).resolves.toBe(false);
+    expect(listAgentSkillBindings).toHaveBeenCalledWith({
+      appId: 'default',
+      agentId: 'agent:main',
+    });
+  });
+
+  it('fails closed when the recovery route cannot resolve an owner', async () => {
+    const app = makeApp();
+    app.getConversationRoutes = vi.fn(() => ({
+      'tg:primary::agent:agent%3Aalpha': {
+        name: 'Alpha',
+        folder: 'alpha',
+        trigger: '@A',
+        added_at: 't',
+      },
+      'tg:primary::agent:agent%3Abeta': {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@B',
+        added_at: 't',
+      },
+    }));
+    const listAgentSkillBindings = vi.fn(async () => [
+      { skillId: 'sk-1', status: 'active' },
+    ]);
+    const gate = buildLiveTurnRecoveryCapabilityGate({
+      app,
+      workerCoordination: {
+        getWorker: vi.fn(async () => ({
+          capabilities: ['skill:sk-alpha', 'skill:sk-beta'],
+        })),
+      } as any,
+      liveTurnLeaseDeps: { workerInstanceId: 'worker-new' } as any,
+      getDeploymentMode: () => 'fleet',
+      getSkillRepository: () => ({ listAgentSkillBindings }) as any,
+      agentIdForFolder: (folder) => `agent:${folder}`,
+      nowMs: () => 0,
+      warn: vi.fn(),
+    });
+
+    await expect(
+      gate.isEligibleToRecoverLiveTurn({
+        appId: 'default',
+        conversationId: 'tg:primary',
+        threadId: null,
+        pendingMessage: null,
+      } as any),
+    ).resolves.toBe(false);
+    await expect(
+      gate.isEligibleToRecoverLiveTurn({
+        appId: 'default',
+        conversationId: 'tg:primary',
+        threadId: null,
+        pendingMessage: {
+          kind: 'message_cursor',
+          queueJid: 'tg:stale',
+          cursorBefore: 'cursor-before-run',
+        },
+      } as any),
+    ).resolves.toBe(false);
+    expect(listAgentSkillBindings).not.toHaveBeenCalled();
+  });
+});
 
 describe('startRuntimeServices', () => {
   it('preserves runtime-services startup order and snapshot shape', async () => {
@@ -676,6 +768,72 @@ describe('startRuntimeServices', () => {
           resultSummary: 'Live turn completed.',
         },
       ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('uses the selected agent route for an agent-qualified live queue key', async () => {
+    const app = makeApp();
+    app.getConversationRoutes = vi.fn(() => ({
+      'tg:primary::agent:agent%3Aalpha': {
+        name: 'Alpha',
+        folder: 'alpha',
+        trigger: '@A',
+        added_at: 't',
+      },
+      'tg:primary::agent:agent%3Abeta': {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@B',
+        added_at: 't',
+      },
+    }));
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    const getAgentTurnContext = vi.fn(async () => ({
+      appId: 'default',
+      agentSessionId: 'session-beta',
+    }));
+
+    await startRuntimeServices(
+      { app, channelWiring },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext,
+          createSessionAgentRun: vi.fn(async () => 'agent-run:beta'),
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await processMessages('tg:primary::agent:agent%3Abeta');
+
+      expect(getAgentTurnContext).toHaveBeenCalledWith(
+        expect.objectContaining({ agentFolder: 'beta' }),
+      );
+      expect(app.processGroupMessages).toHaveBeenCalledWith(
+        'tg:primary::agent:agent%3Abeta',
+        expect.any(Object),
+      );
     } finally {
       stopLiveTurnRecoveryLoop();
       await stopLiveAdmissionLoop(0);

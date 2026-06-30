@@ -32,6 +32,11 @@ type ConversationMessageThreadRouting = {
   runtimeThreadId: string | null;
 };
 
+type ConversationMessageRouteResolution = {
+  agentId?: string | null;
+  queueKey: string;
+};
+
 export class ConversationMessageIngressModule {
   constructor(
     private readonly deps: {
@@ -70,6 +75,14 @@ export class ConversationMessageIngressModule {
         conversationJid: string,
         threadId: string | null,
       ) => string;
+      resolveRoute?: (input: {
+        conversationJid: string;
+        threadId: string | null;
+        agentId?: string | null;
+      }) =>
+        | ConversationMessageRouteResolution
+        | null
+        | Promise<ConversationMessageRouteResolution | null>;
       now: () => string;
       createId: () => string;
     },
@@ -80,6 +93,7 @@ export class ConversationMessageIngressModule {
     invocationId: string;
     conversationId: string;
     threadId?: string | null;
+    agentId?: string | null;
     message: string;
     senderId?: string | null;
     senderName?: string | null;
@@ -119,6 +133,11 @@ export class ConversationMessageIngressModule {
     });
     const publicThreadId = thread.publicThreadId;
     const runtimeThreadId = thread.runtimeThreadId;
+    const route = await this.resolveRoute({
+      conversationJid,
+      threadId: runtimeThreadId,
+      agentId: input.agentId ?? null,
+    });
     const now = this.deps.now();
     const senderId = input.senderId?.trim() || 'external-ingress';
     const senderName = input.senderName?.trim() || 'External System';
@@ -191,6 +210,7 @@ export class ConversationMessageIngressModule {
             message,
             liveAdmission: {
               appId: liveAdmissionAppId,
+              ...(route.agentId ? { agentId: route.agentId } : {}),
               triggerDecision: {
                 source: 'external_ingress',
                 conversationKind: conversation.kind,
@@ -223,9 +243,28 @@ export class ConversationMessageIngressModule {
       enqueue: {
         conversationJid,
         threadId: runtimeThreadId,
-        queueKey: this.deps.makeQueueKey(conversationJid, runtimeThreadId),
+        queueKey: route.queueKey,
         durableAdmissionCreated,
       },
+    };
+  }
+
+  private async resolveRoute(input: {
+    conversationJid: string;
+    threadId: string | null;
+    agentId?: string | null;
+  }): Promise<ConversationMessageRouteResolution> {
+    const route = await this.deps.resolveRoute?.(input);
+    if (route) return route;
+    if (this.deps.resolveRoute) {
+      throw new ApplicationError(
+        'NOT_FOUND',
+        'Conversation is not configured for runtime routing',
+      );
+    }
+    return {
+      agentId: input.agentId ?? null,
+      queueKey: this.deps.makeQueueKey(input.conversationJid, input.threadId),
     };
   }
 

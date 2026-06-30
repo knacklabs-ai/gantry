@@ -73,6 +73,7 @@ import type {
 import { resolveAgentToolReference } from '../../domain/tools/agent-tool-catalog-references.js';
 import { normalizeRuntimeSecretRefString } from '../../domain/ports/runtime-secret-provider.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import { makeAgentThreadQueueKey } from '../../shared/thread-queue-key.js';
 
 export class SettingsDesiredStateService {
   private readonly appId: AppId;
@@ -105,9 +106,16 @@ export class SettingsDesiredStateService {
     settings = (await this.normalizeConfiguredCapabilities(settings)).settings;
     const groups = await this.deps.ops.getAllConversationRoutes();
     const configuredFolders = new Set(Object.keys(settings.agents));
-    const configuredJids = new Set(
-      configuredRoutingBindings(settings).map((binding) => binding.jid),
-    );
+    const configuredJids = new Set<string>();
+    for (const binding of configuredRoutingBindings(settings)) {
+      configuredJids.add(binding.jid);
+      configuredJids.add(
+        makeAgentThreadQueueKey(
+          binding.jid,
+          agentIdForFolder(binding.agentFolder),
+        ),
+      );
+    }
     return {
       missingSettingsAgents: [
         ...new Set(
@@ -207,8 +215,12 @@ export class SettingsDesiredStateService {
 
       for (const binding of bindingsByAgent.get(folder) ?? []) {
         const conversation = binding.conversation;
-        configuredJids.add(binding.jid);
-        await this.deps.ops.setConversationRoute(binding.jid, {
+        const routeKey = makeAgentThreadQueueKey(
+          binding.jid,
+          agentIdForFolder(folder),
+        );
+        configuredJids.add(routeKey);
+        await this.deps.ops.setConversationRoute(routeKey, {
           name: agent.name,
           folder,
           trigger: binding.trigger,
@@ -227,7 +239,7 @@ export class SettingsDesiredStateService {
                 }
               : undefined,
         });
-        applied.push(`binding:${binding.jid}`);
+        applied.push(`binding:${binding.jid}:${folder}`);
       }
 
       if (

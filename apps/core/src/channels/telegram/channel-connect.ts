@@ -6,6 +6,7 @@ import {
   resolveDurableQuestionInteractionByRequestId,
 } from '../../application/interactions/pending-interaction-durability.js';
 import { logger } from '../../infrastructure/logging/logger.js';
+import { findConversationRoutesForChat } from '../../shared/thread-queue-key.js';
 import {
   decisionForMode,
   normalizePermissionAction,
@@ -615,8 +616,13 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         isGroup,
       );
 
-      const group = this.opts.conversationRoutes()[chatJid];
-      if (!group && isGroup) {
+      const hasRegisteredRoute =
+        findConversationRoutesForChat(
+          this.opts.conversationRoutes(),
+          chatJid,
+          threadId?.toString(),
+        ).length > 0;
+      if (!hasRegisteredRoute && isGroup) {
         logger.debug(
           { chatJid, chatName },
           'Message from unregistered Telegram chat',

@@ -140,6 +140,7 @@ describe('@gantry/sdk ingress signature verification', () => {
     expect(
       conversationMessageTarget({
         conversationId: 'conversation:ops-room',
+        agentId: 'agent:ops',
         threadId: 'thread:ops-room:daily',
         message: 'Run the test',
         senderId: 'external-ci',
@@ -148,6 +149,7 @@ describe('@gantry/sdk ingress signature verification', () => {
     ).toEqual({
       kind: 'conversation_message',
       conversationId: 'conversation:ops-room',
+      agentId: 'agent:ops',
       threadId: 'thread:ops-room:daily',
       message: 'Run the test',
       senderId: 'external-ci',

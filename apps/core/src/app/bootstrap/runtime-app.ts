@@ -22,14 +22,21 @@ import { RemoteMcpDnsValidationCache } from '../../application/mcp/mcp-server-po
 import { createGroupProcessor } from '../../runtime/group-processing.js';
 import type { GroupProcessingDeps } from '../../runtime/group-processing-types.js';
 import { resolveAgentLockStatus } from '../../config/profiles.js';
-import { listAvailableGroups } from '../../runtime/group-registry.js';
-import { GroupQueue } from '../../runtime/group-queue.js';
-import { parseThreadQueueKey } from '../../shared/thread-queue-key.js';
 import {
+  ensureRouteProfileDefaults,
+  listAvailableGroups,
   registerGroup as registerGroupEntry,
   setGroupModelOverride as setGroupModelOverrideEntry,
   setGroupThinkingOverride as setGroupThinkingOverrideEntry,
 } from '../../runtime/group-registry.js';
+import { GroupQueue } from '../../runtime/group-queue.js';
+import {
+  findConversationRouteForQueue,
+  makeAgentThreadQueueKey,
+  makeThreadQueueKey,
+  parseAgentThreadQueueKey,
+} from '../../shared/thread-queue-key.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import type {
   RuntimeAgentSessionRepository,
   RuntimeChatMetadataRepository,
@@ -57,13 +64,11 @@ import type { AgentExecutionAdapter } from '../../application/agent-execution/ag
 import type { AgentExecutionAdapterRegistry } from '../../application/agent-execution/agent-execution-adapter-registry.js';
 import { registerMemoryLlmClient } from '../../memory/memory-llm-port.js';
 import type { RunnerSandboxProvider } from '../../shared/runner-sandbox-provider.js';
-
 export type RuntimeAppRepository = RuntimeRouterStateRepository &
   RuntimeMessageRepository &
   RuntimeConversationRouteRepository &
   RuntimeChatMetadataRepository &
   RuntimeAgentSessionRepository;
-
 export interface RuntimeApp {
   executionAdapter: AgentExecutionAdapter;
   executionAdapters: AgentExecutionAdapterRegistry;
@@ -118,7 +123,6 @@ export interface RuntimeApp {
   setAgentCursor: (chatJid: string, timestamp: string) => void;
   setChannelRuntime: (runtime: GroupProcessingDeps['channelRuntime']) => void;
 }
-
 export interface RuntimeAppOptions {
   ensureCredentialBinding?: (input: {
     groupJid: string;
@@ -137,6 +141,19 @@ export interface RuntimeAppOptions {
   runnerSandboxProvider?: RunnerSandboxProvider;
   opsRepository?: RuntimeAppRepository;
   processRole?: ProcessRole;
+}
+
+function resolveConversationRoute(
+  routes: Record<string, ConversationRoute>,
+  chatJid: string,
+  threadId?: string | null,
+  agentId?: string | null,
+): ConversationRoute | undefined {
+  return findConversationRouteForQueue(
+    routes,
+    makeAgentThreadQueueKey(chatJid, agentId, threadId),
+    (route) => agentIdForFolder(route.folder),
+  );
 }
 
 export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
@@ -330,6 +347,16 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
       lastAgentTimestamp = {};
     }
     conversationRoutes = loadedRoutes;
+    const seededCount = await ensureRouteProfileDefaults(
+      Object.values(conversationRoutes),
+      { getFileArtifactStore: () => getRuntimeStorage().fileArtifacts },
+    );
+    if (seededCount > 0) {
+      logger.debug(
+        { seededCount },
+        'Profile defaults seeded for persisted routes',
+      );
+    }
     logger.info(
       { groupCount: Object.keys(conversationRoutes).length },
       'State loaded',
@@ -356,18 +383,16 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   async function getOrRecoverCursor(chatJid: string): Promise<string> {
     const existing = lastAgentTimestamp[chatJid];
     if (existing) return existing;
-    const parsed = parseThreadQueueKey(chatJid);
+    const parsed = parseAgentThreadQueueKey(chatJid);
     if (parsed.threadId) {
-      return '';
+      const baseExisting =
+        lastAgentTimestamp[makeThreadQueueKey(parsed.chatJid, parsed.threadId)];
+      return baseExisting ? (lastAgentTimestamp[chatJid] = baseExisting) : '';
     }
+    const baseExisting = parsed.agentId && lastAgentTimestamp[parsed.chatJid];
+    if (baseExisting) return (lastAgentTimestamp[chatJid] = baseExisting);
 
     const baseChatJid = parsed.chatJid;
-    const baseExisting = lastAgentTimestamp[baseChatJid];
-    if (baseExisting) {
-      lastAgentTimestamp[chatJid] = baseExisting;
-      return baseExisting;
-    }
-
     const botCursor = await ops().getLastBotMessageCursor(baseChatJid);
     if (botCursor) {
       const encoded = encodeGroupMessageCursor(botCursor);
@@ -403,7 +428,11 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     jid: string,
     group: ConversationRoute,
   ): Promise<void> {
-    await registerGroupEntry(conversationRoutes, jid, group, {
+    const routeKey = makeAgentThreadQueueKey(
+      jid,
+      agentIdForFolder(group.folder),
+    );
+    await registerGroupEntry(conversationRoutes, routeKey, group, {
       assistantName: ASSISTANT_NAME,
       persist: async () => undefined,
       ensureCredentialBinding,
@@ -412,9 +441,15 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   }
 
   async function unregisterConversationRoute(jid: string): Promise<void> {
-    delete conversationRoutes[jid];
-    queue.stopGroup(jid);
-    await ops().deleteConversationRoute(jid);
+    const routeKey = Object.hasOwn(conversationRoutes, jid)
+      ? jid
+      : Object.keys(conversationRoutes).find(
+          (key) => parseAgentThreadQueueKey(key).chatJid === jid,
+        );
+    if (!routeKey) return;
+    delete conversationRoutes[routeKey];
+    queue.stopGroup(routeKey);
+    await ops().deleteConversationRoute(routeKey);
   }
 
   async function setGroupModelOverride(
@@ -482,10 +517,17 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     threadId?: string | null,
     metadata: { memoryUserId?: string } = {},
   ): Promise<void> {
-    const group = conversationRoutes[chatJid];
+    const { chatJid: conversationJid, agentId } =
+      parseAgentThreadQueueKey(chatJid);
+    const group = resolveConversationRoute(
+      conversationRoutes,
+      conversationJid,
+      threadId,
+      agentId,
+    );
     if (!group) return;
     await ops().deleteSession(group.folder, threadId, {
-      conversationJid: chatJid,
+      conversationJid,
       conversationKind: group.conversationKind,
       memoryUserId: metadata.memoryUserId,
     });
@@ -520,7 +562,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
         channelRuntime.isControlApproverAllowed?.(input) ??
         Promise.resolve(false),
     },
-    getGroup: (chatJid) => conversationRoutes[chatJid],
+    getGroup: (chatJid, threadId, agentId) =>
+      resolveConversationRoute(conversationRoutes, chatJid, threadId, agentId),
     clearSession: async (workspaceFolder, threadId, metadata) => {
       await ops().deleteSession(workspaceFolder, threadId, metadata);
     },

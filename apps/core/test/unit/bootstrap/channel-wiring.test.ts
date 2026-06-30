@@ -58,6 +58,7 @@ import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
 import { AmbiguousDurableDeliveryError } from '@core/domain/messages/durable-delivery.js';
 import { RICH_INTERACTION_NATIVE_FALLBACK_TEXT } from '@core/domain/types.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 function makeRuntimeSettings(enabled: {
   telegram: boolean;
@@ -627,13 +628,242 @@ describe('createChannelWiring', () => {
     expect(storeMessage).not.toHaveBeenCalled();
     expect(storeMessageWithLiveAdmission).toHaveBeenCalledWith(msg, {
       appId: 'app-one',
-      agentId: 'main_agent',
+      agentId: 'agent:main_agent',
       triggerDecision: {
         source: 'channel_persistence',
         requiresTrigger: false,
         conversationKind: 'channel',
       },
     });
+  });
+
+  it('fans one inbound provider message out to each selected agent route', async () => {
+    const app = makeApp({
+      [makeAgentThreadQueueKey('tg:123', 'agent:alpha')]: {
+        name: 'Alpha',
+        folder: 'alpha',
+        trigger: '@Alpha',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      },
+      [makeAgentThreadQueueKey('tg:123', 'agent:beta')]: {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@Beta',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: true,
+        conversationKind: 'channel',
+      },
+    });
+    const storeMessageWithLiveAdmission = vi.fn(async () => undefined);
+    let onMessage: ((chatJid: string, msg: any) => Promise<void>) | undefined;
+
+    const wiring = createChannelWiring(app, {
+      appId: 'app-one' as never,
+      providerIds: [
+        makeProvider('telegram', (opts: any) => {
+          onMessage = opts.onMessage;
+          return makeChannel();
+        }),
+      ],
+      opsRepository: {
+        storeMessage: vi.fn(),
+        storeMessageWithLiveAdmission,
+      } as any,
+      shouldDropMessage: vi.fn(() => false),
+    });
+
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    const msg = {
+      id: 'm-live-admission',
+      chat_jid: 'tg:123',
+      sender: 'user-1',
+      sender_name: 'User',
+      content: 'normal message',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    };
+
+    await onMessage?.('tg:123', msg);
+
+    expect(storeMessageWithLiveAdmission).toHaveBeenCalledTimes(2);
+    expect(
+      storeMessageWithLiveAdmission.mock.calls.map((call) => call[1]),
+    ).toEqual([
+      expect.objectContaining({ agentId: 'agent:alpha' }),
+      expect.objectContaining({ agentId: 'agent:beta' }),
+    ]);
+  });
+
+  it('does not fan top-level messages into thread-only agent routes', async () => {
+    const app = makeApp({
+      [makeAgentThreadQueueKey('tg:123', 'agent:topic', 'topic-1')]: {
+        name: 'Topic',
+        folder: 'topic',
+        trigger: '@Topic',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      },
+    });
+    const storeMessage = vi.fn(async () => {});
+    const storeMessageWithLiveAdmission = vi.fn(async () => undefined);
+    let onMessage: ((chatJid: string, msg: any) => Promise<void>) | undefined;
+
+    const wiring = createChannelWiring(app, {
+      appId: 'app-one' as never,
+      providerIds: [
+        makeProvider('telegram', (opts: any) => {
+          onMessage = opts.onMessage;
+          return makeChannel();
+        }),
+      ],
+      opsRepository: {
+        storeMessage,
+        storeMessageWithLiveAdmission,
+      } as any,
+      shouldDropMessage: vi.fn(() => false),
+    });
+
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    await onMessage?.('tg:123', {
+      id: 'm-top-level',
+      chat_jid: 'tg:123',
+      sender: 'user-1',
+      sender_name: 'User',
+      content: 'normal message',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+
+    expect(storeMessage).not.toHaveBeenCalled();
+    expect(storeMessageWithLiveAdmission).not.toHaveBeenCalled();
+  });
+
+  it('fans threaded provider messages only to exact thread routes', async () => {
+    const app = makeApp({
+      [makeAgentThreadQueueKey('tg:123', 'agent:whole')]: {
+        name: 'Whole',
+        folder: 'whole',
+        trigger: '@Whole',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      },
+      [makeAgentThreadQueueKey('tg:123', 'agent:topic', 'topic-1')]: {
+        name: 'Topic',
+        folder: 'topic',
+        trigger: '@Topic',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: true,
+        conversationKind: 'channel',
+      },
+    });
+    const storeMessageWithLiveAdmission = vi.fn(async () => undefined);
+    let onMessage: ((chatJid: string, msg: any) => Promise<void>) | undefined;
+
+    const wiring = createChannelWiring(app, {
+      appId: 'app-one' as never,
+      providerIds: [
+        makeProvider('telegram', (opts: any) => {
+          onMessage = opts.onMessage;
+          return makeChannel();
+        }),
+      ],
+      opsRepository: {
+        storeMessage: vi.fn(),
+        storeMessageWithLiveAdmission,
+      } as any,
+      shouldDropMessage: vi.fn(() => false),
+    });
+
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    await onMessage?.('tg:123', {
+      id: 'm-threaded',
+      chat_jid: 'tg:123',
+      sender: 'user-1',
+      sender_name: 'User',
+      content: 'normal message',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      thread_id: 'topic-1',
+    });
+
+    expect(storeMessageWithLiveAdmission).toHaveBeenCalledTimes(1);
+    expect(storeMessageWithLiveAdmission).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agentId: 'agent:topic',
+        triggerDecision: expect.objectContaining({ requiresTrigger: true }),
+      }),
+    );
+  });
+
+  it('deduplicates legacy bare and agent-qualified routes for the same agent', async () => {
+    const app = makeApp({
+      'tg:123': {
+        name: 'Legacy Alpha',
+        folder: 'alpha',
+        trigger: '@Legacy',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      },
+      [makeAgentThreadQueueKey('tg:123', 'agent:alpha')]: {
+        name: 'Alpha',
+        folder: 'alpha',
+        trigger: '@Alpha',
+        added_at: '2026-01-01T00:00:00.000Z',
+        requiresTrigger: true,
+        conversationKind: 'channel',
+      },
+    });
+    const storeMessageWithLiveAdmission = vi.fn(async () => undefined);
+    let onMessage: ((chatJid: string, msg: any) => Promise<void>) | undefined;
+
+    const wiring = createChannelWiring(app, {
+      appId: 'app-one' as never,
+      providerIds: [
+        makeProvider('telegram', (opts: any) => {
+          onMessage = opts.onMessage;
+          return makeChannel();
+        }),
+      ],
+      opsRepository: {
+        storeMessage: vi.fn(),
+        storeMessageWithLiveAdmission,
+      } as any,
+      shouldDropMessage: vi.fn(() => false),
+    });
+
+    await wiring.connectEnabledChannels(
+      makeRuntimeSettings({ telegram: true, slack: false }),
+    );
+
+    await onMessage?.('tg:123', {
+      id: 'm-live-admission',
+      chat_jid: 'tg:123',
+      sender: 'user-1',
+      sender_name: 'User',
+      content: 'normal message',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+
+    expect(storeMessageWithLiveAdmission).toHaveBeenCalledTimes(1);
+    expect(storeMessageWithLiveAdmission).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agentId: 'agent:alpha',
+        triggerDecision: expect.objectContaining({ requiresTrigger: true }),
+      }),
+    );
   });
 
   it('waits for queue capacity when message persistence queue is full', async () => {

@@ -29,7 +29,6 @@ import {
 import { markRoleHasNoJobExecution, requestSchedulerSync, startSchedulerLoop } from '../../jobs/scheduler.js';
 import { registerWorkerInstance } from '../../jobs/worker-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { makeThreadQueueKey } from '../../shared/thread-queue-key.js';
 import type { RuntimeJobRepository } from '../../domain/repositories/ops-repo.js';
 import type { WorkerCoordinationRepository } from '../../domain/ports/worker-coordination.js';
 import type { RuntimeDependencyRepository } from '../../domain/ports/fleet-capability-state.js';
@@ -638,7 +637,7 @@ export async function startRuntimeServices(
       });
       if (!sent) return false;
       app.setAgentCursor(
-        makeThreadQueueKey(chatJid, threadId),
+        queueJid,
         encodeGroupMessageCursor(toGroupMessageCursor(message)),
       );
       await app.saveState();
@@ -668,7 +667,7 @@ export async function startRuntimeServices(
       return false;
     }
     app.setAgentCursor(
-      makeThreadQueueKey(chatJid, threadId),
+      queueJid,
       encodeGroupMessageCursor(toGroupMessageCursor(message)),
     );
     await app.saveState();

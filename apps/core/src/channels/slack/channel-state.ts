@@ -10,6 +10,7 @@ import {
   ensurePrivateDirSync,
   writePrivateFileSync,
 } from '../../shared/private-fs.js';
+import { findConversationRoutesForChat } from '../../shared/thread-queue-key.js';
 import {
   NewMessage,
   PermissionApprovalDecision,
@@ -28,6 +29,11 @@ import {
   truncateSlackButtonText,
   truncateSlackText,
 } from './channel-user-question-utils.js';
+import {
+  tryNativeStreamAppend,
+  tryNativeStreamStart,
+  tryNativeStreamStop,
+} from './native-stream.js';
 
 export const SLACK_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
@@ -571,25 +577,35 @@ export abstract class SlackChannelState {
       url_private?: string;
       url_private_download?: string;
     },
+    threadId?: string,
+    targetFolder?: string,
   ): Promise<SlackAttachmentDownload | null> {
     const url = file.url_private_download || file.url_private;
     if (!url) return null;
 
-    const group = this.opts.conversationRoutes()[jid];
-    if (!group) {
+    const groups = findConversationRoutesForChat(
+      this.opts.conversationRoutes(),
+      jid,
+      threadId,
+    );
+    if (groups.length < 1) {
       return null;
     }
 
     const filename = this.sanitizeFilename(
       file.name || file.title || 'attachment.bin',
     );
-    const groupDir = resolveWorkspaceFolderPath(group.folder);
-    const attachDir = path.join(groupDir, 'attachments');
-    ensurePrivateDirSync(attachDir);
-    const destPath = path.join(attachDir, filename);
     const storageRef = path.posix.join('attachments', filename);
+    const folders = targetFolder
+      ? [targetFolder]
+      : Array.from(new Set(groups.map(([, group]) => group.folder)));
+    if (folders.length !== 1) return null;
 
     try {
+      const groupDir = resolveWorkspaceFolderPath(folders[0]);
+      const attachDir = path.join(groupDir, 'attachments');
+      ensurePrivateDirSync(attachDir);
+      const destPath = path.join(attachDir, filename);
       const resp = await fetch(url, {
         headers: {
           authorization: `Bearer ${this.botToken}`,
@@ -615,6 +631,7 @@ export abstract class SlackChannelState {
   protected async enrichMessage(
     jid: string,
     event: SlackMessageLike,
+    targetFolder?: string,
   ): Promise<{ text: string; attachments: SlackMessageAttachments }> {
     const lines: string[] = [];
     const attachments: SlackMessageAttachments = [];
@@ -623,16 +640,22 @@ export abstract class SlackChannelState {
 
     if (Array.isArray(event.files)) {
       for (const file of event.files) {
-        const download = await this.downloadSlackAttachment(jid, file);
+        const download = await this.downloadSlackAttachment(
+          jid,
+          file,
+          event.thread_ts,
+          targetFolder,
+        );
         const label = file.name || file.title || 'attachment';
         lines.push(`Attachment: ${label}`);
-        attachments.push({
+        const attachment: SlackMessageAttachments[number] = {
           id: file.id ? `slack-file:${file.id}` : undefined,
           kind: file.mimetype?.startsWith('image/') ? 'image' : 'file',
           contentType: file.mimetype,
           externalId: file.id,
-          storageRef: download?.storageRef,
-        });
+        };
+        if (download) attachment.storageRef = download.storageRef;
+        attachments.push(attachment);
       }
     }
 
@@ -650,8 +673,26 @@ export abstract class SlackChannelState {
     });
   }
 
-  protected abstract tryNativeStreamStop(
+  protected async tryNativeStreamStart(
+    channelId: string,
+    threadId: string | undefined,
+    text: string,
+  ): Promise<string | undefined> {
+    return tryNativeStreamStart({ app: this.app, channelId, threadId, text });
+  }
+
+  protected async tryNativeStreamAppend(
     channelId: string,
     streamTs: string,
-  ): Promise<boolean>;
+    text: string,
+  ): Promise<{ completed: boolean; sentPrefix: string }> {
+    return tryNativeStreamAppend({ app: this.app, channelId, streamTs, text });
+  }
+
+  protected async tryNativeStreamStop(
+    channelId: string,
+    streamTs: string,
+  ): Promise<boolean> {
+    return tryNativeStreamStop({ app: this.app, channelId, streamTs });
+  }
 }
