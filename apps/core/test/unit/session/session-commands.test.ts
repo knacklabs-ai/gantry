@@ -606,6 +606,104 @@ describe('handleSessionCommand', () => {
     );
   });
 
+  it('rotates to a fresh checkpoint when the selected provider has no native compaction', async () => {
+    const deps = makeDeps({
+      getSessionCompactionStrategy: vi
+        .fn()
+        .mockResolvedValue('fresh_checkpoint'),
+      runSessionCompaction: vi.fn().mockResolvedValue('success'),
+      archiveCurrentSession: vi.fn().mockResolvedValue({ memory: 'ok' }),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/compact')],
+      groupName: 'test-fresh-checkpoint',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    await flushAsyncFinalizers();
+    expect(deps.runSessionCompaction).not.toHaveBeenCalled();
+    expect(deps.archiveCurrentSession).toHaveBeenCalledWith('manual-compact');
+    expect(deps.finishSessionCompaction).toHaveBeenCalledWith(
+      {
+        providerSessionId: 'provider-session:locked',
+        externalSessionId: 'provider-session:locked',
+      },
+      'expired',
+    );
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      "Compaction ready. I'll use updated memory and a fresh provider context on your next message.",
+    );
+  });
+
+  it('publishes compaction runtime events for queued running and ready states', async () => {
+    const queuedTask = makeCompactionTask();
+    const runningTask = makeCompactionTask({ status: 'running' });
+    const publishSessionCompactionEvent = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      admitSessionCompactionTask: vi
+        .fn()
+        .mockResolvedValue({ task: queuedTask, admitted: true }),
+      markSessionCompactionTaskRunning: vi.fn().mockResolvedValue(runningTask),
+      finishSessionCompactionTask: vi.fn().mockResolvedValue(undefined),
+      finishSessionCompaction: vi.fn().mockResolvedValue(undefined),
+      runSessionCompaction: vi.fn().mockResolvedValue('success'),
+      archiveCurrentSession: vi.fn().mockResolvedValue({ memory: 'ok' }),
+      publishSessionCompactionEvent,
+    });
+
+    await handleSessionCommand({
+      missedMessages: [makeMsg('/compact')],
+      groupName: 'test-compaction-events',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    await flushAsyncFinalizers();
+
+    expect(
+      publishSessionCompactionEvent.mock.calls.map((call) => call[0]),
+    ).toEqual(['queued', 'running', 'ready']);
+  });
+
+  it('keeps successful compaction successful when runtime event publishing fails', async () => {
+    const deps = makeDeps({
+      finishSessionCompaction: vi.fn().mockResolvedValue(undefined),
+      runSessionCompaction: vi.fn().mockResolvedValue('success'),
+      archiveCurrentSession: vi.fn().mockResolvedValue({ memory: 'ok' }),
+      publishSessionCompactionEvent: vi
+        .fn()
+        .mockRejectedValue(new Error('event sink down')),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/compact')],
+      groupName: 'test-compaction-event-failure',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    await flushAsyncFinalizers();
+
+    expect(deps.finishSessionCompaction).toHaveBeenCalledWith(
+      {
+        providerSessionId: 'provider-session:locked',
+        externalSessionId: 'provider-session:locked',
+      },
+      'ready',
+    );
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      "Compaction ready. I'll use the compacted context and updated memory on your next message.",
+    );
+    expect(deps.sendMessage).not.toHaveBeenCalledWith(
+      "Compaction did not finish. I'll keep using current continuity and memory.",
+    );
+  });
+
   it('heartbeats a running durable session compaction task', async () => {
     vi.useFakeTimers();
     try {
@@ -1802,9 +1900,14 @@ describe('handleSessionCommand', () => {
   });
 
   it('returns success before background SDK compact output error settles', async () => {
+    const publishSessionCompactionEvent = vi.fn().mockResolvedValue(undefined);
     const deps = makeDeps({
+      publishSessionCompactionEvent,
       runSessionCompaction: vi.fn().mockImplementation(async (onOutput) => {
-        await onOutput({ status: 'error', result: 'too large' });
+        await onOutput({
+          status: 'error',
+          result: 'provider session handle provider-session:sensitive',
+        });
         return 'success';
       }),
     });
@@ -1823,6 +1926,17 @@ describe('handleSessionCommand', () => {
     expect(deps.archiveCurrentSession).not.toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledWith(
       "Compaction did not finish. I'll keep using current continuity and memory.",
+    );
+    const failedEvent = publishSessionCompactionEvent.mock.calls.find(
+      ([state]) => state === 'failed',
+    );
+    expect(failedEvent?.[1]).toEqual(
+      expect.objectContaining({
+        errorSummary: 'Session compaction did not finish.',
+      }),
+    );
+    expect(JSON.stringify(failedEvent?.[1])).not.toContain(
+      'provider-session:sensitive',
     );
   });
 

@@ -1,10 +1,15 @@
 import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
 import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
 
+type CompactionPromptAdapter = Pick<
+  AgentExecutionAdapter,
+  'id' | 'sessionCompactionPrompt'
+>;
+
 export function maintenanceCompactionPromptForExecutionProvider(
   executionProviderId: string,
   input: {
-    executionAdapter?: AgentExecutionAdapter;
+    executionAdapter?: CompactionPromptAdapter;
     executionAdapters?: AgentExecutionAdapterRegistry;
   },
 ): string | undefined {

@@ -349,7 +349,7 @@ describe('session-resume-runtime', () => {
     });
   });
 
-  it('refreshes DeepAgents compaction state without sending a provider slash command', async () => {
+  it('does not report native DeepAgents compaction success without an adapter compaction prompt', async () => {
     const runAgent = vi.fn(async () => ({ status: 'success', result: 'ok' }));
     const runner = createGroupAgentRunner({
       deps: {
@@ -413,7 +413,7 @@ describe('session-resume-runtime', () => {
           },
         },
       ),
-    ).resolves.toBe('success');
+    ).resolves.toBe('error');
     expect(runAgent).not.toHaveBeenCalled();
   });
 

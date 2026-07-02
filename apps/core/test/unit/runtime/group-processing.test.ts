@@ -5984,7 +5984,7 @@ describe('createGroupProcessor', () => {
       const { capturedDeps, deps } = await captureSessionDeps();
       const archiveCurrentSession = capturedDeps.archiveCurrentSession as (
         cause?: 'new-session' | 'manual-compact',
-      ) => Promise<void>;
+      ) => Promise<{ memory: 'ok' | 'degraded' | 'skipped' }>;
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
         .mockResolvedValue({
@@ -5993,7 +5993,9 @@ describe('createGroupProcessor', () => {
           agentSessionId: 'agent-session:test',
         });
 
-      await archiveCurrentSession('new-session');
+      await expect(archiveCurrentSession('new-session')).resolves.toEqual({
+        memory: 'ok',
+      });
 
       expect(deps.opsRepository.getAgentTurnContext).toHaveBeenCalledWith(
         expect.objectContaining({ hydrateMemory: false }),
@@ -6009,7 +6011,7 @@ describe('createGroupProcessor', () => {
       const { capturedDeps, deps } = await captureSessionDeps();
       const archiveCurrentSession = capturedDeps.archiveCurrentSession as (
         cause?: 'new-session' | 'manual-compact',
-      ) => Promise<void>;
+      ) => Promise<{ memory: 'ok' | 'degraded' | 'skipped' }>;
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
         .mockResolvedValue({
@@ -6018,7 +6020,9 @@ describe('createGroupProcessor', () => {
           agentSessionId: 'agent-session:test',
         });
 
-      await archiveCurrentSession('manual-compact');
+      await expect(archiveCurrentSession('manual-compact')).resolves.toEqual({
+        memory: 'ok',
+      });
 
       expect(deps.collectSessionMemory).toHaveBeenCalledWith({
         agentSessionId: 'agent-session:test',
@@ -6027,15 +6031,36 @@ describe('createGroupProcessor', () => {
       });
     });
 
+    it('archiveCurrentSession returns degraded when precompact memory collection fails', async () => {
+      const { capturedDeps } = await captureSessionDeps({
+        depsOverrides: {
+          collectSessionMemory: vi
+            .fn()
+            .mockRejectedValue(new Error('memory failed')),
+        },
+      });
+      const archiveCurrentSession = capturedDeps.archiveCurrentSession as (
+        cause?: 'new-session' | 'manual-compact',
+      ) => Promise<{ memory: 'ok' | 'degraded' | 'skipped' }>;
+
+      await expect(archiveCurrentSession('manual-compact')).resolves.toEqual({
+        memory: 'degraded',
+      });
+    });
+
     it('archiveCurrentSession does nothing when no session', async () => {
       const { capturedDeps, deps } = await captureSessionDeps();
       const archiveCurrentSession =
-        capturedDeps.archiveCurrentSession as () => Promise<void>;
+        capturedDeps.archiveCurrentSession as () => Promise<{
+          memory: 'ok' | 'degraded' | 'skipped';
+        }>;
       (deps.opsRepository as any).getAgentTurnContext = vi
         .fn()
         .mockResolvedValue(undefined);
 
-      await archiveCurrentSession();
+      await expect(archiveCurrentSession()).resolves.toEqual({
+        memory: 'skipped',
+      });
 
       expect(deps.opsRepository.getAgentTurnContext).toHaveBeenCalledWith(
         expect.objectContaining({ hydrateMemory: false }),
@@ -6615,8 +6640,8 @@ describe('createGroupProcessor', () => {
     });
 
     it('does not fail over when no model override is set (single candidate)', async () => {
-      // No agentConfig.model -> resolveTurnFailoverCandidates returns [] -> the
-      // run keeps exact pre-failover behavior (one spawn, no model passed).
+      // No agentConfig.model -> the configured interactive default is used, but
+      // non-family defaults still produce a single candidate.
       const group = makeGroup({ requiresTrigger: false });
       const { deps } = setupHappyPath({ group });
       deps.getConfiguredModelProviders = vi.fn(
@@ -6632,7 +6657,7 @@ describe('createGroupProcessor', () => {
       await processGroupMessages('group1@g.us');
 
       expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
-      expect(mockSpawnAgent.mock.calls[0][1]).not.toHaveProperty('model');
+      expect(mockSpawnAgent.mock.calls[0][1]).toHaveProperty('model', 'opus');
     });
   });
 });

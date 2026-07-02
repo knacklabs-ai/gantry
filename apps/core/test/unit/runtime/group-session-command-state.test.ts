@@ -30,29 +30,38 @@ function task(patch: Partial<AsyncTaskRecord> = {}): AsyncTaskRecord {
 function handlers(input: {
   context?: Record<string, unknown>;
   tasks?: AsyncTaskRecord[];
+  resolveExecutionProviderId?: () => Promise<string> | string;
+  publishRuntimeEvent?: ReturnType<typeof vi.fn>;
 }) {
+  const getAgentTurnContext = vi.fn(async () => ({
+    appId: 'default',
+    agentId: 'agent-1',
+    agentSessionId: 'agent-session-1',
+    ...input.context,
+  }));
+  const markProviderSessionMaintenance = vi.fn(async () => true);
   const repository = {
     listTasks: vi.fn(async () => input.tasks ?? []),
     transitionTask: vi.fn(async () => task({ status: 'running' })),
   };
   return {
+    getAgentTurnContext,
+    markProviderSessionMaintenance,
     repository,
     handlers: createSessionCompactionHandlers({
       ops: () =>
         ({
-          getAgentTurnContext: vi.fn(async () => ({
-            appId: 'default',
-            agentId: 'agent-1',
-            agentSessionId: 'agent-session-1',
-            ...input.context,
-          })),
+          getAgentTurnContext,
+          markProviderSessionMaintenance,
         }) as any,
       group: { folder: 'agent-folder' },
       chatJid: 'chat-1',
       threadId: null,
       defaultScope: 'group',
       executionAdapter: { id: 'anthropic:claude-agent-sdk' },
+      resolveExecutionProviderId: input.resolveExecutionProviderId as never,
       getAsyncTaskRepository: () => repository as any,
+      publishRuntimeEvent: input.publishRuntimeEvent,
     }),
   };
 }
@@ -105,6 +114,67 @@ describe('createSessionCompactionHandlers', () => {
         status: 'running',
         heartbeatAt: expect.any(String),
       }),
+    );
+  });
+
+  it('uses the route-selected execution provider for compaction locks', async () => {
+    const {
+      handlers: compact,
+      getAgentTurnContext,
+      markProviderSessionMaintenance,
+    } = handlers({
+      resolveExecutionProviderId: () => 'deepagents:langchain',
+      context: {
+        providerSessionId: 'provider-session:deep',
+        externalSessionId: 'provider-session:deep',
+      },
+    });
+
+    await expect(
+      compact.beginSessionCompaction({ baseCursor: 'cursor:base' }),
+    ).resolves.toEqual({
+      providerSessionId: 'provider-session:deep',
+      externalSessionId: 'provider-session:deep',
+    });
+
+    expect(getAgentTurnContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionProviderId: 'deepagents:langchain',
+      }),
+    );
+    expect(markProviderSessionMaintenance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'deepagents:langchain',
+      }),
+    );
+  });
+
+  it('publishes route-scoped compaction runtime events', async () => {
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+    const { handlers: compact } = handlers({ publishRuntimeEvent });
+
+    await compact.publishSessionCompactionEvent('ready', {
+      task: task({ id: 'task-ready' }),
+      strategy: 'fresh_checkpoint',
+    });
+
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'default',
+        agentId: 'agent-1',
+        sessionId: 'agent-session-1',
+        conversationId: 'chat-1',
+        eventType: 'session.compaction.ready',
+        actor: 'runtime',
+        payload: expect.objectContaining({
+          state: 'ready',
+          taskId: 'task-ready',
+          strategy: 'fresh_checkpoint',
+        }),
+      }),
+    );
+    expect(JSON.stringify(publishRuntimeEvent.mock.calls[0])).not.toContain(
+      'provider-session:ready',
     );
   });
 });

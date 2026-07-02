@@ -146,7 +146,11 @@ export function queueActiveCompactionForRuntime(input: {
     queue: { enqueueMessageCheck(queueJid: string): boolean };
     getConversationRoutes(): Record<
       string,
-      { folder: string; conversationKind?: 'channel' | 'dm' }
+      {
+        folder: string;
+        conversationKind?: 'channel' | 'dm';
+        agentConfig?: { model?: string };
+      }
     >;
   };
   opsRepository: LiveTurnScopeRepository;

@@ -242,8 +242,20 @@ export interface LiveTurnScopeRepository {
 interface LiveTurnScopeApp {
   getConversationRoutes(): Record<
     string,
-    { folder: string; conversationKind?: 'channel' | 'dm' }
+    {
+      folder: string;
+      conversationKind?: 'channel' | 'dm';
+      agentConfig?: { model?: string };
+    }
   >;
+  resolveExecutionProviderId?: (
+    route: {
+      folder: string;
+      conversationKind?: 'channel' | 'dm';
+      agentConfig?: { model?: string };
+    },
+    chatJid: string,
+  ) => Promise<ExecutionProviderId> | ExecutionProviderId;
 }
 
 export async function liveTurnScopeForQueue(input: {
@@ -262,6 +274,7 @@ export async function liveTurnScopeForQueue(input: {
   );
   if (!route) return null;
   const executionProviderId =
+    (await app.resolveExecutionProviderId?.(route, chatJid)) ??
     resolveRuntimeExecutionProviderId(executionAdapter);
   const turnContext = await opsRepository.getAgentTurnContext?.({
     agentFolder: route.folder,

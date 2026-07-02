@@ -4,6 +4,8 @@ import type {
   AsyncTaskRecord,
   AsyncTaskRepository,
 } from '../domain/ports/async-tasks.js';
+import type { RuntimeEventPublishInput } from '../domain/events/events.js';
+import { RUNTIME_EVENT_TYPES } from '../domain/events/runtime-event-types.js';
 import type { RuntimeAgentSessionRepository } from '../domain/repositories/ops-repo.js';
 import type { NewMessage } from '../domain/types.js';
 import type { SessionMemoryCollector } from '../domain/ports/session-memory-collector.js';
@@ -21,13 +23,16 @@ import { archiveCurrentRuntimeSession } from './session-resume-runtime.js';
 import { saveGroupProcedureMemory } from './group-memory-commands.js';
 import { resolveRuntimeExecutionProviderId } from './execution-provider-id.js';
 import type { AgentExecutionAdapter } from '../application/agent-execution/agent-execution-adapter.js';
+import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
+import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
+import { maintenanceCompactionPromptForExecutionProvider } from './group-agent-runner-maintenance-compaction.js';
 
 type ArchiveSessionInput = Parameters<typeof archiveCurrentRuntimeSession>[0];
 type SenderPolicyGroup = {
   folder: string;
   requiresTrigger?: boolean;
 };
-const SESSION_COMPACTION_TIMEOUT_MS = 10 * 60_000;
+export const SESSION_COMPACTION_TIMEOUT_MS = 10 * 60_000;
 
 export function createAdvanceCursorHandler(input: {
   queueJid: string;
@@ -54,9 +59,14 @@ export function createArchiveCurrentSessionHandler(input: {
   memoryUserId?: string;
   collectMemory?: SessionMemoryCollector;
   executionAdapter?: Pick<AgentExecutionAdapter, 'id'>;
+  resolveExecutionProviderId?: () =>
+    | ExecutionProviderId
+    | Promise<ExecutionProviderId>;
 }) {
   return async (cause: ArchiveSessionInput['cause'] = 'new-session') => {
-    await archiveCurrentRuntimeSession({
+    const executionProviderId =
+      await resolveSessionCommandExecutionProviderId(input);
+    return archiveCurrentRuntimeSession({
       ops: input.ops(),
       appId: input.appId,
       group: input.group,
@@ -65,9 +75,9 @@ export function createArchiveCurrentSessionHandler(input: {
       cause,
       defaultScope: input.defaultScope,
       memoryUserId: input.memoryUserId,
-      executionProviderId: resolveRuntimeExecutionProviderId(
-        input.executionAdapter,
-      ),
+      executionProviderId: resolveRuntimeExecutionProviderId({
+        id: executionProviderId,
+      }),
       ...(input.collectMemory ? { collectMemory: input.collectMemory } : {}),
     });
   };
@@ -83,15 +93,18 @@ export function createPrepareSessionArchiveHandler(input: {
   memoryUserId?: string;
   collectMemory?: SessionMemoryCollector;
   executionAdapter?: Pick<AgentExecutionAdapter, 'id'>;
+  resolveExecutionProviderId?: () =>
+    | ExecutionProviderId
+    | Promise<ExecutionProviderId>;
 }) {
   return async (_cause: 'new-session') => {
     const ops = input.ops();
+    const executionProviderId =
+      await resolveSessionCommandExecutionProviderId(input);
     const turnContext = await ops.getAgentTurnContext?.({
       appId: input.appId,
       agentFolder: input.group.folder,
-      executionProviderId: resolveRuntimeExecutionProviderId(
-        input.executionAdapter,
-      ),
+      executionProviderId,
       conversationJid: input.chatJid,
       providerAccountId: input.group.providerAccountId,
       threadId: input.threadId,
@@ -125,13 +138,16 @@ export function createSessionArchiveHandlers(
 export function createSessionCompactionHandlers(
   input: Parameters<typeof createArchiveCurrentSessionHandler>[0] & {
     getAsyncTaskRepository?: () => AsyncTaskRepository | undefined;
+    executionAdapters?: AgentExecutionAdapterRegistry;
+    publishRuntimeEvent?: (
+      event: RuntimeEventPublishInput,
+    ) => Promise<unknown> | unknown;
   },
 ) {
   const getContext = async () => {
     const ops = input.ops();
-    const executionProviderId = resolveRuntimeExecutionProviderId(
-      input.executionAdapter,
-    );
+    const executionProviderId =
+      await resolveSessionCommandExecutionProviderId(input);
     const context = await ops.getAgentTurnContext?.({
       appId: input.appId,
       agentFolder: input.group.folder,
@@ -196,6 +212,17 @@ export function createSessionCompactionHandlers(
       });
       await releaseStaleTaskLocks(result.staleTasks);
       return { task: result.task, admitted: result.admitted };
+    },
+    getSessionCompactionStrategy: async () => {
+      const { executionProviderId } = await getContext();
+      const prompt = maintenanceCompactionPromptForExecutionProvider(
+        executionProviderId,
+        {
+          executionAdapter: input.executionAdapter,
+          executionAdapters: input.executionAdapters,
+        },
+      );
+      return prompt ? 'provider_compaction' : 'fresh_checkpoint';
     },
     beginSessionCompaction: async (input?: { baseCursor?: string }) => {
       const { ops, executionProviderId, context } = await getContext();
@@ -280,6 +307,39 @@ export function createSessionCompactionHandlers(
         ...terminal,
       });
     },
+    publishSessionCompactionEvent: async (
+      state: 'queued' | 'running' | 'ready' | 'degraded' | 'failed' | 'timeout',
+      details?: {
+        task?: AsyncTaskRecord;
+        strategy?: 'provider_compaction' | 'fresh_checkpoint';
+        errorSummary?: string;
+      },
+    ) => {
+      if (!input.publishRuntimeEvent) return;
+      const { context, executionProviderId } = await getContext();
+      if (!context?.appId) return;
+      await input.publishRuntimeEvent({
+        appId: context.appId as never,
+        ...(context.agentId ? { agentId: context.agentId as never } : {}),
+        ...(context.agentSessionId
+          ? { sessionId: context.agentSessionId as never }
+          : {}),
+        conversationId: input.chatJid as never,
+        ...(input.threadId ? { threadId: input.threadId as never } : {}),
+        eventType: sessionCompactionEventType(state),
+        actor: 'runtime',
+        responseMode: 'none',
+        payload: {
+          state,
+          provider: executionProviderId,
+          ...(details?.task ? { taskId: details.task.id } : {}),
+          ...(details?.strategy ? { strategy: details.strategy } : {}),
+          ...(details?.errorSummary
+            ? { errorSummary: details.errorSummary }
+            : {}),
+        },
+      });
+    },
     getSessionCompactionStatus: async () => {
       const { context, repository } = await getContext();
       if (context?.latestProviderSessionLocked)
@@ -318,6 +378,37 @@ export function createSessionCompactionHandlers(
   };
 }
 
+async function resolveSessionCommandExecutionProviderId(input: {
+  executionAdapter?: Pick<AgentExecutionAdapter, 'id'>;
+  resolveExecutionProviderId?: () =>
+    | ExecutionProviderId
+    | Promise<ExecutionProviderId>;
+}): Promise<ExecutionProviderId> {
+  return (
+    (await input.resolveExecutionProviderId?.()) ??
+    resolveRuntimeExecutionProviderId(input.executionAdapter)
+  );
+}
+
+function sessionCompactionEventType(
+  state: 'queued' | 'running' | 'ready' | 'degraded' | 'failed' | 'timeout',
+) {
+  switch (state) {
+    case 'queued':
+      return RUNTIME_EVENT_TYPES.SESSION_COMPACTION_QUEUED;
+    case 'running':
+      return RUNTIME_EVENT_TYPES.SESSION_COMPACTION_RUNNING;
+    case 'ready':
+      return RUNTIME_EVENT_TYPES.SESSION_COMPACTION_READY;
+    case 'degraded':
+      return RUNTIME_EVENT_TYPES.SESSION_COMPACTION_DEGRADED;
+    case 'failed':
+      return RUNTIME_EVENT_TYPES.SESSION_COMPACTION_FAILED;
+    case 'timeout':
+      return RUNTIME_EVENT_TYPES.SESSION_COMPACTION_TIMEOUT;
+  }
+}
+
 async function latestCompactionTaskStatus(
   repository: AsyncTaskRepository,
   scope: {
@@ -350,7 +441,7 @@ async function latestCompactionTaskStatus(
   return undefined;
 }
 
-async function releaseCompactionLockFromTask(
+export async function releaseCompactionLockFromTask(
   ops: RuntimeAgentSessionRepository,
   fallbackProvider: string,
   task: AsyncTaskRecord,

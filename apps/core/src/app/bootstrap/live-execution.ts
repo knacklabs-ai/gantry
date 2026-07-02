@@ -43,7 +43,6 @@ import { type LiveTurnBrowserFinalizer } from './live-turn-browser-finalizer.js'
 import { computeHostCapacityPlan } from '../../shared/host-capacity.js';
 import { type SessionCommand } from '../../session/session-commands.js';
 import { createActiveCompactRouteHandlers } from './runtime-services-active-compact.js';
-
 type WarnLog = (context: Record<string, unknown>, message: string) => void;
 type InfoLog = (obj: string | Record<string, unknown>, msg?: string) => void;
 export type ActiveControlRoute = {
@@ -51,6 +50,7 @@ export type ActiveControlRoute = {
   trigger?: string;
   conversationKind?: 'dm' | 'channel';
   providerAccountId?: string;
+  agentConfig?: { model?: string };
 };
 export type ActiveControlCommandHandler = (args: {
   chatJid: string;
@@ -99,6 +99,10 @@ interface AdmissionOpsRepository {
 
 interface AdmissionApp {
   getConversationRoutes(): Record<string, ConversationRoute>;
+  resolveExecutionProviderId?: (
+    route: ConversationRoute,
+    chatJid: string,
+  ) => Promise<ExecutionProviderId> | ExecutionProviderId;
   processGroupMessages: (
     queueJid: string,
     options: {
@@ -227,6 +231,7 @@ export function buildLiveAdmissionProcessor(input: {
       );
       if (!route) return false;
       const executionProviderId =
+        (await app.resolveExecutionProviderId?.(route, chatJid)) ??
         resolveRuntimeExecutionProviderId(executionAdapter);
       const turnContext = await opsRepository.getAgentTurnContext?.({
         agentFolder: route.folder,

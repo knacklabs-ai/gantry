@@ -102,6 +102,9 @@ export interface SessionCommandDeps {
       maintenanceProviderSession: CompactionProviderSession;
     },
   ) => Promise<'success' | 'error' | 'stopped'>;
+  getSessionCompactionStrategy?: () => Promise<
+    'provider_compaction' | 'fresh_checkpoint'
+  >;
   closeStdin: () => void;
   advanceCursor: (message: Pick<NewMessage, 'timestamp' | 'id'>) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
@@ -152,6 +155,14 @@ export interface SessionCommandDeps {
     locked: CompactionProviderSession | undefined,
     status: 'active' | 'expired' | 'ready',
   ) => Promise<void>;
+  publishSessionCompactionEvent?: (
+    state: 'queued' | 'running' | 'ready' | 'degraded' | 'failed' | 'timeout',
+    details?: {
+      task?: AsyncTaskRecord;
+      strategy?: 'provider_compaction' | 'fresh_checkpoint';
+      errorSummary?: string;
+    },
+  ) => Promise<void> | void;
   clearCurrentSession: () => Promise<void> | void;
   stopCurrentRun?: () => boolean;
   runMemoryDreaming?: () => Promise<unknown>;

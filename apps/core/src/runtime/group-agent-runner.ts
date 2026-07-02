@@ -31,9 +31,6 @@ import {
   providerSessionAccessFingerprintMatches,
 } from './provider-session-access-fingerprint.js';
 import { buildBoundedMemoryRecallQuery } from '../memory/app-memory-recall-query.js';
-import { resolveRuntimeExecutionProviderId } from './execution-provider-id.js';
-import { resolveExecutionRoute } from '../shared/model-execution-route.js';
-import type { ExecutionProviderId } from '../domain/sessions/sessions.js';
 import { appIdFromConversationJid } from '../shared/app-conversation-jid.js';
 import {
   loadPatternsContext,
@@ -42,8 +39,6 @@ import {
 import { patternSubjectForScope } from '../shared/pattern-candidate-subject.js';
 import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
 import {
-  executionProviderIdForCandidate,
-  resolveTurnFailoverCandidates,
   runFamilyFailoverLoop,
   publishRunFailoverEvent,
 } from './failover-candidate-loop.js';
@@ -59,6 +54,7 @@ import { memoryReviewerApproverAllowed } from './group-agent-runner-memory-revie
 import { prepareCompactionDeltaReplay } from './group-agent-runner-compaction-delta.js';
 import { maintenanceCompactionPromptForExecutionProvider } from './group-agent-runner-maintenance-compaction.js';
 import { hasAsyncTaskRepository } from './group-agent-runner-async-task-repository.js';
+import { resolveInitialGroupExecutionProviderId } from './group-initial-execution-provider.js';
 const DEFAULT_ASSISTANT_NAME = 'Gantry';
 const DEFAULT_MODEL_ALIAS = 'opus';
 const DEFAULT_TURN_APP_ID = 'default';
@@ -112,33 +108,23 @@ export function createGroupAgentRunner(input: {
       maintenanceCompaction?: boolean;
     },
   ): Promise<GroupAgentRunResult> {
-    const initialModelSelection = defaultModelStatusSelection(
-      group.agentConfig?.model ?? DEFAULT_MODEL_ALIAS,
-    );
     const agentHarness = deps.getSelectedAgentHarness(group.folder);
     const turnAppId = appIdFromConversationJid(chatJid) ?? DEFAULT_TURN_APP_ID;
-    const failoverCandidates = await resolveTurnFailoverCandidates({
-      requestedModel: group.agentConfig?.model,
+    const defaultInteractiveModel =
+      deps.getDefaultInteractiveModel?.(group.folder) ?? DEFAULT_MODEL_ALIAS;
+    const initialProvider = await resolveInitialGroupExecutionProviderId({
+      group,
       appId: turnAppId,
+      defaultModel: defaultInteractiveModel,
       listConfiguredProviders: deps.getConfiguredModelProviders,
       familyOrder: deps.getModelFamilyOrder?.(),
+      executionAdapter: deps.executionAdapter,
+      agentHarness,
     });
-    const firstModel = failoverCandidates[0];
-    const fallbackExecutionProviderId = (): ExecutionProviderId =>
-      resolveRuntimeExecutionProviderId(
-        deps.executionAdapter,
-      ) as ExecutionProviderId;
-    const liveTurnRoute = initialModelSelection.model
-      ? resolveExecutionRoute({
-          entry: initialModelSelection.model,
-          agentHarness,
-        })
-      : undefined;
-    let executionProviderId = firstModel
-      ? executionProviderIdForCandidate(firstModel, undefined, agentHarness)
-      : liveTurnRoute?.ok
-        ? (liveTurnRoute.value.executionProviderId as ExecutionProviderId)
-        : fallbackExecutionProviderId();
+    const initialModelSelection = initialProvider.initialModelSelection;
+    const failoverCandidates = initialProvider.failoverCandidates;
+    const firstModel = initialProvider.firstModel;
+    let executionProviderId = initialProvider.executionProviderId;
     const maintenanceCompactionPrompt = options?.maintenanceCompaction
       ? maintenanceCompactionPromptForExecutionProvider(
           executionProviderId,
@@ -146,7 +132,7 @@ export function createGroupAgentRunner(input: {
         )
       : undefined;
     if (options?.maintenanceCompaction && !maintenanceCompactionPrompt)
-      return 'success';
+      return 'error';
     const sessionThreadId = options?.memoryContext?.threadId ?? null;
     const modelStatus = createRuntimeModelStatusAccess(
       group.folder,
@@ -286,7 +272,7 @@ export function createGroupAgentRunner(input: {
           usageEventId: output.usageEventId,
           getDefaultModel: () => {
             defaultRuntimeModel ??=
-              group.agentConfig?.model ?? DEFAULT_MODEL_ALIAS;
+              group.agentConfig?.model ?? defaultInteractiveModel;
             return defaultRuntimeModel;
           },
         });
@@ -296,7 +282,7 @@ export function createGroupAgentRunner(input: {
           ...defaultModelStatusSelection(
             group.agentConfig?.model ??
               (defaultRuntimeModel ??=
-                group.agentConfig?.model ?? DEFAULT_MODEL_ALIAS),
+                group.agentConfig?.model ?? defaultInteractiveModel),
           ),
           selectionSource: group.agentConfig?.model
             ? 'session override'

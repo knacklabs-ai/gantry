@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type AsyncTaskCreateInput,
+  type AsyncTaskKind,
   type AsyncTaskRecord,
   type AsyncTaskRepository,
   type PublicAsyncTaskDto,
@@ -308,6 +309,7 @@ export class AsyncCommandTaskService {
     agentId?: string;
     staleAfterMs?: number;
     limit?: number;
+    excludeKinds?: AsyncTaskKind[];
   }): Promise<number> {
     const staleBefore =
       Date.now() - (input.staleAfterMs ?? ASYNC_TASK_STALE_AFTER_MS);
@@ -316,8 +318,10 @@ export class AsyncCommandTaskService {
       statuses: ['running', 'needs_attention'],
       limit: input.limit ?? 100,
     });
+    const excludeKinds = new Set(input.excludeKinds ?? []);
     let recovered = 0;
     for (const task of tasks) {
+      if (excludeKinds.has(task.kind)) continue;
       if (taskTimestampMs(task) > staleBefore) continue;
       const handle = readPersistedProcessHandle(task.privateCorrelationJson);
       if (!handle && task.status === 'running') {
