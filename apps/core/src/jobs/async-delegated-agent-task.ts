@@ -23,6 +23,7 @@ import {
 } from './async-command-task-service.js';
 import { asyncDelegatedPrivateCorrelation } from './async-task-execution-payload.js';
 import { createAdmittedAsyncTask } from './async-task-admission.js';
+import { notifyAsyncTaskChange } from './async-task-change-waiter.js';
 
 const ASYNC_TASK_HEARTBEAT_MS = 15_000;
 const ASYNC_TASK_WAKE_FALLBACK_MS = 15_000;
@@ -404,7 +405,7 @@ async function finishDelegatedAgentTask(
   },
 ) {
   const now = nowIso();
-  await repository.transitionTask({
+  const updated = await repository.transitionTask({
     taskId: task.id,
     leaseToken: task.leaseToken,
     fencingVersion: task.fencingVersion,
@@ -422,6 +423,7 @@ async function finishDelegatedAgentTask(
       needsAttention: input.needsAttention,
     },
   });
+  if (updated) notifyAsyncTaskChange(repository);
 }
 
 async function waitForLinkedChildTasks(

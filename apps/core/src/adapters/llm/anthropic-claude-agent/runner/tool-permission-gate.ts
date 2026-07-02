@@ -44,12 +44,13 @@ import { forceBackgroundNativeAgentInput } from './native-agent-tool-input.js';
 import { denyNonPromptableAutonomousRecovery } from './autonomous-permission-recovery.js';
 import { publicCapabilityAllowedToolRules } from '../../../../shared/agent-tool-references.js';
 import { stableTimedGrantKey } from './stable-timed-grant-key.js';
-import { denyRemovedNativeSubagentTool } from './removed-native-subagent-tool.js';
 type ApprovalInput = Parameters<typeof requestPermissionApproval>[0];
 const WORKSPACE_FOLDER_KEY = WORKSPACE_FOLDER_OPTION_KEY as keyof ApprovalInput;
 const TIMED_GRANT_DURATION_MS = 5 * 60 * 1000;
 const TIMED_GRANT_CLOCK_SKEW_MS = 10_000;
 const RAW_REQ = /^(Agent|AskUserQuestion|TodoWrite)$/;
+const REMOVED_NATIVE_SUBAGENT_TOOL =
+  /^Task(Create|Get|List|Output|Stop|Update)?$/;
 
 interface CreateCanUseToolCallbackInput {
   agentInput: AgentRunnerInput;
@@ -174,12 +175,11 @@ export function createCanUseToolCallback(
       },
     );
     const toolInput = forceBackgroundNativeAgentInput(toolName, rawToolInput);
-    const removedToolDenial = denyRemovedNativeSubagentTool({
-      toolName,
-      agentInput: input.agentInput,
-      getNewSessionId: input.getNewSessionId,
-    });
-    if (removedToolDenial) return removedToolDenial;
+    if (REMOVED_NATIVE_SUBAGENT_TOOL.test(toolName)) {
+      const message =
+        'Native SDK Task subagent tools are not supported. Use the Agent tool for native subagents, or request the Gantry AgentDelegation facade.';
+      return { behavior: 'deny' as const, message, interrupt: false };
+    }
     const waitOnlyDenial = waitOnlyBashMonitoringDenial(toolName, toolInput);
     if (waitOnlyDenial) {
       log(`Permission denied by wait-only Bash guard: ${waitOnlyDenial}`);
