@@ -134,6 +134,7 @@ interface Deps {
   startOutboundDeliveryRecoveryLoop: typeof startOutboundDeliveryRecoveryLoop;
   callBrowserTool: IpcDeps['callBrowserTool'];
   publishRuntimeEvent: IpcDeps['publishRuntimeEvent'];
+  subscribeRuntimeEvents: IpcDeps['subscribeRuntimeEvents'];
   publishBrowserJobActivity: IpcDeps['publishBrowserJobActivity'];
   closeBrowserToolBackends: IpcDeps['closeBrowserToolBackends'];
   executionAdapter?: RuntimeApp['executionAdapter'];
@@ -171,6 +172,7 @@ function makeDefaultDeps(): RuntimeServicesDefaults {
     startOutboundDeliveryRecoveryLoop,
     callBrowserTool: undefined,
     publishRuntimeEvent: undefined,
+    subscribeRuntimeEvents: undefined,
     publishBrowserJobActivity: undefined,
     closeBrowserToolBackends: undefined,
     exit: (code: number) => process.exit(code),
@@ -442,6 +444,7 @@ export async function startRuntimeServices(
     runApprovedCommand: resolved.runApprovedCommand,
     getPermissionRepository: resolved.getPermissionRepository,
     publishRuntimeEvent: resolved.publishRuntimeEvent,
+    subscribeRuntimeEvents: resolved.subscribeRuntimeEvents,
     getEgressSettings: () => getRuntimeSettingsForConfig().permissions.egress,
     mirrorAgentToolRulesToSettings,
     reloadRuntimeState: () => app.loadState(),

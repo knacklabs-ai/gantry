@@ -24,6 +24,7 @@ import {
 } from './async-command-task-service.js';
 
 const ASYNC_TASK_HEARTBEAT_MS = 15_000;
+const ASYNC_TASK_WAKE_FALLBACK_MS = 15_000;
 
 class DelegatedChildFailureError extends Error {
   constructor(readonly subtasks: string) {
@@ -68,6 +69,10 @@ export async function startDelegatedAgentTask(input: {
   admitTask: AdmitTask;
   recoverStaleTasks: (input: { appId: string }) => Promise<number>;
   cancelLinkedChildTasks: (parent: AsyncTaskRecord) => Promise<number>;
+  waitForTaskChange?: (
+    parent: AsyncTaskRecord,
+    options: { signal: AbortSignal; timeoutMs: number },
+  ) => Promise<void>;
 }): Promise<StartDelegatedAgentTaskResult> {
   const objective = input.taskInput.objective.trim();
   if (!objective) {
@@ -108,6 +113,7 @@ export async function startDelegatedAgentTask(input: {
     repository: input.repository,
     active: input.active,
     cancelLinkedChildTasks: input.cancelLinkedChildTasks,
+    waitForTaskChange: input.waitForTaskChange,
   });
   return { ok: true, task: toPublicAsyncTaskDto(task) };
 }
@@ -231,6 +237,10 @@ async function executeDelegatedAgentTask(input: {
   repository: AsyncTaskRepository;
   active: Map<string, AbortController>;
   cancelLinkedChildTasks: (parent: AsyncTaskRecord) => Promise<number>;
+  waitForTaskChange?: (
+    parent: AsyncTaskRecord,
+    options: { signal: AbortSignal; timeoutMs: number },
+  ) => Promise<void>;
 }): Promise<void> {
   const {
     task,
@@ -239,6 +249,7 @@ async function executeDelegatedAgentTask(input: {
     repository,
     active,
     cancelLinkedChildTasks,
+    waitForTaskChange,
   } = input;
   const startedAt = nowIso();
   const running = await repository.transitionTask({
@@ -326,6 +337,7 @@ async function executeDelegatedAgentTask(input: {
     });
     const childResult = await waitForLinkedChildTasks(repository, task, {
       signal: controller.signal,
+      waitForTaskChange,
     });
     if (childResult.hasFailure) {
       throw new DelegatedChildFailureError(childResult.summary);
@@ -399,14 +411,50 @@ async function finishDelegatedAgentTask(
 async function waitForLinkedChildTasks(
   repository: AsyncTaskRepository,
   parent: AsyncTaskRecord,
-  input: { signal: AbortSignal },
+  input: {
+    signal: AbortSignal;
+    waitForTaskChange?: (
+      parent: AsyncTaskRecord,
+      options: { signal: AbortSignal; timeoutMs: number },
+    ) => Promise<void>;
+  },
 ): Promise<{ summary: string; hasFailure: boolean }> {
   while (!input.signal.aborted) {
     const counts = await linkedChildTaskCounts(repository, parent);
     if (activeChildCount(counts) === 0) return childTaskResult(counts);
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await waitForChildTaskWakeup(parent, input);
   }
   throw new Error('cancelled');
+}
+
+async function waitForChildTaskWakeup(
+  parent: AsyncTaskRecord,
+  input: {
+    signal: AbortSignal;
+    waitForTaskChange?: (
+      parent: AsyncTaskRecord,
+      options: { signal: AbortSignal; timeoutMs: number },
+    ) => Promise<void>;
+  },
+): Promise<void> {
+  if (input.waitForTaskChange) {
+    await input.waitForTaskChange(parent, {
+      signal: input.signal,
+      timeoutMs: ASYNC_TASK_WAKE_FALLBACK_MS,
+    });
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ASYNC_TASK_WAKE_FALLBACK_MS);
+    input.signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 async function linkedChildTaskCounts(

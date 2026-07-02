@@ -189,7 +189,7 @@ describe('AsyncCommandTaskService', () => {
     });
     const runner: AsyncCommandRunner = {
       run: async ({ signal, onProcessStarted }) => {
-        onProcessStarted?.({
+        await onProcessStarted?.({
           pid: 12345,
           processGroupId: 12345,
           detached: true,
@@ -210,6 +210,7 @@ describe('AsyncCommandTaskService', () => {
     expect(repository.tasks.has(started.task.id)).toBe(true);
 
     await waitForStatus(repository, started.task.id, 'running');
+    await waitForProcessHandle(repository, started.task.id);
     await expect(service.cancel(started.task.id)).resolves.toEqual({
       ok: true,
       message: 'Task was cancelled. Nothing else changed.',
@@ -740,71 +741,76 @@ describe('AsyncCommandTaskService', () => {
   });
 
   it('waits for active child tasks beyond the terminal child page before completing delegated tasks', async () => {
+    vi.useFakeTimers();
     const repository = new MemoryAsyncTaskRepository();
     const service = new AsyncCommandTaskService(repository, {
       run: async () => ({}),
     });
-    let activeChild: AsyncTaskRecord | null = null;
-    const started = await service.startDelegatedAgent({
-      appId: 'app-1',
-      agentId: 'agent-1',
-      conversationId: 'conversation-1',
-      objective: 'Research many leads',
-      workspaceFolder: 'main_agent',
-      run: async ({ task }) => {
-        const now = new Date().toISOString();
-        for (let index = 0; index < 100; index += 1) {
-          await repository.createTask({
-            id: `task-terminal-${index}`,
+    try {
+      let activeChild: AsyncTaskRecord | null = null;
+      const started = await service.startDelegatedAgent({
+        appId: 'app-1',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        objective: 'Research many leads',
+        workspaceFolder: 'main_agent',
+        run: async ({ task }) => {
+          const now = new Date().toISOString();
+          for (let index = 0; index < 100; index += 1) {
+            await repository.createTask({
+              id: `task-terminal-${index}`,
+              appId: task.appId,
+              agentId: task.agentId,
+              conversationId: task.conversationId,
+              kind: 'async_command',
+              status: 'completed',
+              admissionClass: 'task',
+              authoritySnapshotJson: {},
+              privateCorrelationJson: { parentTaskId: task.id },
+              leaseToken: `terminal-lease-${index}`,
+              fencingVersion: 1,
+              now,
+            });
+          }
+          activeChild = await repository.createTask({
+            id: 'task-active-hidden',
             appId: task.appId,
             agentId: task.agentId,
             conversationId: task.conversationId,
             kind: 'async_command',
-            status: 'completed',
+            status: 'running',
             admissionClass: 'task',
             authoritySnapshotJson: {},
             privateCorrelationJson: { parentTaskId: task.id },
-            leaseToken: `terminal-lease-${index}`,
+            leaseToken: 'active-lease',
             fencingVersion: 1,
             now,
           });
-        }
-        activeChild = await repository.createTask({
-          id: 'task-active-hidden',
-          appId: task.appId,
-          agentId: task.agentId,
-          conversationId: task.conversationId,
-          kind: 'async_command',
-          status: 'running',
-          admissionClass: 'task',
-          authoritySnapshotJson: {},
-          privateCorrelationJson: { parentTaskId: task.id },
-          leaseToken: 'active-lease',
-          fencingVersion: 1,
-          now,
-        });
-        return { outputSummary: 'delegated done' };
-      },
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+          return { outputSummary: 'delegated done' };
+        },
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(repository.tasks.get(started.task.id)?.status).toBe('running');
-    expect(activeChild).toBeTruthy();
-    if (!activeChild) return;
-    const now = new Date().toISOString();
-    await repository.transitionTask({
-      taskId: activeChild.id,
-      leaseToken: activeChild.leaseToken,
-      fencingVersion: activeChild.fencingVersion,
-      status: 'completed',
-      now,
-      terminalAt: now,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+      await vi.advanceTimersByTimeAsync(20);
+      expect(repository.tasks.get(started.task.id)?.status).toBe('running');
+      expect(activeChild).toBeTruthy();
+      if (!activeChild) return;
+      const now = new Date().toISOString();
+      await repository.transitionTask({
+        taskId: activeChild.id,
+        leaseToken: activeChild.leaseToken,
+        fencingVersion: activeChild.fencingVersion,
+        status: 'completed',
+        now,
+        terminalAt: now,
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
 
-    await waitForStatus(repository, started.task.id, 'completed');
+      await waitForStatus(repository, started.task.id, 'completed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fails delegated tasks when a failed child is beyond the terminal child page', async () => {
@@ -1552,4 +1558,21 @@ async function waitForStatus(
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`Task did not reach ${status}.`);
+}
+
+async function waitForProcessHandle(
+  repository: MemoryAsyncTaskRepository,
+  taskId: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const task = repository.tasks.get(taskId);
+    if (
+      task?.privateCorrelationJson.process &&
+      typeof task.privateCorrelationJson.process === 'object'
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('Task did not persist process handle.');
 }

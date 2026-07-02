@@ -45,6 +45,7 @@ import {
 } from './async-command-task-receipts.js';
 import { cancelAsyncMcpTask } from './async-mcp-tool-task.js';
 import { refreshDelegatedCancellationReceipt } from './async-task-cancellation.js';
+import { AsyncTaskChangeWaiter } from './async-task-change-waiter.js';
 
 const SHELL_POLICY_TOOL_NAME = 'Bash';
 const ACTIVE_TASK_STATUSES: AsyncTaskRecord['status'][] = ['queued', 'running'];
@@ -149,6 +150,7 @@ export interface AsyncCommandTaskServiceOptions {
 
 export class AsyncCommandTaskService {
   private readonly active = new Map<string, AbortController>();
+  private readonly taskChanges = new AsyncTaskChangeWaiter();
   private readonly classifier = new ToolExecutionClassifier();
   private readonly policy = new ToolExecutionPolicyService();
   private readonly terminateProcess: (
@@ -268,6 +270,7 @@ export class AsyncCommandTaskService {
         const result = await this.cancelChildTasks(parent);
         return result.ok ? result.cancelled : 0;
       },
+      waitForTaskChange: (_parent, options) => this.taskChanges.wait(options),
     });
   }
 
@@ -309,6 +312,14 @@ export class AsyncCommandTaskService {
       }
       return { ok: true, task: await this.repository.createTask(input) };
     });
+  }
+
+  private async transitionTask(
+    input: Parameters<AsyncTaskRepository['transitionTask']>[0],
+  ): ReturnType<AsyncTaskRepository['transitionTask']> {
+    const updated = await this.repository.transitionTask(input);
+    if (updated) this.taskChanges.notify();
+    return updated;
   }
 
   async get(taskId: string): Promise<PublicAsyncTaskDto | null> {
@@ -377,7 +388,7 @@ export class AsyncCommandTaskService {
       if (!handle && task.status === 'running') {
         const now = nowIso();
         if (task.kind === 'delegated_agent') await this.cancelChildTasks(task);
-        const updated = await this.repository.transitionTask({
+        const updated = await this.transitionTask({
           taskId: task.id,
           leaseToken: task.leaseToken,
           fencingVersion: task.fencingVersion,
@@ -396,7 +407,7 @@ export class AsyncCommandTaskService {
       }
       const now = nowIso();
       if (task.kind === 'delegated_agent') await this.cancelChildTasks(task);
-      const updated = await this.repository.transitionTask({
+      const updated = await this.transitionTask({
         taskId: task.id,
         leaseToken: task.leaseToken,
         fencingVersion: task.fencingVersion,
@@ -459,7 +470,7 @@ export class AsyncCommandTaskService {
       const handle = readPersistedProcessHandle(task.privateCorrelationJson);
       if (handle) {
         const now = nowIso();
-        const cancelled = await this.repository.transitionTask({
+        const cancelled = await this.transitionTask({
           taskId,
           leaseToken: task.leaseToken,
           fencingVersion: task.fencingVersion,
@@ -495,7 +506,7 @@ export class AsyncCommandTaskService {
       };
     }
     const now = nowIso();
-    const cancelled = await this.repository.transitionTask({
+    const cancelled = await this.transitionTask({
       taskId,
       leaseToken: task.leaseToken,
       fencingVersion: task.fencingVersion,
@@ -575,7 +586,7 @@ export class AsyncCommandTaskService {
     launchControl: AsyncCommandLaunchControl,
   ): Promise<void> {
     const startedAt = nowIso();
-    const running = await this.repository.transitionTask({
+    const running = await this.transitionTask({
       taskId: task.id,
       leaseToken: task.leaseToken,
       fencingVersion: task.fencingVersion,
@@ -589,7 +600,7 @@ export class AsyncCommandTaskService {
       return;
     }
     const heartbeat = setInterval(() => {
-      void this.repository.transitionTask({
+      void this.transitionTask({
         taskId: task.id,
         leaseToken: task.leaseToken,
         fencingVersion: task.fencingVersion,
@@ -636,7 +647,7 @@ export class AsyncCommandTaskService {
         parentJobId: task.parentJobId,
       });
       const now = nowIso();
-      await this.repository.transitionTask({
+      await this.transitionTask({
         taskId: task.id,
         leaseToken: task.leaseToken,
         fencingVersion: task.fencingVersion,
@@ -657,7 +668,7 @@ export class AsyncCommandTaskService {
       const now = nowIso();
       const aborted = controller.signal.aborted;
       const timedOut = isTimeoutError(err);
-      await this.repository.transitionTask({
+      await this.transitionTask({
         taskId: task.id,
         leaseToken: task.leaseToken,
         fencingVersion: task.fencingVersion,
