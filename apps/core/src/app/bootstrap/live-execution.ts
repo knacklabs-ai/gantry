@@ -16,9 +16,11 @@ import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
 import type { NewMessage } from '../../domain/types.js';
 import type { ProcessRole } from './roles/process-role.js';
 import {
-  parseThreadQueueKey,
+  findConversationRouteForQueue,
+  parseAgentThreadQueueKey,
   makeThreadQueueKey,
 } from '../../shared/thread-queue-key.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import { resolveRuntimeExecutionProviderId } from '../../runtime/execution-provider-id.js';
 import type { LiveTurnAuthority } from '../../runtime/live-turn-authority.js';
 import type { LiveTurnLeaseDeps } from '../../application/live-turns/live-turn-lease-service.js';
@@ -37,10 +39,7 @@ import {
 } from '../../runtime/live-admission-work-loop.js';
 import { markPendingContinuationCommandsApplied } from './live-turn-continuation.js';
 import { routeScopeActiveLiveTurnAdmissionFromCursor } from './live-recovery-coordinator.js';
-import {
-  buildLiveTurnBrowserFinalizer,
-  type LiveTurnBrowserFinalizer,
-} from './live-turn-browser-finalizer.js';
+import { type LiveTurnBrowserFinalizer } from './live-turn-browser-finalizer.js';
 import { computeHostCapacityPlan } from '../../shared/host-capacity.js';
 
 type WarnLog = (context: Record<string, unknown>, message: string) => void;
@@ -52,6 +51,7 @@ interface AdmissionOpsRepository {
     executionProviderId: ExecutionProviderId;
     conversationJid: string;
     threadId: string | null;
+    providerAccountId?: string | null;
     conversationKind?: 'channel' | 'dm';
     hydrateMemory: boolean;
   }) => Promise<
@@ -78,7 +78,7 @@ interface AdmissionOpsRepository {
     conversationJid: string,
     sinceCursor: string,
     limit?: number,
-    options?: { threadId?: string | null },
+    options?: { threadId?: string | null; providerAccountId?: string | null },
   ) => Promise<NewMessage[]>;
 }
 
@@ -138,6 +138,7 @@ export function buildLiveAdmissionProcessor(input: {
     jid: string,
     messageRef: string,
     emoji: string,
+    options?: { providerAccountId?: string },
   ) => Promise<void>;
   finalizeAgentTodo?: (
     jid: string,
@@ -146,6 +147,7 @@ export function buildLiveAdmissionProcessor(input: {
       cardKind?: AgentTodoRender['cardKind'];
       status: AgentTodoCardStatus;
     },
+    options?: { providerAccountId?: string },
   ) => Promise<boolean>;
   finalizeBrowserForLiveTurn?: LiveTurnBrowserFinalizer;
 }): (queueJid: string, context?: GroupMessageRunContext) => Promise<boolean> {
@@ -197,11 +199,28 @@ export function buildLiveAdmissionProcessor(input: {
         finalRetry: context?.finalRetry === true,
       });
     }
-    const { chatJid, threadId } = parseThreadQueueKey(queueJid);
+    const { chatJid, threadId, providerAccountId } =
+      parseAgentThreadQueueKey(queueJid);
+    const account = providerAccountId ? { providerAccountId } : undefined;
+    const finalizeTodo = (
+      status: AgentTodoCardStatus,
+      message: string,
+    ): Promise<unknown> =>
+      finalizeAgentTodo
+        ? finalizeAgentTodo(
+            chatJid,
+            { threadId: threadId ?? null, status },
+            account,
+          ).catch((todoErr) => warn({ err: todoErr, queueJid }, message))
+        : Promise.resolve(false);
     let liveRunId = liveTurnAuthority.ownedRunId(queueJid) ?? undefined;
     let liveRunFence = liveTurnAuthority.ownedFence(queueJid);
     if (!liveTurnAuthority.ownsQueue(queueJid)) {
-      const route = app.getConversationRoutes()[chatJid];
+      const route = findConversationRouteForQueue(
+        app.getConversationRoutes(),
+        queueJid,
+        (candidate) => agentIdForFolder(candidate.folder),
+      );
       if (!route) return false;
       const executionProviderId =
         resolveRuntimeExecutionProviderId(executionAdapter);
@@ -210,6 +229,7 @@ export function buildLiveAdmissionProcessor(input: {
         executionProviderId,
         conversationJid: chatJid,
         threadId: threadId ?? null,
+        providerAccountId: providerAccountId ?? null,
         conversationKind: route.conversationKind,
         hydrateMemory: false,
       });
@@ -297,7 +317,9 @@ export function buildLiveAdmissionProcessor(input: {
           liveRunResult = result;
         },
         onFirstProgress: ({ jid, messageRef }) =>
-          input.addReaction?.(jid, messageRef, 'seen').catch(() => undefined),
+          input
+            .addReaction?.(jid, messageRef, 'seen', account)
+            .catch(() => undefined),
         onLiveStopActionToken: async (token) => {
           await liveTurnAuthority.registerStopAliases(queueJid, [token]);
         },
@@ -306,6 +328,11 @@ export function buildLiveAdmissionProcessor(input: {
         success && (liveRunResult === 'success' || liveRunResult === null);
       const terminalHandled =
         terminalSuccess || (success && liveRunResult === 'stopped');
+      const todoStatus = terminalSuccess
+        ? 'done'
+        : liveRunResult === 'stopped'
+          ? 'stopped'
+          : 'failed';
       // Snapshot the browser profile (if used) BEFORE finalizing the live turn,
       // while this worker still owns the run lease fence.
       await finalizeBrowserForLiveTurn?.({
@@ -331,20 +358,11 @@ export function buildLiveAdmissionProcessor(input: {
                 }),
         },
       );
-      if (finalized && finalizeAgentTodo) {
-        await finalizeAgentTodo(chatJid, {
-          threadId: threadId ?? null,
-          status: terminalSuccess
-            ? 'done'
-            : liveRunResult === 'stopped'
-              ? 'stopped'
-              : 'failed',
-        }).catch((todoErr) => {
-          warn(
-            { err: todoErr, queueJid },
-            'Failed to finalize live-turn todo card',
-          );
-        });
+      if (finalized) {
+        await finalizeTodo(
+          todoStatus,
+          'Failed to finalize live-turn todo card',
+        );
       }
       return terminalHandled && finalized;
     } catch (err) {
@@ -373,16 +391,11 @@ export function buildLiveAdmissionProcessor(input: {
           return false;
         });
       void finalized;
-      if (finalized && finalizeAgentTodo) {
-        await finalizeAgentTodo(chatJid, {
-          threadId: threadId ?? null,
-          status: 'failed',
-        }).catch((todoErr) => {
-          warn(
-            { err: todoErr, queueJid },
-            'Failed to finalize live-turn todo card after message processing error',
-          );
-        });
+      if (finalized) {
+        await finalizeTodo(
+          'failed',
+          'Failed to finalize live-turn todo card after message processing error',
+        );
       }
       throw err;
     }
@@ -464,6 +477,7 @@ export function startLiveExecutionServices(input: {
     jid: string,
     messageRef: string,
     emoji: string,
+    options?: { providerAccountId?: string },
   ) => Promise<void>;
 }): LiveExecutionServicesHandle {
   const {
@@ -629,10 +643,16 @@ async function resumeRecoveredTurn(input: {
 }): Promise<void> {
   const { turn, lease, app, liveTurnAuthority, liveTurnLeaseDeps, warn } =
     input;
-  const queueJid = makeThreadQueueKey(
-    turn.conversationId,
-    turn.threadId ?? undefined,
-  );
+  const pendingMessage =
+    turn.pendingMessage &&
+    typeof turn.pendingMessage === 'object' &&
+    !Array.isArray(turn.pendingMessage)
+      ? turn.pendingMessage
+      : null;
+  const queueJid =
+    typeof pendingMessage?.queueJid === 'string'
+      ? pendingMessage.queueJid
+      : makeThreadQueueKey(turn.conversationId, turn.threadId ?? undefined);
   liveTurnAuthority.adoptRecoveredTurn({
     queueJid,
     turn,
@@ -642,12 +662,6 @@ async function resumeRecoveredTurn(input: {
       fencingVersion: lease.fencingVersion,
     },
   });
-  const pendingMessage =
-    turn.pendingMessage &&
-    typeof turn.pendingMessage === 'object' &&
-    !Array.isArray(turn.pendingMessage)
-      ? turn.pendingMessage
-      : null;
   const replayQueueJid =
     pendingMessage?.queueJid === queueJid ? queueJid : null;
   const cursorBefore =

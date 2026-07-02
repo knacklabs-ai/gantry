@@ -115,7 +115,7 @@ maybeDescribe('Postgres memory continuity', () => {
     });
   });
 
-  it('uses active conversation binding agent identity for turn context', async () => {
+  it('uses active conversation install agent identity for turn context', async () => {
     const chatJid = 'tg:bound-skill-agent';
 
     await runtime.ops.setConversationRoute(chatJid, {
@@ -127,7 +127,7 @@ maybeDescribe('Postgres memory continuity', () => {
     });
 
     const context = await runtime.sessionOps.getAgentTurnContext({
-      workspaceFolder: 'runtime_workspace_folder',
+      workspaceFolder: 'bound_skill_agent',
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
       threadId: null,
@@ -142,19 +142,113 @@ maybeDescribe('Postgres memory continuity', () => {
     });
   });
 
+  it('prefers the selected folder when multiple agents are installed in one conversation', async () => {
+    const chatJid = 'tg:multi-agent-provider-onboarding';
+    const selectedFolder = 'multi_agent_selected';
+    const selectedAgentId = `agent:${selectedFolder}`;
+    const conversationId = `conversation:${chatJid}`;
+
+    await runtime.ops.setConversationRoute(chatJid, {
+      name: 'First Agent',
+      folder: 'multi_agent_first',
+      trigger: '@First',
+      added_at: '2026-04-28T00:00:00.000Z',
+      requiresTrigger: false,
+    });
+    await runtime.repositories.agents.saveAgent({
+      id: selectedAgentId as never,
+      appId: 'default' as never,
+      name: 'Selected Agent',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    });
+    await runtime.repositories.providerAccounts.saveConversationInstall({
+      id: 'conversation-install:test:multi-agent-selected' as never,
+      appId: 'default' as never,
+      agentId: selectedAgentId as never,
+      providerAccountId: 'channel-providerAccount:default:telegram' as never,
+      conversationId: conversationId as never,
+      displayName: 'Selected Agent',
+      status: 'active',
+      senderPolicy: 'provider_native',
+      controlPolicy: 'conversation_approvers',
+      memoryScope: 'conversation',
+      memorySubject: {
+        kind: 'conversation',
+        appId: 'default' as never,
+        conversationId: conversationId as never,
+      },
+      permissionPolicyIds: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const context = await runtime.sessionOps.getAgentTurnContext({
+      workspaceFolder: selectedFolder,
+      executionProviderId: TEST_EXECUTION_PROVIDER_ID,
+      chatJid,
+      threadId: null,
+    });
+
+    expect(context.agentId).toBe(selectedAgentId);
+  });
+
+  it('does not reuse a sibling agent when the selected install is missing', async () => {
+    const chatJid = 'tg:missing-selected-agent-binding';
+    const selectedFolder = 'missing_selected_agent';
+    const selectedAgentId = `agent:${selectedFolder}`;
+    const siblingFolder = 'missing_selected_sibling';
+    const selectedProviderSessionId =
+      'provider-session:test:missing-selected-agent';
+
+    await runtime.ops.setConversationRoute(chatJid, {
+      name: 'Sibling Agent',
+      folder: siblingFolder,
+      trigger: '@Sibling',
+      added_at: '2026-04-28T00:00:00.000Z',
+      requiresTrigger: false,
+    });
+
+    await runtime.sessionOps.setSession(
+      selectedFolder,
+      selectedProviderSessionId,
+      null,
+      {
+        executionProviderId: TEST_EXECUTION_PROVIDER_ID,
+        chatJid,
+      },
+    );
+    const context = await runtime.sessionOps.getAgentTurnContext({
+      workspaceFolder: selectedFolder,
+      executionProviderId: TEST_EXECUTION_PROVIDER_ID,
+      chatJid,
+      threadId: null,
+    });
+
+    expect(context).toMatchObject({
+      agentId: selectedAgentId,
+      externalSessionId: selectedProviderSessionId,
+    });
+    expect(context.agentSessionId).toContain(
+      `agent:agent%3A${selectedFolder}::`,
+    );
+  });
+
   it('does not reuse provider sessions when a conversation route rebinds to another agent', async () => {
     const chatJid = 'tg:session-rebind';
-    const routeFolder = 'runtime_workspace_folder';
+    const agentAFolder = 'agent_a';
+    const agentBFolder = 'agent_b';
 
     await runtime.ops.setConversationRoute(chatJid, {
       name: 'Agent A',
-      folder: 'agent_a',
+      folder: agentAFolder,
       trigger: '@A',
       added_at: '2026-05-08T00:00:00.000Z',
       requiresTrigger: false,
     });
     await runtime.sessionOps.setSession(
-      routeFolder,
+      agentAFolder,
       'provider-session:test:agent-a',
       null,
       {
@@ -163,7 +257,7 @@ maybeDescribe('Postgres memory continuity', () => {
       },
     );
     const agentAContext = await runtime.sessionOps.getAgentTurnContext({
-      workspaceFolder: routeFolder,
+      workspaceFolder: agentAFolder,
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
       threadId: null,
@@ -171,13 +265,13 @@ maybeDescribe('Postgres memory continuity', () => {
 
     await runtime.ops.setConversationRoute(chatJid, {
       name: 'Agent B',
-      folder: 'agent_b',
+      folder: agentBFolder,
       trigger: '@B',
       added_at: '2026-05-08T00:01:00.000Z',
       requiresTrigger: false,
     });
     const agentBContext = await runtime.sessionOps.getAgentTurnContext({
-      workspaceFolder: routeFolder,
+      workspaceFolder: agentBFolder,
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
       threadId: null,
@@ -195,7 +289,7 @@ maybeDescribe('Postgres memory continuity', () => {
     expect(agentBContext).not.toHaveProperty('externalSessionId');
 
     await runtime.sessionOps.setSession(
-      routeFolder,
+      agentBFolder,
       'provider-session:test:agent-b',
       null,
       {
@@ -205,7 +299,7 @@ maybeDescribe('Postgres memory continuity', () => {
     );
     await expect(
       runtime.sessionOps.getAgentTurnContext({
-        workspaceFolder: routeFolder,
+        workspaceFolder: agentBFolder,
         executionProviderId: TEST_EXECUTION_PROVIDER_ID,
         chatJid,
         threadId: null,
@@ -286,23 +380,24 @@ maybeDescribe('Postgres memory continuity', () => {
 
   it('scoped reset clears only the targeted agent owner session state', async () => {
     const chatJid = 'tg:session-reset-owner';
-    const routeFolder = 'runtime_workspace_folder';
+    const agentAFolder = 'reset_owner_agent_a';
+    const agentBFolder = 'reset_owner_agent_b';
     const sessionA = 'provider-session:test:reset-owner:agent-a';
     const sessionB = 'provider-session:test:reset-owner:agent-b';
 
     await runtime.ops.setConversationRoute(chatJid, {
       name: 'Reset Owner Agent A',
-      folder: 'reset_owner_agent_a',
+      folder: agentAFolder,
       trigger: '@A',
       added_at: '2026-05-08T00:00:00.000Z',
       requiresTrigger: false,
     });
-    await runtime.sessionOps.setSession(routeFolder, sessionA, null, {
+    await runtime.sessionOps.setSession(agentAFolder, sessionA, null, {
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
     });
     const agentAContext = await runtime.sessionOps.getAgentTurnContext({
-      workspaceFolder: routeFolder,
+      workspaceFolder: agentAFolder,
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
       threadId: null,
@@ -310,31 +405,31 @@ maybeDescribe('Postgres memory continuity', () => {
 
     await runtime.ops.setConversationRoute(chatJid, {
       name: 'Reset Owner Agent B',
-      folder: 'reset_owner_agent_b',
+      folder: agentBFolder,
       trigger: '@B',
       added_at: '2026-05-08T00:01:00.000Z',
       requiresTrigger: false,
     });
-    await runtime.sessionOps.setSession(routeFolder, sessionB, null, {
+    await runtime.sessionOps.setSession(agentBFolder, sessionB, null, {
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
     });
     const agentBContext = await runtime.sessionOps.getAgentTurnContext({
-      workspaceFolder: routeFolder,
+      workspaceFolder: agentBFolder,
       executionProviderId: TEST_EXECUTION_PROVIDER_ID,
       chatJid,
       threadId: null,
     });
     expect(agentBContext.agentSessionId).not.toBe(agentAContext.agentSessionId);
 
-    await runtime.sessionOps.deleteSession(routeFolder, null, {
+    await runtime.sessionOps.deleteSession(agentBFolder, null, {
       chatJid,
       agentId: agentBContext.agentId,
     });
 
     await expect(
       runtime.sessionOps.getAgentTurnContext({
-        workspaceFolder: routeFolder,
+        workspaceFolder: agentBFolder,
         executionProviderId: TEST_EXECUTION_PROVIDER_ID,
         chatJid,
         threadId: null,

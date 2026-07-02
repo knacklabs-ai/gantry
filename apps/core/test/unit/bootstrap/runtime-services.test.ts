@@ -7,12 +7,14 @@ import {
   stopLiveAdmissionLoop,
   stopLiveTurnRecoveryLoop,
 } from '@core/app/bootstrap/runtime-services.js';
+import { buildLiveTurnRecoveryCapabilityGate } from '@core/app/bootstrap/live-turn-recovery-capability-gate.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
-import { ChannelWiring } from '@core/app/bootstrap/channel-wiring.js';
+import type { ChannelWiring } from '@core/app/bootstrap/channel-wiring-types.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
 import { runBoundedOutboundDeliveryRecovery } from '@core/jobs/outbound-delivery-recovery.js';
 import { stopWorkerHeartbeat } from '@core/jobs/worker-identity.js';
 import { buildPendingMessagesContinuationIdempotencyKey } from '@core/runtime/pending-message-replay.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 import {
   FakeCoordination,
   FakeLiveTurns,
@@ -132,6 +134,97 @@ function makeChannelWiring(): ChannelWiring {
     isControlApproverAllowed: vi.fn(async () => true),
   };
 }
+
+describe('buildLiveTurnRecoveryCapabilityGate', () => {
+  it('uses the conversation route when recovered turn has no queue metadata', async () => {
+    const app = makeApp();
+    const listAgentSkillBindings = vi.fn(async () => [
+      { skillId: 'sk-1', status: 'active' },
+    ]);
+    const gate = buildLiveTurnRecoveryCapabilityGate({
+      app,
+      workerCoordination: {
+        getWorker: vi.fn(async () => ({ capabilities: [] })),
+      } as any,
+      liveTurnLeaseDeps: { workerInstanceId: 'worker-new' } as any,
+      getDeploymentMode: () => 'fleet',
+      getSkillRepository: () => ({ listAgentSkillBindings }) as any,
+      agentIdForFolder: (folder) => `agent:${folder}`,
+      nowMs: () => 0,
+      warn: vi.fn(),
+    });
+
+    await expect(
+      gate.isEligibleToRecoverLiveTurn({
+        appId: 'default',
+        conversationId: 'tg:primary',
+        threadId: null,
+        pendingMessage: null,
+      } as any),
+    ).resolves.toBe(false);
+    expect(listAgentSkillBindings).toHaveBeenCalledWith({
+      appId: 'default',
+      agentId: 'agent:main',
+    });
+  });
+
+  it('fails closed when the recovery route cannot resolve an owner', async () => {
+    const app = makeApp();
+    app.getConversationRoutes = vi.fn(() => ({
+      'tg:primary::agent:agent%3Aalpha': {
+        name: 'Alpha',
+        folder: 'alpha',
+        trigger: '@A',
+        added_at: 't',
+      },
+      'tg:primary::agent:agent%3Abeta': {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@B',
+        added_at: 't',
+      },
+    }));
+    const listAgentSkillBindings = vi.fn(async () => [
+      { skillId: 'sk-1', status: 'active' },
+    ]);
+    const gate = buildLiveTurnRecoveryCapabilityGate({
+      app,
+      workerCoordination: {
+        getWorker: vi.fn(async () => ({
+          capabilities: ['skill:sk-alpha', 'skill:sk-beta'],
+        })),
+      } as any,
+      liveTurnLeaseDeps: { workerInstanceId: 'worker-new' } as any,
+      getDeploymentMode: () => 'fleet',
+      getSkillRepository: () => ({ listAgentSkillBindings }) as any,
+      agentIdForFolder: (folder) => `agent:${folder}`,
+      nowMs: () => 0,
+      warn: vi.fn(),
+    });
+
+    await expect(
+      gate.isEligibleToRecoverLiveTurn({
+        appId: 'default',
+        conversationId: 'tg:primary',
+        threadId: null,
+        pendingMessage: null,
+      } as any),
+    ).resolves.toBe(false);
+    await expect(
+      gate.isEligibleToRecoverLiveTurn({
+        appId: 'default',
+        conversationId: 'tg:primary',
+        threadId: null,
+        pendingMessage: {
+          kind: 'message_cursor',
+          queueJid: 'tg:stale',
+          cursorBefore: 'cursor-before-run',
+        },
+      } as any),
+    ).resolves.toBe(false);
+    expect(listAgentSkillBindings).not.toHaveBeenCalled();
+  });
+});
 
 describe('startRuntimeServices', () => {
   it('preserves runtime-services startup order and snapshot shape', async () => {
@@ -389,6 +482,15 @@ describe('startRuntimeServices', () => {
       // admission (already running).
       transitions?.onAcquired({ release: vi.fn(async () => {}) });
       expect(recoverPendingMessages).toHaveBeenCalledOnce();
+      const messageLoopDeps = recoverPendingMessages.mock.calls[0]?.[0] as any;
+      expect(
+        messageLoopDeps.hasChannel('sl:C123', {
+          providerAccountId: 'slack_beta',
+        }),
+      ).toBe(true);
+      expect(channelWiring.hasChannel).toHaveBeenCalledWith('sl:C123', {
+        providerAccountId: 'slack_beta',
+      });
 
       // Losing the coordinator lease stops recovery but keeps admission running.
       transitions?.onLost(new Error('lease connection ended'));
@@ -655,6 +757,7 @@ describe('startRuntimeServices', () => {
         'tg:primary',
         'message-1',
         'seen',
+        undefined,
       );
       expect([...liveTurns.turns.values()]).toEqual([
         expect.objectContaining({
@@ -676,6 +779,72 @@ describe('startRuntimeServices', () => {
           resultSummary: 'Live turn completed.',
         },
       ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('uses the selected agent route for an agent-qualified live queue key', async () => {
+    const app = makeApp();
+    app.getConversationRoutes = vi.fn(() => ({
+      'tg:primary::agent:agent%3Aalpha': {
+        name: 'Alpha',
+        folder: 'alpha',
+        trigger: '@A',
+        added_at: 't',
+      },
+      'tg:primary::agent:agent%3Abeta': {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@B',
+        added_at: 't',
+      },
+    }));
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    const getAgentTurnContext = vi.fn(async () => ({
+      appId: 'default',
+      agentSessionId: 'session-beta',
+    }));
+
+    await startRuntimeServices(
+      { app, channelWiring },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext,
+          createSessionAgentRun: vi.fn(async () => 'agent-run:beta'),
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await processMessages('tg:primary::agent:agent%3Abeta');
+
+      expect(getAgentTurnContext).toHaveBeenCalledWith(
+        expect.objectContaining({ agentFolder: 'beta' }),
+      );
+      expect(app.processGroupMessages).toHaveBeenCalledWith(
+        'tg:primary::agent:agent%3Abeta',
+        expect.any(Object),
+      );
     } finally {
       stopLiveTurnRecoveryLoop();
       await stopLiveAdmissionLoop(0);
@@ -748,6 +917,7 @@ describe('startRuntimeServices', () => {
           threadId: null,
           status: 'failed',
         },
+        undefined,
       );
       expect([...liveTurns.turns.values()]).toEqual([
         expect.objectContaining({
@@ -825,6 +995,7 @@ describe('startRuntimeServices', () => {
           threadId: null,
           status: 'stopped',
         },
+        undefined,
       );
       expect([...liveTurns.turns.values()]).toEqual([
         expect.objectContaining({
@@ -1573,6 +1744,61 @@ describe('startRuntimeServices', () => {
     );
   });
 
+  it('scopes scheduler sends to the resolved provider account', async () => {
+    let schedulerDeps:
+      | import('@core/jobs/scheduler.js').SchedulerDependencies
+      | undefined;
+    const app = makeApp();
+    app.getConversationRoutes = vi.fn(() => ({
+      [makeAgentThreadQueueKey(
+        'sl:C123',
+        'agent:beta',
+        'thread-42',
+        'slack_beta',
+      )]: {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@B',
+        added_at: 't',
+        providerAccountId: 'slack_beta',
+      },
+    }));
+    const channelWiring = makeChannelWiring();
+
+    await startRuntimeServices(
+      { app, channelWiring },
+      {
+        startSchedulerLoop: vi.fn((deps) => {
+          schedulerDeps = deps;
+        }) as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+
+    await schedulerDeps?.sendMessage('sl:C123', 'scheduler output', {
+      threadId: 'thread-42',
+    });
+
+    expect(channelWiring.sendMessage).toHaveBeenCalledWith(
+      'sl:C123',
+      'scheduler output',
+      {
+        durability: 'required',
+        throwOnMissing: true,
+        messageOptions: {
+          threadId: 'thread-42',
+          providerAccountId: 'slack_beta',
+        },
+      },
+    );
+  });
+
   it('routes live stop message actions through the active thread queue', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
@@ -1623,6 +1849,71 @@ describe('startRuntimeServices', () => {
       'tg:primary',
       'Stopping current run.',
       { durability: 'required', messageOptions: { threadId: 'topic-42' } },
+    );
+  });
+
+  it('scopes message actions to the originating provider account', async () => {
+    const app = makeApp();
+    app.getConversationRoutes = vi.fn(() => ({
+      [makeAgentThreadQueueKey('sl:C123', 'agent:alpha', null, 'slack-alpha')]:
+        {
+          name: 'Alpha',
+          folder: 'alpha',
+          trigger: '@A',
+          added_at: 't',
+          providerAccountId: 'slack-alpha',
+        },
+      [makeAgentThreadQueueKey('sl:C123', 'agent:beta', null, 'slack-beta')]: {
+        name: 'Beta',
+        folder: 'beta',
+        trigger: '@B',
+        added_at: 't',
+        providerAccountId: 'slack-beta',
+      },
+    }));
+    const channelWiring = makeChannelWiring();
+    vi.mocked(app.queue.stopGroup as any).mockReturnValue(true);
+
+    await startRuntimeServices(
+      { app, channelWiring },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+
+    const handler = vi.mocked(channelWiring.setMessageActionHandler).mock
+      .calls[0]?.[0];
+    await handler?.({
+      kind: 'live_turn_stop',
+      conversationJid: 'sl:C123',
+      providerAccountId: 'slack-beta',
+      userId: 'user',
+    });
+
+    expect(channelWiring.isControlApproverAllowed).toHaveBeenCalledWith({
+      conversationJid: 'sl:C123',
+      providerAccountId: 'slack-beta',
+      userId: 'user',
+      sourceAgentFolder: 'beta',
+      decisionPolicy: 'same_channel',
+    });
+    expect(app.queue.stopGroup).toHaveBeenCalledWith(
+      makeAgentThreadQueueKey('sl:C123', 'agent:beta', null, 'slack-beta'),
+    );
+    expect(channelWiring.sendMessage).toHaveBeenCalledWith(
+      'sl:C123',
+      'Stopping current run.',
+      {
+        durability: 'required',
+        messageOptions: { providerAccountId: 'slack-beta' },
+      },
     );
   });
 
@@ -1791,7 +2082,7 @@ describe('startRuntimeServices', () => {
                 conversationJid: 'tg:primary',
                 threadId: 'thread-1',
                 providerId: 'telegram',
-                providerConnectionId: 'telegram_default',
+                providerAccountId: 'telegram_default',
               })),
             }) as any,
         ),
@@ -1834,7 +2125,10 @@ describe('startRuntimeServices', () => {
       'Recovered outbound',
       expect.objectContaining({
         throwOnMissing: true,
-        messageOptions: { threadId: 'thread-1' },
+        messageOptions: expect.objectContaining({
+          providerAccountId: 'telegram_default',
+          threadId: 'thread-1',
+        }),
         permit: expect.objectContaining({
           deliveryId: 'delivery:1',
           itemId: 'delivery-item:1',
@@ -1890,7 +2184,7 @@ describe('startRuntimeServices', () => {
                 conversationJid: 'sl:C123',
                 threadId: 'thread-1',
                 providerId: 'slack',
-                providerConnectionId: 'slack_default',
+                providerAccountId: 'slack_default',
               })),
             }) as any,
         ),
@@ -1914,7 +2208,10 @@ describe('startRuntimeServices', () => {
       'Recovered outbound',
       expect.objectContaining({
         throwOnMissing: true,
-        messageOptions: { threadId: 'thread-1' },
+        messageOptions: expect.objectContaining({
+          providerAccountId: 'slack_default',
+          threadId: 'thread-1',
+        }),
         permit: expect.objectContaining({
           destinationJid: 'sl:C123',
           canonicalText: 'Recovered outbound',
@@ -1971,7 +2268,7 @@ describe('startRuntimeServices', () => {
                 conversationJid: `teams:${rawTeamsConversationId}`,
                 threadId: 'thread-1',
                 providerId: 'teams',
-                providerConnectionId: 'teams_default',
+                providerAccountId: 'teams_default',
               })),
             }) as any,
         ),
@@ -1995,7 +2292,10 @@ describe('startRuntimeServices', () => {
       'Recovered outbound',
       expect.objectContaining({
         throwOnMissing: true,
-        messageOptions: { threadId: 'thread-1' },
+        messageOptions: expect.objectContaining({
+          providerAccountId: 'teams_default',
+          threadId: 'thread-1',
+        }),
         permit: expect.objectContaining({
           destinationJid: `teams:${rawTeamsConversationId}`,
           canonicalText: 'Recovered outbound',
@@ -2068,7 +2368,7 @@ describe('startRuntimeServices', () => {
                 conversationJid: 'sl:C123',
                 threadId: 'thread-1',
                 providerId: 'slack',
-                providerConnectionId: 'slack_default',
+                providerAccountId: 'slack_default',
               })),
             }) as any,
         ),
@@ -2092,7 +2392,10 @@ describe('startRuntimeServices', () => {
       'Recovered outbound',
       expect.objectContaining({
         throwOnMissing: true,
-        messageOptions: { threadId: 'thread-1' },
+        messageOptions: expect.objectContaining({
+          providerAccountId: 'slack_default',
+          threadId: 'thread-1',
+        }),
         permit: expect.objectContaining({
           deliveryId: 'delivery:slack:partial:1',
           itemId: 'delivery-item:slack:partial:1',
@@ -2185,7 +2488,7 @@ describe('startRuntimeServices', () => {
                 conversationJid: 'sl:C123',
                 threadId: 'thread-1',
                 providerId: 'slack',
-                providerConnectionId: 'slack_default',
+                providerAccountId: 'slack_default',
               })),
             }) as any,
         ),
@@ -2264,7 +2567,7 @@ describe('startRuntimeServices', () => {
                 conversationJid: 'tg:canonical',
                 threadId: 'thread-canonical',
                 providerId: 'telegram',
-                providerConnectionId: 'telegram_default',
+                providerAccountId: 'telegram_default',
               })),
             }) as any,
         ),
@@ -2333,7 +2636,7 @@ describe('startRuntimeServices', () => {
               resolveDeliveryDestination: vi.fn(async () => ({
                 conversationJid: 'tg:missing',
                 providerId: 'telegram',
-                providerConnectionId: 'telegram_default',
+                providerAccountId: 'telegram_default',
               })),
             }) as any,
         ),
@@ -2402,7 +2705,7 @@ describe('startRuntimeServices', () => {
               resolveDeliveryDestination: vi.fn(async () => ({
                 conversationJid: 'sl:C999',
                 providerId: 'slack',
-                providerConnectionId: 'provider-connection:other',
+                providerAccountId: 'provider-account:other',
               })),
             }) as any,
         ),
@@ -2471,7 +2774,7 @@ describe('startRuntimeServices', () => {
               resolveDeliveryDestination: vi.fn(async () => ({
                 conversationJid: 'app:app-other:conv-1',
                 providerId: 'app',
-                providerConnectionId: 'control:app-other',
+                providerAccountId: 'control:app-other',
               })),
             }) as any,
         ),
@@ -2580,6 +2883,88 @@ describe('startRuntimeServices', () => {
     expect(enqueueDelivery.mock.calls[0]?.[0]?.delivery).toMatchObject({
       appId: 'app-one',
       conversationId: 'control:app-one:conversation:conv-1',
+    });
+  });
+
+  it('maps provider-account durable enqueue targets to scoped conversation and thread ids', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const enqueueDelivery = vi.fn(async (input: any) => ({
+      created: true,
+      delivery: input.delivery,
+    }));
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getOutboundDeliveryRepository: vi.fn(
+          () =>
+            ({
+              enqueueDelivery,
+              getDelivery: vi.fn(async () => null),
+              claimDueDeliveryItems: vi.fn(async () => []),
+              resolveDeliveryDestination: vi.fn(async () => null),
+              markDeliveryItemSent: vi.fn(async () => ({
+                applied: true,
+                delivery: null,
+              })),
+              markDeliveryItemFailed: vi.fn(async () => ({
+                applied: true,
+                delivery: null,
+              })),
+              markDeliveryItemPartiallyDelivered: vi.fn(async () => ({
+                applied: true,
+                delivery: null,
+              })),
+              listReceiptsForItem: vi.fn(async () => []),
+              getReceipt: vi.fn(async () => null),
+            }) as any,
+        ),
+        startOutboundDeliveryRecoveryLoop: vi.fn(
+          () =>
+            ({
+              isRunning: () => true,
+              stop: async () => {},
+            }) as any,
+        ),
+        recoverPendingMessages: vi.fn() as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+
+    const durableAttemptFactory = vi.mocked(
+      channelWiring.setDurableOutboundAttemptFactory,
+    ).mock.calls[0]?.[0];
+    expect(durableAttemptFactory).toBeDefined();
+
+    await durableAttemptFactory!({
+      appId: 'default' as never,
+      chatJid: 'sl:C123',
+      threadId: '171.123',
+      providerAccountId: 'slack_beta',
+      sourceMessageId: 'outbound:test:scoped-account',
+      provider: 'slack',
+      canonicalText: 'hello slack',
+    });
+
+    expect(enqueueDelivery).toHaveBeenCalledTimes(1);
+    expect(enqueueDelivery.mock.calls[0]?.[0]?.delivery).toMatchObject({
+      appId: 'default',
+      conversationId: 'conversation:slack_beta:sl:C123',
+      threadId: 'thread:slack_beta:sl:C123:171.123',
     });
   });
 
