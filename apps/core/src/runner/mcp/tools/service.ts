@@ -9,6 +9,7 @@ import {
   deploymentMode,
   isAdminMcpToolEnabled,
   memoryUserId,
+  memoryDefaultScope,
   TASKS_DIR,
   threadId,
 } from '../context.js';
@@ -36,12 +37,16 @@ export function registerServiceTools(server: McpServer): void {
   );
   server.tool(
     'pattern_candidate_decision',
-    'Record the user decision for a pattern_id from [[PATTERNS_NOTICED]]. Use this only after the user explicitly says not now or do not suggest again.',
+    'Record the user decision for a pattern_id from [[PATTERNS_NOTICED]]. Use accept only after the user agrees to a scheduler_job, durable_capability, or memory_update fix; skill fixes go through request_skill_proposal.',
     {
       patternCandidateId: z
         .string()
         .describe('pattern_id from the pattern block'),
-      choice: z.enum(['not_now', 'dismiss']),
+      choice: z.enum(['accept', 'not_now', 'dismiss']),
+      actionKind: z
+        .enum(['scheduler_job', 'durable_capability', 'memory_update'])
+        .optional()
+        .describe('Required only when choice is accept.'),
     },
     async (args) => {
       const taskId = makeIpcId('pattern-candidate-decision');
@@ -55,6 +60,7 @@ export function registerServiceTools(server: McpServer): void {
         payload: {
           patternCandidateId: args.patternCandidateId,
           choice: args.choice,
+          actionKind: args.actionKind,
         },
         timestamp: nowIso(),
       });
@@ -68,6 +74,43 @@ export function registerServiceTools(server: McpServer): void {
               (response?.ok
                 ? 'Pattern decision recorded.'
                 : 'Pattern decision was not recorded.'),
+          },
+        ],
+        ...(response?.ok ? {} : { isError: true }),
+      };
+    },
+  );
+  server.tool(
+    'proactive_surfacing_consent',
+    'Record the user explicit decision to keep flagging (enable) or stop flagging (opt_out) proactive patterns for this conversation. Use ONLY after the user explicitly says so this turn.',
+    {
+      choice: z.enum(['enable', 'opt_out']),
+    },
+    async (args) => {
+      const taskId = makeIpcId('proactive-surfacing-consent');
+      writeIpcFile(TASKS_DIR, {
+        type: 'proactive_surfacing_consent',
+        taskId,
+        targetJid: chatJid,
+        chatJid,
+        memoryUserId,
+        authThreadId: threadId,
+        payload: {
+          choice: args.choice,
+          conversationKind: memoryDefaultScope === 'user' ? 'dm' : 'channel',
+        },
+        timestamp: nowIso(),
+      });
+      const response = await waitForTaskResponse(taskId, 10_000);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              response?.message ||
+              (response?.ok
+                ? 'Proactive surfacing consent recorded.'
+                : 'Proactive surfacing consent was not recorded.'),
           },
         ],
         ...(response?.ok ? {} : { isError: true }),
@@ -198,6 +241,8 @@ export function registerServiceTools(server: McpServer): void {
     listCapabilities: () => availableSemanticCapabilities,
     isCapabilitySelected: (capabilityId) =>
       currentConfiguredAllowedTools().includes(`capability:${capabilityId}`),
+    isToolSelected: (toolName) =>
+      currentConfiguredAllowedTools().includes(toolName),
     validateRunCommandFallback: ({ argvPattern }) => {
       const currentAllowedTools = currentConfiguredAllowedTools();
       const selectedMcpCapabilities = availableSemanticCapabilities.filter(
@@ -234,7 +279,7 @@ export function registerServiceTools(server: McpServer): void {
             text: [
               'RunCommand/Bash permission is not available as a fallback while MCP access is selected for this run.',
               `Selected MCP capabilities: ${selectedMcpCapabilityIds.join(', ')}`,
-              'Use mcp_list_tools to inspect the ready source, then mcp_call_tool to call the approved action.',
+              'Use mcp_list_tools to inspect the ready source, then mcp_call_tool for immediate approved actions or async_mcp_call for long-running work.',
             ].join('\n'),
           },
         ],
@@ -305,7 +350,7 @@ export function registerServiceTools(server: McpServer): void {
                 existingSource.selectedCapabilities.length
                   ? `Selected capabilities: ${existingSource.selectedCapabilities.join(', ')}`
                   : 'A matching MCP source is already attached.',
-                `Use mcp_list_tools with serverName="${existingSource.serverName}", mcp_describe_tool when schema is needed, then mcp_call_tool with serverName="${existingSource.serverName}" for approved actions.`,
+                `Use mcp_list_tools with serverName="${existingSource.serverName}", mcp_describe_tool when schema is needed, then mcp_call_tool with serverName="${existingSource.serverName}" for immediate approved actions or async_mcp_call for long-running work.`,
                 'Do not request the same MCP source setup again unless a tool call reports access is missing or denied.',
               ].join('\n'),
             },
@@ -428,17 +473,17 @@ export function registerServiceTools(server: McpServer): void {
     'register_agent',
     `Register the current chat/channel agent so Gantry can respond to messages there. Requires selected agent tool grant mcp__gantry__register_agent and same-conversation approver approval.
 
-The JID must be the current conversation. The folder name must be channel-prefixed: "{channel}_{conversation-name}" (e.g., "telegram_dev-team", "slack_eng", "teams_engineering"). Use lowercase with hyphens for the conversation name part.`,
+The JID must be the current conversation. The folder name must be channel-prefixed: "{channel}_{conversation-name}" (e.g., "telegram_dev-team", "slack_eng", "discord_ops", "teams_engineering"). Use lowercase with hyphens for the conversation name part.`,
     {
       jid: z
         .string()
         .describe(
-          'The chat JID (e.g., "tg:-1001234567890", "sl:C0123456789", "teams:19:abc@thread.v2")',
+          'The chat JID (e.g., "tg:-1001234567890", "sl:C0123456789", "dc:1234567890", "teams:19:abc@thread.v2")',
         ),
       name: z.string().describe('Display name for the agent'),
       folder: z
         .string()
-        .describe('Channel-prefixed folder name (e.g., "teams_engineering")'),
+        .describe('Channel-prefixed folder name (e.g., "discord_ops")'),
       trigger: z.string().describe('Trigger word (e.g., "@Default Agent")'),
       requiresTrigger: z
         .boolean()

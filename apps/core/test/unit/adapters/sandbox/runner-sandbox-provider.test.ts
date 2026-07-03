@@ -173,7 +173,7 @@ describe('runner sandbox provider', () => {
 
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       '/work/agent/.gantry/sandbox.json',
-      expect.stringContaining('"httpProxyPort"'),
+      expect.stringContaining('"parentProxy"'),
       { mode: 0o600 },
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -184,9 +184,13 @@ describe('runner sandbox provider', () => {
     const config = JSON.parse(
       String(vi.mocked(fs.writeFileSync).mock.calls.at(-1)?.[1]),
     );
-    expect(config.network.httpProxyPort).toBe(18789);
+    expect(config.network.httpProxyPort).toBeUndefined();
     expect(config.network.socksProxyPort).toBeUndefined();
-    expect(config.network.parentProxy).toBeUndefined();
+    expect(config.network.parentProxy).toEqual({
+      http: 'http://127.0.0.1:18789',
+      https: 'http://127.0.0.1:18789',
+      noProxy: '',
+    });
     expect(config.network.allowLocalBinding).toBe(false);
     expect(config.filesystem.denyRead).not.toContain('/');
     expect(config.filesystem.denyRead).toContain('/work');
@@ -231,6 +235,55 @@ describe('runner sandbox provider', () => {
       }),
     );
     (child as unknown as { emit(name: string): void }).emit('exit');
+  });
+
+  it('allows macOS FSEvents for sandboxed runner file watches', () => {
+    const provider = createRunnerSandboxProvider({
+      provider: 'sandbox_runtime',
+      resourceLimits: {
+        cpuSeconds: 0,
+        memoryMb: 0,
+        maxProcesses: 0,
+      },
+    });
+
+    provider.start(baseInput);
+
+    const config = JSON.parse(
+      String(vi.mocked(fs.writeFileSync).mock.calls.at(-1)?.[1]),
+    );
+    if (process.platform === 'darwin') {
+      expect(config.network.allowMachLookup).toEqual(['com.apple.FSEvents']);
+    } else {
+      expect(config.network.allowMachLookup).toBeUndefined();
+    }
+  });
+
+  it('allows Claude SDK generated config state inside the runtime config dir', () => {
+    const provider = createRunnerSandboxProvider({
+      provider: 'sandbox_runtime',
+      resourceLimits: {
+        cpuSeconds: 0,
+        memoryMb: 0,
+        maxProcesses: 0,
+      },
+    });
+    const claudeConfigDir = '/work/agent/.llm-runtime/run-test/claude';
+
+    provider.start({
+      ...baseInput,
+      runtimeReadPaths: [claudeConfigDir],
+      runtimeWritePaths: [claudeConfigDir],
+      protectedReadPaths: [claudeConfigDir],
+    });
+
+    const config = JSON.parse(
+      String(vi.mocked(fs.writeFileSync).mock.calls.at(-1)?.[1]),
+    );
+    expect(config.filesystem.denyRead).toContain(claudeConfigDir);
+    expect(config.filesystem.allowRead).toContain(
+      `${claudeConfigDir}/.claude.json`,
+    );
   });
 
   it('allows required executable paths while denying sibling runtime reads', () => {

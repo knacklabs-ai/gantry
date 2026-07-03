@@ -14,12 +14,17 @@ function truncateSlackButtonLabel(label: string): string {
 }
 
 function slackActionValue(action: MessageActionAffordance): string | undefined {
-  if (!SCHEDULER_ACTION_KINDS.has(action.kind)) return undefined;
-  const value = JSON.stringify({
-    kind: action.kind,
-    jobId: action.jobId,
-    runId: action.runId ?? null,
-  });
+  const value =
+    action.kind === 'live_turn_stop'
+      ? JSON.stringify({ kind: action.kind, actionToken: action.actionToken })
+      : SCHEDULER_ACTION_KINDS.has(action.kind)
+        ? JSON.stringify({
+            kind: action.kind,
+            jobId: action.jobId,
+            runId: action.runId ?? null,
+          })
+        : undefined;
+  if (!value) return undefined;
   return Buffer.byteLength(value, 'utf8') <= SLACK_ACTION_VALUE_MAX_BYTES
     ? value
     : undefined;
@@ -28,6 +33,7 @@ function slackActionValue(action: MessageActionAffordance): string | undefined {
 export function slackMessageActionBlocks(
   text: string,
   actions?: MessageActionAffordance[],
+  options: { actionOnly?: boolean } = {},
 ): Array<Record<string, unknown>> | undefined {
   const elements = (actions ?? [])
     .map((action) => {
@@ -40,7 +46,8 @@ export function slackMessageActionBlocks(
           type: 'plain_text',
           text: truncateSlackButtonLabel(action.label),
         },
-        ...(action.kind === 'scheduler_pause_job'
+        ...(action.kind === 'scheduler_pause_job' ||
+        action.kind === 'live_turn_stop'
           ? { style: 'danger' as const }
           : {}),
         value,
@@ -48,14 +55,17 @@ export function slackMessageActionBlocks(
     })
     .filter((action) => action !== null) as Array<Record<string, unknown>>;
   if (elements.length === 0) return undefined;
-  return [
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text },
-    },
-    {
-      type: 'actions',
-      elements,
-    },
-  ];
+  const actionBlock = {
+    type: 'actions',
+    elements,
+  };
+  return options.actionOnly
+    ? [actionBlock]
+    : [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text },
+        },
+        actionBlock,
+      ];
 }

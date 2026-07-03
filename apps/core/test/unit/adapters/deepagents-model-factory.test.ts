@@ -10,6 +10,8 @@ import { buildRunnerModel } from '@core/adapters/llm/deepagents-langchain/runner
 
 const loopbackBaseUrl = 'http://127.0.0.1:4567/openai';
 const openrouterBaseUrl = 'http://127.0.0.1:4567/openrouter';
+const sandboxOpenrouterBaseUrl =
+  'http://model-gateway.gantry.internal:4567/openrouter';
 const gatewayToken = 'gtw_token';
 
 describe('deepagents model factory', () => {
@@ -113,6 +115,22 @@ describe('deepagents model factory', () => {
     expect(resolved.modelId).toBe('moonshotai/kimi-k2.6');
   });
 
+  it('accepts the sandbox-runtime private gateway alias', async () => {
+    const resolved = await buildRunnerModel({
+      provider: 'openrouter',
+      modelId: 'moonshotai/kimi-k2.6',
+      gatewayBaseUrl: sandboxOpenrouterBaseUrl,
+      gatewayToken,
+    });
+
+    const model = resolved.model as unknown as {
+      baseURL: string;
+      apiKey?: string;
+    };
+    expect(model.baseURL).toBe(`${sandboxOpenrouterBaseUrl}/v1`);
+    expect(model.apiKey).toBe(gatewayToken);
+  });
+
   it('threads the durable session id into ChatOpenRouter for sticky cache routing', async () => {
     const resolved = await buildRunnerModel({
       provider: 'openrouter',
@@ -126,6 +144,32 @@ describe('deepagents model factory', () => {
     // upstream provider/cache.
     const model = resolved.model as unknown as { sessionId?: string };
     expect(model.sessionId).toBe('durable-session-123');
+  });
+
+  it('threads OpenRouter provider preferences into the request body', async () => {
+    const providerRouting = {
+      only: ['moonshotai'],
+      allow_fallbacks: false,
+      require_parameters: true,
+      data_collection: 'deny' as const,
+      sort: 'latency' as const,
+    };
+    const resolved = await buildRunnerModel({
+      provider: 'openrouter',
+      modelId: 'moonshotai/kimi-k2.6',
+      gatewayBaseUrl: openrouterBaseUrl,
+      gatewayToken,
+      openRouterProviderRouting: providerRouting,
+    });
+
+    const model = resolved.model as unknown as {
+      provider?: unknown;
+      invocationParams: (options: Record<string, unknown>) => {
+        provider?: unknown;
+      };
+    };
+    expect(model.provider).toEqual(providerRouting);
+    expect(model.invocationParams({}).provider).toEqual(providerRouting);
   });
 
   it('omits sessionId for the openai lane (session_id is OpenRouter-only)', async () => {
@@ -178,7 +222,41 @@ describe('deepagents model factory', () => {
         gatewayBaseUrl: 'https://api.openai.com',
         gatewayToken,
       }),
-    ).rejects.toThrow('must be a loopback Gantry gateway URL');
+    ).rejects.toThrow(
+      'must be a loopback or sandbox-private Gantry gateway URL',
+    );
+  });
+
+  it('rejects arbitrary private gateway-looking hosts', async () => {
+    await expect(
+      buildRunnerModel({
+        provider: 'openai',
+        modelId: 'gpt-5.5',
+        gatewayBaseUrl: 'http://model-gateway.internal:4567/openai',
+        gatewayToken,
+      }),
+    ).rejects.toThrow(
+      'must be a loopback or sandbox-private Gantry gateway URL',
+    );
+  });
+
+  it('accepts the sandbox-runtime model gateway alias', async () => {
+    const sandboxGatewayBaseUrl =
+      'http://model-gateway.gantry.internal:4567/openai';
+    const resolved = await buildRunnerModel({
+      provider: 'openai',
+      modelId: 'gpt-5.5',
+      gatewayBaseUrl: sandboxGatewayBaseUrl,
+      gatewayToken,
+    });
+    const underlying = await (
+      resolved.model as unknown as {
+        _getModelInstance: () => Promise<{
+          clientConfig?: { baseURL?: string };
+        }>;
+      }
+    )._getModelInstance();
+    expect(underlying.clientConfig?.baseURL).toBe(sandboxGatewayBaseUrl);
   });
 
   it('rejects a non-gateway token', async () => {

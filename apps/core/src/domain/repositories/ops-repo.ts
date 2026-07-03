@@ -130,19 +130,30 @@ export interface RuntimeMessageRepository {
       now?: string;
     },
   ): Promise<LiveAdmissionWorkItemEnqueueResult | undefined>;
-  getNewMessages(
-    jids: string[],
-    lastCursor: string,
-    limit?: number,
-  ): Promise<{
-    messages: NewMessage[];
-    newTimestamp: string;
-  }>;
+  notifyLiveAdmissionWorkItem?(
+    result: LiveAdmissionWorkItemEnqueueResult,
+  ): Promise<void>;
   getMessagesSince(
     conversationJid: string,
     sinceCursor: string,
     limit?: number,
     options?: { threadId?: string | null },
+  ): Promise<NewMessage[]>;
+  getRecentTopLevelMessagesBefore(
+    conversationJid: string,
+    before: Pick<NewMessage, 'timestamp' | 'id'>,
+    limit?: number,
+  ): Promise<NewMessage[]>;
+  getFirstThreadMessages(
+    conversationJid: string,
+    threadId: string,
+    limit?: number,
+  ): Promise<NewMessage[]>;
+  getLatestThreadMessages(
+    conversationJid: string,
+    threadId: string,
+    beforeOrAt: Pick<NewMessage, 'timestamp' | 'id'>,
+    limit?: number,
   ): Promise<NewMessage[]>;
   getMessageThreadIds(conversationJid: string): Promise<Array<string | null>>;
   getLastBotMessageCursor(

@@ -8,10 +8,10 @@ import { getModelProviderDefinition } from '../../../shared/model-provider-regis
 
 // Credential-mode guard for the DeepAgents (LangChain) execution adapter. This
 // adapter is selected ONLY for the `deepagents:langchain` execution provider, so
-// the engine is definitively DeepAgents here. The deepagents execution routes
-// declare supportedCredentialModes: ['api_key']; Claude OAuth/subscription is
-// the Anthropic SDK lane only. The host threads the resolved bound credential
-// mode through modelCredentialProjection.brokerAuthMode.
+// the engine is definitively DeepAgents here. Provider routes declare their own
+// supportedCredentialModes; Claude OAuth/subscription is the Anthropic SDK lane
+// only. The host threads the resolved bound credential mode through
+// modelCredentialProjection.brokerAuthMode.
 const DEEPAGENTS_OAUTH_CREDENTIAL_MESSAGE =
   'DeepAgents cannot use Claude OAuth/subscription credentials. Choose Anthropic SDK or configure Claude API-key Model Access.';
 

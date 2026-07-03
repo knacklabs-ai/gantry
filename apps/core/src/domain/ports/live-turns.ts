@@ -169,6 +169,18 @@ export interface LiveAdmissionWakeupSource {
   close(): Promise<void>;
 }
 
+export interface LiveTurnCommandNotifier {
+  notifyLiveTurnCommand(input: {
+    liveTurnId: string;
+    commandId: string;
+  }): Promise<void>;
+}
+
+export interface LiveTurnCommandWakeupSource {
+  subscribe(listener: () => void): () => void;
+  close(): Promise<void>;
+}
+
 export interface LiveAdmissionClaimInput {
   appId: string;
   workerInstanceId: string;
@@ -312,7 +324,7 @@ export interface LiveTurnRepository {
   updateLiveTurnRouting(input: {
     id: string;
     fence: LiveTurnLeaseFence;
-    stopAliasJids: string[];
+    stopAliasJids?: string[];
     requiredContinuationUserId?: string | null;
     now?: string;
   }): Promise<boolean>;

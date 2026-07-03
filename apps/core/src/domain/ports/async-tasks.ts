@@ -1,4 +1,7 @@
-export type AsyncTaskKind = 'async_command' | 'delegated_agent';
+export type AsyncTaskKind =
+  | 'async_command'
+  | 'delegated_agent'
+  | 'mcp_tool_call';
 
 export type AsyncTaskStatus =
   | 'queued'
@@ -58,6 +61,10 @@ export interface PublicAsyncTaskDto {
   blocker?: string | null;
   pendingSteeringCount?: number;
   consumedSteeringCount?: number;
+  heartbeatAt?: string | null;
+  elapsedMs?: number | null;
+  stdoutTail?: string | null;
+  stderrTail?: string | null;
   receiptLines: string[];
   allowedActions: Array<'get' | 'list' | 'cancel'>;
   createdAt: string;
@@ -88,6 +95,7 @@ export interface AsyncTaskCreateInput {
 export interface AsyncTaskListFilter {
   appId: string;
   agentId?: string;
+  kind?: AsyncTaskKind;
   conversationId?: string | null;
   threadId?: string | null;
   parentRunId?: string | null;
@@ -124,6 +132,7 @@ export interface AsyncTaskRepository {
     input: AsyncTaskCreateInput,
     admission: {
       activeStatuses: AsyncTaskStatus[];
+      kind?: AsyncTaskKind;
       maxActivePerApp: number;
       maxActivePerAgent: number;
     },
@@ -168,6 +177,7 @@ export function toPublicAsyncTaskDto(
     outputSummary: task.outputSummary,
     errorSummary: task.errorSummary,
     ...publicProgress(task),
+    ...publicInspection(task),
     receiptLines: receiptLines(task.receiptJson),
     allowedActions: isAsyncTaskTerminal(task.status)
       ? ['get', 'list']
@@ -180,6 +190,7 @@ export function toPublicAsyncTaskDto(
 
 function receiptLines(receipt: AsyncTaskReceipt | null | undefined): string[] {
   if (!receipt) return [];
+  if (isPureAnswerReceipt(receipt)) return [`Completed: ${receipt.completed}`];
   const lines = [
     `Completed: ${receipt.completed}`,
     `Used: ${receipt.used}`,
@@ -193,6 +204,15 @@ function receiptLines(receipt: AsyncTaskReceipt | null | undefined): string[] {
   }
   lines.push(`Needs attention: ${receipt.needsAttention}`);
   return lines;
+}
+
+function isPureAnswerReceipt(receipt: AsyncTaskReceipt): boolean {
+  return (
+    receipt.used === 'none' &&
+    receipt.changed === 'none' &&
+    receipt.delegated === 'no' &&
+    receipt.needsAttention === 'none'
+  );
 }
 
 function publicProgress(
@@ -221,6 +241,43 @@ function publicProgress(
     consumedSteeringCount: steering.filter(
       (entry) => record(entry).status === 'consumed',
     ).length,
+  };
+}
+
+function publicInspection(
+  task: AsyncTaskRecord,
+): Pick<
+  PublicAsyncTaskDto,
+  'heartbeatAt' | 'elapsedMs' | 'stdoutTail' | 'stderrTail'
+> {
+  if (
+    task.status !== 'running' ||
+    (task.kind !== 'async_command' && task.kind !== 'mcp_tool_call')
+  ) {
+    return {
+      heartbeatAt: null,
+      elapsedMs: null,
+      stdoutTail: null,
+      stderrTail: null,
+    };
+  }
+  const progress = record(task.privateCorrelationJson.progress);
+  const startedAt = task.startedAt ?? task.createdAt;
+  const startedMs = Date.parse(startedAt);
+  const endMs =
+    Date.parse(task.terminalAt ?? '') ||
+    Date.parse(task.heartbeatAt ?? '') ||
+    Date.parse(task.updatedAt) ||
+    Date.now();
+  const fallbackElapsedMs =
+    Number.isFinite(startedMs) && endMs >= startedMs ? endMs - startedMs : null;
+  return {
+    heartbeatAt: task.heartbeatAt ?? null,
+    elapsedMs: fallbackElapsedMs,
+    stdoutTail:
+      task.kind === 'async_command' ? stringValue(progress.stdoutTail) : null,
+    stderrTail:
+      task.kind === 'async_command' ? stringValue(progress.stderrTail) : null,
   };
 }
 

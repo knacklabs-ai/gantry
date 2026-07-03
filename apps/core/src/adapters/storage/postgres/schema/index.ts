@@ -19,6 +19,7 @@ export * from './mcp-servers.js';
 export * from './external-platform-events.js';
 export * from './outbound-delivery.js';
 export * from './pattern-candidates.js';
+export * from './proactive-surfacing.js';
 export * from './pending-access-requests.js';
 export * from './permissions.js';
 export * from './runs.js';

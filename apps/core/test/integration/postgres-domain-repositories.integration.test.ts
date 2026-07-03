@@ -95,7 +95,7 @@ maybeDescribe('Postgres domain repositories', () => {
       label: 'Test Slack',
       status: 'active',
       config: { workspace: 'test' },
-      runtimeSecretRefs: [],
+      runtimeSecretRefs: {},
       createdAt: now,
       updatedAt: now,
     });
@@ -192,6 +192,114 @@ maybeDescribe('Postgres domain repositories', () => {
     expect(raw.rows[0]?.value_encrypted).not.toContain('plain-token-value');
   });
 
+  it('scopes async task admission capacity by kind', async () => {
+    const createTaskWithAdmission =
+      repositories.asyncTasks.createTaskWithAdmission?.bind(
+        repositories.asyncTasks,
+      );
+    if (!createTaskWithAdmission) {
+      throw new Error('Postgres async task admission is not available.');
+    }
+
+    await repositories.asyncTasks.createTask({
+      id: 'task-admission-command-1',
+      appId,
+      agentId,
+      conversationId,
+      kind: 'async_command',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: {},
+      leaseToken: 'lease-command-1',
+      fencingVersion: 1,
+      now,
+    });
+    await repositories.asyncTasks.createTask({
+      id: 'task-admission-delegated-1',
+      appId,
+      agentId,
+      conversationId,
+      kind: 'delegated_agent',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: {},
+      leaseToken: 'lease-delegated-1',
+      fencingVersion: 1,
+      now,
+    });
+
+    await expect(
+      createTaskWithAdmission(
+        {
+          id: 'task-admission-unfiltered',
+          appId,
+          agentId,
+          conversationId,
+          kind: 'mcp_tool_call',
+          status: 'queued',
+          admissionClass: 'task',
+          authoritySnapshotJson: {},
+          leaseToken: 'lease-unfiltered',
+          fencingVersion: 1,
+          now,
+        },
+        {
+          activeStatuses: ['queued', 'running'],
+          maxActivePerApp: 2,
+          maxActivePerAgent: 2,
+        },
+      ),
+    ).resolves.toEqual({ ok: false, reason: 'app_capacity' });
+
+    await expect(
+      createTaskWithAdmission(
+        {
+          id: 'task-admission-mcp-1',
+          appId,
+          agentId,
+          conversationId,
+          kind: 'mcp_tool_call',
+          status: 'queued',
+          admissionClass: 'task',
+          authoritySnapshotJson: {},
+          leaseToken: 'lease-mcp-1',
+          fencingVersion: 1,
+          now,
+        },
+        {
+          activeStatuses: ['queued', 'running'],
+          kind: 'mcp_tool_call',
+          maxActivePerApp: 2,
+          maxActivePerAgent: 2,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+
+    await expect(
+      createTaskWithAdmission(
+        {
+          id: 'task-admission-command-2',
+          appId,
+          agentId,
+          conversationId,
+          kind: 'async_command',
+          status: 'queued',
+          admissionClass: 'task',
+          authoritySnapshotJson: {},
+          leaseToken: 'lease-command-2',
+          fencingVersion: 1,
+          now,
+        },
+        {
+          activeStatuses: ['queued', 'running'],
+          kind: 'async_command',
+          maxActivePerApp: 2,
+          maxActivePerAgent: 2,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
   it('rebinds desired-state conversation and binding upserts to the selected provider connection', async () => {
     const selectedConnectionId =
       'channel-providerConnection:test:slack-selected' as ProviderConnectionId;
@@ -209,7 +317,7 @@ maybeDescribe('Postgres domain repositories', () => {
       label: 'Selected Slack',
       status: 'active',
       config: { workspace: 'selected' },
-      runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
+      runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
       createdAt: now,
       updatedAt: now,
     });
@@ -310,7 +418,7 @@ maybeDescribe('Postgres domain repositories', () => {
       label: 'Partial Slack',
       status: 'active',
       config: { workspace: 'partial', locale: 'en' },
-      runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
+      runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
       createdAt: now,
       updatedAt: now,
     });
@@ -325,7 +433,7 @@ maybeDescribe('Postgres domain repositories', () => {
     ).resolves.toMatchObject({
       label: 'Renamed Slack',
       config: { workspace: 'partial', locale: 'en' },
-      runtimeSecretRefs: ['SLACK_BOT_TOKEN'],
+      runtimeSecretRefs: { bot_token: 'env:SLACK_BOT_TOKEN' },
     });
   });
 

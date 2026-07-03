@@ -4,14 +4,15 @@ import {
   PermissionApprovalDecisionMode,
   PermissionApprovalRequest,
   PermissionApprovalUpdate,
-  InteractionDescriptor,
-  InteractionDetail,
+  type RichInteractionRequest,
   UserQuestionRequest,
 } from '../domain/types.js';
 import {
   BROWSER_BACKEND_ACTIONS,
+  PUBLIC_BROWSER_GATEWAY_TOOL_NAMES,
   type BrowserBackendAction,
 } from '../shared/browser-backend-actions.js';
+import { parseIpcMessageFiles } from './ipc-message-files.js';
 import { parseSemanticCapabilityDefinitionsRecord } from '../shared/semantic-capabilities.js';
 import { isPlainObject, toTrimmedString } from '../shared/object.js';
 import {
@@ -20,28 +21,17 @@ import {
   validateIpcAuthRequest,
   validateMemoryIpcAuthRequest,
 } from './ipc-auth-validation.js';
+import { parseInteractionDescriptor } from './ipc-interaction-descriptor-parsing.js';
 
-const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const PERMISSION_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const BROWSER_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const CONVERSATION_HISTORY_IPC_REQUEST_ID_PATTERN =
-  /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const USER_QUESTION_IPC_REQUEST_ID_PATTERN =
-  /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-const PUBLIC_BROWSER_GATEWAY_TOOL_NAMES = new Set([
-  'browser_status',
-  'browser_open',
-  'browser_inspect',
-  'browser_act',
-  'browser_close',
-]);
-
+const IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 export interface ParsedIpcMessage {
   type: 'message';
+  appId?: string;
   chatJid: string;
   text: string;
   sender?: string;
   threadId?: string;
+  files?: ReturnType<typeof parseIpcMessageFiles>;
 }
 
 export interface ParsedMemoryIpcRequest {
@@ -113,7 +103,6 @@ const PERMISSION_DECISION_MODES = new Set<PermissionApprovalDecisionMode>([
   'allow_timed_grant',
   'cancel',
 ]);
-
 function sanitizeToolInputValue(value: unknown, depth: number): unknown {
   if (depth > TOOL_INPUT_MAX_DEPTH) return '[TRUNCATED_DEPTH]';
   if (typeof value === 'string') {
@@ -271,66 +260,6 @@ function parsePermissionDecisionOptions(
   return options.length ? [...new Set(options)] : undefined;
 }
 
-function parseInteractionDetails(
-  raw: unknown,
-): InteractionDetail[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const details: InteractionDetail[] = [];
-  for (const item of raw.slice(0, 40)) {
-    if (!isPlainObject(item)) continue;
-    const label = toTrimmedString(item.label, { maxLen: 120 });
-    const value = toTrimmedString(item.value, { maxLen: 2000 });
-    if (!label || !value) continue;
-    details.push({
-      label,
-      value,
-      ...(typeof item.mono === 'boolean' ? { mono: item.mono } : {}),
-    });
-  }
-  return details.length ? details : undefined;
-}
-
-function parseInteractionDescriptor(
-  raw: unknown,
-): InteractionDescriptor | undefined {
-  if (!isPlainObject(raw)) return undefined;
-  const id = toTrimmedString(raw.id, { maxLen: 128 });
-  const title = toTrimmedString(raw.title, { maxLen: 200 });
-  if (!id || !title) return undefined;
-  const body = toTrimmedString(raw.body, { maxLen: 4000 });
-  const details = parseInteractionDetails(raw.details);
-  const requestContext = isPlainObject(raw.requestContext)
-    ? raw.requestContext
-    : undefined;
-  const capabilityId = toTrimmedString(requestContext?.capabilityId, {
-    maxLen: 160,
-  });
-  const capabilityDisplayName = toTrimmedString(
-    requestContext?.capabilityDisplayName,
-    { maxLen: 200 },
-  );
-  const toolName = toTrimmedString(requestContext?.toolName, { maxLen: 120 });
-  const capabilityType = toTrimmedString(requestContext?.capabilityType, {
-    maxLen: 120,
-  });
-  return {
-    id,
-    title,
-    ...(body ? { body } : {}),
-    ...(details ? { details } : {}),
-    ...(capabilityId || capabilityDisplayName || toolName || capabilityType
-      ? {
-          requestContext: {
-            ...(capabilityId ? { capabilityId } : {}),
-            ...(capabilityDisplayName ? { capabilityDisplayName } : {}),
-            ...(toolName ? { toolName } : {}),
-            ...(capabilityType ? { capabilityType } : {}),
-          },
-        }
-      : {}),
-  };
-}
-
 function normalizeBrowserBackendAction(
   rawAction: string,
 ): BrowserBackendAction | undefined {
@@ -345,7 +274,7 @@ export function parseIpcMessage(
   sourceAgentFolder: string,
 ): ParsedIpcMessage {
   if (!isPlainObject(raw)) throw new Error('Invalid IPC message payload');
-  const { authThreadId: threadId } = validateIpcAuthRequest(
+  const { appId, authThreadId: threadId } = validateIpcAuthRequest(
     raw,
     sourceAgentFolder,
     'IPC message',
@@ -356,12 +285,15 @@ export function parseIpcMessage(
   const text = toTrimmedString(raw.text, { maxLen: 20000 });
   if (!chatJid || !text) throw new Error('Invalid IPC message fields');
   const sender = toTrimmedString(raw.sender, { maxLen: 255 });
+  const files = parseIpcMessageFiles(raw.files);
   return {
     type: 'message',
+    ...(appId ? { appId } : {}),
     chatJid,
     text,
     ...(sender ? { sender } : {}),
     ...(threadId ? { threadId } : {}),
+    ...(files.length > 0 ? { files } : {}),
   };
 }
 
@@ -387,7 +319,7 @@ export function parseMemoryIpcRequest(
   if (!requestId || !action) {
     throw new Error('Invalid memory IPC request envelope');
   }
-  if (!MEMORY_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+  if (!IPC_REQUEST_ID_PATTERN.test(requestId)) {
     throw new Error('Invalid memory IPC requestId');
   }
   if (!MEMORY_IPC_ACTIONS.includes(action as MemoryIpcAction)) {
@@ -448,7 +380,7 @@ export function parseConversationHistoryIpcRequest(
   const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
   if (
     !requestId ||
-    !CONVERSATION_HISTORY_IPC_REQUEST_ID_PATTERN.test(requestId)
+    !IPC_REQUEST_ID_PATTERN.test(requestId)
   ) {
     throw new Error('Invalid conversation history IPC requestId');
   }
@@ -488,7 +420,7 @@ export function parsePermissionIpcRequest(
     throw new Error('permission IPC responseKeyId is required');
   }
   const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
-  if (!requestId || !PERMISSION_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+  if (!requestId || !IPC_REQUEST_ID_PATTERN.test(requestId)) {
     throw new Error('Invalid permission IPC requestId');
   }
   const responseNonce = toTrimmedString(raw.responseNonce, { maxLen: 128 });
@@ -617,7 +549,7 @@ export function parseUserQuestionIpcRequest(
   }
 
   const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
-  if (!requestId || !USER_QUESTION_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+  if (!requestId || !IPC_REQUEST_ID_PATTERN.test(requestId)) {
     throw new Error('Invalid user question IPC requestId');
   }
   const context = isPlainObject(raw.context) ? raw.context : undefined;
@@ -754,6 +686,55 @@ export function parseUserQuestionIpcRequest(
   };
 }
 
+export function parseRichInteractionIpcRequest(
+  raw: unknown,
+  sourceAgentFolder: string,
+): RichInteractionRequest {
+  if (!isPlainObject(raw)) {
+    throw new Error('Invalid rich interaction IPC payload');
+  }
+  const binding = validateIpcAuthRequest(
+    raw,
+    sourceAgentFolder,
+    'rich interaction IPC',
+  );
+  const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
+  if (!requestId || !IPC_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('Invalid rich interaction IPC requestId');
+  }
+  const context = isPlainObject(raw.context) ? raw.context : undefined;
+  const payloadTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
+  const contextTargetJid = toTrimmedString(context?.chatJid, { maxLen: 255 });
+  if (
+    payloadTargetJid &&
+    contextTargetJid &&
+    payloadTargetJid !== contextTargetJid
+  ) {
+    throw new Error('rich interaction IPC targetJid mismatch');
+  }
+  const descriptor = parseInteractionDescriptor(
+    raw.interaction ?? raw.descriptor,
+  );
+  if (!descriptor?.rich) {
+    throw new Error('Rich interaction descriptor is required');
+  }
+  const jobId = toTrimmedString(context?.jobId, { maxLen: 200 });
+  const runId = toTrimmedString(context?.runId, { maxLen: 200 });
+  return {
+    requestId,
+    sourceAgentFolder,
+    ...(binding.appId ? { appId: binding.appId } : {}),
+    ...(binding.agentId ? { agentId: binding.agentId } : {}),
+    ...(jobId ? { jobId } : {}),
+    ...(runId ? { runId } : {}),
+    ...(payloadTargetJid || contextTargetJid
+      ? { targetJid: payloadTargetJid ?? contextTargetJid }
+      : {}),
+    ...(binding.authThreadId ? { threadId: binding.authThreadId } : {}),
+    descriptor,
+  };
+}
+
 export function parseBrowserIpcRequest(
   raw: unknown,
   sourceAgentFolder: string,
@@ -772,7 +753,7 @@ export function parseBrowserIpcRequest(
   if (!requestId || !rawAction) {
     throw new Error('Invalid browser IPC request envelope');
   }
-  if (!BROWSER_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+  if (!IPC_REQUEST_ID_PATTERN.test(requestId)) {
     throw new Error('Invalid browser IPC requestId');
   }
   const action = normalizeBrowserBackendAction(rawAction);

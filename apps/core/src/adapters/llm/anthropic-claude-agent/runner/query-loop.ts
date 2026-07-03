@@ -41,7 +41,6 @@ import {
 } from './system-prompt.js';
 import type {
   AgentRunnerInput,
-  AgentRunnerRuntimeEventOutput,
   AgentRunnerToolAttemptOutput,
 } from './types.js';
 import { normalizeModelUsage } from '../../../../shared/model-usage.js';
@@ -58,6 +57,12 @@ import {
 import { startJobHeartbeat } from './job-heartbeat.js';
 import { logUsage } from './usage-logging.js';
 import { readContextUsage } from './context-usage.js';
+import {
+  hasTopLevelAssistantContent,
+  sdkResultFailureMessage,
+  shouldPrefixVisibleBoundary,
+  topLevelAssistantText,
+} from './sdk-message-output.js';
 import { createCanUseToolCallback } from './tool-permission-gate.js';
 import {
   decideClaudeSdkToolSearch,
@@ -65,11 +70,7 @@ import {
 } from './tool-search-decision.js';
 import { runnerStartupTimingRuntimeEvent } from './runner-startup-diagnostic.js';
 import { startRuntimeSignalPump } from '../../../../runner/runtime-signal-pump.js';
-import {
-  buildTaskLifecycleRuntimeEvent,
-  type TaskLifecycleEventInput,
-  type TaskLifecycleUsageInput,
-} from '../../../../runner/task-lifecycle-events.js';
+import { taskRuntimeEvent } from './task-runtime-event.js';
 
 interface RunQueryOptions {
   enableIpcFollowups?: boolean;
@@ -83,169 +84,6 @@ function localCliCredentialDirectoriesFromRuntimeAccess(
     access.sourceType === 'local_cli' ? access.credentialDirs : [],
   );
   return normalizeFilesystemSandboxPaths(dirs);
-}
-
-function sdkResultFailureMessage(message: unknown): string | null {
-  if (!message || typeof message !== 'object') {
-    return null;
-  }
-  const resultMessage = message as {
-    subtype?: string;
-    is_error?: boolean;
-    result?: string;
-    errors?: unknown;
-  };
-  const errors = Array.isArray(resultMessage.errors)
-    ? resultMessage.errors.filter((error): error is string => {
-        return typeof error === 'string' && error.trim().length > 0;
-      })
-    : [];
-  const text =
-    typeof resultMessage.result === 'string' ? resultMessage.result : '';
-  if (text) {
-    const normalized = text.toLowerCase();
-    const looksLikeCredentialFailure =
-      normalized.includes('invalid api key') ||
-      normalized.includes('external api key') ||
-      normalized.includes('authentication failed') ||
-      normalized.includes('failed to authenticate') ||
-      normalized.includes('authentication_error') ||
-      normalized.includes('invalid bearer token') ||
-      normalized.includes('api error: 401');
-    const looksLikeBillingFailure =
-      normalized.includes('billing') ||
-      normalized.includes('out of credits') ||
-      normalized.includes('credit balance') ||
-      normalized.includes('insufficient credit') ||
-      normalized.includes('payment required');
-    if (looksLikeCredentialFailure || looksLikeBillingFailure) {
-      return text;
-    }
-  }
-  if (resultMessage.subtype && resultMessage.subtype !== 'success') {
-    return errors.length > 0
-      ? errors.join('; ')
-      : `Claude SDK result failed with subtype ${resultMessage.subtype}`;
-  }
-  if (resultMessage.is_error && errors.length > 0) {
-    return errors.join('; ');
-  }
-  return null;
-}
-
-function stringField(
-  value: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const field = value[key];
-  return typeof field === 'string' && field.trim().length > 0
-    ? field
-    : undefined;
-}
-
-function finiteNumberField(
-  value: Record<string, unknown>,
-  key: string,
-): number | undefined {
-  const field = value[key];
-  return typeof field === 'number' && Number.isFinite(field)
-    ? field
-    : undefined;
-}
-
-function taskUsagePayload(value: unknown): TaskLifecycleUsageInput | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const usage = value as Record<string, unknown>;
-  const out: TaskLifecycleUsageInput = {};
-  const totalTokens = finiteNumberField(usage, 'total_tokens');
-  const toolUses = finiteNumberField(usage, 'tool_uses');
-  const durationMs = finiteNumberField(usage, 'duration_ms');
-  if (totalTokens !== undefined) out.totalTokens = totalTokens;
-  if (toolUses !== undefined) out.toolUses = toolUses;
-  if (durationMs !== undefined) out.durationMs = durationMs;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function taskRuntimeEvent(
-  agentInput: AgentRunnerInput,
-  message: Record<string, unknown>,
-): AgentRunnerRuntimeEventOutput | null {
-  const taskId = stringField(message, 'task_id');
-  if (!taskId) return null;
-  const toolUseId = stringField(message, 'tool_use_id');
-  const context = {
-    appId: agentInput.appId,
-    agentId: agentInput.agentId,
-    runId: agentInput.runId,
-    jobId: agentInput.jobId,
-    conversationId: agentInput.chatJid,
-    threadId: agentInput.threadId,
-    actor: 'sdk',
-  };
-  let input: TaskLifecycleEventInput | null = null;
-
-  if (message.subtype === 'task_started') {
-    input = {
-      kind: 'started',
-      taskId,
-      toolUseId,
-      description: stringField(message, 'description'),
-      subagentType: stringField(message, 'subagent_type'),
-      taskType: stringField(message, 'task_type'),
-      workflowName: stringField(message, 'workflow_name'),
-      skipTranscript: message.skip_transcript === true,
-    };
-  }
-
-  if (message.subtype === 'task_progress') {
-    input = {
-      kind: 'progress',
-      taskId,
-      toolUseId,
-      description: stringField(message, 'description'),
-      subagentType: stringField(message, 'subagent_type'),
-      lastToolName: stringField(message, 'last_tool_name'),
-      summary: stringField(message, 'summary'),
-      usage: taskUsagePayload(message.usage),
-    };
-  }
-
-  if (message.subtype === 'task_updated') {
-    const patch =
-      message.patch && typeof message.patch === 'object'
-        ? (message.patch as Record<string, unknown>)
-        : {};
-    input = {
-      kind: 'updated',
-      taskId,
-      toolUseId,
-      patch: {
-        status: stringField(patch, 'status'),
-        description: stringField(patch, 'description'),
-        endTime: finiteNumberField(patch, 'end_time'),
-        totalPausedMs: finiteNumberField(patch, 'total_paused_ms'),
-        isBackgrounded:
-          typeof patch.is_backgrounded === 'boolean'
-            ? patch.is_backgrounded
-            : undefined,
-        hasError: typeof patch.error === 'string' && patch.error.length > 0,
-      },
-    };
-  }
-
-  if (message.subtype === 'task_notification') {
-    input = {
-      kind: 'notification',
-      taskId,
-      toolUseId,
-      status: stringField(message, 'status'),
-      summary: stringField(message, 'summary'),
-      skipTranscript: message.skip_transcript === true,
-      usage: taskUsagePayload(message.usage),
-    };
-  }
-
-  return input ? buildTaskLifecycleRuntimeEvent(context, input) : null;
 }
 
 export async function runQuery(
@@ -333,6 +171,10 @@ export async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
   let sawPartialTextSinceLastResult = false;
+  let sawAssistantContentSinceLastResult = false;
+  let sawStructuredTextSinceLastResult = false;
+  let visibleTextSinceLastResult = '';
+  let pendingStructuredToPartialBoundary = false;
   const primeToolAttempts: AgentRunnerToolAttemptOutput[] = [];
   const heartbeat = startJobHeartbeat({
     agentInput,
@@ -390,6 +232,7 @@ export async function runQuery(
     parentTaskId: agentInput.parentTaskId,
     runLeaseToken: agentInput.runLeaseToken,
     runLeaseFencingVersion: agentInput.runLeaseFencingVersion,
+    liveStopActionToken: process.env.GANTRY_LIVE_STOP_ACTION_TOKEN,
     memoryUserId: agentInput.memoryUserId,
     memoryDefaultScope: agentInput.memoryDefaultScope,
     memoryReviewerIsControlApprover: agentInput.memoryReviewerIsControlApprover,
@@ -556,6 +399,34 @@ export async function runQuery(
       if (message.type === 'assistant' && 'uuid' in message) {
         lastAssistantUuid = (message as { uuid: string }).uuid;
       }
+      if (message.type === 'assistant') {
+        if (hasTopLevelAssistantContent(message)) {
+          sawAssistantContentSinceLastResult = true;
+        }
+        const assistantText = topLevelAssistantText(message);
+        if (assistantText && !sawPartialTextSinceLastResult) {
+          if (!firstTextDeltaLogged) {
+            firstTextDeltaLogged = true;
+            firstVisibleOutputMs = elapsedMs();
+            log(`First SDK assistant text after ${firstVisibleOutputMs}ms`);
+          }
+          const visibleText = shouldPrefixVisibleBoundary(
+            visibleTextSinceLastResult,
+            assistantText,
+          )
+            ? `\n\n${assistantText}`
+            : assistantText;
+          sawStructuredTextSinceLastResult = true;
+          pendingStructuredToPartialBoundary = true;
+          visibleTextSinceLastResult += visibleText;
+          writeOutput({
+            status: 'success',
+            result: visibleText,
+            newSessionId,
+          });
+          emitStartupTimingDiagnostic();
+        }
+      }
       if (message.type === 'system' && message.subtype === 'init') {
         newSessionId = message.session_id;
         assertRequiredMcpServerReady(message);
@@ -617,15 +488,24 @@ export async function runQuery(
               firstVisibleOutputMs = elapsedMs();
               log(`First SDK text delta after ${firstVisibleOutputMs}ms`);
             }
+            const visibleText =
+              pendingStructuredToPartialBoundary &&
+              shouldPrefixVisibleBoundary(
+                visibleTextSinceLastResult,
+                delta.text,
+              )
+                ? `\n\n${delta.text}`
+                : delta.text;
+            pendingStructuredToPartialBoundary = false;
             sawPartialTextSinceLastResult = true;
+            visibleTextSinceLastResult += visibleText;
             writeOutput({
               status: 'success',
-              result: delta.text,
+              result: visibleText,
               newSessionId,
             });
-            if (firstVisibleOutputMs !== undefined) {
+            if (firstVisibleOutputMs !== undefined)
               emitStartupTimingDiagnostic();
-            }
           }
         }
       }
@@ -637,15 +517,20 @@ export async function runQuery(
         }
         const textResult =
           'result' in message ? (message as { result?: string }).result : null;
+        const emittedVisibleText =
+          sawPartialTextSinceLastResult || sawStructuredTextSinceLastResult;
+        const canUseResultFallback =
+          !emittedVisibleText && !sawAssistantContentSinceLastResult;
         const resultFailure = sdkResultFailureMessage(message);
         if (resultFailure) {
           throw new Error(resultFailure);
         }
-        if (!sawPartialTextSinceLastResult && textResult) {
+        if (canUseResultFallback && textResult) {
           firstVisibleOutputMs ??= firstResultMs;
         }
+        const loggedResultText = canUseResultFallback ? textResult : null;
         log(
-          `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+          `Result #${resultCount}: subtype=${message.subtype}${loggedResultText ? ` text=${loggedResultText.slice(0, 200)}` : ''}`,
         );
         logUsage(message);
         const usage = normalizeModelUsage({
@@ -656,8 +541,7 @@ export async function runQuery(
         const continuedByFollowup = steeringGate.pendingCount() > 0;
         writeOutput({
           status: 'success',
-          result:
-            textResult && !sawPartialTextSinceLastResult ? textResult : null,
+          result: textResult && canUseResultFallback ? textResult : null,
           newSessionId,
           ...(primeToolAttempts.length > 0 ? { primeToolAttempts } : {}),
           ...(continuedByFollowup ? { continuedByFollowup: true } : {}),
@@ -676,6 +560,10 @@ export async function runQuery(
         });
         emitStartupTimingDiagnostic();
         sawPartialTextSinceLastResult = false;
+        sawAssistantContentSinceLastResult = false;
+        sawStructuredTextSinceLastResult = false;
+        visibleTextSinceLastResult = '';
+        pendingStructuredToPartialBoundary = false;
         steeringGate.markTurnBoundary();
       }
     }
@@ -685,6 +573,12 @@ export async function runQuery(
     heartbeat.stop();
     steeringGate.close();
   }
+  if (messageCount === 0 && resultCount === 0 && !closedDuringQuery)
+    throw new Error(
+      persistSdkSession && agentInput.sessionId
+        ? `No conversation found with session ID: ${agentInput.sessionId}`
+        : 'Anthropic SDK query completed without messages or results',
+    );
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
   );

@@ -22,6 +22,9 @@ import {
   applyRecoveredPersistentPermissionGrant,
   type PermissionPersistenceBackend,
 } from './pending-interaction-permission-recovery.js';
+import { configurePendingInteractionPromptBinding } from './pending-interaction-prompt-binding.js';
+import type { DurablePermissionFullView } from './pending-interaction-prompt-binding.js';
+import { readDurablePermissionFullView } from './pending-interaction-prompt-binding.js';
 import {
   QUESTION_SELECTIONS_PAYLOAD_KEY,
   questionSelectionsFromPayload,
@@ -44,14 +47,11 @@ interface InteractionDurabilityBackend {
 }
 let backend: InteractionDurabilityBackend | null = null;
 let permissionPersistence: PermissionPersistenceBackend | null = null;
-/**
- * Wired by the storage runtime when Postgres comes up. Without a backend the
- * durability hooks no-op (storage-less local fallback).
- */
 export function configurePendingInteractionDurability(
   next: InteractionDurabilityBackend | null,
 ): void {
   backend = next;
+  configurePendingInteractionPromptBinding(next);
 }
 export function configurePendingInteractionPermissionPersistence(
   next: PermissionPersistenceBackend | null,
@@ -66,11 +66,6 @@ export function pendingInteractionIdempotencyKey(input: {
   return [input.kind, input.sourceAgentFolder, input.requestId].join(':');
 }
 
-/**
- * Durable record for a permission/question prompt, created BEFORE the
- * provider prompt renders. Survives provider and control-plane restarts: the
- * idempotency key makes a restart-driven re-prompt reuse the same record.
- */
 export async function recordPendingInteractionRequested(input: {
   kind: PendingInteractionKind;
   sourceAgentFolder: string;
@@ -163,9 +158,6 @@ export async function resolvePendingInteractionRecord(input: {
     }
   }
 
-  // Persist the live-turn command before marking the pending row resolved. A
-  // crash after the row transition must not leave the runner blocked with no
-  // durable command to replay.
   if (input.runId && active.liveTurns && liveTurnDelivery) {
     try {
       const delivered = await enqueueResolvedInteractionCommand({
@@ -223,6 +215,7 @@ export interface DurablePermissionInteractionContext {
   sourceAgentFolder: string;
   targetJid: string | null;
   decisionPolicy: string | null;
+  fullView?: DurablePermissionFullView;
 }
 
 export async function findDurablePermissionInteractionByRequestId(input: {
@@ -247,6 +240,9 @@ export async function findDurablePermissionInteractionByRequestId(input: {
       pending?.payload,
     );
     if (!pending || !sourceAgentFolder) return null;
+    const fullView = readDurablePermissionFullView(
+      pending.payload.permissionFullView,
+    );
     return {
       sourceAgentFolder,
       targetJid:
@@ -257,6 +253,7 @@ export async function findDurablePermissionInteractionByRequestId(input: {
         typeof pending.payload.decisionPolicy === 'string'
           ? pending.payload.decisionPolicy
           : null,
+      ...(fullView ? { fullView } : {}),
     };
   } catch (err) {
     active.warn?.(
@@ -266,6 +263,12 @@ export async function findDurablePermissionInteractionByRequestId(input: {
     return null;
   }
 }
+
+export {
+  bindPendingPermissionInteractionMessage,
+  findDurablePermissionInteractionByPromptMessage,
+} from './pending-interaction-prompt-binding.js';
+export type { DurablePermissionPromptMessageContext } from './pending-interaction-prompt-binding.js';
 
 function sourceAgentFolderFromPendingPayload(
   payload: Record<string, unknown> | undefined,
@@ -650,10 +653,6 @@ async function activeRunLeaseForInteraction(input: {
   }
 }
 
-/**
- * Transient, run-scoped authority: bound to the run's active lease and
- * expiring with it. Never written to durable permission state.
- */
 export async function recordRunScopedTransientGrant(input: {
   appId?: string | null;
   runId: string;

@@ -42,12 +42,6 @@ function recoveryActionAffordances(input: {
 }): MessageActionAffordance[] {
   return [
     {
-      kind: 'scheduler_run_now',
-      label: 'Retry now',
-      jobId: input.job.id,
-      runId: input.runId,
-    },
-    {
       kind: 'scheduler_pause_job',
       label: 'Pause job',
       jobId: input.job.id,
@@ -60,6 +54,13 @@ function recoveryActionAffordances(input: {
       runId: input.runId,
     },
   ];
+}
+
+function runAgainActionAffordances(_input: {
+  job: Job;
+  runId: string;
+}): MessageActionAffordance[] {
+  return [];
 }
 
 export function logMemoryDreamJobFailure(input: {
@@ -197,7 +198,7 @@ export async function notifySchedulerTerminalRunState(input: {
   if (updateResult === 'updated') return true;
   const actionAffordances =
     input.runStatus === 'completed'
-      ? undefined
+      ? runAgainActionAffordances({ job: input.job, runId: input.runId })
       : recoveryActionAffordances({ job: input.job, runId: input.runId });
   return sendJobNotification({
     job: input.job,

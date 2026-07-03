@@ -86,7 +86,7 @@ async function withCredentialServices<T>(
     await import('../adapters/storage/postgres/factory.js');
   const storage = createStorageRuntime();
   try {
-    await storage.service.migrate();
+    await storage.service.assertMigrationsCurrent();
     return await fn({
       model: new ModelCredentialService(
         storage.repositories.modelCredentials,
@@ -117,6 +117,34 @@ export async function storeModelCredentialInput(input: {
       authMode: input.authMode,
       payload: input.payload,
       actor: 'cli',
+    }),
+  );
+}
+
+export async function listReadyModelCredentialProviders(
+  runtimeHome: string,
+): Promise<Set<string>> {
+  const rows = await withCredentialServices(runtimeHome, ({ model }) =>
+    model.list({ appId: DEFAULT_APP_ID }),
+  );
+  return new Set(
+    rows.filter((row) => row.health === 'ready').map((row) => row.providerId),
+  );
+}
+
+export async function storeRuntimeSecretInput(input: {
+  runtimeHome: string;
+  name: string;
+  value: string;
+  actor?: string;
+}): Promise<void> {
+  const name = normalizeCapabilitySecretName(input.name);
+  await withCredentialServices(input.runtimeHome, ({ capability }) =>
+    capability.set({
+      appId: DEFAULT_APP_ID,
+      name,
+      value: input.value,
+      actor: input.actor ?? 'cli',
     }),
   );
 }

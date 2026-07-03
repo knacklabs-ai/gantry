@@ -47,14 +47,17 @@ import {
   configureCustomModelCatalogEntries,
   withCustomModelCatalogEntries,
 } from '../../shared/model-catalog.js';
+import { envRuntimeSecretRef } from '../../domain/ports/runtime-secret-provider.js';
 
 export {
   configureDesiredSettingsStorageProvider,
+  loadDesiredRuntimeSettingsForWrite,
   writeDesiredRuntimeSettings,
 } from './desired-settings-writer.js';
 
 const DEFAULT_PROVIDER_CONNECTION_IDS: Record<string, string> = {
   app: 'app_default',
+  discord: 'discord_default',
   slack: 'slack_default',
   teams: 'teams_default',
   telegram: 'telegram_default',
@@ -62,16 +65,20 @@ const DEFAULT_PROVIDER_CONNECTION_IDS: Record<string, string> = {
 
 const DEFAULT_RUNTIME_SECRET_REFS: Record<string, Record<string, string>> = {
   slack: {
-    bot_token: 'SLACK_BOT_TOKEN',
-    app_token: 'SLACK_APP_TOKEN',
+    bot_token: envRuntimeSecretRef('SLACK_BOT_TOKEN'),
+    app_token: envRuntimeSecretRef('SLACK_APP_TOKEN'),
+  },
+  discord: {
+    bot_token: envRuntimeSecretRef('DISCORD_BOT_TOKEN'),
+    application_id: envRuntimeSecretRef('DISCORD_APPLICATION_ID'),
   },
   teams: {
-    client_id: 'TEAMS_CLIENT_ID',
-    client_secret: 'TEAMS_CLIENT_SECRET',
-    tenant_id: 'TEAMS_TENANT_ID',
+    client_id: envRuntimeSecretRef('TEAMS_CLIENT_ID'),
+    client_secret: envRuntimeSecretRef('TEAMS_CLIENT_SECRET'),
+    tenant_id: envRuntimeSecretRef('TEAMS_TENANT_ID'),
   },
   telegram: {
-    bot_token: 'TELEGRAM_BOT_TOKEN',
+    bot_token: envRuntimeSecretRef('TELEGRAM_BOT_TOKEN'),
   },
 };
 
@@ -364,12 +371,18 @@ export function ensureConfiguredConversationBinding(
     controlApprovers,
   };
 
-  const bindingId = stableSettingsId(
-    `${agentId}_${conversationId}`,
-    settings.bindings,
-    `${agentId}:${conversationId}`,
+  const existingBindingEntry = Object.entries(settings.bindings).find(
+    ([, binding]) =>
+      binding.agent === agentId && binding.conversation === conversationId,
   );
-  const existingBinding = settings.bindings[bindingId];
+  const bindingId =
+    existingBindingEntry?.[0] ??
+    stableSettingsId(
+      `${agentId}_${conversationId}`,
+      settings.bindings,
+      `${agentId}:${conversationId}`,
+    );
+  const existingBinding = existingBindingEntry?.[1];
   settings.bindings[bindingId] = {
     agent: agentId,
     conversation: conversationId,

@@ -240,6 +240,7 @@ export function capabilityStatusText(): string {
       toolName === 'send_message' ||
       toolName === 'ask_user_question' ||
       toolName === 'async_run_command' ||
+      toolName === 'async_mcp_call' ||
       toolName === 'delegate_task' ||
       toolName === 'task_cancel' ||
       toolName === 'task_get' ||
@@ -276,6 +277,7 @@ export function capabilityStatusText(): string {
           'Agent access model:',
           '- Use an available action when one fits.',
           '- If the action is missing, request_access target.kind=capability for the reviewed capability id.',
+          '- If an exact Gantry facade or admin tool is missing, request_access target.kind=tool with a durable Gantry tool name such as AgentDelegation or mcp__gantry__request_settings_update.',
           '- If setup is missing, request source setup through the Gantry access flow; setup records inventory, not authority.',
           '- Use request_access target.kind=run_command only as a temporary exact-command fallback when no reviewed capability fits.',
           '- Use admin_permission_list (read-only, no grant needed) to review current permissions, suggest cleanup of unused or overly broad access, or spot missing access; report findings in plain language.',
@@ -338,13 +340,13 @@ export function capabilityStatusText(): string {
                     `  selected capabilities: ${selectedCapabilities.join(', ')}`,
                   ]
                 : []),
-              `  use: mcp_list_tools with serverName="${sourceName}", mcp_describe_tool for one tool schema if needed, then mcp_call_tool with serverName="${sourceName}"`,
+              `  use: mcp_list_tools with serverName="${sourceName}", mcp_describe_tool for one tool schema if needed, then mcp_call_tool with serverName="${sourceName}" for immediate calls or async_mcp_call for long-running work`,
             ];
           })
       : ['- none connected yet']),
     ...(attachedMcpSourceIds.length > 0
       ? [
-          'MCP source rule: ready sources are already attached. Inspect them with mcp_list_tools, fetch one-tool schema/details with mcp_describe_tool when needed, and call approved actions through mcp_call_tool. Do not request the same MCP capability again unless the tool response says access is missing or denied.',
+          'MCP source rule: ready sources are already attached. Inspect them with mcp_list_tools, fetch one-tool schema/details with mcp_describe_tool when needed, call approved immediate actions through mcp_call_tool, and use async_mcp_call for long-running or parallel work. Do not request the same MCP capability again unless the tool response says access is missing or denied.',
         ]
       : []),
     ...(requestableBrowserTools.length > 0

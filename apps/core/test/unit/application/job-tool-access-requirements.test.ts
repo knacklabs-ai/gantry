@@ -118,7 +118,7 @@ describe('job tool access requirements', () => {
     expect(
       evaluateToolAccessRequirements({
         toolAccessRequirements: [
-          'RunCommand(acme records get "Bot Recommendation!A1:Z1" --json *)',
+          'RunCommand(acme records get "Fixture Leads!A1:Z1" --json *)',
         ],
         effectiveAllowedTools: [
           'RunCommand(/opt/homebrew/bin/acme records get * --json *)',
@@ -126,7 +126,7 @@ describe('job tool access requirements', () => {
       }),
     ).toEqual({
       toolAccessRequirements: [
-        "RunCommand(/opt/homebrew/bin/acme records get 'Bot Recommendation!A1:Z1' --json *)",
+        "RunCommand(/opt/homebrew/bin/acme records get 'Fixture Leads!A1:Z1' --json *)",
       ],
       missingTools: [],
     });
@@ -155,6 +155,21 @@ describe('job tool access requirements', () => {
     expect(action).toContain('"argvPattern":"acme records append *"');
     expect(action).not.toContain(
       '"argvPattern":"RunCommand(acme records append *)"',
+    );
+  });
+
+  it('builds durable recovery actions for exact Gantry tool requirements', () => {
+    const delegationAction =
+      toolAccessRequirementRecoveryAction('AgentDelegation');
+    expect(delegationAction).toContain('"kind":"tool"');
+    expect(delegationAction).toContain('"name":"AgentDelegation"');
+
+    const adminAction = toolAccessRequirementRecoveryAction(
+      'mcp__gantry__request_settings_update',
+    );
+    expect(adminAction).toContain('"kind":"tool"');
+    expect(adminAction).toContain(
+      '"name":"mcp__gantry__request_settings_update"',
     );
   });
 });

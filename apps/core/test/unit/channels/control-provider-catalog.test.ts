@@ -40,6 +40,18 @@ const mocks = vi.hoisted(() => ({
       },
     ],
   })),
+  listDiscordChannels: vi.fn(async () => ({
+    ok: true,
+    channels: [
+      {
+        chatJid: 'dc:1234567890',
+        chatTitle: 'Engineering / #general',
+        guildId: '987654321',
+        channelId: '1234567890',
+        channelType: 'text',
+      },
+    ],
+  })),
 }));
 
 vi.mock('@core/cli/telegram-chat-discovery.js', () => ({
@@ -50,7 +62,9 @@ vi.mock('@core/cli/slack-chat-discovery.js', () => ({
   listSlackRecentChats: mocks.listSlackRecentChats,
 }));
 
-function providerConnection(runtimeSecretRefs: string[]): ProviderConnection {
+function providerConnection(
+  runtimeSecretRefs: Record<string, string>,
+): ProviderConnection {
   return {
     id: 'providerConnection-1',
     appId: 'app-one',
@@ -67,12 +81,14 @@ function providerConnection(runtimeSecretRefs: string[]): ProviderConnection {
 function secrets(values: Record<string, string>): RuntimeSecretProvider {
   return {
     getSecret(ref) {
-      const value = values[ref.env];
-      if (!value) throw new Error(`Missing ${ref.env}`);
+      const key = (ref.ref ?? ref.env ?? '').replace(/^[^:]+:/, '');
+      const value = values[key];
+      if (!value) throw new Error(`Missing ${key}`);
       return value;
     },
     getOptionalSecret(ref) {
-      return values[ref.env];
+      const key = (ref.ref ?? ref.env ?? '').replace(/^[^:]+:/, '');
+      return values[key];
     },
   };
 }
@@ -85,11 +101,21 @@ function teamsDiscoveryClient() {
   };
 }
 
+function discordDiscoveryClient() {
+  return {
+    validateCredentials: vi.fn(),
+    verifyChannel: vi.fn(),
+    registerGantryCommand: vi.fn(),
+    listChannels: mocks.listDiscordChannels,
+  };
+}
+
 describe('RuntimeSecretConversationDiscovery', () => {
   beforeEach(() => {
     mocks.listTelegramRecentChats.mockClear();
     mocks.listTeamsChannels.mockClear();
     mocks.listSlackRecentChats.mockClear();
+    mocks.listDiscordChannels.mockClear();
   });
 
   it('does not fall back to preferred host env names when refs are empty', async () => {
@@ -99,7 +125,7 @@ describe('RuntimeSecretConversationDiscovery', () => {
 
     await expect(
       discovery.discover({
-        providerConnection: providerConnection([]),
+        providerConnection: providerConnection({}),
         limit: 10,
       }),
     ).rejects.toMatchObject({
@@ -115,7 +141,9 @@ describe('RuntimeSecretConversationDiscovery', () => {
 
     await expect(
       discovery.discover({
-        providerConnection: providerConnection(['TELEGRAM_BOT_TOKEN']),
+        providerConnection: providerConnection({
+          bot_token: 'env:TELEGRAM_BOT_TOKEN',
+        }),
         limit: 10,
       }),
     ).resolves.toEqual([
@@ -140,11 +168,11 @@ describe('RuntimeSecretConversationDiscovery', () => {
       teamsDiscoveryClient(),
     );
     const teamsInstallation = {
-      ...providerConnection([
-        'TEAMS_CLIENT_ID',
-        'TEAMS_CLIENT_SECRET',
-        'TEAMS_TENANT_ID',
-      ]),
+      ...providerConnection({
+        client_id: 'env:TEAMS_CLIENT_ID',
+        client_secret: 'env:TEAMS_CLIENT_SECRET',
+        tenant_id: 'env:TEAMS_TENANT_ID',
+      }),
       providerId: 'teams' as never,
       label: 'Teams',
     } as ProviderConnection;
@@ -181,7 +209,7 @@ describe('RuntimeSecretConversationDiscovery', () => {
       secrets({ SLACK_BOT_TOKEN: 'xoxb-token' }),
     );
     const slackConnection = {
-      ...providerConnection(['SLACK_BOT_TOKEN']),
+      ...providerConnection({ bot_token: 'env:SLACK_BOT_TOKEN' }),
       providerId: 'slack' as never,
       label: 'Slack',
     } as ProviderConnection;
@@ -206,6 +234,46 @@ describe('RuntimeSecretConversationDiscovery', () => {
     });
   });
 
+  it('discovers Discord channels from referenced runtime secrets', async () => {
+    const discovery = new RuntimeSecretConversationDiscovery(
+      secrets({
+        DISCORD_BOT_TOKEN: 'discord-token',
+        DISCORD_APPLICATION_ID: '123456789',
+      }),
+      teamsDiscoveryClient(),
+      discordDiscoveryClient(),
+    );
+    const discordConnection = {
+      ...providerConnection({
+        bot_token: 'env:DISCORD_BOT_TOKEN',
+        application_id: 'env:DISCORD_APPLICATION_ID',
+      }),
+      providerId: 'discord' as never,
+      label: 'Discord',
+    } as ProviderConnection;
+
+    await expect(
+      discovery.discover({
+        providerConnection: discordConnection,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      {
+        externalId: '1234567890',
+        title: 'Engineering / #general',
+        kind: 'channel',
+        externalRef: { kind: 'conversation', value: '1234567890' },
+      },
+    ]);
+    expect(mocks.listDiscordChannels).toHaveBeenCalledWith({
+      credentials: {
+        botToken: 'discord-token',
+        applicationId: '123456789',
+      },
+      limit: 10,
+    });
+  });
+
   it('fails Teams discovery when required runtime secret refs are missing', async () => {
     const discovery = new RuntimeSecretConversationDiscovery(
       secrets({
@@ -216,7 +284,10 @@ describe('RuntimeSecretConversationDiscovery', () => {
       teamsDiscoveryClient(),
     );
     const teamsInstallation = {
-      ...providerConnection(['TEAMS_CLIENT_ID', 'TEAMS_TENANT_ID']),
+      ...providerConnection({
+        client_id: 'env:TEAMS_CLIENT_ID',
+        tenant_id: 'env:TEAMS_TENANT_ID',
+      }),
       providerId: 'teams' as never,
       label: 'Teams',
     } as ProviderConnection;
@@ -228,7 +299,7 @@ describe('RuntimeSecretConversationDiscovery', () => {
       }),
     ).rejects.toMatchObject({
       code: 'INVALID_REQUEST',
-      message: 'provider connection does not reference TEAMS_CLIENT_SECRET',
+      message: 'provider connection does not reference client_secret',
     });
     expect(mocks.listTeamsChannels).not.toHaveBeenCalled();
   });
@@ -245,7 +316,7 @@ describe('RuntimeSecretConversationDiscovery', () => {
       secrets({ SLACK_BOT_TOKEN: 'xoxb-token' }),
     );
     const slackConnection = {
-      ...providerConnection(['SLACK_BOT_TOKEN']),
+      ...providerConnection({ bot_token: 'env:SLACK_BOT_TOKEN' }),
       providerId: 'slack' as never,
       label: 'Slack',
     } as ProviderConnection;
@@ -281,7 +352,7 @@ describe('RuntimeSecretConversationDiscovery', () => {
       secrets({ SLACK_BOT_TOKEN: 'xoxb-token' }),
     );
     const slackConnection = {
-      ...providerConnection(['SLACK_BOT_TOKEN']),
+      ...providerConnection({ bot_token: 'env:SLACK_BOT_TOKEN' }),
       providerId: 'slack' as never,
       label: 'Slack',
     } as ProviderConnection;
@@ -328,11 +399,11 @@ describe('RuntimeSecretConversationDiscovery', () => {
       teamsDiscoveryClient(),
     );
     const teamsInstallation = {
-      ...providerConnection([
-        'TEAMS_CLIENT_ID',
-        'TEAMS_CLIENT_SECRET',
-        'TEAMS_TENANT_ID',
-      ]),
+      ...providerConnection({
+        client_id: 'env:TEAMS_CLIENT_ID',
+        client_secret: 'env:TEAMS_CLIENT_SECRET',
+        tenant_id: 'env:TEAMS_TENANT_ID',
+      }),
       providerId: 'teams' as never,
       label: 'Teams',
     } as ProviderConnection;
@@ -363,6 +434,48 @@ describe('RuntimeSecretConversationDiscovery', () => {
 
 describe('BuiltInControlChannelProviderCatalog', () => {
   it('advertises Teams Bot Framework runtime support without installer flow', () => {
+    const catalog = new BuiltInControlChannelProviderCatalog();
+
+    const teams = catalog
+      .listProviders()
+      .find((provider) => provider.id === 'teams');
+
+    expect(teams).toEqual(
+      expect.objectContaining({
+        id: 'teams',
+        displayName: 'Teams',
+        capabilityFlags: expect.arrayContaining([
+          'setup',
+          'discover',
+          'bot-framework-runtime',
+        ]),
+      }),
+    );
+    expect(teams?.capabilityFlags).not.toContain('install');
+    expect(teams?.capabilityFlags).not.toContain('placeholder');
+    expect(teams?.capabilityFlags).not.toContain('runtime-placeholder');
+  });
+
+  it('advertises Discord setup/discovery runtime support', () => {
+    const catalog = new BuiltInControlChannelProviderCatalog();
+
+    const discord = catalog
+      .listProviders()
+      .find((provider) => provider.id === 'discord');
+
+    expect(discord).toEqual(
+      expect.objectContaining({
+        id: 'discord',
+        displayName: 'Discord',
+        capabilityFlags: expect.arrayContaining(['setup', 'discover']),
+        allowedRuntimeSecretKeys: ['bot_token', 'application_id'],
+      }),
+    );
+    expect(discord?.capabilityFlags).not.toContain('install');
+    expect(discord?.capabilityFlags).not.toContain('runtime-placeholder');
+  });
+
+  it('does not advertise Teams runtime as installable while the transport is stubbed', () => {
     const catalog = new BuiltInControlChannelProviderCatalog();
 
     const teams = catalog

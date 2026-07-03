@@ -8,13 +8,15 @@ import {
   initializeRuntimeStorage,
 } from '../adapters/storage/postgres/runtime-store.js';
 import {
-  applyRuntimeSettingsDesiredState,
   getDeploymentMode,
   loadRuntimeSettings,
   loadRuntimeSettingsFromPath,
   SettingsDesiredStateService,
 } from '../config/index.js';
-import { importFleetSettingsRevision } from '../config/settings/settings-import-service.js';
+import {
+  importFleetSettingsRevision,
+  importWorkstationSettings,
+} from '../config/settings/settings-import-service.js';
 import type { AppId } from '../domain/app/app.js';
 
 function usage(): string {
@@ -26,8 +28,7 @@ function usage(): string {
     '  gantry settings drift',
     '  gantry settings revisions list',
     '',
-    'Workstation import writes settings.yaml (the restart source of truth).',
-    'Fleet import (or --fleet) appends a desired-state revision in Postgres.',
+    'Import/export appends a desired-state revision in Postgres and syncs settings.yaml.',
   ].join('\n');
 }
 
@@ -100,17 +101,26 @@ export async function runSettingsCommand(
 
     if (subcommand === 'export') {
       const exported = await service.exportCurrent(settings);
-      await applyRuntimeSettingsDesiredState({
-        runtimeHome,
-        settings: exported,
-        ops: storage.ops,
-        repositories: storage.repositories,
-        appId: 'default' as AppId,
-        previousSettings: settings,
-      });
+      await importWorkstationSettings(
+        {
+          runtimeHome,
+          ops: storage.ops,
+          repositories: storage.repositories,
+          appId: 'default' as AppId,
+          previousSettings: settings,
+          revisionMirror: {
+            settingsRevisions: storage.repositories.settingsRevisions,
+            pool: storage.service.pool,
+            createdBy: 'cli:settings-export',
+            logWarn: (_context, message) => p.log.warn(message),
+          },
+          revisionMirrorRequired: true,
+        },
+        exported,
+      );
       const agentCount = Object.keys(exported.agents).length;
       p.log.success(
-        `Exported ${agentCount} agent desired-state record(s) to settings.yaml.`,
+        `Exported ${agentCount} agent desired-state record(s) to a settings revision and settings.yaml.`,
       );
       p.log.info(
         'Review settings.yaml before setting desired_state.authoritative=true.',
@@ -171,22 +181,40 @@ async function runImport(
 
   const fleet = flags.fleet || getDeploymentMode() === 'fleet';
   if (!fleet) {
+    let outcome: Awaited<ReturnType<typeof importWorkstationSettings>>;
     try {
-      await applyRuntimeSettingsDesiredState({
-        runtimeHome,
-        settings: parsed,
-        ops: storage.ops,
-        repositories: storage.repositories,
-        appId: 'default' as AppId,
-        previousSettings: loadRuntimeSettings(runtimeHome),
-      });
+      outcome = await importWorkstationSettings(
+        {
+          runtimeHome,
+          ops: storage.ops,
+          repositories: storage.repositories,
+          appId: 'default' as AppId,
+          previousSettings: loadRuntimeSettings(runtimeHome),
+          revisionMirror: {
+            settingsRevisions: storage.repositories.settingsRevisions,
+            pool: storage.service.pool,
+            createdBy: 'cli:settings-import',
+            note: flags.note ?? null,
+            logWarn: (_context, message) => p.log.warn(message),
+          },
+          revisionMirrorRequired: true,
+          expectedRevision: Number.isInteger(flags.expectedRevision)
+            ? flags.expectedRevision
+            : null,
+        },
+        parsed,
+      );
     } catch (err) {
       p.log.error(
         `settings import failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return 1;
     }
-    p.log.success(`Imported ${flags.file} into settings.yaml (workstation).`);
+    const revisionText =
+      outcome.revision === undefined ? '' : ` ${outcome.revision}`;
+    p.log.success(
+      `Imported ${flags.file} into settings revision${revisionText} and settings.yaml.`,
+    );
     return 0;
   }
 

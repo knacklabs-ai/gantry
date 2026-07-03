@@ -2,7 +2,9 @@ import {
   AdaptiveCardSink,
   GroupDiscoverySource,
   InteractionSurface,
+  MessageReactionSink,
   ProgressSink,
+  RichInteractionSurface,
   StreamingSink,
   StreamingStateSink,
   TypingSink,
@@ -48,6 +50,14 @@ export function asProgressSink(
     : undefined;
 }
 
+export function asMessageReactionSink(
+  channel: ChannelAdapter,
+): MessageReactionSink | undefined {
+  return typeof channel.addReaction === 'function'
+    ? (channel as unknown as MessageReactionSink)
+    : undefined;
+}
+
 export function asGroupDiscoverySource(
   channel: ChannelAdapter,
 ): GroupDiscoverySource | undefined {
@@ -72,6 +82,14 @@ export function asUserQuestionSurface(
 ): Pick<InteractionSurface, 'requestUserAnswer'> | undefined {
   return typeof channel.requestUserAnswer === 'function'
     ? (channel as unknown as Pick<InteractionSurface, 'requestUserAnswer'>)
+    : undefined;
+}
+
+export function asRichInteractionSurface(
+  channel: ChannelAdapter,
+): RichInteractionSurface | undefined {
+  return typeof channel.renderRichInteraction === 'function'
+    ? (channel as unknown as RichInteractionSurface)
     : undefined;
 }
 

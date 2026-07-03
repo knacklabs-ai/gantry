@@ -7,10 +7,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   AUTHORITY_CHANGING_GANTRY_MCP_TOOL_NAMES,
   DEFAULT_GANTRY_MCP_TOOL_NAMES,
+  ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+  DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
   parseEnabledGantryMcpToolNames,
   selectedGantryMcpToolNames,
 } from '@core/runner/gantry-mcp-tool-surface.js';
 import { ADMIN_MCP_TOOL_NAMES } from '@core/shared/admin-mcp-tools.js';
+
+const RAW_DEEPAGENTS_ASYNC_TOOL_NAMES = [
+  'start_async_task',
+  'check_async_task',
+  'update_async_task',
+  'cancel_async_task',
+  'list_async_tasks',
+] as const;
 
 // server.js transitively requires GANTRY_IPC_DIR at import time, so the env
 // must be set before the dynamic import resolves.
@@ -38,6 +48,13 @@ function hasAnyAuthorityOrAdminTool(names: Iterable<string>): boolean {
       set.has(toolName),
     ) || ADMIN_MCP_TOOL_NAMES.some((toolName) => set.has(toolName))
   );
+}
+
+function expectNoRawDeepAgentsAsyncTools(names: Iterable<string>): void {
+  const set = new Set(names);
+  for (const toolName of RAW_DEEPAGENTS_ASYNC_TOOL_NAMES) {
+    expect(set.has(toolName)).toBe(false);
+  }
 }
 
 describe('locked tool surface mounting', () => {
@@ -103,6 +120,7 @@ describe('locked tool surface mounting', () => {
     const defaultNames = selectedGantryMcpToolNames([]);
     expect(defaultNames).toContain('todo_update');
     expect(defaultNames).not.toContain('async_run_command');
+    expect(defaultNames).not.toContain('async_mcp_call');
     expect(defaultNames).not.toContain('task_get');
     expect(defaultNames).not.toContain('task_list');
     expect(defaultNames).not.toContain('task_cancel');
@@ -113,6 +131,7 @@ describe('locked tool surface mounting', () => {
       asyncTaskToolsEnabled: true,
     });
     expect(enabledNames).toContain('async_run_command');
+    expect(enabledNames).toContain('async_mcp_call');
     expect(enabledNames).toContain('task_get');
     expect(enabledNames).toContain('task_list');
     expect(enabledNames).toContain('task_cancel');
@@ -127,11 +146,13 @@ describe('locked tool surface mounting', () => {
 
     const explicitlyConfiguredNames = selectedGantryMcpToolNames([
       'mcp__gantry__delegate_task',
+      'mcp__gantry__async_mcp_call',
       'mcp__gantry__task_get',
       'mcp__gantry__task_cancel',
       'mcp__gantry__task_message',
     ]);
     expect(explicitlyConfiguredNames).not.toContain('delegate_task');
+    expect(explicitlyConfiguredNames).not.toContain('async_mcp_call');
     expect(explicitlyConfiguredNames).not.toContain('task_get');
     expect(explicitlyConfiguredNames).not.toContain('task_cancel');
     expect(explicitlyConfiguredNames).not.toContain('task_message');
@@ -139,12 +160,14 @@ describe('locked tool surface mounting', () => {
     const parsedNames = parseEnabledGantryMcpToolNames(
       JSON.stringify([
         'delegate_task',
+        'async_mcp_call',
         'task_get',
         'task_cancel',
         'task_message',
       ]),
     );
     expect(parsedNames.has('delegate_task')).toBe(true);
+    expect(parsedNames.has('async_mcp_call')).toBe(true);
     expect(parsedNames.has('task_get')).toBe(true);
     expect(parsedNames.has('task_cancel')).toBe(true);
     expect(parsedNames.has('task_message')).toBe(true);
@@ -154,11 +177,52 @@ describe('locked tool surface mounting', () => {
     });
     expect(lockedNames).toContain('todo_update');
     expect(lockedNames).not.toContain('async_run_command');
+    expect(lockedNames).not.toContain('async_mcp_call');
     expect(lockedNames).not.toContain('task_get');
     expect(lockedNames).not.toContain('task_list');
     expect(lockedNames).not.toContain('task_cancel');
     expect(lockedNames).not.toContain('delegate_task');
     expect(lockedNames).not.toContain('task_message');
+  });
+
+  it('registers only Gantry task tools and ignores raw DeepAgents async names', () => {
+    const publicTaskToolNames = [
+      ...ASYNC_TASK_GANTRY_MCP_TOOL_NAMES,
+      ...DELEGATED_TASK_GANTRY_MCP_TOOL_NAMES,
+    ];
+    expect(publicTaskToolNames.sort()).toEqual([
+      'async_mcp_call',
+      'async_run_command',
+      'delegate_task',
+      'task_cancel',
+      'task_get',
+      'task_list',
+      'task_message',
+    ]);
+    expectNoRawDeepAgentsAsyncTools(publicTaskToolNames);
+
+    const selectedNames = selectedGantryMcpToolNames(['AgentDelegation'], {
+      asyncTaskToolsEnabled: true,
+    });
+    for (const toolName of publicTaskToolNames) {
+      expect(selectedNames).toContain(toolName);
+    }
+    expectNoRawDeepAgentsAsyncTools(selectedNames);
+
+    const envNames = effectiveEnabledMcpToolNames(
+      JSON.stringify([
+        ...publicTaskToolNames,
+        ...RAW_DEEPAGENTS_ASYNC_TOOL_NAMES,
+      ]),
+      undefined,
+      undefined,
+      false,
+      '1',
+    );
+    for (const toolName of publicTaskToolNames) {
+      expect(envNames.has(toolName)).toBe(true);
+    }
+    expectNoRawDeepAgentsAsyncTools(envNames);
   });
 });
 

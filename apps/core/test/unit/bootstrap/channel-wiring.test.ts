@@ -48,11 +48,16 @@ import { Provider } from '@core/channels/provider-registry.js';
 import { AsyncTaskQueue } from '@core/app/bootstrap/async-task-queue.js';
 import { createChannelPersistenceHandlers } from '@core/app/bootstrap/channel-persistence-handlers.js';
 import { createChannelWiring } from '@core/app/bootstrap/channel-wiring.js';
-import { createPermissionApprovalRequester } from '@core/app/bootstrap/channel-wiring-interactions.js';
+import {
+  createAgentTodoRenderer,
+  createPermissionApprovalRequester,
+  createRichInteractionRenderer,
+} from '@core/app/bootstrap/channel-wiring-interactions.js';
 import { PERMISSION_APPROVAL_TIMEOUT_MS } from '@core/config/index.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
 import { PartialMessageDeliveryError } from '@core/domain/messages/partial-delivery.js';
 import { AmbiguousDurableDeliveryError } from '@core/domain/messages/durable-delivery.js';
+import { RICH_INTERACTION_NATIVE_FALLBACK_TEXT } from '@core/domain/types.js';
 
 function makeRuntimeSettings(enabled: {
   telegram: boolean;
@@ -139,8 +144,6 @@ function makeApp(conversationRoutes: Record<string, any> = {}): RuntimeApp {
     ensureCredentialBindingsForConversationRoutes: vi.fn(),
     processGroupMessages: vi.fn(),
     getConversationRoutes: vi.fn(() => conversationRoutes),
-    getLastTimestamp: vi.fn(() => ''),
-    setLastTimestamp: vi.fn(),
     setAgentCursor: vi.fn(),
     setChannelRuntime: vi.fn(),
   };
@@ -205,6 +208,74 @@ describe('createChannelWiring', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('routes rich interactions to a bound channel surface', async () => {
+    const renderRichInteraction = vi.fn(async () => true);
+    const sendMessage = vi.fn();
+    const channel = { renderRichInteraction };
+    const renderer = createRichInteractionRenderer({
+      findBoundChannel: () => channel,
+      asRichInteractionSurface: () => channel,
+      sendMessage,
+      logger: { error: vi.fn() },
+    });
+
+    await expect(
+      renderer('tg:team', {
+        requestId: 'rich-1',
+        sourceAgentFolder: 'team',
+        targetJid: 'tg:team',
+        descriptor: {
+          id: 'status',
+          title: 'Status',
+          fallbackText: 'Status: ready',
+          rich: {
+            kind: 'status',
+            fallbackText: 'Status: ready',
+            payload: { state: 'ready' },
+          },
+        },
+      }),
+    ).resolves.toBe(true);
+
+    expect(renderRichInteraction).toHaveBeenCalledOnce();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('falls back rich interactions when the channel has no rich surface', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const renderer = createRichInteractionRenderer({
+      findBoundChannel: () => ({}),
+      asRichInteractionSurface: () => undefined,
+      sendMessage,
+      logger: { error: vi.fn() },
+    });
+
+    await expect(
+      renderer('tg:team', {
+        requestId: 'rich-2',
+        sourceAgentFolder: 'team',
+        targetJid: 'tg:team',
+        threadId: 'thread-1',
+        descriptor: {
+          id: 'status',
+          title: 'Status',
+          fallbackText: 'Status: blocked',
+          rich: {
+            kind: 'status',
+            fallbackText: 'Status: blocked',
+            payload: { state: 'blocked' },
+          },
+        },
+      }),
+    ).resolves.toBe(true);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'tg:team',
+      `${RICH_INTERACTION_NATIVE_FALLBACK_TEXT}\n\nStatus: blocked`,
+      { threadId: 'thread-1' },
+    );
   });
 
   it('skips disabled channels in runtime settings', async () => {
@@ -1788,6 +1859,56 @@ describe('createChannelWiring', () => {
       'tg:group',
       'Working on it...',
       { threadId: 'thread-1' },
+    );
+  });
+
+  it('reports agent todo render failure when the channel surface returns false', async () => {
+    const renderAgentTodo = vi.fn(async () => false);
+    const render = createAgentTodoRenderer({
+      findBoundChannel: () => makeChannel({ renderAgentTodo }),
+      asAgentTodoSurface: (channel) => channel,
+      logger: { error: vi.fn() },
+    });
+
+    await expect(
+      render('tg:group', {
+        items: [{ id: '1', title: 'Work', status: 'pending' }],
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('flushes host terminal todo status over the latest model-rendered card', async () => {
+    const renderAgentTodo = vi.fn(async () => true);
+    const render = createAgentTodoRenderer({
+      findBoundChannel: () => makeChannel({ renderAgentTodo }),
+      asAgentTodoSurface: (channel) => channel,
+      logger: { error: vi.fn() },
+    });
+
+    await render('tg:group', {
+      summary: 'Plan done',
+      status: 'done',
+      threadId: 'thread-1',
+      stop: { label: 'Stop', actionToken: 'stale-stop-token' },
+      items: [{ id: '1', title: 'Work', status: 'completed' }],
+    });
+
+    await expect(
+      render.finalize('tg:group', {
+        threadId: 'thread-1',
+        status: 'failed',
+      }),
+    ).resolves.toBe(true);
+
+    expect(renderAgentTodo).toHaveBeenLastCalledWith(
+      'tg:group',
+      expect.objectContaining({
+        summary: 'Plan done',
+        status: 'failed',
+        stop: undefined,
+        flush: true,
+        items: [{ id: '1', title: 'Work', status: 'completed' }],
+      }),
     );
   });
 

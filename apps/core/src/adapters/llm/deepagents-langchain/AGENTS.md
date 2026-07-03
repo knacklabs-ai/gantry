@@ -33,13 +33,13 @@ provider string:
   `upstreamPathPrefix`: groq `/openai/v1`, fireworks `/inference/v1`,
   perplexity no extra prefix, gemini `/v1beta/openai`, and
   deepseek/xai/together/cerebras `/v1`. Bedrock resolves to the regional
-  Bedrock Runtime `/openai/v1` endpoint and, for this OpenAI-compatible route,
-  accepts only the Amazon Bedrock API-key credential mode; AWS credentials,
-  SigV4, and default-chain identity require a separate non-OpenAI Bedrock API
-  family lane. Vertex resolves its upstream prefix from encrypted Model Access
-  location/project fields at gateway request time, currently accepts only
-  `global`, and uses the OpenAI-compatible `v1` endpoint prefix under
-  `https://aiplatform.googleapis.com`; regional/multi-region Vertex routing is
+  Bedrock Runtime `/v1` endpoint and authenticates host-side through AWS
+  role/profile SigV4, a Bedrock API key resolved from AWS Secrets Manager, or
+  an encrypted Bedrock API key. Vertex resolves its upstream prefix from
+  encrypted Model Access location/project fields at gateway request time,
+  currently accepts only `global`, and authenticates host-side through Google
+  ADC/workload identity, service-account JSON from Google Secret Manager, or
+  encrypted service-account JSON. Regional/multi-region Vertex routing is
   deferred until explicitly implemented and verified. The gateway allowlist permits
   `/chat/completions` and
   `/v1/chat/completions` for the DeepAgents lane; upstream confinement is
@@ -55,6 +55,11 @@ provider string:
   `ChatOpenRouter.buildUrl()` appends `/chat/completions` to `baseURL`, so the
   factory passes `<gateway>/v1` -> loopback `/openrouter/v1/chat/completions` ->
   `openrouter.ai/api/v1/chat/completions` (bearer auth).
+  Optional catalog `providerRouting.openrouter` metadata is host-projected as
+  `GANTRY_DEEPAGENTS_OPENROUTER_PROVIDER_ROUTING` and passed to
+  `ChatOpenRouter`'s request-body `provider` object. Keep those preferences
+  OpenRouter-route-only; do not model them as Gantry regions, locations, raw
+  user-facing aliases, or durable authority.
 - `anthropic` is NOT accepted by this adapter today; the factory throws. Do not
   route Claude OAuth/subscription here. Any future Anthropic API-key DeepAgents
   route must be explicit, official-doc-backed, gateway-brokered, and tested.
@@ -62,6 +67,11 @@ provider string:
 The built `BaseChatModel` instance is passed to `createDeepAgent({ model })`.
 Loopback-URL + `gtw_`-token guards are enforced in the factory; the runtime
 `model.profile` (context window etc.) is read from the resolved instance.
+
+Do not edit only the DeepAgents runner when adding Bedrock, Vertex, or another
+cloud provider mode. Provider support is host-gateway-owned first: update the
+provider registry, gateway auth/upstream behavior, CLI/Control API metadata,
+credential docs, and gateway tests before changing runner model construction.
 
 ## OpenRouter prompt caching
 
@@ -95,13 +105,13 @@ correct-by-construction:
   (`<runnerDistDir>/../adapters/llm/deepagents-langchain/runner/index.js`),
   validates the credential projection, projects gateway model env (including
   `GANTRY_DEEPAGENTS_MODEL_PROVIDER`, `GANTRY_DEEPAGENTS_MODEL_ID`, and
-  `GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL`), points the runner at an adapter-owned
-  sessions dir.
+  `GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL`), and creates a disposable
+  adapter-owned runtime config dir.
 - `credential-validation.ts` — credential-mode guard / defensive backstop. The
   engine is derived from the provider, so an OAuth pairing can't be configured;
-  this still enforces `supportedCredentialModes: ['api_key']` here as a fail-closed
-  boundary: Claude OAuth is rejected with the locked copy; missing Model Access uses
-  the setup-required copy.
+  this still enforces the provider registry's `supportedCredentialModes` as a
+  fail-closed boundary: Claude OAuth is rejected with the locked copy; missing
+  Model Access uses the setup-required copy.
 - `model-credential-env.ts` — allowlist (`OPENAI_*`, `ANTHROPIC_*`,
   `NODE_EXTRA_CA_CERTS`) projected to `runnerInputPatch.modelCredentialEnv` only.
 - `runner/` — the child process. `model-factory.ts` builds the LangChain instance
@@ -131,10 +141,10 @@ correct-by-construction:
   future/proxy-provided third-party MCP tools (`runner/tool-gate-core.ts`) + the
   neutral permission-IPC client (`runner/permission-ipc-client.ts`) before
   execution.
-- `skill-projection.ts` — host-side selected-skill projection. It reads only
-  Gantry-reviewed selected skill artifacts, validates DeepAgents-compatible
-  `SKILL.md` metadata/paths before runner spawn, and serializes virtual
-  `/skills/**` files for the child runner.
+- `skill-projection.ts` — DeepAgents adapter mapper. Shared selected-skill
+  artifact resolution lives in `application/skills/selected-skill-projection.ts`;
+  this file only validates DeepAgents-compatible `SKILL.md` metadata and
+  serializes virtual `/skills/**` files for the child runner.
 - `runner/builtin-tool-exclusion.ts` — a `langchain` `createMiddleware`
   `wrapModelCall` that strips raw DeepAgents built-ins from the model-visible
   tool list. `task`, `write_todos`, `write_file`, and `edit_file` stay hidden;
@@ -199,11 +209,13 @@ on the enforcing `sandbox_runtime` path. Under `direct`, File facades must stay
 unmounted even for runtime approval prompts.
 
 Skills decision: DeepAgents receives skills only from Gantry-reviewed selected
-skill artifacts. The host passes `skills: ["/skills/"]` and graph input `files`
-only after `skill-projection.ts` validates: selected id is enabled for the agent,
-artifact storage exists, `SKILL.md` exists, paths cannot escape or use hidden
-segments, the official frontmatter `name`/`description` are present and bounded,
-and the `name` exactly matches the materialized lowercase hyphen directory.
+skill artifacts. Shared application projection first validates that selected ids
+are enabled for the agent, artifact storage exists, `SKILL.md` exists, paths
+cannot escape or use hidden segments, and selected skills do not collide. The
+DeepAgents adapter then passes `skills: ["/skills/"]` and graph input `files`
+only after validating the official frontmatter `name`/`description` are present
+and bounded, and the `name` exactly matches the materialized lowercase hyphen
+directory.
 Supporting files are projected as UTF-8 text only; unsupported binary assets
 fail closed before spawn instead of corrupting JSON runner input. The runner
 then exposes only read-only DeepAgents filesystem tools for virtual `/skills/**`

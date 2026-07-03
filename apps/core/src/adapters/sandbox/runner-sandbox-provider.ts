@@ -53,6 +53,8 @@ const HOME_SECRET_DENY_SUFFIXES = [
   '.env',
 ] as const;
 
+const MACOS_FSEVENTS_MACH_SERVICE = 'com.apple.FSEvents';
+
 let cachedSandboxRuntimeWarmTemplate:
   | Readonly<SandboxRuntimeWarmTemplate>
   | undefined;
@@ -240,6 +242,9 @@ function buildSandboxRuntimeConfig(input: RunnerSandboxSpawnInput) {
     network: {
       deniedDomains: [...template.network.deniedDomains],
       allowLocalBinding: template.network.allowLocalBinding,
+      ...(process.platform === 'darwin'
+        ? { allowMachLookup: [MACOS_FSEVENTS_MACH_SERVICE] }
+        : {}),
       allowedDomains:
         input.sandboxProfile.network === 'required'
           ? sandboxAllowedDomainsFromHosts(input.allowedNetworkHosts)
@@ -324,7 +329,7 @@ function installProcessGroupKill(child: ReturnType<typeof spawn>): void {
 }
 
 function egressProxyConfig(proxyUrl: string | undefined): {
-  httpProxyPort: number;
+  parentProxy: { http: string; https: string; noProxy: string };
 } {
   if (!proxyUrl) {
     throw new Error('Sandbox egress proxy URL is missing.');
@@ -340,7 +345,13 @@ function egressProxyConfig(proxyUrl: string | undefined): {
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error('Sandbox egress proxy must include a numeric port.');
   }
-  return { httpProxyPort: port };
+  return {
+    parentProxy: {
+      http: proxyUrl,
+      https: proxyUrl,
+      noProxy: '',
+    },
+  };
 }
 
 function sandboxAllowedDomainsFromHosts(hosts: readonly string[]): string[] {
@@ -457,6 +468,7 @@ function defaultReadAllowPaths(
     ...workspaceCwdReadAllowPaths(input),
     ...expandReadAllowRoot(input.workspaceRoot, denyReadPaths),
     ...runtimeReadRootDirectoryAllowPaths(input.runtimeReadPaths),
+    ...claudeRuntimeGeneratedReadAllowPaths(input.runtimeReadPaths),
   ];
   for (const runtimePath of input.runtimeReadPaths) {
     paths.push(...expandReadAllowRoot(runtimePath, denyReadPaths));
@@ -475,6 +487,14 @@ function defaultReadAllowPaths(
     paths.push('/opt/homebrew', '/usr/local');
   }
   return paths;
+}
+
+function claudeRuntimeGeneratedReadAllowPaths(
+  runtimeReadPaths: readonly string[],
+): string[] {
+  return runtimeReadPaths
+    .filter((runtimePath) => path.basename(runtimePath) === 'claude')
+    .map((runtimePath) => path.join(runtimePath, '.claude.json'));
 }
 
 function runtimeReadRootDirectoryAllowPaths(

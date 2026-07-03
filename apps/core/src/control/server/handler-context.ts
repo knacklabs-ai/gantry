@@ -15,6 +15,7 @@ import type {
   ModelWorkload,
 } from '../../shared/model-catalog.js';
 import type { AgentHarness } from '../../shared/agent-engine.js';
+import type { EgressSettings } from '../../shared/egress-policy.js';
 import { authenticate, type ApiKeyRecord, type Scope } from './auth.js';
 import { sendError } from './http.js';
 import type { RateLimiter } from './rate-limit.js';
@@ -69,6 +70,8 @@ export type ControlRouteContext = {
   processRole: ProcessRole;
   /** Whether this process role runs live execution (live readiness + gauges). */
   liveExecution: boolean;
+  /** Whether durable live-turn admission is enabled in runtime settings. */
+  liveTurnsEnabled?: boolean;
   /** Role-specific readiness checks that apply (derived from the role). */
   roleReadinessRequirements: ReadinessRoleRequirements;
   /**
@@ -89,6 +92,7 @@ export type ControlRouteContext = {
   triggerRateLimiter: RateLimiter;
   getRuntimeSettings: () => RuntimeSettingsResponse['settings'];
   getInternalRuntimeSettings: () => InternalRuntimeSettings;
+  getEgressSettings?: () => EgressSettings;
   getDefaultModelConfig: (
     kind?: 'interactive' | 'oneTimeJob' | 'recurringJob',
     agentFolder?: string,
@@ -96,6 +100,8 @@ export type ControlRouteContext = {
   getModelDefaults: () => ControlModelDefaults;
   patchModelDefaults: (
     body: Record<string, unknown>,
+    appId?: AppId,
+    createdBy?: string,
   ) => Promise<ControlModelDefaultsPatchResult>;
   preflightModelPreset: (
     preset: ModelPresetId,
@@ -115,6 +121,11 @@ export type ControlRouteContext = {
     threadId: string | null;
     text: string;
   }) => Promise<void>;
+  addMessageReaction?: (
+    jid: string,
+    messageRef: string,
+    emoji: string,
+  ) => Promise<void>;
   getBrowserStatus?: JobManagementServiceDeps['getBrowserStatus'];
   syncSettingsFromProjection: (appId: AppId) => Promise<void>;
   getSelectedAgentHarness: (agentFolder?: string) => AgentHarness;

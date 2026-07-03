@@ -17,17 +17,36 @@ import {
   TELEGRAM_PERMISSION_CALLBACK_PATTERN,
   TELEGRAM_DEAD_LETTER_ACTION_CALLBACK_PATTERN,
   TELEGRAM_USER_QUESTION_CALLBACK_PATTERN,
-  TelegramContext,
 } from './channel-shared.js';
 import {
   createTelegramBotRuntime,
   registerTelegramBotCommands,
 } from './bot-setup.js';
 import { registerTelegramMediaHandlers } from './media-ingestion.js';
+import { clearProgressActions } from './progress-message-actions.js';
 
 const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping']);
 
 export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
+  private async clearRestoredProgressActions(): Promise<void> {
+    this.loadPersistedProgressMessages();
+    for (const [key, state] of this.activeProgressMessages.entries()) {
+      if (!state.restored || !state.messageId) continue;
+      await clearProgressActions({
+        api: this.bot!.api,
+        chatId: state.chatId,
+        messageId: state.messageId,
+        text: state.lastText,
+        editReplyMarkup: { reply_markup: { inline_keyboard: [] } },
+      }).catch((err) =>
+        logger.debug(
+          { key, err: this.sanitizeErrorMessage(err) },
+          'Failed to clear restored Telegram progress actions',
+        ),
+      );
+    }
+  }
+
   async connect(
     options: { inbound?: boolean; interactionCallbacks?: boolean } = {},
   ): Promise<void> {
@@ -272,9 +291,77 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         return;
       }
 
-      const deadLetterActionMatch =
-        TELEGRAM_DEAD_LETTER_ACTION_CALLBACK_PATTERN.exec(data);
-      if (deadLetterActionMatch) {
+      if (data.startsWith('lt:stop:')) {
+        const callbackMessage = ctx.callbackQuery?.message as
+          | {
+              chat?: { id?: number | string };
+              message_thread_id?: number;
+            }
+          | undefined;
+        const chatId =
+          callbackMessage?.chat?.id?.toString() ||
+          ctx.chat?.id?.toString() ||
+          '';
+        if (!chatId) return;
+        await this.opts.onMessageAction?.({
+          kind: 'live_turn_stop',
+          conversationJid: `tg:${chatId}`,
+          threadId:
+            typeof callbackMessage?.message_thread_id === 'number'
+              ? String(callbackMessage.message_thread_id)
+              : undefined,
+          userId: ctx.from?.id?.toString(),
+          actionToken: data.slice('lt:stop:'.length),
+        });
+        await ctx.answerCallbackQuery({ text: 'Stopping current run.' });
+        return;
+      }
+
+      const compactRetryJobId = data.startsWith('r:') ? data.slice(2) : '';
+      const deadLetterActionMatch = compactRetryJobId
+        ? null
+        : TELEGRAM_DEAD_LETTER_ACTION_CALLBACK_PATTERN.exec(data);
+      if (compactRetryJobId || deadLetterActionMatch) {
+        if (
+          compactRetryJobId ||
+          (deadLetterActionMatch?.[1] === 'retry' && deadLetterActionMatch[2])
+        ) {
+          let jobId: string;
+          try {
+            jobId = decodeURIComponent(
+              compactRetryJobId || deadLetterActionMatch![2],
+            );
+          } catch {
+            await ctx.answerCallbackQuery({
+              text: 'Invalid scheduler action.',
+              show_alert: true,
+            });
+            return;
+          }
+          const callbackMessage = ctx.callbackQuery?.message as
+            | {
+                chat?: { id?: number | string };
+                message_thread_id?: number;
+              }
+            | undefined;
+          const chatId =
+            callbackMessage?.chat?.id?.toString() ||
+            ctx.chat?.id?.toString() ||
+            '';
+          if (!chatId) return;
+          await this.opts.onMessageAction?.({
+            kind: 'scheduler_run_now',
+            conversationJid: `tg:${chatId}`,
+            threadId:
+              typeof callbackMessage?.message_thread_id === 'number'
+                ? String(callbackMessage.message_thread_id)
+                : undefined,
+            userId: ctx.from?.id?.toString(),
+            jobId,
+          });
+          await ctx.answerCallbackQuery({ text: 'Checking retry request.' });
+          return;
+        }
         await ctx.answerCallbackQuery({
           text: 'Open the scheduler surface or use scheduler tools to run this action.',
           show_alert: true,
@@ -577,6 +664,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
       );
     });
 
+    await this.clearRestoredProgressActions();
     this.startPolling();
   }
 }

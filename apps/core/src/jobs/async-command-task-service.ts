@@ -12,7 +12,6 @@ import {
   sendDelegatedAgentTaskMessage,
   startDelegatedAgentTask,
   type StartDelegatedAgentTaskInput,
-  type StartDelegatedAgentTaskResult,
 } from './async-delegated-agent-task.js';
 import {
   buildAgentToolExecutionRequest,
@@ -29,19 +28,22 @@ import {
   cleanupLaunchControl,
   commandSummary,
   errorMessage,
-  isRecord,
   isTimeoutError,
+  persistInspectionSnapshot,
+  persistProcessHandle,
   readPersistedProcessHandle,
   taskInScope,
   taskTimestampMs,
   terminateProcessHandle,
   truncate,
   withLocalAdmissionLock,
+  type AsyncCommandOutputSnapshot,
 } from './async-command-task-helpers.js';
 import {
   cancelledReceipt,
   failedReceipt,
 } from './async-command-task-receipts.js';
+import { cancelAsyncMcpTask } from './async-mcp-tool-task.js';
 import { refreshDelegatedCancellationReceipt } from './async-task-cancellation.js';
 
 const SHELL_POLICY_TOOL_NAME = 'Bash';
@@ -97,6 +99,7 @@ export interface AsyncCommandRunner {
     onProcessStarted?: (
       handle: AsyncCommandProcessHandle,
     ) => Promise<void> | void;
+    onOutputSnapshot?: (snapshot: AsyncCommandOutputSnapshot) => unknown;
     launchControl?: AsyncCommandLaunchControl;
   }): Promise<AsyncCommandRunnerResult>;
 }
@@ -277,6 +280,7 @@ export class AsyncCommandTaskService {
     if (this.repository.createTaskWithAdmission) {
       return this.repository.createTaskWithAdmission(input, {
         activeStatuses: ACTIVE_TASK_STATUSES,
+        kind: input.kind,
         maxActivePerApp: MAX_ACTIVE_ASYNC_COMMANDS_PER_APP,
         maxActivePerAgent: MAX_ACTIVE_ASYNC_COMMANDS_PER_AGENT,
       });
@@ -285,12 +289,14 @@ export class AsyncCommandTaskService {
       const [appActive, agentActive] = await Promise.all([
         this.repository.listTasks({
           appId: input.appId,
+          kind: input.kind,
           statuses: ACTIVE_TASK_STATUSES,
           limit: MAX_ACTIVE_ASYNC_COMMANDS_PER_APP,
         }),
         this.repository.listTasks({
           appId: input.appId,
           agentId: input.agentId,
+          kind: input.kind,
           statuses: ACTIVE_TASK_STATUSES,
           limit: MAX_ACTIVE_ASYNC_COMMANDS_PER_AGENT,
         }),
@@ -447,6 +453,9 @@ export class AsyncCommandTaskService {
     }
     const controller = this.active.get(taskId);
     if (!controller) {
+      if (task.kind === 'mcp_tool_call') {
+        return cancelAsyncMcpTask(this.repository, task);
+      }
       const handle = readPersistedProcessHandle(task.privateCorrelationJson);
       if (handle) {
         const now = nowIso();
@@ -611,25 +620,14 @@ export class AsyncCommandTaskService {
         resourceLimits: input.resourceLimits,
         signal: controller.signal,
         launchControl,
-        onProcessStarted: async (handle) => {
-          const updated = await this.repository.transitionTask({
-            taskId: task.id,
-            leaseToken: task.leaseToken,
-            fencingVersion: task.fencingVersion,
-            status: 'running',
-            now: nowIso(),
-            heartbeatAt: nowIso(),
-            privateCorrelationJson: {
-              ...(isRecord(task.privateCorrelationJson)
-                ? task.privateCorrelationJson
-                : {}),
-              process: handle,
-            },
-          });
-          if (!updated) {
-            throw new Error('Failed to persist async command process handle.');
-          }
-        },
+        onOutputSnapshot: (snapshot) =>
+          persistInspectionSnapshot({
+            repository: this.repository,
+            task,
+            snapshot,
+          }),
+        onProcessStarted: (handle) =>
+          persistProcessHandle({ repository: this.repository, task, handle }),
         appId: task.appId,
         agentId: task.agentId,
         conversationId: task.conversationId ?? '',

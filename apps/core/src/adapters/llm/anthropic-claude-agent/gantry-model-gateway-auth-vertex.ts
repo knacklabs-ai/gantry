@@ -7,6 +7,7 @@ const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const DEFAULT_TOKEN_TTL_MS = 55 * 60_000;
 const DEFAULT_TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_TOKEN_CACHE_ENTRIES = 128;
+const VERTEX_ADC_CACHE_KEY = 'vertex-adc';
 
 interface CachedToken {
   token: string;
@@ -71,6 +72,50 @@ export async function getVertexServiceAccountBearerToken(input: {
   return token;
 }
 
+export async function getVertexAdcBearerToken(
+  input: {
+    nowMs?: number;
+    tokenRequestTimeoutMs?: number;
+  } = {},
+): Promise<string> {
+  const nowMs = input.nowMs ?? Date.now();
+  const tokenRequestTimeoutMs =
+    input.tokenRequestTimeoutMs ?? DEFAULT_TOKEN_REQUEST_TIMEOUT_MS;
+  const cached = tokenCache.get(VERTEX_ADC_CACHE_KEY);
+  if (cached && cached.expiresAtMs > nowMs + TOKEN_EXPIRY_SKEW_MS) {
+    tokenCache.delete(VERTEX_ADC_CACHE_KEY);
+    tokenCache.set(VERTEX_ADC_CACHE_KEY, cached);
+    return cached.token;
+  }
+
+  const auth = new GoogleAuth({
+    scopes: [CLOUD_PLATFORM_SCOPE],
+  });
+  const client = (await withTimeout(
+    auth.getClient(),
+    tokenRequestTimeoutMs,
+  )) as unknown as GoogleAuthClient;
+  const accessToken = await withTimeout(
+    client.getAccessToken(),
+    tokenRequestTimeoutMs,
+  );
+  const token =
+    typeof accessToken === 'string' ? accessToken : accessToken?.token;
+  if (!token) {
+    throw new Error('Google ADC did not return a Vertex access token.');
+  }
+  const expiryDate = client.credentials?.expiry_date;
+  const expiresAtMs =
+    typeof expiryDate === 'number' && Number.isFinite(expiryDate)
+      ? expiryDate
+      : nowMs + DEFAULT_TOKEN_TTL_MS;
+  cacheToken(VERTEX_ADC_CACHE_KEY, {
+    token,
+    expiresAtMs: Math.max(nowMs, expiresAtMs - TOKEN_EXPIRY_SKEW_MS),
+  });
+  return token;
+}
+
 export function clearVertexTokenCacheForTest(): void {
   tokenCache.clear();
 }
@@ -81,8 +126,10 @@ function parseServiceAccountCredentials(
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
-  } catch {
-    throw new Error('Invalid Vertex service account credential.');
+  } catch (error) {
+    throw new Error('Invalid Vertex service account credential.', {
+      cause: error,
+    });
   }
   if (
     !parsed ||

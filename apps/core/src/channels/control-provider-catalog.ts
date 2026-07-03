@@ -5,6 +5,11 @@ import type {
 import type { ProviderCatalogPort } from '../application/provider-conversations/provider-catalog-ports.js';
 import type { Provider } from '../domain/provider/provider.js';
 import type { RuntimeSecretProvider } from '../domain/ports/runtime-secret-provider.js';
+import {
+  getOptionalRuntimeSecret,
+  normalizeRuntimeSecretRefString,
+} from '../domain/ports/runtime-secret-provider.js';
+import { runtimeSecretKeyForEnv } from '../domain/provider/provider-runtime-secret-keys.js';
 import type { IsoTimestamp } from '../shared/time/primitives.js';
 import { listSlackRecentChats } from '../cli/slack-chat-discovery.js';
 import { listTelegramRecentChats } from '../cli/telegram-chat-discovery.js';
@@ -12,6 +17,10 @@ import {
   GraphTeamsSetupDiscoveryClient,
   type TeamsSetupDiscoveryClient,
 } from './teams-setup-discovery.js';
+import {
+  RestDiscordSetupDiscoveryClient,
+  type DiscordSetupDiscoveryClient,
+} from './discord-setup-discovery.js';
 import './register-builtins.js';
 import {
   getProvider,
@@ -30,7 +39,9 @@ export class BuiltInControlChannelProviderCatalog implements ProviderCatalogPort
       capabilityFlags:
         provider.controlCapabilityFlags ??
         (provider.internal ? ['internal'] : ['install', 'discover']),
-      allowedRuntimeSecretRefs: provider.setup.envKeys,
+      allowedRuntimeSecretKeys: provider.setup.envKeys.map((envKey) =>
+        runtimeSecretKeyForEnv(provider.id, envKey),
+      ),
       createdAt,
     })) as Provider[];
     const existingIds = new Set<string>(
@@ -42,7 +53,7 @@ export class BuiltInControlChannelProviderCatalog implements ProviderCatalogPort
         id: id as Provider['id'],
         displayName: id === 'teams' ? 'Teams' : 'WhatsApp',
         capabilityFlags: ['placeholder'],
-        allowedRuntimeSecretRefs: [],
+        allowedRuntimeSecretKeys: [],
         createdAt,
       } as Provider);
     }
@@ -54,6 +65,7 @@ export class RuntimeSecretConversationDiscovery implements ProviderConversationD
   constructor(
     private readonly secrets: RuntimeSecretProvider,
     private readonly teamsDiscoveryClient: TeamsSetupDiscoveryClient = new GraphTeamsSetupDiscoveryClient(),
+    private readonly discordDiscoveryClient: DiscordSetupDiscoveryClient = new RestDiscordSetupDiscoveryClient(),
   ) {}
 
   async discover(
@@ -70,9 +82,9 @@ export class RuntimeSecretConversationDiscovery implements ProviderConversationD
     }
     if (providerId === 'app') return [];
     if (providerId === 'telegram') {
-      const token = this.resolveSecret(
+      const token = await this.resolveSecret(
         input.providerConnection.runtimeSecretRefs,
-        ['TELEGRAM_BOT_TOKEN'],
+        ['bot_token'],
       );
       const result = await listTelegramRecentChats({
         token,
@@ -105,9 +117,9 @@ export class RuntimeSecretConversationDiscovery implements ProviderConversationD
       );
     }
     if (providerId === 'slack') {
-      const botToken = this.resolveSecret(
+      const botToken = await this.resolveSecret(
         input.providerConnection.runtimeSecretRefs,
-        ['SLACK_BOT_TOKEN'],
+        ['bot_token'],
       );
       const result = await listSlackRecentChats({
         botToken,
@@ -139,17 +151,17 @@ export class RuntimeSecretConversationDiscovery implements ProviderConversationD
     if (providerId === 'teams') {
       const result = await this.teamsDiscoveryClient.listChannels({
         credentials: {
-          clientId: this.resolveExactSecret(
+          clientId: await this.resolveExactSecret(
             input.providerConnection.runtimeSecretRefs,
-            'TEAMS_CLIENT_ID',
+            'client_id',
           ),
-          clientSecret: this.resolveExactSecret(
+          clientSecret: await this.resolveExactSecret(
             input.providerConnection.runtimeSecretRefs,
-            'TEAMS_CLIENT_SECRET',
+            'client_secret',
           ),
-          tenantId: this.resolveExactSecret(
+          tenantId: await this.resolveExactSecret(
             input.providerConnection.runtimeSecretRefs,
-            'TEAMS_TENANT_ID',
+            'tenant_id',
           ),
         },
         limit: input.limit,
@@ -180,19 +192,61 @@ export class RuntimeSecretConversationDiscovery implements ProviderConversationD
         input,
       );
     }
+    if (providerId === 'discord') {
+      const result = await this.discordDiscoveryClient.listChannels({
+        credentials: {
+          botToken: await this.resolveExactSecret(
+            input.providerConnection.runtimeSecretRefs,
+            'bot_token',
+          ),
+          applicationId: await this.resolveExactSecret(
+            input.providerConnection.runtimeSecretRefs,
+            'application_id',
+          ),
+        },
+        limit: input.limit,
+      });
+      if (!result.ok) {
+        throw new ApplicationError('UNAVAILABLE', result.message);
+      }
+      return filterDiscoveredConversations(
+        result.channels.map(
+          (channel): DiscoveredConversation => ({
+            externalId: canonicalConversationExternalId(
+              providerId,
+              channel.chatJid,
+            ),
+            title: channel.chatTitle,
+            kind: 'channel',
+            externalRef: {
+              kind: 'conversation',
+              value: canonicalConversationExternalId(
+                providerId,
+                channel.chatJid,
+              ),
+            },
+          }),
+        ),
+        input,
+      );
+    }
     throw new ApplicationError(
       'NOT_IMPLEMENTED',
       `Conversation discovery is not implemented for ${providerId}`,
     );
   }
 
-  private resolveSecret(refs: string[], preferred: string[]): string {
-    const candidates = [
-      ...preferred.filter((ref) => refs.includes(ref)),
-      ...refs,
-    ].filter((ref, index, all) => all.indexOf(ref) === index);
+  private async resolveSecret(
+    refs: Record<string, string>,
+    preferredKeys: string[],
+  ): Promise<string> {
+    const candidates = preferredKeys
+      .map((key) => refs[key])
+      .filter((ref): ref is string => Boolean(ref?.trim()));
     for (const ref of candidates) {
-      const value = this.secrets.getOptionalSecret({ env: ref });
+      const value = await getOptionalRuntimeSecret(this.secrets, {
+        ref: normalizeRuntimeSecretRefString(ref),
+      });
       if (value) return value;
     }
     throw new ApplicationError(
@@ -201,18 +255,24 @@ export class RuntimeSecretConversationDiscovery implements ProviderConversationD
     );
   }
 
-  private resolveExactSecret(refs: string[], ref: string): string {
-    if (!refs.includes(ref)) {
+  private async resolveExactSecret(
+    refs: Record<string, string>,
+    key: string,
+  ): Promise<string> {
+    const actualRef = refs[key];
+    if (!actualRef) {
       throw new ApplicationError(
         'INVALID_REQUEST',
-        `provider connection does not reference ${ref}`,
+        `provider connection does not reference ${key}`,
       );
     }
-    const value = this.secrets.getOptionalSecret({ env: ref });
+    const value = await getOptionalRuntimeSecret(this.secrets, {
+      ref: normalizeRuntimeSecretRefString(actualRef),
+    });
     if (value) return value;
     throw new ApplicationError(
       'INVALID_REQUEST',
-      `provider connection references ${ref}, but it is not configured`,
+      `provider connection references ${key}, but it is not configured`,
     );
   }
 }

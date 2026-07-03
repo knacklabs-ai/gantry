@@ -20,7 +20,6 @@ import {
 import { resolveWorkspaceFolderPath } from '../platform/workspace-folder.js';
 
 const SANDBOX_RUNTIME_GO_DNS = 'netdns=go';
-
 // Host env projection for the DeepAgents shell tool. Returns the enable flag the
 // runner reads when (and only when) the run is a DeepAgents run that requests
 // shell (RunCommand) authority AND is confined by an enforcing sandbox — derived
@@ -77,6 +76,7 @@ export function buildBaseRunnerEnv(input: {
   parentTaskId?: string;
   runLeaseToken?: string;
   runLeaseFencingVersion?: number;
+  liveStopActionToken?: string;
   browserIpcAuthToken?: string;
   conversationHistoryIpcAuthToken: string;
   memoryIpcAuthToken: string;
@@ -139,6 +139,9 @@ export function buildBaseRunnerEnv(input: {
           ),
         }
       : {}),
+    ...(input.liveStopActionToken
+      ? { GANTRY_LIVE_STOP_ACTION_TOKEN: input.liveStopActionToken }
+      : {}),
     ...(input.browserIpcAuthToken
       ? { GANTRY_BROWSER_IPC_AUTH_TOKEN: input.browserIpcAuthToken }
       : {}),
@@ -167,7 +170,7 @@ export function buildBaseRunnerEnv(input: {
   };
 }
 type WarnLogger = (metadata: Record<string, unknown>, message: string) => void;
-type SandboxRuntimeGatewayOptions = {
+type SandboxRuntimeNetworkProjection = {
   allowedNetworkHosts?: string[];
   privateNetworkHostMappings?: readonly EgressGatewayPrivateHostMapping[];
 };
@@ -295,16 +298,16 @@ export function sandboxRuntimeToolNetworkEnv(
   };
 }
 
-export function buildSandboxRuntimeGatewayOptions(
+export function buildSandboxRuntimeNetworkProjection(
   providerId: string,
   allowedNetworkHosts: readonly string[],
   modelCredentialEnv: Record<string, string> | undefined,
 ): {
   modelCredentialEnv: Record<string, string> | undefined;
-  gatewayOptions: SandboxRuntimeGatewayOptions;
+  networkProjection: SandboxRuntimeNetworkProjection;
 } {
   if (providerId !== 'sandbox_runtime') {
-    return { modelCredentialEnv, gatewayOptions: {} };
+    return { modelCredentialEnv, networkProjection: {} };
   }
   const projection = projectSandboxRuntimeModelGatewayEnv(modelCredentialEnv);
   const mergedHosts =
@@ -318,7 +321,7 @@ export function buildSandboxRuntimeGatewayOptions(
       : [...allowedNetworkHosts];
   return {
     modelCredentialEnv: projection.modelCredentialEnv,
-    gatewayOptions: {
+    networkProjection: {
       allowedNetworkHosts: mergedHosts,
       ...(projection.privateNetworkHostMappings.length > 0
         ? { privateNetworkHostMappings: projection.privateNetworkHostMappings }

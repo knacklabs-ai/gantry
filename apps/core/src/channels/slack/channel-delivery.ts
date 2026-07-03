@@ -6,6 +6,7 @@ import {
   PermissionApprovalDecision,
   PermissionApprovalRequest,
   ProgressUpdateOptions,
+  RichInteractionRequest,
   StreamingChunkOptions,
   UserQuestionRequest,
   UserQuestionResponse,
@@ -18,11 +19,6 @@ import {
   formatOutboundForChannel,
   stripInternalTagsPreserveWhitespace,
 } from '../../messaging/router.js';
-import {
-  buildPermissionPromptParts,
-  permissionButtonLabel,
-  permissionDecisionOptions,
-} from '../permission-interaction.js';
 import {
   disconnectSlackDelivery,
   loadPersistedSlackProgress,
@@ -48,9 +44,13 @@ import { slackThreadTsFromThreadId } from './thread-ts.js';
 import { renderSlackAgentTodo } from './agent-todo-delivery.js';
 import { connectSlackApp } from './channel-connect.js';
 import { requestSlackPermissionApproval } from './permission-approval-delivery.js';
+import { renderSlackRichInteraction } from './rich-interaction.js';
+import { addSlackReaction } from './reactions.js';
 const SLACK_STREAM_SNIPPET_FALLBACK_MIN_PARTS = 4;
+
 export abstract class SlackChannelDelivery extends SlackChannelInteractions {
   private interactionCallbacksEnabled = true;
+  private readonly reactionKeys = new Set<string>();
   protected async sendSnippetFallback(
     _input: SlackSnippetFallbackInput,
   ): Promise<SlackSnippetFallbackResult | null> {
@@ -99,18 +99,59 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
     });
   }
 
-  async renderAgentTodo(jid: string, render: AgentTodoRender): Promise<void> {
+  async addReaction(
+    jid: string,
+    messageRef: string,
+    emoji: string,
+  ): Promise<void> {
     if (!this.app) return;
     const parsed = this.parseJid(jid);
     if (!parsed) return;
-    const todoKey = this.streamKey(jid, render.threadId ?? undefined);
-    await renderSlackAgentTodo({
+    await addSlackReaction({
+      app: this.app,
+      jid,
+      channelId: parsed.channelId,
+      messageRef,
+      emoji,
+      reactionKeys: this.reactionKeys,
+    });
+  }
+
+  async renderAgentTodo(
+    jid: string,
+    render: AgentTodoRender,
+  ): Promise<boolean> {
+    if (!this.app) return false;
+    const parsed = this.parseJid(jid);
+    if (!parsed) return false;
+    const todoKey = this.streamKey(
+      `${jid}:${render.cardKind ?? 'todo'}`,
+      render.threadId ?? undefined,
+    );
+    return renderSlackAgentTodo({
       app: this.app,
       jid,
       channelId: parsed.channelId,
       render,
       todoKey,
       pendingTodos: this.pendingTodos,
+    });
+  }
+
+  async renderRichInteraction(
+    jid: string,
+    render: RichInteractionRequest,
+  ): Promise<boolean> {
+    if (!this.app) return false;
+    const parsed = this.parseJid(jid);
+    if (!parsed) return false;
+    return renderSlackRichInteraction({
+      app: this.app,
+      jid,
+      channelId: parsed.channelId,
+      render,
+      pendingRichForms: this.pendingRichForms,
+      sendFallback: (text, options) => this.sendMessage(jid, text, options),
     });
   }
 
@@ -468,18 +509,31 @@ export abstract class SlackChannelDelivery extends SlackChannelInteractions {
     }
 
     const timeoutMs = PERMISSION_APPROVAL_TIMEOUT_MS;
-    const promptText = this.formatPermissionPromptText(request, timeoutMs);
     return requestSlackPermissionApproval({
       app: this.app,
       jid,
       channelId: parsed.channelId,
       request,
       timeoutMs,
-      promptText,
+      approverUserIds: this.slackControlApproverIds(parsed.channelId),
       pendingPermissionPrompts: this.pendingPermissionPrompts,
       resolvePermissionPrompt: (requestId, decision) =>
         this.resolvePermissionPrompt(requestId, decision),
     });
+  }
+
+  private slackControlApproverIds(channelId: string): string[] {
+    try {
+      return [
+        ...new Set(
+          Object.values(this.opts.runtimeSettings?.().conversations || {})
+            .filter((conversation) => conversation.externalId === channelId)
+            .flatMap((conversation) => conversation.controlApprovers),
+        ),
+      ];
+    } catch {
+      return [];
+    }
   }
 
   private loadPersistedProgress(): void {

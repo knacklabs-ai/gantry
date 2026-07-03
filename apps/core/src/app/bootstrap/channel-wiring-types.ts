@@ -2,10 +2,12 @@ import type {
   AdaptiveCardPayload,
   AdaptiveCardSendOptions,
   MessageDeliveryResult,
+  MessageActionCallbackInput,
   MessageSendOptions,
   PermissionApprovalDecision,
   PermissionApprovalRequest,
   ProgressUpdateOptions,
+  RichInteractionRequest,
   StreamingChunkOptions,
   UserQuestionRequest,
   UserQuestionResponse,
@@ -28,7 +30,14 @@ import type { logger } from '../../infrastructure/logging/logger.js';
 import type { RuntimeSecretProvider } from '../../domain/ports/runtime-secret-provider.js';
 import type { AppId } from '../../domain/app/app.js';
 import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
-import type { AgentTodoRender } from '../../domain/ports/task-lifecycle.js';
+import type {
+  AgentTodoCardStatus,
+  AgentTodoRender,
+} from '../../domain/ports/task-lifecycle.js';
+import type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
+} from '../../channels/channel-provider.js';
 
 export type ChannelWiringRepository = RuntimeChatMetadataRepository &
   RuntimeMessageRepository;
@@ -158,6 +167,10 @@ export interface ChannelWiring {
   setDurableOutboundAttemptFactory: (
     factory: DurableOutboundAttemptFactory | undefined,
   ) => void;
+  setRuntimeSecrets: (provider: RuntimeSecretProvider) => void;
+  setMessageActionHandler: (
+    handler: ((input: MessageActionCallbackInput) => Promise<void>) | undefined,
+  ) => void;
   sendStreamingChunk: (
     jid: string,
     rawText: string,
@@ -170,6 +183,11 @@ export interface ChannelWiring {
     text: string,
     options?: ProgressUpdateOptions,
   ) => Promise<void>;
+  addReaction: (
+    jid: string,
+    messageRef: string,
+    emoji: string,
+  ) => Promise<void>;
   syncGroups: (force: boolean) => Promise<void>;
   requestPermissionApproval: (
     request: PermissionApprovalRequest,
@@ -177,7 +195,22 @@ export interface ChannelWiring {
   requestUserAnswer: (
     request: UserQuestionRequest,
   ) => Promise<UserQuestionResponse>;
-  renderAgentTodo: (jid: string, render: AgentTodoRender) => Promise<void>;
+  renderAgentTodo: (jid: string, render: AgentTodoRender) => Promise<boolean>;
+  renderRichInteraction: (
+    jid: string,
+    request: RichInteractionRequest,
+  ) => Promise<boolean>;
+  hydrateConversationContext?: (
+    request: ConversationContextHydrationRequest,
+  ) => Promise<ConversationContextHydrationResult>;
+  finalizeAgentTodo: (
+    jid: string,
+    input: {
+      threadId?: string | null;
+      cardKind?: AgentTodoRender['cardKind'];
+      status: AgentTodoCardStatus;
+    },
+  ) => Promise<boolean>;
   isControlApproverAllowed: (input: {
     conversationJid: string;
     userId: string;
@@ -186,3 +219,8 @@ export interface ChannelWiring {
   }) => Promise<boolean>;
   disconnectChannels: () => Promise<void>;
 }
+
+export type {
+  ConversationContextHydrationRequest,
+  ConversationContextHydrationResult,
+};

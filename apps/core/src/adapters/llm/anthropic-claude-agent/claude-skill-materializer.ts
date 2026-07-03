@@ -5,7 +5,7 @@ import type { AgentId } from '../../../domain/agent/agent.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { SkillArtifactStore } from '../../../domain/ports/skill-artifact-store.js';
 import type { SkillCatalogRepository } from '../../../domain/ports/repositories.js';
-import { isSkillMaterializableLocally } from '../../../domain/skills/skills.js';
+import { resolveSelectedSkillProjection } from '../../../application/skills/selected-skill-projection.js';
 import {
   sanitizeSkillDirectoryName,
   type SkillActionPermission,
@@ -15,7 +15,7 @@ import {
   readSkillFrontmatterName,
   readSkillMdAssetText,
   writeSkillAssets,
-} from '../skill-artifact-helpers.js';
+} from '../../../shared/skill-artifact-helpers.js';
 import { isClaudeNativeReservedSkillName } from './native-sdk-skills.js';
 
 export interface ClaudeSkillSourceItem {
@@ -81,30 +81,24 @@ export class ArtifactClaudeSkillSource implements SkillSource {
   async listSkills(input?: {
     enabledSkillIds?: string[];
   }): Promise<ClaudeSkillSourceItem[]> {
-    const allowed = input?.enabledSkillIds
-      ? new Set(input.enabledSkillIds)
-      : undefined;
-    const enabled = await this.skills.listEnabledSkillsForAgent(this.context);
-    const items: ClaudeSkillSourceItem[] = [];
-    for (const skill of enabled.filter(isSkillMaterializableLocally)) {
-      if (allowed && !allowed.has(skill.id)) {
-        continue;
-      }
-      if (!skill.storage) continue;
-      const bundle = await this.artifacts.getSkillArtifact(
-        skill.storage.storageRef,
-      );
-      items.push({
-        id: skill.id,
-        name: skill.name,
-        sourceType: 'artifact',
-        assets: bundle.assets,
-        contentHash: skill.storage.contentHash,
-        actionPermissions: skill.actionPermissions ?? [],
-        enabled: true,
-      });
-    }
-    return items;
+    const selectedSkillIds = uniqueSkillCatalogIds(
+      input?.enabledSkillIds ?? [],
+    );
+    const projection = await resolveSelectedSkillProjection({
+      selectedSkillIds,
+      skillRepository: this.skills,
+      skillArtifactStore: this.artifacts,
+      skillContext: this.context,
+    });
+    return (projection?.skills ?? []).map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      sourceType: 'artifact',
+      assets: skill.assets,
+      contentHash: skill.contentHash,
+      actionPermissions: skill.actionPermissions,
+      enabled: true,
+    }));
   }
 }
 
@@ -255,6 +249,16 @@ function isValidAssetSkill(
     }
     throw error;
   }
+}
+
+function uniqueSkillCatalogIds(values: readonly string[]): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => String(value))
+        .filter((value) => value.startsWith('skill:')),
+    ),
+  ];
 }
 
 function copyDirRecursive(src: string, dst: string): void {

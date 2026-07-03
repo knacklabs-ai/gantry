@@ -4,6 +4,7 @@ import {
   AsyncCommandTaskService,
   type AsyncCommandRunner,
 } from '@core/jobs/async-command-task-service.js';
+import { persistInspectionSnapshot } from '@core/jobs/async-command-task-helpers.js';
 import type {
   AsyncTaskCreateInput,
   AsyncTaskListFilter,
@@ -52,6 +53,7 @@ class MemoryAsyncTaskRepository implements AsyncTaskRepository {
         (task) =>
           task.appId === filter.appId &&
           (!filter.agentId || task.agentId === filter.agentId) &&
+          (!filter.kind || task.kind === filter.kind) &&
           (filter.parentTaskId === undefined ||
             task.privateCorrelationJson.parentTaskId === filter.parentTaskId) &&
           (!filter.statuses || filter.statuses.includes(task.status)),
@@ -273,6 +275,106 @@ describe('AsyncCommandTaskService', () => {
       message:
         'Async command capacity is full for this agent. Wait for an existing task to finish or cancel one.',
     });
+  });
+
+  it('does not count non-command tasks against async command admission capacity', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const now = new Date().toISOString();
+    await repository.createTask({
+      id: 'task-mcp',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'mcp_tool_call',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: {},
+      privateCorrelationJson: {},
+      leaseToken: 'lease-mcp',
+      fencingVersion: 1,
+      now,
+    });
+    await repository.createTask({
+      id: 'task-delegated',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'delegated_agent',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: {},
+      privateCorrelationJson: {},
+      leaseToken: 'lease-delegated',
+      fencingVersion: 1,
+      now,
+    });
+    const runner: AsyncCommandRunner = {
+      run: async () => new Promise(() => undefined),
+    };
+    const service = new AsyncCommandTaskService(repository, runner);
+
+    await expect(service.start(baseInput())).resolves.toMatchObject({
+      ok: true,
+    });
+
+    expect(
+      [...repository.tasks.values()].filter(
+        (task) => task.kind === 'async_command',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('applies active task backpressure to delegated agents before child spawn', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({}),
+    });
+    const activeChildSpawn = vi.fn(
+      async () => new Promise<never>(() => undefined),
+    );
+
+    await expect(
+      service.startDelegatedAgent({
+        appId: 'app-1',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        objective: 'Research accounts',
+        workspaceFolder: 'main_agent',
+        run: activeChildSpawn,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      service.startDelegatedAgent({
+        appId: 'app-1',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        objective: 'Draft accounts',
+        workspaceFolder: 'main_agent',
+        run: activeChildSpawn,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const childSpawn = vi.fn(async () => ({ outputSummary: 'done' }));
+
+    await expect(
+      service.startDelegatedAgent({
+        appId: 'app-1',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        objective: 'Research accounts',
+        workspaceFolder: 'main_agent',
+        run: childSpawn,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      message:
+        'Async command capacity is full for this agent. Wait for an existing task to finish or cancel one.',
+    });
+
+    expect(childSpawn).not.toHaveBeenCalled();
+    expect([...repository.tasks.values()].map((task) => task.kind)).toEqual([
+      'delegated_agent',
+      'delegated_agent',
+    ]);
   });
 
   it('does not claim cancellation when this process has no active handle', async () => {
@@ -979,6 +1081,73 @@ describe('AsyncCommandTaskService', () => {
     expect(killed.sort()).toEqual([56789, 56790]);
   });
 
+  it('keeps stale MCP recovery retry guidance side-effect safe', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const stale = new Date(Date.now() - 120_000).toISOString();
+    await repository.createTask({
+      id: 'task-mcp',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'mcp_tool_call',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: { mcpToolRule: 'mcp__crm__create_deal' },
+      privateCorrelationJson: {},
+      leaseToken: 'lease-mcp',
+      fencingVersion: 1,
+      now: stale,
+    });
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({}),
+    });
+
+    await expect(
+      service.recoverStaleTasks({ appId: 'app-1', staleAfterMs: 1 }),
+    ).resolves.toBe(1);
+    expect(repository.tasks.get('task-mcp')?.receiptJson).toMatchObject({
+      used: 'mcp__crm__create_deal',
+      needsAttention:
+        'check the remote MCP system before retrying; work may have already run',
+    });
+  });
+
+  it('cancels recovered running MCP tasks with a fenced terminal state', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    await repository.createTask({
+      id: 'task-mcp',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'mcp_tool_call',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: { mcpToolRule: 'mcp__crm__create_deal' },
+      privateCorrelationJson: {},
+      leaseToken: 'lease-mcp',
+      fencingVersion: 1,
+      now: new Date().toISOString(),
+    });
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({}),
+    });
+
+    await expect(service.cancel('task-mcp')).resolves.toEqual({
+      ok: true,
+      message:
+        'Task was cancelled in Gantry. Remote MCP work may have already run; late results will be ignored.',
+    });
+    expect(repository.tasks.get('task-mcp')?.status).toBe('cancelled');
+    expect(
+      repository.tasks.get('task-mcp')?.privateCorrelationJson,
+    ).toMatchObject({
+      progress: {
+        phase: 'cancelled',
+        lastProgress: 'MCP tool cancelled.',
+      },
+    });
+  });
+
   it('starts delegated agent tasks and records steering messages', async () => {
     const repository = new MemoryAsyncTaskRepository();
     let release!: () => void;
@@ -1111,6 +1280,229 @@ describe('AsyncCommandTaskService', () => {
       'cancelled',
     );
     expect(killed).toEqual([45691]);
+  });
+
+  it('persists redacted bounded output snapshots while command is running', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    let releaseRunner!: () => void;
+    let snapshotPersisted!: () => void;
+    const runnerReleased = new Promise<void>((resolve) => {
+      releaseRunner = resolve;
+    });
+    const snapshotWritten = new Promise<void>((resolve) => {
+      snapshotPersisted = resolve;
+    });
+    const secret = `sk-ant-${'a'.repeat(24)}`;
+    const runner: AsyncCommandRunner = {
+      run: async ({ onProcessStarted, onOutputSnapshot }) => {
+        await onProcessStarted?.({
+          pid: 45693,
+          processGroupId: 45693,
+          detached: true,
+          platform: process.platform,
+          ownerPid: process.pid,
+          startedAt: new Date().toISOString(),
+        });
+        await Promise.resolve(
+          onOutputSnapshot?.({
+            stdoutTail: `${'x'.repeat(1_200)} ${secret}`,
+            stderrTail: `failed with ${secret}`,
+          }),
+        );
+        snapshotPersisted();
+        await runnerReleased;
+        return { outputSummary: 'done' };
+      },
+    };
+    const service = new AsyncCommandTaskService(repository, runner);
+
+    const started = await service.start(baseInput());
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await waitForStatus(repository, started.task.id, 'running');
+    await snapshotWritten;
+
+    const dto = await service.get(started.task.id);
+
+    expect(dto).toMatchObject({
+      status: 'running',
+      stdoutTail: expect.stringContaining('[REDACTED_SECRET]'),
+      stderrTail: expect.stringContaining('[REDACTED_SECRET]'),
+    });
+    expect(dto?.stdoutTail?.length).toBeLessThanOrEqual(1_003);
+    expect(JSON.stringify(dto)).not.toContain(secret);
+    releaseRunner();
+    await waitForStatus(repository, started.task.id, 'completed');
+  });
+
+  it('preserves early output snapshot when process handle is persisted later', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    let allowProcessStart!: () => void;
+    const processStartAllowed = new Promise<void>((resolve) => {
+      allowProcessStart = resolve;
+    });
+    const runner: AsyncCommandRunner = {
+      run: async ({ onProcessStarted, onOutputSnapshot }) => {
+        const processStarted = Promise.resolve(
+          onProcessStarted?.({
+            pid: 45694,
+            processGroupId: 45694,
+            detached: true,
+            platform: process.platform,
+            ownerPid: process.pid,
+            startedAt: new Date().toISOString(),
+          }),
+        );
+        await Promise.resolve(
+          onOutputSnapshot?.({
+            stdoutTail: 'early stdout',
+            stderrTail: 'early stderr',
+          }),
+        );
+        allowProcessStart();
+        await processStarted;
+        return { outputSummary: 'done' };
+      },
+    };
+    const service = new AsyncCommandTaskService(repository, runner);
+    const originalGetTask = repository.getTask.bind(repository);
+    let delayProcessMerge = true;
+    repository.getTask = async (taskId) => {
+      if (delayProcessMerge) {
+        delayProcessMerge = false;
+        await processStartAllowed;
+      }
+      return originalGetTask(taskId);
+    };
+
+    const started = await service.start(baseInput());
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForStatus(repository, started.task.id, 'completed');
+    const correlation =
+      repository.tasks.get(started.task.id)?.privateCorrelationJson ?? {};
+    expect(correlation.progress).toMatchObject({
+      stdoutTail: 'early stdout',
+      stderrTail: 'early stderr',
+    });
+    expect(correlation.process).toMatchObject({ pid: 45694 });
+  });
+
+  it('drops inspection snapshots from stale task owners', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const task = await repository.createTask({
+      id: 'task-stale-snapshot',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'async_command',
+      status: 'running',
+      admissionClass: 'agent',
+      authoritySnapshotJson: {},
+      privateCorrelationJson: {},
+      leaseToken: 'old-token',
+      fencingVersion: 1,
+      now: new Date().toISOString(),
+    });
+    repository.tasks.set(task.id, {
+      ...task,
+      leaseToken: 'new-token',
+      fencingVersion: 2,
+    });
+
+    await persistInspectionSnapshot({
+      repository,
+      task,
+      snapshot: { stdoutTail: 'stale output' },
+    });
+
+    expect(
+      repository.tasks.get(task.id)?.privateCorrelationJson.progress,
+    ).toBeUndefined();
+  });
+
+  it('retries inspection snapshot writes that race process handle persistence', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const task = await repository.createTask({
+      id: 'task-snapshot-process-race',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'async_command',
+      status: 'running',
+      admissionClass: 'agent',
+      authoritySnapshotJson: {},
+      privateCorrelationJson: {},
+      leaseToken: 'token',
+      fencingVersion: 1,
+      now: new Date().toISOString(),
+    });
+    const originalTransition = repository.transitionTask.bind(repository);
+    let raced = false;
+    repository.transitionTask = async (input) => {
+      if (!raced && input.privateCorrelationJson?.progress) {
+        raced = true;
+        const current = repository.tasks.get(task.id);
+        if (current) {
+          repository.tasks.set(task.id, {
+            ...current,
+            privateCorrelationJson: {
+              ...current.privateCorrelationJson,
+              process: { pid: 45696 },
+            },
+          });
+        }
+      }
+      return originalTransition(input);
+    };
+
+    await persistInspectionSnapshot({
+      repository,
+      task,
+      snapshot: { stdoutTail: 'latest output' },
+    });
+
+    expect(repository.tasks.get(task.id)?.privateCorrelationJson).toMatchObject(
+      {
+        process: { pid: 45696 },
+        progress: { stdoutTail: 'latest output' },
+      },
+    );
+  });
+
+  it('drops process handles from stale task owners', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const runner: AsyncCommandRunner = {
+      run: async ({ onProcessStarted }) => {
+        await onProcessStarted?.({
+          pid: 45695,
+          processGroupId: 45695,
+          detached: true,
+          platform: process.platform,
+          ownerPid: process.pid,
+          startedAt: new Date().toISOString(),
+        });
+        return { outputSummary: 'done' };
+      },
+    };
+    const service = new AsyncCommandTaskService(repository, runner);
+    const originalGetTask = repository.getTask.bind(repository);
+    repository.getTask = async (taskId) => {
+      const latest = await originalGetTask(taskId);
+      return latest
+        ? { ...latest, leaseToken: 'new-token', fencingVersion: 2 }
+        : latest;
+    };
+
+    const started = await service.start(baseInput());
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForStatus(repository, started.task.id, 'failed');
+    expect(
+      repository.tasks.get(started.task.id)?.privateCorrelationJson.process,
+    ).toBeUndefined();
   });
 
   it('rejects steering for async command and terminal tasks', async () => {

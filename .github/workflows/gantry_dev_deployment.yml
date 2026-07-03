@@ -5,16 +5,14 @@ on:
   push:
     branches:
       - develop
-    paths-ignore:
-      - '.github/**'
 
 env:
   AWS_REGION: ap-south-1
-  ECS_CLUSTER: caw-aws-aps1-prod-ecs-ats-cluster
-  ECR_REPOSITORY: caw-aws-aps1-prod-ecr-ats-gantry-reagent
-  ECS_SERVICE: caw-aws-aps1-prod-ecs-ats-gantry-reagent-service
+  ECS_CLUSTER: caw-aws-aps1-dev-ecs-ats-cluster
+  ECR_REPOSITORY: caw-aws-aps1-dev-ecr-ats-gantry-reagent
+  ECS_SERVICE: caw-aws-aps1-dev-ecs-ats-gantry-reagent-service
   TASK_NAME: caw-aws-aps1-dev-task_definition-ats-gantry-reagent
-  CONTAINER_NAME: caw-aws-aps1-prod-task_definition-ats-gantry-reagent-container
+  CONTAINER_NAME: caw-aws-aps1-dev-task_definition-ats-gantry-reagent-container
 
 
 jobs:
@@ -45,12 +43,27 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build \
-          -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Agent.Gantry/ops/docker/Dockerfile .
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ops/docker/Dockerfile .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Download task definition
         run: aws ecs describe-task-definition --task-definition ${{ env.TASK_NAME }} --query taskDefinition > task-definition.json
+
+      - name: Normalize task definition for sandbox runtime
+        run: |
+          jq --arg container "${{ env.CONTAINER_NAME }}" '
+            .containerDefinitions |= map(
+              if .name == $container then
+                del(.dockerSecurityOptions)
+                | .privileged = true
+                | .linuxParameters = ((.linuxParameters // {}) + { initProcessEnabled: true })
+              else
+                .
+              end
+            )
+          ' task-definition.json > task-definition.normalized.json
+          mv task-definition.normalized.json task-definition.json
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
@@ -59,6 +72,14 @@ jobs:
             task-definition: task-definition.json
             container-name: ${{ env.CONTAINER_NAME }}
             image: ${{ steps.build-image.outputs.image }}
+
+      - name: Verify sandbox runtime task options
+        run: |
+          jq -e --arg container "${{ env.CONTAINER_NAME }}" '
+            .containerDefinitions[]
+            | select(.name == $container)
+            | .privileged == true
+          ' "${{ steps.task-def.outputs.task-definition }}" >/dev/null
 
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2

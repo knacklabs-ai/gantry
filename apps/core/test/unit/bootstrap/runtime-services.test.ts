@@ -4,7 +4,7 @@ import {
   getOldestWaitingLiveAdmissionSeconds,
   shutdownLiveTurnAuthority,
   startRuntimeServices,
-  stopMessagePollingLoop,
+  stopLiveAdmissionLoop,
   stopLiveTurnRecoveryLoop,
 } from '@core/app/bootstrap/runtime-services.js';
 import { RuntimeApp } from '@core/app/bootstrap/runtime-app.js';
@@ -57,7 +57,10 @@ function makeApp(): RuntimeApp {
     setConversationRoutesForTest: vi.fn(),
     ensureCredentialBindingsForConversationRoutes: vi.fn(),
     clearSessionForChatJid: vi.fn(),
-    processGroupMessages: vi.fn(async () => true),
+    processGroupMessages: vi.fn(async (_queueJid, options) => {
+      options?.onRunResult?.('success');
+      return true;
+    }),
     getConversationRoutes: vi.fn(() => ({
       'tg:primary': {
         name: 'Main',
@@ -66,8 +69,6 @@ function makeApp(): RuntimeApp {
         added_at: 't',
       },
     })),
-    getLastTimestamp: vi.fn(() => ''),
-    setLastTimestamp: vi.fn(),
     setAgentCursor: vi.fn(),
   };
 }
@@ -116,14 +117,19 @@ function makeChannelWiring(): ChannelWiring {
     createRecoveryDispatchPermit,
     setRetryTailRecoveryEnqueue: vi.fn(),
     setDurableOutboundAttemptFactory: vi.fn(),
+    setMessageActionHandler: vi.fn(),
     sendStreamingChunk: vi.fn(async () => {}),
     resetStreaming: vi.fn(),
     setTyping: vi.fn(async () => {}),
     sendProgressUpdate: vi.fn(async () => {}),
+    addReaction: vi.fn(async () => {}),
     syncGroups: vi.fn(async () => {}),
     requestPermissionApproval: vi.fn(async () => ({ approved: true })),
     requestUserAnswer: vi.fn(async () => ({ requestId: 'q', answers: {} })),
+    renderAgentTodo: vi.fn(async () => true),
+    finalizeAgentTodo: vi.fn(async () => true),
     disconnectChannels: vi.fn(async () => {}),
+    isControlApproverAllowed: vi.fn(async () => true),
   };
 }
 
@@ -160,10 +166,6 @@ describe('startRuntimeServices', () => {
         recoverPendingMessages: vi.fn(() => {
           order.push('recoverPendingMessages');
         }) as any,
-        startMessagePollingLoop: vi.fn(() => {
-          order.push('startMessagePollingLoop');
-          return { stop: vi.fn(), done: new Promise<void>(() => {}) };
-        }) as any,
         logger: {
           info: vi.fn(() => {
             order.push('runtime-ready-log');
@@ -177,32 +179,24 @@ describe('startRuntimeServices', () => {
 
     await new Promise((resolve) => setImmediate(resolve));
 
-    // WP2: the polling loop starts on every live worker (always-on), then the
-    // recovery coordinator (single-process embedding, no lease) logs and runs
-    // startup pending-message recovery.
+    // Durable live admission is required. Without the repository dependencies,
+    // startup does not start route-wide message scans.
     expect(order).toEqual([
       'startIpcWatcher',
       'startSchedulerLoop',
       'writeGroupsSnapshot',
       'runtime-ready-log',
-      'startMessagePollingLoop',
-      'runtime-ready-log',
-      'recoverPendingMessages',
     ]);
 
     expect((app.queue.setProcessMessagesFn as any).mock.calls).toHaveLength(1);
   });
 
-  it('skips live message polling when live turns are disabled', async () => {
+  it('skips live admission when live turns are disabled', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
     const startSchedulerLoop = vi.fn();
     const startIpcWatcher = vi.fn();
     const recoverPendingMessages = vi.fn();
-    const startMessagePollingLoop = vi.fn(() => ({
-      stop: vi.fn(),
-      done: new Promise<void>(() => {}),
-    }));
 
     await startRuntimeServices(
       {
@@ -217,7 +211,6 @@ describe('startRuntimeServices', () => {
         opsRepository: {} as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: recoverPendingMessages as any,
-        startMessagePollingLoop: startMessagePollingLoop as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -230,7 +223,6 @@ describe('startRuntimeServices', () => {
     expect(startSchedulerLoop).toHaveBeenCalledOnce();
     expect(startIpcWatcher).toHaveBeenCalledOnce();
     expect(recoverPendingMessages).not.toHaveBeenCalled();
-    expect(startMessagePollingLoop).not.toHaveBeenCalled();
     expect(app.queue.setProcessMessagesFn).toHaveBeenCalledOnce();
   });
 
@@ -272,10 +264,6 @@ describe('startRuntimeServices', () => {
             }) as any,
         ),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: Promise.resolve(),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -291,7 +279,7 @@ describe('startRuntimeServices', () => {
       ),
     );
 
-    await stopMessagePollingLoop(0);
+    await stopLiveAdmissionLoop(0);
     stopLiveTurnRecoveryLoop();
     await shutdownLiveTurnAuthority();
     stopWorkerHeartbeat();
@@ -315,10 +303,6 @@ describe('startRuntimeServices', () => {
         opsRepository: {} as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -345,10 +329,6 @@ describe('startRuntimeServices', () => {
         opsRepository: {} as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -357,9 +337,15 @@ describe('startRuntimeServices', () => {
     expect(startSchedulerLoop).toHaveBeenCalledOnce();
   });
 
-  it('runs polling on every live worker and gates only the recovery coordinator on the lease', async () => {
+  it('runs durable admission on every live worker and gates only the recovery coordinator on the lease', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
     let transitions:
       | {
           onAcquired: (lease: { release: () => Promise<void> }) => void;
@@ -373,53 +359,49 @@ describe('startRuntimeServices', () => {
     };
     const startSchedulerLoop = vi.fn();
     const recoverPendingMessages = vi.fn();
-    const pollingStops: Array<ReturnType<typeof vi.fn>> = [];
-    const startMessagePollingLoop = vi.fn(() => {
-      const stop = vi.fn();
-      pollingStops.push(stop);
-      return { stop, done: new Promise<void>(() => {}) };
-    });
 
-    await startRuntimeServices(
-      {
-        app,
-        channelWiring,
-        recoveryCoordinator: recoveryCoordinator as any,
-      },
-      {
-        startSchedulerLoop: startSchedulerLoop as any,
-        startIpcWatcher: vi.fn() as any,
-        writeGroupsSnapshot: vi.fn() as any,
-        opsRepository: {} as any,
-        getToolRepository: vi.fn(() => ({}) as any),
-        recoverPendingMessages: recoverPendingMessages as any,
-        startMessagePollingLoop: startMessagePollingLoop as any,
-        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
-        exit: vi.fn() as any,
-      },
-    );
+    try {
+      await startRuntimeServices(
+        {
+          app,
+          channelWiring,
+          recoveryCoordinator: recoveryCoordinator as any,
+        },
+        {
+          startSchedulerLoop: startSchedulerLoop as any,
+          startIpcWatcher: vi.fn() as any,
+          writeGroupsSnapshot: vi.fn() as any,
+          opsRepository: {} as any,
+          getToolRepository: vi.fn(() => ({}) as any),
+          getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+          getLiveTurnRepository: vi.fn(() => liveTurns as any),
+          recoverPendingMessages: recoverPendingMessages as any,
+          logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+          exit: vi.fn() as any,
+        },
+      );
 
-    // WP2: every live worker polls. Polling starts at boot regardless of the
-    // coordinator lease; only recovery is gated.
-    expect(startSchedulerLoop).toHaveBeenCalledOnce();
-    expect(recoveryCoordinator.onTransition).toHaveBeenCalledOnce();
-    expect(startMessagePollingLoop).toHaveBeenCalledOnce();
-    expect(recoverPendingMessages).not.toHaveBeenCalled();
+      expect(startSchedulerLoop).toHaveBeenCalledOnce();
+      expect(recoveryCoordinator.onTransition).toHaveBeenCalledOnce();
+      expect(recoverPendingMessages).not.toHaveBeenCalled();
 
-    // Acquiring the coordinator lease starts recovery; it does NOT restart
-    // polling (already running).
-    transitions?.onAcquired({ release: vi.fn(async () => {}) });
-    expect(recoverPendingMessages).toHaveBeenCalledOnce();
-    expect(startMessagePollingLoop).toHaveBeenCalledOnce();
+      // Acquiring the coordinator lease starts recovery; it does NOT restart
+      // admission (already running).
+      transitions?.onAcquired({ release: vi.fn(async () => {}) });
+      expect(recoverPendingMessages).toHaveBeenCalledOnce();
 
-    // Losing the coordinator lease stops recovery but keeps polling running.
-    transitions?.onLost(new Error('lease connection ended'));
-    expect(pollingStops[0]).not.toHaveBeenCalled();
+      // Losing the coordinator lease stops recovery but keeps admission running.
+      transitions?.onLost(new Error('lease connection ended'));
 
-    // Re-acquisition re-runs recovery; polling is still the one boot loop.
-    transitions?.onAcquired({ release: vi.fn(async () => {}) });
-    expect(recoverPendingMessages).toHaveBeenCalledTimes(2);
-    expect(startMessagePollingLoop).toHaveBeenCalledOnce();
+      // Re-acquisition re-runs recovery; admission is still the one boot loop.
+      transitions?.onAcquired({ release: vi.fn(async () => {}) });
+      expect(recoverPendingMessages).toHaveBeenCalledTimes(2);
+    } finally {
+      await stopLiveAdmissionLoop(0);
+      stopLiveTurnRecoveryLoop();
+      await shutdownLiveTurnAuthority();
+      stopWorkerHeartbeat();
+    }
   });
 
   it('does not start the waiting-status monitor in workstation mode', async () => {
@@ -456,10 +438,6 @@ describe('startRuntimeServices', () => {
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         getDeploymentMode: vi.fn(() => 'workstation' as const),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -470,6 +448,7 @@ describe('startRuntimeServices', () => {
       expect(getOldestWaitingLiveAdmissionSeconds()).toBe(0);
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
       vi.useRealTimers();
     }
@@ -513,10 +492,6 @@ describe('startRuntimeServices', () => {
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         getDeploymentMode: vi.fn(() => 'fleet' as const),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -542,6 +517,7 @@ describe('startRuntimeServices', () => {
       );
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
       vi.useRealTimers();
     }
@@ -562,7 +538,6 @@ describe('startRuntimeServices', () => {
       agentSessionId: 'session-main',
     }));
     const createSessionAgentRun = vi.fn(async () => 'agent-run:live-1');
-
     await startRuntimeServices(
       {
         app,
@@ -583,10 +558,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -600,6 +571,7 @@ describe('startRuntimeServices', () => {
       expect(createSessionAgentRun).toHaveBeenCalledOnce();
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
     }
   });
@@ -619,6 +591,11 @@ describe('startRuntimeServices', () => {
       agentSessionId: 'session-main',
     }));
     const createSessionAgentRun = vi.fn(async () => 'agent-run:live-1');
+    app.processGroupMessages = vi.fn(async (_queueJid, options: any) => {
+      await options.onLiveStopActionToken?.('stop-token-1');
+      options.onRunResult?.('success');
+      return true;
+    });
 
     await startRuntimeServices(
       {
@@ -637,10 +614,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -659,14 +632,30 @@ describe('startRuntimeServices', () => {
       expect(getAgentTurnContext).toHaveBeenCalledOnce();
       expect(createSessionAgentRun).toHaveBeenCalledOnce();
 
-      expect(app.processGroupMessages).toHaveBeenCalledWith('tg:primary', {
-        queued: true,
-        existingRunId: 'agent-run:live-1',
-        existingRunLeaseToken: 'lease-1',
-        existingRunLeaseWorkerInstanceId: expect.any(String),
-        existingRunLeaseFencingVersion: 1,
-        onRunResult: expect.any(Function),
+      expect(app.processGroupMessages).toHaveBeenCalledWith(
+        'tg:primary',
+        expect.objectContaining({
+          queued: true,
+          existingRunId: 'agent-run:live-1',
+          existingRunLeaseToken: 'lease-1',
+          existingRunLeaseWorkerInstanceId: expect.any(String),
+          existingRunLeaseFencingVersion: 1,
+          onRunResult: expect.any(Function),
+          onFirstProgress: expect.any(Function),
+          onLiveStopActionToken: expect.any(Function),
+        }),
+      );
+      const runOptions = vi.mocked(app.processGroupMessages).mock
+        .calls[0]?.[1] as any;
+      await runOptions?.onFirstProgress?.({
+        jid: 'tg:primary',
+        messageRef: 'message-1',
       });
+      expect(channelWiring.addReaction).toHaveBeenCalledWith(
+        'tg:primary',
+        'message-1',
+        'seen',
+      );
       expect([...liveTurns.turns.values()]).toEqual([
         expect.objectContaining({
           appId: 'default',
@@ -674,6 +663,7 @@ describe('startRuntimeServices', () => {
           conversationId: 'tg:primary',
           runId: 'agent-run:live-1',
           state: 'completed',
+          stopAliasJids: ['stop-token-1'],
         }),
       ]);
       expect(coordination.leases).toEqual([
@@ -688,6 +678,174 @@ describe('startRuntimeServices', () => {
       ]);
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('finalizes the live todo card as failed from host turn outcome', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    app.processGroupMessages = vi.fn(
+      async (_queueJid: string, options: any) => {
+        await channelWiring.renderAgentTodo('tg:primary', {
+          summary: 'Plan done',
+          status: 'done',
+          items: [{ id: 'step-1', title: 'Work', status: 'completed' }],
+        });
+        options.onRunResult?.('error');
+        return true;
+      },
+    );
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentSessionId: 'session-main',
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await expect(processMessages('tg:primary')).resolves.toBe(false);
+
+      expect(channelWiring.renderAgentTodo).toHaveBeenCalledWith(
+        'tg:primary',
+        expect.objectContaining({ status: 'done' }),
+      );
+      expect(channelWiring.finalizeAgentTodo).toHaveBeenCalledWith(
+        'tg:primary',
+        {
+          threadId: null,
+          status: 'failed',
+        },
+      );
+      expect([...liveTurns.turns.values()]).toEqual([
+        expect.objectContaining({
+          conversationId: 'tg:primary',
+          runId: 'agent-run:live-1',
+          state: 'failed',
+        }),
+      ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
+      await shutdownLiveTurnAuthority();
+    }
+  });
+
+  it('settles host stop outcome as handled terminal cancellation', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    const liveTurns = new FakeLiveTurns();
+    const coordination = Object.assign(new FakeCoordination(), {
+      registerWorker: vi.fn(async () => {}),
+      heartbeatWorker: vi.fn(async () => true),
+    });
+    liveTurns.coordination = coordination;
+    app.processGroupMessages = vi.fn(
+      async (_queueJid: string, options: any) => {
+        await channelWiring.renderAgentTodo('tg:primary', {
+          summary: 'Plan running',
+          status: 'running',
+          stop: { label: 'Stop', actionToken: 'stop-token-1' },
+          items: [{ id: 'step-1', title: 'Work', status: 'inProgress' }],
+        });
+        options.onRunResult?.('stopped');
+        return true;
+      },
+    );
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {
+          getAgentTurnContext: vi.fn(async () => ({
+            appId: 'default',
+            agentSessionId: 'session-main',
+          })),
+          createSessionAgentRun: vi.fn(async () => 'agent-run:live-1'),
+        } as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        getWorkerCoordinationRepository: vi.fn(() => coordination as any),
+        getLiveTurnRepository: vi.fn(() => liveTurns as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+    try {
+      const processMessages = vi.mocked(app.queue.setProcessMessagesFn as any)
+        .mock.calls[0]?.[0] as (queueJid: string) => Promise<boolean>;
+
+      await expect(processMessages('tg:primary')).resolves.toBe(true);
+
+      expect(channelWiring.finalizeAgentTodo).toHaveBeenCalledWith(
+        'tg:primary',
+        {
+          threadId: null,
+          status: 'stopped',
+        },
+      );
+      expect([...liveTurns.turns.values()]).toEqual([
+        expect.objectContaining({
+          conversationId: 'tg:primary',
+          runId: 'agent-run:live-1',
+          state: 'completed',
+        }),
+      ]);
+      expect(coordination.leases).toEqual([
+        expect.objectContaining({ status: 'completed' }),
+      ]);
+      expect(liveTurns.agentRunCompletions).toEqual([
+        {
+          runId: 'agent-run:live-1',
+          status: 'canceled',
+          errorSummary: 'Live turn stopped by request.',
+        },
+      ]);
+    } finally {
+      stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
     }
   });
@@ -735,10 +893,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -760,6 +914,7 @@ describe('startRuntimeServices', () => {
       );
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
     }
   });
@@ -819,10 +974,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -868,6 +1019,7 @@ describe('startRuntimeServices', () => {
       ]);
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
     }
   });
@@ -913,10 +1065,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -938,6 +1086,7 @@ describe('startRuntimeServices', () => {
       });
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
     }
   });
@@ -991,10 +1140,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1025,6 +1170,7 @@ describe('startRuntimeServices', () => {
       ]);
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
       vi.useRealTimers();
     }
@@ -1104,10 +1250,6 @@ describe('startRuntimeServices', () => {
         getWorkerCoordinationRepository: vi.fn(() => coordination as any),
         getLiveTurnRepository: vi.fn(() => liveTurns as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1141,6 +1283,7 @@ describe('startRuntimeServices', () => {
       );
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
       vi.useRealTimers();
     }
@@ -1215,10 +1358,6 @@ describe('startRuntimeServices', () => {
         ),
         publishRuntimeEvent,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -1243,6 +1382,7 @@ describe('startRuntimeServices', () => {
       );
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
       vi.useRealTimers();
     }
@@ -1316,10 +1456,6 @@ describe('startRuntimeServices', () => {
         ),
         publishRuntimeEvent,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
         exit: vi.fn() as any,
       },
@@ -1339,6 +1475,7 @@ describe('startRuntimeServices', () => {
       );
     } finally {
       stopLiveTurnRecoveryLoop();
+      await stopLiveAdmissionLoop(0);
       await shutdownLiveTurnAuthority();
       vi.useRealTimers();
     }
@@ -1371,10 +1508,6 @@ describe('startRuntimeServices', () => {
         getToolRepository: vi.fn(() => ({}) as any),
         getOutboundDeliveryRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         startOutboundDeliveryRecoveryLoop: vi.fn(() => {
           order.push('startOutboundDeliveryRecoveryLoop');
         }) as any,
@@ -1416,10 +1549,6 @@ describe('startRuntimeServices', () => {
         opsRepository: {} as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1444,14 +1573,9 @@ describe('startRuntimeServices', () => {
     );
   });
 
-  it('targets active control commands at the originating thread queue', async () => {
-    let capturedDeps:
-      | import('@core/runtime/message-loop.js').MessageLoopDeps
-      | undefined;
+  it('routes live stop message actions through the active thread queue', async () => {
     const app = makeApp();
     const channelWiring = makeChannelWiring();
-
-    vi.mocked(app.queue.isGroupActive as any).mockReturnValue(true);
     vi.mocked(app.queue.stopGroup as any).mockReturnValue(true);
 
     await startRuntimeServices(
@@ -1466,10 +1590,6 @@ describe('startRuntimeServices', () => {
         opsRepository: {} as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn((deps) => {
-          capturedDeps = deps;
-          return { stop: vi.fn(), done: new Promise<void>(() => {}) };
-        }) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1479,38 +1599,115 @@ describe('startRuntimeServices', () => {
       },
     );
 
-    const handled = await capturedDeps?.handleActiveControlCommand?.({
-      chatJid: 'tg:primary',
-      queueJid: 'tg:primary::thread:topic-42',
-      group: {
-        name: 'Main',
-        folder: 'main',
-        trigger: '@M',
-        added_at: 't',
-      },
-      command: { kind: 'stop', raw: '/stop' } as any,
-      message: {
-        id: '1',
-        chat_jid: 'tg:primary',
-        sender: 'user',
-        sender_name: 'User',
-        content: '/stop',
-        timestamp: '2026-01-01T00:00:00.000Z',
-        thread_id: 'topic-42',
-      },
+    const handler = vi.mocked(channelWiring.setMessageActionHandler).mock
+      .calls[0]?.[0];
+    expect(handler).toBeDefined();
+    await handler?.({
+      kind: 'live_turn_stop',
+      conversationJid: 'tg:primary',
+      threadId: 'topic-42',
+      userId: 'user',
+      actionToken: '67ad9359-9a43-4fb7-a782-c21a5ef9442a',
     });
 
-    expect(handled).toBe(true);
-    expect(app.queue.isGroupActive).toHaveBeenCalledWith(
-      'tg:primary::thread:topic-42',
-    );
     expect(app.queue.stopGroup).toHaveBeenCalledWith(
-      'tg:primary::thread:topic-42',
+      '67ad9359-9a43-4fb7-a782-c21a5ef9442a',
     );
+    expect(channelWiring.isControlApproverAllowed).toHaveBeenCalledWith({
+      conversationJid: 'tg:primary',
+      userId: 'user',
+      sourceAgentFolder: 'main',
+      decisionPolicy: 'same_channel',
+    });
     expect(channelWiring.sendMessage).toHaveBeenCalledWith(
       'tg:primary',
       'Stopping current run.',
       { durability: 'required', messageOptions: { threadId: 'topic-42' } },
+    );
+  });
+
+  it('does not fall back to the active thread queue when a live stop token is stale', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    vi.mocked(app.queue.stopGroup as any).mockReturnValue(false);
+
+    await startRuntimeServices(
+      {
+        app,
+        channelWiring,
+      },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          fatal: vi.fn(),
+        },
+        exit: vi.fn() as any,
+      },
+    );
+
+    const handler = vi.mocked(channelWiring.setMessageActionHandler).mock
+      .calls[0]?.[0];
+    await handler?.({
+      kind: 'live_turn_stop',
+      conversationJid: 'tg:primary',
+      threadId: 'topic-42',
+      userId: 'user',
+      actionToken: '67ad9359-9a43-4fb7-a782-c21a5ef9442a',
+    });
+
+    expect(app.queue.stopGroup).toHaveBeenNthCalledWith(
+      1,
+      '67ad9359-9a43-4fb7-a782-c21a5ef9442a',
+    );
+    expect(app.queue.stopGroup).toHaveBeenCalledTimes(1);
+    expect(channelWiring.sendMessage).not.toHaveBeenCalledWith(
+      'tg:primary',
+      'Stopping current run.',
+      expect.any(Object),
+    );
+  });
+
+  it('does not stop live runs from unapproved message action callbacks', async () => {
+    const app = makeApp();
+    const channelWiring = makeChannelWiring();
+    vi.mocked(channelWiring.isControlApproverAllowed).mockResolvedValue(false);
+    vi.mocked(app.queue.stopGroup as any).mockReturnValue(true);
+
+    await startRuntimeServices(
+      { app, channelWiring },
+      {
+        startSchedulerLoop: vi.fn() as any,
+        startIpcWatcher: vi.fn() as any,
+        writeGroupsSnapshot: vi.fn() as any,
+        opsRepository: {} as any,
+        getToolRepository: vi.fn(() => ({}) as any),
+        recoverPendingMessages: vi.fn() as any,
+        logger: { info: vi.fn(), warn: vi.fn(), fatal: vi.fn() },
+        exit: vi.fn() as any,
+      },
+    );
+
+    const handler = vi.mocked(channelWiring.setMessageActionHandler).mock
+      .calls[0]?.[0];
+    await handler?.({
+      kind: 'live_turn_stop',
+      conversationJid: 'tg:primary',
+      threadId: 'topic-42',
+      userId: 'user',
+    });
+
+    expect(app.queue.stopGroup).not.toHaveBeenCalled();
+    expect(channelWiring.sendMessage).not.toHaveBeenCalledWith(
+      'tg:primary',
+      'Stopping current run.',
+      expect.any(Object),
     );
   });
 
@@ -1536,10 +1733,6 @@ describe('startRuntimeServices', () => {
         opsRepository: {} as any,
         getToolRepository: vi.fn(() => ({}) as any),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1555,100 +1748,6 @@ describe('startRuntimeServices', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(writeGroupsSnapshot).toHaveBeenCalledTimes(1);
-  });
-
-  it('clears only the originating thread session for active /new commands', async () => {
-    let capturedDeps:
-      | import('@core/runtime/message-loop.js').MessageLoopDeps
-      | undefined;
-    const app = makeApp();
-    const channelWiring = makeChannelWiring();
-    const getAgentTurnContext = vi.fn(async () => ({
-      appId: 'app:default',
-      agentId: 'agent:main',
-      agentSessionId: 'agent-session:main',
-    }));
-    const collectSessionMemory = vi.fn(async () => ({ saved: 0 }));
-
-    vi.mocked(app.queue.isGroupActive as any).mockReturnValue(true);
-    vi.mocked(app.queue.stopGroup as any).mockReturnValue(true);
-
-    await startRuntimeServices(
-      {
-        app,
-        channelWiring,
-      },
-      {
-        startSchedulerLoop: vi.fn() as any,
-        startIpcWatcher: vi.fn() as any,
-        writeGroupsSnapshot: vi.fn() as any,
-        opsRepository: { getAgentTurnContext } as any,
-        collectSessionMemory: collectSessionMemory as any,
-        getToolRepository: vi.fn(() => ({}) as any),
-        recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn((deps) => {
-          capturedDeps = deps;
-          return { stop: vi.fn(), done: new Promise<void>(() => {}) };
-        }) as any,
-        logger: {
-          info: vi.fn(),
-          warn: vi.fn(),
-          fatal: vi.fn(),
-        },
-        exit: vi.fn() as any,
-      },
-    );
-
-    const handled = await capturedDeps?.handleActiveControlCommand?.({
-      chatJid: 'tg:primary',
-      queueJid: 'tg:primary::thread:topic-42',
-      group: {
-        name: 'Main',
-        folder: 'main',
-        trigger: '@M',
-        added_at: 't',
-      },
-      command: { kind: 'new', raw: '/new' } as any,
-      message: {
-        id: '1',
-        chat_jid: 'tg:primary',
-        sender: 'user',
-        sender_name: 'User',
-        content: '/new',
-        timestamp: '2026-01-01T00:00:00.000Z',
-        thread_id: 'topic-42',
-      },
-    });
-
-    expect(handled).toBe(true);
-    expect(app.clearSessionForChatJid).toHaveBeenCalledWith(
-      'tg:primary',
-      'topic-42',
-      { memoryUserId: 'user' },
-    );
-    expect(getAgentTurnContext).toHaveBeenCalledWith({
-      agentFolder: 'main',
-      executionProviderId: 'anthropic:claude-agent-sdk',
-      conversationJid: 'tg:primary',
-      threadId: 'topic-42',
-      conversationKind: undefined,
-      memoryUserId: 'user',
-      hydrateMemory: false,
-    });
-    expect(collectSessionMemory).toHaveBeenCalledWith({
-      agentSessionId: 'agent-session:main',
-      trigger: 'session-end',
-      defaultScope: 'group',
-    });
-    expect(app.setAgentCursor).toHaveBeenCalledWith(
-      'tg:primary::thread:topic-42',
-      expect.any(String),
-    );
-    expect(channelWiring.sendMessage).toHaveBeenCalledWith(
-      'tg:primary',
-      'Started a fresh session.',
-      { durability: 'required', messageOptions: { threadId: 'topic-42' } },
-    );
   });
 
   it('starts outbound delivery recovery loop when repository seam is provided', async () => {
@@ -1699,10 +1798,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1802,10 +1897,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1887,10 +1978,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -1988,10 +2075,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2109,10 +2192,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2192,10 +2271,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2265,10 +2340,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2338,10 +2409,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2411,10 +2478,6 @@ describe('startRuntimeServices', () => {
         startOutboundDeliveryRecoveryLoop:
           startOutboundDeliveryRecoveryLoop as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2491,10 +2554,6 @@ describe('startRuntimeServices', () => {
             }) as any,
         ),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2575,10 +2634,6 @@ describe('startRuntimeServices', () => {
             }) as any,
         ),
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),
@@ -2747,10 +2802,6 @@ describe('startRuntimeServices', () => {
           };
         }) as any,
         recoverPendingMessages: vi.fn() as any,
-        startMessagePollingLoop: vi.fn(() => ({
-          stop: vi.fn(),
-          done: new Promise<void>(() => {}),
-        })) as any,
         logger: {
           info: vi.fn(),
           warn: vi.fn(),

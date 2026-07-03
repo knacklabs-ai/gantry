@@ -5,6 +5,11 @@ import type {
   LiveTurn,
   LiveTurnScope,
 } from '../../domain/ports/live-turns.js';
+import type {
+  AgentTodoCardStatus,
+  AgentTodoRender,
+} from '../../domain/ports/task-lifecycle.js';
+import type { GroupMessageRunContext } from '../../runtime/group-queue-types.js';
 import type { RunLease } from '../../domain/ports/worker-coordination.js';
 import type { RuntimeLease } from '../../domain/ports/runtime-lease.js';
 import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
@@ -24,9 +29,7 @@ import {
 } from '../../runtime/live-turn-recovery.js';
 import {
   recoverPendingMessages as defaultRecoverPendingMessages,
-  startMessagePollingLoop as defaultStartMessagePollingLoop,
   type MessageLoopDeps,
-  type MessagePollingLoopHandle,
 } from '../../runtime/message-loop.js';
 import {
   startLiveAdmissionWorkLoop as defaultStartLiveAdmissionWorkLoop,
@@ -34,80 +37,14 @@ import {
 } from '../../runtime/live-admission-work-loop.js';
 import { markPendingContinuationCommandsApplied } from './live-turn-continuation.js';
 import { routeScopeActiveLiveTurnAdmissionFromCursor } from './live-recovery-coordinator.js';
-import { resolveConversationBrowserProfile } from '../../shared/browser-profile-scope.js';
-import { getProfile } from '../../runtime/browser-profiles.js';
 import {
-  consumeBrowserProfileActivity,
-  isBrowserProfileSyncEnabled,
-  snapshotBrowserProfile,
-} from '../../runtime/browser-profile-sync.js';
+  buildLiveTurnBrowserFinalizer,
+  type LiveTurnBrowserFinalizer,
+} from './live-turn-browser-finalizer.js';
 import { computeHostCapacityPlan } from '../../shared/host-capacity.js';
 
 type WarnLog = (context: Record<string, unknown>, message: string) => void;
 type InfoLog = (obj: string | Record<string, unknown>, msg?: string) => void;
-
-function isLiveAdmissionWorkLoopHandle(
-  loop: MessagePollingLoopHandle | LiveAdmissionWorkLoopHandle,
-): loop is LiveAdmissionWorkLoopHandle {
-  return typeof (loop as LiveAdmissionWorkLoopHandle).trigger === 'function';
-}
-
-/**
- * Browser teardown + cross-worker snapshot at live-turn finalize. Resolves the
- * conversation profile, read-and-clears the per-profile activity flag set by the
- * IPC browser handler, and (only when the browser was actually used this turn)
- * closes the backends + session and snapshots the quiescent bytes. No-op when
- * the snapshot coordinator is unregistered (workstation single-process) or no
- * browser activity was recorded.
- */
-export interface LiveTurnBrowserFinalizer {
-  (input: {
-    queueJid: string;
-    runId?: string | null;
-    fencingVersion?: number;
-  }): Promise<void>;
-}
-
-export function buildLiveTurnBrowserFinalizer(deps: {
-  getConversationRoutes: () => Record<string, { folder: string }>;
-  closeBrowserSession?: (profileName: string) => Promise<unknown>;
-  closeBrowserToolBackends?: (profileName: string) => Promise<void>;
-  warn: WarnLog;
-}): LiveTurnBrowserFinalizer {
-  return async (input) => {
-    const { chatJid } = parseThreadQueueKey(input.queueJid);
-    const folder = deps.getConversationRoutes()[chatJid]?.folder;
-    if (!folder) return;
-    const profileName = resolveConversationBrowserProfile({
-      agentId: folder,
-      workspaceKey: folder,
-      conversationId: chatJid,
-    });
-    // Read-and-clear: even when sync is disabled we must clear so the flag does
-    // not leak across turns on a long-lived worker.
-    const used = consumeBrowserProfileActivity(profileName);
-    if (!used) return;
-    try {
-      if (!isBrowserProfileSyncEnabled()) return;
-      await deps.closeBrowserToolBackends?.(profileName);
-      await deps.closeBrowserSession?.(profileName);
-      const profile = getProfile(profileName);
-      if (!profile) return;
-      await snapshotBrowserProfile({
-        profileName,
-        profileDir: profile.dir,
-        userDataDir: profile.userDataDir,
-        snapshotRunId: input.runId ?? null,
-        snapshotFencingVersion: input.fencingVersion ?? 0,
-      });
-    } catch (err) {
-      deps.warn(
-        { err, queueJid: input.queueJid, profileName },
-        'Failed to snapshot live-turn browser profile after finalize',
-      );
-    }
-  };
-}
 
 interface AdmissionOpsRepository {
   getAgentTurnContext?: (input: {
@@ -158,7 +95,13 @@ interface AdmissionApp {
       existingRunLeaseToken?: string;
       existingRunLeaseWorkerInstanceId?: string;
       existingRunLeaseFencingVersion?: number;
+      finalRetry?: boolean;
       onRunResult?: (result: 'success' | 'error' | 'stopped' | null) => void;
+      onFirstProgress?: (input: {
+        jid: string;
+        messageRef: string;
+      }) => Promise<void> | void;
+      onLiveStopActionToken?: (token: string) => Promise<void> | void;
     },
   ) => Promise<boolean>;
   getOrRecoverCursor: (queueJid: string) => Promise<string>;
@@ -191,8 +134,21 @@ export function buildLiveAdmissionProcessor(input: {
   timezone: string;
   enqueueMessageCheck: (queueJid: string) => void;
   warn: WarnLog;
+  addReaction?: (
+    jid: string,
+    messageRef: string,
+    emoji: string,
+  ) => Promise<void>;
+  finalizeAgentTodo?: (
+    jid: string,
+    input: {
+      threadId?: string | null;
+      cardKind?: AgentTodoRender['cardKind'];
+      status: AgentTodoCardStatus;
+    },
+  ) => Promise<boolean>;
   finalizeBrowserForLiveTurn?: LiveTurnBrowserFinalizer;
-}): (queueJid: string) => Promise<boolean> {
+}): (queueJid: string, context?: GroupMessageRunContext) => Promise<boolean> {
   const {
     liveTurnAuthority,
     app,
@@ -201,6 +157,7 @@ export function buildLiveAdmissionProcessor(input: {
     messageFetchPageSize,
     timezone,
     warn,
+    finalizeAgentTodo,
     finalizeBrowserForLiveTurn,
   } = input;
 
@@ -230,14 +187,20 @@ export function buildLiveAdmissionProcessor(input: {
         opsRepository.completeSessionAgentRun?.bind(opsRepository),
     });
 
-  return async (queueJid: string): Promise<boolean> => {
+  return async (
+    queueJid: string,
+    context?: GroupMessageRunContext,
+  ): Promise<boolean> => {
     if (!liveTurnAuthority) {
-      return app.processGroupMessages(queueJid, { queued: true });
+      return app.processGroupMessages(queueJid, {
+        queued: true,
+        finalRetry: context?.finalRetry === true,
+      });
     }
+    const { chatJid, threadId } = parseThreadQueueKey(queueJid);
     let liveRunId = liveTurnAuthority.ownedRunId(queueJid) ?? undefined;
     let liveRunFence = liveTurnAuthority.ownedFence(queueJid);
     if (!liveTurnAuthority.ownsQueue(queueJid)) {
-      const { chatJid, threadId } = parseThreadQueueKey(queueJid);
       const route = app.getConversationRoutes()[chatJid];
       if (!route) return false;
       const executionProviderId =
@@ -321,6 +284,7 @@ export function buildLiveAdmissionProcessor(input: {
       let liveRunResult: 'success' | 'error' | 'stopped' | null = null;
       const success = await app.processGroupMessages(queueJid, {
         queued: true,
+        finalRetry: context?.finalRetry === true,
         existingRunId: liveRunId,
         ...(liveRunFence
           ? {
@@ -332,8 +296,16 @@ export function buildLiveAdmissionProcessor(input: {
         onRunResult: (result) => {
           liveRunResult = result;
         },
+        onFirstProgress: ({ jid, messageRef }) =>
+          input.addReaction?.(jid, messageRef, 'seen').catch(() => undefined),
+        onLiveStopActionToken: async (token) => {
+          await liveTurnAuthority.registerStopAliases(queueJid, [token]);
+        },
       });
-      const terminalSuccess = success && liveRunResult !== 'stopped';
+      const terminalSuccess =
+        success && (liveRunResult === 'success' || liveRunResult === null);
+      const terminalHandled =
+        terminalSuccess || (success && liveRunResult === 'stopped');
       // Snapshot the browser profile (if used) BEFORE finalizing the live turn,
       // while this worker still owns the run lease fence.
       await finalizeBrowserForLiveTurn?.({
@@ -343,20 +315,38 @@ export function buildLiveAdmissionProcessor(input: {
       });
       const finalized = await liveTurnAuthority.finalize(
         queueJid,
-        terminalSuccess ? 'completed' : 'failed',
+        terminalHandled ? 'completed' : 'failed',
         {
-          status: terminalSuccess ? 'completed' : 'failed',
+          status: terminalSuccess
+            ? 'completed'
+            : liveRunResult === 'stopped'
+              ? 'canceled'
+              : 'failed',
           ...(terminalSuccess
             ? { resultSummary: 'Live turn completed.' }
-            : {
-                errorSummary:
-                  liveRunResult === 'stopped'
-                    ? 'Live turn stopped by request.'
-                    : 'Live turn failed.',
-              }),
+            : liveRunResult === 'stopped'
+              ? { errorSummary: 'Live turn stopped by request.' }
+              : {
+                  errorSummary: 'Live turn failed.',
+                }),
         },
       );
-      return success && finalized;
+      if (finalized && finalizeAgentTodo) {
+        await finalizeAgentTodo(chatJid, {
+          threadId: threadId ?? null,
+          status: terminalSuccess
+            ? 'done'
+            : liveRunResult === 'stopped'
+              ? 'stopped'
+              : 'failed',
+        }).catch((todoErr) => {
+          warn(
+            { err: todoErr, queueJid },
+            'Failed to finalize live-turn todo card',
+          );
+        });
+      }
+      return terminalHandled && finalized;
     } catch (err) {
       // Snapshot on failure too: the browser may have persisted new cookies/
       // logins before the turn errored. Best-effort; never mask the original err.
@@ -383,6 +373,17 @@ export function buildLiveAdmissionProcessor(input: {
           return false;
         });
       void finalized;
+      if (finalized && finalizeAgentTodo) {
+        await finalizeAgentTodo(chatJid, {
+          threadId: threadId ?? null,
+          status: 'failed',
+        }).catch((todoErr) => {
+          warn(
+            { err: todoErr, queueJid },
+            'Failed to finalize live-turn todo card after message processing error',
+          );
+        });
+      }
       throw err;
     }
   };
@@ -390,14 +391,11 @@ export function buildLiveAdmissionProcessor(input: {
 
 export interface LiveExecutionServicesHandle {
   /** Stop the always-on admission loop (drain/handoff). */
-  stopPolling: () => void;
+  stopAdmission: () => void;
   /** Stop the recovery coordinator loop if this worker held it. */
   stopRecovery: () => void;
   /** Current admission loop handle (registered as the active loop for shutdown). */
-  pollingLoop:
-    | MessagePollingLoopHandle
-    | LiveAdmissionWorkLoopHandle
-    | undefined;
+  admissionLoop: LiveAdmissionWorkLoopHandle | undefined;
   /** Current recovery loop handle, set only while this worker is coordinator. */
   recoveryLoop: LiveTurnRecoveryLoop | undefined;
 }
@@ -451,11 +449,10 @@ export function startLiveExecutionServices(input: {
     | ((turn: LiveTurn) => Promise<void> | void)
     | undefined;
   recoverPendingMessages?: typeof defaultRecoverPendingMessages;
-  startMessagePollingLoop?: typeof defaultStartMessagePollingLoop;
   startLiveAdmissionWorkLoop?: typeof defaultStartLiveAdmissionWorkLoop;
   liveAdmissionWakeupSource?: LiveAdmissionWakeupSource;
-  registerActivePollingLoop: (
-    loop: MessagePollingLoopHandle | LiveAdmissionWorkLoopHandle | undefined,
+  registerActiveAdmissionLoop: (
+    loop: LiveAdmissionWorkLoopHandle | undefined,
   ) => void;
   registerActiveRecoveryLoop: (loop: LiveTurnRecoveryLoop | undefined) => void;
   /** Waiting-status monitor, started/stopped with the coordinator. */
@@ -463,6 +460,11 @@ export function startLiveExecutionServices(input: {
   onPollingCrash: (err: unknown) => void;
   info: InfoLog;
   warn: WarnLog;
+  addReaction?: (
+    jid: string,
+    messageRef: string,
+    emoji: string,
+  ) => Promise<void>;
 }): LiveExecutionServicesHandle {
   const {
     app,
@@ -472,7 +474,7 @@ export function startLiveExecutionServices(input: {
     recoveryCoordinator,
     isEligibleToRecoverLiveTurn,
     alertNoEligibleLiveTurnRecoverer,
-    registerActivePollingLoop,
+    registerActiveAdmissionLoop,
     registerActiveRecoveryLoop,
     waitingStatus,
     onPollingCrash,
@@ -481,15 +483,13 @@ export function startLiveExecutionServices(input: {
   } = input;
   const recoverPendingMessages =
     input.recoverPendingMessages ?? defaultRecoverPendingMessages;
-  const startMessagePollingLoop =
-    input.startMessagePollingLoop ?? defaultStartMessagePollingLoop;
   const startLiveAdmissionWorkLoop =
     input.startLiveAdmissionWorkLoop ?? defaultStartLiveAdmissionWorkLoop;
 
   const handle: LiveExecutionServicesHandle = {
-    pollingLoop: undefined,
+    admissionLoop: undefined,
     recoveryLoop: undefined,
-    stopPolling: () => undefined,
+    stopAdmission: () => undefined,
     stopRecovery: () => undefined,
   };
 
@@ -497,31 +497,32 @@ export function startLiveExecutionServices(input: {
     !!liveTurnLeaseDeps &&
     typeof liveTurnLeaseDeps.liveTurns.claimLiveAdmissionWorkItems ===
       'function';
-  // Always-on: live admission runs on every live worker. With the durable
-  // admission repository present, workers claim queue-scoped work items instead
-  // of scanning every route on POLL_INTERVAL. The old route-wide poller remains
-  // only for single-process/test embeddings that do not expose durable claims.
-  const pollingLoop = hasDurableAdmissionClaims
-    ? startLiveAdmissionWorkLoop({
-        liveAdmissions: liveTurnLeaseDeps.liveTurns,
-        appId: input.appId,
-        workerInstanceId: liveTurnLeaseDeps.workerInstanceId,
-        messageLoopDeps,
-        maxRetryCount: app.queue.getPolicy().maxRetries,
-        warn,
-      })
-    : startMessagePollingLoop(messageLoopDeps);
+  // Always-on: every live worker claims queue-scoped durable work items. There
+  // is intentionally no route-wide message scanner fallback.
+  if (!hasDurableAdmissionClaims) {
+    warn(
+      { processRole: input.processRole },
+      'Live admission requires durable admission claims; live admission disabled for this role',
+    );
+    return handle;
+  }
+  const admissionLoop = startLiveAdmissionWorkLoop({
+    liveAdmissions: liveTurnLeaseDeps.liveTurns,
+    appId: input.appId,
+    workerInstanceId: liveTurnLeaseDeps.workerInstanceId,
+    messageLoopDeps,
+    maxRetryCount: app.queue.getPolicy().maxRetries,
+    warn,
+  });
   const unsubscribeLiveAdmissionWakeup =
-    hasDurableAdmissionClaims && isLiveAdmissionWorkLoopHandle(pollingLoop)
-      ? input.liveAdmissionWakeupSource?.subscribe(() => pollingLoop.trigger())
-      : undefined;
-  handle.pollingLoop = pollingLoop;
-  registerActivePollingLoop(pollingLoop);
-  pollingLoop.done.catch((err) => onPollingCrash(err));
-  handle.stopPolling = () => {
+    input.liveAdmissionWakeupSource?.subscribe(() => admissionLoop.trigger());
+  handle.admissionLoop = admissionLoop;
+  registerActiveAdmissionLoop(admissionLoop);
+  admissionLoop.done.catch((err) => onPollingCrash(err));
+  handle.stopAdmission = () => {
     unsubscribeLiveAdmissionWakeup?.();
-    pollingLoop.stop();
-    registerActivePollingLoop(undefined);
+    admissionLoop.stop();
+    registerActiveAdmissionLoop(undefined);
   };
 
   // Lease-gated: recovery coordinator. Only the holder runs startup pending
@@ -562,8 +563,8 @@ export function startLiveExecutionServices(input: {
           onNoEligibleRecoverer: alertNoEligibleLiveTurnRecoverer,
           warn,
           // Recovered turns resume ON THE COORDINATOR: this worker adopts the
-          // turn locally and re-enqueues the message check so its own polling
-          // loop replays the pending message under the higher fencing version.
+          // turn locally and re-enqueues the message check so its owner drains
+          // pending input under the higher fencing version.
           resumeRecoveredTurn: async ({ turn, lease }) =>
             resumeRecoveredTurn({
               turn,
@@ -601,7 +602,7 @@ export function startLiveExecutionServices(input: {
     onLost: (err) => {
       warn(
         { err },
-        'Live-recovery-coordinator lease lost; stopping recovery coordinator (polling and admission continue)',
+        'Live-recovery-coordinator lease lost; stopping recovery coordinator (live admission continues)',
       );
       stopCoordinator();
     },

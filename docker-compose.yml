@@ -8,12 +8,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      onecli:
-        condition: service_healthy
     environment:
       GANTRY_HOME: /home/node/gantry
       GANTRY_DATABASE_URL: postgresql://gantry_app:${GANTRY_DB_PASSWORD:-gantry_app_password}@postgres:5432/gantry?schema=gantry
-      ONECLI_DATABASE_URL: postgresql://onecli_app:${ONECLI_DB_PASSWORD:-onecli_app_password}@postgres:5432/gantry?schema=onecli
       GANTRY_LOCAL_POSTGRES_HOSTS: postgres
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?Set SECRET_ENCRYPTION_KEY before starting Gantry}
       GANTRY_IPC_AUTH_SECRET: ${GANTRY_IPC_AUTH_SECRET:?Set GANTRY_IPC_AUTH_SECRET before starting Gantry}
@@ -46,7 +43,9 @@ services:
       - gantry-home:/home/node/gantry
 
   postgres:
-    image: pgvector/pgvector:${POSTGRES_IMAGE_TAG:-0.8.2-pg16-trixie}
+    # Local loopback development database. Set POSTGRES_PASSWORD and
+    # GANTRY_DB_PASSWORD explicitly for any shared or hosted environment.
+    image: pgvector/pgvector:0.8.2-pg16-trixie@sha256:fce8fb583b92ef8af5150b373a96415d46a8cd38ba09b38efeea17c8b4c7d782
     container_name: gantry-postgres
     restart: unless-stopped
     environment:
@@ -67,3 +66,7 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+volumes:
+  gantry-home:
+  gantry-postgres-data:

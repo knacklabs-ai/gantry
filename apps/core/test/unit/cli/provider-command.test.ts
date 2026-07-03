@@ -82,7 +82,9 @@ describe('channel CLI command', () => {
 
     expect(code).toBe(0);
     expect(note).toHaveBeenCalledWith(
-      expect.stringContaining('Telegram: enabled | credentials: configured'),
+      expect.stringContaining(
+        'Telegram: enabled | credentials: secret refs configured',
+      ),
       'Provider Status',
     );
   });
@@ -153,7 +155,9 @@ describe('channel CLI command', () => {
 
     expect(code).toBe(1);
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('gantry provider connect <telegram|slack|teams>'),
+      expect.stringContaining(
+        'gantry provider connect <telegram|slack|discord|teams>',
+      ),
     );
   });
 
@@ -264,7 +268,7 @@ describe('channel CLI command', () => {
       label: 'App',
       status: 'active',
       config: {},
-      runtimeSecretRefs: [],
+      runtimeSecretRefs: {},
       createdAt: iso,
       updatedAt: iso,
     };
@@ -375,7 +379,7 @@ describe('channel CLI command', () => {
                 label: 'Telegram',
                 status: 'active',
                 config: {},
-                runtimeSecretRefs: [],
+                runtimeSecretRefs: {},
                 createdAt: iso,
                 updatedAt: iso,
               })),

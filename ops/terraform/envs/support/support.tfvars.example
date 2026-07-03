@@ -18,9 +18,6 @@ secret_encryption_key_secret_arn        = "arn:aws:secretsmanager:us-east-1:REPL
 gantry_ipc_auth_secret_arn              = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/support/ipc-auth-secret-REPLACE"
 gantry_control_api_keys_json_secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/support/control-api-keys-REPLACE"
 
-# Optional migration-role URL.
-# migration_database_url_secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/support/migration-db-url-REPLACE"
-
 # Optional extra runtime secrets.
 # additional_runtime_secret_refs = [
 #   { env_name = "TELEGRAM_BOT_TOKEN", secret_arn = "arn:aws:secretsmanager:us-east-1:REPLACE_ME:secret:gantry/support/telegram-bot-token-REPLACE" },

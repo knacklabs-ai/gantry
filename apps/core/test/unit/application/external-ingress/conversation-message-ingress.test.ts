@@ -5,7 +5,12 @@ import { ConversationMessageIngressModule } from '@core/application/external-ing
 function makeModule(overrides?: {
   conversation?: Record<string, unknown> | null;
   thread?: Record<string, unknown> | null;
+  ops?: Record<string, unknown>;
+  runtimeEvents?: Record<string, unknown>;
+  messageReactions?: Record<string, unknown>;
   routable?: boolean;
+  liveAdmissionAppId?: string | null;
+  createId?: () => string;
 }) {
   const conversations = {
     getConversation: vi.fn(async () =>
@@ -43,21 +48,25 @@ function makeModule(overrides?: {
   const ops = {
     storeChatMetadata: vi.fn(async () => undefined),
     storeMessage: vi.fn(async () => undefined),
+    ...overrides?.ops,
   };
   const runtimeEvents = {
     publish: vi.fn(async () => ({ eventId: 77 })),
+    ...overrides?.runtimeEvents,
   };
   const module = new ConversationMessageIngressModule({
     conversations: conversations as never,
-    ops,
+    ops: ops as never,
     runtimeEvents,
+    messageReactions: overrides?.messageReactions as never,
+    liveAdmissionAppId: overrides?.liveAdmissionAppId,
     isConversationRoutable: vi.fn(() => overrides?.routable ?? true),
     providerForConversationJid: (jid) =>
       jid.startsWith('tg:') ? 'telegram' : 'app',
     makeQueueKey: (jid, threadId) =>
       threadId ? `${jid}::thread:${threadId}` : jid,
     now: () => '2026-04-24T00:00:00.000Z',
-    createId: () => 'message-1',
+    createId: overrides?.createId ?? (() => 'message-1'),
   });
   return { module, conversations, ops, runtimeEvents };
 }
@@ -85,6 +94,7 @@ describe('ConversationMessageIngressModule', () => {
         conversationJid: 'tg:-100',
         threadId: '42',
         queueKey: 'tg:-100::thread:42',
+        durableAdmissionCreated: false,
       },
     });
     expect(ops.storeMessage).toHaveBeenCalledWith(
@@ -111,6 +121,60 @@ describe('ConversationMessageIngressModule', () => {
           direction: 'inbound',
           deliveryStatus: 'accepted',
         }),
+      }),
+    );
+  });
+
+  it('adds a seen reaction when ingress provides a native message ref', async () => {
+    const addReaction = vi.fn(async () => undefined);
+    const { module, ops } = makeModule({
+      messageReactions: { addReaction },
+    });
+
+    await module.acceptMessage({
+      appId: 'app-one',
+      invocationId: 'invocation-1',
+      conversationId: 'conversation:tg:-100',
+      message: 'Run this',
+      messageRef: '12345',
+    });
+
+    expect(addReaction).toHaveBeenCalledWith('tg:-100', '12345', 'seen');
+    expect(ops.storeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.stringMatching(/^external-ingress:/),
+        external_message_id: '12345',
+      }),
+    );
+  });
+
+  it('uses a stable internal id for native message ref redelivery', async () => {
+    let nextId = 0;
+    const { module, ops } = makeModule({
+      createId: () => `message-${(nextId += 1)}`,
+    });
+
+    const first = await module.acceptMessage({
+      appId: 'app-one',
+      invocationId: 'invocation-1',
+      conversationId: 'conversation:tg:-100',
+      message: 'Run this',
+      messageRef: '12345',
+    });
+    const second = await module.acceptMessage({
+      appId: 'app-one',
+      invocationId: 'invocation-2',
+      conversationId: 'conversation:tg:-100',
+      message: 'Run this',
+      messageRef: '12345',
+    });
+
+    expect(first.messageId).toBe(second.messageId);
+    expect(ops.storeMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: first.messageId,
+        external_message_id: '12345',
       }),
     );
   });
@@ -179,6 +243,64 @@ describe('ConversationMessageIngressModule', () => {
         thread_id: '2771',
       }),
     );
+  });
+
+  it('writes live-admission work under the runtime app id when configured', async () => {
+    const order: string[] = [];
+    const publish = vi.fn();
+    const publishWithLiveAdmissionMessage = vi.fn(async (_event, admission) => {
+      order.push('publishAcceptedEventAndStoreAdmission');
+      expect(admission).toMatchObject({
+        message: {
+          chat_jid: 'tg:-100',
+          content: 'Run this',
+        },
+        liveAdmission: {
+          appId: 'default',
+          triggerDecision: {
+            source: 'external_ingress',
+            conversationKind: 'group',
+          },
+        },
+      });
+      return {
+        event: { eventId: 77 },
+        liveAdmissionResult: {
+          outcome: 'enqueued',
+          item: {
+            id: 'admission-conversation-1',
+            state: 'queued',
+          },
+        },
+      };
+    });
+    const { module, ops } = makeModule({
+      liveAdmissionAppId: 'default',
+      ops: {
+        notifyLiveAdmissionWorkItem: vi.fn(async () => {
+          order.push('notifyLiveAdmissionWorkItem');
+        }),
+      },
+      runtimeEvents: {
+        publish,
+        publishWithLiveAdmissionMessage,
+      },
+    });
+
+    const accepted = await module.acceptMessage({
+      appId: 'app-one',
+      invocationId: 'invocation-1',
+      conversationId: 'conversation:tg:-100',
+      message: 'Run this',
+    });
+
+    expect(ops.storeMessage).not.toHaveBeenCalled();
+    expect(order).toEqual([
+      'publishAcceptedEventAndStoreAdmission',
+      'notifyLiveAdmissionWorkItem',
+    ]);
+    expect(publish).not.toHaveBeenCalled();
+    expect(accepted.enqueue.durableAdmissionCreated).toBe(true);
   });
 
   it('rejects conversations that are not active runtime routes', async () => {

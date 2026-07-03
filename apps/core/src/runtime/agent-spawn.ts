@@ -86,7 +86,7 @@ import { compileSpawnSystemPrompt } from './agent-spawn-prompt.js';
 import {
   cleanupRunnerMcpConfigFile,
   cleanupRunnerTempDir,
-  buildSandboxRuntimeGatewayOptions,
+  buildSandboxRuntimeNetworkProjection,
   deepAgentsFilesystemEnabledEnv,
   deepAgentsShellEnabledEnv,
   protectedWritePathsForOuterSandbox,
@@ -101,8 +101,11 @@ import {
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
-// prettier-ignore
-export type { AvailableGroup, AgentInput, AgentOutput } from './agent-spawn-types.js';
+export type {
+  AvailableGroup,
+  AgentInput,
+  AgentOutput,
+} from './agent-spawn-types.js';
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -128,7 +131,7 @@ export async function spawnAgent(
       : 'interactive',
     group.folder,
   );
-  const { modelWorkload, resolvedModel } = await resolveSpawnModel({
+  const { resolvedModel } = await resolveSpawnModel({
     group,
     agentInput: input,
     appId: input.appId || 'default',
@@ -195,7 +198,6 @@ export async function spawnAgent(
     compiledSystemPrompt,
     yoloMode: effectiveYoloModeSettings(runtimeSettings.permissions.yoloMode),
   };
-
   const hostRuntime = prepareHostRuntimeContext(group);
   ensureWorkspaceIpcLayout(hostRuntime.workspaceIpcDir);
   let executionAdapter: NonNullable<RunAgentOptions['executionAdapter']>;
@@ -280,7 +282,6 @@ export async function spawnAgent(
         `LLM runtime materialization failed: ${errorText}`,
     };
   }
-
   let mcpConfigPath: string | undefined;
   let sandboxConfigPath: string | undefined;
   let runnerTempDir: string | undefined;
@@ -381,8 +382,10 @@ export async function spawnAgent(
     const checkpointerNetworkHost = databaseNetworkHostFromUrl(
       runnerInputPatch.deepAgentCheckpointer?.databaseUrl,
     );
-    const sandboxAllowedNetworkHosts =
-      sandboxAllowedNetworkHostsFromRuntimeAccess(effectiveRuntimeAccess);
+    const sandboxAllowedNetworkHosts = uniqueStrings([
+      ...sandboxAllowedNetworkHostsFromRuntimeAccess(effectiveRuntimeAccess),
+      ...(checkpointerNetworkHost ? [checkpointerNetworkHost] : []),
+    ]);
     const runtimeSandbox = getRuntimeSettingsForConfig().runtime.sandbox;
     const { runnerSandboxProviderId, sandboxWarmTemplate } =
       resolveRunnerSandboxStartup({
@@ -390,25 +393,14 @@ export async function spawnAgent(
         runtimeProvider: runtimeSandbox.provider,
         measure: hostStartup.measure,
       });
-    const sandboxRuntimeGateway = buildSandboxRuntimeGatewayOptions(
+    const sandboxRuntimeNetwork = buildSandboxRuntimeNetworkProjection(
       runnerSandboxProviderId,
       sandboxAllowedNetworkHosts,
       runnerInput.modelCredentialEnv,
     );
-    runnerInput.modelCredentialEnv = sandboxRuntimeGateway.modelCredentialEnv;
+    runnerInput.modelCredentialEnv = sandboxRuntimeNetwork.modelCredentialEnv;
     runnerInputPatch.modelCredentialEnv =
-      sandboxRuntimeGateway.modelCredentialEnv;
-    const egressAllowedNetworkHosts =
-      runnerSandboxProviderId === 'sandbox_runtime'
-        ? uniqueStrings(
-            sandboxRuntimeGateway.gatewayOptions.allowedNetworkHosts ??
-              sandboxAllowedNetworkHosts,
-          )
-        : sandboxRuntimeGateway.gatewayOptions.allowedNetworkHosts;
-    const egressAllowedPrivateNetworkHosts =
-      runnerSandboxProviderId === 'sandbox_runtime' && checkpointerNetworkHost
-        ? [checkpointerNetworkHost]
-        : undefined;
+      sandboxRuntimeNetwork.modelCredentialEnv;
     egressGateway = await hostStartup.measureAsync('egressGatewayMs', () =>
       ensureEgressGateway({
         key: `${runnerAppId}:${input.agentId || group.folder}:${processName}`,
@@ -422,12 +414,12 @@ export async function spawnAgent(
           ...(input.jobId ? { jobId: input.jobId } : {}),
         },
         networkAttribution,
-        ...sandboxRuntimeGateway.gatewayOptions,
-        ...(egressAllowedNetworkHosts
-          ? { allowedNetworkHosts: egressAllowedNetworkHosts }
-          : {}),
-        ...(egressAllowedPrivateNetworkHosts
-          ? { allowedPrivateNetworkHosts: egressAllowedPrivateNetworkHosts }
+        ...(sandboxRuntimeNetwork.networkProjection.privateNetworkHostMappings
+          ? {
+              privateNetworkHostMappings:
+                sandboxRuntimeNetwork.networkProjection
+                  .privateNetworkHostMappings,
+            }
           : {}),
         ...(options?.mcpHostnameLookup
           ? { lookupHostname: options.mcpHostnameLookup }
@@ -465,15 +457,8 @@ export async function spawnAgent(
     if (runnerInputPatch.semanticCapabilities) {
       runnerInput.semanticCapabilities = runnerInputPatch.semanticCapabilities;
     }
-    if (runnerInputPatch.deepAgentCheckpointer) {
-      runnerInput.deepAgentCheckpointer =
-        runnerSandboxProviderId === 'sandbox_runtime'
-          ? {
-              ...runnerInputPatch.deepAgentCheckpointer,
-              proxyUrl: egressGateway.proxyUrl,
-            }
-          : runnerInputPatch.deepAgentCheckpointer;
-    }
+    const checkpointer = runnerInputPatch.deepAgentCheckpointer;
+    if (checkpointer) runnerInput.deepAgentCheckpointer = checkpointer;
     runnerInput.deepAgentSkills = runnerInputPatch.deepAgentSkills;
     const localCliCredentialPaths = resolveHomeRelativePaths(
       localCliCredentialPathHintsFromRuntimeAccess(effectiveRuntimeAccess),
@@ -496,6 +481,11 @@ export async function spawnAgent(
         fs.mkdirSync(providerToolTempDir, { recursive: true, mode: 0o700 });
       }
     }
+    // DeepAgents model traffic runs inside the runner process. In
+    // sandbox_runtime, OpenRouter uses raw fetch rather than an SDK client, so
+    // the runner process itself needs the Gantry egress proxy to reach the
+    // sandbox-private model-gateway alias. Child shell/tool envs still receive
+    // only the separately sanitized toolNetworkEnv projection.
     const runnerToolProcessEnv =
       preparedExecution.providerId === 'deepagents:langchain'
         ? toolNetworkEnv
@@ -526,6 +516,7 @@ export async function spawnAgent(
       parentTaskId: input.parentTaskId,
       runLeaseToken: input.runLeaseToken,
       runLeaseFencingVersion: input.runLeaseFencingVersion,
+      liveStopActionToken: input.liveStopActionToken,
       browserIpcAuthToken: browserIpcEnabled
         ? computeBrowserIpcAuthToken(
             group.folder,
@@ -586,7 +577,6 @@ export async function spawnAgent(
     hostStartup.finish('runnerEnvMs', runnerEnvStarted);
     // Job-level model overrides group-level model.
     const effectiveModelSource = input.model ? 'job.model' : modelConfig.source;
-
     const runtimeDetails = buildAndLogRunnerRuntimeDetails({
       logger,
       groupName: group.name,
@@ -606,7 +596,6 @@ export async function spawnAgent(
       effectiveModelSource,
       systemPromptChars: compiledSystemPrompt.length,
     });
-
     const logsDir = path.join(groupDir, 'logs');
     fs.mkdirSync(logsDir, { recursive: true });
     const selectedSkillEnv = await hostStartup.measureAsync(
@@ -697,7 +686,7 @@ export async function spawnAgent(
       protectedReadPaths: protectedFilesystemDenyReadPaths,
       protectedWritePaths: protectedFilesystemDenyWritePaths,
       gatewayAllowedNetworkHosts:
-        sandboxRuntimeGateway.gatewayOptions.allowedNetworkHosts,
+        sandboxRuntimeNetwork.networkProjection.allowedNetworkHosts,
       fallbackAllowedNetworkHosts: sandboxAllowedNetworkHosts,
       resourceLimits: runtimeSandbox.resourceLimits,
     });
@@ -795,7 +784,18 @@ export async function spawnAgent(
       await closeEgressGateway(egressGateway);
     }
     await hostCredentials.revoke?.();
-    preparedExecution.cleanup();
+    try {
+      preparedExecution.cleanup();
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          group: group.name,
+          executionProviderId: preparedExecution.providerId,
+        },
+        'Failed to clean prepared execution runtime',
+      );
+    }
     revokeIpcResponseSigningKey(
       ipcAuth.responseKeyId,
       group.folder,

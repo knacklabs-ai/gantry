@@ -6,19 +6,25 @@ import type {
   ConversationThreadId,
 } from '../../domain/conversation/conversation.js';
 import type { ConversationRepository } from '../../domain/ports/repositories.js';
-import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
+import type {
+  RuntimeEvent,
+  RuntimeEventPublishInput,
+} from '../../domain/events/events.js';
 import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
 import type {
   RuntimeChatMetadataRepository,
   RuntimeMessageRepository,
 } from '../../domain/repositories/ops-repo.js';
 import type { AppId } from '../../domain/app/app.js';
+import type { LiveAdmissionWorkItemEnqueueResult } from '../../domain/ports/live-turns.js';
+import { sha256Base64Url } from '../../shared/stable-hash.js';
 import { ApplicationError } from '../common/application-error.js';
 
 export type ConversationMessageQueueIntent = {
   conversationJid: string;
   threadId: string | null;
   queueKey: string;
+  durableAdmissionCreated: boolean;
 };
 
 type ConversationMessageThreadRouting = {
@@ -33,7 +39,31 @@ export class ConversationMessageIngressModule {
       ops: RuntimeChatMetadataRepository & RuntimeMessageRepository;
       runtimeEvents: {
         publish(input: RuntimeEventPublishInput): Promise<{ eventId: number }>;
+        publishWithLiveAdmissionMessage?(
+          input: RuntimeEventPublishInput,
+          admission: {
+            message: NewMessage;
+            liveAdmission: {
+              appId: string;
+              agentId?: string | null;
+              agentSessionId?: string | null;
+              triggerDecision?: Record<string, unknown>;
+              now?: string;
+            };
+          },
+        ): Promise<{
+          event: RuntimeEvent;
+          liveAdmissionResult: LiveAdmissionWorkItemEnqueueResult | undefined;
+        }>;
       };
+      messageReactions?: {
+        addReaction(
+          jid: string,
+          messageRef: string,
+          emoji: string,
+        ): Promise<void>;
+      };
+      liveAdmissionAppId?: string | null;
       isConversationRoutable: (conversationJid: string) => boolean;
       providerForConversationJid: (conversationJid: string) => string;
       makeQueueKey: (
@@ -53,6 +83,7 @@ export class ConversationMessageIngressModule {
     message: string;
     senderId?: string | null;
     senderName?: string | null;
+    messageRef?: string | null;
     correlationId?: string | null;
   }): Promise<{
     messageId: string;
@@ -89,10 +120,19 @@ export class ConversationMessageIngressModule {
     const publicThreadId = thread.publicThreadId;
     const runtimeThreadId = thread.runtimeThreadId;
     const now = this.deps.now();
-    const messageId = this.deps.createId();
     const senderId = input.senderId?.trim() || 'external-ingress';
     const senderName = input.senderName?.trim() || 'External System';
     const provider = this.deps.providerForConversationJid(conversationJid);
+    const externalMessageId =
+      input.messageRef?.trim() || `external-ingress:${input.invocationId}`;
+    const messageId = input.messageRef?.trim()
+      ? stableExternalIngressMessageId([
+          input.appId,
+          conversation.id,
+          publicThreadId ?? '',
+          externalMessageId,
+        ])
+      : this.deps.createId();
     const message: NewMessage = {
       id: messageId,
       chat_jid: conversationJid,
@@ -103,7 +143,7 @@ export class ConversationMessageIngressModule {
       timestamp: now,
       is_from_me: false,
       is_bot_message: false,
-      external_message_id: `external-ingress:${input.invocationId}`,
+      external_message_id: externalMessageId,
       thread_id: runtimeThreadId ?? undefined,
     };
 
@@ -114,18 +154,7 @@ export class ConversationMessageIngressModule {
       provider,
       conversation.kind === 'group' || conversation.kind === 'channel',
     );
-    if (this.deps.ops.storeMessageWithLiveAdmission) {
-      await this.deps.ops.storeMessageWithLiveAdmission(message, {
-        appId: input.appId,
-        triggerDecision: {
-          source: 'external_ingress',
-          conversationKind: conversation.kind,
-        },
-      });
-    } else {
-      await this.deps.ops.storeMessage(message);
-    }
-    const accepted = await this.deps.runtimeEvents.publish({
+    const acceptedEvent: RuntimeEventPublishInput = {
       appId: input.appId as AppId,
       conversationId: conversation.id,
       threadId: publicThreadId ?? undefined,
@@ -146,7 +175,45 @@ export class ConversationMessageIngressModule {
         text,
       },
       createdAt: now,
-    });
+    };
+    let durableAdmissionCreated = false;
+    let admissionResult: LiveAdmissionWorkItemEnqueueResult | undefined;
+    let accepted: RuntimeEvent | { eventId: number };
+    if (
+      this.deps.runtimeEvents.publishWithLiveAdmissionMessage &&
+      this.deps.liveAdmissionAppId !== null
+    ) {
+      const liveAdmissionAppId = this.deps.liveAdmissionAppId ?? input.appId;
+      const result =
+        await this.deps.runtimeEvents.publishWithLiveAdmissionMessage(
+          acceptedEvent,
+          {
+            message,
+            liveAdmission: {
+              appId: liveAdmissionAppId,
+              triggerDecision: {
+                source: 'external_ingress',
+                conversationKind: conversation.kind,
+              },
+            },
+          },
+        );
+      accepted = result.event;
+      admissionResult = result.liveAdmissionResult;
+      durableAdmissionCreated = !!admissionResult;
+    } else {
+      await this.deps.ops.storeMessage(message);
+      accepted = await this.deps.runtimeEvents.publish(acceptedEvent);
+    }
+    if (admissionResult) {
+      await this.deps.ops.notifyLiveAdmissionWorkItem?.(admissionResult);
+    }
+    const messageRef = input.messageRef?.trim();
+    if (messageRef) {
+      await this.deps.messageReactions
+        ?.addReaction(conversationJid, messageRef, 'seen')
+        .catch(() => undefined);
+    }
 
     return {
       messageId,
@@ -157,6 +224,7 @@ export class ConversationMessageIngressModule {
         conversationJid,
         threadId: runtimeThreadId,
         queueKey: this.deps.makeQueueKey(conversationJid, runtimeThreadId),
+        durableAdmissionCreated,
       },
     };
   }
@@ -261,4 +329,8 @@ function resolveRuntimeThreadIdFromCanonical(
   if (!threadId.startsWith(prefix)) return null;
   const runtimeThreadId = threadId.slice(prefix.length).trim();
   return runtimeThreadId ? runtimeThreadId : null;
+}
+
+function stableExternalIngressMessageId(parts: string[]): string {
+  return `external-ingress:${sha256Base64Url(parts.join('\0')).slice(0, 32)}`;
 }

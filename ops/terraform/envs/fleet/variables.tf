@@ -62,12 +62,6 @@ variable "gantry_control_api_keys_json_secret_arn" {
   }
 }
 
-variable "migration_database_url_secret_arn" {
-  description = "Optional Secrets Manager ARN of the MIGRATION DATABASE_URL secret (migration role; may differ from runtime role). When set, injected as MIGRATION_DATABASE_URL so the entrypoint migrates with the migration role. Empty string disables (runtime role migrates)."
-  type        = string
-  default     = ""
-}
-
 variable "additional_runtime_secret_refs" {
   description = "Extra runtime secrets to inject into workers as env vars: list of { env_name, secret_arn }. Use for channel/provider credentials and control API keys (e.g. { env_name = \"GANTRY_CONTROL_API_KEYS_JSON\", secret_arn = \"arn:...\" })."
   type = list(object({

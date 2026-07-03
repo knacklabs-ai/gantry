@@ -1,7 +1,7 @@
 # Gantry on AWS — Terraform Runbook
 
-Copy-paste runbook for standing up a Gantry **fleet** or **locked support** stack
-on AWS with Terraform, plus a short local-rehearsal section.
+Copy-paste runbook for standing up a Gantry **fleet**, **locked support**, or
+**ECS/EC2** stack on AWS with Terraform, plus a short local-rehearsal section.
 
 Targets (measured gates from the deployment-modes plan):
 
@@ -13,9 +13,10 @@ ADRs under [docs/decisions/](../decisions/) (delivery vehicle, deployment modes,
 [process roles and multi-live](../decisions/2026-06-12-process-roles-and-multi-live.md),
 capability artifacts, locked preset).
 
-Module reference: `ops/terraform/modules/{network,database,storage,secrets,worker_pool,control}`,
-roots `ops/terraform/envs/{fleet,support}`. Image: `ops/docker/Dockerfile` +
-`ops/docker/entrypoint.sh`.
+Module reference:
+`ops/terraform/modules/{network,database,storage,secrets,worker_pool,control,ecs_capacity,ecs_service_set}`,
+roots `ops/terraform/envs/{fleet,support,ecs}`. Image:
+`ops/docker/Dockerfile` + `ops/docker/entrypoint.sh`.
 
 Artifact bucket IAM is split by prefix. Capability artifacts (`skills/`,
 `toolchains/`) are **bake-rw / worker-ro** — workers never mutate capability
@@ -68,17 +69,37 @@ The `settings-seed` one-shot service runs first: it writes a fleet-marked
 container entrypoint. Every role `depend_on`s it completing, so they boot in
 fleet mode with desired state already seeded and `/readyz` can go green (a
 fleet worker with no revision stays red and logs the seed command). The
-`settings-seed` service runs the required first migration/import
-(`GANTRY_SKIP_MIGRATIONS=0`); `control` also runs the idempotent entrypoint
-migration pass, and workers skip the explicit pass. The entrypoint advisory lock
-makes concurrent migration safe regardless.
+`settings-seed`, `control`, and worker services all run the same explicit
+entrypoint migration pass before runtime starts. The advisory lock makes
+concurrent migration deterministic, and runtime readiness fails closed if a
+worker starts before the schema exists or is current.
+
+For ECS deployments that mount an empty EBS/EFS runtime home directly into the
+Gantry container instead of running the compose `settings-seed` one-shot, the
+runtime image first-bootstraps a minimal workstation `settings.yaml` when
+`GANTRY_BOOTSTRAP_SETTINGS_IF_MISSING=1` (the image default) and the runtime
+command is `node dist/index.js`. The bootstrap writes to `GANTRY_HOME`
+(`/var/lib/gantry` by default), derives the Postgres schema from
+`GANTRY_SETTINGS_POSTGRES_SCHEMA`, the `schema=` query parameter in
+`GANTRY_DATABASE_URL`, or `GANTRY_DB_SCHEMA`, falling back to `gantry`. The
+explicit migration pass uses `GANTRY_DATABASE_URL`. Existing mounted
+`settings.yaml` files are left untouched. A fresh
+workstation bootstrap imports the generated file through the normal workstation
+settings path after migrations and mirrors the applied snapshot into
+`settings_revisions`.
+Workstation keeps `settings.yaml` as the desired-state authority; it does not
+apply database revisions back to the file. Fleet materializes the latest
+settings revision back to local `settings.yaml` and treats
+`settings_revisions` as its boot authority. To seed a fleet desired-state
+revision from the bootstrap file, explicitly set
+`GANTRY_BOOTSTRAP_DEPLOYMENT_MODE=fleet`.
 
 Expected sequence in the logs:
 
 ```
 gantry-fleet-postgres      | ... database system is ready to accept connections
 gantry-fleet-settings-seed | ... fleet settings revision 1 seeded
-gantry-fleet-control-1     | <ts> [entrypoint] running migrations (GANTRY_DATABASE_URL)
+gantry-fleet-control-1     | <ts> [entrypoint] running migrations (<db env>)
 gantry-fleet-control-1     | <ts> [entrypoint] migrations complete
 gantry-fleet-control-1     | <ts> [entrypoint] starting runtime: node dist/index.js
 gantry-fleet-live-worker-1 | ... Loaded fleet settings from revision
@@ -131,10 +152,18 @@ everything, registered to both ALB target groups. Use `envs/support` for the
 locked support stack and `envs/fleet` for the full fleet. Commands below show
 `fleet`; substitute `support` where noted.
 
+The **ECS** root (`envs/ecs`) is the ECS/EC2 test-and-scale variant. It uses the
+same process roles but creates ECS services instead of direct Docker ASGs:
+`api-only` => `control`, `chat-only` => `control + live-worker`, `jobs-only` =>
+`job-worker`, and `all` => all three separated services. The control service
+attaches to the control/API target group, live-worker attaches to webhook
+ingress, and `jobs-only` creates no public ALB.
+
 ### B.0 Prerequisites
 
-- Terraform `>= 1.6`, AWS CLI v2, Docker (to build/push the image), and an AWS
-  account with permissions for VPC, RDS, S3, IAM, Secrets Manager, ELB, EC2/ASG.
+- Terraform `>= 1.6`, AWS CLI v2, `jq`, Docker (to build/push the image), and an
+  AWS account with permissions for VPC, RDS, S3, IAM, Secrets Manager, ELB,
+  EC2/ASG, ECS, CloudWatch Logs, and Application Auto Scaling.
 - A built runtime image pushed somewhere the workers can pull from. CI
   (`.github/workflows/image.yml`) pushes to GHCR on `main`/tags. For private GHCR
   or cross-registry pulls, mirror the image to ECR or grant the worker role pull
@@ -186,7 +215,7 @@ DB_PROXY_ARN=$(aws secretsmanager create-secret \
 
 # Runtime DATABASE_URL (filled in after apply once the proxy endpoint is known;
 # create a placeholder now, update its value in B.5). Target the PROXY host and
-# sslmode=require. The runtime role may differ from the migration role.
+# sslmode=require. Runtime workers should use the least-privileged Gantry role.
 RUNTIME_DBURL_ARN=$(aws secretsmanager create-secret \
   --name gantry/fleet/runtime-db-url --secret-string "postgres://PLACEHOLDER" \
   --query ARN --output text)
@@ -196,9 +225,8 @@ echo "DB_PROXY_ARN=$DB_PROXY_ARN"
 echo "RUNTIME_DBURL_ARN=$RUNTIME_DBURL_ARN"
 ```
 
-Optionally create a `MIGRATION_DATABASE_URL` secret (migration role ≠ runtime
-role) and channel/provider credential secrets; pass them via
-`migration_database_url_secret_arn` and `additional_runtime_secret_refs`.
+Optionally create channel/provider credential secrets and pass them via
+`additional_runtime_secret_refs`.
 
 ### B.3 Configure tfvars
 
@@ -217,6 +245,18 @@ aws ssm get-parameter --region "$AWS_REGION" \
   --query 'Parameter.Value' --output text
 ```
 
+For the ECS variant:
+
+```bash
+cd ops/terraform/envs/ecs
+cp ecs.tfvars.example ecs.auto.tfvars
+$EDITOR ecs.auto.tfvars
+```
+
+Set `deployment_type` to `api-only`, `chat-only`, `jobs-only`, or `all`.
+`ecs_capacity_ami_id = ""` resolves the latest Amazon Linux 2023 ECS-optimized
+AMI from SSM; set it explicitly only when you want a pinned AMI.
+
 ### B.4 Init / plan / apply
 
 ```bash
@@ -228,6 +268,21 @@ terraform init \
   -backend-config="encrypt=true"
 
 terraform plan -out tf.plan        # support adds: -var-file=support.tfvars (if not using *.auto.tfvars)
+terraform apply tf.plan
+```
+
+For ECS, use the separate state key:
+
+```bash
+cd ops/terraform/envs/ecs
+terraform init \
+  -backend-config="bucket=$TF_STATE_BUCKET" \
+  -backend-config="key=gantry/ecs/terraform.tfstate" \
+  -backend-config="region=$AWS_REGION" \
+  -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+  -backend-config="encrypt=true"
+
+terraform plan -out tf.plan
 terraform apply tf.plan
 ```
 
@@ -248,7 +303,18 @@ job_worker_asg          = "gantry-fleet-job-worker"
 # support has a single ASG instead: worker_asg = "gantry-support-all"
 ```
 
-### B.5 Point the runtime DB URL secret at the proxy
+ECS outputs include:
+
+```
+alb_dns_name            = "gantry-ecs-alb-1234567890.us-east-1.elb.amazonaws.com" # null for jobs-only
+artifacts_bucket        = "gantry-ecs-artifacts-ab12cd34"
+database_proxy_endpoint = "gantry-ecs-proxy.proxy-abcdefg.us-east-1.rds.amazonaws.com"
+ecs_cluster_name        = "gantry-ecs-ecs"
+ecs_capacity_asg        = "gantry-ecs-ecs-capacity"
+ecs_service_names       = { control = "...", live-worker = "...", job-worker = "..." } # depends on deployment_type
+```
+
+### B.5 Point the database URL secrets at the proxy
 
 Now that `database_proxy_endpoint` is known, set the real runtime URL value:
 
@@ -273,11 +339,22 @@ done
 #     --auto-scaling-group-name "$(terraform output -raw worker_asg)"
 ```
 
+On ECS, start fresh tasks instead of an ASG instance refresh:
+
+```bash
+CLUSTER=$(terraform output -raw ecs_cluster_name)
+terraform output -json ecs_service_names | jq -r 'to_entries[].value' |
+while read -r service; do
+  aws ecs update-service --cluster "$CLUSTER" --service "$service" --force-new-deployment
+done
+```
+
 > Note: the runtime DB role (`gantry_app`) is created by the database bootstrap.
 > On RDS, run the role/grant bootstrap once from a bastion (the same SQL as
 > `ops/postgres/init/001-gantry-bootstrap.sh`, adapted for RDS — the master user
-> is `gantry_admin`, not `postgres`). The migration entrypoint installs the
-> `vector`/`pgcrypto` extensions it needs at migrate time on a supported engine.
+> is `gantry_admin`, not `postgres`). The runtime database URL is also the
+> migration URL, so grant that role the schema and extension privileges required
+> by Gantry migrations.
 
 ### B.6 Seed settings (locked support agents)
 
@@ -333,6 +410,22 @@ done
 # its /readyz directly.
 ```
 
+For ECS, first verify services are stable:
+
+```bash
+CLUSTER=$(terraform output -raw ecs_cluster_name)
+terraform output -json ecs_service_names | jq -r 'to_entries[].value' |
+while read -r service; do
+  aws ecs describe-services --cluster "$CLUSTER" --services "$service" \
+    --query 'services[0].{serviceName:serviceName,desired:desiredCount,running:runningCount,pending:pendingCount,status:status}'
+done
+```
+
+For deployment types with control, the control target group should show healthy
+IP targets; for chat-enabled deployment types, the live target group should show
+healthy live-worker IP targets. `jobs-only` has no public ALB; inspect `/readyz`
+through ECS Exec, SSM, or another private VPC path.
+
 First locked support-agent turn: send a message through the configured channel
 (its webhook resolves to `https://$ALB/webhooks/...`). The locked agent responds
 using only pre-provisioned capabilities; any `request_*`/`admin_*`/`settings_*`
@@ -355,6 +448,18 @@ for asg in control_asg live_worker_asg job_worker_asg; do
 done
 # Support: aws autoscaling start-instance-refresh \
 #   --auto-scaling-group-name "$(terraform output -raw worker_asg)"
+```
+
+For ECS, re-apply the previous `image_ref` and force a new deployment for each
+enabled service:
+
+```bash
+terraform apply
+CLUSTER=$(terraform output -raw ecs_cluster_name)
+terraform output -json ecs_service_names | jq -r 'to_entries[].value' |
+while read -r service; do
+  aws ecs update-service --cluster "$CLUSTER" --service "$service" --force-new-deployment
+done
 ```
 
 Drain is graceful: the terminate lifecycle hook holds each instance in
@@ -417,6 +522,13 @@ per instance, so the instance hostname is already the host identity.
 
 The scaling policy owns desired capacity once enabled; steer a running pool via
 its `*_min_size`/`*_max_size`, not `*_desired_capacity`.
+
+**ECS variant.** `envs/ecs` creates an ECS service per enabled role plus one
+ECS-optimized EC2 capacity ASG. Service Auto Scaling owns each service's desired
+task count through `service_configs.<role>.min_capacity/max_capacity`, while the
+EC2 capacity provider's managed scaling owns the container-instance ASG desired
+capacity. Tune service min/max for workload shape; tune
+`ecs_capacity_min_size/max_size` for the total worker host floor/ceiling.
 
 **Scale-in and live turns.** Every termination goes through the terminate
 lifecycle hook (B.8): SIGTERM, `/readyz` 503, finish or hand off owned turns,

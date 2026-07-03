@@ -25,10 +25,13 @@ import { nowIso } from '../../shared/time/datetime.js';
 import { slackMessageActionBlocks } from './message-action-affordances.js';
 import { slackThreadTsFromThreadId } from './thread-ts.js';
 import {
+  handleSlackThreadProgressStatus,
+  isSlackTerminalSuccessText,
+} from './thread-progress-status.js';
+import {
   clampSlackRetryDelayMs,
   slackRateLimitRetryDelayMs,
 } from './channel-retry-delay.js';
-
 type SlackPostMessagePayload = {
   channel: string;
   text: string;
@@ -53,7 +56,6 @@ async function waitForPostMessageRetry(delayMs: number): Promise<void> {
     setTimeout(resolve, clampSlackRetryDelayMs(delayMs)),
   );
 }
-
 export function isSlackPayloadTooLarge(err: unknown): boolean {
   const candidate = err as {
     status?: unknown;
@@ -77,7 +79,6 @@ export function isSlackPayloadTooLarge(err: unknown): boolean {
   ].filter((value): value is string => typeof value === 'string');
   return text.some((value) => /msg_too_long|too_long|payload/i.test(value));
 }
-
 export async function postSlackMessageWithRetry(
   app: App | null,
   payload: SlackPostMessagePayload,
@@ -385,25 +386,53 @@ export async function sendSlackProgressUpdate(input: {
     );
     return;
   }
-  const trimmed = input.text.trim();
+  const actionOnly = Boolean(
+    input.options.actionOnly && input.options.actionAffordances?.length,
+  );
+  const trimmed = actionOnly ? '' : input.text.trim();
+  if (
+    await handleSlackThreadProgressStatus({
+      app: input.app,
+      channelId: input.channelId,
+      key: input.key,
+      text: input.text,
+      options: input.options,
+      onDone: () => {
+        input.activeProgress.delete(input.key);
+        input.persistProgress();
+      },
+    })
+  )
+    return;
+  if (actionOnly) return;
   if (!trimmed) {
     if (input.options.done) {
       input.activeProgress.delete(input.key);
       input.persistProgress();
-      logger.info(
-        {
-          channelId: input.channelId,
-          key: input.key,
-          generation: input.options.generation,
-        },
-        'Progress lifecycle slack cleared empty done',
-      );
     }
     return;
   }
 
   let existing = input.activeProgress.get(input.key);
   const threadTs = slackThreadTsFromThreadId(input.options.threadId);
+  if (
+    existing &&
+    (existing.channelId !== input.channelId || existing.threadId !== threadTs)
+  ) {
+    logger.warn(
+      {
+        channelId: input.channelId,
+        key: input.key,
+        storedChannelId: existing.channelId,
+        storedThreadId: existing.threadId,
+        expectedThreadId: threadTs,
+      },
+      'Progress lifecycle slack dropped mismatched persisted handle',
+    );
+    input.activeProgress.delete(input.key);
+    input.persistProgress();
+    existing = undefined;
+  }
   logger.info(
     {
       channelId: input.channelId,
@@ -422,10 +451,9 @@ export async function sendSlackProgressUpdate(input: {
     existing &&
     input.options.generation !== undefined &&
     existing.generation !== undefined &&
-    existing.generation !== input.options.generation &&
-    !(input.options.done && input.options.generation > existing.generation)
+    existing.generation !== input.options.generation
   ) {
-    if (input.options.done || input.options.replaceOnly) {
+    if (input.options.generation < existing.generation) {
       logger.info(
         {
           channelId: input.channelId,
@@ -439,19 +467,21 @@ export async function sendSlackProgressUpdate(input: {
       );
       return;
     }
-    logger.info(
-      {
-        channelId: input.channelId,
-        key: input.key,
-        done: input.options.done ?? false,
-        generation: input.options.generation,
-        existingGeneration: existing.generation,
-      },
-      'Progress lifecycle slack generation rollover',
-    );
-    input.activeProgress.delete(input.key);
-    input.persistProgress();
-    if (!input.options.done) existing = undefined;
+    if (!input.options.done && !input.options.replaceOnly) {
+      logger.info(
+        {
+          channelId: input.channelId,
+          key: input.key,
+          done: input.options.done ?? false,
+          generation: input.options.generation,
+          existingGeneration: existing.generation,
+        },
+        'Progress lifecycle slack generation rollover',
+      );
+      input.activeProgress.delete(input.key);
+      input.persistProgress();
+      existing = undefined;
+    }
   }
   if (!existing && input.options.replaceOnly) {
     logger.info(
@@ -465,24 +495,19 @@ export async function sendSlackProgressUpdate(input: {
     );
     return;
   }
-
-  if (threadTs) {
-    try {
-      await input.app.client.apiCall('assistant.threads.setStatus', {
-        channel_id: input.channelId,
-        thread_ts: threadTs,
-        status: trimmed,
-      });
-    } catch {
-      // Optional surface; fall through to message-based progress.
-    }
-  }
+  if (!existing && input.options.done && isSlackTerminalSuccessText(trimmed))
+    return void (input.activeProgress.delete(input.key),
+    input.persistProgress());
 
   if (!existing) {
+    const blocks = input.options.actionAffordances
+      ? slackMessageActionBlocks(trimmed, input.options.actionAffordances)
+      : undefined;
     const sent = (await input.app.client.chat.postMessage({
       channel: input.channelId,
       text: trimmed,
       ...(threadTs ? { thread_ts: threadTs } : {}),
+      ...(blocks ? { blocks } : {}),
     })) as { ts?: string };
     if (!input.options.done) {
       input.activeProgress.set(input.key, {
@@ -513,6 +538,14 @@ export async function sendSlackProgressUpdate(input: {
 
   if (existing.lastText === trimmed) {
     if (input.options.done) {
+      if (existing.messageTs) {
+        await input.app.client.chat.update({
+          channel: existing.channelId,
+          ts: existing.messageTs,
+          text: trimmed,
+          blocks: [],
+        });
+      }
       input.activeProgress.delete(input.key);
       input.persistProgress();
       logger.info(
@@ -524,6 +557,11 @@ export async function sendSlackProgressUpdate(input: {
         'Progress lifecycle slack cleared unchanged done',
       );
     } else {
+      if (input.options.generation !== undefined) {
+        existing.generation = input.options.generation;
+        input.activeProgress.set(input.key, existing);
+        input.persistProgress();
+      }
       logger.info(
         {
           channelId: input.channelId,
@@ -537,17 +575,25 @@ export async function sendSlackProgressUpdate(input: {
   }
 
   if (existing.messageTs) {
+    const blocks = input.options.actionAffordances
+      ? slackMessageActionBlocks(trimmed, input.options.actionAffordances)
+      : undefined;
     await input.app.client.chat.update({
       channel: existing.channelId,
       ts: existing.messageTs,
       text: trimmed,
+      ...(blocks ? { blocks } : { blocks: [] }),
     });
   } else {
     const existingThreadTs = slackThreadTsFromThreadId(existing.threadId);
+    const blocks = input.options.actionAffordances
+      ? slackMessageActionBlocks(trimmed, input.options.actionAffordances)
+      : undefined;
     const sent = (await input.app.client.chat.postMessage({
       channel: existing.channelId,
       text: trimmed,
       ...(existingThreadTs ? { thread_ts: existingThreadTs } : {}),
+      ...(blocks ? { blocks } : {}),
     })) as { ts?: string };
     existing.messageTs = sent.ts;
   }

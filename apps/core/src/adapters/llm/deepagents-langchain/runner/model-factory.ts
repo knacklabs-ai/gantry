@@ -1,5 +1,6 @@
 import { initChatModel } from 'langchain/chat_models/universal';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type { ChatOpenRouterInput } from '@langchain/openrouter';
 import { GantryChatOpenRouter } from './gantry-chat-openrouter.js';
 
 // Builds the LangChain chat-model instance the DeepAgents graph runs on. Model
@@ -26,6 +27,9 @@ import { GantryChatOpenRouter } from './gantry-chat-openrouter.js';
 // - `anthropic` is NOT a deepagents provider (Claude is SDK-only); it throws.
 
 export type ModelEndpointFamily = 'openai' | 'openrouter';
+export type OpenRouterProviderPreferences = NonNullable<
+  ChatOpenRouterInput['provider']
+>;
 
 // The "openai:" class prefix is correct for ALL of these — they reach the Gantry
 // loopback gateway, which routes to the real upstream by pathSegment. Adding a
@@ -43,6 +47,11 @@ const INIT_CHAT_MODEL_PROVIDERS = new Set<string>([
   'bedrock',
   'vertex',
 ]);
+
+// In sandbox_runtime, the host rewrites loopback model gateway URLs to this
+// private alias and installs a Gantry-owned egress mapping back to loopback.
+// Keep the runner allowlist exact so raw private/provider URLs remain rejected.
+const SANDBOX_RUNTIME_MODEL_GATEWAY_HOST = 'model-gateway.gantry.internal';
 
 export interface ResolvedRunnerModel {
   model: BaseChatModel;
@@ -64,6 +73,7 @@ export async function buildRunnerModel(input: {
   // of the real window and context-usage reports correctly. When ABSENT (e.g.
   // gpt-5.5/gpt-5.4), the library's real profile is used unchanged.
   maxInputTokens?: number;
+  openRouterProviderRouting?: OpenRouterProviderPreferences;
 }): Promise<ResolvedRunnerModel> {
   const provider = input.provider.trim().toLowerCase();
   const baseURL = input.gatewayBaseUrl;
@@ -93,6 +103,9 @@ export async function buildRunnerModel(input: {
       // durable session id; stable across turns. ChatOpenRouter injects this as
       // body `session_id` via invocationParams.
       ...(sessionId ? { sessionId } : {}),
+      ...(input.openRouterProviderRouting
+        ? { provider: input.openRouterProviderRouting }
+        : {}),
     });
     return { model, endpointFamily: 'openrouter', modelId: input.modelId };
   }
@@ -150,8 +163,10 @@ function assertLoopbackGatewayUrl(value: string, label: string): void {
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
-    throw new Error(`DeepAgents runner ${label} is not a valid URL.`);
+  } catch (error) {
+    throw new Error(`DeepAgents runner ${label} is not a valid URL.`, {
+      cause: error,
+    });
   }
   const hostname = url.hostname.toLowerCase();
   const loopback =
@@ -160,9 +175,11 @@ function assertLoopbackGatewayUrl(value: string, label: string): void {
       hostname === 'localhost' ||
       hostname === '::1' ||
       hostname === '[::1]');
-  if (!loopback) {
+  const sandboxGatewayAlias =
+    url.protocol === 'http:' && hostname === SANDBOX_RUNTIME_MODEL_GATEWAY_HOST;
+  if (!loopback && !sandboxGatewayAlias) {
     throw new Error(
-      `DeepAgents runner ${label} must be a loopback Gantry gateway URL.`,
+      `DeepAgents runner ${label} must be a loopback or sandbox-private Gantry gateway URL.`,
     );
   }
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { signIpcRequestPayload } from '@core/infrastructure/ipc/request-signing.js';
 import {
@@ -22,12 +22,18 @@ import {
 } from '@core/runtime/ipc.js';
 import {
   parseBrowserIpcRequest,
+  parseIpcMessage,
   parseMemoryIpcRequest,
   parsePermissionIpcRequest,
+  parseRichInteractionIpcRequest,
   parseUserQuestionIpcRequest,
 } from '@core/runtime/ipc-parsing.js';
 import { parseTaskIpcData } from '@core/runtime/ipc-task-parsing.js';
 import { clearConsumedIpcRequestIds } from '@core/runtime/ipc-auth-validation.js';
+import {
+  appendOwnedFileArtifactDegradeText,
+  resolveOwnedFileArtifactMessage,
+} from '@core/runtime/ipc-message-files.js';
 
 const TEST_RESPONSE_KEY_ID = 'test-response-key';
 
@@ -101,6 +107,68 @@ describe('validateIpcAuthRequest', () => {
   afterEach(() => {
     clearConsumedIpcRequestIds({ durable: 'consumed' });
     stopIpcWatcher();
+  });
+
+  it('accepts signed rich interaction IPC with required fallback text', () => {
+    const payload = {
+      requestId: 'rich-1',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      targetJid: 'tg:team',
+      context: { threadId: 'thread-1', appId: 'app-1', agentId: 'agent-1' },
+      interaction: {
+        id: 'brief',
+        title: 'Brief',
+        fallbackText: 'Status: ready',
+        rich: {
+          kind: 'status',
+          payload: { state: 'ready' },
+        },
+      },
+    };
+
+    expect(
+      parseRichInteractionIpcRequest(
+        signedPayload(payload, 'team', 'thread-1'),
+        'team',
+      ),
+    ).toMatchObject({
+      requestId: 'rich-1',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      targetJid: 'tg:team',
+      threadId: 'thread-1',
+      descriptor: {
+        rich: {
+          kind: 'status',
+          fallbackText: 'Status: ready',
+          payload: { state: 'ready' },
+        },
+      },
+    });
+  });
+
+  it('rejects unsigned or malformed rich interaction IPC', () => {
+    const payload = {
+      requestId: 'rich-bad',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      interaction: {
+        id: 'brief',
+        title: 'Brief',
+        rich: {
+          kind: 'unknown',
+          payload: {},
+        },
+      },
+    };
+
+    expect(() => parseRichInteractionIpcRequest(payload, 'team')).toThrow(
+      /signature/i,
+    );
+    expect(() =>
+      parseRichInteractionIpcRequest(signedPayload(payload), 'team'),
+    ).toThrow('Invalid rich interaction kind');
   });
 
   it('accepts a signed fresh request and returns the trusted thread binding', () => {
@@ -1241,5 +1309,176 @@ describe('validateIpcAuthRequest', () => {
     expect(() =>
       validateIpcAuthRequest(restartReplay, 'team', 'permission IPC'),
     ).toThrow(/replay/);
+  });
+});
+
+describe('parseIpcMessage', () => {
+  afterEach(() => {
+    clearConsumedIpcRequestIds({ durable: 'consumed' });
+    stopIpcWatcher();
+  });
+
+  it('keeps signed app scope and bounded FileArtifact refs', () => {
+    const payload = {
+      type: 'message',
+      requestId: 'msg-1',
+      chatJid: 'tg:team',
+      text: 'See attached report.',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      context: { appId: 'app:test', agentId: 'agent:test' },
+      files: [
+        { scope: 'reports', path: 'daily.md', version: 2 },
+        { path: 'summary.txt' },
+        { scope: 'ignored' },
+      ],
+    };
+
+    expect(parseIpcMessage(signedPayload(payload), 'team')).toMatchObject({
+      appId: 'app:test',
+      chatJid: 'tg:team',
+      text: 'See attached report.',
+      files: [
+        { scope: 'reports', path: 'daily.md', version: 2 },
+        { path: 'summary.txt' },
+      ],
+    });
+  });
+});
+
+describe('appendOwnedFileArtifactDegradeText', () => {
+  it('resolves owned file artifacts into message attachments', async () => {
+    const listFileArtifacts = vi.fn(async () => [
+      {
+        id: 'artifact-1',
+        virtualScope: 'reports',
+        virtualPath: 'daily.md',
+        version: 2,
+        contentHash: 'sha256:abc',
+        sizeBytes: 1_024,
+        contentType: 'text/markdown',
+        createdAt: '2026-06-23T00:00:00.000Z',
+      },
+    ]);
+    const readFileArtifact = vi.fn(async () => ({
+      artifact: {
+        id: 'artifact-1',
+        virtualScope: 'reports',
+        virtualPath: 'daily.md',
+        version: 2,
+        contentHash: 'sha256:abc',
+        sizeBytes: 1_024,
+        contentType: 'text/markdown',
+        createdAt: '2026-06-23T00:00:00.000Z',
+      },
+      content: '# report',
+    }));
+
+    await expect(
+      resolveOwnedFileArtifactMessage({
+        deps: {
+          getFileArtifactStore: () =>
+            ({
+              listFileArtifacts,
+              readFileArtifact,
+            }) as never,
+        },
+        appId: 'app:test',
+        sourceAgentFolder: 'team',
+        text: 'See attached report.',
+        files: [{ scope: 'reports', path: 'daily.md' }],
+      }),
+    ).resolves.toMatchObject({
+      text: 'See attached report.\n\nAttachments:\n- daily.md (text/markdown, 1024 bytes)',
+      files: [
+        {
+          filename: 'daily.md',
+          contentType: 'text/markdown',
+          sizeBytes: 1_024,
+        },
+      ],
+    });
+
+    expect(listFileArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'app:test',
+        virtualScope: 'reports',
+        virtualPath: 'daily.md',
+        limit: 1,
+      }),
+    );
+    expect(readFileArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'app:test',
+        virtualScope: 'reports',
+        virtualPath: 'daily.md',
+        version: 2,
+      }),
+    );
+  });
+
+  it('does not read oversized file artifact content into memory', async () => {
+    const listFileArtifacts = vi.fn(async () => [
+      {
+        id: 'artifact-large',
+        virtualScope: 'reports',
+        virtualPath: 'large.bin',
+        version: 1,
+        contentHash: 'sha256:large',
+        sizeBytes: 26 * 1024 * 1024,
+        contentType: 'application/octet-stream',
+        createdAt: '2026-06-23T00:00:00.000Z',
+      },
+    ]);
+    const readFileArtifact = vi.fn();
+
+    await expect(
+      resolveOwnedFileArtifactMessage({
+        deps: {
+          getFileArtifactStore: () =>
+            ({
+              listFileArtifacts,
+              readFileArtifact,
+            }) as never,
+        },
+        appId: 'app:test',
+        sourceAgentFolder: 'team',
+        text: 'See attached report.',
+        files: [{ scope: 'reports', path: 'large.bin' }],
+      }),
+    ).resolves.toEqual({
+      text: 'See attached report.\n\nAttachments:\n- Attachment unavailable.',
+    });
+    expect(readFileArtifact).not.toHaveBeenCalled();
+  });
+
+  it('keeps the base message when file artifact storage is unavailable', async () => {
+    await expect(
+      appendOwnedFileArtifactDegradeText({
+        deps: {},
+        appId: 'app:test',
+        sourceAgentFolder: 'team',
+        text: 'Ship the note.',
+        files: [{ path: 'daily.md' }],
+      }),
+    ).resolves.toBe(
+      'Ship the note.\n\nAttachments:\n- Attachment unavailable.',
+    );
+  });
+
+  it('keeps the base message when a file reference is invalid', async () => {
+    await expect(
+      appendOwnedFileArtifactDegradeText({
+        deps: {
+          getFileArtifactStore: () => ({ readFileArtifact: vi.fn() }) as never,
+        },
+        appId: 'app:test',
+        sourceAgentFolder: 'team',
+        text: 'Ship the note.',
+        files: [{ path: '../secret.txt' }],
+      }),
+    ).resolves.toBe(
+      'Ship the note.\n\nAttachments:\n- Attachment unavailable.',
+    );
   });
 });

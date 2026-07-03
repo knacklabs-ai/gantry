@@ -3,13 +3,8 @@ import type {
   ProgressUpdateOptions,
 } from '../domain/types.js';
 import { buildReplaceOnlyProgressOptions } from './progress-updates.js';
-import { formatElapsed } from './time-format.js';
-import { nowMs as currentTimeMs } from '../shared/time/datetime.js';
 
 const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
-const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
-const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
-const INITIAL_PROGRESS_DELAY_MS = 750;
 
 type GroupProgressHeartbeatLogger = {
   debug(metadata: Record<string, unknown>, message: string): void;
@@ -31,12 +26,12 @@ function logProgressLifecycle(
 export function startInitialGroupProgress(input: {
   supportsProgress: boolean;
   groupName: string;
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
-  buildProgressOptions?: () => ProgressUpdateOptions | undefined;
+  buildProgressOptions: () => ProgressUpdateOptions | undefined;
   sendProgressToChannel(
     text: string,
     options?: ProgressUpdateOptions,
   ): Promise<void>;
+  onSent?: () => Promise<void> | void;
   log: GroupProgressHeartbeatLogger;
 }): { cancel(): Promise<void> } {
   if (!input.supportsProgress) {
@@ -49,66 +44,25 @@ export function startInitialGroupProgress(input: {
   }
   logProgressLifecycle(
     input.log,
-    { group: input.groupName, delayMs: INITIAL_PROGRESS_DELAY_MS },
-    'Progress lifecycle initial scheduled',
+    { group: input.groupName },
+    'Progress lifecycle initial Stop affordance send',
   );
-  let cancelled = false;
-  let sendStarted: Promise<void> | undefined;
-  let resolveFinished: () => void = () => undefined;
-  const finished = new Promise<void>((resolve) => {
-    resolveFinished = resolve;
-  });
-  let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
-    timer = undefined;
-    if (cancelled) {
-      logProgressLifecycle(
-        input.log,
-        { group: input.groupName },
-        'Progress lifecycle initial timer skipped after cancel',
-      );
-      resolveFinished();
-      return;
-    }
-    logProgressLifecycle(
-      input.log,
-      { group: input.groupName },
-      'Progress lifecycle initial sending',
+  const send = input
+    .sendProgressToChannel('', {
+      ...input.buildProgressOptions(),
+      actionOnly: true,
+    })
+    .then(() => input.onSent?.())
+    .catch((err) =>
+      input.log.debug(
+        { err, group: input.groupName },
+        'Progress lifecycle initial Stop affordance failed',
+      ),
     );
-    sendStarted = input
-      .sendProgressToChannel(
-        'Working on it...',
-        input.buildProgressOptions?.() ?? input.buildMessageOptions(),
-      )
-      .then(() =>
-        logProgressLifecycle(
-          input.log,
-          { group: input.groupName },
-          'Progress lifecycle initial sent',
-        ),
-      )
-      .catch((err) =>
-        input.log.debug(
-          { err, group: input.groupName },
-          'Failed to send initial progress update',
-        ),
-      )
-      .finally(resolveFinished);
-  }, INITIAL_PROGRESS_DELAY_MS);
 
   return {
     cancel: async () => {
-      cancelled = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = undefined;
-        logProgressLifecycle(
-          input.log,
-          { group: input.groupName },
-          'Progress lifecycle initial cancelled before send',
-        );
-        resolveFinished();
-      }
-      await (sendStarted ?? finished);
+      await send;
     },
   };
 }
@@ -168,8 +122,7 @@ export function startGroupProgressHeartbeats(input: {
   channelRuntime: {
     setTyping(jid: string, isTyping: boolean): Promise<void>;
   };
-  buildMessageOptions: (threadId?: string) => MessageSendOptions | undefined;
-  buildProgressOptions?: () => ProgressUpdateOptions | undefined;
+  buildProgressOptions: () => ProgressUpdateOptions | undefined;
   sendProgressToChannel(
     text: string,
     options?: ProgressUpdateOptions,
@@ -177,13 +130,11 @@ export function startGroupProgressHeartbeats(input: {
   log: GroupProgressHeartbeatLogger;
 }): {
   typingHeartbeatTimer: ReturnType<typeof setInterval>;
-  progressTimer: ReturnType<typeof setInterval>;
+  progressTimer: ReturnType<typeof setInterval> | null;
   pause(): void;
   resume(): void;
   reset(): void;
 } {
-  let lastElapsedProgressAt = currentTimeMs();
-  let lastNoOutputWarningAt = 0;
   let paused = false;
   const typingHeartbeatTimer = setInterval(() => {
     if (paused || !input.isTypingActive()) return;
@@ -196,63 +147,15 @@ export function startGroupProgressHeartbeats(input: {
         ),
       );
   }, TYPING_HEARTBEAT_INTERVAL_MS);
-  const progressTimer = setInterval(() => {
-    void (async () => {
-      if (!input.supportsProgress || paused || !input.isTypingActive()) return;
-      const now = currentTimeMs();
-      const elapsedMs = input.getElapsedMs();
-      if (
-        !input.hasVisibleOutput?.() &&
-        now - lastElapsedProgressAt >= ELAPSED_PROGRESS_INTERVAL_MS
-      ) {
-        lastElapsedProgressAt = now;
-        const progressOptions =
-          input.buildProgressOptions?.() ?? input.buildMessageOptions();
-        void input
-          .sendProgressToChannel(
-            `Still working (${formatElapsed(elapsedMs)})...`,
-            progressOptions,
-          )
-          .catch((err) =>
-            input.log.debug(
-              { err, group: input.groupName },
-              'Failed to send elapsed progress update',
-            ),
-          );
-      }
-      if (
-        now - input.getLastAgentProgressAt() >= NO_OUTPUT_WARNING_INTERVAL_MS &&
-        now - lastNoOutputWarningAt >= NO_OUTPUT_WARNING_INTERVAL_MS
-      ) {
-        lastNoOutputWarningAt = now;
-        const progressOptions =
-          input.buildProgressOptions?.() ?? input.buildMessageOptions();
-        void input
-          .sendProgressToChannel(
-            `No new output yet, still running (${formatElapsed(elapsedMs)})...`,
-            progressOptions,
-          )
-          .catch((err) =>
-            input.log.debug(
-              { err, group: input.groupName },
-              'Failed to send no-output warning',
-            ),
-          );
-      }
-    })();
-  }, 5_000);
   return {
     typingHeartbeatTimer,
-    progressTimer,
+    progressTimer: null,
     pause: () => {
       paused = true;
     },
     resume: () => {
       paused = false;
     },
-    reset: () => {
-      lastElapsedProgressAt = currentTimeMs();
-      lastNoOutputWarningAt = 0;
-    },
+    reset: () => undefined,
   };
 }

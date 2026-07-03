@@ -10,6 +10,7 @@ import { envFilePath } from '../config/settings/runtime-home.js';
 import {
   capabilityToToolRule,
   ensureConfiguredConversationBinding,
+  loadDesiredRuntimeSettingsForWrite,
   loadRuntimeSettings,
   writeDesiredRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
@@ -25,6 +26,8 @@ import { runHarness } from './group-harness.js';
 import { runList } from './group-list.js';
 import { runProfile } from './agent-profile.js';
 import { verifyTelegramChatAccess } from './telegram.js';
+import { EnvRuntimeSecretProvider } from '../adapters/credentials/env-runtime-secret-provider.js';
+import { getProviderRuntimeSecret } from '../channels/provider-runtime-secrets.js';
 import {
   parseGroupAddArgs,
   parseGroupPolicyArgs,
@@ -40,7 +43,6 @@ import {
   findConversationIdForAgent,
   formatAgentHarnessLine,
   isInteractiveTerminal,
-  listGroupsWithJid,
   loadDatabase,
   normalizeGroupAddSelector,
   pruneAgentSenderPolicyOverride,
@@ -60,6 +62,27 @@ import { nowIso } from '../shared/time/datetime.js';
 
 const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
+
+function displayNameForConfiguredConversation(
+  settings: ReturnType<typeof loadRuntimeSettings>,
+  jid: string,
+  fallback: string,
+): string {
+  const provider = providerFromGroupJid(jid);
+  if (!provider) return fallback;
+  const existingConversation = Object.values(settings.conversations).find(
+    (conversation) => {
+      const connection =
+        settings.providerConnections[conversation.providerConnection];
+      return (
+        connection?.provider === provider &&
+        (conversation.externalId === jid ||
+          jid.endsWith(`:${conversation.externalId}`))
+      );
+    },
+  );
+  return existingConversation?.displayName || fallback;
+}
 
 async function runInfo(
   runtimeHome: string,
@@ -184,13 +207,25 @@ async function runAdd(runtimeHome: string, args: string[]): Promise<number> {
     let displayName = parsed.name?.trim() || '';
     let chatProbeMessage = '';
 
+    const settings = loadRuntimeSettings(runtimeHome);
+
     if (normalized.startsWith('tg:')) {
-      const env = readEnvFile(envFilePath(runtimeHome));
-      const token = env.TELEGRAM_BOT_TOKEN?.trim() || '';
+      const token = await getProviderRuntimeSecret({
+        providerId: 'telegram',
+        key: 'bot_token',
+        defaultEnvName: 'TELEGRAM_BOT_TOKEN',
+        settings,
+        secrets:
+          db.getRuntimeSecrets?.() ??
+          new EnvRuntimeSecretProvider({
+            ...process.env,
+            ...readEnvFile(envFilePath(runtimeHome)),
+          }),
+      });
       if (!token) {
-        p.log.error('TELEGRAM_BOT_TOKEN is missing.');
+        p.log.error('Telegram bot token runtime secret is missing.');
         p.log.info(
-          'Next action: run `gantry config set TELEGRAM_BOT_TOKEN <token>` first.',
+          'Next action: run `gantry provider connect telegram` or configure provider_connections.telegram_default.runtime_secret_refs.bot_token.',
         );
         return 1;
       }
@@ -240,7 +275,6 @@ async function runAdd(runtimeHome: string, args: string[]): Promise<number> {
       return 1;
     }
 
-    const settings = loadRuntimeSettings(runtimeHome);
     const previousSettings = structuredClone(settings);
     const requiresTrigger = parsed.requiresTrigger ?? true;
     const defaultTrigger = defaultTriggerForAgentName(
@@ -512,16 +546,22 @@ async function runTrigger(
     }
 
     try {
-      await db.setConversationRoute(found.jid, nextGroup);
-      try {
-        const settings = loadRuntimeSettings(runtimeHome);
+      const providerId = providerFromGroupJid(found.jid);
+      if (providerId) {
+        const settings = await loadDesiredRuntimeSettingsForWrite({
+          runtimeHome,
+        });
         const previousSettings = structuredClone(settings);
         ensureConfiguredConversationBinding(settings, {
           agentId: found.group.folder,
           agentName: found.group.name,
           agentFolder: found.group.folder,
           jid: found.jid,
-          displayName: found.group.name,
+          displayName: displayNameForConfiguredConversation(
+            settings,
+            found.jid,
+            found.group.name,
+          ),
           trigger: nextGroup.trigger,
           requiresTrigger: nextGroup.requiresTrigger !== false,
         });
@@ -530,10 +570,8 @@ async function runTrigger(
           settings,
           previousSettings,
         });
-      } catch {
-        // Generic local JIDs are still allowed for file-backed agents; only
-        // known provider JIDs participate in conversation desired state.
       }
+      await db.setConversationRoute(found.jid, nextGroup);
     } catch (err) {
       p.log.error(`Could not update trigger settings: ${errorMessage(err)}`);
       return 1;

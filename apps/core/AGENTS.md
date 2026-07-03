@@ -15,10 +15,11 @@
   common in hosted deployments: IPv4-capable managed Postgres endpoints, custom
   CA bundles, Slack Socket Mode scopes/App Home DM settings, and Linux sandbox
   packages such as `bubblewrap`, `socat`, and `ripgrep`.
-- When path-sensitive code changes, update the matching tests in `apps/core/src/**/*.test.ts` in the same change.
+- When path-sensitive code changes, update the matching tests under `apps/core/test/**` in the same change.
 - Integration tests for runtime features must use shared harnesses under `apps/core/test/harness/`; DB-backed cases must guard on `GANTRY_TEST_DATABASE_URL` and isolate schemas.
 - Run `npm run test:integration:postgres` for DB-backed feature work. Use a disposable Docker Postgres container for each task, enable `vector` and `pg_trgm` before migrations, pass its URL through `GANTRY_TEST_DATABASE_URL`, and remove the container after the check. A plain `npm run test:integration` is allowed to skip those suites when the local Postgres test URL is absent.
 - When adding DB-backed outbound delivery coverage, include the suite in the `test:integration:postgres` script so the required database gate cannot silently omit it.
+- DB-backed e2e coverage belongs in `apps/core/test/e2e/**` and must be included in `npm run test:e2e:postgres` so the required database gate cannot silently omit it.
 - IPC/MCP stdio fixture tests that spawn child processes must drain stdout/stderr, use explicit timeouts with full-suite headroom, and include buffered child output in timeout errors.
 - Claude Agent SDK boundary tests must stay hermetic: mock the SDK provider, assert generated options at the adapter boundary, and never require real Anthropic auth.
 - Claude SDK `result` messages can encode provider auth or billing failures, including success-subtyped text such as `Invalid API key`; runner code must promote those to errors before writing channel-visible assistant output.
@@ -27,6 +28,11 @@
 - Execution adapters may project provider process metadata such as `modelCredentialEnv`, but must not patch host-owned authority or continuity fields such as allowed tools, selected MCP servers, session id, chat id, or thread id after runtime validation.
 - Claude runtime materialization owns generated Claude config paths and protected-path projection; host spawn code should consume the execution adapter result instead of naming `.claude` settings or skills as durable inputs.
 - Anthropic Claude runtime materialization must receive the exact selected Gantry skill ids for the run. No selected skills means `query({ options: { skills: [] } })`; Browser may add only the generated `gantry-browser` skill when the canonical Browser capability is selected. Do not materialize bundled or artifact skills merely because they exist on disk or are enabled elsewhere.
+- Anthropic and DeepAgents selected-skill runs must both resolve installed skill
+  artifacts through `apps/core/src/application/skills/selected-skill-projection.ts`.
+  Adapters may only translate that projection into runner-native scratch input:
+  Claude `CLAUDE_CONFIG_DIR/skills` or DeepAgents virtual `/skills/**`. Generated
+  `.llm-runtime` paths are disposable and must not be used as install truth.
 - Claude Agent SDK boundary env assertions must include `GANTRY_MEMORY_IPC_ACTIONS_JSON` in MCP server env (capability allowlist projection) and keep it out of top-level SDK process env.
 - Control HTTP route changes must have route-level coverage for encoded ids, app ownership checks, and pre-mutation authorization.
 - Control API bearer auth is JSON-only: use `GANTRY_CONTROL_API_KEYS_JSON` entries with explicit `kid`, `token`, `appId`, and `scopes`; do not reintroduce `GANTRY_CONTROL_API_KEY` or implicit all-scope local auth.
@@ -45,6 +51,18 @@
 - Host spawn must treat `selectedMcpServerIds` as the per-run third-party MCP allowlist. If the list is empty, do not resolve MCP Gantry Credentials or materialize active MCP bindings from storage.
 - Broker model proxy values must not be projected into tool subprocesses. The SDK process receives model credentials only through `modelCredentialEnv`; approved Bash, skill, local CLI, script, and MCP stdio tool calls receive loopback egress proxy and neutral TLS trust aliases through provider-neutral `toolNetworkEnv`. Keep provider tokens and broker proxies out of tool subprocesses. `NO_PROXY` is compatibility only, not a safety boundary.
 - Model-provider credentials are shared Model Access credentials. Resolve chat runs, subagents, memory, and jobs through the reserved `gantry-model-access` broker profile with `purpose=model_runtime`; do not add per-agent or `main-agent` fallback model credential bindings. Tool/API credentials must use `purpose=tool_capability` with explicit agent/capability context.
+- Cloud Model Access modes such as Bedrock role/profile, Bedrock Secrets
+  Manager refs, Vertex ADC, and Vertex Secret Manager refs are not simple API
+  keys. Add them through registry credential modes, explicit gateway auth
+  strategies, host-side signing/token/secret-ref resolution, and gateway tests
+  as documented in `docs/architecture/credential-management.md`; never project
+  AWS or Google raw credentials into runner/tool env or `settings.yaml`. Update
+  focused coverage where behavior changes: `core/model-provider-registry.test.ts`,
+  `core/model-credential-service.test.ts`, `core/gantry-model-gateway.test.ts`,
+  `control/credentials-routes.test.ts`, `control/openapi.test.ts`,
+  `cli/setup-credentials.test.ts`,
+  `adapters/deepagents-credential-validation.test.ts`, and
+  `adapters/deepagents-model-factory.test.ts`.
 - Agent-facing broker failures must include a short cause, broker health/recovery guidance, and avoid leaking raw credential values; browser launch/status may expose broker health metadata only for broker-backed semantic capabilities.
 - Browser is one durable capability: `Browser`. Runtime projects it into first-party Gantry MCP gateway tools: `mcp__gantry__browser_status`, `mcp__gantry__browser_open`, `mcp__gantry__browser_inspect`, `mcp__gantry__browser_act`, and `mcp__gantry__browser_close`; do not persist concrete browser subtool names as authority.
 - Host spawn must fail closed on host-private browser backend allowed-tool rules and projected `mcp__gantry__browser_*` allowed-tool rules inherited from persistence; do not silently strip or canonicalize stale browser grants. Browser actions go through signed per-tool Browser IPC.
@@ -83,6 +101,7 @@
 - Do not expose scheduler MCP list filters that the host will ignore. If an MCP tool is always scoped to the authenticated conversation, keep agent-facing schemas scoped the same way.
 - `scheduler_wait_for_events` is a long-polling contract, not an immediate list alias. It must wait until matching events arrive or the requested timeout expires, and a five-minute wait must stay within the host IPC long-running path.
 - Claude SDK `allowedTools` only auto-approves; it does not hide tools. Use runner-owned `tools` for available built-ins, `disallowedTools` for unsupported Claude Code built-ins, and `GANTRY_MCP_TOOL_NAMES_JSON` to keep duplicate or unselected Gantry MCP schemas out of agent context.
+- Built-in Gantry MCP server config must set an explicit SDK `timeout` that covers IPC-backed tools such as memory, browser, and scheduler calls; do not rely on SDK defaults.
 - Keep the Claude SDK `Skill` tool available, but treat `query({ options: { skills } })` as the live session authority: live agent runs must pass the exact materialized Gantry skill names, and memory/slash helper queries must pass `skills: []`. Filesystem materialization and `skillOverrides` are defense in depth only; do not rely on omitted `skills` to hide Claude Code native skills/commands such as `commands`, `init`, `review`, `security-review`, `dream`, `schedule`, `batch`, or `claude-api`.
 - Claude native SDK tools such as `Read`, `Write`, `Edit`, `Bash`, `Agent`, `WebFetch`, and `WebSearch` are Anthropic harness projections only. Do not seed or expose them as durable Gantry catalog capabilities; durable Gantry authority must be reviewed source-neutral capabilities such as `browser.use`, exact Gantry admin MCP capabilities, reviewed skill/MCP/CLI/adapter capabilities, or scoped `RunCommand(...)` fallback bindings behind a capability.
 - Owner-app job run/event listing must start from the app-owned control session route and join into jobs/runs/events; do not implement app scoping by scanning global recency pages and applying correlated ownership checks.
@@ -103,6 +122,7 @@
 - Persistent permission approvals for scheduler blockers must re-run setup readiness for matching `Setup required` paused jobs, reactivate and queue only after shared readiness passes, and send a receipt that names queued or still-blocked jobs.
 - Permission approval timeout must stay human-scale by default (300000ms), resolve `PERMISSION_APPROVAL_TIMEOUT_MS` before `GANTRY_PERMISSION_TIMEOUT_MS`, and preserve runtime `.env` fallback for shared timeout consumers.
 - Permission approval prompts and receipts must stay scan-readable and auditable: format tool inputs with typed sections, show long commands with head/tail truncation, keep persistent rules in Details/audit using safe rule summaries, and keep receipts tied to the exact approved action.
+- If a native permission prompt hides full command/diff/settings details behind a channel action, persist the redacted full-view payload with the durable pending interaction or keep a visible inline fallback; approvers must not be able to approve after restart without inspectable evidence.
 - Keep the architecture simple, do not over complicate
 - MCP source inventory, requestable semantic capabilities, and selected
   `capability:<id>` authority must stay separate in runner projections.
@@ -134,7 +154,10 @@
 - `ChannelWiring.sendProviderMessage` is recovery-only: recovery paths must mint a channel-wiring opaque permit bound to the claimed outbound item/destination before dispatch, and non-recovery files must not call `createRecoveryDispatchPermit` or `sendProviderMessage`.
 - Runtime provider-visible text streaming may send live deltas only after passing through the stateful user-visible stream sanitizer. Never send raw provider deltas directly; final streaming calls close the generation and flush sanitizer carry.
 - Runtime progress/status/receipt dispatch may use provider progress sinks, but progress text must stay host-authored status only. Do not send model/provider deltas, provider session handles, or arbitrary assistant text through progress updates.
+- Live message reaction acks are best-effort channel delivery hints. Use native provider message refs only, keep them out of durable authority, and fire running reactions from first provider-visible progress rather than live-turn claim.
 - Runtime progress handles are turn-scoped by generation. Permission waits must pause active elapsed time and heartbeat updates, resume the same generation on prompt approval, and allocate a fresh generation only after background demotion or a new user turn.
+- Channel streaming sinks must gate chunks by generation, clear old stream state on generation rollover, and seal the latest generation on reset/done so stale provider chunks cannot recreate visible output after `/new` or continuation.
+- Channel progress adapters with persisted handles must let newer replace-only progress generations take over the existing handle while still dropping older generations; otherwise a restarted or multi-turn run can silently lose `Working`/`Waiting` updates.
 - Runtime progress generation must stay separate from streaming-chunk generation. SDK success markers may advance streaming generations within a turn, but final progress such as `Done in N` must keep the active progress handle generation so follow-up receipts can be replaced.
 - Runtime final progress such as `Done in N` must not be replace-only. Fast streaming can cancel the delayed initial progress before a handle exists, and terminal progress must still be allowed to create a final status.
 - Runtime progress heartbeat elapsed-warning timestamps must initialize from the active turn start. Before starting a new queue turn, cancel any prior turn UI timers for that queue instead of relying on per-invocation cleanup to win races.

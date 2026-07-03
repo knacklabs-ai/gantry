@@ -22,6 +22,7 @@ import { ConversationRoute, ThinkingOverride } from '../../domain/types.js';
 import { RemoteMcpDnsValidationCache } from '../../application/mcp/mcp-server-policy.js';
 import { createGroupProcessor } from '../../runtime/group-processing.js';
 import type { GroupProcessingDeps } from '../../runtime/group-processing-types.js';
+import { resolveAgentLockStatus } from '../../config/profiles.js';
 import { listAvailableGroups } from '../../runtime/group-registry.js';
 import { GroupQueue } from '../../runtime/group-queue.js';
 import { parseThreadQueueKey } from '../../shared/thread-queue-key.js';
@@ -109,11 +110,13 @@ export interface RuntimeApp {
       existingRunLeaseWorkerInstanceId?: string;
       existingRunLeaseFencingVersion?: number;
       onRunResult?: (result: 'success' | 'error' | 'stopped') => void;
+      onFirstProgress?: (input: {
+        jid: string;
+        messageRef: string;
+      }) => Promise<void> | void;
     },
   ) => Promise<boolean>;
   getConversationRoutes: () => Record<string, ConversationRoute>;
-  getLastTimestamp: () => string;
-  setLastTimestamp: (timestamp: string) => void;
   setAgentCursor: (chatJid: string, timestamp: string) => void;
   setChannelRuntime: (runtime: GroupProcessingDeps['channelRuntime']) => void;
   sendChannelMessage: (
@@ -153,7 +156,6 @@ export interface RuntimeAppOptions {
 }
 
 export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
-  let lastTimestamp = '';
   let conversationRoutes: Record<string, ConversationRoute> = {};
   let lastAgentTimestamp: Record<string, string> = {};
   let stateSaveInFlight: Promise<void> | undefined;
@@ -333,12 +335,10 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
 
   async function loadState(): Promise<void> {
     const repository = ops();
-    const [loadedLastTimestamp, agentTs, loadedRoutes] = await Promise.all([
-      repository.getRouterState('last_timestamp'),
+    const [agentTs, loadedRoutes] = await Promise.all([
       repository.getRouterState('last_agent_timestamp'),
       repository.getAllConversationRoutes(),
     ]);
-    lastTimestamp = loadedLastTimestamp || '';
     try {
       lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
     } catch {
@@ -359,12 +359,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     stateSaveInFlight = (async () => {
       do {
         stateSaveDirty = false;
-        const timestamp = lastTimestamp;
         const agentTimestampJson = JSON.stringify(lastAgentTimestamp);
-        await Promise.all([
-          ops().setRouterState('last_timestamp', timestamp),
-          ops().setRouterState('last_agent_timestamp', agentTimestampJson),
-        ]);
+        await ops().setRouterState('last_agent_timestamp', agentTimestampJson);
       } while (stateSaveDirty);
     })().finally(() => {
       stateSaveInFlight = undefined;
@@ -525,6 +521,17 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
         channelRuntime.setTyping(chatJid, isTyping),
       sendProgressUpdate: (chatJid, text, options) =>
         channelRuntime.sendProgressUpdate(chatJid, text, options),
+      renderAgentTodo: (chatJid, render) =>
+        channelRuntime.renderAgentTodo?.(chatJid, render) ??
+        Promise.resolve(false),
+      hydrateConversationContext: (request) =>
+        channelRuntime.hydrateConversationContext?.(request) ??
+        Promise.resolve({
+          providerId: 'unknown',
+          attempted: false,
+          skipped: true,
+          reason: 'unsupported',
+        }),
       isControlApproverAllowed: (input) =>
         channelRuntime.isControlApproverAllowed?.(input) ??
         Promise.resolve(false),
@@ -575,6 +582,9 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     getAsyncTaskRepository: () => getRuntimeStorage().repositories.asyncTasks,
     getPatternCandidateRepository: () =>
       getRuntimeStorage().repositories.patternCandidates,
+    getProactiveSurfacingRepository: () =>
+      getRuntimeStorage().repositories.proactiveSurfacing,
+    getAgentLockStatus: resolveAgentLockStatus,
     getSkillRepository: () => getRuntimeStorage().repositories.skills,
     getMcpServerRepository: () => getRuntimeStorage().repositories.mcpServers,
     getCapabilitySecretRepository: () =>
@@ -615,10 +625,6 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     processGroupMessages: (chatJid, options) =>
       groupProcessor.processGroupMessages(chatJid, options),
     getConversationRoutes: () => conversationRoutes,
-    getLastTimestamp: () => lastTimestamp,
-    setLastTimestamp: (timestamp) => {
-      lastTimestamp = timestamp;
-    },
     setAgentCursor: (chatJid, timestamp) => {
       lastAgentTimestamp[chatJid] = timestamp;
     },

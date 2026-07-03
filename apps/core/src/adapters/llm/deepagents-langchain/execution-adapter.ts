@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 import type {
   AgentExecutionAdapter,
@@ -13,6 +14,7 @@ import { isMissingDeepAgentSessionError } from './runner/session-store.js';
 import { ensureDeepAgentsCheckpointSchema } from './checkpoint-setup.js';
 import { resolveModelCacheSupport } from '../../../shared/model-cache-support.js';
 import { resolveDeepAgentSkillProjection } from './skill-projection.js';
+import type { OpenRouterProviderRouting } from '../../../shared/model-catalog-provider-metadata.js';
 
 const GANTRY_DEEPAGENTS_MODEL_ID_ENV = 'GANTRY_DEEPAGENTS_MODEL_ID';
 const GANTRY_DEEPAGENTS_MODEL_PROVIDER_ENV = 'GANTRY_DEEPAGENTS_MODEL_PROVIDER';
@@ -25,6 +27,8 @@ const GANTRY_DEEPAGENTS_CACHE_PROMPT_CONTROL_ENV =
 // the runner leaves that profile untouched.
 const GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS_ENV =
   'GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS';
+const GANTRY_DEEPAGENTS_OPENROUTER_PROVIDER_ROUTING_ENV =
+  'GANTRY_DEEPAGENTS_OPENROUTER_PROVIDER_ROUTING';
 
 // Maps the resolved model's prompt-cache request control (catalog descriptor) to
 // the runner's gated cache_control mode. 'provider_automatic_prefix' (OpenAI
@@ -42,6 +46,32 @@ function cachePromptControlMode(
     default:
       return 'none';
   }
+}
+
+function openRouterProviderRoutingEnv(
+  routing: OpenRouterProviderRouting | undefined,
+): string | undefined {
+  if (!routing) return undefined;
+  return JSON.stringify({
+    ...(routing.only ? { only: routing.only } : {}),
+    ...(routing.ignore ? { ignore: routing.ignore } : {}),
+    ...(routing.order ? { order: routing.order } : {}),
+    ...(routing.allowFallbacks !== undefined
+      ? { allow_fallbacks: routing.allowFallbacks }
+      : {}),
+    ...(routing.requireParameters !== undefined
+      ? { require_parameters: routing.requireParameters }
+      : {}),
+    ...(routing.dataCollection !== undefined
+      ? { data_collection: routing.dataCollection }
+      : {}),
+    ...(routing.zdr !== undefined ? { zdr: routing.zdr } : {}),
+    ...(routing.enforceDistillableText !== undefined
+      ? { enforce_distillable_text: routing.enforceDistillableText }
+      : {}),
+    ...(routing.quantizations ? { quantizations: routing.quantizations } : {}),
+    ...(routing.sort ? { sort: routing.sort } : {}),
+  });
 }
 
 export function deepAgentsCheckpointSchema(storageSchema: string): string {
@@ -92,13 +122,13 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
       );
     }
 
-    // Adapter-owned runtime config dir is retained for sandbox/read path parity.
+    // Adapter-owned runtime config dir is scratch only.
     // Live continuity is not file-backed: the runner uses LangGraph's official
     // PostgresSaver keyed by the Gantry provider session id.
+    const runtimeScratchRoot = path.join(input.groupDir, '.llm-runtime');
     const runtimeConfigDir = path.join(
-      input.groupDir,
-      '.llm-runtime',
-      'deepagents',
+      runtimeScratchRoot,
+      `deepagents-${safePathSegment(input.input.runId ?? randomUUID())}`,
     );
     fs.mkdirSync(runtimeConfigDir, { recursive: true, mode: 0o700 });
 
@@ -133,6 +163,13 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
       ) {
         env[GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS_ENV] =
           String(contextWindowTokens);
+      }
+      const openRouterRouting = openRouterProviderRoutingEnv(
+        input.effectiveModelEntry.providerRouting?.openrouter,
+      );
+      if (openRouterRouting) {
+        env[GANTRY_DEEPAGENTS_OPENROUTER_PROVIDER_ROUTING_ENV] =
+          openRouterRouting;
       }
     }
 
@@ -190,10 +227,14 @@ export class DeepAgentsLangChainExecutionAdapter implements AgentExecutionAdapte
         `checkpointSchema=${deepAgentsCheckpointSchema(input.runtimeStorage?.postgresSchema ?? 'gantry')}`,
       ],
       cleanup: () => {
-        /* retain session projection across live turns; no per-run temp to clean */
+        fs.rmSync(runtimeConfigDir, { recursive: true, force: true });
       },
     };
   }
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
 export function createDeepAgentsLangChainExecutionAdapter(): AgentExecutionAdapter {

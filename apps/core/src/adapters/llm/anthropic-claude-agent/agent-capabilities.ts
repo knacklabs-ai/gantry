@@ -46,6 +46,7 @@ export interface AgentCapabilityContext {
   parentTaskId?: string;
   runLeaseToken?: string;
   runLeaseFencingVersion?: number;
+  liveStopActionToken?: string;
   memoryUserId?: string;
   memoryDefaultScope?: 'user' | 'group';
   memoryReviewerIsControlApprover?: boolean;
@@ -81,12 +82,14 @@ export type McpServerConfig =
       command: string;
       args?: string[];
       env?: Record<string, string>;
+      timeout?: number;
       alwaysLoad?: boolean;
     }
   | {
       type: 'http' | 'sse';
       url: string;
       headers?: Record<string, string>;
+      timeout?: number;
       alwaysLoad?: boolean;
     };
 
@@ -250,6 +253,9 @@ const gantryMcpProvider: AgentCapabilityProvider = {
             ),
           }
         : {}),
+      ...(ctx.liveStopActionToken
+        ? { GANTRY_LIVE_STOP_ACTION_TOKEN: ctx.liveStopActionToken }
+        : {}),
       GANTRY_MEMORY_USER_ID: ctx.memoryUserId || '',
       GANTRY_MEMORY_DEFAULT_SCOPE: ctx.memoryDefaultScope || 'group',
       GANTRY_MEMORY_REVIEWER_IS_CONTROL_APPROVER:
@@ -318,6 +324,7 @@ const gantryMcpProvider: AgentCapabilityProvider = {
         gantry: {
           command: 'node',
           args: [ctx.mcpServerPath],
+          timeout: 300_000,
           alwaysLoad: true,
           env,
         },

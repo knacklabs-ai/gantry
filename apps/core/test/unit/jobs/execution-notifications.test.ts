@@ -146,12 +146,12 @@ describe('jobs/execution-notifications', () => {
     const sendMessage = vi.fn(async () => undefined);
 
     await notifySchedulerTerminalRunState({
-      job: makeJob({ name: 'KnackLabs Lead Maintenance' }),
+      job: makeJob({ name: 'Fixture Lead Maintenance' }),
       runId: 'run-1',
       runShortId: 4,
       runStatus: 'completed',
       summary:
-        '## Final Job Report\n- *Mode*: B (KnackLabs lead finder) — Sun 12:05 IST.\n- *Added*: 2 leads to Bot Recommendation tab (rows 1918-1919), locations written to column K.',
+        '## Final Job Report\n- *Mode*: B (fixture lead finder) — Sun 12:05 IST.\n- *Added*: 2 leads to Fixture Leads tab (rows 1918-1919), locations written to column K.',
       nextRun: '2026-05-17T08:35:00.000Z',
       retryCount: 0,
       pauseReason: null,
@@ -161,14 +161,15 @@ describe('jobs/execution-notifications', () => {
 
     const message = String(sendMessage.mock.calls[0]?.[1]);
     expect(message).toContain('**✅ Completed**');
-    expect(message).toContain('· KnackLabs Lead Maintenance · 6m 22s');
-    expect(message).toContain(
-      'Final Job Report Mode: B (KnackLabs lead finder)',
-    );
+    expect(message).toContain('· Fixture Lead Maintenance · 6m 22s');
+    expect(message).toContain('Final Job Report Mode: B (fixture lead finder)');
     expect(message).toContain('Added: 2 leads');
     expect(message).not.toContain('##');
     expect(message).not.toContain('*Mode*');
     expect(message).not.toContain('T08:35:00.000Z');
+    expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
+      actionAffordances: [],
+    });
   });
 
   it('turns queue bookkeeping JSON into a human memory maintenance outcome', async () => {
@@ -205,7 +206,7 @@ describe('jobs/execution-notifications', () => {
       runId: 'run-1',
       runShortId: 7,
       runStatus: 'completed',
-      summary: 'Memory dreaming completed: 3 promoted, 4 sent to review.',
+      summary: 'Memory dreaming needs attention: 4 sent to review.',
       nextRun: '2026-05-15T21:45:00.000Z',
       retryCount: 0,
       pauseReason: null,
@@ -219,14 +220,17 @@ describe('jobs/execution-notifications', () => {
       expect.stringContaining(
         '**📝 Needs memory review** · Memory Dreaming (main_agent tg:5759865942)',
       ),
-      { threadId: 'thread-1' },
+      expect.objectContaining({
+        threadId: 'thread-1',
+        actionAffordances: [],
+      }),
     );
     const message = String(sendMessage.mock.calls[0]?.[1]);
     expect(message).toContain(
-      'Memory dreaming completed: 3 promoted, 4 sent to review.',
+      'Memory dreaming needs attention: 4 sent to review.',
     );
     expect(message).toContain(
-      'Action: Ask the agent to show pending memory reviews, then approve, reject, or edit by number.',
+      'Needs attention: 4 memory changes need your review.',
     );
     expect(message).not.toContain('memory_review_pending');
   });
@@ -241,7 +245,7 @@ describe('jobs/execution-notifications', () => {
       runShortId: 8,
       runStatus: 'completed',
       summary:
-        'Memory dreaming completed with no memory changes. 7 pending memory reviews need review.',
+        'Memory dreaming needs attention: 7 pending memory reviews need review.',
       nextRun: null,
       retryCount: 0,
       pauseReason: null,
@@ -264,10 +268,10 @@ describe('jobs/execution-notifications', () => {
       updateLifecycleNotification.mock.calls[0]?.[0].summaryMessage,
     );
     expect(summaryMessage).toContain(
-      'Memory dreaming completed with no memory changes. 7 pending memory reviews need review.',
+      'Memory dreaming needs attention: 7 pending memory reviews need review.',
     );
     expect(summaryMessage).toContain(
-      'Action: Ask the agent to show pending memory reviews, then approve, reject, or edit by number.',
+      'Needs attention: 7 memory changes need your review.',
     );
     expect(summaryMessage).not.toContain('memory_review_pending');
   });
@@ -276,7 +280,7 @@ describe('jobs/execution-notifications', () => {
     const sendMessage = vi.fn(async () => undefined);
 
     await notifySchedulerTerminalRunState({
-      job: makeJob({ name: 'KnackLabs Lead Maintenance' }),
+      job: makeJob({ name: 'Fixture Lead Maintenance' }),
       runId: 'run-1',
       runShortId: 1,
       runStatus: 'failed',
@@ -292,7 +296,7 @@ describe('jobs/execution-notifications', () => {
     const message = String(sendMessage.mock.calls[0]?.[1]);
     expect(message).toContain('Missing Browser access for this job.');
     expect(message).toContain(
-      'Action: Approve the missing access, then retry the job.',
+      'Needs attention: Approve the missing access, then retry the job.',
     );
     expect(message).not.toContain('Diagnostics:');
     expect(message).not.toContain('lastTool=');
@@ -361,17 +365,24 @@ describe('jobs/execution-notifications', () => {
     expect(message).toContain('**🔐 Needs permission**');
     expect(message).toContain('· Daily summary');
     expect(message).toContain('Could not use the browser');
-    expect(message).toContain('Action: Browser access needs approval.');
+    expect(message).toContain(
+      'Needs attention: Browser access needs approval.',
+    );
     expect(message).not.toContain('request_permission');
     expect(options).toMatchObject({
       threadId: 'thread-1',
       actionAffordances: [
-        { kind: 'scheduler_run_now', label: 'Retry now', jobId: 'job-1' },
-        { kind: 'scheduler_pause_job', label: 'Pause job', jobId: 'job-1' },
+        {
+          kind: 'scheduler_pause_job',
+          label: 'Pause job',
+          jobId: 'job-1',
+          runId: 'run-1',
+        },
         {
           kind: 'scheduler_open',
           label: 'Open in scheduler',
           jobId: 'job-1',
+          runId: 'run-1',
         },
       ],
     });
@@ -454,17 +465,22 @@ describe('jobs/execution-notifications', () => {
     expect(message).toContain('· Daily summary');
     expect(message).toContain('Scheduler run lease expired before completion.');
     expect(message).toContain(
-      'Action: Rerun with a longer job timeout if this work is expected to take more time.',
+      'Needs attention: Rerun with a longer job timeout if this work is expected to take more time.',
     );
     expect(message).not.toContain('Narrow the job scope');
     expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
       actionAffordances: [
-        { kind: 'scheduler_run_now', label: 'Retry now', jobId: 'job-1' },
-        { kind: 'scheduler_pause_job', label: 'Pause job', jobId: 'job-1' },
+        {
+          kind: 'scheduler_pause_job',
+          label: 'Pause job',
+          jobId: 'job-1',
+          runId: 'run-1',
+        },
         {
           kind: 'scheduler_open',
           label: 'Open in scheduler',
           jobId: 'job-1',
+          runId: 'run-1',
         },
       ],
     });
@@ -474,12 +490,12 @@ describe('jobs/execution-notifications', () => {
     const sendMessage = vi.fn(async () => undefined);
 
     await notifySchedulerTerminalRunState({
-      job: makeJob({ name: 'KnackLabs Lead Maintenance' }),
+      job: makeJob({ name: 'Fixture Lead Maintenance' }),
       runId: 'run-1',
       runShortId: 12,
       runStatus: 'completed',
       summary:
-        'Sunday 22:05 IST -> Mode B. Let me load tools and check Hot Leads dedup.Now searching for the 22:00 slot query.CashFlo + Sachit already there (Feb). Searching for other targets.## Final Job Report\nMode: B (KnackLabs lead finder)\nAdded: 0 leads\nReason: heavy dedup overlap.',
+        'Sunday 22:05 IST -> Mode B. Let me load tools and check Fixture Leads dedup.Now searching for the 22:00 slot query.ExampleCo + Sample Contact already there (Feb). Searching for other targets.## Final Job Report\nMode: B (fixture lead finder)\nAdded: 0 leads\nReason: heavy dedup overlap.',
       nextRun: '2026-05-18T02:35:00.000Z',
       retryCount: 0,
       pauseReason: null,
@@ -489,7 +505,7 @@ describe('jobs/execution-notifications', () => {
 
     const message = String(sendMessage.mock.calls[0]?.[1]);
     expect(message).toContain('**✅ Completed**');
-    expect(message).toContain('· KnackLabs Lead Maintenance');
+    expect(message).toContain('· Fixture Lead Maintenance');
     expect(message).toContain('Final Job Report Mode: B');
     expect(message).toContain('Added: 0 leads');
     expect(message).not.toContain('Let me load tools');

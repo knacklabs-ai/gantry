@@ -3,6 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+  vi.doUnmock('@clack/prompts');
+  vi.doUnmock('@core/cli/onboarding-state.js');
+  vi.doUnmock('@core/cli/setup-credentials.js');
+  vi.doUnmock('@core/cli/setup-flow-core-steps.js');
+  vi.doUnmock('@core/cli/setup-flow-final-steps.js');
+  vi.doUnmock('@core/cli/setup-flow-provider-steps.js');
+  vi.doUnmock('@core/cli/setup-flow-state.js');
+  vi.doUnmock('@core/cli/setup-ready.js');
 });
 
 describe('simplified setup sequence', () => {
@@ -13,9 +21,9 @@ describe('simplified setup sequence', () => {
       'welcome',
       'runtime_home',
       'storage',
-      'credentials',
       'channel',
       'model',
+      'credentials',
       'telegram',
       'slack',
       'config',
@@ -51,6 +59,7 @@ describe('simplified setup sequence', () => {
       agentName: 'Gantry',
       modelPreset: 'anthropic',
       selectedModel: 'sonnet',
+      agentHarness: 'auto',
       telegramBotToken: '',
       telegramChatJid: 'tg:-100123',
       telegramDisplayName: 'main team chat',
@@ -74,6 +83,7 @@ describe('simplified setup sequence', () => {
     updateStateData(state, draft as never);
     expect(state.data.workspaceKey).toBe('gantry-main');
     expect(state.data.conversationLabel).toBe('main team chat');
+    expect(state.data.agentHarness).toBe('auto');
     expect(state.data.telegramDisplayName).toBe('main team chat');
     expect(state.data.slackDisplayName).toBe('ops-room');
 
@@ -87,8 +97,126 @@ describe('simplified setup sequence', () => {
     updateDraftFromState(resumed as never, state);
     expect(resumed.workspaceKey).toBe('gantry-main');
     expect(resumed.conversationLabel).toBe('main team chat');
+    expect(resumed.agentHarness).toBe('auto');
     expect(resumed.telegramDisplayName).toBe('main team chat');
     expect(resumed.slackDisplayName).toBe('ops-room');
+  });
+
+  it('can move back and forward across model and credentials steps', async () => {
+    const sequence = [
+      'welcome',
+      'runtime_home',
+      'storage',
+      'channel',
+      'model',
+      'credentials',
+      'telegram',
+      'slack',
+      'config',
+      'group',
+      'verify',
+      'ready',
+    ];
+    const calls: string[] = [];
+    const draft = {
+      runtimeHome: '/tmp/gantry-setup-flow-state-machine',
+      primaryProvider: 'telegram',
+    };
+    const step = (name: string, action = { type: 'next' }) =>
+      vi.fn(async () => {
+        calls.push(name);
+        return action;
+      });
+    vi.doMock('@clack/prompts', () => ({
+      intro: vi.fn(),
+      outro: vi.fn(),
+    }));
+    vi.doMock('@core/cli/setup-flow-state.js', () => ({
+      FULL_SEQUENCE: sequence,
+      defaultStepIndex: (step: string | undefined) =>
+        step ? sequence.indexOf(step) : 0,
+      shouldSkipStep: (step: string) => step === 'slack',
+      restoreDraft: vi.fn(() => draft),
+      updateStateData: vi.fn(),
+      persistProgress: vi.fn(),
+    }));
+    vi.doMock('@core/cli/onboarding-state.js', () => ({
+      clearOnboardingState: vi.fn(),
+      createInitialState: vi.fn((runtimeHome: string) => ({
+        currentStep: 'welcome',
+        status: 'in_progress',
+        data: { runtimeHome },
+      })),
+      readOnboardingState: vi.fn(() => null),
+    }));
+    vi.doMock('@core/cli/setup-flow-core-steps.js', () => {
+      let modelCalls = 0;
+      return {
+        runWelcomeStep: step('welcome'),
+        runRuntimeHomeStep: step('runtime_home', {
+          action: { type: 'next' },
+        }),
+        runStorageStep: step('storage'),
+        runChannelStep: step('channel'),
+        runModelStep: vi.fn(async () => {
+          calls.push('model');
+          modelCalls += 1;
+          return modelCalls === 1 ? { type: 'back' } : { type: 'next' };
+        }),
+      };
+    });
+    vi.doMock('@core/cli/setup-credentials.js', () => {
+      let credentialCalls = 0;
+      return {
+        runCredentialsStep: vi.fn(async () => {
+          calls.push('credentials');
+          credentialCalls += 1;
+          return credentialCalls === 1 ? { type: 'back' } : { type: 'next' };
+        }),
+      };
+    });
+    vi.doMock('@core/cli/setup-flow-provider-steps.js', () => ({
+      runTelegramStep: step('telegram'),
+      runSlackStep: step('slack'),
+    }));
+    vi.doMock('@core/cli/setup-flow-final-steps.js', () => ({
+      runConfigStep: step('config'),
+      runGroupStep: step('group'),
+      runVerifyStep: step('verify'),
+    }));
+    vi.doMock('@core/cli/setup-ready.js', () => ({
+      runReadyStep: step('ready'),
+    }));
+
+    const { runSetupFlow } = await import('@core/cli/setup-flow.js');
+
+    await expect(
+      runSetupFlow({
+        importMetaUrl: 'file:///test',
+        runtimeHome: draft.runtimeHome,
+      }),
+    ).resolves.toEqual({
+      status: 'completed',
+      runtimeHome: draft.runtimeHome,
+      startAfterSetup: undefined,
+    });
+    expect(calls).toEqual([
+      'welcome',
+      'runtime_home',
+      'storage',
+      'channel',
+      'model',
+      'channel',
+      'model',
+      'credentials',
+      'model',
+      'credentials',
+      'telegram',
+      'config',
+      'group',
+      'verify',
+      'ready',
+    ]);
   });
 });
 
@@ -109,8 +237,13 @@ describe('ready screen copy', () => {
   const draft = {
     workspaceKey: 'gantry-main',
     agentName: 'Gantry',
+    agentHarness: 'auto',
     conversationLabel: 'main team chat',
     selectedModel: 'sonnet',
+    modelPreset: 'anthropic',
+    memoryEnabled: true,
+    embeddingsEnabled: false,
+    dreamingEnabled: true,
   };
 
   it('renders the ready contract block', async () => {
@@ -125,8 +258,12 @@ describe('ready screen copy', () => {
         '',
         'Workspace: gantry-main',
         'Agent: Gantry',
+        'Agent harness: auto',
         'Conversation: main team chat',
         'Model: sonnet',
+        'Resolved model/harness: sonnet / Anthropic SDK',
+        'Required model providers: anthropic',
+        '  anthropic: main model sonnet; memory LLM consolidation sonnet; memory LLM dreaming sonnet; memory LLM extractor haiku; one-time jobs inherit main model; recurring jobs inherit main model',
         '',
         'Next: Start chatting or run gantry status.',
         'Optional setup: memory, background service, extra providers.',
@@ -175,6 +312,10 @@ async function loadVerifyStep(input: {
     listConnectableChannelProviders: vi.fn(() => [{ id: 'telegram' }]),
   }));
   vi.doMock('@core/cli/setup-credentials.js', () => ({
+    requiredModelCredentialProviderReasonsForSetupDraft: vi.fn(() => [
+      { providerId: 'anthropic', reasons: ['main model opus'] },
+    ]),
+    requiredModelCredentialProvidersForSetupDraft: vi.fn(() => ['anthropic']),
     verifyModelAccess: vi.fn(
       async () => input.modelAccess ?? { ok: true, message: 'ok' },
     ),
@@ -249,7 +390,7 @@ describe('blocked copy', () => {
       primaryProvider: 'telegram',
     } as never);
 
-    expect(action).toEqual({ type: 'resume' });
+    expect(action).toEqual({ type: 'goto', step: 'credentials' });
     expect(warn.mock.calls[0][0]).toBe(
       [
         'Setup blocked: Missing active model credentials for selected defaults: anthropic.',
@@ -263,6 +404,12 @@ async function loadGroupStep() {
   const settings = {};
   const spinner = { start: vi.fn(), stop: vi.fn() };
   const ensureConfiguredConversationBinding = vi.fn();
+  const saveRuntimeSettings = vi.fn();
+  const writeDesiredRuntimeSettings = vi.fn();
+  const registerSlackMainGroup = vi.fn(async () => ({
+    folder: 'main_agent',
+    groupName: 'Gantry',
+  }));
   vi.doMock('@clack/prompts', () => ({
     isCancel: () => false,
     note: vi.fn(),
@@ -282,10 +429,7 @@ async function loadGroupStep() {
     persistOnboardingConfig: vi.fn(),
   }));
   vi.doMock('@core/cli/slack.js', () => ({
-    registerSlackMainGroup: vi.fn(async () => ({
-      folder: 'main_agent',
-      groupName: 'Gantry',
-    })),
+    registerSlackMainGroup,
   }));
   vi.doMock('@core/cli/telegram.js', () => ({
     registerTelegramMainGroup: vi.fn(async () => ({
@@ -295,17 +439,27 @@ async function loadGroupStep() {
   }));
   vi.doMock('@core/config/settings/runtime-settings.js', () => ({
     loadRuntimeSettings: vi.fn(() => settings),
-    saveRuntimeSettings: vi.fn(),
+    saveRuntimeSettings,
+    writeDesiredRuntimeSettings,
     ensureConfiguredConversationBinding,
   }));
   const { runGroupStep } = await import('@core/cli/setup-flow-final-steps.js');
-  return { runGroupStep, ensureConfiguredConversationBinding };
+  return {
+    runGroupStep,
+    ensureConfiguredConversationBinding,
+    registerSlackMainGroup,
+    saveRuntimeSettings,
+  };
 }
 
 describe('conversation binding labels', () => {
   it('uses the selected Slack conversation label in the ready draft', async () => {
-    const { runGroupStep, ensureConfiguredConversationBinding } =
-      await loadGroupStep();
+    const {
+      runGroupStep,
+      ensureConfiguredConversationBinding,
+      registerSlackMainGroup,
+      saveRuntimeSettings,
+    } = await loadGroupStep();
     const draft = {
       primaryProvider: 'slack',
       runtimeHome: '/tmp/gantry-group-labels',
@@ -319,12 +473,14 @@ describe('conversation binding labels', () => {
       type: 'next',
     });
 
-    expect(ensureConfiguredConversationBinding).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(ensureConfiguredConversationBinding).not.toHaveBeenCalled();
+    expect(saveRuntimeSettings).not.toHaveBeenCalled();
+    expect(registerSlackMainGroup).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentName: 'Gantry',
-        jid: 'sl:C0123456789',
-        displayName: 'ops-room',
+        chatJid: 'sl:C0123456789',
+        displayName: 'Gantry',
+        conversationDisplayName: 'ops-room',
+        approverIds: ['U123'],
       }),
     );
     expect(draft).toEqual(

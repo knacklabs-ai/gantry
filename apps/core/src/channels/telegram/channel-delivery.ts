@@ -6,6 +6,7 @@ import {
   PermissionApprovalDecision,
   PermissionApprovalRequest,
   ProgressUpdateOptions,
+  RichInteractionRequest,
   StreamingChunkOptions,
   UserQuestionRequest,
   UserQuestionResponse,
@@ -14,7 +15,6 @@ import { PartialMessageDeliveryError } from '../../domain/messages/partial-deliv
 import type { AgentTodoRender } from '../../domain/ports/task-lifecycle.js';
 import { TelegramChannelConnect } from './channel-connect.js';
 import {
-  TELEGRAM_MEDIA_DRAIN_TIMEOUT_MS,
   TELEGRAM_MESSAGE_MAX_LENGTH,
   TELEGRAM_STREAM_CHUNK_MAX_LENGTH,
   TELEGRAM_USER_QUESTION_TIMEOUT_MS,
@@ -26,11 +26,25 @@ import {
   telegramThreadOptionsFromString,
 } from './channel-shared.js';
 import { telegramActionReplyMarkup } from './message-action-affordances.js';
+import {
+  clearProgressActions,
+  prepareTelegramProgressHandle,
+  progressActionOptions,
+  sendNewProgressMessage,
+} from './progress-message-actions.js';
 import { sendTelegramPlannedChunk } from './send-planned-chunk.js';
-import { renderTelegramAgentTodo } from './agent-todo-delivery.js';
+import { appendTelegramDocumentMessageIds as appendDocIds } from './file-delivery.js';
+import { renderTelegramChannelAgentTodo } from './agent-todo-delivery.js';
+import { bindTelegramPermissionPromptMessage } from './prompt-binding.js';
 import { unescapeTelegramEscapedMarkdownV2 } from './markdown-v2-unescape.js';
 import { sendTelegramTyping } from './typing-indicator.js';
+import { renderTelegramRichInteraction } from './rich-interaction.js';
+import { addTelegramReaction } from './reactions.js';
+import { disconnectTelegramDelivery } from './disconnect.js';
+
 export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
+  private readonly reactionKeys = new Set<string>();
+
   async sendMessage(
     jid: string,
     text: string,
@@ -134,6 +148,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
           throw err;
         }
       }
+      await appendDocIds(externalMessageIds, this.bot.api, numericId, options);
       logger.info(
         { jid, length: text.length, threadId: options.threadId },
         'Telegram message sent',
@@ -154,6 +169,34 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
       );
       throw err;
     }
+  }
+
+  async renderRichInteraction(
+    jid: string,
+    render: RichInteractionRequest,
+  ): Promise<boolean> {
+    if (!this.bot) return false;
+    return renderTelegramRichInteraction({
+      bot: this.bot,
+      jid,
+      render,
+      sendFallback: (text, options) => this.sendMessage(jid, text, options),
+    });
+  }
+
+  async addReaction(
+    jid: string,
+    messageRef: string,
+    emoji: string,
+  ): Promise<void> {
+    if (!this.bot) return;
+    await addTelegramReaction({
+      bot: this.bot,
+      jid,
+      messageRef,
+      emoji,
+      reactionKeys: this.reactionKeys,
+    });
   }
 
   async sendStreamingChunk(
@@ -290,7 +333,11 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
       : undefined;
     const key = `progress:${this.buildDraftStreamKey(jid, options.threadId)}`;
     this.loadPersistedProgressMessages();
-    const nextText = text.trim();
+    const hasActionMarkup = options.actionAffordances
+      ? Boolean(telegramActionReplyMarkup(options.actionAffordances))
+      : false;
+    const actionOnly = Boolean(options.actionOnly && hasActionMarkup);
+    const nextText = actionOnly ? String.fromCharCode(8288) : text.trim();
     if (options.done) {
       this.markProgressGenerationDone(key, options.generation);
     } else if (
@@ -298,41 +345,31 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
     ) {
       return;
     }
-    let existing = this.activeProgressMessages.get(key);
-    if (
-      existing &&
-      options.generation !== undefined &&
-      existing.generation !== undefined &&
-      existing.generation !== options.generation &&
-      !(options.done && options.generation > existing.generation)
-    ) {
-      if (options.done || options.replaceOnly) {
-        logger.info(
-          {
-            jid,
-            key,
-            done: options.done ?? false,
-            replaceOnly: options.replaceOnly ?? false,
-            generation: options.generation,
-            existingGeneration: existing.generation,
-          },
-          'Progress lifecycle telegram dropped generation mismatch',
-        );
-        return;
+    const prepared = prepareTelegramProgressHandle({
+      activeProgressMessages: this.activeProgressMessages,
+      persistProgressMessages: () => this.persistProgressMessages(),
+      jid,
+      key,
+      existing: this.activeProgressMessages.get(key),
+      chatId: numericId,
+      threadId: Number.isFinite(parsedThreadId) ? parsedThreadId : undefined,
+      options,
+    });
+    if (!prepared.accepted) return;
+    const existing = prepared.existing;
+    if (options.done && nextText === 'Done.') {
+      if (existing?.messageId) {
+        await clearProgressActions({
+          api: this.bot.api,
+          chatId: numericId,
+          messageId: existing.messageId,
+          text: existing.lastText,
+          editReplyMarkup: { reply_markup: { inline_keyboard: [] } },
+        }).catch(() => undefined);
       }
-      logger.info(
-        {
-          jid,
-          key,
-          done: options.done ?? false,
-          generation: options.generation,
-          existingGeneration: existing.generation,
-        },
-        'Progress lifecycle telegram generation rollover',
-      );
       this.activeProgressMessages.delete(key);
       this.persistProgressMessages();
-      if (!options.done) existing = undefined;
+      return;
     }
     if (!nextText) {
       if (options.done) {
@@ -345,9 +382,13 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
       }
       return;
     }
-    const sendOptions = Number.isFinite(parsedThreadId)
-      ? { message_thread_id: parsedThreadId }
-      : {};
+    const actionOptions = progressActionOptions(options);
+    const sendOptions = {
+      ...(Number.isFinite(parsedThreadId)
+        ? { message_thread_id: parsedThreadId }
+        : {}),
+      ...actionOptions.sendOptions,
+    };
     if (!existing && options.replaceOnly) {
       logger.info(
         { jid, key, progressText: nextText, generation: options.generation },
@@ -356,43 +397,29 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
       return;
     }
     if (!existing) {
-      const messageId = await sendTelegramMessageWithResult(
-        this.bot.api,
-        numericId,
-        nextText,
+      await sendNewProgressMessage({
+        api: this.bot.api,
+        activeProgressMessages: this.activeProgressMessages,
+        persistProgressMessages: () => this.persistProgressMessages(),
+        chatId: numericId,
+        key,
+        jid,
+        text: nextText,
+        options,
         sendOptions,
-      );
-      if (!options.done) {
-        this.activeProgressMessages.set(key, {
-          chatId: numericId,
-          threadId: Number.isFinite(parsedThreadId)
-            ? parsedThreadId
-            : undefined,
-          messageId,
-          lastText: nextText,
-          ...(options.generation !== undefined
-            ? { generation: options.generation }
-            : {}),
-        });
-        this.persistProgressMessages();
-      }
-      logger.info(
-        {
-          jid,
-          key,
-          progressText: nextText,
-          done: options.done ?? false,
-          generation: options.generation,
-          messageId,
-          storedHandle: !options.done,
-        },
-        'Progress lifecycle telegram sent new message',
-      );
+        threadId: Number.isFinite(parsedThreadId) ? parsedThreadId : undefined,
+      });
       return;
     }
-
     if (existing.lastText === nextText) {
       if (options.done) {
+        await clearProgressActions({
+          api: this.bot.api,
+          chatId: numericId,
+          messageId: existing.messageId,
+          text: nextText,
+          editReplyMarkup: actionOptions.editReplyMarkup,
+        });
         this.activeProgressMessages.delete(key);
         this.persistProgressMessages();
         logger.info(
@@ -406,9 +433,8 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
           nextText,
           sendOptions,
         );
-        if (options.generation !== undefined) {
+        if (options.generation !== undefined)
           existing.generation = options.generation;
-        }
         this.activeProgressMessages.set(key, existing);
         this.persistProgressMessages();
         logger.info(
@@ -421,6 +447,11 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
           'Progress lifecycle telegram refreshed unchanged initial message',
         );
       } else {
+        if (options.generation !== undefined) {
+          existing.generation = options.generation;
+          this.activeProgressMessages.set(key, existing);
+          this.persistProgressMessages();
+        }
         logger.info(
           { jid, key, generation: options.generation },
           'Progress lifecycle telegram skipped unchanged text',
@@ -436,6 +467,8 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
           numericId,
           existing.messageId,
           nextText,
+          {},
+          actionOptions.editReplyMarkup,
         );
       } catch (err) {
         logger.debug(
@@ -525,7 +558,6 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
         reason: 'This approval request is already awaiting a decision.',
       };
     }
-
     const callbackId = this.permissionCallbackIdForRequest(request.requestId);
     const timeoutMs = TELEGRAM_USER_QUESTION_TIMEOUT_MS;
     try {
@@ -536,6 +568,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
         timeoutMs,
         threadOpts: telegramThreadOptionsFromString(request.threadId),
       });
+      bindTelegramPermissionPromptMessage(request, chatId, sent.message_id);
       return await new Promise<PermissionApprovalDecision>((resolve) => {
         const timer = setTimeout(() => {
           void this.resolvePermissionPrompt(request.requestId, {
@@ -681,14 +714,14 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
     };
   }
 
-  async renderAgentTodo(jid: string, render: AgentTodoRender): Promise<void> {
-    if (!this.bot) return;
-    const threadId = render.threadId ?? undefined;
-    await renderTelegramAgentTodo({
+  async renderAgentTodo(jid: string, render: AgentTodoRender) {
+    if (!this.bot) return false;
+    return renderTelegramChannelAgentTodo({
       api: this.bot.api,
       jid,
       render,
-      todoKey: this.buildDraftStreamKey(jid, threadId),
+      buildDraftStreamKey: (key, threadId) =>
+        this.buildDraftStreamKey(key, threadId),
       pendingTodos: this.pendingTodos,
       sanitizeErrorMessage: (err) => this.sanitizeErrorMessage(err),
     });
@@ -708,51 +741,21 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
   async disconnect(): Promise<void> {
     this.isStopping = true;
     this.clearPollingRetryTimer();
-    for (const streamState of this.activeDraftStreams.values()) {
-      streamState.closeStream();
-    }
-    this.activeDraftStreams.clear();
-    this.activeGroupStreams.clear();
-    this.streamGenerationByJid.clear();
-    this.sealedStreamGenerationByJid.clear();
-    this.activeProgressMessages.clear();
-    const mediaDrained = await this.mediaIngestionQueue.waitForIdle(
-      TELEGRAM_MEDIA_DRAIN_TIMEOUT_MS,
-    );
-    if (!mediaDrained) {
-      logger.warn(
-        { timeoutMs: TELEGRAM_MEDIA_DRAIN_TIMEOUT_MS },
-        'Timed out waiting for Telegram media ingestion queue to drain',
-      );
-    }
-    for (const [
-      requestId,
-      pending,
-    ] of this.pendingPermissionPrompts.entries()) {
-      clearTimeout(pending.timer);
-      pending.resolve({
-        approved: false,
-        decidedBy: 'system',
-        reason: 'Telegram channel disconnected',
-      });
-      this.pendingPermissionPrompts.delete(requestId);
-      this.pendingPermissionCallbackIds.delete(pending.callbackId);
-    }
-    for (const [key, pending] of this.pendingUserQuestions.entries()) {
-      clearTimeout(pending.timer);
-      pending.resolve({
-        selected: pending.multiSelect ? [] : '',
-        answeredBy: 'system',
-      });
-      this.pendingUserQuestions.delete(key);
-    }
-    if (this.bot) {
-      this.bot.stop();
-      this.bot = null;
-      this.draftStreamApi = null;
-      await this.releasePollingLease();
-      logger.info('Telegram bot stopped');
-    }
+    const disconnected = await disconnectTelegramDelivery({
+      bot: this.bot,
+      activeDraftStreams: this.activeDraftStreams,
+      activeGroupStreams: this.activeGroupStreams,
+      streamGenerationByJid: this.streamGenerationByJid,
+      sealedStreamGenerationByJid: this.sealedStreamGenerationByJid,
+      activeProgressMessages: this.activeProgressMessages,
+      mediaIngestionQueue: this.mediaIngestionQueue,
+      pendingPermissionPrompts: this.pendingPermissionPrompts,
+      pendingPermissionCallbackIds: this.pendingPermissionCallbackIds,
+      pendingUserQuestions: this.pendingUserQuestions,
+      releasePollingLease: () => this.releasePollingLease(),
+    });
+    this.bot = disconnected.bot;
+    this.draftStreamApi = disconnected.draftStreamApi;
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {

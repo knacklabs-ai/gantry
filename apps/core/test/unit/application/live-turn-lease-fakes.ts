@@ -1,4 +1,7 @@
 import {
+  type LiveAdmissionClaimInput,
+  type LiveAdmissionWorkItem,
+  type LiveAdmissionWorkItemEnqueueResult,
   isTerminalLiveTurnState,
   makeLiveTurnScopeKey,
   type LiveTurn,
@@ -192,6 +195,28 @@ export class FakeLiveTurns {
     return true;
   }
 
+  async enqueueLiveAdmissionWorkItem(): Promise<LiveAdmissionWorkItemEnqueueResult> {
+    throw new Error('not implemented in FakeLiveTurns');
+  }
+
+  async claimLiveAdmissionWorkItems(
+    _input: LiveAdmissionClaimInput,
+  ): Promise<LiveAdmissionWorkItem[]> {
+    return [];
+  }
+
+  async renewLiveAdmissionWorkItemClaim(): Promise<boolean> {
+    return true;
+  }
+
+  async deferLiveAdmissionWorkItem(): Promise<boolean> {
+    return true;
+  }
+
+  async settleLiveAdmissionWorkItem(): Promise<boolean> {
+    return true;
+  }
+
   async claimLiveTurn(input: {
     id: string;
     scope: LiveTurnScope;
@@ -269,7 +294,7 @@ export class FakeLiveTurns {
   async updateLiveTurnRouting(input: {
     id: string;
     fence: LiveTurnLeaseFence;
-    stopAliasJids: string[];
+    stopAliasJids?: string[];
     requiredContinuationUserId?: string | null;
     now?: string;
   }): Promise<boolean> {
@@ -281,9 +306,13 @@ export class FakeLiveTurns {
     ) {
       return false;
     }
-    turn.stopAliasJids = input.stopAliasJids;
-    turn.requiredContinuationUserId =
-      input.requiredContinuationUserId?.trim() || null;
+    if (input.stopAliasJids !== undefined) {
+      turn.stopAliasJids = input.stopAliasJids;
+    }
+    if (input.requiredContinuationUserId !== undefined) {
+      turn.requiredContinuationUserId =
+        input.requiredContinuationUserId?.trim() || null;
+    }
     return true;
   }
 

@@ -5,6 +5,7 @@ export type RunnerControlRequestLane =
   | 'conversation-history-requests'
   | 'browser-requests'
   | 'permission-requests'
+  | 'rich-interactions'
   | 'user-questions';
 
 export type RunnerControlResponseLane =

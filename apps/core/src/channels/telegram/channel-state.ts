@@ -1,5 +1,4 @@
 import { createHash } from 'crypto';
-
 import { Bot } from 'grammy';
 import { ChannelAdapter, ChannelOpts } from '../channel-provider.js';
 import type { RuntimeLease } from '../../domain/ports/runtime-lease.js';
@@ -37,10 +36,8 @@ import {
   writeProgressStateEntries,
 } from '../progress-state-file.js';
 import { nowMs as currentTimeMs } from '../../shared/time/datetime.js';
-
 export abstract class TelegramChannelState implements ChannelAdapter {
   name = 'telegram';
-
   protected bot: Bot<TelegramContext> | null = null;
   protected draftStreamApi: TelegramStreamApi | null = null;
   protected isStopping = false;
@@ -67,8 +64,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
   protected pendingPermissionCallbackIds = new Map<string, string>();
   private permissionCallbackCounter = 0;
   protected pendingUserQuestions = new Map<string, PendingUserQuestionState>();
-  // Maps a ForceReply prompt (the "Other" free-text path) back to its question.
-  // Keyed by `${chatId}:${forceReplyMessageId}`.
   protected pendingUserQuestionOtherPrompts = new Map<
     string,
     { requestId: string; questionIndex: number }
@@ -90,16 +85,13 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     TELEGRAM_MEDIA_DOWNLOAD_QUEUE_MAX,
   );
   protected nextDraftIdOffset = 1;
-
   constructor(botToken: string, opts: ChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
   }
-
   supportsInteractionCallbacks(): boolean {
     return this.interactionCallbacksEnabled;
   }
-
   protected nextPermissionCallbackId(): string {
     for (let attempts = 0; attempts < 1000; attempts += 1) {
       this.permissionCallbackCounter =
@@ -109,16 +101,13 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     }
     throw new Error('Unable to allocate Telegram permission callback id');
   }
-
   protected permissionCallbackIdForRequest(requestId: string): string {
     return `p${createHash('sha256').update(requestId).digest('hex').slice(0, 24)}`;
   }
-
   protected redactBotToken(input: string): string {
     if (!input) return input;
     return input.split(this.botToken).join('[REDACTED_BOT_TOKEN]');
   }
-
   protected sanitizeErrorMessage(err: unknown): string {
     const message =
       err instanceof Error
@@ -131,7 +120,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
           : String(err);
     return this.redactBotToken(message);
   }
-
   protected sanitizeTelegramFilePath(rawPath: string): string | null {
     const normalized = rawPath.replace(/\\/g, '/').trim();
     if (!normalized) return null;
@@ -139,17 +127,14 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     if (!/^[a-zA-Z0-9._/-]+$/.test(normalized)) return null;
     return normalized;
   }
-
   protected clearPollingRetryTimer(): void {
     if (!this.pollingRetryTimer) return;
     clearTimeout(this.pollingRetryTimer);
     this.pollingRetryTimer = null;
   }
-
   protected buildDraftStreamKey(jid: string, threadId?: string): string {
     return `${jid}:${threadId || ''}`;
   }
-
   protected loadPersistedProgressMessages(): void {
     if (this.progressStateLoaded) return;
     this.progressStateLoaded = true;
@@ -162,11 +147,10 @@ export abstract class TelegramChannelState implements ChannelAdapter {
         typeof state.chatId === 'string' &&
         typeof state.lastText === 'string'
       ) {
-        this.activeProgressMessages.set(key, state);
+        this.activeProgressMessages.set(key, { ...state, restored: true });
       }
     }
   }
-
   protected persistProgressMessages(): void {
     writeProgressStateEntries(
       this.progressStateFilePath(),
@@ -174,7 +158,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       this.activeProgressMessages.entries(),
     );
   }
-
   protected shouldAcceptProgressUpdate(
     key: string,
     generation?: number,
@@ -184,7 +167,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     const sealed = this.sealedProgressGenerationByKey.get(key);
     return sealed === undefined || generation > sealed;
   }
-
   protected markProgressGenerationDone(key: string, generation?: number): void {
     if (generation === undefined) return;
     const sealed = this.sealedProgressGenerationByKey.get(key);
@@ -192,11 +174,9 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       this.sealedProgressGenerationByKey.set(key, generation);
     }
   }
-
   private progressStateFilePath(): string | null {
     return channelProgressStateFilePath('telegram', this.botToken);
   }
-
   protected clearStreamingStateForJid(jid: string): void {
     for (const [key, state] of this.activeDraftStreams.entries()) {
       if (!key.startsWith(`${jid}:`)) continue;
@@ -208,7 +188,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       this.activeGroupStreams.delete(key);
     }
   }
-
   protected shouldAcceptStreamingChunk(
     jid: string,
     generation?: number,
@@ -218,7 +197,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     if (sealed !== undefined && generation <= sealed) {
       return false;
     }
-
     const latest = this.streamGenerationByJid.get(jid);
     if (latest === undefined) {
       this.streamGenerationByJid.set(jid, generation);
@@ -233,7 +211,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     }
     return true;
   }
-
   protected isCurrentStreamingGeneration(
     jid: string,
     generation?: number,
@@ -312,6 +289,59 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     };
   }
 
+  private telegramRateLimitRetryDelayMs(err: unknown): number | null {
+    const candidate = err as {
+      error_code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      parameters?: { retry_after?: unknown };
+      response?: {
+        status?: unknown;
+        parameters?: { retry_after?: unknown };
+      };
+    };
+    if (
+      candidate.error_code !== 429 &&
+      candidate.status !== 429 &&
+      candidate.statusCode !== 429 &&
+      candidate.response?.status !== 429
+    ) {
+      return null;
+    }
+    const retryAfter =
+      candidate.parameters?.retry_after ??
+      candidate.response?.parameters?.retry_after;
+    const seconds =
+      typeof retryAfter === 'number'
+        ? retryAfter
+        : typeof retryAfter === 'string'
+          ? Number.parseFloat(retryAfter)
+          : Number.NaN;
+    if (!Number.isFinite(seconds) || seconds <= 0) return 1000;
+    return Math.min(5000, Math.max(1, Math.round(seconds * 1000)));
+  }
+
+  private async withTelegramGroupRateLimitRetry<T>(
+    jid: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await action();
+    } catch (err) {
+      const retryDelayMs = this.telegramRateLimitRetryDelayMs(err);
+      if (retryDelayMs === null) throw err;
+      logger.warn(
+        { jid, retryDelayMs },
+        'Telegram group stream rate-limited; retrying current flush',
+      );
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, retryDelayMs);
+        timer.unref?.();
+      });
+      return action();
+    }
+  }
+
   protected async handleGroupStreamingChunk(
     jid: string,
     numericId: string,
@@ -349,7 +379,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       }
       return false;
     }
-
     const now = currentTimeMs();
     const shouldFlush =
       options.done ||
@@ -359,31 +388,31 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     const headText = parts[0] ?? '';
     const overflowParts = parts.slice(1).filter((part) => part.length > 0);
     const overflowText = parts.slice(1).join('');
-
     try {
       if (shouldFlush) {
         if (!state.messageId) {
-          // First message — send as plain text during streaming, formatted on done
           const sendOptions = state.threadId
             ? { message_thread_id: state.threadId }
             : {};
           if (options.done) {
-            const messageId = await sendTelegramMessageWithResult(
-              this.bot.api,
-              numericId,
-              headText,
-              sendOptions,
-              { preserveStyleMarkers: true },
+            const messageId = await this.withTelegramGroupRateLimitRetry(
+              jid,
+              () =>
+                sendTelegramMessageWithResult(
+                  this.bot!.api,
+                  numericId,
+                  headText,
+                  sendOptions,
+                  { preserveStyleMarkers: true },
+                ),
             );
             if (messageId) {
               state.messageId = messageId;
               delivered = true;
             }
           } else {
-            const sent = await this.bot.api.sendMessage(
-              numericId,
-              headText,
-              sendOptions,
+            const sent = await this.withTelegramGroupRateLimitRetry(jid, () =>
+              this.bot!.api.sendMessage(numericId, headText, sendOptions),
             );
             const messageId = (sent as { message_id?: number })?.message_id;
             if (messageId) {
@@ -396,13 +425,14 @@ export abstract class TelegramChannelState implements ChannelAdapter {
             }
           }
         } else if (options.done) {
-          // Final edit — apply MarkdownV2 formatting
-          await editTelegramMessage(
-            this.bot.api,
-            numericId,
-            state.messageId,
-            headText,
-            { preserveStyleMarkers: true },
+          await this.withTelegramGroupRateLimitRetry(jid, () =>
+            editTelegramMessage(
+              this.bot!.api,
+              numericId,
+              state.messageId!,
+              headText,
+              { preserveStyleMarkers: true },
+            ),
           );
           delivered = true;
           logger.info(
@@ -410,12 +440,13 @@ export abstract class TelegramChannelState implements ChannelAdapter {
             'Telegram group stream message finalized',
           );
         } else {
-          // Intermediate edits — plain text, single API call, no fallback cascade
           try {
-            await this.bot.api.editMessageText(
-              numericId,
-              state.messageId,
-              headText,
+            await this.withTelegramGroupRateLimitRetry(jid, () =>
+              this.bot!.api.editMessageText(
+                numericId,
+                state.messageId!,
+                headText,
+              ),
             );
             delivered = true;
             logger.debug(
@@ -449,12 +480,14 @@ export abstract class TelegramChannelState implements ChannelAdapter {
               ? { message_thread_id: state.threadId }
               : {};
             for (const part of overflowParts) {
-              await sendTelegramMessageWithResult(
-                this.bot.api,
-                numericId,
-                part,
-                sendOptions,
-                { preserveStyleMarkers: true },
+              await this.withTelegramGroupRateLimitRetry(jid, () =>
+                sendTelegramMessageWithResult(
+                  this.bot!.api,
+                  numericId,
+                  part,
+                  sendOptions,
+                  { preserveStyleMarkers: true },
+                ),
               );
               delivered = true;
             }
@@ -481,12 +514,16 @@ export abstract class TelegramChannelState implements ChannelAdapter {
             const sentOverflowMessageIds: string[] = [];
             try {
               for (const part of overflowParts) {
-                const messageId = await sendTelegramMessageWithResult(
-                  this.bot.api,
-                  numericId,
-                  part,
-                  sendOptions,
-                  { preserveStyleMarkers: true },
+                const messageId = await this.withTelegramGroupRateLimitRetry(
+                  jid,
+                  () =>
+                    sendTelegramMessageWithResult(
+                      this.bot!.api,
+                      numericId,
+                      part,
+                      sendOptions,
+                      { preserveStyleMarkers: true },
+                    ),
                 );
                 if (messageId !== undefined) {
                   const externalMessageId = String(messageId);
@@ -592,7 +629,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       }
       return delivered || Boolean(state.messageId);
     }
-
     if (options.done) {
       this.activeGroupStreams.delete(key);
       if (
@@ -603,12 +639,14 @@ export abstract class TelegramChannelState implements ChannelAdapter {
           ? { message_thread_id: state.threadId }
           : {};
         for (const part of overflowParts) {
-          await sendTelegramMessageWithResult(
-            this.bot.api,
-            numericId,
-            part,
-            sendOptions,
-            { preserveStyleMarkers: true },
+          await this.withTelegramGroupRateLimitRetry(jid, () =>
+            sendTelegramMessageWithResult(
+              this.bot!.api,
+              numericId,
+              part,
+              sendOptions,
+              { preserveStyleMarkers: true },
+            ),
           );
           delivered = true;
         }
@@ -617,7 +655,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
     }
     return delivered || Boolean(state.messageId);
   }
-
   protected schedulePollingRetry(): void {
     if (this.isStopping || !this.bot || this.pollingRetryTimer) return;
     const retryDelayMs = 3000;
@@ -627,7 +664,6 @@ export abstract class TelegramChannelState implements ChannelAdapter {
       this.startPolling();
     }, retryDelayMs);
   }
-
   protected abstract startPolling(): void;
   abstract connect(): Promise<void>;
   abstract sendMessage(

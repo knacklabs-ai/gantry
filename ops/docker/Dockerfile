@@ -50,13 +50,14 @@ RUN npm prune --omit=dev --ignore-scripts
 
 # ---------------------------------------------------------------------------
 # Stage 3: runtime — minimal, non-root, production-only.
-# Contains: production node_modules, dist/ (incl. migration SQL), the built
-# contracts/sdk workspace dist, the ops migrate runner, and the entrypoint.
+# Contains: production node_modules, dist/ (incl. migration SQL and migrator),
+# the built contracts/sdk workspace dist, and the entrypoint.
 # ---------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS runtime
 
 ENV NODE_ENV=production \
-    GANTRY_HOME=/var/lib/gantry
+    GANTRY_HOME=/var/lib/gantry \
+    GANTRY_BOOTSTRAP_SETTINGS_IF_MISSING=1
 
 # Skill-script interpreters. Skills are distributed as data artifacts in any
 # language; the image carries the interpreters their scripts need at runtime.
@@ -72,6 +73,7 @@ RUN apt-get update \
       bubblewrap \
       socat \
       ripgrep \
+      gosu \
     && rm -rf /var/lib/apt/lists/*
 # bubblewrap backs runtime.sandbox.provider=sandbox_runtime (the whole-runner
 # OS sandbox on Linux). Creating its namespaces inside Docker additionally
@@ -86,7 +88,9 @@ RUN apt-get update \
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Non-root runtime user. The base image already ships a `node` user (uid 1000);
-# create a dedicated home and a writable runtime-state dir owned by it.
+# create the default runtime-state dir owned by it. The entrypoint also prepares
+# runtime-mounted GANTRY_HOME values such as /srv/reagent/home before dropping
+# privileges, which ECS/EBS mounts need because they arrive root-owned.
 RUN install -d -o node -g node "${GANTRY_HOME}"
 
 WORKDIR /app
@@ -100,13 +104,10 @@ COPY --from=build /app/packages/contracts/package.json ./packages/contracts/pack
 COPY --from=build /app/packages/sdk/dist ./packages/sdk/dist
 COPY --from=build /app/packages/sdk/package.json ./packages/sdk/package.json
 
-# Ops scripts: race-safe migration runner + entrypoint.
-COPY ops/docker/migrate.mjs ./ops/docker/migrate.mjs
+# Ops scripts: fleet settings seed + entrypoint.
 COPY ops/docker/fleet-settings-seed.mjs ./ops/docker/fleet-settings-seed.mjs
 COPY ops/docker/entrypoint.sh /usr/local/bin/gantry-entrypoint
 RUN chmod +x /usr/local/bin/gantry-entrypoint
-
-USER node
 
 # Control port (liveness /healthz, readiness /readyz, internal /metrics) is
 # set by the deployment via GANTRY_CONTROL_PORT; documented, not hardcoded.

@@ -15,6 +15,7 @@
  */
 
 import { runDeepAgentTurn } from './deep-agent-runner.js';
+import type { OpenRouterProviderPreferences } from './model-factory.js';
 import {
   drainIpcInput,
   prepareInteractiveIpcInputDir,
@@ -40,7 +41,7 @@ function log(message: string): void {
   }
 }
 
-function resolveModelId(agentInput: DeepAgentRunnerInput): string {
+function resolveModelId(): string {
   const fromEnv = process.env.GANTRY_DEEPAGENTS_MODEL_ID?.trim();
   if (fromEnv) return fromEnv;
   throw new Error(
@@ -64,6 +65,20 @@ function resolveMaxInputTokens(): number | undefined {
   if (!raw) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function resolveOpenRouterProviderRouting():
+  | OpenRouterProviderPreferences
+  | undefined {
+  const raw = process.env.GANTRY_DEEPAGENTS_OPENROUTER_PROVIDER_ROUTING?.trim();
+  if (!raw) return undefined;
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(
+      'DeepAgents runner OpenRouter provider routing must be a JSON object.',
+    );
+  }
+  return parsed as OpenRouterProviderPreferences;
 }
 
 type DeepAgentTurnOutput = Awaited<ReturnType<typeof runDeepAgentTurn>>;
@@ -95,11 +110,13 @@ async function runScheduled(agentInput: DeepAgentRunnerInput): Promise<void> {
   };
   try {
     const maxInputTokens = resolveMaxInputTokens();
+    const openRouterProviderRouting = resolveOpenRouterProviderRouting();
     const turn = await runDeepAgentTurn({
       agentInput,
       provider: resolveModelProvider(),
-      modelId: resolveModelId(agentInput),
+      modelId: resolveModelId(),
       ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
+      ...(openRouterProviderRouting ? { openRouterProviderRouting } : {}),
       newSessionId: diagnosticSessionId,
       includeMemoryContext: true,
       emit,
@@ -212,11 +229,13 @@ async function runInteractive(agentInput: DeepAgentRunnerInput): Promise<void> {
       let turn: Awaited<ReturnType<typeof runDeepAgentTurn>> | undefined;
       try {
         const maxInputTokens = resolveMaxInputTokens();
+        const openRouterProviderRouting = resolveOpenRouterProviderRouting();
         turn = await runDeepAgentTurn({
           agentInput: turnInput,
           provider: resolveModelProvider(),
-          modelId: resolveModelId(agentInput),
+          modelId: resolveModelId(),
           ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
+          ...(openRouterProviderRouting ? { openRouterProviderRouting } : {}),
           newSessionId: sessionId,
           threadId: sessionId,
           checkpointer,

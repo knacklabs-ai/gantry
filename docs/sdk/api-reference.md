@@ -20,7 +20,7 @@ LaunchAgent.
 Control API settings are read from process env and from `~/gantry/.env`:
 
 ```env
-GANTRY_CONTROL_API_KEYS_JSON=[{"kid":"local-admin","token":"dev-key","appId":"default","scopes":["sessions:read","sessions:write","jobs:read","jobs:write","providers:read","providers:admin","conversations:read","conversations:admin","messages:read","agents:admin","skills:read","skills:admin","mcp:read","mcp:admin","webhooks:read","webhooks:write","ingresses:read","ingresses:write","memory:read","memory:admin"]}]
+GANTRY_CONTROL_API_KEYS_JSON=[{"kid":"local-admin","token":"replace-with-a-generated-token","appId":"default","scopes":["sessions:read","sessions:write","jobs:read","jobs:write","providers:read","providers:admin","conversations:read","conversations:admin","messages:read","agents:admin","skills:read","skills:admin","mcp:read","mcp:admin","webhooks:read","webhooks:write","ingresses:read","ingresses:write","memory:read","memory:admin"]}]
 GANTRY_CONTROL_PORT=8787
 GANTRY_CONTROL_HOST=127.0.0.1
 ```
@@ -30,6 +30,8 @@ Unix socket at `~/gantry/run/control.sock`. Do not put control API secrets in
 the launchd plist; keep the plist limited to `GANTRY_HOME`, `HOME`, and `PATH`.
 Every Control API token must be listed in `GANTRY_CONTROL_API_KEYS_JSON` with
 an explicit `kid`, `token`, `appId`, and `scopes` array.
+Generate the `token` value with a password manager or `openssl rand -base64 32`;
+do not copy the placeholder into a shared or hosted deployment.
 `GANTRY_CONTROL_HOST` defaults to `127.0.0.1`; set it to `0.0.0.0` only for a
 hosted deployment that protects the Control API with bearer tokens and platform
 network controls.
@@ -676,7 +678,7 @@ API job creation rejects raw provider model IDs unless they are registered
 catalog aliases.
 
 Use `client.models.defaults.get()` to inspect configured and effective chat,
-job, and memory defaults. Use `client.models.defaults.update()` or
+job, and memory LLM defaults. Use `client.models.defaults.update()` or
 `PATCH /v1/models/defaults` to select a model preset, set chat/job
 aliases, or reset an area back to inheritance/preset-managed defaults:
 
@@ -784,10 +786,10 @@ Notable runtime event types include:
 These events are observable history only. They do not create permissions, alter
 selected capabilities, or prove provider/channel delivery by themselves.
 
-The current run event API exposes read-only runtime history, but Gantry does not
-yet host-enforce the five-line terminal evidence receipt until the receipt
-formatter/enforcer lands. The target terminal run and job evidence receipt uses
-this exact format:
+The current run event API exposes read-only runtime history. Evidence receipts
+are adaptive: pure chat answers do not need a receipt, work with no tools,
+changes, delegation, or blocker may use only `Completed: <short outcome>`, and
+impactful work uses the full receipt:
 
 ```text
 Completed: <short outcome>

@@ -12,6 +12,13 @@ import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-reference
 export const BASELINE_GANTRY_MCP_TOOL_NAMES = [
   'send_message',
   'ask_user_question',
+  'render_status',
+  'render_facts',
+  'render_list',
+  'render_table',
+  'render_form',
+  'render_media',
+  'render_progress',
   'todo_update',
   'memory_search',
   'memory_save',
@@ -20,6 +27,7 @@ export const BASELINE_GANTRY_MCP_TOOL_NAMES = [
   'request_skill_install',
   'request_skill_proposal',
   'pattern_candidate_decision',
+  'proactive_surfacing_consent',
   'request_skill_dependency_install',
   'request_mcp_server',
   'request_access',
@@ -33,6 +41,7 @@ export const BASELINE_GANTRY_MCP_TOOL_NAMES = [
 
 export const ASYNC_TASK_GANTRY_MCP_TOOL_NAMES = [
   'async_run_command',
+  'async_mcp_call',
   'task_cancel',
   'task_get',
   'task_list',

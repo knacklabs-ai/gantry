@@ -1,6 +1,10 @@
 import type { UserQuestionRequest } from '../../domain/types.js';
 import type { AgentTodoItem } from '../../domain/ports/task-lifecycle.js';
-import { formatAgentTodoLine } from '../agent-todo-render.js';
+import {
+  formatAgentTodoHeader,
+  formatAgentTodoLine,
+  hasAgentTodoCardHeader,
+} from '../agent-todo-render.js';
 import {
   PERMISSION_GLYPH,
   type PermissionPromptParts,
@@ -71,6 +75,7 @@ export function renderBodyLinesHtml(lines: string[]): string {
 
 export function renderPermissionPromptHtml(
   parts: PermissionPromptParts,
+  options: { includeFullView?: boolean } = {},
 ): string {
   const segments = [
     `<b>${PERMISSION_GLYPH} ${escapeTelegramHtml(parts.title)}</b>`,
@@ -84,6 +89,13 @@ export function renderPermissionPromptHtml(
       parts.contextLines
         .map((line) => `<i>${escapeTelegramHtml(line)}</i>`)
         .join('\n'),
+    );
+  }
+  if (options.includeFullView && parts.fullView) {
+    segments.push(
+      '',
+      `<b>${escapeTelegramHtml(parts.fullView.label)}</b>`,
+      `<blockquote expandable>${escapeTelegramHtml(parts.fullView.content)}</blockquote>`,
     );
   }
   segments.push('', `<i>Reply in ${parts.replyInMinutes}m</i>`);
@@ -128,10 +140,15 @@ const AGENT_TODO_MAX_LENGTH = 3800;
 export function renderAgentTodoHtml(render: {
   summary: string | null;
   items: AgentTodoItem[];
+  headline?: string | null;
+  status?: 'running' | 'waiting' | 'done' | 'failed' | 'stopped';
+  elapsed?: string | null;
 }): string {
-  const title = render.summary?.trim()
-    ? escapeTelegramHtml(render.summary.trim())
-    : '📋 Plan';
+  const title = hasAgentTodoCardHeader(render)
+    ? formatAgentTodoHeader(render, escapeTelegramHtml)
+    : render.summary?.trim()
+      ? escapeTelegramHtml(render.summary.trim())
+      : '📋 Plan';
   const header = `<b>${title}</b>`;
   const lines: string[] = [];
   let used = header.length + 35; // header + blockquote tags + "(N more)" margin

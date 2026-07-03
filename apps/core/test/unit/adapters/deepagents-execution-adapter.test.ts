@@ -31,6 +31,7 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => true),
       mkdirSync: vi.fn(),
+      rmSync: vi.fn(),
     },
   };
 });
@@ -45,6 +46,8 @@ beforeEach(() => {
   checkpointSetupMock.ensureDeepAgentsCheckpointSchema.mockClear();
   vi.mocked(fs.existsSync).mockReset();
   vi.mocked(fs.existsSync).mockReturnValue(true);
+  vi.mocked(fs.mkdirSync).mockReset();
+  vi.mocked(fs.rmSync).mockReset();
 });
 
 function catalogEntry(alias: string): ModelCatalogEntry {
@@ -194,6 +197,34 @@ describe('DeepAgentsLangChainExecutionAdapter', () => {
     expect(prepared.env.GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS).toBeUndefined();
   });
 
+  it('uses a disposable per-run DeepAgents runtime config dir', async () => {
+    const adapter = new DeepAgentsLangChainExecutionAdapter();
+    const prepared = await adapter.prepare(
+      prepareInput({
+        input: {
+          prompt: 'hello',
+          chatJid: 'tg:test',
+          runId: 'run/123',
+        },
+      }),
+    );
+
+    expect(prepared.runtimeConfigDir).toBe(
+      '/tmp/gantry/agents/test-agent/.llm-runtime/deepagents-run_123',
+    );
+    expect(fs.mkdirSync).toHaveBeenCalledWith(prepared.runtimeConfigDir, {
+      recursive: true,
+      mode: 0o700,
+    });
+
+    prepared.cleanup();
+
+    expect(fs.rmSync).toHaveBeenCalledWith(prepared.runtimeConfigDir, {
+      recursive: true,
+      force: true,
+    });
+  });
+
   it('projects the curated context window for an empty-profile openai-lane model', async () => {
     const adapter = new DeepAgentsLangChainExecutionAdapter();
     const prepared = await adapter.prepare(
@@ -328,6 +359,47 @@ describe('DeepAgentsLangChainExecutionAdapter', () => {
     );
     // Kimi declares a curated 262_142 window (no library profile on this lane).
     expect(prepared.env.GANTRY_DEEPAGENTS_MAX_INPUT_TOKENS).toBe('262142');
+  });
+
+  it('projects optional OpenRouter provider routing as snake_case runner env', async () => {
+    const adapter = new DeepAgentsLangChainExecutionAdapter();
+    const prepared = await adapter.prepare(
+      prepareInput({
+        effectiveModel: 'moonshotai/kimi-k2.6',
+        effectiveModelEntry: {
+          ...catalogEntry('kimi'),
+          providerRouting: {
+            openrouter: {
+              only: ['moonshotai'],
+              allowFallbacks: false,
+              requireParameters: true,
+              dataCollection: 'deny',
+              sort: 'latency',
+            },
+          },
+        },
+        modelCredentialProjection: {
+          env: Object.fromEntries([
+            [openAiBaseUrlKey(), 'http://127.0.0.1:4567/openrouter'],
+            [openAiApiKeyKey(), 'gtw_test'],
+          ]),
+          credentialProviders: {},
+          brokerProfile: 'gantry',
+          brokerApplied: true,
+          brokerAuthMode: 'api_key',
+        },
+      }),
+    );
+
+    expect(
+      JSON.parse(prepared.env.GANTRY_DEEPAGENTS_OPENROUTER_PROVIDER_ROUTING!),
+    ).toEqual({
+      only: ['moonshotai'],
+      allow_fallbacks: false,
+      require_parameters: true,
+      data_collection: 'deny',
+      sort: 'latency',
+    });
   });
 
   it('allows Gantry gateway projections for DeepAgents-routed API-key models', async () => {

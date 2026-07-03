@@ -5,9 +5,14 @@ import {
   type ModelGatewayResolvedUpstream,
   type ModelProviderDefinition,
 } from '../../../shared/model-provider-registry.js';
+import { getAwsDefaultChainCredentials } from './gantry-model-gateway-auth-aws-default.js';
 import { signAwsSigV4Request } from './gantry-model-gateway-auth-sigv4.js';
-import { getVertexServiceAccountBearerToken } from './gantry-model-gateway-auth-vertex.js';
+import {
+  getVertexAdcBearerToken,
+  getVertexServiceAccountBearerToken,
+} from './gantry-model-gateway-auth-vertex.js';
 import { GatewayBadRequestError } from './gantry-model-gateway-http.js';
+import { resolveModelCredentialSecretRef } from './gantry-model-gateway-secret-ref.js';
 
 export function resolveGatewayUpstream(
   provider: ModelProviderDefinition,
@@ -63,12 +68,30 @@ export async function injectProviderAuth(input: {
     auth.strategy !== 'header' &&
     auth.strategy !== 'claude_code_oauth' &&
     auth.strategy !== 'aws_bedrock_api_key' &&
+    auth.strategy !== 'aws_bedrock_api_key_ref' &&
     auth.strategy !== 'aws_sigv4' &&
-    auth.strategy !== 'vertex_service_account'
+    auth.strategy !== 'aws_sdk_default_chain' &&
+    auth.strategy !== 'vertex_service_account' &&
+    auth.strategy !== 'vertex_service_account_ref' &&
+    auth.strategy !== 'google_adc'
   ) {
     throw new Error(
       `Model gateway auth strategy ${auth.strategy} is not implemented for ${provider.id} ${authMode}.`,
     );
+  }
+  if (auth.strategy === 'aws_sdk_default_chain') {
+    signAwsSigV4Request({
+      method: input.method,
+      url: input.upstreamUrl,
+      headers,
+      body: input.body,
+      region: requirePayloadField(payload, provider.id, 'region'),
+      service: 'bedrock',
+      credentials: await getAwsDefaultChainCredentials({
+        profile: payload.profile,
+      }),
+    });
+    return;
   }
   if (auth.strategy === 'aws_sigv4') {
     signAwsSigV4Request({
@@ -90,6 +113,10 @@ export async function injectProviderAuth(input: {
     });
     return;
   }
+  if (auth.strategy === 'google_adc') {
+    headers.authorization = `Bearer ${await getVertexAdcBearerToken()}`;
+    return;
+  }
   if (auth.strategy === 'vertex_service_account') {
     if (!auth.field) {
       throw new Error(
@@ -98,6 +125,22 @@ export async function injectProviderAuth(input: {
     }
     const token = await getVertexServiceAccountBearerToken({
       serviceAccountJson: requirePayloadField(payload, provider.id, auth.field),
+      expectedProjectId: requirePayloadField(payload, provider.id, 'projectId'),
+    });
+    headers.authorization = `Bearer ${token}`;
+    return;
+  }
+  if (auth.strategy === 'vertex_service_account_ref') {
+    if (!auth.field) {
+      throw new Error(
+        `Model gateway auth strategy ${auth.strategy} for ${provider.id} ${authMode} is missing a credential field.`,
+      );
+    }
+    const serviceAccountJson = await resolveModelCredentialSecretRef(
+      requirePayloadField(payload, provider.id, auth.field),
+    );
+    const token = await getVertexServiceAccountBearerToken({
+      serviceAccountJson,
       expectedProjectId: requirePayloadField(payload, provider.id, 'projectId'),
     });
     headers.authorization = `Bearer ${token}`;
@@ -115,6 +158,12 @@ export async function injectProviderAuth(input: {
     auth.strategy === 'aws_bedrock_api_key'
   ) {
     headers.authorization = `Bearer ${value}`;
+    return;
+  }
+  if (auth.strategy === 'aws_bedrock_api_key_ref') {
+    headers.authorization = `Bearer ${await resolveModelCredentialSecretRef(
+      value,
+    )}`;
     return;
   }
   headers[auth.headerName ?? auth.field] = value;

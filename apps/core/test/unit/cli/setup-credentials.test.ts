@@ -11,13 +11,28 @@ async function loadCredentialsStep(
   input: {
     selections?: string[];
     password?: string;
+    readyProviders?: string[];
   } = {},
 ) {
   const note = vi.fn();
   const success = vi.fn();
   const password = vi.fn(async () => input.password ?? 'provider-key');
-  const selections = [...(input.selections ?? ['anthropic', 'store'])];
+  const selections = [...(input.selections ?? ['api_key', 'store'])];
   const select = vi.fn(async () => selections.shift() ?? 'store');
+  const listModelCredentials = vi.fn(async () =>
+    (input.readyProviders ?? []).map((providerId) => ({
+      id: `model-credential:default:${providerId}`,
+      appId: 'default',
+      providerId,
+      authMode: 'api_key',
+      status: 'active',
+      schemaVersion: 1,
+      fingerprint: 'fp',
+      fieldFingerprints: [],
+      createdAt: '2026-05-17T00:00:00.000Z',
+      updatedAt: '2026-05-17T00:00:00.000Z',
+    })),
+  );
   const upsertModelCredential = vi.fn(async (credentialInput) => ({
     id: 'model-credential:default:anthropic',
     appId: credentialInput.appId,
@@ -41,6 +56,7 @@ async function loadCredentialsStep(
     createStorageRuntime: () => ({
       service: {
         migrate: vi.fn(async () => undefined),
+        assertMigrationsCurrent: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
       },
       runtimeEventNotifier: { close: vi.fn(async () => undefined) },
@@ -48,6 +64,7 @@ async function loadCredentialsStep(
       repositories: {
         capabilitySecrets: {},
         modelCredentials: {
+          listModelCredentials,
           upsertModelCredential,
         },
       },
@@ -62,6 +79,7 @@ async function loadCredentialsStep(
     password,
     select,
     success,
+    listModelCredentials,
     upsertModelCredential,
   };
 }
@@ -75,11 +93,16 @@ describe('setup credentials step', () => {
       success,
       upsertModelCredential,
     } = await loadCredentialsStep({
-      selections: ['anthropic', 'api_key', 'store'],
+      selections: ['api_key', 'store'],
     });
     const draft = {
       credentialMode: 'none' as const,
       postgresSetupKind: 'local' as const,
+      modelPreset: 'anthropic' as const,
+      selectedModel: 'opus',
+      memoryEnabled: false,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
     };
 
     const action = await runCredentialsStep(
@@ -104,23 +127,85 @@ describe('setup credentials step', () => {
     expect(success).toHaveBeenCalledWith(
       'Anthropic credential stored. Model Access is ready to validate during runtime preflight.',
     );
-    expect(select).toHaveBeenCalledWith(
+    expect(select).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Model access provider' }),
+    );
+  });
+
+  it('prompts only missing providers required by selected defaults', async () => {
+    const { runCredentialsStep, note, upsertModelCredential } =
+      await loadCredentialsStep({
+        selections: ['store'],
+        readyProviders: ['anthropic'],
+      });
+    const draft = {
+      credentialMode: 'none' as const,
+      postgresSetupKind: 'local' as const,
+      modelPreset: 'anthropic' as const,
+      selectedModel: 'gpt',
+      memoryEnabled: true,
+      embeddingsEnabled: true,
+      dreamingEnabled: true,
+    };
+
+    const action = await runCredentialsStep(
+      draft,
+      '/tmp/gantry-credentials-test',
+    );
+
+    expect(action).toEqual({ type: 'next' });
+    expect(note).toHaveBeenCalledWith(
+      'Selected defaults require credentials for: anthropic, openai.',
+      'Model Access required',
+    );
+    expect(upsertModelCredential).toHaveBeenCalledWith(
       expect.objectContaining({
-        options: expect.not.arrayContaining([
-          expect.objectContaining({ value: 'openai' }),
-        ]),
+        providerId: 'openai',
       }),
     );
+  });
+
+  it('explains OpenAI separately when only embeddings require it', async () => {
+    const { requiredModelCredentialProviderReasonsForSetupDraft } =
+      await import('@core/cli/setup-credentials.js');
+
+    expect(
+      requiredModelCredentialProviderReasonsForSetupDraft({
+        credentialMode: 'gantry',
+        modelPreset: 'anthropic',
+        selectedModel: 'opus',
+        memoryEnabled: true,
+        embeddingsEnabled: true,
+        dreamingEnabled: true,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        providerId: 'anthropic',
+        reasons: expect.arrayContaining([
+          'main model opus',
+          'memory LLM extractor haiku',
+        ]),
+      }),
+      {
+        providerId: 'openai',
+        reasons: ['memory embeddings'],
+      },
+    ]);
   });
 
   it('lets the user go back instead of deferring required credentials', async () => {
     const { runCredentialsStep, password, select, upsertModelCredential } =
       await loadCredentialsStep({
-        selections: ['anthropic', 'api_key', 'back'],
+        selections: ['api_key', 'back'],
       });
     const draft = {
       credentialMode: 'none' as const,
       postgresSetupKind: 'local' as const,
+      modelPreset: 'anthropic' as const,
+      selectedModel: 'opus',
+      memoryEnabled: false,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
     };
 
     const action = await runCredentialsStep(
@@ -155,6 +240,11 @@ describe('setup credentials step', () => {
     const draft = {
       credentialMode: 'none' as const,
       postgresSetupKind: 'local' as const,
+      modelPreset: 'anthropic' as const,
+      selectedModel: 'opus',
+      memoryEnabled: false,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
     };
 
     const action = await runCredentialsStep(
@@ -163,6 +253,65 @@ describe('setup credentials step', () => {
     );
 
     expect(action).toEqual({ type: 'back' });
+    expect(password).not.toHaveBeenCalled();
+    expect(upsertModelCredential).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['resume', { type: 'resume' }],
+    ['cancel', { type: 'cancel' }],
+  ])(
+    'can %s from the first model access prompt',
+    async (selection, expected) => {
+      const { runCredentialsStep, password, upsertModelCredential } =
+        await loadCredentialsStep({
+          selections: [selection],
+        });
+      const draft = {
+        credentialMode: 'none' as const,
+        postgresSetupKind: 'local' as const,
+        modelPreset: 'anthropic' as const,
+        selectedModel: 'opus',
+        memoryEnabled: false,
+        embeddingsEnabled: false,
+        dreamingEnabled: false,
+      };
+
+      const action = await runCredentialsStep(
+        draft,
+        '/tmp/gantry-credentials-test',
+      );
+
+      expect(action).toEqual(expected);
+      expect(password).not.toHaveBeenCalled();
+      expect(upsertModelCredential).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['resume', { type: 'resume' }],
+    ['cancel', { type: 'cancel' }],
+  ])('can %s from the credential store prompt', async (selection, expected) => {
+    const { runCredentialsStep, password, upsertModelCredential } =
+      await loadCredentialsStep({
+        selections: ['api_key', selection],
+      });
+    const draft = {
+      credentialMode: 'none' as const,
+      postgresSetupKind: 'local' as const,
+      modelPreset: 'anthropic' as const,
+      selectedModel: 'opus',
+      memoryEnabled: false,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    };
+
+    const action = await runCredentialsStep(
+      draft,
+      '/tmp/gantry-credentials-test',
+    );
+
+    expect(action).toEqual(expected);
     expect(password).not.toHaveBeenCalled();
     expect(upsertModelCredential).not.toHaveBeenCalled();
   });

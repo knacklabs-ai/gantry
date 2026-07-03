@@ -30,7 +30,7 @@ describe('job status formatting', () => {
       runId: 'cb7f3c0a-c8f8-40eb-82f0-3b21d2cfc342',
       runShortId: 3,
       runStatus: 'completed',
-      summary: 'Memory dreaming completed: 3 promoted, 4 sent to review.',
+      summary: 'Memory dreaming needs attention: 4 sent to review.',
       nextRun: '2026-05-20T21:45:00.000Z',
       retryCount: 0,
       durationMs: 311_000,
@@ -39,7 +39,13 @@ describe('job status formatting', () => {
     expect(message).toContain('**📝 Needs memory review**');
     expect(message).toContain('· Memory Dreaming');
     expect(message).toContain(
-      'Action: Ask the agent to show pending memory reviews, then approve, reject, or edit by number.',
+      'Completed: Memory dreaming needs attention: 4 sent to review.',
+    );
+    expect(message).toContain('Used: none reported');
+    expect(message).toContain('Changed: none');
+    expect(message).toContain('Delegated: no');
+    expect(message).toContain(
+      'Needs attention: 4 memory changes need your review.',
     );
     expect(message).not.toContain('memory_review_pending');
   });
@@ -60,9 +66,35 @@ describe('job status formatting', () => {
     expect(message).toContain('**⏱️ Timed out**');
     expect(message).toContain('· Memory Dreaming');
     expect(message).toContain(
-      'Action: Ask the agent to show pending memory reviews, then approve, reject, or edit by number.',
+      'Completed: memory dreaming deadline exceeded. 2 pending memory reviews need review.',
     );
-    expect(message).not.toContain('Action: Rerun with a longer job timeout');
+    expect(message).toContain('Used: none reported');
+    expect(message).toContain('Changed: none');
+    expect(message).toContain('Delegated: no');
+    expect(message).toContain(
+      'Needs attention: 2 memory changes need your review.',
+    );
+    expect(message).not.toContain(
+      'Needs attention: Rerun with a longer job timeout',
+    );
     expect(message).not.toContain('memory_review_pending');
+  });
+
+  it('includes the full terminal receipt fields when no action is needed', () => {
+    const message = formatRunStatusMessage({
+      job: job(),
+      runId: 'cb7f3c0a-c8f8-40eb-82f0-3b21d2cfc342',
+      runShortId: 3,
+      runStatus: 'completed',
+      summary: 'Completed',
+      nextRun: null,
+      retryCount: 0,
+    });
+
+    expect(message).toContain('Completed: Completed, no reportable output.');
+    expect(message).toContain('Used: none reported');
+    expect(message).toContain('Changed: none');
+    expect(message).toContain('Delegated: no');
+    expect(message).toContain('Needs attention: none');
   });
 });

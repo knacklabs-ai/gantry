@@ -16,6 +16,9 @@ const importOutcome = vi.hoisted(() => ({
     | { status: 'conflict'; expectedRevision: number; actualRevision: number },
 }));
 const workstationImports = vi.hoisted(() => [] as unknown[]);
+const workstationImportOutcome = vi.hoisted(() => ({
+  current: { revision: 11 } as { revision?: number },
+}));
 
 vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
   getRuntimeStorage: () => ({
@@ -37,8 +40,9 @@ vi.mock('@core/config/settings/settings-import-service.js', async () => {
   return {
     ...actual,
     importFleetSettingsRevision: vi.fn(async () => importOutcome.current),
-    importWorkstationSettings: vi.fn(async (_deps, settings) => {
-      workstationImports.push(settings);
+    importWorkstationSettings: vi.fn(async (deps, settings) => {
+      workstationImports.push({ deps, settings });
+      return workstationImportOutcome.current;
     }),
   };
 });
@@ -61,6 +65,7 @@ type TestResponse = ServerResponse & {
 beforeEach(() => {
   revisions.length = 0;
   importOutcome.current = { status: 'applied', revision: 1 };
+  workstationImportOutcome.current = { revision: 11 };
   workstationImports.length = 0;
 });
 
@@ -183,11 +188,36 @@ describe('settings desired-state control routes', () => {
       { deploymentMode: 'workstation' },
     );
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ revision: 0 });
+    expect(JSON.parse(res.body)).toEqual({ revision: 11 });
     expect(workstationImports).toHaveLength(1);
   });
 
-  it('rejects revision guards in workstation mode', async () => {
+  it('returns the latest revision for workstation no-op updates', async () => {
+    workstationImportOutcome.current = {};
+    revisions.push({
+      appId: 'default',
+      revision: 12,
+      settingsDocument: { agent: { name: 'Ada' } },
+      minReaderVersion: 1,
+      createdBy: 'cli',
+      note: 'latest',
+      createdAt: '2026-06-11T00:00:00.000Z',
+    });
+
+    const res = await invoke(
+      'PUT',
+      '/v1/settings/desired-state',
+      {
+        settings: { agent: {} },
+      },
+      { deploymentMode: 'workstation' },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ revision: 12 });
+  });
+
+  it('accepts revision guards in workstation mode', async () => {
     const res = await invoke(
       'PUT',
       '/v1/settings/desired-state',
@@ -197,9 +227,15 @@ describe('settings desired-state control routes', () => {
       },
       { deploymentMode: 'workstation' },
     );
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error.code).toBe('INVALID_REQUEST');
-    expect(workstationImports).toHaveLength(0);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ revision: 11 });
+    expect(workstationImports).toHaveLength(1);
+    expect(workstationImports[0]).toMatchObject({
+      deps: {
+        revisionMirrorRequired: true,
+        expectedRevision: 3,
+      },
+    });
   });
 
   it('rejects a non-integer expectedRevision', async () => {

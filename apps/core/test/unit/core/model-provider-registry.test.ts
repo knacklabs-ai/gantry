@@ -73,12 +73,20 @@ describe('model provider registry', () => {
     expect(getModelProviderDefinition('bedrock')?.executionRoute).toEqual({
       engine: 'deepagents',
       executionProviderId: 'deepagents:langchain',
-      supportedCredentialModes: ['bedrock_api_key'],
+      supportedCredentialModes: [
+        'aws_default_chain',
+        'bedrock_api_key_ref',
+        'bedrock_api_key',
+      ],
     });
     expect(getModelProviderDefinition('vertex')?.executionRoute).toEqual({
       engine: 'deepagents',
       executionProviderId: 'deepagents:langchain',
-      supportedCredentialModes: ['service_account'],
+      supportedCredentialModes: [
+        'google_adc',
+        'service_account_ref',
+        'service_account',
+      ],
     });
   });
 
@@ -174,12 +182,12 @@ describe('model provider registry', () => {
       getModelProviderDefinition('bedrock')?.credentialModes.map(
         (mode) => mode.id,
       ),
-    ).toEqual(['bedrock_api_key']);
+    ).toEqual(['aws_default_chain', 'bedrock_api_key_ref', 'bedrock_api_key']);
     expect(
       getModelProviderDefinition('vertex')?.credentialModes.map(
         (mode) => mode.id,
       ),
-    ).toEqual(['service_account']);
+    ).toEqual(['google_adc', 'service_account_ref', 'service_account']);
   });
 
   it('validates payloads through the selected credential mode', () => {
@@ -207,6 +215,26 @@ describe('model provider registry', () => {
     expect(
       normalizeModelCredentialPayload({
         providerId: 'bedrock',
+        authMode: 'aws_default_chain',
+        payload: { region: ' us-west-2 ', profile: ' gantry-dev ' },
+      }),
+    ).toEqual({ region: 'us-west-2', profile: 'gantry-dev' });
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'bedrock',
+        authMode: 'bedrock_api_key_ref',
+        payload: {
+          region: ' us-east-1 ',
+          apiKeyRef: ' aws-sm:prod/bedrock/api-key ',
+        },
+      }),
+    ).toEqual({
+      region: 'us-east-1',
+      apiKeyRef: 'aws-sm:prod/bedrock/api-key',
+    });
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'bedrock',
         authMode: 'bedrock_api_key',
         payload: { region: ' us-east-1 ', apiKey: ' bedrock-key ' },
       }),
@@ -218,6 +246,30 @@ describe('model provider registry', () => {
         payload: { region: 'us-west-2', accessKeyId: 'AKIATEST' },
       }),
     ).toThrow('Credential auth mode access_key is not supported for bedrock.');
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'google_adc',
+        payload: { region: ' global ', projectId: ' gantry-test ' },
+      }),
+    ).toEqual({ region: 'global', projectId: 'gantry-test' });
+    expect(
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account_ref',
+        payload: {
+          region: ' global ',
+          projectId: 'gantry-test',
+          serviceAccountJsonRef:
+            ' gcp-sm:projects/gantry-test/secrets/vertex-sa/versions/latest ',
+        },
+      }),
+    ).toEqual({
+      region: 'global',
+      projectId: 'gantry-test',
+      serviceAccountJsonRef:
+        'gcp-sm:projects/gantry-test/secrets/vertex-sa/versions/latest',
+    });
     expect(
       normalizeModelCredentialPayload({
         providerId: 'vertex',
@@ -241,11 +293,33 @@ describe('model provider registry', () => {
     expect(() =>
       normalizeModelCredentialPayload({
         providerId: 'bedrock',
+        authMode: 'bedrock_api_key_ref',
+        payload: { region: 'us-east-1', apiKeyRef: 'prod/bedrock/key' },
+      }),
+    ).toThrow(
+      'Credential field apiKeyRef is invalid for bedrock bedrock_api_key_ref.',
+    );
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'bedrock',
         authMode: 'bedrock_api_key',
         payload: { region: 'us-east-1.example.com', apiKey: 'key' },
       }),
     ).toThrow(
       'Credential field region is invalid for bedrock bedrock_api_key.',
+    );
+    expect(() =>
+      normalizeModelCredentialPayload({
+        providerId: 'vertex',
+        authMode: 'service_account_ref',
+        payload: {
+          region: 'global',
+          projectId: 'gantry-test',
+          serviceAccountJsonRef: 'projects/gantry-test/secrets/key',
+        },
+      }),
+    ).toThrow(
+      'Credential field serviceAccountJsonRef is invalid for vertex service_account_ref.',
     );
     expect(() =>
       normalizeModelCredentialPayload({
@@ -515,7 +589,19 @@ describe('model provider registry', () => {
     expect(bedrock).toBeDefined();
     expect(bedrock!.responseFamily).toBe('openai');
     expect(bedrock!.gateway.pathSegment).toBe('bedrock');
+    expect(bedrock!.gateway.upstreamPathPrefix).toBe('/v1');
     expect(bedrock!.gateway.upstreamResolver).toBeDefined();
+    expect(
+      bedrock!.gateway.upstreamResolver!({
+        authMode: 'aws_default_chain',
+        payload: {
+          region: 'ap-south-1',
+        },
+      }),
+    ).toEqual({
+      origin: 'https://bedrock-runtime.ap-south-1.amazonaws.com',
+      pathPrefix: '/v1',
+    });
     expect(bedrock!.cacheSupport.prompt.mode).toBe('none');
     expect(bedrock!.supportedWorkloads).toEqual([
       'chat',
@@ -536,11 +622,10 @@ describe('model provider registry', () => {
     expect(vertex!.gateway.upstreamResolver).toBeDefined();
     expect(
       vertex!.gateway.upstreamResolver!({
-        authMode: 'service_account',
+        authMode: 'google_adc',
         payload: {
           region: 'global',
           projectId: 'gantry-test',
-          serviceAccountJson: '{}',
         },
       }),
     ).toEqual({

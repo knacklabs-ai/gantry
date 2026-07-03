@@ -221,6 +221,7 @@ export function startControlServer(input: {
   app: RuntimeApp;
   getBrowserStatus?: JobManagementServiceDeps['getBrowserStatus'];
   sendConversationIngressProjection?: ControlRouteContext['sendConversationIngressProjection'];
+  addMessageReaction?: ControlRouteContext['addMessageReaction'];
   /**
    * Which control routes to mount. `'full'` (default) mounts every route, the
    * historical behaviour. `'ops'` mounts only operational + read-only diagnostic
@@ -231,6 +232,8 @@ export function startControlServer(input: {
   processRole?: ProcessRole;
   /** Whether this role runs live execution (live readiness + live gauges). */
   liveExecution?: boolean;
+  /** Whether durable live-turn admission is enabled in runtime settings. */
+  liveTurnsEnabled?: boolean;
   /** Role-specific readiness checks that apply (derived by the runtime caller). */
   roleReadinessRequirements?: ReadinessRoleRequirements;
   /** Runtime accessors injected from the runtime layer (DI; no cross-layer import here). */
@@ -244,6 +247,8 @@ export function startControlServer(input: {
     return {
       ops: getRuntimeRepositories(),
       repositories: storage.repositories,
+      settingsRevisions: storage.repositories.settingsRevisions,
+      pool: storage.service.pool,
     };
   });
   const socketPath =
@@ -308,6 +313,7 @@ export function startControlServer(input: {
     keys,
     processRole: input.processRole ?? 'all',
     liveExecution: input.liveExecution ?? true,
+    liveTurnsEnabled: input.liveTurnsEnabled ?? true,
     roleReadinessRequirements: input.roleReadinessRequirements ?? {
       // Default (workstation `all`): the historical check set, no role checks.
       requiresApiAuthConfigured: false,
@@ -328,6 +334,7 @@ export function startControlServer(input: {
     triggerRateLimiter: createRateLimiter(),
     getRuntimeSettings: () => getPublicRuntimeSettings(),
     getInternalRuntimeSettings: () => getRuntimeSettingsForConfig(),
+    getEgressSettings: () => getRuntimeSettingsForConfig().permissions.egress,
     getDefaultModelConfig,
     getModelDefaults: getRuntimeModelDefaults,
     patchModelDefaults: patchRuntimeModelDefaults,
@@ -369,15 +376,21 @@ export function startControlServer(input: {
       });
     },
     sendConversationIngressProjection: input.sendConversationIngressProjection,
+    addMessageReaction: input.addMessageReaction,
     getBrowserStatus: input.getBrowserStatus,
-    syncSettingsFromProjection: (appId: AppId) =>
-      syncRuntimeSettingsFromProjection({
+    syncSettingsFromProjection: (appId: AppId) => {
+      const storage = getRuntimeStorage();
+      return syncRuntimeSettingsFromProjection({
         runtimeHome: GANTRY_HOME,
         ops: getRuntimeRepositories(),
-        repositories: getRuntimeStorage().repositories,
+        repositories: storage.repositories,
         appId,
+        settingsRevisions: storage.repositories.settingsRevisions,
+        pool: storage.service?.pool,
+        createdBy: 'control-api:projection-sync',
         reloadRuntimeState: () => input.app.loadState(),
-      }),
+      });
+    },
     getSelectedAgentHarness: (agentFolder?: string) =>
       getSelectedAgentHarness(agentFolder),
   };

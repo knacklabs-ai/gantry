@@ -1,10 +1,15 @@
-import type {
-  PermissionApprovalDecision,
-  PermissionApprovalRequest,
-  UserQuestionRequest,
-  UserQuestionResponse,
+import {
+  RICH_INTERACTION_NATIVE_FALLBACK_TEXT,
+  type PermissionApprovalDecision,
+  type PermissionApprovalRequest,
+  type RichInteractionRequest,
+  type UserQuestionRequest,
+  type UserQuestionResponse,
 } from '../../domain/types.js';
-import type { AgentTodoRender } from '../../domain/ports/task-lifecycle.js';
+import type {
+  AgentTodoCardStatus,
+  AgentTodoRender,
+} from '../../domain/ports/task-lifecycle.js';
 import { formatDuration } from '../../shared/human-format.js';
 import { PERMISSION_APPROVAL_TIMEOUT_MS } from '../../shared/permission-timeout.js';
 
@@ -30,7 +35,29 @@ interface UserQuestionSurfaceLike {
 }
 
 interface AgentTodoSurfaceLike {
-  renderAgentTodo: (jid: string, render: AgentTodoRender) => Promise<void>;
+  renderAgentTodo: (
+    jid: string,
+    render: AgentTodoRender,
+  ) => Promise<void | boolean>;
+}
+
+interface RichInteractionSurfaceLike {
+  renderRichInteraction: (
+    jid: string,
+    request: RichInteractionRequest,
+  ) => Promise<void | boolean>;
+}
+
+export interface AgentTodoRenderer {
+  (jid: string, render: AgentTodoRender): Promise<boolean>;
+  finalize: (
+    jid: string,
+    input: {
+      threadId?: string | null;
+      cardKind?: AgentTodoRender['cardKind'];
+      status: AgentTodoCardStatus;
+    },
+  ) => Promise<boolean>;
 }
 
 interface PermissionApprovalTargetResolution {
@@ -211,6 +238,46 @@ export function createUserQuestionResponder(input: {
   };
 }
 
+export function createRichInteractionRenderer(input: {
+  findBoundChannel: (jid: string) => ChannelLike | undefined;
+  asRichInteractionSurface: (
+    channel: ChannelLike,
+  ) => RichInteractionSurfaceLike | undefined;
+  sendMessage: (
+    jid: string,
+    text: string,
+    options?: { threadId?: string },
+  ) => Promise<unknown>;
+  logger: Pick<ChannelWiringInteractionsLogger, 'error'>;
+}): (jid: string, request: RichInteractionRequest) => Promise<boolean> {
+  return async (jid, request): Promise<boolean> => {
+    const channel = input.findBoundChannel(jid);
+    const surface = channel
+      ? input.asRichInteractionSurface(channel)
+      : undefined;
+    if (surface) {
+      try {
+        if ((await surface.renderRichInteraction(jid, request)) !== false) {
+          return true;
+        }
+      } catch (err) {
+        input.logger.error({
+          err,
+          jid,
+          requestId: request.requestId,
+          message: 'Target channel rich interaction render failed',
+        });
+      }
+    }
+    await input.sendMessage(
+      jid,
+      `${RICH_INTERACTION_NATIVE_FALLBACK_TEXT}\n\n${request.descriptor.rich?.fallbackText ?? request.descriptor.fallbackText ?? ''}`.trim(),
+      { ...(request.threadId ? { threadId: request.threadId } : {}) },
+    );
+    return true;
+  };
+}
+
 // Renders an agent todo/plan to the bound channel, live-updating in place.
 // Best-effort: a missing channel or a render failure is logged and swallowed so
 // it never breaks the originating todo_update tool response. Per-conversation
@@ -229,29 +296,39 @@ export function createAgentTodoRenderer(input: {
     channel: ChannelLike,
   ) => AgentTodoSurfaceLike | undefined;
   logger: Pick<ChannelWiringInteractionsLogger, 'error'>;
-}): (jid: string, render: AgentTodoRender) => Promise<void> {
+}): AgentTodoRenderer {
   const windows = new Map<
     string,
     { pending: AgentTodoRender | null; timer: ReturnType<typeof setTimeout> }
   >();
+  // ponytail: ceiling is the latest in-memory render only; todo state stays non-durable.
+  const latest = new Map<string, AgentTodoRender>();
 
-  const flush = async (jid: string, render: AgentTodoRender): Promise<void> => {
+  const getSurface = (jid: string): AgentTodoSurfaceLike | undefined => {
     const channel = input.findBoundChannel(jid);
-    const surface = channel ? input.asAgentTodoSurface(channel) : undefined;
-    if (!surface) return;
+    return channel ? input.asAgentTodoSurface(channel) : undefined;
+  };
+
+  const flush = async (
+    jid: string,
+    render: AgentTodoRender,
+  ): Promise<boolean> => {
+    const surface = getSurface(jid);
+    if (!surface) return false;
     try {
-      await surface.renderAgentTodo(jid, render);
+      return (await surface.renderAgentTodo(jid, render)) !== false;
     } catch (err) {
       input.logger.error({
         err,
         jid,
         message: 'Target channel agent todo render failed',
       });
+      return false;
     }
   };
 
   const renderKey = (jid: string, render: AgentTodoRender): string =>
-    `${jid}:${render.threadId ?? ''}`;
+    `${jid}:${render.threadId ?? ''}:${render.cardKind ?? 'todo'}`;
 
   const openWindow = (key: string, jid: string): void => {
     const timer = setTimeout(() => {
@@ -271,16 +348,56 @@ export function createAgentTodoRenderer(input: {
     windows.set(key, { pending: windows.get(key)?.pending ?? null, timer });
   };
 
-  return async (jid: string, render: AgentTodoRender): Promise<void> => {
-    if (!jid) return;
+  const renderTodo = (async (
+    jid: string,
+    render: AgentTodoRender,
+  ): Promise<boolean> => {
+    if (!jid || !getSurface(jid)) return false;
     const key = renderKey(jid, render);
+    latest.set(key, render);
+    if (render.flush) {
+      const existing = windows.get(key);
+      if (existing) {
+        clearTimeout(existing.timer);
+        windows.delete(key);
+      }
+      return flush(jid, render);
+    }
     const existing = windows.get(key);
     if (existing) {
       // Within the throttle window: keep only the latest plan; it flushes on close.
       existing.pending = render;
-      return;
+      return true;
     }
     openWindow(key, jid);
-    await flush(jid, render);
+    return flush(jid, render);
+  }) as AgentTodoRenderer;
+
+  renderTodo.finalize = async (
+    jid: string,
+    final: {
+      threadId?: string | null;
+      cardKind?: AgentTodoRender['cardKind'];
+      status: AgentTodoCardStatus;
+    },
+  ): Promise<boolean> => {
+    if (!jid || !getSurface(jid)) return false;
+    const key = renderKey(jid, {
+      summary: null,
+      items: [],
+      threadId: final.threadId ?? null,
+      cardKind: final.cardKind ?? 'todo',
+    });
+    const render = latest.get(key);
+    if (!render) return false;
+    return renderTodo(jid, {
+      ...render,
+      status: final.status,
+      stop: undefined,
+      updatedAt: new Date().toISOString(),
+      flush: true,
+    });
   };
+
+  return renderTodo;
 }

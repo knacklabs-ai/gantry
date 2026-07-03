@@ -59,7 +59,7 @@ export async function initializeRuntimeStorage(
 ): Promise<StorageRuntime> {
   const nextRuntime = createStorageRuntime(undefined, options);
   try {
-    await nextRuntime.service.migrate();
+    await nextRuntime.service.assertMigrationsCurrent();
     const capabilities = await nextRuntime.service.healthCheck();
     const failure = evaluatePostgresStorageCapabilities(capabilities);
     if (failure) {
@@ -193,6 +193,7 @@ export async function closeRuntimeStorage(): Promise<void> {
   const existing = runtime;
   runtime = null;
   configurePendingInteractionDurability(null);
+  await existing?.liveTurnCommandWakeupSource.close();
   await existing?.liveAdmissionWakeupSource.close();
   await existing?.runtimeEventNotifier.close();
   await existing?.service.close();
@@ -235,6 +236,10 @@ export function _setRuntimeRepositoriesForTest(
       close: async () => {},
     } as StorageRuntime['runtimeEventNotifier'],
     liveAdmissionWakeupSource: {
+      subscribe: () => () => {},
+      close: async () => {},
+    },
+    liveTurnCommandWakeupSource: {
       subscribe: () => () => {},
       close: async () => {},
     },

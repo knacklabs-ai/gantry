@@ -5,10 +5,12 @@ import {
   providerForJid,
 } from '@core/channels/provider-registry.js';
 import '@core/channels/register-builtins.js';
+import { TEAMS_HARD_MESSAGE_BYTES } from '@core/channels/teams-delivery.js';
 import {
   TEAMS_ADAPTIVE_CARD_CONTENT_TYPE,
   TeamsChannel,
   type TeamsSdkClient,
+  type TeamsInboundMessage,
   buildTeamsApprovalDescriptorPayload,
   createTeamsChannel,
   normalizeTeamsJid,
@@ -20,6 +22,11 @@ import {
 } from '@core/channels/teams-external-card-actions.js';
 import { signExternalCardActionForVerification } from '@core/control/server/routes/external-notification-card.js';
 import { _testTeamsBotFrameworkClient } from '@core/channels/teams-bot-framework-client.js';
+import { formatTeamsAttachmentUnavailableCopy } from '@core/channels/teams-cards.js';
+import {
+  sendTeamsProgressUpdate,
+  type TeamsProgressMessages,
+} from '@core/channels/teams-progress.js';
 import type { ChannelOpts } from '@core/channels/channel-provider.js';
 import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 
@@ -34,6 +41,7 @@ vi.mock('@core/infrastructure/logging/logger.js', () => ({
 
 afterEach(() => {
   configurePendingInteractionDurability(null);
+  vi.useRealTimers();
 });
 
 function makeOpts(): ChannelOpts {
@@ -58,7 +66,32 @@ function makeOpts(): ChannelOpts {
   };
 }
 
+type TeamsSdkClientWithRoot = TeamsSdkClient & {
+  getChannelMessage(input: {
+    conversationId: string;
+    messageId: string;
+  }): Promise<TeamsInboundMessage>;
+};
+
 describe('Teams built-in provider', () => {
+  it('uses the locked no-link copy for unavailable attachments', () => {
+    expect(
+      formatTeamsAttachmentUnavailableCopy(
+        'Ship the note.\n\nAttachments:\n- Attachment unavailable.',
+      ),
+    ).toBe(
+      'Ship the note.\n\nAttachments:\n- Attachment unavailable in Teams until signed artifact links are added.',
+    );
+    expect(
+      formatTeamsAttachmentUnavailableCopy(
+        'Ship the note.\n\nAttachments:\n- daily.md (text/markdown, 1024 bytes)',
+        true,
+      ),
+    ).toBe(
+      'Ship the note.\n\nAttachments:\n- Attachment unavailable in Teams until signed artifact links are added.',
+    );
+  });
+
   it('registers Teams provider metadata and ownership prefix', () => {
     const provider = getProvider('teams');
 
@@ -188,9 +221,9 @@ describe('Teams Adaptive Card payloads', () => {
       action: 'external_card_action',
       integrationId: 'integration-test',
       eventId: 'outbox-1',
-      resourceId: 'tender-1',
-      workspaceId: 'workspace-1',
-      sourceChannelId: '19:abc@thread.v2',
+      subjectId: 'tender-1',
+      scopeId: 'workspace-1',
+      sourceConversationId: '19:abc@thread.v2',
       teamsTenantId: 'tenant-1',
       actionType: 'watch',
       platformOperation: 'mark_resource',
@@ -225,7 +258,7 @@ describe('Teams Adaptive Card payloads', () => {
       }),
     ).toEqual({
       reason:
-        'missing_fields:integrationId,resourceId,workspaceId,sourceChannelId,teamsTenantId,actionType,platformOperation,nonce,expiresAt,signature',
+        'missing_fields:integrationId,subjectId,scopeId,sourceConversationId,teamsTenantId,actionType,platformOperation,nonce,expiresAt,signature',
       valueKeys: ['action', 'trigger'],
       dataKeys: ['action', 'eventId'],
     });
@@ -236,9 +269,9 @@ describe('Teams Adaptive Card payloads', () => {
       action: {
         integrationId: 'integration-test',
         eventId: 'outbox-1',
-        resourceId: 'tender-1',
-        workspaceId: 'workspace-1',
-        sourceChannelId: '19:abc@thread.v2',
+        subjectId: 'tender-1',
+        scopeId: 'workspace-1',
+        sourceConversationId: '19:abc@thread.v2',
         teamsTenantId: 'tenant-1',
         actionType: 'watch',
         platformOperation: 'mark_resource',
@@ -262,10 +295,10 @@ describe('Teams Adaptive Card payloads', () => {
       expect.objectContaining({
         integrationId: 'integration-test',
         eventId: 'outbox-1',
-        resourceId: 'tender-1',
-        workspaceId: 'workspace-1',
-        sourceWorkspaceId: 'workspace-1',
-        sourceChannelId: '19:abc@thread.v2',
+        subjectId: 'tender-1',
+        scopeId: 'workspace-1',
+        sourceScopeId: 'workspace-1',
+        sourceConversationId: '19:abc@thread.v2',
         teamsTenantId: 'tenant-1',
         platformOperation: 'mark_resource',
         actorId: 'teams-user-1',
@@ -294,9 +327,9 @@ describe('Teams Adaptive Card payloads', () => {
       secret: 'secret',
       integrationId: 'integration-test',
       eventId: 'outbox-1',
-      resourceId: 'tender-1',
-      workspaceId: 'workspace-1',
-      sourceChannelId: '19:abc@thread.v2',
+      subjectId: 'tender-1',
+      scopeId: 'workspace-1',
+      sourceConversationId: '19:abc@thread.v2',
       teamsTenantId: 'tenant-1',
       actionType: 'request_analysis',
       platformOperation: 'requestAdminProcessingApproval',
@@ -310,9 +343,9 @@ describe('Teams Adaptive Card payloads', () => {
         _testExternalCardActions.verifyExternalCardActionSignature({
           integrationId: 'integration-test',
           eventId: 'outbox-1',
-          resourceId: 'tender-1',
-          workspaceId: 'workspace-1',
-          sourceChannelId: '19:abc@thread.v2',
+          subjectId: 'tender-1',
+          scopeId: 'workspace-1',
+          sourceConversationId: '19:abc@thread.v2',
           teamsTenantId: 'tenant-1',
           actionType: 'request_analysis',
           platformOperation: 'requestAdminProcessingApproval',
@@ -326,9 +359,9 @@ describe('Teams Adaptive Card payloads', () => {
         _testExternalCardActions.verifyExternalCardActionSignature({
           integrationId: 'integration-test',
           eventId: 'outbox-1',
-          resourceId: 'tender-1',
-          workspaceId: 'workspace-1',
-          sourceChannelId: '19:abc@thread.v2',
+          subjectId: 'tender-1',
+          scopeId: 'workspace-1',
+          sourceConversationId: '19:abc@thread.v2',
           teamsTenantId: 'tenant-1',
           actionType: 'request_analysis',
           platformOperation: 'markTenderWatching',
@@ -393,9 +426,49 @@ describe('Teams Adaptive Card payloads', () => {
     ]);
     expect(JSON.stringify(payload)).toContain('git status --short');
   });
+
+  it('keeps Teams on the inline approval fallback until task-module transport exists', () => {
+    const payload = buildTeamsApprovalDescriptorPayload({
+      requestId: 'perm-1',
+      sourceAgentFolder: 'teams_main',
+      targetJid: 'teams:19:abc@thread.v2',
+      toolName: 'Bash',
+      toolInput: {
+        command: 'npm test -- --runInBand',
+      },
+    });
+
+    const rendered = JSON.stringify(payload);
+    expect(rendered).toContain('npm test -- --runInBand');
+    expect(rendered).not.toContain('View full command');
+    expect(rendered).not.toContain('task/fetch');
+  });
 });
 
 describe('TeamsChannel adapter scaffold', () => {
+  it('does not post visible Teams reaction text', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+    await channel.connect({ inbound: false });
+
+    await channel.addReaction('teams:19:abc@thread.v2', 'message-1', 'running');
+    await channel.addReaction('teams:19:abc@thread.v2', 'message-1', 'running');
+
+    expect(sdkClient.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('renders todo cards in the active Teams thread', async () => {
     let messageCounter = 0;
     const sdkClient: TeamsSdkClient = {
@@ -420,6 +493,10 @@ describe('TeamsChannel adapter scaffold', () => {
 
     await channel.renderAgentTodo('teams:19:abc@thread.v2', {
       threadId: 'reply-a',
+      headline: 'Searching the web',
+      status: 'running',
+      elapsed: '2m 14s',
+      stop: { label: 'Stop', actionToken: 'stop-token-1' },
       items: [{ id: '1', title: 'First', status: 'pending' }],
     });
     await channel.renderAgentTodo('teams:19:abc@thread.v2', {
@@ -428,12 +505,23 @@ describe('TeamsChannel adapter scaffold', () => {
     });
     await channel.renderAgentTodo('teams:19:abc@thread.v2', {
       threadId: 'reply-a',
+      status: 'done',
+      stop: { label: 'Stop', actionToken: 'stale-stop-token' },
       items: [{ id: '1', title: 'First', status: 'completed' }],
     });
 
     expect(sdkClient.sendAdaptiveCard).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ threadId: 'reply-a' }),
+    );
+    const firstCard = vi.mocked(sdkClient.sendAdaptiveCard).mock.calls[0]?.[0]
+      ?.card as any;
+    expect(JSON.stringify(firstCard)).toContain(
+      '⏳ Searching the web · 2m 14s',
+    );
+    expect(JSON.stringify(firstCard.actions)).toContain('stop-token-1');
+    expect(JSON.stringify(firstCard.actions)).toContain(
+      'teams:19:abc@thread.v2',
     );
     expect(sdkClient.sendAdaptiveCard).toHaveBeenNthCalledWith(
       2,
@@ -443,6 +531,7 @@ describe('TeamsChannel adapter scaffold', () => {
       expect.objectContaining({
         messageId: 'todo-1',
         threadId: 'reply-a',
+        card: expect.objectContaining({ actions: [] }),
       }),
     );
   });
@@ -531,6 +620,1027 @@ describe('TeamsChannel adapter scaffold', () => {
 
     expect(channel.isConnected()).toBe(false);
     expect(sdkClient.stop).toHaveBeenCalled();
+  });
+
+  it('ingests attachment-only Teams messages with provider metadata only', async () => {
+    let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined =
+      undefined;
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async (input) => {
+        startInput = input;
+      }),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+    };
+    const opts = makeOpts();
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      opts,
+      sdkClient,
+    );
+
+    await channel.connect();
+    await startInput?.onMessage({
+      conversationId: '19:abc@thread.v2',
+      id: 'activity-attachment',
+      text: '   ',
+      from: {
+        id: 'user-1',
+        name: 'Ravi',
+      },
+      timestamp: '2026-04-30T00:00:00.000Z',
+      attachments: [
+        {
+          id: 'teams-image',
+          contentType: 'image/png',
+          sizeBytes: 4096,
+        },
+      ],
+    });
+    await startInput?.onMessage({
+      conversationId: '19:abc@thread.v2',
+      id: 'activity-empty',
+      text: '   ',
+      from: {
+        id: 'user-1',
+        name: 'Ravi',
+      },
+      timestamp: '2026-04-30T00:00:01.000Z',
+    });
+
+    expect(opts.onMessage).toHaveBeenCalledTimes(1);
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'teams:19:abc@thread.v2',
+      expect.objectContaining({
+        id: 'activity-attachment',
+        chat_jid: 'teams:19:abc@thread.v2',
+        provider: 'teams',
+        content: '',
+        attachments: [
+          {
+            id: 'teams-attachment:teams-image',
+            kind: 'image',
+            contentType: 'image/png',
+            sizeBytes: 4096,
+            externalId: 'teams-image',
+          },
+        ],
+      }),
+    );
+  });
+
+  it('skips Teams context hydration when the SDK has no history methods', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+
+    await expect(
+      channel.hydrateConversationContext({
+        conversationJid: 'teams:19:abc@thread.v2',
+        latestMessage: {
+          id: 'current',
+          timestamp: '2026-04-30T00:00:00.000Z',
+          external_message_id: 'activity-3',
+        },
+        limits: { channelMessages: 30, threadMessages: 50 },
+      }),
+    ).resolves.toMatchObject({
+      providerId: 'teams',
+      attempted: false,
+      skipped: true,
+      reason: 'unsupported_sdk',
+      messages: [],
+    });
+  });
+
+  it('hydrates Teams attachment-only context messages with provider metadata only', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+      listChannelMessages: vi.fn(async () => [
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'activity-1',
+          text: '',
+          from: { id: 'user-1', name: 'Ravi' },
+          timestamp: '2026-04-30T00:00:01.000Z',
+          attachments: [
+            {
+              id: 'teams-image',
+              contentType: 'image/png',
+              sizeBytes: 4096,
+            },
+          ],
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'activity-2',
+          text: 'report attached',
+          senderId: 'user-2',
+          senderName: 'Maya',
+          timestamp: '2026-04-30T00:00:02.000Z',
+          attachments: [
+            {
+              id: 'teams-file',
+              contentType: 'application/pdf',
+              sizeBytes: 8192,
+            },
+          ],
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'activity-3',
+          text: '',
+          from: { id: 'user-3', name: 'Isha' },
+          timestamp: '2026-04-30T00:00:03.000Z',
+        },
+      ]),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+
+    const result = await channel.hydrateConversationContext({
+      conversationJid: 'teams:19:abc@thread.v2',
+      latestMessage: {
+        id: 'current',
+        timestamp: '2026-04-30T00:00:04.000Z',
+        external_message_id: 'activity-4',
+      },
+      limits: { channelMessages: 3, threadMessages: 50 },
+    });
+
+    expect(sdkClient.listChannelMessages).toHaveBeenCalledWith({
+      conversationId: '19:abc@thread.v2',
+      beforeMessageId: 'activity-4',
+      limit: 3,
+    });
+    expect(result.messages).toEqual([
+      expect.objectContaining({
+        external_message_id: 'activity-1',
+        content: '',
+        is_from_me: false,
+        is_bot_message: false,
+        attachments: [
+          expect.objectContaining({
+            kind: 'image',
+            contentType: 'image/png',
+            sizeBytes: 4096,
+            externalId: 'teams-image',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        external_message_id: 'activity-2',
+        content: 'report attached',
+        is_from_me: false,
+        is_bot_message: false,
+        attachments: [
+          expect.objectContaining({
+            kind: 'file',
+            contentType: 'application/pdf',
+            sizeBytes: 8192,
+            externalId: 'teams-file',
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('only marks configured Teams self bot history as bot messages', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+      listChannelMessages: vi.fn(async () => [
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'activity-1',
+          text: 'deploy finished',
+          from: { id: '28:other-bot-id', name: 'BuildBot' },
+          timestamp: '2026-04-30T00:00:01.000Z',
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'activity-2',
+          text: 'Gantry summary',
+          from: { id: '28:client-id', name: 'Gantry' },
+          timestamp: '2026-04-30T00:00:02.000Z',
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'activity-3',
+          text: 'looks good',
+          from: { id: 'user-1', name: 'Ravi' },
+          timestamp: '2026-04-30T00:00:03.000Z',
+        },
+      ]),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+
+    const result = await channel.hydrateConversationContext({
+      conversationJid: 'teams:19:abc@thread.v2',
+      latestMessage: {
+        id: 'current',
+        timestamp: '2026-04-30T00:00:04.000Z',
+        external_message_id: 'activity-4',
+      },
+      limits: { channelMessages: 3, threadMessages: 50 },
+    });
+
+    expect(result.messages).toEqual([
+      expect.objectContaining({
+        sender: '28:other-bot-id',
+        content: 'deploy finished',
+        is_from_me: false,
+        is_bot_message: false,
+      }),
+      expect.objectContaining({
+        sender: '28:client-id',
+        content: 'Gantry summary',
+        is_from_me: true,
+        is_bot_message: true,
+        delivery_status: 'sent',
+      }),
+      expect.objectContaining({
+        sender: 'user-1',
+        content: 'looks good',
+        is_from_me: false,
+        is_bot_message: false,
+      }),
+    ]);
+  });
+
+  it('hydrates Teams reply chains through the optional SDK method', async () => {
+    const sdkClient: TeamsSdkClientWithRoot = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+      getChannelMessage: vi.fn(async () => ({
+        conversationId: '19:abc@thread.v2',
+        id: 'root-message',
+        text: 'thread root',
+        from: { id: 'user-root', name: 'Root User' },
+        timestamp: '2026-04-30T00:00:00.000Z',
+      })),
+      listChannelMessageReplies: vi.fn(async () => [
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'reply-1',
+          text: 'first reply',
+          from: { id: 'user-1', name: 'Ravi' },
+          timestamp: '2026-04-30T00:00:01.000Z',
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'reply-2',
+          text: 'second reply',
+          senderId: '28:client-id',
+          senderName: 'Gantry',
+          timestamp: '2026-04-30T00:00:02.000Z',
+          replyToId: 'root-message',
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'reply-3',
+          text: 'third reply',
+          senderId: 'user-2',
+          senderName: 'Maya',
+          timestamp: '2026-04-30T00:00:03.000Z',
+          replyToId: 'root-message',
+        },
+      ]),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+
+    const result = await channel.hydrateConversationContext({
+      conversationJid: 'teams:19:abc@thread.v2',
+      threadId: 'root-message',
+      latestMessage: {
+        id: 'current',
+        timestamp: '2026-04-30T00:00:04.000Z',
+        external_message_id: 'reply-4',
+        thread_id: 'root-message',
+      },
+      limits: { channelMessages: 30, threadMessages: 3 },
+    });
+
+    expect(sdkClient.getChannelMessage).toHaveBeenCalledWith({
+      conversationId: '19:abc@thread.v2',
+      messageId: 'root-message',
+    });
+    expect(sdkClient.listChannelMessageReplies).toHaveBeenCalledWith({
+      conversationId: '19:abc@thread.v2',
+      messageId: 'root-message',
+      beforeMessageId: 'reply-4',
+      limit: 2,
+    });
+    expect(result.messages).toEqual([
+      expect.objectContaining({
+        external_message_id: 'root-message',
+        thread_id: 'root-message',
+        reply_to_message_id: undefined,
+        content: 'thread root',
+        is_from_me: false,
+        is_bot_message: false,
+      }),
+      expect.objectContaining({
+        external_message_id: 'reply-1',
+        thread_id: 'root-message',
+        reply_to_message_id: 'root-message',
+        is_from_me: false,
+        is_bot_message: false,
+      }),
+      expect.objectContaining({
+        external_message_id: 'reply-2',
+        thread_id: 'root-message',
+        reply_to_message_id: 'root-message',
+        is_from_me: true,
+        is_bot_message: true,
+        sender_name: 'Gantry',
+      }),
+    ]);
+  });
+
+  it('hydrates Teams reply chains through replies when the root SDK method is absent', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+      listChannelMessageReplies: vi.fn(async () => [
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'reply-1',
+          text: 'first reply',
+          from: { id: 'user-1', name: 'Ravi' },
+          timestamp: '2026-04-30T00:00:01.000Z',
+          replyToId: 'root-message',
+        },
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'reply-2',
+          text: 'second reply',
+          senderId: '28:client-id',
+          senderName: 'Gantry',
+          timestamp: '2026-04-30T00:00:02.000Z',
+          replyToId: 'root-message',
+        },
+      ]),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+
+    const result = await channel.hydrateConversationContext({
+      conversationJid: 'teams:19:abc@thread.v2',
+      threadId: 'root-message',
+      latestMessage: {
+        id: 'current',
+        timestamp: '2026-04-30T00:00:04.000Z',
+        external_message_id: 'reply-4',
+        thread_id: 'root-message',
+      },
+      limits: { channelMessages: 30, threadMessages: 3 },
+    });
+
+    expect(sdkClient.listChannelMessageReplies).toHaveBeenCalledWith({
+      conversationId: '19:abc@thread.v2',
+      messageId: 'root-message',
+      beforeMessageId: 'reply-4',
+      limit: 3,
+    });
+    expect(result.messages).toEqual([
+      expect.objectContaining({
+        external_message_id: 'reply-1',
+        thread_id: 'root-message',
+        reply_to_message_id: 'root-message',
+        is_from_me: false,
+        is_bot_message: false,
+      }),
+      expect.objectContaining({
+        external_message_id: 'reply-2',
+        thread_id: 'root-message',
+        reply_to_message_id: 'root-message',
+        is_from_me: true,
+        is_bot_message: true,
+        sender_name: 'Gantry',
+      }),
+    ]);
+  });
+
+  it('hydrates Teams reply chains when the thread root fetch fails', async () => {
+    const sdkClient: TeamsSdkClientWithRoot = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({ externalMessageId: 'teams-msg-1' })),
+      getChannelMessage: vi.fn(async () => {
+        throw new Error('root unavailable');
+      }),
+      listChannelMessageReplies: vi.fn(async () => [
+        {
+          conversationId: '19:abc@thread.v2',
+          id: 'reply-1',
+          text: 'first reply',
+          from: { id: 'user-1', name: 'Ravi' },
+          timestamp: '2026-04-30T00:00:01.000Z',
+        },
+      ]),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+
+    const result = await channel.hydrateConversationContext({
+      conversationJid: 'teams:19:abc@thread.v2',
+      threadId: 'root-message',
+      latestMessage: {
+        id: 'current',
+        timestamp: '2026-04-30T00:00:04.000Z',
+        external_message_id: 'reply-4',
+        thread_id: 'root-message',
+      },
+      limits: { channelMessages: 30, threadMessages: 3 },
+    });
+
+    expect(sdkClient.listChannelMessageReplies).toHaveBeenCalledWith({
+      conversationId: '19:abc@thread.v2',
+      messageId: 'root-message',
+      beforeMessageId: 'reply-4',
+      limit: 3,
+    });
+    expect(result.messages).toEqual([
+      expect.objectContaining({
+        external_message_id: 'reply-1',
+        thread_id: 'root-message',
+        reply_to_message_id: 'root-message',
+      }),
+    ]);
+  });
+
+  it('routes Teams live stop card actions through the neutral message action callback', async () => {
+    let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined =
+      undefined;
+    const onMessageAction = vi.fn(async () => {});
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async (input) => {
+        startInput = input;
+      }),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'teams-stop-card',
+      })),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      { ...makeOpts(), onMessageAction },
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendMessage('teams:19:abc@thread.v2', 'Running...', {
+      threadId: 'root-message',
+      actionAffordances: [
+        {
+          kind: 'live_turn_stop',
+          label: 'Stop',
+          actionToken: 'token-1',
+        },
+      ],
+    });
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        threadId: 'root-message',
+        card: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              type: 'Action.Execute',
+              verb: 'gantry.live.stop',
+              data: expect.objectContaining({
+                action: 'message_action',
+                kind: 'live_turn_stop',
+                actionToken: 'token-1',
+                targetJid: 'teams:19:abc@thread.v2',
+                threadId: 'root-message',
+              }),
+            }),
+          ],
+        }),
+      }),
+    );
+
+    await startInput?.onMessage({
+      conversationId: '19:abc@thread.v2',
+      from: { id: 'teams-user-1', name: 'Team Admin' },
+      value: {
+        data: {
+          action: 'message_action',
+          kind: 'live_turn_stop',
+          actionToken: 'token-1',
+          targetJid: 'teams:19:abc@thread.v2',
+          threadId: 'root-message',
+        },
+      },
+    });
+
+    expect(onMessageAction).toHaveBeenCalledWith({
+      kind: 'live_turn_stop',
+      conversationJid: 'teams:19:abc@thread.v2',
+      threadId: 'root-message',
+      userId: 'teams-user-1',
+      actionToken: 'token-1',
+    });
+  });
+
+  it('routes Teams scheduler retry card actions through the neutral message action callback', async () => {
+    let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined =
+      undefined;
+    const onMessageAction = vi.fn(async () => {});
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async (input) => {
+        startInput = input;
+      }),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'teams-retry-card',
+      })),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      { ...makeOpts(), onMessageAction },
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendMessage(
+      'teams:19:abc@thread.v2',
+      'Paused after failures',
+      {
+        threadId: 'root-message',
+        actionAffordances: [
+          { kind: 'scheduler_run_now', label: 'Retry now', jobId: 'job-1' },
+          { kind: 'scheduler_pause_job', label: 'Pause job', jobId: 'job-1' },
+          {
+            kind: 'scheduler_open',
+            label: 'Open in scheduler',
+            jobId: 'job-1',
+          },
+        ],
+      },
+    );
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        threadId: 'root-message',
+        card: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              type: 'Action.Execute',
+              verb: 'gantry.scheduler.run_now',
+              data: expect.objectContaining({
+                action: 'message_action',
+                kind: 'scheduler_run_now',
+                jobId: 'job-1',
+                targetJid: 'teams:19:abc@thread.v2',
+                threadId: 'root-message',
+              }),
+            }),
+          ],
+        }),
+      }),
+    );
+
+    await startInput?.onMessage({
+      conversationId: '19:abc@thread.v2',
+      from: { id: 'teams-user-1', name: 'Team Admin' },
+      value: {
+        data: {
+          action: 'message_action',
+          kind: 'scheduler_run_now',
+          jobId: 'job-1',
+          targetJid: 'teams:19:abc@thread.v2',
+          threadId: 'root-message',
+        },
+      },
+    });
+
+    expect(onMessageAction).toHaveBeenCalledWith({
+      kind: 'scheduler_run_now',
+      conversationJid: 'teams:19:abc@thread.v2',
+      threadId: 'root-message',
+      userId: 'teams-user-1',
+      jobId: 'job-1',
+    });
+  });
+
+  it('updates Teams progress cards and clears stop actions when done', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'progress-card-1',
+      })),
+      updateAdaptiveCard: vi.fn(async () => ({})),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendProgressUpdate('teams:19:abc@thread.v2', 'Working...', {
+      threadId: 'root-message',
+      generation: 7,
+      actionAffordances: [
+        {
+          kind: 'live_turn_stop',
+          label: 'Stop',
+          actionToken: 'token-7',
+        },
+      ],
+    });
+    await channel.sendProgressUpdate('teams:19:abc@thread.v2', 'Done.', {
+      threadId: 'root-message',
+      generation: 7,
+      done: true,
+      replaceOnly: true,
+      actionAffordances: [
+        {
+          kind: 'live_turn_stop',
+          label: 'Stop',
+          actionToken: 'token-7',
+        },
+      ],
+    });
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledTimes(1);
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        messageId: 'progress-card-1',
+        threadId: 'root-message',
+        card: expect.objectContaining({
+          body: [expect.objectContaining({ text: 'Done.' })],
+          actions: [],
+        }),
+      }),
+    );
+  });
+
+  it('sends action-only Teams progress cards with Stop action and no status body', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'progress-card-1',
+      })),
+      updateAdaptiveCard: vi.fn(async () => ({})),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendProgressUpdate('teams:19:abc@thread.v2', '', {
+      actionOnly: true,
+      actionAffordances: [
+        {
+          kind: 'live_turn_stop',
+          label: 'Stop',
+          actionToken: 'token-7',
+        },
+      ],
+    });
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        card: expect.objectContaining({
+          body: [],
+          actions: [
+            expect.objectContaining({
+              title: 'Stop',
+              data: expect.objectContaining({
+                kind: 'live_turn_stop',
+                actionToken: 'token-7',
+              }),
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('settles the Teams Stop progress card across generation rollover', async () => {
+    const pendingProgress: TeamsProgressMessages = new Map();
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'progress-card-1',
+      })),
+      updateAdaptiveCard: vi.fn(async () => ({})),
+    };
+
+    await sendTeamsProgressUpdate({
+      sdkClient,
+      pendingProgress,
+      jid: 'teams:19:abc@thread.v2',
+      text: '',
+      options: {
+        threadId: 'root-message',
+        generation: 1,
+        actionOnly: true,
+        actionAffordances: [
+          {
+            kind: 'live_turn_stop',
+            label: 'Stop',
+            actionToken: 'token-1',
+          },
+        ],
+      },
+    });
+    await sendTeamsProgressUpdate({
+      sdkClient,
+      pendingProgress,
+      jid: 'teams:19:abc@thread.v2',
+      text: 'Done.',
+      options: {
+        threadId: 'root-message',
+        generation: 2,
+        done: true,
+      },
+    });
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledTimes(1);
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        messageId: 'progress-card-1',
+        threadId: 'root-message',
+        card: expect.objectContaining({
+          body: [expect.objectContaining({ text: 'Done.' })],
+          actions: [],
+        }),
+      }),
+    );
+    expect(pendingProgress.size).toBe(0);
+  });
+
+  it('streams Teams output by updating one native card at the Teams cadence', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'stream-card-1',
+      })),
+      updateAdaptiveCard: vi.fn(async () => ({})),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendStreamingChunk('teams:19:abc@thread.v2', 'Hello', {
+      threadId: 'root-message',
+      generation: 1,
+    });
+    await channel.sendStreamingChunk('teams:19:abc@thread.v2', ' world', {
+      threadId: 'root-message',
+      generation: 1,
+    });
+    expect(sdkClient.updateAdaptiveCard).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1800);
+    await channel.sendStreamingChunk('teams:19:abc@thread.v2', '!', {
+      threadId: 'root-message',
+      generation: 1,
+      done: true,
+    });
+
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledTimes(1);
+    expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        threadId: 'root-message',
+        streamType: 'informative',
+        card: expect.objectContaining({
+          body: [expect.objectContaining({ text: 'Hello' })],
+        }),
+      }),
+    );
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledTimes(1);
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: '19:abc@thread.v2',
+        messageId: 'stream-card-1',
+        threadId: 'root-message',
+        streamType: 'streaming',
+        card: expect.objectContaining({
+          body: [expect.objectContaining({ text: 'Hello world!' })],
+        }),
+      }),
+    );
+    expect(sdkClient.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('serializes Teams streaming updates for the same stream', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    let resolveFirstUpdate: ((value?: unknown) => void) | undefined;
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'stream-card-1',
+      })),
+      updateAdaptiveCard: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveFirstUpdate = resolve;
+            }),
+        )
+        .mockResolvedValue({}),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+    await channel.connect();
+    await channel.sendStreamingChunk('teams:19:abc@thread.v2', 'A');
+    await vi.advanceTimersByTimeAsync(1800);
+
+    const firstUpdate = channel.sendStreamingChunk(
+      'teams:19:abc@thread.v2',
+      'B',
+    );
+    await Promise.resolve();
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledTimes(1);
+
+    const secondUpdate = channel.sendStreamingChunk(
+      'teams:19:abc@thread.v2',
+      'C',
+      { done: true },
+    );
+    await Promise.resolve();
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledTimes(1);
+
+    resolveFirstUpdate?.({});
+    await firstUpdate;
+    await secondUpdate;
+
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledTimes(2);
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        card: expect.objectContaining({
+          body: [expect.objectContaining({ text: 'ABC' })],
+        }),
+      }),
+    );
+  });
+
+  it('splits Teams streaming output to a new message only at the hard cap', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async ({ text }) => ({
+        externalMessageId: `overflow-${text.length}`,
+      })),
+      sendAdaptiveCard: vi.fn(async () => ({
+        externalMessageId: 'stream-card-1',
+      })),
+      updateAdaptiveCard: vi.fn(async () => ({})),
+    };
+    const channel = new TeamsChannel(
+      {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        tenantId: 'tenant-id',
+      },
+      makeOpts(),
+      sdkClient,
+    );
+    await channel.connect();
+
+    await channel.sendStreamingChunk(
+      'teams:19:abc@thread.v2',
+      'x'.repeat(TEAMS_HARD_MESSAGE_BYTES - 1),
+    );
+    expect(sdkClient.sendMessage).not.toHaveBeenCalled();
+
+    await channel.sendStreamingChunk('teams:19:abc@thread.v2', 'yy', {
+      done: true,
+    });
+
+    expect(sdkClient.updateAdaptiveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        card: expect.objectContaining({
+          body: [
+            expect.objectContaining({
+              text: `${'x'.repeat(TEAMS_HARD_MESSAGE_BYTES - 1)}y`,
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(sdkClient.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sdkClient.sendMessage).toHaveBeenCalledWith({
+      conversationId: '19:abc@thread.v2',
+      text: 'y',
+    });
   });
 
   it('starts the SDK for outbound messages without processing inbound activities in outbound-only mode', async () => {
@@ -1059,15 +2169,54 @@ describe('TeamsChannel adapter scaffold', () => {
     );
   });
 
-  it('creates a channel only when runtime secrets and an SDK client are supplied', () => {
+  it('creates a channel only when runtime secrets and an SDK client are supplied', async () => {
     const sdkClient: TeamsSdkClient = {
       start: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       sendMessage: vi.fn(async () => ({})),
     };
 
-    expect(createTeamsChannel(makeOpts(), { sdkClient })).toBeInstanceOf(
-      TeamsChannel,
-    );
+    await expect(
+      createTeamsChannel(makeOpts(), { sdkClient }),
+    ).resolves.toBeInstanceOf(TeamsChannel);
+  });
+
+  it('creates the runtime channel from configured runtime secret refs', async () => {
+    const sdkClient: TeamsSdkClient = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => ({})),
+    };
+    const opts = makeOpts();
+    opts.runtimeSettings = () =>
+      ({
+        providers: { teams: { defaultConnection: 'teams_default' } },
+        providerConnections: {
+          teams_default: {
+            runtimeSecretRefs: {
+              client_id: 'gantry-secret:TEAMS_CLIENT_ID',
+              client_secret: 'gantry-secret:TEAMS_CLIENT_SECRET',
+              tenant_id: 'gantry-secret:TEAMS_TENANT_ID',
+            },
+          },
+        },
+      }) as never;
+    opts.runtimeSecrets = {
+      getSecret: vi.fn(),
+      getOptionalSecret: vi.fn(),
+      getOptionalSecretAsync: vi.fn(async (ref) =>
+        ref.ref === 'gantry-secret:TEAMS_CLIENT_ID'
+          ? 'client-id'
+          : ref.ref === 'gantry-secret:TEAMS_CLIENT_SECRET'
+            ? 'client-secret'
+            : ref.ref === 'gantry-secret:TEAMS_TENANT_ID'
+              ? 'tenant-id'
+              : undefined,
+      ),
+    };
+
+    await expect(
+      createTeamsChannel(opts, { sdkClient }),
+    ).resolves.toBeInstanceOf(TeamsChannel);
   });
 });

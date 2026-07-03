@@ -10,22 +10,22 @@ import {
   resolveDurableQuestionInteractionByRequestId,
 } from '../../application/interactions/pending-interaction-durability.js';
 import {
+  buildPermissionPromptFullView,
   decisionForMode,
-  formatPermissionPromptText as formatSharedPermissionPromptText,
   formatPermissionReceiptText,
   normalizePermissionAction,
   permissionDecisionOptions,
 } from '../permission-interaction.js';
 import { SlackChannelState, SlackMessageLike } from './channel-state.js';
-import { buildPermissionReceiptBlocks } from './permission-blocks.js';
+import {
+  buildPermissionFullViewModalBlocks,
+  buildPermissionReceiptBlocks,
+} from './permission-blocks.js';
+import { registerSlackRichFormHandlers } from './rich-interaction.js';
 import {
   buildTriggerPattern,
   triggerForRoute,
 } from '../../shared/trigger-pattern.js';
-import {
-  SLACK_NATIVE_APPEND_MAX_LENGTH,
-  splitSlackTextByCodeUnits,
-} from './text-limits.js';
 import { SLACK_PERMISSION_DECISION_ACTION_IDS } from './permission-action-id.js';
 import { nowIso } from '../../shared/time/datetime.js';
 import {
@@ -35,8 +35,27 @@ import {
 } from './native-stream.js';
 import { registerSlackMessageActionHandler } from './channel-message-action-handler.js';
 import { registerSlackUtilityHandlers } from './channel-utility-handlers.js';
+import { ingestSlackSlashCommand as ingestSlackSlashCommandEvent } from './slash-command-ingest.js';
 
 export abstract class SlackChannelInteractions extends SlackChannelState {
+  protected async ingestSlackSlashCommand(command: {
+    channel_id?: string;
+    user_id?: string;
+    user_name?: string;
+    text?: string;
+    trigger_id?: string;
+    command_id?: string;
+  }): Promise<void> {
+    await ingestSlackSlashCommandEvent({
+      command,
+      opts: this.opts,
+      resolveChannelName: (channelId) => this.resolveChannelName(channelId),
+      resolveUserName: (userId) => this.resolveUserName(userId),
+      isLikelyGroupConversation: (channelId) =>
+        this.isLikelyGroupConversation(channelId),
+    });
+  }
+
   protected async ingestSlackMessage(
     event: SlackMessageLike,
     options: { forceOwnedTopLevel?: boolean } = {},
@@ -140,12 +159,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
     }
     return false;
   }
-  protected formatPermissionPromptText(
-    request: PermissionApprovalRequest,
-    timeoutMs: number,
-  ): string {
-    return formatSharedPermissionPromptText(request, timeoutMs);
-  }
   protected async resolvePermissionPrompt(
     requestId: string,
     decision: PermissionApprovalDecision,
@@ -186,6 +199,10 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         await this.ingestSlackMessage(args.event as SlackMessageLike, {
           forceOwnedTopLevel: true,
         });
+      });
+      this.app.command('/gantry', async (args: any) => {
+        await args.ack();
+        await this.ingestSlackSlashCommand(args.command || args.body || {});
       });
       registerSlackUtilityHandlers(this.app);
     }
@@ -299,13 +316,104 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
         return;
       }
       const decision = decisionForMode(pending.request, mode, decidedBy);
-      await this.resolvePermissionPrompt(payload.requestId, {
-        ...decision,
-      });
+      await this.resolvePermissionPrompt(payload.requestId, decision);
     };
     for (const actionId of SLACK_PERMISSION_DECISION_ACTION_IDS) {
       this.app.action(actionId, handlePermissionDecision);
     }
+    this.app.action('gantry_perm_full_view', async (args: any) => {
+      await args.ack();
+      const body = args.body as {
+        channel?: { id?: string };
+        container?: { channel_id?: string };
+        message?: { channel?: string };
+        trigger_id?: string;
+        user?: { id?: string };
+      };
+      const action = args.action as { value?: string };
+      const userId = body.user?.id || '';
+      const triggerId = body.trigger_id;
+      if (!action.value || !userId || !triggerId) return;
+      let payload: { requestId?: string } = {};
+      try {
+        payload = JSON.parse(action.value) as { requestId?: string };
+      } catch {
+        return;
+      }
+      if (!payload.requestId) return;
+      const callbackChannelId =
+        body.channel?.id ||
+        body.container?.channel_id ||
+        body.message?.channel ||
+        '';
+      const pending = this.pendingPermissionPrompts.get(payload.requestId);
+      let fullView: ReturnType<typeof buildPermissionPromptFullView>;
+      if (pending && !pending.settled) {
+        if (
+          !(await this.canDecidePermission(
+            userId,
+            pending.sourceAgentFolder,
+            pending.decisionPolicy,
+            pending.approvalContextJid || `sl:${pending.channelId}`,
+          ))
+        ) {
+          try {
+            await this.app?.client.chat.postEphemeral({
+              channel: callbackChannelId || pending.channelId,
+              user: userId,
+              text: 'You are not allowed to view this permission payload.',
+            });
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        fullView = buildPermissionPromptFullView(pending.request);
+      } else {
+        const durable = await findDurablePermissionInteractionByRequestId({
+          requestId: payload.requestId,
+        });
+        if (!durable || durable.targetJid !== `sl:${callbackChannelId}`) return;
+        if (
+          !(await this.canDecidePermission(
+            userId,
+            durable.sourceAgentFolder,
+            durable.decisionPolicy as PermissionApprovalRequest['decisionPolicy'],
+            durable.targetJid,
+          ))
+        ) {
+          try {
+            await this.app?.client.chat.postEphemeral({
+              channel: callbackChannelId,
+              user: userId,
+              text: 'You are not allowed to view this permission payload.',
+            });
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        fullView = durable.fullView;
+      }
+      if (!fullView) return;
+      try {
+        await this.app?.client.views.open({
+          trigger_id: triggerId,
+          view: {
+            type: 'modal',
+            callback_id: 'gantry_perm_full_view_modal',
+            title: {
+              type: 'plain_text',
+              text: fullView.title.slice(0, 24),
+            },
+            close: { type: 'plain_text', text: 'Close' },
+            blocks: buildPermissionFullViewModalBlocks(fullView) as any,
+          },
+        });
+      } catch (err) {
+        logger.debug({ err }, 'Failed to open Slack permission full view');
+      }
+    });
     this.app.action('gantry_userq_select', async (args: any) => {
       await args.ack();
       const action = args.action as { value?: string };
@@ -478,9 +586,6 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       const callbackChannelId = body.channel?.id || '';
       const userId = body.user?.id || '';
       if (!userId) return;
-      // Free-text "Other" only supports the in-memory pending question (the
-      // modal opens and submits within the same worker session); durable
-      // cross-restart free text is not modeled.
       if (!pending || pending.settled) return;
       if (!callbackChannelId || callbackChannelId !== pending.channelId) return;
       if (
@@ -595,6 +700,10 @@ export abstract class SlackChannelInteractions extends SlackChannelState {
       }
       await this.finalizeUserQuestionPrompt(pending, text, answeredBy);
     });
-    registerSlackMessageActionHandler(this.app);
+    registerSlackRichFormHandlers({
+      app: this.app,
+      pendingRichForms: this.pendingRichForms,
+    });
+    registerSlackMessageActionHandler(this.app, this.opts.onMessageAction);
   }
 }

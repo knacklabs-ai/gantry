@@ -21,8 +21,10 @@ import type { HostnameLookup } from '../../domain/network/public-address-policy.
 import { writeGroupsSnapshot } from '../../runtime/agent-spawn.js';
 import { startIpcWatcher, type IpcDeps } from '../../runtime/ipc.js';
 import { computeHostCapacityPlan } from '../../shared/host-capacity.js';
-// prettier-ignore
-import { recoverPendingMessages, startMessagePollingLoop, type MessageLoopDeps, type MessagePollingLoopHandle } from '../../runtime/message-loop.js';
+import {
+  recoverPendingMessages,
+  type MessageLoopDeps,
+} from '../../runtime/message-loop.js';
 // prettier-ignore
 import { markRoleHasNoJobExecution, requestSchedulerSync, startSchedulerLoop } from '../../jobs/scheduler.js';
 import { registerWorkerInstance } from '../../jobs/worker-identity.js';
@@ -33,6 +35,7 @@ import type { WorkerCoordinationRepository } from '../../domain/ports/worker-coo
 import type { RuntimeDependencyRepository } from '../../domain/ports/fleet-capability-state.js';
 import type {
   LiveAdmissionWakeupSource,
+  LiveTurnCommandWakeupSource,
   LiveTurnCoordinationRepository,
 } from '../../domain/ports/live-turns.js';
 import type {
@@ -79,19 +82,19 @@ import {
 import { splitLiveSendProfileText } from './runtime-services-live-send-segmentation.js';
 import { createDurableOutboundAttempt } from './runtime-services-durable-outbound-attempt.js';
 import { handleActiveNewSessionCommand } from './runtime-services-active-new.js';
-// prettier-ignore
-import { nowIso, nowMs as currentTimeMs, toIso } from '../../shared/time/datetime.js';
+import { registerRuntimeLiveStopMessageAction } from './runtime-live-stop-message-action.js';
+import { nowIso, nowMs, toIso } from '../../shared/time/datetime.js';
 import { LiveTurnAuthority } from '../../runtime/live-turn-authority.js';
 import type { LiveTurnRecoveryLoop } from '../../runtime/live-turn-recovery.js';
 import { configurePendingInteractionPermissionPersistence } from '../../application/interactions/pending-interaction-durability.js';
 import { liveTurnScopeForQueue } from './live-recovery-coordinator.js';
 import {
   buildLiveAdmissionProcessor,
-  buildLiveTurnBrowserFinalizer,
   startLiveExecutionServices,
   type LiveExecutionServicesHandle,
   type RecoveryCoordinatorPort,
 } from './live-execution.js';
+import { buildLiveTurnBrowserFinalizer } from './live-turn-browser-finalizer.js';
 import { startWaitingStatusMonitor } from './live-execution-waiting-status.js';
 import type { ProcessRole } from './roles/process-role.js';
 import { buildLiveTurnRecoveryCapabilityGate } from './live-turn-recovery-capability-gate.js';
@@ -106,7 +109,6 @@ interface Deps {
   writeGroupsSnapshot: typeof writeGroupsSnapshot;
   opsRepository: RuntimeBootstrapRepository;
   recoverPendingMessages: typeof recoverPendingMessages;
-  startMessagePollingLoop: typeof startMessagePollingLoop;
   logger: Pick<typeof logger, 'info' | 'warn' | 'fatal'>;
   mcpHostnameLookup?: HostnameLookup;
   collectSessionMemory: SessionMemoryCollector;
@@ -127,7 +129,9 @@ interface Deps {
     | undefined;
   getLiveTurnRepository?: () => LiveTurnCoordinationRepository | undefined;
   getLiveAdmissionWakeupSource?: () => LiveAdmissionWakeupSource | undefined;
-  /** Toolchain manifests for the live-turn recovery capability gate (fleet). */
+  getLiveTurnCommandWakeupSource?: () =>
+    | LiveTurnCommandWakeupSource
+    | undefined;
   getRuntimeDependencyRepository?: () =>
     | RuntimeDependencyRepository
     | undefined;
@@ -155,13 +159,9 @@ export type RuntimeServicesOptions = {
   app: RuntimeApp;
   channelWiring: ChannelWiring;
   liveTurnsEnabled?: boolean;
-  /** Recovery lease manager; omitted single-process embeddings coordinate immediately. */
   recoveryCoordinator?: RecoveryCoordinatorPort;
-  /** Process role; persisted on the worker_instances row at registration. */
   processRole?: ProcessRole;
-  /** Whether this role admits/executes live turns + interaction callbacks. Default true. */
   liveExecution?: boolean;
-  /** Whether this role claims/runs scheduler jobs (the scheduler loop). Default true. */
   jobExecution?: boolean;
 };
 function makeDefaultDeps(): RuntimeServicesDefaults {
@@ -170,7 +170,6 @@ function makeDefaultDeps(): RuntimeServicesDefaults {
     startIpcWatcher,
     writeGroupsSnapshot,
     recoverPendingMessages,
-    startMessagePollingLoop,
     getDeploymentMode,
     logger,
     collectSessionMemory: collectRuntimeSessionMemory,
@@ -260,24 +259,15 @@ export function stopAsyncTaskRecoveryLoop(): void {
 
 let activeLiveTurnRecoveryLoop: LiveTurnRecoveryLoop | undefined;
 let activeLiveTurnAuthority: LiveTurnAuthority | undefined;
-let activeMessagePollingLoop: MessagePollingLoopHandle | undefined;
+let activeLiveAdmissionLoop: LiveExecutionServicesHandle['admissionLoop'];
 let activeWaitingStatusMonitor:
   | { oldestWaitingSeconds: () => number }
   | undefined;
 let activeLiveExecutionServices: LiveExecutionServicesHandle | undefined;
-/**
- * Oldest waiting live admission age in seconds (0 when none / this process is
- * not the recovery coordinator). Read by `/metrics`; the monitor runs only on
- * the coordinator, so a non-coordinator process reports 0.
- */
 export function getOldestWaitingLiveAdmissionSeconds(): number {
   return activeWaitingStatusMonitor?.oldestWaitingSeconds() ?? 0;
 }
 export function stopLiveTurnRecoveryLoop(): void {
-  // Graceful-drain choke point: stop the whole coordinator (recovery sweep AND
-  // the waiting-status monitor). Shared, idempotent stop path with the lease-loss
-  // `onLost` handler — the monitor interval clears and `activeWaitingStatusMonitor`
-  // resets exactly once whether teardown is lease loss OR SIGTERM drain.
   if (activeLiveExecutionServices) {
     activeLiveExecutionServices.stopRecovery();
     activeLiveExecutionServices = undefined;
@@ -286,11 +276,9 @@ export function stopLiveTurnRecoveryLoop(): void {
   activeLiveTurnRecoveryLoop?.stop();
   activeLiveTurnRecoveryLoop = undefined;
 }
-export async function stopMessagePollingLoop(
-  timeoutMs?: number,
-): Promise<void> {
-  const loop = activeMessagePollingLoop;
-  activeMessagePollingLoop = undefined;
+export async function stopLiveAdmissionLoop(timeoutMs?: number): Promise<void> {
+  const loop = activeLiveAdmissionLoop;
+  activeLiveAdmissionLoop = undefined;
   await loop?.stop({ drainDeadlineMs: timeoutMs });
 }
 export function beginDrainingLiveTurnAdmission(): void {
@@ -311,6 +299,7 @@ export async function startRuntimeServices(
         | 'getPermissionRepository'
         | 'getWorkerCoordinationRepository'
         | 'getLiveTurnRepository'
+        | 'getLiveTurnCommandWakeupSource'
       >
     >,
 ): Promise<void> {
@@ -351,13 +340,14 @@ export async function startRuntimeServices(
             queue: app.queue.getPolicy(),
             processRole,
           }).budget,
+        commandWakeupSource: resolved.getLiveTurnCommandWakeupSource?.(),
         warn: (context, message) => resolved.logger.warn(context, message),
       })
     : undefined;
   activeLiveTurnAuthority = liveTurnAuthority;
   if (liveTurnsEnabled && !liveTurnAuthority) {
     resolved.logger.warn(
-      'Live-turn admission is enabled, but durable live-turn repositories are unavailable; falling back to local queue admission',
+      'Live-turn admission is enabled, but durable live-turn repositories are unavailable; live admission will stay disabled for this role',
     );
   }
   const { isEligibleToRecoverLiveTurn, alertNoEligibleLiveTurnRecoverer } =
@@ -370,7 +360,7 @@ export async function startRuntimeServices(
       getRuntimeDependencyRepository: resolved.getRuntimeDependencyRepository,
       agentIdForFolder,
       publishRuntimeEvent: resolved.publishRuntimeEvent,
-      nowMs: currentTimeMs,
+      nowMs,
       warn: (context, message) => resolved.logger.warn(context, message),
     });
   const syncGroupSnapshots = createGroupSnapshotSync(app, resolved);
@@ -397,9 +387,7 @@ export async function startRuntimeServices(
         channelWiring.sendMessage(jid, rawText, {
           durability: 'required',
           throwOnMissing: true,
-          ...(options?.threadId
-            ? { messageOptions: { threadId: options.threadId } }
-            : {}),
+          ...(options ? { messageOptions: options } : {}),
         }),
       sendStreamingChunk: channelWiring.sendStreamingChunk,
       resetStreaming: channelWiring.resetStreaming,
@@ -460,9 +448,7 @@ export async function startRuntimeServices(
       channelWiring.sendMessage(jid, text, {
         durability: 'required',
         throwOnMissing: true,
-        ...(options?.threadId
-          ? { messageOptions: { threadId: options.threadId } }
-          : {}),
+        ...(options ? { messageOptions: options } : {}),
       }),
     conversationRoutes: () => app.getConversationRoutes(),
     registerGroup: app.registerGroup,
@@ -511,7 +497,11 @@ export async function startRuntimeServices(
     renderAgentTodo: (jid, render) =>
       liveTurnsEnabled && liveExecution
         ? channelWiring.renderAgentTodo(jid, render)
-        : Promise.resolve(),
+        : Promise.resolve(false),
+    renderRichInteraction: (jid, request) =>
+      liveTurnsEnabled && liveExecution
+        ? channelWiring.renderRichInteraction(jid, request)
+        : Promise.resolve(false),
     mcpHostnameLookup: resolved.mcpHostnameLookup,
   });
   syncGroupSnapshots();
@@ -531,6 +521,10 @@ export async function startRuntimeServices(
       timezone: TIMEZONE,
       enqueueMessageCheck: app.queue.enqueueMessageCheck.bind(app.queue),
       warn: (context, message) => resolved.logger.warn(context, message),
+      addReaction: (jid, messageRef, emoji) =>
+        channelWiring.addReaction(jid, messageRef, emoji),
+      finalizeAgentTodo: (jid, render) =>
+        channelWiring.finalizeAgentTodo(jid, render),
       finalizeBrowserForLiveTurn: buildLiveTurnBrowserFinalizer({
         getConversationRoutes: () => app.getConversationRoutes(),
         closeBrowserSession: closeBrowser,
@@ -603,16 +597,16 @@ export async function startRuntimeServices(
         executionAdapter: resolved.executionAdapter ?? app.executionAdapter,
         queueJid,
       });
-      const routed = await liveTurnAuthority.routeStop({
+      return liveTurnAuthority.routeStop({
         ...(scope ? { scope } : {}),
         aliasJid: queueJid,
         queueJid,
         idempotencyKey: `stop:${randomUUID()}`,
         requestedBy: 'runtime-control',
       });
-      return routed;
     },
   };
+  registerRuntimeLiveStopMessageAction(channelWiring, app, liveMessageQueue);
   const handleActiveControlCommand = async ({
     chatJid,
     queueJid,
@@ -779,7 +773,7 @@ export async function startRuntimeServices(
         },
         initialClaim: {
           claimToken: `claim:live-send:${input.sourceMessageId}`,
-          claimExpiresAt: toIso(currentTimeMs() + 60_000),
+          claimExpiresAt: toIso(nowMs() + 60_000),
         },
       });
       const claimedItems = started.claimedItems;
@@ -1024,15 +1018,13 @@ export async function startRuntimeServices(
   resolved.logger.info(`Gantry running (default trigger: ${DEFAULT_TRIGGER})`);
   if (!liveTurnsEnabled || !liveExecution) {
     resolved.logger.info(
-      'Live-turn execution disabled for this role; skipping live execution services (message polling, admission, recovery coordinator)',
+      'Live-turn execution disabled for this role; skipping live execution services (admission and recovery coordinator)',
     );
     return;
   }
 
   const messageLoopDeps: MessageLoopDeps = {
     getConversationRoutes: () => app.getConversationRoutes(),
-    getLastTimestamp: () => app.getLastTimestamp(),
-    setLastTimestamp: (timestamp) => app.setLastTimestamp(timestamp),
     getOrRecoverCursor: app.getOrRecoverCursor,
     setAgentCursor: (chatJid, timestamp) =>
       app.setAgentCursor(chatJid, timestamp),
@@ -1060,14 +1052,14 @@ export async function startRuntimeServices(
     isEligibleToRecoverLiveTurn,
     alertNoEligibleLiveTurnRecoverer,
     recoverPendingMessages: resolved.recoverPendingMessages,
-    startMessagePollingLoop: resolved.startMessagePollingLoop,
-    registerActivePollingLoop: (loop) => {
-      activeMessagePollingLoop = loop;
+    registerActiveAdmissionLoop: (loop) => {
+      activeLiveAdmissionLoop = loop;
     },
     registerActiveRecoveryLoop: (loop) => {
       activeLiveTurnRecoveryLoop = loop;
     },
-    // Fleet-only queued-capacity UX; workstation recovery can replay old backlog.
+    addReaction: (jid, messageRef, emoji) =>
+      channelWiring.addReaction(jid, messageRef, emoji),
     waitingStatus:
       liveTurns && resolved.getDeploymentMode() === 'fleet'
         ? {

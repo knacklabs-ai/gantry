@@ -2,7 +2,7 @@
 # Gantry container entrypoint.
 #
 # 1. Run database migrations under a Postgres advisory lock (race-safe across a
-#    rolling deploy), unless GANTRY_SKIP_MIGRATIONS=1.
+#    rolling deploy).
 # 2. exec the runtime as PID 1 so SIGTERM reaches it directly and graceful drain
 #    (control server: SIGTERM -> /readyz 503 -> drain -> exit) works correctly.
 #
@@ -14,12 +14,87 @@ log() {
   printf '%s [entrypoint] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
 }
 
+prepare_runtime_home_and_drop_privileges() {
+  runtime_home="${GANTRY_HOME:-/var/lib/gantry}"
+  if [ "$(id -u)" != "0" ]; then
+    return
+  fi
+
+  mkdir -p "$runtime_home"
+  chown -R node:node "$runtime_home"
+  log "prepared runtime home ${runtime_home} for node user"
+  exec gosu node "$0" "$@"
+}
+
 rand_base64_32() {
   node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"
 }
 
 rand_hex_32() {
   node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))"
+}
+
+resolve_settings_schema() {
+  node <<'NODE'
+const explicit = process.env.GANTRY_SETTINGS_POSTGRES_SCHEMA?.trim();
+if (explicit) {
+  process.stdout.write(explicit);
+  process.exit(0);
+}
+const url = process.env.GANTRY_DATABASE_URL?.trim() || '';
+if (url) {
+  try {
+    const schema = new URL(url).searchParams.get('schema')?.trim();
+    if (schema) {
+      process.stdout.write(schema);
+      process.exit(0);
+    }
+  } catch {
+    // Fall through to env/default; the migrator reports malformed URLs.
+  }
+}
+process.stdout.write(process.env.GANTRY_DB_SCHEMA?.trim() || 'gantry');
+NODE
+}
+
+bootstrap_settings_if_missing() {
+  BOOTSTRAPPED_SETTINGS_FILE=0
+  BOOTSTRAPPED_SETTINGS_DEPLOYMENT_MODE=''
+  if [ "${GANTRY_BOOTSTRAP_SETTINGS_IF_MISSING:-0}" != "1" ]; then
+    return
+  fi
+  case "$*" in
+    *dist/index.js*) ;;
+    *) return ;;
+  esac
+
+  runtime_home="${GANTRY_HOME:-/var/lib/gantry}"
+  settings_file="${runtime_home}/settings.yaml"
+  if [ -f "$settings_file" ]; then
+    return
+  fi
+
+  mkdir -p "$runtime_home"
+  schema="$(resolve_settings_schema)"
+  deployment_mode="${GANTRY_BOOTSTRAP_DEPLOYMENT_MODE:-${GANTRY_DEPLOYMENT_MODE:-workstation}}"
+  sandbox_provider="${GANTRY_BOOTSTRAP_SANDBOX_PROVIDER:-sandbox_runtime}"
+  tmp_file="${settings_file}.tmp.$$"
+  umask 077
+  {
+    printf '%s\n' 'runtime:'
+    printf '  deployment_mode: %s\n' "$deployment_mode"
+    printf '%s\n' '  sandbox:'
+    printf '    provider: %s\n' "$sandbox_provider"
+    printf '%s\n' ''
+    printf '%s\n' 'storage:'
+    printf '%s\n' '  postgres:'
+    printf '%s\n' '    url_env: GANTRY_DATABASE_URL'
+    printf '    schema: %s\n' "$schema"
+  } >"$tmp_file"
+  mv "$tmp_file" "$settings_file"
+  BOOTSTRAPPED_SETTINGS_FILE=1
+  BOOTSTRAPPED_SETTINGS_DEPLOYMENT_MODE="$deployment_mode"
+  log "created bootstrap settings.yaml at ${settings_file} (schema=${schema}, deployment_mode=${deployment_mode})"
 }
 
 load_or_create_rehearsal_secrets() {
@@ -57,40 +132,88 @@ load_or_create_rehearsal_secrets() {
   trap - EXIT INT TERM
 }
 
+seed_fleet_settings_file() {
+  gantry_home="${GANTRY_HOME:-/var/lib/gantry}"
+  settings_file="$gantry_home/settings.yaml"
+
+  mkdir -p "$gantry_home"
+  if [ -f "$settings_file" ]; then
+    log "fleet settings file already exists: $settings_file"
+    return
+  fi
+
+  artifact_bucket="${GANTRY_ARTIFACT_BUCKET:-${GANTRY_ARTIFACT_BUCKET_NAME:-}}"
+  artifact_region="${GANTRY_ARTIFACT_REGION:-${AWS_REGION:-}}"
+  schema="$(resolve_settings_schema)"
+
+  : "${artifact_bucket:?GANTRY_ARTIFACT_BUCKET is required when GANTRY_FLEET_SETTINGS_AUTO=1}"
+  : "${artifact_region:?AWS_REGION or GANTRY_ARTIFACT_REGION is required when GANTRY_FLEET_SETTINGS_AUTO=1}"
+
+  umask 077
+  cat >"$settings_file" <<EOF
+runtime:
+  deployment_mode: fleet
+  queue:
+    max_message_runs: 6
+    max_job_runs: 2
+  sandbox:
+    provider: sandbox_runtime
+    resource_limits:
+      memory_mb: 512
+      max_processes: 64
+  artifact_store:
+    driver: s3
+    bucket: $artifact_bucket
+    region: $artifact_region
+storage:
+  postgres:
+    url_env: GANTRY_DATABASE_URL
+    schema: $schema
+EOF
+  log "seeded fleet settings file: $settings_file"
+}
+
+prepare_runtime_home_and_drop_privileges "$@"
+
 if [ "${GANTRY_FLEET_REHEARSAL_AUTO_SECRETS:-0}" = "1" ]; then
   load_or_create_rehearsal_secrets
   export SECRET_ENCRYPTION_KEY GANTRY_IPC_AUTH_SECRET GANTRY_CONTROL_API_KEYS_JSON
   log "loaded shared rehearsal-only runtime secrets"
 fi
 
+if [ "${GANTRY_FLEET_SETTINGS_AUTO:-0}" = "1" ]; then
+  seed_fleet_settings_file
+fi
+
+BOOTSTRAPPED_SETTINGS_FILE=0
+BOOTSTRAPPED_SETTINGS_DEPLOYMENT_MODE=''
+bootstrap_settings_if_missing "$@"
+
 # ---------------------------------------------------------------------------
 # Migrations.
 #
-# Default: every instance runs migrations. The advisory lock inside migrate()
-# itself (storage-service) serializes every migrator — explicit passes like
-# this one and runtime boot-time migrations alike — and migrate() is
-# idempotent (drizzle tracks applied migrations), so N workers booting at once
-# is safe: the lock holder migrates, the rest block then find nothing pending.
-#
-# GANTRY_SKIP_MIGRATIONS=1: skip the explicit migrate step. Use this for an
-# N-worker fleet where one dedicated migrator (or the first booting worker)
-# already applied the schema. Still safe under concurrent boots: the runtime's
-# boot-time migrate() takes the same advisory lock, so skipping here only
-# avoids the redundant explicit pass.
+# The advisory lock inside migrate() itself (storage-service) serializes every
+# explicit migrator, and migrate() is idempotent (drizzle tracks applied
+# migrations), so N workers booting at once is safe: the lock holder migrates,
+# the rest block then find nothing pending.
 # ---------------------------------------------------------------------------
-if [ "${GANTRY_SKIP_MIGRATIONS:-0}" = "1" ]; then
-  log "GANTRY_SKIP_MIGRATIONS=1 — skipping explicit migration step"
-else
-  # The migration role may differ from the runtime role: migrate.mjs prefers
-  # MIGRATION_DATABASE_URL, falling back to GANTRY_DATABASE_URL.
-  if [ -n "${MIGRATION_DATABASE_URL:-}" ]; then
-    log "running migrations (MIGRATION_DATABASE_URL)"
-  else
-    log "running migrations (GANTRY_DATABASE_URL)"
-  fi
-  # Non-zero exit here aborts the container before the runtime starts.
-  node /app/ops/docker/migrate.mjs
-  log "migrations complete"
+log "running migrations (GANTRY_DATABASE_URL)"
+# Non-zero exit here aborts the container before the runtime starts.
+node /app/dist/postgres-migrate.js
+log "migrations complete"
+
+if [ "$BOOTSTRAPPED_SETTINGS_FILE" = "1" ] && [ "$BOOTSTRAPPED_SETTINGS_DEPLOYMENT_MODE" = "fleet" ]; then
+  log "seeding initial fleet settings revision from bootstrap settings.yaml"
+  node /app/ops/docker/fleet-settings-seed.mjs "${GANTRY_HOME:-/var/lib/gantry}/settings.yaml"
+  log "fleet settings seed complete"
+elif [ "$BOOTSTRAPPED_SETTINGS_FILE" = "1" ] && [ "$BOOTSTRAPPED_SETTINGS_DEPLOYMENT_MODE" = "workstation" ]; then
+  log "seeding workstation settings projection from bootstrap settings.yaml"
+  node /app/dist/cli/index.js settings import --file "${GANTRY_HOME:-/var/lib/gantry}/settings.yaml"
+  log "workstation settings seed complete"
+elif [ "${GANTRY_FLEET_SETTINGS_AUTO:-0}" = "1" ]; then
+  GANTRY_FLEET_SETTINGS_SEED_IF_EMPTY=1 \
+    node /app/ops/docker/fleet-settings-seed.mjs "${GANTRY_HOME:-/var/lib/gantry}/settings.yaml"
+  log "fleet settings revision seed complete"
 fi
 
 # ---------------------------------------------------------------------------

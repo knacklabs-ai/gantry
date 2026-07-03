@@ -222,6 +222,10 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'model-catalog.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-catalog-provider-metadata.ts'),
+    path.join(sharedDir, 'model-catalog-provider-metadata.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/model-catalog-lookup.ts'),
     path.join(sharedDir, 'model-catalog-lookup.ts'),
   );
@@ -238,6 +242,10 @@ function createRunnerFixture(): {
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/model-catalog-openai-compatible.ts'),
     path.join(sharedDir, 'model-catalog-openai-compatible.ts'),
+  );
+  fs.copyFileSync(
+    path.resolve('apps/core/src/shared/model-catalog-bedrock.ts'),
+    path.join(sharedDir, 'model-catalog-bedrock.ts'),
   );
   fs.copyFileSync(
     path.resolve('apps/core/src/shared/agent-engine.ts'),
@@ -456,6 +464,14 @@ export async function* query({ prompt, options }) {
       path.join(process.env.GANTRY_IPC_INPUT_DIR, '_close'),
     ),
   };
+
+  if (
+    process.env.TEST_EMPTY_QUERY === '1' ||
+    process.env.TEST_EMPTY_RESUMED_QUERY === '1'
+  ) {
+    appendRecord(call);
+    return;
+  }
 
   yield {
     type: 'system',
@@ -756,6 +772,62 @@ export async function* query({ prompt, options }) {
   }
 
   appendRecord(call);
+  if (process.env.TEST_STRUCTURED_THEN_STREAM_SUCCESS_RESULT === '1') {
+    const finalAnswer =
+      '**Claude Tag** is Anthropic product detail text that was already streamed to the user before the SDK result arrived. ' +
+      'It is long enough to avoid being confused with a short operational error.';
+    yield {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: "I'll search for that." }] },
+    };
+    yield {
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        delta: { type: 'text_delta', text: finalAnswer },
+      },
+    };
+    yield {
+      type: 'result',
+      subtype: 'success',
+      result: finalAnswer,
+    };
+    if (process.env.TEST_EXIT_AFTER_QUERY === '1') {
+      setTimeout(() => {
+        fs.mkdirSync(process.env.GANTRY_IPC_INPUT_DIR, { recursive: true });
+        fs.writeFileSync(path.join(process.env.GANTRY_IPC_INPUT_DIR, '_close'), '');
+      }, 20);
+    }
+    return;
+  }
+  if (process.env.TEST_STRUCTURED_THEN_STREAM_CREDENTIAL_RESULT === '1') {
+    const finalAnswer =
+      'The provider returned invalid api key text after visible output was already streamed. ' +
+      'This must still be treated as a runtime failure.';
+    yield {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: "I'll check that." }] },
+    };
+    yield {
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        delta: { type: 'text_delta', text: finalAnswer },
+      },
+    };
+    yield {
+      type: 'result',
+      subtype: 'success',
+      result: finalAnswer,
+    };
+    if (process.env.TEST_EXIT_AFTER_QUERY === '1') {
+      setTimeout(() => {
+        fs.mkdirSync(process.env.GANTRY_IPC_INPUT_DIR, { recursive: true });
+        fs.writeFileSync(path.join(process.env.GANTRY_IPC_INPUT_DIR, '_close'), '');
+      }, 20);
+    }
+    return;
+  }
   if (process.env.TEST_COMPACT_BOUNDARY === '1') {
     yield { type: 'system', subtype: 'compact_boundary', uuid: 'compact-1' };
   }
@@ -2019,6 +2091,123 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
+    'separates structured acknowledgements from streamed answers',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput(),
+        {
+          TEST_STRUCTURED_THEN_STREAM_SUCCESS_RESULT: '1',
+          TEST_EXIT_AFTER_QUERY: '1',
+        },
+        RUNNER_IPC_TEST_TIMEOUT_MS,
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const outputs = readRunnerOutputs(result.stdout);
+      expect(outputs).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ status: 'error' })]),
+      );
+      const visibleResults = outputs
+        .map((output) => output.result)
+        .filter((value): value is string => typeof value === 'string');
+      expect(visibleResults).toEqual([
+        "I'll search for that.",
+        expect.stringMatching(/^\n\n\*\*Claude Tag\*\*/),
+      ]);
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'keeps streamed credential result text as a terminal failure',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput(),
+        {
+          TEST_STRUCTURED_THEN_STREAM_CREDENTIAL_RESULT: '1',
+          TEST_EXIT_AFTER_QUERY: '1',
+        },
+        RUNNER_IPC_TEST_TIMEOUT_MS,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(readRunnerOutputs(result.stdout)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            status: 'error',
+            error: expect.stringContaining('invalid api key'),
+          }),
+        ]),
+      );
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'fails empty resumed SDK streams so the runtime can retry without resume',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(
+        fixture,
+        baseInput({ sessionId: 'stale-sdk-session' }),
+        {
+          TEST_EMPTY_RESUMED_QUERY: '1',
+          TEST_EXIT_AFTER_QUERY: '1',
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(readRecord(fixture.recordPath).calls[0]?.resume).toBe(
+        'stale-sdk-session',
+      );
+      expect(readRunnerOutputs(result.stdout)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            status: 'error',
+            error: expect.stringContaining(
+              'No conversation found with session ID',
+            ),
+          }),
+        ]),
+      );
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'fails empty new SDK streams instead of completing with no answer',
+    async () => {
+      const fixture = createRunnerFixture();
+
+      const result = await runRunner(fixture, baseInput(), {
+        TEST_EMPTY_QUERY: '1',
+        TEST_EXIT_AFTER_QUERY: '1',
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(readRecord(fixture.recordPath).calls[0]?.resume).toBeUndefined();
+      expect(readRunnerOutputs(result.stdout)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            status: 'error',
+            error: expect.stringContaining(
+              'Anthropic SDK query completed without messages or results',
+            ),
+          }),
+        ]),
+      );
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
     'routes /compact through a persistent live streaming SDK query',
     async () => {
       const fixture = createRunnerFixture();
@@ -2698,7 +2887,7 @@ describe('agent-runner IPC lifecycle', () => {
             {
               selectedCapabilityId: 'acme.records.get',
               sourceType: 'local_cli',
-              auditLabel: 'Gog Sheets get',
+              auditLabel: 'Fixture Records get',
               commandRules: [
                 'RunCommand(/opt/homebrew/bin/acme records get *)',
               ],
@@ -2719,7 +2908,7 @@ describe('agent-runner IPC lifecycle', () => {
           TEST_PARENTLESS_SDK_NETWORK_AFTER_TOOL: '1',
           TEST_SDK_NETWORK_HOST: 'oauth2.googleapis.com',
           TEST_TOOL_USE_CMD:
-            '/opt/homebrew/bin/acme records get 12s6uzwLDLV-DVcTH6XBa5vV3FZJUo04fLm0npfgACb4 "Bot Recommendation!A1:Z1" --json --account ravi@knacklabs.ai',
+            '/opt/homebrew/bin/acme records get fixture_sheet_001 "Fixture Leads!A1:Z1" --json --account operator@example.test',
         },
       );
 
@@ -2759,7 +2948,7 @@ describe('agent-runner IPC lifecycle', () => {
           TEST_SDK_NETWORK_AFTER_TOOL: '1',
           TEST_PARENTLESS_SDK_NETWORK_AFTER_TOOL: '1',
           TEST_TOOL_USE_CMD:
-            '/opt/homebrew/bin/acme records get 12s6uzwLDLV-DVcTH6XBa5vV3FZJUo04fLm0npfgACb4 "Bot Recommendation!A1:Z1" --json --account ravi@knacklabs.ai',
+            '/opt/homebrew/bin/acme records get fixture_sheet_001 "Fixture Leads!A1:Z1" --json --account operator@example.test',
         },
       );
 

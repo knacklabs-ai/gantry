@@ -5,7 +5,10 @@ import {
   ensureRuntimeSettings,
   validateRuntimeSettings,
 } from './settings/runtime-settings.js';
-import { inspectRuntimeStorageReadiness } from '../adapters/storage/postgres/storage-readiness.js';
+import {
+  inspectRuntimeSecretReadiness,
+  inspectRuntimeStorageReadiness,
+} from '../adapters/storage/postgres/storage-readiness.js';
 
 export interface RuntimePreflightFailure {
   summary: string;
@@ -74,9 +77,7 @@ export async function validateRuntimePreflightWithStorage(
     return base;
   }
 
-  const storageReadiness = await inspectRuntimeStorageReadiness(runtimeHome, {
-    migrate: true,
-  });
+  const storageReadiness = await inspectRuntimeStorageReadiness(runtimeHome);
   if (storageReadiness.status === 'fail') {
     return {
       ok: false,
@@ -93,6 +94,20 @@ export async function validateRuntimePreflightWithStorage(
   }
 
   ensureRuntimeSettings(runtimeHome);
+  const settings = ensureRuntimeSettings(runtimeHome);
+  const secretReadiness = await inspectRuntimeSecretReadiness(
+    runtimeHome,
+    settings,
+  );
+  if (secretReadiness.status === 'fail') {
+    return {
+      ok: false,
+      failure: {
+        summary: secretReadiness.message,
+        details: secretReadiness.details || [],
+      },
+    };
+  }
   readEnvFile(envFilePath(runtimeHome));
   return { ok: true };
 }

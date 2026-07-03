@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 vi.mock('@core/config/index.js', () => ({
   ASSISTANT_NAME: 'Andy',
   PERMISSION_APPROVAL_TIMEOUT_MS: 300000,
-  getTelegramBotToken: () => process.env.TELEGRAM_BOT_TOKEN || '',
   TRIGGER_PATTERN: /^@Andy\b/i,
 }));
 
@@ -34,6 +33,12 @@ type Handler = (...args: any[]) => any;
 const botRef = vi.hoisted(() => ({ current: null as any }));
 
 vi.mock('grammy', () => ({
+  InputFile: class MockInputFile {
+    constructor(
+      readonly data: unknown,
+      readonly filename?: string,
+    ) {}
+  },
   Bot: class MockBot {
     token: string;
     pollingRunning = false;
@@ -43,11 +48,14 @@ vi.mock('grammy', () => ({
 
     api = {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 987 }),
+      sendDocument: vi.fn().mockResolvedValue({ message_id: 988 }),
       sendMessageDraft: vi.fn().mockResolvedValue(true),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
       getFile: vi.fn().mockResolvedValue({ file_path: 'photos/file_0.jpg' }),
       getChatMember: vi.fn().mockResolvedValue({ status: 'administrator' }),
       editMessageText: vi.fn().mockResolvedValue(undefined),
+      setMessageReaction: vi.fn().mockResolvedValue(true),
+      setMyCommands: vi.fn().mockResolvedValue(true),
       config: { use: vi.fn() },
       raw: null as any,
     };
@@ -100,6 +108,7 @@ vi.mock('grammy', () => ({
 }));
 
 import fs from 'fs';
+import { EnvRuntimeSecretProvider } from '@core/adapters/credentials/env-runtime-secret-provider.js';
 import {
   createTelegramChannel,
   TelegramChannel,
@@ -186,6 +195,23 @@ function createTestOpts(
     })),
     ...overrides,
   };
+}
+
+function createTelegramGroupApprovalOpts(): TelegramChannelOpts {
+  const base = createTestOpts();
+  const settings = base.runtimeSettings!();
+  return createTestOpts({
+    runtimeSettings: vi.fn(() => ({
+      ...settings,
+      conversations: {
+        ...settings.conversations,
+        whatsapp_main_conversation: {
+          ...settings.conversations.whatsapp_main_conversation,
+          externalId: '-100200300',
+        },
+      },
+    })),
+  });
 }
 
 function createTextCtx(overrides: {
@@ -325,6 +351,28 @@ describe('TelegramChannel', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does not expose a conversation context hydration hook', () => {
+    const channel = new TelegramChannel('token', createTestOpts());
+
+    expect('hydrateConversationContext' in channel).toBe(false);
+  });
+
+  it('adds Telegram reactions idempotently', async () => {
+    const channel = new TelegramChannel('token', createTestOpts());
+    await channel.connect({ inbound: false });
+
+    await channel.addReaction('tg:100200300', '987', 'running');
+    await channel.addReaction('tg:100200300', '987', 'running');
+
+    expect(botRef.current.api.setMessageReaction).toHaveBeenCalledTimes(1);
+    expect(botRef.current.api.setMessageReaction).toHaveBeenCalledWith(
+      '100200300',
+      987,
+      [{ type: 'emoji', emoji: '⏳' }],
+      { is_big: false },
+    );
+  });
+
   it('renders todo messages in the active Telegram topic', async () => {
     const opts = createTestOpts();
     const channel = new TelegramChannel('test-token', opts);
@@ -335,6 +383,10 @@ describe('TelegramChannel', () => {
 
     await channel.renderAgentTodo('tg:-100123', {
       threadId: '42',
+      headline: 'Searching the web',
+      status: 'running',
+      elapsed: '2m 14s',
+      stop: { label: 'Stop', actionToken: 'stop-token-1' },
       items: [{ id: '1', title: 'First', status: 'pending' }],
     });
     await channel.renderAgentTodo('tg:-100123', {
@@ -343,14 +395,21 @@ describe('TelegramChannel', () => {
     });
     await channel.renderAgentTodo('tg:-100123', {
       threadId: '42',
+      status: 'done',
+      stop: { label: 'Stop', actionToken: 'stale-stop-token' },
       items: [{ id: '1', title: 'First', status: 'completed' }],
     });
 
     expect(currentBot().api.sendMessage).toHaveBeenNthCalledWith(
       1,
       '-100123',
-      expect.any(String),
-      expect.objectContaining({ message_thread_id: 42 }),
+      expect.stringContaining('⏳ Searching the web · 2m 14s'),
+      expect.objectContaining({
+        message_thread_id: 42,
+      }),
+    );
+    expect(currentBot().api.sendMessage.mock.calls[0]?.[2]).not.toHaveProperty(
+      'reply_markup',
     );
     expect(currentBot().api.sendMessage).toHaveBeenNthCalledWith(
       2,
@@ -362,7 +421,7 @@ describe('TelegramChannel', () => {
       '-100123',
       101,
       expect.any(String),
-      expect.any(Object),
+      expect.objectContaining({ reply_markup: { inline_keyboard: [] } }),
     );
   });
 
@@ -386,6 +445,11 @@ describe('TelegramChannel', () => {
 
       expect(currentBot().commandHandlers.has('chatid')).toBe(true);
       expect(currentBot().commandHandlers.has('ping')).toBe(true);
+      expect(currentBot().api.setMyCommands).toHaveBeenCalledWith([
+        { command: 'gantry', description: 'Open Gantry commands' },
+        { command: 'chatid', description: 'Show this chat ID' },
+        { command: 'ping', description: 'Check bot status' },
+      ]);
       expect(currentBot().filterHandlers.has('message:text')).toBe(true);
       expect(currentBot().filterHandlers.has('message:photo')).toBe(true);
       expect(currentBot().filterHandlers.has('message:video')).toBe(true);
@@ -527,6 +591,14 @@ describe('TelegramChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
         expect.objectContaining({ content: '/custom-command' }),
+      );
+
+      const ctx4 = createTextCtx({ text: '/gantry status', messageId: 4 });
+      await triggerTextMessage(ctx4);
+      expect(opts.onMessage).toHaveBeenCalledTimes(2);
+      expect(opts.onMessage).toHaveBeenLastCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '/gantry status' }),
       );
     });
 
@@ -1498,6 +1570,80 @@ describe('TelegramChannel', () => {
       );
     });
 
+    it('uploads message files as Telegram documents', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendMessage('tg:100200300', 'Report attached', {
+        files: [
+          {
+            filename: 'report.txt',
+            contentType: 'text/plain',
+            sizeBytes: 6,
+            content: new TextEncoder().encode('report'),
+          },
+        ],
+      });
+
+      expect(currentBot().api.sendDocument).toHaveBeenCalledWith(
+        '100200300',
+        expect.objectContaining({ filename: 'report.txt' }),
+        expect.objectContaining({ caption: 'report.txt' }),
+      );
+    });
+
+    it('keeps Telegram text delivery when document upload fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      currentBot().api.sendDocument.mockRejectedValueOnce(
+        new Error('upload failed'),
+      );
+
+      await expect(
+        channel.sendMessage('tg:100200300', 'Report attached', {
+          files: [
+            {
+              filename: 'report.txt',
+              contentType: 'text/plain',
+              sizeBytes: 6,
+              content: new TextEncoder().encode('report'),
+            },
+          ],
+        }),
+      ).resolves.toMatchObject({ externalMessageId: '987' });
+      expect(currentBot().api.sendMessage).toHaveBeenLastCalledWith(
+        '100200300',
+        'Attachment unavailable in Telegram: report.txt upload failed.',
+        {},
+      );
+    });
+
+    it('announces Telegram documents that exceed the upload cap', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendMessage('tg:100200300', 'Report attached', {
+        files: [
+          {
+            filename: 'large.txt',
+            contentType: 'text/plain',
+            sizeBytes: 51 * 1024 * 1024,
+            content: new Uint8Array(),
+          },
+        ],
+      });
+
+      expect(currentBot().api.sendDocument).not.toHaveBeenCalled();
+      expect(currentBot().api.sendMessage).toHaveBeenLastCalledWith(
+        '100200300',
+        'Attachment unavailable in Telegram: large.txt exceeds 50 MB.',
+        {},
+      );
+    });
+
     it('renders scheduler dead-letter action affordances as Telegram buttons', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
@@ -1523,7 +1669,7 @@ describe('TelegramChannel', () => {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: 'Retry now', callback_data: 'dl:retry' },
+                { text: 'Retry now', callback_data: 'r:job-1' },
                 { text: 'Pause job', callback_data: 'dl:pause' },
               ],
               [{ text: 'Open in scheduler', callback_data: 'dl:open' }],
@@ -1533,12 +1679,37 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('fails closed when Telegram scheduler action buttons are clicked', async () => {
+    it('keeps Telegram retry buttons for long generated job ids', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
+      const jobId = `job-${'a'.repeat(40)}-${'b'.repeat(12)}`;
+
+      await channel.sendMessage('tg:100200300', 'Paused after failures', {
+        actionAffordances: [
+          { kind: 'scheduler_run_now', label: 'Retry now', jobId },
+        ],
+      });
+
+      const callbackData =
+        currentBot().api.sendMessage.mock.calls[0]?.[2]?.reply_markup
+          ?.inline_keyboard?.[0]?.[0]?.callback_data;
+      expect(callbackData).toBe(`r:${jobId}`);
+      expect(Buffer.byteLength(callbackData, 'utf8')).toBeLessThanOrEqual(64);
+    });
+
+    it('routes Telegram scheduler run-now action buttons through the message action callback', async () => {
+      const opts = createTestOpts({ onMessageAction: vi.fn() } as any);
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
       const callbackCtx = {
-        callbackQuery: { data: 'dl:retry' },
+        callbackQuery: {
+          data: 'r:job-1',
+          message: {
+            chat: { id: 100200300 },
+            message_thread_id: 42,
+          },
+        },
         chat: { id: 100200300 },
         from: { id: 111 },
         answerCallbackQuery: vi.fn(),
@@ -1546,9 +1717,57 @@ describe('TelegramChannel', () => {
 
       await triggerCallbackQuery(callbackCtx);
 
+      expect(opts.onMessageAction).toHaveBeenCalledWith({
+        kind: 'scheduler_run_now',
+        conversationJid: 'tg:100200300',
+        threadId: '42',
+        userId: '111',
+        jobId: 'job-1',
+      });
       expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Open the scheduler surface or use scheduler tools to run this action.',
-        show_alert: true,
+        text: 'Checking retry request.',
+      });
+    });
+
+    it('omits Telegram live stop action buttons but still routes stale callbacks', async () => {
+      const opts = createTestOpts({ onMessageAction: vi.fn() } as any);
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendMessage('tg:100200300', 'Working...', {
+        actionAffordances: [
+          { kind: 'live_turn_stop', label: 'Stop', actionToken: 'token-1' },
+        ],
+      });
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        'Working\\.\\.\\.',
+        expect.not.objectContaining({ reply_markup: expect.anything() }),
+      );
+
+      const callbackCtx = {
+        callbackQuery: {
+          data: 'lt:stop:token-1',
+          message: {
+            chat: { id: 100200300 },
+            message_thread_id: 42,
+          },
+        },
+        from: { id: 111 },
+        answerCallbackQuery: vi.fn(),
+      };
+      await triggerCallbackQuery(callbackCtx);
+
+      expect(opts.onMessageAction).toHaveBeenCalledWith({
+        kind: 'live_turn_stop',
+        conversationJid: 'tg:100200300',
+        threadId: '42',
+        userId: '111',
+        actionToken: 'token-1',
+      });
+      expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Stopping current run.',
       });
     });
 
@@ -1981,6 +2200,42 @@ describe('TelegramChannel', () => {
       );
     });
 
+    it('retries Telegram group edits after retry_after rate limits', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot()
+        .api.editMessageText.mockRejectedValueOnce({
+          error_code: 429,
+          parameters: { retry_after: 0.001 },
+          message: 'Too Many Requests',
+        })
+        .mockResolvedValueOnce(undefined);
+
+      try {
+        await channel.sendStreamingChunk('tg:-1001234567890', 'group update');
+        await vi.advanceTimersByTimeAsync(950);
+        const updatePromise = channel.sendStreamingChunk(
+          'tg:-1001234567890',
+          ' more',
+        );
+        await Promise.resolve();
+
+        expect(currentBot().api.editMessageText).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await updatePromise;
+
+        expect(currentBot().api.editMessageText).toHaveBeenCalledTimes(2);
+        expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('does not duplicate final group message when edit returns "message is not modified"', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
@@ -2134,23 +2389,98 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      await channel.sendProgressUpdate('tg:-1001234567890', 'Working on it...');
+      const stopAction = {
+        actionAffordances: [
+          {
+            kind: 'live_turn_stop' as const,
+            label: 'Stop',
+            actionToken: 'token-1',
+          },
+        ],
+      };
+      await channel.sendProgressUpdate(
+        'tg:-1001234567890',
+        'Working on it...',
+        stopAction,
+      );
       await channel.sendProgressUpdate(
         'tg:-1001234567890',
         'Still working (1m 00s)...',
+        stopAction,
       );
 
       expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
         '-1001234567890',
         'Working on it...',
-        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+        expect.objectContaining({
+          parse_mode: 'MarkdownV2',
+        }),
       );
+      expect(
+        currentBot().api.sendMessage.mock.calls[0]?.[2],
+      ).not.toHaveProperty('reply_markup');
       expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
         '-1001234567890',
         987,
         'Still working (1m 00s)...',
+        expect.objectContaining({
+          parse_mode: 'MarkdownV2',
+        }),
+      );
+      expect(
+        currentBot().api.editMessageText.mock.calls[0]?.[3],
+      ).not.toHaveProperty('reply_markup');
+    });
+
+    it('drops action-only progress when Telegram has no renderable actions', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendProgressUpdate('tg:-1001234567890', '', {
+        actionOnly: true,
+        actionAffordances: [
+          {
+            kind: 'live_turn_stop' as const,
+            label: 'Stop',
+            actionToken: 'token-1',
+          },
+        ],
+      });
+
+      expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('suppresses terminal Done progress without posting a Done message', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Working on it...');
+      await channel.sendProgressUpdate('tg:100200300', 'Done.', {
+        done: true,
+      });
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        'Working on it...',
         expect.objectContaining({ parse_mode: 'MarkdownV2' }),
       );
+      expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+        '100200300',
+        987,
+        'Working on it...',
+        expect.objectContaining({
+          parse_mode: 'MarkdownV2',
+          reply_markup: { inline_keyboard: [] },
+        }),
+      );
+      expect(
+        currentBot().api.editMessageText.mock.calls.some(
+          (call) => call[2] === 'Done.',
+        ),
+      ).toBe(false);
     });
 
     it('clears progress state on done and starts a fresh message next run', async () => {
@@ -2211,6 +2541,80 @@ describe('TelegramChannel', () => {
       expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
     });
 
+    it('lets fresh progress replace a restored higher generation after restart', async () => {
+      const runtimeHome = fs.mkdtempSync('/tmp/gantry-tg-progress-');
+      const savedHome = process.env.GANTRY_HOME;
+      process.env.GANTRY_HOME = runtimeHome;
+      try {
+        const first = new TelegramChannel('test-token', createTestOpts());
+        await first.connect();
+        await first.sendProgressUpdate('tg:100200300', 'Old waiting...', {
+          generation: 4,
+        });
+
+        const second = new TelegramChannel('test-token', createTestOpts());
+        await second.connect();
+        currentBot().api.sendMessage.mockClear();
+        currentBot().api.editMessageText.mockClear();
+
+        await second.sendProgressUpdate('tg:100200300', 'Working again...', {
+          generation: 2,
+        });
+
+        expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+        expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+
+        await second.sendProgressUpdate('tg:100200300', 'Done again.', {
+          done: true,
+          generation: 3,
+        });
+
+        expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+          '100200300',
+          987,
+          'Done again.',
+          expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+        );
+      } finally {
+        if (savedHome === undefined) delete process.env.GANTRY_HOME;
+        else process.env.GANTRY_HOME = savedHome;
+        fs.rmSync(runtimeHome, { recursive: true, force: true });
+      }
+    });
+
+    it('clears restored Telegram progress buttons on connect', async () => {
+      const runtimeHome = fs.mkdtempSync('/tmp/gantry-tg-progress-');
+      const savedHome = process.env.GANTRY_HOME;
+      process.env.GANTRY_HOME = runtimeHome;
+      try {
+        const first = new TelegramChannel('test-token', createTestOpts());
+        await first.connect();
+        await first.sendProgressUpdate('tg:100200300', 'Still working...', {
+          generation: 4,
+          actionAffordances: [
+            { kind: 'live_turn_stop', label: 'Stop', actionToken: 'token-1' },
+          ],
+        });
+
+        const second = new TelegramChannel('test-token', createTestOpts());
+        await second.connect();
+
+        expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+          '100200300',
+          987,
+          'Still working...',
+          expect.objectContaining({
+            parse_mode: 'MarkdownV2',
+            reply_markup: { inline_keyboard: [] },
+          }),
+        );
+      } finally {
+        if (savedHome === undefined) delete process.env.GANTRY_HOME;
+        else process.env.GANTRY_HOME = savedHome;
+        fs.rmSync(runtimeHome, { recursive: true, force: true });
+      }
+    });
+
     it('refreshes a stale unchanged initial progress handle with a new message', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
@@ -2249,7 +2653,15 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      await channel.sendProgressUpdate('tg:100200300', 'Working on it...');
+      await channel.sendProgressUpdate('tg:100200300', 'Working on it...', {
+        actionAffordances: [
+          {
+            kind: 'live_turn_stop',
+            label: 'Stop',
+            actionToken: 'token-1',
+          },
+        ],
+      });
       await channel.sendProgressUpdate('tg:100200300', 'Done in 1s.', {
         done: true,
         replaceOnly: true,
@@ -2258,7 +2670,10 @@ describe('TelegramChannel', () => {
         '100200300',
         987,
         'Done in 1s.',
-        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+        expect.objectContaining({
+          parse_mode: 'MarkdownV2',
+          reply_markup: { inline_keyboard: [] },
+        }),
       );
       currentBot().api.sendMessage.mockClear();
       currentBot().api.editMessageText.mockClear();
@@ -2307,30 +2722,130 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('restores progress handles after process restart', async () => {
+    it('lets newer replace-only progress take over the existing generation', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Waiting...', {
+        generation: 4,
+      });
+      currentBot().api.sendMessage.mockClear();
+      currentBot().api.editMessageText.mockClear();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Waiting...', {
+        replaceOnly: true,
+        generation: 7,
+      });
+      await channel.sendProgressUpdate('tg:100200300', 'Stale waiting...', {
+        replaceOnly: true,
+        generation: 6,
+      });
+
+      expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+      expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Continuing...', {
+        replaceOnly: true,
+        generation: 8,
+      });
+
+      expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+        '100200300',
+        987,
+        'Continuing...',
+        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+      );
+    });
+
+    it('restores progress handles after restart for newer replace-only generations', async () => {
       const runtimeHome = fs.mkdtempSync('/tmp/gantry-tg-progress-');
       const savedHome = process.env.GANTRY_HOME;
       process.env.GANTRY_HOME = runtimeHome;
       try {
         const first = new TelegramChannel('test-token', createTestOpts());
         await first.connect();
-        await first.sendProgressUpdate('tg:100200300', 'Working on it...');
+        await first.sendProgressUpdate('tg:100200300', 'Waiting...', {
+          generation: 4,
+        });
 
         const second = new TelegramChannel('test-token', createTestOpts());
         await second.connect();
         currentBot().api.sendMessage.mockClear();
-        await second.sendProgressUpdate('tg:100200300', 'Done in 1s.', {
-          done: true,
+        currentBot().api.editMessageText.mockClear();
+        await second.sendProgressUpdate('tg:100200300', 'Waiting...', {
           replaceOnly: true,
+          generation: 7,
+        });
+        await second.sendProgressUpdate('tg:100200300', 'Stale waiting...', {
+          replaceOnly: true,
+          generation: 6,
         });
 
         expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+        expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+
+        await second.sendProgressUpdate('tg:100200300', 'Continuing...', {
+          replaceOnly: true,
+          generation: 8,
+        });
+
         expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
           '100200300',
           987,
-          'Done in 1s.',
+          'Continuing...',
           expect.objectContaining({ parse_mode: 'MarkdownV2' }),
         );
+      } finally {
+        if (savedHome === undefined) delete process.env.GANTRY_HOME;
+        else process.env.GANTRY_HOME = savedHome;
+        fs.rmSync(runtimeHome, { recursive: true, force: true });
+      }
+    });
+
+    it('drops persisted Telegram progress handles for a different thread', async () => {
+      const runtimeHome = fs.mkdtempSync('/tmp/gantry-tg-progress-');
+      const savedHome = process.env.GANTRY_HOME;
+      process.env.GANTRY_HOME = runtimeHome;
+      try {
+        const first = new TelegramChannel('test-token', createTestOpts());
+        await first.connect();
+        await first.sendProgressUpdate('tg:100200300', 'Waiting...', {
+          threadId: '42',
+          generation: 4,
+        });
+
+        const runDir = `${runtimeHome}/run`;
+        const stateFile = fs
+          .readdirSync(runDir)
+          .find((name) => name.startsWith('telegram-progress-state-'));
+        expect(stateFile).toBeTruthy();
+        const statePath = `${runDir}/${stateFile}`;
+        const entries = JSON.parse(fs.readFileSync(statePath, 'utf8')) as any[];
+        entries[0][1].threadId = 99;
+        fs.writeFileSync(statePath, JSON.stringify(entries));
+
+        const second = new TelegramChannel('test-token', createTestOpts());
+        await second.connect();
+        currentBot().api.sendMessage.mockClear();
+        currentBot().api.editMessageText.mockClear();
+
+        await second.sendProgressUpdate('tg:100200300', 'Continuing...', {
+          threadId: '42',
+          replaceOnly: true,
+          generation: 5,
+        });
+
+        expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+        expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+
+        await second.sendProgressUpdate('tg:100200300', 'Working again...', {
+          threadId: '42',
+          generation: 6,
+        });
+
+        expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+        expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
       } finally {
         if (savedHome === undefined) delete process.env.GANTRY_HOME;
         else process.env.GANTRY_HOME = savedHome;
@@ -2526,9 +3041,15 @@ describe('TelegramChannel', () => {
       expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
         '100200300',
         expect.stringContaining(
-          'Command:\n<pre>rm -rf /tmp/old-cache &amp;&amp; npm install</pre>',
+          '<b>View full command</b>\n<blockquote expandable>rm -rf /tmp/old-cache &amp;&amp; npm install</blockquote>',
         ),
         expect.objectContaining({ message_thread_id: 42, parse_mode: 'HTML' }),
+      );
+      expect(currentBot().api.sendMessage.mock.calls[0]?.[1]).toContain(
+        'Runs: rm, npm',
+      );
+      expect(currentBot().api.sendMessage.mock.calls[0]?.[1]).not.toContain(
+        'Command:',
       );
 
       const callbackCtx = {
@@ -2583,15 +3104,15 @@ describe('TelegramChannel', () => {
       expect(decision.approved).toBe(true);
     });
 
-    it('splits oversized permission review text before sending the decision buttons', async () => {
-      const opts = createTestOpts();
+    it('DMs oversized permission full view files to approvers instead of the group', async () => {
+      const opts = createTelegramGroupApprovalOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
       const tail = 'review-tail-after-shared-budget';
       const proposed = `${'x'.repeat(7000)}${tail}`;
 
       const decisionPromise = channel.requestPermissionApproval(
-        'tg:100200300',
+        'tg:-100200300',
         {
           requestId: 'perm-profile-large',
           sourceAgentFolder: 'whatsapp_main',
@@ -2622,6 +3143,197 @@ describe('TelegramChannel', () => {
       await flushPromises();
 
       const calls = currentBot().api.sendMessage.mock.calls;
+      expect(currentBot().api.sendDocument).toHaveBeenCalled();
+      for (const call of currentBot().api.sendDocument.mock.calls) {
+        expect(call[0]).not.toBe('-100200300');
+      }
+      const uploaded = currentBot()
+        .api.sendDocument.mock.calls.map((call) =>
+          String((call[1] as any).data),
+        )
+        .join('');
+      expect(uploaded).toContain(tail);
+      const promptCall = calls.at(-1);
+      expect(promptCall?.[0]).toBe('-100200300');
+      expect(promptCall?.[1]).toContain('View diff: sent to approver DM.');
+      expect(promptCall?.[2]).toMatchObject({
+        parse_mode: 'HTML',
+        reply_markup: expect.objectContaining({
+          inline_keyboard: expect.any(Array),
+        }),
+      });
+
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'perm:allow_once:perm-profile-large' },
+        chat: { id: -100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+      const decision = await decisionPromise;
+      expect(decision.approved).toBe(true);
+    });
+
+    it('sends oversized permission full view files only to that Telegram conversation approvers', async () => {
+      const base = createTestOpts().runtimeSettings!();
+      const opts = createTestOpts({
+        runtimeSettings: vi.fn(() => ({
+          ...base,
+          conversations: {
+            wrong_conversation: {
+              ...base.conversations.whatsapp_main_conversation,
+              externalId: '-100999',
+              controlApprovers: ['999'],
+            },
+            right_conversation: {
+              ...base.conversations.whatsapp_main_conversation,
+              externalId: '-100200300',
+              controlApprovers: ['12345'],
+            },
+          },
+          bindings: {
+            wrong_binding: {
+              ...base.bindings.whatsapp_main_binding,
+              conversation: 'wrong_conversation',
+            },
+            right_binding: {
+              ...base.bindings.whatsapp_main_binding,
+              conversation: 'right_conversation',
+            },
+          },
+        })),
+      });
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:-100200300',
+        {
+          requestId: 'perm-profile-right-approvers',
+          sourceAgentFolder: 'whatsapp_main',
+          toolName: 'request_agent_profile_update',
+          title: 'Update AGENTS.md',
+          interaction: {
+            id: 'perm-profile-right-approvers',
+            title: 'Update AGENTS.md',
+            body: 's'.repeat(1000),
+            requestContext: {
+              requestId: 'perm-profile-right-approvers',
+              sourceAgentFolder: 'whatsapp_main',
+              targetJid: 'tg:-100200300',
+              toolName: 'request_agent_profile_update',
+            },
+            files: [
+              {
+                path: 'AGENTS.md',
+                preview: 'x'.repeat(7000),
+                truncated: false,
+                sizeBytes: 7000,
+                contentHash: 'abc123',
+              },
+            ],
+          },
+        },
+      );
+      await flushPromises();
+
+      const targets = currentBot().api.sendDocument.mock.calls.map(
+        (call) => call[0],
+      );
+      expect(targets).toEqual(['12345']);
+      expect(targets).not.toContain('999');
+
+      await triggerCallbackQuery({
+        callbackQuery: { data: 'perm:allow_once:perm-profile-right-approvers' },
+        chat: { id: -100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      });
+      await decisionPromise;
+    });
+
+    it('fails closed when oversized permission full view delivery fails', async () => {
+      const opts = createTelegramGroupApprovalOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      currentBot().api.sendDocument.mockRejectedValue(
+        new Error('upload failed'),
+      );
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:-100200300',
+        {
+          requestId: 'perm-profile-undelivered',
+          sourceAgentFolder: 'whatsapp_main',
+          toolName: 'request_agent_profile_update',
+          title: 'Update AGENTS.md',
+          interaction: {
+            id: 'perm-profile-undelivered',
+            title: 'Update AGENTS.md',
+            body: 's'.repeat(1000),
+            requestContext: {
+              requestId: 'perm-profile-undelivered',
+              sourceAgentFolder: 'whatsapp_main',
+              targetJid: 'tg:100200300',
+              toolName: 'request_agent_profile_update',
+            },
+            files: [
+              {
+                path: 'AGENTS.md',
+                preview: 'x'.repeat(7000),
+                truncated: false,
+                sizeBytes: 7000,
+                contentHash: 'abc123',
+              },
+            ],
+          },
+        },
+      );
+      await flushPromises();
+
+      const promptCall = currentBot().api.sendMessage.mock.calls.at(-1);
+      expect(promptCall?.[0]).toBe('-100200300');
+      expect(promptCall?.[1]).toContain(
+        'Approval unavailable until the full details can be reviewed.',
+      );
+      expect(promptCall?.[2]).not.toHaveProperty('reply_markup');
+
+      const decision = await decisionPromise;
+      expect(decision.approved).toBe(false);
+    });
+
+    it('splits an oversized intent-only review prompt before sending the decision buttons', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      const details = Array.from({ length: 90 }, (_, index) => ({
+        label: `Field${index}`,
+        value: 'v'.repeat(150),
+      }));
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: 'perm-mcp-large',
+          sourceAgentFolder: 'whatsapp_main',
+          toolName: 'request_mcp_server',
+          title: 'Connect MCP',
+          interaction: {
+            id: 'perm-mcp-large',
+            title: 'Connect MCP',
+            body: 'short body',
+            details,
+            requestContext: {
+              requestId: 'perm-mcp-large',
+              sourceAgentFolder: 'whatsapp_main',
+              targetJid: 'tg:100200300',
+              toolName: 'request_mcp_server',
+            },
+          },
+        },
+      );
+      await flushPromises();
+
+      const calls = currentBot().api.sendMessage.mock.calls;
       expect(calls.length).toBeGreaterThan(1);
       const reviewCalls = calls.slice(0, -1);
       const finalCall = calls.at(-1);
@@ -2630,7 +3342,7 @@ describe('TelegramChannel', () => {
         expect(call[2]).not.toHaveProperty('reply_markup');
         expect(call[2]).not.toHaveProperty('parse_mode');
       }
-      expect(reviewCalls.map((call) => call[1]).join('')).toContain(tail);
+      expect(currentBot().api.sendDocument).not.toHaveBeenCalled();
       expect(finalCall?.[1]).toContain(
         'Review the approval details above before choosing.',
       );
@@ -2642,7 +3354,7 @@ describe('TelegramChannel', () => {
       });
 
       await triggerCallbackQuery({
-        callbackQuery: { data: 'perm:allow_once:perm-profile-large' },
+        callbackQuery: { data: 'perm:allow_once:perm-mcp-large' },
         chat: { id: 100200300 },
         from: { id: 12345, first_name: 'Ravi' },
         answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
@@ -3304,14 +4016,15 @@ describe('TelegramChannel', () => {
 });
 
 describe('createTelegramChannel factory', () => {
-  it('returns null when TELEGRAM_BOT_TOKEN is not set', () => {
+  it('returns null when TELEGRAM_BOT_TOKEN is not set', async () => {
     const saved = process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.TELEGRAM_BOT_TOKEN;
     try {
-      const result = createTelegramChannel({
+      const result = await createTelegramChannel({
         onMessage: vi.fn(),
         onChatMetadata: vi.fn(),
         conversationRoutes: () => ({}),
+        runtimeSecrets: new EnvRuntimeSecretProvider(),
       });
       expect(result).toBeNull();
       expect(logger.warn).toHaveBeenCalledWith(
@@ -3322,14 +4035,15 @@ describe('createTelegramChannel factory', () => {
     }
   });
 
-  it('returns a TelegramChannel when token is available', () => {
+  it('returns a TelegramChannel when token is available', async () => {
     const saved = process.env.TELEGRAM_BOT_TOKEN;
     process.env.TELEGRAM_BOT_TOKEN = 'test-token-from-env';
     try {
-      const result = createTelegramChannel({
+      const result = await createTelegramChannel({
         onMessage: vi.fn(),
         onChatMetadata: vi.fn(),
         conversationRoutes: () => ({}),
+        runtimeSecrets: new EnvRuntimeSecretProvider(),
       });
       expect(result).not.toBeNull();
       expect(result).toBeInstanceOf(TelegramChannel);
@@ -3337,5 +4051,35 @@ describe('createTelegramChannel factory', () => {
       if (saved !== undefined) process.env.TELEGRAM_BOT_TOKEN = saved;
       else delete process.env.TELEGRAM_BOT_TOKEN;
     }
+  });
+
+  it('returns a TelegramChannel from configured runtime secret refs', async () => {
+    const result = await createTelegramChannel({
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      conversationRoutes: () => ({}),
+      runtimeSettings: () =>
+        ({
+          providers: { telegram: { defaultConnection: 'telegram_default' } },
+          providerConnections: {
+            telegram_default: {
+              runtimeSecretRefs: {
+                bot_token: 'gantry-secret:TELEGRAM_BOT_TOKEN',
+              },
+            },
+          },
+        }) as never,
+      runtimeSecrets: {
+        getSecret: vi.fn(),
+        getOptionalSecret: vi.fn(),
+        getOptionalSecretAsync: vi.fn(async (ref) =>
+          ref.ref === 'gantry-secret:TELEGRAM_BOT_TOKEN'
+            ? 'test-token-from-store'
+            : undefined,
+        ),
+      },
+    });
+
+    expect(result).toBeInstanceOf(TelegramChannel);
   });
 });

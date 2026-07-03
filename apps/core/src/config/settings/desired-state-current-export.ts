@@ -147,10 +147,7 @@ export async function exportCurrentDesiredState(input: {
     providerConnections[connectionId] = {
       provider: providerId,
       label: connection.label,
-      runtimeSecretRefs: runtimeSecretRefsForConnection(
-        connection,
-        settings.providerConnections[connectionId],
-      ),
+      runtimeSecretRefs: runtimeSecretRefsForConnection(connection),
     };
     const existingProvider = settings.providers[providerId];
     providers[providerId] = {
@@ -448,43 +445,12 @@ function isInternalAppControlProviderConnection(
 
 function runtimeSecretRefsForConnection(
   connection: ProviderConnection,
-  existing?: RuntimeProviderConnectionSettings,
 ): Record<string, string> {
-  const refs = new Set(connection.runtimeSecretRefs);
-  const rendered: Record<string, string> = {};
-  for (const [key, value] of Object.entries(
-    existing?.runtimeSecretRefs ?? {},
-  )) {
-    if (refs.has(value)) rendered[key] = value;
-  }
-  for (const [key, value] of Object.entries(
-    defaultRuntimeSecretRefs(connection.providerId as string),
-  )) {
-    if (refs.has(value) && !Object.values(rendered).includes(value)) {
-      rendered[key] = value;
-    }
-  }
-  for (const value of refs) {
-    if (Object.values(rendered).includes(value)) continue;
-    rendered[safeSecretRefKey(value, rendered)] = value;
-  }
-  return rendered;
-}
-
-function safeSecretRefKey(
-  value: string,
-  existing: Record<string, string>,
-): string {
-  const base =
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9_]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 64) || 'secret_ref';
-  if (!Object.hasOwn(existing, base)) return base;
-  let index = 2;
-  while (Object.hasOwn(existing, `${base}_${index}`)) index += 1;
-  return `${base}_${index}`;
+  return Object.fromEntries(
+    Object.entries(connection.runtimeSecretRefs).sort(([a], [b]) =>
+      a.localeCompare(b),
+    ),
+  );
 }
 
 function runtimeMemoryScope(

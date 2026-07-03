@@ -1,4 +1,5 @@
 import type {
+  MessageActionAffordance,
   PermissionApprovalRequest,
   UserQuestionRequest,
 } from '../domain/types.js';
@@ -6,7 +7,10 @@ import type { AgentTodoRender } from '../domain/ports/task-lifecycle.js';
 import { PERMISSION_APPROVAL_TIMEOUT_MS } from '../shared/permission-timeout.js';
 import {
   agentTodoLines,
+  agentTodoStopActions,
   countCompletedAgentTodos,
+  formatAgentTodoHeader,
+  hasAgentTodoCardHeader,
 } from './agent-todo-render.js';
 
 export { agentTodoLines } from './agent-todo-render.js';
@@ -18,19 +22,37 @@ import {
 
 export const TEAMS_ADAPTIVE_CARD_CONTENT_TYPE =
   'application/vnd.microsoft.card.adaptive';
+const GENERIC_ATTACHMENT_UNAVAILABLE_LINE = '- Attachment unavailable.';
+const TEAMS_ATTACHMENT_UNAVAILABLE_LINE =
+  '- Attachment unavailable in Teams until signed artifact links are added.';
 
 export interface TeamsAdaptiveCardAction {
   type: 'Action.Execute';
   title: string;
   verb: string;
-  data: {
-    action: 'permission_decision';
-    requestId: string;
-    decision: string;
-    sourceAgentFolder: string;
-    targetJid?: string;
-    threadId?: string;
-  };
+  data:
+    | {
+        action: 'permission_decision';
+        requestId: string;
+        decision: string;
+        sourceAgentFolder: string;
+        targetJid?: string;
+        threadId?: string;
+      }
+    | {
+        action: 'message_action';
+        kind: 'live_turn_stop';
+        actionToken: string;
+        targetJid: string;
+        threadId?: string;
+      }
+    | {
+        action: 'message_action';
+        kind: 'scheduler_run_now';
+        jobId: string;
+        targetJid: string;
+        threadId?: string;
+      };
 }
 
 export interface TeamsAdaptiveCardSubmitAction {
@@ -60,6 +82,26 @@ export interface TeamsAdaptiveCardDescriptorPayload {
       content: TeamsAdaptiveCardPayload;
     },
   ];
+}
+
+export function formatTeamsAttachmentUnavailableCopy(
+  text: string,
+  filesUnavailable = false,
+): string {
+  let inAttachments = false;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (line === 'Attachments:') inAttachments = true;
+      if (
+        line === GENERIC_ATTACHMENT_UNAVAILABLE_LINE ||
+        (filesUnavailable && inAttachments && line.startsWith('- '))
+      ) {
+        return TEAMS_ATTACHMENT_UNAVAILABLE_LINE;
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 export function buildTeamsApprovalAdaptiveCard(
@@ -117,9 +159,12 @@ export function buildTeamsApprovalDescriptorPayload(
 
 export function buildTeamsAgentTodoCard(
   render: AgentTodoRender,
+  targetJid = '',
 ): TeamsAdaptiveCardPayload {
-  const title = render.summary?.trim() ? render.summary.trim() : 'Plan';
+  const title = formatAgentTodoHeader(render);
+  const heading = hasAgentTodoCardHeader(render) ? title : `📋 ${title}`;
   const done = countCompletedAgentTodos(render);
+  const stopAction = agentTodoStopActions(render)?.[0];
   return {
     $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
     type: 'AdaptiveCard',
@@ -129,7 +174,7 @@ export function buildTeamsAgentTodoCard(
         type: 'TextBlock',
         size: 'Medium',
         weight: 'Bolder',
-        text: `📋 ${title}`,
+        text: heading,
         wrap: true,
       },
       {
@@ -148,7 +193,76 @@ export function buildTeamsAgentTodoCard(
         wrap: true,
       },
     ],
-    actions: [],
+    actions:
+      stopAction?.kind === 'live_turn_stop'
+        ? [
+            {
+              type: 'Action.Execute',
+              title: stopAction.label,
+              verb: 'gantry.live.stop',
+              data: {
+                action: 'message_action',
+                kind: 'live_turn_stop',
+                actionToken: stopAction.actionToken,
+                targetJid,
+                ...(render.threadId ? { threadId: render.threadId } : {}),
+              },
+            },
+          ]
+        : [],
+  };
+}
+
+export function buildTeamsMessageCard(options: {
+  text: string;
+  targetJid: string;
+  threadId?: string;
+  actionOnly?: boolean;
+  actionAffordances?: MessageActionAffordance[];
+}): TeamsAdaptiveCardPayload {
+  const actions = (options.actionAffordances ?? [])
+    .map((action): TeamsAdaptiveCardAction | null => {
+      if (!action.label.trim()) return null;
+      if (action.kind === 'live_turn_stop') {
+        return {
+          type: 'Action.Execute',
+          title: action.label.trim(),
+          verb: 'gantry.live.stop',
+          data: {
+            action: 'message_action',
+            kind: 'live_turn_stop',
+            actionToken: action.actionToken,
+            targetJid: options.targetJid,
+            ...(options.threadId ? { threadId: options.threadId } : {}),
+          },
+        };
+      }
+      if (action.kind === 'scheduler_run_now' && action.jobId.trim()) {
+        // ponytail: only scheduler_run_now is wired here; add pause/open when they share a callback path.
+        return {
+          type: 'Action.Execute',
+          title: action.label.trim(),
+          verb: 'gantry.scheduler.run_now',
+          data: {
+            action: 'message_action',
+            kind: 'scheduler_run_now',
+            jobId: action.jobId,
+            targetJid: options.targetJid,
+            ...(options.threadId ? { threadId: options.threadId } : {}),
+          },
+        };
+      }
+      return null;
+    })
+    .filter((action): action is TeamsAdaptiveCardAction => action !== null);
+  return {
+    $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+    type: 'AdaptiveCard',
+    version: '1.5',
+    body: options.actionOnly
+      ? []
+      : [{ type: 'TextBlock', text: options.text, wrap: true }],
+    actions,
   };
 }
 
