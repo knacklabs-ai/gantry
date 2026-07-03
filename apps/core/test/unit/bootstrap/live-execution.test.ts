@@ -13,6 +13,7 @@ describe('startLiveExecutionServices', () => {
       appId: 'default',
       agentSessionId: 'session-thread',
     }));
+    const resolveExecutionProviderId = vi.fn(() => 'deepagents:langchain');
     const processor = buildLiveAdmissionProcessor({
       liveTurnAuthority: {
         ownedRunId: vi.fn(),
@@ -40,12 +41,14 @@ describe('startLiveExecutionServices', () => {
           [queueJid]: {
             folder: 'alpha',
             conversationKind: 'dm',
+            agentConfig: { model: 'gpt-5.5' },
           },
         }),
         processGroupMessages: vi.fn(async () => true),
         getOrRecoverCursor: vi.fn(async () => ''),
         setAgentCursor: vi.fn(),
         saveState: vi.fn(),
+        resolveExecutionProviderId,
       },
       opsRepository: {
         getAgentTurnContext,
@@ -60,7 +63,15 @@ describe('startLiveExecutionServices', () => {
 
     await expect(processor(queueJid)).resolves.toBe(true);
     expect(getAgentTurnContext).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationKind: 'dm', threadId: 'T1' }),
+      expect.objectContaining({
+        conversationKind: 'dm',
+        executionProviderId: 'deepagents:langchain',
+        threadId: 'T1',
+      }),
+    );
+    expect(resolveExecutionProviderId).toHaveBeenCalledWith(
+      expect.objectContaining({ agentConfig: { model: 'gpt-5.5' } }),
+      'sl:C123',
     );
   });
 

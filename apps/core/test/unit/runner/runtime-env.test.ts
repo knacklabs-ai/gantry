@@ -70,6 +70,14 @@ describe('Anthropic runner runtime env', () => {
     expect(sdkEnv.CLAUDE_CODE_DISABLE_WORKFLOWS).toBe('1');
   });
 
+  it('leaves Claude Code auto-compaction window on the SDK default', async () => {
+    const { buildSdkEnv } = await loadRuntimeEnv();
+
+    const sdkEnv = buildSdkEnv();
+
+    expect(sdkEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+  });
+
   it('keeps SDK no-proxy loopback-only so external hosts pass through Gantry egress', async () => {
     process.env.NO_PROXY = 'api.github.com,corp.internal,127.0.0.1';
     process.env.no_proxy = 'lower.internal,localhost';

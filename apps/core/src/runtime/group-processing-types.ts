@@ -214,6 +214,7 @@ export interface GroupProcessingDeps {
   // injected test runner) failover degrades to a single candidate.
   getConfiguredModelProviders?: (appId: string) => Promise<Set<string>>;
   getModelFamilyOrder?: () => FamilyOrderOverrides | undefined;
+  getDefaultInteractiveModel?: (agentFolder?: string) => string | undefined;
   getSelectedAgentHarness: (agentFolder?: string) => AgentHarness;
   opsRepository?: GroupProcessingRepository;
   getRuntimeRepository?: () => GroupProcessingRepository;

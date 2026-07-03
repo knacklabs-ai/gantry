@@ -1,6 +1,7 @@
 import {
   ASSISTANT_NAME,
   getCredentialBrokerRuntimeConfig,
+  getDefaultModelConfig,
   getRuntimeQueueConfig,
   getRuntimeSettingsForConfig,
   getSelectedAgentHarness,
@@ -36,8 +37,10 @@ import {
   makeThreadQueueKey,
   parseAgentThreadQueueKey,
 } from '../../shared/thread-queue-key.js';
+import { appIdFromConversationJid } from '../../shared/app-conversation-jid.js';
 import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import { resolveConversationRoute } from './runtime-app-routes.js';
+import type { ExecutionProviderId } from '../../domain/sessions/sessions.js';
 import type {
   RuntimeAgentSessionRepository,
   RuntimeChatMetadataRepository,
@@ -66,6 +69,7 @@ import type { AgentExecutionAdapterRegistry } from '../../application/agent-exec
 import { registerMemoryLlmClient } from '../../memory/memory-llm-port.js';
 import type { RunnerSandboxProvider } from '../../shared/runner-sandbox-provider.js';
 import { createMutableChannelRuntime } from './runtime-app-channel-runtime.js';
+import { resolveGroupRouteExecutionProviderId } from '../../runtime/group-initial-execution-provider.js';
 export type RuntimeAppRepository = RuntimeRouterStateRepository &
   RuntimeMessageRepository &
   RuntimeConversationRouteRepository &
@@ -122,6 +126,10 @@ export interface RuntimeApp {
     },
   ) => Promise<boolean>;
   getConversationRoutes: () => Record<string, ConversationRoute>;
+  resolveExecutionProviderId: (
+    route: Pick<ConversationRoute, 'agentConfig' | 'folder'>,
+    chatJid: string,
+  ) => Promise<ExecutionProviderId>;
   setAgentCursor: (chatJid: string, timestamp: string) => void;
   setChannelRuntime: (runtime: GroupProcessingDeps['channelRuntime']) => void;
 }
@@ -179,6 +187,19 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
   const credentialBindingPromises = new Map<string, Promise<void>>();
   const ops = () => options.opsRepository ?? getRuntimeRepositories();
   const channelRuntime = createMutableChannelRuntime();
+  const resolveExecutionProviderId = (
+    route: Pick<ConversationRoute, 'agentConfig' | 'folder'>,
+    chatJid: string,
+  ) =>
+    resolveGroupRouteExecutionProviderId({
+      group: route,
+      appId: appIdFromConversationJid(chatJid) ?? 'default',
+      defaultModel: getDefaultModelConfig('interactive', route.folder).model,
+      executionAdapter,
+      agentHarness: getSelectedAgentHarness(route.folder),
+      listConfiguredProviders: getConfiguredModelProvidersForApp,
+      familyOrder: getRuntimeSettingsForConfig().modelFamilies,
+    });
   function getCredentialBroker(): Promise<AgentCredentialBroker | undefined> {
     const brokerConfig = getCredentialBrokerRuntimeConfig();
     const configKey = `${brokerConfig.mode}:${brokerConfig.gatewayBindHost}`;
@@ -608,6 +629,8 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     runnerSandboxProvider,
     getConfiguredModelProviders: getConfiguredModelProvidersForApp,
     getModelFamilyOrder: () => getRuntimeSettingsForConfig().modelFamilies,
+    getDefaultInteractiveModel: (agentFolder) =>
+      getDefaultModelConfig('interactive', agentFolder).model,
     getSelectedAgentHarness,
   });
 
@@ -632,6 +655,7 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     processGroupMessages: (chatJid, options) =>
       groupProcessor.processGroupMessages(chatJid, options),
     getConversationRoutes: () => conversationRoutes,
+    resolveExecutionProviderId,
     setAgentCursor: (chatJid, timestamp) => {
       lastAgentTimestamp[chatJid] = timestamp;
     },
@@ -640,7 +664,6 @@ export function createRuntimeApp(options: RuntimeAppOptions = {}): RuntimeApp {
     },
   };
 }
-
 export const collectRuntimeSessionMemory: import('../../domain/ports/session-memory-collector.js').SessionMemoryCollector =
   async (input) => {
     const { repositories } = getRuntimeStorage();
@@ -652,7 +675,6 @@ export const collectRuntimeSessionMemory: import('../../domain/ports/session-mem
       },
     });
   };
-
 let defaultRuntimeApp: RuntimeApp | null = null;
 
 export function getDefaultRuntimeApp(

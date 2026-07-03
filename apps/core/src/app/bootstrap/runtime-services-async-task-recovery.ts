@@ -17,15 +17,22 @@ import type { Logger } from '../../infrastructure/logging/logger.js';
 import type { IpcDeps } from '../../runtime/ipc.js';
 import { spawnAgent } from '../../runtime/agent-spawn.js';
 import type { AgentOutput } from '../../runtime/agent-spawn-types.js';
+import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
+import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
 import {
   resolveTurnSelectedMcpServerIds,
   resolveTurnSelectedSkillContext,
   resolveTurnSemanticCapabilities,
   resolveTurnToolPolicy,
 } from '../../runtime/group-run-context.js';
+import {
+  releaseCompactionLockFromTask,
+  SESSION_COMPACTION_TIMEOUT_MS,
+} from '../../runtime/group-session-command-state.js';
 import { McpToolProxy } from '../../application/mcp/mcp-tool-proxy.js';
 import { resolveMcpCredentialEnvForAgent } from '../../application/capability-secrets/mcp-secret-projection.js';
 import type { AsyncTaskRecord } from '../../domain/ports/async-tasks.js';
+import type { RuntimeAgentSessionRepository } from '../../domain/repositories/ops-repo.js';
 
 interface AsyncTaskRecoveryDeps extends Partial<
   Pick<
@@ -49,6 +56,7 @@ interface AsyncTaskRecoveryDeps extends Partial<
   >
 > {
   logger: Pick<Logger, 'warn'>;
+  opsRepository?: RuntimeAgentSessionRepository;
 }
 
 export async function recoverStaleAsyncCommandTasks(
@@ -115,9 +123,20 @@ export async function recoverStaleAsyncCommandTasks(
           }),
         });
   try {
+    const timedOutCompactions = await recoverStaleSessionCompactionTasks(
+      appId,
+      deps,
+    );
+    if (timedOutCompactions > 0) {
+      deps.logger.warn(
+        { timedOutCompactions },
+        'Recovered stale session compaction tasks',
+      );
+    }
     const recovered = await service.recoverStaleTasks({
       appId,
       staleAfterMs: ASYNC_TASK_STALE_AFTER_MS,
+      excludeKinds: ['session_compaction'],
     });
     if (recovered > 0) {
       deps.logger.warn({ recovered }, 'Recovered stale async command tasks');
@@ -139,6 +158,101 @@ export async function recoverStaleAsyncCommandTasks(
   } catch (err) {
     deps.logger.warn({ err }, 'Failed to recover stale async command tasks');
   }
+}
+
+export async function recoverStaleSessionCompactionTasks(
+  appId: string,
+  deps: AsyncTaskRecoveryDeps,
+): Promise<number> {
+  const repository = deps.getAsyncTaskRepository?.();
+  if (!repository) return 0;
+  const staleBefore = Date.now() - SESSION_COMPACTION_TIMEOUT_MS;
+  const tasks = await repository.listTasks({
+    appId,
+    kind: 'session_compaction',
+    statuses: ['queued', 'running'],
+    order: 'oldest_first',
+    limit: 200,
+  });
+  let recovered = 0;
+  for (const task of tasks) {
+    const activityAt = Date.parse(
+      task.heartbeatAt ?? task.updatedAt ?? task.createdAt,
+    );
+    if (Number.isFinite(activityAt) && activityAt >= staleBefore) continue;
+    const now = new Date().toISOString();
+    const errorSummary = 'Session compaction exceeded the 10 minute timeout.';
+    const terminal = await repository.transitionTask({
+      taskId: task.id,
+      leaseToken: task.leaseToken,
+      fencingVersion: task.fencingVersion,
+      status: 'timed_out',
+      now,
+      terminalAt: now,
+      errorSummary,
+      expectedUpdatedAt: task.updatedAt,
+    });
+    if (!terminal) continue;
+    recovered += 1;
+    if (deps.opsRepository) {
+      await releaseCompactionLockFromTask(
+        deps.opsRepository,
+        stringValue(terminal.privateCorrelationJson.provider) ?? '',
+        terminal,
+      );
+    }
+    await publishSessionCompactionTimeoutEvent(
+      deps.publishRuntimeEvent,
+      terminal,
+      errorSummary,
+    ).catch((err) =>
+      deps.logger.warn(
+        { err, taskId: task.id },
+        'Failed to publish session compaction timeout event',
+      ),
+    );
+  }
+  return recovered;
+}
+
+async function publishSessionCompactionTimeoutEvent(
+  publishRuntimeEvent:
+    | ((event: RuntimeEventPublishInput) => Promise<unknown> | unknown)
+    | undefined,
+  task: AsyncTaskRecord,
+  errorSummary: string,
+): Promise<void> {
+  if (!publishRuntimeEvent) return;
+  await publishRuntimeEvent({
+    appId: task.appId as never,
+    agentId: task.agentId as never,
+    ...(stringValue(task.privateCorrelationJson.agentSessionId)
+      ? {
+          sessionId: stringValue(
+            task.privateCorrelationJson.agentSessionId,
+          ) as never,
+        }
+      : {}),
+    ...(task.conversationId
+      ? { conversationId: task.conversationId as never }
+      : {}),
+    ...(task.threadId ? { threadId: task.threadId as never } : {}),
+    eventType: RUNTIME_EVENT_TYPES.SESSION_COMPACTION_TIMEOUT,
+    actor: 'runtime',
+    responseMode: 'none',
+    payload: {
+      state: 'timeout',
+      taskId: task.id,
+      ...(stringValue(task.privateCorrelationJson.provider)
+        ? { provider: stringValue(task.privateCorrelationJson.provider) }
+        : {}),
+      errorSummary,
+    },
+  });
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 const ASYNC_TASK_RECOVERY_INTERVAL_MS = 30_000;

@@ -1698,6 +1698,37 @@ describe('AsyncCommandTaskService', () => {
     expect(repository.tasks.get('task-stale')?.status).toBe('failed');
   });
 
+  it('skips excluded task kinds during stale recovery', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const stale = new Date(Date.now() - 120_000).toISOString();
+    await repository.createTask({
+      id: 'task-compact',
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      kind: 'session_compaction',
+      status: 'running',
+      admissionClass: 'task',
+      authoritySnapshotJson: {},
+      privateCorrelationJson: {},
+      leaseToken: 'lease-compact',
+      fencingVersion: 1,
+      now: stale,
+    });
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({}),
+    });
+
+    await expect(
+      service.recoverStaleTasks({
+        appId: 'app-1',
+        staleAfterMs: 1,
+        excludeKinds: ['session_compaction'],
+      }),
+    ).resolves.toBe(0);
+    expect(repository.tasks.get('task-compact')?.status).toBe('running');
+  });
+
   it('cancels delegated child tasks during stale parent recovery', async () => {
     const repository = new MemoryAsyncTaskRepository();
     const stale = new Date(Date.now() - 120_000).toISOString();
