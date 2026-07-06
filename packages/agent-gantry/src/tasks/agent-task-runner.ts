@@ -7,6 +7,7 @@ import type {
   GantryAgentTaskResult,
   GantryAgentTaskStep,
   GantryAgentTool,
+  GantryStructuredModelUsage,
   StructuredModelTaskRunnerConfig,
   StructuredJsonModelProvider,
 } from '../shared/types.js';
@@ -271,6 +272,7 @@ export async function runGenericAgentTask(
         outputSchema: actionSchema,
         attachments,
       });
+      promptMetrics = attachPromptCacheRequestMetrics(promptMetrics, input);
       const traceAttachments = await persistTraceAttachments(
         traceDir,
         step,
@@ -291,12 +293,14 @@ export async function runGenericAgentTask(
       });
       let generated: unknown;
       try {
-        generated = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
+        const generatedResult = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
           config.model.generateJson({
             taskType: input.taskType,
             instructions,
             input: modelInput,
             outputSchema: actionSchema,
+            cacheablePrefix: input.cacheablePrefix,
+            promptCache: input.promptCache,
             correlationId: input.correlationId
               ? `${input.correlationId}:step:${step}`
               : undefined,
@@ -304,7 +308,9 @@ export async function runGenericAgentTask(
           }),
           input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
           'agent_model_step_timeout',
-        )).output;
+        ));
+        generated = generatedResult.output;
+        promptMetrics = attachModelUsagePromptMetrics(promptMetrics, generatedResult.modelUsage);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message !== 'agent_model_step_timeout' || !input.projectStepStateForModel) {
@@ -323,6 +329,7 @@ export async function runGenericAgentTask(
           outputSchema: actionSchema,
           attachments,
         });
+        let retryPromptMetricsWithCache = attachPromptCacheRequestMetrics(retryPromptMetrics, input);
         await writeAgentModelTrace(traceDir, {
           kind: 'model_input_timeout_retry',
           taskRunId,
@@ -334,17 +341,19 @@ export async function runGenericAgentTask(
           modelInput: retryModelInput,
           outputSchema: actionSchema,
           attachments: traceAttachments,
-          promptMetrics: retryPromptMetrics,
+          promptMetrics: retryPromptMetricsWithCache,
           previousError: message,
         });
         modelInput = retryModelInput;
-        promptMetrics = retryPromptMetrics;
-        generated = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
+        promptMetrics = retryPromptMetricsWithCache;
+        const generatedResult = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
           config.model.generateJson({
             taskType: input.taskType,
             instructions,
             input: modelInput,
             outputSchema: actionSchema,
+            cacheablePrefix: input.cacheablePrefix,
+            promptCache: input.promptCache,
             correlationId: input.correlationId
               ? `${input.correlationId}:step:${step}:timeout_retry`
               : undefined,
@@ -352,7 +361,9 @@ export async function runGenericAgentTask(
           }),
           input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
           'agent_model_step_timeout',
-        )).output;
+        ));
+        generated = generatedResult.output;
+        promptMetrics = attachModelUsagePromptMetrics(promptMetrics, generatedResult.modelUsage);
       }
       action =
         typeof generated === 'string'
@@ -936,6 +947,7 @@ export async function runGenericAgentTask(
             outputSchema: actionSchema,
             attachments: [],
           });
+          let recoveryPromptMetricsWithCache = attachPromptCacheRequestMetrics(recoveryPromptMetrics, input);
           await writeAgentModelTrace(traceDir, {
             kind: 'model_input_tool_error_recovery',
             taskRunId,
@@ -947,16 +959,18 @@ export async function runGenericAgentTask(
             modelInput: recoveryModelInput,
             outputSchema: actionSchema,
             attachments: [],
-            promptMetrics: recoveryPromptMetrics,
+            promptMetrics: recoveryPromptMetricsWithCache,
             previousError: message,
           });
           try {
-            const generated = await runWithOptionalTimeout(
+            const generatedResult = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
               config.model.generateJson({
                 taskType: input.taskType,
                 instructions: recoveryInstructions,
                 input: recoveryModelInput,
                 outputSchema: actionSchema,
+                cacheablePrefix: input.cacheablePrefix,
+                promptCache: input.promptCache,
                 correlationId: input.correlationId
                   ? `${input.correlationId}:step:${step}:tool_error_recovery`
                   : undefined,
@@ -964,6 +978,11 @@ export async function runGenericAgentTask(
               }),
               input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
               'agent_model_step_timeout',
+            ));
+            const generated = generatedResult.output;
+            recoveryPromptMetricsWithCache = attachModelUsagePromptMetrics(
+              recoveryPromptMetricsWithCache,
+              generatedResult.modelUsage,
             );
             const recoveryAction =
               typeof generated === 'string'
@@ -978,7 +997,7 @@ export async function runGenericAgentTask(
               createdAt: new Date().toISOString(),
               rawOutput: generated,
               parsedAction: recoveryAction,
-              promptMetrics: recoveryPromptMetrics,
+              promptMetrics: recoveryPromptMetricsWithCache,
               previousError: message,
             });
             const recoveryParsed = parseGenericAgentAction(recoveryAction);
@@ -1005,7 +1024,7 @@ export async function runGenericAgentTask(
                   completedAt: new Date().toISOString(),
                   durationMs: 0,
                   observation: summarizeAgentObservation(recoveryParsed.output),
-                  promptMetrics: recoveryPromptMetrics,
+                  promptMetrics: recoveryPromptMetricsWithCache,
                   auditNote: recoveryParsed.auditNote,
                   whyThisStep: recoveryParsed.whyThisStep,
                   expectedOutcome: recoveryParsed.expectedOutcome,
@@ -1039,7 +1058,7 @@ export async function runGenericAgentTask(
                   source: 'model_final',
                   validation: recoveryValidation,
                 }),
-                promptMetrics: recoveryPromptMetrics,
+                promptMetrics: recoveryPromptMetricsWithCache,
                 auditNote: 'Tool timeout recovery final output rejected by task-specific validator.',
               });
             }
@@ -1056,7 +1075,7 @@ export async function runGenericAgentTask(
               createdAt: new Date().toISOString(),
               error: recoveryMessage,
               previousError: message,
-              promptMetrics: recoveryPromptMetrics,
+              promptMetrics: recoveryPromptMetricsWithCache,
             });
             await recordStep({
               step,
@@ -1072,7 +1091,7 @@ export async function runGenericAgentTask(
                 originalError: message,
                 recoveryError: recoveryMessage,
               },
-              promptMetrics: recoveryPromptMetrics,
+              promptMetrics: recoveryPromptMetricsWithCache,
             });
           }
         }
@@ -1153,6 +1172,50 @@ function resolveAgentModelTraceDir(input: GantryAgentTaskInput): string | null {
     input.correlationId ?? randomUUID(),
   );
   return path.resolve(baseDir, safeTask, safeCorrelation);
+}
+
+function attachPromptCacheRequestMetrics(
+  promptMetrics: Record<string, unknown>,
+  input: GantryAgentTaskInput,
+): Record<string, unknown> {
+  const prefix = input.cacheablePrefix?.trim();
+  const promptCache = input.promptCache;
+  if (!prefix || promptCache?.enabled !== true) {
+    return promptMetrics;
+  }
+  return {
+    ...promptMetrics,
+    promptCache: {
+      enabled: true,
+      ttl: promptCache.ttl ?? '1h',
+      prefixHash: promptCache.prefixHash ?? null,
+      prefixCharCount: prefix.length,
+    },
+  };
+}
+
+function attachModelUsagePromptMetrics(
+  promptMetrics: Record<string, unknown>,
+  modelUsage: GantryStructuredModelUsage | null,
+): Record<string, unknown> {
+  if (!modelUsage) {
+    return promptMetrics;
+  }
+  const promptCache = asRecord(promptMetrics.promptCache);
+  if (!promptCache) {
+    return promptMetrics;
+  }
+  return {
+    ...promptMetrics,
+    promptCache: {
+      ...promptCache,
+      cacheCreationInputTokens: modelUsage.cacheCreationInputTokens ?? null,
+      cacheReadInputTokens: modelUsage.cacheReadInputTokens ?? null,
+      cachedTokens: modelUsage.cachedTokens ?? null,
+      promptCacheTtl: modelUsage.promptCacheTtl ?? null,
+      promptCachePrefixHash: modelUsage.promptCachePrefixHash ?? promptCache.prefixHash ?? null,
+    },
+  };
 }
 
 async function writeAgentModelTrace(

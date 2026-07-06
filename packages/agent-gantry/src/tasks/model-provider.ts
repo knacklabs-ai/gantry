@@ -80,6 +80,7 @@ export function createAnthropicStructuredModelProvider(
             throw buildAnthropicError(response.status, payload);
           }
           const output = parseAnthropicJsonPayload(payload);
+          const promptCacheMetadata = resolvePromptCache(input);
           return {
             output,
             modelUsage: readAnthropicModelUsage({
@@ -90,6 +91,7 @@ export function createAnthropicStructuredModelProvider(
               taskType: input.taskType,
               correlationId: input.correlationId ?? null,
               durationMs: Date.now() - startedAt,
+              promptCacheMetadata,
             }),
           };
         } catch (error) {
@@ -218,7 +220,7 @@ function buildAnthropicRequestBody(input: {
       ? {}
       : { temperature: input.temperature }),
     ...buildAnthropicEffortRequestFields(input.effort),
-    system: buildAnthropicSystemPrompt(input.input.instructions),
+    system: buildAnthropicSystemPrompt(input.input),
     messages: [
       {
         role: 'user',
@@ -238,16 +240,32 @@ function buildAnthropicEffortRequestFields(
   };
 }
 
-function buildAnthropicSystemPrompt(instructions: string): string {
+function buildAnthropicSystemPrompt(
+  input: Parameters<StructuredJsonModelProvider['generateJson']>[0],
+): string {
+  if (resolvePromptCache(input)) {
+    return [
+      'You are a structured JSON task runner.',
+      '',
+      'Return exactly one JSON object. Do not include markdown fences, prose, or commentary outside JSON.',
+    ].join('\n');
+  }
   return [
-    instructions.trim(),
+    input.instructions.trim(),
     '',
     'Return exactly one JSON object. Do not include markdown fences, prose, or commentary outside JSON.',
   ].join('\n');
 }
 
 type AnthropicUserContentBlock =
-  | { readonly type: 'text'; readonly text: string }
+  | {
+      readonly type: 'text';
+      readonly text: string;
+      readonly cache_control?: {
+        readonly type: 'ephemeral';
+        readonly ttl?: '5m' | '1h';
+      };
+    }
   | {
       readonly type: 'image';
       readonly source: {
@@ -260,7 +278,10 @@ type AnthropicUserContentBlock =
 function buildAnthropicUserContent(
   input: Parameters<StructuredJsonModelProvider['generateJson']>[0],
 ): AnthropicUserContentBlock[] {
-  const prompt = [
+  const promptCache = resolvePromptCache(input);
+  const dynamicPrompt = [
+    promptCache ? `Task instructions:\n${input.instructions.trim()}` : '',
+    promptCache ? '' : '',
     'Task type:',
     input.taskType,
     '',
@@ -289,7 +310,19 @@ function buildAnthropicUserContent(
     .filter((part) => part !== '')
     .join('\n');
   return [
-    { type: 'text', text: prompt },
+    ...(promptCache
+      ? [
+          {
+            type: 'text' as const,
+            text: promptCache.prefix,
+            cache_control: {
+              type: 'ephemeral' as const,
+              ttl: promptCache.ttl,
+            },
+          },
+        ]
+      : []),
+    { type: 'text', text: dynamicPrompt },
     ...readInlineImageAttachments(input.attachments).map((attachment) => ({
       type: 'image' as const,
       source: {
@@ -299,6 +332,24 @@ function buildAnthropicUserContent(
       },
     })),
   ];
+}
+
+function resolvePromptCache(
+  input: Parameters<StructuredJsonModelProvider['generateJson']>[0],
+): {
+  readonly prefix: string;
+  readonly ttl: '5m' | '1h';
+  readonly prefixHash: string | null;
+} | null {
+  const prefix = input.cacheablePrefix?.trim();
+  if (!prefix || input.promptCache?.enabled !== true) {
+    return null;
+  }
+  return {
+    prefix,
+    ttl: input.promptCache.ttl === '5m' ? '5m' : '1h',
+    prefixHash: input.promptCache.prefixHash ?? null,
+  };
 }
 
 function readInlineImageAttachments(
@@ -346,7 +397,7 @@ function parseAnthropicJsonPayload(
   if (!text) {
     throw new Error('Anthropic response did not include text content.');
   }
-  return parseJsonRecord(stripJsonFence(text));
+  return parseJsonRecord(text);
 }
 
 function readAnthropicModelUsage(input: {
@@ -357,13 +408,20 @@ function readAnthropicModelUsage(input: {
   readonly taskType: string;
   readonly correlationId: string | null;
   readonly durationMs: number;
+  readonly promptCacheMetadata: {
+    readonly ttl: '5m' | '1h';
+    readonly prefixHash: string | null;
+  } | null;
 }): GantryStructuredModelUsage {
   const usage = asRecord(input.payload.usage);
   const inputTokens = readOptionalNumber(usage?.input_tokens);
   const outputTokens = readOptionalNumber(usage?.output_tokens);
+  const cacheReadInputTokens = readOptionalNumber(usage?.cache_read_input_tokens);
+  const cacheCreationInputTokens = readOptionalNumber(usage?.cache_creation_input_tokens);
   const cachedTokens =
-    readOptionalNumber(usage?.cache_read_input_tokens) ??
-    readOptionalNumber(usage?.cache_creation_input_tokens);
+    cacheReadInputTokens ??
+    cacheCreationInputTokens;
+  const promptCacheMetadata = input.promptCacheMetadata;
   const promptCharCount = JSON.stringify(input.body).length;
   if (inputTokens !== null || outputTokens !== null) {
     return {
@@ -376,6 +434,10 @@ function readAnthropicModelUsage(input: {
       outputTokens,
       totalTokens: addOptionalNumbers(inputTokens, outputTokens),
       cachedTokens,
+      cacheCreationInputTokens,
+      cacheReadInputTokens,
+      promptCacheTtl: promptCacheMetadata?.ttl ?? null,
+      promptCachePrefixHash: promptCacheMetadata?.prefixHash ?? null,
       durationMs: input.durationMs,
       usageSource: 'provider',
     };
@@ -393,6 +455,10 @@ function readAnthropicModelUsage(input: {
     outputTokens: estimatedOutputTokens,
     totalTokens: estimatedInputTokens + estimatedOutputTokens,
     cachedTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    promptCacheTtl: promptCacheMetadata?.ttl ?? null,
+    promptCachePrefixHash: promptCacheMetadata?.prefixHash ?? null,
     durationMs: input.durationMs,
     usageSource: 'estimated',
   };
@@ -444,10 +510,4 @@ function isStructuredModelProviderEnvelope(
     'output' in value &&
     'modelUsage' in value,
   );
-}
-
-function stripJsonFence(text: string): string {
-  const trimmed = text.trim();
-  const match = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return match?.[1]?.trim() ?? trimmed;
 }

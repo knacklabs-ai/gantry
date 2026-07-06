@@ -514,6 +514,183 @@ describe('@cawstudios/agent-gantry', () => {
     expect(JSON.stringify(requestBody)).not.toContain('test-key');
   });
 
+  it('adds Anthropic prompt cache control only to the stable prefix block', async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      fetchImpl: async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: '{"status":"completed"}' }],
+            usage: {
+              input_tokens: 100,
+              output_tokens: 5,
+              cache_creation_input_tokens: 40,
+              cache_read_input_tokens: 60,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'agent.tender.deep_analysis.section',
+        instructions: 'Return JSON for commercial financial terms.',
+        cacheablePrefix: 'stable tender evidence scope',
+        promptCache: { enabled: true, ttl: '1h', prefixHash: 'prefix-hash' },
+        input: {
+          sectionKey: 'commercial_financial_terms',
+          correlationId: 'dynamic-correlation',
+        },
+        correlationId: 'dynamic-correlation',
+      }),
+    ).resolves.toMatchObject({
+      output: { status: 'completed' },
+      modelUsage: {
+        cacheCreationInputTokens: 40,
+        cacheReadInputTokens: 60,
+        promptCacheTtl: '1h',
+        promptCachePrefixHash: 'prefix-hash',
+      },
+    });
+
+    const messages = requestBody?.messages as Array<{ content?: unknown }> | undefined;
+    const content = messages?.[0]?.content as Array<Record<string, unknown>>;
+    expect(String(requestBody?.system)).not.toContain('commercial financial terms');
+    expect(content).toHaveLength(2);
+    expect(content[0]).toMatchObject({
+      type: 'text',
+      text: 'stable tender evidence scope',
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    });
+    expect(JSON.stringify(content[0])).not.toContain('commercial_financial_terms');
+    expect(JSON.stringify(content[0])).not.toContain('dynamic-correlation');
+    expect(content[1]).toMatchObject({ type: 'text' });
+    expect(JSON.stringify(content[1])).toContain('Return JSON for commercial financial terms.');
+    expect(JSON.stringify(content[1])).toContain('commercial_financial_terms');
+    expect(JSON.stringify(content[1])).toContain('dynamic-correlation');
+    expect(content[1]).not.toHaveProperty('cache_control');
+  });
+
+  it('keeps the existing Anthropic single-block prompt shape when prompt cache is disabled', async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      fetchImpl: async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: '{"status":"completed"}' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'agent.tender.deep_analysis.section',
+        instructions: 'Return JSON.',
+        cacheablePrefix: 'stable tender evidence scope',
+        promptCache: { enabled: false, ttl: '1h' },
+        input: { sectionKey: 'commercial_financial_terms' },
+      }),
+    ).resolves.toMatchObject({ output: { status: 'completed' } });
+
+    const messages = requestBody?.messages as Array<{ content?: unknown }> | undefined;
+    const content = messages?.[0]?.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(1);
+    expect(content[0]?.cache_control).toBeUndefined();
+    expect(JSON.stringify(content)).not.toContain('stable tender evidence scope');
+  });
+
+  it.each([
+    ['raw JSON', '{"status":"completed"}'],
+    ['markdown-fenced JSON', '```json\n{"status":"completed"}\n```'],
+    [
+      'prose with markdown-fenced JSON',
+      'Here is the JSON:\n```json\n{"status":"completed"}\n```',
+    ],
+  ])('parses Anthropic text content as %s', async (_label, text) => {
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'task.anthropic_json_shape',
+        instructions: 'Return JSON.',
+        input: { value: 1 },
+      }),
+    ).resolves.toMatchObject({ output: { status: 'completed' } });
+  });
+
+  it('rejects malformed Anthropic JSON text content', async () => {
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      maxRetries: 1,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: '{"status":' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'task.anthropic_malformed_json',
+        instructions: 'Return JSON.',
+        input: { value: 1 },
+      }),
+    ).rejects.toThrow(
+      'Anthropic task.anthropic_malformed_json failed after 1 attempts',
+    );
+  });
+
+  it('rejects non-object Anthropic JSON text content', async () => {
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      maxRetries: 1,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: '["completed"]' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'task.anthropic_non_object_json',
+        instructions: 'Return JSON.',
+        input: { value: 1 },
+      }),
+    ).rejects.toThrow('Structured task model output must be a JSON object.');
+  });
+
   it('retries transient Anthropic overload responses before succeeding', async () => {
     const fetchMock = vi.fn(async () => {
       if (fetchMock.mock.calls.length === 1) {

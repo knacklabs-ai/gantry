@@ -99,6 +99,8 @@ export interface GantryAgentTaskInput {
   readonly input: Record<string, unknown>;
   readonly tools: readonly GantryAgentTool[];
   readonly finalSchema?: Record<string, unknown>;
+  readonly cacheablePrefix?: string | null;
+  readonly promptCache?: GantryPromptCacheConfig | null;
   readonly correlationId?: string | null;
   readonly maxSteps?: number;
   readonly deadlineAt?: string | null;
@@ -479,9 +481,17 @@ export interface StructuredJsonModelProvider {
     readonly instructions: string;
     readonly input: Record<string, unknown>;
     readonly outputSchema?: Record<string, unknown>;
+    readonly cacheablePrefix?: string | null;
+    readonly promptCache?: GantryPromptCacheConfig | null;
     readonly correlationId?: string | null;
     readonly attachments?: readonly GantryAgentTaskAttachment[];
   }): Promise<StructuredJsonModelProviderResult>;
+}
+
+export interface GantryPromptCacheConfig {
+  readonly enabled?: boolean;
+  readonly ttl?: '5m' | '1h';
+  readonly prefixHash?: string | null;
 }
 
 export interface GantryStructuredModelUsage {
@@ -494,6 +504,10 @@ export interface GantryStructuredModelUsage {
   readonly outputTokens?: number | null;
   readonly totalTokens?: number | null;
   readonly cachedTokens?: number | null;
+  readonly cacheCreationInputTokens?: number | null;
+  readonly cacheReadInputTokens?: number | null;
+  readonly promptCacheTtl?: '5m' | '1h' | null;
+  readonly promptCachePrefixHash?: string | null;
   readonly durationMs?: number | null;
   readonly usageSource?: 'provider' | 'estimated' | string;
 }
@@ -510,6 +524,8 @@ export interface GantryDelegatedAgentTaskInput {
   readonly objective: string;
   readonly context?: string | null;
   readonly expectedOutput?: string | null;
+  readonly cacheablePrefix?: string | null;
+  readonly promptCache?: GantryPromptCacheConfig | null;
   readonly timeoutMs?: number | null;
   readonly correlationId?: string | null;
 }
