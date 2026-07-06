@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildExternalNotificationAdaptiveCard,
   createAnthropicStructuredModelProvider,
@@ -118,7 +118,8 @@ describe('@cawstudios/agent-gantry', () => {
   it('still rejects non-JSON prose from structured model task final output', async () => {
     const runner = createStructuredModelTaskRunner({
       model: {
-        generateJson: async () => 'Here is the answer: {"action":"final","output":{"status":"ok"}}',
+        generateJson: async () =>
+          'Here is the answer: {"action":"final","output":{"status":"ok"}}',
       },
     });
 
@@ -146,7 +147,10 @@ describe('@cawstudios/agent-gantry', () => {
           seenInputSizes.push(JSON.stringify(input).length);
           if (calls === 1) {
             return await new Promise<Record<string, unknown>>((resolve) => {
-              setTimeout(() => resolve({ action: 'final', output: { status: 'late' } }), 50);
+              setTimeout(
+                () => resolve({ action: 'final', output: { status: 'late' } }),
+                50,
+              );
             });
           }
           return { action: 'final', output: { status: 'ok' } };
@@ -161,9 +165,14 @@ describe('@cawstudios/agent-gantry', () => {
       tools: [],
       maxSteps: 1,
       modelStepTimeoutMs: 5,
-      projectStepStateForModel: ({ attempt, state }) => attempt === 'timeout_retry'
-        ? { input: { retry: true }, observations: [], agentMemory: { nextGoal: { recommendedTool: 'final' } } }
-        : state,
+      projectStepStateForModel: ({ attempt, state }) =>
+        attempt === 'timeout_retry'
+          ? {
+              input: { retry: true },
+              observations: [],
+              agentMemory: { nextGoal: { recommendedTool: 'final' } },
+            }
+          : state,
     });
 
     expect(result).toMatchObject({
@@ -296,13 +305,14 @@ describe('@cawstudios/agent-gantry', () => {
         expect(state.input).toMatchObject({ large: expect.any(String) });
         return { instructions: 'Return final JSON now.', tools: [] };
       },
-      projectStepStateForModel: ({ attempt, state }) => attempt === 'tool_error_recovery'
-        ? {
-            input: { recovery: true },
-            observations: [],
-            agentMemory: { nextGoal: { recommendedTool: 'final' } },
-          }
-        : state,
+      projectStepStateForModel: ({ attempt, state }) =>
+        attempt === 'tool_error_recovery'
+          ? {
+              input: { recovery: true },
+              observations: [],
+              agentMemory: { nextGoal: { recommendedTool: 'final' } },
+            }
+          : state,
     });
 
     expect(result).toMatchObject({
@@ -312,7 +322,10 @@ describe('@cawstudios/agent-gantry', () => {
     expect(modelCalls).toBe(2);
     expect(recoveryHookCalls).toBe(1);
     expect(recoveryAvailableToolCount).toBe(0);
-    expect(result?.steps.map((step) => step.status)).toEqual(['failed', 'completed']);
+    expect(result?.steps.map((step) => step.status)).toEqual([
+      'failed',
+      'completed',
+    ]);
   });
 
   it('keeps stepTimeoutMs as the generic agent timeout fallback', async () => {
@@ -499,6 +512,69 @@ describe('@cawstudios/agent-gantry', () => {
     expect(requestBody).not.toHaveProperty('thinking');
     expect(requestBody).not.toHaveProperty('output_config');
     expect(JSON.stringify(requestBody)).not.toContain('test-key');
+  });
+
+  it('retries transient Anthropic overload responses before succeeding', async () => {
+    const fetchMock = vi.fn(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(
+          JSON.stringify({ error: { message: 'Overloaded' } }),
+          { status: 529, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          content: [{ type: 'text', text: '{"status":"completed"}' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      maxRetries: 2,
+      retryBaseDelayMs: 0,
+      retryMaxDelayMs: 0,
+      fetchImpl: fetchMock,
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'task.overloaded',
+        instructions: 'Return JSON.',
+        input: { value: 1 },
+      }),
+    ).resolves.toMatchObject({ output: { status: 'completed' } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry non-transient Anthropic validation failures', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'Bad request' } }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const model = createAnthropicStructuredModelProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      defaultModel: 'claude-test',
+      maxRetries: 3,
+      retryBaseDelayMs: 0,
+      retryMaxDelayMs: 0,
+      fetchImpl: fetchMock,
+    });
+
+    await expect(
+      model.generateJson({
+        taskType: 'task.bad_request',
+        instructions: 'Return JSON.',
+        input: { value: 1 },
+      }),
+    ).rejects.toThrow('Anthropic task.bad_request failed after 3 attempts');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('estimates generic Anthropic token usage when provider usage is missing', async () => {

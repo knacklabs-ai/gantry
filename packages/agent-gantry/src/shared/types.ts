@@ -516,7 +516,13 @@ export interface GantryDelegatedAgentTaskInput {
 
 export interface GantryDelegatedAgentTaskHandle {
   readonly taskId: string;
-  readonly status?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+  readonly status?:
+    | 'queued'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'unknown';
   readonly summary?: string | null;
 }
 
@@ -528,7 +534,13 @@ export interface GantryDelegatedAgentTaskLookup {
 
 export interface GantryDelegatedAgentTaskResult {
   readonly taskId: string;
-  readonly status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+  readonly status:
+    | 'queued'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'unknown';
   readonly output?: Record<string, unknown> | null;
   readonly outputText?: string | null;
   readonly error?: string | null;
@@ -562,6 +574,8 @@ export interface AnthropicStructuredModelConfig {
   readonly fetchImpl?: typeof fetch;
   readonly timeoutMs?: number;
   readonly maxRetries?: number;
+  readonly retryBaseDelayMs?: number;
+  readonly retryMaxDelayMs?: number;
   readonly temperature?: number;
   readonly maxTokens?: number;
   readonly apiVersion?: string;

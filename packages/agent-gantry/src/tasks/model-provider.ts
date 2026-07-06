@@ -39,6 +39,11 @@ export function createAnthropicStructuredModelProvider(
   const fetchImpl = config.fetchImpl ?? fetch;
   const timeoutMs = Math.max(1_000, config.timeoutMs ?? 60_000);
   const maxRetries = Math.max(1, config.maxRetries ?? 3);
+  const retryBaseDelayMs = Math.max(0, config.retryBaseDelayMs ?? 1_000);
+  const retryMaxDelayMs = Math.max(
+    retryBaseDelayMs,
+    config.retryMaxDelayMs ?? 30_000,
+  );
   const apiVersion = config.apiVersion ?? '2023-06-01';
 
   return {
@@ -89,7 +94,15 @@ export function createAnthropicStructuredModelProvider(
           };
         } catch (error) {
           lastError = error;
-          if (attempt === maxRetries) break;
+          if (attempt === maxRetries || !isRetryableAnthropicError(error))
+            break;
+          await sleep(
+            calculateRetryDelayMs({
+              attempt,
+              baseDelayMs: retryBaseDelayMs,
+              maxDelayMs: retryMaxDelayMs,
+            }),
+          );
         }
       }
       throw new Error(
@@ -99,6 +112,43 @@ export function createAnthropicStructuredModelProvider(
       );
     },
   };
+}
+
+function isRetryableAnthropicError(error: unknown): boolean {
+  const statusCode = readAnthropicErrorStatusCode(error);
+  if (statusCode === null) return true;
+  return (
+    statusCode === 408 ||
+    statusCode === 429 ||
+    statusCode === 529 ||
+    (statusCode >= 500 && statusCode <= 599)
+  );
+}
+
+function readAnthropicErrorStatusCode(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  return typeof statusCode === 'number' && Number.isFinite(statusCode)
+    ? statusCode
+    : null;
+}
+
+function calculateRetryDelayMs(input: {
+  readonly attempt: number;
+  readonly baseDelayMs: number;
+  readonly maxDelayMs: number;
+}): number {
+  if (input.baseDelayMs <= 0 || input.maxDelayMs <= 0) return 0;
+  const exponentialDelayMs = Math.min(
+    input.maxDelayMs,
+    input.baseDelayMs * 2 ** Math.max(0, input.attempt - 1),
+  );
+  return Math.floor(exponentialDelayMs * (0.5 + Math.random() * 0.5));
+}
+
+function sleep(delayMs: number): Promise<void> {
+  if (delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 interface ResolvedAnthropicTaskPolicy {
@@ -164,7 +214,9 @@ function buildAnthropicRequestBody(input: {
   return {
     model: input.model,
     max_tokens: input.maxTokens,
-    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input.temperature === undefined
+      ? {}
+      : { temperature: input.temperature }),
     ...buildAnthropicEffortRequestFields(input.effort),
     system: buildAnthropicSystemPrompt(input.input.instructions),
     messages: [
@@ -309,7 +361,8 @@ function readAnthropicModelUsage(input: {
   const usage = asRecord(input.payload.usage);
   const inputTokens = readOptionalNumber(usage?.input_tokens);
   const outputTokens = readOptionalNumber(usage?.output_tokens);
-  const cachedTokens = readOptionalNumber(usage?.cache_read_input_tokens) ??
+  const cachedTokens =
+    readOptionalNumber(usage?.cache_read_input_tokens) ??
     readOptionalNumber(usage?.cache_creation_input_tokens);
   const promptCharCount = JSON.stringify(input.body).length;
   if (inputTokens !== null || outputTokens !== null) {
@@ -351,7 +404,10 @@ function readOptionalNumber(value: unknown): number | null {
     : null;
 }
 
-function addOptionalNumbers(left: number | null, right: number | null): number | null {
+function addOptionalNumbers(
+  left: number | null,
+  right: number | null,
+): number | null {
   if (left === null && right === null) return null;
   return (left ?? 0) + (right ?? 0);
 }
@@ -362,7 +418,10 @@ function estimateTokensFromChars(charCount: number): number {
 
 export function unwrapStructuredJsonModelProviderResult(
   result: StructuredJsonModelProviderResult,
-): { readonly output: Record<string, unknown> | string; readonly modelUsage: GantryStructuredModelUsage | null } {
+): {
+  readonly output: Record<string, unknown> | string;
+  readonly modelUsage: GantryStructuredModelUsage | null;
+} {
   if (isStructuredModelProviderEnvelope(result)) {
     return {
       output: result.output,
@@ -374,13 +433,16 @@ export function unwrapStructuredJsonModelProviderResult(
 
 function isStructuredModelProviderEnvelope(
   value: StructuredJsonModelProviderResult,
-): value is { readonly output: Record<string, unknown> | string; readonly modelUsage?: GantryStructuredModelUsage | null } {
+): value is {
+  readonly output: Record<string, unknown> | string;
+  readonly modelUsage?: GantryStructuredModelUsage | null;
+} {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      'output' in value &&
-      'modelUsage' in value,
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    'output' in value &&
+    'modelUsage' in value,
   );
 }
 
