@@ -899,7 +899,13 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(
       sdkState.calls[0]?.options.mcpServers.gantry?.env
         ?.GANTRY_MCP_TOOL_NAMES_JSON,
-    ).toBe(JSON.stringify(selectedGantryMcpToolNames([])));
+    ).toBe(
+      JSON.stringify(
+        selectedGantryMcpToolNames([], {
+          memoryReviewerIsControlApprover: true,
+        }),
+      ),
+    );
     expect(
       sdkState.calls[0]?.options.mcpServers.gantry?.env
         ?.GANTRY_MEMORY_IPC_ACTIONS_JSON,
@@ -910,7 +916,7 @@ describe('Claude Agent SDK boundary integration', () => {
         }),
       ),
     );
-    expect(sdkState.calls[0]?.options.allowedTools).not.toEqual(
+    expect(sdkState.calls[0]?.options.allowedTools).toEqual(
       expect.arrayContaining([
         'mcp__gantry__memory_review_pending',
         'mcp__gantry__memory_review_decision',

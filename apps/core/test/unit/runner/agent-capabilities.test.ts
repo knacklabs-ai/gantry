@@ -497,7 +497,7 @@ describe('agent capability composition', () => {
     ]);
   });
 
-  it('keeps memory review tools out of the user-facing runner', () => {
+  it('projects memory review tools for memory control approvers', () => {
     const profile = composeAgentCapabilities({
       mcpServerPath: '/tmp/ipc-mcp-stdio.js',
       chatJid: 'tg:sales',
@@ -506,10 +506,10 @@ describe('agent capability composition', () => {
       memoryReviewerIsControlApprover: true,
     });
 
-    expect(profile.allowedTools).not.toContain(
+    expect(profile.allowedTools).toContain(
       'mcp__gantry__memory_review_pending',
     );
-    expect(profile.allowedTools).not.toContain(
+    expect(profile.allowedTools).toContain(
       'mcp__gantry__memory_review_decision',
     );
     expect(profile.allowedTools).not.toContain('mcp__gantry__memory_patch');
@@ -522,8 +522,8 @@ describe('agent capability composition', () => {
     const projectedToolNames = JSON.parse(
       String(profile.mcpServers.gantry?.env?.GANTRY_MCP_TOOL_NAMES_JSON),
     ) as string[];
-    expect(projectedToolNames).not.toContain('memory_review_pending');
-    expect(projectedToolNames).not.toContain('memory_review_decision');
+    expect(projectedToolNames).toContain('memory_review_pending');
+    expect(projectedToolNames).toContain('memory_review_decision');
     expect(
       JSON.parse(
         String(profile.mcpServers.gantry?.env?.GANTRY_MEMORY_IPC_ACTIONS_JSON),

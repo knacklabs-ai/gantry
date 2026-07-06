@@ -258,22 +258,12 @@ describe('jobs/execution-notifications', () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       'tg:scheduler',
-      expect.stringContaining(
-        '**📝 Needs memory review** · Memory Dreaming (main_agent tg:5759865942)',
-      ),
+      'Memory job needs review: 4 memory changes waiting.',
       expect.objectContaining({
         threadId: 'thread-1',
         actionAffordances: [],
       }),
     );
-    const message = String(sendMessage.mock.calls[0]?.[1]);
-    expect(message).toContain(
-      'Memory dreaming needs attention: 4 sent to review.',
-    );
-    expect(message).toContain(
-      'Needs attention: 4 memory changes need your review.',
-    );
-    expect(message).not.toContain('memory_review_pending');
   });
 
   it('keeps pending memory review guidance in lifecycle update summaries', async () => {
@@ -300,21 +290,35 @@ describe('jobs/execution-notifications', () => {
     expect(updateLifecycleNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         runStatus: 'completed',
-        summaryMessage: expect.stringContaining(
-          '**📝 Needs memory review** · Memory Dreaming (main_agent tg:5759865942)',
-        ),
+        summaryMessage: 'Memory job needs review: 7 memory changes waiting.',
       }),
     );
-    const summaryMessage = String(
-      updateLifecycleNotification.mock.calls[0]?.[0].summaryMessage,
+  });
+
+  it('sends compact blocked memory dreaming notifications', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+
+    await notifySchedulerTerminalRunState({
+      job: makeMemoryDreamingJob(),
+      runId: 'run-1',
+      runShortId: 9,
+      runStatus: 'completed',
+      summary: 'Memory dreaming needs attention: 4 blocked.',
+      nextRun: null,
+      retryCount: 0,
+      pauseReason: null,
+      sendMessage,
+      durationMs: 12_000,
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'tg:scheduler',
+      'Memory job needs attention: 4 memory changes blocked while creating reviews.',
+      expect.objectContaining({
+        threadId: 'thread-1',
+        actionAffordances: [],
+      }),
     );
-    expect(summaryMessage).toContain(
-      'Memory dreaming needs attention: 7 pending memory reviews need review.',
-    );
-    expect(summaryMessage).toContain(
-      'Needs attention: 7 memory changes need your review.',
-    );
-    expect(summaryMessage).not.toContain('memory_review_pending');
   });
 
   it('hides runner diagnostics from failed job receipts', async () => {

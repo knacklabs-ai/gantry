@@ -223,16 +223,44 @@ function compactMemoryDreamingTerminalMessage(input: {
 }): string | null {
   if (!isMemoryDreamingSystemJob(input.job)) return null;
   if (input.runStatus !== 'completed') return null;
-  if (memoryDreamingSummaryNeedsAttention(input.summary)) return null;
-  return memoryDreamingSummaryAlreadyRunning(input.summary)
-    ? 'Memory job already running.'
+  if (memoryDreamingSummaryAlreadyRunning(input.summary)) {
+    return 'Memory job already running.';
+  }
+  const reviewCount = memoryDreamingReviewCount(input.summary);
+  if (reviewCount) {
+    return `Memory job needs review: ${reviewCount} memory change${reviewCount === 1 ? '' : 's'} waiting.`;
+  }
+  const blockedCount = memoryDreamingBlockedCount(input.summary);
+  if (blockedCount) {
+    return `Memory job needs attention: ${blockedCount} memory change${blockedCount === 1 ? '' : 's'} blocked while creating reviews.`;
+  }
+  return memoryDreamingSummaryNeedsAttention(input.summary)
+    ? null
     : 'Memory job done.';
 }
 
 function memoryDreamingSummaryNeedsAttention(summary: string): boolean {
-  return /\b(needs attention|failed|blocked|sent to review|pending memory reviews?|needs review|deadline exceeded|timed out)\b/i.test(
+  return /\b(needs attention|failed|deadline exceeded|timed out)\b/i.test(
     summary,
   );
+}
+
+function memoryDreamingReviewCount(summary: string): number | null {
+  const match =
+    summary.match(/\b(\d+)\s+sent to review\b/i) ||
+    summary.match(/\b(\d+)\s+(?:pending\s+)?memory reviews?\b/i);
+  return positiveIntegerMatch(match);
+}
+
+function memoryDreamingBlockedCount(summary: string): number | null {
+  const match = summary.match(/\b(\d+)\s+blocked\b/i);
+  return positiveIntegerMatch(match);
+}
+
+function positiveIntegerMatch(match: RegExpMatchArray | null): number | null {
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function memoryDreamingSummaryAlreadyRunning(summary: string): boolean {

@@ -452,6 +452,47 @@ describe('Slack channel', () => {
     );
   });
 
+  it('treats duplicate Slack route aliases for one agent as one route', async () => {
+    const opts = createOpts();
+    const route = {
+      folder: 'slack_ops',
+      name: 'Ops',
+      trigger: '@Ops',
+      providerAccountId: 'slack_default',
+    };
+    opts.conversationRoutes.mockReturnValue({
+      'sl:C123': route,
+      [makeAgentThreadQueueKey('sl:C123', 'agent:slack_ops')]: route,
+      [makeAgentThreadQueueKey(
+        'sl:C123',
+        'agent:slack_ops',
+        null,
+        'slack_default',
+      )]: route,
+    });
+    const channel = new SlackChannel('xoxb-token', 'xapp-token', opts as any);
+    await channel.connect();
+
+    const handlers = appRef.current.eventHandlers.get('app_mention') || [];
+    await handlers[0]({
+      event: {
+        channel: 'C123',
+        ts: '1710000000.000100',
+        user: 'U123',
+        text: '<@U_BOT> list projects',
+      },
+    });
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'sl:C123',
+      expect.objectContaining({
+        content: '@Ops list projects',
+        providerAccountId: 'slack_default',
+        thread_id: '1710000000.000100',
+      }),
+    );
+  });
+
   it('matches shared Slack inbound routes under the target provider account', async () => {
     const opts = {
       ...createOpts(),
