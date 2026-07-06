@@ -1,12 +1,16 @@
 import type { ChannelOpts } from '../channel-provider.js';
-import type { NewMessage } from '../../domain/types.js';
+import type { ConversationRoute, NewMessage } from '../../domain/types.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import {
   buildTriggerPattern,
   triggerForRoute,
 } from '../../shared/trigger-pattern.js';
-import { findConversationRoutesForChat } from '../../shared/thread-queue-key.js';
+import {
+  findConversationRoutesForChat,
+  parseAgentThreadQueueKey,
+} from '../../shared/thread-queue-key.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import type { SlackMessageLike } from './channel-state.js';
 import { ingestSlackSlashCommand as ingestSlackSlashCommandEvent } from './slash-command-ingest.js';
 
@@ -22,6 +26,36 @@ type EnrichedSlackMessage = {
   text: string;
   attachments: NonNullable<NewMessage['attachments']>;
 };
+type SlackRouteMatch = [string, ConversationRoute, string | undefined];
+
+function dedupeRouteAliases(matches: SlackRouteMatch[]): SlackRouteMatch[] {
+  const byIdentity = new Map<
+    string,
+    { match: SlackRouteMatch; specificity: number }
+  >();
+  for (const match of matches) {
+    const [key, route, providerAccountId] = match;
+    const parsed = parseAgentThreadQueueKey(key);
+    const agentId =
+      parsed.agentId ?? route.agentId ?? agentIdForFolder(route.folder);
+    const routeProviderAccountId =
+      parsed.providerAccountId ??
+      route.providerAccountId ??
+      providerAccountId ??
+      '';
+    const routeThreadId = parsed.threadId ?? '';
+    const identity = `${agentId}::${routeProviderAccountId}::${routeThreadId}`;
+    const specificity =
+      (parsed.agentId ? 1 : 0) +
+      (parsed.providerAccountId ? 1 : 0) +
+      (parsed.threadId ? 1 : 0);
+    const existing = byIdentity.get(identity);
+    if (!existing || specificity >= existing.specificity) {
+      byIdentity.set(identity, { match, specificity });
+    }
+  }
+  return [...byIdentity.values()].map(({ match }) => match);
+}
 
 export async function ingestSlackSlashCommand(input: {
   command: {
@@ -82,13 +116,15 @@ export async function ingestSlackMessage(input: {
     input.opts.inboundProviderAccountIds?.length && input.opts.providerAccountId
       ? input.opts.inboundProviderAccountIds
       : [input.opts.providerAccountId];
-  const routeMatches = providerAccountIds.flatMap((providerAccountId) =>
-    findConversationRoutesForChat(
-      routes,
-      jid,
-      event.thread_ts,
-      providerAccountId,
-    ).map((match) => [...match, providerAccountId] as const),
+  const routeMatches = dedupeRouteAliases(
+    providerAccountIds.flatMap((providerAccountId) =>
+      findConversationRoutesForChat(
+        routes,
+        jid,
+        event.thread_ts,
+        providerAccountId,
+      ).map((match) => [...match, providerAccountId] as SlackRouteMatch),
+    ),
   );
   const singleRoute =
     routeMatches.length === 1 ? routeMatches[0]?.[1] : undefined;

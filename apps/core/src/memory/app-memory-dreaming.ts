@@ -12,7 +12,7 @@ import type {
   SaveAppMemoryInput,
 } from './memory-types.js';
 import { embeddingContentHash } from './app-memory-service-helpers.js';
-import { hashText } from './app-memory-canonical-codec.js';
+import { hashText, parseItemSource } from './app-memory-canonical-codec.js';
 import {
   extractMemoryValue,
   parseStagedCandidateMetadata,
@@ -292,6 +292,7 @@ export async function runAppMemoryDreamPass(input: {
       const value =
         typeof payload.value === 'string' ? payload.value.toLowerCase() : '';
       if (/\b(no longer|instead|actually|correction|wrong)\b/.test(value)) {
+        const evidenceIds = parseItemSource(item.row).evidenceIds;
         const action = await routeMemoryProposalToReview({
           db,
           runId,
@@ -299,7 +300,7 @@ export async function runAppMemoryDreamPass(input: {
           dryRun,
           createPendingReview: input.createPendingReview,
           itemId: item.row.id,
-          evidenceIds: [],
+          evidenceIds,
           proposal: {
             action: 'needs_review',
             itemId: item.row.id,
@@ -308,12 +309,14 @@ export async function runAppMemoryDreamPass(input: {
             reason:
               'REM dreaming found correction language; human or admin review should decide whether to rewrite or retire related memory.',
             confidence: item.row.confidence,
-            evidenceIds: [],
+            evidenceIds,
           },
           reviewRationale:
             'REM dreaming routed correction language to memory review',
           blockRationale:
-            'REM dreaming blocked correction-language review because memory review creation failed.',
+            evidenceIds.length > 0
+              ? 'REM dreaming blocked correction-language review because memory review creation failed.'
+              : 'REM dreaming blocked correction-language review because the active memory has no source evidence.',
         });
         decisions.push({ action });
       }

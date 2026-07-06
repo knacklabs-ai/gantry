@@ -85,6 +85,7 @@ function activeItemRow(
     key?: string;
     kind?: string;
     value?: string;
+    sourceRefJson?: string;
   } = {},
 ) {
   return {
@@ -99,7 +100,7 @@ function activeItemRow(
     kind: input.kind ?? 'decision',
     key: input.key ?? 'decision:queue-policy',
     valueJson: JSON.stringify({ value: input.value ?? 'old value', why: null }),
-    sourceRefJson: '{}',
+    sourceRefJson: input.sourceRefJson ?? '{}',
     confidence: 0.8,
     status: 'active',
     lastObservedAt: null,
@@ -526,6 +527,56 @@ describe('runAppMemoryDreamPass guardrails', () => {
         candidateId: 'mca-1',
         evidenceIdsJson: '["mev-1"]',
         applied: true,
+      },
+    ]);
+  });
+
+  it('routes REM correction-language items to review with source evidence', async () => {
+    const { db, inserted } = createDb([]);
+    const createPendingReview = vi.fn(async () => 'mrv-correction');
+    const sourceRefJson = JSON.stringify({
+      source: 'dreaming',
+      subject,
+      version: 1,
+      evidenceIds: ['mev-1'],
+    });
+
+    const decisions = await runAppMemoryDreamPass({
+      db: db as never,
+      runId: 'mdr-rem-correction',
+      subject,
+      phase: 'rem',
+      dryRun: false,
+      listItems: vi.fn(async () => [
+        {
+          row: activeItemRow({
+            value: 'Actually use lead finder instead of Mode A.',
+            sourceRefJson,
+          }),
+        },
+      ]),
+      save: vi.fn(),
+      retire: vi.fn(async () => ({ deleted: true })),
+      createPendingReview,
+    });
+
+    expect(decisions).toEqual([{ action: 'needs_review' }]);
+    expect(createPendingReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'needs_review',
+        itemId: 'mem-1',
+        value: 'Actually use lead finder instead of Mode A.',
+        evidenceIds: ['mev-1'],
+      }),
+      db,
+    );
+    expect(decisionValues(inserted)).toMatchObject([
+      {
+        action: 'needs_review',
+        itemId: 'mem-1',
+        evidenceIdsJson: '["mev-1"]',
+        rationale:
+          'REM dreaming routed correction language to memory review: mrv-correction.',
       },
     ]);
   });

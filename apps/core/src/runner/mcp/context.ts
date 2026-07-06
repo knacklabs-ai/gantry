@@ -242,6 +242,8 @@ export function capabilityStatusText(): string {
       toolName === 'memory_search' ||
       toolName === 'memory_save' ||
       toolName === 'continuity_summary' ||
+      toolName === 'memory_review_pending' ||
+      toolName === 'memory_review_decision' ||
       toolName === 'procedure_save' ||
       toolName === 'file' ||
       toolName === 'request_access' ||
@@ -285,6 +287,15 @@ export function capabilityStatusText(): string {
           'Scheduler monitoring:',
           '- Use scheduler_get_job, scheduler_list_runs, scheduler_list_events, and scheduler_wait_for_events to inspect or wait for jobs.',
           '- Never request Bash just to sleep, wait, poll, or monitor scheduler job completion.',
+        ]
+      : []),
+    ...(normalActionToolNames.includes('memory_review_pending')
+      ? [
+          '',
+          'Memory review:',
+          '- When a user asks to inspect, approve, reject, or edit pending memory changes, call memory_review_pending first and show the numbered items.',
+          '- Call memory_review_decision only after explicit numbered approve, reject, or edit instructions from the user.',
+          '- When pending reviews are empty but dreaming reports blocked changes, inspect continuity_summary for blocked dream decision details.',
         ]
       : []),
     ...(lockedAccessPreset
