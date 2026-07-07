@@ -58,9 +58,15 @@ activity audit records the public `browser_act` call and backend
 `file_attach` action; durable authority remains the single `Browser`
 capability.
 
-Downloads are intentionally deferred in this slice. The direct driver does not
-add download tools until download roots, retention, and result disclosure have a
-separate scoped policy and test plan.
+`browser_act` also supports `action: "download"` for browser-initiated file
+downloads. The action requires `profile: "full"` and a reason, then waits for
+the next browser download after either clicking `payload.target` or opening
+`payload.url`. Downloaded files are saved only under the run browser artifact
+root, defaulting to `downloads/<suggested-filename>`, and the model-facing
+result is a compact file reference with path, optional MIME type, and size.
+Requested filenames are resolved through the same artifact-root policy as
+screenshots and text outputs, so absolute host paths, hidden/sensitive path
+segments, and symlink writes fail closed before Playwright saves the file.
 
 Private browser backend tools are not Gantry browser authority. They must not be
 persisted, requested, advertised, or projected into the model-facing tool

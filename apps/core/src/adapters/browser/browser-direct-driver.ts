@@ -3,6 +3,7 @@ import { type Browser, type Page } from 'playwright-core';
 import type { Locator } from 'playwright-core';
 
 import { ensureBrowserArtifactRoot } from './browser-artifact-policy.js';
+import { downloadWithBrowser } from './browser-direct-download.js';
 import {
   resolveTargetLocator,
   snapshotPage,
@@ -407,6 +408,10 @@ async function dispatchBrowserToolInner(input: {
         }
         return textResult(`Uploaded ${paths.length} file(s).`);
       });
+    case 'download':
+      return await runWithActivePage(input, async (page) =>
+        downloadWithBrowser(page, input.args, input.outputDir, input.deadline),
+      );
     case 'handle_dialog':
       return await runWithActivePage(input, async (page) => {
         const accept = input.args.accept !== false;

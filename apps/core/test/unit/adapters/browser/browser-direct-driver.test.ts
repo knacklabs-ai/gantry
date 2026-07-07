@@ -38,6 +38,10 @@ function createPage(opts: {
   redirectUrl?: string;
   screenshotBuffers?: Buffer[];
   locatorClick?: ReturnType<typeof vi.fn>;
+  download?: {
+    suggestedFilename: string;
+    content: string | Buffer;
+  };
 }) {
   const locator = {
     click: opts.locatorClick ?? vi.fn(async () => undefined),
@@ -79,6 +83,17 @@ function createPage(opts: {
     goBack: vi.fn(async () => undefined),
     locator: vi.fn(() => locator),
     getByText: vi.fn(() => locator),
+    waitForEvent: vi.fn(async (eventName: string) => {
+      if (eventName !== 'download' || !opts.download) {
+        throw new Error(`Unexpected event wait: ${eventName}`);
+      }
+      return {
+        suggestedFilename: vi.fn(() => opts.download?.suggestedFilename),
+        saveAs: vi.fn(async (filename: string) => {
+          fs.writeFileSync(filename, opts.download?.content ?? '');
+        }),
+      };
+    }),
     keyboard: {
       type: vi.fn(async () => undefined),
       press: vi.fn(async () => undefined),
@@ -721,6 +736,38 @@ describe('browser direct driver', () => {
     expect(page.setViewportSize).toHaveBeenCalledWith({
       width: 1024,
       height: 768,
+    });
+  });
+
+  it('downloads files into the browser artifact root', async () => {
+    const root = tempRoot();
+    const { page, locator } = createPage({
+      url: 'https://93.184.216.34/',
+      download: {
+        suggestedFilename: '../report final.csv',
+        content: 'name,score\nAsha,91\n',
+      },
+    });
+    const { browser } = createBrowser([page]);
+    browserMocks.connectOverCDP.mockResolvedValue(browser);
+
+    const result = await callBrowserTool({
+      toolName: 'download',
+      arguments: { target: 'a.download' },
+      session: session(),
+      fileAccessRoot: root,
+    });
+
+    const filename = path.join(root, 'downloads', 'report_final.csv');
+    expect(locator.click).toHaveBeenCalledWith({ timeout: expect.any(Number) });
+    expect(fs.readFileSync(filename, 'utf8')).toBe('name,score\nAsha,91\n');
+    expect(result).toEqual({
+      content: [{ type: 'text', text: `Saved to ${filename}` }],
+      file: {
+        path: filename,
+        mimeType: 'text/csv',
+        sizeBytes: 19,
+      },
     });
   });
 

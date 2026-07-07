@@ -233,6 +233,12 @@ describe('runner browser MCP gateway tools', () => {
       action: 'back',
       payload: { ignored: true },
     });
+    await server.tools.get('browser_act')?.({
+      action: 'download',
+      profile: 'full',
+      reason: 'Download the report requested by the user.',
+      payload: { target: 'a.report', filename: 'reports/latest.csv' },
+    });
 
     expect(requestBrowserAction).toHaveBeenNthCalledWith(
       1,
@@ -256,6 +262,12 @@ describe('runner browser MCP gateway tools', () => {
       4,
       'back',
       {},
+      { timeoutMs: 120_000, publicToolName: 'browser_act' },
+    );
+    expect(requestBrowserAction).toHaveBeenNthCalledWith(
+      5,
+      'download',
+      { target: 'a.report', filename: 'reports/latest.csv' },
       { timeoutMs: 120_000, publicToolName: 'browser_act' },
     );
   });
@@ -471,6 +483,14 @@ describe('runner browser MCP gateway tools', () => {
           target: 'file-input',
           source: { type: 'bytes', name: 'a.txt', content: 'hello' },
         },
+      }).success,
+    ).toBe(true);
+    expect(
+      actSchema.safeParse({
+        action: 'download',
+        profile: 'full',
+        reason: 'Download the selected report artifact.',
+        payload: { target: 'a.download', filename: 'reports/latest.csv' },
       }).success,
     ).toBe(true);
     expect(
