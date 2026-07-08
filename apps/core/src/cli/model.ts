@@ -384,10 +384,11 @@ export async function runModelCommand(
         }
         const previousSettings = structuredClone(settings);
         settings.agents[agentId].model = resolved.alias;
-        await persistSettings(previousSettings, settings);
+        const writeResult = await persistSettings(previousSettings, settings);
         console.log(
           `agent ${agentId} chat: ${resolved.alias} (${resolved.entry.displayName})`,
         );
+        noteRestartRequired(writeResult);
         await noteUnconfiguredProvider(
           runtimeHome,
           resolved.alias,
