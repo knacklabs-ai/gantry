@@ -4,6 +4,10 @@ import { AUTO_AGENT_HARNESS } from '../../shared/agent-engine.js';
 import { DEFAULT_AGENT_NAME } from '../../shared/default-agent.js';
 import { listChannelProviders } from '../../channels/provider-registry.js';
 import {
+  resolveModelSelectionForWorkloadWithFamilies,
+  type FamilyOrderOverrides,
+} from '../../shared/model-families.js';
+import {
   DEFAULT_SETUP_MODEL_ALIAS,
   memoryModelDefaultsForProvider,
   resolveModelSelectionForWorkload,
@@ -72,8 +76,17 @@ export function getDefaultMemoryBackfillSettings(): RuntimeMemoryBackfillSetting
   };
 }
 
-function providerForChatAlias(chatAlias: string): string {
-  const resolved = resolveModelSelectionForWorkload(chatAlias, 'chat');
+function providerForChatAlias(
+  chatAlias: string,
+  familyOrder?: FamilyOrderOverrides,
+): string {
+  // Family-aware: a family chat alias derives its provider from the selected
+  // member, not the default-provider fallback.
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    chatAlias,
+    'chat',
+    familyOrder,
+  );
   if (resolved.ok) return resolved.entry.modelRoute.id;
   const fallback = resolveModelSelectionForWorkload(
     DEFAULT_SETUP_MODEL_ALIAS,
@@ -217,6 +230,7 @@ export function applyProviderManagedMemoryDefaults(
   settings: RuntimeSettings,
   providerId = providerForChatAlias(
     settings.agent.defaultModel || DEFAULT_SETUP_MODEL_ALIAS,
+    settings.modelFamilies,
   ),
 ): void {
   settings.memory.llm.models = getProviderManagedMemoryDefaults(providerId);
@@ -226,7 +240,11 @@ export function applyModelDefaults(
   settings: RuntimeSettings,
   chatAlias: string,
 ): void {
-  const resolved = resolveModelSelectionForWorkload(chatAlias, 'chat');
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    chatAlias,
+    'chat',
+    settings.modelFamilies,
+  );
   settings.agent.defaultModel = resolved.ok
     ? resolved.alias
     : DEFAULT_SETUP_MODEL_ALIAS;
@@ -234,7 +252,7 @@ export function applyModelDefaults(
   settings.agent.recurringJobDefaultModel = '';
   applyProviderManagedMemoryDefaults(
     settings,
-    providerForChatAlias(settings.agent.defaultModel),
+    providerForChatAlias(settings.agent.defaultModel, settings.modelFamilies),
   );
 }
 

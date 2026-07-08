@@ -12,6 +12,7 @@ import {
 } from '../shared/model-catalog-format.js';
 import {
   listModelFamilies,
+  resolveModelSelectionForWorkloadWithFamilies,
   type FamilyOrderOverrides,
 } from '../shared/model-families.js';
 import {
@@ -74,13 +75,22 @@ export function effectiveJobAlias(
 export function providerForAlias(
   alias: string,
   workload: ModelWorkload,
+  familyOrder?: FamilyOrderOverrides,
 ): string | undefined {
-  const resolved = resolveModelSelectionForWorkload(alias, workload);
+  // Family-aware: family aliases resolve to their selected member's provider.
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    alias,
+    workload,
+    familyOrder,
+  );
   return resolved.ok ? resolved.entry.modelRoute.id : undefined;
 }
 
 export function providerFromSettings(settings: ModelListSettings): string {
-  return providerForAlias(chatAlias(settings), 'chat') ?? 'anthropic';
+  return (
+    providerForAlias(chatAlias(settings), 'chat', settings.modelFamilies) ??
+    'anthropic'
+  );
 }
 
 export function memoryProviderFromSettings(

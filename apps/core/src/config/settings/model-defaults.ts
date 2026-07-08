@@ -4,6 +4,7 @@ import {
   type ModelCatalogEntry,
   type ModelWorkload,
 } from '../../shared/model-catalog.js';
+import { resolveModelSelectionForWorkloadWithFamilies } from '../../shared/model-families.js';
 import type { AppId } from '../../domain/app/app.js';
 import {
   applyProviderManagedMemoryDefaults,
@@ -51,9 +52,12 @@ export type RuntimeModelDefaultsPatchResult =
   | { ok: false; message: string };
 
 function providerFromSettings(settings: RuntimeSettings): string {
-  const resolved = resolveModelSelectionForWorkload(
+  // Family-aware: a stored family chat alias derives its provider from the
+  // selected member, not the default-provider fallback.
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
     settings.agent.defaultModel || DEFAULT_SETUP_MODEL_ALIAS,
     'chat',
+    settings.modelFamilies,
   );
   if (resolved.ok) return resolved.entry.modelRoute.id;
   const fallback = resolveModelSelectionForWorkload(
