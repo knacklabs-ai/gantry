@@ -316,6 +316,7 @@ export async function registerTelegramMainGroup(options: {
   runtimeHome: string;
   chatJid: string;
   displayName: string;
+  agentId?: string;
 }): Promise<{ folder: string; groupName: string }> {
   ensureRuntimeLayout(options.runtimeHome);
   const db = await openRuntimeGroupDb(options.runtimeHome);
@@ -323,6 +324,7 @@ export async function registerTelegramMainGroup(options: {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
     const folder =
+      options.agentId?.trim() ||
       existingGroup?.folder ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
     const groupName = normalizeDefaultAgentName(options.displayName);

@@ -17,8 +17,11 @@ afterEach(() => {
   vi.resetModules();
   vi.doUnmock('@core/infrastructure/service/manager.js');
   vi.doUnmock('@core/config/settings/runtime-settings.js');
+  vi.doUnmock('@core/adapters/storage/postgres/runtime-store.js');
   vi.doUnmock('@core/adapters/storage/postgres/storage-service.js');
   vi.doUnmock('@core/cli/provider.js');
+  vi.doUnmock('@core/cli/provider-connect.js');
+  vi.doUnmock('@core/cli/credentials.js');
   vi.doUnmock('@core/cli/onboarding-state.js');
   vi.doUnmock('@core/cli/setup-flow.js');
   vi.doUnmock('@core/cli/local.js');
@@ -81,6 +84,104 @@ describe('CLI local routing', () => {
       });
     },
   );
+
+  it('runs the completed setup add-agent mini-flow', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const onboarding = await import('@core/cli/onboarding-state.js');
+    const state = onboarding.createInitialState(runtimeHome);
+    state.status = 'completed';
+    state.currentStep = 'ready';
+    onboarding.writeOnboardingState(runtimeHome, state);
+    const select = vi.fn(async ({ message }: { message: string }) => {
+      if (message === 'What do you want to change?') return 'add_agent';
+      if (message === 'Choose this agent chat model') return 'gpt';
+      if (message === 'Choose a channel to connect this agent') return 'slack';
+      return 'cancel';
+    });
+    const text = vi.fn(async () => 'Research Bot');
+    const runSetupFlow = vi.fn(async () => ({
+      status: 'completed',
+      runtimeHome,
+      startAfterSetup: false,
+    }));
+    const listReadyModelCredentialProviders = vi.fn(async () => new Set());
+    const promptModelCredentialPayload = vi.fn(async () => ({
+      authMode: 'api_key',
+      payload: { apiKey: 'sk-test' },
+    }));
+    const verifyModelCredentialInputWithPrompt = vi.fn(async () => ({
+      type: 'verified',
+    }));
+    const storeModelCredentialInput = vi.fn(async () => undefined);
+    const runProviderConnectCommand = vi.fn(async () => 0);
+    const settings = { agents: {} as Record<string, any> };
+    const writeDesiredRuntimeSettings = vi.fn(async (input) => {
+      Object.assign(settings, structuredClone(input.settings));
+      return { reconciled: true };
+    });
+    vi.doMock('@clack/prompts', () => ({
+      isCancel: () => false,
+      outro: vi.fn(),
+      select,
+      text,
+      log: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), success: vi.fn() },
+    }));
+    vi.doMock(
+      '@core/config/settings/runtime-settings.js',
+      async (importOriginal) => ({
+        ...(await importOriginal<
+          typeof import('@core/config/settings/runtime-settings.js')
+        >()),
+        configureDesiredSettingsStorageProvider: vi.fn(),
+        ensureRuntimeSettings: vi.fn(),
+        loadDesiredRuntimeSettingsForWrite: vi.fn(async () => settings),
+        writeDesiredRuntimeSettings,
+        ensureConfiguredAgent: vi.fn((target, input) => {
+          target.agents[input.agentId] ??= {
+            name: input.agentName,
+            folder: input.agentFolder,
+            persona: 'developer',
+            bindings: {},
+            sources: { skills: [], mcpServers: [], tools: [] },
+            capabilities: [],
+            accessPreset: 'full',
+          };
+        }),
+      }),
+    );
+    vi.doMock('@core/cli/setup-flow.js', () => ({ runSetupFlow }));
+    vi.doMock('@core/cli/credentials.js', () => ({
+      listReadyModelCredentialProviders,
+      promptModelCredentialPayload,
+      verifyModelCredentialInputWithPrompt,
+      storeModelCredentialInput,
+    }));
+    vi.doMock('@core/cli/provider-connect.js', () => ({
+      runProviderConnectCommand,
+    }));
+
+    const { main } = await import('@core/cli/index.js');
+    const code = await main(['--runtime-home', runtimeHome, 'setup']);
+
+    expect(code).toBe(0);
+    expect(runSetupFlow).not.toHaveBeenCalled();
+    expect(settings.agents.research_bot).toMatchObject({
+      name: 'Research Bot',
+      model: 'gpt',
+    });
+    expect(promptModelCredentialPayload).toHaveBeenCalledWith('openai');
+    expect(verifyModelCredentialInputWithPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: 'openai', authMode: 'api_key' }),
+    );
+    expect(storeModelCredentialInput).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeHome, providerId: 'openai' }),
+    );
+    expect(runProviderConnectCommand).toHaveBeenCalledWith(
+      runtimeHome,
+      'slack',
+      'research_bot',
+    );
+  });
 
   it('does not override CLI settings storage resolution when URL lives in runtime .env', async () => {
     const runtimeHome = makeRuntimeHome();

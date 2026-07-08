@@ -141,9 +141,8 @@ export async function verifyModelCredentialInputWithPrompt(input: {
   spinner.start(`Verifying ${label} key...`);
   // Lazy import keeps the capability-secret path free of the channel/config
   // import chain the live verifier drags in.
-  const { verifyModelProviderCredentialLive } = await import(
-    './model-credential-verify.js'
-  );
+  const { verifyModelProviderCredentialLive } =
+    await import('./model-credential-verify.js');
   const result = await verifyModelProviderCredentialLive({
     providerId: input.providerId,
     authMode: input.authMode,

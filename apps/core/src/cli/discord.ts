@@ -53,6 +53,7 @@ export async function registerDiscordMainGroup(options: {
   runtimeHome: string;
   chatJid: string;
   displayName: string;
+  agentId?: string;
 }): Promise<{ folder: string; groupName: string }> {
   ensureRuntimeLayout(options.runtimeHome);
   const db = await openRuntimeGroupDb(options.runtimeHome);
@@ -60,6 +61,7 @@ export async function registerDiscordMainGroup(options: {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
     const folder =
+      options.agentId?.trim() ||
       existingGroup?.folder ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
     const groupName = normalizeDefaultAgentName(options.displayName);
@@ -155,6 +157,7 @@ async function chooseDiscordChannelForConnect(
 export async function runDiscordConnectCommand(
   runtimeHome: string,
   discoveryClient: DiscordSetupDiscoveryClient = new RestDiscordSetupDiscoveryClient(),
+  requestedAgentId?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
   p.note(
@@ -231,6 +234,7 @@ export async function runDiscordConnectCommand(
   const approverIds = parseDiscordApproverIds(approverInput || '');
 
   if (channelChoice.type === 'selected') {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const verified = await discoveryClient.verifyChannel({
       credentials,
       guildId: channelChoice.channel.guildId,
@@ -255,7 +259,10 @@ export async function runDiscordConnectCommand(
     const registered = await registerDiscordMainGroup({
       runtimeHome,
       chatJid: verified.chatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        currentSettings.agent.name,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -271,13 +278,17 @@ export async function runDiscordConnectCommand(
   const previousSettings = structuredClone(settings);
   const previousDiscordEnabled = settings.providers.discord?.enabled ?? false;
   let providerAccountId = 'discord_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  const providerAgentId =
+    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
   settings.providers.discord = {
     enabled: channelChoice.type === 'selected' || previousDiscordEnabled,
   };
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: registeredChatTitle || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      registeredChatTitle ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {

@@ -90,6 +90,48 @@ describe('model CLI command', () => {
     expect(settings.agent.recurringJobDefaultModel).toBe('');
   });
 
+  it('sets an agent chat override without changing global chat default', async () => {
+    const runtimeHome = makeRuntimeHome();
+    const settings = loadRuntimeSettings(runtimeHome);
+    settings.agent.defaultModel = 'sonnet';
+    settings.agents.helper = {
+      name: 'Helper',
+      folder: 'helper',
+      persona: 'developer',
+      model: 'sonnet',
+      bindings: {},
+      sources: { skills: [], mcpServers: [], tools: [] },
+      capabilities: [],
+      accessPreset: 'full',
+    };
+    saveRuntimeSettings(runtimeHome, settings);
+    const preflightProvider = vi.fn(async () => ({
+      ok: true,
+      status: 'pass' as const,
+      message: 'ok',
+    }));
+
+    await expect(
+      runModelCommand(
+        runtimeHome,
+        ['set', 'chat', 'gpt', '--agent', 'helper'],
+        {
+          preflightProvider,
+        },
+      ),
+    ).resolves.toBe(0);
+
+    const updated = loadRuntimeSettings(runtimeHome);
+    expect(updated.agent.defaultModel).toBe('sonnet');
+    expect(updated.agents.helper?.model).toBe('gpt');
+    expect(preflightProvider).toHaveBeenCalledWith(
+      runtimeHome,
+      'openai',
+      expect.any(Object),
+      'gpt',
+    );
+  });
+
   it('accepts a model family alias for set chat and stores it verbatim', async () => {
     const runtimeHome = makeRuntimeHome();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);

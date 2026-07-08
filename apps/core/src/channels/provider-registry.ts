@@ -2,6 +2,7 @@ import { ChannelFactory } from './channel-provider.js';
 
 export interface ChannelProviderSetupContext {
   runtimeHome: string;
+  agentId?: string;
   prompt: (question: string) => Promise<string>;
   confirm: (question: string) => Promise<boolean>;
 }

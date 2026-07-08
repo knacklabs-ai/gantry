@@ -1,9 +1,15 @@
 import * as p from '@clack/prompts';
 
+import { listConnectableChannelProviders } from '../channels/provider-registry.js';
 import {
   ensureRuntimeWritable,
   resolveRuntimeHome,
 } from '../config/settings/runtime-home.js';
+import {
+  ensureConfiguredAgent,
+  loadDesiredRuntimeSettingsForWrite,
+  writeDesiredRuntimeSettings,
+} from '../config/settings/runtime-settings.js';
 import { validatePostgresConnectionUrl } from '../adapters/storage/postgres/url.js';
 import {
   DEFAULT_SETUP_MODEL_ALIAS,
@@ -25,6 +31,138 @@ import {
 } from './setup-flow-control.js';
 import { chooseProgressAction } from './setup-flow-prompts.js';
 import type { SetupDraft } from './setup-flow-state.js';
+
+function agentIdFromName(
+  name: string,
+  agents: Record<string, unknown>,
+): string {
+  const normalized =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_')
+      .replace(/^[_-]+|[_-]+$/g, '')
+      .slice(0, 64)
+      .replace(/[_-]+$/g, '') || 'agent';
+  const base = ['global', 'shared'].includes(normalized)
+    ? `agent_${normalized}`
+    : normalized;
+  let candidate = base;
+  let suffix = 2;
+  while (agents[candidate]) {
+    candidate = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function ensureModelCredentialForProvider(
+  runtimeHome: string,
+  providerId: string,
+): Promise<boolean> {
+  const {
+    listReadyModelCredentialProviders,
+    promptModelCredentialPayload,
+    storeModelCredentialInput,
+    verifyModelCredentialInputWithPrompt,
+  } = await import('./credentials.js');
+  const ready = await listReadyModelCredentialProviders(runtimeHome);
+  if (ready.has(providerId)) return true;
+
+  while (true) {
+    const credentialInput = await promptModelCredentialPayload(providerId);
+    if (!credentialInput) return false;
+    const verification = await verifyModelCredentialInputWithPrompt({
+      providerId,
+      authMode: credentialInput.authMode,
+      payload: credentialInput.payload,
+    });
+    if (verification.type === 'reenter') continue;
+    if (verification.type !== 'verified' && verification.type !== 'skip') {
+      return false;
+    }
+    await storeModelCredentialInput({
+      runtimeHome,
+      providerId,
+      authMode: credentialInput.authMode,
+      payload: credentialInput.payload,
+    });
+    return true;
+  }
+}
+
+export async function runAddAgentSetupSlice(
+  runtimeHome: string,
+): Promise<number> {
+  const agentName = await p.text({
+    message: 'Agent name',
+    validate: (input) => {
+      const trimmed = String(input ?? '').trim();
+      if (!trimmed) return 'Agent name is required.';
+      if (trimmed.length > 80)
+        return 'Agent name must be 80 characters or fewer.';
+      return undefined;
+    },
+  });
+  if (p.isCancel(agentName)) return 1;
+
+  const modelValue = await p.select({
+    message: 'Choose this agent chat model',
+    options: [
+      ...chatModelSelectOptions(),
+      { value: 'cancel', label: 'Cancel' },
+    ],
+    initialValue: DEFAULT_SETUP_MODEL_ALIAS,
+  });
+  if (p.isCancel(modelValue) || modelValue === 'cancel') return 1;
+  const resolved = resolveModelSelectionForWorkload(String(modelValue), 'chat');
+  if (!resolved.ok) {
+    p.log.error(resolved.message);
+    return 1;
+  }
+
+  const settings = await loadDesiredRuntimeSettingsForWrite({ runtimeHome });
+  const previousSettings = structuredClone(settings);
+  const name = String(agentName).trim();
+  const agentId = agentIdFromName(name, settings.agents);
+  ensureConfiguredAgent(settings, {
+    agentId,
+    agentName: name,
+    agentFolder: agentId,
+  });
+  settings.agents[agentId]!.model = resolved.alias;
+  await writeDesiredRuntimeSettings({
+    runtimeHome,
+    settings,
+    previousSettings,
+    createdBy: 'cli:setup-add-agent',
+  });
+
+  if (
+    !(await ensureModelCredentialForProvider(
+      runtimeHome,
+      resolved.entry.modelRoute.id,
+    ))
+  ) {
+    return 1;
+  }
+
+  const provider = await p.select({
+    message: 'Choose a channel to connect this agent',
+    options: [
+      ...listConnectableChannelProviders().map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        hint: entry.setup.describe(),
+      })),
+      { value: 'cancel', label: 'Cancel' },
+    ],
+  });
+  if (p.isCancel(provider) || provider === 'cancel') return 1;
+
+  const { runProviderConnectCommand } = await import('./provider-connect.js');
+  return runProviderConnectCommand(runtimeHome, String(provider), agentId);
+}
 
 export async function runWelcomeStep(): Promise<FlowAction> {
   p.note(
@@ -283,16 +421,7 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
   if (agentNameControl) return agentNameControl;
   draft.agentName = String(agentName).trim();
 
-  const chatModelOptions = listModelCatalogEntries()
-    .filter((entry) => entry.supportedWorkloads.includes('chat'))
-    .map((entry) => ({
-      value: entry.recommendedAlias,
-      label:
-        entry.recommendedAlias === DEFAULT_SETUP_MODEL_ALIAS
-          ? `${entry.displayName} (Recommended)`
-          : entry.displayName,
-      hint: `${entry.modelRoute.label} · Alias: ${entry.recommendedAlias} · Context: ${formatContextWindow(entry.contextWindowTokens)} · Cost: ${formatCostPerMillion(entry)} per 1M.`,
-    }));
+  const chatModelOptions = chatModelSelectOptions();
   const initialModel =
     chatModelOptions.some((option) => option.value === draft.selectedModel) &&
     resolveModelSelectionForWorkload(draft.selectedModel, 'chat').ok
@@ -332,6 +461,23 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
   }
   draft.agentHarness = AUTO_AGENT_HARNESS;
   return { type: 'next' };
+}
+
+export function chatModelSelectOptions(): Array<{
+  value: string;
+  label: string;
+  hint: string;
+}> {
+  return listModelCatalogEntries()
+    .filter((entry) => entry.supportedWorkloads.includes('chat'))
+    .map((entry) => ({
+      value: entry.recommendedAlias,
+      label:
+        entry.recommendedAlias === DEFAULT_SETUP_MODEL_ALIAS
+          ? `${entry.displayName} (Recommended)`
+          : entry.displayName,
+      hint: `${entry.modelRoute.label} · Alias: ${entry.recommendedAlias} · Context: ${formatContextWindow(entry.contextWindowTokens)} · Cost: ${formatCostPerMillion(entry)} per 1M.`,
+    }));
 }
 
 export async function runMemoryStep(draft: SetupDraft): Promise<FlowAction> {

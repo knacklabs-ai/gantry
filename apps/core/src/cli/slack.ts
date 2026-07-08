@@ -373,6 +373,7 @@ export async function registerSlackMainGroup(options: {
   displayName: string;
   conversationDisplayName?: string;
   approverIds?: string[];
+  agentId?: string;
 }): Promise<{ folder: string; groupName: string }> {
   ensureRuntimeLayout(options.runtimeHome);
   const db = await openRuntimeGroupDb(options.runtimeHome);
@@ -380,6 +381,7 @@ export async function registerSlackMainGroup(options: {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
     const folder =
+      options.agentId?.trim() ||
       existingGroup?.folder ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
 
@@ -448,6 +450,7 @@ async function promptForValue(options: {
 
 export async function runSlackConnectCommand(
   runtimeHome: string,
+  requestedAgentId?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
   const env = readEnvFile(envFilePath(runtimeHome));
@@ -550,6 +553,7 @@ export async function runSlackConnectCommand(
   let conversationDisplayName = '';
 
   if (normalizedChatJid) {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const access = await verifySlackChatAccess({
       botToken: botTokenInput,
       chatJid: normalizedChatJid,
@@ -565,9 +569,12 @@ export async function runSlackConnectCommand(
     const registered = await registerSlackMainGroup({
       runtimeHome,
       chatJid: normalizedChatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        currentSettings.agent.name,
       conversationDisplayName,
       approverIds,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -582,10 +589,14 @@ export async function runSlackConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.slack.enabled = true;
   let providerAccountId = 'slack_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  const providerAgentId =
+    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: conversationRouteName || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      conversationRouteName ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {

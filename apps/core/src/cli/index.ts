@@ -342,6 +342,10 @@ async function runSetupCommand(
           hint: 'Reset setup progress and review every step.',
         },
         {
+          value: 'add_agent',
+          label: 'Add another agent',
+        },
+        {
           value: 'channel',
           label: 'Chat channel',
         },
@@ -374,6 +378,11 @@ async function runSetupCommand(
     if (p.isCancel(choice) || choice === 'cancel') {
       p.outro('Setup cancelled.');
       return 1;
+    }
+    if (choice === 'add_agent') {
+      const { runAddAgentSetupSlice } =
+        await import('./setup-flow-core-steps.js');
+      return runAddAgentSetupSlice(runtimeHome);
     }
     startStep = choice as OnboardingStep;
     const nextState = createInitialState(runtimeHome);

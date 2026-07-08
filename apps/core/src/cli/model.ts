@@ -52,6 +52,7 @@ function usage(): string {
   gantry model list [--provider <id>]
   gantry model chat|jobs|memory
   gantry model set chat <alias|family>
+  gantry model set chat <alias> --agent <id>
   gantry model set jobs inherit|<alias|family>
   gantry model reset chat|jobs|memory
   gantry model why chat [group-scope|conversation-id]
@@ -335,6 +336,44 @@ export async function runModelCommand(
   if (action === 'set') {
     const familyOrder = familyOrderFromSettings(settings);
     if (target === 'chat' && alias) {
+      const agentId = parseAgentFlag(args);
+      if (agentId !== undefined) {
+        if (!agentId) {
+          console.error(usage());
+          return 1;
+        }
+        const resolved = resolveModelSelectionForWorkload(alias, 'chat');
+        if (!resolved.ok) {
+          console.error(resolved.message);
+          return 1;
+        }
+        if (!settings.agents[agentId]) {
+          console.error(`Unknown agent: ${agentId}`);
+          return 1;
+        }
+        if (
+          !(await preflightAliasProviders({
+            runtimeHome,
+            settings,
+            preflight,
+            aliases: [{ alias: resolved.alias, workload: 'chat' }],
+          }))
+        ) {
+          return 1;
+        }
+        const previousSettings = structuredClone(settings);
+        settings.agents[agentId].model = resolved.alias;
+        await persistSettings(previousSettings, settings);
+        console.log(
+          `agent ${agentId} chat: ${resolved.alias} (${resolved.entry.displayName})`,
+        );
+        await noteUnconfiguredProvider(
+          runtimeHome,
+          resolved.alias,
+          resolved.entry.modelRoute.id,
+        );
+        return 0;
+      }
       // Family aliases (e.g. gpt-oss) are accepted and stored verbatim; the
       // concrete provider is picked at spawn from the configured credential.
       const resolved = resolveModelSelectionForWorkloadWithFamilies(

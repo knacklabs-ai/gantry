@@ -188,6 +188,7 @@ async function chooseChatFromDiscovery(
 
 export async function runTelegramConnectCommand(
   runtimeHome: string,
+  requestedAgentId?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
   const env = readTelegramFromRuntimeEnv(runtimeHome);
@@ -251,6 +252,7 @@ export async function runTelegramConnectCommand(
   let conversationRouteName = '';
 
   if (normalizedChatJid) {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const access = await verifyTelegramChatAccess({
       token: tokenInput,
       chatJid: normalizedChatJid,
@@ -266,7 +268,10 @@ export async function runTelegramConnectCommand(
     const registered = await registerTelegramMainGroup({
       runtimeHome,
       chatJid: normalizedChatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        currentSettings.agent.name,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -281,10 +286,14 @@ export async function runTelegramConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.telegram.enabled = true;
   let providerAccountId = 'telegram_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  const providerAgentId =
+    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: conversationRouteName || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      conversationRouteName ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {

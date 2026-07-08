@@ -53,6 +53,7 @@ export async function registerTeamsMainGroup(options: {
   runtimeHome: string;
   chatJid: string;
   displayName: string;
+  agentId?: string;
 }): Promise<{ folder: string; groupName: string }> {
   ensureRuntimeLayout(options.runtimeHome);
   const db = await openRuntimeGroupDb(options.runtimeHome);
@@ -60,6 +61,7 @@ export async function registerTeamsMainGroup(options: {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
     const folder =
+      options.agentId?.trim() ||
       existingGroup?.folder ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
     const groupName = normalizeDefaultAgentName(options.displayName);
@@ -214,6 +216,7 @@ async function chooseTeamsChannelForConnect(
 export async function runTeamsConnectCommand(
   runtimeHome: string,
   discoveryClient: TeamsSetupDiscoveryClient = new GraphTeamsSetupDiscoveryClient(),
+  requestedAgentId?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
   p.note(
@@ -330,6 +333,7 @@ export async function runTeamsConnectCommand(
   const approverIds = parseTeamsApproverIds(approverInput || '');
 
   if (channelChoice.type === 'selected') {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const verified = await discoveryClient.verifyChannel({
       credentials,
       teamId: channelChoice.channel.teamId,
@@ -343,7 +347,10 @@ export async function runTeamsConnectCommand(
     const registered = await registerTeamsMainGroup({
       runtimeHome,
       chatJid: verified.chatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        currentSettings.agent.name,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -363,10 +370,14 @@ export async function runTeamsConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.teams.enabled = true;
   let providerAccountId = 'teams_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  const providerAgentId =
+    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: registeredChatTitle || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      registeredChatTitle ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {
