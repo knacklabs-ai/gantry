@@ -19,6 +19,7 @@ import {
   type MemoryModelDefaults,
   resolveModelSelectionForWorkload,
 } from '../shared/model-catalog.js';
+import { getModelProviderDefinition } from '../shared/model-provider-registry.js';
 import {
   formatContextWindow,
   formatCostPerMillion,
@@ -504,6 +505,49 @@ export async function runMemoryStep(draft: SetupDraft): Promise<FlowAction> {
   if (p.isCancel(memoryEnabled)) return { type: 'resume' };
 
   draft.memoryEnabled = Boolean(memoryEnabled);
+  if (draft.memoryEnabled) {
+    const chatModel = resolveModelSelectionForWorkload(
+      draft.selectedModel || DEFAULT_SETUP_MODEL_ALIAS,
+      'chat',
+    );
+    const chatProviderId = chatModel.ok ? chatModel.entry.modelRoute.id : '';
+    const memoryDefaults = memoryModelDefaultsForProvider(chatProviderId);
+    const memoryModel = resolveModelSelectionForWorkload(
+      memoryDefaults.extractor,
+      'memory_extractor',
+    );
+    const memoryProviderId = memoryModel.ok
+      ? memoryModel.entry.modelRoute.id
+      : chatProviderId;
+    if (chatProviderId && memoryProviderId !== chatProviderId) {
+      const memoryProvider =
+        getModelProviderDefinition(memoryProviderId)?.label ?? memoryProviderId;
+      p.note(
+        `Memory models run on ${memoryProvider} and require its credential.`,
+      );
+      const memoryChoice = await p.select({
+        message: 'Use memory with this extra credential?',
+        options: [
+          {
+            value: 'keep',
+            label: `Keep memory on (needs ${memoryProvider} credential)`,
+          },
+          { value: 'disable', label: 'Disable memory' },
+          { value: 'back', label: 'Back' },
+          { value: 'resume', label: 'Resume Later' },
+        ],
+        initialValue: 'keep',
+      });
+      if (p.isCancel(memoryChoice)) return { type: 'resume' };
+      if (memoryChoice === 'back') return { type: 'back' };
+      if (memoryChoice === 'resume') return { type: 'resume' };
+      if (memoryChoice === 'disable') {
+        draft.memoryEnabled = false;
+        draft.embeddingsEnabled = false;
+      }
+    }
+  }
+
   if (draft.memoryEnabled) {
     const embeddingsEnabled = await p.confirm({
       message:

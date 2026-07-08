@@ -1,9 +1,54 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const googleAuthMocks = vi.hoisted(() => {
+  const getAccessToken = vi.fn(async () => ({ token: 'ya29.vertex-token' }));
+  const getClient = vi.fn(async () => ({ getAccessToken }));
+  const constructor = vi.fn();
+  return { constructor, getAccessToken, getClient };
+});
+
+const awsCredentialMocks = vi.hoisted(() => {
+  const provider = vi.fn(async () => ({
+    accessKeyId: 'AKIDDEFAULT',
+    secretAccessKey: 'default-secret-access-key',
+  }));
+  const defaultProvider = vi.fn(() => provider);
+  return { defaultProvider, provider };
+});
+
+vi.mock('google-auth-library', () => ({
+  GoogleAuth: vi.fn().mockImplementation(function GoogleAuthMock(options) {
+    googleAuthMocks.constructor(options);
+    return { getClient: googleAuthMocks.getClient };
+  }),
+}));
+
+vi.mock('@aws-sdk/credential-provider-node', () => ({
+  defaultProvider: awsCredentialMocks.defaultProvider,
+}));
+
 import { verifyModelProviderCredentialLive } from '@core/cli/model-credential-verify.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  googleAuthMocks.constructor.mockClear();
+  googleAuthMocks.getClient.mockReset();
+  googleAuthMocks.getClient.mockResolvedValue({
+    getAccessToken: googleAuthMocks.getAccessToken,
+  });
+  googleAuthMocks.getAccessToken.mockReset();
+  googleAuthMocks.getAccessToken.mockResolvedValue({
+    token: 'ya29.vertex-token',
+  });
+  awsCredentialMocks.defaultProvider.mockReset();
+  awsCredentialMocks.defaultProvider.mockImplementation(
+    () => awsCredentialMocks.provider,
+  );
+  awsCredentialMocks.provider.mockReset();
+  awsCredentialMocks.provider.mockResolvedValue({
+    accessKeyId: 'AKIDDEFAULT',
+    secretAccessKey: 'default-secret-access-key',
+  });
 });
 
 describe('model credential live verification', () => {
@@ -102,13 +147,51 @@ describe('model credential live verification', () => {
     });
   });
 
-  it.each([
-    ['anthropic', 'claude_code_oauth', { oauthToken: 'token' }],
-    ['bedrock', 'bedrock_api_key', { region: 'us-east-1', apiKey: 'key' }],
-    [
-      'vertex',
-      'service_account',
-      {
+  it('verifies Vertex service-account credentials by fetching an access token', async () => {
+    const { verifyModelProviderCredentialLive } =
+      await import('@core/cli/model-credential-verify.js');
+    const serviceAccountJson = JSON.stringify({
+      type: 'service_account',
+      project_id: 'project-12345',
+      client_email: 'svc@example.com',
+      private_key:
+        '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----',
+    });
+
+    await expect(
+      verifyModelProviderCredentialLive({
+        providerId: 'vertex',
+        authMode: 'service_account',
+        payload: {
+          region: 'global',
+          projectId: 'project-12345',
+          serviceAccountJson,
+        },
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(googleAuthMocks.constructor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: expect.objectContaining({
+          client_email: 'svc@example.com',
+        }),
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      }),
+    );
+  });
+
+  it('returns a redacted Vertex service-account auth failure', async () => {
+    const { verifyModelProviderCredentialLive } =
+      await import('@core/cli/model-credential-verify.js');
+    const echoedSecret = 'sk-google-abcdef0123456789abcdef0123456789';
+    googleAuthMocks.getAccessToken.mockRejectedValueOnce(
+      new Error(`invalid_grant for ${echoedSecret}`),
+    );
+
+    const result = await verifyModelProviderCredentialLive({
+      providerId: 'vertex',
+      authMode: 'service_account',
+      payload: {
         region: 'global',
         projectId: 'project-12345',
         serviceAccountJson: JSON.stringify({
@@ -119,8 +202,81 @@ describe('model credential live verification', () => {
             '-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----',
         }),
       },
-    ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining('credential verification failed'),
+    });
+    expect('ok' in result && result.message).toContain('[redacted]');
+    expect('ok' in result && result.message).not.toContain(echoedSecret);
+  });
+
+  it('gives an actionable message when Vertex ADC is missing', async () => {
+    const { verifyModelProviderCredentialLive } =
+      await import('@core/cli/model-credential-verify.js');
+    googleAuthMocks.getAccessToken.mockRejectedValueOnce(
+      new Error('Could not load the default credentials.'),
+    );
+
+    await expect(
+      verifyModelProviderCredentialLive({
+        providerId: 'vertex',
+        authMode: 'google_adc',
+        payload: { region: 'global', projectId: 'project-12345' },
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      message: expect.stringContaining('gcloud auth application-default login'),
+    });
+  });
+
+  it('resolves the Bedrock default credential chain without over-verifying Bedrock', async () => {
+    const { verifyModelProviderCredentialLive } =
+      await import('@core/cli/model-credential-verify.js');
+
+    await expect(
+      verifyModelProviderCredentialLive({
+        providerId: 'bedrock',
+        authMode: 'aws_default_chain',
+        payload: { region: 'us-east-1', profile: 'dev' },
+      }),
+    ).resolves.toEqual({
+      skipped: true,
+      reason: 'AWS credentials resolved locally; not verified against Bedrock.',
+    });
+    expect(awsCredentialMocks.defaultProvider).toHaveBeenCalledWith({
+      profile: 'dev',
+    });
+  });
+
+  it('fails when the Bedrock default credential chain cannot resolve credentials', async () => {
+    const { verifyModelProviderCredentialLive } =
+      await import('@core/cli/model-credential-verify.js');
+    awsCredentialMocks.provider.mockRejectedValueOnce(
+      new Error('ProviderError: no credentials'),
+    );
+
+    await expect(
+      verifyModelProviderCredentialLive({
+        providerId: 'bedrock',
+        authMode: 'aws_default_chain',
+        payload: { region: 'us-east-1' },
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      message: expect.stringContaining(
+        'No AWS credentials resolved from the default chain',
+      ),
+    });
+  });
+
+  it.each([
+    ['anthropic', 'claude_code_oauth', { oauthToken: 'token' }],
+    ['bedrock', 'bedrock_api_key', { region: 'us-east-1', apiKey: 'key' }],
   ])('skips %s %s live checks in v1', async (providerId, authMode, payload) => {
+    const { verifyModelProviderCredentialLive } =
+      await import('@core/cli/model-credential-verify.js');
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
 

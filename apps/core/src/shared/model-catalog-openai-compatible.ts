@@ -463,7 +463,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
     ...buildBedrockCatalog({
       executableModelEntry,
       providerRoute,
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
     }),
     executableModelEntry({
       id: 'vertex:flash-3.5',
@@ -476,7 +476,7 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_1M,
       cacheMode: 'none',
       cacheTokenFields: [],
-      supportedWorkloads: DEEPAGENTS_WORKLOADS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
       providerAvailability: VERTEX_GLOBAL_AVAILABILITY,
       experimental: true,
     }),

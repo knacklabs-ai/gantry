@@ -1,7 +1,11 @@
+import { defaultProvider as fromNodeProviderChain } from '@aws-sdk/credential-provider-node';
+import { GoogleAuth } from 'google-auth-library';
+
 import {
   injectProviderAuth,
   resolveGatewayUpstream,
 } from '../adapters/llm/anthropic-claude-agent/gantry-model-gateway-routing.js';
+import { resolveModelCredentialSecretRef } from '../adapters/llm/anthropic-claude-agent/gantry-model-gateway-secret-ref.js';
 import {
   getModelProviderDefinition,
   type ModelCredentialPayload,
@@ -41,6 +45,11 @@ const SLACK_CHANNEL_TOKEN_NEXT_ACTION =
   're-run `gantry provider connect slack`, then `gantry restart`';
 const TELEGRAM_CHANNEL_TOKEN_NEXT_ACTION =
   're-run `gantry provider connect telegram`, then `gantry restart`';
+const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+
+type GoogleAuthClient = {
+  getAccessToken: () => Promise<string | { token?: string | null } | null>;
+};
 
 export async function verifyModelProviderCredentialLive(input: {
   providerId: string;
@@ -55,11 +64,22 @@ export async function verifyModelProviderCredentialLive(input: {
       message: `Unsupported model provider: ${input.providerId}.`,
     };
   }
-  if (provider.id === 'bedrock' || provider.id === 'vertex') {
+  if (provider.id === 'bedrock') {
+    if (input.authMode === 'aws_default_chain') {
+      return verifyAwsDefaultChain(input.payload, input.timeoutMs ?? 10_000);
+    }
     return {
       skipped: true,
-      reason: `${provider.label} live credential verification is not supported yet.`,
+      reason:
+        'Amazon Bedrock API key live credential verification is not supported without SigV4.',
     };
+  }
+  if (provider.id === 'vertex') {
+    return verifyVertexCredential({
+      authMode: input.authMode,
+      payload: input.payload,
+      timeoutMs: input.timeoutMs ?? 10_000,
+    });
   }
   if (provider.id === 'anthropic' && input.authMode !== 'api_key') {
     return {
@@ -101,13 +121,122 @@ export async function verifyModelProviderCredentialLive(input: {
     }`;
     return { ok: false, message };
   } catch (error) {
-    const timedOut =
-      error instanceof DOMException && error.name === 'TimeoutError';
     return {
       ok: false,
-      message: `${provider.label} credential verification ${
-        timedOut ? 'timed out and ' : ''
-      }could not reach provider. Check network access and retry.`,
+      message: providerReachabilityMessage(provider.label, error),
+    };
+  }
+}
+
+async function verifyAwsDefaultChain(
+  payload: ModelCredentialPayload,
+  timeoutMs: number,
+): Promise<ModelProviderCredentialLiveCheck> {
+  try {
+    const profile = payload.profile?.trim();
+    const provider = fromNodeProviderChain(profile ? { profile } : {});
+    const credentials = await withTimeout(provider(), timeoutMs);
+    if (credentials.accessKeyId && credentials.secretAccessKey) {
+      return {
+        skipped: true,
+        reason:
+          'AWS credentials resolved locally; not verified against Bedrock.',
+      };
+    }
+  } catch {
+    // Fall through to the stable user-facing message below.
+  }
+  return {
+    ok: false,
+    message:
+      'No AWS credentials resolved from the default chain. Configure AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, or an AWS runtime role.',
+  };
+}
+
+async function verifyVertexCredential(input: {
+  authMode: string;
+  payload: ModelCredentialPayload;
+  timeoutMs: number;
+}): Promise<ModelProviderCredentialLiveCheck> {
+  if (input.authMode === 'service_account_ref') {
+    try {
+      const serviceAccountJson = await withTimeout(
+        resolveModelCredentialSecretRef(input.payload.serviceAccountJsonRef),
+        input.timeoutMs,
+      );
+      return verifyGoogleToken({
+        serviceAccountJson,
+        timeoutMs: input.timeoutMs,
+      });
+    } catch {
+      return {
+        skipped: true,
+        reason:
+          'Google Vertex AI service-account ref could not be resolved locally; not verified against Vertex.',
+      };
+    }
+  }
+  if (input.authMode === 'service_account') {
+    return verifyGoogleToken({
+      serviceAccountJson: input.payload.serviceAccountJson,
+      timeoutMs: input.timeoutMs,
+    });
+  }
+  if (input.authMode === 'google_adc') {
+    return verifyGoogleToken({ timeoutMs: input.timeoutMs, adc: true });
+  }
+  return {
+    skipped: true,
+    reason:
+      'Google Vertex AI live credential verification is not supported yet.',
+  };
+}
+
+async function verifyGoogleToken(input: {
+  timeoutMs: number;
+  serviceAccountJson?: string;
+  adc?: boolean;
+}): Promise<ModelProviderCredentialLiveCheck> {
+  try {
+    const auth = new GoogleAuth({
+      ...(input.serviceAccountJson
+        ? { credentials: JSON.parse(input.serviceAccountJson) }
+        : {}),
+      scopes: [CLOUD_PLATFORM_SCOPE],
+    });
+    const client = (await withTimeout(
+      auth.getClient(),
+      input.timeoutMs,
+    )) as unknown as GoogleAuthClient;
+    const accessToken = await withTimeout(
+      client.getAccessToken(),
+      input.timeoutMs,
+    );
+    const token =
+      typeof accessToken === 'string' ? accessToken : accessToken?.token;
+    if (!token) {
+      throw new Error('Google credential did not return an access token.');
+    }
+    return { ok: true };
+  } catch (error) {
+    if (isNetworkOrTimeoutError(error)) {
+      return {
+        ok: false,
+        message: providerReachabilityMessage('Google Vertex AI', error),
+      };
+    }
+    if (input.adc && isGoogleAdcMissing(error)) {
+      return {
+        ok: false,
+        message:
+          'Google ADC is not configured. Run `gcloud auth application-default login`, then retry.',
+      };
+    }
+    return {
+      ok: false,
+      message: `Google Vertex AI credential verification failed: ${errorSnippet(
+        error,
+      )}`,
     };
   }
 }
@@ -240,16 +369,78 @@ async function readErrorSnippet(response: Response): Promise<string> {
     // Upstream bodies are outside Gantry's trust boundary and may echo the
     // submitted key or account identifiers — redact secret-shaped tokens
     // before the message reaches CLI/doctor output.
-    return (await response.text())
-      .replace(/\b(?:sk|xox[bap]|xapp|gtw|ghp|gsk)[-_][\w.-]+/gi, '[redacted]')
-      .replace(/\bBearer\s+[\w.-]+/gi, 'Bearer [redacted]')
-      .replace(/[\w-]{24,}/g, '[redacted]')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
+    return redactCredentialSnippet(await response.text());
   } catch {
     return '';
   }
+}
+
+function providerReachabilityMessage(label: string, error: unknown): string {
+  return `${label} credential verification ${
+    isTimeoutError(error) ? 'timed out and ' : ''
+  }could not reach provider. Check network access and retry.`;
+}
+
+function errorSnippet(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return redactCredentialSnippet(message || 'Unknown error.');
+}
+
+function redactCredentialSnippet(value: string): string {
+  return value
+    .replace(/\b(?:sk|xox[bap]|xapp|gtw|ghp|gsk)[-_][\w.-]+/gi, '[redacted]')
+    .replace(/\bBearer\s+[\w.-]+/gi, 'Bearer [redacted]')
+    .replace(/[\w-]{24,}/g, '[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'TimeoutError';
+}
+
+function isNetworkOrTimeoutError(error: unknown): boolean {
+  if (isTimeoutError(error)) return true;
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code).toLowerCase()
+      : '';
+  const message = errorSnippet(error).toLowerCase();
+  return (
+    [
+      'econnrefused',
+      'econnreset',
+      'enotfound',
+      'eai_again',
+      'enetunreach',
+      'etimedout',
+    ].includes(code) ||
+    /network|socket|timed out|fetch failed|could not reach/.test(message)
+  );
+}
+
+function isGoogleAdcMissing(error: unknown): boolean {
+  const message = errorSnippet(error).toLowerCase();
+  return (
+    message.includes('could not load the default credentials') ||
+    message.includes('unable to find credentials in current environment') ||
+    message.includes('application default credentials')
+  );
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timer = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new DOMException('timed out', 'TimeoutError')),
+      timeoutMs,
+    );
+    timeout.unref?.();
+  });
+  return Promise.race([promise, timer]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 type RuntimeSecretDoctorStorage = {

@@ -502,7 +502,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     modelRoute: true,
     embeddingProvider: false,
     responseFamily: OA_FAMILY,
-    supportedWorkloads: CHAT_AND_JOB_WORKLOADS,
+    supportedWorkloads: [...CHAT_AND_JOB_WORKLOADS, ...MEMORY_WORKLOADS],
     credentialModes: BEDROCK_CREDENTIAL_MODES,
     gateway: {
       pathSegment: 'bedrock',
@@ -525,7 +525,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_DEFINITIONS = [
     modelRoute: true,
     embeddingProvider: false,
     responseFamily: OA_FAMILY,
-    supportedWorkloads: CHAT_AND_JOB_WORKLOADS,
+    supportedWorkloads: [...CHAT_AND_JOB_WORKLOADS, ...MEMORY_WORKLOADS],
     credentialModes: VERTEX_CREDENTIAL_MODES,
     gateway: {
       pathSegment: 'vertex',
