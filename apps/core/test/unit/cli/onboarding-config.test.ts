@@ -208,4 +208,35 @@ describe('persistOnboardingConfig', () => {
       slackAppRef: 'gantry-secret:SLACK_APP_TOKEN',
     });
   });
+
+  it('keeps the other configured channel enabled when a different primary is persisted', async () => {
+    desiredSettings.providers.slack.enabled = true;
+    desiredSettings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {
+        bot_token: 'gantry-secret:SLACK_BOT_TOKEN',
+        app_token: 'gantry-secret:SLACK_APP_TOKEN',
+      },
+    };
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'telegram',
+      telegramBotToken: '12345:telegram-token',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      telegramEnabled: true,
+      slackEnabled: true,
+    });
+  });
 });

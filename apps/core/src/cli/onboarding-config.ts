@@ -150,19 +150,20 @@ export async function persistOnboardingConfig(
   const hasSlackTokens = Boolean(
     input.slackBotToken?.trim() && input.slackAppToken?.trim(),
   );
+  // A channel that is already enabled with stored secret refs stays enabled
+  // unless this run reconfigures it — maintenance runs and channel switches
+  // must not silently disable a working channel.
   const preserveTelegram =
-    input.primaryProvider === 'telegram' &&
     !hasTelegramBotToken &&
     hasEnabledProviderWithStoredSecretRefs(previousSettings, 'telegram');
   const preserveSlack =
-    input.primaryProvider === 'slack' &&
     !hasSlackTokens &&
     hasEnabledProviderWithStoredSecretRefs(previousSettings, 'slack');
   settings.providers.telegram.enabled =
-    input.primaryProvider === 'telegram' &&
-    (hasTelegramBotToken || preserveTelegram);
+    (input.primaryProvider === 'telegram' && hasTelegramBotToken) ||
+    preserveTelegram;
   settings.providers.slack.enabled =
-    input.primaryProvider === 'slack' && (hasSlackTokens || preserveSlack);
+    (input.primaryProvider === 'slack' && hasSlackTokens) || preserveSlack;
   const secretWrites: Promise<void>[] = [];
   if (input.telegramBotToken?.trim()) {
     secretWrites.push(

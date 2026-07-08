@@ -125,7 +125,10 @@ describe('CLI local routing', () => {
     state.status = 'completed';
     state.currentStep = 'ready';
     onboarding.writeOnboardingState(runtimeHome, state);
-    fs.writeFileSync(path.join(runtimeHome, 'settings.yaml'), 'providers: {}\n');
+    fs.writeFileSync(
+      path.join(runtimeHome, 'settings.yaml'),
+      'providers: {}\n',
+    );
 
     const runMemoryStep = vi.fn(async () => ({ type: 'next' }));
     const runCredentialsStep = vi.fn(async () => ({ type: 'next' }));

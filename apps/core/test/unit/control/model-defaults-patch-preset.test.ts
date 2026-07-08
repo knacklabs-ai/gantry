@@ -56,4 +56,21 @@ describe('providersSelectedByPatch', () => {
     const defaults = defaultsWith('sonnet', 'haiku');
     expect(providersSelectedByPatch({}, defaults)).toEqual(['anthropic']);
   });
+
+  it('follows the patched chat alias for inherited job defaults', () => {
+    const defaults = defaultsWith('sonnet', 'groq');
+    const inheritedOneTime = slotFor('sonnet', 'one_time_job');
+    const inheritedRecurring = slotFor('sonnet', 'recurring_job');
+    inheritedOneTime.configuredAlias = null;
+    inheritedRecurring.configuredAlias = null;
+    defaults.defaults.oneTime = inheritedOneTime;
+    defaults.defaults.recurring = inheritedRecurring;
+
+    const selected = providersSelectedByPatch(
+      { chat: 'groq', memory: 'reset' },
+      defaults,
+    );
+    expect(selected).not.toContain('anthropic');
+    expect(selected).toContain('groq');
+  });
 });

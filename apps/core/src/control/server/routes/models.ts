@@ -238,14 +238,11 @@ export function providersSelectedByPatch(
           : chatAlias;
   }
 
-  let oneTimeAlias =
-    defaults.defaults.oneTime.configuredAlias ??
-    defaults.defaults.oneTime.effectiveAlias ??
-    chatAlias;
-  let recurringAlias =
-    defaults.defaults.recurring.configuredAlias ??
-    defaults.defaults.recurring.effectiveAlias ??
-    chatAlias;
+  // Inherited job defaults (no configured alias) follow the PATCHED chat
+  // alias; seeding them from the old effective alias would preflight the
+  // outgoing provider and block a valid chat provider switch.
+  let oneTimeAlias = defaults.defaults.oneTime.configuredAlias ?? chatAlias;
+  let recurringAlias = defaults.defaults.recurring.configuredAlias ?? chatAlias;
 
   if ('jobs' in body) {
     if (body.jobs === null || body.jobs === 'inherit') {

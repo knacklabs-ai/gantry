@@ -229,7 +229,8 @@ export function restoreDraft(
     env[postgresUrlEnv]?.trim() || process.env[postgresUrlEnv]?.trim() || '';
   const readySummary = resolveReadySummary(settings, primaryProvider);
   const hasConfiguredChannelBinding = Boolean(
-    settings.providers[primaryProvider]?.enabled && readySummary.conversationJid,
+    settings.providers[primaryProvider]?.enabled &&
+    readySummary.conversationJid,
   );
   const draft: SetupDraft = {
     runtimeHome,
