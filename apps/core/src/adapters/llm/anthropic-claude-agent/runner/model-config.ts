@@ -10,6 +10,8 @@ import type { AgentRunnerInput } from './types.js';
 
 const GANTRY_EFFECTIVE_MODEL_SOURCE_ENV = 'GANTRY_EFFECTIVE_MODEL_SOURCE';
 const DEFAULT_THINKING_DISPLAY = 'omitted' as const;
+// Anthropic API minimum for thinking.budget_tokens.
+const MIN_THINKING_BUDGET_TOKENS = 1024;
 
 function normalizeModelValue(value?: string): string | undefined {
   const aliasModel = resolveRunnerModel(value);
@@ -54,15 +56,25 @@ export function resolveThinkingOptions(
   }
 
   if (thinkingOverride.mode === 'enabled') {
+    // The API rejects budgets below its minimum; an unvalidated override
+    // would only fail later at request time. Invalid values fall back to
+    // the SDK default budget instead of being passed through.
+    const rawBudget = thinkingOverride.budgetTokens;
+    const validBudget =
+      typeof rawBudget === 'number' && Number.isFinite(rawBudget)
+        ? Math.max(Math.floor(rawBudget), MIN_THINKING_BUDGET_TOKENS)
+        : undefined;
     return {
       thinking: {
         type: 'enabled',
-        budgetTokens: thinkingOverride.budgetTokens,
+        budgetTokens: validBudget,
         display: thinkingOverride.display ?? DEFAULT_THINKING_DISPLAY,
       },
       description:
-        typeof thinkingOverride.budgetTokens === 'number'
-          ? `enabled (budget ${thinkingOverride.budgetTokens} tokens)`
+        typeof validBudget === 'number'
+          ? `enabled (budget ${validBudget} tokens${
+              validBudget !== rawBudget ? `, raised from ${rawBudget}` : ''
+            })`
           : 'enabled',
     };
   }
