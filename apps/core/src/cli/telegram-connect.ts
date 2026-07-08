@@ -287,8 +287,10 @@ export async function runTelegramConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.telegram.enabled = true;
   let providerAccountId = 'telegram_default';
+  // The registered route's owner wins: reusing an existing conversation
+  // must not hand its provider account to the requesting agent.
   const providerAgentId =
-    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
+    registeredFolder || requestedAgentId || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
     agentName:

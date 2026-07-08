@@ -280,8 +280,10 @@ export async function runDiscordConnectCommand(
   const previousSettings = structuredClone(settings);
   const previousDiscordEnabled = settings.providers.discord?.enabled ?? false;
   let providerAccountId = 'discord_default';
+  // The registered route's owner wins: reusing an existing conversation
+  // must not hand its provider account to the requesting agent.
   const providerAgentId =
-    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
+    registeredFolder || requestedAgentId || DEFAULT_AGENT_FOLDER;
   settings.providers.discord = {
     enabled: channelChoice.type === 'selected' || previousDiscordEnabled,
   };

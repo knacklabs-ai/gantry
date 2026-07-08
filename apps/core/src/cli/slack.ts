@@ -592,8 +592,10 @@ export async function runSlackConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.slack.enabled = true;
   let providerAccountId = 'slack_default';
+  // The registered route's owner wins: reusing an existing conversation
+  // must not hand its provider account to the requesting agent.
   const providerAgentId =
-    requestedAgentId || registeredFolder || DEFAULT_AGENT_FOLDER;
+    registeredFolder || requestedAgentId || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
     agentName:
