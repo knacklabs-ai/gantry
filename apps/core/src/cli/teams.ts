@@ -60,9 +60,11 @@ export async function registerTeamsMainGroup(options: {
   try {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
+    // An already-registered conversation keeps its owning agent; agentId
+    // only binds conversations that are not routed yet.
     const folder =
-      options.agentId?.trim() ||
       existingGroup?.folder ||
+      options.agentId?.trim() ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
     const groupName = normalizeDefaultAgentName(options.displayName);
 
