@@ -334,7 +334,9 @@ export async function registerTelegramMainGroup(options: {
     // route with no rollback path in the route DB.
     const requestedAgentId = options.agentId?.trim();
     const keepExistingRoute = Boolean(
-      existingGroup && requestedAgentId && existingGroup.folder !== requestedAgentId,
+      existingGroup &&
+      requestedAgentId &&
+      existingGroup.folder !== requestedAgentId,
     );
     const groupName = keepExistingRoute
       ? existingGroup!.name

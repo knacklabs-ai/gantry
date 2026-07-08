@@ -164,7 +164,14 @@ function applyAliasOverride(input: {
   if (typeof value !== 'string') {
     return `${input.field} must be a model alias or null.`;
   }
-  const resolved = resolveModelSelectionForWorkload(value, input.workload);
+  // Family-aware so the Control API accepts the same family aliases the CLI
+  // and settings parser do; a family resolves back to its own alias and is
+  // stored verbatim.
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    value,
+    input.workload,
+    input.settings.modelFamilies,
+  );
   if (!resolved.ok) return resolved.message;
   input.set(resolved.alias);
   return undefined;
@@ -182,11 +189,16 @@ function applyJobsPatch(input: {
   if (typeof input.value !== 'string') {
     return 'jobs must be a model alias, "inherit", or null.';
   }
-  const oneTime = resolveModelSelectionForWorkload(input.value, 'one_time_job');
+  const oneTime = resolveModelSelectionForWorkloadWithFamilies(
+    input.value,
+    'one_time_job',
+    input.settings.modelFamilies,
+  );
   if (!oneTime.ok) return oneTime.message;
-  const recurring = resolveModelSelectionForWorkload(
+  const recurring = resolveModelSelectionForWorkloadWithFamilies(
     input.value,
     'recurring_job',
+    input.settings.modelFamilies,
   );
   if (!recurring.ok) return recurring.message;
   input.settings.agent.oneTimeJobDefaultModel = oneTime.alias;
