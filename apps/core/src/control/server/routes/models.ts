@@ -11,6 +11,10 @@ import {
   resolveModelSelectionForWorkload,
   type ModelWorkload,
 } from '../../../shared/model-catalog.js';
+import {
+  isModelFamilyAlias,
+  resolveModelFamilyAlias,
+} from '../../../shared/model-families.js';
 import { resolveModelCacheSupport } from '../../../shared/model-cache-support.js';
 import {
   deriveAgentEngineForProvider,
@@ -29,6 +33,11 @@ import {
 } from '../handler-context.js';
 import { readJson, sendError, sendJson } from '../http.js';
 import { authenticate, type ApiKeyRecord } from '../auth.js';
+
+type FamilyProviderOptions = {
+  configuredProviders?: ReadonlySet<string>;
+  familyOrder?: Record<string, string[]>;
+};
 
 function modelToResponse(
   entry: ReturnType<typeof listModelCatalogEntries>[number],
@@ -215,9 +224,18 @@ function modelDefaultsResponse(ctx: ControlRouteContext) {
 function providerForAlias(
   value: unknown,
   workload: ModelWorkload,
+  options: FamilyProviderOptions = {},
 ): string | undefined {
   if (typeof value !== 'string' || value === 'inherit') return undefined;
-  const resolved = resolveModelSelectionForWorkload(value, workload);
+  const configuredProviders = options.configuredProviders;
+  const alias = isModelFamilyAlias(value)
+    ? (resolveModelFamilyAlias(value, {
+        isProviderConfigured: (providerId) =>
+          configuredProviders?.has(providerId) ?? false,
+        order: options.familyOrder,
+      })?.alias ?? value)
+    : value;
+  const resolved = resolveModelSelectionForWorkload(alias, workload);
   if (!resolved.ok) return undefined;
   return resolved.entry.modelRoute.id;
 }
@@ -225,6 +243,7 @@ function providerForAlias(
 export function providersSelectedByPatch(
   body: Record<string, unknown>,
   defaults: ReturnType<ControlRouteContext['getModelDefaults']>,
+  options: FamilyProviderOptions = {},
 ): string[] {
   let chatAlias =
     defaults.defaults.chat.effectiveAlias ?? DEFAULT_SETUP_MODEL_ALIAS;
@@ -238,9 +257,7 @@ export function providersSelectedByPatch(
           : chatAlias;
   }
 
-  // Inherited job defaults (no configured alias) follow the PATCHED chat
-  // alias; seeding them from the old effective alias would preflight the
-  // outgoing provider and block a valid chat provider switch.
+  // Inherited job defaults follow the patched chat alias.
   let oneTimeAlias = defaults.defaults.oneTime.configuredAlias ?? chatAlias;
   let recurringAlias = defaults.defaults.recurring.configuredAlias ?? chatAlias;
 
@@ -270,32 +287,34 @@ export function providersSelectedByPatch(
           : recurringAlias;
   }
 
-  const chatProvider = providerForAlias(chatAlias, 'chat');
+  const chatProvider = providerForAlias(chatAlias, 'chat', options);
   const memoryDefaults = memoryModelDefaultsForProvider(
-    chatProvider ?? providerForAlias(DEFAULT_SETUP_MODEL_ALIAS, 'chat') ?? '',
+    chatProvider ??
+      providerForAlias(DEFAULT_SETUP_MODEL_ALIAS, 'chat', options) ??
+      '',
   );
-  const memoryExtractorAlias =
+  const memoryAliases =
     'memory' in body
-      ? memoryDefaults.extractor
-      : defaults.defaults.memoryExtractor.effectiveAlias;
-  const memoryDreamingAlias =
-    'memory' in body
-      ? memoryDefaults.dreaming
-      : defaults.defaults.memoryDreaming.effectiveAlias;
-  const memoryConsolidationAlias =
-    'memory' in body
-      ? memoryDefaults.consolidation
-      : defaults.defaults.memoryConsolidation.effectiveAlias;
+      ? memoryDefaults
+      : {
+          extractor: defaults.defaults.memoryExtractor.effectiveAlias,
+          dreaming: defaults.defaults.memoryDreaming.effectiveAlias,
+          consolidation: defaults.defaults.memoryConsolidation.effectiveAlias,
+        };
 
   return [
     [chatAlias, 'chat'],
     [oneTimeAlias, 'one_time_job'],
     [recurringAlias, 'recurring_job'],
-    [memoryExtractorAlias, 'memory_extractor'],
-    [memoryDreamingAlias, 'memory_dreaming'],
-    [memoryConsolidationAlias, 'memory_consolidation'],
+    [memoryAliases.extractor, 'memory_extractor'],
+    [memoryAliases.dreaming, 'memory_dreaming'],
+    [memoryAliases.consolidation, 'memory_consolidation'],
   ].reduce<string[]>((providers, [alias, workload]) => {
-    const provider = providerForAlias(alias, workload as ModelWorkload);
+    const provider = providerForAlias(
+      alias,
+      workload as ModelWorkload,
+      options,
+    );
     if (provider && !providers.includes(provider)) providers.push(provider);
     return providers;
   }, []);
@@ -629,14 +648,19 @@ export async function handleModelRoutes(
         return true;
       }
       const body = rawBody as Record<string, unknown>;
+      const appId = auth.appId as AppId;
+      const configuredProviders = new Set(
+        await ctx.getActiveModelCredentialProviderIds(appId),
+      );
       for (const provider of providersSelectedByPatch(
         body,
         ctx.getModelDefaults(),
+        {
+          configuredProviders,
+          familyOrder: ctx.getInternalRuntimeSettings().modelFamilies,
+        },
       )) {
-        const preflight = await ctx.preflightModelProvider(
-          provider,
-          auth.appId as AppId,
-        );
+        const preflight = await ctx.preflightModelProvider(provider, appId);
         if (!preflight.ok) {
           sendError(
             res,
@@ -649,8 +673,11 @@ export async function handleModelRoutes(
       }
       const result = await ctx.patchModelDefaults(
         body,
-        auth.appId as AppId,
+        appId,
         `control-api:${auth.kid}`,
+        {
+          getConfiguredModelProviderIds: async () => configuredProviders,
+        },
       );
       if (!result.ok) {
         sendError(res, 400, 'INVALID_REQUEST', result.message);

@@ -76,7 +76,6 @@ async function preflightAliasProviders(input: {
   aliases: Array<{ alias: string | undefined; workload: ModelWorkload }>;
 }): Promise<boolean> {
   const providers = new Map<string, string | undefined>();
-  const familyOrder = familyOrderFromSettings(input.settings);
   // Family aliases preflight the same member the runtime would choose: the
   // first member whose provider has a configured credential, falling back to
   // the first member when none are (or the control API is unreachable).
@@ -86,6 +85,7 @@ async function preflightAliasProviders(input: {
   const configuredProviders = hasFamilyAlias
     ? await fetchConfiguredProviders(input.runtimeHome)
     : undefined;
+  const familyOrder = familyOrderFromSettings(input.settings);
   for (const { alias, workload } of input.aliases) {
     if (!alias) continue;
     const concreteInput = isModelFamilyAlias(alias)
@@ -116,6 +116,22 @@ async function preflightAliasProviders(input: {
     return false;
   }
   return true;
+}
+
+async function memoryResetProviderFromSettings(
+  runtimeHome: string,
+  settings: ModelCommandSettings,
+): Promise<string> {
+  const fallback = providerFromSettings(settings);
+  const alias = chatAlias(settings);
+  if (!isModelFamilyAlias(alias)) return fallback;
+  const configuredProviders = await fetchConfiguredProviders(runtimeHome);
+  if (!configuredProviders) return fallback;
+  const concreteAlias = resolveModelFamilyAlias(alias, {
+    isProviderConfigured: (providerId) => configuredProviders.has(providerId),
+    order: familyOrderFromSettings(settings),
+  })?.alias;
+  return (concreteAlias && providerForAlias(concreteAlias, 'chat')) ?? fallback;
 }
 
 async function noteUnconfiguredProvider(
@@ -512,8 +528,11 @@ export async function runModelCommand(
   }
 
   if (action === 'reset') {
-    const providerId = providerFromSettings(settings);
-    const memoryDefaults = memoryModelDefaultsForProvider(providerId);
+    const memoryProviderId =
+      target === 'memory'
+        ? await memoryResetProviderFromSettings(runtimeHome, settings)
+        : providerFromSettings(settings);
+    const memoryDefaults = memoryModelDefaultsForProvider(memoryProviderId);
     const aliases =
       target === 'chat'
         ? [{ alias: DEFAULT_SETUP_MODEL_ALIAS, workload: 'chat' as const }]
@@ -562,7 +581,7 @@ export async function runModelCommand(
       settings.agent.oneTimeJobDefaultModel = '';
       settings.agent.recurringJobDefaultModel = '';
     } else if (target === 'memory') {
-      applyProviderManagedMemoryDefaults(settings, providerId);
+      applyProviderManagedMemoryDefaults(settings, memoryProviderId);
     }
     const writeResult = await persistSettings(previousSettings, settings);
     console.log(formatTarget(settings, target));

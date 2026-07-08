@@ -45,6 +45,32 @@ function defaultsWith(
   } as unknown as ReturnType<ControlRouteContext['getModelDefaults']>;
 }
 
+function familyDefaults(
+  familyAlias: string,
+): ReturnType<ControlRouteContext['getModelDefaults']> {
+  const inherited = {
+    configuredAlias: null,
+    effectiveAlias: familyAlias,
+    source: 'settings.yaml agent.default_model',
+    workload: 'one_time_job' as const,
+    modelEntry: null,
+  };
+  return {
+    defaults: {
+      chat: {
+        ...inherited,
+        configuredAlias: familyAlias,
+        workload: 'chat',
+      },
+      oneTime: inherited,
+      recurring: { ...inherited, workload: 'recurring_job' },
+      memoryExtractor: slotFor('groq-oss', 'memory_extractor'),
+      memoryDreaming: slotFor('groq-oss', 'memory_dreaming'),
+      memoryConsolidation: slotFor('groq-oss', 'memory_consolidation'),
+    },
+  } as unknown as ReturnType<ControlRouteContext['getModelDefaults']>;
+}
+
 describe('providersSelectedByPatch', () => {
   it('selects a DeepAgents provider when the body omits provider-managed memory', () => {
     const defaults = defaultsWith('groq', 'groq');
@@ -72,5 +98,13 @@ describe('providersSelectedByPatch', () => {
     );
     expect(selected).not.toContain('anthropic');
     expect(selected).toContain('groq');
+  });
+
+  it('uses configured family provider for provider-managed memory patches', () => {
+    expect(
+      providersSelectedByPatch({ memory: 'reset' }, familyDefaults('gpt-oss'), {
+        configuredProviders: new Set(['cerebras']),
+      }),
+    ).toEqual(['cerebras']);
   });
 });

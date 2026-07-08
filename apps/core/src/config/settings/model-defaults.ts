@@ -4,7 +4,11 @@ import {
   type ModelCatalogEntry,
   type ModelWorkload,
 } from '../../shared/model-catalog.js';
-import { resolveModelSelectionForWorkloadWithFamilies } from '../../shared/model-families.js';
+import {
+  isModelFamilyAlias,
+  resolveModelFamilyAlias,
+  resolveModelSelectionForWorkloadWithFamilies,
+} from '../../shared/model-families.js';
 import type { AppId } from '../../domain/app/app.js';
 import {
   applyProviderManagedMemoryDefaults,
@@ -197,11 +201,39 @@ function resetMemoryDefaults(
   applyProviderManagedMemoryDefaults(settings, providerId);
 }
 
+async function memoryResetProviderFromSettings(
+  settings: RuntimeSettings,
+  getConfiguredModelProviderIds?: () => Promise<ReadonlySet<string>>,
+): Promise<string> {
+  const fallback = providerFromSettings(settings);
+  const alias = settings.agent.defaultModel || DEFAULT_SETUP_MODEL_ALIAS;
+  if (!isModelFamilyAlias(alias) || !getConfiguredModelProviderIds) {
+    return fallback;
+  }
+  let configuredProviders: ReadonlySet<string>;
+  try {
+    configuredProviders = await getConfiguredModelProviderIds();
+  } catch {
+    return fallback;
+  }
+  const resolved = resolveModelFamilyAlias(alias, {
+    isProviderConfigured: (providerId) => configuredProviders.has(providerId),
+    order: settings.modelFamilies,
+  });
+  if (!resolved) return fallback;
+  const concrete = resolveModelSelectionForWorkload(resolved.alias, 'chat');
+  const providerId = concrete.ok ? concrete.entry.modelRoute.id : undefined;
+  return providerId && configuredProviders.has(providerId)
+    ? providerId
+    : fallback;
+}
+
 export async function updateRuntimeModelDefaults(input: {
   runtimeHome: string;
   body: Record<string, unknown>;
   appId?: AppId;
   createdBy?: string;
+  getConfiguredModelProviderIds?: () => Promise<ReadonlySet<string>>;
 }): Promise<RuntimeModelDefaultsPatchResult> {
   const supportedFields = new Set([
     'chat',
@@ -283,7 +315,13 @@ export async function updateRuntimeModelDefaults(input: {
         message: 'memory must be null, "reset", or "provider-managed".',
       };
     }
-    resetMemoryDefaults(settings);
+    resetMemoryDefaults(
+      settings,
+      await memoryResetProviderFromSettings(
+        settings,
+        input.getConfiguredModelProviderIds,
+      ),
+    );
   }
   await writeDesiredRuntimeSettings({
     runtimeHome: input.runtimeHome,

@@ -395,12 +395,16 @@ export function patchRuntimeModelDefaults(
   body: Record<string, unknown>,
   appId?: AppId,
   createdBy?: string,
+  options?: {
+    getConfiguredModelProviderIds?: () => Promise<ReadonlySet<string>>;
+  },
 ) {
   return updateRuntimeModelDefaults({
     runtimeHome: GANTRY_HOME,
     body,
     appId,
     createdBy,
+    getConfiguredModelProviderIds: options?.getConfiguredModelProviderIds,
   });
 }
 export function getEffectiveModelConfig(

@@ -19,7 +19,9 @@ import { authenticate, type ApiKeyRecord, type Scope } from './auth.js';
 import { sendError } from './http.js';
 import type { RateLimiter } from './rate-limit.js';
 
-type InternalRuntimeSettings = ControlPlaneStorageSettings;
+type InternalRuntimeSettings = ControlPlaneStorageSettings & {
+  modelFamilies?: Record<string, string[]>;
+};
 
 export type ControlServerState = {
   activeStreams: number;
@@ -101,6 +103,9 @@ export type ControlRouteContext = {
     body: Record<string, unknown>,
     appId?: AppId,
     createdBy?: string,
+    options?: {
+      getConfiguredModelProviderIds?: () => Promise<ReadonlySet<string>>;
+    },
   ) => Promise<ControlModelDefaultsPatchResult>;
   preflightModelProvider: (
     providerId: string,
