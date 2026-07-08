@@ -10,6 +10,18 @@ export type RequiredModelCredentialProvidersSettings = {
     oneTimeJobDefaultModel: string;
     recurringJobDefaultModel: string;
   };
+  // Per-agent and per-binding model overrides also demand credentials; the
+  // redacted Control API settings view may omit them.
+  agents?: Record<
+    string,
+    | {
+        model?: string;
+        oneTimeJobDefaultModel?: string;
+        recurringJobDefaultModel?: string;
+      }
+    | undefined
+  >;
+  bindings?: Record<string, { model?: string } | undefined>;
   memory: {
     enabled: boolean;
     // Memory model/embedding detail is only present in the full runtime
@@ -52,6 +64,25 @@ export function requiredModelCredentialProviders(
       workload: 'recurring_job',
     },
   );
+  for (const agent of Object.values(settings.agents ?? {})) {
+    if (!agent) continue;
+    if (agent.model) slots.push({ alias: agent.model, workload: 'chat' });
+    if (agent.oneTimeJobDefaultModel) {
+      slots.push({
+        alias: agent.oneTimeJobDefaultModel,
+        workload: 'one_time_job',
+      });
+    }
+    if (agent.recurringJobDefaultModel) {
+      slots.push({
+        alias: agent.recurringJobDefaultModel,
+        workload: 'recurring_job',
+      });
+    }
+  }
+  for (const binding of Object.values(settings.bindings ?? {})) {
+    if (binding?.model) slots.push({ alias: binding.model, workload: 'chat' });
+  }
   if (settings.memory.enabled && settings.memory.llm) {
     const memoryModels = settings.memory.llm.models;
     for (const [alias, workload] of [

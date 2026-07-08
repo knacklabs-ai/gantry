@@ -298,7 +298,10 @@ export function parseConfiguredAgents(
           ? undefined
           : parseStringValue(map.model, `${pathPrefix}.model`);
     if (model) {
-      const resolved = resolveModelSelectionForWorkloadWithFamilies(model, 'chat');
+      const resolved = resolveModelSelectionForWorkloadWithFamilies(
+        model,
+        'chat',
+      );
       if (!resolved.ok) {
         throw new Error(`${pathPrefix}.model is invalid: ${resolved.message}`);
       }

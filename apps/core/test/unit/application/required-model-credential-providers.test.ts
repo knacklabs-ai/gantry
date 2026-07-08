@@ -23,6 +23,21 @@ describe('requiredModelCredentialProviders', () => {
     expect(providers).toEqual(['anthropic']);
   });
 
+  it('includes per-agent and binding model override providers', () => {
+    const settings = baseSettings();
+    settings.agents = {
+      helper: { model: 'gpt', oneTimeJobDefaultModel: 'kimi' },
+      empty: {},
+    };
+    settings.bindings = { ops: { model: 'groq' } };
+    expect(requiredModelCredentialProviders(settings)).toEqual([
+      'anthropic',
+      'groq',
+      'openai',
+      'openrouter',
+    ]);
+  });
+
   it('falls back to the setup default alias when defaultModel is empty', () => {
     const settings = baseSettings();
     settings.agent.defaultModel = '';
