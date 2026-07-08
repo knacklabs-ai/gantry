@@ -365,6 +365,7 @@ export async function runStorageStep(draft: SetupDraft): Promise<FlowAction> {
     validate: (input) => {
       const trimmed = String(input ?? '').trim();
       if (isInputFlowControl(trimmed)) return undefined;
+      if (!trimmed) return undefined;
       if (!/^[a-z_][a-z0-9_]{0,62}$/.test(trimmed)) {
         return 'Use a lowercase PostgreSQL schema identifier.';
       }
@@ -424,7 +425,7 @@ export async function runModelStep(draft: SetupDraft): Promise<FlowAction> {
     validate: (input) => {
       const trimmed = String(input ?? '').trim();
       if (isInputFlowControl(trimmed)) return undefined;
-      if (!trimmed) return 'Default agent name is required.';
+      if (!trimmed) return undefined;
       if (trimmed.length > 80) {
         return 'Default agent name must be 80 characters or fewer.';
       }
