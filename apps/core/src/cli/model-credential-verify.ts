@@ -237,7 +237,16 @@ function normalizePrefix(prefix: string): string {
 
 async function readErrorSnippet(response: Response): Promise<string> {
   try {
-    return (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 300);
+    // Upstream bodies are outside Gantry's trust boundary and may echo the
+    // submitted key or account identifiers — redact secret-shaped tokens
+    // before the message reaches CLI/doctor output.
+    return (await response.text())
+      .replace(/\b(?:sk|xox[bap]|xapp|gtw|ghp|gsk)[-_][\w.-]+/gi, '[redacted]')
+      .replace(/\bBearer\s+[\w.-]+/gi, 'Bearer [redacted]')
+      .replace(/[\w-]{24,}/g, '[redacted]')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
   } catch {
     return '';
   }

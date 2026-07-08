@@ -54,6 +54,34 @@ describe('model credential live verification', () => {
     expect('ok' in result && result.message).toContain('bad key');
   });
 
+  it('redacts secret-shaped tokens echoed by the upstream error body', async () => {
+    const echoedKey = 'sk-or-v1-abcdef0123456789abcdef0123456789';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: `invalid key ${echoedKey}`,
+              authorization: 'Bearer gtw_someverylongtokenvalue123456',
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+
+    const result = await verifyModelProviderCredentialLive({
+      providerId: 'openrouter',
+      authMode: 'api_key',
+      payload: { apiKey: echoedKey },
+    });
+
+    const message = 'ok' in result && !result.ok ? result.message : '';
+    expect(message).toContain('[redacted]');
+    expect(message).not.toContain(echoedKey);
+    expect(message).not.toContain('someverylongtokenvalue');
+  });
+
   it('reports timeout and network failures as could-not-reach-provider', async () => {
     vi.stubGlobal(
       'fetch',
