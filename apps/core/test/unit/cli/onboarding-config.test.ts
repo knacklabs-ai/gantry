@@ -93,6 +93,7 @@ vi.mock('@core/config/settings/runtime-settings.js', async (importOriginal) => {
 
 describe('persistOnboardingConfig', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     events.length = 0;
     settingsWrites.length = 0;
     Object.assign(desiredSettings, createDefaultRuntimeSettings());
@@ -212,6 +213,42 @@ describe('persistOnboardingConfig', () => {
       slackEnabled: true,
       slackBotRef: 'gantry-secret:SLACK_BOT_TOKEN',
       slackAppRef: 'gantry-secret:SLACK_APP_TOKEN',
+    });
+  });
+
+  it('does not scrub env-backed refs for a preserved enabled provider', async () => {
+    desiredSettings.providers.slack.enabled = true;
+    desiredSettings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {
+        bot_token: 'env:SLACK_BOT_TOKEN',
+        app_token: 'env:SLACK_APP_TOKEN',
+      },
+    };
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+    const { upsertEnvFile } = await import('@core/config/env/file.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'slack',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      slackEnabled: true,
+      slackBotRef: 'env:SLACK_BOT_TOKEN',
+      slackAppRef: 'env:SLACK_APP_TOKEN',
+    });
+    expect(vi.mocked(upsertEnvFile).mock.calls.at(-1)?.[1]).toEqual({
+      TELEGRAM_BOT_TOKEN: null,
+      SLACK_PERMISSION_APPROVER_IDS: null,
     });
   });
 

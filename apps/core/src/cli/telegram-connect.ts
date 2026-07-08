@@ -190,8 +190,10 @@ async function chooseChatFromDiscovery(
 export async function runTelegramConnectCommand(
   runtimeHome: string,
   requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   const env = readTelegramFromRuntimeEnv(runtimeHome);
   p.note(
     [
@@ -271,6 +273,7 @@ export async function runTelegramConnectCommand(
       chatJid: normalizedChatJid,
       displayName:
         (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
         currentSettings.agent.name,
       agentId: requestedAgentId,
     });
@@ -295,6 +298,7 @@ export async function runTelegramConnectCommand(
     agentId: providerAgentId,
     agentName:
       settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
       conversationRouteName ||
       settings.agent.name,
     agentFolder: providerAgentId,

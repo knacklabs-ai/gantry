@@ -332,6 +332,7 @@ describe('CLI local routing', () => {
       runtimeHome,
       'slack',
       'research_bot',
+      'Research Bot',
     );
   });
 

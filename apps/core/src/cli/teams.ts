@@ -219,8 +219,10 @@ export async function runTeamsConnectCommand(
   runtimeHome: string,
   discoveryClient: TeamsSetupDiscoveryClient = new GraphTeamsSetupDiscoveryClient(),
   requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   p.note(
     [
       'Create or reuse a Microsoft Entra app for Teams Graph discovery.',
@@ -351,6 +353,7 @@ export async function runTeamsConnectCommand(
       chatJid: verified.chatJid,
       displayName:
         (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
         currentSettings.agent.name,
       agentId: requestedAgentId,
     });
@@ -380,6 +383,7 @@ export async function runTeamsConnectCommand(
     agentId: providerAgentId,
     agentName:
       settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
       registeredChatTitle ||
       settings.agent.name,
     agentFolder: providerAgentId,

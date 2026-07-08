@@ -160,8 +160,10 @@ export async function runDiscordConnectCommand(
   runtimeHome: string,
   discoveryClient: DiscordSetupDiscoveryClient = new RestDiscordSetupDiscoveryClient(),
   requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   p.note(
     [
       'Create or reuse a Discord application and bot.',
@@ -263,6 +265,7 @@ export async function runDiscordConnectCommand(
       chatJid: verified.chatJid,
       displayName:
         (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
         currentSettings.agent.name,
       agentId: requestedAgentId,
     });
@@ -291,6 +294,7 @@ export async function runDiscordConnectCommand(
     agentId: providerAgentId,
     agentName:
       settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
       registeredChatTitle ||
       settings.agent.name,
     agentFolder: providerAgentId,

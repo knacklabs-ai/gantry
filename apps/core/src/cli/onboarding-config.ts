@@ -21,7 +21,11 @@ import {
   DEFAULT_SETUP_MODEL_ALIAS,
   resolveModelSelectionForWorkload,
 } from '../shared/model-catalog.js';
-import { gantryRuntimeSecretRef } from '../domain/ports/runtime-secret-provider.js';
+import {
+  gantryRuntimeSecretRef,
+  normalizeRuntimeSecretRefString,
+  parseRuntimeSecretRefString,
+} from '../domain/ports/runtime-secret-provider.js';
 import { runPostgresMigrations } from '../postgres-migrate.js';
 import { storeRuntimeSecretInput } from './credentials.js';
 import { DEFAULT_AGENT_FOLDER } from './main-agent.js';
@@ -66,6 +70,32 @@ function hasEnabledProviderWithStoredSecretRefs(
         Boolean(account.runtimeSecretRefs[key]?.trim()),
       ),
   );
+}
+
+const CHANNEL_ENV_KEYS = [
+  'TELEGRAM_BOT_TOKEN',
+  'SLACK_BOT_TOKEN',
+  'SLACK_APP_TOKEN',
+  'SLACK_PERMISSION_APPROVER_IDS',
+] as const;
+
+function enabledProviderEnvSecretNames(settings: RuntimeSettings): Set<string> {
+  const names = new Set<string>();
+  for (const account of Object.values(settings.providerAccounts)) {
+    if (account.status === 'disabled') continue;
+    if (!settings.providers[account.provider]?.enabled) continue;
+    for (const [key, value] of Object.entries(account.runtimeSecretRefs)) {
+      const ref = value?.trim();
+      if (!ref) continue;
+      const normalized = normalizeRuntimeSecretRefString(
+        ref,
+        `provider account ${account.provider} secret ref ${key}`,
+      );
+      const parsed = parseRuntimeSecretRefString(normalized);
+      if (parsed.source === 'env') names.add(parsed.name);
+    }
+  }
+  return names;
 }
 
 export async function persistOnboardingConfig(
@@ -256,12 +286,16 @@ export async function persistOnboardingConfig(
       ...new Set([...restartRequired, ...(result.restartRequired ?? [])]),
     ],
   });
-  upsertEnvFile(envPath, {
-    TELEGRAM_BOT_TOKEN: null,
-    SLACK_BOT_TOKEN: null,
-    SLACK_APP_TOKEN: null,
-    SLACK_PERMISSION_APPROVER_IDS: null,
-  });
+  const envSecretRefs = enabledProviderEnvSecretNames(settings);
+  upsertEnvFile(
+    envPath,
+    Object.fromEntries(
+      CHANNEL_ENV_KEYS.filter((key) => !envSecretRefs.has(key)).map((key) => [
+        key,
+        null,
+      ]),
+    ),
+  );
 }
 
 export async function prepareOnboardingCredentialStorage(input: {

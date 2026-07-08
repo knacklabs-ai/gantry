@@ -156,6 +156,7 @@ export async function runAddAgentSetupSlice(
     runtimeHome,
     String(provider),
     agentId,
+    name,
   );
   if (connectCode !== 0) return connectCode;
 

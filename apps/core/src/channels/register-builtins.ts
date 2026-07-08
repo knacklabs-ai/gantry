@@ -42,10 +42,14 @@ async function createAppBuiltInChannel(
 
 async function runBuiltInSetup(
   providerLabel: string,
-  setup: (runtimeHome: string, agentId?: string) => Promise<number>,
+  setup: (
+    runtimeHome: string,
+    agentId?: string,
+    agentName?: string,
+  ) => Promise<number>,
   ctx: ChannelProviderSetupContext,
 ): Promise<void> {
-  const code = await setup(ctx.runtimeHome, ctx.agentId);
+  const code = await setup(ctx.runtimeHome, ctx.agentId, ctx.agentName);
   if (code !== 0) {
     throw new Error(
       `${providerLabel} connect command exited with status ${code}`,
@@ -56,40 +60,49 @@ async function runBuiltInSetup(
 async function runTelegramSetup(
   runtimeHome: string,
   agentId?: string,
+  agentName?: string,
 ): Promise<number> {
   const mod = await import('../cli/telegram-connect.js');
   return agentId
-    ? await mod.runTelegramConnectCommand(runtimeHome, agentId)
+    ? await mod.runTelegramConnectCommand(runtimeHome, agentId, agentName)
     : await mod.runTelegramConnectCommand(runtimeHome);
 }
 
 async function runSlackSetup(
   runtimeHome: string,
   agentId?: string,
+  agentName?: string,
 ): Promise<number> {
   const mod = await import('../cli/slack.js');
   return agentId
-    ? await mod.runSlackConnectCommand(runtimeHome, agentId)
+    ? await mod.runSlackConnectCommand(runtimeHome, agentId, agentName)
     : await mod.runSlackConnectCommand(runtimeHome);
 }
 
 async function runTeamsSetup(
   runtimeHome: string,
   agentId?: string,
+  agentName?: string,
 ): Promise<number> {
   const mod = await import('../cli/teams.js');
   return agentId
-    ? await mod.runTeamsConnectCommand(runtimeHome, undefined, agentId)
+    ? await mod.runTeamsConnectCommand(runtimeHome, undefined, agentId, agentName)
     : await mod.runTeamsConnectCommand(runtimeHome);
 }
 
 async function runDiscordSetup(
   runtimeHome: string,
   agentId?: string,
+  agentName?: string,
 ): Promise<number> {
   const mod = await import('../cli/discord.js');
   return agentId
-    ? await mod.runDiscordConnectCommand(runtimeHome, undefined, agentId)
+    ? await mod.runDiscordConnectCommand(
+        runtimeHome,
+        undefined,
+        agentId,
+        agentName,
+      )
     : await mod.runDiscordConnectCommand(runtimeHome);
 }
 

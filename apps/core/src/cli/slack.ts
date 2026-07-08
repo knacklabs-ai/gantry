@@ -454,8 +454,10 @@ async function promptForValue(options: {
 export async function runSlackConnectCommand(
   runtimeHome: string,
   requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   const env = readEnvFile(envFilePath(runtimeHome));
   p.note(
     [
@@ -574,6 +576,7 @@ export async function runSlackConnectCommand(
       chatJid: normalizedChatJid,
       displayName:
         (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
         currentSettings.agent.name,
       conversationDisplayName,
       approverIds,
@@ -600,6 +603,7 @@ export async function runSlackConnectCommand(
     agentId: providerAgentId,
     agentName:
       settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
       conversationRouteName ||
       settings.agent.name,
     agentFolder: providerAgentId,
