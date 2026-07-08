@@ -17,12 +17,14 @@ import {
 import { formatModelWhy } from '../shared/model-why-format.js';
 import {
   chatAlias,
+  configuredProviderIdsForCli,
   effectiveJobAlias,
   familyOrderFromSettings,
   fetchConfiguredProviders,
   formatModelList,
   formatModelStatus,
   memoryProviderFromSettings,
+  memoryResetProviderFromSettings,
   providerForAlias,
   providerFromSettings,
   resolveSlot,
@@ -116,38 +118,6 @@ async function preflightAliasProviders(input: {
     return false;
   }
   return true;
-}
-
-// Configured model providers for CLI family resolution. Storage is the
-// source of truth and works with the service stopped; the control API is
-// the fallback when storage is unreachable from this process.
-async function configuredProviderIdsForCli(
-  runtimeHome: string,
-): Promise<ReadonlySet<string> | undefined> {
-  try {
-    const { listReadyModelCredentialProviders } = await import(
-      './credentials.js'
-    );
-    return await listReadyModelCredentialProviders(runtimeHome);
-  } catch {
-    return fetchConfiguredProviders(runtimeHome);
-  }
-}
-
-async function memoryResetProviderFromSettings(
-  runtimeHome: string,
-  settings: ModelCommandSettings,
-): Promise<string> {
-  const fallback = providerFromSettings(settings);
-  const alias = chatAlias(settings);
-  if (!isModelFamilyAlias(alias)) return fallback;
-  const configuredProviders = await configuredProviderIdsForCli(runtimeHome);
-  if (!configuredProviders) return fallback;
-  const concreteAlias = resolveModelFamilyAlias(alias, {
-    isProviderConfigured: (providerId) => configuredProviders.has(providerId),
-    order: familyOrderFromSettings(settings),
-  })?.alias;
-  return (concreteAlias && providerForAlias(concreteAlias, 'chat')) ?? fallback;
 }
 
 async function noteUnconfiguredProvider(

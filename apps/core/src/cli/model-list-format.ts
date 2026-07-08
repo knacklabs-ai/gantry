@@ -11,7 +11,9 @@ import {
   formatCostPerMillion,
 } from '../shared/model-catalog-format.js';
 import {
+  isModelFamilyAlias,
   listModelFamilies,
+  resolveModelFamilyAlias,
   resolveModelSelectionForWorkloadWithFamilies,
   type FamilyOrderOverrides,
 } from '../shared/model-families.js';
@@ -91,6 +93,38 @@ export function providerFromSettings(settings: ModelListSettings): string {
     providerForAlias(chatAlias(settings), 'chat', settings.modelFamilies) ??
     'anthropic'
   );
+}
+
+// Configured model providers for CLI family resolution. Storage is the
+// source of truth and works with the service stopped; the control API is
+// the fallback when storage is unreachable from this process. Both are
+// lazy/dynamic so this file's static graph stays config-free.
+export async function configuredProviderIdsForCli(
+  runtimeHome: string,
+): Promise<ReadonlySet<string> | undefined> {
+  try {
+    const { listReadyModelCredentialProviders } =
+      await import('./credentials.js');
+    return await listReadyModelCredentialProviders(runtimeHome);
+  } catch {
+    return fetchConfiguredProviders(runtimeHome);
+  }
+}
+
+export async function memoryResetProviderFromSettings(
+  runtimeHome: string,
+  settings: ModelListSettings,
+): Promise<string> {
+  const fallback = providerFromSettings(settings);
+  const alias = chatAlias(settings);
+  if (!isModelFamilyAlias(alias)) return fallback;
+  const configuredProviders = await configuredProviderIdsForCli(runtimeHome);
+  if (!configuredProviders) return fallback;
+  const concreteAlias = resolveModelFamilyAlias(alias, {
+    isProviderConfigured: (providerId) => configuredProviders.has(providerId),
+    order: familyOrderFromSettings(settings),
+  })?.alias;
+  return (concreteAlias && providerForAlias(concreteAlias, 'chat')) ?? fallback;
 }
 
 export function memoryProviderFromSettings(
