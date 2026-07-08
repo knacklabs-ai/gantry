@@ -75,9 +75,16 @@ async function preflightAliasProviders(input: {
   aliases: Array<{ alias: string | undefined; workload: ModelWorkload }>;
 }): Promise<boolean> {
   const providers = new Map<string, string | undefined>();
+  const familyOrder = familyOrderFromSettings(input.settings);
   for (const { alias, workload } of input.aliases) {
     if (!alias) continue;
-    const resolved = resolveModelSelectionForWorkload(alias, workload);
+    // Family-aware so aliases like gpt-oss preflight their selected member's
+    // provider instead of silently skipping the credential check.
+    const resolved = resolveModelSelectionForWorkloadWithFamilies(
+      alias,
+      workload,
+      familyOrder,
+    );
     if (resolved.ok) {
       const providerId = resolved.entry.modelRoute.id;
       providers.set(

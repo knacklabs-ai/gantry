@@ -69,6 +69,7 @@ export type DoctorReport = {
 export type DoctorNetworkOptions = {
   validateTelegramToken?: boolean;
   validateSlackToken?: boolean;
+  validateModelCredentials?: boolean;
   telegramTimeoutMs?: number;
   slackTimeoutMs?: number;
 };
@@ -650,7 +651,7 @@ export async function runDoctorWithNetwork(
     report = addToReport(
       report,
       await inspectModelCredentialReadiness(runtimeHome, settings, {
-        live: true,
+        live: options.validateModelCredentials !== false,
       }),
     );
   }

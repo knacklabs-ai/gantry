@@ -94,6 +94,7 @@ export async function collectRuntimeStatus(
   const doctor = await runDoctorWithNetwork(importMetaUrl, runtimeHome, {
     validateTelegramToken: false,
     validateSlackToken: false,
+    validateModelCredentials: false,
   });
   const memoryHealth = inspectMemoryHealth(runtimeHome, settings, env);
   const accessNeedsApprovalCount = storageUnavailable(doctor)

@@ -104,6 +104,7 @@ describe('status command formatting', () => {
       {
         validateTelegramToken: false,
         validateSlackToken: false,
+        validateModelCredentials: false,
       },
     );
   });
