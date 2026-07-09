@@ -1249,7 +1249,7 @@ agents:
   dreaming:
     enabled: true
     cron: "*/15 * * * *"
-    alerts: false
+    alerts: true
     embeddings:
       enabled: true
       provider: openai
@@ -1268,7 +1268,7 @@ agents:
     expect(parsed.memory.embeddings.dailyLimit).toBe(42);
     expect(parsed.memory.embeddings.batchSize).toBe(7);
     expect(parsed.memory.dreaming.cron).toBe('*/15 * * * *');
-    expect(parsed.memory.dreaming.alerts).toBe(false);
+    expect(parsed.memory.dreaming.alerts).toBe(true);
     expect(parsed.memory.dreaming.embeddings).toEqual({
       enabled: true,
       provider: 'openai',
@@ -1279,7 +1279,7 @@ agents:
     expect(parsed.memory.maintenance.maxPending).toBe(250);
   });
 
-  it('defaults memory.dreaming.alerts to true', () => {
+  it('defaults memory.dreaming.alerts to false', () => {
     const parsed = parseRuntimeSettings(`memory:
   enabled: true
   embeddings:
@@ -1290,7 +1290,7 @@ agents:
     enabled: true
 `);
 
-    expect(parsed.memory.dreaming.alerts).toBe(true);
+    expect(parsed.memory.dreaming.alerts).toBe(false);
   });
 
   it('rejects unsupported semantic memory vector dimensions', () => {

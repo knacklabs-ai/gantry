@@ -210,7 +210,7 @@ export function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
       dreaming: {
         enabled: false,
         cron: DEFAULT_MEMORY_DREAMING_CRON,
-        alerts: true,
+        alerts: false,
         embeddings: {
           enabled: false,
           provider: 'disabled',
@@ -407,7 +407,7 @@ export function parseMemorySettings(raw: unknown): RuntimeMemorySettings {
       alerts: parseBooleanValue(
         dreamingMap.alerts,
         'memory.dreaming.alerts',
-        true,
+        false,
       ),
       embeddings: {
         enabled: dreamingEmbeddingsEnabled,
