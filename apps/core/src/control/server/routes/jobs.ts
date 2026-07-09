@@ -21,11 +21,11 @@ import type {
 import {
   enqueueJobTrigger,
   isJobTriggerQueueReady,
-  invalidateSystemJobRegistrationSignature,
   runtimeJobSchedulePlanner,
   requestSchedulerSync,
   schedulerNotReadyReason,
 } from '../../../jobs/scheduler.js';
+import { invalidateSystemJobRegistrationSignature } from '../../../jobs/system-registration-cache.js';
 import {
   formatBrowserProfileLabel,
   resolveConversationBrowserProfile,

@@ -40,8 +40,6 @@ import type {
   SchedulerDispatchPayload,
 } from './types.js';
 
-export { invalidateSystemJobRegistrationSignature } from './system-registration-cache.js';
-
 let activeSchedulerEngine: PgBossSchedulerEngine | null = null;
 let schedulerRunning = false;
 
