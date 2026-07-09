@@ -4,10 +4,15 @@ import { AsyncCommandTaskService } from './async-command-task-service.js';
 import {
   isAsyncTaskTerminal,
   type AsyncTaskRepository,
+  type AsyncTaskRecord,
 } from '../domain/ports/async-tasks.js';
 import { nowIso } from '../shared/time/datetime.js';
 import { logger } from '../infrastructure/logging/logger.js';
-import { createTaskResponder, toTrimmedString } from './ipc-shared.js';
+import {
+  createTaskResponder,
+  respondTaskLifecycleResult,
+  toTrimmedString,
+} from './ipc-shared.js';
 import type { TaskContext, TaskHandler } from './ipc-types.js';
 import { resolveConfiguredAllowedTools } from '../runtime/configured-agent-tools.js';
 import { resolveWorkspaceFolderPath } from '../platform/workspace-folder.js';
@@ -40,6 +45,7 @@ import {
   resolveTurnSemanticCapabilities,
   resolveTurnToolPolicy,
 } from '../runtime/group-run-context.js';
+import { createCoreTaskLifecycleBackend } from '../application/core-tools/task-lifecycle.js';
 
 const TODO_STATUSES = new Set([
   'pending',
@@ -162,6 +168,22 @@ function taskService(context: TaskContext): AsyncCommandTaskService | null {
   );
   asyncCommandServices.set(repository, service);
   return service;
+}
+
+function taskBackend(
+  context: TaskContext,
+  service: AsyncCommandTaskService,
+  owner: Parameters<typeof createCoreTaskLifecycleBackend>[0]['owner'],
+  parent: { parentTaskId: string | null },
+  deliverTaskMessage?: (task: AsyncTaskRecord, message: string) => void,
+) {
+  return createCoreTaskLifecycleBackend({
+    service,
+    owner,
+    parentTaskId: parent.parentTaskId,
+    workspaceFolder: context.sourceAgentFolder,
+    deliverTaskMessage,
+  });
 }
 
 function taskScope(context: TaskContext): {
@@ -368,7 +390,7 @@ const asyncRunCommandHandler: TaskHandler = async (context) => {
 };
 
 const taskGetHandler: TaskHandler = async (context) => {
-  const { acceptData, reject } = responder(context);
+  const { reject } = responder(context);
   const scope = taskScope(context);
   if (!scope) {
     reject(
@@ -395,20 +417,12 @@ const taskGetHandler: TaskHandler = async (context) => {
     reject(parentTask.message, 'forbidden');
     return;
   }
-  const task = await service.getScoped({
-    ...scopedTaskOwner,
-    taskId,
-    parentTaskId: parentTask.parentTaskId ?? undefined,
-  });
-  if (!task) {
-    reject('Task not found.', 'not_found');
-    return;
-  }
-  acceptData('Task loaded.', task);
+  const tasks = taskBackend(context, service, scopedTaskOwner, parentTask);
+  respondTaskLifecycleResult(context, await tasks.task_get({ taskId }));
 };
 
 const taskListHandler: TaskHandler = async (context) => {
-  const { acceptData, reject } = responder(context);
+  const { reject } = responder(context);
   const scope = taskScope(context);
   if (!scope) {
     reject(
@@ -428,16 +442,12 @@ const taskListHandler: TaskHandler = async (context) => {
     reject(parentTask.message, 'forbidden');
     return;
   }
-  const tasks = await service.list({
-    ...scopedTaskOwner,
-    parentTaskId: parentTask.parentTaskId ?? undefined,
-    limit: 20,
-  });
-  acceptData(`Listed ${tasks.length} async task(s).`, { tasks });
+  const tasks = taskBackend(context, service, scopedTaskOwner, parentTask);
+  respondTaskLifecycleResult(context, await tasks.task_list({}));
 };
 
 const taskCancelHandler: TaskHandler = async (context) => {
-  const { acceptData, reject } = responder(context);
+  const { reject } = responder(context);
   const scope = taskScope(context);
   if (!scope) {
     reject(
@@ -464,25 +474,12 @@ const taskCancelHandler: TaskHandler = async (context) => {
     reject(parentTask.message, 'forbidden');
     return;
   }
-  const result = await service.cancel({
-    ...scopedTaskOwner,
-    taskId,
-    parentTaskId: parentTask.parentTaskId ?? undefined,
-  });
-  if (!result.ok) {
-    reject(
-      result.message,
-      result.message.includes('already finished')
-        ? 'invalid_request'
-        : 'not_found',
-    );
-    return;
-  }
-  acceptData(result.message, { taskId });
+  const tasks = taskBackend(context, service, scopedTaskOwner, parentTask);
+  respondTaskLifecycleResult(context, await tasks.task_cancel({ taskId }));
 };
 
 const delegateTaskHandler: TaskHandler = async (context) => {
-  const { acceptData, reject } = responder(context);
+  const { reject } = responder(context);
   const scope = taskScope(context);
   if (!scope) {
     reject(
@@ -530,14 +527,19 @@ const delegateTaskHandler: TaskHandler = async (context) => {
     scopedTaskOwner,
     toolPolicy.toolPolicyRules,
   );
-  const result = await service.startDelegatedAgent({
-    ...scopedTaskOwner,
+  const sharedResult = await createCoreTaskLifecycleBackend({
+    service,
+    owner: scopedTaskOwner,
     parentRunId: context.data.jobId ? null : (context.data.runId ?? null),
-    objective,
-    context: toTrimmedString(payload.context, { maxLen: 20_000 }),
-    expectedOutput: toTrimmedString(payload.expectedOutput, { maxLen: 2_000 }),
     workspaceFolder: context.sourceAgentFolder,
-    run: async ({ task, prompt, signal, onProcessStarted, onProgress }) => {
+    runDelegatedAgent: async ({
+      task,
+      prompt,
+      signal,
+      onProcessStarted,
+      onProgress,
+      timeoutMs: delegatedTimeoutMs,
+    }) => {
       const runAgent = context.deps.runAgent ?? spawnAgent;
       let latestResult: string | null = null;
       let processHandlePersisted: Promise<void> | null = null;
@@ -584,10 +586,7 @@ const delegateTaskHandler: TaskHandler = async (context) => {
           }
         },
         {
-          timeoutMs:
-            typeof payload.timeoutMs === 'number'
-              ? Math.min(payload.timeoutMs, DEFAULT_DELEGATED_AGENT_TIMEOUT_MS)
-              : DEFAULT_DELEGATED_AGENT_TIMEOUT_MS,
+          timeoutMs: delegatedTimeoutMs ?? DEFAULT_DELEGATED_AGENT_TIMEOUT_MS,
           signal,
           credentialBroker: await context.deps.getCredentialBroker?.(),
           skillRepository: context.deps.getSkillRepository?.(),
@@ -617,16 +616,21 @@ const delegateTaskHandler: TaskHandler = async (context) => {
           output.result ?? latestResult ?? 'delegated task completed',
       };
     },
+  }).delegate_task({
+    objective,
+    context: toTrimmedString(payload.context, { maxLen: 20_000 }) ?? undefined,
+    expectedOutput:
+      toTrimmedString(payload.expectedOutput, { maxLen: 2_000 }) ?? undefined,
+    timeoutMs:
+      typeof payload.timeoutMs === 'number'
+        ? Math.min(payload.timeoutMs, DEFAULT_DELEGATED_AGENT_TIMEOUT_MS)
+        : undefined,
   });
-  if (!result.ok) {
-    reject(result.message, 'forbidden');
-    return;
-  }
-  acceptData(`Queued: ${result.task.summary || result.task.id}`, result.task);
+  respondTaskLifecycleResult(context, sharedResult);
 };
 
 const taskMessageHandler: TaskHandler = async (context) => {
-  const { acceptData, reject } = responder(context);
+  const { reject } = responder(context);
   const scope = taskScope(context);
   if (!scope) {
     reject(
@@ -661,12 +665,12 @@ const taskMessageHandler: TaskHandler = async (context) => {
     reject(parentTask.message, 'forbidden');
     return;
   }
-  const result = await service.message({
-    ...scopedTaskOwner,
-    taskId,
-    parentTaskId: parentTask.parentTaskId ?? undefined,
-    message,
-    deliver: (task, text) => {
+  const tasks = taskBackend(
+    context,
+    service,
+    scopedTaskOwner,
+    parentTask,
+    (task, text) => {
       const workspaceFolder =
         typeof task.privateCorrelationJson.workspaceFolder === 'string'
           ? task.privateCorrelationJson.workspaceFolder
@@ -678,12 +682,11 @@ const taskMessageHandler: TaskHandler = async (context) => {
         taskContinuationThreadId(task.threadId, task.id),
       );
     },
-  });
-  if (!result.ok) {
-    reject(result.message, 'invalid_request');
-    return;
-  }
-  acceptData(result.message, { taskId });
+  );
+  respondTaskLifecycleResult(
+    context,
+    await tasks.task_message({ taskId, message }),
+  );
 };
 
 export const agentTaskLifecycleHandlers: Record<string, TaskHandler> = {

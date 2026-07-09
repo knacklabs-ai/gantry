@@ -21,16 +21,19 @@ import {
   getIpcResponseSigningPrivateKey,
   sealIpcResponseSigningPrivateKey,
 } from './ipc-auth.js';
-import {
-  durablePermissionCallbackId,
-  durablePermissionRequestSnapshot,
-} from './ipc-durable-permission.js';
+import { durablePermissionCallbackId } from './ipc-durable-permission.js';
 import {
   isActiveRunLeaseForInteraction,
-  recordPendingInteractionRequested,
   recordRunScopedTransientGrant,
   resolvePendingInteractionRecord,
 } from '../application/interactions/pending-interaction-durability.js';
+import {
+  beginDurablePermissionInteraction,
+  beginDurableQuestionInteraction,
+  durablePermissionRequestSnapshot,
+  finishDurablePermissionInteraction,
+  finishDurableQuestionInteraction,
+} from '../application/interactions/durable-interaction-handler.js';
 import {
   resolveAgentLockStatus,
   type AgentLockStatus,
@@ -184,14 +187,9 @@ export async function processPermissionInteractionIpc(input: {
     input.logger.info?.(requestedContext, 'Permission requested');
     // Durable pending record first: the prompt may only render once the
     // interaction can survive a provider/control-plane restart.
-    const recorded = await recordPendingInteractionRequested({
-      kind: 'permission',
+    await beginDurablePermissionInteraction({
+      request: input.request,
       sourceAgentFolder: input.sourceAgentFolder,
-      requestId: input.request.requestId,
-      appId: input.request.appId,
-      runId: input.request.runId,
-      runLeaseToken: input.request.runLeaseToken,
-      runLeaseFencingVersion: input.request.runLeaseFencingVersion,
       payload: {
         ...requestedContext,
         decisionPolicy: input.request.decisionPolicy ?? null,
@@ -216,8 +214,6 @@ export async function processPermissionInteractionIpc(input: {
         responseNonce: input.request.responseNonce ?? null,
       },
     });
-    if (!recorded)
-      throw new Error('Permission prompt was not durably recorded');
     await publishPermissionRuntimeEvent(input.deps, input.request, {
       eventType: RUNTIME_EVENT_TYPES.PERMISSION_REQUESTED,
       payload: requestedContext,
@@ -384,22 +380,11 @@ export async function processPermissionInteractionIpc(input: {
       | PermissionApprovalDecision['updatedPermissions']
       | undefined;
     await assertActiveScheduledPermissionLease(input);
-    const resolved = await resolvePendingInteractionRecord({
-      kind: 'permission',
+    const resolved = await finishDurablePermissionInteraction({
+      request: input.request,
       sourceAgentFolder: input.sourceAgentFolder,
-      requestId: input.request.requestId,
-      appId: input.request.appId ?? null,
-      runId: input.request.runId,
-      status: decision.mode === 'cancel' ? 'cancelled' : 'resolved',
-      resolution: {
-        approved: decision.approved,
-        mode: decision.mode,
-        reason: decision.reason ?? null,
-        updatedPermissions: responsePermissionUpdates ?? null,
-        decisionClassification: decision.decisionClassification ?? null,
-        timedGrantExpiresAtMs: decision.timedGrantExpiresAtMs ?? null,
-      },
-      approverRef: decision.decidedBy ?? null,
+      decision,
+      updatedPermissions: responsePermissionUpdates,
     });
     if (!resolved) {
       input.logger.warn(
@@ -754,14 +739,9 @@ export async function processUserQuestionInteractionIpc(input: {
   logger: IpcInteractionLogger;
 }): Promise<void> {
   try {
-    const recorded = await recordPendingInteractionRequested({
-      kind: 'question',
+    await beginDurableQuestionInteraction({
+      request: input.request,
       sourceAgentFolder: input.sourceAgentFolder,
-      requestId: input.request.requestId,
-      appId: input.request.appId ?? null,
-      runId: input.request.runId ?? null,
-      runLeaseToken: input.request.runLeaseToken ?? null,
-      runLeaseFencingVersion: input.request.runLeaseFencingVersion ?? null,
       payload: {
         sourceAgentFolder: input.sourceAgentFolder,
         requestId: input.request.requestId,
@@ -786,21 +766,15 @@ export async function processUserQuestionInteractionIpc(input: {
           ) ?? null,
       },
     });
-    if (!recorded) throw new Error('Question prompt was not durably recorded');
     await assertActiveScheduledQuestionLease(input);
     const response = await processUserQuestionIpcRequest(input.request, {
       requestUserAnswer: input.deps.requestUserAnswer,
     });
     await assertActiveScheduledQuestionLease(input);
-    const resolved = await resolvePendingInteractionRecord({
-      kind: 'question',
+    const resolved = await finishDurableQuestionInteraction({
+      request: input.request,
       sourceAgentFolder: input.sourceAgentFolder,
-      requestId: input.request.requestId,
-      appId: input.request.appId ?? null,
-      runId: input.request.runId ?? null,
-      status: 'resolved',
-      resolution: { answers: response.answers || {} },
-      approverRef: response.answeredBy ?? null,
+      response,
     });
     if (!resolved) {
       input.logger.warn(

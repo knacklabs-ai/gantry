@@ -24,7 +24,7 @@ import { canProcessIpcFile, clearIpcRateLimitState } from './ipc-rate-limit.js';
 // prettier-ignore
 import { validatePermissionIpcJobExecutionTarget, validateUserQuestionIpcJobExecutionTarget } from './ipc-scheduled-interaction-validation.js';
 import type { ConversationRoute as RuntimeGroupRecord } from '../domain/types.js';
-import { resolveOwnedFileArtifactMessage } from './ipc-message-files.js';
+import { deliverIpcMessage } from './ipc-message-delivery.js';
 import { FilesystemRunnerControlPort } from './filesystem-runner-control-port.js';
 import {
   IpcRequestWakeupRegistry,
@@ -314,19 +314,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   threadId: data.threadId,
                   providerAccountId: data.providerAccountId,
                 });
-                const message = await resolveOwnedFileArtifactMessage({
+                await deliverIpcMessage({
                   deps,
-                  appId: data.appId,
                   sourceAgentFolder,
-                  text: data.text,
-                  files: data.files,
-                });
-                await deps.sendMessage(route.targetJid, message.text, {
-                  ...(data.threadId ? { threadId: data.threadId } : {}),
-                  ...(route.providerAccountId
-                    ? { providerAccountId: route.providerAccountId }
-                    : {}),
-                  files: message.files,
+                  data,
+                  targetJid: route.targetJid,
+                  providerAccountId: route.providerAccountId,
                 });
                 logger.info(
                   { chatJid: route.targetJid, sourceAgentFolder },
