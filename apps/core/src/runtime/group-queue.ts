@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'child_process';
 import { logger } from '../infrastructure/logging/logger.js';
-import { stopActiveGroupRun } from './group-queue-stop.js';
+import { runPort, stopActiveGroupRun } from './group-queue-stop.js';
 import { normalizeThreadQueueId } from '../shared/thread-queue-key.js';
 import {
   continuationSenderMatchesRequiredUser,
@@ -394,7 +394,7 @@ export class GroupQueue {
       const hooks = createLiveTurnLocalRunnerHooks({
         groupJid,
         state,
-        runnerControlPort: this.runnerControlPort,
+        runnerControlPort: runPort(proc) ?? this.runnerControlPort,
         closeStdin: () => this.closeStdin(groupJid),
         stopGroup: () => this.stopGroup(groupJid),
       });
@@ -455,7 +455,8 @@ export class GroupQueue {
     }
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
     try {
-      this.runnerControlPort.writeContinuationInput({
+      const port = runPort(state.process);
+      (port ?? this.runnerControlPort).writeContinuationInput({
         workspaceFolder: state.workspaceFolder,
         text,
         sequence: this.continuationSequence++,
@@ -472,7 +473,8 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.workspaceFolder) return;
     try {
-      this.runnerControlPort.writeCloseSignal({
+      const port = runPort(state.process);
+      (port ?? this.runnerControlPort).writeCloseSignal({
         workspaceFolder: state.workspaceFolder,
         threadId: state.threadId,
       });

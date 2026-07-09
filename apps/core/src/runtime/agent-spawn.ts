@@ -26,7 +26,6 @@ import {
   McpServerService,
   type MaterializedMcpCapability,
 } from '../application/mcp/mcp-server-service.js';
-import { ensureWorkspaceIpcLayout } from './agent-spawn-layout.js';
 import { resolvePackageRootFromSourceDir } from '../platform/package-root.js';
 import {
   computeBrowserIpcAuthToken,
@@ -101,11 +100,8 @@ import {
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
-export type {
-  AvailableGroup,
-  AgentInput,
-  AgentOutput,
-} from './agent-spawn-types.js';
+export type { AvailableGroup } from './agent-spawn-types.js';
+export type { AgentInput, AgentOutput } from './agent-spawn-types.js';
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -113,6 +109,10 @@ export async function spawnAgent(
   onOutput: ((output: AgentOutput) => Promise<void>) | undefined,
   options: RunAgentOptions,
 ): Promise<AgentOutput> {
+  if ((input.runtime ?? getSelectedAgentRuntime(group.folder)) === 'inline') {
+    const { runInlineAgent } = await import('./agent-inline.js');
+    return runInlineAgent(group, input, onProcess, onOutput, options);
+  }
   const startTime = currentTimeMs();
   const hostStartup = createRunnerHostStartupTiming({ nowMs: currentTimeMs });
   const { groupDir, processName } = hostStartup.measure('workspacePrepMs', () =>
@@ -200,7 +200,6 @@ export async function spawnAgent(
     yoloMode: effectiveYoloModeSettings(runtimeSettings.permissions.yoloMode),
   };
   const hostRuntime = prepareHostRuntimeContext(group);
-  ensureWorkspaceIpcLayout(hostRuntime.workspaceIpcDir);
   let executionAdapter: NonNullable<RunAgentOptions['executionAdapter']>;
   try {
     executionAdapter = resolveAgentExecutionAdapter({

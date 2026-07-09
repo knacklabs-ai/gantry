@@ -34,6 +34,8 @@ export type ContinuationRunnerControlPort = Pick<
   'writeContinuationInput' | 'writeCloseSignal'
 >;
 
+export const RUNNER_CONTROL_PORT = Symbol.for('gantry.runnerControlPort');
+
 export const localContinuationRunnerControlPort: ContinuationRunnerControlPort =
   {
     writeContinuationInput: ({ workspaceFolder, text, sequence, threadId }) =>
