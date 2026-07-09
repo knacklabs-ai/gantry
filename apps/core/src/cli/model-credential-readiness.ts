@@ -86,9 +86,7 @@ export async function inspectModelCredentialReadiness(
     // Re-derive with the stored credential set so family aliases require the
     // member the runtime would actually select.
     const configuredProviderIds = new Set(
-      rows
-        .filter((row) => row.health === 'ready')
-        .map((row) => row.providerId),
+      rows.filter((row) => row.health === 'ready').map((row) => row.providerId),
     );
     const refinedRequiredProviders = requiredModelCredentialProviders(
       settings,
