@@ -6,6 +6,7 @@ import {
   ensureConfiguredAgent,
   ensureConfiguredConversationBinding,
   loadRuntimeSettings,
+  noteRestartRequired,
   writeDesiredRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
 import { DEFAULT_AGENT_FOLDER } from './main-agent.js';
@@ -188,8 +189,11 @@ async function chooseChatFromDiscovery(
 
 export async function runTelegramConnectCommand(
   runtimeHome: string,
+  requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   const env = readTelegramFromRuntimeEnv(runtimeHome);
   p.note(
     [
@@ -251,6 +255,7 @@ export async function runTelegramConnectCommand(
   let conversationRouteName = '';
 
   if (normalizedChatJid) {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const access = await verifyTelegramChatAccess({
       token: tokenInput,
       chatJid: normalizedChatJid,
@@ -266,7 +271,11 @@ export async function runTelegramConnectCommand(
     const registered = await registerTelegramMainGroup({
       runtimeHome,
       chatJid: normalizedChatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
+        currentSettings.agent.name,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -281,10 +290,17 @@ export async function runTelegramConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.telegram.enabled = true;
   let providerAccountId = 'telegram_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  // The registered route's owner wins: reusing an existing conversation
+  // must not hand its provider account to the requesting agent.
+  const providerAgentId =
+    registeredFolder || requestedAgentId || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: conversationRouteName || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
+      conversationRouteName ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {
@@ -329,11 +345,12 @@ export async function runTelegramConnectCommand(
       bot_token: tokenSecret.ref,
     },
   };
-  await writeDesiredRuntimeSettings({
+  const result = await writeDesiredRuntimeSettings({
     runtimeHome,
     settings,
     previousSettings,
   });
+  noteRestartRequired(result);
 
   if (normalizedChatJid) {
     p.outro('Telegram connected. Secret stored encrypted in Gantry.');

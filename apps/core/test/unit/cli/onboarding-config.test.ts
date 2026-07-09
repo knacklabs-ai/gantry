@@ -8,7 +8,13 @@ const settingsWrites: Array<{
   previousSchema?: string;
   telegramEnabled: boolean;
   telegramBotRef?: string;
+  slackEnabled: boolean;
+  slackBotRef?: string;
+  slackAppRef?: string;
   agentHarness: string;
+  defaultModel: string;
+  oneTimeJobDefaultModel: string;
+  memoryExtractor: string;
 }> = [];
 const desiredSettings = createDefaultRuntimeSettings();
 
@@ -67,7 +73,17 @@ vi.mock('@core/config/settings/runtime-settings.js', async (importOriginal) => {
           telegramBotRef:
             input.settings.providerAccounts.telegram_default?.runtimeSecretRefs
               .bot_token,
+          slackEnabled: Boolean(input.settings.providers.slack.enabled),
+          slackBotRef:
+            input.settings.providerAccounts.slack_default?.runtimeSecretRefs
+              .bot_token,
+          slackAppRef:
+            input.settings.providerAccounts.slack_default?.runtimeSecretRefs
+              .app_token,
           agentHarness: input.settings.agent.agentHarness,
+          defaultModel: input.settings.agent.defaultModel,
+          oneTimeJobDefaultModel: input.settings.agent.oneTimeJobDefaultModel,
+          memoryExtractor: input.settings.memory.llm.models.extractor,
         });
         return { reconciled: false };
       },
@@ -77,6 +93,7 @@ vi.mock('@core/config/settings/runtime-settings.js', async (importOriginal) => {
 
 describe('persistOnboardingConfig', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     events.length = 0;
     settingsWrites.length = 0;
     Object.assign(desiredSettings, createDefaultRuntimeSettings());
@@ -164,6 +181,176 @@ describe('persistOnboardingConfig', () => {
       schema: 'custom_schema',
       previousSchema: 'latest_schema',
       agentHarness: 'auto',
+    });
+  });
+
+  it('preserves an enabled provider with stored refs when no new token is supplied', async () => {
+    desiredSettings.providers.slack.enabled = true;
+    desiredSettings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {
+        bot_token: 'gantry-secret:SLACK_BOT_TOKEN',
+        app_token: 'gantry-secret:SLACK_APP_TOKEN',
+      },
+    };
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'slack',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(events).toEqual(['loadDesired:gantry', 'write:gantry']);
+    expect(settingsWrites.at(-1)).toMatchObject({
+      slackEnabled: true,
+      slackBotRef: 'gantry-secret:SLACK_BOT_TOKEN',
+      slackAppRef: 'gantry-secret:SLACK_APP_TOKEN',
+    });
+  });
+
+  it('does not scrub env-backed refs for a preserved enabled provider', async () => {
+    desiredSettings.providers.slack.enabled = true;
+    desiredSettings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {
+        bot_token: 'env:SLACK_BOT_TOKEN',
+        app_token: 'env:SLACK_APP_TOKEN',
+      },
+    };
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+    const { upsertEnvFile } = await import('@core/config/env/file.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'slack',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      slackEnabled: true,
+      slackBotRef: 'env:SLACK_BOT_TOKEN',
+      slackAppRef: 'env:SLACK_APP_TOKEN',
+    });
+    expect(vi.mocked(upsertEnvFile).mock.calls.at(-1)?.[1]).toEqual({
+      TELEGRAM_BOT_TOKEN: null,
+      SLACK_PERMISSION_APPROVER_IDS: null,
+    });
+  });
+
+  it('keeps the other configured channel enabled when a different primary is persisted', async () => {
+    desiredSettings.providers.slack.enabled = true;
+    desiredSettings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {
+        bot_token: 'gantry-secret:SLACK_BOT_TOKEN',
+        app_token: 'gantry-secret:SLACK_APP_TOKEN',
+      },
+    };
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'telegram',
+      telegramBotToken: '12345:telegram-token',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      telegramEnabled: true,
+      slackEnabled: true,
+    });
+  });
+
+  it('preserves job and memory customizations when the chat model is unchanged', async () => {
+    desiredSettings.agent.defaultModel = 'kimi';
+    desiredSettings.agent.oneTimeJobDefaultModel = 'haiku';
+    desiredSettings.memory.llm.models.extractor = 'haiku';
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'telegram',
+      modelAlias: 'kimi',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      defaultModel: 'kimi',
+      oneTimeJobDefaultModel: 'haiku',
+      memoryExtractor: 'haiku',
+    });
+  });
+
+  it('carries a family chat alias through a non-model maintenance save', async () => {
+    desiredSettings.agent.defaultModel = 'gpt-oss';
+    desiredSettings.agent.oneTimeJobDefaultModel = 'haiku';
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'telegram',
+      modelAlias: 'gpt-oss',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      defaultModel: 'gpt-oss',
+      oneTimeJobDefaultModel: 'haiku',
+    });
+  });
+
+  it('re-derives defaults when the chat model changes', async () => {
+    desiredSettings.agent.defaultModel = 'kimi';
+    desiredSettings.agent.oneTimeJobDefaultModel = 'haiku';
+    const { persistOnboardingConfig } =
+      await import('@core/cli/onboarding-config.js');
+
+    await persistOnboardingConfig({
+      runtimeHome: '/tmp/gantry',
+      primaryProvider: 'telegram',
+      modelAlias: 'sonnet',
+      agentHarness: 'auto',
+      credentialMode: 'gantry',
+      memoryEnabled: true,
+      embeddingsEnabled: false,
+      dreamingEnabled: false,
+    });
+
+    expect(settingsWrites.at(-1)).toMatchObject({
+      defaultModel: 'sonnet',
+      oneTimeJobDefaultModel: '',
     });
   });
 });

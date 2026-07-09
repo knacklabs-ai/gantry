@@ -29,4 +29,18 @@ describe('Anthropic Claude Agent model config', () => {
       type: 'disabled',
     });
   });
+
+  it('raises sub-minimum thinking budgets to the API floor and drops invalid ones', () => {
+    expect(
+      resolveThinkingOptions({ mode: 'enabled', budgetTokens: 128 }).thinking,
+    ).toMatchObject({ type: 'enabled', budgetTokens: 1024 });
+    expect(
+      resolveThinkingOptions({ mode: 'enabled', budgetTokens: 4096.7 })
+        .thinking,
+    ).toMatchObject({ type: 'enabled', budgetTokens: 4096 });
+    expect(
+      resolveThinkingOptions({ mode: 'enabled', budgetTokens: Number.NaN })
+        .thinking,
+    ).toMatchObject({ type: 'enabled', budgetTokens: undefined });
+  });
 });

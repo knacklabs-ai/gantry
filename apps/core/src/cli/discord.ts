@@ -53,16 +53,31 @@ export async function registerDiscordMainGroup(options: {
   runtimeHome: string;
   chatJid: string;
   displayName: string;
+  agentId?: string;
 }): Promise<{ folder: string; groupName: string }> {
   ensureRuntimeLayout(options.runtimeHome);
   const db = await openRuntimeGroupDb(options.runtimeHome);
   try {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
+    // An already-registered conversation keeps its owning agent; agentId
+    // only binds conversations that are not routed yet.
     const folder =
       existingGroup?.folder ||
+      options.agentId?.trim() ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
-    const groupName = normalizeDefaultAgentName(options.displayName);
+    // A conversation owned by a DIFFERENT agent than the requested one is
+    // reused as-is: rewriting its display name would rename someone else's
+    // route with no rollback path in the route DB.
+    const requestedAgentId = options.agentId?.trim();
+    const keepExistingRoute = Boolean(
+      existingGroup &&
+      requestedAgentId &&
+      existingGroup.folder !== requestedAgentId,
+    );
+    const groupName = keepExistingRoute
+      ? existingGroup!.name
+      : normalizeDefaultAgentName(options.displayName);
     const route = {
       name: groupName,
       folder,
@@ -155,8 +170,11 @@ async function chooseDiscordChannelForConnect(
 export async function runDiscordConnectCommand(
   runtimeHome: string,
   discoveryClient: DiscordSetupDiscoveryClient = new RestDiscordSetupDiscoveryClient(),
+  requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   p.note(
     [
       'Create or reuse a Discord application and bot.',
@@ -231,6 +249,7 @@ export async function runDiscordConnectCommand(
   const approverIds = parseDiscordApproverIds(approverInput || '');
 
   if (channelChoice.type === 'selected') {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const verified = await discoveryClient.verifyChannel({
       credentials,
       guildId: channelChoice.channel.guildId,
@@ -255,7 +274,11 @@ export async function runDiscordConnectCommand(
     const registered = await registerDiscordMainGroup({
       runtimeHome,
       chatJid: verified.chatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
+        currentSettings.agent.name,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -271,13 +294,20 @@ export async function runDiscordConnectCommand(
   const previousSettings = structuredClone(settings);
   const previousDiscordEnabled = settings.providers.discord?.enabled ?? false;
   let providerAccountId = 'discord_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  // The registered route's owner wins: reusing an existing conversation
+  // must not hand its provider account to the requesting agent.
+  const providerAgentId =
+    registeredFolder || requestedAgentId || DEFAULT_AGENT_FOLDER;
   settings.providers.discord = {
     enabled: channelChoice.type === 'selected' || previousDiscordEnabled,
   };
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: registeredChatTitle || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
+      registeredChatTitle ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {

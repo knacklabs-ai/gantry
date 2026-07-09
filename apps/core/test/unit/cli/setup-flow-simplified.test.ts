@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
@@ -11,6 +15,7 @@ afterEach(() => {
   vi.doUnmock('@core/cli/setup-flow-provider-steps.js');
   vi.doUnmock('@core/cli/setup-flow-state.js');
   vi.doUnmock('@core/cli/setup-ready.js');
+  vi.doUnmock('@core/config/settings/runtime-settings.js');
 });
 
 describe('simplified setup sequence', () => {
@@ -23,6 +28,7 @@ describe('simplified setup sequence', () => {
       'storage',
       'channel',
       'model',
+      'memory',
       'credentials',
       'telegram',
       'slack',
@@ -34,7 +40,6 @@ describe('simplified setup sequence', () => {
 
     for (const removed of [
       'prerequisites',
-      'memory',
       'embeddings',
       'dreaming',
       'service',
@@ -57,7 +62,6 @@ describe('simplified setup sequence', () => {
       primaryProvider: 'telegram',
       credentialMode: 'gantry',
       agentName: 'Gantry',
-      modelPreset: 'anthropic',
       selectedModel: 'sonnet',
       agentHarness: 'auto',
       telegramBotToken: '',
@@ -102,13 +106,69 @@ describe('simplified setup sequence', () => {
     expect(resumed.slackDisplayName).toBe('ops-room');
   });
 
-  it('can move back and forward across model and credentials steps', async () => {
+  it('prefills the chat jid from the existing ready binding', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-ready-binding-'),
+    );
+    fs.writeFileSync(path.join(runtimeHome, 'settings.yaml'), 'agent: {}\n');
+    vi.doMock('@core/config/settings/runtime-settings.js', async () => ({
+      createDefaultRuntimeSettings: vi.fn(),
+      loadRuntimeSettingsFromPath: vi.fn(() => ({
+        providers: {
+          telegram: { enabled: true },
+          slack: { enabled: false },
+        },
+        credentialBroker: { mode: 'gantry' },
+        storage: {
+          postgres: { schema: 'gantry', urlEnv: 'GANTRY_DATABASE_URL' },
+        },
+        memory: {
+          enabled: true,
+          embeddings: { enabled: false },
+          dreaming: { enabled: true },
+        },
+        agent: {
+          name: 'Gantry',
+          defaultModel: 'sonnet',
+          agentHarness: 'auto',
+        },
+        agents: {
+          main_agent: {
+            folder: 'main_agent',
+            bindings: {
+              main: {
+                provider: 'telegram',
+                jid: 'tg:-100123',
+                name: 'Ops Room',
+              },
+            },
+          },
+        },
+        conversations: {},
+        providerAccounts: {},
+      })),
+    }));
+    const { restoreDraft } = await import('@core/cli/setup-flow-state.js');
+
+    try {
+      const draft = restoreDraft(runtimeHome, null);
+
+      expect(draft.telegramChatJid).toBe('tg:-100123');
+      expect(draft.conversationLabel).toBe('Ops Room');
+      expect(draft.workspaceKey).toBe('main_agent');
+    } finally {
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('can move back and forward across model, memory, and credentials steps', async () => {
     const sequence = [
       'welcome',
       'runtime_home',
       'storage',
       'channel',
       'model',
+      'memory',
       'credentials',
       'telegram',
       'slack',
@@ -130,6 +190,7 @@ describe('simplified setup sequence', () => {
     vi.doMock('@clack/prompts', () => ({
       intro: vi.fn(),
       outro: vi.fn(),
+      log: { message: vi.fn(), step: vi.fn() },
     }));
     vi.doMock('@core/cli/setup-flow-state.js', () => ({
       FULL_SEQUENCE: sequence,
@@ -150,7 +211,7 @@ describe('simplified setup sequence', () => {
       readOnboardingState: vi.fn(() => null),
     }));
     vi.doMock('@core/cli/setup-flow-core-steps.js', () => {
-      let modelCalls = 0;
+      let memoryCalls = 0;
       return {
         runWelcomeStep: step('welcome'),
         runRuntimeHomeStep: step('runtime_home', {
@@ -158,10 +219,11 @@ describe('simplified setup sequence', () => {
         }),
         runStorageStep: step('storage'),
         runChannelStep: step('channel'),
-        runModelStep: vi.fn(async () => {
-          calls.push('model');
-          modelCalls += 1;
-          return modelCalls === 1 ? { type: 'back' } : { type: 'next' };
+        runModelStep: step('model'),
+        runMemoryStep: vi.fn(async () => {
+          calls.push('memory');
+          memoryCalls += 1;
+          return memoryCalls === 1 ? { type: 'back' } : { type: 'next' };
         }),
       };
     });
@@ -206,10 +268,11 @@ describe('simplified setup sequence', () => {
       'storage',
       'channel',
       'model',
-      'channel',
+      'memory',
       'model',
+      'memory',
       'credentials',
-      'model',
+      'memory',
       'credentials',
       'telegram',
       'config',
@@ -240,7 +303,6 @@ describe('ready screen copy', () => {
     agentHarness: 'auto',
     conversationLabel: 'main team chat',
     selectedModel: 'sonnet',
-    modelPreset: 'anthropic',
     memoryEnabled: true,
     embeddingsEnabled: false,
     dreamingEnabled: true,
@@ -266,7 +328,7 @@ describe('ready screen copy', () => {
         '  anthropic: main model sonnet; memory LLM consolidation sonnet; memory LLM dreaming sonnet; memory LLM extractor haiku; one-time jobs inherit main model; recurring jobs inherit main model',
         '',
         'Next: Start chatting or run gantry status.',
-        'Optional setup: memory, background service, extra providers.',
+        'Optional setup: memory, background service, extra chat channels.',
       ].join('\n'),
     );
     expect(note.mock.calls[0][1]).toBe('Ready');
@@ -283,11 +345,97 @@ describe('ready screen copy', () => {
   });
 });
 
+async function loadConfigStep(error: Error) {
+  const logError = vi.fn();
+  const spinner = { start: vi.fn(), stop: vi.fn() };
+  vi.doMock('@clack/prompts', () => ({
+    isCancel: () => false,
+    note: vi.fn(),
+    spinner: vi.fn(() => spinner),
+    log: { error: logError, info: vi.fn(), warn: vi.fn(), success: vi.fn() },
+  }));
+  vi.doMock(
+    '@core/config/settings/runtime-home.js',
+    async (importOriginal) => ({
+      ...(await importOriginal<
+        typeof import('@core/config/settings/runtime-home.js')
+      >()),
+      ensureRuntimeWritable: vi.fn(),
+    }),
+  );
+  vi.doMock('@core/cli/onboarding-config.js', () => ({
+    persistOnboardingConfig: vi.fn(async () => {
+      throw error;
+    }),
+  }));
+  vi.doMock('@core/cli/setup-flow-prompts.js', () => ({
+    chooseProgressAction: vi.fn(async () => ({ type: 'next' })),
+  }));
+  vi.doMock('@core/cli/setup-credentials.js', () => ({
+    requiredModelCredentialProviderReasonsForSetupDraft: vi.fn(() => []),
+    requiredModelCredentialProvidersForSetupDraft: vi.fn(() => []),
+    verifyModelAccess: vi.fn(),
+  }));
+  const { runConfigStep } = await import('@core/cli/setup-flow-final-steps.js');
+  return { runConfigStep, logError };
+}
+
+describe('config save copy', () => {
+  const draft = {
+    runtimeHome: '/tmp/gantry-config-copy',
+    postgresDatabaseUrl: 'postgres://localhost/gantry',
+    postgresSchema: 'gantry',
+    primaryProvider: 'telegram',
+    credentialMode: 'gantry',
+    agentName: 'Gantry',
+    selectedModel: 'opus',
+    agentHarness: 'auto',
+    telegramBotToken: '',
+    telegramChatJid: 'tg:-100123',
+    telegramPermissionApproverIds: '123',
+    slackBotToken: '',
+    slackAppToken: '',
+    slackChatJid: '',
+    slackPermissionApproverIds: '',
+    memoryEnabled: true,
+    embeddingsEnabled: false,
+    dreamingEnabled: true,
+  };
+
+  it('tells the user how to recover from stale setup settings', async () => {
+    const { runConfigStep, logError } = await loadConfigStep(
+      new Error(
+        'Settings mutation is based on stale settings; reload latest desired state and retry.',
+      ),
+    );
+
+    await expect(runConfigStep(draft as never)).resolves.toEqual({
+      type: 'resume',
+    });
+    expect(logError.mock.calls[0][0]).toContain(
+      'Next action: another process changed settings during setup — re-run `gantry setup`; your answers are saved and pre-filled',
+    );
+  });
+
+  it('points generic config failures at doctor', async () => {
+    const { runConfigStep, logError } = await loadConfigStep(
+      new Error('connection refused'),
+    );
+
+    await expect(runConfigStep(draft as never)).resolves.toEqual({
+      type: 'resume',
+    });
+    expect(logError.mock.calls[0][0]).toContain(
+      'Next action: check Postgres connectivity (`gantry doctor`), then re-run `gantry setup`',
+    );
+  });
+});
+
 async function loadVerifyStep(input: {
   runtimeConfigured: boolean;
   hasProcessableGroup?: boolean;
-  report?: unknown;
-  modelAccess?: unknown;
+  report?: unknown | ((options: unknown) => unknown);
+  modelAccess?: unknown | ((options: unknown) => unknown);
 }) {
   const warn = vi.fn();
   const note = vi.fn();
@@ -296,9 +444,14 @@ async function loadVerifyStep(input: {
     note,
     log: { error: vi.fn(), info: vi.fn(), warn, success: vi.fn() },
   }));
-  const report = input.report ?? { ok: true, sections: [], checks: [] };
+  const defaultReport = { ok: true, sections: [], checks: [] };
+  const runDoctorWithNetwork = vi.fn(async (...args: unknown[]) =>
+    typeof input.report === 'function'
+      ? input.report(args[2])
+      : (input.report ?? defaultReport),
+  );
   vi.doMock('@core/cli/doctor.js', () => ({
-    runDoctorWithNetwork: vi.fn(async () => report),
+    runDoctorWithNetwork,
     formatDoctorReport: vi.fn(() => 'doctor'),
     hasRuntimeConfig: vi.fn(() => input.runtimeConfigured),
     hasProcessableGroupForConfiguredChannel: vi.fn(
@@ -311,17 +464,29 @@ async function loadVerifyStep(input: {
     >()),
     listConnectableChannelProviders: vi.fn(() => [{ id: 'telegram' }]),
   }));
+  const verifyModelAccess = vi.fn(async (...args: unknown[]) =>
+    typeof input.modelAccess === 'function'
+      ? input.modelAccess(args[2])
+      : (input.modelAccess ?? { ok: true, message: 'ok' }),
+  );
   vi.doMock('@core/cli/setup-credentials.js', () => ({
     requiredModelCredentialProviderReasonsForSetupDraft: vi.fn(() => [
       { providerId: 'anthropic', reasons: ['main model opus'] },
     ]),
     requiredModelCredentialProvidersForSetupDraft: vi.fn(() => ['anthropic']),
-    verifyModelAccess: vi.fn(
-      async () => input.modelAccess ?? { ok: true, message: 'ok' },
-    ),
+    verifyModelAccess,
   }));
+  vi.doMock(
+    '@core/config/settings/runtime-settings.js',
+    async (importOriginal) => ({
+      ...(await importOriginal<
+        typeof import('@core/config/settings/runtime-settings.js')
+      >()),
+      loadRuntimeSettings: vi.fn(() => ({})),
+    }),
+  );
   const { runVerifyStep } = await import('@core/cli/setup-flow-final-steps.js');
-  return { runVerifyStep, warn };
+  return { runVerifyStep, warn, runDoctorWithNetwork, verifyModelAccess };
 }
 
 describe('blocked copy', () => {
@@ -398,6 +563,58 @@ describe('blocked copy', () => {
       ].join('\n'),
     );
   });
+
+  it('does not bounce setup when a skip-listed credential only fails live verification', async () => {
+    const { runVerifyStep, runDoctorWithNetwork, verifyModelAccess } =
+      await loadVerifyStep({
+        runtimeConfigured: true,
+        report: (options) =>
+          (
+            options as {
+              modelCredentialLiveSkipProviderIds?: readonly string[];
+            }
+          ).modelCredentialLiveSkipProviderIds?.includes('anthropic')
+            ? { ok: true, sections: [], checks: [] }
+            : {
+                ok: false,
+                blockingFailures: 1,
+                warnings: 0,
+                checks: [
+                  {
+                    id: 'model-access-credentials',
+                    title: 'Model Access Credentials',
+                    status: 'fail',
+                    message: 'anthropic live credential check failed: 401',
+                    nextAction: 'gantry credentials model set anthropic',
+                  },
+                ],
+              },
+        modelAccess: (options) =>
+          (
+            options as {
+              skipLiveProviderIds?: readonly string[];
+            }
+          ).skipLiveProviderIds?.includes('anthropic')
+            ? { ok: true, message: 'ok' }
+            : { ok: false, message: 'anthropic live credential check failed' },
+      });
+
+    const action = await runVerifyStep('file:///x', {
+      runtimeHome: '/tmp/x',
+      primaryProvider: 'telegram',
+      credentialLiveSkipProviderIds: ['anthropic'],
+    } as never);
+
+    expect(action).toEqual({ type: 'next' });
+    expect(runDoctorWithNetwork).toHaveBeenCalledWith('file:///x', '/tmp/x', {
+      modelCredentialLiveSkipProviderIds: ['anthropic'],
+    });
+    expect(verifyModelAccess).toHaveBeenCalledWith(
+      '/tmp/x',
+      expect.anything(),
+      { skipLiveProviderIds: ['anthropic'] },
+    );
+  });
 });
 
 async function loadGroupStep() {
@@ -440,6 +657,7 @@ async function loadGroupStep() {
   vi.doMock('@core/config/settings/runtime-settings.js', () => ({
     loadRuntimeSettings: vi.fn(() => settings),
     saveRuntimeSettings,
+    noteRestartRequired: vi.fn(),
     writeDesiredRuntimeSettings,
     ensureConfiguredConversationBinding,
   }));

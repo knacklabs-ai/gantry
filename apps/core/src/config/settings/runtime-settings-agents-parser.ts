@@ -1,4 +1,4 @@
-import { resolveModelSelectionForWorkload } from '../../shared/model-catalog.js';
+import { resolveModelSelectionForWorkloadWithFamilies } from '../../shared/model-families.js';
 import {
   isAgentHarness,
   type AgentHarness,
@@ -298,7 +298,10 @@ export function parseConfiguredAgents(
           ? undefined
           : parseStringValue(map.model, `${pathPrefix}.model`);
     if (model) {
-      const resolved = resolveModelSelectionForWorkload(model, 'chat');
+      const resolved = resolveModelSelectionForWorkloadWithFamilies(
+        model,
+        'chat',
+      );
       if (!resolved.ok) {
         throw new Error(`${pathPrefix}.model is invalid: ${resolved.message}`);
       }
@@ -311,7 +314,7 @@ export function parseConfiguredAgents(
             `${pathPrefix}.one_time_job_default_model`,
           );
     if (oneTimeJobDefaultModel) {
-      const resolved = resolveModelSelectionForWorkload(
+      const resolved = resolveModelSelectionForWorkloadWithFamilies(
         oneTimeJobDefaultModel,
         'one_time_job',
       );
@@ -329,7 +332,7 @@ export function parseConfiguredAgents(
             `${pathPrefix}.recurring_job_default_model`,
           );
     if (recurringJobDefaultModel) {
-      const resolved = resolveModelSelectionForWorkload(
+      const resolved = resolveModelSelectionForWorkloadWithFamilies(
         recurringJobDefaultModel,
         'recurring_job',
       );

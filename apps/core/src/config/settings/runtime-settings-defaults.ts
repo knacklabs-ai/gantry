@@ -4,9 +4,13 @@ import { AUTO_AGENT_HARNESS } from '../../shared/agent-engine.js';
 import { DEFAULT_AGENT_NAME } from '../../shared/default-agent.js';
 import { listChannelProviders } from '../../channels/provider-registry.js';
 import {
-  DEFAULT_MODEL_PRESET_ID,
-  getModelPreset,
-  type ModelPresetId,
+  resolveModelSelectionForWorkloadWithFamilies,
+  type FamilyOrderOverrides,
+} from '../../shared/model-families.js';
+import {
+  DEFAULT_SETUP_MODEL_ALIAS,
+  memoryModelDefaultsForProvider,
+  resolveModelSelectionForWorkload,
 } from '../../shared/model-catalog.js';
 import { type SenderControlAllowlistConfig } from './control-allowlist.js';
 import { type SenderAllowlistConfig } from './sender-allowlist.js';
@@ -72,10 +76,29 @@ export function getDefaultMemoryBackfillSettings(): RuntimeMemoryBackfillSetting
   };
 }
 
-export function getPresetManagedMemoryDefaults(
-  presetId: ModelPresetId = DEFAULT_MODEL_PRESET_ID,
+function providerForChatAlias(
+  chatAlias: string,
+  familyOrder?: FamilyOrderOverrides,
+): string {
+  // Family-aware: a family chat alias derives its provider from the selected
+  // member, not the default-provider fallback.
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    chatAlias,
+    'chat',
+    familyOrder,
+  );
+  if (resolved.ok) return resolved.entry.modelRoute.id;
+  const fallback = resolveModelSelectionForWorkload(
+    DEFAULT_SETUP_MODEL_ALIAS,
+    'chat',
+  );
+  return fallback.ok ? fallback.entry.modelRoute.id : '';
+}
+
+export function getProviderManagedMemoryDefaults(
+  providerId = providerForChatAlias(DEFAULT_SETUP_MODEL_ALIAS),
 ): RuntimeMemoryLlmModels {
-  const selected = getModelPreset(presetId).memoryDefaults;
+  const selected = memoryModelDefaultsForProvider(providerId);
   return {
     extractor: selected.extractor,
     dreaming: selected.dreaming,
@@ -128,7 +151,7 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
       },
     },
     llm: {
-      models: getPresetManagedMemoryDefaults(),
+      models: getProviderManagedMemoryDefaults(),
       extractorMaxFacts: DEFAULT_MEMORY_EXTRACTOR_MAX_FACTS,
       extractorMinConfidence: DEFAULT_MEMORY_EXTRACTOR_MIN_CONFIDENCE,
     },
@@ -203,22 +226,34 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
   };
 }
 
-export function applyPresetManagedMemoryDefaults(
+export function applyProviderManagedMemoryDefaults(
   settings: RuntimeSettings,
-  presetId: ModelPresetId = DEFAULT_MODEL_PRESET_ID,
+  providerId = providerForChatAlias(
+    settings.agent.defaultModel || DEFAULT_SETUP_MODEL_ALIAS,
+    settings.modelFamilies,
+  ),
 ): void {
-  settings.memory.llm.models = getPresetManagedMemoryDefaults(presetId);
+  settings.memory.llm.models = getProviderManagedMemoryDefaults(providerId);
 }
 
-export function applyModelPreset(
+export function applyModelDefaults(
   settings: RuntimeSettings,
-  presetId: ModelPresetId,
+  chatAlias: string,
 ): void {
-  const preset = getModelPreset(presetId);
-  settings.agent.defaultModel = preset.chatDefault;
-  settings.agent.oneTimeJobDefaultModel = preset.oneTimeJobDefault;
-  settings.agent.recurringJobDefaultModel = preset.recurringJobDefault;
-  applyPresetManagedMemoryDefaults(settings, presetId);
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    chatAlias,
+    'chat',
+    settings.modelFamilies,
+  );
+  settings.agent.defaultModel = resolved.ok
+    ? resolved.alias
+    : DEFAULT_SETUP_MODEL_ALIAS;
+  settings.agent.oneTimeJobDefaultModel = '';
+  settings.agent.recurringJobDefaultModel = '';
+  applyProviderManagedMemoryDefaults(
+    settings,
+    providerForChatAlias(settings.agent.defaultModel, settings.modelFamilies),
+  );
 }
 
 export type {

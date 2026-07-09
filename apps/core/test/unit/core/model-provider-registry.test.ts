@@ -607,6 +607,9 @@ describe('model provider registry', () => {
       'chat',
       'one_time_job',
       'recurring_job',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
     ]);
 
     const vertex = getModelProviderDefinition('vertex');
@@ -647,6 +650,9 @@ describe('model provider registry', () => {
       'chat',
       'one_time_job',
       'recurring_job',
+      'memory_extractor',
+      'memory_dreaming',
+      'memory_consolidation',
     ]);
   });
 });

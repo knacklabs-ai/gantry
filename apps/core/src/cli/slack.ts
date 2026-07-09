@@ -22,6 +22,7 @@ import {
   ensureConfiguredAgent,
   ensureConfiguredConversationBinding,
   loadRuntimeSettings,
+  noteRestartRequired,
   writeDesiredRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
 import { chooseSlackChatForConnect } from './slack-connect-chat-picker.js';
@@ -373,17 +374,32 @@ export async function registerSlackMainGroup(options: {
   displayName: string;
   conversationDisplayName?: string;
   approverIds?: string[];
+  agentId?: string;
 }): Promise<{ folder: string; groupName: string }> {
   ensureRuntimeLayout(options.runtimeHome);
   const db = await openRuntimeGroupDb(options.runtimeHome);
   try {
     const existing = await db.getAllConversationRoutes();
     const existingGroup = existing[options.chatJid];
+    // An already-registered conversation keeps its owning agent; agentId
+    // only binds conversations that are not routed yet.
     const folder =
       existingGroup?.folder ||
+      options.agentId?.trim() ||
       allocateDefaultAgentFolder(options.runtimeHome, existing);
 
-    const groupName = normalizeDefaultAgentName(options.displayName);
+    // A conversation owned by a DIFFERENT agent than the requested one is
+    // reused as-is: rewriting its display name would rename someone else's
+    // route with no rollback path in the route DB.
+    const requestedAgentId = options.agentId?.trim();
+    const keepExistingRoute = Boolean(
+      existingGroup &&
+      requestedAgentId &&
+      existingGroup.folder !== requestedAgentId,
+    );
+    const groupName = keepExistingRoute
+      ? existingGroup!.name
+      : normalizeDefaultAgentName(options.displayName);
 
     const route = {
       name: groupName,
@@ -448,8 +464,11 @@ async function promptForValue(options: {
 
 export async function runSlackConnectCommand(
   runtimeHome: string,
+  requestedAgentId?: string,
+  requestedAgentName?: string,
 ): Promise<number> {
   ensureRuntimeLayout(runtimeHome);
+  const requestedAgentDisplayName = requestedAgentName?.trim();
   const env = readEnvFile(envFilePath(runtimeHome));
   p.note(
     [
@@ -550,6 +569,7 @@ export async function runSlackConnectCommand(
   let conversationDisplayName = '';
 
   if (normalizedChatJid) {
+    const currentSettings = loadRuntimeSettings(runtimeHome);
     const access = await verifySlackChatAccess({
       botToken: botTokenInput,
       chatJid: normalizedChatJid,
@@ -565,9 +585,13 @@ export async function runSlackConnectCommand(
     const registered = await registerSlackMainGroup({
       runtimeHome,
       chatJid: normalizedChatJid,
-      displayName: loadRuntimeSettings(runtimeHome).agent.name,
+      displayName:
+        (requestedAgentId && currentSettings.agents[requestedAgentId]?.name) ||
+        requestedAgentDisplayName ||
+        currentSettings.agent.name,
       conversationDisplayName,
       approverIds,
+      agentId: requestedAgentId,
     });
     registeredFolder = registered.folder;
     conversationRouteName = registered.groupName;
@@ -582,10 +606,17 @@ export async function runSlackConnectCommand(
   const previousSettings = structuredClone(settings);
   settings.providers.slack.enabled = true;
   let providerAccountId = 'slack_default';
-  const providerAgentId = registeredFolder || DEFAULT_AGENT_FOLDER;
+  // The registered route's owner wins: reusing an existing conversation
+  // must not hand its provider account to the requesting agent.
+  const providerAgentId =
+    registeredFolder || requestedAgentId || DEFAULT_AGENT_FOLDER;
   ensureConfiguredAgent(settings, {
     agentId: providerAgentId,
-    agentName: conversationRouteName || settings.agent.name,
+    agentName:
+      settings.agents[providerAgentId]?.name ||
+      requestedAgentDisplayName ||
+      conversationRouteName ||
+      settings.agent.name,
     agentFolder: providerAgentId,
   });
   if (registeredFolder) {
@@ -620,11 +651,12 @@ export async function runSlackConnectCommand(
       app_token: appSecret.ref,
     },
   };
-  await writeDesiredRuntimeSettings({
+  const result = await writeDesiredRuntimeSettings({
     runtimeHome,
     settings,
     previousSettings,
   });
+  noteRestartRequired(result);
 
   if (normalizedChatJid) {
     p.outro('Slack connected. Secret stored encrypted in Gantry.');

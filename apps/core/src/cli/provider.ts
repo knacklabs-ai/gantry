@@ -10,6 +10,7 @@ import {
 } from '../channels/provider-registry.js';
 import {
   loadDesiredRuntimeSettingsForWrite,
+  noteRestartRequired,
   writeDesiredRuntimeSettings,
 } from '../config/settings/desired-settings-writer.js';
 import type { AgentId } from '../domain/agent/agent.js';
@@ -83,6 +84,7 @@ function scopeProviderDoctorReport(report: DoctorReport): DoctorReport {
       'telegram-token',
       'telegram-token-api',
       'slack-tokens',
+      'slack-token-api',
       'discord-credentials',
       'teams-credentials',
     ].includes(check.id),
@@ -131,7 +133,11 @@ export async function runProviderCommand(
   if (command === 'doctor') {
     const { formatDoctorReport, runDoctorWithNetwork } =
       await import('./doctor.js');
-    const report = await runDoctorWithNetwork(importMetaUrl, runtimeHome);
+    // Provider doctor reports only channel checks — skip the live model
+    // credential probes whose results the scoped report would discard.
+    const report = await runDoctorWithNetwork(importMetaUrl, runtimeHome, {
+      validateModelCredentials: false,
+    });
     const scoped = scopeProviderDoctorReport(report);
     p.note(formatDoctorReport(scoped), 'Provider Doctor');
     return scoped.ok ? 0 : 1;
@@ -328,12 +334,13 @@ async function runProviderAccountCommand(
       runtimeSecretRefs,
       config: {},
     };
-    await writeDesiredRuntimeSettings({
+    const result = await writeDesiredRuntimeSettings({
       runtimeHome,
       settings,
       previousSettings,
       createdBy: 'cli:provider-account-connect',
     });
+    noteRestartRequired(result);
     p.note(
       [
         `Provider Account: ${label}`,
@@ -372,12 +379,13 @@ async function runProviderAccountCommand(
       ...account,
       runtimeSecretRefs: { ...(account.runtimeSecretRefs ?? {}), [key]: ref },
     };
-    await writeDesiredRuntimeSettings({
+    const result = await writeDesiredRuntimeSettings({
       runtimeHome,
       settings,
       previousSettings,
       createdBy: 'cli:provider-account-rotate-secret',
     });
+    noteRestartRequired(result);
     p.note('Provider Account secret ref updated.', 'Provider Account');
     return 0;
   }
@@ -477,12 +485,13 @@ async function runConversationInstallCommand(
         },
       },
     };
-    await writeDesiredRuntimeSettings({
+    const result = await writeDesiredRuntimeSettings({
       runtimeHome,
       settings,
       previousSettings,
       createdBy: 'cli:conversation-install',
     });
+    noteRestartRequired(result);
     p.note(
       [
         `Agent: ${agentFolder}`,
