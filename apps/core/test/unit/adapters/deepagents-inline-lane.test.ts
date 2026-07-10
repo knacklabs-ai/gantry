@@ -321,6 +321,49 @@ describe('DeepAgents inline lane', () => {
     expect(remote.Client.instances[0]?.close).toHaveBeenCalledOnce();
   });
 
+  it('filters remote MCP tools with reviewed wildcard scopes', async () => {
+    deep.streamEvents.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield streamEvent('done');
+      },
+    }));
+    remote.loadTools.mockResolvedValueOnce([
+      {
+        name: 'read_contacts',
+        description: 'Read contacts.',
+        schema: z.object({}),
+        invoke: remote.invoke,
+      },
+      {
+        name: 'write_contacts',
+        description: 'Write contacts.',
+        schema: z.object({}),
+        invoke: remote.invoke,
+      },
+    ]);
+    const base = laneInput();
+    const input = laneInput({
+      mcpServers: [
+        {
+          ...base.mcpServers[0],
+          allowedToolPatterns: ['read_*'],
+        },
+      ],
+    });
+    const lane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: 'postgres://gantry:test@localhost:5432/gantry',
+      schema: 'gantry_deepagents',
+    });
+
+    await lane(input);
+
+    const toolNames = deep.createAgent.mock.calls[0]?.[0].tools.map(
+      (tool) => tool.name,
+    );
+    expect(toolNames).toContain('mcp__crm__read_contacts');
+    expect(toolNames).not.toContain('mcp__crm__write_contacts');
+  });
+
   it('terminates when the run signal is aborted', async () => {
     deep.streamEvents.mockImplementation((_input, options) => ({
       async *[Symbol.asyncIterator]() {

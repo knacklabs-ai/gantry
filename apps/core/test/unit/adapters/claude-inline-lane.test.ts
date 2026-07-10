@@ -217,16 +217,30 @@ describe('Claude inline lane', () => {
         { signal: input.signal, toolUseID: 'tool-unknown' },
       ),
     ).resolves.toMatchObject({ behavior: 'deny' });
-    await queryOptions.canUseTool(
-      'mcp__crm__delete',
-      { id: 'crm-1' },
-      { signal: input.signal, toolUseID: 'tool-2' },
-    );
-    expect(input.coreTools.authorizeThirdPartyMcpTool).toHaveBeenCalledWith(
-      'mcp__crm__delete',
-      { id: 'crm-1' },
-      { signal: input.signal },
-    );
+    await expect(
+      queryOptions.canUseTool(
+        'mcp__crm__delete',
+        { id: 'crm-1' },
+        { signal: input.signal, toolUseID: 'tool-2' },
+      ),
+    ).resolves.toMatchObject({ behavior: 'deny', toolUseID: 'tool-2' });
+    expect(input.coreTools.authorizeThirdPartyMcpTool).toHaveBeenCalledTimes(1);
+    await expect(
+      queryOptions.hooks.PreToolUse[0].hooks[0](
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'mcp__crm__delete',
+          tool_input: { id: 'crm-1' },
+          tool_use_id: 'tool-2',
+        },
+        'tool-2',
+        { signal: input.signal },
+      ),
+    ).resolves.toMatchObject({
+      continue: false,
+      decision: 'block',
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
     await queryOptions.hooks.PreToolUse[0].hooks[0](
       {
         hook_event_name: 'PreToolUse',
@@ -300,6 +314,76 @@ describe('Claude inline lane', () => {
       }),
     );
     expect(remoteProxy.close).toHaveBeenCalledOnce();
+  });
+
+  it('enforces reviewed wildcard scopes in the remote MCP tool gate', async () => {
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield resultMessage('wildcard-result', 'done');
+      },
+    }));
+
+    for (const testCase of [
+      {
+        patterns: ['read_*'],
+        allowedTool: 'mcp__crm__read_contacts',
+        deniedTool: 'mcp__crm__write_contacts',
+      },
+      {
+        patterns: ['*'],
+        allowedTool: 'mcp__crm__write_contacts',
+      },
+    ]) {
+      remoteProxy.create.mockResolvedValueOnce({
+        servers: [
+          {
+            name: 'crm',
+            type: 'http',
+            url: 'http://127.0.0.1:43210/rpc',
+            headers: { 'x-gantry-inline-mcp-token': 'proxy-token' },
+            allowedToolPatterns: testCase.patterns,
+          },
+        ],
+        close: remoteProxy.close,
+      });
+      const base = laneInput();
+      const input = laneInput({
+        mcpServers: [
+          {
+            ...base.mcpServers[0],
+            allowedToolPatterns: testCase.patterns,
+          },
+        ],
+      });
+
+      await runClaudeInlineAgentLoopLane(input);
+
+      const queryOptions = sdk.query.mock.calls.at(-1)?.[0].options;
+      expect(queryOptions.mcpServers.crm.tools).toBeUndefined();
+      await expect(
+        queryOptions.canUseTool(
+          testCase.allowedTool,
+          {},
+          { signal: input.signal, toolUseID: 'allowed-tool' },
+        ),
+      ).resolves.toMatchObject({ behavior: 'allow' });
+      if (testCase.deniedTool) {
+        await expect(
+          queryOptions.canUseTool(
+            testCase.deniedTool,
+            {},
+            { signal: input.signal, toolUseID: 'denied-tool' },
+          ),
+        ).resolves.toMatchObject({ behavior: 'deny' });
+        expect(
+          input.coreTools.authorizeThirdPartyMcpTool,
+        ).not.toHaveBeenCalledWith(
+          testCase.deniedTool,
+          expect.anything(),
+          expect.anything(),
+        );
+      }
+    }
   });
 
   it('terminates when the run signal is aborted', async () => {

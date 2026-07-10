@@ -15,6 +15,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ZodRawShape } from 'zod';
 
 import { applyNeutralCaTrustAliases } from '../../../../shared/neutral-ca-trust-env.js';
+import { mcpToolNameAllowedBySourceScope } from '../../../../shared/mcp-tool-scope.js';
 import { normalizeModelUsage } from '../../../../shared/model-usage.js';
 import type { RunnerOutputFrame } from '../../../../runner/runner-frame.js';
 import { buildGantryAgentSystemPrompt } from '../../../../runner/gantry-agent-system-prompt.js';
@@ -141,9 +142,7 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
           const isCoreTool = input.coreTools.tools.some(
             ({ name }) => toolName === `mcp__${CORE_MCP_SERVER_NAME}__${name}`,
           );
-          const isRemoteMcpTool = input.mcpServers.some(({ name }) =>
-            toolName.startsWith(`mcp__${name}__`),
-          );
+          const isRemoteMcpTool = remoteMcpTool(input, toolName)?.allowed;
           if (isCoreTool) {
             return {
               behavior: 'allow',
@@ -398,26 +397,28 @@ function remoteMcpAuditHooks(
   Array<{ hooks: HookCallback[] }>
 > {
   const startedAt = new Map<string, number>();
-  const remoteTool = (toolName: string) => {
-    for (const server of input.mcpServers) {
-      const prefix = `mcp__${server.name}__`;
-      if (toolName.startsWith(prefix)) {
-        return {
-          serverName: server.name,
-          toolName: toolName.slice(prefix.length),
-        };
-      }
-    }
-    return undefined;
-  };
   const pre: HookCallback = async (hookInput) => {
     if (hookInput.hook_event_name !== 'PreToolUse') return { continue: true };
-    const tool = remoteTool(hookInput.tool_name);
+    const tool = remoteMcpTool(input, hookInput.tool_name);
     if (!tool) return { continue: true };
+    if (!tool.allowed) {
+      const reason = `Tool ${hookInput.tool_name} is outside its reviewed MCP scope.`;
+      return {
+        continue: false,
+        decision: 'block',
+        reason,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: reason,
+        },
+      };
+    }
     startedAt.set(hookInput.tool_use_id, Date.now());
     await toolActivity.start(hookInput.tool_use_id, hookInput.tool_name);
     await input.coreTools.recordThirdPartyMcpToolActivity({
-      ...tool,
+      serverName: tool.serverName,
+      toolName: tool.toolName,
       toolInput: hookInput.tool_input,
       outcome: 'attempt',
       latencyMs: 0,
@@ -426,10 +427,11 @@ function remoteMcpAuditHooks(
   };
   const success: HookCallback = async (hookInput) => {
     if (hookInput.hook_event_name !== 'PostToolUse') return { continue: true };
-    const tool = remoteTool(hookInput.tool_name);
-    if (!tool) return { continue: true };
+    const tool = remoteMcpTool(input, hookInput.tool_name);
+    if (!tool?.allowed) return { continue: true };
     await input.coreTools.recordThirdPartyMcpToolActivity({
-      ...tool,
+      serverName: tool.serverName,
+      toolName: tool.toolName,
       toolInput: hookInput.tool_input,
       outcome: 'success',
       latencyMs: hookLatencyMs(
@@ -449,10 +451,11 @@ function remoteMcpAuditHooks(
     if (hookInput.hook_event_name !== 'PostToolUseFailure') {
       return { continue: true };
     }
-    const tool = remoteTool(hookInput.tool_name);
-    if (!tool) return { continue: true };
+    const tool = remoteMcpTool(input, hookInput.tool_name);
+    if (!tool?.allowed) return { continue: true };
     await input.coreTools.recordThirdPartyMcpToolActivity({
-      ...tool,
+      serverName: tool.serverName,
+      toolName: tool.toolName,
       toolInput: hookInput.tool_input,
       outcome: 'failure',
       latencyMs: hookLatencyMs(
@@ -474,6 +477,26 @@ function remoteMcpAuditHooks(
     PostToolUse: [{ hooks: [success] }],
     PostToolUseFailure: [{ hooks: [failure] }],
   };
+}
+
+function remoteMcpTool(
+  input: Parameters<ProviderInlineAgentLoopLane>[0],
+  fullToolName: string,
+): { serverName: string; toolName: string; allowed: boolean } | undefined {
+  for (const server of input.mcpServers) {
+    const prefix = `mcp__${server.name}__`;
+    if (!fullToolName.startsWith(prefix)) continue;
+    return {
+      serverName: server.name,
+      toolName: fullToolName.slice(prefix.length),
+      allowed: mcpToolNameAllowedBySourceScope({
+        serverName: server.name,
+        fullToolName,
+        allowedToolPatterns: server.allowedToolPatterns,
+      }),
+    };
+  }
+  return undefined;
 }
 
 function hookLatencyMs(
