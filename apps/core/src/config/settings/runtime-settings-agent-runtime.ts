@@ -5,7 +5,12 @@ import {
   type AgentRuntime,
 } from '../../shared/agent-runtime.js';
 import { settingsCapabilityIdToToolRule } from './configured-capability-normalization.js';
-import type { RuntimeConfiguredAgent } from './runtime-settings-types.js';
+import type {
+  AgentEffort,
+  RuntimeConfiguredAgent,
+} from './runtime-settings-types.js';
+
+const AGENT_EFFORT_VALUES = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export {
   formatInlineAgentWorkerOnlyConfigError,
@@ -19,6 +24,30 @@ export function parseAgentRuntimeValue(
   if (raw === undefined) return 'worker';
   if (raw === 'worker' || raw === 'inline') return raw;
   throw new Error(`${pathPrefix} must be worker or inline`);
+}
+
+export function parseAgentMaxTurnsValue(
+  raw: unknown,
+  pathPrefix: string,
+): number | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) {
+    throw new Error(`${pathPrefix} must be a positive integer`);
+  }
+  return raw;
+}
+
+export function parseAgentEffortValue(
+  raw: unknown,
+  pathPrefix: string,
+): AgentEffort | undefined {
+  if (raw === undefined) return undefined;
+  if (!AGENT_EFFORT_VALUES.includes(raw as AgentEffort)) {
+    throw new Error(
+      `${pathPrefix} must be one of ${AGENT_EFFORT_VALUES.join(', ')}`,
+    );
+  }
+  return raw as AgentEffort;
 }
 
 export function resolveConfiguredAgentRuntime(

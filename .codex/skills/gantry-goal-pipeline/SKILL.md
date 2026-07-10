@@ -14,12 +14,19 @@ subagents, verify, review, restart, smoke test, and publish.
 1. Load and follow `ponytail` before implementation. Prefer the smallest
    correct change, delete obsolete paths for single-cut work, and avoid
    compatibility shims unless the user explicitly asks for them.
-2. Claude Code is the orchestrator. Implementation edits go through the Codex
-   plugin (`codex:codex-rescue` subagent) at `--effort xhigh` with write
-   access. The orchestrator owns repo grounding, plan/goal shaping, stage
-   splitting, diff inspection, integration checks, review triage, commits, PR
-   updates, and final reporting. The orchestrator does not implement directly.
-3. Every Codex implementation handoff must include:
+2. Claude Code is the orchestrator. Implementation stages go through the
+   Codex plugin (`codex:codex-rescue` → companion background task) at
+   `--effort xhigh` with write access. The orchestrator owns repo grounding,
+   plan/goal shaping, stage splitting, diff inspection, integration checks,
+   review triage, commits, PR updates, and final reporting. The orchestrator
+   does not implement directly.
+3. Within a Codex task, use Codex subagents for implementation edits
+   (`multi_agent` is enabled; up to 8 threads). The Codex main thread owns
+   grounding, task decomposition, diff review of subagent output, and
+   verification — it rejects overbuilt subagent diffs and runs the focused
+   checks. Each subagent gets an exact bounded write scope and acceptance
+   criteria; parallelize only clearly separable files/domains.
+4. Every Codex implementation handoff must include:
    - `--model gpt-5.6-sol --effort xhigh` (and `--resume` to continue an
      unfinished stage; `--fresh` for a new stage). `gpt-5.6-sol` is the
      current implementation model (needs codex CLI >= 0.144.0); update here
@@ -29,12 +36,12 @@ subagents, verify, review, restart, smoke test, and publish.
    - `Return changed files, checks run, and blockers only.`
    - The exact bounded write scope and acceptance criteria (reference the
      goal prompt file when one exists).
-4. If the Codex plugin is unavailable, stop before implementation and report
+5. If the Codex plugin is unavailable, stop before implementation and report
    that blocker. Do not implement directly under this skill.
-5. Keep user-facing implementation commentary silent unless the user asks for
+6. Keep user-facing implementation commentary silent unless the user asks for
    status, a blocker needs a decision, or system instructions require a brief
    update. Subagents must not produce progress commentary.
-6. Run `autoreview` as a required closeout loop after implementation. Fix only
+7. Run `autoreview` as a required closeout loop after implementation. Fix only
    accepted/actionable findings, rerun focused checks, and rerun autoreview
    until clean.
 

@@ -173,12 +173,15 @@ export interface RuntimeConfiguredAgentCapability {
 }
 
 export type AgentAccessPreset = 'full' | 'locked';
+export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type { AgentRuntime };
 
 export interface RuntimeConfiguredAgent {
   name: string;
   folder: string;
   runtime?: AgentRuntime;
+  maxTurns?: number;
+  effort?: AgentEffort;
   persona?: AgentPersona;
   relationshipMode?: AgentRelationshipMode;
   model?: string;

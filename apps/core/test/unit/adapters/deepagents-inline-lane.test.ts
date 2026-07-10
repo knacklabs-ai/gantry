@@ -199,6 +199,52 @@ beforeEach(() => {
 });
 
 describe('DeepAgents inline lane', () => {
+  it.each([
+    ['uses the default cap when unset', {}, 50],
+    ['maps configured max_turns', { maxTurns: 6 }, 6],
+  ])('%s', async (_name, overrides, expectedRecursionLimit) => {
+    deep.streamEvents.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield streamEvent('done');
+      },
+    }));
+    const lane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: 'postgres://gantry:test@localhost:5432/gantry',
+      schema: 'gantry_deepagents',
+    });
+
+    await lane(laneInput(overrides));
+
+    expect(deep.streamEvents.mock.calls[0]?.[1]).toMatchObject({
+      recursionLimit: expectedRecursionLimit,
+    });
+  });
+
+  it('emits and returns a named max_turns error on graph recursion', async () => {
+    deep.streamEvents.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield streamEvent('partial');
+        throw Object.assign(new Error('recursion limit'), {
+          name: 'GraphRecursionError',
+          lc_error_code: 'GRAPH_RECURSION_LIMIT',
+        });
+      },
+    }));
+    const input = laneInput({ maxTurns: 2, mcpServers: [] });
+    const lane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: 'postgres://gantry:test@localhost:5432/gantry',
+      schema: 'gantry_deepagents',
+    });
+
+    const result = await lane(input);
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringMatching(/max_turns cap.*configured limit: 2/),
+    });
+    expect(input.emitOutput).toHaveBeenLastCalledWith(result);
+  });
+
   it('uses PostgresSaver, LangChain core tools, remote MCP, and continuations', async () => {
     let releaseFirst: (() => void) | undefined;
     deep.streamEvents.mockImplementation((_input, options) => {

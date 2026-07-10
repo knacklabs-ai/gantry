@@ -21,6 +21,8 @@ import {
 import {
   formatInlineAgentWorkerOnlyConfigError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
+  parseAgentEffortValue,
+  parseAgentMaxTurnsValue,
   parseAgentRuntimeValue,
 } from './runtime-settings-agent-runtime.js';
 
@@ -286,6 +288,8 @@ export function parseConfiguredAgents(
         key !== 'persona' &&
         key !== 'relationship_mode' &&
         key !== 'runtime' &&
+        key !== 'max_turns' &&
+        key !== 'effort' &&
         key !== 'model' &&
         key !== 'agent_harness' &&
         key !== 'one_time_job_default_model' &&
@@ -293,7 +297,7 @@ export function parseConfiguredAgents(
         key !== 'access'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, relationship_mode, runtime, model, agent_harness, job model defaults, or access. Install agents under conversations.*.installed_agents.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, relationship_mode, runtime, max_turns, effort, model, agent_harness, job model defaults, or access. Install agents under conversations.*.installed_agents.`,
         );
       }
     }
@@ -356,6 +360,11 @@ export function parseConfiguredAgents(
       name: parseStringValue(map.name, `${pathPrefix}.name`),
       folder,
       runtime,
+      maxTurns: parseAgentMaxTurnsValue(
+        map.max_turns,
+        `${pathPrefix}.max_turns`,
+      ),
+      effort: parseAgentEffortValue(map.effort, `${pathPrefix}.effort`),
       persona: parseAgentPersona(map.persona, `${pathPrefix}.persona`),
       relationshipMode: parseAgentRelationshipMode(
         map.relationship_mode,

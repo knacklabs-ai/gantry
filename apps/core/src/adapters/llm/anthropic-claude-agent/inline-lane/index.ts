@@ -19,7 +19,11 @@ import { mcpToolNameAllowedBySourceScope } from '../../../../shared/mcp-tool-sco
 import { normalizeModelUsage } from '../../../../shared/model-usage.js';
 import type { RunnerOutputFrame } from '../../../../runner/runner-frame.js';
 import { buildGantryAgentSystemPrompt } from '../../../../runner/gantry-agent-system-prompt.js';
-import type { ProviderInlineAgentLoopLane } from '../../inline-lane-dispatcher.js';
+import {
+  DEFAULT_INLINE_AGENT_MAX_TURNS,
+  inlineAgentMaxTurnsError,
+  type ProviderInlineAgentLoopLane,
+} from '../../inline-lane-dispatcher.js';
 import {
   createInlineToolActivity,
   type InlineToolActivity,
@@ -63,6 +67,7 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
     };
   }
   if (input.signal.aborted) return abortedOutput();
+  const maxTurns = input.maxTurns ?? DEFAULT_INLINE_AGENT_MAX_TURNS;
   validateModelCredentialProjectionForEntry({
     model: input.resolvedModel.value.modelEntry,
     projection: {
@@ -117,6 +122,8 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
       options: {
         abortController,
         model: input.resolvedModel.value.runnerModel,
+        maxTurns,
+        ...(input.effort ? { effort: input.effort } : {}),
         ...(persistSdkSession && input.input.sessionId
           ? { resume: input.input.sessionId }
           : {}),
@@ -240,6 +247,12 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
           continue;
         }
         if (record?.type !== 'result') continue;
+
+        if (record.subtype === 'error_max_turns') {
+          lastTerminal = inlineAgentMaxTurnsError(maxTurns, newSessionId);
+          await input.emitOutput(lastTerminal);
+          break;
+        }
 
         const failure = sdkResultFailureMessage(message);
         if (failure) throw new Error(failure);

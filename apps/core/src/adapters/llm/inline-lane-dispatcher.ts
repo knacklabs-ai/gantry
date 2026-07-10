@@ -7,6 +7,21 @@ import type { AgentPersona } from '../../shared/agent-persona.js';
 import { DEFAULT_AGENT_ENGINE } from '../../shared/agent-engine.js';
 import type { YoloModeSettings } from '../../shared/yolo-mode-policy.js';
 
+export const DEFAULT_INLINE_AGENT_MAX_TURNS = 50;
+export type InlineAgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export function inlineAgentMaxTurnsError(
+  limit: number,
+  newSessionId?: string,
+): RunnerOutputFrame {
+  return {
+    status: 'error',
+    result: null,
+    error: `Inline agent reached the max_turns cap (configured limit: ${limit}).`,
+    ...(newSessionId ? { newSessionId } : {}),
+  };
+}
+
 export interface AdapterInlineAgentInput {
   prompt: string;
   workspaceFolder: string;
@@ -48,6 +63,8 @@ export interface AdapterInlineAgentLoopLaneInput {
   mcpServers: readonly MaterializedMcpCapability[];
   mcpHostnameLookup?: HostnameLookup;
   runtimeDataDir: string;
+  maxTurns?: number;
+  effort?: InlineAgentEffort;
   emitOutput(output: RunnerOutputFrame): Promise<void>;
 }
 

@@ -131,6 +131,8 @@ describe('exportCurrentDesiredState', () => {
   main_agent:
     name: Main
     runtime: inline
+    max_turns: 12
+    effort: high
 `);
     settings.conversations = {
       shared_channel: {
@@ -297,6 +299,10 @@ describe('exportCurrentDesiredState', () => {
       'main_agent',
     );
     expect(exported.agents.main_agent?.runtime).toBe('inline');
+    expect(exported.agents.main_agent).toMatchObject({
+      maxTurns: 12,
+      effort: 'high',
+    });
     const yaml = renderRuntimeSettingsYaml(exported as any);
     expect(yaml).toContain('installed_agents:');
     expect(yaml).toContain('      main_agent:');
@@ -426,6 +432,8 @@ describe('exportCurrentDesiredState', () => {
   main_agent:
     name: Main
     runtime: inline
+    max_turns: 9
+    effort: low
 `);
     settings.providerAccounts.slack_custom = {
       agentId: 'main_agent',
@@ -469,6 +477,10 @@ describe('exportCurrentDesiredState', () => {
       model: 'opus',
     });
     expect(exported.agents.main_agent?.runtime).toBe('inline');
+    expect(exported.agents.main_agent).toMatchObject({
+      maxTurns: 9,
+      effort: 'low',
+    });
   });
 
   it('keeps route-less channel installs trigger gated on export', async () => {

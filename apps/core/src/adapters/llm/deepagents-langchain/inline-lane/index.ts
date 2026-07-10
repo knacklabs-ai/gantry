@@ -24,7 +24,11 @@ import type { NormalizedCacheProvider } from '../../../../shared/model-catalog.j
 import type { OpenRouterProviderRouting } from '../../../../shared/model-catalog-provider-metadata.js';
 import type { RunnerOutputFrame } from '../../../../runner/runner-frame.js';
 import { buildGantryAgentSystemPrompt } from '../../../../runner/gantry-agent-system-prompt.js';
-import type { ProviderInlineAgentLoopLane } from '../../inline-lane-dispatcher.js';
+import {
+  DEFAULT_INLINE_AGENT_MAX_TURNS,
+  inlineAgentMaxTurnsError,
+  type ProviderInlineAgentLoopLane,
+} from '../../inline-lane-dispatcher.js';
 import {
   createInlineToolActivity,
   type InlineToolActivity,
@@ -54,6 +58,7 @@ interface InlineDeepAgentGraph {
       version: 'v2';
       signal: AbortSignal;
       configurable: { thread_id: string };
+      recursionLimit: number;
     },
   ): AsyncIterable<LangGraphStreamEvent>;
 }
@@ -71,6 +76,7 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
       };
     }
     if (laneInput.signal.aborted) return abortedOutput();
+    const maxTurns = laneInput.maxTurns ?? DEFAULT_INLINE_AGENT_MAX_TURNS;
 
     const sessionId = laneInput.input.sessionId ?? randomUUID();
     const stop = new AbortController();
@@ -161,6 +167,8 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
                 version: 'v2',
                 signal,
                 configurable: { thread_id: sessionId },
+                // Claude max_turns counts SDK turns; this bounds LangGraph steps.
+                recursionLimit: maxTurns,
               },
             ),
             newSessionId: sessionId,
@@ -183,6 +191,12 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
           await emitChain;
         } catch (error) {
           if (signal.aborted && isAbortError(error)) break;
+          if (isGraphRecursionLimitError(error)) {
+            await emitChain;
+            const terminal = inlineAgentMaxTurnsError(maxTurns, sessionId);
+            await laneInput.emitOutput(terminal);
+            return terminal;
+          }
           throw error;
         }
         if (signal.aborted || closeRequested) break;
@@ -501,6 +515,15 @@ function cacheProvider(model: ResolvedRunnerModel): NormalizedCacheProvider {
   return model.endpointFamily === 'openrouter'
     ? 'openrouter-provider'
     : 'openai';
+}
+
+function isGraphRecursionLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { name?: unknown; lc_error_code?: unknown };
+  return (
+    value.name === 'GraphRecursionError' ||
+    value.lc_error_code === 'GRAPH_RECURSION_LIMIT'
+  );
 }
 
 function abortedOutput(newSessionId?: string): RunnerOutputFrame {

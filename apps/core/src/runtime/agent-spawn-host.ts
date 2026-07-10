@@ -99,6 +99,8 @@ export async function prepareInlineAgentHostContext(
     defaultTimeoutMs: AGENT_TIMEOUT,
     idleTimeoutMs: IDLE_TIMEOUT,
     sandboxProvider: runtimeSettings.runtime.sandbox.provider,
+    maxTurns: runtimeSettings.agents?.[group.folder]?.maxTurns,
+    effort: runtimeSettings.agents?.[group.folder]?.effort,
   };
 }
 

@@ -7,6 +7,12 @@ const INLINE_DATA_DIR = vi.hoisted(
   () => `/tmp/gantry-inline-unit-${process.pid}`,
 );
 const revokeGatewayToken = vi.hoisted(() => vi.fn(async () => undefined));
+const inlineAgentSettings = vi.hoisted(() => ({
+  current: {} as {
+    maxTurns?: number;
+    effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  },
+}));
 
 vi.mock('@core/config/index.js', () => ({
   DATA_DIR: INLINE_DATA_DIR,
@@ -14,6 +20,7 @@ vi.mock('@core/config/index.js', () => ({
 
 vi.mock('@core/runtime/agent-spawn-host.js', () => ({
   prepareInlineAgentHostContext: vi.fn(async () => ({
+    ...inlineAgentSettings.current,
     dataDir: INLINE_DATA_DIR,
     defaultTimeoutMs: 10_000,
     idleTimeoutMs: 10_000,
@@ -98,6 +105,7 @@ const settleWhenAborted: InlineAgentLoopLane = ({ signal }) =>
 describe('runInlineAgent', () => {
   beforeEach(() => {
     revokeGatewayToken.mockClear();
+    inlineAgentSettings.current = {};
     fs.rmSync(INLINE_DATA_DIR, { recursive: true, force: true });
   });
 
@@ -282,6 +290,23 @@ describe('runInlineAgent', () => {
       result: 'default lane',
     });
     expect(lane).toHaveBeenCalledOnce();
+  });
+
+  it('threads the selected inline agent iteration settings to the lane', async () => {
+    inlineAgentSettings.current = {
+      maxTurns: 7,
+      effort: 'high',
+    };
+    const lane = vi.fn<InlineAgentLoopLane>(async () => ({
+      status: 'success',
+      result: null,
+    }));
+
+    await runInlineAgent(group, agentInput, vi.fn(), undefined, options(lane));
+
+    expect(lane).toHaveBeenCalledWith(
+      expect.objectContaining({ maxTurns: 7, effort: 'high' }),
+    );
   });
 
   it('emits a synthetic scheduled-job heartbeat', async () => {

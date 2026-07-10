@@ -229,6 +229,8 @@ export async function exportCurrentDesiredState(input: {
       model: existing?.model,
       agentHarness: existing?.agentHarness,
       runtime: existing?.runtime === 'inline' ? 'inline' : undefined,
+      maxTurns: existing?.maxTurns,
+      effort: existing?.effort,
       oneTimeJobDefaultModel: existing?.oneTimeJobDefaultModel,
       recurringJobDefaultModel: existing?.recurringJobDefaultModel,
       bindings: existing?.bindings ?? {},
@@ -488,6 +490,8 @@ export async function exportCurrentDesiredState(input: {
       model: existing?.model ?? group.agentConfig?.model,
       agentHarness: existing?.agentHarness,
       runtime: existing?.runtime === 'inline' ? 'inline' : undefined,
+      maxTurns: existing?.maxTurns,
+      effort: existing?.effort,
       oneTimeJobDefaultModel: existing?.oneTimeJobDefaultModel,
       recurringJobDefaultModel: existing?.recurringJobDefaultModel,
       bindings: {

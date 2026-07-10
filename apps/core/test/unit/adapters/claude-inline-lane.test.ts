@@ -124,6 +124,45 @@ beforeEach(() => {
 });
 
 describe('Claude inline lane', () => {
+  it.each([
+    ['uses the default cap when unset', {}, 50, undefined],
+    [
+      'maps configured iteration settings',
+      { maxTurns: 6, effort: 'xhigh' },
+      6,
+      'xhigh',
+    ],
+  ])('%s', async (_name, overrides, expectedMaxTurns, expectedEffort) => {
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield resultMessage('iteration-result', 'done');
+      },
+    }));
+
+    await runClaudeInlineAgentLoopLane(laneInput(overrides));
+
+    const options = sdk.query.mock.calls[0]?.[0].options;
+    expect(options.maxTurns).toBe(expectedMaxTurns);
+    expect(options.effort).toBe(expectedEffort);
+  });
+
+  it('emits and returns a named max_turns terminal error', async () => {
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'result', subtype: 'error_max_turns' };
+      },
+    }));
+    const input = laneInput({ maxTurns: 2 });
+
+    const result = await runClaudeInlineAgentLoopLane(input);
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringMatching(/max_turns cap.*configured limit: 2/),
+    });
+    expect(input.emitOutput).toHaveBeenLastCalledWith(result);
+  });
+
   it('mounts core tools in an SDK MCP server and keeps remote MCP native', async () => {
     const prompts: unknown[] = [];
     let releaseFirstResult: (() => void) | undefined;

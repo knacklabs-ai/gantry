@@ -36,6 +36,12 @@ with `subagent_type: codex:codex-rescue` whose prompt contains:
 - The exact bounded write scope ("Nothing else").
 - Repo gate notes: import from source modules in tests, no provider-name
   literals outside adapter dirs, file-size budgets.
+- An instruction to use Codex subagents for implementation edits: the repo's
+  `.codex/config.toml` enables `multi_agent` (8 threads). E.g.
+  `Delegate implementation edits to your subagents with exact bounded write
+  scopes; your main thread grounds the task, decomposes it, reviews subagent
+  diffs, and runs the focused checks. Parallelize only clearly separable
+  files/domains.`
 - MANDATORY closing lines, verbatim in every implementation handoff:
   `Use ponytail. No commentary. Return changed files, checks run, and blockers only.`
   "No commentary" suppresses Codex's progress narration during generation —

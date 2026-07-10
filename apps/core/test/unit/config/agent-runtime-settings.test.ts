@@ -24,6 +24,8 @@ describe('agent runtime settings', () => {
   main_agent:
     name: Main
     runtime: inline
+    max_turns: 12
+    effort: xhigh
 `);
     expect(resolveConfiguredAgentRuntime(parsed.agents.main_agent)).toBe(
       'inline',
@@ -31,11 +33,47 @@ describe('agent runtime settings', () => {
 
     const rendered = renderRuntimeSettingsYaml(parsed);
     expect(rendered).toContain('runtime: inline');
-    expect(
-      resolveConfiguredAgentRuntime(
-        parseRuntimeSettings(rendered).agents.main_agent,
-      ),
-    ).toBe('inline');
+    expect(rendered).toContain('max_turns: 12');
+    expect(rendered).toContain('effort: xhigh');
+    const roundTripped = parseRuntimeSettings(rendered).agents.main_agent;
+    expect(resolveConfiguredAgentRuntime(roundTripped)).toBe('inline');
+    expect(roundTripped).toMatchObject({ maxTurns: 12, effort: 'xhigh' });
+  });
+
+  it.each([
+    ['max_turns: 0', 'agents.main_agent.max_turns must be a positive integer'],
+    ['max_turns: -1', 'agents.main_agent.max_turns must be a positive integer'],
+    [
+      'effort: extreme',
+      'agents.main_agent.effort must be one of low, medium, high, xhigh, max',
+    ],
+  ])('rejects invalid inline iteration setting %s', (setting, error) => {
+    expect(() =>
+      parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    runtime: inline
+    ${setting}
+`),
+    ).toThrow(error);
+  });
+
+  it('leaves worker execution selected when iteration settings are present', () => {
+    const parsed = parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    runtime: worker
+    max_turns: 8
+    effort: low
+`);
+
+    expect(resolveConfiguredAgentRuntime(parsed.agents.main_agent)).toBe(
+      'worker',
+    );
+    expect(parsed.agents.main_agent).toMatchObject({
+      maxTurns: 8,
+      effort: 'low',
+    });
   });
 
   it('rejects inline agents while naming worker-only configured capabilities', () => {
