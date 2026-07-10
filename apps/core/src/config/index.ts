@@ -444,10 +444,17 @@ export function getSelectedAgentHarness(agentFolder?: string): AgentHarness {
 }
 
 export function getSelectedAgentRuntime(agentFolder?: string): AgentRuntime {
+  return getConfiguredAgentRuntime(agentFolder) ?? 'worker';
+}
+
+export function getConfiguredAgentRuntime(
+  agentFolder?: string,
+): AgentRuntime | undefined {
   const settings = getRuntimeSettingsForConfig();
   const configuredAgent = agentFolder
     ? settings.agents[agentFolder]
     : undefined;
+  if (!configuredAgent) return undefined;
   return resolveConfiguredAgentRuntime(configuredAgent);
 }
 

@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { SettingsDesiredStateService } from '@core/config/settings/desired-state-service.js';
@@ -70,6 +74,52 @@ function settingsDesiredStateService() {
 }
 
 describe('agent runtime settings', () => {
+  it('separates configured runtime lookup from selected runtime defaulting', async () => {
+    const originalHome = process.env.GANTRY_HOME;
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-runtime-'),
+    );
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.worker_agent = {
+      name: 'Worker',
+      folder: 'worker_agent',
+      runtime: 'worker',
+      bindings: {},
+      sources: emptySources(),
+      capabilities: [],
+      accessPreset: 'full',
+    };
+    settings.agents.inline_agent = {
+      name: 'Inline',
+      folder: 'inline_agent',
+      runtime: 'inline',
+      bindings: {},
+      sources: emptySources(),
+      capabilities: [],
+      accessPreset: 'full',
+    };
+    fs.writeFileSync(
+      path.join(runtimeHome, 'settings.yaml'),
+      renderRuntimeSettingsYaml(settings),
+    );
+
+    vi.resetModules();
+    process.env.GANTRY_HOME = runtimeHome;
+    try {
+      const config = await import('@core/config/index.js');
+
+      expect(config.getConfiguredAgentRuntime('worker_agent')).toBe('worker');
+      expect(config.getConfiguredAgentRuntime('inline_agent')).toBe('inline');
+      expect(config.getConfiguredAgentRuntime('missing_agent')).toBeUndefined();
+      expect(config.getSelectedAgentRuntime('missing_agent')).toBe('worker');
+    } finally {
+      if (originalHome === undefined) delete process.env.GANTRY_HOME;
+      else process.env.GANTRY_HOME = originalHome;
+      fs.rmSync(runtimeHome, { recursive: true, force: true });
+      vi.resetModules();
+    }
+  });
+
   it('parses inline runtime and defaults agents to worker', () => {
     const defaults = parseRuntimeSettings(`agents:
   main_agent:

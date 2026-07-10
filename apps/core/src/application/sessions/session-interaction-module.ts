@@ -85,7 +85,7 @@ export type SessionInteractionDeps = {
   };
   runtimeEvents: RuntimeEventExchange;
   liveAdmissionAppId?: string | null;
-  getSelectedAgentRuntime?: (agentFolder: string) => AgentRuntime;
+  getConfiguredAgentRuntime?: (agentFolder: string) => AgentRuntime | undefined;
   now: () => IsoTimestamp;
   createId: () => string;
   stableHash: (input: string) => string;
@@ -238,7 +238,7 @@ export class SessionInteractionModule {
     }
     if (
       input.responseSchema &&
-      this.deps.getSelectedAgentRuntime?.(session.workspaceKey) !== 'inline'
+      this.deps.getConfiguredAgentRuntime?.(session.workspaceKey) === 'worker'
     ) {
       throw new ApplicationError(
         'INVALID_REQUEST',

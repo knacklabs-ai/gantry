@@ -137,7 +137,9 @@ export type ControlRouteContext = {
   getBrowserStatus?: JobManagementServiceDeps['getBrowserStatus'];
   syncSettingsFromProjection: (appId: AppId) => Promise<void>;
   getSelectedAgentHarness: (agentFolder?: string) => AgentHarness;
-  getSelectedAgentRuntime: (agentFolder?: string) => AgentRuntime;
+  getConfiguredAgentRuntime?: (
+    agentFolder?: string,
+  ) => AgentRuntime | undefined;
 };
 
 export function authorizeControlRequest(

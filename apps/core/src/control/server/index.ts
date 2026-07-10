@@ -17,8 +17,8 @@ import {
   configureDesiredSettingsStorageProvider,
   getControlEnvValue,
   getDefaultModelConfig,
+  getConfiguredAgentRuntime,
   getSelectedAgentHarness,
-  getSelectedAgentRuntime,
   getRuntimeSettingsForConfig,
   getRuntimeModelDefaults,
   getPublicRuntimeSettings,
@@ -392,8 +392,8 @@ export function startControlServer(input: {
     },
     getSelectedAgentHarness: (agentFolder?: string) =>
       getSelectedAgentHarness(agentFolder),
-    getSelectedAgentRuntime: (agentFolder?: string) =>
-      getSelectedAgentRuntime(agentFolder),
+    getConfiguredAgentRuntime: (agentFolder?: string) =>
+      getConfiguredAgentRuntime(agentFolder),
   };
 
   const server = http.createServer(

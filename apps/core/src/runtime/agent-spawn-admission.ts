@@ -48,6 +48,9 @@ function inlineRuntimePreSpawnAdmissionError(input: {
   stdioMcpSourceIds?: readonly string[];
 }): string | null {
   const runtime = input.agentRuntime ?? input.agentInput.runtime ?? 'worker';
+  if (input.agentInput.responseSchema && runtime === 'worker') {
+    return 'response_schema requires an inline agent runtime';
+  }
   if (runtime !== 'inline') return null;
   const labels = new Set<string>();
   for (const rule of inlineWorkerOnlyToolRuleLabels(

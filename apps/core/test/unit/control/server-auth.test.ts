@@ -19,7 +19,7 @@ import {
 } from '@core/config/settings/runtime-settings.js';
 import {
   getControlEnvValue,
-  getSelectedAgentRuntime,
+  getConfiguredAgentRuntime,
 } from '@core/config/index.js';
 import { signExternalIngressRequest } from '@core/application/external-ingress/signature.js';
 import { preflightModelProvider } from '@core/adapters/llm/model-provider-preflight.js';
@@ -44,7 +44,7 @@ vi.mock('@core/cli/slack-chat-discovery.js', () => ({
 
 const mockedPreflightModelProvider = vi.mocked(preflightModelProvider);
 const mockedGetControlEnvValue = vi.mocked(getControlEnvValue);
-const mockedGetSelectedAgentRuntime = vi.mocked(getSelectedAgentRuntime);
+const mockedGetConfiguredAgentRuntime = vi.mocked(getConfiguredAgentRuntime);
 const mockedListSlackRecentChats = vi.mocked(listSlackRecentChats);
 
 vi.mock('@core/config/index.js', async () => {
@@ -127,7 +127,7 @@ vi.mock('@core/config/index.js', async () => {
         'auto'
       );
     }),
-    getSelectedAgentRuntime: vi.fn(() => 'worker'),
+    getConfiguredAgentRuntime: vi.fn(() => undefined),
     getPublicRuntimeSettings: toPublic,
     configureDesiredSettingsStorageProvider: vi.fn(() => undefined),
   };
@@ -492,7 +492,7 @@ beforeEach(() => {
   mockedGetControlEnvValue.mockImplementation(
     (key: string) => process.env[key]?.trim() || '',
   );
-  mockedGetSelectedAgentRuntime.mockReturnValue('worker');
+  mockedGetConfiguredAgentRuntime.mockReturnValue(undefined);
   mockedPreflightModelProvider.mockResolvedValue({
     ok: true,
     status: 'pass',
@@ -3635,6 +3635,7 @@ describe('control server runtime hardening', () => {
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
     });
+    mockedGetConfiguredAgentRuntime.mockReturnValueOnce('worker');
     const app = {
       registerGroup: vi.fn(),
       queue: { enqueueMessageCheck: vi.fn() },
@@ -3662,7 +3663,7 @@ describe('control server runtime hardening', () => {
           message: 'response_schema requires an inline agent runtime',
         },
       });
-      expect(mockedGetSelectedAgentRuntime).toHaveBeenCalledWith(
+      expect(mockedGetConfiguredAgentRuntime).toHaveBeenCalledWith(
         'worker-agent',
       );
       expect(opsRepo.storeChatMetadata).not.toHaveBeenCalled();
@@ -3696,7 +3697,6 @@ describe('control server runtime hardening', () => {
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
     });
-    mockedGetSelectedAgentRuntime.mockReturnValueOnce('inline');
     const app = {
       registerGroup: vi.fn(),
       queue: { enqueueMessageCheck: vi.fn() },
@@ -3751,7 +3751,7 @@ describe('control server runtime hardening', () => {
           },
         }),
       );
-      expect(mockedGetSelectedAgentRuntime).toHaveBeenCalledWith(
+      expect(mockedGetConfiguredAgentRuntime).toHaveBeenCalledWith(
         'app_app_one_conv_1',
       );
       expect(controlRepo.upsertAppResponseRoute).toHaveBeenCalledWith({

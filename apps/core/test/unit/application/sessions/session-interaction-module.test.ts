@@ -8,7 +8,9 @@ function makeModule(overrides?: {
   repositories?: Record<string, unknown>;
   runtimeEvents?: Record<string, unknown>;
   liveAdmissionAppId?: string | null;
-  getSelectedAgentRuntime?: (agentFolder: string) => 'worker' | 'inline';
+  getConfiguredAgentRuntime?: (
+    agentFolder: string,
+  ) => 'worker' | 'inline' | undefined;
 }) {
   const control = {
     ensureAppSession: vi.fn(async (input) => ({
@@ -59,8 +61,8 @@ function makeModule(overrides?: {
     repositories: (overrides?.repositories ?? {}) as never,
     runtimeEvents: runtimeEvents as never,
     liveAdmissionAppId: overrides?.liveAdmissionAppId,
-    getSelectedAgentRuntime:
-      overrides?.getSelectedAgentRuntime ?? vi.fn(() => 'inline'),
+    getConfiguredAgentRuntime:
+      overrides?.getConfiguredAgentRuntime ?? vi.fn(() => 'inline'),
     now: () => '2026-04-30T00:00:00.000Z' as never,
     createId: () => 'id-1',
     stableHash: () => '123456789abc',
@@ -256,10 +258,10 @@ describe('SessionInteractionModule', () => {
   });
 
   it('rejects response schemas for worker runtimes before persistence or durable admission', async () => {
-    const getSelectedAgentRuntime = vi.fn(() => 'worker' as const);
+    const getConfiguredAgentRuntime = vi.fn(() => 'worker' as const);
     const publishWithLiveAdmissionMessage = vi.fn();
     const { module, control, ops, runtimeEvents } = makeModule({
-      getSelectedAgentRuntime,
+      getConfiguredAgentRuntime,
       runtimeEvents: { publishWithLiveAdmissionMessage },
     });
 
@@ -275,12 +277,36 @@ describe('SessionInteractionModule', () => {
       message: 'response_schema requires an inline agent runtime',
     });
 
-    expect(getSelectedAgentRuntime).toHaveBeenCalledWith('group');
+    expect(getConfiguredAgentRuntime).toHaveBeenCalledWith('group');
     expect(ops.storeChatMetadata).not.toHaveBeenCalled();
     expect(control.upsertAppResponseRoute).not.toHaveBeenCalled();
     expect(ops.storeMessage).not.toHaveBeenCalled();
     expect(publishWithLiveAdmissionMessage).not.toHaveBeenCalled();
     expect(runtimeEvents.publish).not.toHaveBeenCalled();
+  });
+
+  it('accepts response schemas when no settings agent entry resolves', async () => {
+    const getConfiguredAgentRuntime = vi.fn(() => undefined);
+    const { module, ops } = makeModule({
+      getConfiguredAgentRuntime,
+      liveAdmissionAppId: null,
+    });
+
+    await expect(
+      module.acceptMessage({
+        appId: 'app-one',
+        sessionId: 'session-1',
+        message: 'hello from sdk',
+        responseSchema: { type: 'object' },
+      }),
+    ).resolves.toMatchObject({ accepted: true });
+
+    expect(getConfiguredAgentRuntime).toHaveBeenCalledWith('group');
+    expect(ops.storeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseSchema: { type: 'object' },
+      }),
+    );
   });
 
   it('falls back to plain message storage when durable live admission is disabled', async () => {
