@@ -383,6 +383,9 @@ export function parseTaskIpcData(
   const workspaceFolder = toTrimmedString(raw.workspaceFolder, { maxLen: 128 });
   const chatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
   const targetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
+  const providerAccountId = toTrimmedString(raw.providerAccountId, {
+    maxLen: 255,
+  });
   const memoryUserId = toTrimmedString(raw.memoryUserId, { maxLen: 255 });
   const jid = toTrimmedString(raw.jid, { maxLen: 255 });
   const name = toTrimmedString(raw.name, { maxLen: 255 });
@@ -477,6 +480,7 @@ export function parseTaskIpcData(
   if (workspaceFolder) parsed.workspaceFolder = workspaceFolder;
   if (chatJid) parsed.chatJid = chatJid;
   if (targetJid) parsed.targetJid = targetJid;
+  if (providerAccountId) parsed.providerAccountId = providerAccountId;
   if (memoryUserId) parsed.memoryUserId = memoryUserId;
   if (jid) parsed.jid = jid;
   if (name) parsed.name = name;

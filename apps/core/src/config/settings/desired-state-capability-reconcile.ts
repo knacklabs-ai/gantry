@@ -36,6 +36,7 @@ import {
   formatInlineAgentWorkerOnlyConfigError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
   inlineWorkerOnlyToolRuleLabels,
+  resolveConfiguredAgentRuntime,
 } from './runtime-settings-agent-runtime.js';
 
 export async function replaceDesiredStateCapabilities(input: {
@@ -122,6 +123,7 @@ export async function inlineAgentRuntimeCapabilityErrors(input: {
 }): Promise<string[]> {
   const errors: string[] = [];
   for (const [folder, agent] of Object.entries(input.settings.agents)) {
+    if (resolveConfiguredAgentRuntime(agent) !== 'inline') continue;
     const blockers = new Set(
       inlineWorkerOnlyConfiguredCapabilityLabels({
         agent,

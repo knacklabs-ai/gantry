@@ -39,13 +39,10 @@ import {
   buildAsyncCommandEnv,
   runSandboxedAsyncCommand,
 } from './async-command-sandbox-runner.js';
-import {
-  resolveTurnSelectedMcpServerIds,
-  resolveTurnSelectedSkillContext,
-  resolveTurnSemanticCapabilities,
-  resolveTurnToolPolicy,
-} from '../runtime/group-run-context.js';
+import { resolveTurnToolPolicy } from '../runtime/group-run-context.js';
 import { createCoreTaskLifecycleBackend } from '../application/core-tools/task-lifecycle.js';
+import { delegatedTaskAgentInScope } from './async-command-task-helpers.js';
+import { resolveDelegatedAgentTarget } from './ipc-agent-delegation-target.js';
 
 const TODO_STATUSES = new Set([
   'pending',
@@ -59,7 +56,6 @@ const asyncCommandServices = new WeakMap<
   AsyncTaskRepository,
   AsyncCommandTaskService
 >();
-
 function responder(context: TaskContext) {
   return createTaskResponder(
     context.sourceAgentFolder,
@@ -68,7 +64,6 @@ function responder(context: TaskContext) {
     context.data.responseKeyId,
   );
 }
-
 function normalizeTodoItems(value: unknown): AgentTodoItem[] | null {
   if (
     !Array.isArray(value) ||
@@ -100,7 +95,6 @@ function normalizeTodoItems(value: unknown): AgentTodoItem[] | null {
   }
   return items;
 }
-
 function validateSameConversation(context: TaskContext): string | null {
   const conversationId = toTrimmedString(context.data.chatJid, {
     maxLen: 255,
@@ -113,7 +107,6 @@ function validateSameConversation(context: TaskContext): string | null {
   }
   return conversationId;
 }
-
 function taskService(context: TaskContext): AsyncCommandTaskService | null {
   const repository = context.deps.getAsyncTaskRepository?.();
   const runnerSandboxProvider = context.deps.runnerSandboxProvider;
@@ -169,7 +162,6 @@ function taskService(context: TaskContext): AsyncCommandTaskService | null {
   asyncCommandServices.set(repository, service);
   return service;
 }
-
 function taskBackend(
   context: TaskContext,
   service: AsyncCommandTaskService,
@@ -185,11 +177,11 @@ function taskBackend(
     deliverTaskMessage,
   });
 }
-
 function taskScope(context: TaskContext): {
   appId: string;
   agentId: string;
   conversationId: string;
+  providerAccountId?: string | null;
   threadId?: string | null;
   sandboxPolicy: AsyncCommandSandboxPolicy;
 } | null {
@@ -210,6 +202,11 @@ function taskScope(context: TaskContext): {
   if (sandboxPolicy.agentId && sandboxPolicy.agentId !== agentId) return null;
   if (sandboxPolicy.conversationId !== conversationId) return null;
   if (
+    sandboxPolicy.providerAccountId &&
+    sandboxPolicy.providerAccountId !== context.data.providerAccountId
+  )
+    return null;
+  if (
     sandboxPolicy.threadId !== undefined &&
     sandboxPolicy.threadId !== null &&
     sandboxPolicy.threadId !==
@@ -227,17 +224,18 @@ function taskScope(context: TaskContext): {
     appId,
     agentId,
     conversationId,
+    providerAccountId: sandboxPolicy.providerAccountId ?? null,
     threadId: context.data.authThreadId || context.data.threadId || null,
     sandboxPolicy,
   };
 }
-
 async function validateParentTaskScope(
   context: TaskContext,
   scope: {
     appId: string;
     agentId: string;
     conversationId: string;
+    providerAccountId?: string | null;
     threadId?: string | null;
   },
 ): Promise<
@@ -254,8 +252,10 @@ async function validateParentTaskScope(
     parent &&
     parent.kind === 'delegated_agent' &&
     parent.appId === scope.appId &&
-    parent.agentId === scope.agentId &&
+    delegatedTaskAgentInScope(parent, scope.agentId) &&
     parent.conversationId === scope.conversationId &&
+    (parent.privateCorrelationJson.providerAccountId ?? null) ===
+      (scope.providerAccountId ?? null) &&
     (parent.threadId ?? null) === (scope.threadId ?? null) &&
     !isAsyncTaskTerminal(parent.status);
   if (!valid) {
@@ -266,7 +266,6 @@ async function validateParentTaskScope(
   }
   return { ok: true, parentTaskId };
 }
-
 async function configuredAllowedTools(
   context: TaskContext,
   scope: { appId: string; agentId: string },
@@ -286,7 +285,6 @@ async function configuredAllowedTools(
   });
   return [...new Set([...durableRules, ...liveRules])];
 }
-
 const todoUpdateHandler: TaskHandler = async (context) => {
   const { accept, reject } = responder(context);
   const conversationId = validateSameConversation(context);
@@ -335,7 +333,6 @@ const todoUpdateHandler: TaskHandler = async (context) => {
   }
   accept('Plan updated.');
 };
-
 const asyncRunCommandHandler: TaskHandler = async (context) => {
   const { acceptData, reject } = responder(context);
   const scope = taskScope(context);
@@ -500,38 +497,40 @@ const delegateTaskHandler: TaskHandler = async (context) => {
     );
     return;
   }
-  const group = context.conversationBindings[scope.conversationId];
-  if (!group) {
-    reject('Delegated task conversation is unavailable.', 'not_found');
-    return;
-  }
   const payload = context.data.payload ?? {};
   const objective = toTrimmedString(payload.objective, { maxLen: 10_000 });
   if (!objective) {
     reject('delegate_task requires an objective.', 'invalid_request');
     return;
   }
+  const targetAgentId = toTrimmedString(payload.targetAgentId, { maxLen: 160 });
   const { sandboxPolicy: _sandboxPolicy, ...scopedTaskOwner } = scope;
-  const [toolPolicy, selectedSkillContext, semanticCapabilities] =
-    await Promise.all([
-      resolveTurnToolPolicy(context.deps, scopedTaskOwner),
-      resolveTurnSelectedSkillContext(context.deps, scopedTaskOwner),
-      resolveTurnSemanticCapabilities(context.deps, scopedTaskOwner),
-    ]);
-  if (!toolPolicy.toolPolicyRules?.includes('AgentDelegation')) {
-    reject('delegate_task requires AgentDelegation access.', 'forbidden');
+  const target = await resolveDelegatedAgentTarget({
+    deps: context.deps,
+    routes: context.conversationBindings,
+    owner: scopedTaskOwner,
+    sourceAgentFolder: context.sourceAgentFolder,
+    trustedProviderAccountId: scope.sandboxPolicy.providerAccountId,
+    requestedProviderAccountId: context.data.providerAccountId,
+    targetAgentId,
+  });
+  if (!target.ok) {
+    reject(target.message, target.code);
     return;
   }
-  const attachedMcpSourceIds = await resolveTurnSelectedMcpServerIds(
-    context.deps,
-    scopedTaskOwner,
-    toolPolicy.toolPolicyRules,
-  );
+  const {
+    group,
+    targetOwner,
+    toolPolicy,
+    selectedSkillContext,
+    semanticCapabilities,
+    attachedMcpSourceIds,
+  } = target;
   const sharedResult = await createCoreTaskLifecycleBackend({
     service,
-    owner: scopedTaskOwner,
+    owner: { ...scopedTaskOwner, providerAccountId: target.providerAccountId },
     parentRunId: context.data.jobId ? null : (context.data.runId ?? null),
-    workspaceFolder: context.sourceAgentFolder,
+    workspaceFolder: group.folder,
     runDelegatedAgent: async ({
       task,
       prompt,
@@ -548,10 +547,10 @@ const delegateTaskHandler: TaskHandler = async (context) => {
         {
           prompt,
           appId: scopedTaskOwner.appId,
-          agentId: scopedTaskOwner.agentId,
+          agentId: target.targetAgentId,
           chatJid: scopedTaskOwner.conversationId,
           threadId: scopedTaskOwner.threadId ?? undefined,
-          workspaceFolder: context.sourceAgentFolder,
+          workspaceFolder: group.folder,
           parentTaskId: task.id,
           persona: group.agentConfig?.persona,
           thinking: group.agentConfig?.thinking,
@@ -591,11 +590,11 @@ const delegateTaskHandler: TaskHandler = async (context) => {
           credentialBroker: await context.deps.getCredentialBroker?.(),
           skillRepository: context.deps.getSkillRepository?.(),
           skillArtifactStore: context.deps.getSkillArtifactStore?.(),
-          skillContext: scopedTaskOwner,
+          skillContext: targetOwner,
           mcpServerRepository: context.deps.getMcpServerRepository?.(),
           capabilitySecretRepository:
             context.deps.getCapabilitySecretRepository?.(),
-          mcpContext: scopedTaskOwner,
+          mcpContext: targetOwner,
           mcpHostnameLookup: context.deps.mcpHostnameLookup,
           mcpDnsValidationCache: context.deps.getMcpDnsValidationCache?.(),
           publishRuntimeEvent: context.deps.publishRuntimeEvent,
@@ -618,6 +617,7 @@ const delegateTaskHandler: TaskHandler = async (context) => {
     },
   }).delegate_task({
     objective,
+    ...(targetAgentId ? { targetAgentId } : {}),
     context: toTrimmedString(payload.context, { maxLen: 20_000 }) ?? undefined,
     expectedOutput:
       toTrimmedString(payload.expectedOutput, { maxLen: 2_000 }) ?? undefined,

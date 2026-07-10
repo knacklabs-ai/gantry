@@ -288,12 +288,15 @@ describe('core tool registry', () => {
     });
   });
 
-  it('forwards delegate_task timeout through the shared task service callback', async () => {
+  it('forwards delegate_task target and timeout through the shared task service callback', async () => {
     const runDelegatedAgent = vi.fn(async () => ({ outputSummary: 'done' }));
     const startDelegatedAgent = vi.fn(async (input) => {
+      expect(input.providerAccountId).toBe('slack-one');
+      expect(input.targetAgentId).toBe('agent:reviewer');
       await input.run({
         task: { id: 'task-1' },
         prompt: 'Investigate',
+        targetAgentId: input.targetAgentId,
         signal: new AbortController().signal,
       });
       return { ok: true, task: { id: 'task-1', summary: 'Investigate' } };
@@ -310,16 +313,24 @@ describe('core tool registry', () => {
         appId: 'default',
         agentId: 'agent-1',
         conversationId: 'conversation:test',
+        providerAccountId: 'slack-one',
       },
       workspaceFolder: 'main_agent',
       runDelegatedAgent,
     });
 
     await expect(
-      backend.delegate_task({ objective: 'Investigate', timeoutMs: 1_234 }),
+      backend.delegate_task({
+        objective: 'Investigate',
+        targetAgentId: 'agent:reviewer',
+        timeoutMs: 1_234,
+      }),
     ).resolves.toMatchObject({ ok: true });
     expect(runDelegatedAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 1_234 }),
+      expect.objectContaining({
+        targetAgentId: 'agent:reviewer',
+        timeoutMs: 1_234,
+      }),
     );
   });
 

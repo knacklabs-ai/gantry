@@ -164,6 +164,7 @@ export function registerTaskLifecycleTools(server: McpServer): void {
       objective: z.string().min(1).max(10_000),
       context: z.string().max(20_000).optional(),
       expectedOutput: z.string().max(2_000).optional(),
+      targetAgentId: z.string().min(1).max(160).optional(),
       timeoutMs: z
         .number()
         .int()

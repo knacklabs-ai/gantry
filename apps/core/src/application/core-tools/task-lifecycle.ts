@@ -27,6 +27,7 @@ export interface CoreTaskOwner {
   appId: string;
   agentId: string;
   conversationId: string;
+  providerAccountId?: string | null;
   threadId?: string | null;
 }
 
@@ -43,6 +44,7 @@ export interface CoreTaskProcessHandle {
 export interface CoreDelegatedRunInput {
   task: AsyncTaskRecord;
   prompt: string;
+  targetAgentId?: string;
   signal: AbortSignal;
   onProcessStarted?: (handle: CoreTaskProcessHandle) => Promise<void> | void;
   onProgress?: (summary: string) => Promise<void> | void;
@@ -74,6 +76,7 @@ export interface CoreTaskLifecycleService {
       objective: string;
       context?: string | null;
       expectedOutput?: string | null;
+      targetAgentId?: string;
       workspaceFolder: string;
       run(input: CoreDelegatedRunInput): Promise<{
         outputSummary?: string | null;
@@ -148,12 +151,14 @@ export function createCoreTaskLifecycleBackend(input: {
       if (!input.runDelegatedAgent) {
         return unavailable('Delegated agent runtime is unavailable.');
       }
+      const targetAgentId = optionalString(args.targetAgentId);
       const result = await input.service.startDelegatedAgent({
         ...input.owner,
         parentRunId: input.parentRunId ?? null,
         objective,
         context: optionalString(args.context),
         expectedOutput: optionalString(args.expectedOutput),
+        ...(targetAgentId ? { targetAgentId } : {}),
         workspaceFolder: input.workspaceFolder,
         run: (runInput) =>
           input.runDelegatedAgent!({

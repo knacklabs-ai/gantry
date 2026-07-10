@@ -18,7 +18,12 @@ type DurableAsyncCommandPayload = {
 
 type DurableDelegatedAgentPayload = Pick<
   StartDelegatedAgentTaskInput,
-  'context' | 'expectedOutput' | 'objective' | 'workspaceFolder'
+  | 'context'
+  | 'expectedOutput'
+  | 'objective'
+  | 'providerAccountId'
+  | 'targetAgentId'
+  | 'workspaceFolder'
 >;
 
 export async function recoverQueuedAsyncTasks(input: {
@@ -129,6 +134,8 @@ async function recoverQueuedDelegatedAgentTasks(input: {
       objective: payload.objective,
       context: payload.context,
       expectedOutput: payload.expectedOutput,
+      providerAccountId: payload.providerAccountId,
+      targetAgentId: payload.targetAgentId,
       workspaceFolder: payload.workspaceFolder,
     };
     input.pending.set(task.id, {
@@ -190,6 +197,11 @@ function isDurableDelegatedAgentPayload(
   return Boolean(
     value &&
     typeof value.objective === 'string' &&
+    (value.providerAccountId === undefined ||
+      value.providerAccountId === null ||
+      typeof value.providerAccountId === 'string') &&
+    (value.targetAgentId === undefined ||
+      typeof value.targetAgentId === 'string') &&
     typeof value.workspaceFolder === 'string',
   );
 }

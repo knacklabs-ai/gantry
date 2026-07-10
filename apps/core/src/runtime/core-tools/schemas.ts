@@ -39,6 +39,7 @@ export type CoreToolInputByName = {
     objective: string;
     context?: string;
     expectedOutput?: string;
+    targetAgentId?: string;
     timeoutMs?: number;
   };
   task_get: { taskId: string };
@@ -111,6 +112,7 @@ export function createCoreToolSchemas(z: ZodFactory): CoreToolSchemas {
       objective: z.string().min(1).max(10_000),
       context: z.string().max(20_000).optional(),
       expectedOutput: z.string().max(2_000).optional(),
+      targetAgentId: z.string().min(1).max(160).optional(),
       timeoutMs: z
         .number()
         .int()

@@ -9,9 +9,13 @@ import {
   summarizeMcpToolError,
 } from '../../application/mcp/mcp-tool-audit.js';
 import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
+import type { RuntimeAgentSessionRepository } from '../../domain/repositories/ops-repo.js';
 import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
 import type { AsyncTaskRepository } from '../../domain/ports/async-tasks.js';
-import type { McpServerRepository } from '../../domain/ports/repositories.js';
+import type {
+  McpServerRepository,
+  ToolCatalogRepository,
+} from '../../domain/ports/repositories.js';
 import type {
   PermissionApprovalDecision,
   PermissionApprovalRequest,
@@ -20,6 +24,12 @@ import type {
 } from '../../domain/types.js';
 import type { InlineAgentLoopLaneInput } from '../../runtime/agent-inline.js';
 import type { RunAgentOptions } from '../../runtime/agent-spawn-types.js';
+import {
+  resolveTurnSelectedMcpServerIds,
+  resolveTurnSelectedSkillContext,
+  resolveTurnSemanticCapabilities,
+  resolveTurnToolPolicy,
+} from '../../runtime/group-run-context.js';
 import {
   createCoreToolRegistry,
   type CoreToolRegistryDeps,
@@ -146,7 +156,7 @@ export function createInlineCoreTools(
         allowedToolRules: [
           ...(run.toolPolicyRules ?? []),
           ...laneInput.mcpServers.flatMap(
-            ({ allowedToolNames }) => allowedToolNames,
+            ({ autoApproveToolNames }) => autoApproveToolNames,
           ),
         ],
       });
@@ -302,13 +312,20 @@ export function wireInlineAgentLoopTools(input: {
     | 'executionAdapters'
     | 'runnerSandboxProvider'
     | 'getCredentialBroker'
+    | 'getConversationRoutes'
+    | 'resolveExecutionProviderId'
   >;
   channelWiring: ChannelWiring;
   interactionsEnabled: boolean;
   getAgentAccessPreset(folder: string): 'full' | 'locked';
   getYoloMode(): YoloModeSettings;
+  getToolRepository?: () => ToolCatalogRepository | undefined;
   getMcpServerRepository?: () => McpServerRepository | undefined;
   getAsyncTaskRepository?: () => AsyncTaskRepository | undefined;
+  opsRepository?: Pick<
+    RuntimeAgentSessionRepository,
+    'getAgentTurnContext' | 'createSessionAgentRun' | 'completeSessionAgentRun'
+  >;
   getSkillRepository?: () => RunAgentOptions['skillRepository'];
   getSkillArtifactStore?: () => RunAgentOptions['skillArtifactStore'];
   getCapabilitySecretRepository?: () =>
@@ -361,26 +378,50 @@ export function wireInlineAgentLoopTools(input: {
       createInlineAgentTaskLifecycle({
         laneInput,
         repository: input.getAsyncTaskRepository?.(),
-        buildRunOptions: async () => ({
+        runRepository: input.opsRepository,
+        getConversationRoutes: input.app.getConversationRoutes,
+        resolveExecutionProviderId: input.app.resolveExecutionProviderId,
+        resolveRunAccess: async (agentId) => {
+          const turnContext = laneInput.input.appId
+            ? { appId: laneInput.input.appId, agentId }
+            : undefined;
+          const [toolPolicy, selectedSkills, semanticCapabilities] =
+            await Promise.all([
+              resolveTurnToolPolicy(input, turnContext),
+              resolveTurnSelectedSkillContext(input, turnContext),
+              resolveTurnSemanticCapabilities(input, turnContext),
+            ]);
+          return {
+            toolPolicyRules: toolPolicy.toolPolicyRules,
+            runtimeAccess: toolPolicy.runtimeAccess,
+            attachedSkillSourceIds: selectedSkills.ids,
+            selectedSkillDisplays: selectedSkills.displays,
+            attachedMcpSourceIds: await resolveTurnSelectedMcpServerIds(
+              input,
+              turnContext,
+              toolPolicy.toolPolicyRules,
+            ),
+            semanticCapabilities,
+          };
+        },
+        buildRunOptions: async (agentId) => ({
           credentialBroker: await input.app.getCredentialBroker(),
           skillRepository: input.getSkillRepository?.(),
           skillArtifactStore: input.getSkillArtifactStore?.(),
-          skillContext:
-            laneInput.input.appId && laneInput.input.agentId
-              ? {
-                  appId: laneInput.input.appId,
-                  agentId: laneInput.input.agentId,
-                }
-              : undefined,
+          skillContext: laneInput.input.appId
+            ? {
+                appId: laneInput.input.appId,
+                agentId,
+              }
+            : undefined,
           mcpServerRepository: input.getMcpServerRepository?.(),
           capabilitySecretRepository: input.getCapabilitySecretRepository?.(),
-          mcpContext:
-            laneInput.input.appId && laneInput.input.agentId
-              ? {
-                  appId: laneInput.input.appId,
-                  agentId: laneInput.input.agentId,
-                }
-              : undefined,
+          mcpContext: laneInput.input.appId
+            ? {
+                appId: laneInput.input.appId,
+                agentId,
+              }
+            : undefined,
           mcpHostnameLookup: input.mcpHostnameLookup,
           mcpDnsValidationCache: input.getMcpDnsValidationCache?.(),
           publishRuntimeEvent: input.publishRuntimeEvent,

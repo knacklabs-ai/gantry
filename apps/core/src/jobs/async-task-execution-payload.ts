@@ -36,6 +36,7 @@ export function asyncCommandPrivateCorrelation(input: {
     | 'cwd'
     | 'egressProxyUrl'
     | 'parentTaskId'
+    | 'providerAccountId'
     | 'protectedReadPaths'
     | 'protectedWritePaths'
     | 'resourceLimits'
@@ -44,6 +45,7 @@ export function asyncCommandPrivateCorrelation(input: {
   const base = {
     cwd: input.taskInput.cwd ?? null,
     parentTaskId: input.taskInput.parentTaskId ?? null,
+    providerAccountId: input.taskInput.providerAccountId ?? null,
     launch: input.launchControl,
   };
   return withEncryptedAsyncTaskPayload(base, {
@@ -68,12 +70,14 @@ export function asyncMcpPrivateCorrelation(input: {
   appId: string;
   taskId: string;
   parentTaskId?: string | null;
+  providerAccountId?: string | null;
   serverName: string;
   toolName: string;
   arguments: Record<string, unknown>;
 }): Record<string, unknown> {
   const base = {
     ...(input.parentTaskId ? { parentTaskId: input.parentTaskId } : {}),
+    providerAccountId: input.providerAccountId ?? null,
     progress: {
       phase: 'queued',
       lastProgress: 'MCP tool queued.',
@@ -96,11 +100,18 @@ export function asyncDelegatedPrivateCorrelation(input: {
   taskId: string;
   taskInput: Pick<
     StartDelegatedAgentTaskInput,
-    'context' | 'expectedOutput' | 'objective' | 'workspaceFolder'
+    | 'context'
+    | 'expectedOutput'
+    | 'objective'
+    | 'providerAccountId'
+    | 'targetAgentId'
+    | 'workspaceFolder'
   >;
 }): Record<string, unknown> {
   const base = {
+    providerAccountId: input.taskInput.providerAccountId ?? null,
     workspaceFolder: input.taskInput.workspaceFolder,
+    targetAgentId: input.taskInput.targetAgentId ?? null,
     steering: [],
     progress: { phase: 'queued' },
   };
@@ -111,6 +122,8 @@ export function asyncDelegatedPrivateCorrelation(input: {
       objective: input.taskInput.objective,
       context: input.taskInput.context,
       expectedOutput: input.taskInput.expectedOutput,
+      providerAccountId: input.taskInput.providerAccountId,
+      targetAgentId: input.taskInput.targetAgentId,
       workspaceFolder: input.taskInput.workspaceFolder,
     },
   });

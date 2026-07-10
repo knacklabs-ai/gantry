@@ -15,6 +15,6 @@ export function resolveConversationRoute(
   return findConversationRouteForQueue(
     routes,
     makeAgentThreadQueueKey(chatJid, agentId, threadId, providerAccountId),
-    (route) => agentIdForFolder(route.folder),
+    (route) => route.agentId ?? agentIdForFolder(route.folder),
   );
 }

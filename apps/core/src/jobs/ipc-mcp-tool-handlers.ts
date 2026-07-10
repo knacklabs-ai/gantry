@@ -21,6 +21,7 @@ import {
   mcpDescribeToolProxyInput,
   mcpListToolsProxyInput,
 } from './ipc-mcp-list-tools-input.js';
+import { delegatedTaskAgentInScope } from './async-command-task-helpers.js';
 
 type CreateMcpProxyForSourceGroup = (input: {
   appId: import('../domain/app/app.js').AppId;
@@ -292,12 +293,36 @@ function asyncMcpCallToolHandler(
         reject('Async task runtime is unavailable.', 'unavailable');
         return;
       }
+      const agentId = agentIdForMcpTask(data, sourceAgentFolder);
+      const sandboxPolicy = readAsyncCommandSandboxPolicy({
+        sourceAgentFolder,
+        runHandle: data.runHandle,
+      });
+      if (
+        !sandboxPolicy ||
+        sandboxPolicy.appId !== data.appId ||
+        (sandboxPolicy.agentId && sandboxPolicy.agentId !== agentId) ||
+        sandboxPolicy.conversationId !== requestedTargetJid ||
+        (sandboxPolicy.providerAccountId &&
+          sandboxPolicy.providerAccountId !== data.providerAccountId) ||
+        (sandboxPolicy.threadId ?? null) !==
+          (data.authThreadId || data.threadId || null) ||
+        (sandboxPolicy.runId && sandboxPolicy.runId !== data.runId) ||
+        (sandboxPolicy.jobId && sandboxPolicy.jobId !== data.jobId)
+      ) {
+        reject(
+          'async_mcp_call must target a run where async task tools are mounted.',
+          'forbidden',
+        );
+        return;
+      }
       const parentTask = await validateAsyncMcpParentTask({
         repository,
         data,
         appId: data.appId,
-        agentId: agentIdForMcpTask(data, sourceAgentFolder),
+        agentId,
         conversationId: requestedTargetJid,
+        providerAccountId: sandboxPolicy.providerAccountId ?? null,
         threadId: data.authThreadId || data.threadId || null,
       });
       if (!parentTask.ok) {
@@ -317,27 +342,6 @@ function asyncMcpCallToolHandler(
         return;
       }
       const { serverName, toolName } = callInput;
-      const agentId = agentIdForMcpTask(data, sourceAgentFolder);
-      const sandboxPolicy = readAsyncCommandSandboxPolicy({
-        sourceAgentFolder,
-        runHandle: data.runHandle,
-      });
-      if (
-        !sandboxPolicy ||
-        sandboxPolicy.appId !== data.appId ||
-        (sandboxPolicy.agentId && sandboxPolicy.agentId !== agentId) ||
-        sandboxPolicy.conversationId !== requestedTargetJid ||
-        (sandboxPolicy.threadId ?? null) !==
-          (data.authThreadId || data.threadId || null) ||
-        (sandboxPolicy.runId && sandboxPolicy.runId !== data.runId) ||
-        (sandboxPolicy.jobId && sandboxPolicy.jobId !== data.jobId)
-      ) {
-        reject(
-          'async_mcp_call must target a run where async task tools are mounted.',
-          'forbidden',
-        );
-        return;
-      }
       const proxy = await createMcpProxyForSourceGroup({
         appId: data.appId as never,
         agentId,
@@ -360,6 +364,7 @@ function asyncMcpCallToolHandler(
         appId: data.appId,
         agentId,
         conversationId: requestedTargetJid,
+        providerAccountId: sandboxPolicy.providerAccountId ?? null,
         threadId: data.authThreadId || data.threadId || null,
         parentTaskId: parentTask.parentTaskId,
         jobId: data.jobId,
@@ -400,6 +405,7 @@ async function validateAsyncMcpParentTask(input: {
   appId: string;
   agentId: string;
   conversationId: string;
+  providerAccountId?: string | null;
   threadId?: string | null;
 }): Promise<
   { ok: true; parentTaskId: string | null } | { ok: false; message: string }
@@ -413,8 +419,10 @@ async function validateAsyncMcpParentTask(input: {
     parent &&
     parent.kind === 'delegated_agent' &&
     parent.appId === input.appId &&
-    parent.agentId === input.agentId &&
+    delegatedTaskAgentInScope(parent, input.agentId) &&
     parent.conversationId === input.conversationId &&
+    (parent.privateCorrelationJson.providerAccountId ?? null) ===
+      (input.providerAccountId ?? null) &&
     (parent.threadId ?? null) === (input.threadId ?? null) &&
     !isAsyncTaskTerminal(parent.status);
   return valid

@@ -14,6 +14,7 @@ import {
   jobRunLeaseFencingVersion,
   jobRunLeaseToken,
   lockedAccessPreset,
+  providerAccountId,
   TASKS_DIR,
   threadId,
 } from '../context.js';
@@ -243,6 +244,7 @@ export function registerMcpProxyTools(server: McpServer): void {
       writeIpcFile(TASKS_DIR, {
         type: 'async_mcp_call',
         taskId,
+        ...(providerAccountId ? { providerAccountId } : {}),
         runHandle: process.env.GANTRY_AGENT_RUN_HANDLE || undefined,
         ...(jobId ? { jobId } : {}),
         ...(jobRunId ? { runId: jobRunId } : {}),

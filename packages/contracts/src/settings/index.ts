@@ -73,6 +73,7 @@ export const RuntimeSettingsConfiguredAgentSchema = z
     relationshipMode: AgentRelationshipModeSchema.optional(),
     model: z.string().optional(),
     agentHarness: AgentHarnessSchema.optional(),
+    runtime: z.enum(['worker', 'inline']).optional(),
     oneTimeJobDefaultModel: z.string().optional(),
     recurringJobDefaultModel: z.string().optional(),
     bindings: z.record(z.string(), RuntimeSettingsConfiguredAgentBindingSchema),

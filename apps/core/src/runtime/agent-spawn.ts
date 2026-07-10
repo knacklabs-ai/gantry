@@ -482,10 +482,8 @@ export async function spawnAgent(
       }
     }
     // DeepAgents model traffic runs inside the runner process. In
-    // sandbox_runtime, OpenRouter uses raw fetch rather than an SDK client, so
-    // the runner process itself needs the Gantry egress proxy to reach the
-    // sandbox-private model-gateway alias. Child shell/tool envs still receive
-    // only the separately sanitized toolNetworkEnv projection.
+    // OpenRouter's sandbox_runtime lane needs the Gantry egress proxy because
+    // it uses raw fetch; child tools still receive only sanitized toolNetworkEnv.
     const runnerToolProcessEnv =
       preparedExecution.providerId === 'deepagents:langchain'
         ? toolNetworkEnv
@@ -676,6 +674,7 @@ export async function spawnAgent(
       appId: runnerAppId,
       agentId: input.agentId,
       conversationId: input.chatJid,
+      providerAccountId: group.providerAccountId,
       threadId: input.threadId,
       runId: input.runId,
       jobId: input.jobId,

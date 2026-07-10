@@ -30,6 +30,8 @@ function wire(overrides: Record<string, unknown> = {}) {
       executionAdapters: undefined,
       runnerSandboxProvider: { enforcing: true },
       getCredentialBroker: vi.fn(async () => undefined),
+      getConversationRoutes: vi.fn(() => ({})),
+      resolveExecutionProviderId: vi.fn(async () => 'test:inline'),
     },
     channelWiring: {
       sendMessage: vi.fn(async () => undefined),
@@ -150,5 +152,41 @@ describe('inline core tool bootstrap', () => {
       'permission.resumed',
       'permission.final_outcome',
     ]);
+  });
+
+  it('prompts for allowed remote MCP tools that are not auto-approved', async () => {
+    wire();
+    const input = laneInput();
+    input.mcpServers = [
+      {
+        name: 'crm',
+        allowedToolNames: ['mcp__crm__read'],
+        autoApproveToolNames: [],
+      },
+    ] as never;
+    const tools = createInlineCoreTools(input, support());
+
+    await expect(
+      tools.authorizeThirdPartyMcpTool('mcp__crm__read', { id: 'crm-1' }),
+    ).resolves.toEqual({ allowed: true });
+    expect(requestPermissionApproval).toHaveBeenCalledOnce();
+  });
+
+  it('does not prompt for auto-approved remote MCP tools', async () => {
+    wire();
+    const input = laneInput();
+    input.mcpServers = [
+      {
+        name: 'crm',
+        allowedToolNames: ['mcp__crm__read'],
+        autoApproveToolNames: ['mcp__crm__read'],
+      },
+    ] as never;
+    const tools = createInlineCoreTools(input, support());
+
+    await expect(
+      tools.authorizeThirdPartyMcpTool('mcp__crm__read', { id: 'crm-1' }),
+    ).resolves.toEqual({ allowed: true });
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
   });
 });

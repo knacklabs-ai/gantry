@@ -71,6 +71,7 @@ export async function createAsyncMcpTask(input: {
   appId: string;
   agentId: string;
   conversationId: string;
+  providerAccountId?: string | null;
   threadId?: string | null;
   parentTaskId?: string | null;
   jobId?: string;
@@ -105,6 +106,7 @@ export async function createAsyncMcpTask(input: {
       appId: input.appId,
       taskId,
       parentTaskId: input.parentTaskId,
+      providerAccountId: input.providerAccountId,
       serverName: input.serverName,
       toolName: input.toolName,
       arguments: input.arguments ?? {},
