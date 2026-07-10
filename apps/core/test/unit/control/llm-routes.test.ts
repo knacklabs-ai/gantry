@@ -239,6 +239,11 @@ describe('direct LLM control routes', () => {
       Buffer.from(fetchMock.mock.calls[0]![1]!.body as Buffer).toString('utf8'),
     );
     expect(upstreamBody.model).toBe('claude-sonnet-4-6');
+    const upstreamSignal = fetchMock.mock.calls[0]![1]!.signal as AbortSignal;
+    expect(upstreamSignal.aborted).toBe(false);
+    req.emit('close');
+    res.emit('close');
+    expect(upstreamSignal.aborted).toBe(false);
     expect(gatewayBroker.revokeInjection).toHaveBeenCalledWith({
       binding: expect.objectContaining({
         apiKeyId: 'llm-key',
@@ -486,6 +491,56 @@ describe('direct LLM control routes', () => {
     expect(requestLogs).toContainEqual(
       expect.objectContaining({ statusCode: 502, modelAlias: 'gpt' }),
     );
+  });
+
+  it('aborts the gateway and preserves cleanup when the client disconnects mid-stream', async () => {
+    const gatewayBroker = broker();
+    let upstreamSignal: AbortSignal | undefined;
+    let streamController: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+        controller.enqueue(Buffer.from('data: first\n\n'));
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        upstreamSignal = init?.signal ?? undefined;
+        upstreamSignal?.addEventListener(
+          'abort',
+          () => streamController.error(upstreamSignal?.reason),
+          { once: true },
+        );
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }),
+    );
+    const req = request({ body: { model: 'gpt', stream: true } });
+    const res = new TestResponse();
+
+    const route = handleLlmRoutes(
+      req,
+      res as unknown as ServerResponse,
+      context({ broker: gatewayBroker }),
+      '/llm/v1/chat/completions',
+    );
+    await vi.waitFor(() => expect(res.body()).toBe('data: first\n\n'));
+    res.emit('close');
+
+    await expect(route).resolves.toBe(true);
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(res.body()).toBe('data: first\n\n');
+    expect(requestLogs).toContainEqual(
+      expect.objectContaining({
+        statusCode: 200,
+        modelAlias: 'gpt',
+        clientDisconnected: true,
+      }),
+    );
+    expect(gatewayBroker.revokeInjection).toHaveBeenCalledOnce();
   });
 
   it('preserves request-caused gateway setup errors as 4xx responses', async () => {

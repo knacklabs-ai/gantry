@@ -14,6 +14,7 @@ export type ControlRequestLogEntry = {
   modelRouteId?: string;
   requestBodyBytes?: number;
   responseBodyBytes?: number;
+  clientDisconnected?: boolean;
 };
 
 export type ControlRequestLogSink = (

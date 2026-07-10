@@ -88,6 +88,23 @@ export async function handleLlmRoutes(
   let injectionIssued = false;
   let statusCode = 502;
   let responseBodyBytes: number | undefined;
+  let responseCompleted = false;
+  let clientDisconnected = false;
+  const gatewayAbort = new AbortController();
+  const abortGateway = () => {
+    if (responseCompleted) return;
+    clientDisconnected = true;
+    gatewayAbort.abort();
+  };
+  const abortGatewayForIncompleteRequest = () => {
+    if (req.complete === false) abortGateway();
+  };
+  const markResponseCompleted = () => {
+    responseCompleted = true;
+  };
+  req.once('close', abortGatewayForIncompleteRequest);
+  res.once('close', abortGateway);
+  res.once('finish', markResponseCompleted);
   try {
     let gateway: { baseUrl: string; token: string };
     try {
@@ -117,6 +134,7 @@ export async function handleLlmRoutes(
         method: 'POST',
         headers,
         body: resolved.body,
+        signal: gatewayAbort.signal,
       });
       statusCode = response.status;
       const contentLength = response.headers.get('content-length');
@@ -128,6 +146,7 @@ export async function handleLlmRoutes(
       forwardGatewayResponseHeaders(response, res);
       await pipeFetchResponseBody(response, res);
     } catch {
+      if (clientDisconnected) return true;
       statusCode = 502;
       if (res.headersSent) {
         if (!res.writableEnded) res.end();
@@ -142,6 +161,10 @@ export async function handleLlmRoutes(
       return true;
     }
   } finally {
+    responseCompleted = responseCompleted || res.writableEnded;
+    req.off('close', abortGatewayForIncompleteRequest);
+    res.off('close', abortGateway);
+    res.off('finish', markResponseCompleted);
     await recordControlRequestLog({
       route: `/llm/v1/${endpoint === 'messages' ? 'messages' : 'chat/completions'}`,
       method: req.method ?? 'POST',
@@ -152,6 +175,7 @@ export async function handleLlmRoutes(
       modelRouteId: resolved.entry.modelRoute.id,
       requestBodyBytes: resolved.body.byteLength,
       ...(responseBodyBytes !== undefined ? { responseBodyBytes } : {}),
+      ...(clientDisconnected ? { clientDisconnected: true } : {}),
     });
     if (injectionIssued) {
       await broker?.revokeInjection?.({
