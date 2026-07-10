@@ -165,16 +165,25 @@ async function forwardRequest(
     return;
   }
   const bodyStream = Readable.fromWeb(upstream.body as never);
-  await pipeline(
+  const isSseHandshake =
     input.targetType === 'sse' &&
-      request.method === 'GET' &&
-      sameMcpEndpoint(target, input.target) &&
-      upstream.headers
-        .get('content-type')
-        ?.toLowerCase()
-        .includes('text/event-stream')
+    request.method === 'GET' &&
+    sameMcpEndpoint(target, input.target) &&
+    upstream.headers
+      .get('content-type')
+      ?.toLowerCase()
+      .includes('text/event-stream');
+  await pipeline(
+    isSseHandshake
       ? bodyStream.pipe(
-          createSseEndpointCapture(input.target, sseEndpointState),
+          createSseEndpointCapture(
+            input.target,
+            sseEndpointState,
+            new URL(
+              request.url ?? '/',
+              `http://127.0.0.1:${request.socket.localPort}`,
+            ),
+          ),
         )
       : bodyStream,
     response,
@@ -241,50 +250,80 @@ function sameMcpEndpoint(left: URL, right: URL): boolean {
 export function createSseEndpointCapture(
   configuredTarget: URL,
   state: SseProxyEndpointState,
+  proxyTarget: URL,
 ): Transform {
-  const decoder = new TextDecoder();
-  let pending = '';
+  let pending = Buffer.alloc(0);
+  let handshakeBytes = 0;
   let captured = false;
   return new Transform({
     transform(chunk: Buffer, _encoding, callback) {
-      if (!captured) {
-        pending =
-          `${pending}${decoder.decode(chunk, { stream: true })}`.replace(
-            /\r\n/g,
-            '\n',
-          );
-        if (Buffer.byteLength(pending) > MAX_SSE_HANDSHAKE_BYTES) {
-          captured = true;
-          pending = '';
-        } else {
-          let boundary = pending.indexOf('\n\n');
-          while (boundary >= 0) {
-            const advertised = sseEndpointFromEvent(
-              pending.slice(0, boundary),
-              configuredTarget,
-            );
-            pending = pending.slice(boundary + 2);
-            if (advertised) {
-              state.advertisedTarget = advertised;
-              captured = true;
-              break;
-            }
-            boundary = pending.indexOf('\n\n');
-          }
-        }
+      if (captured) {
+        callback(null, chunk);
+        return;
       }
-      callback(null, chunk);
+      try {
+        handshakeBytes += chunk.byteLength;
+        pending = Buffer.concat([pending, chunk]);
+        const output: Buffer[] = [];
+        let boundary = findSseEventBoundary(pending);
+        while (boundary) {
+          const eventBlock = pending.subarray(0, boundary.index);
+          const separator = pending.subarray(
+            boundary.index,
+            boundary.index + boundary.length,
+          );
+          pending = pending.subarray(boundary.index + boundary.length);
+          const rewritten = rewriteSseEndpointEvent(
+            eventBlock,
+            configuredTarget,
+            proxyTarget,
+          );
+          output.push(rewritten?.block ?? eventBlock, separator);
+          if (rewritten) {
+            state.advertisedTarget = rewritten.advertisedTarget;
+            captured = true;
+            output.push(pending);
+            pending = Buffer.alloc(0);
+            break;
+          }
+          boundary = findSseEventBoundary(pending);
+        }
+        if (!captured && handshakeBytes > MAX_SSE_HANDSHAKE_BYTES) {
+          throw new Error('Inline MCP SSE handshake is too large.');
+        }
+        callback(null, Buffer.concat(output));
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+    flush(callback) {
+      callback(null, pending);
     },
   });
 }
 
-function sseEndpointFromEvent(
-  eventBlock: string,
+function findSseEventBoundary(
+  buffer: Buffer,
+): { index: number; length: number } | undefined {
+  const lf = buffer.indexOf('\n\n');
+  const crlf = buffer.indexOf('\r\n\r\n');
+  if (lf < 0 && crlf < 0) return undefined;
+  if (crlf >= 0 && (lf < 0 || crlf < lf)) {
+    return { index: crlf, length: 4 };
+  }
+  return { index: lf, length: 2 };
+}
+
+function rewriteSseEndpointEvent(
+  eventBlock: Buffer,
   configuredTarget: URL,
-): URL | undefined {
+  proxyTarget: URL,
+): { advertisedTarget: URL; block: Buffer } | undefined {
+  const text = eventBlock.toString('utf8');
   let eventType = 'message';
   const data: string[] = [];
-  for (const line of eventBlock.split('\n')) {
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
     if (!line || line.startsWith(':')) continue;
     const separator = line.indexOf(':');
     const field = separator < 0 ? line : line.slice(0, separator);
@@ -296,11 +335,34 @@ function sseEndpointFromEvent(
   if (eventType !== 'endpoint' || data.length === 0) return undefined;
   try {
     const advertised = new URL(data.join('\n'), configuredTarget);
-    return advertised.origin === configuredTarget.origin
-      ? advertised
-      : undefined;
+    if (advertised.origin !== configuredTarget.origin) {
+      throw new Error('Inline MCP SSE endpoint escaped its configured origin.');
+    }
+    const rewritten = new URL(
+      `${advertised.pathname}${advertised.search}${advertised.hash}`,
+      proxyTarget.origin,
+    );
+    let replaced = false;
+    const rewrittenLines: string[] = [];
+    for (const line of lines) {
+      const separator = line.indexOf(':');
+      const field = separator < 0 ? line : line.slice(0, separator);
+      if (field !== 'data') {
+        rewrittenLines.push(line);
+      } else if (!replaced) {
+        const hasSpace = line.slice(separator + 1).startsWith(' ');
+        rewrittenLines.push(`data:${hasSpace ? ' ' : ''}${rewritten.href}`);
+        replaced = true;
+      }
+    }
+    return {
+      advertisedTarget: advertised,
+      block: Buffer.from(
+        rewrittenLines.join(text.includes('\r\n') ? '\r\n' : '\n'),
+      ),
+    };
   } catch {
-    return undefined;
+    throw new Error('Inline MCP SSE endpoint is invalid or not allowed.');
   }
 }
 
