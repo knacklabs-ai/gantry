@@ -100,6 +100,9 @@ export interface InlineAgentLoopLaneInput {
   modelCredentialEnv: Readonly<Record<string, string>>;
   mcpServers: readonly MaterializedMcpCapability[];
   mcpHostnameLookup?: HostnameLookup;
+  skillRepository?: RunAgentOptions['skillRepository'];
+  skillArtifactStore?: RunAgentOptions['skillArtifactStore'];
+  skillContext?: RunAgentOptions['skillContext'];
   runtimeDataDir: string;
   maxTurns?: number;
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -439,6 +442,9 @@ async function executeInlineRun(input: {
         modelCredentialEnv: input.credentials.env,
         mcpServers: input.mcpServers,
         mcpHostnameLookup: input.options.mcpHostnameLookup,
+        skillRepository: input.options.skillRepository,
+        skillArtifactStore: input.options.skillArtifactStore,
+        skillContext: input.options.skillContext,
         runtimeDataDir: input.runtimeDataDir,
         maxTurns: input.maxTurns,
         effort: input.effort,

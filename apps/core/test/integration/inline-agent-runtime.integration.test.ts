@@ -34,7 +34,10 @@ const sdk = vi.hoisted(() => ({
     handler,
   })),
 }));
-const deep = vi.hoisted(() => ({ createAgent: vi.fn() }));
+const deep = vi.hoisted(() => ({
+  createAgent: vi.fn(),
+  createSkillsMiddleware: vi.fn(),
+}));
 const model = vi.hoisted(() => ({ build: vi.fn() }));
 const delegatedSpawn = vi.hoisted(() => ({ run: vi.fn() }));
 
@@ -57,6 +60,7 @@ vi.mock(`@anthropic-ai/${'claude-agent-sdk'}`, () => ({
 
 vi.mock('deepagents', () => ({
   createDeepAgent: deep.createAgent,
+  createSkillsMiddleware: deep.createSkillsMiddleware,
   StateBackend: class StateBackend {},
 }));
 
@@ -338,6 +342,8 @@ async function callRemoteTool(
 }
 
 function configureProviderMocks(): void {
+  deep.createAgent.mockReset();
+  deep.createSkillsMiddleware.mockReset();
   sdk.query.mockImplementation(({ options }) => ({
     async *[Symbol.asyncIterator]() {
       yield {
@@ -592,6 +598,127 @@ describe('inline runtime integration seams', () => {
     ).toContain(RUNTIME_EVENT_TYPES.JOB_HEARTBEAT);
     expect(frames.some((frame) => readScheduledJobHeartbeat(frame))).toBe(true);
     expect(credentials.revoke).toHaveBeenCalledOnce();
+  });
+
+  it('loads an attached skill into the DeepAgents inline middleware from in-memory storage', async () => {
+    const skillContent = `---
+name: inline-response
+description: Supplies the integration response marker.
+---
+Response marker: stage-c-skill-loaded`;
+    const skillRepository = {
+      listEnabledSkillsForAgent: vi.fn(async () => [
+        {
+          id: 'skill:inline-response',
+          name: 'inline-response',
+          status: 'installed',
+          storage: {
+            storageType: 'object-store',
+            storageRef: 'memory:inline-response',
+            contentHash: 'sha256-inline-response',
+            sizeBytes: Buffer.byteLength(skillContent),
+          },
+        },
+      ]),
+    };
+    const skillArtifactStore = {
+      putSkillArtifact: vi.fn(),
+      getSkillArtifact: vi.fn(async () => ({
+        assets: [
+          {
+            path: 'SKILL.md',
+            contentType: 'text/markdown',
+            content: Buffer.from(skillContent),
+          },
+        ],
+      })),
+    };
+    deep.createSkillsMiddleware.mockImplementationOnce((options) => ({
+      stageCSkillMiddleware: options,
+    }));
+    deep.createAgent.mockImplementationOnce(({ middleware }) => ({
+      async *streamEvents({ files }) {
+        const loaded = middleware.find(
+          (item) => item.stageCSkillMiddleware,
+        ).stageCSkillMiddleware;
+        const content = files[`${loaded.sources[0]}inline-response/SKILL.md`]
+          .content as string;
+        yield {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: content.match(/Response marker: (\S+)/)?.[1] ?? '',
+              usage_metadata: { input_tokens: 1, output_tokens: 1 },
+            },
+          },
+        };
+      },
+    }));
+    model.build.mockResolvedValueOnce({
+      model: { profile: { maxInputTokens: 100 } },
+      endpointFamily: 'openai',
+      modelId: 'openai-inline',
+    });
+    const { createDeepAgentsInlineAgentLoopLane } =
+      await import('@core/adapters/llm/deepagents-langchain/inline-lane/index.js');
+    const deepAgentsLane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: null,
+      schema: 'integration',
+    });
+    const frames: AgentOutput[] = [];
+
+    await runInlineAgent(
+      group,
+      {
+        ...baseInput,
+        prompt: 'OPENAI_TURN use the attached skill',
+        model: 'openai-fallback',
+        attachedSkillSourceIds: ['skill:inline-response'],
+        isScheduledJob: true,
+        jobId: 'job:inline-skill',
+      },
+      vi.fn(),
+      async (frame) => {
+        frames.push(frame);
+      },
+      {
+        ...inlineOptions((laneInput) =>
+          deepAgentsLane({
+            ...laneInput,
+            coreTools: {
+              tools: [],
+              execute: vi.fn(),
+              authorizeThirdPartyMcpTool: vi.fn(),
+              recordThirdPartyMcpToolActivity: vi.fn(),
+            },
+            egressDenylist: [],
+          }),
+        ),
+        skillRepository: skillRepository as never,
+        skillArtifactStore: skillArtifactStore as never,
+        skillContext: {
+          appId: 'default',
+          agentId: 'agent:inline-integration',
+        },
+      },
+    );
+
+    expect(frames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ result: 'stage-c-skill-loaded' }),
+      ]),
+    );
+    expect(deep.createSkillsMiddleware).toHaveBeenCalledWith(
+      expect.objectContaining({ sources: ['/skills/'] }),
+    );
+    expect(skillRepository.listEnabledSkillsForAgent).toHaveBeenCalledWith({
+      appId: 'default',
+      agentId: 'agent:inline-integration',
+    });
+    expect(skillArtifactStore.getSkillArtifact).toHaveBeenCalledWith(
+      'memory:inline-response',
+    );
+    expect(skillArtifactStore.putSkillArtifact).not.toHaveBeenCalled();
   });
 
   it('uses the existing scheduled-run failover chain after an inline model error', async () => {

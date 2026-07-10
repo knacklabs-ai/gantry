@@ -1,9 +1,16 @@
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  inlineAgentSkillEngineConstraintError,
   inlineWorkerOnlyToolRuleLabels,
   isInlineWorkerOnlyToolRule,
   type AgentRuntime,
 } from '../../shared/agent-runtime.js';
+import { deriveAgentEngineForProvider } from '../../shared/model-execution-route.js';
+import {
+  resolveModelSelectionForWorkloadWithFamilies,
+  type FamilyOrderOverrides,
+} from '../../shared/model-families.js';
+import { DEFAULT_SETUP_MODEL_ALIAS } from '../../shared/model-catalog.js';
 import { settingsCapabilityIdToToolRule } from './configured-capability-normalization.js';
 import type {
   AgentEffort,
@@ -62,7 +69,6 @@ export function inlineWorkerOnlyConfiguredCapabilityLabels(input: {
 }): string[] {
   if (resolveConfiguredAgentRuntime(input.agent) !== 'inline') return [];
   const labels = new Set<string>();
-  for (const source of input.agent.sources.skills) labels.add(source.id);
   for (const source of input.agent.sources.tools) {
     if (source.kind === 'local_cli') labels.add(source.id);
   }
@@ -74,4 +80,30 @@ export function inlineWorkerOnlyConfiguredCapabilityLabels(input: {
     if (isInlineWorkerOnlyToolRule(rule)) labels.add(capability.id);
   }
   return [...labels].sort();
+}
+
+export function inlineConfiguredSkillEngineConstraintError(input: {
+  subject: string;
+  agent: RuntimeConfiguredAgent;
+  defaultModel?: string;
+  modelFamilyOrder?: FamilyOrderOverrides;
+}): string | null {
+  const effectiveModel =
+    input.agent.model?.trim() ||
+    input.defaultModel?.trim() ||
+    DEFAULT_SETUP_MODEL_ALIAS;
+  const resolved = resolveModelSelectionForWorkloadWithFamilies(
+    effectiveModel,
+    'chat',
+    input.modelFamilyOrder,
+  );
+  if (!resolved.ok) return null;
+  return inlineAgentSkillEngineConstraintError({
+    subject: input.subject,
+    agentRuntime: resolveConfiguredAgentRuntime(input.agent),
+    agentEngine: deriveAgentEngineForProvider(resolved.entry.modelRoute.id),
+    attachedSkillSourceIds: input.agent.sources.skills.map(
+      (source) => source.id,
+    ),
+  });
 }

@@ -31,6 +31,7 @@ import type {
 } from './runtime-settings-types.js';
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  inlineConfiguredSkillEngineConstraintError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
 } from './runtime-settings-agent-runtime.js';
 
@@ -220,6 +221,13 @@ export function validateLoadedRuntimeSettings(
   }
 
   for (const [agentId, agent] of Object.entries(settings.agents)) {
+    const skillEngineError = inlineConfiguredSkillEngineConstraintError({
+      subject: `agents.${agentId}`,
+      agent,
+      defaultModel: settings.agent.defaultModel,
+      modelFamilyOrder: settings.modelFamilies,
+    });
+    if (skillEngineError) details.push(skillEngineError);
     const inlineBlockers = inlineWorkerOnlyConfiguredCapabilityLabels({
       agent,
     });

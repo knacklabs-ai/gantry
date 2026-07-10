@@ -1,15 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-const deep = vi.hoisted(() => ({
-  createAgent: vi.fn(),
-  streamEvents: vi.fn(),
-}));
+const deep = vi.hoisted(() => {
+  class Backend {
+    constructor(readonly config?: unknown) {}
+  }
+  return {
+    Backend,
+    createAgent: vi.fn(),
+    createSkills: vi.fn(() => ({
+      name: 'SkillsMiddleware',
+      beforeAgent: vi.fn(async (state) => state.skillsMetadata),
+    })),
+    streamEvents: vi.fn(),
+  };
+});
 
 const checkpoint = vi.hoisted(() => {
   class Saver {
     static instances: Saver[] = [];
-    getTuple = vi.fn(async () => ({ checkpoint: {} }));
+    static tuple: unknown = { checkpoint: {} };
+    getTuple = vi.fn(async () => Saver.tuple);
     end = vi.fn(async () => undefined);
 
     constructor(
@@ -74,7 +85,8 @@ const mcpAdaptersPackage = vi.hoisted(() =>
 
 vi.mock('deepagents', () => ({
   createDeepAgent: deep.createAgent,
-  StateBackend: class StateBackend {},
+  createSkillsMiddleware: deep.createSkills,
+  StateBackend: deep.Backend,
 }));
 
 vi.mock(checkpointPackage, () => ({
@@ -184,6 +196,7 @@ function laneInput(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   checkpoint.Saver.instances = [];
+  checkpoint.Saver.tuple = { checkpoint: {} };
   checkpoint.Pool.instances = [];
   remote.Client.instances = [];
   remote.HttpTransport.instances = [];
@@ -243,6 +256,126 @@ describe('DeepAgents inline lane', () => {
       error: expect.stringMatching(/max_turns cap.*configured limit: 2/),
     });
     expect(input.emitOutput).toHaveBeenLastCalledWith(result);
+  });
+
+  it('loads attached skills through in-memory skills middleware state', async () => {
+    const skillContent = `---
+name: release-writer
+description: Use this skill to write release notes.
+---
+
+# Release writer
+Always mention the migration impact.
+`;
+    const skillRepository = {
+      listEnabledSkillsForAgent: vi.fn(async () => [
+        {
+          id: 'skill:release',
+          appId: 'app:test',
+          name: 'release-writer',
+          source: 'admin_uploaded',
+          status: 'installed',
+          promptRefs: [],
+          toolIds: [],
+          workflowRefs: [],
+          storage: {
+            storageType: 'object-store',
+            storageRef: 'skill-release',
+            contentHash: 'sha256:release',
+            sizeBytes: skillContent.length,
+          },
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        },
+      ]),
+    };
+    const skillArtifactStore = {
+      getSkillArtifact: vi.fn(async () => ({
+        assets: [
+          {
+            path: 'SKILL.md',
+            contentType: 'text/markdown',
+            content: Buffer.from(skillContent),
+          },
+        ],
+      })),
+    };
+    deep.streamEvents.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield streamEvent('done');
+      },
+    }));
+    checkpoint.Saver.tuple = {
+      checkpoint: {
+        channel_values: {
+          files: {
+            '/skills/old-release-writer/SKILL.md': { content: 'stale' },
+          },
+        },
+      },
+    };
+    const base = laneInput();
+    const input = laneInput({
+      input: {
+        ...base.input,
+        attachedSkillSourceIds: ['skill:release'],
+        sessionId: 'existing-session',
+      },
+      mcpServers: [],
+      skillRepository,
+      skillArtifactStore,
+      skillContext: { appId: 'app:test', agentId: 'agent:test' },
+    });
+    const lane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: 'postgres://gantry:test@localhost:5432/gantry',
+      schema: 'gantry_deepagents',
+    });
+
+    await lane(input);
+
+    expect(skillRepository.listEnabledSkillsForAgent).toHaveBeenCalledWith({
+      appId: 'app:test',
+      agentId: 'agent:test',
+    });
+    expect(skillArtifactStore.getSkillArtifact).toHaveBeenCalledWith(
+      'skill-release',
+    );
+    expect(deep.createSkills).toHaveBeenCalledWith({
+      backend: expect.any(Function),
+      sources: ['/skills/'],
+    });
+    const skillsBackend = deep.createSkills.mock.calls[0]?.[0].backend;
+    expect(skillsBackend({ state: {} })).toBeInstanceOf(deep.Backend);
+    expect(deep.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permissions: [
+          { operations: ['read'], paths: ['/skills', '/skills/**'] },
+          { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
+        ],
+        middleware: expect.arrayContaining([
+          expect.objectContaining({ name: 'SkillsMiddleware' }),
+        ]),
+      }),
+    );
+    const skillsMiddleware = deep.createAgent.mock.calls[0]?.[0].middleware[0];
+    await expect(
+      skillsMiddleware.beforeAgent(
+        { skillsMetadata: [{ name: 'old-release-writer' }] },
+        {},
+      ),
+    ).resolves.toEqual([]);
+    expect(deep.streamEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        files: {
+          '/skills/release-writer/SKILL.md': expect.objectContaining({
+            content: skillContent,
+            mimeType: 'text/markdown',
+          }),
+          '/skills/old-release-writer/SKILL.md': null,
+        },
+      }),
+      expect.any(Object),
+    );
   });
 
   it('returns the schema-valid structured response as JSON', async () => {

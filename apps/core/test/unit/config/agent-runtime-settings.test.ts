@@ -5,9 +5,68 @@ import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-sett
 import { parseRuntimeSettings } from '@core/config/settings/runtime-settings-parser.js';
 import { renderRuntimeSettingsYaml } from '@core/config/settings/runtime-settings-renderer.js';
 import { resolveConfiguredAgentRuntime } from '@core/config/settings/runtime-settings-agent-runtime.js';
+import {
+  DEFAULT_AGENT_ENGINE,
+  DEEPAGENTS_ENGINE,
+} from '@core/shared/agent-engine.js';
 
 function emptySources() {
   return { skills: [], mcpServers: [], tools: [] };
+}
+
+const installedSkill = {
+  id: 'skill:writer',
+  appId: 'default',
+  name: 'writer',
+  source: 'admin_uploaded',
+  status: 'installed',
+  promptRefs: [],
+  toolIds: [],
+  workflowRefs: [],
+  storage: {
+    storageType: 'local-filesystem',
+    storageRef: 'skills/writer',
+    contentHash: 'sha256:writer',
+    sizeBytes: 1,
+  },
+  createdAt: '2026-07-01T00:00:00.000Z',
+  updatedAt: '2026-07-01T00:00:00.000Z',
+} as const;
+
+function settingsDesiredStateService() {
+  return new SettingsDesiredStateService({
+    ops: {} as never,
+    repositories: {
+      tools: {
+        listTools: vi.fn(async () => []),
+        getTool: vi.fn(async () => null),
+      },
+      skills: {
+        listSkills: vi.fn(async () => [installedSkill]),
+        getSkill: vi.fn(async (id: string) =>
+          id === installedSkill.id ? installedSkill : null,
+        ),
+      },
+      mcpServers: {
+        getServer: vi.fn(async () => ({
+          id: 'mcp:stdio-crm',
+          appId: 'default',
+          name: 'stdio-crm',
+          status: 'active',
+          createdSource: 'admin',
+          riskClass: 'medium',
+          transport: 'stdio_template',
+          config: { transport: 'stdio_template' },
+          allowedToolPatterns: [],
+          autoApproveToolPatterns: [],
+          credentialRefs: [],
+          networkHosts: [],
+          createdAt: '2026-07-01T00:00:00.000Z',
+          updatedAt: '2026-07-01T00:00:00.000Z',
+        })),
+      },
+    } as never,
+  });
 }
 
 describe('agent runtime settings', () => {
@@ -82,6 +141,7 @@ describe('agent runtime settings', () => {
   main_agent:
     name: Main
     runtime: inline
+    model: gpt
     access:
       sources:
         skills:
@@ -98,7 +158,55 @@ describe('agent runtime settings', () => {
           version: builtin
 `),
     ).toThrow(
-      'agents.main_agent.runtime inline is incompatible with worker-only capabilities: Browser, FileRead, RunCommand(npm test *), acme-cli, skill:writer',
+      'agents.main_agent.runtime inline is incompatible with worker-only capabilities: Browser, FileRead, RunCommand(npm test *), acme-cli',
+    );
+  });
+
+  it('allows inline attached skills on a DeepAgents model route', () => {
+    const parsed = parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    runtime: inline
+    model: gpt
+    access:
+      sources:
+        skills:
+          - id: skill:writer
+`);
+
+    expect(parsed.agents.main_agent.sources.skills[0]?.id).toBe('skill:writer');
+  });
+
+  it('uses the global model default for inline skill admission', () => {
+    const parsed = parseRuntimeSettings(`agent:
+  default_model: gpt
+agents:
+  main_agent:
+    name: Main
+    runtime: inline
+    access:
+      sources:
+        skills:
+          - id: skill:writer
+`);
+
+    expect(parsed.agents.main_agent.sources.skills[0]?.id).toBe('skill:writer');
+  });
+
+  it('rejects inline attached skills on the default engine model route', () => {
+    expect(() =>
+      parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    runtime: inline
+    model: opus
+    access:
+      sources:
+        skills:
+          - id: skill:writer
+`),
+    ).toThrow(
+      `agents.main_agent.runtime inline supports attached skills only with engine ${DEEPAGENTS_ENGINE}; resolved engine ${DEFAULT_AGENT_ENGINE} is incompatible with attached skills: skill:writer`,
     );
   });
 
@@ -162,42 +270,41 @@ describe('agent runtime settings', () => {
       capabilities: [],
       accessPreset: 'full',
     };
-    const service = new SettingsDesiredStateService({
-      ops: {} as never,
-      repositories: {
-        tools: {
-          listTools: vi.fn(async () => []),
-          getTool: vi.fn(async () => null),
-        },
-        skills: {
-          listSkills: vi.fn(async () => []),
-          getSkill: vi.fn(async () => null),
-        },
-        mcpServers: {
-          getServer: vi.fn(async () => ({
-            id: 'mcp:stdio-crm',
-            appId: 'default',
-            name: 'stdio-crm',
-            status: 'active',
-            createdSource: 'admin',
-            riskClass: 'medium',
-            transport: 'stdio_template',
-            config: { transport: 'stdio_template' },
-            allowedToolPatterns: [],
-            autoApproveToolPatterns: [],
-            credentialRefs: [],
-            networkHosts: [],
-            createdAt: '2026-07-01T00:00:00.000Z',
-            updatedAt: '2026-07-01T00:00:00.000Z',
-          })),
-        },
-      } as never,
-    });
+    const service = settingsDesiredStateService();
 
     await expect(
       service.validateCapabilityReferences(settings),
     ).resolves.toEqual([
       'agents.main_agent.runtime inline is incompatible with worker-only capabilities: mcp:stdio-crm',
     ]);
+  });
+
+  it('reuses model-route skill admission during settings apply', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agent.defaultModel = 'gpt';
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      runtime: 'inline',
+      bindings: {},
+      sources: {
+        ...emptySources(),
+        skills: [{ id: installedSkill.id }],
+      },
+      capabilities: [],
+      accessPreset: 'full',
+    };
+    const service = settingsDesiredStateService();
+
+    await expect(
+      service.validateCapabilityReferences(settings),
+    ).resolves.toEqual([]);
+
+    settings.agent.defaultModel = 'opus';
+    await expect(
+      service.validateCapabilityReferences(settings),
+    ).resolves.toContain(
+      `agents.main_agent.runtime inline supports attached skills only with engine ${DEEPAGENTS_ENGINE}; resolved engine ${DEFAULT_AGENT_ENGINE} is incompatible with attached skills: skill:writer`,
+    );
   });
 });

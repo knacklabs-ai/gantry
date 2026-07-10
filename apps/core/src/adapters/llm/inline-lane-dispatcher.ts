@@ -1,6 +1,8 @@
 import type { MaterializedMcpCapability } from '../../application/mcp/mcp-server-service.js';
 import type { LlmProfileResolution } from '../../application/model-resolution/llm-profile-resolution-service.js';
 import type { HostnameLookup } from '../../domain/network/public-address-policy.js';
+import type { SkillArtifactStore } from '../../domain/ports/skill-artifact-store.js';
+import type { SkillCatalogRepository } from '../../domain/ports/repositories.js';
 import type { ConversationRoute } from '../../domain/types.js';
 import type { RunnerOutputFrame } from '../../runner/runner-frame.js';
 import type { AgentPersona } from '../../shared/agent-persona.js';
@@ -36,6 +38,7 @@ export interface AdapterInlineAgentInput {
   memoryUserId?: string;
   memoryDefaultScope?: 'user' | 'group';
   memoryContextBlock?: string;
+  attachedSkillSourceIds?: string[];
   toolPolicyRules?: string[];
   yoloMode?: YoloModeSettings;
   isScheduledJob?: boolean;
@@ -63,6 +66,9 @@ export interface AdapterInlineAgentLoopLaneInput {
   modelCredentialEnv: Readonly<Record<string, string>>;
   mcpServers: readonly MaterializedMcpCapability[];
   mcpHostnameLookup?: HostnameLookup;
+  skillRepository?: SkillCatalogRepository;
+  skillArtifactStore?: SkillArtifactStore;
+  skillContext?: { appId: string; agentId: string };
   runtimeDataDir: string;
   maxTurns?: number;
   effort?: InlineAgentEffort;

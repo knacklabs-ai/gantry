@@ -309,6 +309,31 @@ describe('runInlineAgent', () => {
     );
   });
 
+  it('threads skill storage dependencies to the lane', async () => {
+    const lane = vi.fn<InlineAgentLoopLane>(async () => ({
+      status: 'success',
+      result: null,
+    }));
+    const skillRepository = {} as never;
+    const skillArtifactStore = {} as never;
+    const skillContext = { appId: 'app-1', agentId: 'agent-1' };
+
+    await runInlineAgent(group, agentInput, vi.fn(), undefined, {
+      ...options(lane),
+      skillRepository,
+      skillArtifactStore,
+      skillContext,
+    });
+
+    expect(lane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillRepository,
+        skillArtifactStore,
+        skillContext,
+      }),
+    );
+  });
+
   it('emits a synthetic scheduled-job heartbeat', async () => {
     const streamed: AgentOutput[] = [];
     await runInlineAgent(

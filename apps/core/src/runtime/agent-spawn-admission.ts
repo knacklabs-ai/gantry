@@ -1,6 +1,7 @@
 import type { AgentEngine } from '../shared/agent-engine.js';
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  inlineAgentSkillEngineConstraintError,
   inlineWorkerOnlyToolRuleLabels,
   type AgentRuntime,
 } from '../shared/agent-runtime.js';
@@ -42,15 +43,13 @@ export function validateAgentPreSpawnAdmission(input: {
 
 function inlineRuntimePreSpawnAdmissionError(input: {
   agentInput: AgentInput;
+  agentEngine: AgentEngine;
   agentRuntime?: AgentRuntime;
   stdioMcpSourceIds?: readonly string[];
 }): string | null {
   const runtime = input.agentRuntime ?? input.agentInput.runtime ?? 'worker';
   if (runtime !== 'inline') return null;
   const labels = new Set<string>();
-  for (const skill of input.agentInput.attachedSkillSourceIds ?? []) {
-    labels.add(skill);
-  }
   for (const rule of inlineWorkerOnlyToolRuleLabels(
     input.agentInput.toolPolicyRules ?? [],
   )) {
@@ -80,9 +79,17 @@ function inlineRuntimePreSpawnAdmissionError(input: {
       }
     }
   }
-  return labels.size === 0
-    ? null
-    : formatInlineAgentWorkerOnlyConfigError('agent', [...labels].sort());
+  const skillEngineError = inlineAgentSkillEngineConstraintError({
+    subject: 'agent',
+    agentRuntime: runtime,
+    agentEngine: input.agentEngine,
+    attachedSkillSourceIds: input.agentInput.attachedSkillSourceIds,
+  });
+  const workerOnlyError =
+    labels.size === 0
+      ? null
+      : formatInlineAgentWorkerOnlyConfigError('agent', [...labels].sort());
+  return [skillEngineError, workerOnlyError].filter(Boolean).join('; ') || null;
 }
 
 function fixedImageCapabilityPreflightError(input: AgentInput): string | null {

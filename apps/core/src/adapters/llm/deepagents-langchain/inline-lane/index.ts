@@ -6,12 +6,13 @@ import {
   tool as createLangChainTool,
   type StructuredToolInterface,
 } from '@langchain/core/tools';
+import type { BaseStore } from '@langchain/langgraph-checkpoint';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createDeepAgent, StateBackend } from 'deepagents';
-import type { FilesystemPermission } from 'deepagents';
+import type { FileData, FilesystemPermission } from 'deepagents';
 import pg from 'pg';
 
 import {
@@ -34,6 +35,10 @@ import {
   type InlineToolActivity,
 } from '../../inline-lane-tool-activity.js';
 import { ensureDeepAgentsCheckpointSchema } from '../checkpoint-setup.js';
+import {
+  reconcileDeepAgentSkillFiles,
+  resolveDeepAgentSkillProjection,
+} from '../skill-projection.js';
 import { createBuiltinToolExclusionMiddleware } from '../runner/builtin-tool-exclusion.js';
 import { isAbortError } from '../runner/live-control.js';
 import {
@@ -45,15 +50,20 @@ import {
   normalizeDeepAgentStream,
   type LangGraphStreamEvent,
 } from '../runner/stream-normalizer.js';
+import { createInlineSkillsMiddleware } from './skills.js';
 
 const CHECKPOINT_POOL_MAX_CONNECTIONS = 1;
 const DENY_ALL_FILESYSTEM: FilesystemPermission[] = [
   { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
 ];
+const READONLY_SKILLS_FILESYSTEM: FilesystemPermission[] = [
+  { operations: ['read'], paths: ['/skills', '/skills/**'] },
+  ...DENY_ALL_FILESYSTEM,
+];
 
 interface InlineDeepAgentGraph {
   streamEvents(
-    input: { messages: BaseMessage[] },
+    input: { messages: BaseMessage[]; files?: Record<string, FileData | null> },
     options: {
       version: 'v2';
       signal: AbortSignal;
@@ -77,6 +87,15 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
     }
     if (laneInput.signal.aborted) return abortedOutput();
     const maxTurns = laneInput.maxTurns ?? DEFAULT_INLINE_AGENT_MAX_TURNS;
+    const skillProjection = await resolveDeepAgentSkillProjection({
+      selectedSkillIds: laneInput.input.attachedSkillSourceIds,
+      skillRepository: laneInput.skillRepository,
+      skillArtifactStore: laneInput.skillArtifactStore,
+      skillContext: laneInput.skillContext,
+    });
+    const hasProjectedSkills = Boolean(skillProjection);
+    const backend = (config: { state: unknown; store?: BaseStore }) =>
+      new StateBackend(config);
 
     const sessionId = laneInput.input.sessionId ?? randomUUID();
     const stop = new AbortController();
@@ -128,19 +147,38 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
         ...buildCoreLangChainTools(laneInput, toolActivity),
         ...remoteMcp.tools,
       ];
+      const skillFiles = reconcileDeepAgentSkillFiles({
+        currentFiles: skillProjection?.files,
+        checkpointTuple:
+          saver && laneInput.input.sessionId
+            ? await saver.getTuple({
+                configurable: { thread_id: laneInput.input.sessionId },
+              })
+            : undefined,
+      });
       const graph = createDeepAgent({
         model: model.model,
         ...(laneInput.input.responseSchema
           ? { responseFormat: laneInput.input.responseSchema as never }
           : {}),
-        backend: (config) => new StateBackend(config),
+        backend,
         ...(saver ? { checkpointer: saver } : {}),
-        permissions: DENY_ALL_FILESYSTEM,
+        permissions: hasProjectedSkills
+          ? READONLY_SKILLS_FILESYSTEM
+          : DENY_ALL_FILESYSTEM,
         subagents: [],
         tools: tools as StructuredToolInterface[] as never,
         middleware: [
+          ...(skillProjection
+            ? [
+                createInlineSkillsMiddleware({
+                  backend,
+                  sources: skillProjection.sources,
+                }),
+              ]
+            : []),
           createBuiltinToolExclusionMiddleware({
-            exposeSkillReadTools: false,
+            exposeSkillReadTools: hasProjectedSkills,
           }),
         ] as never,
         systemPrompt: inlineSystemPrompt(laneInput),
@@ -167,7 +205,10 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
           normalized = await normalizeDeepAgentStream({
             events: captureStructuredResponse(
               graph.streamEvents(
-                { messages },
+                {
+                  messages,
+                  ...(skillFiles ? { files: skillFiles } : {}),
+                },
                 {
                   version: 'v2',
                   signal,

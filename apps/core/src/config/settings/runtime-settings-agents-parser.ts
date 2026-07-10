@@ -1,4 +1,7 @@
-import { resolveModelSelectionForWorkloadWithFamilies } from '../../shared/model-families.js';
+import {
+  resolveModelSelectionForWorkloadWithFamilies,
+  type FamilyOrderOverrides,
+} from '../../shared/model-families.js';
 import {
   isAgentHarness,
   type AgentHarness,
@@ -20,6 +23,7 @@ import {
 } from './runtime-settings-parse-primitives.js';
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  inlineConfiguredSkillEngineConstraintError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
   parseAgentEffortValue,
   parseAgentMaxTurnsValue,
@@ -261,6 +265,10 @@ function parseConfiguredAgentSelections(
 
 export function parseConfiguredAgents(
   raw: unknown,
+  defaults: {
+    model?: string;
+    modelFamilyOrder?: FamilyOrderOverrides;
+  } = {},
 ): Record<string, RuntimeConfiguredAgent> {
   if (raw === undefined) return {};
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -381,11 +389,20 @@ export function parseConfiguredAgents(
       ...parseConfiguredAgentAccess(map.access, `${pathPrefix}.access`),
     };
     const blockers = inlineWorkerOnlyConfiguredCapabilityLabels({ agent });
-    if (blockers.length > 0) {
-      throw new Error(
-        formatInlineAgentWorkerOnlyConfigError(pathPrefix, blockers),
-      );
-    }
+    const skillEngineError = inlineConfiguredSkillEngineConstraintError({
+      subject: pathPrefix,
+      agent,
+      defaultModel: defaults.model,
+      modelFamilyOrder: defaults.modelFamilyOrder,
+    });
+    const workerOnlyError =
+      blockers.length > 0
+        ? formatInlineAgentWorkerOnlyConfigError(pathPrefix, blockers)
+        : null;
+    const inlineError = [skillEngineError, workerOnlyError]
+      .filter(Boolean)
+      .join('; ');
+    if (inlineError) throw new Error(inlineError);
     result[folder] = agent;
   }
   for (const [folder, agent] of Object.entries(result)) {

@@ -4291,7 +4291,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(result).toMatchObject({
       status: 'error',
       error: expect.stringContaining(
-        'agent.runtime inline is incompatible with worker-only capabilities: skill:writer',
+        'agent.runtime inline supports attached skills only with engine',
       ),
     });
     expect(getSelectedAgentRuntime).toHaveBeenCalledOnce();
