@@ -36,6 +36,7 @@ const sdk = vi.hoisted(() => ({
 }));
 const deep = vi.hoisted(() => ({
   createAgent: vi.fn(),
+  createAgentMemoryMiddleware: vi.fn(),
   createSkillsMiddleware: vi.fn(),
 }));
 const model = vi.hoisted(() => ({ build: vi.fn() }));
@@ -60,6 +61,7 @@ vi.mock(`@anthropic-ai/${'claude-agent-sdk'}`, () => ({
 
 vi.mock('deepagents', () => ({
   createDeepAgent: deep.createAgent,
+  createAgentMemoryMiddleware: deep.createAgentMemoryMiddleware,
   createSkillsMiddleware: deep.createSkillsMiddleware,
   StateBackend: class StateBackend {},
 }));
@@ -343,6 +345,11 @@ async function callRemoteTool(
 
 function configureProviderMocks(): void {
   deep.createAgent.mockReset();
+  deep.createAgentMemoryMiddleware.mockReset();
+  deep.createAgentMemoryMiddleware.mockReturnValue({
+    name: 'AgentMemoryMiddleware',
+    stateSchema: {},
+  });
   deep.createSkillsMiddleware.mockReset();
   sdk.query.mockImplementation(({ options }) => ({
     async *[Symbol.asyncIterator]() {
@@ -461,6 +468,7 @@ function configureProviderMocks(): void {
 }
 
 beforeEach(() => {
+  configureProviderMocks();
   credentials.revoke.mockClear();
   delegatedSpawn.run.mockReset();
   delegatedSpawn.run.mockImplementation(
@@ -667,7 +675,7 @@ Response marker: stage-c-skill-loaded`;
     });
     const frames: AgentOutput[] = [];
 
-    await runInlineAgent(
+    const output = await runInlineAgent(
       group,
       {
         ...baseInput,
@@ -703,6 +711,11 @@ Response marker: stage-c-skill-loaded`;
       },
     );
 
+    expect(output.error).toBeUndefined();
+    expect(output).toMatchObject({
+      status: 'success',
+      result: null,
+    });
     expect(frames).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ result: 'stage-c-skill-loaded' }),
@@ -843,6 +856,87 @@ Response marker: stage-c-skill-loaded`;
       expect(terminal).toMatchObject({ status: 'error', result: null });
       expect(terminal.error).toMatch(/stopped by request/i);
     }
+  });
+
+  it('continues a compacted inline session with retained task continuity', async () => {
+    const queue = new GroupQueue();
+    const frames: AgentOutput[] = [];
+    const taskId = 'task-continuity';
+    const sessionId = 'session:mock-compact';
+    let terminal: AgentOutput | undefined;
+
+    queue.setProcessMessagesFn(async (queueJid) => {
+      terminal = await runInlineAgent(
+        group,
+        {
+          ...baseInput,
+          prompt: 'MOCK_COMPACTION_THRESHOLD crossed',
+        },
+        (handle, runHandle) =>
+          queue.registerProcess(queueJid, handle, runHandle, group.folder),
+        async (frame) => {
+          frames.push(frame);
+        },
+        inlineOptions(async ({ controlPort, emitOutput, signal }) => {
+          const continuations: string[] = [];
+          const unsubscribe = controlPort.subscribe({
+            onContinuation: ({ text }) => continuations.push(text),
+            onClose: () => undefined,
+          });
+          try {
+            await emitOutput({
+              status: 'success',
+              result: null,
+              newSessionId: sessionId,
+              sessionInit: true,
+            });
+            await emitOutput({
+              status: 'success',
+              result: `compacted ${taskId}`,
+              newSessionId: sessionId,
+              compactBoundary: true,
+            });
+            await vi.waitFor(() =>
+              expect(continuations).toEqual(['continue after compaction']),
+            );
+            signal.throwIfAborted();
+            return {
+              status: 'success',
+              result: `continued ${taskId} after compaction`,
+              newSessionId: sessionId,
+            };
+          } finally {
+            unsubscribe();
+          }
+        }),
+      );
+      return terminal.status === 'success';
+    });
+
+    queue.enqueueMessageCheck(baseInput.chatJid);
+    await vi.waitFor(() =>
+      expect(frames.some((frame) => frame.compactBoundary)).toBe(true),
+    );
+    expect(
+      queue.sendMessage(baseInput.chatJid, 'continue after compaction'),
+    ).toBe(true);
+    await vi.waitFor(() =>
+      expect(terminal).toMatchObject({
+        status: 'success',
+        result: `continued ${taskId} after compaction`,
+        newSessionId: sessionId,
+      }),
+    );
+    expect(frames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sessionInit: true, newSessionId: sessionId }),
+        expect.objectContaining({
+          compactBoundary: true,
+          result: `compacted ${taskId}`,
+          newSessionId: sessionId,
+        }),
+      ]),
+    );
   });
 });
 

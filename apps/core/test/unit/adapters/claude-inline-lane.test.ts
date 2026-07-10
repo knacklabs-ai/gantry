@@ -415,6 +415,74 @@ describe('Claude inline lane', () => {
     expect(remoteProxy.close).toHaveBeenCalledOnce();
   });
 
+  it('continues the SDK-managed session after a compact boundary', async () => {
+    const prompts: unknown[] = [];
+    let releasePostCompactTurn: (() => void) | undefined;
+    sdk.query.mockImplementation(({ prompt }) => ({
+      async *[Symbol.asyncIterator]() {
+        const iterator = prompt[Symbol.asyncIterator]();
+        prompts.push((await iterator.next()).value);
+        yield {
+          type: 'system',
+          subtype: 'init',
+          session_id: 'long-session',
+        };
+        yield resultMessage('pre-compact-result', 'captured ticket-42');
+        yield { type: 'system', subtype: 'compact_boundary' };
+        await new Promise<void>((resolve) => {
+          releasePostCompactTurn = resolve;
+        });
+        prompts.push((await iterator.next()).value);
+        yield resultMessage(
+          'post-compact-result',
+          'continued ticket-42 after compact',
+        );
+      },
+    }));
+    const input = laneInput();
+
+    const result = runClaudeInlineAgentLoopLane(input);
+    await vi.waitFor(() =>
+      expect(input.emitOutput).toHaveBeenCalledWith(
+        expect.objectContaining({ result: 'captured ticket-42' }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(input.emitOutput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          compactBoundary: true,
+          newSessionId: 'long-session',
+        }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(releasePostCompactTurn).toEqual(expect.any(Function)),
+    );
+
+    input.controlPort.writeContinuationInput({
+      workspaceFolder: 'main_agent',
+      text: 'continue ticket-42',
+      sequence: 2,
+    });
+    releasePostCompactTurn?.();
+
+    await expect(result).resolves.toMatchObject({
+      status: 'success',
+      result: 'continued ticket-42 after compact',
+      newSessionId: 'long-session',
+      usageEventId: 'post-compact-result',
+    });
+    expect(prompts).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ content: 'first prompt' }),
+      }),
+      expect.objectContaining({
+        message: expect.objectContaining({ content: 'continue ticket-42' }),
+      }),
+    ]);
+    expect(remoteProxy.close).toHaveBeenCalledOnce();
+  });
+
   it('enforces reviewed wildcard scopes in the remote MCP tool gate', async () => {
     sdk.query.mockImplementation(() => ({
       async *[Symbol.asyncIterator]() {

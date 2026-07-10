@@ -8,6 +8,7 @@ const deep = vi.hoisted(() => {
   return {
     Backend,
     createAgent: vi.fn(),
+    createAgentMemory: vi.fn(),
     createSkills: vi.fn(() => ({
       name: 'SkillsMiddleware',
       beforeAgent: vi.fn(async (state) => state.skillsMetadata),
@@ -85,6 +86,7 @@ const mcpAdaptersPackage = vi.hoisted(() =>
 
 vi.mock('deepagents', () => ({
   createDeepAgent: deep.createAgent,
+  createAgentMemoryMiddleware: deep.createAgentMemory,
   createSkillsMiddleware: deep.createSkills,
   StateBackend: deep.Backend,
 }));
@@ -201,6 +203,16 @@ beforeEach(() => {
   remote.Client.instances = [];
   remote.HttpTransport.instances = [];
   deep.createAgent.mockReturnValue({ streamEvents: deep.streamEvents });
+  deep.createAgentMemory.mockReturnValue({
+    name: 'AgentMemoryMiddleware',
+    stateSchema: { gantry: 'agent-memory-state-schema' },
+    beforeAgent: vi.fn(() => {
+      throw new Error('deprecated filesystem memory hook must not run');
+    }),
+    wrapModelCall: vi.fn(() => {
+      throw new Error('deprecated filesystem memory guidance must not run');
+    }),
+  });
   remote.loadTools.mockResolvedValue([
     {
       name: 'read',
@@ -357,7 +369,10 @@ Always mention the migration impact.
         ]),
       }),
     );
-    const skillsMiddleware = deep.createAgent.mock.calls[0]?.[0].middleware[0];
+    const skillsMiddleware =
+      deep.createAgent.mock.calls[0]?.[0].middleware.find(
+        (middleware) => middleware.name === 'SkillsMiddleware',
+      );
     await expect(
       skillsMiddleware.beforeAgent(
         { skillsMetadata: [{ name: 'old-release-writer' }] },
@@ -375,6 +390,68 @@ Always mention the migration impact.
         },
       }),
       expect.any(Object),
+    );
+  });
+
+  it('delegates scoped memory through core tools and injects it without a legacy HumanMessage', async () => {
+    let injectedSystemPrompt = '';
+    deep.streamEvents.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        const memoryMiddleware =
+          deep.createAgent.mock.calls[0]?.[0].middleware.find(
+            (middleware) => middleware.name === 'AgentMemoryMiddleware',
+          );
+        const memoryState = await memoryMiddleware.beforeAgent({}, {});
+        await memoryMiddleware.wrapModelCall(
+          { state: memoryState, systemPrompt: 'base system prompt' },
+          async (request) => {
+            injectedSystemPrompt = request.systemPrompt;
+            return {} as never;
+          },
+        );
+        yield streamEvent('done');
+      },
+    }));
+    const input = laneInput({ mcpServers: [] });
+    input.input.memoryContextBlock = 'legacy memory block';
+    input.coreTools.execute = vi.fn(async (name) =>
+      name === 'memory_search'
+        ? {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'Found 1 relevant memory:\n1. preference: concise replies',
+              },
+            ],
+          }
+        : { content: [{ type: 'text' as const, text: 'sent' }] },
+    );
+    const lane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: 'postgres://gantry:test@localhost:5432/gantry',
+      schema: 'gantry_deepagents',
+    });
+
+    await lane(input);
+
+    expect(deep.createAgentMemory).toHaveBeenCalledOnce();
+    expect(input.coreTools.execute).toHaveBeenCalledWith(
+      'memory_search',
+      { query: 'first prompt' },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(injectedSystemPrompt).toContain(
+      'Found 1 relevant memory:\n1. preference: concise replies',
+    );
+    expect(injectedSystemPrompt).toContain('memory_search');
+    expect(injectedSystemPrompt).toContain('memory_save');
+    expect(injectedSystemPrompt).not.toMatch(
+      /filesystem|agent\.md|read_file|edit_file/i,
+    );
+    const messages = deep.streamEvents.mock.calls[0]?.[0].messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('first prompt');
+    expect(messages.map((message) => message.content)).not.toContain(
+      'legacy memory block',
     );
   });
 

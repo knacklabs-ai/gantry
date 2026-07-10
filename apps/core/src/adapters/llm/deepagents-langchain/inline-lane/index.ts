@@ -50,6 +50,10 @@ import {
   normalizeDeepAgentStream,
   type LangGraphStreamEvent,
 } from '../runner/stream-normalizer.js';
+import {
+  createGantryScopedMemoryMiddleware,
+  searchGantryScopedMemory,
+} from './gantry-memory-middleware.js';
 import { createInlineSkillsMiddleware } from './skills.js';
 
 const CHECKPOINT_POOL_MAX_CONNECTIONS = 1;
@@ -112,6 +116,12 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
     });
     const signal = AbortSignal.any([laneInput.signal, stop.signal]);
     const toolActivity = createInlineToolActivity(laneInput);
+    let currentMemoryQuery = '';
+    const memoryMiddleware = createGantryScopedMemoryMiddleware({
+      currentQuery: () => currentMemoryQuery,
+      searchMemory: (query) =>
+        searchGantryScopedMemory(laneInput, query, signal),
+    });
     let saver: PostgresSaver | undefined;
     let remoteMcp:
       | Awaited<ReturnType<typeof connectRemoteMcpTools>>
@@ -169,6 +179,7 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
         subagents: [],
         tools: tools as StructuredToolInterface[] as never,
         middleware: [
+          memoryMiddleware,
           ...(skillProjection
             ? [
                 createInlineSkillsMiddleware({
@@ -192,11 +203,8 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
           ? [laneInput.input.prompt, ...queued].join('\n')
           : queued.join('\n');
         if (!prompt) break;
-        const messages: BaseMessage[] = [];
-        if (firstTurn && laneInput.input.memoryContextBlock?.trim()) {
-          messages.push(new HumanMessage(laneInput.input.memoryContextBlock));
-        }
-        messages.push(new HumanMessage(prompt));
+        currentMemoryQuery = prompt;
+        const messages: BaseMessage[] = [new HumanMessage(prompt)];
         firstTurn = false;
 
         let normalized: Awaited<ReturnType<typeof normalizeDeepAgentStream>>;
@@ -568,7 +576,7 @@ function inlineSystemPrompt(
     assistantName: input.input.assistantName,
     persona: input.input.persona,
     compiledSystemPrompt: input.input.compiledSystemPrompt,
-    hasMemoryContext: Boolean(input.input.memoryContextBlock?.trim()),
+    hasMemoryContext: true,
     selectedToolRules: input.input.toolPolicyRules,
     workspaceFolder: input.input.workspaceFolder,
     conversationId: input.input.chatJid,
