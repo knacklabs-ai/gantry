@@ -360,6 +360,25 @@ describe('Claude inline lane', () => {
 
       const queryOptions = sdk.query.mock.calls.at(-1)?.[0].options;
       expect(queryOptions.mcpServers.crm.tools).toBeUndefined();
+      expect(queryOptions.permissionMode).toBe('dontAsk');
+      expect(queryOptions.allowedTools).not.toContain(testCase.allowedTool);
+      const invokePreToolUse = (toolName: string) =>
+        queryOptions.hooks.PreToolUse[0].hooks[0](
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name: toolName,
+            tool_input: {},
+            tool_use_id: toolName,
+          },
+          toolName,
+          { signal: input.signal },
+        );
+      await expect(
+        invokePreToolUse(testCase.allowedTool),
+      ).resolves.toMatchObject({
+        continue: true,
+        hookSpecificOutput: { permissionDecision: 'allow' },
+      });
       await expect(
         queryOptions.canUseTool(
           testCase.allowedTool,
@@ -368,6 +387,12 @@ describe('Claude inline lane', () => {
         ),
       ).resolves.toMatchObject({ behavior: 'allow' });
       if (testCase.deniedTool) {
+        await expect(
+          invokePreToolUse(testCase.deniedTool),
+        ).resolves.toMatchObject({
+          continue: false,
+          hookSpecificOutput: { permissionDecision: 'deny' },
+        });
         await expect(
           queryOptions.canUseTool(
             testCase.deniedTool,

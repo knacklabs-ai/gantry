@@ -397,12 +397,21 @@ function remoteMcpAuditHooks(
   Array<{ hooks: HookCallback[] }>
 > {
   const startedAt = new Map<string, number>();
-  const pre: HookCallback = async (hookInput) => {
+  const pre: HookCallback = async (hookInput, _toolUseId, options) => {
     if (hookInput.hook_event_name !== 'PreToolUse') return { continue: true };
     const tool = remoteMcpTool(input, hookInput.tool_name);
     if (!tool) return { continue: true };
-    if (!tool.allowed) {
-      const reason = `Tool ${hookInput.tool_name} is outside its reviewed MCP scope.`;
+    const authorization = tool.allowedByWildcard
+      ? await input.coreTools.authorizeThirdPartyMcpTool(
+          hookInput.tool_name,
+          hookInput.tool_input,
+          { signal: options.signal },
+        )
+      : undefined;
+    if (!tool.allowed || authorization?.allowed === false) {
+      const reason = !tool.allowed
+        ? `Tool ${hookInput.tool_name} is outside its reviewed MCP scope.`
+        : (authorization?.reason ?? 'Permission denied.');
       return {
         continue: false,
         decision: 'block',
@@ -423,7 +432,15 @@ function remoteMcpAuditHooks(
       outcome: 'attempt',
       latencyMs: 0,
     });
-    return { continue: true };
+    return authorization
+      ? {
+          continue: true,
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'allow',
+          },
+        }
+      : { continue: true };
   };
   const success: HookCallback = async (hookInput) => {
     if (hookInput.hook_event_name !== 'PostToolUse') return { continue: true };
@@ -482,18 +499,22 @@ function remoteMcpAuditHooks(
 function remoteMcpTool(
   input: Parameters<ProviderInlineAgentLoopLane>[0],
   fullToolName: string,
-): { serverName: string; toolName: string; allowed: boolean } | undefined {
+) {
   for (const server of input.mcpServers) {
     const prefix = `mcp__${server.name}__`;
     if (!fullToolName.startsWith(prefix)) continue;
+    const toolName = fullToolName.slice(prefix.length);
+    const allowed = mcpToolNameAllowedBySourceScope({
+      serverName: server.name,
+      fullToolName,
+      allowedToolPatterns: server.allowedToolPatterns,
+    });
     return {
       serverName: server.name,
-      toolName: fullToolName.slice(prefix.length),
-      allowed: mcpToolNameAllowedBySourceScope({
-        serverName: server.name,
-        fullToolName,
-        allowedToolPatterns: server.allowedToolPatterns,
-      }),
+      toolName,
+      allowed,
+      allowedByWildcard:
+        allowed && !server.allowedToolPatterns.includes(toolName),
     };
   }
   return undefined;
