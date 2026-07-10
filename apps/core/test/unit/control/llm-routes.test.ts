@@ -293,6 +293,80 @@ describe('direct LLM control routes', () => {
     expect(upstreamBody.model).toBe('gpt-5.5');
   });
 
+  it('returns a shaped unavailable error when gateway setup fails', async () => {
+    const gatewayBroker = broker();
+    vi.mocked(gatewayBroker.getInjection).mockRejectedValueOnce(
+      new Error('Model credential for anthropic is not configured.'),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const res = new TestResponse();
+
+    await handleLlmRoutes(
+      request({ body: { model: 'sonnet' } }),
+      res as unknown as ServerResponse,
+      context({ broker: gatewayBroker }),
+      '/llm/v1/messages',
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.body())).toMatchObject({
+      error: { code: 'MODEL_GATEWAY_UNAVAILABLE', retryable: true },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(gatewayBroker.revokeInjection).not.toHaveBeenCalled();
+    expect(requestLogs).toContainEqual(
+      expect.objectContaining({ statusCode: 503, modelAlias: 'sonnet' }),
+    );
+  });
+
+  it('preserves request-caused gateway setup errors as 4xx responses', async () => {
+    const gatewayBroker = broker();
+    vi.mocked(gatewayBroker.getInjection).mockRejectedValueOnce(
+      Object.assign(new Error('Gateway binding is invalid.'), {
+        name: 'CredentialBrokerPolicyError',
+        statusCode: 400,
+        code: 'INVALID_REQUEST',
+      }),
+    );
+    const res = new TestResponse();
+
+    await handleLlmRoutes(
+      request({ body: { model: 'sonnet' } }),
+      res as unknown as ServerResponse,
+      context({ broker: gatewayBroker }),
+      '/llm/v1/messages',
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body())).toMatchObject({
+      error: { code: 'INVALID_REQUEST', retryable: false },
+    });
+  });
+
+  it('revokes an issued injection when its gateway projection is incomplete', async () => {
+    const gatewayBroker = broker();
+    vi.mocked(gatewayBroker.getInjection).mockResolvedValueOnce({
+      env: {},
+      applied: true,
+      brokerProfile: 'gantry',
+    });
+    const res = new TestResponse();
+
+    await handleLlmRoutes(
+      request({ body: { model: 'sonnet' } }),
+      res as unknown as ServerResponse,
+      context({ broker: gatewayBroker }),
+      '/llm/v1/messages',
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.body())).toMatchObject({
+      error: { code: 'MODEL_GATEWAY_UNAVAILABLE' },
+    });
+    expect(gatewayBroker.revokeInjection).toHaveBeenCalledOnce();
+  });
+
   it('rejects invalid keys before broker access', async () => {
     const gatewayBroker = broker();
     const res = new TestResponse();

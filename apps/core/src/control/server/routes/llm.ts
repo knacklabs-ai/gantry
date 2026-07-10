@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises';
 
 import { getAgentCredentialInjection } from '../../../application/credentials/agent-credential-service.js';
 import type { AppId } from '../../../domain/app/app.js';
+import type { AgentCredentialBroker } from '../../../domain/ports/agent-credential-broker.js';
 import {
   resolveModelSelectionForWorkload,
   type ModelCatalogEntry,
@@ -81,35 +82,32 @@ export async function handleLlmRoutes(
   const resolved = resolveLlmRequest(endpoint, rawBody, res);
   if (!resolved) return true;
 
-  const broker = await ctx.app.getCredentialBroker();
-  if (!broker) {
-    sendError(
-      res,
-      503,
-      'MODEL_GATEWAY_UNAVAILABLE',
-      'Model gateway is not configured',
-    );
-    return true;
-  }
-
   const apiRequestId = randomUUID();
-  const injection = await getAgentCredentialInjection({
-    mode: 'gantry',
-    purpose: 'model_runtime',
-    appId: auth.appId as AppId,
-    apiKeyId: auth.kid,
-    apiRequestId,
-    modelRouteId: resolved.entry.modelRoute.id,
-    broker,
-  });
-  const { baseUrl, token } = readGatewayProjection(
-    resolved.provider,
-    injection.env,
-  );
-
+  let broker: AgentCredentialBroker | undefined;
+  let injectionIssued = false;
   let statusCode = 502;
   let responseBodyBytes: number | undefined;
   try {
+    let gateway: { baseUrl: string; token: string };
+    try {
+      broker = await ctx.app.getCredentialBroker();
+      if (!broker) throw new Error('Model gateway is not configured');
+      const injection = await getAgentCredentialInjection({
+        mode: 'gantry',
+        purpose: 'model_runtime',
+        appId: auth.appId as AppId,
+        apiKeyId: auth.kid,
+        apiRequestId,
+        modelRouteId: resolved.entry.modelRoute.id,
+        broker,
+      });
+      injectionIssued = true;
+      gateway = readGatewayProjection(resolved.provider, injection.env);
+    } catch (error) {
+      statusCode = sendLlmSetupError(res, error);
+      return true;
+    }
+    const { baseUrl, token } = gateway;
     const headers = copyLoopbackRequestHeaders(req.headers);
     headers.authorization = `Bearer ${token}`;
     headers['content-type'] = 'application/json';
@@ -139,16 +137,18 @@ export async function handleLlmRoutes(
       requestBodyBytes: resolved.body.byteLength,
       ...(responseBodyBytes !== undefined ? { responseBodyBytes } : {}),
     });
-    await broker.revokeInjection?.({
-      binding: {
-        profile: 'gantry',
-        purpose: 'model_runtime',
-        appId: auth.appId as AppId,
-        apiKeyId: auth.kid,
-        apiRequestId,
-        modelRouteId: resolved.entry.modelRoute.id,
-      },
-    });
+    if (injectionIssued) {
+      await broker?.revokeInjection?.({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_runtime',
+          appId: auth.appId as AppId,
+          apiKeyId: auth.kid,
+          apiRequestId,
+          modelRouteId: resolved.entry.modelRoute.id,
+        },
+      });
+    }
   }
   return true;
 }
@@ -294,4 +294,33 @@ function readGatewayProjection(
     );
   }
   return { baseUrl, token };
+}
+
+function sendLlmSetupError(res: ServerResponse, error: unknown): number {
+  const statusCode =
+    error &&
+    typeof error === 'object' &&
+    'statusCode' in error &&
+    typeof error.statusCode === 'number' &&
+    error.statusCode >= 400 &&
+    error.statusCode < 500
+      ? error.statusCode
+      : 503;
+  const code =
+    statusCode < 500 &&
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string'
+      ? error.code
+      : statusCode < 500
+        ? 'INVALID_REQUEST'
+        : 'MODEL_GATEWAY_UNAVAILABLE';
+  sendError(
+    res,
+    statusCode,
+    code,
+    error instanceof Error ? error.message : 'Model gateway is unavailable',
+  );
+  return statusCode;
 }

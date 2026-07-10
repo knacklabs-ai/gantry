@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import {
@@ -11,6 +11,7 @@ import type { MaterializedMcpCapability } from '../../../../application/mcp/mcp-
 import type { HostnameLookup } from '../../../../domain/network/public-address-policy.js';
 
 const MAX_MCP_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_SSE_HANDSHAKE_BYTES = 64 * 1024;
 const PROXY_AUTH_HEADER = 'x-gantry-inline-mcp-token';
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
@@ -32,6 +33,10 @@ export interface ProxiedClaudeMcpServer {
   url: string;
   headers: Record<string, string>;
   allowedToolPatterns: readonly string[];
+}
+
+export interface SseProxyEndpointState {
+  advertisedTarget?: URL;
 }
 
 export async function createPinnedClaudeMcpProxies(input: {
@@ -103,15 +108,20 @@ function createProxyServer(input: {
   guardedFetch: typeof fetch;
   proxyToken: string;
 }): http.Server {
+  const sseEndpointState: SseProxyEndpointState = {};
   return http.createServer((request, response) => {
-    void forwardRequest(request, response, input).catch((error) => {
-      if (response.headersSent) {
-        response.destroy(error instanceof Error ? error : undefined);
-        return;
-      }
-      response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('Remote MCP request failed.');
-    });
+    void forwardRequest(request, response, input, sseEndpointState).catch(
+      (error) => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined);
+          return;
+        }
+        response.writeHead(502, {
+          'content-type': 'text/plain; charset=utf-8',
+        });
+        response.end('Remote MCP request failed.');
+      },
+    );
   });
 }
 
@@ -125,11 +135,17 @@ async function forwardRequest(
     guardedFetch: typeof fetch;
     proxyToken: string;
   },
+  sseEndpointState: SseProxyEndpointState,
 ): Promise<void> {
   if (request.headers[PROXY_AUTH_HEADER] !== input.proxyToken) {
     throw new Error('Inline MCP proxy authentication failed.');
   }
-  const target = proxyTarget(request.url, input.target, input.targetType);
+  const target = proxyTarget(
+    request.url,
+    input.target,
+    input.targetType,
+    sseEndpointState,
+  );
   const abort = new AbortController();
   request.once('aborted', () => abort.abort());
   const body = await readRequestBody(request);
@@ -148,13 +164,28 @@ async function forwardRequest(
     response.end();
     return;
   }
-  await pipeline(Readable.fromWeb(upstream.body as never), response);
+  const bodyStream = Readable.fromWeb(upstream.body as never);
+  await pipeline(
+    input.targetType === 'sse' &&
+      request.method === 'GET' &&
+      sameMcpEndpoint(target, input.target) &&
+      upstream.headers
+        .get('content-type')
+        ?.toLowerCase()
+        .includes('text/event-stream')
+      ? bodyStream.pipe(
+          createSseEndpointCapture(input.target, sseEndpointState),
+        )
+      : bodyStream,
+    response,
+  );
 }
 
-function proxyTarget(
+export function proxyTarget(
   requestUrl: string | undefined,
   configuredTarget: URL,
   targetType: 'http' | 'sse',
+  sseEndpointState: SseProxyEndpointState = {},
 ): URL {
   const value = requestUrl ?? '/';
   if (!value.startsWith('/')) {
@@ -164,9 +195,10 @@ function proxyTarget(
   if (
     target.origin !== configuredTarget.origin ||
     !pathWithinMcpEndpoint(
-      target.pathname,
-      configuredTarget.pathname,
+      target,
+      configuredTarget,
       targetType,
+      sseEndpointState,
     )
   ) {
     throw new Error(
@@ -177,16 +209,99 @@ function proxyTarget(
 }
 
 function pathWithinMcpEndpoint(
-  candidate: string,
-  configured: string,
+  candidate: URL,
+  configured: URL,
   targetType: 'http' | 'sse',
+  sseEndpointState: SseProxyEndpointState,
 ): boolean {
   if (targetType === 'http') {
-    const prefix = configured.endsWith('/') ? configured : `${configured}/`;
-    return candidate === configured || candidate.startsWith(prefix);
+    const prefix = configured.pathname.endsWith('/')
+      ? configured.pathname
+      : `${configured.pathname}/`;
+    return (
+      candidate.pathname === configured.pathname ||
+      candidate.pathname.startsWith(prefix)
+    );
   }
-  const directory = configured.slice(0, configured.lastIndexOf('/') + 1);
-  return candidate.startsWith(directory);
+  return (
+    sameMcpEndpoint(candidate, configured) ||
+    (sseEndpointState.advertisedTarget !== undefined &&
+      sameMcpEndpoint(candidate, sseEndpointState.advertisedTarget))
+  );
+}
+
+function sameMcpEndpoint(left: URL, right: URL): boolean {
+  return (
+    left.origin === right.origin &&
+    left.pathname === right.pathname &&
+    left.search === right.search
+  );
+}
+
+export function createSseEndpointCapture(
+  configuredTarget: URL,
+  state: SseProxyEndpointState,
+): Transform {
+  const decoder = new TextDecoder();
+  let pending = '';
+  let captured = false;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (!captured) {
+        pending =
+          `${pending}${decoder.decode(chunk, { stream: true })}`.replace(
+            /\r\n/g,
+            '\n',
+          );
+        if (Buffer.byteLength(pending) > MAX_SSE_HANDSHAKE_BYTES) {
+          captured = true;
+          pending = '';
+        } else {
+          let boundary = pending.indexOf('\n\n');
+          while (boundary >= 0) {
+            const advertised = sseEndpointFromEvent(
+              pending.slice(0, boundary),
+              configuredTarget,
+            );
+            pending = pending.slice(boundary + 2);
+            if (advertised) {
+              state.advertisedTarget = advertised;
+              captured = true;
+              break;
+            }
+            boundary = pending.indexOf('\n\n');
+          }
+        }
+      }
+      callback(null, chunk);
+    },
+  });
+}
+
+function sseEndpointFromEvent(
+  eventBlock: string,
+  configuredTarget: URL,
+): URL | undefined {
+  let eventType = 'message';
+  const data: string[] = [];
+  for (const line of eventBlock.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
+    const separator = line.indexOf(':');
+    const field = separator < 0 ? line : line.slice(0, separator);
+    const rawValue = separator < 0 ? '' : line.slice(separator + 1);
+    const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue;
+    if (field === 'event') eventType = value;
+    if (field === 'data') data.push(value);
+  }
+  if (eventType !== 'endpoint' || data.length === 0) return undefined;
+  try {
+    const advertised = new URL(data.join('\n'), configuredTarget);
+    return advertised.origin === configuredTarget.origin
+      ? advertised
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function readRequestBody(request: http.IncomingMessage): Promise<Buffer> {

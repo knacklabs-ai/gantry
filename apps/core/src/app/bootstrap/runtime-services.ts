@@ -110,10 +110,8 @@ type RuntimeDependencyRepositoryFactory = () =>
   | RuntimeDependencyRepository
   | undefined;
 type WaitingStatusMonitor = { oldestWaitingSeconds: () => number };
-interface Deps extends Pick<
-  IpcDeps,
-  'getAsyncTaskRepository' | 'getFileArtifactStore'
-> {
+type RuntimeStorageDep = 'getAsyncTaskRepository' | 'getFileArtifactStore';
+interface Deps extends Pick<IpcDeps, RuntimeStorageDep> {
   startSchedulerLoop: typeof startSchedulerLoop;
   startIpcWatcher: typeof startIpcWatcher;
   writeGroupsSnapshot: typeof writeGroupsSnapshot;
