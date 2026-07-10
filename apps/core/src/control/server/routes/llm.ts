@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 
 import { getAgentCredentialInjection } from '../../../application/credentials/agent-credential-service.js';
 import type { AppId } from '../../../domain/app/app.js';
@@ -111,20 +110,35 @@ export async function handleLlmRoutes(
     const headers = copyLoopbackRequestHeaders(req.headers);
     headers.authorization = `Bearer ${token}`;
     headers['content-type'] = 'application/json';
-    const response = await fetch(`${baseUrl}${resolved.tail}`, {
-      method: 'POST',
-      headers,
-      body: resolved.body,
-    });
-    statusCode = response.status;
-    const contentLength = response.headers.get('content-length');
-    if (contentLength) {
-      const parsed = Number(contentLength);
-      if (Number.isFinite(parsed)) responseBodyBytes = parsed;
+    try {
+      const response = await fetch(`${baseUrl}${resolved.tail}`, {
+        method: 'POST',
+        headers,
+        body: resolved.body,
+      });
+      statusCode = response.status;
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        const parsed = Number(contentLength);
+        if (Number.isFinite(parsed)) responseBodyBytes = parsed;
+      }
+      res.statusCode = response.status;
+      forwardGatewayResponseHeaders(response, res);
+      await pipeFetchResponseBody(response, res);
+    } catch {
+      statusCode = 502;
+      if (res.headersSent) {
+        if (!res.writableEnded) res.end();
+      } else {
+        sendError(
+          res,
+          statusCode,
+          'MODEL_GATEWAY_UNAVAILABLE',
+          'Model gateway request failed',
+        );
+      }
+      return true;
     }
-    res.statusCode = response.status;
-    forwardGatewayResponseHeaders(response, res);
-    await pipeFetchResponseBody(response, res);
   } finally {
     await recordControlRequestLog({
       route: `/llm/v1/${endpoint === 'messages' ? 'messages' : 'chat/completions'}`,
@@ -274,10 +288,15 @@ async function pipeFetchResponseBody(
     res.end();
     return;
   }
-  await pipeline(
-    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    res,
+  const body = Readable.fromWeb(
+    response.body as Parameters<typeof Readable.fromWeb>[0],
   );
+  for await (const chunk of body) {
+    await new Promise<void>((resolve, reject) => {
+      res.write(chunk, (error) => (error ? reject(error) : resolve()));
+    });
+  }
+  res.end();
 }
 
 function readGatewayProjection(

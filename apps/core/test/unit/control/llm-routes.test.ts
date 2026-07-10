@@ -26,6 +26,11 @@ class TestResponse extends Writable {
   statusCode = 0;
   readonly headers: Record<string, string> = {};
   private readonly chunks: Buffer[] = [];
+  private sentHeaders = false;
+
+  get headersSent(): boolean {
+    return this.sentHeaders;
+  }
 
   setHeader(name: string, value: number | string | string[]) {
     this.headers[name.toLowerCase()] = Array.isArray(value)
@@ -39,6 +44,7 @@ class TestResponse extends Writable {
     _encoding: BufferEncoding,
     callback: (error?: Error | null) => void,
   ) {
+    this.sentHeaders = true;
     this.chunks.push(Buffer.from(chunk));
     callback();
   }
@@ -317,6 +323,77 @@ describe('direct LLM control routes', () => {
     expect(gatewayBroker.revokeInjection).not.toHaveBeenCalled();
     expect(requestLogs).toContainEqual(
       expect.objectContaining({ statusCode: 503, modelAlias: 'sonnet' }),
+    );
+  });
+
+  it('returns a shaped unavailable error when the gateway fetch fails', async () => {
+    const gatewayBroker = broker();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new Error('fetch failed')),
+    );
+    const res = new TestResponse();
+
+    await expect(
+      handleLlmRoutes(
+        request({ body: { model: 'sonnet' } }),
+        res as unknown as ServerResponse,
+        context({ broker: gatewayBroker }),
+        '/llm/v1/messages',
+      ),
+    ).resolves.toBe(true);
+
+    expect(res.statusCode).toBe(502);
+    expect(JSON.parse(res.body())).toMatchObject({
+      error: { code: 'MODEL_GATEWAY_UNAVAILABLE', retryable: true },
+    });
+    expect(gatewayBroker.revokeInjection).toHaveBeenCalledOnce();
+    expect(requestLogs).toContainEqual(
+      expect.objectContaining({ statusCode: 502, modelAlias: 'sonnet' }),
+    );
+  });
+
+  it('ends a failed gateway stream without appending a JSON error', async () => {
+    const gatewayBroker = broker();
+    let pullCount = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (pullCount++ === 0) {
+          controller.enqueue(Buffer.from('data: first\n\n'));
+          return;
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        controller.error(new Error('gateway stream reset'));
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          }),
+        ),
+      ),
+    );
+    const res = new TestResponse();
+
+    await expect(
+      handleLlmRoutes(
+        request({ body: { model: 'gpt', stream: true } }),
+        res as unknown as ServerResponse,
+        context({ broker: gatewayBroker }),
+        '/llm/v1/chat/completions',
+      ),
+    ).resolves.toBe(true);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body()).toBe('data: first\n\n');
+    expect(res.writableEnded).toBe(true);
+    expect(gatewayBroker.revokeInjection).toHaveBeenCalledOnce();
+    expect(requestLogs).toContainEqual(
+      expect.objectContaining({ statusCode: 502, modelAlias: 'gpt' }),
     );
   });
 
