@@ -13,6 +13,7 @@ import {
   getRuntimeSettingsForConfig,
   getEffectiveModelConfig,
   getSelectedAgentHarness,
+  getSelectedAgentRuntime,
 } from '../config/index.js';
 import { resolveAgentAccessPolicy } from '../config/profiles.js';
 import { logger } from '../infrastructure/logging/logger.js';
@@ -25,7 +26,6 @@ import {
   McpServerService,
   type MaterializedMcpCapability,
 } from '../application/mcp/mcp-server-service.js';
-import { ensureWorkspaceIpcLayout } from './agent-spawn-layout.js';
 import { resolvePackageRootFromSourceDir } from '../platform/package-root.js';
 import {
   computeBrowserIpcAuthToken,
@@ -100,11 +100,8 @@ import {
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
-export type {
-  AvailableGroup,
-  AgentInput,
-  AgentOutput,
-} from './agent-spawn-types.js';
+export type { AvailableGroup } from './agent-spawn-types.js';
+export type { AgentInput, AgentOutput } from './agent-spawn-types.js';
 export async function spawnAgent(
   group: ConversationRoute,
   input: AgentInput,
@@ -112,6 +109,11 @@ export async function spawnAgent(
   onOutput: ((output: AgentOutput) => Promise<void>) | undefined,
   options: RunAgentOptions,
 ): Promise<AgentOutput> {
+  const agentRuntime = input.runtime ?? getSelectedAgentRuntime(group.folder);
+  if (agentRuntime === 'inline') {
+    const { runInlineAgent } = await import('./agent-inline.js');
+    return runInlineAgent(group, input, onProcess, onOutput, options);
+  }
   const startTime = currentTimeMs();
   const hostStartup = createRunnerHostStartupTiming({ nowMs: currentTimeMs });
   const { groupDir, processName } = hostStartup.measure('workspacePrepMs', () =>
@@ -156,6 +158,7 @@ export async function spawnAgent(
       validateAgentPreSpawnAdmission({
         agentInput: input,
         agentEngine,
+        agentRuntime,
         securityEnv: process.env,
         sandboxProvider: runtimeSettings.runtime.sandbox.provider,
       }),
@@ -198,7 +201,6 @@ export async function spawnAgent(
     yoloMode: effectiveYoloModeSettings(runtimeSettings.permissions.yoloMode),
   };
   const hostRuntime = prepareHostRuntimeContext(group);
-  ensureWorkspaceIpcLayout(hostRuntime.workspaceIpcDir);
   let executionAdapter: NonNullable<RunAgentOptions['executionAdapter']>;
   try {
     executionAdapter = resolveAgentExecutionAdapter({
@@ -481,10 +483,8 @@ export async function spawnAgent(
       }
     }
     // DeepAgents model traffic runs inside the runner process. In
-    // sandbox_runtime, OpenRouter uses raw fetch rather than an SDK client, so
-    // the runner process itself needs the Gantry egress proxy to reach the
-    // sandbox-private model-gateway alias. Child shell/tool envs still receive
-    // only the separately sanitized toolNetworkEnv projection.
+    // OpenRouter's sandbox_runtime lane needs the Gantry egress proxy because
+    // it uses raw fetch; child tools still receive only sanitized toolNetworkEnv.
     const runnerToolProcessEnv =
       preparedExecution.providerId === 'deepagents:langchain'
         ? toolNetworkEnv
@@ -675,6 +675,7 @@ export async function spawnAgent(
       appId: runnerAppId,
       agentId: input.agentId,
       conversationId: input.chatJid,
+      providerAccountId: group.providerAccountId,
       threadId: input.threadId,
       runId: input.runId,
       jobId: input.jobId,

@@ -42,6 +42,7 @@ vi.mock('@core/config/index.js', () => ({
       : { source: 'unset' },
   ),
   getSelectedAgentHarness: vi.fn(() => 'auto'),
+  getSelectedAgentRuntime: vi.fn(() => 'worker'),
   getDeploymentMode: vi.fn(() => 'workstation'),
   getRuntimeSettingsForConfig: vi.fn(() => ({
     permissions: {
@@ -117,6 +118,22 @@ vi.mock('@core/runtime/agent-spawn-host.js', () => ({
     workspaceIpcDir: '/tmp/gantry-test-data/ipc/test-group',
     runnerDistDir: '/tmp/gantry-home/dist/runner',
   })),
+  prepareInlineAgentHostContext: vi.fn(async () => ({
+    dataDir: '/tmp/gantry-test-data',
+    defaultTimeoutMs: 1800000,
+    idleTimeoutMs: 1800000,
+    sandboxProvider: 'direct',
+    compiledSystemPrompt: '',
+    resolvedModel: {
+      ok: true,
+      value: {
+        agentEngine: 'test-engine',
+        executionProviderId: 'test-execution',
+        runnerModel: 'test-model',
+        modelEntry: { modelRoute: { id: 'test-route' } },
+      },
+    },
+  })),
 }));
 
 vi.mock(
@@ -168,6 +185,7 @@ vi.mock('@core/adapters/storage/postgres/runtime-store.js', () => ({
 
 // Mock platform
 vi.mock('@core/platform/workspace-folder.js', () => ({
+  isValidWorkspaceFolder: vi.fn(() => true),
   resolveWorkspaceFolderPath: vi.fn(
     (folder: string) => `/tmp/gantry-test-data/agents/${folder}`,
   ),
@@ -234,6 +252,7 @@ import {
   getEffectiveModelConfig,
   getRuntimeSettingsForConfig,
   getSelectedAgentHarness,
+  getSelectedAgentRuntime,
 } from '@core/config/index.js';
 import { getConfiguredModelProvidersForApp } from '@core/adapters/storage/postgres/runtime-store.js';
 import { DirectRunnerSandboxProvider } from '@core/adapters/sandbox/runner-sandbox-provider.js';
@@ -243,7 +262,10 @@ import fs from 'fs';
 import type { ConversationRoute } from '@core/domain/types.js';
 import { PromptProfileService } from '@core/application/agents/prompt-profile-service.js';
 import { logger } from '@core/infrastructure/logging/logger.js';
-import { getHostRuntimeCredentialEnv } from '@core/runtime/agent-spawn-host.js';
+import {
+  getHostRuntimeCredentialEnv,
+  prepareHostRuntimeContext,
+} from '@core/runtime/agent-spawn-host.js';
 import { createSignedIpcRequestEnvelope } from '@core/runner/mcp/signing.js';
 import { parseMemoryIpcRequest } from '@core/runtime/ipc-parsing.js';
 import type {
@@ -653,6 +675,8 @@ describe('agent-spawn timeout behavior', () => {
     vi.mocked(getEffectiveModelConfig).mockClear();
     vi.mocked(getSelectedAgentHarness).mockReset();
     vi.mocked(getSelectedAgentHarness).mockReturnValue('auto');
+    vi.mocked(getSelectedAgentRuntime).mockReset();
+    vi.mocked(getSelectedAgentRuntime).mockReturnValue('worker');
     vi.mocked(getRuntimeSettingsForConfig).mockReturnValue({
       permissions: {
         yoloMode: {
@@ -939,7 +963,7 @@ describe('agent-spawn timeout behavior', () => {
     delete process.env.GANTRY_SCHEDULED_JOB_IDLE_TIMEOUT_MS;
   });
 
-  it('ensures group IPC layout before spawning host runner', async () => {
+  it('prepares host runtime context before spawning host runner', async () => {
     const resultPromise = spawnTestAgent(testGroup, testInput, () => {});
     emitOutputMarker(fakeProc, {
       status: 'success',
@@ -950,9 +974,7 @@ describe('agent-spawn timeout behavior', () => {
     await vi.advanceTimersByTimeAsync(10);
     await resultPromise;
 
-    expect(mockEnsureWorkspaceIpcLayout).toHaveBeenCalledWith(
-      '/tmp/gantry-test-data/ipc/test-group',
-    );
+    expect(prepareHostRuntimeContext).toHaveBeenCalledWith(testGroup);
   });
 
   it('publishes a host startup diagnostic with projection counts', async () => {
@@ -4212,6 +4234,67 @@ describe('agent-spawn timeout behavior', () => {
     });
     expect(result.error).toContain('readable/executable');
     expect(result.error).not.toContain('LLM runtime materialization failed');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('routes inline agents through the in-process choke point', async () => {
+    vi.mocked(getSelectedAgentRuntime).mockReturnValueOnce('inline');
+
+    const result = await spawnTestAgent(testGroup, testInput, vi.fn());
+
+    expect(result).toMatchObject({
+      status: 'error',
+      result: null,
+      error: expect.stringContaining('INLINE_AGENT_LOOP_NOT_AVAILABLE'),
+    });
+    expect(mockEnsureWorkspaceIpcLayout).toHaveBeenCalledWith(
+      '/tmp/gantry-test-data/ipc/test-group',
+      'inline',
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicit worker runtime for worker admission and spawning', async () => {
+    vi.mocked(getSelectedAgentRuntime).mockReturnValue('inline');
+
+    const resultPromise = spawnTestAgent(
+      testGroup,
+      {
+        ...testInput,
+        runtime: 'worker',
+        attachedSkillSourceIds: ['skill:writer'],
+      },
+      vi.fn(),
+    );
+    emitOutputMarker(fakeProc, { status: 'success', result: 'Done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      result: 'Done',
+    });
+    expect(getSelectedAgentRuntime).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it('uses the configured inline runtime for inline admission', async () => {
+    vi.mocked(getSelectedAgentRuntime).mockReturnValue('inline');
+
+    const result = await spawnTestAgent(
+      testGroup,
+      { ...testInput, attachedSkillSourceIds: ['skill:writer'] },
+      vi.fn(),
+    );
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining(
+        'agent.runtime inline is incompatible with worker-only capabilities: skill:writer',
+      ),
+    });
+    expect(getSelectedAgentRuntime).toHaveBeenCalledOnce();
     expect(spawn).not.toHaveBeenCalled();
   });
 });

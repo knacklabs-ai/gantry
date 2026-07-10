@@ -71,6 +71,9 @@ class MemoryAsyncTaskRepository implements AsyncTaskRepository {
           task.appId === filter.appId &&
           (!filter.agentId || task.agentId === filter.agentId) &&
           (!filter.kind || task.kind === filter.kind) &&
+          (filter.providerAccountId === undefined ||
+            (task.privateCorrelationJson.providerAccountId ?? null) ===
+              filter.providerAccountId) &&
           (!filter.statuses || filter.statuses.includes(task.status)),
       )
       .slice(0, filter.limit ?? 50);
@@ -263,14 +266,14 @@ describe('MCP IPC tool handlers', () => {
     const parent = await repository.createTask({
       id: 'task_parent',
       appId: 'app:test',
-      agentId: 'agent:signed',
+      agentId: 'agent:caller',
       conversationId: 'sl:C123',
       threadId: null,
       kind: 'delegated_agent',
       status: 'running',
       admissionClass: 'task',
       authoritySnapshotJson: { toolName: 'delegate_task' },
-      privateCorrelationJson: {},
+      privateCorrelationJson: { targetAgentId: 'agent:signed' },
       leaseToken: 'parent-lease',
       fencingVersion: 1,
       now: '2026-06-25T00:00:00.000Z',

@@ -766,6 +766,22 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
+  it('preserves provider account scope from signed task requests', () => {
+    const payload = signedPayload({
+      requestId: 'task-provider-account',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'delegate_task',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
+      providerAccountId: 'provider-account:slack:main',
+    });
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'delegate_task',
+      providerAccountId: 'provider-account:slack:main',
+    });
+  });
+
   it('preserves memory user ids from signed task requests', () => {
     const payload = signedPayload({
       requestId: 'task-memory-user-id',

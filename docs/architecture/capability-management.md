@@ -258,6 +258,42 @@ Postgres binding and intersected at materialization so the proxy only exposes
 the agent's allowed operations. Set it with
 `gantry mcp connect --agent-tool <pattern>` or the agent access API.
 
+## Agent Runtime Tiers
+
+Each configured agent has one execution tier: `runtime: worker` or
+`runtime: inline`. Omitted `runtime` defaults to `worker`. The tier changes how
+the agent loop executes, not the agent's identity, conversation bindings, model
+selection, durable memory, run/turn persistence, or permission authority.
+
+- `worker` executes in the existing worker subprocess and supports the full
+  reviewed worker capability projection and sandbox boundary.
+- `inline` executes the provider loop in the Gantry host process. Its built-in
+  surface is limited to `send_message`, `ask_user_question`, `memory_search`,
+  `memory_save`, `delegate_task`, `task_get`, `task_list`, `task_cancel`, and
+  `task_message`, as declared in
+  `apps/core/src/runtime/core-tools/registry.ts`. Approved remote `http` and
+  `sse` MCP operations are connected in-process through the same per-agent tool
+  scope, permission checks, audit, and DNS-pinned egress policy.
+
+Cross-agent delegation requires `AgentDelegation`, may target only an agent
+bound to the current conversation, and runs under the target agent's selected
+capabilities.
+
+Settings parse/apply and pre-spawn admission hard-reject `runtime: inline` when
+the agent has an attached skill, a `local_cli` source or runtime access, a
+`stdio_template` MCP source, a skill-action runtime access, or a selected tool
+rule that projects filesystem access (`FileSearch`, `FileRead`, `FileEdit`, or
+`FileWrite`) or `RunCommand(...)`. The configuration error lists every detected
+worker-only source, capability, or rule. The same validation applies when an
+existing worker agent is changed to inline; changing an inline agent to worker
+does not have this inline-only restriction.
+
+V1 inline loops also do not expose browser tools, capability self-service
+tools, agent-created-job tools, or provider-library internal subagents. Gantry's
+task lifecycle remains available, including delegation to inline or worker
+agents. Inline scheduled runs use the existing job persistence, heartbeat, and
+failover paths.
+
 ## Administration Model
 
 The deterministic ownership rule is:
@@ -299,6 +335,39 @@ API, CLI, and MCP are adapters over the same application services:
 - Gantry MCP tools are for agent-requested reviewed changes and safe runtime
   interactions. They create reviewable requests rendered through
   `InteractionDescriptor`.
+
+## Direct LLM API
+
+The Control API exposes provider-shaped raw model calls at
+`POST /llm/v1/messages` and `POST /llm/v1/chat/completions`. Both streaming and
+non-streaming responses pass through the Gantry Model Gateway; the control
+route does not receive provider credentials or implement provider
+authentication. These calls do not run an agent loop or grant access to agent
+tools and capabilities.
+
+The passthrough supports ordinary chat and streaming, caller-defined
+client-side tools (Anthropic tools with `input_schema` and OpenAI `function`
+tools), structured outputs, and thinking or effort parameters. It does not
+delegate execution to provider-hosted tools: Anthropic server tools, remote MCP
+servers, containers, and execution betas are rejected, as are OpenAI hosted
+tools, hosted-tool fields, attachments, and file references. Unsupported
+surfaces return `400` with code `UNSUPPORTED_FIELD` and identify the rejected
+field or tool type.
+
+Clients authenticate with a Control API bearer key carrying `llm:invoke`.
+Missing or invalid keys return `401`; a valid key without the scope returns
+`403`. The request `model` must be a registered Gantry model alias for the
+endpoint's response family. Raw provider model ids and incompatible aliases are
+rejected with `400`; the resolved provider model id is used only for the
+gateway request. The request log attributes the route, result, model alias,
+model route, and request/response sizes to the API key and app. Each request
+uses an API-key/request-scoped gateway credential that is revoked when response
+delivery ends, including failures.
+
+For official SDK base-URL configuration, the Anthropic Messages route is under
+the `/llm` base (`/v1/messages`), while OpenAI Chat Completions is under the
+`/llm/v1` base (`/chat/completions`). The active route implementation is
+`apps/core/src/control/server/routes/llm.ts`.
 
 The single agent-wide view of what an agent can do is
 `GET /v1/agents/{id}/access` (and `gantry agent access show <agent>`): one place

@@ -1,7 +1,16 @@
 import fs from 'fs';
 import { randomUUID } from 'node:crypto';
 
-import { getCredentialBrokerRuntimeConfig } from '../config/index.js';
+import {
+  AGENT_TIMEOUT,
+  DATA_DIR,
+  IDLE_TIMEOUT,
+  getCredentialBrokerRuntimeConfig,
+  getEffectiveModelConfig,
+  getRuntimeSettingsForConfig,
+  getSelectedAgentHarness,
+} from '../config/index.js';
+import { resolveAgentAccessPolicy } from '../config/profiles.js';
 import { getAgentCredentialInjection } from '../application/credentials/agent-credential-service.js';
 import { ConversationRoute } from '../domain/types.js';
 import type { AppId } from '../domain/app/app.js';
@@ -28,6 +37,12 @@ import {
   getHostAgentRunnerDistDir,
 } from './agent-spawn-layout.js';
 import { AgentInput, HostRuntimeContext } from './agent-spawn-types.js';
+import { resolveSpawnModel } from './agent-spawn-model-resolution.js';
+import { compileSpawnSystemPrompt } from './agent-spawn-prompt.js';
+import {
+  getConfiguredModelProvidersForApp,
+  getRuntimeFileArtifactStore,
+} from '../adapters/storage/postgres/runtime-store.js';
 
 export interface HostRuntimeCredentialEnvOptions {
   purpose?: AgentCredentialPurpose;
@@ -42,6 +57,49 @@ export interface HostRuntimeCredentialEnvOptions {
     AgentInput,
     'appId' | 'agentId' | 'runId' | 'jobId' | 'chatJid' | 'threadId'
   >;
+}
+
+export async function prepareInlineAgentHostContext(
+  group: ConversationRoute,
+  input: AgentInput,
+) {
+  const runtimeSettings = getRuntimeSettingsForConfig();
+  const modelConfig = getEffectiveModelConfig(
+    input.isScheduledJob ? undefined : group.agentConfig?.model,
+    input.isScheduledJob
+      ? input.jobModelUseKind || 'recurringJob'
+      : 'interactive',
+    group.folder,
+  );
+  const { resolvedModel } = await resolveSpawnModel({
+    group,
+    agentInput: input,
+    appId: input.appId || 'default',
+    modelConfig,
+    agentHarness: getSelectedAgentHarness(group.folder),
+    modelFamilyOrder: runtimeSettings.modelFamilies,
+    listConfiguredProviders: getConfiguredModelProvidersForApp,
+  });
+  const compiledSystemPrompt = resolvedModel.ok
+    ? await compileSpawnSystemPrompt({
+        group,
+        agentInput: input,
+        appId: input.appId || 'default',
+        accessPreset: resolveAgentAccessPolicy(
+          runtimeSettings.agents?.[group.folder]?.accessPreset,
+        ).preset,
+        fileArtifactStore: () => getRuntimeFileArtifactStore(),
+        measureAsync: async (_name, fn) => fn(),
+      })
+    : undefined;
+  return {
+    resolvedModel,
+    compiledSystemPrompt,
+    dataDir: DATA_DIR,
+    defaultTimeoutMs: AGENT_TIMEOUT,
+    idleTimeoutMs: IDLE_TIMEOUT,
+    sandboxProvider: runtimeSettings.runtime.sandbox.provider,
+  };
 }
 
 export async function getHostRuntimeCredentialEnv(

@@ -12,6 +12,7 @@ import {
   recoverQueuedAsyncMcpTasks,
 } from '@core/jobs/async-mcp-tool-task.js';
 import { asyncTaskChangeWaiterFor } from '@core/jobs/async-task-change-waiter.js';
+import type { StartDelegatedAgentTaskInput } from '@core/jobs/async-delegated-agent-task.js';
 import type {
   AsyncTaskCreateInput,
   AsyncTaskListFilter,
@@ -63,6 +64,9 @@ class MemoryAsyncTaskRepository implements AsyncTaskRepository {
           task.appId === filter.appId &&
           (!filter.agentId || task.agentId === filter.agentId) &&
           (!filter.kind || task.kind === filter.kind) &&
+          (filter.providerAccountId === undefined ||
+            (task.privateCorrelationJson.providerAccountId ?? null) ===
+              filter.providerAccountId) &&
           (filter.parentTaskId === undefined ||
             task.privateCorrelationJson.parentTaskId === filter.parentTaskId) &&
           (!filter.statuses || filter.statuses.includes(task.status)),
@@ -173,6 +177,44 @@ describe('AsyncCommandTaskService', () => {
     });
     expect(calls).toBe(0);
     expect(repository.tasks.size).toBe(0);
+  });
+
+  it('applies provider scope before limiting task lists', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({}),
+    });
+    const now = new Date().toISOString();
+    for (const providerAccountId of ['slack-two', 'slack-one']) {
+      await repository.createTask({
+        id: `task-${providerAccountId}`,
+        appId: 'app-1',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        kind: 'async_command',
+        status: 'completed',
+        admissionClass: 'command',
+        authoritySnapshotJson: {},
+        privateCorrelationJson: { providerAccountId },
+        leaseToken: `lease-${providerAccountId}`,
+        fencingVersion: 1,
+        now,
+      });
+    }
+
+    await expect(
+      service.list({
+        appId: 'app-1',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        providerAccountId: 'slack-one',
+        limit: 1,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: 'task-slack-one' })]);
+    expect(repository.listFilters.at(-1)).toMatchObject({
+      providerAccountId: 'slack-one',
+      limit: 1,
+    });
   });
 
   it('redacts command text before persisting durable task metadata', async () => {
@@ -630,9 +672,11 @@ describe('AsyncCommandTaskService', () => {
       appId: 'app-1',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
+      providerAccountId: 'slack-one',
       objective: 'three',
       context: 'use current repo',
       expectedOutput: 'short report',
+      targetAgentId: 'agent:reviewer',
       workspaceFolder: 'main_agent',
       run: async () => ({ outputSummary: 'should not run in old service' }),
     });
@@ -651,17 +695,28 @@ describe('AsyncCommandTaskService', () => {
         terminalAt: new Date().toISOString(),
       });
     }
-    const recoveredRun = vi.fn(async ({ prompt }) => {
+    const recoveredRun = vi.fn(async ({ prompt, targetAgentId }) => {
       expect(prompt).toContain('Objective: three');
       expect(prompt).toContain('Context: use current repo');
       expect(prompt).toContain('Expected output: short report');
+      expect(targetAgentId).toBe('agent:reviewer');
       return { outputSummary: 'recovered delegation done' };
     });
+    const createRecoveredRun = vi.fn(
+      (
+        _task: AsyncTaskRecord,
+        taskInput: Omit<StartDelegatedAgentTaskInput, 'run'>,
+      ) => {
+        expect(taskInput.providerAccountId).toBe('slack-one');
+        expect(taskInput.targetAgentId).toBe('agent:reviewer');
+        return recoveredRun;
+      },
+    );
     const recovered = new AsyncCommandTaskService(
       repository,
       { run: async () => ({}) },
       {
-        createRecoveredDelegatedAgentRun: () => recoveredRun,
+        createRecoveredDelegatedAgentRun: createRecoveredRun,
       },
     );
 
@@ -677,6 +732,7 @@ describe('AsyncCommandTaskService', () => {
     );
 
     await waitForStatus(repository, queued.task.id, 'completed');
+    expect(createRecoveredRun).toHaveBeenCalledOnce();
     expect(recoveredRun).toHaveBeenCalledTimes(1);
     expect(repository.tasks.get(queued.task.id)?.receiptJson).toMatchObject({
       completed: 'recovered delegation done',
@@ -1141,7 +1197,7 @@ describe('AsyncCommandTaskService', () => {
     await repository.createTask({
       id: 'task-child',
       appId: 'app-1',
-      agentId: 'agent-1',
+      agentId: 'agent:target',
       conversationId: 'conversation-1',
       kind: 'async_command',
       status: 'running',
@@ -1392,7 +1448,7 @@ describe('AsyncCommandTaskService', () => {
           activeChild = await repository.createTask({
             id: 'task-active-hidden',
             appId: task.appId,
-            agentId: task.agentId,
+            agentId: 'agent:target',
             conversationId: task.conversationId,
             kind: 'async_command',
             status: 'running',

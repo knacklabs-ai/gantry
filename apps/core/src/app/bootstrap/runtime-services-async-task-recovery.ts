@@ -33,6 +33,8 @@ import { McpToolProxy } from '../../application/mcp/mcp-tool-proxy.js';
 import { resolveMcpCredentialEnvForAgent } from '../../application/capability-secrets/mcp-secret-projection.js';
 import type { AsyncTaskRecord } from '../../domain/ports/async-tasks.js';
 import type { RuntimeAgentSessionRepository } from '../../domain/repositories/ops-repo.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
+import { resolveConversationRoute } from './runtime-app-routes.js';
 
 interface AsyncTaskRecoveryDeps extends Partial<
   Pick<
@@ -282,13 +284,27 @@ function createRecoveredDelegatedAgentRun(
 >['createRecoveredDelegatedAgentRun'] {
   return (_task, taskInput) => async (runInput) => {
     const conversationId = runInput.task.conversationId ?? '';
-    const group = deps.conversationRoutes?.()[conversationId];
+    const routes = deps.conversationRoutes?.() ?? {};
+    const recoveryAgentId = taskInput.targetAgentId ?? runInput.task.agentId;
+    const group = resolveConversationRoute(
+      routes,
+      conversationId,
+      runInput.task.threadId,
+      recoveryAgentId,
+      taskInput.providerAccountId,
+    );
     if (!group) {
       throw new Error('Delegated task conversation is unavailable.');
     }
+    const routedAgentId = group.agentId ?? agentIdForFolder(group.folder);
+    if (routedAgentId !== recoveryAgentId) {
+      throw new Error(
+        `Delegated task route mismatch: expected ${recoveryAgentId}, resolved ${routedAgentId}.`,
+      );
+    }
     const scopedTaskOwner = {
       appId: runInput.task.appId,
-      agentId: runInput.task.agentId,
+      agentId: taskInput.targetAgentId ? routedAgentId : runInput.task.agentId,
     };
     const [toolPolicy, selectedSkillContext, semanticCapabilities] =
       await Promise.all([
@@ -309,10 +325,10 @@ function createRecoveredDelegatedAgentRun(
       {
         prompt: runInput.prompt,
         appId: runInput.task.appId,
-        agentId: runInput.task.agentId,
+        agentId: scopedTaskOwner.agentId,
         chatJid: conversationId,
         threadId: runInput.task.threadId ?? undefined,
-        workspaceFolder: taskInput.workspaceFolder,
+        workspaceFolder: group.folder,
         parentTaskId: runInput.task.id,
         persona: group.agentConfig?.persona,
         thinking: group.agentConfig?.thinking,

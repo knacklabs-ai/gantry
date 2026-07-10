@@ -38,15 +38,18 @@ export interface StartDelegatedAgentTaskInput {
   appId: string;
   agentId: string;
   conversationId: string;
+  providerAccountId?: string | null;
   threadId?: string | null;
   parentRunId?: string | null;
   objective: string;
   context?: string | null;
   expectedOutput?: string | null;
+  targetAgentId?: string;
   workspaceFolder: string;
   run(input: {
     task: AsyncTaskRecord;
     prompt: string;
+    targetAgentId?: string;
     signal: AbortSignal;
     onProcessStarted?: (
       handle: AsyncCommandProcessHandle,
@@ -140,6 +143,7 @@ export async function sendDelegatedAgentTaskMessage(input: {
   appId: string;
   agentId: string;
   conversationId?: string | null;
+  providerAccountId?: string | null;
   threadId?: string | null;
   parentTaskId?: string | null;
   message: string;
@@ -305,6 +309,9 @@ export async function executeDelegatedAgentTask(input: {
     const result = await taskInput.run({
       task,
       prompt: delegatedPrompt(taskInput),
+      ...(taskInput.targetAgentId
+        ? { targetAgentId: taskInput.targetAgentId }
+        : {}),
       signal: controller.signal,
       onProcessStarted: async (handle) => {
         const updated = await transitionPrivateCorrelation(repository, task, {
@@ -481,7 +488,6 @@ async function linkedChildTaskCounts(
 ): Promise<AsyncTaskStatusCount[]> {
   return repository.countTasksByStatus({
     appId: parent.appId,
-    agentId: parent.agentId,
     parentTaskId: parent.id,
   });
 }

@@ -119,6 +119,7 @@ export interface AsyncTaskListFilter {
   agentId?: string;
   kind?: AsyncTaskKind;
   conversationId?: string | null;
+  providerAccountId?: string | null;
   threadId?: string | null;
   parentRunId?: string | null;
   parentTaskId?: string | null;

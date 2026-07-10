@@ -112,6 +112,7 @@ export interface StartAsyncCommandTaskInput {
   appId: string;
   agentId: string;
   conversationId: string;
+  providerAccountId?: string | null;
   threadId?: string | null;
   parentRunId?: string | null;
   parentTaskId?: string | null;
@@ -267,6 +268,7 @@ export class AsyncCommandTaskService {
     appId: string;
     agentId: string;
     conversationId?: string | null;
+    providerAccountId?: string | null;
     threadId?: string | null;
     parentTaskId?: string | null;
   }): Promise<PublicAsyncTaskDto | null> {
@@ -279,13 +281,16 @@ export class AsyncCommandTaskService {
     appId: string;
     agentId?: string;
     conversationId?: string | null;
+    providerAccountId?: string | null;
     threadId?: string | null;
     parentRunId?: string | null;
     parentTaskId?: string | null;
     limit?: number;
   }): Promise<PublicAsyncTaskDto[]> {
     const tasks = await this.repository.listTasks(input);
-    return tasks.filter(isAgentFacingTask).map(toPublicAsyncTaskDto);
+    return tasks
+      .filter((task) => isAgentFacingTask(task) && taskInScope(task, input))
+      .map(toPublicAsyncTaskDto);
   }
 
   async message(input: {
@@ -293,6 +298,7 @@ export class AsyncCommandTaskService {
     appId: string;
     agentId: string;
     conversationId?: string | null;
+    providerAccountId?: string | null;
     threadId?: string | null;
     parentTaskId?: string | null;
     message: string;
@@ -395,6 +401,7 @@ export class AsyncCommandTaskService {
           appId?: string;
           agentId?: string;
           conversationId?: string | null;
+          providerAccountId?: string | null;
           threadId?: string | null;
           parentTaskId?: string | null;
         },
@@ -410,6 +417,7 @@ export class AsyncCommandTaskService {
         appId: input.appId ?? task.appId,
         agentId: input.agentId ?? task.agentId,
         conversationId: input.conversationId,
+        providerAccountId: input.providerAccountId,
         threadId: input.threadId,
         parentTaskId: input.parentTaskId,
       })
@@ -512,7 +520,6 @@ export class AsyncCommandTaskService {
     for (;;) {
       const tasks = await this.repository.listTasks({
         appId: parent.appId,
-        agentId: parent.agentId,
         parentTaskId: parent.id,
         statuses: ['queued', 'running', 'needs_attention'],
         limit: 100,

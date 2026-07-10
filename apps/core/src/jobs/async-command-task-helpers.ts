@@ -250,20 +250,34 @@ export function taskInScope(
   task: AsyncTaskRecord,
   input: {
     appId: string;
-    agentId: string;
+    agentId?: string;
     conversationId?: string | null;
+    providerAccountId?: string | null;
     threadId?: string | null;
     parentTaskId?: string | null;
   },
 ): boolean {
   return (
     task.appId === input.appId &&
-    task.agentId === input.agentId &&
+    (input.agentId === undefined || task.agentId === input.agentId) &&
     (input.conversationId === undefined ||
       task.conversationId === input.conversationId) &&
+    (input.providerAccountId === undefined ||
+      (task.privateCorrelationJson.providerAccountId ?? null) ===
+        input.providerAccountId) &&
     (input.threadId === undefined || task.threadId === input.threadId) &&
     (input.parentTaskId === undefined ||
       task.privateCorrelationJson.parentTaskId === input.parentTaskId)
+  );
+}
+
+export function delegatedTaskAgentInScope(
+  task: AsyncTaskRecord,
+  agentId: string,
+): boolean {
+  return (
+    task.agentId === agentId ||
+    task.privateCorrelationJson.targetAgentId === agentId
   );
 }
 

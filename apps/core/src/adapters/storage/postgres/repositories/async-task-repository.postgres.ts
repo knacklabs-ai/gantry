@@ -372,6 +372,9 @@ function asyncTaskFilterWhere(filter: Omit<AsyncTaskListFilter, 'limit'>) {
           filter.conversationId,
         )
       : undefined,
+    filter.providerAccountId !== undefined
+      ? sql`coalesce(${pgSchema.agentAsyncTasksPostgres.privateCorrelationJson}->>'providerAccountId', '') = ${filter.providerAccountId ?? ''}`
+      : undefined,
     filter.threadId !== undefined
       ? nullableEq(pgSchema.agentAsyncTasksPostgres.threadId, filter.threadId)
       : undefined,
