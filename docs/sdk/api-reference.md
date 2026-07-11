@@ -20,7 +20,7 @@ LaunchAgent.
 Control API settings are read from process env and from `~/gantry/.env`:
 
 ```env
-GANTRY_CONTROL_API_KEYS_JSON=[{"kid":"local-admin","token":"replace-with-a-generated-token","appId":"default","scopes":["sessions:read","sessions:write","jobs:read","jobs:write","providers:read","providers:admin","conversations:read","conversations:admin","messages:read","agents:admin","skills:read","skills:admin","mcp:read","mcp:admin","webhooks:read","webhooks:write","ingresses:read","ingresses:write","memory:read","memory:admin"]}]
+GANTRY_CONTROL_API_KEYS_JSON=[{"kid":"local-admin","token":"replace-with-a-generated-token","appId":"default","scopes":["sessions:read","sessions:write","jobs:read","jobs:write","providers:read","providers:admin","conversations:read","conversations:admin","messages:read","agents:admin","skills:read","skills:admin","mcp:read","mcp:admin","webhooks:read","webhooks:write","ingresses:read","ingresses:write","memory:read","memory:admin","llm:invoke"]}]
 GANTRY_CONTROL_PORT=8787
 GANTRY_CONTROL_HOST=127.0.0.1
 ```

@@ -100,6 +100,16 @@ with capabilities an operator pre-provisioned. See
 [Agent Internals For SDK Consumers](./agent-internals.md#locked-access-preset).
 The preset is set on the agent, not in SDK calls — your client code is unchanged.
 
+## Beyond chat turns
+
+The same session machinery drives headless workflow steps: send
+`response_schema` with a message to get validated JSON back from an
+inline-runtime agent, pass per-request `effort` / `max_output_tokens`, make raw
+model calls without an agent via the Direct LLM API (`baseURL` swap on official
+provider SDKs), and subscribe webhooks to `run.completed` /
+`interaction.pending` instead of polling. See the
+[SDK API Reference](./api-reference.md) for all of these.
+
 ## Going to production
 
 Run Gantry as a same-machine sidecar while one box and live installs are enough.
