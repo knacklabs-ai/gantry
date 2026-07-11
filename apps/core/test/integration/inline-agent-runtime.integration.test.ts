@@ -1258,10 +1258,15 @@ maybeDescribe('inline session turns through the control API', () => {
       schema: responseSchema,
     });
     expect(deep.createAgent.mock.calls[1]?.[0].responseFormat).toMatchObject({
-      schema: responseSchema,
+      schema: expect.objectContaining({
+        properties: responseSchema.properties,
+      }),
       tool: expect.objectContaining({
         function: expect.objectContaining({
-          parameters: responseSchema,
+          name: 'gantry_structured_output',
+          parameters: expect.objectContaining({
+            properties: responseSchema.properties,
+          }),
         }),
       }),
     });
