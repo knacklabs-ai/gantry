@@ -104,7 +104,10 @@ disposable database.
 
 ## Auto Review Loop
 
-Use the `autoreview` skill as part of this skill.
+Use the `autoreview` skill as part of this skill. When Claude Code
+orchestrates, each review round is dispatched as a Codex rescue handoff that
+runs the autoreview helper and returns findings verbatim (user decision
+2026-07-11) — the orchestrator does not run the helper in its own shell.
 
 Before starting a new review, check whether one is already running:
 
