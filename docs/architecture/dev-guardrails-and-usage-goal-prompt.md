@@ -90,7 +90,26 @@ scope enforcement (403 without `usage:read`), and app scoping.
 Declare `langchain` (pin matching the currently hoisted resolution) in the
 root manifest — `apps/core` imports `langchain/chat_models/universal` today as
 an undeclared transitive. The lockfile resolution must not change (tree
-already hoists it); `npm ci` stays green under latest npm.
+already hoists it); `npm ci` stays green under latest npm. Orchestrator-owned
+(lockfile regeneration needs network the implementation sandbox lacks).
+
+## Stage E — runnable example app
+
+A clonable Next.js example under `examples/` exercising the real developer
+journey against a local Gantry sidecar: chat turn with send/wait, SSE
+streaming proxy, a structured workflow step (`response_schema` + per-request
+`effort`), a signed lifecycle-webhook receiver (`run.completed`,
+`interaction.pending`), one Direct LLM API call through the passthrough, and a
+`GET /v1/usage` readout of what the demo spent (Stage C). Uses `@gantry/sdk`
+via workspace reference; a README walks setup (register agent, mint key with
+scopes, register webhook). CI-buildable: a workspace build/typecheck script
+covers it so the example cannot rot — no e2e harness against a live runtime in
+v1.
+
+Acceptance: `npm run build` (or a dedicated `build:examples` script wired into
+the root build) compiles the example; the example imports only public SDK
+surface (`@gantry/sdk`) — no `apps/core` internals; README setup steps name
+the exact scopes and settings the flows require.
 
 ## Non-goals
 
@@ -179,4 +198,5 @@ autoreview clean result (branch mode vs origin/main), remaining risks.
 - `packages/sdk/**` (generated types + usage resource), `packages/contracts/**`
   if settings contract requires
 - Root `package.json` + lockfile (langchain declaration only)
+- `examples/**` + root build script wiring (Stage E)
 - Tests + docs for the above. Nothing else — STOP and ask for anything more.

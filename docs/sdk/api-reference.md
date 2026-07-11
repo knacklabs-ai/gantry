@@ -509,9 +509,9 @@ model progress through `client.sessions.stream`, `client.sessions.wait`,
 
 Sessions bound to an inline-runtime agent accept an optional JSON Schema on the
 message-send payload. The selected inline lane enforces the schema and the turn
-result carries the validated JSON. The field is available on the HTTP payload
-(`POST /v1/sessions/:sessionId/messages`); the typed SDK helper does not expose
-it yet.
+result carries the validated JSON. The field is typed on
+`client.sessions.sendMessage` via the generated OpenAPI types and available on
+the raw HTTP payload (`POST /v1/sessions/:sessionId/messages`).
 
 ```http
 POST /v1/sessions/:sessionId/messages
@@ -552,8 +552,9 @@ POST /v1/sessions/:sessionId/messages
   (Claude-engine agents reject it; use `effort` there)
 
 Overrides are validated against the target agent's model capabilities; an
-unsupported combination is rejected with a `400` naming the field. These
-fields are HTTP-level today, like `response_schema`.
+unsupported combination is rejected with a `400` naming the field. All of
+these fields are typed on `client.sessions.sendMessage` via the generated
+OpenAPI types.
 
 Read-only history endpoints are available over the control API. SDK helpers are
 not exposed for these endpoints yet.

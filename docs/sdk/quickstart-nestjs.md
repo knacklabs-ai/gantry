@@ -61,6 +61,80 @@ export class AgentService {
 Normal sidecar calls derive `appId` from the API key. Pass `appId` only as an
 advanced assertion when the caller intentionally verifies a known app scope.
 
+## Structured output as a service method
+
+```ts
+async extractInvoice(sessionId: string, documentText: string) {
+  const accepted = await this.gantry.client.sessions.sendMessage({
+    sessionId,
+    message: `Extract the invoice fields:\n${documentText}`,
+    response_schema: {
+      type: 'object',
+      required: ['vendor', 'total'],
+      properties: {
+        vendor: { type: 'string' },
+        total: { type: 'number' },
+        dueDate: { type: 'string' },
+      },
+    },
+  });
+  const event = await this.gantry.client.sessions.wait(sessionId, {
+    afterEventId: accepted.acceptedEventId,
+    timeoutMs: 60_000,
+  });
+  return JSON.parse((event.payload as { text: string }).text);
+}
+```
+
+## Streaming to the browser
+
+```ts
+// events.controller.ts
+@Get('sessions/:sessionId/events')
+async stream(
+  @Param('sessionId') sessionId: string,
+  @Query('afterEventId') afterEventId: string,
+  @Res() res: Response,
+) {
+  res.setHeader('content-type', 'text/event-stream');
+  res.setHeader('cache-control', 'no-cache');
+  for await (const event of this.gantry.client.sessions.stream(sessionId, {
+    afterEventId: Number(afterEventId || 0),
+  })) {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+  res.end();
+}
+```
+
+## Receiving lifecycle webhooks
+
+Register a webhook with `eventTypes` (for example `run.completed`,
+`interaction.pending`) and verify deliveries with the SDK helper. NestJS must
+expose the raw body: `NestFactory.create(AppModule, { rawBody: true })`.
+
+```ts
+// gantry-webhook.controller.ts
+import { verifyWebhookSignature } from '@gantry/sdk';
+
+@Post('hooks/gantry')
+handle(@Req() req: RawBodyRequest<Request>) {
+  const ok = verifyWebhookSignature({
+    secret: process.env.GANTRY_WEBHOOK_SECRET!,
+    timestamp: req.headers['x-gantry-webhook-timestamp'] as string,
+    eventId: req.headers['x-gantry-webhook-id'] as string,
+    eventType: req.headers['x-gantry-webhook-event'] as string,
+    signature: req.headers['x-gantry-webhook-signature'] as string,
+    rawBody: req.rawBody!.toString(),
+    toleranceMs: 5 * 60_000,
+  });
+  if (!ok) throw new UnauthorizedException('invalid signature');
+  const event = JSON.parse(req.rawBody!.toString());
+  // deduplicate on x-gantry-webhook-id; react to event.eventType
+  return { ok: true };
+}
+```
+
 ## Provision the agent locked
 
 A customer-facing example agent (a support or product assistant your end users
