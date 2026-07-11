@@ -31,6 +31,7 @@ import {
 import {
   coreTaskLifecycleResultText,
   type CoreTaskLifecycleBackend,
+  type CoreTaskLifecycleErrorCode,
   type CoreTaskLifecycleName,
 } from '../../application/core-tools/task-lifecycle.js';
 import type {
@@ -58,6 +59,13 @@ const LOCKED_ACCESS_PRESET_DENY_REASON =
 export interface McpCompatibleToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
+  error?: McpCompatibleToolError;
+}
+
+export interface McpCompatibleToolError {
+  category: 'transient' | 'validation' | 'business' | 'permission';
+  isRetryable: boolean;
+  message: string;
 }
 
 export interface CoreToolHandlerContext {
@@ -270,14 +278,22 @@ export function createCoreToolRegistry(deps: CoreToolRegistryDeps): {
     ).map(([name, schema]) =>
       define(name, taskDescription(name), schema, async (args) => {
         if (!deps.taskLifecycleBackend) {
-          return errorResult('Async task runtime is unavailable.');
+          return errorResult(
+            'Async task runtime is unavailable.',
+            'transient',
+            true,
+          );
         }
         const result = await deps.taskLifecycleBackend[name]({ ...args });
+        const text = coreTaskLifecycleResultText(result);
         return {
-          content: [
-            { type: 'text', text: coreTaskLifecycleResultText(result) },
-          ],
-          ...(result.ok ? {} : { isError: true }),
+          content: [{ type: 'text', text }],
+          ...(result.ok
+            ? {}
+            : {
+                isError: true,
+                error: taskLifecycleError(result.code, text),
+              }),
         };
       }),
     ),
@@ -291,11 +307,14 @@ export function createCoreToolRegistry(deps: CoreToolRegistryDeps): {
     get: (name) => byName[name as CoreToolName],
     execute: async (name, input, context) => {
       const tool = byName[name];
-      if (!tool) return errorResult(`Unknown core tool: ${name}`);
+      if (!tool)
+        return errorResult(`Unknown core tool: ${name}`, 'validation', false);
       const parsed = tool.inputSchema.safeParse(input);
       if (!parsed.success) {
         return errorResult(
           parsed.error.issues[0]?.message ?? 'Invalid tool input.',
+          'validation',
+          false,
         );
       }
       const gate = await gateCoreTool(name, parsed.data, deps, id);
@@ -305,6 +324,8 @@ export function createCoreToolRegistry(deps: CoreToolRegistryDeps): {
       } catch (error) {
         return errorResult(
           error instanceof Error ? error.message : String(error),
+          'transient',
+          true,
         );
       }
     },
@@ -552,10 +573,35 @@ function textResult(text: string): McpCompatibleToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
-function errorResult(text: string): McpCompatibleToolResult {
-  return { content: [{ type: 'text', text }], isError: true };
+function errorResult(
+  text: string,
+  category: McpCompatibleToolError['category'] = 'transient',
+  isRetryable = true,
+): McpCompatibleToolResult {
+  return {
+    content: [{ type: 'text', text }],
+    isError: true,
+    error: { category, isRetryable, message: text },
+  };
 }
 
 function permissionDenied(reason: string): McpCompatibleToolResult {
-  return errorResult(`Permission denied: ${reason}`);
+  return errorResult(`Permission denied: ${reason}`, 'permission', false);
+}
+
+function taskLifecycleError(
+  code: CoreTaskLifecycleErrorCode | undefined,
+  message: string,
+): McpCompatibleToolError {
+  switch (code) {
+    case 'unavailable':
+      return { category: 'transient', isRetryable: true, message };
+    case 'invalid_request':
+      return { category: 'validation', isRetryable: false, message };
+    case 'forbidden':
+      return { category: 'permission', isRetryable: false, message };
+    case 'not_found':
+    default:
+      return { category: 'business', isRetryable: false, message };
+  }
 }

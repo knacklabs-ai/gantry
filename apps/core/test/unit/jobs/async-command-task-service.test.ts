@@ -1481,6 +1481,14 @@ describe('AsyncCommandTaskService', () => {
       await vi.advanceTimersByTimeAsync(15_000);
 
       await waitForStatus(repository, started.task.id, 'completed');
+      expect((await service.get(started.task.id))?.terminalChildren).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'task-terminal-0',
+            status: 'completed',
+          }),
+        ]),
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1594,6 +1602,17 @@ describe('AsyncCommandTaskService', () => {
     await waitForStatus(repository, started.task.id, 'failed');
     expect(repository.tasks.get(started.task.id)?.receiptJson).toMatchObject({
       subtasks: '101 completed, 1 failed, 0 cancelled',
+    });
+    const dto = await service.get(started.task.id);
+    expect(dto).toMatchObject({
+      failure: {
+        type: 'child_task',
+        partialResult: 'delegated done',
+      },
+    });
+    expect(dto?.terminalChildren?.[0]).toMatchObject({
+      id: 'task-failed-hidden',
+      status: 'failed',
     });
   });
 

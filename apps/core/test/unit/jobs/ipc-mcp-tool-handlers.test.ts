@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
@@ -16,9 +20,14 @@ import { readEncryptedAsyncTaskPayload } from '@core/jobs/async-task-execution-p
 import { createMcpToolHandlers } from '@core/jobs/ipc-mcp-tool-handlers.js';
 import { registerAsyncCommandSandboxPolicy } from '@core/runtime/async-command-sandbox-policy.js';
 
+const runtimeHomes: string[] = [];
+
 afterEach(() => {
   configurePendingInteractionDurability(null);
   vi.unstubAllEnvs();
+  for (const runtimeHome of runtimeHomes.splice(0)) {
+    fs.rmSync(runtimeHome, { recursive: true, force: true });
+  }
 });
 
 beforeEach(() => {
@@ -159,6 +168,73 @@ function registerAsyncTaskPolicy(input: {
 }
 
 describe('MCP IPC tool handlers', () => {
+  it('preserves structured remote MCP failures in the IPC response', async () => {
+    const runtimeHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'gantry-mcp-ipc-'),
+    );
+    runtimeHomes.push(runtimeHome);
+    vi.resetModules();
+    vi.stubEnv('GANTRY_HOME', runtimeHome);
+    const ipcAuth = await import('@core/runtime/ipc-auth.js');
+    const { createMcpToolHandlers: createHandlers } =
+      await import('@core/jobs/ipc-mcp-tool-handlers.js');
+    const remoteResult = {
+      content: [{ type: 'text', text: 'Remote validation failed.' }],
+      structuredContent: { field: 'account_id', reason: 'missing' },
+      isError: true,
+    };
+    const createProxy = vi.fn(async () => ({
+      callTool: vi.fn(async () => remoteResult),
+      describeTool: vi.fn(),
+      listTools: vi.fn(),
+    }));
+    const { mcpCallToolHandler } = createHandlers(createProxy as never);
+    const responseKeyId =
+      ipcAuth.createIpcAuthEnvelope('main_agent').responseKeyId;
+
+    await mcpCallToolHandler({
+      data: {
+        type: 'mcp_call_tool',
+        taskId: 'remote-error',
+        responseKeyId,
+        appId: 'app:test',
+        agentId: 'agent:signed',
+        chatJid: 'sl:C123',
+        targetJid: 'sl:C123',
+        payload: { serverName: 'crm', toolName: 'lookup', arguments: {} },
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {} as never,
+      conversationBindings: {},
+      sourceAgentFolderJids: ['sl:C123'],
+    });
+
+    const response = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          runtimeHome,
+          'data',
+          'ipc',
+          'main_agent',
+          'task-responses',
+          'task-remote-error.json',
+        ),
+        'utf8',
+      ),
+    );
+    expect(response).toMatchObject({
+      ok: true,
+      data: {
+        ...remoteResult,
+        error: {
+          category: 'business',
+          isRetryable: false,
+          message: 'Remote validation failed.',
+        },
+      },
+    });
+  });
+
   it('uses the signed runner agent id for MCP tool calls', async () => {
     const callTool = vi.fn(async () => ({}));
     const createProxy = vi.fn(async () => ({

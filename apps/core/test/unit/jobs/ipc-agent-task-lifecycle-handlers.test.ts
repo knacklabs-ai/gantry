@@ -949,6 +949,56 @@ describe('agent task lifecycle IPC handlers', () => {
     ).toMatchObject({ providerAccountId: 'slack-one' });
     await waitForStatus(repository, 'completed');
 
+    runAgent.mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'Reviewed three sources.',
+        });
+        return {
+          status: 'error',
+          result: null,
+          error: 'Lead source review failed.',
+        };
+      },
+    );
+    await agentTaskLifecycleHandlers.delegate_task(
+      contextFor({
+        data: {
+          ...taskData('delegate-failure', 'delegate_task', {
+            objective: 'Review lead sources',
+            targetAgentId: 'agent:reviewer',
+          }),
+          providerAccountId: 'slack-one',
+        },
+        deps,
+        conversationBindings,
+      }),
+    );
+    const failedTaskId = await waitForStatus(repository, 'failed');
+    await agentTaskLifecycleHandlers.task_get(
+      contextFor({
+        data: {
+          ...taskData('delegate-failure-get', 'task_get', {
+            taskId: failedTaskId,
+          }),
+          providerAccountId: 'slack-one',
+        },
+        deps,
+      }),
+    );
+    expect(readResponse(runtimeHome, 'delegate-failure-get')).toMatchObject({
+      ok: true,
+      data: {
+        status: 'failed',
+        failure: {
+          type: 'execution',
+          attemptedAction: 'Review lead sources',
+          partialResult: 'Reviewed three sources.',
+        },
+      },
+    });
+
     registerAsyncCommandSandboxPolicy({
       sourceAgentFolder: 'main_agent',
       runHandle: 'run-other-account',

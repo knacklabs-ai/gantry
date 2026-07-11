@@ -141,6 +141,11 @@ describe('core tool registry', () => {
     expect(result).toEqual({
       content: [{ type: 'text', text: 'Permission denied: No delegation' }],
       isError: true,
+      error: {
+        category: 'permission',
+        isRetryable: false,
+        message: 'Permission denied: No delegation',
+      },
     });
     expect(backend.delegate_task).not.toHaveBeenCalled();
   });
@@ -174,6 +179,11 @@ describe('core tool registry', () => {
         },
       ],
       isError: true,
+      error: {
+        category: 'permission',
+        isRetryable: false,
+        message: expect.stringContaining('locked access preset'),
+      },
     });
     expect(record).not.toHaveBeenCalled();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
@@ -296,6 +306,38 @@ describe('core tool registry', () => {
       conversationId: 'conversation:test',
       parentTaskId: undefined,
       taskId: 'task-1',
+    });
+  });
+
+  it('maps task lifecycle error codes into model-visible structured errors', async () => {
+    const backend = createCoreTaskLifecycleBackend({
+      service: {
+        getScoped: vi.fn(async () => null),
+        list: vi.fn(),
+        cancel: vi.fn(),
+        startDelegatedAgent: vi.fn(),
+        message: vi.fn(),
+      } as never,
+      owner: {
+        appId: 'default',
+        agentId: 'agent-1',
+        conversationId: 'conversation:test',
+      },
+      workspaceFolder: 'main_agent',
+    });
+
+    await expect(
+      createCoreToolRegistry(
+        registryDeps({ taskLifecycleBackend: backend }),
+      ).execute('task_get', { taskId: 'missing' }),
+    ).resolves.toEqual({
+      content: [{ type: 'text', text: 'Task not found.' }],
+      isError: true,
+      error: {
+        category: 'business',
+        isRetryable: false,
+        message: 'Task not found.',
+      },
     });
   });
 

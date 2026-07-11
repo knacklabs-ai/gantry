@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type AsyncTaskCreateInput,
+  type AgentFailureMetadata,
   type AsyncTaskKind,
   type AsyncTaskRecord,
   type AsyncTaskRepository,
@@ -72,6 +73,7 @@ export interface AsyncCommandLaunchControl {
 export interface AsyncCommandRunnerResult {
   outputSummary?: string | null;
   errorSummary?: string | null;
+  failure?: AgentFailureMetadata;
 }
 
 export interface AsyncCommandProcessHandle {
@@ -83,7 +85,6 @@ export interface AsyncCommandProcessHandle {
   startedAt: string;
   processStartId?: string;
 }
-
 export interface AsyncCommandRunner {
   run(input: {
     command: string;
@@ -107,7 +108,6 @@ export interface AsyncCommandRunner {
     launchControl?: AsyncCommandLaunchControl;
   }): Promise<AsyncCommandRunnerResult>;
 }
-
 export interface StartAsyncCommandTaskInput {
   appId: string;
   agentId: string;
@@ -135,6 +135,26 @@ export type StartAsyncCommandTaskResult =
   | { ok: false; message: string };
 
 export class AsyncCommandTaskService {
+  static delegatedAgentFailureResult(
+    output: {
+      result: string | null;
+      error?: string;
+      failure?: AgentFailureMetadata;
+    },
+    latestResult: string | null,
+    attemptedAction: string,
+  ): AsyncCommandRunnerResult {
+    const partialResult = output.result ?? latestResult;
+    return {
+      outputSummary: partialResult,
+      errorSummary: output.error ?? 'Delegated agent run failed.',
+      failure: output.failure ?? {
+        type: 'execution',
+        attemptedAction,
+        partialResult,
+      },
+    };
+  }
   private readonly active = new Map<string, AbortController>();
   private readonly pending = new Map<string, PendingAsyncTaskExecution>();
   private readonly taskChanges;
@@ -249,7 +269,6 @@ export class AsyncCommandTaskService {
       waitForTaskChange: (_parent, options) => this.taskChanges.wait(options),
     });
   }
-
   private async transitionTask(
     input: Parameters<AsyncTaskRepository['transitionTask']>[0],
   ): ReturnType<AsyncTaskRepository['transitionTask']> {
@@ -257,12 +276,10 @@ export class AsyncCommandTaskService {
     if (updated) this.taskChanges.notify();
     return updated;
   }
-
   async get(taskId: string): Promise<PublicAsyncTaskDto | null> {
     const task = await this.repository.getTask(taskId);
     return task && isAgentFacingTask(task) ? toPublicAsyncTaskDto(task) : null;
   }
-
   async getScoped(input: {
     taskId: string;
     appId: string;
@@ -292,7 +309,6 @@ export class AsyncCommandTaskService {
       .filter((task) => isAgentFacingTask(task) && taskInScope(task, input))
       .map(toPublicAsyncTaskDto);
   }
-
   async message(input: {
     taskId: string;
     appId: string;
@@ -373,7 +389,6 @@ export class AsyncCommandTaskService {
     }
     return recovered;
   }
-
   async recoverQueuedTasks(input: {
     appId: string;
     agentId?: string;

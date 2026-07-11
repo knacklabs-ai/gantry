@@ -10,10 +10,16 @@ export type CoreTaskLifecycleName =
   | 'task_cancel'
   | 'task_message';
 
+export type CoreTaskLifecycleErrorCode =
+  | 'invalid_request'
+  | 'unavailable'
+  | 'not_found'
+  | 'forbidden';
+
 export interface CoreTaskLifecycleResult {
   ok: boolean;
   message: string;
-  code?: string;
+  code?: CoreTaskLifecycleErrorCode;
   data?: unknown;
 }
 
