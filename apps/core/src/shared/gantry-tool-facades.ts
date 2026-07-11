@@ -16,6 +16,18 @@ export type GantryFacadeExactToolName =
 const GANTRY_FACADE_EXACT_TOOL_NAME_SET = new Set<string>(
   GANTRY_FACADE_EXACT_TOOL_NAMES,
 );
+const GANTRY_DELEGATION_TOOL_NAME_SET = new Set([
+  'mcp__gantry__delegate_task',
+  'mcp__gantry__task_message',
+  'delegate_task',
+  'task_message',
+]);
+
+export function canonicalGantryToolRuleName(toolName: string): string {
+  return GANTRY_DELEGATION_TOOL_NAME_SET.has(toolName)
+    ? 'AgentDelegation'
+    : toolName;
+}
 
 const PROVIDER_NATIVE_TOOL_REPLACEMENTS = new Map<string, string>([
   ['WebFetch', 'WebRead'],

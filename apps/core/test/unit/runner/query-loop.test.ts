@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { usageEventIdForMessage } from '@core/adapters/llm/anthropic-claude-agent/runner/query-usage-event-id.js';
+import { canonicalGantryToolRuleName } from '@core/shared/gantry-tool-facades.js';
 
 describe('Claude query loop usage event IDs', () => {
   it('uses stable provider IDs when present', () => {
@@ -15,6 +16,23 @@ describe('Claude query loop usage event IDs', () => {
     );
     expect(usageEventIdForMessage({}, 'session-1', 1, 'run-b')).toBe(
       'session-1:run:run-b:result:1',
+    );
+  });
+});
+
+describe('Claude query loop declarative tool names', () => {
+  it.each([
+    'mcp__gantry__delegate_task',
+    'mcp__gantry__task_message',
+    'delegate_task',
+    'task_message',
+  ])('canonicalizes %s as AgentDelegation', (toolName) => {
+    expect(canonicalGantryToolRuleName(toolName)).toBe('AgentDelegation');
+  });
+
+  it('keeps non-Gantry MCP names unchanged', () => {
+    expect(canonicalGantryToolRuleName('mcp__crm__delete')).toBe(
+      'mcp__crm__delete',
     );
   });
 });

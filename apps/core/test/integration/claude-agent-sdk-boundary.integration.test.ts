@@ -847,8 +847,18 @@ describe('Claude Agent SDK boundary integration', () => {
           {
             tool: 'deploy',
             action: 'require_prior',
-            prior: 'test',
+            prior: 'AgentDelegation',
             reason: 'tests must pass before deploy',
+          },
+          {
+            tool: 'AgentDelegation',
+            action: 'block',
+            reason: 'delegation disabled',
+          },
+          {
+            tool: 'mcp__crm__delete',
+            action: 'block',
+            reason: 'deletion disabled',
           },
         ],
       }),
@@ -882,11 +892,37 @@ describe('Claude Agent SDK boundary integration', () => {
       isRetryable: false,
       message: expect.stringContaining('tests must pass before deploy'),
     });
+    await expect(
+      declarativePreToolUse({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__gantry__delegate_task',
+        tool_input: {},
+      }),
+    ).resolves.toMatchObject({
+      continue: false,
+      hookSpecificOutput: {
+        permissionDecisionReason: expect.stringContaining(
+          'delegation disabled',
+        ),
+      },
+    });
+    await expect(
+      declarativePreToolUse({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__crm__delete',
+        tool_input: {},
+      }),
+    ).resolves.toMatchObject({
+      continue: false,
+      hookSpecificOutput: {
+        permissionDecisionReason: expect.stringContaining('deletion disabled'),
+      },
+    });
 
     const postToolUse = guardedCall?.options.hooks.PostToolUse[0].hooks[0];
     await postToolUse({
       hook_event_name: 'PostToolUse',
-      tool_name: 'test',
+      tool_name: 'mcp__gantry__delegate_task',
     });
     await expect(
       declarativePreToolUse({

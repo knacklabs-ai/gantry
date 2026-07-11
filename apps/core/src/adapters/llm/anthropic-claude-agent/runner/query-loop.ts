@@ -75,6 +75,7 @@ import {
   evaluateDeclarativeToolRules,
   RunScopedToolSuccessLedger,
 } from '../../../../runner/tool-gate-core.js';
+import { canonicalGantryToolRuleName } from '../../../../shared/gantry-tool-facades.js';
 import { emitJobToolActivity } from './tool-permission-events.js';
 
 interface RunQueryOptions {
@@ -129,7 +130,7 @@ export async function runQuery(
           return { continue: true as const };
         }
         const denial = evaluateDeclarativeToolRules({
-          toolName: hookInput.tool_name,
+          toolName: canonicalGantryToolRuleName(hookInput.tool_name),
           toolInput: hookInput.tool_input,
           rules: agentInput.toolRules,
           successLedger: toolSuccessLedger,
@@ -389,7 +390,9 @@ export async function runQuery(
                         hookInput.hook_event_name === 'PostToolUse' &&
                         hookInput.tool_name
                       ) {
-                        toolSuccessLedger.recordSuccess(hookInput.tool_name);
+                        toolSuccessLedger.recordSuccess(
+                          canonicalGantryToolRuleName(hookInput.tool_name),
+                        );
                       }
                       return { continue: true as const };
                     },
