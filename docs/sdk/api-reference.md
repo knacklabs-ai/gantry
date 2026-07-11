@@ -1117,10 +1117,17 @@ const openai = new OpenAI({
 });
 ```
 
+- `POST {base}/llm/v1/messages/count_tokens` (Anthropic shape) is also
+  mounted for context-window budgeting, with the same auth, scope, and model
+  rules as the messages route.
 - The API key must carry the `llm:invoke` scope. Missing/invalid key → `401`;
   valid key without the scope → `403`.
 - `model` must be a registered Gantry model alias for the endpoint's response
   family; raw provider model ids are rejected with `400`.
+- An API key may carry an optional `maxTokens` ceiling. Requests whose
+  `max_tokens` / `max_completion_tokens` exceed it are rejected with `400
+  MAX_TOKENS_EXCEEDED` naming the limit — never silently clamped. Keys without
+  the field are unlimited.
 - Client-side tools, structured outputs, `max_tokens`, and thinking/effort
   parameters pass through to the provider unchanged. Provider-hosted execution
   surfaces (Anthropic server tools, remote MCP, containers; OpenAI hosted

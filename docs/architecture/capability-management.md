@@ -325,6 +325,14 @@ message record, survives replay, and wins over the agent's configured default
 for that turn. On the Claude worker path the conversation-level `/thinking`
 command override continues to win over both.
 
+Two spend guards complement the knobs. A per-agent `max_run_tokens` setting
+bounds cumulative normalized usage across a run: the budget is checked at turn
+boundaries and exceeding it terminates the run with an error naming the budget
+and observed total (no mid-turn cutoff). On the direct LLM API, an optional
+per-API-key `maxTokens` ceiling rejects requests whose `max_tokens` /
+`max_completion_tokens` exceed the key's limit with a shaped `400`
+`MAX_TOKENS_EXCEEDED` — requests are never silently clamped.
+
 ## Administration Model
 
 The deterministic ownership rule is:
@@ -370,7 +378,8 @@ API, CLI, and MCP are adapters over the same application services:
 ## Direct LLM API
 
 The Control API exposes provider-shaped raw model calls at
-`POST /llm/v1/messages` and `POST /llm/v1/chat/completions`. Both streaming and
+`POST /llm/v1/messages`, `POST /llm/v1/chat/completions`, and
+`POST /llm/v1/messages/count_tokens`. Both streaming and
 non-streaming responses pass through the Gantry Model Gateway; the control
 route does not receive provider credentials or implement provider
 authentication. These calls do not run an agent loop or grant access to agent
