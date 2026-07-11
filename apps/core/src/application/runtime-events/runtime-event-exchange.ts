@@ -59,7 +59,7 @@ export class RuntimeEventExchange {
     } catch {
       // Wakeups are best-effort; durable consumers recover by cursor polling.
     }
-    notifyWebhookDeliveryIfNeeded(event);
+    notifyWebhookDeliveryReady();
     return event;
   }
 
@@ -96,7 +96,7 @@ export class RuntimeEventExchange {
     } catch {
       // Wakeups are best-effort; durable consumers recover by cursor polling.
     }
-    notifyWebhookDeliveryIfNeeded(result.event);
+    notifyWebhookDeliveryReady();
     return result;
   }
 
@@ -112,15 +112,6 @@ export class RuntimeEventExchange {
       this.notifier,
       normalizeRuntimeEventFilter(filter),
     );
-  }
-}
-
-function notifyWebhookDeliveryIfNeeded(event: RuntimeEvent): void {
-  if (
-    event.webhookId &&
-    (event.responseMode === 'webhook' || event.responseMode === 'both')
-  ) {
-    notifyWebhookDeliveryReady();
   }
 }
 

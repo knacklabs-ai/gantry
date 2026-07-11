@@ -124,7 +124,7 @@ export const openApiRequestSchemas: Record<string, JsonSchema> = {
   createJob: ref('JobCreateRequest'),
   createMemory: ref('MemorySaveRequest'),
   createProviderAccount: ref('ProviderAccountRequest'),
-  createWebhook: ref('WebhookRequest'),
+  createWebhook: ref('WebhookCreateRequest'),
   disableMcpServer: ref('DisableMcpServerRequest'),
   discoverProviderConversations: ref('DiscoverProviderConversationsRequest'),
   enableConversationInstall: ref('ConversationInstallRequest'),
@@ -155,6 +155,6 @@ export const openApiRequestSchemas: Record<string, JsonSchema> = {
   updateExternalIngress: ref('ExternalIngressRequest'),
   updateJob: ref('JobUpdateRequest'),
   updateProviderAccount: ref('ProviderAccountUpdateRequest'),
-  updateWebhook: ref('WebhookRequest'),
+  updateWebhook: ref('WebhookUpdateRequest'),
   waitForExternalIngress: ref('ExternalIngressInvokeRequest'),
 };

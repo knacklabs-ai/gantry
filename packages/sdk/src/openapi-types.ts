@@ -151,7 +151,7 @@ export type DisableConversationInstallResponse = JsonResponse<
   200
 >;
 
-export type WebhookRequest = JsonRequest<'createWebhook'>;
+export type CreateWebhookRequest = JsonRequest<'createWebhook'>;
 export type CreateWebhookResponse = JsonResponse<'createWebhook', 201>;
 export type ListWebhooksResponse = JsonResponse<'listWebhooks', 200>;
 export type UpdateWebhookRequest = JsonRequest<'updateWebhook'>;

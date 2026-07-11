@@ -610,6 +610,40 @@ describe('control OpenAPI documentation', () => {
     expect(
       spec.components.schemas.SendSessionMessageRequest.properties.responseMode,
     ).toEqual({ type: 'string', enum: responseModes });
+    expect(spec.paths['/v1/webhooks']?.post.requestBody).toMatchObject({
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/WebhookCreateRequest' },
+        },
+      },
+    });
+    expect(
+      spec.paths['/v1/webhooks/{webhookId}']?.patch.requestBody,
+    ).toMatchObject({
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/WebhookUpdateRequest' },
+        },
+      },
+    });
+    expect(spec.components.schemas.Webhook).toMatchObject({
+      required: expect.arrayContaining([
+        'eventTypes',
+        'agentId',
+        'sessionId',
+        'jobId',
+      ]),
+      properties: {
+        eventTypes: {
+          type: ['array', 'null'],
+          minItems: 1,
+          uniqueItems: true,
+        },
+        agentId: { type: ['string', 'null'] },
+        sessionId: { type: ['string', 'null'] },
+        jobId: { type: ['string', 'null'] },
+      },
+    });
     expect(spec.components.schemas.SessionMessage).toMatchObject({
       required: [
         'id',

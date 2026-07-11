@@ -102,7 +102,7 @@ describe('RuntimeEventExchange', () => {
     expect(notifier.notifiedEvents).toEqual([event]);
   });
 
-  it('wakes webhook delivery flushes after webhook runtime events commit', async () => {
+  it('wakes webhook delivery flushes after every runtime event commit', async () => {
     const repository = new MemoryRuntimeEventRepository();
     const notifier = new InMemoryRuntimeEventNotifier();
     const exchange = new RuntimeEventExchange(repository, notifier);
@@ -117,11 +117,17 @@ describe('RuntimeEventExchange', () => {
         webhookId: 'wh_1',
         payload: { text: 'done' },
       });
+      await exchange.publish({
+        appId: 'app:test' as never,
+        eventType: RUNTIME_EVENT_TYPES.RUN_COMPLETED,
+        actor: 'runtime',
+        payload: { status: 'completed' },
+      });
     } finally {
       unsubscribe();
     }
 
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it('can co-commit accepted messages and live admission before notifying subscribers', async () => {

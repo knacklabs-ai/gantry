@@ -3449,6 +3449,8 @@ describe('control server runtime hardening', () => {
             name: 'webhook-name',
             url: 'https://example.com/hook',
             secret: 'secret-1',
+            eventTypes: ['run.completed'],
+            agentId: 'agent:one',
           }),
         },
       );
@@ -3457,6 +3459,8 @@ describe('control server runtime hardening', () => {
         expect.objectContaining({
           appId: 'app-one',
           name: 'webhook-name',
+          eventTypes: ['run.completed'],
+          agentId: 'agent:one',
         }),
       );
     } finally {

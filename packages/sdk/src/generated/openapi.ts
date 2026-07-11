@@ -1086,7 +1086,7 @@ export interface paths {
         put?: never;
         /**
          * Create outbound webhook
-         * @description Registers an outbound callback URL for runtime events.
+         * @description Registers an outbound callback URL with optional lifecycle event and subject filters.
          */
         post: operations["createWebhook"];
         delete?: never;
@@ -1114,7 +1114,7 @@ export interface paths {
         head?: never;
         /**
          * Update outbound webhook
-         * @description Updates name, URL, secret, or enabled state.
+         * @description Updates destination, enabled state, or lifecycle event subscription filters.
          */
         patch: operations["updateWebhook"];
         trace?: never;
@@ -2623,6 +2623,10 @@ export interface components {
             /** Format: uri */
             url: string;
             enabled: boolean;
+            eventTypes: ("session.message.inbound" | "session.message.outbound" | "session.message.streaming" | "session.typing" | "session.progress" | "session.compaction.queued" | "session.compaction.running" | "session.compaction.ready" | "session.compaction.degraded" | "session.compaction.failed" | "session.compaction.timeout" | "conversation.message.inbound" | "conversation.message.outbound" | "job.triggered" | "job.run.started" | "job.started" | "job.streaming" | "job.heartbeat" | "job.setup_required" | "job.tool_denied" | "job.tool_activity" | "task.started" | "task.progress" | "task.updated" | "task.notification" | "job.completed" | "job.failed" | "job.run.completed" | "job.run.failed" | "permission.requested" | "permission.allowed" | "permission.denied" | "permission.cancelled" | "permission.persisted" | "permission.resumed" | "permission.final_outcome" | "permission.yolo_denylist_hit" | "interaction.pending" | "credential.capability.updated" | "credential.capability.removed" | "credential.model.updated" | "credential.model.disabled" | "credential.model.used" | "profile.file.read" | "profile.file.updated" | "egress.connect" | "mcp.tool_activity" | "sandbox.blocked" | "run.started" | "run.startup_diagnostic" | "run.failover" | "run.canceled" | "run.completed" | "run.failed" | "run.timeout" | "run.dead_lettered" | "proactive.surfacing.outcome" | "webhook.test")[] | null;
+            agentId: string | null;
+            sessionId: string | null;
+            jobId: string | null;
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */
@@ -2631,12 +2635,27 @@ export interface components {
         WebhookListResponse: {
             webhooks: components["schemas"]["Webhook"][];
         };
-        WebhookRequest: {
+        WebhookCreateRequest: {
             name: string;
             /** Format: uri */
             url: string;
             secret?: string;
             enabled?: boolean;
+            eventTypes?: ("session.message.inbound" | "session.message.outbound" | "session.message.streaming" | "session.typing" | "session.progress" | "session.compaction.queued" | "session.compaction.running" | "session.compaction.ready" | "session.compaction.degraded" | "session.compaction.failed" | "session.compaction.timeout" | "conversation.message.inbound" | "conversation.message.outbound" | "job.triggered" | "job.run.started" | "job.started" | "job.streaming" | "job.heartbeat" | "job.setup_required" | "job.tool_denied" | "job.tool_activity" | "task.started" | "task.progress" | "task.updated" | "task.notification" | "job.completed" | "job.failed" | "job.run.completed" | "job.run.failed" | "permission.requested" | "permission.allowed" | "permission.denied" | "permission.cancelled" | "permission.persisted" | "permission.resumed" | "permission.final_outcome" | "permission.yolo_denylist_hit" | "interaction.pending" | "credential.capability.updated" | "credential.capability.removed" | "credential.model.updated" | "credential.model.disabled" | "credential.model.used" | "profile.file.read" | "profile.file.updated" | "egress.connect" | "mcp.tool_activity" | "sandbox.blocked" | "run.started" | "run.startup_diagnostic" | "run.failover" | "run.canceled" | "run.completed" | "run.failed" | "run.timeout" | "run.dead_lettered" | "proactive.surfacing.outcome" | "webhook.test")[] | null;
+            agentId?: string | null;
+            sessionId?: string | null;
+            jobId?: string | null;
+        };
+        WebhookUpdateRequest: {
+            name?: string;
+            /** Format: uri */
+            url?: string;
+            secret?: string;
+            enabled?: boolean;
+            eventTypes?: ("session.message.inbound" | "session.message.outbound" | "session.message.streaming" | "session.typing" | "session.progress" | "session.compaction.queued" | "session.compaction.running" | "session.compaction.ready" | "session.compaction.degraded" | "session.compaction.failed" | "session.compaction.timeout" | "conversation.message.inbound" | "conversation.message.outbound" | "job.triggered" | "job.run.started" | "job.started" | "job.streaming" | "job.heartbeat" | "job.setup_required" | "job.tool_denied" | "job.tool_activity" | "task.started" | "task.progress" | "task.updated" | "task.notification" | "job.completed" | "job.failed" | "job.run.completed" | "job.run.failed" | "permission.requested" | "permission.allowed" | "permission.denied" | "permission.cancelled" | "permission.persisted" | "permission.resumed" | "permission.final_outcome" | "permission.yolo_denylist_hit" | "interaction.pending" | "credential.capability.updated" | "credential.capability.removed" | "credential.model.updated" | "credential.model.disabled" | "credential.model.used" | "profile.file.read" | "profile.file.updated" | "egress.connect" | "mcp.tool_activity" | "sandbox.blocked" | "run.started" | "run.startup_diagnostic" | "run.failover" | "run.canceled" | "run.completed" | "run.failed" | "run.timeout" | "run.dead_lettered" | "proactive.surfacing.outcome" | "webhook.test")[] | null;
+            agentId?: string | null;
+            sessionId?: string | null;
+            jobId?: string | null;
         };
         WebhookTestResponse: {
             accepted: boolean;
@@ -5544,7 +5563,7 @@ export interface operations {
         /** @description JSON request payload. */
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WebhookRequest"];
+                "application/json": components["schemas"]["WebhookCreateRequest"];
             };
         };
         responses: {
@@ -5605,7 +5624,7 @@ export interface operations {
         /** @description JSON request payload. */
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WebhookRequest"];
+                "application/json": components["schemas"]["WebhookUpdateRequest"];
             };
         };
         responses: {

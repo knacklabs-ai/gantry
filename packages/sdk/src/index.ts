@@ -530,7 +530,7 @@ export class GantryClient {
   };
 
   readonly webhooks = {
-    register: (input: OpenApi.WebhookRequest) =>
+    register: (input: OpenApi.CreateWebhookRequest) =>
       this.transport.request<OpenApi.CreateWebhookResponse>({
         method: 'POST',
         path: '/v1/webhooks',
