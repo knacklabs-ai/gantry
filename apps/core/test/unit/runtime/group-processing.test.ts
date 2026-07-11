@@ -1404,7 +1404,7 @@ describe('createGroupProcessor', () => {
       const usage = {
         ...makeUsage(12, 4),
         model: 'sonnet',
-        provider: 'anthropic',
+        provider: 'test-provider',
       };
       const publishRuntimeEvent = vi.fn().mockResolvedValue(undefined);
       const { deps } = setupHappyPath({
@@ -1472,7 +1472,7 @@ describe('createGroupProcessor', () => {
           usage: {
             ...makeUsage(12, 4),
             model: 'sonnet',
-            provider: 'anthropic',
+            provider: 'test-provider',
           },
         },
       });
