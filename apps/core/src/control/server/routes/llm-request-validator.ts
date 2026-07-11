@@ -1,11 +1,19 @@
-export type LlmPassthroughEndpoint = 'messages' | 'chat_completions';
+export type LlmPassthroughEndpoint =
+  | 'messages'
+  | 'count_tokens'
+  | 'chat_completions';
 
 export type UnsupportedLlmRequestField = {
   field: string;
   message: string;
+  code?: 'MAX_TOKENS_EXCEEDED';
+  limit?: number;
+  requested?: number;
   toolType?: string;
   value?: string;
 };
+
+const OUTPUT_TOKEN_FIELDS = ['max_tokens', 'max_completion_tokens'] as const;
 
 const MESSAGES_PROVIDER_EXECUTION_FIELDS = ['mcp_servers', 'container'];
 const CHAT_HOSTED_TOOL_FIELDS = [
@@ -30,10 +38,54 @@ const SERVER_EXECUTION_BETA =
 export function findUnsupportedLlmRequestField(
   endpoint: LlmPassthroughEndpoint,
   body: Record<string, unknown>,
+  maxTokens?: number,
 ): UnsupportedLlmRequestField | null {
-  return endpoint === 'messages'
+  const tokenLimitViolation =
+    endpoint === 'count_tokens'
+      ? null
+      : findTokenLimitViolation(endpoint, body, maxTokens);
+  if (tokenLimitViolation) return tokenLimitViolation;
+  return endpoint === 'messages' || endpoint === 'count_tokens'
     ? findUnsupportedMessagesField(body)
     : findUnsupportedChatField(body);
+}
+
+function findTokenLimitViolation(
+  endpoint: Exclude<LlmPassthroughEndpoint, 'count_tokens'>,
+  body: Record<string, unknown>,
+  maxTokens: number | undefined,
+): UnsupportedLlmRequestField | null {
+  if (maxTokens === undefined) return null;
+  let hasDeclaredLimit = false;
+  for (const field of OUTPUT_TOKEN_FIELDS) {
+    const declared = body[field];
+    if (typeof declared === 'number') {
+      hasDeclaredLimit = true;
+      const choices =
+        endpoint === 'chat_completions' && typeof body.n === 'number'
+          ? body.n
+          : 1;
+      const requested = declared * choices;
+      if (requested <= maxTokens) continue;
+      return {
+        code: 'MAX_TOKENS_EXCEEDED',
+        field,
+        limit: maxTokens,
+        requested,
+        message:
+          choices === 1
+            ? `Request field "${field}" value ${requested} exceeds this API key's output-token limit of ${maxTokens}.`
+            : `Request field "${field}" value ${declared} with n=${choices} requests ${requested} output tokens, exceeding this API key's output-token limit of ${maxTokens}.`,
+      };
+    }
+  }
+  if (hasDeclaredLimit) return null;
+  return {
+    code: 'MAX_TOKENS_EXCEEDED',
+    field: 'max_tokens',
+    limit: maxTokens,
+    message: `This API key requires an explicit "max_tokens" (or "max_completion_tokens") at or below its output-token limit of ${maxTokens}.`,
+  };
 }
 
 function findUnsupportedMessagesField(

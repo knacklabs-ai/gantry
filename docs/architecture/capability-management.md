@@ -294,6 +294,45 @@ task lifecycle remains available, including delegation to inline or worker
 agents. Inline scheduled runs use the existing job persistence, heartbeat, and
 failover paths.
 
+Inline loops are turn-bounded: the optional per-agent `max_turns` setting caps
+provider-loop iterations, and when unset a built-in default cap applies
+(`DEFAULT_INLINE_AGENT_MAX_TURNS` in
+`apps/core/src/adapters/llm/inline-lane-dispatcher.ts`). Hitting the cap
+produces a terminal error naming the cap. Session messages to inline agents may
+carry a per-message `response_schema` (JSON Schema) enforced by the selected
+lane; see the Direct LLM API section for the passthrough equivalent.
+
+### Agent control knobs
+
+Per-agent model-control settings apply on every runtime tier and are validated
+against the model catalog's capability metadata at settings parse/apply —
+a knob the selected model cannot honor is a configuration error naming the
+field and model, never a silent no-op:
+
+- `effort` (`low|medium|high|xhigh|max`) maps to the provider's
+  effort/reasoning parameter on the Claude and DeepAgents lanes, worker and
+  inline alike.
+- `thinking` (`off`, `on`, or `{mode: on, budget_tokens: <positive int>}`)
+  maps to provider thinking configuration where the model supports it.
+- `max_output_tokens` (positive int) sets the per-call output cap on
+  DeepAgents-engine agents. Claude-engine agents reject the field at
+  settings-apply — the claude-agent-sdk has no per-query output-token option;
+  `effort` is the Claude-side spend lever.
+
+Session message sends accept the same three fields (`effort`, `thinking`,
+`max_output_tokens`) as per-request overrides. An override is persisted on the
+message record, survives replay, and wins over the agent's configured default
+for that turn. On the Claude worker path the conversation-level `/thinking`
+command override continues to win over both.
+
+Two spend guards complement the knobs. A per-agent `max_run_tokens` setting
+bounds cumulative normalized usage across a run: the budget is checked at turn
+boundaries and exceeding it terminates the run with an error naming the budget
+and observed total (no mid-turn cutoff). On the direct LLM API, an optional
+per-API-key `maxTokens` ceiling rejects requests whose `max_tokens` /
+`max_completion_tokens` exceed the key's limit with a shaped `400`
+`MAX_TOKENS_EXCEEDED` — requests are never silently clamped.
+
 ## Administration Model
 
 The deterministic ownership rule is:
@@ -339,7 +378,8 @@ API, CLI, and MCP are adapters over the same application services:
 ## Direct LLM API
 
 The Control API exposes provider-shaped raw model calls at
-`POST /llm/v1/messages` and `POST /llm/v1/chat/completions`. Both streaming and
+`POST /llm/v1/messages`, `POST /llm/v1/chat/completions`, and
+`POST /llm/v1/messages/count_tokens`. Both streaming and
 non-streaming responses pass through the Gantry Model Gateway; the control
 route does not receive provider credentials or implement provider
 authentication. These calls do not run an agent loop or grant access to agent

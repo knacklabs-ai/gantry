@@ -143,6 +143,19 @@ function makeMessage(overrides: Partial<NewMessage> = {}): NewMessage {
   };
 }
 
+function makeUsage(inputTokens: number, outputTokens: number) {
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalBillableInputTokens: inputTokens,
+    cacheProvider: 'none' as const,
+    cacheStatus: 'unsupported' as const,
+    at: new Date(0).toISOString(),
+  };
+}
+
 function makePendingMessages(
   count: number,
   content: (index: number) => string,
@@ -679,6 +692,76 @@ describe('createGroupProcessor', () => {
   // =======================================================================
 
   describe('successful agent run', () => {
+    it('terminates an inline run when accumulated usage exceeds max_run_tokens at a turn boundary', async () => {
+      mockGetRuntimeSettingsForConfig.mockReturnValue({
+        memory: {
+          enabled: true,
+          embeddings: { enabled: false, provider: 'disabled' },
+        },
+        agents: { 'test-group': { runtime: 'inline', maxRunTokens: 10 } },
+      });
+      const { deps } = setupHappyPath();
+      deps.queue.stopGroup = vi.fn(() => true);
+      mockSpawnAgent.mockImplementation(
+        async (_group, _input, _register, onOutput) => {
+          await onOutput?.({
+            status: 'success',
+            result: null,
+            usage: makeUsage(6, 4),
+            usageEventId: 'turn-1',
+          });
+          await onOutput?.({
+            status: 'success',
+            result: null,
+            usage: makeUsage(6, 4),
+            usageEventId: 'turn-1',
+          });
+          const overBudget: AgentOutput = {
+            status: 'success',
+            result: null,
+            usage: makeUsage(1, 0),
+            usageEventId: 'turn-2',
+          };
+          await onOutput?.(overBudget);
+          return overBudget;
+        },
+      );
+
+      await createGroupProcessor(deps).processGroupMessages('group1@g.us');
+
+      expect(deps.queue.stopGroup).toHaveBeenCalledWith('group1@g.us');
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error:
+            'Agent run token budget exceeded: max_run_tokens is 10; observed total is 11 tokens.',
+        }),
+        'Agent runner error',
+      );
+      expect(mockSpawnAgent).toHaveBeenCalledOnce();
+    });
+
+    it('keeps accumulated usage unlimited when max_run_tokens is unset', async () => {
+      const { deps } = setupHappyPath({
+        agentOutput: {
+          status: 'success',
+          result: 'done',
+          usage: makeUsage(1_000_000, 1_000_000),
+          usageEventId: 'turn-unlimited',
+        },
+      });
+      deps.queue.stopGroup = vi.fn(() => true);
+
+      await createGroupProcessor(deps).processGroupMessages('group1@g.us');
+
+      expect(deps.queue.stopGroup).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.stringContaining('max_run_tokens'),
+        }),
+        'Agent runner error',
+      );
+    });
+
     it('derives the turn response schema from the drained message', async () => {
       const responseSchema = { type: 'object', required: ['answer'] };
       const { deps } = setupHappyPath({
@@ -789,6 +872,52 @@ describe('createGroupProcessor', () => {
         'group1@g.us',
       );
       expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('isolates per-request controls to one turn and threads their effective field names', async () => {
+      const controls = {
+        effort: 'high' as const,
+        thinking: { mode: 'on' as const, budgetTokens: 2048 },
+        maxOutputTokens: 4096,
+      };
+      const messages = [
+        makeMessage({
+          id: '1',
+          timestamp: '1',
+          content: 'controlled',
+          agentControls: controls,
+        }),
+        makeMessage({ id: '2', timestamp: '2', content: 'plain follow-up' }),
+      ];
+      const { deps } = setupHappyPath({ messages });
+      let cursor = '0';
+      deps.getCursor = vi.fn(() => cursor);
+      deps.setCursor = vi.fn((_queueJid, nextCursor) => {
+        cursor = nextCursor;
+      });
+      mockGetMessagesSince.mockImplementation((_jid, sinceCursor) => {
+        const afterTimestamp = decodeGroupMessageCursor(
+          String(sinceCursor),
+        ).timestamp;
+        return messages.filter(
+          (message) => Number(message.timestamp) > Number(afterTimestamp),
+        );
+      });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+      await processGroupMessages('group1@g.us');
+
+      expect(mockSpawnAgent.mock.calls[0][1]).toMatchObject({
+        effort: 'high',
+        configuredThinking: { mode: 'on', budgetTokens: 2048 },
+        maxOutputTokens: 4096,
+      });
+      expect(mockSpawnAgent.mock.calls[1][1].effort).toBeUndefined();
+      expect(
+        mockSpawnAgent.mock.calls[1][1].configuredThinking,
+      ).toBeUndefined();
+      expect(mockSpawnAgent.mock.calls[1][1].maxOutputTokens).toBeUndefined();
     });
 
     it('keeps plain message turns schema-less', async () => {

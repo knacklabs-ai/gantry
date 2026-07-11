@@ -652,6 +652,13 @@
       "when": 1777327800000,
       "tag": "0095_memory_review_content_fingerprint",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1777331400000,
+      "tag": "0096_lifecycle_webhook_subscriptions",
+      "breakpoints": true
     }
   ]
 }

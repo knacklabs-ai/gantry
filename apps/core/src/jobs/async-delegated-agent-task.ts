@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AgentFailureMetadata,
   type AsyncTaskCreateInput,
   type AsyncTaskRecord,
   type AsyncTaskRepository,
@@ -29,8 +30,12 @@ const ASYNC_TASK_HEARTBEAT_MS = 15_000;
 const ASYNC_TASK_WAKE_FALLBACK_MS = 15_000;
 
 class DelegatedChildFailureError extends Error {
-  constructor(readonly subtasks: string) {
-    super('Delegated child task failed.');
+  constructor(
+    readonly subtasks: string,
+    readonly failure: AgentFailureMetadata,
+    readonly terminalChildren: ReturnType<typeof toPublicAsyncTaskDto>[],
+  ) {
+    super(failure.attemptedAction);
   }
 }
 
@@ -346,6 +351,12 @@ export async function executeDelegatedAgentTask(input: {
         });
       },
     });
+    if (result.failure) {
+      throw Object.assign(
+        new Error(result.errorSummary ?? 'Delegated agent run failed.'),
+        { failure: result.failure },
+      );
+    }
     await transitionPrivateCorrelation(repository, task, {
       update: (privateCorrelationJson) => ({
         ...privateCorrelationJson,
@@ -364,7 +375,15 @@ export async function executeDelegatedAgentTask(input: {
       waitForTaskChange,
     });
     if (childResult.hasFailure) {
-      throw new DelegatedChildFailureError(childResult.summary);
+      throw new DelegatedChildFailureError(
+        childResult.summary,
+        {
+          type: 'child_task',
+          attemptedAction: task.summary ?? 'Complete delegated task.',
+          partialResult: result.outputSummary ?? null,
+        },
+        childResult.terminalChildren,
+      );
     }
     await finishDelegatedAgentTask(repository, task, {
       status: 'completed',
@@ -372,6 +391,7 @@ export async function executeDelegatedAgentTask(input: {
       error: result.errorSummary ?? '',
       subtasks: childResult.summary,
       needsAttention: 'none',
+      terminalChildren: childResult.terminalChildren,
     });
   } catch (err) {
     const aborted = controller.signal.aborted;
@@ -393,6 +413,14 @@ export async function executeDelegatedAgentTask(input: {
               ? '0 completed, 0 failed, 1 cancelled'
               : '0 completed, 1 failed, 0 cancelled',
       needsAttention: aborted ? 'none' : errorMessage(err),
+      failure:
+        err instanceof DelegatedChildFailureError
+          ? err.failure
+          : failureMetadata(err, task, { aborted, timedOut }),
+      terminalChildren:
+        err instanceof DelegatedChildFailureError
+          ? err.terminalChildren
+          : undefined,
     });
   } finally {
     clearInterval(heartbeat);
@@ -409,9 +437,12 @@ async function finishDelegatedAgentTask(
     error: string;
     subtasks: string;
     needsAttention: string;
+    failure?: AgentFailureMetadata;
+    terminalChildren?: ReturnType<typeof toPublicAsyncTaskDto>[];
   },
 ) {
   const now = nowIso();
+  const latest = await repository.getTask(task.id);
   const updated = await repository.transitionTask({
     taskId: task.id,
     leaseToken: task.leaseToken,
@@ -419,6 +450,13 @@ async function finishDelegatedAgentTask(
     status: input.status,
     now,
     terminalAt: now,
+    privateCorrelationJson: {
+      ...(latest?.privateCorrelationJson ?? task.privateCorrelationJson),
+      ...(input.failure ? { failure: input.failure } : {}),
+      ...(input.terminalChildren
+        ? { terminalChildren: input.terminalChildren }
+        : {}),
+    },
     outputSummary: truncate(input.output),
     errorSummary: truncate(input.error),
     receiptJson: {
@@ -432,7 +470,6 @@ async function finishDelegatedAgentTask(
   });
   if (updated) notifyAsyncTaskChange(repository);
 }
-
 async function waitForLinkedChildTasks(
   repository: AsyncTaskRepository,
   parent: AsyncTaskRecord,
@@ -443,15 +480,44 @@ async function waitForLinkedChildTasks(
       options: { signal: AbortSignal; timeoutMs: number },
     ) => Promise<void>;
   },
-): Promise<{ summary: string; hasFailure: boolean }> {
+): Promise<{
+  summary: string;
+  hasFailure: boolean;
+  terminalChildren: ReturnType<typeof toPublicAsyncTaskDto>[];
+}> {
   while (!input.signal.aborted) {
     const counts = await linkedChildTaskCounts(repository, parent);
-    if (activeChildCount(counts) === 0) return childTaskResult(counts);
+    if (activeChildCount(counts) === 0) {
+      const terminalChildren = await linkedTerminalChildTasks(
+        repository,
+        parent,
+      );
+      return childTaskResult(counts, terminalChildren);
+    }
     await waitForChildTaskWakeup(parent, input);
   }
   throw new Error('cancelled');
 }
-
+async function linkedTerminalChildTasks(
+  repository: AsyncTaskRepository,
+  parent: AsyncTaskRecord,
+): Promise<ReturnType<typeof toPublicAsyncTaskDto>[]> {
+  const failures = await repository.listTasks({
+    appId: parent.appId,
+    parentTaskId: parent.id,
+    statuses: ['failed', 'timed_out', 'cancelled'],
+    limit: 100,
+    order: 'oldest_first',
+  });
+  const completed = await repository.listTasks({
+    appId: parent.appId,
+    parentTaskId: parent.id,
+    statuses: ['completed'],
+    limit: Math.max(1, 100 - failures.length),
+    order: 'oldest_first',
+  });
+  return [...failures, ...completed].slice(0, 100).map(toPublicAsyncTaskDto);
+}
 async function waitForChildTaskWakeup(
   parent: AsyncTaskRecord,
   input: {
@@ -481,7 +547,6 @@ async function waitForChildTaskWakeup(
     );
   });
 }
-
 async function linkedChildTaskCounts(
   repository: AsyncTaskRepository,
   parent: AsyncTaskRecord,
@@ -491,7 +556,6 @@ async function linkedChildTaskCounts(
     parentTaskId: parent.id,
   });
 }
-
 function activeChildCount(counts: AsyncTaskStatusCount[]): number {
   return counts.reduce(
     (total, entry) =>
@@ -501,17 +565,19 @@ function activeChildCount(counts: AsyncTaskStatusCount[]): number {
     0,
   );
 }
-
 function statusCount(
   counts: AsyncTaskStatusCount[],
   status: AsyncTaskRecord['status'],
 ): number {
   return counts.find((entry) => entry.status === status)?.count ?? 0;
 }
-
-function childTaskResult(counts: AsyncTaskStatusCount[]): {
+function childTaskResult(
+  counts: AsyncTaskStatusCount[],
+  terminalChildren: ReturnType<typeof toPublicAsyncTaskDto>[],
+): {
   summary: string;
   hasFailure: boolean;
+  terminalChildren: ReturnType<typeof toPublicAsyncTaskDto>[];
 } {
   const completed = 1 + statusCount(counts, 'completed');
   const failed =
@@ -520,9 +586,27 @@ function childTaskResult(counts: AsyncTaskStatusCount[]): {
   return {
     summary: `${completed} completed, ${failed} failed, ${cancelled} cancelled`,
     hasFailure: failed > 0 || cancelled > 0,
+    terminalChildren,
   };
 }
-
+function failureMetadata(
+  error: unknown,
+  task: AsyncTaskRecord,
+  state: { aborted: boolean; timedOut: boolean },
+): AgentFailureMetadata {
+  const preserved = isRecordValue(error) ? error.failure : undefined;
+  if (isRecordValue(preserved)) {
+    return preserved as unknown as AgentFailureMetadata;
+  }
+  return {
+    type: state.aborted
+      ? 'cancelled'
+      : state.timedOut
+        ? 'timeout'
+        : 'execution',
+    attemptedAction: task.summary ?? 'Complete delegated task.',
+  };
+}
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }

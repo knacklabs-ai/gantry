@@ -214,6 +214,12 @@ export async function processPermissionInteractionIpc(input: {
         responseNonce: input.request.responseNonce ?? null,
       },
     });
+    await publishPendingInteractionRuntimeEvent(
+      input.deps,
+      input.request,
+      'permission',
+      input.sourceAgentFolder,
+    );
     await publishPermissionRuntimeEvent(input.deps, input.request, {
       eventType: RUNTIME_EVENT_TYPES.PERMISSION_REQUESTED,
       payload: requestedContext,
@@ -688,6 +694,36 @@ async function publishPermissionRuntimeEvent(
   }
 }
 
+export async function publishPendingInteractionRuntimeEvent(
+  deps: IpcDeps,
+  request: PermissionApprovalRequest | UserQuestionRequest,
+  kind: 'permission' | 'question',
+  sourceAgentFolder: string,
+): Promise<void> {
+  if (!deps.publishRuntimeEvent) return;
+  try {
+    await deps.publishRuntimeEvent({
+      appId: (request.appId ?? 'default') as never,
+      agentId: request.agentId as never,
+      runId: request.runId as never,
+      jobId: request.jobId as never,
+      conversationId: request.targetJid as never,
+      threadId: request.threadId as never,
+      eventType: RUNTIME_EVENT_TYPES.INTERACTION_PENDING,
+      actor: 'interaction',
+      correlationId: request.requestId,
+      payload: {
+        kind,
+        requestId: request.requestId,
+        sourceAgentFolder,
+        status: 'pending',
+      },
+    });
+  } catch {
+    // Durable interaction recording succeeded; wakeup telemetry is best-effort.
+  }
+}
+
 function pathForGroupIpc(
   ipcBaseDir: string,
   sourceAgentFolder: string,
@@ -732,6 +768,12 @@ export async function processUserQuestionInteractionIpc(input: {
           ) ?? null,
       },
     });
+    await publishPendingInteractionRuntimeEvent(
+      input.deps,
+      input.request,
+      'question',
+      input.sourceAgentFolder,
+    );
     await assertActiveScheduledQuestionLease(input);
     const response = await processUserQuestionIpcRequest(input.request, {
       requestUserAnswer: input.deps.requestUserAnswer,

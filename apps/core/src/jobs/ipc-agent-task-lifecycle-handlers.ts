@@ -417,7 +417,6 @@ const taskGetHandler: TaskHandler = async (context) => {
   const tasks = taskBackend(context, service, scopedTaskOwner, parentTask);
   respondTaskLifecycleResult(context, await tasks.task_get({ taskId }));
 };
-
 const taskListHandler: TaskHandler = async (context) => {
   const { reject } = responder(context);
   const scope = taskScope(context);
@@ -442,7 +441,6 @@ const taskListHandler: TaskHandler = async (context) => {
   const tasks = taskBackend(context, service, scopedTaskOwner, parentTask);
   respondTaskLifecycleResult(context, await tasks.task_list({}));
 };
-
 const taskCancelHandler: TaskHandler = async (context) => {
   const { reject } = responder(context);
   const scope = taskScope(context);
@@ -474,7 +472,6 @@ const taskCancelHandler: TaskHandler = async (context) => {
   const tasks = taskBackend(context, service, scopedTaskOwner, parentTask);
   respondTaskLifecycleResult(context, await tasks.task_cancel({ taskId }));
 };
-
 const delegateTaskHandler: TaskHandler = async (context) => {
   const { reject } = responder(context);
   const scope = taskScope(context);
@@ -608,7 +605,11 @@ const delegateTaskHandler: TaskHandler = async (context) => {
       );
       if (processHandlePersisted) await processHandlePersisted;
       if (output.status === 'error') {
-        throw new Error(output.error ?? 'Delegated agent run failed.');
+        return AsyncCommandTaskService.delegatedAgentFailureResult(
+          output,
+          latestResult,
+          task.summary ?? 'Complete delegated task.',
+        );
       }
       return {
         outputSummary:
@@ -628,7 +629,6 @@ const delegateTaskHandler: TaskHandler = async (context) => {
   });
   respondTaskLifecycleResult(context, sharedResult);
 };
-
 const taskMessageHandler: TaskHandler = async (context) => {
   const { reject } = responder(context);
   const scope = taskScope(context);
@@ -688,7 +688,6 @@ const taskMessageHandler: TaskHandler = async (context) => {
     await tasks.task_message({ taskId, message }),
   );
 };
-
 export const agentTaskLifecycleHandlers: Record<string, TaskHandler> = {
   async_run_command: asyncRunCommandHandler,
   delegate_task: delegateTaskHandler,

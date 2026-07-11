@@ -10,6 +10,7 @@ import {
 } from '../domain/ports/async-tasks.js';
 import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
 import { readAsyncCommandSandboxPolicy } from '../runtime/async-command-sandbox-policy.js';
+import type { McpCompatibleToolError } from '../runtime/core-tools/registry.js';
 import {
   createAsyncMcpTask,
   enqueueAsyncMcpTask,
@@ -236,7 +237,10 @@ function mcpCallToolHandler(
         toolName,
         arguments: callInput.arguments ?? {},
       });
-      acceptData(`MCP tool ${serverName}.${toolName} completed.`, result);
+      acceptData(
+        `MCP tool ${serverName}.${toolName} completed.`,
+        preserveRemoteMcpError(result),
+      );
     } catch (err) {
       reject(
         err instanceof Error ? err.message : 'MCP tool call failed.',
@@ -244,6 +248,61 @@ function mcpCallToolHandler(
       );
     }
   };
+}
+
+function preserveRemoteMcpError(result: unknown): unknown {
+  if (!isRemoteMcpErrorResult(result)) return result;
+  return {
+    ...result,
+    error: remoteMcpError(result),
+  };
+}
+
+function remoteMcpError(
+  result: Record<string, unknown>,
+): McpCompatibleToolError {
+  const error = result.error;
+  if (
+    error &&
+    typeof error === 'object' &&
+    !Array.isArray(error) &&
+    ['transient', 'validation', 'business', 'permission'].includes(
+      String((error as Record<string, unknown>).category),
+    ) &&
+    typeof (error as Record<string, unknown>).isRetryable === 'boolean' &&
+    typeof (error as Record<string, unknown>).message === 'string'
+  ) {
+    return error as McpCompatibleToolError;
+  }
+  return {
+    category: 'business',
+    isRetryable: false,
+    message: remoteMcpErrorMessage(result),
+  };
+}
+
+function isRemoteMcpErrorResult(
+  result: unknown,
+): result is Record<string, unknown> {
+  return (
+    result !== null &&
+    typeof result === 'object' &&
+    !Array.isArray(result) &&
+    (result as Record<string, unknown>).isError === true
+  );
+}
+
+function remoteMcpErrorMessage(result: Record<string, unknown>): string {
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content.find(
+    (item): item is { type: 'text'; text: string } =>
+      item !== null &&
+      typeof item === 'object' &&
+      !Array.isArray(item) &&
+      (item as Record<string, unknown>).type === 'text' &&
+      typeof (item as Record<string, unknown>).text === 'string',
+  )?.text;
+  return text?.trim().slice(0, 2_000) || 'Remote MCP tool returned an error.';
 }
 
 function asyncMcpCallToolHandler(

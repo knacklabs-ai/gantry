@@ -36,7 +36,11 @@ import {
   ensureWorkspaceIpcLayout,
   getHostAgentRunnerDistDir,
 } from './agent-spawn-layout.js';
-import { AgentInput, HostRuntimeContext } from './agent-spawn-types.js';
+import {
+  AgentInput,
+  type AgentOutput,
+  HostRuntimeContext,
+} from './agent-spawn-types.js';
 import { resolveSpawnModel } from './agent-spawn-model-resolution.js';
 import { compileSpawnSystemPrompt } from './agent-spawn-prompt.js';
 import {
@@ -57,6 +61,65 @@ export interface HostRuntimeCredentialEnvOptions {
     AgentInput,
     'appId' | 'agentId' | 'runId' | 'jobId' | 'chatJid' | 'threadId'
   >;
+}
+
+export function getConfiguredAgentMaxRunTokens(
+  agentFolder: string,
+): number | undefined {
+  return getRuntimeSettingsForConfig().agents?.[agentFolder]?.maxRunTokens;
+}
+
+export function createConfiguredRunTokenBudget(agentFolder: string) {
+  let maxRunTokens: number | undefined;
+  let settingsRead = false;
+  const seenUsageEventIds = new Set<string>();
+  const seenUsage = new WeakSet<object>();
+  let observedTokens = 0;
+  let failure: AgentOutput | undefined;
+  return {
+    get exceeded() {
+      return failure !== undefined;
+    },
+    enforce(output: AgentOutput): AgentOutput {
+      if (failure) return failure;
+      if (!output.usage) return output;
+      if (!settingsRead) {
+        maxRunTokens = getConfiguredAgentMaxRunTokens(agentFolder);
+        settingsRead = true;
+      }
+      const duplicate = output.usageEventId
+        ? seenUsageEventIds.has(output.usageEventId)
+        : seenUsage.has(output.usage);
+      if (duplicate) return output;
+      if (output.usageEventId) seenUsageEventIds.add(output.usageEventId);
+      else seenUsage.add(output.usage);
+      observedTokens += output.usage.inputTokens + output.usage.outputTokens;
+      if (maxRunTokens === undefined || observedTokens <= maxRunTokens)
+        return output;
+      failure = {
+        status: 'error',
+        result: null,
+        error: `Agent run token budget exceeded: max_run_tokens is ${maxRunTokens}; observed total is ${observedTokens} tokens.`,
+      };
+      return failure;
+    },
+  };
+}
+
+export function withControls(
+  input: AgentInput,
+  defaults?: {
+    effort?: AgentInput['effort'];
+    thinking?: AgentInput['configuredThinking'];
+    maxOutputTokens?: number;
+  },
+): AgentInput {
+  return {
+    ...input,
+    effort: input.effort ?? defaults?.effort,
+    configuredThinking: input.configuredThinking ?? defaults?.thinking,
+    maxOutputTokens: input.maxOutputTokens ?? defaults?.maxOutputTokens,
+  };
 }
 
 export async function prepareInlineAgentHostContext(
@@ -92,6 +155,10 @@ export async function prepareInlineAgentHostContext(
         measureAsync: async (_name, fn) => fn(),
       })
     : undefined;
+  const effectiveInput = withControls(
+    input,
+    runtimeSettings.agents?.[group.folder],
+  );
   return {
     resolvedModel,
     compiledSystemPrompt,
@@ -100,7 +167,9 @@ export async function prepareInlineAgentHostContext(
     idleTimeoutMs: IDLE_TIMEOUT,
     sandboxProvider: runtimeSettings.runtime.sandbox.provider,
     maxTurns: runtimeSettings.agents?.[group.folder]?.maxTurns,
-    effort: runtimeSettings.agents?.[group.folder]?.effort,
+    effort: effectiveInput.effort,
+    configuredThinking: effectiveInput.configuredThinking,
+    maxOutputTokens: effectiveInput.maxOutputTokens,
   };
 }
 

@@ -226,8 +226,25 @@ function renderConfiguredAgentsYaml(
     if (agent.maxTurns !== undefined) {
       lines.push(`    max_turns: ${agent.maxTurns}`);
     }
+    if (agent.maxRunTokens !== undefined) {
+      lines.push(`    max_run_tokens: ${agent.maxRunTokens}`);
+    }
     if (agent.effort !== undefined) {
       lines.push(`    effort: ${quoteYamlString(agent.effort)}`);
+    }
+    if (agent.thinking !== undefined) {
+      if (agent.thinking.budgetTokens === undefined) {
+        lines.push(`    thinking: ${agent.thinking.mode}`);
+      } else {
+        lines.push(
+          '    thinking:',
+          '      mode: on',
+          `      budget_tokens: ${agent.thinking.budgetTokens}`,
+        );
+      }
+    }
+    if (agent.maxOutputTokens !== undefined) {
+      lines.push(`    max_output_tokens: ${agent.maxOutputTokens}`);
     }
     if (agent.model) {
       lines.push(`    model: ${quoteYamlString(agent.model)}`);

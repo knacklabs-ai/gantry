@@ -863,6 +863,33 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
     });
   });
 
+  it('preserves structured remote MCP failures for the model', async () => {
+    const fixture = createMcpFixture();
+    const remoteResult = {
+      content: [{ type: 'text', text: 'Remote validation failed.' }],
+      structuredContent: { field: 'account_id', reason: 'missing' },
+      isError: true,
+      error: {
+        category: 'business',
+        isRetryable: false,
+        message: 'Remote validation failed.',
+      },
+    };
+
+    const result = await runMcpFixture(
+      fixture,
+      'mcp_call_tool',
+      { serverName: 'crm', toolName: 'lookup' },
+      { TEST_MCP_TASK_RESPONSE_DATA: JSON.stringify(remoteResult) },
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const record = JSON.parse(fs.readFileSync(fixture.resultPath, 'utf-8'));
+    expect(record.result).toMatchObject({
+      ...remoteResult,
+    });
+  });
+
   it('writes MCP tool detail requests through IPC without execution arguments', async () => {
     const fixture = createMcpFixture();
 

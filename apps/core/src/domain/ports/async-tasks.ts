@@ -22,6 +22,18 @@ export interface AsyncTaskReceipt {
   needsAttention: string;
 }
 
+export type AgentFailureType =
+  | 'execution'
+  | 'timeout'
+  | 'cancelled'
+  | 'child_task';
+
+export interface AgentFailureMetadata {
+  type: AgentFailureType;
+  attemptedAction: string;
+  partialResult?: string | null;
+}
+
 export interface AsyncTaskRecord {
   id: string;
   appId: string;
@@ -56,6 +68,8 @@ export interface PublicAsyncTaskDto {
   summary?: string | null;
   outputSummary?: string | null;
   errorSummary?: string | null;
+  failure?: AgentFailureMetadata;
+  terminalChildren?: PublicAsyncTaskDto[];
   currentPhase?: string | null;
   lastProgress?: string | null;
   lastToolSummary?: string | null;
@@ -196,6 +210,10 @@ export function isAsyncTaskTerminal(status: AsyncTaskStatus): boolean {
 export function toPublicAsyncTaskDto(
   task: AsyncTaskRecord,
 ): PublicAsyncTaskDto {
+  const failure = publicFailure(task.privateCorrelationJson.failure);
+  const terminalChildren = publicTerminalChildren(
+    task.privateCorrelationJson.terminalChildren,
+  );
   return {
     id: task.id,
     kind: task.kind,
@@ -203,6 +221,8 @@ export function toPublicAsyncTaskDto(
     summary: task.summary,
     outputSummary: task.outputSummary,
     errorSummary: task.errorSummary,
+    ...(failure ? { failure } : {}),
+    ...(terminalChildren.length > 0 ? { terminalChildren } : {}),
     ...publicProgress(task),
     ...publicInspection(task),
     receiptLines: receiptLines(task.receiptJson),
@@ -213,6 +233,38 @@ export function toPublicAsyncTaskDto(
     updatedAt: task.updatedAt,
     terminalAt: task.terminalAt,
   };
+}
+
+function publicFailure(value: unknown): AgentFailureMetadata | null {
+  const failure = record(value);
+  const type = failure.type;
+  const attemptedAction = stringValue(failure.attemptedAction);
+  if (
+    !['execution', 'timeout', 'cancelled', 'child_task'].includes(
+      typeof type === 'string' ? type : '',
+    ) ||
+    !attemptedAction
+  ) {
+    return null;
+  }
+  return {
+    type: type as AgentFailureType,
+    attemptedAction,
+    partialResult: stringValue(failure.partialResult),
+  };
+}
+
+function publicTerminalChildren(value: unknown): PublicAsyncTaskDto[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is PublicAsyncTaskDto =>
+        Boolean(
+          entry &&
+          typeof entry === 'object' &&
+          typeof (entry as { id?: unknown }).id === 'string' &&
+          typeof (entry as { status?: unknown }).status === 'string',
+        ),
+      )
+    : [];
 }
 
 function receiptLines(receipt: AsyncTaskReceipt | null | undefined): string[] {

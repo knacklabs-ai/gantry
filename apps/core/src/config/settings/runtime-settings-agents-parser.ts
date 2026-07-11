@@ -23,11 +23,14 @@ import {
 } from './runtime-settings-parse-primitives.js';
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  configuredAgentControlConstraintErrors,
   inlineConfiguredSkillEngineConstraintError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
   parseAgentEffortValue,
   parseAgentMaxTurnsValue,
+  parseAgentPositiveIntegerValue,
   parseAgentRuntimeValue,
+  parseAgentThinkingValue,
 } from './runtime-settings-agent-runtime.js';
 
 function parseOptionalAgentHarnessValue(
@@ -269,6 +272,7 @@ export function parseConfiguredAgents(
     model?: string;
     oneTimeJobDefaultModel?: string;
     recurringJobDefaultModel?: string;
+    agentHarness?: AgentHarness;
     modelFamilyOrder?: FamilyOrderOverrides;
   } = {},
 ): Record<string, RuntimeConfiguredAgent> {
@@ -299,7 +303,10 @@ export function parseConfiguredAgents(
         key !== 'relationship_mode' &&
         key !== 'runtime' &&
         key !== 'max_turns' &&
+        key !== 'max_run_tokens' &&
         key !== 'effort' &&
+        key !== 'thinking' &&
+        key !== 'max_output_tokens' &&
         key !== 'model' &&
         key !== 'agent_harness' &&
         key !== 'one_time_job_default_model' &&
@@ -307,7 +314,7 @@ export function parseConfiguredAgents(
         key !== 'access'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, relationship_mode, runtime, max_turns, effort, model, agent_harness, job model defaults, or access. Install agents under conversations.*.installed_agents.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, relationship_mode, runtime, max_turns, max_run_tokens, effort, thinking, max_output_tokens, model, agent_harness, job model defaults, or access. Install agents under conversations.*.installed_agents.`,
         );
       }
     }
@@ -374,7 +381,16 @@ export function parseConfiguredAgents(
         map.max_turns,
         `${pathPrefix}.max_turns`,
       ),
+      maxRunTokens: parseAgentPositiveIntegerValue(
+        map.max_run_tokens,
+        `${pathPrefix}.max_run_tokens`,
+      ),
       effort: parseAgentEffortValue(map.effort, `${pathPrefix}.effort`),
+      thinking: parseAgentThinkingValue(map.thinking, `${pathPrefix}.thinking`),
+      maxOutputTokens: parseAgentPositiveIntegerValue(
+        map.max_output_tokens,
+        `${pathPrefix}.max_output_tokens`,
+      ),
       persona: parseAgentPersona(map.persona, `${pathPrefix}.persona`),
       relationshipMode: parseAgentRelationshipMode(
         map.relationship_mode,
@@ -391,6 +407,15 @@ export function parseConfiguredAgents(
       ...parseConfiguredAgentAccess(map.access, `${pathPrefix}.access`),
     };
     const blockers = inlineWorkerOnlyConfiguredCapabilityLabels({ agent });
+    const controlErrors = configuredAgentControlConstraintErrors({
+      subject: pathPrefix,
+      agent,
+      defaultModel: defaults.model,
+      defaultOneTimeJobDefaultModel: defaults.oneTimeJobDefaultModel,
+      defaultRecurringJobDefaultModel: defaults.recurringJobDefaultModel,
+      defaultAgentHarness: defaults.agentHarness,
+      modelFamilyOrder: defaults.modelFamilyOrder,
+    });
     const skillEngineError = inlineConfiguredSkillEngineConstraintError({
       subject: pathPrefix,
       agent,
@@ -403,7 +428,7 @@ export function parseConfiguredAgents(
       blockers.length > 0
         ? formatInlineAgentWorkerOnlyConfigError(pathPrefix, blockers)
         : null;
-    const inlineError = [skillEngineError, workerOnlyError]
+    const inlineError = [...controlErrors, skillEngineError, workerOnlyError]
       .filter(Boolean)
       .join('; ');
     if (inlineError) throw new Error(inlineError);

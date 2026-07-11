@@ -131,8 +131,12 @@ describe('exportCurrentDesiredState', () => {
   main_agent:
     name: Main
     runtime: inline
+    model: gpt
     max_turns: 12
+    max_run_tokens: 4096
     effort: high
+    thinking: on
+    max_output_tokens: 2048
 `);
     settings.conversations = {
       shared_channel: {
@@ -301,7 +305,10 @@ describe('exportCurrentDesiredState', () => {
     expect(exported.agents.main_agent?.runtime).toBe('inline');
     expect(exported.agents.main_agent).toMatchObject({
       maxTurns: 12,
+      maxRunTokens: 4096,
       effort: 'high',
+      thinking: { mode: 'on' },
+      maxOutputTokens: 2048,
     });
     const yaml = renderRuntimeSettingsYaml(exported as any);
     expect(yaml).toContain('installed_agents:');
@@ -432,8 +439,12 @@ describe('exportCurrentDesiredState', () => {
   main_agent:
     name: Main
     runtime: inline
+    model: gpt
     max_turns: 9
+    max_run_tokens: 2048
     effort: low
+    thinking: off
+    max_output_tokens: 1024
 `);
     settings.providerAccounts.slack_custom = {
       agentId: 'main_agent',
@@ -479,7 +490,10 @@ describe('exportCurrentDesiredState', () => {
     expect(exported.agents.main_agent?.runtime).toBe('inline');
     expect(exported.agents.main_agent).toMatchObject({
       maxTurns: 9,
+      maxRunTokens: 2048,
       effort: 'low',
+      thinking: { mode: 'off' },
+      maxOutputTokens: 1024,
     });
   });
 

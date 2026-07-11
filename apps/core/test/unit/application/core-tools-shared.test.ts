@@ -67,6 +67,34 @@ describe('shared core tool handlers', () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
+  it('returns model-visible retry metadata for a failing core tool', async () => {
+    sendCoreMessageSpy.mockRejectedValueOnce(new Error('Delivery unavailable'));
+
+    const result = await createCoreToolRegistry({
+      context: {
+        sourceAgentFolder: 'main_agent',
+        conversationId: 'conversation:test',
+      },
+      sendMessage: vi.fn(),
+      requestUserAnswer: vi.fn(),
+      evaluateToolPreChecks: evaluateNeutralToolPreChecks,
+      evaluateToolPolicy: evaluateNeutralToolPolicy,
+      formatMemorySearchResponse: formatMemoryToolResponse,
+      formatMemoryWriteResponse,
+      schemas: createCoreToolSchemas(z),
+    }).execute('send_message', { text: 'direct' });
+
+    expect(result).toEqual({
+      content: [{ type: 'text', text: 'Delivery unavailable' }],
+      isError: true,
+      error: {
+        category: 'transient',
+        isRetryable: true,
+        message: 'Delivery unavailable',
+      },
+    });
+  });
+
   it('round-trips memory_save and memory_search through AppMemoryService', async () => {
     const memory = {
       save: vi.fn(async (input) => ({

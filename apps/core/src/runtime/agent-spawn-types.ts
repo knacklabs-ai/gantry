@@ -1,7 +1,13 @@
 import { ChildProcess } from 'child_process';
 
-import { ConversationRoute, ThinkingOverride } from '../domain/types.js';
+import {
+  ConversationRoute,
+  ThinkingOverride,
+  type AgentControlEffort,
+  type AgentControlThinking,
+} from '../domain/types.js';
 import type { AgentCredentialBroker } from '../domain/ports/agent-credential-broker.js';
+import type { AgentFailureMetadata } from '../domain/ports/async-tasks.js';
 import type { SkillArtifactStore } from '../domain/ports/skill-artifact-store.js';
 import type {
   CapabilitySecretRepository,
@@ -64,6 +70,9 @@ export interface AgentInput {
   assistantName?: string;
   compiledSystemPrompt?: string;
   thinking?: ThinkingOverride;
+  effort?: AgentControlEffort;
+  configuredThinking?: AgentControlThinking;
+  maxOutputTokens?: number;
   memoryContextBlock?: string;
   yoloMode?: YoloModeSettings;
   runtimeAccess?: CapabilityRuntimeAccess[];
@@ -91,6 +100,7 @@ export interface AgentOutput {
   usageEventId?: string;
   contextUsage?: RuntimeContextUsageSnapshot;
   error?: string;
+  failure?: AgentFailureMetadata;
   runtimeEvents?: AgentOutputRuntimeEvent[];
 }
 

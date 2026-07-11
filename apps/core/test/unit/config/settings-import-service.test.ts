@@ -649,6 +649,7 @@ describe('importFleetSettingsRevision', () => {
   });
 
   it('appends a revision stamped with the current reader version', async () => {
+    expect(CURRENT_SETTINGS_READER_VERSION).toBe(9);
     capabilityErrors = [];
     const repo = new FakeRevisionRepo();
     const outcome = await importFleetSettingsRevision(
@@ -749,8 +750,10 @@ describe('importFleetSettingsRevision', () => {
       folder: 'researcher',
       agentHarness: 'anthropic_sdk',
       maxTurns: 14,
+      maxRunTokens: 32_000,
       effort: 'medium',
-      model: undefined,
+      thinking: { mode: 'on', budgetTokens: 8192 },
+      model: 'opus-4.6',
       oneTimeJobDefaultModel: undefined,
       recurringJobDefaultModel: undefined,
       bindings: {},
@@ -761,6 +764,17 @@ describe('importFleetSettingsRevision', () => {
       },
       capabilities: [{ id: 'browser.use', version: '1' }],
       accessPreset: 'locked',
+    };
+    settings.agents.analyst = {
+      name: 'Analyst',
+      folder: 'analyst',
+      agentHarness: 'deepagents',
+      model: 'gpt',
+      maxOutputTokens: 4096,
+      bindings: {},
+      sources: { skills: [], mcpServers: [], tools: [] },
+      capabilities: [],
+      accessPreset: 'full',
     };
     settings.providerAccounts.telegram_main = {
       agentId: 'researcher',
@@ -814,7 +828,15 @@ describe('importFleetSettingsRevision', () => {
     ).toBe('anthropic_sdk');
     expect(
       (document.agents as Record<string, Record<string, unknown>>).researcher,
-    ).toMatchObject({ max_turns: 14, effort: 'medium' });
+    ).toMatchObject({
+      max_turns: 14,
+      max_run_tokens: 32_000,
+      effort: 'medium',
+      thinking: { mode: 'on', budget_tokens: 8192 },
+    });
+    expect(
+      (document.agents as Record<string, Record<string, unknown>>).analyst,
+    ).toMatchObject({ max_output_tokens: 4096 });
     expect(
       (
         (document.memory as Record<string, unknown>).llm as Record<
@@ -860,8 +882,11 @@ describe('importFleetSettingsRevision', () => {
     expect(restored.agents.researcher.agentHarness).toBe('anthropic_sdk');
     expect(restored.agents.researcher).toMatchObject({
       maxTurns: 14,
+      maxRunTokens: 32_000,
       effort: 'medium',
+      thinking: { mode: 'on', budgetTokens: 8192 },
     });
+    expect(restored.agents.analyst.maxOutputTokens).toBe(4096);
     expect(restored.agents.researcher.capabilities).toEqual([
       { id: 'browser.use', version: '1' },
     ]);
