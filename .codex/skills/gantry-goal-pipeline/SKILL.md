@@ -14,12 +14,19 @@ subagents, verify, review, restart, smoke test, and publish.
 1. Load and follow `ponytail` before implementation. Prefer the smallest
    correct change, delete obsolete paths for single-cut work, and avoid
    compatibility shims unless the user explicitly asks for them.
-2. Claude Code is the orchestrator. Implementation edits go through the Codex
-   plugin (`codex:codex-rescue` subagent) at `--effort xhigh` with write
-   access. The orchestrator owns repo grounding, plan/goal shaping, stage
-   splitting, diff inspection, integration checks, review triage, commits, PR
-   updates, and final reporting. The orchestrator does not implement directly.
-3. Every Codex implementation handoff must include:
+2. Claude Code is the orchestrator. Implementation stages go through the
+   Codex plugin (`codex:codex-rescue` → companion background task) at
+   `--effort xhigh` with write access. The orchestrator owns repo grounding,
+   plan/goal shaping, stage splitting, diff inspection, integration checks,
+   review triage, commits, PR updates, and final reporting. The orchestrator
+   does not implement directly.
+3. Within a Codex task, use Codex subagents for implementation edits
+   (`multi_agent` is enabled; up to 8 threads). The Codex main thread owns
+   grounding, task decomposition, diff review of subagent output, and
+   verification — it rejects overbuilt subagent diffs and runs the focused
+   checks. Each subagent gets an exact bounded write scope and acceptance
+   criteria; parallelize only clearly separable files/domains.
+4. Every Codex implementation handoff must include:
    - `--model gpt-5.6-sol --effort xhigh` (and `--resume` to continue an
      unfinished stage; `--fresh` for a new stage). `gpt-5.6-sol` is the
      current implementation model (needs codex CLI >= 0.144.0); update here
@@ -29,12 +36,12 @@ subagents, verify, review, restart, smoke test, and publish.
    - `Return changed files, checks run, and blockers only.`
    - The exact bounded write scope and acceptance criteria (reference the
      goal prompt file when one exists).
-4. If the Codex plugin is unavailable, stop before implementation and report
+5. If the Codex plugin is unavailable, stop before implementation and report
    that blocker. Do not implement directly under this skill.
-5. Keep user-facing implementation commentary silent unless the user asks for
+6. Keep user-facing implementation commentary silent unless the user asks for
    status, a blocker needs a decision, or system instructions require a brief
    update. Subagents must not produce progress commentary.
-6. Run `autoreview` as a required closeout loop after implementation. Fix only
+7. Run `autoreview` as a required closeout loop after implementation. Fix only
    accepted/actionable findings, rerun focused checks, and rerun autoreview
    until clean.
 
@@ -52,17 +59,22 @@ For any non-trivial plan or feature:
 3. Include acceptance criteria, bounded write scope, no-legacy cleanup terms,
    verification commands, runtime smoke steps, PR closeout requirements, and a
    Surface Impact Matrix.
-4. If the user says to pursue it as a goal, call the goal tool only when the
+4. Write each stage's implementation shape as separable work packets — one
+   numbered item per ownership boundary (files/domain + its own acceptance
+   criteria) — so implementation can fan the packets out to subagents
+   immediately. Packets that share files must be merged into one packet;
+   stage size is bounded by packet separability, not serial run length.
+5. If the user says to pursue it as a goal, call the goal tool only when the
    current environment provides it and the user has explicitly asked for goal
    pursuit. Otherwise, treat the goal prompt as the execution contract.
 
 ## Implementation Workflow
 
-1. Split work into Codex-stage-sized tasks by ownership boundary. Size each
-   stage to complete within one Codex run (~10 minutes); if a run is cut off
+1. Split work into stages by ownership boundary, each stage a set of
+   separable packets that fan out to subagents in parallel — stage size is
+   bounded by packet separability, not serial run length. If a run is cut off
    mid-stage, verify what landed, then continue the same stage with
-   `--resume`. Prefer one handoff for a tight change; add more only when files
-   or domains are clearly separable.
+   `--resume`. Prefer one handoff for a tight change.
 2. Give each Codex handoff the exact files or surfaces it owns. Do not ask
    Codex to make product decisions.
 3. Require Codex to use existing repo patterns and to keep diffs surgical.

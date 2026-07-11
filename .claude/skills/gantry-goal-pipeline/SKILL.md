@@ -24,9 +24,10 @@ will create, write the bare basename plus prose ("new module in `apps/core/src/r
 
 ## 2. Implementation handoffs
 
-Split work into stages sized for one Codex run (~10 min). One handoff at a
-time — never two writers in the same worktree. For each stage, spawn an Agent
-with `subagent_type: codex:codex-rescue` whose prompt contains:
+One handoff (stage) at a time — never two writers in the same worktree. Stage
+size is bounded by packet separability (see §1), not serial run length —
+Codex fans packets out to its subagents. For each stage, spawn an Agent with
+`subagent_type: codex:codex-rescue` whose prompt contains:
 
 - `--model gpt-5.6-sol --effort xhigh --fresh` on the first line (`--resume`
   instead of `--fresh` to continue an unfinished stage). `gpt-5.6-sol` is the
@@ -36,6 +37,12 @@ with `subagent_type: codex:codex-rescue` whose prompt contains:
 - The exact bounded write scope ("Nothing else").
 - Repo gate notes: import from source modules in tests, no provider-name
   literals outside adapter dirs, file-size budgets.
+- An instruction to use Codex subagents for implementation edits: the repo's
+  `.codex/config.toml` enables `multi_agent` (8 threads). E.g.
+  `Delegate implementation edits to your subagents with exact bounded write
+  scopes; your main thread grounds the task, decomposes it, reviews subagent
+  diffs, and runs the focused checks. Parallelize only clearly separable
+  files/domains.`
 - MANDATORY closing lines, verbatim in every implementation handoff:
   `Use ponytail. No commentary. Return changed files, checks run, and blockers only.`
   "No commentary" suppresses Codex's progress narration during generation —

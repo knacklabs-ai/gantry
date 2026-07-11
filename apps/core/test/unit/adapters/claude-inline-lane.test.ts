@@ -124,6 +124,100 @@ beforeEach(() => {
 });
 
 describe('Claude inline lane', () => {
+  it.each([
+    ['uses the default cap when unset', {}, 50, undefined],
+    [
+      'maps configured iteration settings',
+      { maxTurns: 6, effort: 'xhigh' },
+      6,
+      'xhigh',
+    ],
+  ])('%s', async (_name, overrides, expectedMaxTurns, expectedEffort) => {
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield resultMessage('iteration-result', 'done');
+      },
+    }));
+
+    await runClaudeInlineAgentLoopLane(laneInput(overrides));
+
+    const options = sdk.query.mock.calls[0]?.[0].options;
+    expect(options.maxTurns).toBe(expectedMaxTurns);
+    expect(options.effort).toBe(expectedEffort);
+    expect(options.outputFormat).toBeUndefined();
+  });
+
+  it('returns SDK-validated structured output as JSON', async () => {
+    const responseSchema = {};
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield {
+          ...resultMessage('structured-result', 'ignored text'),
+          structured_output: { answer: 'done' },
+        };
+      },
+    }));
+
+    const input = laneInput({
+      input: { ...laneInput().input, responseSchema },
+    });
+    const result = await runClaudeInlineAgentLoopLane(input);
+
+    expect(sdk.query.mock.calls[0]?.[0].options.outputFormat).toEqual({
+      type: 'json_schema',
+      schema: responseSchema,
+    });
+    expect(result).toMatchObject({
+      status: 'success',
+      result: JSON.stringify({ answer: 'done' }),
+    });
+    expect(input.emitOutput).toHaveBeenLastCalledWith(result);
+  });
+
+  it('returns a shaped error when structured output violates the schema', async () => {
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: 'result',
+          subtype: 'error_max_structured_output_retries',
+          errors: ['Structured output did not match the schema.'],
+        };
+      },
+    }));
+    const input = laneInput({
+      input: {
+        ...laneInput().input,
+        responseSchema: { type: 'object' },
+      },
+    });
+
+    const result = await runClaudeInlineAgentLoopLane(input);
+
+    expect(result).toEqual({
+      status: 'error',
+      result: null,
+      error: 'Structured output did not match the schema.',
+    });
+    expect(input.emitOutput).toHaveBeenLastCalledWith(result);
+  });
+
+  it('emits and returns a named max_turns terminal error', async () => {
+    sdk.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'result', subtype: 'error_max_turns' };
+      },
+    }));
+    const input = laneInput({ maxTurns: 2 });
+
+    const result = await runClaudeInlineAgentLoopLane(input);
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: expect.stringMatching(/max_turns cap.*configured limit: 2/),
+    });
+    expect(input.emitOutput).toHaveBeenLastCalledWith(result);
+  });
+
   it('mounts core tools in an SDK MCP server and keeps remote MCP native', async () => {
     const prompts: unknown[] = [];
     let releaseFirstResult: (() => void) | undefined;
@@ -313,6 +407,74 @@ describe('Claude inline lane', () => {
         continuedByFollowup: true,
       }),
     );
+    expect(remoteProxy.close).toHaveBeenCalledOnce();
+  });
+
+  it('continues the SDK-managed session after a compact boundary', async () => {
+    const prompts: unknown[] = [];
+    let releasePostCompactTurn: (() => void) | undefined;
+    sdk.query.mockImplementation(({ prompt }) => ({
+      async *[Symbol.asyncIterator]() {
+        const iterator = prompt[Symbol.asyncIterator]();
+        prompts.push((await iterator.next()).value);
+        yield {
+          type: 'system',
+          subtype: 'init',
+          session_id: 'long-session',
+        };
+        yield resultMessage('pre-compact-result', 'captured ticket-42');
+        yield { type: 'system', subtype: 'compact_boundary' };
+        await new Promise<void>((resolve) => {
+          releasePostCompactTurn = resolve;
+        });
+        prompts.push((await iterator.next()).value);
+        yield resultMessage(
+          'post-compact-result',
+          'continued ticket-42 after compact',
+        );
+      },
+    }));
+    const input = laneInput();
+
+    const result = runClaudeInlineAgentLoopLane(input);
+    await vi.waitFor(() =>
+      expect(input.emitOutput).toHaveBeenCalledWith(
+        expect.objectContaining({ result: 'captured ticket-42' }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(input.emitOutput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          compactBoundary: true,
+          newSessionId: 'long-session',
+        }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(releasePostCompactTurn).toEqual(expect.any(Function)),
+    );
+
+    input.controlPort.writeContinuationInput({
+      workspaceFolder: 'main_agent',
+      text: 'continue ticket-42',
+      sequence: 2,
+    });
+    releasePostCompactTurn?.();
+
+    await expect(result).resolves.toMatchObject({
+      status: 'success',
+      result: 'continued ticket-42 after compact',
+      newSessionId: 'long-session',
+      usageEventId: 'post-compact-result',
+    });
+    expect(prompts).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({ content: 'first prompt' }),
+      }),
+      expect.objectContaining({
+        message: expect.objectContaining({ content: 'continue ticket-42' }),
+      }),
+    ]);
     expect(remoteProxy.close).toHaveBeenCalledOnce();
   });
 

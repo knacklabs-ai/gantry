@@ -41,6 +41,10 @@ function formatSessionRequestIssue(issue: ZodIssue): string {
   return `${path}${issue.message}`;
 }
 
+function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export async function handleSessionRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -161,6 +165,18 @@ export async function handleSessionRoutes(
     ]);
     if (!auth) return true;
     const body = (await readJson(req)) as Record<string, unknown>;
+    if (
+      body.response_schema !== undefined &&
+      !isJsonSchemaObject(body.response_schema)
+    ) {
+      sendError(
+        res,
+        400,
+        'INVALID_REQUEST',
+        'response_schema must be a JSON Schema object',
+      );
+      return true;
+    }
     try {
       const accepted = await acceptMessageForControl(ctx, {
         appId: auth.appId,
@@ -174,6 +190,9 @@ export async function handleSessionRoutes(
           typeof body.correlationId === 'string' ? body.correlationId : null,
         responseMode: body.responseMode,
         webhookId: typeof body.webhookId === 'string' ? body.webhookId : null,
+        responseSchema: body.response_schema as
+          | Record<string, unknown>
+          | undefined,
       });
       sendJson(res, 202, {
         accepted: true,

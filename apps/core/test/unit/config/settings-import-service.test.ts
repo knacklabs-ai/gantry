@@ -748,6 +748,8 @@ describe('importFleetSettingsRevision', () => {
       name: 'Researcher',
       folder: 'researcher',
       agentHarness: 'anthropic_sdk',
+      maxTurns: 14,
+      effort: 'medium',
       model: undefined,
       oneTimeJobDefaultModel: undefined,
       recurringJobDefaultModel: undefined,
@@ -811,6 +813,9 @@ describe('importFleetSettingsRevision', () => {
         .agent_harness,
     ).toBe('anthropic_sdk');
     expect(
+      (document.agents as Record<string, Record<string, unknown>>).researcher,
+    ).toMatchObject({ max_turns: 14, effort: 'medium' });
+    expect(
       (
         (document.memory as Record<string, unknown>).llm as Record<
           string,
@@ -853,6 +858,10 @@ describe('importFleetSettingsRevision', () => {
     expect(restored.runtime.deploymentMode).toBe('fleet');
     expect(restored.agents.researcher.accessPreset).toBe('locked');
     expect(restored.agents.researcher.agentHarness).toBe('anthropic_sdk');
+    expect(restored.agents.researcher).toMatchObject({
+      maxTurns: 14,
+      effort: 'medium',
+    });
     expect(restored.agents.researcher.capabilities).toEqual([
       { id: 'browser.use', version: '1' },
     ]);

@@ -52,6 +52,34 @@ export interface QueuedTask {
   fn: () => Promise<void>;
 }
 
+export interface GroupStateFields {
+  active: boolean;
+  idleWaiting: boolean;
+  isTaskRun: boolean;
+  runningTaskId: string | null;
+  pendingMessages: boolean;
+  pendingTasks: QueuedTask[];
+  runHandle: string | null;
+  workspaceFolder: string | null;
+  threadId: string | null;
+  requiredContinuationUserId: string | null;
+  retryCount: number;
+  continuationHandler: ContinuationHandler | null;
+}
+
+export function isGroupStateIdle(
+  state: GroupStateFields & { process: unknown },
+): boolean {
+  return (
+    !state.active &&
+    !state.pendingMessages &&
+    state.pendingTasks.length === 0 &&
+    !state.runningTaskId &&
+    !state.process &&
+    !state.idleWaiting
+  );
+}
+
 export interface GroupQueueOptions extends GroupQueuePolicyOptions {
   setTimeoutFn?: typeof setTimeout;
   runnerControlPort?: ContinuationRunnerControlPort;

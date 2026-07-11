@@ -4254,6 +4254,22 @@ describe('agent-spawn timeout behavior', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it('rejects response schemas for worker runtime before spawning', async () => {
+    const result = await spawnTestAgent(
+      testGroup,
+      { ...testInput, responseSchema: { type: 'object' } },
+      vi.fn(),
+    );
+
+    expect(result).toMatchObject({
+      status: 'error',
+      result: null,
+      error: 'response_schema requires an inline agent runtime',
+    });
+    expect(getSelectedAgentRuntime).toHaveBeenCalledOnce();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('uses an explicit worker runtime for worker admission and spawning', async () => {
     vi.mocked(getSelectedAgentRuntime).mockReturnValue('inline');
 
@@ -4291,7 +4307,7 @@ describe('agent-spawn timeout behavior', () => {
     expect(result).toMatchObject({
       status: 'error',
       error: expect.stringContaining(
-        'agent.runtime inline is incompatible with worker-only capabilities: skill:writer',
+        'agent.runtime inline supports attached skills only with engine',
       ),
     });
     expect(getSelectedAgentRuntime).toHaveBeenCalledOnce();

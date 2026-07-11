@@ -34,6 +34,7 @@ import {
 } from '../../shared/mcp-tool-scope.js';
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  inlineConfiguredSkillEngineConstraintError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
   inlineWorkerOnlyToolRuleLabels,
   resolveConfiguredAgentRuntime,
@@ -124,6 +125,17 @@ export async function inlineAgentRuntimeCapabilityErrors(input: {
   const errors: string[] = [];
   for (const [folder, agent] of Object.entries(input.settings.agents)) {
     if (resolveConfiguredAgentRuntime(agent) !== 'inline') continue;
+    const skillEngineError = inlineConfiguredSkillEngineConstraintError({
+      subject: `agents.${folder}`,
+      agent,
+      defaultModel: input.settings.agent.defaultModel,
+      defaultOneTimeJobDefaultModel:
+        input.settings.agent.oneTimeJobDefaultModel,
+      defaultRecurringJobDefaultModel:
+        input.settings.agent.recurringJobDefaultModel,
+      modelFamilyOrder: input.settings.modelFamilies,
+    });
+    if (skillEngineError) errors.push(skillEngineError);
     const blockers = new Set(
       inlineWorkerOnlyConfiguredCapabilityLabels({
         agent,

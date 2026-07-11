@@ -4,6 +4,7 @@ import {
   RUN_COMMAND_TOOL_NAME,
 } from './gantry-tool-facades.js';
 import { isCanonicalBrowserCapabilityRule } from './agent-tool-references.js';
+import { DEEPAGENTS_ENGINE, type AgentEngine } from './agent-engine.js';
 
 export type AgentRuntime = 'worker' | 'inline';
 
@@ -25,6 +26,23 @@ export function formatInlineAgentWorkerOnlyConfigError(
   labels: readonly string[],
 ): string {
   return `${subject}.runtime inline is incompatible with worker-only capabilities: ${labels.join(', ')}`;
+}
+
+export function inlineAgentSkillEngineConstraintError(input: {
+  subject: string;
+  agentRuntime?: AgentRuntime;
+  agentEngine: AgentEngine;
+  attachedSkillSourceIds?: readonly string[];
+}): string | null {
+  const skillIds = [...new Set(input.attachedSkillSourceIds ?? [])].sort();
+  if (
+    (input.agentRuntime ?? 'worker') !== 'inline' ||
+    input.agentEngine === DEEPAGENTS_ENGINE ||
+    skillIds.length === 0
+  ) {
+    return null;
+  }
+  return `${input.subject}.runtime inline supports attached skills only with engine ${DEEPAGENTS_ENGINE}; resolved engine ${input.agentEngine} is incompatible with attached skills: ${skillIds.join(', ')}`;
 }
 
 export function isInlineWorkerOnlyToolRule(rule: string): boolean {

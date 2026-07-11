@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 
@@ -16,6 +17,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import * as pgSchema from '@core/adapters/storage/postgres/schema/index.js';
+import {
+  ensureConfiguredAgent,
+  loadRuntimeSettings,
+  saveRuntimeSettings,
+} from '@core/config/settings/runtime-settings.js';
+import { makeAppGroup } from '@core/application/sessions/session-interaction-module.js';
 
 const INLINE_DATA_DIR = vi.hoisted(
   () => `/tmp/gantry-inline-runtime-integration-${process.pid}`,
@@ -34,7 +41,11 @@ const sdk = vi.hoisted(() => ({
     handler,
   })),
 }));
-const deep = vi.hoisted(() => ({ createAgent: vi.fn() }));
+const deep = vi.hoisted(() => ({
+  createAgent: vi.fn(),
+  createAgentMemoryMiddleware: vi.fn(),
+  createSkillsMiddleware: vi.fn(),
+}));
 const model = vi.hoisted(() => ({ build: vi.fn() }));
 const delegatedSpawn = vi.hoisted(() => ({ run: vi.fn() }));
 
@@ -57,6 +68,8 @@ vi.mock(`@anthropic-ai/${'claude-agent-sdk'}`, () => ({
 
 vi.mock('deepagents', () => ({
   createDeepAgent: deep.createAgent,
+  createAgentMemoryMiddleware: deep.createAgentMemoryMiddleware,
+  createSkillsMiddleware: deep.createSkillsMiddleware,
   StateBackend: class StateBackend {},
 }));
 
@@ -191,6 +204,30 @@ function waitUntilAborted(signal: AbortSignal): Promise<AgentOutput> {
     if (signal.aborted) finish();
     else signal.addEventListener('abort', finish, { once: true });
   });
+}
+
+function registerInlineSessionAgent(conversationId: string): void {
+  const appId = 'app-inline-itest';
+  const runtimeHome = process.env.GANTRY_HOME;
+  if (!runtimeHome) throw new Error('GANTRY_HOME is required for this test');
+  const folder = makeAppGroup({
+    appId,
+    conversationId,
+    conversationJid: `app:${appId}:${conversationId}`,
+    identityHash: createHash('sha256')
+      .update(`${appId}\0${conversationId}`)
+      .digest('hex')
+      .slice(0, 12),
+    addedAt: new Date(0).toISOString(),
+  }).folder;
+  const settings = loadRuntimeSettings(runtimeHome);
+  ensureConfiguredAgent(settings, {
+    agentId: folder,
+    agentName: conversationId,
+    agentFolder: folder,
+  });
+  settings.agents[folder].runtime = 'inline';
+  saveRuntimeSettings(runtimeHome, settings);
 }
 
 function scriptedCoreTools(events: string[]) {
@@ -338,6 +375,13 @@ async function callRemoteTool(
 }
 
 function configureProviderMocks(): void {
+  deep.createAgent.mockReset();
+  deep.createAgentMemoryMiddleware.mockReset();
+  deep.createAgentMemoryMiddleware.mockReturnValue({
+    name: 'AgentMemoryMiddleware',
+    stateSchema: {},
+  });
+  deep.createSkillsMiddleware.mockReset();
   sdk.query.mockImplementation(({ options }) => ({
     async *[Symbol.asyncIterator]() {
       yield {
@@ -345,6 +389,17 @@ function configureProviderMocks(): void {
         subtype: 'init',
         session_id: 'claude-inline-session',
       };
+      if (options.outputFormat) {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'claude-structured-usage',
+          result: '',
+          structured_output: { lane: 'first' },
+          usage: { input_tokens: 4, output_tokens: 2 },
+        };
+        return;
+      }
       const tools = options.mcpServers.gantry.instance.tools;
       await tools
         .find((tool) => tool.name === 'send_message')
@@ -389,8 +444,15 @@ function configureProviderMocks(): void {
     },
   }));
 
-  deep.createAgent.mockImplementation(({ tools }) => ({
+  deep.createAgent.mockImplementation(({ tools, responseFormat }) => ({
     async *streamEvents() {
+      if (responseFormat) {
+        yield {
+          event: 'on_chain_end',
+          data: { output: { structuredResponse: { lane: 'second' } } },
+        };
+        return;
+      }
       await tools
         .find((tool) => tool.name === 'send_message')
         .invoke({ text: 'OpenAI core message' });
@@ -437,6 +499,7 @@ function configureProviderMocks(): void {
 }
 
 beforeEach(() => {
+  configureProviderMocks();
   credentials.revoke.mockClear();
   delegatedSpawn.run.mockReset();
   delegatedSpawn.run.mockImplementation(
@@ -576,6 +639,132 @@ describe('inline runtime integration seams', () => {
     expect(credentials.revoke).toHaveBeenCalledOnce();
   });
 
+  it('loads an attached skill into the DeepAgents inline middleware from in-memory storage', async () => {
+    const skillContent = `---
+name: inline-response
+description: Supplies the integration response marker.
+---
+Response marker: stage-c-skill-loaded`;
+    const skillRepository = {
+      listEnabledSkillsForAgent: vi.fn(async () => [
+        {
+          id: 'skill:inline-response',
+          name: 'inline-response',
+          status: 'installed',
+          storage: {
+            storageType: 'object-store',
+            storageRef: 'memory:inline-response',
+            contentHash: 'sha256-inline-response',
+            sizeBytes: Buffer.byteLength(skillContent),
+          },
+        },
+      ]),
+    };
+    const skillArtifactStore = {
+      putSkillArtifact: vi.fn(),
+      getSkillArtifact: vi.fn(async () => ({
+        assets: [
+          {
+            path: 'SKILL.md',
+            contentType: 'text/markdown',
+            content: Buffer.from(skillContent),
+          },
+        ],
+      })),
+    };
+    deep.createSkillsMiddleware.mockImplementationOnce((options) => ({
+      stageCSkillMiddleware: options,
+    }));
+    deep.createAgent.mockImplementationOnce(({ middleware }) => ({
+      async *streamEvents({ files }) {
+        const loaded = middleware.find(
+          (item) => item.stageCSkillMiddleware,
+        ).stageCSkillMiddleware;
+        const content = files[`${loaded.sources[0]}inline-response/SKILL.md`]
+          .content as string;
+        yield {
+          event: 'on_chat_model_stream',
+          data: {
+            chunk: {
+              content: content.match(/Response marker: (\S+)/)?.[1] ?? '',
+              usage_metadata: { input_tokens: 1, output_tokens: 1 },
+            },
+          },
+        };
+      },
+    }));
+    model.build.mockResolvedValueOnce({
+      model: { profile: { maxInputTokens: 100 } },
+      endpointFamily: 'openai',
+      modelId: 'openai-inline',
+    });
+    const { createDeepAgentsInlineAgentLoopLane } =
+      await import('@core/adapters/llm/deepagents-langchain/inline-lane/index.js');
+    const deepAgentsLane = createDeepAgentsInlineAgentLoopLane({
+      databaseUrl: null,
+      schema: 'integration',
+    });
+    const frames: AgentOutput[] = [];
+
+    const output = await runInlineAgent(
+      group,
+      {
+        ...baseInput,
+        prompt: 'OPENAI_TURN use the attached skill',
+        model: 'openai-fallback',
+        attachedSkillSourceIds: ['skill:inline-response'],
+        isScheduledJob: true,
+        jobId: 'job:inline-skill',
+      },
+      vi.fn(),
+      async (frame) => {
+        frames.push(frame);
+      },
+      {
+        ...inlineOptions((laneInput) =>
+          deepAgentsLane({
+            ...laneInput,
+            coreTools: {
+              tools: [],
+              execute: vi.fn(),
+              authorizeThirdPartyMcpTool: vi.fn(),
+              recordThirdPartyMcpToolActivity: vi.fn(),
+            },
+            egressDenylist: [],
+          }),
+        ),
+        skillRepository: skillRepository as never,
+        skillArtifactStore: skillArtifactStore as never,
+        skillContext: {
+          appId: 'default',
+          agentId: 'agent:inline-integration',
+        },
+      },
+    );
+
+    expect(output.error).toBeUndefined();
+    expect(output).toMatchObject({
+      status: 'success',
+      result: null,
+    });
+    expect(frames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ result: 'stage-c-skill-loaded' }),
+      ]),
+    );
+    expect(deep.createSkillsMiddleware).toHaveBeenCalledWith(
+      expect.objectContaining({ sources: ['/skills/'] }),
+    );
+    expect(skillRepository.listEnabledSkillsForAgent).toHaveBeenCalledWith({
+      appId: 'default',
+      agentId: 'agent:inline-integration',
+    });
+    expect(skillArtifactStore.getSkillArtifact).toHaveBeenCalledWith(
+      'memory:inline-response',
+    );
+    expect(skillArtifactStore.putSkillArtifact).not.toHaveBeenCalled();
+  });
+
   it('uses the existing scheduled-run failover chain after an inline model error', async () => {
     const attemptedModels: Array<string | undefined> = [];
     const onFailover = vi.fn(async (providerId) => providerId);
@@ -698,6 +887,87 @@ describe('inline runtime integration seams', () => {
       expect(terminal).toMatchObject({ status: 'error', result: null });
       expect(terminal.error).toMatch(/stopped by request/i);
     }
+  });
+
+  it('continues a compacted inline session with retained task continuity', async () => {
+    const queue = new GroupQueue();
+    const frames: AgentOutput[] = [];
+    const taskId = 'task-continuity';
+    const sessionId = 'session:mock-compact';
+    let terminal: AgentOutput | undefined;
+
+    queue.setProcessMessagesFn(async (queueJid) => {
+      terminal = await runInlineAgent(
+        group,
+        {
+          ...baseInput,
+          prompt: 'MOCK_COMPACTION_THRESHOLD crossed',
+        },
+        (handle, runHandle) =>
+          queue.registerProcess(queueJid, handle, runHandle, group.folder),
+        async (frame) => {
+          frames.push(frame);
+        },
+        inlineOptions(async ({ controlPort, emitOutput, signal }) => {
+          const continuations: string[] = [];
+          const unsubscribe = controlPort.subscribe({
+            onContinuation: ({ text }) => continuations.push(text),
+            onClose: () => undefined,
+          });
+          try {
+            await emitOutput({
+              status: 'success',
+              result: null,
+              newSessionId: sessionId,
+              sessionInit: true,
+            });
+            await emitOutput({
+              status: 'success',
+              result: `compacted ${taskId}`,
+              newSessionId: sessionId,
+              compactBoundary: true,
+            });
+            await vi.waitFor(() =>
+              expect(continuations).toEqual(['continue after compaction']),
+            );
+            signal.throwIfAborted();
+            return {
+              status: 'success',
+              result: `continued ${taskId} after compaction`,
+              newSessionId: sessionId,
+            };
+          } finally {
+            unsubscribe();
+          }
+        }),
+      );
+      return terminal.status === 'success';
+    });
+
+    queue.enqueueMessageCheck(baseInput.chatJid);
+    await vi.waitFor(() =>
+      expect(frames.some((frame) => frame.compactBoundary)).toBe(true),
+    );
+    expect(
+      queue.sendMessage(baseInput.chatJid, 'continue after compaction'),
+    ).toBe(true);
+    await vi.waitFor(() =>
+      expect(terminal).toMatchObject({
+        status: 'success',
+        result: `continued ${taskId} after compaction`,
+        newSessionId: sessionId,
+      }),
+    );
+    expect(frames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sessionInit: true, newSessionId: sessionId }),
+        expect.objectContaining({
+          compactBoundary: true,
+          result: `compacted ${taskId}`,
+          newSessionId: sessionId,
+        }),
+      ]),
+    );
   });
 });
 
@@ -955,9 +1225,14 @@ maybeDescribe('inline session turns through the control API', () => {
         },
       );
       expect(response.status).toBe(200);
+      registerInlineSessionAgent(conversationId);
       return (await response.json()) as { sessionId: string };
     };
-    const runTurn = async (sessionId: string, message: string) => {
+    const runTurn = async (
+      sessionId: string,
+      message: string,
+      responseSchema?: Record<string, unknown>,
+    ) => {
       const runIndex = runIds.length;
       const response = await fetch(
         `${controlServer!.baseUrl}/v1/sessions/${sessionId}/messages`,
@@ -967,7 +1242,11 @@ maybeDescribe('inline session turns through the control API', () => {
             authorization: `Bearer ${controlServer!.token}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ message, responseMode: 'sse' }),
+          body: JSON.stringify({
+            message,
+            responseMode: 'sse',
+            ...(responseSchema ? { response_schema: responseSchema } : {}),
+          }),
         },
       );
       expect(response.status).toBe(202);
@@ -987,13 +1266,51 @@ maybeDescribe('inline session turns through the control API', () => {
     await runTurn(claude.sessionId, 'CLAUDE_TURN use every scripted tool');
     const openai = await ensureSession('openai-inline');
     await runTurn(openai.sessionId, 'OPENAI_TURN use every scripted tool');
+    const responseSchema = {
+      type: 'object',
+      properties: { lane: { type: 'string' } },
+      required: ['lane'],
+      additionalProperties: false,
+    };
+    await runTurn(
+      claude.sessionId,
+      'Return the first structured result',
+      responseSchema,
+    );
+    await runTurn(
+      openai.sessionId,
+      'OPENAI_TURN return the second structured result',
+      responseSchema,
+    );
 
-    expect(sdk.query).toHaveBeenCalledOnce();
-    expect(deep.createAgent).toHaveBeenCalledOnce();
+    expect(sdk.query).toHaveBeenCalledTimes(2);
+    expect(deep.createAgent).toHaveBeenCalledTimes(2);
+    expect(sdk.query.mock.calls[1]?.[0].options.outputFormat).toEqual({
+      type: 'json_schema',
+      schema: responseSchema,
+    });
+    expect(deep.createAgent.mock.calls[1]?.[0].responseFormat).toMatchObject({
+      schema: expect.objectContaining({
+        properties: responseSchema.properties,
+      }),
+      tool: expect.objectContaining({
+        function: expect.objectContaining({
+          name: 'gantry_structured_output',
+          parameters: expect.objectContaining({
+            properties: responseSchema.properties,
+          }),
+        }),
+      }),
+    });
     expect(mcpCalls).toEqual([{ value: 'claude' }, { value: 'openai' }]);
     expect(gatewayCalls).toContain('/openai/mock');
     expect(channelEffects.outbound.map(({ text }) => text)).toEqual(
-      expect.arrayContaining(['Claude core message', 'OpenAI core message']),
+      expect.arrayContaining([
+        'Claude core message',
+        'OpenAI core message',
+        '{"lane":"first"}',
+        '{"lane":"second"}',
+      ]),
     );
     expect(channelEffects.userQuestions).toHaveLength(2);
     expect(channelEffects.permissionRequests).toHaveLength(2);
@@ -1032,7 +1349,7 @@ maybeDescribe('inline session turns through the control API', () => {
         status: pgSchema.agentRunsPostgres.status,
       })
       .from(pgSchema.agentRunsPostgres);
-    expect(runRows.filter((row) => row.status === 'completed')).toHaveLength(2);
+    expect(runRows.filter((row) => row.status === 'completed')).toHaveLength(4);
     await vi.waitFor(
       async () => {
         const liveTurnRows = await runtime.service.db
@@ -1041,7 +1358,7 @@ maybeDescribe('inline session turns through the control API', () => {
             state: pgSchema.liveTurnsPostgres.state,
           })
           .from(pgSchema.liveTurnsPostgres);
-        expect(liveTurnRows).toHaveLength(2);
+        expect(liveTurnRows).toHaveLength(4);
         expect(liveTurnRows).toEqual(
           expect.arrayContaining(
             runRows.map((run) =>
@@ -1164,16 +1481,21 @@ maybeDescribe('inline session turns through the control API', () => {
       },
       { timeout: 20_000, interval: 50 },
     );
-    const childTasks = await runtime.service.db
-      .select({
-        kind: pgSchema.agentAsyncTasksPostgres.kind,
-        status: pgSchema.agentAsyncTasksPostgres.status,
-      })
-      .from(pgSchema.agentAsyncTasksPostgres);
-    expect(childTasks).toEqual([
-      { kind: 'delegated_agent', status: 'completed' },
-      { kind: 'delegated_agent', status: 'completed' },
-    ]);
+    await vi.waitFor(
+      async () => {
+        const childTasks = await runtime.service.db
+          .select({
+            kind: pgSchema.agentAsyncTasksPostgres.kind,
+            status: pgSchema.agentAsyncTasksPostgres.status,
+          })
+          .from(pgSchema.agentAsyncTasksPostgres);
+        expect(childTasks).toEqual([
+          { kind: 'delegated_agent', status: 'completed' },
+          { kind: 'delegated_agent', status: 'completed' },
+        ]);
+      },
+      { timeout: 20_000, interval: 50 },
+    );
     expect(delegatedSpawn.run).toHaveBeenCalledWith(
       expect.objectContaining({ folder: 'child_inline' }),
       expect.objectContaining({

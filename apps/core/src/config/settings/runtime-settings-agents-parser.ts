@@ -1,4 +1,7 @@
-import { resolveModelSelectionForWorkloadWithFamilies } from '../../shared/model-families.js';
+import {
+  resolveModelSelectionForWorkloadWithFamilies,
+  type FamilyOrderOverrides,
+} from '../../shared/model-families.js';
 import {
   isAgentHarness,
   type AgentHarness,
@@ -20,7 +23,10 @@ import {
 } from './runtime-settings-parse-primitives.js';
 import {
   formatInlineAgentWorkerOnlyConfigError,
+  inlineConfiguredSkillEngineConstraintError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
+  parseAgentEffortValue,
+  parseAgentMaxTurnsValue,
   parseAgentRuntimeValue,
 } from './runtime-settings-agent-runtime.js';
 
@@ -259,6 +265,12 @@ function parseConfiguredAgentSelections(
 
 export function parseConfiguredAgents(
   raw: unknown,
+  defaults: {
+    model?: string;
+    oneTimeJobDefaultModel?: string;
+    recurringJobDefaultModel?: string;
+    modelFamilyOrder?: FamilyOrderOverrides;
+  } = {},
 ): Record<string, RuntimeConfiguredAgent> {
   if (raw === undefined) return {};
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -286,6 +298,8 @@ export function parseConfiguredAgents(
         key !== 'persona' &&
         key !== 'relationship_mode' &&
         key !== 'runtime' &&
+        key !== 'max_turns' &&
+        key !== 'effort' &&
         key !== 'model' &&
         key !== 'agent_harness' &&
         key !== 'one_time_job_default_model' &&
@@ -293,7 +307,7 @@ export function parseConfiguredAgents(
         key !== 'access'
       ) {
         throw new Error(
-          `${pathPrefix}.${key} is not supported. Configure name, persona, relationship_mode, runtime, model, agent_harness, job model defaults, or access. Install agents under conversations.*.installed_agents.`,
+          `${pathPrefix}.${key} is not supported. Configure name, persona, relationship_mode, runtime, max_turns, effort, model, agent_harness, job model defaults, or access. Install agents under conversations.*.installed_agents.`,
         );
       }
     }
@@ -356,6 +370,11 @@ export function parseConfiguredAgents(
       name: parseStringValue(map.name, `${pathPrefix}.name`),
       folder,
       runtime,
+      maxTurns: parseAgentMaxTurnsValue(
+        map.max_turns,
+        `${pathPrefix}.max_turns`,
+      ),
+      effort: parseAgentEffortValue(map.effort, `${pathPrefix}.effort`),
       persona: parseAgentPersona(map.persona, `${pathPrefix}.persona`),
       relationshipMode: parseAgentRelationshipMode(
         map.relationship_mode,
@@ -372,11 +391,22 @@ export function parseConfiguredAgents(
       ...parseConfiguredAgentAccess(map.access, `${pathPrefix}.access`),
     };
     const blockers = inlineWorkerOnlyConfiguredCapabilityLabels({ agent });
-    if (blockers.length > 0) {
-      throw new Error(
-        formatInlineAgentWorkerOnlyConfigError(pathPrefix, blockers),
-      );
-    }
+    const skillEngineError = inlineConfiguredSkillEngineConstraintError({
+      subject: pathPrefix,
+      agent,
+      defaultModel: defaults.model,
+      defaultOneTimeJobDefaultModel: defaults.oneTimeJobDefaultModel,
+      defaultRecurringJobDefaultModel: defaults.recurringJobDefaultModel,
+      modelFamilyOrder: defaults.modelFamilyOrder,
+    });
+    const workerOnlyError =
+      blockers.length > 0
+        ? formatInlineAgentWorkerOnlyConfigError(pathPrefix, blockers)
+        : null;
+    const inlineError = [skillEngineError, workerOnlyError]
+      .filter(Boolean)
+      .join('; ');
+    if (inlineError) throw new Error(inlineError);
     result[folder] = agent;
   }
   for (const [folder, agent] of Object.entries(result)) {

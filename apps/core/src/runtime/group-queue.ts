@@ -10,10 +10,12 @@ import {
 } from './group-queue-policy.js';
 import { createLiveTurnLocalRunnerHooks } from './group-queue-live-turn-hooks.js';
 import {
+  isGroupStateIdle,
   localContinuationRunnerControlPort,
   type ContinuationHandler,
   type ContinuationOptions,
   type ContinuationRunnerControlPort,
+  type GroupStateFields,
   type GroupQueueOptions,
   type ProcessMessagesFn,
   type QueueKind,
@@ -22,21 +24,7 @@ import {
 import type { LiveTurnLocalRunnerHooks } from './live-turn-authority.js';
 import * as admission from './runtime-admission.js';
 
-interface GroupState {
-  active: boolean;
-  idleWaiting: boolean;
-  isTaskRun: boolean;
-  runningTaskId: string | null;
-  pendingMessages: boolean;
-  pendingTasks: QueuedTask[];
-  process: ChildProcess | null;
-  runHandle: string | null;
-  workspaceFolder: string | null;
-  threadId: string | null;
-  requiredContinuationUserId: string | null;
-  retryCount: number;
-  continuationHandler: ContinuationHandler | null;
-}
+type GroupState = GroupStateFields & { process: ChildProcess | null };
 
 export class GroupQueue {
   private readonly policy: GroupQueuePolicy;
@@ -102,10 +90,7 @@ export class GroupQueue {
   }
 
   private deleteGroupIfIdle(groupJid: string, state: GroupState): boolean {
-    if (state.active || state.pendingMessages || state.pendingTasks.length > 0)
-      return false;
-    if (state.runningTaskId || state.process || state.idleWaiting) return false;
-    return this.groups.delete(groupJid);
+    return isGroupStateIdle(state) && this.groups.delete(groupJid);
   }
 
   setProcessMessagesFn(fn: ProcessMessagesFn): void {
@@ -238,7 +223,6 @@ export class GroupQueue {
     if (this.shuttingDown) return false;
 
     const state = this.getGroup(groupJid);
-
     if (state.active) {
       state.pendingMessages = true;
       logger.debug({ groupJid }, 'Agent run active, message queued');

@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
 import { loadMcpTools } from '@langchain/mcp-adapters';
-import { HumanMessage, type BaseMessage } from '@langchain/core/messages';
+import type { BaseMessage } from '@langchain/core/messages';
 import {
   tool as createLangChainTool,
   type StructuredToolInterface,
 } from '@langchain/core/tools';
+import type { BaseStore } from '@langchain/langgraph-checkpoint';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createDeepAgent, StateBackend } from 'deepagents';
-import type { FilesystemPermission } from 'deepagents';
+import type { FileData, FilesystemPermission } from 'deepagents';
+import { ProviderStrategy, ToolStrategy } from 'langchain';
 import pg from 'pg';
 
 import {
@@ -24,12 +26,20 @@ import type { NormalizedCacheProvider } from '../../../../shared/model-catalog.j
 import type { OpenRouterProviderRouting } from '../../../../shared/model-catalog-provider-metadata.js';
 import type { RunnerOutputFrame } from '../../../../runner/runner-frame.js';
 import { buildGantryAgentSystemPrompt } from '../../../../runner/gantry-agent-system-prompt.js';
-import type { ProviderInlineAgentLoopLane } from '../../inline-lane-dispatcher.js';
+import {
+  DEFAULT_INLINE_AGENT_MAX_TURNS,
+  inlineAgentMaxTurnsError,
+  type ProviderInlineAgentLoopLane,
+} from '../../inline-lane-dispatcher.js';
 import {
   createInlineToolActivity,
   type InlineToolActivity,
 } from '../../inline-lane-tool-activity.js';
 import { ensureDeepAgentsCheckpointSchema } from '../checkpoint-setup.js';
+import {
+  reconcileDeepAgentSkillFiles,
+  resolveDeepAgentSkillProjection,
+} from '../skill-projection.js';
 import { createBuiltinToolExclusionMiddleware } from '../runner/builtin-tool-exclusion.js';
 import { isAbortError } from '../runner/live-control.js';
 import {
@@ -41,19 +51,26 @@ import {
   normalizeDeepAgentStream,
   type LangGraphStreamEvent,
 } from '../runner/stream-normalizer.js';
+import * as memory from './gantry-memory-middleware.js';
+import { createInlineSkillsMiddleware } from './skills.js';
 
 const CHECKPOINT_POOL_MAX_CONNECTIONS = 1;
 const DENY_ALL_FILESYSTEM: FilesystemPermission[] = [
   { operations: ['read', 'write'], paths: ['/**'], mode: 'deny' },
 ];
+const READONLY_SKILLS_FILESYSTEM: FilesystemPermission[] = [
+  { operations: ['read'], paths: ['/skills', '/skills/**'] },
+  ...DENY_ALL_FILESYSTEM,
+];
 
 interface InlineDeepAgentGraph {
   streamEvents(
-    input: { messages: BaseMessage[] },
+    input: { messages: BaseMessage[]; files?: Record<string, FileData | null> },
     options: {
       version: 'v2';
       signal: AbortSignal;
       configurable: { thread_id: string };
+      recursionLimit: number;
     },
   ): AsyncIterable<LangGraphStreamEvent>;
 }
@@ -71,6 +88,16 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
       };
     }
     if (laneInput.signal.aborted) return abortedOutput();
+    const maxTurns = laneInput.maxTurns ?? DEFAULT_INLINE_AGENT_MAX_TURNS;
+    const skillProjection = await resolveDeepAgentSkillProjection({
+      selectedSkillIds: laneInput.input.attachedSkillSourceIds,
+      skillRepository: laneInput.skillRepository,
+      skillArtifactStore: laneInput.skillArtifactStore,
+      skillContext: laneInput.skillContext,
+    });
+    const hasProjectedSkills = Boolean(skillProjection);
+    const backend = (config: { state: unknown; store?: BaseStore }) =>
+      new StateBackend(config);
 
     const sessionId = laneInput.input.sessionId ?? randomUUID();
     const stop = new AbortController();
@@ -87,6 +114,12 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
     });
     const signal = AbortSignal.any([laneInput.signal, stop.signal]);
     const toolActivity = createInlineToolActivity(laneInput);
+    let currentMemoryQuery = '';
+    const memoryMiddleware = memory.createGantryScopedMemoryMiddleware({
+      currentQuery: () => currentMemoryQuery,
+      searchMemory: (query) =>
+        memory.searchGantryScopedMemory(laneInput, query, signal),
+    });
     let saver: PostgresSaver | undefined;
     let remoteMcp:
       | Awaited<ReturnType<typeof connectRemoteMcpTools>>
@@ -122,16 +155,44 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
         ...buildCoreLangChainTools(laneInput, toolActivity),
         ...remoteMcp.tools,
       ];
+      const skillFiles = reconcileDeepAgentSkillFiles({
+        currentFiles: skillProjection?.files,
+        checkpointTuple:
+          saver && laneInput.input.sessionId
+            ? await saver.getTuple({
+                configurable: { thread_id: laneInput.input.sessionId },
+              })
+            : undefined,
+      });
       const graph = createDeepAgent({
         model: model.model,
-        backend: (config) => new StateBackend(config),
+        ...(laneInput.input.responseSchema
+          ? {
+              responseFormat: responseFormatForSchema(
+                laneInput.input.responseSchema,
+                model.model,
+              ),
+            }
+          : {}),
+        backend,
         ...(saver ? { checkpointer: saver } : {}),
-        permissions: DENY_ALL_FILESYSTEM,
+        permissions: hasProjectedSkills
+          ? READONLY_SKILLS_FILESYSTEM
+          : DENY_ALL_FILESYSTEM,
         subagents: [],
         tools: tools as StructuredToolInterface[] as never,
         middleware: [
+          memoryMiddleware,
+          ...(skillProjection
+            ? [
+                createInlineSkillsMiddleware({
+                  backend,
+                  sources: skillProjection.sources,
+                }),
+              ]
+            : []),
           createBuiltinToolExclusionMiddleware({
-            exposeSkillReadTools: false,
+            exposeSkillReadTools: hasProjectedSkills,
           }),
         ] as never,
         systemPrompt: inlineSystemPrompt(laneInput),
@@ -145,22 +206,33 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
           ? [laneInput.input.prompt, ...queued].join('\n')
           : queued.join('\n');
         if (!prompt) break;
-        const messages: BaseMessage[] = [];
-        if (firstTurn && laneInput.input.memoryContextBlock?.trim()) {
-          messages.push(new HumanMessage(laneInput.input.memoryContextBlock));
-        }
-        messages.push(new HumanMessage(prompt));
+        currentMemoryQuery = prompt;
+        const messages = memory.buildInlineTurnMessages(
+          prompt,
+          firstTurn ? laneInput.input.memoryContextBlock : undefined,
+        );
         firstTurn = false;
 
         let normalized: Awaited<ReturnType<typeof normalizeDeepAgentStream>>;
+        let structuredResponse: unknown;
         try {
           normalized = await normalizeDeepAgentStream({
-            events: graph.streamEvents(
-              { messages },
-              {
-                version: 'v2',
-                signal,
-                configurable: { thread_id: sessionId },
+            events: captureStructuredResponse(
+              graph.streamEvents(
+                {
+                  messages,
+                  ...(skillFiles ? { files: skillFiles } : {}),
+                },
+                {
+                  version: 'v2',
+                  signal,
+                  configurable: { thread_id: sessionId },
+                  // Claude max_turns counts SDK turns; this bounds LangGraph steps.
+                  recursionLimit: maxTurns,
+                },
+              ),
+              (value) => {
+                structuredResponse = value;
               },
             ),
             newSessionId: sessionId,
@@ -177,20 +249,57 @@ export function createDeepAgentsInlineAgentLoopLane(input: {
               actor: 'deepagents',
             },
             emit: (output) => {
+              if (laneInput.input.responseSchema && !output.runtimeEventOnly) {
+                return;
+              }
               emitChain = emitChain.then(() => laneInput.emitOutput(output));
             },
           });
           await emitChain;
         } catch (error) {
           if (signal.aborted && isAbortError(error)) break;
+          if (isGraphRecursionLimitError(error)) {
+            await emitChain;
+            const terminal = inlineAgentMaxTurnsError(maxTurns, sessionId);
+            await laneInput.emitOutput(terminal);
+            return terminal;
+          }
+          if (
+            laneInput.input.responseSchema &&
+            isStructuredOutputError(error)
+          ) {
+            await emitChain;
+            const terminal = structuredOutputError(error, sessionId);
+            await laneInput.emitOutput(terminal);
+            return terminal;
+          }
           throw error;
         }
         if (signal.aborted || closeRequested) break;
 
+        let terminalResult = normalized.terminalResult;
+        if (laneInput.input.responseSchema) {
+          try {
+            terminalResult =
+              structuredResponse === undefined
+                ? null
+                : JSON.stringify(structuredResponse);
+          } catch (error) {
+            const terminal = structuredOutputError(error, sessionId);
+            await laneInput.emitOutput(terminal);
+            return terminal;
+          }
+          if (terminalResult === null) {
+            const terminal = structuredOutputError(undefined, sessionId);
+            await laneInput.emitOutput(terminal);
+            return terminal;
+          }
+        }
+
         const continuedByFollowup = pendingFollowups.length > 0;
         lastTerminal = {
           status: 'success',
-          result: normalized.terminalResult,
+          result: terminalResult,
           newSessionId: sessionId,
           ...(continuedByFollowup ? { continuedByFollowup: true } : {}),
           usage: normalized.terminalUsage,
@@ -471,7 +580,7 @@ function inlineSystemPrompt(
     assistantName: input.input.assistantName,
     persona: input.input.persona,
     compiledSystemPrompt: input.input.compiledSystemPrompt,
-    hasMemoryContext: Boolean(input.input.memoryContextBlock?.trim()),
+    hasMemoryContext: true,
     selectedToolRules: input.input.toolPolicyRules,
     workspaceFolder: input.input.workspaceFolder,
     conversationId: input.input.chatJid,
@@ -501,6 +610,82 @@ function cacheProvider(model: ResolvedRunnerModel): NormalizedCacheProvider {
   return model.endpointFamily === 'openrouter'
     ? 'openrouter-provider'
     : 'openai';
+}
+
+function isGraphRecursionLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { name?: unknown; lc_error_code?: unknown };
+  return (
+    value.name === 'GraphRecursionError' ||
+    value.lc_error_code === 'GRAPH_RECURSION_LIMIT'
+  );
+}
+
+async function* captureStructuredResponse(
+  events: AsyncIterable<LangGraphStreamEvent>,
+  capture: (value: unknown) => void,
+): AsyncIterable<LangGraphStreamEvent> {
+  for await (const event of events) {
+    const output = event.data?.output;
+    if (
+      output &&
+      typeof output === 'object' &&
+      'structuredResponse' in output &&
+      output.structuredResponse !== undefined
+    ) {
+      capture(output.structuredResponse);
+    }
+    yield event;
+  }
+}
+
+function isStructuredOutputError(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!current || typeof current !== 'object') return false;
+    const value = current as {
+      name?: unknown;
+      message?: unknown;
+      errors?: unknown;
+      toolNames?: unknown;
+      cause?: unknown;
+    };
+    if (
+      [
+        'StructuredOutputParsingError',
+        'MultipleStructuredOutputsError',
+      ].includes(String(value.name)) ||
+      Array.isArray(value.errors) ||
+      Array.isArray(value.toolNames) ||
+      String(value.message).toLowerCase().includes('structured output')
+    ) {
+      return true;
+    }
+    current = value.cause;
+  }
+  return false;
+}
+
+function responseFormatForSchema(
+  schema: Record<string, unknown>,
+  { profile: { structuredOutput } }: ResolvedRunnerModel['model'],
+) {
+  const name = 'gantry_structured_output';
+  const normalized = { ...schema, name, title: name };
+  if (structuredOutput === true) return ProviderStrategy.fromSchema(normalized);
+  return ToolStrategy.fromSchema(normalized);
+}
+function structuredOutputError(
+  error: unknown,
+  newSessionId: string,
+): RunnerOutputFrame {
+  const detail = error instanceof Error ? ` ${error.message}` : '';
+  return {
+    status: 'error',
+    result: null,
+    error: `Inline structured output failed schema validation.${detail}`,
+    newSessionId,
+  };
 }
 
 function abortedOutput(newSessionId?: string): RunnerOutputFrame {

@@ -14,6 +14,7 @@ import type {
   ModelWorkload,
 } from '../../shared/model-catalog.js';
 import type { AgentHarness } from '../../shared/agent-engine.js';
+import type { AgentRuntime } from '../../shared/agent-runtime.js';
 import type { EgressSettings } from '../../shared/egress-policy.js';
 import { authenticate, type ApiKeyRecord, type Scope } from './auth.js';
 import { sendError } from './http.js';
@@ -136,6 +137,9 @@ export type ControlRouteContext = {
   getBrowserStatus?: JobManagementServiceDeps['getBrowserStatus'];
   syncSettingsFromProjection: (appId: AppId) => Promise<void>;
   getSelectedAgentHarness: (agentFolder?: string) => AgentHarness;
+  getConfiguredAgentRuntime?: (
+    agentFolder?: string,
+  ) => AgentRuntime | undefined;
 };
 
 export function authorizeControlRequest(

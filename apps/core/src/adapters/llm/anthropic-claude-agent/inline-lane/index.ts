@@ -19,7 +19,11 @@ import { mcpToolNameAllowedBySourceScope } from '../../../../shared/mcp-tool-sco
 import { normalizeModelUsage } from '../../../../shared/model-usage.js';
 import type { RunnerOutputFrame } from '../../../../runner/runner-frame.js';
 import { buildGantryAgentSystemPrompt } from '../../../../runner/gantry-agent-system-prompt.js';
-import type { ProviderInlineAgentLoopLane } from '../../inline-lane-dispatcher.js';
+import {
+  DEFAULT_INLINE_AGENT_MAX_TURNS,
+  inlineAgentMaxTurnsError,
+  type ProviderInlineAgentLoopLane,
+} from '../../inline-lane-dispatcher.js';
 import {
   createInlineToolActivity,
   type InlineToolActivity,
@@ -63,6 +67,8 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
     };
   }
   if (input.signal.aborted) return abortedOutput();
+  const maxTurns = input.maxTurns ?? DEFAULT_INLINE_AGENT_MAX_TURNS;
+  const responseSchema = input.input.responseSchema;
   validateModelCredentialProjectionForEntry({
     model: input.resolvedModel.value.modelEntry,
     projection: {
@@ -117,6 +123,12 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
       options: {
         abortController,
         model: input.resolvedModel.value.runnerModel,
+        maxTurns,
+        ...(input.effort ? { effort: input.effort } : {}),
+        // The SDK implements outputFormat with its strict StructuredOutput answer tool.
+        ...(responseSchema
+          ? { outputFormat: { type: 'json_schema', schema: responseSchema } }
+          : {}),
         ...(persistSdkSession && input.input.sessionId
           ? { resume: input.input.sessionId }
           : {}),
@@ -226,11 +238,12 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
           continue;
         }
         if (record?.type === 'assistant') {
-          assistantText += topLevelAssistantText(message);
+          if (!responseSchema) assistantText += topLevelAssistantText(message);
           continue;
         }
         const delta = textDelta(record);
         if (delta !== null) {
+          if (responseSchema) continue;
           sawPartialText = true;
           await input.emitOutput({
             status: 'success',
@@ -241,10 +254,40 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
         }
         if (record?.type !== 'result') continue;
 
+        if (record.subtype === 'error_max_turns') {
+          lastTerminal = inlineAgentMaxTurnsError(maxTurns, newSessionId);
+          await input.emitOutput(lastTerminal);
+          break;
+        }
+
+        if (
+          responseSchema &&
+          record.subtype === 'error_max_structured_output_retries'
+        ) {
+          lastTerminal = structuredOutputError(
+            sdkResultFailureMessage(message) ??
+              'Claude SDK could not produce output matching response_schema.',
+            newSessionId,
+          );
+          await input.emitOutput(lastTerminal);
+          break;
+        }
+
         const failure = sdkResultFailureMessage(message);
         if (failure) throw new Error(failure);
         resultCount += 1;
         const resultText = stringValue(record.result);
+        const structuredResult = responseSchema
+          ? jsonString(record.structured_output)
+          : undefined;
+        if (responseSchema && structuredResult === undefined) {
+          lastTerminal = structuredOutputError(
+            'Claude SDK returned success without validated structured output.',
+            newSessionId,
+          );
+          await input.emitOutput(lastTerminal);
+          break;
+        }
         const contextUsage = await readContextUsage(sdkQuery);
         const usage = normalizeModelUsage({
           message,
@@ -253,7 +296,9 @@ export const runClaudeInlineAgentLoopLane: ProviderInlineAgentLoopLane = async (
         const continuedByFollowup = steeringGate.pendingCount() > 0;
         lastTerminal = {
           status: 'success',
-          result: sawPartialText ? null : resultText || assistantText || null,
+          result:
+            structuredResult ??
+            (sawPartialText ? null : resultText || assistantText || null),
           newSessionId,
           ...(continuedByFollowup ? { continuedByFollowup: true } : {}),
           ...(usage
@@ -530,6 +575,26 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function jsonString(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function structuredOutputError(
+  error: string,
+  newSessionId?: string,
+): RunnerOutputFrame {
+  return {
+    status: 'error',
+    result: null,
+    error,
+    ...(newSessionId ? { newSessionId } : {}),
+  };
 }
 
 function abortedOutput(newSessionId?: string): RunnerOutputFrame {

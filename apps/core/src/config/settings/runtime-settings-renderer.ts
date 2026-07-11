@@ -223,6 +223,12 @@ function renderConfiguredAgentsYaml(
     if (agentRuntime !== 'worker') {
       lines.push(`    runtime: ${quoteYamlString(agentRuntime)}`);
     }
+    if (agent.maxTurns !== undefined) {
+      lines.push(`    max_turns: ${agent.maxTurns}`);
+    }
+    if (agent.effort !== undefined) {
+      lines.push(`    effort: ${quoteYamlString(agent.effort)}`);
+    }
     if (agent.model) {
       lines.push(`    model: ${quoteYamlString(agent.model)}`);
     }

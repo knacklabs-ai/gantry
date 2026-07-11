@@ -958,7 +958,14 @@ export function parseRuntimeSettingsObject(
   return withCustomModelCatalogEntries(customModelEntries, () => {
     const desiredState = parseDesiredStateSettings(root.desired_state);
     const providers = parseProviderSettings(root.providers);
-    const parsedAgents = parseConfiguredAgents(root.agents);
+    const agent = parseAgentSettings(root.agent);
+    const modelFamilies = parseModelFamilies(root.model_families);
+    const parsedAgents = parseConfiguredAgents(root.agents, {
+      model: agent.defaultModel,
+      oneTimeJobDefaultModel: agent.oneTimeJobDefaultModel,
+      recurringJobDefaultModel: agent.recurringJobDefaultModel,
+      modelFamilyOrder: modelFamilies,
+    });
     const providerAccounts = parseProviderAccounts(
       root.provider_accounts,
       providers,
@@ -978,14 +985,12 @@ export function parseRuntimeSettingsObject(
       jidForConversation: (conversation) =>
         jidForConversation(conversation, providerAccounts),
     });
-    const agent = parseAgentSettings(root.agent);
     const credentialBroker = parseModelAccessSettings(root.model_access);
     const memory = parseMemorySettings(root.memory);
     const runtime = parseRuntimeProcessSettings(root.runtime);
     const browser = parseBrowserSettings(root.browser);
     const permissions = parsePermissionSettings(root.permissions);
     const limits = parseLimitsSettings(root.limits);
-    const modelFamilies = parseModelFamilies(root.model_families);
 
     return {
       desiredState,

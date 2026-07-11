@@ -100,7 +100,12 @@ export interface InlineAgentLoopLaneInput {
   modelCredentialEnv: Readonly<Record<string, string>>;
   mcpServers: readonly MaterializedMcpCapability[];
   mcpHostnameLookup?: HostnameLookup;
+  skillRepository?: RunAgentOptions['skillRepository'];
+  skillArtifactStore?: RunAgentOptions['skillArtifactStore'];
+  skillContext?: RunAgentOptions['skillContext'];
   runtimeDataDir: string;
+  maxTurns?: number;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   jobActivity: InlineJobActivity;
   emitOutput(output: AgentOutput): Promise<void>;
 }
@@ -194,7 +199,6 @@ export async function runInlineAgent(
   if (admissionError) {
     return { status: 'error', result: null, error: admissionError };
   }
-
   const sessionsLogDir = path.join(
     hostContext.dataDir,
     'sessions',
@@ -250,6 +254,8 @@ export async function runInlineAgent(
       defaultTimeoutMs: hostContext.defaultTimeoutMs,
       idleTimeoutMs: hostContext.idleTimeoutMs,
       runtimeDataDir: hostContext.dataDir,
+      maxTurns: hostContext.maxTurns,
+      effort: hostContext.effort,
     });
   } catch (error) {
     return inlineFailure('Inline agent setup failed', error);
@@ -277,6 +283,8 @@ async function executeInlineRun(input: {
   defaultTimeoutMs: number;
   idleTimeoutMs: number;
   runtimeDataDir: string;
+  maxTurns?: number;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }): Promise<AgentOutput> {
   const controlPort = new InMemoryInlineRunnerControlPort();
   const handle = createInlineRunHandle(input.controller, controlPort);
@@ -434,7 +442,12 @@ async function executeInlineRun(input: {
         modelCredentialEnv: input.credentials.env,
         mcpServers: input.mcpServers,
         mcpHostnameLookup: input.options.mcpHostnameLookup,
+        skillRepository: input.options.skillRepository,
+        skillArtifactStore: input.options.skillArtifactStore,
+        skillContext: input.options.skillContext,
         runtimeDataDir: input.runtimeDataDir,
+        maxTurns: input.maxTurns,
+        effort: input.effort,
         jobActivity,
         emitOutput,
       }),

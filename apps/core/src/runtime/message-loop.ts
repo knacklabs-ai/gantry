@@ -295,6 +295,7 @@ async function processQueueMessages(
     messages: NewMessage[];
     hasMore: boolean;
     cursorAfter: string | null;
+    responseSchema?: Record<string, unknown>;
   },
 ): Promise<MessageAdmissionProcessingResult> {
   const opsRepository = resolveMessageRepository(deps);
@@ -381,6 +382,10 @@ async function processQueueMessages(
   let initialBatch = replay.messages;
   if (initialBatch.length === 0) {
     initialBatch = groupMessages;
+  }
+  if (replay.responseSchema !== undefined) {
+    await deps.queue.closeStdin(queueJid);
+    return enqueueMessageCheck(deps, queueJid);
   }
 
   const needsTrigger = group.requiresTrigger !== false;

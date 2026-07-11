@@ -19,6 +19,7 @@ import type {
   ProviderSessionRepository,
 } from '../../domain/ports/repositories.js';
 import type { IsoTimestamp } from '../../shared/time/primitives.js';
+import type { AgentRuntime } from '../../shared/agent-runtime.js';
 import { ApplicationError } from '../common/application-error.js';
 import { isValidControlId } from '../../shared/control-id.js';
 import { nowMs as currentTimeMs } from '../../shared/time/datetime.js';
@@ -84,6 +85,7 @@ export type SessionInteractionDeps = {
   };
   runtimeEvents: RuntimeEventExchange;
   liveAdmissionAppId?: string | null;
+  getConfiguredAgentRuntime?: (agentFolder: string) => AgentRuntime | undefined;
   now: () => IsoTimestamp;
   createId: () => string;
   stableHash: (input: string) => string;
@@ -220,6 +222,7 @@ export class SessionInteractionModule {
     correlationId?: string | null;
     responseMode?: unknown;
     webhookId?: string | null;
+    responseSchema?: Record<string, unknown>;
     durableLiveAdmission?: boolean;
     beforeDurableAdmission?: () => Promise<void> | void;
   }): Promise<{
@@ -232,6 +235,15 @@ export class SessionInteractionModule {
     const text = input.message.trim();
     if (!text) {
       throw new ApplicationError('INVALID_REQUEST', 'message is required');
+    }
+    if (
+      input.responseSchema &&
+      this.deps.getConfiguredAgentRuntime?.(session.workspaceKey) !== 'inline'
+    ) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        'response_schema requires an inline agent runtime',
+      );
     }
     const threadId = input.threadId?.trim() || null;
     const responseMode = normalizeResponseMode(
@@ -256,6 +268,7 @@ export class SessionInteractionModule {
       is_bot_message: false,
       external_message_id: messageId,
       thread_id: threadId ?? undefined,
+      responseSchema: input.responseSchema,
     };
     await this.deps.ops.storeChatMetadata(
       session.conversationJid,
