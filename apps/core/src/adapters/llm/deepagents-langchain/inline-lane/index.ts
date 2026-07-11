@@ -670,11 +670,11 @@ function isStructuredOutputError(error: unknown): boolean {
 
 function responseFormatForSchema(
   schema: Record<string, unknown>,
-  model: ResolvedRunnerModel['model'],
+  { profile: { structuredOutput } }: ResolvedRunnerModel['model'],
 ) {
-  return model.profile.structuredOutput === true
-    ? ProviderStrategy.fromSchema(schema)
-    : ToolStrategy.fromSchema({ ...schema, title: 'gantry_structured_output' });
+  if (structuredOutput === true) return ProviderStrategy.fromSchema(schema);
+  const name = 'gantry_structured_output';
+  return ToolStrategy.fromSchema({ ...schema, name, title: name });
 }
 
 function structuredOutputError(

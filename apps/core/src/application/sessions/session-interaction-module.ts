@@ -238,7 +238,7 @@ export class SessionInteractionModule {
     }
     if (
       input.responseSchema &&
-      this.deps.getConfiguredAgentRuntime?.(session.workspaceKey) === 'worker'
+      this.deps.getConfiguredAgentRuntime?.(session.workspaceKey) !== 'inline'
     ) {
       throw new ApplicationError(
         'INVALID_REQUEST',

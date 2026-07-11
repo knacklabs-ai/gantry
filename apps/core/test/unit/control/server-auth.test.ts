@@ -3629,6 +3629,7 @@ describe('control server runtime hardening', () => {
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
     });
+    mockedGetConfiguredAgentRuntime.mockReturnValue('inline');
     const app = {
       registerGroup: vi.fn(),
       queue: { enqueueMessageCheck: vi.fn() },
@@ -3655,6 +3656,68 @@ describe('control server runtime hardening', () => {
           expect.objectContaining({ responseSchema }),
         );
       }
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects response schemas when the session runtime is unresolved', async () => {
+    const port = await reservePort();
+    process.env.GANTRY_CONTROL_PORT = String(port);
+    process.env.GANTRY_CONTROL_API_KEYS_JSON = JSON.stringify([
+      {
+        kid: 'k',
+        token: 'token-message-unresolved-schema',
+        scopes: ['sessions:write'],
+        appId: 'app-one',
+      },
+    ]);
+    controlRepo.getAppSessionById.mockResolvedValue({
+      sessionId: 'session-1',
+      appId: 'app-one',
+      conversationId: 'conv-1',
+      chatJid: 'app:app-one:conv-1',
+      workspaceKey: 'unresolved-agent',
+      title: null,
+      defaultResponseMode: 'sse',
+      defaultWebhookId: null,
+    });
+    mockedGetConfiguredAgentRuntime.mockReturnValueOnce(undefined);
+    const app = {
+      registerGroup: vi.fn(),
+      queue: { enqueueMessageCheck: vi.fn() },
+    };
+    const handle = startControlServer({ app: app as any });
+
+    try {
+      const response = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/sessions/session-1/messages`,
+        'token-message-unresolved-schema',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            message: 'hello',
+            response_schema: { type: 'object' },
+          }),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'response_schema requires an inline agent runtime',
+        },
+      });
+      expect(mockedGetConfiguredAgentRuntime).toHaveBeenCalledWith(
+        'unresolved-agent',
+      );
+      expect(opsRepo.storeChatMetadata).not.toHaveBeenCalled();
+      expect(controlRepo.upsertAppResponseRoute).not.toHaveBeenCalled();
+      expect(opsRepo.storeMessage).not.toHaveBeenCalled();
+      expect(runtimeEvents.publish).not.toHaveBeenCalled();
+      expect(app.queue.enqueueMessageCheck).not.toHaveBeenCalled();
     } finally {
       await handle.close();
     }
@@ -3743,6 +3806,7 @@ describe('control server runtime hardening', () => {
       defaultResponseMode: 'sse',
       defaultWebhookId: null,
     });
+    mockedGetConfiguredAgentRuntime.mockReturnValue('inline');
     const app = {
       registerGroup: vi.fn(),
       queue: { enqueueMessageCheck: vi.fn() },

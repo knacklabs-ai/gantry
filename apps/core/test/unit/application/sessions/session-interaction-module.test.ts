@@ -285,8 +285,34 @@ describe('SessionInteractionModule', () => {
     expect(runtimeEvents.publish).not.toHaveBeenCalled();
   });
 
-  it('accepts response schemas when no settings agent entry resolves', async () => {
+  it('rejects response schemas when no settings agent entry resolves', async () => {
     const getConfiguredAgentRuntime = vi.fn(() => undefined);
+    const { module, control, ops, runtimeEvents } = makeModule({
+      getConfiguredAgentRuntime,
+      liveAdmissionAppId: null,
+    });
+
+    await expect(
+      module.acceptMessage({
+        appId: 'app-one',
+        sessionId: 'session-1',
+        message: 'hello from sdk',
+        responseSchema: { type: 'object' },
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'response_schema requires an inline agent runtime',
+    });
+
+    expect(getConfiguredAgentRuntime).toHaveBeenCalledWith('group');
+    expect(ops.storeChatMetadata).not.toHaveBeenCalled();
+    expect(control.upsertAppResponseRoute).not.toHaveBeenCalled();
+    expect(ops.storeMessage).not.toHaveBeenCalled();
+    expect(runtimeEvents.publish).not.toHaveBeenCalled();
+  });
+
+  it('accepts and persists response schemas for inline runtimes', async () => {
+    const getConfiguredAgentRuntime = vi.fn(() => 'inline' as const);
     const { module, ops } = makeModule({
       getConfiguredAgentRuntime,
       liveAdmissionAppId: null,

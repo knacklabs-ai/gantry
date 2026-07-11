@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 
@@ -16,6 +17,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import * as pgSchema from '@core/adapters/storage/postgres/schema/index.js';
+import {
+  ensureConfiguredAgent,
+  loadRuntimeSettings,
+  saveRuntimeSettings,
+} from '@core/config/settings/runtime-settings.js';
+import { makeAppGroup } from '@core/application/sessions/session-interaction-module.js';
 
 const INLINE_DATA_DIR = vi.hoisted(
   () => `/tmp/gantry-inline-runtime-integration-${process.pid}`,
@@ -197,6 +204,30 @@ function waitUntilAborted(signal: AbortSignal): Promise<AgentOutput> {
     if (signal.aborted) finish();
     else signal.addEventListener('abort', finish, { once: true });
   });
+}
+
+function registerInlineSessionAgent(conversationId: string): void {
+  const appId = 'app-inline-itest';
+  const runtimeHome = process.env.GANTRY_HOME;
+  if (!runtimeHome) throw new Error('GANTRY_HOME is required for this test');
+  const folder = makeAppGroup({
+    appId,
+    conversationId,
+    conversationJid: `app:${appId}:${conversationId}`,
+    identityHash: createHash('sha256')
+      .update(`${appId}\0${conversationId}`)
+      .digest('hex')
+      .slice(0, 12),
+    addedAt: new Date(0).toISOString(),
+  }).folder;
+  const settings = loadRuntimeSettings(runtimeHome);
+  ensureConfiguredAgent(settings, {
+    agentId: folder,
+    agentName: conversationId,
+    agentFolder: folder,
+  });
+  settings.agents[folder].runtime = 'inline';
+  saveRuntimeSettings(runtimeHome, settings);
 }
 
 function scriptedCoreTools(events: string[]) {
@@ -1194,6 +1225,7 @@ maybeDescribe('inline session turns through the control API', () => {
         },
       );
       expect(response.status).toBe(200);
+      registerInlineSessionAgent(conversationId);
       return (await response.json()) as { sessionId: string };
     };
     const runTurn = async (
