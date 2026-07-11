@@ -40,6 +40,10 @@ vi.mock('deepagents', () => ({
 }));
 
 import { runDeepAgentTurn } from '@core/adapters/llm/deepagents-langchain/runner/deep-agent-runner.js';
+import {
+  evaluateDeclarativeToolRules,
+  RunScopedToolSuccessLedger,
+} from '@core/runner/tool-gate-core.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -135,5 +139,69 @@ describe('DeepAgents worker model controls', () => {
         ],
       }),
     );
+  });
+
+  it('keeps require_prior success through a continuation but not a new run', async () => {
+    const toolRules = [
+      {
+        tool: 'deploy',
+        action: 'require_prior' as const,
+        prior: 'test',
+        reason: 'test before deploy',
+      },
+    ];
+    const firstInput = {
+      prompt: 'test then deploy',
+      workspaceFolder: '/tmp/workspace',
+      chatJid: 'conversation:test',
+      toolRules,
+      modelCredentialEnv: {
+        OPENAI_BASE_URL: 'http://127.0.0.1:4567/openai',
+        OPENAI_API_KEY: 'gtw_test',
+      },
+    };
+    const runLedger = new RunScopedToolSuccessLedger();
+    const runTurn = (agentInput: typeof firstInput, ledger = runLedger) =>
+      runDeepAgentTurn({
+        agentInput,
+        provider: 'openai',
+        modelId: 'gpt-5.5',
+        newSessionId: 'session-1',
+        includeMemoryContext: false,
+        toolSuccessLedger: ledger,
+        emit: vi.fn(),
+      });
+
+    await runTurn(firstInput);
+    const firstTurnLedger = mcp.connect.mock.calls[0]?.[0].toolSuccessLedger;
+    expect(firstTurnLedger).toBe(runLedger);
+    firstTurnLedger?.recordSuccess('test');
+
+    await runTurn({ ...firstInput, prompt: 'follow up: deploy' });
+    expect(mcp.connect.mock.calls[1]?.[0].toolSuccessLedger).toBe(runLedger);
+    expect(
+      evaluateDeclarativeToolRules({
+        toolName: 'deploy',
+        toolInput: {},
+        rules: toolRules,
+        successLedger: mcp.connect.mock.calls[1]?.[0].toolSuccessLedger,
+      }),
+    ).toBeNull();
+
+    await runTurn(
+      { ...firstInput, prompt: 'new run: deploy' },
+      new RunScopedToolSuccessLedger(),
+    );
+    expect(mcp.connect.mock.calls[2]?.[0].toolSuccessLedger).not.toBe(
+      runLedger,
+    );
+    expect(
+      evaluateDeclarativeToolRules({
+        toolName: 'deploy',
+        toolInput: {},
+        rules: toolRules,
+        successLedger: mcp.connect.mock.calls[2]?.[0].toolSuccessLedger,
+      }),
+    ).toMatchObject({ decision: 'declarative_tool_rule' });
   });
 });

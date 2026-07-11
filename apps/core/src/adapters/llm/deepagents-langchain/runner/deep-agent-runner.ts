@@ -75,23 +75,6 @@ interface ModelProfileLike {
   maxOutputTokens?: number;
 }
 
-const toolSuccessLedgers = new WeakMap<
-  DeepAgentRunnerInput,
-  RunScopedToolSuccessLedger
->();
-
-function toolSuccessLedgerFor(
-  input: DeepAgentRunnerInput,
-): RunScopedToolSuccessLedger | undefined {
-  if (!input.toolRules?.length) return undefined;
-  let ledger = toolSuccessLedgers.get(input);
-  if (!ledger) {
-    ledger = new RunScopedToolSuccessLedger();
-    toolSuccessLedgers.set(input, ledger);
-  }
-  return ledger;
-}
-
 export interface DeepAgentTurnResult {
   text: string;
   // Terminal-frame payload for the single per-turn terminal marker the caller
@@ -116,6 +99,7 @@ export async function runDeepAgentTurn(input: {
   checkpointer?: DeepAgentCheckpointSaver;
   checkpointTiming?: DeepAgentCheckpointTiming;
   includeMemoryContext: boolean;
+  toolSuccessLedger?: RunScopedToolSuccessLedger;
   emit: (frame: RunnerOutputFrame) => void;
   log?: (message: string) => void;
   // Marks tool activity (by name) on each tool-call start; the scheduled-job
@@ -169,7 +153,9 @@ export async function runDeepAgentTurn(input: {
   const permissionEnv = startupTiming.measure('permissionEnvMs', () =>
     buildPermissionIpcRuntimeEnv(),
   );
-  const toolSuccessLedger = toolSuccessLedgerFor(input.agentInput);
+  const toolSuccessLedger = input.agentInput.toolRules?.length
+    ? (input.toolSuccessLedger ?? new RunScopedToolSuccessLedger())
+    : undefined;
   logElapsed('Permission env prepared');
   const connected = await startupTiming.measureAsync('mcpConnectMs', () =>
     connectGantryAndThirdPartyMcpTools({
