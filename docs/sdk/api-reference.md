@@ -525,6 +525,31 @@ POST /v1/sessions/:sessionId/messages
 it. Direct LLM API callers use provider-native structured output in the
 provider-shaped payload instead (see Direct LLM API below).
 
+### Per-request model controls
+
+Session message sends also accept per-request overrides of the agent's
+configured model controls. They apply to that turn only, win over the agent's
+settings defaults, are persisted with the message, and survive replay:
+
+```http
+POST /v1/sessions/:sessionId/messages
+{
+  "message": "...",
+  "effort": "high",
+  "thinking": { "mode": "on", "budget_tokens": 8192 },
+  "max_output_tokens": 2048
+}
+```
+
+- `effort` — `low | medium | high | xhigh | max`
+- `thinking` — `"off"`, `"on"`, or `{ "mode": "on", "budget_tokens": <positive int> }`
+- `max_output_tokens` — positive integer; DeepAgents-engine agents only
+  (Claude-engine agents reject it; use `effort` there)
+
+Overrides are validated against the target agent's model capabilities; an
+unsupported combination is rejected with a `400` naming the field. These
+fields are HTTP-level today, like `response_schema`.
+
 Read-only history endpoints are available over the control API. SDK helpers are
 not exposed for these endpoints yet.
 

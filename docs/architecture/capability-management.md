@@ -302,6 +302,29 @@ produces a terminal error naming the cap. Session messages to inline agents may
 carry a per-message `response_schema` (JSON Schema) enforced by the selected
 lane; see the Direct LLM API section for the passthrough equivalent.
 
+### Agent control knobs
+
+Per-agent model-control settings apply on every runtime tier and are validated
+against the model catalog's capability metadata at settings parse/apply —
+a knob the selected model cannot honor is a configuration error naming the
+field and model, never a silent no-op:
+
+- `effort` (`low|medium|high|xhigh|max`) maps to the provider's
+  effort/reasoning parameter on the Claude and DeepAgents lanes, worker and
+  inline alike.
+- `thinking` (`off`, `on`, or `{mode: on, budget_tokens: <positive int>}`)
+  maps to provider thinking configuration where the model supports it.
+- `max_output_tokens` (positive int) sets the per-call output cap on
+  DeepAgents-engine agents. Claude-engine agents reject the field at
+  settings-apply — the claude-agent-sdk has no per-query output-token option;
+  `effort` is the Claude-side spend lever.
+
+Session message sends accept the same three fields (`effort`, `thinking`,
+`max_output_tokens`) as per-request overrides. An override is persisted on the
+message record, survives replay, and wins over the agent's configured default
+for that turn. On the Claude worker path the conversation-level `/thinking`
+command override continues to win over both.
+
 ## Administration Model
 
 The deterministic ownership rule is:
