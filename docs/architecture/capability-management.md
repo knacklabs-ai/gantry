@@ -325,6 +325,34 @@ message record, survives replay, and wins over the agent's configured default
 for that turn. On the Claude worker path the conversation-level `/thinking`
 command override continues to win over both.
 
+### Declarative tool rules
+
+Per-agent `tool_rules` add programmatic enforcement on top of capability
+selection — deterministic guarantees where prompt instructions alone have a
+non-zero failure rate:
+
+```yaml
+agents:
+  support:
+    tool_rules:
+      - tool: Bash
+        action: block
+        when: { arg: command, matches: '^rm\s' }
+        reason: destructive command
+      - tool: process_refund
+        action: require_prior
+        prior: get_customer
+        reason: verify the customer before refunds
+```
+
+`block` denies matching calls (tool name or glob, optional argument dot-path
+regex). `require_prior` denies until the named prior tool has completed
+successfully earlier in the same run. Rules are evaluated in the shared
+provider-neutral gate on both runtime tiers; denials return the structured
+error envelope (category, `isRetryable: false`, the rule reason) so the agent
+can adapt, and appear in tool-activity audit events. Agents without rules are
+unaffected. Result transforms are not supported.
+
 Two spend guards complement the knobs. A per-agent `max_run_tokens` setting
 bounds cumulative normalized usage across a run: the budget is checked at turn
 boundaries and exceeding it terminates the run with an error naming the budget
