@@ -505,6 +505,26 @@ user-facing channel has received a response synchronously. Observe delivery and
 model progress through `client.sessions.stream`, `client.sessions.wait`,
 `client.sessions.listEvents`, or the configured outbound webhook events.
 
+### Structured output (`response_schema`)
+
+Sessions bound to an inline-runtime agent accept an optional JSON Schema on the
+message-send payload. The selected inline lane enforces the schema and the turn
+result carries the validated JSON. The field is available on the HTTP payload
+(`POST /v1/sessions/:sessionId/messages`); the typed SDK helper does not expose
+it yet.
+
+```http
+POST /v1/sessions/:sessionId/messages
+{
+  "message": "Summarize open incidents",
+  "response_schema": { "type": "object", "properties": { ... }, "required": [ ... ] }
+}
+```
+
+`response_schema` must be a JSON Schema object; worker-runtime agents reject
+it. Direct LLM API callers use provider-native structured output in the
+provider-shaped payload instead (see Direct LLM API below).
+
 Read-only history endpoints are available over the control API. SDK helpers are
 not exposed for these endpoints yet.
 
@@ -1048,6 +1068,41 @@ client.memory.dreaming.status({ appId?, agentId? })
 
 `reference` memory is reserved for procedure/knowledge-source flows instead of
 direct `memory_save` payloads.
+
+## Direct LLM API
+
+Provider-shaped raw model calls through the Gantry Model Gateway — no agent
+loop, no agent tools. Streaming and non-streaming both pass through. There is
+no SDK helper; point the official provider SDK at Gantry instead:
+
+```ts
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
+
+// Anthropic Messages shape → POST {base}/llm/v1/messages
+const anthropic = new Anthropic({
+  apiKey: process.env.GANTRY_CONTROL_API_KEY!,
+  baseURL: 'http://127.0.0.1:3939/llm',
+});
+
+// OpenAI Chat Completions shape → POST {base}/llm/v1/chat/completions
+const openai = new OpenAI({
+  apiKey: process.env.GANTRY_CONTROL_API_KEY!,
+  baseURL: 'http://127.0.0.1:3939/llm/v1',
+});
+```
+
+- The API key must carry the `llm:invoke` scope. Missing/invalid key → `401`;
+  valid key without the scope → `403`.
+- `model` must be a registered Gantry model alias for the endpoint's response
+  family; raw provider model ids are rejected with `400`.
+- Client-side tools, structured outputs, `max_tokens`, and thinking/effort
+  parameters pass through to the provider unchanged. Provider-hosted execution
+  surfaces (Anthropic server tools, remote MCP, containers; OpenAI hosted
+  tools, attachments, file references) are rejected with `400
+  UNSUPPORTED_FIELD` naming the field.
+- Usage is attributed to the API key in the request log; the gateway credential
+  is request-scoped and revoked when delivery ends.
 
 ## Webhooks
 

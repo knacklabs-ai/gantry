@@ -294,6 +294,14 @@ task lifecycle remains available, including delegation to inline or worker
 agents. Inline scheduled runs use the existing job persistence, heartbeat, and
 failover paths.
 
+Inline loops are turn-bounded: the optional per-agent `max_turns` setting caps
+provider-loop iterations, and when unset a built-in default cap applies
+(`DEFAULT_INLINE_AGENT_MAX_TURNS` in
+`apps/core/src/adapters/llm/inline-lane-dispatcher.ts`). Hitting the cap
+produces a terminal error naming the cap. Session messages to inline agents may
+carry a per-message `response_schema` (JSON Schema) enforced by the selected
+lane; see the Direct LLM API section for the passthrough equivalent.
+
 ## Administration Model
 
 The deterministic ownership rule is:
