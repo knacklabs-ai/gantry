@@ -184,6 +184,28 @@ describe('inline lane dispatcher', () => {
       }),
     );
   });
+
+  it('fails closed when an async schema validator returns a promise', async () => {
+    const claudeLane = vi.fn(async () => ({
+      status: 'success' as const,
+      result: '{"answer":"ok"}',
+    }));
+    const input = laneInput(DEFAULT_AGENT_ENGINE);
+    input.input.responseSchema = { $async: true, ...responseSchema() };
+    const dispatcher = createInlineAgentLoopLaneDispatcher({
+      claudeLane,
+      deepAgentsLane: vi.fn(),
+      createCoreTools: () => ({ tools: [] }) as never,
+      getEgressDenylist: () => [],
+    });
+
+    await expect(dispatcher(input)).resolves.toMatchObject({
+      status: 'error',
+      result: '{"answer":"ok"}',
+      error: expect.stringMatching(/failed response_schema validation/i),
+    });
+    expect(claudeLane).toHaveBeenCalledTimes(2);
+  });
 });
 
 function responseSchema(): Record<string, unknown> {

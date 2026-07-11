@@ -242,7 +242,7 @@ function validateResponse(
       error: `candidate is not valid JSON: ${errorMessage(error)}`,
     };
   }
-  if (validate(value)) return { valid: true };
+  if (validate(value) === true) return { valid: true };
   const errors = validate.errors ?? [];
   return {
     valid: false,

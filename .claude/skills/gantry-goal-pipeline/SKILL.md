@@ -84,13 +84,19 @@ python3 .codex/scripts/verify.py
 python3 ~/.claude/skills/autoreview/scripts/autoreview --mode branch --base origin/main
 ```
 
-Autoreview runs through a Codex rescue handoff too (user decision 2026-07-11):
-spawn `codex:codex-rescue` with a prompt that runs the autoreview helper for
-the branch and returns its findings output verbatim — do not run the helper
-directly via nohup/background shell. Example handoff body: `Run: python3
-~/.claude/skills/autoreview/scripts/autoreview --mode branch --base <base>
-and return its complete findings output verbatim. Read-only otherwise. No
-commentary.`
+Codex handles review rounds too (user decision 2026-07-11), via the plugin's
+NATIVE review command — not by running the autoreview python helper inside a
+rescue sandbox (that fails structurally: no usable temp dir, and the helper's
+inner `codex exec` has no network there). Launch and poll as orchestrator:
+
+```bash
+COMPANION=$(ls ~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs | tail -1)
+node "$COMPANION" review --background --base <base-ref> --scope branch
+node "$COMPANION" status <review-id>   # then result once terminal
+```
+
+The launch call may block past 2 minutes before detaching — check `status`
+for the running review job rather than treating a timeout as failure.
 
 Autoreview contract: accept only concrete findings grounded in current code;
 fix accepted findings with the smallest diff (via a Codex handoff or directly

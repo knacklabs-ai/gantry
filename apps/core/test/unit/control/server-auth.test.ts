@@ -3626,6 +3626,25 @@ describe('control server runtime hardening', () => {
           ),
         },
       });
+      const asyncResponse = await requestWithRetry(
+        `http://127.0.0.1:${port}/v1/sessions/session-1/messages`,
+        'token-message-schema',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            message: 'hello',
+            response_schema: { $async: true, type: 'object' },
+          }),
+        },
+      );
+      expect(asyncResponse.status).toBe(400);
+      await expect(asyncResponse.json()).resolves.toMatchObject({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'response_schema async schemas are unsupported',
+        },
+      });
       expect(controlRepo.getAppSessionById).not.toHaveBeenCalled();
       expect(app.queue.enqueueMessageCheck).not.toHaveBeenCalled();
     } finally {

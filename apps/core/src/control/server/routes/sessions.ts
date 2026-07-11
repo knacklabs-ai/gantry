@@ -59,7 +59,10 @@ function responseSchemaCompileFailure(
   schema: Record<string, unknown>,
 ): string | undefined {
   try {
-    responseSchemaCompiler.compile(schema as AnySchema);
+    const validate = responseSchemaCompiler.compile(schema as AnySchema);
+    if ('$async' in validate && validate.$async === true) {
+      return 'response_schema async schemas are unsupported';
+    }
     return undefined;
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'unknown error';
