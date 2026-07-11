@@ -104,12 +104,14 @@ disposable database.
 
 ## Auto Review Loop
 
-Use the `autoreview` skill as part of this skill. The helper's review engine
-is codex (`codex exec` with the findings schema). When Claude Code
-orchestrates, it launches the helper detached from the orchestrator shell
-(user decision 2026-07-11; the plugin's native `review` command is not used,
-and running the helper inside a rescue sandbox is policy-blocked: wrapper
-prefix rules, headless approval, no child network).
+Use the `autoreview` skill as part of this skill. When Claude Code
+orchestrates, each review round is a codex rescue handoff that runs the
+helper as ONE plain command (no shell wrapper, no env prefix, no chaining)
+and returns findings verbatim (user decision 2026-07-11, confirmed working).
+Enablers live in repo config: `[sandbox_workspace_write] network_access=true`
+in `.codex/config.toml` and an allow prefix_rule for the helper path in
+`.codex/rules/default.rules`. The plugin's native `review` command is not
+used.
 
 Before starting a new review, check whether one is already running:
 

@@ -84,20 +84,24 @@ python3 .codex/scripts/verify.py
 python3 ~/.claude/skills/autoreview/scripts/autoreview --mode branch --base origin/main
 ```
 
-Review rounds use the autoreview skill with codex as its engine (user decision
-2026-07-11; the plugin's native `review` command is NOT used). The orchestrator
-launches the helper detached from its own shell — the helper itself spawns
-`codex exec` as the reviewer, so codex performs the review either way:
+Review rounds run the autoreview skill THROUGH a codex rescue handoff (user
+decision 2026-07-11, confirmed working end-to-end). Prerequisites already in
+repo config: `.codex/config.toml` has `[sandbox_workspace_write]
+network_access = true` (the helper's inner `codex exec` engine needs it) and
+`.codex/rules/default.rules` has an allow prefix_rule for
+`python3 <autoreview script path>`. The handoff prompt must demand ONE plain
+command — no shell wrapper (forbidden rule), no `env` prefix (prompt rule that
+dies under headless approval), no `&&` chaining:
 
-```bash
-nohup python3 ~/.claude/skills/autoreview/scripts/autoreview \
-  --mode branch --base <base-ref> > <scratch>/autoreview-rN.log 2>&1 &
+```
+Run the autoreview skill in <repo>. Execute this exact command directly — a
+single plain command, no shell wrapper, no env prefix, no chaining:
+python3 ~/.claude/skills/autoreview/scripts/autoreview --mode branch --base <base-ref>
+Return its complete output verbatim. Make no edits, no commits. No commentary.
 ```
 
-Do NOT try to run the helper inside a codex rescue task — it is policy-blocked
-three ways (shell wrappers rejected by prefix rules; out-of-workspace script
-execution needs an approval headless mode can't grant; the inner `codex exec`
-child has no sandbox network).
+Poll the returned companion task and read findings from `result`. The plugin's
+native `review` command is NOT used (user decision).
 
 Autoreview contract: accept only concrete findings grounded in current code;
 fix accepted findings with the smallest diff (via a Codex handoff or directly
