@@ -258,6 +258,9 @@ autoreview result (`python3 ~/.claude/skills/autoreview/scripts/autoreview
   `apps/core/src/runtime/group-processing.ts`,
   `apps/core/src/runtime/message-loop.ts` (per-request overrides must survive
   durable message admission and replay to reach the runner)
+- `apps/core/src/adapters/storage/postgres/repositories/canonical-message-repository.postgres.ts`,
+  `apps/core/src/adapters/storage/postgres/services/canonical-message-ops-service.ts`
+  (override persistence on the message record, same binding as `response_schema`)
 - `apps/core/src/adapters/llm/anthropic-claude-agent/**`,
   `apps/core/src/adapters/llm/deepagents-langchain/**`,
   `apps/core/src/adapters/llm/inline-lane-dispatcher.ts` (lane mappings)
