@@ -173,6 +173,7 @@ autoreview clean result (branch mode vs origin/main), remaining risks.
   `apps/core/src/adapters/llm/anthropic-claude-agent/gantry-model-gateway.ts`
   (usage emission)
 - New usage route module under `apps/core/src/control/server/routes/`,
+  `apps/core/src/control/server/index.ts` (route registration),
   OpenAPI modules, `apps/core/src/shared/control-api-keys.ts` (usage:read)
 - `apps/core/src/adapters/storage/postgres/**` (usage persistence/read)
 - `packages/sdk/**` (generated types + usage resource), `packages/contracts/**`
