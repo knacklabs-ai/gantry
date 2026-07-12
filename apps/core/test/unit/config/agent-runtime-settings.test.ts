@@ -283,6 +283,10 @@ describe('agent runtime settings', () => {
       'agents.main_agent.thinking.budget_tokens is not supported by model opus.',
     ],
     [
+      'model: fable\n    thinking:\n      mode: on\n      budget_tokens: 4096',
+      'agents.main_agent.thinking.budget_tokens is not supported by model fable.',
+    ],
+    [
       'model: sonnet\n    effort: xhigh',
       'agents.main_agent.effort xhigh is not supported by model sonnet; supported levels are low, medium, high, max.',
     ],
@@ -313,6 +317,17 @@ describe('agent runtime settings', () => {
     thinking:
       mode: on
       budget_tokens: 4096
+`),
+    ).not.toThrow();
+  });
+
+  it.each(['xhigh', 'max'])('accepts Fable 5 effort %s', (effort) => {
+    expect(() =>
+      parseRuntimeSettings(`agents:
+  main_agent:
+    name: Main
+    model: fable
+    effort: ${effort}
 `),
     ).not.toThrow();
   });
