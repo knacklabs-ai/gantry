@@ -263,6 +263,7 @@ export const RuntimeSettingsPublicSchema = z
           trigger: z.string().optional(),
           requiresTrigger: z.boolean().optional(),
           model: z.string().optional(),
+          permissionMode: z.enum(['ask', 'auto']).optional(),
         })
         .strict(),
     ),

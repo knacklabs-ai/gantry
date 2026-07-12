@@ -424,6 +424,7 @@ export function settingsToRevisionDocument(
               trigger: install.trigger,
               requires_trigger: install.requiresTrigger,
               model: install.model,
+              permission_mode: install.permissionMode,
             },
           ],
         ),

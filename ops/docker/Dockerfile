@@ -22,6 +22,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/sdk/package.json packages/sdk/package.json
+COPY examples/nextjs-workflows/package.json examples/nextjs-workflows/package.json
 
 # Full install (dev deps included) — needed for tsc + workspace builds.
 # `--ignore-scripts` keeps install hermetic; the prepare hook (husky) is a no-op

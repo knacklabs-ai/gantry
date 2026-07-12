@@ -816,6 +816,7 @@ describe('importFleetSettingsRevision', () => {
           status: 'active',
           addedAt: new Date(0).toISOString(),
           memoryScope: 'conversation',
+          permissionMode: 'auto',
         },
       },
     };
@@ -903,6 +904,15 @@ describe('importFleetSettingsRevision', () => {
         >
       )['researcher_171.1'].agent,
     ).toBe('researcher');
+    expect(
+      (
+        (document.conversations as Record<string, Record<string, unknown>>)
+          .shared_channel.installed_agents as Record<
+          string,
+          Record<string, unknown>
+        >
+      )['researcher_171.1'].permission_mode,
+    ).toBe('auto');
     const restored = settingsFromRevisionDocument(document);
     expect(restored.agent.name).toBe(settings.agent.name);
     expect(restored.agent.agentHarness).toBe('deepagents');
@@ -944,6 +954,10 @@ describe('importFleetSettingsRevision', () => {
       restored.conversations.shared_channel.installedAgents['researcher_171.1']
         ?.agentId,
     ).toBe('researcher');
+    expect(
+      restored.conversations.shared_channel.installedAgents['researcher_171.1']
+        ?.permissionMode,
+    ).toBe('auto');
   });
 
   it('migrates legacy per-agent bindings when reading settings revisions', () => {

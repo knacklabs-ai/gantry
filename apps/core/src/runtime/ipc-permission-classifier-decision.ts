@@ -182,6 +182,8 @@ async function resolvePermissionIntent(
           message &&
           message.is_from_me !== true &&
           message.is_bot_message !== true &&
+          (!input.request.senderId ||
+            message.sender === input.request.senderId) &&
           message.content.trim()
         ) {
           operatorMessage = message.content;
