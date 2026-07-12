@@ -73,7 +73,12 @@ export function escapeTelegramMarkdownV2(
 
 type TelegramStyleMarker = '_' | '*' | '~' | '|';
 
-const TELEGRAM_STYLE_MARKERS = new Set<TelegramStyleMarker>(['_', '*', '~', '|']);
+const TELEGRAM_STYLE_MARKERS = new Set<TelegramStyleMarker>([
+  '_',
+  '*',
+  '~',
+  '|',
+]);
 
 function isEscapedAt(text: string, index: number): boolean {
   let slashCount = 0;

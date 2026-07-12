@@ -72,7 +72,7 @@ function transformSegment(text: string, channel: FormattingDialect): string {
 
   if (channel === 'mrkdwn') {
     t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
-   } else if (channel === 'telegram-markdown-v2') {
+  } else if (channel === 'telegram-markdown-v2') {
     t = t.replace(/<u>(.*?)<\/u>/g, '__$1__');
   } else {
     t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
