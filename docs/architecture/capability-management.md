@@ -363,6 +363,59 @@ per-API-key `maxTokens` ceiling rejects requests whose `max_tokens` /
 `max_completion_tokens` exceed the key's limit with a shaped `400`
 `MAX_TOKENS_EXCEEDED` — requests are never silently clamped.
 
+### Auto-permission mode
+
+Per-agent `permission_mode: auto` adds an LLM classifier between "policy says
+ask a human" and the prompt actually rendering. The classifier is a policy
+relief valve, not an authority: its verdict space is `allow | ask` only — it
+can never deny, and it is never consulted for anything the deterministic
+tiers already decide (pre-checks, `tool_rules`, locked access presets, and
+the hard always-ask families: spend, credentials, settings mutations,
+outward-facing sends, delegation, admin/review prompts).
+
+```yaml
+agents:
+  support:
+    permission_mode: auto # default: ask
+permissions:
+  auto_mode:
+    model: haiku # optional; defaults to the memory extractor slot model
+```
+
+How a gray-zone call resolves:
+
+1. Deterministic checks run unchanged. Only calls that would interrupt a
+   human continue.
+2. Eligibility is deterministic and narrow: third-party MCP tools
+   (`mcp__<server>__<op>`, excluding the Gantry server) and shell
+   (`Bash`/`RunCommand`). Everything else keeps today's behavior.
+3. One short LLM call judges the actual invocation against the turn intent
+   (agent identity, triggering-message summary, canonical tool name,
+   secret-redacted input, policy reason). `allow` resolves the request as an
+   `allow_once` decision recorded with `decidedBy: auto_classifier`; `ask`
+   falls through to the normal prompt. Timeouts, parse failures, or an
+   unconfigured model all collapse to `ask` — the worst case is exactly
+   today's behavior.
+
+Every verdict (including failure-coded asks) is published as a
+`permission.classifier_decision` runtime event, so the audit trail is
+complete and queryable.
+
+Unattended runs (scheduled jobs) get the same treatment: where a zero-timeout
+permission request used to deny immediately, an auto-mode runner waits a
+bounded classifier window; the host answers eligible requests allow-or-deny
+within it and denies ineligible ones immediately.
+
+Decisions compound instead of repeating: each auto-allow carrying a
+synthesizable durable-rule suggestion increments a per-agent counter, and at
+three allows for the same rule shape the operator gets a one-tap prompt —
+"make this permanent?" with `Allow for future` — that lands in the existing
+audited persistent-grant path. The offer is made at most once per rule shape,
+and the ruleset stays inspectable configuration, never model memory.
+
+The conversation-level `/permissions ask|auto|default` command overrides the
+agent setting for the current conversation, mirroring `/thinking`.
+
 ## Administration Model
 
 The deterministic ownership rule is:
