@@ -35,17 +35,7 @@ const baseInput = {
   policyDecisionReason: 'No durable rule matched this tool call.',
   approvedCapabilityIds: [],
   memoryModelConfig: {
-    extractor: 'extractor-model',
-    modelProfiles: {
-      extractor: {
-        alias: 'extractor',
-        runnerModel: 'extractor-model',
-        responseFamily: 'test-family',
-        modelRoute: 'test-route',
-        modelRouteLabel: 'Test route',
-        displayName: 'Extractor',
-      },
-    },
+    extractor: 'haiku',
   },
 };
 
@@ -104,8 +94,13 @@ describe('permission classifier verdict client', () => {
     expect(result.failureCode).toBeUndefined();
     expect(query).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'extractor-model',
-        modelProfile: baseInput.memoryModelConfig.modelProfiles.extractor,
+        model: 'claude-haiku-4-5-20251001',
+        modelProfile: expect.objectContaining({
+          alias: 'haiku',
+          runnerModel: 'claude-haiku-4-5-20251001',
+          responseFamily: 'anthropic',
+          modelRoute: 'anthropic',
+        }),
         systemPrompt: expect.stringContaining(
           'The approvedCapabilityIds list is authoritative operator intent',
         ),
@@ -142,6 +137,14 @@ describe('permission classifier verdict client', () => {
     await expectFailure('model_resolution_failure', {
       ...baseInput,
       autoModeModel: 'not-a-model-alias',
+    });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the extractor model alias cannot be resolved', async () => {
+    await expectFailure('model_resolution_failure', {
+      ...baseInput,
+      memoryModelConfig: { extractor: 'not-a-model-alias' },
     });
     expect(query).not.toHaveBeenCalled();
   });

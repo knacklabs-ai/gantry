@@ -467,18 +467,8 @@ function resolveClassifierModel(input: PermissionClassifierInput): {
   model: string;
   modelProfile?: MemoryLlmModelProfile;
 } {
-  const autoModeModel = input.autoModeModel?.trim();
-  if (!autoModeModel) {
-    return {
-      model: input.memoryModelConfig.extractor,
-      ...(input.memoryModelConfig.modelProfiles?.extractor
-        ? { modelProfile: input.memoryModelConfig.modelProfiles.extractor }
-        : {}),
-    };
-  }
-
   const resolved = resolveModelSelectionForWorkload(
-    autoModeModel,
+    input.autoModeModel?.trim() || input.memoryModelConfig.extractor,
     'memory_extractor',
   );
   if (!resolved.ok) throw new Error(resolved.message);
