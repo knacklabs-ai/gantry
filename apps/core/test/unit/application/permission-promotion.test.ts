@@ -16,7 +16,7 @@ function repository(): PermissionPromotionRepository {
   const row = (): PermissionPromotionCounter => ({
     appId: 'app-one',
     agentFolder: 'main_agent',
-    suggestionKey: 'main_agent|mcp__github__get_issue',
+    suggestionKey: 'main_agent|RunCommand(git status)',
     allowCount: count,
     lastOfferedAt,
     createdAt: '2026-07-12T00:00:00.000Z',
@@ -43,16 +43,16 @@ const promotionInput = (
   appId: 'app-one',
   agentId: 'agent-one',
   agentFolder: 'main_agent',
-  suggestionKey: 'main_agent|mcp__github__get_issue',
+  suggestionKey: 'main_agent|RunCommand(git status)',
   suggestions: [
     {
       type: 'addRules' as const,
       behavior: 'allow' as const,
       destination: 'session' as const,
-      rules: [{ toolName: 'mcp__github__get_issue' }],
+      rules: [{ toolName: 'RunCommand', ruleContent: 'git status' }],
     },
   ],
-  toolName: 'mcp__github__get_issue',
+  toolName: 'RunCommand',
   targetJid: 'conversation-one',
   offer,
   now: () => '2026-07-12T00:00:00.000Z',
@@ -79,7 +79,7 @@ describe('permission promotion', () => {
         decisionOptions: ['allow_persistent_rule', 'cancel'],
         suggestions: promotionInput(promotionRepository, offer).suggestions,
         description:
-          "I've auto-allowed mcp__github__get_issue 3 times in this conversation — make it permanent?",
+          "I've auto-allowed RunCommand 3 times in this conversation — make it permanent?",
       }),
     );
   });

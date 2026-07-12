@@ -256,7 +256,7 @@ describe('permission classifier decision events', () => {
     const incrementAndGet = vi.fn(async () => ({
       appId: 'app:test',
       agentFolder: 'researcher',
-      suggestionKey: 'researcher|mcp__github__search',
+      suggestionKey: 'researcher|RunCommand(git status)',
       allowCount: 3,
       lastOfferedAt: null,
       createdAt: '2026-07-12T00:00:00.000Z',
@@ -276,9 +276,9 @@ describe('permission classifier decision events', () => {
         conversationId: 'conversation:test',
         correlationId: 'request:test',
         actor: 'permission',
-        turnIntentSummary: 'Search open pull requests.',
-        canonicalToolName: 'mcp__github__search',
-        toolInput: { query: 'open pull requests' },
+        turnIntentSummary: 'Inspect the repository status.',
+        canonicalToolName: 'RunCommand',
+        toolInput: { command: 'git status' },
         policyDecisionReason: 'No durable rule matched.',
         classifierConfig: { memoryExtractorModel: 'extractor-model' },
         publishRuntimeEvent,
@@ -294,14 +294,14 @@ describe('permission classifier decision events', () => {
       }),
     ).resolves.toMatchObject({
       decision: 'allow',
-      suggestionKey: 'researcher|mcp__github__search',
+      suggestionKey: 'researcher|RunCommand(git status)',
     });
 
     await vi.waitFor(() => expect(offer).toHaveBeenCalledTimes(1));
     expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({
-          suggestionKey: 'researcher|mcp__github__search',
+          suggestionKey: 'researcher|RunCommand(git status)',
         }),
       }),
     );

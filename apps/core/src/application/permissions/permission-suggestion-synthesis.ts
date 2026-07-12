@@ -3,7 +3,6 @@ import type {
   PermissionApprovalUpdate,
 } from '../../domain/types.js';
 import {
-  isThirdPartyMcpToolRule,
   publicGantryToolNameForSdkTool,
   RUN_COMMAND_TOOL_NAME,
 } from '../../shared/agent-tool-references.js';
@@ -22,11 +21,8 @@ export function synthesizeHostPermissionSuggestions(
   toolInput: unknown,
 ): PermissionApprovalUpdate[] | undefined {
   const publicToolName = publicGantryToolNameForSdkTool(toolName.trim());
-  const rules = isThirdPartyMcpToolRule(publicToolName)
-    ? [publicToolName]
-    : publicToolName === RUN_COMMAND_TOOL_NAME
-      ? commandRules(toolInput)
-      : [];
+  const rules =
+    publicToolName === RUN_COMMAND_TOOL_NAME ? commandRules(toolInput) : [];
   const validRules = rules.filter((rule) => {
     try {
       validatePersistentRule(rule);

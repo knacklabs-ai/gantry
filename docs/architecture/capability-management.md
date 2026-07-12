@@ -412,6 +412,10 @@ three allows for the same rule shape the operator gets a one-tap prompt —
 "make this permanent?" with `Allow for future` — that lands in the existing
 audited persistent-grant path. The offer is made at most once per rule shape,
 and the ruleset stays inspectable configuration, never model memory.
+Promotion only synthesizes rule shapes the durable-access policy already
+accepts (scoped `RunCommand(...)` and friends); third-party MCP calls are
+auto-allowed per call but produce no durable offer — their lasting grants
+remain reviewed semantic capabilities via `request_access`.
 
 The conversation-level `/permissions ask|auto|default` command overrides the
 agent setting for the current conversation, mirroring `/thinking`.

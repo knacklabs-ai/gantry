@@ -694,14 +694,7 @@ describe('ipc-interaction-handler', () => {
     expect(classifierConsult).toHaveBeenCalledOnce();
     expect(requestPermissionApproval).toHaveBeenCalledWith(
       expect.objectContaining({
-        suggestions: [
-          {
-            type: 'addRules',
-            behavior: 'allow',
-            destination: 'session',
-            rules: [{ toolName: 'mcp__crm__read' }],
-          },
-        ],
+        suggestions: undefined,
       }),
     );
     expect(publishRuntimeEvent).toHaveBeenCalledWith(

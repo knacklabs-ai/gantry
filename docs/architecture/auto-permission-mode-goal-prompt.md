@@ -83,11 +83,16 @@ allow-or-deny-with-reason.
   (request_permission review, admin) are excluded by family filter inside the
   shared helper.
 - **Suggestion synthesis**: shared host-side function producing
-  `PermissionApprovalUpdate[]` for the gray-zone families that currently pass
-  none (DeepAgents third-party MCP, DeepAgents RunCommand, inline MCP):
-  exact-tool-name allow rule for MCP tools; Bash prefix rules reuse the same
-  derivation the Claude worker gate performs. All synthesized rules pass the
-  existing `validatePersistentRule` path before being attached or counted.
+  `PermissionApprovalUpdate[]` only for rule shapes the durable-access policy
+  already accepts — scoped `RunCommand(...)` shell rules reusing the Claude
+  worker gate's derivation. Third-party MCP tools synthesize NOTHING in v1
+  (closeout correction 2026-07-12): the Agent Access design routes durable
+  third-party access through reviewed semantic capabilities
+  (`request_access target.kind=capability`), never raw `mcp__` tool rules, so
+  MCP calls get per-call classifier relief but no promotion offer. All
+  synthesized rules pass the existing `validatePersistentRule` path before
+  being attached or counted; the durable-access policy itself is NEVER
+  loosened for this feature.
 - **New event type**: one line in
   `apps/core/src/domain/events/runtime-event-types.ts` + explicit mapping in
   `apps/core/src/control/server/run-event-projection.ts` (permission events

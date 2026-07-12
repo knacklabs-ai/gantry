@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DURABLE_ACCESS_RULE_REJECTION_REASON,
   formatDurableAccessRulesForUser,
   isDurableAccessRuleAllowed,
   validateDurableAccessRule,
@@ -68,9 +69,10 @@ describe('durable access policy', () => {
     ).toEqual({ ok: true });
   });
 
-  it('allows exact third-party MCP tools', () => {
+  it('rejects exact third-party MCP tools', () => {
     expect(validateDurableAccessRule('mcp__github__get_issue')).toEqual({
-      ok: true,
+      ok: false,
+      reason: DURABLE_ACCESS_RULE_REJECTION_REASON,
     });
   });
 
