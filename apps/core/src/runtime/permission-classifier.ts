@@ -208,8 +208,8 @@ export async function consultPermissionClassifier(
   let response: string;
   try {
     response = await runWithMemoryOperationTimeout(
-      (signal) =>
-        llm.query({
+      (signal) => {
+        const query = {
           appId: input.appId,
           model: modelSelection.model,
           ...(modelSelection.modelProfile
@@ -219,7 +219,10 @@ export async function consultPermissionClassifier(
           prompt: classifierUserPayload(input),
           signal,
           timeoutMs: PERMISSION_CLASSIFIER_TIMEOUT_MS,
-        }),
+          singleRequest: true,
+        };
+        return llm.query(query);
+      },
       {
         timeoutMs: PERMISSION_CLASSIFIER_TIMEOUT_MS,
         label: 'permission classifier',

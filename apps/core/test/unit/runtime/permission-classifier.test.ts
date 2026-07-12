@@ -109,6 +109,7 @@ describe('permission classifier verdict client', () => {
         systemPrompt: expect.stringContaining(
           'The approvedCapabilityIds list is authoritative operator intent',
         ),
+        singleRequest: true,
         timeoutMs: 12_000,
       }),
     );
@@ -324,8 +325,10 @@ describe('permission classifier verdict client', () => {
     });
   });
 
-  it('fails closed when the query throws', async () => {
-    query.mockRejectedValue(new Error('gateway failed'));
+  it('fails closed when the direct gateway query surfaces a non-2xx response', async () => {
+    query.mockRejectedValue(
+      new Error('Anthropic classifier query failed: 429 Too Many Requests'),
+    );
     await expectFailure('query_error');
   });
 
