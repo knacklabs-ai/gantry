@@ -18,6 +18,7 @@ vi.mock('@core/infrastructure/logging/logger.js', () => ({
 import {
   consultPermissionClassifier,
   consultPermissionClassifierBeforePrompt,
+  PERMISSION_CLASSIFIER_TIMEOUT_MS,
   PERMISSION_CLASSIFIER_MAX_TOOL_INPUT_CHARS,
   publishPermissionClassifierDecision,
   redactPermissionClassifierToolInput,
@@ -72,7 +73,7 @@ describe('permission classifier verdict client', () => {
         model: 'extractor-model',
         modelProfile: baseInput.memoryModelConfig.modelProfiles.extractor,
         systemPrompt: expect.stringContaining('Return allow only when'),
-        timeoutMs: 3_000,
+        timeoutMs: 12_000,
       }),
     );
     expect(JSON.parse(query.mock.calls[0]?.[0].prompt as string)).toMatchObject(
@@ -209,7 +210,7 @@ describe('permission classifier verdict client', () => {
     query.mockImplementation(() => new Promise(() => undefined));
 
     const pending = consultPermissionClassifier(baseInput);
-    await vi.advanceTimersByTimeAsync(3_001);
+    await vi.advanceTimersByTimeAsync(PERMISSION_CLASSIFIER_TIMEOUT_MS + 1);
 
     await expect(pending).resolves.toMatchObject({
       decision: 'ask',

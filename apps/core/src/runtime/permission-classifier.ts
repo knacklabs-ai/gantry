@@ -30,7 +30,7 @@ import type { PermissionMode } from '../shared/permission-mode.js';
 import type { PermissionApprovalUpdate } from '../domain/types.js';
 import { SENSITIVE_TOOL_INPUT_KEY_PATTERN } from './ipc-tool-input-sanitization.js';
 
-export const PERMISSION_CLASSIFIER_TIMEOUT_MS = 3_000;
+export const PERMISSION_CLASSIFIER_TIMEOUT_MS = 12_000;
 export const PERMISSION_CLASSIFIER_MAX_TOOL_INPUT_CHARS = 4_000;
 
 export type PermissionClassifierFailureCode =

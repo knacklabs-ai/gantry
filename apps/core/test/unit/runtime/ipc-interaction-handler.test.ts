@@ -8,7 +8,9 @@ import {
   verifyIpcResponsePayload,
 } from '@core/infrastructure/ipc/response-signing.js';
 import { createIpcAuthEnvelope } from '@core/runtime/ipc-auth.js';
+import { agentIdForFolder } from '@core/domain/agent/agent-folder-id.js';
 import { semanticCapabilityInputSchema } from '@core/shared/semantic-capabilities.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 import {
   processPermissionIpcRequest,
@@ -20,6 +22,7 @@ import {
   processPermissionInteractionIpc,
   processUserQuestionInteractionIpc,
 } from '@core/runtime/ipc-interaction-processing.js';
+import { resolvePermissionIpcDecision } from '@core/runtime/ipc-permission-classifier-decision.js';
 import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 
 function fileMode(filePath: string): number {
@@ -637,6 +640,59 @@ describe('ipc-interaction-handler', () => {
         }),
       }),
     );
+  });
+
+  it('honors a conversation override on the live agent-qualified route key', async () => {
+    const classifierConsult = vi.fn(async () => ({
+      decision: 'allow' as const,
+      reason: 'The command matches the turn intent.',
+      latencyMs: 5,
+    }));
+    const requestPermissionApproval = vi.fn();
+    const targetJid = 'tg:-1003798366047';
+    const sourceAgentFolder = 'main_agent';
+    const routeKey = makeAgentThreadQueueKey(
+      targetJid,
+      agentIdForFolder(sourceAgentFolder),
+    );
+
+    const decision = await resolvePermissionIpcDecision({
+      request: {
+        requestId: 'perm-live-route-override',
+        sourceAgentFolder,
+        targetJid,
+        toolName: 'RunCommand',
+        toolInput: { command: 'git status --short' },
+      },
+      sourceAgentFolder,
+      deps: {
+        conversationRoutes: () => ({
+          [routeKey]: {
+            name: 'Gantry',
+            folder: sourceAgentFolder,
+            trigger: '@Gantry',
+            added_at: '2026-07-12T00:00:00.000Z',
+            agentConfig: { permissionMode: 'auto' },
+          },
+        }),
+        requestPermissionApproval,
+        classifierConsult,
+        publishRuntimeEvent: vi.fn(async () => undefined),
+        getPermissionRuntimeSettings: () => ({
+          agents: {},
+          permissions: { autoMode: {} },
+          memory: { llm: { models: { extractor: 'sonnet' } } },
+        }),
+      } as never,
+    });
+
+    expect(classifierConsult).toHaveBeenCalledOnce();
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(decision).toMatchObject({
+      approved: true,
+      mode: 'allow_once',
+      decidedBy: 'auto_classifier',
+    });
   });
 
   it('publishes an input-truncated ask before preserving the IPC prompt flow', async () => {

@@ -4,6 +4,11 @@ import type {
   PermissionApprovalRequest,
 } from '../domain/types.js';
 import { resolveEffectivePermissionMode } from '../shared/permission-mode.js';
+import {
+  findConversationRouteForQueue,
+  makeAgentThreadQueueKey,
+} from '../shared/thread-queue-key.js';
+import { agentIdForFolder } from '../domain/agent/agent-folder-id.js';
 import type { IpcDeps } from './ipc-domain-types.js';
 import { consultPermissionClassifierBeforePrompt } from './permission-classifier.js';
 import { runDurablePermissionInteraction } from '../application/interactions/durable-interaction-handler.js';
@@ -14,7 +19,16 @@ export async function resolvePermissionIpcDecision(input: {
   deps: IpcDeps;
 }): Promise<PermissionApprovalDecision> {
   const route = input.request.targetJid
-    ? input.deps.conversationRoutes?.()[input.request.targetJid]
+    ? findConversationRouteForQueue(
+        input.deps.conversationRoutes?.() ?? {},
+        makeAgentThreadQueueKey(
+          input.request.targetJid,
+          agentIdForFolder(input.sourceAgentFolder),
+          input.request.threadId,
+          input.request.providerAccountId,
+        ),
+        (candidate) => agentIdForFolder(candidate.folder),
+      )
     : undefined;
   const settings = input.deps.getPermissionRuntimeSettings?.();
   const autoModeModel = settings?.permissions.autoMode.model;
