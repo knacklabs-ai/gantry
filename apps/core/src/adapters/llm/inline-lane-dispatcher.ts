@@ -18,6 +18,7 @@ import type { PermissionMode } from '../../shared/permission-mode.js';
 
 export const DEFAULT_INLINE_AGENT_MAX_TURNS = 50;
 const RESPONSE_SCHEMA_RETRY_LIMIT = 1;
+const RESPONSE_SCHEMA_REPAIR_CANDIDATE_LIMIT = 4_096;
 const responseSchemaCompiler = new Ajv({
   addUsedSchema: false,
   allErrors: true,
@@ -234,12 +235,20 @@ export function createInlineAgentLoopLaneDispatcher(input: {
         ...laneInput,
         input: {
           ...laneInput.input,
-          prompt: `${laneInput.input.prompt}\n\nYour previous response failed response_schema validation. Validation error: ${validation.error}\nReturn one corrected JSON response matching response_schema.`,
+          prompt: `${laneInput.input.prompt}\n\nYour previous response failed validation with: ${validation.error}\nFix it to satisfy response_schema.\n\nPrevious response:\n${boundedRepairCandidate(output.result)}\n\nReturn one corrected JSON response matching response_schema.`,
           disableTools: true,
         },
       };
     }
   };
+}
+
+function boundedRepairCandidate(candidate: string | null): string {
+  if (candidate === null) return '(no candidate text)';
+  if (candidate.length <= RESPONSE_SCHEMA_REPAIR_CANDIDATE_LIMIT) {
+    return candidate;
+  }
+  return `${candidate.slice(0, RESPONSE_SCHEMA_REPAIR_CANDIDATE_LIMIT)}\n[truncated]`;
 }
 
 function validateResponse(

@@ -261,9 +261,9 @@ export class PostgresRuntimeEventRepository implements RuntimeEventRepository {
     const payload = sql`${events.payloadJson}::jsonb`;
     const usage = sql`${payload}->'usage'`;
     const model = sql<string | null>`coalesce(
+      ${usage}->>'model',
       ${payload}->>'modelAlias',
-      ${payload}->>'resolved_model_alias',
-      ${usage}->>'model'
+      ${payload}->>'resolved_model_alias'
     )`;
     const apiKeyId = sql<string | null>`${payload}->>'apiKeyId'`;
     const day = sql<string>`to_char(

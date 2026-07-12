@@ -136,6 +136,9 @@ describe('inline lane dispatcher', () => {
         disableTools: true,
       },
     });
+    expect(claudeLane.mock.calls[1]?.[0].input.prompt).toContain(
+      '{"wrong":"shape"}',
+    );
     // corrective retry must not resume the invalid attempt's provider session
     expect(claudeLane.mock.calls[1]?.[0].input.sessionId).toBeUndefined();
     expect(createCoreTools).toHaveBeenCalledOnce();
@@ -143,6 +146,36 @@ describe('inline lane dispatcher', () => {
     expect(input.emitOutput).toHaveBeenCalledWith(
       expect.objectContaining({ result: '{"answer":"corrected"}' }),
     );
+  });
+
+  it('bounds the failed candidate included in the repair prompt', async () => {
+    const oversizedCandidate = `${'x'.repeat(5_000)}candidate-tail`;
+    const claudeLane = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'success',
+        result: oversizedCandidate,
+      })
+      .mockResolvedValueOnce({
+        status: 'success',
+        result: '{"answer":"corrected"}',
+      });
+    const input = laneInput(DEFAULT_AGENT_ENGINE);
+    input.input.responseSchema = responseSchema();
+    const dispatcher = createInlineAgentLoopLaneDispatcher({
+      claudeLane,
+      deepAgentsLane: vi.fn(),
+      createCoreTools: () => ({ tools: [] }) as never,
+      getEgressDenylist: () => [],
+    });
+
+    await dispatcher(input);
+
+    const repairPrompt = claudeLane.mock.calls[1]?.[0].input.prompt;
+    expect(repairPrompt).toContain('x'.repeat(4_096));
+    expect(repairPrompt).not.toContain('x'.repeat(4_097));
+    expect(repairPrompt).not.toContain('candidate-tail');
+    expect(repairPrompt).toContain('[truncated]');
   });
 
   it('retries a lane-marked structured-output error exactly once', async () => {

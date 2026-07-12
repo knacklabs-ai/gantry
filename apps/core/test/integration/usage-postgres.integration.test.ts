@@ -221,7 +221,11 @@ maybeDescribe('Postgres usage query', () => {
       eventType: RUNTIME_EVENT_TYPES.JOB_COMPLETED,
       actor: 'scheduler',
       payload: {
-        usage: { inputTokens: 20, outputTokens: 4 },
+        usage: {
+          inputTokens: 20,
+          outputTokens: 4,
+          model: 'model:job-failover',
+        },
         resolved_model_alias: 'model:job',
       },
       createdAt: '2026-07-01T11:00:00.000Z' as never,
@@ -383,6 +387,9 @@ maybeDescribe('Postgres usage query', () => {
       { requestCount: 1, inputTokens: 30, outputTokens: 6 },
     ]);
     await expect(
+      query({ ...base, model: 'model:job-failover' }),
+    ).resolves.toEqual([{ requestCount: 1, inputTokens: 20, outputTokens: 4 }]);
+    await expect(
       query({ appId: 'app:other' as never, from, to }),
     ).resolves.toEqual([{ requestCount: 1, inputTokens: 99, outputTokens: 9 }]);
   });
@@ -412,7 +419,7 @@ maybeDescribe('Postgres usage query', () => {
     ]);
     await expect(query({ ...base, groupBy: 'model' })).resolves.toEqual([
       {
-        model: 'model:job',
+        model: 'model:job-failover',
         requestCount: 1,
         inputTokens: 20,
         outputTokens: 4,
