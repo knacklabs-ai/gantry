@@ -39,6 +39,7 @@ import type { SkillArtifactStore } from '../domain/ports/skill-artifact-store.js
 import type { RemoteMcpDnsValidationCache } from '../application/mcp/mcp-server-policy.js';
 import type { PermissionClassifierPromptConsultInput } from './permission-classifier.js';
 import type { PermissionMode } from '../shared/permission-mode.js';
+import type { PermissionPromotionRepository } from '../domain/ports/permission-promotion.js';
 
 export interface IpcDeps {
   sendMessage: (
@@ -99,6 +100,9 @@ export interface IpcDeps {
     redactOutput?: (value: string) => string;
   }) => Promise<{ stdout?: string; stderr?: string } | void>;
   getPermissionRepository?: () => PermissionRepository | undefined;
+  getPermissionPromotionRepository?: () =>
+    | PermissionPromotionRepository
+    | undefined;
   getFileArtifactStore?: () => FileArtifactStore | undefined;
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<void>;
   classifierConsult?: PermissionClassifierPromptConsultInput['classifierConsult'];

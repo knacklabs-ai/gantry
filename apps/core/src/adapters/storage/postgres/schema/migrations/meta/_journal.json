@@ -666,6 +666,13 @@
       "when": 1777335000000,
       "tag": "0097_runtime_usage_query_index",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1777338600000,
+      "tag": "0098_permission_promotion_counters",
+      "breakpoints": true
     }
   ]
 }

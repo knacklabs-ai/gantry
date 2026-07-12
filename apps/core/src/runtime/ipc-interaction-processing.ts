@@ -46,6 +46,7 @@ import {
   writeUserQuestionIpcResponse,
 } from './ipc-interaction-handler.js';
 import { resolvePermissionIpcDecision } from './ipc-permission-classifier-decision.js';
+import { synthesizeHostPermissionSuggestions } from '../application/permissions/permission-suggestion-synthesis.js';
 import {
   permissionDecisionEventType,
   permissionDecisionName,
@@ -179,6 +180,10 @@ export async function processPermissionInteractionIpc(input: {
     await denyLockedPermissionInteraction(input, lockStatus);
     return;
   }
+  input.request.suggestions ??= synthesizeHostPermissionSuggestions(
+    input.request.toolName,
+    input.request.toolInput,
+  );
   try {
     const requestedContext = permissionTelemetryContext(input.request, {
       sourceAgentFolder: input.sourceAgentFolder,

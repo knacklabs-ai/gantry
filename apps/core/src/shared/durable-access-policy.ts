@@ -11,6 +11,7 @@ import {
 import {
   isCanonicalBrowserCapabilityRule,
   isGantryFacadeExactToolRule,
+  isThirdPartyMcpToolRule,
   parseReadableScopedToolRule,
   RUN_COMMAND_TOOL_NAME,
   validateReadableAgentToolRule,
@@ -43,12 +44,13 @@ import {
  *   - canonical Browser
  *   - exact Gantry facade file/web tools
  *   - exact Gantry admin MCP tools (the closed admin allowlist)
+ *   - exact third-party MCP tools
  *   - scoped `RunCommand(...)` with the bash-parser durable safety rejections
  * Gantry MCP wildcards and generated runtime skill paths are rejected.
  */
 
 export const DURABLE_ACCESS_RULE_REJECTION_REASON =
-  'Persistent access approvals support only trusted projected semantic capabilities, canonical Browser, exact Gantry file/web tools, scoped RunCommand(...), or exact Gantry admin tools; use request_access with target.kind=capability for reviewed semantic app/tool access.';
+  'Persistent access approvals support only trusted projected semantic capabilities, canonical Browser, exact Gantry file/web tools, exact third-party MCP tools, scoped RunCommand(...), or exact Gantry admin tools; use request_access with target.kind=capability for reviewed semantic app/tool access.';
 
 export interface DurableAccessRuleOptions {
   semanticCapabilityDefinitions?: Record<string, SemanticCapabilityDefinition>;
@@ -165,6 +167,7 @@ export function validateDurableAccessRule(
 
   if (isCanonicalBrowserCapabilityRule(trimmed)) return { ok: true };
   if (isAdminMcpToolFullName(trimmed)) return { ok: true };
+  if (isThirdPartyMcpToolRule(trimmed)) return { ok: true };
 
   return {
     ok: false,

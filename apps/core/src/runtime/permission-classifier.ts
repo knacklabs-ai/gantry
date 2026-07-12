@@ -7,6 +7,14 @@ import {
   isPermissionClassifierEligible,
   type PermissionClassifierRequestFamily,
 } from '../application/permissions/permission-classifier.js';
+import {
+  schedulePermissionPromotion,
+  type PermissionPromotionInput,
+} from '../application/permissions/permission-promotion.js';
+import {
+  permissionSuggestionKey,
+  synthesizeHostPermissionSuggestions,
+} from '../application/permissions/permission-suggestion-synthesis.js';
 import type {
   MemoryLlmClient,
   MemoryLlmModelProfile,
@@ -19,6 +27,7 @@ import {
 } from '../shared/memory-dreaming-timeout.js';
 import { resolveModelSelectionForWorkload } from '../shared/model-catalog.js';
 import type { PermissionMode } from '../shared/permission-mode.js';
+import type { PermissionApprovalUpdate } from '../domain/types.js';
 
 export const PERMISSION_CLASSIFIER_TIMEOUT_MS = 3_000;
 export const PERMISSION_CLASSIFIER_MAX_TOOL_INPUT_CHARS = 4_000;
@@ -95,10 +104,17 @@ export interface PermissionClassifierPromptConsultInput {
   canonicalToolName: string;
   toolInput: unknown;
   policyDecisionReason: string;
+  suggestions?: PermissionApprovalUpdate[];
+  promotion?: Pick<PermissionPromotionInput, 'repository' | 'offer'>;
   classifierConfig: PermissionClassifierRuntimeConfig;
   signal?: AbortSignal;
   publishRuntimeEvent: (event: RuntimeEventPublishInput) => Promise<unknown>;
   classifierConsult?: typeof consultPermissionClassifier;
+}
+
+export interface PermissionClassifierPromptConsultResult extends PermissionClassifierResult {
+  suggestions?: PermissionApprovalUpdate[];
+  suggestionKey?: string;
 }
 
 export interface PermissionClassifierRuntimeConfig {
@@ -216,7 +232,7 @@ export async function consultPermissionClassifier(
 
 export async function consultPermissionClassifierBeforePrompt(
   input: PermissionClassifierPromptConsultInput,
-): Promise<PermissionClassifierResult | undefined> {
+): Promise<PermissionClassifierPromptConsultResult | undefined> {
   if (
     input.permissionMode !== 'auto' ||
     !isPermissionClassifierEligible(
@@ -245,6 +261,13 @@ export async function consultPermissionClassifierBeforePrompt(
       signal: input.signal,
     },
   );
+  const suggestions =
+    input.suggestions ??
+    synthesizeHostPermissionSuggestions(
+      input.canonicalToolName,
+      input.toolInput,
+    );
+  const suggestionKey = permissionSuggestionKey(input.agentFolder, suggestions);
   await publishPermissionClassifierDecision({
     publishRuntimeEvent: input.publishRuntimeEvent,
     appId: (input.appId ?? 'default') as never,
@@ -256,9 +279,36 @@ export async function consultPermissionClassifierBeforePrompt(
     correlationId: input.correlationId as never,
     actor: input.actor,
     toolName: input.canonicalToolName,
+    ...(suggestionKey ? { suggestionKey } : {}),
     ...result,
   });
-  return result;
+  if (
+    result.decision === 'allow' &&
+    suggestionKey &&
+    suggestions &&
+    input.promotion
+  ) {
+    schedulePermissionPromotion(
+      {
+        repository: input.promotion.repository,
+        offer: input.promotion.offer,
+        appId: input.appId ?? 'default',
+        agentId: input.agentId,
+        agentFolder: input.agentFolder,
+        suggestionKey,
+        suggestions,
+        toolName: input.canonicalToolName,
+        targetJid: input.conversationId,
+        threadId: input.threadId,
+      },
+      (context, message) => logger.warn(context, message),
+    );
+  }
+  return {
+    ...result,
+    ...(suggestions ? { suggestions } : {}),
+    ...(suggestionKey ? { suggestionKey } : {}),
+  };
 }
 
 function resolveClassifierModel(input: PermissionClassifierInput): {

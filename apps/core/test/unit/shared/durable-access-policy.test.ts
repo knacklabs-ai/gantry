@@ -68,6 +68,12 @@ describe('durable access policy', () => {
     ).toEqual({ ok: true });
   });
 
+  it('allows exact third-party MCP tools', () => {
+    expect(validateDurableAccessRule('mcp__github__get_issue')).toEqual({
+      ok: true,
+    });
+  });
+
   it('rejects non-admin Gantry MCP tools as durable access rules', () => {
     expect(
       validateDurableAccessRule('mcp__gantry__send_message'),

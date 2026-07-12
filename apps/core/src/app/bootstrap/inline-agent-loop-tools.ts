@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { CoreSendMessageDeps } from '../../application/core-tools/send-message.js';
 import type { CoreTaskLifecycleBackend } from '../../application/core-tools/task-lifecycle.js';
 import { runDurablePermissionInteraction } from '../../application/interactions/durable-interaction-handler.js';
+import { synthesizeHostPermissionSuggestions } from '../../application/permissions/permission-suggestion-synthesis.js';
 import {
   classifyMcpToolAuditError,
   summarizeMcpToolArgumentPayload,
@@ -13,6 +14,7 @@ import type { RuntimeEventPublishInput } from '../../domain/events/events.js';
 import type { RuntimeAgentSessionRepository } from '../../domain/repositories/ops-repo.js';
 import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
 import type { AsyncTaskRepository } from '../../domain/ports/async-tasks.js';
+import type { PermissionPromotionRepository } from '../../domain/ports/permission-promotion.js';
 import type {
   McpServerRepository,
   ToolCatalogRepository,
@@ -74,6 +76,7 @@ interface InlineCoreToolHostDeps extends CoreSendMessageDeps {
     memory: { llm: { models: { extractor: string } } };
   };
   getMcpServerRepository(): McpServerRepository | undefined;
+  getPermissionPromotionRepository(): PermissionPromotionRepository | undefined;
   createTaskLifecycleBackend(
     laneInput: InlineAgentLoopLaneInput,
   ): CoreTaskLifecycleBackend | undefined;
@@ -314,7 +317,9 @@ export function createInlineCoreTools(
         };
       }
       const permissionRequestId = `permission-${randomUUID()}`;
+      const suggestions = synthesizeHostPermissionSuggestions(name, toolInput);
       if (deps.publishRuntimeEvent) {
+        const promotionRepository = deps.getPermissionPromotionRepository();
         const classifierDecision =
           await consultPermissionClassifierBeforePrompt({
             permissionMode: run.permissionMode,
@@ -332,6 +337,20 @@ export function createInlineCoreTools(
             canonicalToolName: name,
             toolInput,
             policyDecisionReason: decision.reason,
+            suggestions,
+            ...(promotionRepository
+              ? {
+                  promotion: {
+                    repository: promotionRepository,
+                    offer: (request) =>
+                      runDurablePermissionInteraction({
+                        request,
+                        sourceAgentFolder: laneInput.group.folder,
+                        prompt: deps.requestPermissionApproval,
+                      }),
+                  },
+                }
+              : {}),
             classifierConfig: permissionRuntimeConfig,
             signal: context?.signal,
             publishRuntimeEvent: deps.publishRuntimeEvent,
@@ -341,6 +360,7 @@ export function createInlineCoreTools(
       }
       const request: PermissionApprovalRequest = {
         requestId: permissionRequestId,
+        requestFamily: 'tool',
         sourceAgentFolder: laneInput.group.folder,
         appId: run.appId,
         agentId: run.agentId,
@@ -357,7 +377,10 @@ export function createInlineCoreTools(
         decisionReason: decision.reason,
         closestRule: decision.closestRule,
         toolInput: toolInput as Record<string, unknown>,
-        decisionOptions: ['allow_once', 'cancel'],
+        suggestions,
+        decisionOptions: suggestions
+          ? ['allow_once', 'allow_persistent_rule', 'cancel']
+          : ['allow_once', 'cancel'],
       };
       const interaction = await runDurablePermissionInteraction({
         request,
@@ -457,6 +480,9 @@ export function wireInlineAgentLoopTools(input: {
   getToolRepository?: () => ToolCatalogRepository | undefined;
   getFileArtifactStore?: CoreSendMessageDeps['getFileArtifactStore'];
   getMcpServerRepository?: () => McpServerRepository | undefined;
+  getPermissionPromotionRepository?: () =>
+    | PermissionPromotionRepository
+    | undefined;
   getAsyncTaskRepository?: () => AsyncTaskRepository | undefined;
   opsRepository?: Pick<
     RuntimeAgentSessionRepository,
@@ -514,6 +540,8 @@ export function wireInlineAgentLoopTools(input: {
     getAgentAccessPreset: input.getAgentAccessPreset,
     getPermissionRuntimeSettings: input.getPermissionRuntimeSettings,
     getMcpServerRepository: input.getMcpServerRepository ?? (() => undefined),
+    getPermissionPromotionRepository:
+      input.getPermissionPromotionRepository ?? (() => undefined),
     classifierConsult: input.classifierConsult,
     createTaskLifecycleBackend: (laneInput) =>
       createInlineAgentTaskLifecycle({

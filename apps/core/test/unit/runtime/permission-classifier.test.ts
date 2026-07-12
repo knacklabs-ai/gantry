@@ -17,6 +17,7 @@ vi.mock('@core/infrastructure/logging/logger.js', () => ({
 
 import {
   consultPermissionClassifier,
+  consultPermissionClassifierBeforePrompt,
   PERMISSION_CLASSIFIER_MAX_TOOL_INPUT_CHARS,
   publishPermissionClassifierDecision,
   redactPermissionClassifierToolInput,
@@ -250,6 +251,68 @@ describe('permission classifier verdict client', () => {
 });
 
 describe('permission classifier decision events', () => {
+  it('counts keyed auto-allows and emits the promotion prompt without blocking', async () => {
+    const offer = vi.fn(async () => undefined);
+    const incrementAndGet = vi.fn(async () => ({
+      appId: 'app:test',
+      agentFolder: 'researcher',
+      suggestionKey: 'researcher|mcp__github__search',
+      allowCount: 3,
+      lastOfferedAt: null,
+      createdAt: '2026-07-12T00:00:00.000Z',
+      updatedAt: '2026-07-12T00:00:00.000Z',
+    }));
+    const markOffered = vi.fn(async () => true);
+    const publishRuntimeEvent = vi.fn(async () => undefined);
+
+    await expect(
+      consultPermissionClassifierBeforePrompt({
+        permissionMode: 'auto',
+        requestFamily: 'tool',
+        appId: 'app:test',
+        agentId: 'agent:test',
+        agentFolder: 'researcher',
+        runId: 'run:test',
+        conversationId: 'conversation:test',
+        correlationId: 'request:test',
+        actor: 'permission',
+        turnIntentSummary: 'Search open pull requests.',
+        canonicalToolName: 'mcp__github__search',
+        toolInput: { query: 'open pull requests' },
+        policyDecisionReason: 'No durable rule matched.',
+        classifierConfig: { memoryExtractorModel: 'extractor-model' },
+        publishRuntimeEvent,
+        classifierConsult: async () => ({
+          decision: 'allow',
+          reason: 'Read-only lookup.',
+          latencyMs: 10,
+        }),
+        promotion: {
+          repository: { incrementAndGet, markOffered },
+          offer,
+        },
+      }),
+    ).resolves.toMatchObject({
+      decision: 'allow',
+      suggestionKey: 'researcher|mcp__github__search',
+    });
+
+    await vi.waitFor(() => expect(offer).toHaveBeenCalledTimes(1));
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          suggestionKey: 'researcher|mcp__github__search',
+        }),
+      }),
+    );
+    expect(offer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestFamily: 'promotion',
+        decisionOptions: ['allow_persistent_rule', 'cancel'],
+      }),
+    );
+  });
+
   it('publishes an allow verdict with the exact runtime envelope and payload', async () => {
     const publishRuntimeEvent = vi.fn().mockResolvedValue(undefined);
 

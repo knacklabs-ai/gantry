@@ -631,7 +631,10 @@ describe('ipc-interaction-handler', () => {
     expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'permission.classifier_decision',
-        payload: expect.objectContaining({ decision: 'allow' }),
+        payload: expect.objectContaining({
+          decision: 'allow',
+          suggestionKey: 'main_agent|RunCommand(git status --short)',
+        }),
       }),
     );
   });
@@ -689,7 +692,18 @@ describe('ipc-interaction-handler', () => {
     });
 
     expect(classifierConsult).toHaveBeenCalledOnce();
-    expect(requestPermissionApproval).toHaveBeenCalledOnce();
+    expect(requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suggestions: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            destination: 'session',
+            rules: [{ toolName: 'mcp__crm__read' }],
+          },
+        ],
+      }),
+    );
     expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'permission.classifier_decision',

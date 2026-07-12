@@ -6,6 +6,7 @@ import type {
 import { resolveEffectivePermissionMode } from '../shared/permission-mode.js';
 import type { IpcDeps } from './ipc-domain-types.js';
 import { consultPermissionClassifierBeforePrompt } from './permission-classifier.js';
+import { runDurablePermissionInteraction } from '../application/interactions/durable-interaction-handler.js';
 
 export async function resolvePermissionIpcDecision(input: {
   request: PermissionApprovalRequest;
@@ -29,11 +30,12 @@ export async function resolvePermissionIpcDecision(input: {
       : undefined,
     settings?.agents[input.sourceAgentFolder]?.permissionMode,
   );
+  const promotionRepository = input.deps.getPermissionPromotionRepository?.();
   const classifierDecision =
     input.deps.publishRuntimeEvent && classifierConfig
       ? await consultPermissionClassifierBeforePrompt({
           permissionMode,
-          requestFamily: 'tool',
+          requestFamily: input.request.requestFamily ?? 'tool',
           appId: input.request.appId,
           agentId: input.request.agentId,
           agentFolder: input.sourceAgentFolder,
@@ -49,6 +51,20 @@ export async function resolvePermissionIpcDecision(input: {
           toolInput: input.request.toolInput,
           policyDecisionReason:
             input.request.decisionReason ?? 'Human approval is required.',
+          suggestions: input.request.suggestions,
+          ...(promotionRepository
+            ? {
+                promotion: {
+                  repository: promotionRepository,
+                  offer: (request) =>
+                    runDurablePermissionInteraction({
+                      request,
+                      sourceAgentFolder: input.sourceAgentFolder,
+                      prompt: input.deps.requestPermissionApproval,
+                    }),
+                },
+              }
+            : {}),
           classifierConfig,
           publishRuntimeEvent: input.deps.publishRuntimeEvent,
           classifierConsult: input.deps.classifierConsult,

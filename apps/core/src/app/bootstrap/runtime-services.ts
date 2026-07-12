@@ -109,8 +109,10 @@ type LiveTurnCommandWakeupSourceFactory = () =>
 type RuntimeDependencyRepositoryFactory = () =>
   | RuntimeDependencyRepository
   | undefined;
-type WaitingStatusMonitor = { oldestWaitingSeconds: () => number };
-type RuntimeStorageDep = 'getAsyncTaskRepository' | 'getFileArtifactStore';
+type RuntimeStorageDep =
+  | 'getAsyncTaskRepository'
+  | 'getFileArtifactStore'
+  | 'getPermissionPromotionRepository';
 interface Deps extends Pick<IpcDeps, RuntimeStorageDep> {
   startSchedulerLoop: typeof startSchedulerLoop;
   startIpcWatcher: typeof startIpcWatcher;
@@ -225,7 +227,9 @@ function createGroupSnapshotSync(app: RuntimeApp, deps: Deps): () => void {
 let activeLiveTurnRecoveryLoop: LiveTurnRecoveryLoop | undefined;
 let activeLiveTurnAuthority: LiveTurnAuthority | undefined;
 let activeLiveAdmissionLoop: LiveExecutionServicesHandle['admissionLoop'];
-let activeWaitingStatusMonitor: WaitingStatusMonitor | undefined;
+let activeWaitingStatusMonitor:
+  | { oldestWaitingSeconds: () => number }
+  | undefined;
 let activeLiveExecutionServices: LiveExecutionServicesHandle | undefined;
 export function getOldestWaitingLiveAdmissionSeconds(): number {
   return activeWaitingStatusMonitor?.oldestWaitingSeconds() ?? 0;
@@ -461,6 +465,7 @@ export async function startRuntimeServices(
     runnerSandboxProvider: resolved.runnerSandboxProvider,
     runApprovedCommand: resolved.runApprovedCommand,
     getPermissionRepository: resolved.getPermissionRepository,
+    getPermissionPromotionRepository: resolved.getPermissionPromotionRepository,
     publishRuntimeEvent: resolved.publishRuntimeEvent,
     getPermissionRuntimeSettings: getRuntimeSettingsForConfig,
     subscribeRuntimeEvents: resolved.subscribeRuntimeEvents,

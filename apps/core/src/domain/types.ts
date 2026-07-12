@@ -127,6 +127,7 @@ export interface PermissionApprovalRequest {
   providerAccountId?: string;
   responseNonce?: string;
   sourceAgentFolder: string;
+  requestFamily?: 'tool' | 'admin' | 'review' | 'promotion';
   runHandle?: string;
   jobId?: string;
   jobName?: string;
