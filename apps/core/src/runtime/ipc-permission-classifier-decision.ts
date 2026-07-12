@@ -83,21 +83,19 @@ export async function resolvePermissionIpcDecision(input: {
         },
       }
     : undefined;
-  const trustedRequester = await isTrustedRequester(input, route);
+  const authority = await resolvePermissionAuthority(input, route);
   const shouldConsultClassifier =
     input.deps.publishRuntimeEvent &&
     classifierConfig &&
     permissionMode === 'auto' &&
-    trustedRequester;
-  const intent = shouldConsultClassifier
-    ? await resolvePermissionIntent(input)
-    : undefined;
+    authority.trustedRequester;
+  const intent = shouldConsultClassifier ? authority.intent : undefined;
   const classifierDecision =
     shouldConsultClassifier && intent
       ? await consultPermissionClassifierBeforePrompt({
           permissionMode,
           attended: input.request.unattended !== true,
-          trustedRequester,
+          trustedRequester: authority.trustedRequester,
           requestFamily: input.request.requestFamily ?? 'tool',
           appId: input.request.appId,
           agentId: input.request.agentId,
@@ -149,95 +147,97 @@ export async function resolvePermissionIpcDecision(input: {
   return input.deps.requestPermissionApproval(input.request);
 }
 
-async function resolvePermissionIntent(
-  input: Parameters<typeof resolvePermissionIpcDecision>[0],
-): Promise<{
-  summary: string;
-  source: 'operator_message' | 'runner_summary' | 'none';
-}> {
-  const runnerSummary = input.request.turnIntentSummary?.trim();
-  if (runnerSummary) {
-    return {
-      summary: runnerSummary.slice(0, 1_500),
-      source: 'runner_summary',
-    };
-  }
-  let operatorMessage: string | undefined;
-  if (
-    input.request.unattended !== true &&
-    input.request.targetJid &&
-    input.deps.getPermissionMessageRepository
-  ) {
-    try {
-      const repository = input.deps.getPermissionMessageRepository();
-      const messages = input.request.threadId
-        ? await repository.getLatestThreadMessages(
-            input.request.targetJid,
-            input.request.threadId,
-            FUTURE_MESSAGE_CURSOR,
-            50,
-            { providerAccountId: input.request.providerAccountId },
-          )
-        : await repository.getRecentTopLevelMessagesBefore(
-            input.request.targetJid,
-            FUTURE_MESSAGE_CURSOR,
-            30,
-            { providerAccountId: input.request.providerAccountId },
-          );
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index];
-        if (
-          message &&
-          message.is_from_me !== true &&
-          message.is_bot_message !== true &&
-          (!input.request.senderId ||
-            message.sender === input.request.senderId) &&
-          message.content.trim()
-        ) {
-          operatorMessage = message.content;
-          break;
-        }
-      }
-    } catch {
-      operatorMessage = undefined;
-    }
-  }
-  const resolvedOperatorMessage = operatorMessage?.trim();
-  if (resolvedOperatorMessage) {
-    return {
-      summary: resolvedOperatorMessage.slice(0, 1_500),
-      source: 'operator_message',
-    };
-  }
-  return { summary: '', source: 'none' };
-}
-
-async function isTrustedRequester(
+async function resolvePermissionAuthority(
   input: Parameters<typeof resolvePermissionIpcDecision>[0],
   route: ConversationRoute | undefined,
-): Promise<boolean> {
+): Promise<{
+  trustedRequester: boolean;
+  intent: {
+    summary: string;
+    source: 'operator_message' | 'none';
+  };
+}> {
   if (
     input.request.unattended &&
     input.request.jobId &&
     !input.request.senderId
-  )
-    return true;
+  ) {
+    return {
+      trustedRequester: true,
+      intent: { summary: '', source: 'none' },
+    };
+  }
   if (
     (route?.conversationKind !== 'dm' &&
       route?.conversationKind !== 'channel') ||
     !input.request.targetJid ||
-    !input.request.senderId ||
+    !input.deps.getPermissionMessageRepository ||
     !input.deps.isControlApproverAllowed
   ) {
-    return false;
+    return untrustedPermissionAuthority();
   }
-  return input.deps
-    .isControlApproverAllowed({
-      conversationJid: input.request.targetJid,
-      providerAccountId: input.request.providerAccountId,
-      userId: input.request.senderId,
-      sourceAgentFolder: input.sourceAgentFolder,
-      decisionPolicy: 'same_channel',
-    })
-    .catch(() => false);
+  try {
+    const repository = input.deps.getPermissionMessageRepository();
+    const messages = input.request.threadId
+      ? await repository.getLatestThreadMessages(
+          input.request.targetJid,
+          input.request.threadId,
+          FUTURE_MESSAGE_CURSOR,
+          50,
+          { providerAccountId: input.request.providerAccountId },
+        )
+      : await repository.getRecentTopLevelMessagesBefore(
+          input.request.targetJid,
+          FUTURE_MESSAGE_CURSOR,
+          30,
+          { providerAccountId: input.request.providerAccountId },
+        );
+    const checkedSenders = new Set<string>();
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (
+        !message ||
+        message.is_from_me === true ||
+        message.is_bot_message === true ||
+        !message.content.trim() ||
+        typeof message.sender !== 'string' ||
+        !message.sender.trim() ||
+        checkedSenders.has(message.sender)
+      ) {
+        continue;
+      }
+      if (checkedSenders.size >= 5) break;
+      checkedSenders.add(message.sender);
+      if (
+        await input.deps.isControlApproverAllowed({
+          conversationJid: input.request.targetJid,
+          providerAccountId: input.request.providerAccountId,
+          userId: message.sender,
+          sourceAgentFolder: input.sourceAgentFolder,
+          decisionPolicy: 'same_channel',
+        })
+      ) {
+        return {
+          trustedRequester: true,
+          intent: {
+            summary: message.content.trim().slice(0, 1_500),
+            source: 'operator_message',
+          },
+        };
+      }
+    }
+  } catch {
+    return untrustedPermissionAuthority();
+  }
+  return untrustedPermissionAuthority();
+}
+
+function untrustedPermissionAuthority(): {
+  trustedRequester: false;
+  intent: { summary: ''; source: 'none' };
+} {
+  return {
+    trustedRequester: false,
+    intent: { summary: '', source: 'none' },
+  };
 }
