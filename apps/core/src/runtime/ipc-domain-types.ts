@@ -22,6 +22,7 @@ import type { CredentialBrokerProfile } from '../domain/models/credentials.js';
 import type {
   JobControlPort,
   JobManagementServiceDeps,
+  RuntimeEventPublisherPort,
 } from '../application/jobs/job-management-types.js';
 import type { AsyncTaskRepository } from '../domain/ports/async-tasks.js';
 import type { RunnerSandboxProvider } from '../shared/runner-sandbox-provider.js';
@@ -62,10 +63,15 @@ export interface IpcDeps {
   requestUserAnswer: (
     request: UserQuestionRequest,
   ) => Promise<UserQuestionResponse>;
-  renderAgentTodo?: (jid: string, render: AgentTodoRender) => Promise<boolean>;
+  renderAgentTodo?: (
+    jid: string,
+    render: AgentTodoRender,
+    options?: { providerAccountId?: string },
+  ) => Promise<boolean>;
   renderRichInteraction?: (
     jid: string,
     request: RichInteractionRequest,
+    options?: { providerAccountId?: string },
   ) => Promise<boolean>;
   mcpHostnameLookup?: HostnameLookup;
   opsRepository: RuntimeJobRepository;
@@ -93,6 +99,7 @@ export interface IpcDeps {
   getPermissionRepository?: () => PermissionRepository | undefined;
   getFileArtifactStore?: () => FileArtifactStore | undefined;
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<void>;
+  subscribeRuntimeEvents?: RuntimeEventPublisherPort['subscribe'];
   getEgressSettings?: () => EgressSettings;
   getJobControl?: () => JobControlPort | undefined;
   mirrorAgentToolRulesToSettings?: (

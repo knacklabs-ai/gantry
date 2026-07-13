@@ -1,4 +1,4 @@
-import { normalizeRuntimeSecretRefString } from '../../domain/ports/runtime-secret-provider.js';
+import { migrateLegacyAgentBindings } from './settings-revision-legacy-bindings.js';
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === 'object' && raw !== null && !Array.isArray(raw);
@@ -26,14 +26,6 @@ function assertSupportedKeys(
   }
 }
 
-function defaultConnectionIdForProvider(providerId: string): string {
-  return `${providerId}_default`;
-}
-
-function firstDefined(...values: unknown[]): unknown {
-  return values.find((value) => value !== undefined);
-}
-
 const STORED_REVISION_KEY_ALIASES = new Map<string, string>([
   ['addedAt', 'added_at'],
   ['agentHarness', 'agent_harness'],
@@ -42,12 +34,14 @@ const STORED_REVISION_KEY_ALIASES = new Map<string, string>([
   ['baseRetryMs', 'base_retry_ms'],
   ['batchSize', 'batch_size'],
   ['bindHost', 'bind_host'],
+  ['brainHarvest', 'brain_harvest'],
   ['controlApprovers', 'control_approvers'],
   ['contextWindowTokens', 'context_window_tokens'],
   ['cpuSeconds', 'cpu_seconds'],
+  ['credentialBroker', 'model_access'],
   ['dailyLimit', 'daily_limit'],
-  ['defaultConnection', 'default_connection'],
   ['defaultModel', 'default_model'],
+  ['defaultConnection', 'default_connection'],
   ['denylistPaths', 'denylist_paths'],
   ['desiredState', 'desired_state'],
   ['deploymentMode', 'deployment_mode'],
@@ -58,6 +52,7 @@ const STORED_REVISION_KEY_ALIASES = new Map<string, string>([
   ['extractorMinConfidence', 'extractor_min_confidence'],
   ['forcePathStyle', 'force_path_style'],
   ['inputUsdPerMillionTokens', 'input_usd_per_million_tokens'],
+  ['installedAgents', 'installed_agents'],
   ['liveTurns', 'live_turns'],
   ['maxActionsPerWindow', 'max_actions_per_window'],
   ['maxConcurrentPerSite', 'max_concurrent_per_site'],
@@ -80,9 +75,11 @@ const STORED_REVISION_KEY_ALIASES = new Map<string, string>([
   ['modelFamilies', 'model_families'],
   ['oneTimeJobDefaultModel', 'one_time_job_default_model'],
   ['outputUsdPerMillionTokens', 'output_usd_per_million_tokens'],
-  ['providerBatchMinItems', 'provider_batch_min_items'],
+  ['providerAccount', 'provider_account'],
+  ['providerAccounts', 'provider_accounts'],
   ['providerConnection', 'provider_connection'],
   ['providerConnections', 'provider_connections'],
+  ['providerBatchMinItems', 'provider_batch_min_items'],
   ['providerModelId', 'provider_model_id'],
   ['recurringJobDefaultModel', 'recurring_job_default_model'],
   ['recommendedAlias', 'recommended_alias'],
@@ -113,62 +110,6 @@ function normalizeStoredRevisionAliases(value: unknown): unknown {
     normalized[normalizedKey] = normalizeStoredRevisionAliases(rawItem);
   }
   return normalized;
-}
-
-function compactProviderToVerbose(
-  providerId: string,
-  raw: unknown,
-): {
-  provider: Record<string, unknown>;
-  connection?: [string, Record<string, unknown>];
-} {
-  if (!isRecord(raw)) return { provider: {} };
-  const map = raw;
-  assertSupportedKeys(
-    map,
-    `providers.${providerId}`,
-    new Set(['enabled', 'default_connection', 'defaultConnection', 'label']),
-    (key) => key.endsWith('_ref'),
-  );
-  const defaultConnection =
-    typeof map.default_connection === 'string' && map.default_connection.trim()
-      ? map.default_connection.trim()
-      : typeof map.defaultConnection === 'string' &&
-          map.defaultConnection.trim()
-        ? map.defaultConnection.trim()
-        : undefined;
-  const provider: Record<string, unknown> = {
-    enabled: map.enabled,
-    default_connection: defaultConnection,
-  };
-  const secretRefs: Record<string, string> = {};
-  for (const [key, value] of Object.entries(map)) {
-    if (!key.endsWith('_ref')) continue;
-    if (typeof value === 'string' && value.trim()) {
-      secretRefs[key.slice(0, -'_ref'.length)] =
-        normalizeRuntimeSecretRefString(value);
-    }
-  }
-  if (map.label !== undefined || Object.keys(secretRefs).length > 0) {
-    const connectionId =
-      defaultConnection ?? defaultConnectionIdForProvider(providerId);
-    provider.default_connection = connectionId;
-    return {
-      provider,
-      connection: [
-        connectionId,
-        {
-          provider: providerId,
-          label:
-            typeof map.label === 'string' && map.label.trim()
-              ? map.label.trim()
-              : `${providerId} Default`,
-          runtime_secret_refs: secretRefs,
-        },
-      ],
-    };
-  }
-  return { provider };
 }
 
 function normalizeCompactDefaults(
@@ -227,23 +168,19 @@ function normalizeCompactProviders(
 ): void {
   if (!isRecord(root.providers)) return;
   const providers: Record<string, unknown> = {};
-  const providerConnections: Record<string, unknown> = {
-    ...(isRecord(root.provider_connections)
-      ? (root.provider_connections as Record<string, unknown>)
-      : {}),
-  };
   for (const [providerId, providerRaw] of Object.entries(root.providers)) {
-    const compact = compactProviderToVerbose(providerId, providerRaw);
-    providers[providerId] = compact.provider;
-    if (
-      compact.connection &&
-      providerConnections[compact.connection[0]] === undefined
-    ) {
-      providerConnections[compact.connection[0]] = compact.connection[1];
+    if (!isRecord(providerRaw)) {
+      providers[providerId] = providerRaw;
+      continue;
     }
+    assertSupportedKeys(
+      providerRaw,
+      `providers.${providerId}`,
+      new Set(['enabled']),
+    );
+    providers[providerId] = { enabled: providerRaw.enabled };
   }
   normalized.providers = providers;
-  normalized.provider_connections = providerConnections;
 }
 
 function normalizeCompactAgents(
@@ -269,28 +206,9 @@ function normalizeCompactAgents(
         'recurring_job_default_model',
       ]),
     );
-    const typedAccess =
-      !isRecord(agentRaw.access) &&
-      (isRecord(agentRaw.sources) ||
-        Array.isArray(agentRaw.capabilities) ||
-        agentRaw.access_preset !== undefined)
-        ? {
-            sources: agentRaw.sources,
-            selections: agentRaw.capabilities,
-            preset: agentRaw.access_preset,
-          }
-        : undefined;
-    const {
-      jobs: _jobs,
-      folder: _folder,
-      sources: _sources,
-      capabilities: _capabilities,
-      access_preset: _accessPreset,
-      ...verboseAgent
-    } = agentRaw;
+    const { jobs: _jobs, ...verboseAgent } = agentRaw;
     agents[agentId] = {
       ...verboseAgent,
-      access: agentRaw.access ?? typedAccess,
       one_time_job_default_model:
         agentRaw.one_time_job_default_model ??
         jobs.one_time_model ??
@@ -304,44 +222,12 @@ function normalizeCompactAgents(
   normalized.agents = agents;
 }
 
-function normalizeTypedCredentialBroker(
-  normalized: Record<string, unknown>,
-  root: Record<string, unknown>,
-): void {
-  if (
-    normalized.model_access !== undefined ||
-    !isRecord(root.credentialBroker)
-  ) {
-    delete normalized.credentialBroker;
-    return;
-  }
-  const credentialBroker = root.credentialBroker;
-  const gateway = isRecord(credentialBroker.gateway)
-    ? credentialBroker.gateway
-    : {};
-  normalized.model_access = {
-    enabled: credentialBroker.mode === 'gantry',
-    gateway: {
-      bind_host: gateway.bind_host,
-    },
-  };
-  delete normalized.credentialBroker;
-}
-
 function normalizeCompactConversations(
   normalized: Record<string, unknown>,
   root: Record<string, unknown>,
 ): void {
   if (!isRecord(root.conversations)) return;
   const conversations: Record<string, unknown> = {};
-  const bindings: Record<string, unknown> = {
-    ...(isRecord(root.bindings)
-      ? (root.bindings as Record<string, unknown>)
-      : {}),
-  };
-  const providers = isRecord(normalized.providers)
-    ? (normalized.providers as Record<string, unknown>)
-    : {};
   for (const [conversationId, conversationRaw] of Object.entries(
     root.conversations,
   )) {
@@ -353,107 +239,46 @@ function normalizeCompactConversations(
       conversationRaw,
       `conversations.${conversationId}`,
       new Set([
-        'provider',
-        'provider_connection',
-        'providerConnection',
+        'provider_account',
         'id',
         'external_id',
-        'externalId',
         'type',
         'kind',
         'display_name',
-        'displayName',
+        'brain_harvest',
         'sender_policy',
-        'senderPolicy',
-        'approvers',
         'control_approvers',
-        'controlApprovers',
-        'agent',
-        'trigger',
-        'added_at',
-        'addedAt',
-        'requires_trigger',
-        'requiresTrigger',
-        'memory_scope',
-        'memoryScope',
-        'model',
+        'installed_agents',
       ]),
     );
-    const providerId =
-      typeof conversationRaw.provider === 'string'
-        ? conversationRaw.provider.trim()
-        : undefined;
-    const provider =
-      providerId && isRecord(providers[providerId])
-        ? (providers[providerId] as Record<string, unknown>)
-        : undefined;
-    const providerConnection =
-      firstDefined(
-        conversationRaw.provider_connection,
-        conversationRaw.providerConnection,
-      ) ??
-      provider?.default_connection ??
-      (providerId ? defaultConnectionIdForProvider(providerId) : undefined);
-    const externalId = firstDefined(
-      conversationRaw.id,
-      conversationRaw.external_id,
-      conversationRaw.externalId,
-    );
-    const kind = firstDefined(conversationRaw.type, conversationRaw.kind);
-    const displayName = firstDefined(
-      conversationRaw.display_name,
-      conversationRaw.displayName,
-    );
-    const senderPolicy = firstDefined(
-      conversationRaw.sender_policy,
-      conversationRaw.senderPolicy,
-    );
-    const controlApprovers = firstDefined(
-      conversationRaw.approvers,
-      conversationRaw.control_approvers,
-      conversationRaw.controlApprovers,
-    );
     conversations[conversationId] = {
-      provider_connection: providerConnection,
-      external_id: externalId,
-      kind,
-      display_name: displayName,
-      sender_policy: senderPolicy,
-      control_approvers: controlApprovers,
+      provider_account: conversationRaw.provider_account,
+      external_id: conversationRaw.id ?? conversationRaw.external_id,
+      kind: conversationRaw.type ?? conversationRaw.kind,
+      display_name: conversationRaw.display_name,
+      brain_harvest: conversationRaw.brain_harvest,
+      sender_policy: conversationRaw.sender_policy,
+      control_approvers: conversationRaw.control_approvers,
+      installed_agents: conversationRaw.installed_agents,
     };
-    if (conversationRaw.agent !== undefined) {
-      bindings[conversationId] = {
-        agent: conversationRaw.agent,
-        conversation: conversationId,
-        trigger: conversationRaw.trigger,
-        added_at:
-          firstDefined(conversationRaw.added_at, conversationRaw.addedAt) ??
-          new Date(0).toISOString(),
-        requires_trigger: firstDefined(
-          conversationRaw.requires_trigger,
-          conversationRaw.requiresTrigger,
-        ),
-        memory_scope: firstDefined(
-          conversationRaw.memory_scope,
-          conversationRaw.memoryScope,
-        ),
-        model: conversationRaw.model,
-      };
-    }
   }
   normalized.conversations = conversations;
-  normalized.bindings = bindings;
 }
 
 export function normalizeCompactRuntimeSettingsRoot(
   root: Record<string, unknown>,
 ): Record<string, unknown> {
-  const normalizedRoot = normalizeStoredRevisionAliases(root) as Record<
-    string,
-    unknown
-  >;
+  const normalizedRoot = migrateLegacyAgentBindings(
+    normalizeStoredRevisionAliases(root) as Record<string, unknown>,
+  );
+  for (const key of ['provider_connections', 'bindings']) {
+    if (normalizedRoot[key] !== undefined) {
+      throw new Error(
+        `${key} is no longer supported. Use provider_accounts and conversations.*.installed_agents.`,
+      );
+    }
+  }
   const normalized: Record<string, unknown> = { ...normalizedRoot };
-  normalizeTypedCredentialBroker(normalized, normalizedRoot);
   normalizeCompactDefaults(normalized, normalizedRoot);
   normalizeCompactProviders(normalized, normalizedRoot);
   normalizeCompactAgents(normalized, normalizedRoot);
