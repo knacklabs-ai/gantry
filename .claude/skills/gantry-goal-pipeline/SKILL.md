@@ -70,7 +70,14 @@ until node "$COMPANION" status <task-id> | grep -qE '\| (completed|failed|error|
    (or a `--resume` handoff) to trim rather than fixing by hand.
 2. Run the smallest relevant checks: focused vitest files, `npm run build`,
    `python3 .codex/scripts/check_task_completion.py`.
-3. Commit the stage. The pre-commit hook runs prettier and can leave
+3. **Autoreview the stage's LOCAL diff BEFORE committing** (not the whole branch
+   after). Run `autoreview --mode local` (reviews the uncommitted working tree) via a
+   codex plain-command handoff (§4 closeout handoff shape, `--mode local`, no `--base`).
+   Fix accepted findings while still uncommitted — via a `--resume`/follow-up handoff, or
+   directly if trivial — then re-review until clean. This is faster (just this stage's
+   diff, not the growing branch), keeps defects out of history, and avoids re-reviewing
+   already-reviewed committed code every round.
+4. Commit the clean stage. The pre-commit hook runs prettier and can leave
    reformatted files dirty AFTER the commit — check `git status`, amend.
 
 ## 4. Closeout
@@ -83,6 +90,13 @@ python3 .codex/scripts/validate_artifacts.py --allow-missing-run
 python3 .codex/scripts/verify.py
 python3 ~/.claude/skills/autoreview/scripts/autoreview --mode branch --base origin/main
 ```
+
+The `--mode branch` autoreview here is the FINAL integration pass — it catches
+cross-stage issues that per-stage local reviews (§3.3) cannot see (e.g. a trust or
+type boundary that only assembles once several stages land). It is not a substitute
+for the per-stage local reviews: by closeout, each stage should already be
+individually clean from its `--mode local` pass. Expect this final pass to surface
+integration-level findings, not stage-local ones.
 
 Review rounds run the autoreview skill THROUGH a codex rescue handoff (user
 decision 2026-07-11, confirmed working end-to-end). Prerequisites: the
