@@ -27,17 +27,6 @@ export type JobNotificationLifecycleUpdateResult =
   | 'updated'
   | 'unsupported'
   | 'failed';
-const START_NOTIFICATION_TIMEOUT_MS = 5_000;
-
-function startNotificationTimeout(): Promise<false> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(
-      () => resolve(false),
-      START_NOTIFICATION_TIMEOUT_MS,
-    );
-    timer.unref?.();
-  });
-}
 
 function recoveryActionAffordances(input: {
   job: Job;
@@ -84,26 +73,6 @@ export function logMemoryDreamJobFailure(input: {
     },
     'Memory dreaming system job failed',
   );
-}
-
-export async function notifySchedulerRunStart(input: {
-  job: Job;
-  runId: string;
-  runShortId?: number | null;
-  sendMessage: SchedulerSendMessage;
-}): Promise<boolean> {
-  if (input.job.silent) return false;
-  if (isMemoryDreamingSystemJob(input.job)) return false;
-  return Promise.race([
-    sendJobNotification({
-      job: input.job,
-      text: `**▶️ Running** · ${input.job.name}`,
-      phase: 'start',
-      runId: input.runId,
-      sendMessage: input.sendMessage,
-    }),
-    startNotificationTimeout(),
-  ]);
 }
 
 export async function notifySchedulerRunRecovered(input: {

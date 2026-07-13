@@ -40,7 +40,6 @@ import {
 } from './execution-context.js';
 import {
   logMemoryDreamJobFailure,
-  notifySchedulerRunStart,
   notifySchedulerTerminalRunState,
 } from './execution-notifications.js';
 import {
@@ -242,7 +241,7 @@ export async function runJob(
       resultSummaryAccumulator.append(delta);
     };
     let accumulatedUsage: AgentOutput['usage'];
-    let startNotified = false;
+    const startNotified = false;
     try {
       const groupDir = resolveWorkspaceFolderPath(execution.group.folder);
       fs.mkdirSync(groupDir, { recursive: true });
@@ -253,15 +252,6 @@ export async function runJob(
       conversationKind: execution.group.conversationKind,
       executionJid: execution.executionJid,
     });
-    if (!(await deletionGuard.shouldSuppressDelivery())) {
-      startNotified = await notifySchedulerRunStart({
-        job: currentJob,
-        runId,
-        runShortId,
-        sendMessage: deps.sendMessage,
-      });
-      deletionGuard.resetDeliveryDeletionCheck();
-    }
     if (!error && isTrustedSystemJob(currentJob)) {
       const systemOutcome = await runSystemJobTurn({
         currentJob,
