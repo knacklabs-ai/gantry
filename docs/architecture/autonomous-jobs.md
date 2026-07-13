@@ -156,8 +156,10 @@ Pre-spawn readiness blockers emit `job.setup_required` and pause before a
 `JobRun` is claimed. After a run is claimed, the scheduler emits
 `job.tool_activity` for tool-access-requirement preflight, SDK tool requests, allow/deny
 decisions, permission waits, browser IPC actions, and tool-access readiness
-results. Notification routes receive one terminal outcome message; they
-do not receive streamed assistant output or full-output fallback messages.
+results. Notification routes are quiet until terminal by default: they receive
+exactly one terminal outcome message, no normal start message, and no plan/todo
+mirror for scheduled runs. They do not receive streamed assistant output or
+full-output fallback messages.
 Successful scheduled runs must end with a concise user-facing
 `Final Job Report` that states the outcome, notable counts, and the next
 action, and the terminal outcome message may summarize that report.

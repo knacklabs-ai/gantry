@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AmbiguousDurableDeliveryError } from '@core/domain/messages/durable-delivery.js';
 import type { ConversationRoute, Job } from '@core/domain/types.js';
 
 const runtimeStoreMock = vi.hoisted(() => ({
@@ -536,7 +535,7 @@ describe('jobs/execution', () => {
       }),
     );
     const messages = sendMessage.mock.calls.map((call) => String(call[1]));
-    expect(messages).toContainEqual(
+    expect(messages).not.toContainEqual(
       expect.stringContaining('**▶️ Running** ·'),
     );
     expect(messages).toContainEqual(
@@ -900,19 +899,10 @@ describe('jobs/execution', () => {
     expect(runFailureEvent?.payload?.summary).not.toContain('json-error');
   });
 
-  it('sends one terminal summary when start notification settlement is ambiguous', async () => {
+  it('sends one terminal summary without a normal start notification', async () => {
     const job = makeJob();
     const opsRepository = makeOpsRepository(job);
-    const sendMessage = vi
-      .fn<(...args: [string, string, { threadId: string }]) => Promise<void>>()
-      .mockRejectedValueOnce(
-        new AmbiguousDurableDeliveryError({
-          provider: 'telegram',
-          conversationJid: 'tg:scheduler',
-          cause: new Error('sent settlement failed'),
-        }),
-      )
-      .mockResolvedValue(undefined);
+    const sendMessage = vi.fn(async () => undefined);
 
     await runJob(
       job,
@@ -930,15 +920,9 @@ describe('jobs/execution', () => {
       'tg:scheduler',
     );
 
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
-      'tg:scheduler',
-      expect.stringContaining('**▶️ Running** · Daily summary'),
-      { threadId: 'thread-scheduled' },
-    );
-    expect(sendMessage).toHaveBeenNthCalledWith(
-      2,
       'tg:scheduler',
       expect.stringContaining('**✅ Completed** · Daily summary'),
       expect.objectContaining({ threadId: 'thread-scheduled' }),
@@ -1396,19 +1380,11 @@ describe('jobs/execution', () => {
       'tg:scheduler',
     );
 
-    expect(sendMessage.mock.calls).toEqual(
-      expect.arrayContaining([
-        [
-          'tg:scheduler',
-          expect.stringContaining('**▶️ Running** · Daily summary'),
-          { threadId: 'thread-scheduled' },
-        ],
-        [
-          'tg:scheduler',
-          expect.stringContaining('**✅ Completed** · Daily summary'),
-          expect.objectContaining({ threadId: 'thread-scheduled' }),
-        ],
-      ]),
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'tg:scheduler',
+      expect.stringContaining('**✅ Completed** · Daily summary'),
+      expect.objectContaining({ threadId: 'thread-scheduled' }),
     );
   });
 
