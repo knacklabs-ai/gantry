@@ -28,6 +28,14 @@ Use `python3 .codex/scripts/stage_orchestrator.py` to get current phase commands
 
 ## Execution Standards
 
+- Feature implementation follows the Gantry goal pipeline — always, not optionally:
+  approved plan → a goal-prompt doc in `docs/architecture/` (basename
+  ending in -goal-prompt.md) → staged Codex handoffs (Claude orchestrates, Codex
+  implements) → per-stage focused checks + local autoreview before each commit →
+  branch-wide autoreview + runtime smoke at closeout → PR. The orchestrator
+  contract lives in `.claude/skills/gantry-goal-pipeline/SKILL.md` (Codex twin:
+  `.codex/skills/gantry-goal-pipeline/SKILL.md`). Do not implement feature work
+  inline outside this pipeline.
 - Always choose the best proven performance technique for the task and context.
 - Do not use laid-back approaches or loose thinking; reason precisely and verify assumptions.
 - Do the work, critique the work, and make sure the task is completed properly end-to-end.

@@ -45,6 +45,16 @@ Codex fans packets out to its subagents. For each stage, spawn an Agent with
   scopes; your main thread grounds the task, decomposes it, reviews subagent
   diffs, and runs the focused checks. Parallelize only clearly separable
   files/domains.`
+- The assumptions-ledger instruction (every stage, verbatim shape): `Record
+  every assumption you make due to missing information in
+  docs/architecture/<name>-assumptions.md under your stage's section, using the
+  file's table format (assumption, missing info that forced it, what you chose,
+  impact if wrong). If you made no assumptions, write "None." under your stage
+  heading. The assumptions file is part of your write scope.` The orchestrator
+  seeds this file next to the goal prompt (same `<name>` stem) BEFORE the first
+  handoff — one `## Stage <X>` section per stage plus a `Validated` column the
+  orchestrator fills in (see §3). Backticked-path gate applies here too: seed
+  the file so it exists before any handoff references it.
 - MANDATORY closing lines, verbatim in every implementation handoff:
   `Use ponytail. No commentary. Return changed files, checks run, and blockers only.`
   "No commentary" suppresses Codex's progress narration during generation —
@@ -70,6 +80,14 @@ until node "$COMPANION" status <task-id> | grep -qE '\| (completed|failed|error|
 
 1. Inspect the diff; reject overbuilt code — send the same agent a follow-up
    (or a `--resume` handoff) to trim rather than fixing by hand.
+1a. **Validate the stage's assumptions ledger.** Read the stage's section in the
+   assumptions file (same stem as the goal prompt, `-assumptions.md` suffix).
+   For each row: check the assumption against the actual code/plan; mark the
+   `Validated` column `ok` (assumption holds), `fixed` (wrong — corrected via a
+   follow-up handoff before commit), or `escalate` (needs a user decision —
+   surface it instead of committing). An empty/missing stage section when the
+   diff clearly embodies choices the contract didn't specify is itself a
+   finding — send a follow-up asking Codex to backfill the ledger.
 2. Run the smallest relevant checks: focused vitest files, `npm run build`,
    `python3 .codex/scripts/check_task_completion.py`.
 3. **Autoreview the stage's LOCAL diff BEFORE committing** (not the whole branch
