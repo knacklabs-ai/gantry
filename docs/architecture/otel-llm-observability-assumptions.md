@@ -110,6 +110,9 @@ _(Backfilled by the orchestrator — stage launched before the ledger rule; rows
 | E.36 | SSE line terminators include CR-only | Branch autoreview r18 (P2): spec-legal, provider-rare | Delimiter + data-line regexes cover CRLF/LF/CR | CR-only streams unparsed (spans lose usage) | fixed |
 | E.37 | `chat` spans measure the upstream LLM call, not client delivery | Branch autoreview r18 (P2) suggested finalize-after-delivery | Held: a delivery failure to the internal caller doesn't retroactively make the model call unsuccessful; delivery errors remain visible via pipe-failure error spans on streaming and gateway logs | Non-streaming span shows success when the caller disconnected mid-body — semantically intended | ok — documented decision |
 
+| E.38 | Preservation fence vs unconditional semantics resolved: fence always wins | Branch autoreview r19 (P2), closing the r17↔r18 tension: any unfenced attempt can silently revert the private block API callers cannot even read | Every attempt CAS-fenced to its fresh head; unguarded writers get 5 fresh-head retries, then an honest 409 (pathological contention only) | Supersedes E.35's unconditional final attempt | fixed |
+| E.39 | The SSE cap must also bound COMPLETE frames | Branch autoreview r19 (P2): a single-chunk oversized frame bypassed the pending cap into JSON.parse | Oversized completed frames trip overflow, are forwarded byte-wise but never parsed (accumulator dead, usage-frame check skips) | Provider-controlled parse/allocation spike | fixed |
+
 ## Stage D — Gateway wiring + integration tests
 
 | # | Assumption | Missing info that forced it | Choice taken | Impact if wrong | Validated |

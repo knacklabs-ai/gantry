@@ -174,13 +174,13 @@ async function handleDesiredState(
           ? { observability: preservedObservability }
           : {}),
       };
-      // 0 = "expect no head" (null would be an unconditional append). The
-      // FINAL retry for an unguarded caller falls back to unconditional so
-      // pathological contention can never surface a 409 the API contract
-      // does not promise; that attempt still merges from the freshest head.
-      const lastAttempt = attempt >= 2;
-      const effectiveExpectedRevision =
-        callerGuard ?? (lastAttempt ? null : (head?.revision ?? 0));
+      // 0 = "expect no head". Every attempt is fenced to the head it merged
+      // from — dropping the fence on any attempt could silently revert a
+      // concurrent change to the private observability block, which API
+      // callers cannot even see. Unguarded writers get generous fresh-head
+      // retries; contention that survives them earns an honest 409.
+      const lastAttempt = attempt >= 4;
+      const effectiveExpectedRevision = callerGuard ?? head?.revision ?? 0;
       // Decode the inbound typed document through the shared settings parser
       // so a structurally invalid document surfaces the same
       // document-path-level error the file/CLI surface produces (one

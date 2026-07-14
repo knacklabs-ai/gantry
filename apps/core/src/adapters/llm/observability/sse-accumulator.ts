@@ -49,7 +49,11 @@ export function createSseFrameSplitter(): SseFrameSplitter {
       let consumed = 0;
       let match: RegExpExecArray | null;
       while ((match = delimiter.exec(pending))) {
-        frames.push(pending.slice(consumed, match.index));
+        const frame = pending.slice(consumed, match.index);
+        // A COMPLETE oversized frame must trip the cap too — the bytes are
+        // still returned (the tap forwards them) but parsing stops.
+        if (frame.length > MAX_PENDING_CHARS) overflowed = true;
+        frames.push(frame);
         consumed = match.index + match[0].length;
         delimiter.lastIndex = consumed;
       }
@@ -92,6 +96,8 @@ export function sseFrameData(frame: string): string | undefined {
 // no choices content. Used to strip the frame when the gateway injected the
 // flag on behalf of a caller that did not ask for it.
 export function isOpenAiUsageOnlyFrame(frame: string): boolean {
+  // Oversized frames are never parsed (and are not usage-only chunks).
+  if (frame.length > MAX_PENDING_CHARS) return false;
   const data = sseFrameData(frame);
   if (!data || data === '[DONE]') return false;
   try {
@@ -240,6 +246,11 @@ export function createSseAccumulator(
 
   const pushFrame = (frame: string) => {
     if (dead || done) return;
+    if (frame.length > MAX_PENDING_CHARS) {
+      // Never JSON.parse a provider-controlled multi-megabyte frame.
+      dead = true;
+      return;
+    }
     try {
       const data = sseFrameData(frame);
       if (!data) return;
