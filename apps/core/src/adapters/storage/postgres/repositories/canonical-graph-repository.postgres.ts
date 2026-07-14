@@ -362,7 +362,7 @@ export class PostgresCanonicalGraphRepository {
     const existingAlias = await findActiveAlias();
     let participantUserId = existingAlias?.userId;
     if (!participantUserId) {
-      const retiredAliases = await executor
+      const [retiredAlias] = await executor
         .select({ id: pgSchema.userAliasesPostgres.id })
         .from(pgSchema.userAliasesPostgres)
         .where(
@@ -375,12 +375,12 @@ export class PostgresCanonicalGraphRepository {
           ),
         )
         .orderBy(asc(pgSchema.userAliasesPostgres.id));
+      if (retiredAlias) return null;
       const identityParts = [
         CANONICAL_APP_ID,
         input.providerId,
         providerAccountId,
         externalUserId,
-        ...retiredAliases.map((row) => row.id),
       ];
       const userId = stableId('person', identityParts);
       const aliasId = stableId('person-alias', identityParts);

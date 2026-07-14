@@ -4,10 +4,6 @@ import { randomUUID } from 'node:crypto';
 import { ModelCredentialService } from '../../../application/model-credentials/model-credential-service.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { RuntimeEventPublishInput } from '../../../domain/events/events.js';
-import {
-  isRuntimeEventConversationFkId,
-  isRuntimeEventThreadFkId,
-} from '../../../domain/events/runtime-event-conversation.js';
 import { RUNTIME_EVENT_TYPES } from '../../../domain/events/runtime-event-types.js';
 import type { AgentCredentialBroker } from '../../../domain/ports/agent-credential-broker.js';
 import type { ModelCredentialRepository } from '../../../domain/ports/repositories.js';
@@ -34,7 +30,6 @@ import {
   resolveModelCredentialMode,
   type ModelProviderDefinition,
 } from '../../../shared/model-provider-registry.js';
-import { logger } from '../../../infrastructure/logging/logger.js';
 import { normalizeModelUsage } from '../../../shared/model-usage.js';
 import {
   assertProviderPathAllowed,
@@ -58,6 +53,12 @@ import {
   sendGatewayJson,
   shouldForwardGatewayResponseHeader,
 } from './gantry-model-gateway-http.js';
+import {
+  type GatewayTokenRecord,
+  type GatewayUseAuditInput,
+  publishGatewayTokenAudit,
+  publishGatewayUseAudit,
+} from './gantry-model-gateway-audit.js';
 
 const TOKEN_PREFIX = 'gtw_';
 const DEFAULT_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -65,25 +66,6 @@ const DEFAULT_TOKEN_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_TOKENS = 1024;
 const DEFAULT_REQUEST_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10 * 60 * 1000;
-
-interface GatewayTokenRecord {
-  token: string;
-  appId: AppId;
-  providerId: ModelCredentialProvider;
-  authMode: string;
-  schemaVersion: number;
-  credentialFingerprint: string;
-  createdAtMs: number;
-  expiresAtMs: number;
-  tokenScope: string;
-  agentId?: RuntimeEventPublishInput['agentId'];
-  runId?: RuntimeEventPublishInput['runId'];
-  apiKeyId?: string;
-  apiRequestId?: string;
-  jobId?: RuntimeEventPublishInput['jobId'];
-  conversationId?: RuntimeEventPublishInput['conversationId'];
-  threadId?: RuntimeEventPublishInput['threadId'];
-}
 
 export class GantryModelGatewayBroker implements AgentCredentialBroker {
   private readonly credentialService: ModelCredentialService;
@@ -505,110 +487,16 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
 
   private async publishGatewayUseAudit(
     tokenRecord: GatewayTokenRecord,
-    input: {
-      outcome:
-        | 'forwarded'
-        | 'upstream_error'
-        | 'credential_missing'
-        | 'rate_limited';
-      method: string;
-      status: number;
-      upstreamHost?: string;
-      upstreamPath?: string;
-      credentialFingerprint?: string;
-      usage?: ReturnType<typeof normalizeModelUsage>;
-    },
+    input: GatewayUseAuditInput,
   ): Promise<void> {
-    if (!this.audit) return;
-    const conversationId = isRuntimeEventConversationFkId(
-      tokenRecord.conversationId,
-    )
-      ? tokenRecord.conversationId
-      : undefined;
-    const threadId = isRuntimeEventThreadFkId(tokenRecord.threadId)
-      ? tokenRecord.threadId
-      : undefined;
-    try {
-      await this.audit({
-        appId: tokenRecord.appId,
-        ...(tokenRecord.agentId ? { agentId: tokenRecord.agentId } : {}),
-        ...(runtimeEventRunIdFor(tokenRecord)
-          ? { runId: runtimeEventRunIdFor(tokenRecord) }
-          : {}),
-        ...(tokenRecord.jobId ? { jobId: tokenRecord.jobId } : {}),
-        ...(conversationId ? { conversationId } : {}),
-        ...(threadId ? { threadId } : {}),
-        eventType: RUNTIME_EVENT_TYPES.CREDENTIAL_MODEL_USED,
-        actor: 'gantry-model-gateway',
-        payload: {
-          providerId: tokenRecord.providerId,
-          tokenScope: tokenRecord.tokenScope,
-          ...(tokenRecord.apiKeyId ? { apiKeyId: tokenRecord.apiKeyId } : {}),
-          outcome: input.outcome,
-          ...(tokenRecord.conversationId
-            ? { conversationJid: tokenRecord.conversationId }
-            : {}),
-          ...(tokenRecord.threadId ? { threadId: tokenRecord.threadId } : {}),
-          method: input.method,
-          status: input.status,
-          tokenIssuedAtMs: tokenRecord.createdAtMs,
-          tokenExpiresAtMs: tokenRecord.expiresAtMs,
-          ...(input.credentialFingerprint
-            ? { credentialFingerprint: input.credentialFingerprint }
-            : {}),
-          ...(input.upstreamHost ? { upstreamHost: input.upstreamHost } : {}),
-          ...(input.upstreamPath ? { upstreamPath: input.upstreamPath } : {}),
-          usage: input.usage,
-          modelAlias: input.usage?.model,
-        },
-      });
-    } catch (err) {
-      logger.warn({ err }, 'Gantry Model Gateway usage audit failed');
-    }
+    await publishGatewayUseAudit(this.audit, tokenRecord, input);
   }
 
   private async publishGatewayTokenAudit(
     tokenRecord: GatewayTokenRecord,
     outcome: 'token_issued' | 'token_rejected',
   ): Promise<void> {
-    if (!this.audit) return;
-    const conversationId = isRuntimeEventConversationFkId(
-      tokenRecord.conversationId,
-    )
-      ? tokenRecord.conversationId
-      : undefined;
-    const threadId = isRuntimeEventThreadFkId(tokenRecord.threadId)
-      ? tokenRecord.threadId
-      : undefined;
-    try {
-      await this.audit({
-        appId: tokenRecord.appId,
-        ...(tokenRecord.agentId ? { agentId: tokenRecord.agentId } : {}),
-        ...(runtimeEventRunIdFor(tokenRecord)
-          ? { runId: runtimeEventRunIdFor(tokenRecord) }
-          : {}),
-        ...(tokenRecord.jobId ? { jobId: tokenRecord.jobId } : {}),
-        ...(conversationId ? { conversationId } : {}),
-        ...(threadId ? { threadId } : {}),
-        eventType: RUNTIME_EVENT_TYPES.CREDENTIAL_MODEL_USED,
-        actor: 'gantry-model-gateway',
-        payload: {
-          providerId: tokenRecord.providerId,
-          tokenScope: tokenRecord.tokenScope,
-          ...(tokenRecord.apiKeyId ? { apiKeyId: tokenRecord.apiKeyId } : {}),
-          outcome,
-          ...(tokenRecord.conversationId
-            ? { conversationJid: tokenRecord.conversationId }
-            : {}),
-          ...(tokenRecord.threadId ? { threadId: tokenRecord.threadId } : {}),
-          tokenIssuedAtMs: tokenRecord.createdAtMs,
-          tokenExpiresAtMs: tokenRecord.expiresAtMs,
-          credentialFingerprint: tokenRecord.credentialFingerprint,
-        },
-      });
-    } catch (err) {
-      logger.warn({ err }, 'Gantry Model Gateway token audit failed');
-    }
+    await publishGatewayTokenAudit(this.audit, tokenRecord, outcome);
   }
 
   private startTokenSweep(): void {
@@ -660,17 +548,6 @@ function gatewayProviderFor(providerId: string): ModelProviderDefinition {
   const provider = getModelProviderDefinition(normalized);
   if (provider?.executable && provider.gateway) return provider;
   throw new Error(`Unsupported model gateway provider: ${providerId}`);
-}
-
-function runtimeEventRunIdFor(
-  tokenRecord: GatewayTokenRecord,
-): RuntimeEventPublishInput['runId'] | undefined {
-  if (!tokenRecord.runId) return undefined;
-  const runId = String(tokenRecord.runId);
-  return runId.startsWith('credential-run:') ||
-    runId.startsWith('memory-query:')
-    ? undefined
-    : tokenRecord.runId;
 }
 
 function gatewayTokenScope(
