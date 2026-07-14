@@ -64,7 +64,9 @@ export function createGroupOutputBuffer(input: {
     streamSanitizer = createRuntimeUserVisibleStreamSanitizer();
     pendingOutputRawChars = 0;
     pendingOutputHasParts = false;
-    const text = fullVisibleOutput ? formatOutboundForChannel(fullVisibleOutput) : '';
+    const text = fullVisibleOutput
+      ? formatOutboundForChannel(fullVisibleOutput)
+      : '';
     input.log.info(
       { group: input.groupName },
       `Agent output: ${rawChars} chars`,

@@ -97,7 +97,9 @@ function isOpeningBoundary(value: string | undefined): boolean {
 }
 
 function isClosingBoundary(value: string | undefined): boolean {
-  return value === undefined || isWhitespace(value) || /[)\]}.,!?;:-]/u.test(value);
+  return (
+    value === undefined || isWhitespace(value) || /[)\]}.,!?;:-]/u.test(value)
+  );
 }
 
 function isValidOpeningMarker(
