@@ -105,7 +105,8 @@ function promptJson(request: Record<string, unknown>): string | undefined {
   const entries: { role: string; content: string }[] = [];
   let budget = MAX_ATTRIBUTE_CHARS;
   for (let index = messages.length - 1; index >= 0 && budget > 0; index -= 1) {
-    const message = messages[index]!;
+    const message = messages[index];
+    if (message === null || typeof message !== 'object') continue;
     const role = typeof message.role === 'string' ? message.role : 'unknown';
     const content =
       typeof message.content === 'string'
@@ -243,6 +244,7 @@ export function observeGatewayCall(input: {
 }): GatewayCallObservation | undefined {
   const activeTracer = tracer();
   if (!activeTracer) return undefined;
+  let startedSpan: Span | undefined;
   try {
     let request: Record<string, unknown> = {};
     try {
@@ -271,7 +273,7 @@ export function observeGatewayCall(input: {
     const parent = runId ? getTurnSpan(runId) : undefined;
     // Span names bypass the attribute length limit; model comes from an
     // untrusted request body.
-    const span = activeTracer.startSpan(
+    const span = (startedSpan = activeTracer.startSpan(
       `chat ${(requestModel ?? input.providerId).slice(0, 128)}`,
       {
         attributes: {
@@ -311,7 +313,7 @@ export function observeGatewayCall(input: {
         },
       },
       parent ? childContextFor(parent) : undefined,
-    );
+    ));
     // Sampled-out span: no observability data will export, so the request
     // must pass through byte-identical — no usage injection, no stream tap.
     if (!span.isRecording()) {
@@ -533,6 +535,11 @@ export function observeGatewayCall(input: {
       finish,
     };
   } catch (err) {
+    try {
+      startedSpan?.end();
+    } catch {
+      // fail-open
+    }
     logger.warn({ err: String(err) }, 'Failed to observe gateway call');
     return undefined;
   }

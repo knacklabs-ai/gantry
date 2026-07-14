@@ -163,6 +163,16 @@ async function handleDesiredState(
         ? { observability: preservedObservability }
         : {}),
     };
+    // When the hidden block exists and the caller sent no expectedRevision,
+    // bind the append to the head we merged from — an unconditional append
+    // could otherwise silently revert a concurrent observability change
+    // (read-merge-append race). Callers get the documented 409 + retry.
+    const effectiveExpectedRevision =
+      typeof body.expectedRevision === 'number'
+        ? body.expectedRevision
+        : preservedObservability !== undefined && latestForPreserve
+          ? latestForPreserve.revision
+          : null;
     // Decode the inbound typed document through the shared settings parser so a
     // structurally invalid document surfaces the same document-path-level error
     // the file/CLI surface produces (one validation path). YAML never reaches
@@ -201,10 +211,7 @@ async function handleDesiredState(
               logWarn: (context, message) => logger.warn(context, message),
             },
             revisionMirrorRequired: true,
-            expectedRevision:
-              typeof body.expectedRevision === 'number'
-                ? body.expectedRevision
-                : null,
+            expectedRevision: effectiveExpectedRevision,
           },
           parsed,
         );
@@ -255,10 +262,7 @@ async function handleDesiredState(
       },
       parsed,
       {
-        expectedRevision:
-          typeof body.expectedRevision === 'number'
-            ? body.expectedRevision
-            : null,
+        expectedRevision: effectiveExpectedRevision,
         note: typeof body.note === 'string' ? body.note : null,
       },
     );
