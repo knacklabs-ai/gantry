@@ -3047,6 +3047,84 @@ describe('@cawstudios/agent-gantry', () => {
     });
   });
 
+  it('normalizes unsupported model actions through a task hook', async () => {
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async () => ({ status: 'ok', value: 42 }),
+      },
+    });
+
+    const result = await runner.runAgentTask?.({
+      taskType: 'generic.normalize-unsupported-action',
+      instructions: 'Return JSON.',
+      input: {},
+      tools: [],
+      maxSteps: 1,
+      normalizeUnsupportedModelAction: ({ rawAction, unsupportedAction }) => {
+        expect(unsupportedAction).toBe('empty_action');
+        return {
+          action: 'final',
+          output: rawAction,
+          previousGoalEvaluation: {
+            goal: 'finish',
+            status: 'passed',
+            evidenceRefs: [],
+            reason: 'Raw JSON was valid task output.',
+          },
+          memoryUpdate: {},
+          nextGoal: {
+            goal: 'done',
+            requiredEvidence: [],
+            recommendedTool: null,
+          },
+        };
+      },
+      validateFinal: ({ output }) => ({
+        accepted: output.status === 'ok',
+        reason: output.status === 'ok' ? null : 'invalid_output',
+      }),
+    });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      output: { status: 'ok', value: 42 },
+    });
+    expect(result?.steps[0]).toMatchObject({
+      actionType: 'final',
+      status: 'completed',
+      observation: {
+        actionNormalization: {
+          source: 'normalizeUnsupportedModelAction',
+          originalAction: 'empty_action',
+          normalizedAction: 'final',
+        },
+      },
+    });
+  });
+
+  it('does not call unsupported-action normalization for valid actions', async () => {
+    const normalizeUnsupportedModelAction = vi.fn();
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async () => ({
+          action: 'final',
+          output: { status: 'ok' },
+        }),
+      },
+    });
+
+    await runner.runAgentTask?.({
+      taskType: 'generic.valid-action-no-normalization',
+      instructions: 'Return final JSON.',
+      input: {},
+      tools: [],
+      maxSteps: 1,
+      normalizeUnsupportedModelAction,
+    });
+
+    expect(normalizeUnsupportedModelAction).not.toHaveBeenCalled();
+  });
+
   it('filters available and callable agent tools per step', async () => {
     const modelInputs: unknown[] = [];
     const runner = createStructuredModelTaskRunner({
