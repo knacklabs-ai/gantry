@@ -6,6 +6,7 @@ import {
   importFleetSettingsRevision,
   importWorkstationSettings,
   SettingsRevisionConflictError,
+  SettingsStaleMutationError,
   settingsFromRevisionDocument,
 } from '../../../config/settings/settings-import-service.js';
 import type { AppId } from '../../../domain/app/app.js';
@@ -232,6 +233,16 @@ async function handleDesiredState(
             )?.revision ??
             0;
         } catch (err) {
+          // A concurrent winner can make the in-memory previousSettings stale
+          // before reload completes — retryable for unguarded writers, same
+          // as a CAS conflict.
+          if (
+            err instanceof SettingsStaleMutationError &&
+            callerGuard === null &&
+            !lastAttempt
+          ) {
+            continue;
+          }
           if (err instanceof SettingsRevisionConflictError) {
             if (callerGuard === null && !lastAttempt) continue;
             sendError(

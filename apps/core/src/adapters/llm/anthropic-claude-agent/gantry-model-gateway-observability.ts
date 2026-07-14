@@ -31,9 +31,14 @@ export function failGatewayObservation(
   observation: GatewayCallObservation | undefined,
   error: unknown,
 ): void {
+  // Credential-resolution failures can name secret references; only export
+  // the raw message under content capture.
+  const raw = error instanceof Error ? error.message : String(error);
   observation?.finish({
     status: 502,
-    errorMessage: error instanceof Error ? error.message : String(error),
+    errorMessage: contentCaptureEnabled()
+      ? raw.slice(0, 256)
+      : 'gateway request failed',
   });
 }
 

@@ -57,6 +57,15 @@ export interface SettingsRevisionMirror {
   logWarn?: (context: Record<string, unknown>, message: string) => void;
 }
 
+export class SettingsStaleMutationError extends Error {
+  constructor() {
+    super(
+      'Settings mutation is based on stale settings; reload latest desired state and retry.',
+    );
+    this.name = 'SettingsStaleMutationError';
+  }
+}
+
 export class SettingsRevisionConflictError extends Error {
   readonly expectedRevision: number;
   readonly actualRevision: number;
@@ -176,9 +185,7 @@ export async function importWorkstationSettings(
         previousRevisionSettings,
       )
     ) {
-      throw new Error(
-        'Settings mutation is based on stale settings; reload latest desired state and retry.',
-      );
+      throw new SettingsStaleMutationError();
     }
     if (
       latest &&

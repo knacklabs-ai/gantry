@@ -113,6 +113,10 @@ _(Backfilled by the orchestrator — stage launched before the ledger rule; rows
 | E.38 | Preservation fence vs unconditional semantics resolved: fence always wins | Branch autoreview r19 (P2), closing the r17↔r18 tension: any unfenced attempt can silently revert the private block API callers cannot even read | Every attempt CAS-fenced to its fresh head; unguarded writers get 5 fresh-head retries, then an honest 409 (pathological contention only) | Supersedes E.35's unconditional final attempt | fixed |
 | E.39 | The SSE cap must also bound COMPLETE frames | Branch autoreview r19 (P2): a single-chunk oversized frame bypassed the pending cap into JSON.parse | Oversized completed frames trip overflow, are forwarded byte-wise but never parsed (accumulator dead, usage-frame check skips) | Provider-controlled parse/allocation spike | fixed |
 
+| E.40 | Pre-response failure messages can carry credential references | Branch autoreview r20 (P2): AWS/GCP resolver errors name secret refs | `failGatewayObservation` exports the raw message (256-char slice) only under content capture, else a stable label | Credential metadata exported in metadata-only mode | fixed |
+| E.41 | `gen_ai.system` must identify the provider, not the wire format | Branch autoreview r20 (P2): every openai-compatible provider exported as `openai` | Provider-id mapping (semconv well-knowns: `aws.bedrock`, `gcp.vertex_ai`, `gcp.gemini`; else the provider id); `kind` stays parse-only | Backends misgroup/misprice non-OpenAI providers | fixed |
+| E.42 | Workstation unguarded retries must also cover stale in-memory settings | Branch autoreview r20 (P2): the CAS winner leaves `previousSettings` stale until reload; plain-Error stale throw returned 400 | Typed `SettingsStaleMutationError` + route retries it for unguarded writers like a CAS conflict | Retryable race surfaced as INVALID_SETTINGS | fixed |
+
 ## Stage D — Gateway wiring + integration tests
 
 | # | Assumption | Missing info that forced it | Choice taken | Impact if wrong | Validated |

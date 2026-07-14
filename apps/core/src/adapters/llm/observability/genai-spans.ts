@@ -89,6 +89,20 @@ const NON_GENERATION_SUFFIXES = [
 // returns its usage frame natively without the flag.
 const INJECT_STREAM_USAGE_PROVIDERS = new Set(['openai']);
 
+// gen_ai.system identifies the PROVIDER (semconv well-known values where
+// they exist); `kind` is only the wire format used for parsing.
+const PROVIDER_SYSTEM_MAP: Record<string, string> = {
+  anthropic: 'anthropic',
+  openai: 'openai',
+  bedrock: 'aws.bedrock',
+  vertex: 'gcp.vertex_ai',
+  gemini: 'gcp.gemini',
+};
+
+function providerSystemFor(providerId: string): string {
+  return PROVIDER_SYSTEM_MAP[providerId] ?? providerId;
+}
+
 function numeric(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value)
     ? value
@@ -278,12 +292,7 @@ export function observeGatewayCall(input: {
       {
         attributes: {
           'gen_ai.operation.name': 'chat',
-          'gen_ai.system':
-            kind === 'anthropic'
-              ? 'anthropic'
-              : kind === 'openai'
-                ? 'openai'
-                : input.providerId,
+          'gen_ai.system': providerSystemFor(input.providerId),
           ...(requestModel ? { 'gen_ai.request.model': requestModel } : {}),
           ...(numeric(request.max_tokens) !== undefined
             ? { 'gen_ai.request.max_tokens': numeric(request.max_tokens)! }
