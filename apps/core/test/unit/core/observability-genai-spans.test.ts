@@ -328,6 +328,26 @@ describe('observeGatewayCall', () => {
     ]);
   });
 
+  it('releases all bytes and degrades to pass-through on a giant unterminated frame', () => {
+    init();
+    const observation = observe({
+      providerId: 'openai',
+      request: {
+        model: 'request-model',
+        stream: true,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+    const tap = observation.streamTapFor('text/event-stream')!;
+    const giant = Buffer.from(`data: {"x":"${'a'.repeat(1_100_000)}`, 'utf8');
+    const after = Buffer.from('tail-bytes', 'utf8');
+
+    const released = tap.transform(giant);
+    expect(released.toString('utf8')).toBe(giant.toString('utf8'));
+    expect(tap.transform(after)).toBe(after);
+    expect(tap.flush()).toEqual(Buffer.alloc(0));
+  });
+
   it('injects include_usage and strips only the synthetic usage frame', () => {
     const exporter = init();
     const observation = observe({

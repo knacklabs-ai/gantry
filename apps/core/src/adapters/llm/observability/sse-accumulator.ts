@@ -17,7 +17,16 @@ export interface SseAccumulatorResult {
 export interface SseFrameSplitter {
   push: (chunk: Buffer) => string[];
   flush: () => string[];
+  // True once a single unterminated frame exceeds the pending cap; parsing
+  // stops and takePending() releases the buffered text exactly once.
+  overflowed: () => boolean;
+  takePending: () => string;
 }
+
+// A hostile or broken provider can stream one giant frame with no blank-line
+// delimiter; pending state is capped so observability never retains
+// unbounded provider-controlled bytes.
+const MAX_PENDING_CHARS = 1_048_576;
 
 // SSE frames are separated by a blank line; tolerate CRLF. StringDecoder
 // holds partial multibyte UTF-8 sequences split across chunk boundaries —
@@ -25,8 +34,10 @@ export interface SseFrameSplitter {
 export function createSseFrameSplitter(): SseFrameSplitter {
   const decoder = new StringDecoder('utf8');
   let pending = '';
+  let overflowed = false;
   return {
     push: (chunk) => {
+      if (overflowed) return [];
       pending += decoder.write(chunk);
       const frames: string[] = [];
       let boundary: number;
@@ -35,12 +46,20 @@ export function createSseFrameSplitter(): SseFrameSplitter {
         frames.push(pending.slice(0, boundary));
         pending = pending.slice(boundary + (match?.[0].length ?? 2));
       }
+      if (pending.length > MAX_PENDING_CHARS) overflowed = true;
       return frames;
     },
     flush: () => {
+      if (overflowed) return [];
       const rest = pending + decoder.end();
       pending = '';
       return rest.trim() ? [rest] : [];
+    },
+    overflowed: () => overflowed,
+    takePending: () => {
+      const rest = pending;
+      pending = '';
+      return rest;
     },
   };
 }
@@ -196,6 +215,7 @@ export function createSseAccumulator(
       if (dead || done) return;
       try {
         for (const frame of splitter.push(chunk)) pushFrame(frame);
+        if (splitter.overflowed()) dead = true;
       } catch {
         dead = true;
       }

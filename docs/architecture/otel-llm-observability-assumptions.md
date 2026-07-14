@@ -58,6 +58,9 @@ _(Backfilled by the orchestrator — stage launched before the ledger rule; rows
 | E.1 | Renderer number formatting and parser coercion agree | Branch autoreview (P2): `sampleRate: 1e-7` renders in scientific notation; the fixed-decimal regex rejected it → revision round-trip/startup failure | Coercion accepts any finite `Number()`-parseable string; round-trip test with `1e-7` added | Accepted settings revisions could brick startup | fixed |
 | E.2 | `agent-runner-ipc` failures were main's, not ours | 44 spawned-runner tests red — `bfe906c59` (PR #215, main) added a `runtime-env-command` import without extending the fixture copy list | Drive-by one-line copy-list fix committed on this branch | — | fixed (verified import landed on main pre-branch) |
 
+| E.3 | A provider can stream one giant unterminated SSE frame | Branch autoreview r2 (P2): splitter pending state was unbounded and inject-mode withheld those bytes | Pending capped at 1 MiB; on overflow the accumulator stops (partial span) and the inject tap releases everything buffered and degrades to raw pass-through (≤3 boundary bytes of a split multibyte char may degrade to replacement chars in that pathological case) | Unbounded memory retention driven by provider-controlled bytes | fixed |
+| E.4 | Responses-API generic spans re-raised by branch review | The goal prompt's "every chat span carries usage" phrasing overpromised | D.14 decision upheld; acceptance criterion reworded to name the parsed routes (chat/completions, messages) explicitly | — | ok |
+
 ## Stage D — Gateway wiring + integration tests
 
 | # | Assumption | Missing info that forced it | Choice taken | Impact if wrong | Validated |

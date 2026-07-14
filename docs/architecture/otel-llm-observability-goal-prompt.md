@@ -102,7 +102,7 @@ Bounded write scope: the two gateway files + the new test file. Nothing else.
 ## Acceptance Criteria
 
 - Turn span + gateway `chat` span share a trace for a normal message turn (registry hit via the minted correlation id passed into the credential binding).
-- Every `chat` span carries input/output tokens; cache detail present when the provider reports it; `gen_ai.usage.cost` present when the catalog prices the model.
+- Every `chat` span on the parsed generation routes (openai-format `/chat/completions`, Anthropic `/messages`) carries input/output tokens; cache detail present when the provider reports it; `gen_ai.usage.cost` present when the catalog prices the model. Other gateway-allowed generation-ish routes (Bedrock invoke, OpenAI Responses) get best-effort generic spans in v1 (ledger D.14).
 - OpenAI-format streaming without caller `include_usage`: span has full usage AND the client stream contains no usage-only frame.
 - `capture_content: false` removes prompt/completion content but keeps tokens/timing.
 - Tracing disabled: zero spans, zero behavior change (gateway byte-identical, spawnAgent no-op).

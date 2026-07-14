@@ -390,11 +390,19 @@ export function observeGatewayCall(input: {
         };
       }
       const splitter = createSseFrameSplitter();
+      // Once the splitter overflows (one giant unterminated frame), the tap
+      // releases everything it buffered and degrades to raw pass-through —
+      // bytes must never be withheld from the client.
+      let rawPassThrough = false;
       const processFrames = (frames: string[]) => {
         const out: string[] = [];
         for (const frame of frames) {
           accumulator.pushFrame(frame);
           if (!isOpenAiUsageOnlyFrame(frame)) out.push(`${frame}\n\n`);
+        }
+        if (splitter.overflowed()) {
+          rawPassThrough = true;
+          out.push(splitter.takePending());
         }
         return Buffer.from(out.join(''), 'utf8');
       };
@@ -402,6 +410,7 @@ export function observeGatewayCall(input: {
         transform: (chunk) => {
           tapUsed = true;
           markFirstChunk();
+          if (rawPassThrough) return chunk;
           try {
             return processFrames(splitter.push(chunk));
           } catch {
@@ -409,6 +418,7 @@ export function observeGatewayCall(input: {
           }
         },
         flush: () => {
+          if (rawPassThrough) return Buffer.alloc(0);
           try {
             return processFrames(splitter.flush());
           } catch {
