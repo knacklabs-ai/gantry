@@ -90,9 +90,29 @@ function componentFor(token: GatewayCallTokenContext): string {
 
 function streamKindFor(pathname: string): SseStreamKind | undefined {
   if (pathname.includes('/chat/completions')) return 'openai';
-  if (pathname.includes('/messages')) return 'anthropic';
+  if (pathname.includes('/messages') && !pathname.includes('/count_tokens')) {
+    return 'anthropic';
+  }
   return undefined;
 }
+
+// Non-generation endpoints the gateway also proxies; tracing them as `chat`
+// generations would corrupt call counts and usage rollups. Untraced in v1.
+// Suffix-matched: substrings would false-positive on dynamic path segments
+// (e.g. a Vertex project named `embeddings-prod`).
+const NON_GENERATION_SUFFIXES = [
+  '/embeddings',
+  '/count_tokens',
+  '/moderations',
+  '/rerank',
+];
+
+// stream_options.include_usage is only injected for providers verified to
+// accept it — an endpoint that rejects unknown fields would turn a valid
+// call into a 4xx just because tracing is on. Everything else relies on the
+// caller opting in (LangChain's ChatOpenAI does by default), and OpenRouter
+// returns its usage frame natively without the flag.
+const INJECT_STREAM_USAGE_PROVIDERS = new Set(['openai']);
 
 function numeric(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value)
@@ -243,21 +263,18 @@ export function observeGatewayCall(input: {
     } catch {
       // Non-JSON body: still trace timing/status.
     }
+    if (
+      NON_GENERATION_SUFFIXES.some((suffix) =>
+        input.upstreamUrl.pathname.endsWith(suffix),
+      )
+    ) {
+      return undefined;
+    }
     const kind = streamKindFor(input.upstreamUrl.pathname);
     const isStreaming = request.stream === true;
     const requestModel =
       typeof request.model === 'string' ? request.model : undefined;
     const captureContent = contentCaptureEnabled();
-
-    let requestBody = input.requestBody;
-    let injectedUsage = false;
-    if (kind === 'openai' && isStreaming) {
-      const rewritten = injectIncludeUsage(request);
-      if (rewritten) {
-        requestBody = rewritten;
-        injectedUsage = true;
-      }
-    }
 
     const runId =
       input.token.runId === undefined ? undefined : String(input.token.runId);
@@ -303,6 +320,25 @@ export function observeGatewayCall(input: {
       },
       parent ? childContextFor(parent) : undefined,
     );
+    // Sampled-out span: no observability data will export, so the request
+    // must pass through byte-identical — no usage injection, no stream tap.
+    if (!span.isRecording()) {
+      span.end();
+      return undefined;
+    }
+    let requestBody = input.requestBody;
+    let injectedUsage = false;
+    if (
+      kind === 'openai' &&
+      isStreaming &&
+      INJECT_STREAM_USAGE_PROVIDERS.has(input.providerId)
+    ) {
+      const rewritten = injectIncludeUsage(request);
+      if (rewritten) {
+        requestBody = rewritten;
+        injectedUsage = true;
+      }
+    }
     if (captureContent) {
       const prompt = promptJson(request);
       if (prompt) span.setAttribute(ATTR_PROMPT, prompt);
@@ -392,12 +428,14 @@ export function observeGatewayCall(input: {
         let responseModel: string | undefined;
         let completionText: string | undefined;
         let finishReason: string | undefined;
+        let streamErrorMessage: string | undefined;
         if (tapUsed && accumulator) {
           const streamed = accumulator.result();
           usage = streamed.usage;
           responseModel = streamed.model;
           completionText = streamed.completionText;
           finishReason = streamed.finishReason;
+          streamErrorMessage = streamed.errorMessage;
         } else if (
           result.responseJson &&
           typeof result.responseJson === 'object'
@@ -445,13 +483,11 @@ export function observeGatewayCall(input: {
         if (captureContent && completionText) {
           span.setAttribute(ATTR_COMPLETION, completionJson(completionText));
         }
-        if (result.status >= 400 || result.errorMessage) {
-          span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: result.errorMessage,
-          });
-          if (result.errorMessage) {
-            span.setAttribute('error.type', result.errorMessage);
+        const errorMessage = result.errorMessage ?? streamErrorMessage;
+        if (result.status >= 400 || errorMessage) {
+          span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage });
+          if (errorMessage) {
+            span.setAttribute('error.type', errorMessage);
           }
         }
       } catch (err) {

@@ -41,10 +41,11 @@ function observe(input: {
   upstreamUrl?: URL;
   runId?: string;
   apiKeyId?: string;
+  providerId?: string;
 }): GatewayCallObservation {
   const observation = observeGatewayCall({
     token: { runId: input.runId, apiKeyId: input.apiKeyId },
-    providerId: 'fixture-provider',
+    providerId: input.providerId ?? 'fixture-provider',
     upstreamUrl: input.upstreamUrl ?? OPENAI_URL,
     requestBody: Buffer.from(JSON.stringify(input.request)),
   });
@@ -330,6 +331,7 @@ describe('observeGatewayCall', () => {
   it('injects include_usage and strips only the synthetic usage frame', () => {
     const exporter = init();
     const observation = observe({
+      providerId: 'openai',
       request: {
         model: 'request-model',
         stream: true,

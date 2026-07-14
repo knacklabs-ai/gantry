@@ -9,6 +9,9 @@ export interface SseAccumulatorResult {
   usage?: Record<string, unknown>;
   completionText?: string;
   finishReason?: string;
+  // Providers can fail mid-stream behind an HTTP 200 (top-level `error`
+  // chunk / `error` event); spans must not export those as successes.
+  errorMessage?: string;
 }
 
 export interface SseFrameSplitter {
@@ -89,8 +92,18 @@ export function createSseAccumulator(
   let completionText = '';
   let completionCapped = false;
   let finishReason: string | undefined;
+  let errorMessage: string | undefined;
   const usage: Record<string, unknown> = {};
   let sawUsage = false;
+
+  const captureError = (value: unknown) => {
+    if (errorMessage || value === null || typeof value !== 'object') return;
+    const err = value as { message?: unknown; type?: unknown; code?: unknown };
+    const parts = [err.type ?? err.code, err.message]
+      .filter((part) => typeof part === 'string' || typeof part === 'number')
+      .map(String);
+    errorMessage = parts.length > 0 ? parts.join(': ') : 'stream error';
+  };
 
   const appendText = (text: string) => {
     if (!captureContent || completionCapped) return;
@@ -114,6 +127,10 @@ export function createSseAccumulator(
   };
 
   const handleAnthropicEvent = (event: Record<string, unknown>) => {
+    if (event.type === 'error') {
+      captureError(event.error);
+      return;
+    }
     if (event.type === 'message_start') {
       const message = event.message as
         | { model?: string; usage?: unknown }
@@ -139,6 +156,9 @@ export function createSseAccumulator(
   };
 
   const handleOpenAiEvent = (event: Record<string, unknown>) => {
+    if (event.error !== undefined && event.error !== null) {
+      captureError(event.error);
+    }
     if (typeof event.model === 'string') model = event.model;
     mergeUsage(event.usage);
     const choice = (
@@ -186,6 +206,7 @@ export function createSseAccumulator(
       ...(sawUsage ? { usage } : {}),
       ...(completionText ? { completionText } : {}),
       ...(finishReason ? { finishReason } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
     }),
   };
 }

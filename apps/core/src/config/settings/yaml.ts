@@ -65,7 +65,7 @@ function parseScalar(raw: string): unknown {
   if (value === 'true') return true;
   if (value === 'false') return false;
   if (value === '{}') return {};
-  // Integers only: decimal-looking scalars (Slack thread timestamps like
+  // Integers only: decimal-looking scalars (channel thread timestamps like
   // 171.222, version strings) must stay strings; number fields that accept
   // decimals coerce locally in their strict parsers.
   if (/^-?[0-9]+$/.test(value)) return Number.parseInt(value, 10);

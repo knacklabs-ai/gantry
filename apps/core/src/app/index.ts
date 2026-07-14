@@ -14,11 +14,6 @@ import {
   stopLiveAdmissionLoop,
 } from './bootstrap/runtime-services.js';
 import { installShutdownHandlers } from './bootstrap/shutdown.js';
-import {
-  initTracing,
-  parseOtlpHeaders,
-  shutdownTracing,
-} from '../infrastructure/observability/tracing.js';
 import { runStartup } from './bootstrap/startup.js';
 import {
   closeRuntimeStorage,
@@ -126,12 +121,13 @@ export async function startGantryRuntime(
     isControlApproverAllowed: channelWiring.isControlApproverAllowed,
   });
 
-  let { runtimeSettings } = await runStartup(app, {
-    settingsAuthority: shouldDeferPreflightForFleetRole ? 'file' : 'revision',
-    validateSettingsImportPreflight: options.skipPreflight
-      ? () => ({ ok: true })
-      : validateRuntimePreflight,
-  });
+  let { runtimeSettings, closeTracing, initTracingFromSettings } =
+    await runStartup(app, {
+      settingsAuthority: shouldDeferPreflightForFleetRole ? 'file' : 'revision',
+      validateSettingsImportPreflight: options.skipPreflight
+        ? () => ({ ok: true })
+        : validateRuntimePreflight,
+    });
   const storage = getRuntimeStorage();
   channelWiring.setRuntimeSecrets(
     createRepositoryRuntimeSecretProvider({
@@ -165,20 +161,11 @@ export async function startGantryRuntime(
       throw new Error(formatRuntimePreflightFailure(validation.failure));
     }
   }
-  let closeTracing: (() => Promise<void>) | undefined;
-  try {
-    const tracing = runtimeSettings.observability.tracing;
-    initTracing({
-      enabled: tracing.enabled,
-      endpoint: tracing.endpoint || undefined,
-      headers: parseOtlpHeaders(process.env.GANTRY_OTEL_TRACES_HEADERS),
-      captureContent: tracing.captureContent,
-      sampleRate: tracing.sampleRate,
-      environment: tracing.environment,
-    });
-    closeTracing = shutdownTracing;
-  } catch (err) {
-    logger.warn({ err }, 'Failed to initialize tracing');
+  // Settings are final on every path here (workstation revision authority, or
+  // fleet after prepareFleetSettings). A fleet worker with no revision yet
+  // skips init: tracing must never configure from a stale local mirror.
+  if (fleetSettingsLoaded) {
+    initTracingFromSettings(runtimeSettings);
   }
   // P2 guard: a fleet worker with no settings revision must not claim
   // scheduled jobs under bundled default settings (/readyz red only protects
