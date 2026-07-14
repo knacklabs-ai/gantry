@@ -94,6 +94,8 @@ _(Backfilled by the orchestrator — stage launched before the ledger rule; rows
 | E.26 | The revision document exposed the OTLP endpoint through the desired-state API | Branch autoreview r12 (P1): agents:admin could read AND redirect the endpoint the secret headers follow — contradicting private-v1 | `observability` stripped from `/v1/settings` + desired-state reads; writes preserve the stored block server-side (filesystem surfaces remain the only way to change it); route test added | Credential exfiltration via endpoint redirect | fixed |
 | E.27 | Fleet workers must init tracing when the FIRST revision arrives | Branch autoreview r12 (P2): `onSettingsReady` released the scheduler but never initialized tracing | First-revision callback reloads settings and calls `initTracingFromSettings` (idempotent) | Ready workers silently untraced until manual restart | fixed |
 
+| E.28 | First-revision tracing init must not hide behind the scheduler guard | Branch autoreview r13 (P2): control/live-worker roles never hold a scheduler start, so the E.27 fix skipped them | Init moved above the guard in `onSettingsReady` | Control/live-worker fleet roles silently untraced until restart | fixed |
+
 ## Stage D — Gateway wiring + integration tests
 
 | # | Assumption | Missing info that forced it | Choice taken | Impact if wrong | Validated |

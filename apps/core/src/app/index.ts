@@ -357,11 +357,9 @@ export async function startGantryRuntime(
         capabilityReconciliation: roleCaps.workerRegistration,
         settingsLoaded: fleetSettingsLoaded,
         onSettingsReady: async () => {
-          const start = heldSchedulerStart;
-          heldSchedulerStart = undefined;
-          if (!start) return;
           // Tracing was skipped at boot (no revision yet); initialize from
-          // the first authoritative revision.
+          // the first authoritative revision BEFORE the scheduler guard —
+          // control/live-worker roles never hold a scheduler start.
           try {
             initTracingFromSettings(loadRuntimeSettings(GANTRY_HOME));
           } catch (err) {
@@ -370,6 +368,9 @@ export async function startGantryRuntime(
               'Failed to initialize tracing on first settings revision',
             );
           }
+          const start = heldSchedulerStart;
+          heldSchedulerStart = undefined;
+          if (!start) return;
           await start();
           logger.info(
             'First settings revision applied; scheduler job claiming started',
