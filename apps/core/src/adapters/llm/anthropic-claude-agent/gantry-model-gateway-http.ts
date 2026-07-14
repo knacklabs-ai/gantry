@@ -22,7 +22,8 @@ export async function readGatewayResponsePayload(
   requestBody: Buffer,
 ): Promise<GatewayResponsePayload | undefined> {
   if (!response.ok) return undefined;
-  if (response.headers.get('content-type')?.includes('text/event-stream')) {
+  const contentType = response.headers.get('content-type')?.toLowerCase();
+  if (contentType?.includes('text/event-stream')) {
     return undefined;
   }
   try {

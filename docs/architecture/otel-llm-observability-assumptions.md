@@ -81,6 +81,10 @@ _(Backfilled by the orchestrator — stage launched before the ledger rule; rows
 | E.17 | The pre-parse stream event measures first BYTE, not first token | Branch autoreview r8 (P2) | Renamed to `gantry.first_response_byte` — honest TTFB semantics | Misleading latency metric name | fixed |
 | E.18 | Continuation rotation re-raised a third time | Reviewer r8 | Held — C.8/E.8 documented decision with named revisit (synchronous frame hook in agent-spawn-process) | — | ok |
 
+| E.19 | Delimiter scanning must be incremental | Branch autoreview r9 (P1): re-scanning `pending` from zero per chunk is quadratic on chunked giant frames | Splitter tracks a scan offset (3-char overlap for split CRLFCRLF) and compacts consumed frames | Provider-controlled event-loop stall | fixed |
+| E.20 | Media types are case-insensitive | Branch autoreview r9 (P2): `Text/Event-Stream` skipped the tap after injection, leaking the synthetic usage frame | Both tap and payload checks lowercase before testing | Mixed-case SSE responses change downstream bytes | fixed |
+| E.21 | Upstream `statusText` is provider-controlled text | Branch autoreview r9 (P2): exported into span status even with capture off | Gated behind `contentCaptureEnabled()` (256-char slice when on, stable label when off) | Privacy control bypass on error spans | fixed |
+
 ## Stage D — Gateway wiring + integration tests
 
 | # | Assumption | Missing info that forced it | Choice taken | Impact if wrong | Validated |

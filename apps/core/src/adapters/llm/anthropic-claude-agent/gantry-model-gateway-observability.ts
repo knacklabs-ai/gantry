@@ -5,6 +5,7 @@ import {
   type GatewayCallTokenContext,
   type GatewayStreamTap,
 } from '../observability/genai-spans.js';
+import { contentCaptureEnabled } from '../../../infrastructure/observability/tracing.js';
 
 // Observability glue for the gateway hot path. Every helper is fail-open:
 // tracing must never affect the proxied request or response.
@@ -47,9 +48,13 @@ export function finishGatewayNonStreaming(
   // responseJson is the gateway's single shared clone+parse (OK bodies only —
   // a 4xx/5xx upstream that stalls after headers must not hang the proxy).
   if (!response.ok) {
+    // statusText is upstream-controlled; only export it when content
+    // capture is on (bounded to a reason-phrase-sized slice).
     observation.finish({
       status,
-      errorMessage: response.statusText || undefined,
+      errorMessage: contentCaptureEnabled()
+        ? response.statusText.slice(0, 256) || undefined
+        : 'upstream error',
     });
     return;
   }

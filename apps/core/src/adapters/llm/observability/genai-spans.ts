@@ -508,7 +508,11 @@ export function observeGatewayCall(input: {
       requestBody,
       isStreaming,
       streamTapFor: (contentType) => {
-        if (!isStreaming || !contentType?.includes('text/event-stream')) {
+        // Media types are case-insensitive (e.g. Text/Event-Stream).
+        if (
+          !isStreaming ||
+          !contentType?.toLowerCase().includes('text/event-stream')
+        ) {
           return undefined;
         }
         cachedTap ??= buildStreamTap();

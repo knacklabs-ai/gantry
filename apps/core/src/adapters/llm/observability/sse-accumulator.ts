@@ -34,18 +34,27 @@ const MAX_PENDING_CHARS = 1_048_576;
 export function createSseFrameSplitter(): SseFrameSplitter {
   const decoder = new StringDecoder('utf8');
   let pending = '';
+  // Where delimiter scanning resumes — re-scanning `pending` from zero on
+  // every push is quadratic when one large frame arrives in many chunks.
+  let scanFrom = 0;
   let overflowed = false;
   return {
     push: (chunk) => {
       if (overflowed) return [];
       pending += decoder.write(chunk);
       const frames: string[] = [];
-      let boundary: number;
-      while ((boundary = pending.search(/\r?\n\r?\n/)) >= 0) {
-        const match = /\r?\n\r?\n/.exec(pending.slice(boundary));
-        frames.push(pending.slice(0, boundary));
-        pending = pending.slice(boundary + (match?.[0].length ?? 2));
+      const delimiter = /\r?\n\r?\n/g;
+      delimiter.lastIndex = scanFrom;
+      let consumed = 0;
+      let match: RegExpExecArray | null;
+      while ((match = delimiter.exec(pending))) {
+        frames.push(pending.slice(consumed, match.index));
+        consumed = match.index + match[0].length;
+        delimiter.lastIndex = consumed;
       }
+      if (consumed > 0) pending = pending.slice(consumed);
+      // Overlap of 3 covers a CRLFCRLF delimiter split across chunks.
+      scanFrom = Math.max(0, pending.length - 3);
       if (pending.length > MAX_PENDING_CHARS) overflowed = true;
       return frames;
     },
@@ -53,12 +62,14 @@ export function createSseFrameSplitter(): SseFrameSplitter {
       if (overflowed) return [];
       const rest = pending + decoder.end();
       pending = '';
+      scanFrom = 0;
       return rest.trim() ? [rest] : [];
     },
     overflowed: () => overflowed,
     takePending: () => {
       const rest = pending;
       pending = '';
+      scanFrom = 0;
       return rest;
     },
   };
