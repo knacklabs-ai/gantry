@@ -113,7 +113,7 @@ import {
   createTelegramChannel,
   TelegramChannel,
   TelegramChannelOpts,
-} from '@core/channels/telegram.js';
+} from '@core/channels/telegram/channel-adapter.js';
 import { configurePendingInteractionDurability } from '@core/application/interactions/pending-interaction-durability.js';
 import { writeTelegramFetchResponseToFile } from '@core/channels/telegram-file-download.js';
 import { logger } from '@core/infrastructure/logging/logger.js';

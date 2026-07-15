@@ -267,7 +267,7 @@ import {
   getHostRuntimeCredentialEnv,
   prepareHostRuntimeContext,
 } from '@core/runtime/agent-spawn-host.js';
-import { createSignedIpcRequestEnvelope } from '@core/runner/mcp/signing.js';
+import { createSignedIpcRequestEnvelope } from '@core/shared/ipc-signing.js';
 import { parseMemoryIpcRequest } from '@core/runtime/ipc-parsing.js';
 import type {
   AgentMcpServerBinding,
@@ -1640,7 +1640,7 @@ describe('agent-spawn timeout behavior', () => {
     const writeSpy = vi.spyOn(fakeProc.stdin, 'write');
     const group = {
       ...testGroup,
-      agentConfig: { permissionMode: 'auto' },
+      agentConfig: { permissionMode: 'auto_strict' },
     } as ConversationRoute;
 
     const resultPromise = spawnTestAgent(
@@ -1654,7 +1654,7 @@ describe('agent-spawn timeout behavior', () => {
     await resultPromise;
 
     expect(JSON.parse(String(writeSpy.mock.calls[0]?.[0]))).toMatchObject({
-      permissionMode: 'auto',
+      permissionMode: 'auto_strict',
     });
     const env = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env;
     expect(env?.GANTRY_PERMISSION_MODE).toBe('auto');

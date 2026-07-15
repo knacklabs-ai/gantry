@@ -33,7 +33,7 @@ manually invoking unreferenced scripts.
 
 - Tag: `delete`
 - Estimated reduction: 112 lines
-- Path: `apps/core/test/harness/fake-agent-runner.ts`
+- Path: <code>apps/core/test/harness/fake-agent-runner.ts</code>
 - Evidence: `createFakeAgentRunner` and its exported types occur only in their
   declarations; text, semantic, structural-call, dynamic-import, and test
   searches found no consumer.
@@ -44,17 +44,17 @@ manually invoking unreferenced scripts.
 - Tag: `delete`
 - Estimated reduction: 90 lines
 - Paths:
-  - `apps/core/src/channels/slack.ts`
-  - `apps/core/src/channels/slack/channel.ts`
-  - `apps/core/src/channels/telegram.ts`
-  - `apps/core/src/channels/telegram/channel.ts`
-  - `apps/core/src/memory/index.ts`
-  - `apps/core/src/messaging/index.ts`
-  - `apps/core/src/platform/index.ts`
-  - `apps/core/src/runtime/index.ts`
-  - `apps/core/src/session/index.ts`
-  - `apps/core/src/config/security-posture.ts`
-  - `apps/core/src/jobs/job-plan-formatter.ts`
+  - <code>apps/core/src/channels/slack.ts</code>
+  - <code>apps/core/src/channels/slack/channel.ts</code>
+  - <code>apps/core/src/channels/telegram.ts</code>
+  - <code>apps/core/src/channels/telegram/channel.ts</code>
+  - <code>apps/core/src/memory/index.ts</code>
+  - <code>apps/core/src/messaging/index.ts</code>
+  - <code>apps/core/src/platform/index.ts</code>
+  - <code>apps/core/src/runtime/index.ts</code>
+  - <code>apps/core/src/session/index.ts</code>
+  - <code>apps/core/src/config/security-posture.ts</code>
+  - <code>apps/core/src/jobs/job-plan-formatter.ts</code>
   - `.codex/architecture-exceptions.json`
 - Evidence: the files contain only re-exports. Seven have no consumers; four
   have repository consumers that can import the owned target directly. The
@@ -77,9 +77,9 @@ manually invoking unreferenced scripts.
 - Tag: `shrink`
 - Estimated reduction: at least 72 lines after replacement code
 - Paths:
-  - `apps/core/src/runner/mcp/signing.ts`
+  - <code>apps/core/src/runner/mcp/signing.ts</code>
   - `apps/core/src/runner/permission-ipc-client.ts`
-  - `apps/core/src/adapters/llm/anthropic-claude-agent/runner/ipc-signing.ts`
+  - <code>apps/core/src/adapters/llm/anthropic-claude-agent/runner/ipc-signing.ts</code>
 - Evidence: the HMAC request signing and Ed25519 response verification are
   repeated. Envelope expiry behavior is not identical: the MCP implementation
   preserves a caller-supplied `expiresAt`, while the permission implementations
@@ -92,7 +92,7 @@ manually invoking unreferenced scripts.
 - Tag: `delete`
 - Estimated reduction: 70 lines
 - Paths and symbols:
-  - `apps/core/src/jobs/ipc-scheduler-approval-target.ts` —
+  - <code>apps/core/src/jobs/ipc-scheduler-approval-target.ts</code> —
     `resolveSchedulerApprovalTarget`
   - `apps/core/src/application/jobs/job-capability-requirements.ts` —
     `capabilityRequirementToolRules`
@@ -108,8 +108,8 @@ manually invoking unreferenced scripts.
 - Tag: `delete`
 - Estimated reduction: 61 lines
 - Paths:
-  - `apps/core/src/config/env/parse.ts` — 14 lines
-  - `apps/core/src/adapters/storage/postgres/schema/canonical-json.postgres.ts`
+  - <code>apps/core/src/config/env/parse.ts</code> — 14 lines
+  - <code>apps/core/src/adapters/storage/postgres/schema/canonical-json.postgres.ts</code>
     — 12 lines
   - `apps/core/src/adapters/storage/postgres/runtime-store.ts:216` — the
     35-line `_setRuntimeRepositoriesForTest` seam
@@ -165,7 +165,7 @@ manually invoking unreferenced scripts.
 
 - Tag: `delete`
 - Estimated reduction: 26 lines
-- Path: `apps/core/src/memory/prompts/session-summary.ts`
+- Path: <code>apps/core/src/memory/prompts/session-summary.ts</code>
 - Evidence: `SESSION_SUMMARY_PROMPT` occurs only in this file across source,
   tests, packages, documentation, and generated output.
 - Replacement: nothing.
@@ -210,7 +210,7 @@ manually invoking unreferenced scripts.
 - Tag: `shrink`
 - Estimated reduction: 12 lines after replacement code
 - Paths:
-  - `packages/sdk/src/job-list-query.ts`
+  - <code>packages/sdk/src/job-list-query.ts</code>
   - `packages/sdk/src/index.ts`
 - Evidence: the serializer has one caller and duplicates `querySuffix`.
   Passing the input object directly is not equivalent because it changes
@@ -222,12 +222,12 @@ manually invoking unreferenced scripts.
 - Tag: `yagni`
 - Estimated reduction: 6 lines
 - Paths:
-  - `apps/core/src/runtime/host/README.md`
-  - `apps/core/src/runtime/agent/README.md`
-  - `apps/core/src/runtime/permissions/README.md`
-  - `apps/core/src/runner/mcp/transport/README.md`
-  - `apps/core/src/memory/persistence/README.md`
-  - `apps/core/src/infrastructure/local-services/README.md`
+  - <code>apps/core/src/runtime/host/README.md</code>
+  - <code>apps/core/src/runtime/agent/README.md</code>
+  - <code>apps/core/src/runtime/permissions/README.md</code>
+  - <code>apps/core/src/runner/mcp/transport/README.md</code>
+  - <code>apps/core/src/memory/persistence/README.md</code>
+  - <code>apps/core/src/infrastructure/local-services/README.md</code>
 - Evidence: every file is a one-line reservation for future extracted modules;
   no architecture check or consumer requires them.
 - Replacement: create directories when implementations exist.
@@ -280,7 +280,7 @@ The following initial claims did not survive adversarial verification:
   as dead code. It has a live production call and an explicit behavior test.
   Removing it is conditional on proving that no stored settings revision still
   needs the old shape.
-- Do not classify `apps/core/src/jobs/job-plan-formatter.ts` as unused. It has a
+- Do not classify <code>apps/core/src/jobs/job-plan-formatter.ts</code> as unused. It has a
   production consumer and tests. It remains only as a wrapper-removal finding.
 - Do not replace `jobListQuery(input)` with `querySuffix(input ?? {})` directly;
   that changes observable serialization behavior. The corrected finding uses

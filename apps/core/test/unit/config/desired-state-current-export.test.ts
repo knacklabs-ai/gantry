@@ -767,7 +767,7 @@ permissions:
         trigger: '@main',
         added_at: '2026-06-02T00:00:00.000Z',
         requiresTrigger: true,
-        agentConfig: { model: 'opus', permissionMode: 'auto' },
+        agentConfig: { model: 'opus', permissionMode: 'auto_strict' },
       },
     });
 
@@ -787,7 +787,7 @@ permissions:
       trigger: '@main',
       requiresTrigger: true,
       model: 'opus',
-      permissionMode: 'auto',
+      permissionMode: 'auto_strict',
     });
     expect(exported.agents.main_agent?.runtime).toBe('inline');
     expect(exported.agents.main_agent).toMatchObject({
@@ -829,7 +829,7 @@ permissions:
     expect(setConversationRoute).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        agentConfig: expect.objectContaining({ permissionMode: 'auto' }),
+        agentConfig: expect.objectContaining({ permissionMode: 'auto_strict' }),
       }),
     );
 

@@ -362,9 +362,12 @@ function parseConversationInstalledAgents(
     if (
       permissionMode !== undefined &&
       permissionMode !== 'ask' &&
-      permissionMode !== 'auto'
+      permissionMode !== 'auto' &&
+      permissionMode !== 'auto_strict'
     ) {
-      throw new Error(`${installPath}.permission_mode must be ask or auto`);
+      throw new Error(
+        `${installPath}.permission_mode must be one of ask, auto, or auto_strict`,
+      );
     }
     installs[installId] = {
       agentId,

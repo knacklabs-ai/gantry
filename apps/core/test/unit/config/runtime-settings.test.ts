@@ -142,6 +142,7 @@ conversations:
       agent_two:
         provider_account: slack_two
         added_at: 2026-05-02T00:00:00.000Z
+        permission_mode: auto_strict
 `);
 
     expect(Object.keys(parsed.providerAccounts)).toEqual([
@@ -162,6 +163,20 @@ conversations:
       parseRuntimeSettings(renderRuntimeSettingsYaml(parsed)).conversations
         .shared_channel.installedAgents.agent_two.addedAt,
     ).toBe('2026-05-02T00:00:00.000Z');
+    expect(
+      parseRuntimeSettings(renderRuntimeSettingsYaml(parsed)).conversations
+        .shared_channel.installedAgents.agent_two.permissionMode,
+    ).toBe('auto_strict');
+    expect(() =>
+      parseRuntimeSettings(
+        renderRuntimeSettingsYaml(parsed).replace(
+          'permission_mode: auto_strict',
+          'permission_mode: always',
+        ),
+      ),
+    ).toThrow(
+      'conversations.shared_channel.installed_agents.agent_two.permission_mode must be one of ask, auto, or auto_strict',
+    );
     expect(renderRuntimeSettingsYaml(parsed)).toContain(
       'signing_secret_ref: "gantry-secret:SLACK_ONE_SIGNING_SECRET"',
     );

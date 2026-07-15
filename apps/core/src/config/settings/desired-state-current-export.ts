@@ -380,7 +380,8 @@ export async function exportCurrentDesiredState(input: {
           : existingBinding?.model,
       permissionMode:
         routeAgentConfig?.permissionMode === 'ask' ||
-        routeAgentConfig?.permissionMode === 'auto'
+        routeAgentConfig?.permissionMode === 'auto' ||
+        routeAgentConfig?.permissionMode === 'auto_strict'
           ? routeAgentConfig.permissionMode
           : existingBinding?.permissionMode,
     };
