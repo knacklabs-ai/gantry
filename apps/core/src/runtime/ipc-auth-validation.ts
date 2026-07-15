@@ -360,6 +360,7 @@ export function validateMemoryIpcAuthRequest(
   delete payload.signature;
   delete payload.authToken;
   const requestSigningKey = computeMemoryIpcAuthToken(sourceAgentFolder, {
+    appId: binding.appId,
     ...(chatJid ? { chatJid } : {}),
     ...(userId ? { userId } : {}),
     defaultScope: defaultScope || 'group',

@@ -590,6 +590,7 @@ async function memoryResult(
       payload,
       allowedActions: ['memory_search', 'memory_save'],
       context: {
+        appId: deps.context.appId ?? '',
         chatJid: deps.context.conversationId,
         threadId: deps.context.threadId,
         userId: deps.context.memoryUserId,
