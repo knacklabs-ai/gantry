@@ -14,12 +14,20 @@
   --color-ink-hover: var(--ink-hover);
   --color-ink-on: var(--ink-on);
   --color-status-idle: var(--status-idle);
+  --color-status-success: var(--status-success);
+  --color-status-success-soft: var(--status-success-soft);
+  --color-status-attention: var(--status-attention);
+  --color-status-attention-soft: var(--status-attention-soft);
   --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-overlay: var(--overlay);
   --color-focus-ring: var(--focus-ring);
   --font-sans: 'Spline Sans Variable', 'Spline Sans', system-ui, sans-serif;
   --font-mono:
     'Spline Sans Mono Variable', 'Spline Sans Mono', ui-monospace, monospace;
   --shadow-control: 0 1px 2px rgb(27 26 24 / 8%);
+  --shadow-panel: 0 1px 2px rgb(27 26 24 / 5%);
+  --shadow-popover: 0 16px 40px -16px rgb(27 26 24 / 30%);
   --shadow-drawer: 12px 0 28px rgb(27 26 24 / 16%);
 }
 
@@ -36,8 +44,14 @@
   --ink: #1b1a18;
   --ink-hover: #302e2a;
   --ink-on: #f7f6f4;
+  --status-success: #5d7f58;
+  --status-success-soft: #e2ebdf;
+  --status-attention: #8a6a3c;
+  --status-attention-soft: #f1e7d6;
   --danger: #a85439;
+  --danger-soft: #f2e0d8;
   --status-idle: #8a6a3c;
+  --overlay: rgb(27 26 24 / 42%);
   --focus-ring: #6d665c;
 }
 
@@ -54,8 +68,14 @@
   --ink: #f0eeea;
   --ink-hover: #ffffff;
   --ink-on: #1b1a18;
+  --status-success: #84a87e;
+  --status-success-soft: #222b20;
+  --status-attention: #c0985f;
+  --status-attention-soft: #2f2820;
   --danger: #c97f63;
+  --danger-soft: #32231d;
   --status-idle: #c0985f;
+  --overlay: rgb(0 0 0 / 62%);
   --focus-ring: #d0b383;
 }
 
@@ -79,8 +99,15 @@
   }
 
   button,
-  input {
+  input,
+  select,
+  textarea {
     font: inherit;
+  }
+
+  ::selection {
+    background: var(--status-attention-soft);
+    color: var(--text);
   }
 
   button {

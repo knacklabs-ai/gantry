@@ -2,6 +2,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
 } from '@tanstack/react-router';
 
 import { AppShell } from './app-shell';
@@ -26,7 +27,20 @@ const profileRoute = createRoute({
   component: PreferencesRoute,
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, profileRoute]);
+const componentLabRoute = import.meta.env.DEV
+  ? createRoute({
+      getParentRoute: () => rootRoute,
+      path: '__components',
+      component: lazyRouteComponent(
+        () => import('../ui/lab/foundation-lab'),
+        'FoundationLab',
+      ),
+    })
+  : undefined;
+
+const routeTree = componentLabRoute
+  ? rootRoute.addChildren([homeRoute, profileRoute, componentLabRoute])
+  : rootRoute.addChildren([homeRoute, profileRoute]);
 
 export const router = createRouter({
   basepath: '/ui',

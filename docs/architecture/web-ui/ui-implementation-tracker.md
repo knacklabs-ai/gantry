@@ -5,9 +5,9 @@ Branch: `feature/gantry-web-ui-initiate`
 | Packet | Deliverable                                           | Status   | Evidence                                             | Commit      |
 | ------ | ----------------------------------------------------- | -------- | ---------------------------------------------------- | ----------- |
 | P1     | Static workspace, shell, preferences, `/ui` hosting   | Complete | Web/root build and Chrome checks at 1440px and 390px | `62df6a5a`  |
-| P2     | Frontend-only docs and tracker                        | Complete | Prettier and diff checks pass                        | This commit |
-| P3     | Dependencies, semantic tokens, shared action boundary | Pending  | Typecheck, lint, build, component lab                | Pending     |
-| P4     | Primitive and composed component lab                  | Pending  | Desktop/mobile lab review                            | Pending     |
+| P2     | Frontend-only docs and tracker                        | Complete | Prettier and diff checks pass                        | `31af0ced`  |
+| P3     | Dependencies, semantic tokens, shared action boundary | Complete | Typecheck, lint, build, boundary search              | This commit |
+| P4     | Primitive and composed component lab                  | Complete | Chromium review at 1440px and 390px                  | This commit |
 | P5     | Operations console                                    | Pending  | Route and interaction browser checks                 | Pending     |
 | P6     | Agent administration                                  | Pending  | Route and draft browser checks                       | Pending     |
 | P7     | Chat and rich interactions                            | Pending  | Renderer and composer browser checks                 | Pending     |
@@ -21,7 +21,7 @@ Branch: `feature/gantry-web-ui-initiate`
 | Area             | 1440 light/dark | 1024 light/dark | 390 light/dark | Keyboard       | Status      |
 | ---------------- | --------------- | --------------- | -------------- | -------------- | ----------- |
 | Foundation       | Light complete  | Pending         | Light complete | Basic complete | In progress |
-| Component lab    | Pending         | Pending         | Pending        | Pending        | Pending     |
+| Component lab    | Light complete  | Pending         | Light complete | Basic complete | In progress |
 | Operations       | Pending         | Pending         | Pending        | Pending        | Pending     |
 | Agents           | Pending         | Pending         | Pending        | Pending        | Pending     |
 | Chat             | Pending         | Pending         | Pending        | Pending        | Pending     |
