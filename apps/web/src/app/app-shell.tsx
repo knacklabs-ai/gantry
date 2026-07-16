@@ -1,20 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Link, Outlet } from '@tanstack/react-router';
-import { LayoutDashboard, Menu, Moon, Settings2, Sun, X } from 'lucide-react';
+import { Outlet } from '@tanstack/react-router';
+import { Menu, Moon, Sun, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { ConnectionState } from '../ui/compositions/connection-state';
 import { IconButton } from '../ui/primitives/icon-button';
 import { usePreferences } from '../features/preferences/preferences-provider';
-
-const navigation = [
-  { to: '/profile', label: 'Profile', icon: Settings2 },
-] as const;
-
-const NAV_ITEM_CLASS_NAME =
-  'flex min-h-9 items-center gap-2.5 rounded-md border border-transparent px-2.5 text-[13px] font-medium text-text-secondary no-underline hover:bg-surface-muted hover:text-text';
-const NAV_ITEM_ACTIVE_CLASS_NAME =
-  'border-border-strong bg-surface-strong text-text';
+import { AppNavigation } from './app-navigation';
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -33,7 +25,7 @@ export function AppShell() {
         aria-label="Primary navigation"
         className="hidden min-h-dvh border-r border-border bg-surface px-3 pt-[18px] pb-4 lg:block"
       >
-        <Navigation />
+        <AppNavigation />
       </aside>
       <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
         <Dialog.Portal>
@@ -52,7 +44,7 @@ export function AppShell() {
                 <X size={18} aria-hidden="true" />
               </IconButton>
             </Dialog.Close>
-            <Navigation onNavigate={() => setDrawerOpen(false)} />
+            <AppNavigation onNavigate={() => setDrawerOpen(false)} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
@@ -86,47 +78,6 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
-    </div>
-  );
-}
-
-function Navigation({ onNavigate }: { onNavigate?: () => void }) {
-  return (
-    <div className="flex h-full flex-col">
-      <Link
-        className="inline-flex min-h-10 items-center gap-2.5 px-2 text-[17px] font-semibold text-text no-underline"
-        to="/"
-        onClick={onNavigate}
-      >
-        <span className="inline-flex size-6 items-center justify-center rounded-md bg-ink font-mono text-xs font-bold text-ink-on">
-          G
-        </span>
-        <span>Gantry</span>
-      </Link>
-      <nav className="mt-7 grid gap-1">
-        <Link
-          activeOptions={{ exact: true }}
-          activeProps={{ className: NAV_ITEM_ACTIVE_CLASS_NAME }}
-          className={NAV_ITEM_CLASS_NAME}
-          to="/"
-          onClick={onNavigate}
-        >
-          <LayoutDashboard size={17} aria-hidden="true" />
-          <span>Home</span>
-        </Link>
-        {navigation.map(({ to, label, icon: Icon }) => (
-          <Link
-            activeProps={{ className: NAV_ITEM_ACTIVE_CLASS_NAME }}
-            key={to}
-            className={NAV_ITEM_CLASS_NAME}
-            to={to}
-            onClick={onNavigate}
-          >
-            <Icon size={17} aria-hidden="true" />
-            <span>{label}</span>
-          </Link>
-        ))}
-      </nav>
     </div>
   );
 }
