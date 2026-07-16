@@ -14,7 +14,7 @@ features, identity/SSO implementation, and speculative performance machinery.
 ## Screens
 
 No new product screen is introduced. The phase verifies all shipped screens,
-dialogs, drawers, table detail views, pairing, and route states at the defined
+dialogs, drawers, table detail views, and route states at the defined
 desktop and mobile breakpoints.
 
 ## Steps
@@ -24,7 +24,8 @@ desktop and mobile breakpoints.
 2. Complete keyboard flow, focus restoration, semantic labels, contrast,
    screen-reader output, and reduced-motion behavior.
 3. Force SSE loss/reconnect and prove cursor replay/query invalidation without
-   command duplication. Measure before adding virtualization or caches.
+   command duplication. Measure before adding TanStack Virtual or another
+   client-side cache.
 4. Audit storage, responses, logs, and errors for credentials, bearer keys,
    session secrets, and raw provider payloads.
 5. Package `/ui`, validate direct refresh, document operation, and remove
@@ -32,15 +33,13 @@ desktop and mobile breakpoints.
 
 ## Acceptance And Checks
 
-- All target viewports/themes pass functional and visual E2E with no overflow
-  or overlap; axe and keyboard checks pass.
+- All target viewports/themes pass documented manual visual and keyboard
+  checks with no overflow or overlap. Automated UI checks remain deferred until
+  their test scope is separately approved.
 - Reconnect converges safely; browser storage and safe responses contain no
   secret; production packaging serves `/ui` correctly.
 
 ```bash
-npm run test:unit --workspace @gantry/web
-npm run test:a11y --workspace @gantry/web
-npm run test:e2e --workspace @gantry/web
 npm run build
 npm test
 python3 .codex/scripts/verify.py
@@ -56,7 +55,8 @@ condition.
 
 | Surface                                            | Status               | Reason                                                             |
 | -------------------------------------------------- | -------------------- | ------------------------------------------------------------------ |
-| Runtime, API, contracts, audit/events, tests, docs | Changed              | Complete packaging, coverage, security, and performance hardening. |
+| Runtime, API, contracts, audit/events, docs        | Changed              | Complete packaging, security, and performance hardening.           |
+| Tests                                              | Deferred             | No automated UI harness exists until a separate scope approves it. |
 | Postgres                                           | Read-only/observable | Exercise durable data using disposable test databases.             |
 | Settings, CLI, MCP/admin, providers                | Unchanged by design  | Harden existing behavior without new authority or transport.       |
 

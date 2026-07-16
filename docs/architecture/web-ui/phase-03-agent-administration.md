@@ -8,9 +8,10 @@ remain invalid at public UI boundaries.
 
 ## Dependencies And Exclusions
 
-Dependencies: Phase 2 Conversation and interaction compositions plus existing
-desired-state services. Excluded: direct settings/file/SQL writes, raw model
-IDs, user identity, and UI-created permission authority.
+Dependencies: Phase 2 Query/Table/search foundations, Conversation and
+interaction compositions, React Hook Form, and existing desired-state services.
+Excluded: direct settings/file/SQL writes, raw model IDs, user identity, and
+UI-created permission authority.
 
 ## Screens
 
@@ -26,11 +27,15 @@ IDs, user identity, and UI-created permission authority.
 1. Build agent routes from existing agent, catalog, profile, source,
    capability, skill, MCP, access, and Conversation-install services.
 2. Send desired-state writes with `expectedRevision`; display returned revision
-   and refetch after SSE.
+   and invalidate/refetch affected Query records after SSE.
 3. Use protected profile services, catalog aliases, and `agentHarness`, never
    raw provider IDs or legacy engine fields.
 4. Render reviewed capability/access state rather than creating a UI permission
    store.
+
+Use React Hook Form only for the multi-field agent administration surfaces.
+Validation remains contract-aware and server authority remains final; do not add
+TanStack Form or a feature-local mutable store.
 
 ## Acceptance And Checks
 
@@ -39,17 +44,18 @@ IDs, user identity, and UI-created permission authority.
 - No UI route writes files, SQL, or provider-specific flags.
 
 ```bash
-npm run test:unit -- apps/core/test/unit/control/settings-desired-state-routes.test.ts apps/core/test/unit/config/settings-desired-state-service.test.ts apps/core/test/unit/application/agent-capability-administration-service.test.ts apps/core/test/unit/application/permission-management-service.test.ts
-npm run test:unit --workspace @gantry/web -- src/features/agents
-npm run test:e2e --workspace @gantry/web -- tests/e2e/agent-admin.spec.ts
 rg -n -e 'writeFile' -e 'settings\.yaml' -e 'INSERT INTO' -e 'modelId' -e 'providerModelId' -e 'permissionStore' apps/web/src apps/core/src/control
 ```
+
+Automated UI tests remain deferred. Verify the acceptance paths manually and
+run the repository build and structural gates for the implementation change.
 
 ## Surface Impact And Handoff
 
 | Surface                                                                    | Status               | Reason                                                  |
 | -------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------- |
-| Settings, runtime, Postgres projection, API, contracts, audit, tests, docs | Changed              | Add revision-aware administration and safe projections. |
+| Settings, runtime, Postgres projection, API, contracts, audit, docs        | Changed              | Add revision-aware administration and safe projections. |
+| Tests                                                                      | Deferred             | No automated UI harness exists until separately approved. |
 | CLI                                                                        | Read-only/observable | CLI remains another adapter over the same services.     |
 | MCP/admin, providers                                                       | Unchanged by design  | No change to agent-request or transport authority.      |
 

@@ -8,9 +8,9 @@ with provenance and cannot become interchangeable UI identities.
 
 ## Dependencies And Exclusions
 
-Dependencies: Conversation views and shared forms/tables. Excluded: browser
-accounts, SSO, email-as-proof linking, client-only people records, and changes
-to provider identity semantics.
+Dependencies: Phase 2 Query/Table/search foundations, Phase 3 shared forms,
+and Conversation views. Excluded: browser accounts, SSO, email-as-proof
+linking, client-only people records, and changes to provider identity semantics.
 
 ## Screens
 
@@ -30,6 +30,10 @@ to provider identity semantics.
 3. Compose routes with shared tables, inspectors, dialogs, and SSE invalidation;
    do not create a client-only people store.
 
+Reuse domain Query keys, controlled Table state, and Phase 3 form primitives.
+Merge preview and receipt state remains server-derived; no feature-local store
+or additional data library is introduced.
+
 ## Acceptance And Checks
 
 - A safe merge is atomic and preserves aliases, provenance, audit evidence, and
@@ -38,18 +42,18 @@ to provider identity semantics.
   provider ID with the canonical person ID.
 
 ```bash
-npm run test:unit -- apps/core/test/unit/application/user-administration-service.test.ts apps/core/test/unit/control/users-routes.test.ts
-GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres
-npm run test:unit --workspace @gantry/web -- src/features/people
-npm run test:e2e --workspace @gantry/web -- tests/e2e/people-merge.spec.ts
 rg -n -e 'slackUserId' -e 'teamsUserId' -e 'telegramUserId' -e 'discordUserId' -e 'peopleStore' apps/web/src apps/core/src/application
 ```
+
+Automated UI tests remain deferred. Verify the acceptance paths manually and
+run the repository build and structural gates for the implementation change.
 
 ## Surface Impact And Handoff
 
 | Surface                                             | Status               | Reason                                                       |
 | --------------------------------------------------- | -------------------- | ------------------------------------------------------------ |
-| Postgres, API, contracts, audit/events, tests, docs | Changed              | Add people read/merge services, audit, and coverage.         |
+| Postgres, API, contracts, audit/events, docs        | Changed              | Add people read/merge services and audit.                     |
+| Tests                                              | Deferred             | No automated UI harness exists until separately approved.     |
 | Runtime                                             | Read-only/observable | Conversations and messages observe canonical people changes. |
 | Settings, CLI, MCP/admin, providers                 | Unchanged by design  | No auth, desired-state, authority, or transport change.      |
 

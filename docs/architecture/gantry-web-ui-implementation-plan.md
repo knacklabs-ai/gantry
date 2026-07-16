@@ -130,6 +130,9 @@ model execution or successful provider delivery.
 
 ### SSE Contract
 
+This is deferred from Phase 1. It becomes implementation scope only after a
+separate browser identity and access-authority decision is approved.
+
 Keep the existing session event stream and add one app-scoped endpoint:
 
 ```text
@@ -210,57 +213,40 @@ The UI presents three distinct operations and must not merge them:
 same audit evidence as other adapters. It cannot create permissions, convert a
 transient grant into durable authority, or select capabilities.
 
-## Browser Authentication And Security
+## Browser Access Is Deferred
 
-The first release is same-origin and loopback-only.
+Phase 1 serves a static shell only. It adds no pairing, browser sessions, CSRF,
+browser credentials, browser REST, SSE, WebSockets, UI settings, Postgres
+security state, Control API route, CLI command, or audit event.
 
-### Public Flow
-
-1. `gantry ui pair` prints a short-lived, one-use pairing code and the local UI
-   URL.
-2. `POST /v1/ui/auth/pair` exchanges the code for an opaque browser session.
-3. Gantry stores only a hash of the session token and sets an `HttpOnly`,
-   `SameSite=Strict`, path-scoped cookie. Use `Secure` whenever TLS is active.
-4. `GET /v1/ui/auth/session` returns identity, app, scopes, expiry, and a CSRF
-   token; it never returns the session secret.
-5. Mutations require the cookie plus the CSRF header. Origin and host checks
-   reject cross-site requests.
-6. `DELETE /v1/ui/auth/session` revokes the current session and clears the
-   cookie.
-
-Pairing challenges expire after 10 minutes. Browser sessions default to 12
-hours and are revocable. Authentication, pairing, logout, rejected CSRF, and
-privileged mutations emit audit records. Existing scoped Control API keys
-remain available to server-side SDK clients but never enter browser storage.
-
-Non-secret UI configuration belongs in desired state:
-
-```yaml
-ui:
-  enabled: true
-  session_ttl_minutes: 720
-```
-
-Control bind address and port continue to use existing Control API runtime
-configuration. Production or non-loopback exposure fails closed until an
-approved external identity mode exists. OIDC and fleet SSO are deferred.
+The current Control API remains the future authority, but its bearer tokens do
+not enter a browser. A dedicated browser identity and access-authority decision
+must define the future transport boundary before any UI route reads or mutates
+runtime data.
 
 ## Frontend Technical Design
 
 ### Stack
 
-- React 19.2, TypeScript, Vite 8, and React Router Data Mode.
-- TanStack Query for server state and TanStack Table for dense operational
-  tables.
+- React 19.2, TypeScript, Vite 8, and a code-defined TanStack Router tree.
+- TanStack Query, TanStack Table, and Zod begin in Phase 2 after browser
+  access is approved.
 - Radix primitives and Lucide icons.
-- React Hook Form with Zod-backed contract validation.
-- `assistant-ui` only for chat composition and message presentation.
-- CSS Modules with CSS custom-property tokens.
+- React Hook Form begins in Phase 3 for complex administration forms.
+- Gantry-owned `InteractionDescriptor` renderers compose chat presentation;
+  `assistant-ui` is not planned.
+- Tailwind CSS v4 utilities with CSS custom-property tokens.
 - Automated UI test tooling is deferred. Do not add Vitest, Testing Library,
   MSW, Playwright, axe-core, or a frontend test harness in this initiative.
 
 No state library is added for server data. Local UI state stays in component or
 route state until a demonstrated cross-route need exists.
+
+Phase 1 installs only the static-shell dependencies: React, TanStack Router,
+Lucide, the Radix dialog primitive, and self-hosted Spline fonts. Query, table,
+Zod, forms, chat, contract, API, auth, and event dependencies are deferred
+until they have an approved browser authority path. Do not add TanStack Form,
+Store, DB, Virtual, Start, a router Vite plugin, or a generated route tree.
 
 ### Package And Folder Structure
 
@@ -268,18 +254,16 @@ route state until a demonstrated cross-route need exists.
 apps/web/
   public/
   src/
-    app/                  # router, providers, shell, navigation
-    routes/               # route-level composition and loaders
+    app/                  # code-defined router, shell, navigation
+    routes/               # route-level screen composition
     features/             # agents, chat, jobs, providers, workflows, etc.
     ui/
-      tokens/             # CSS variables and theme definitions
       primitives/         # buttons, fields, menus, dialogs, tables
       compositions/       # headers, split panes, timelines, inspectors
       rich/               # InteractionDescriptor/render_* renderers
     lib/
-      api/                # typed client, query keys, error normalization
-      auth/               # session bootstrap, CSRF, logout
-      events/             # app/session SSE, cursor, reconnect, dispatch
+      api/                # Phase 2 typed client, query keys, errors
+      events/             # Phase 2 SSE cursor, reconnect, dispatch
   package.json
   vite.config.ts
 ```
@@ -287,7 +271,8 @@ apps/web/
 `apps/web/dist` is generated and untracked. The root build runs the web build
 before packaging the Control API static assets. The full Control API process
 serves the SPA under `/ui`; API and event routes stay under `/v1`. Development
-uses Vite on `5173` and proxies `/v1` to the loopback Control API on `3939`.
+uses Vite on `5173` with no API proxy in Phase 1 because the browser makes no
+runtime requests.
 
 `packages/contracts` owns browser-safe request, response, and event types.
 `packages/sdk` stays Node-only; the browser does not import its HTTP transport.
@@ -379,7 +364,6 @@ Add contracts and routes only when their phase begins:
 
 | Surface      | Minimum interface                                                                                       |
 | ------------ | ------------------------------------------------------------------------------------------------------- |
-| Browser auth | `POST /v1/ui/auth/pair`, `GET /v1/ui/auth/session`, `DELETE /v1/ui/auth/session`                        |
 | App events   | `GET /v1/events` as JSON or SSE with cursor and resource filters                                        |
 | Sessions     | `GET /v1/sessions` with pagination and agent/conversation/status filters                                |
 | Interactions | `GET /v1/interactions`; `POST /v1/interactions/{id}/resolve`                                            |
@@ -395,13 +379,13 @@ rules independently.
 
 ## Data Ownership Rules
 
-- Browser sessions and pairing challenges are security state in Postgres;
-  store token/code hashes, app scope, expiry, revocation, and audit metadata.
+- Browser identity and access security state are deferred pending a dedicated
+  design; Phase 1 stores no browser session or credential state.
 - Agent identity, defaults, sources, capabilities, provider accounts,
   conversations, policies, approvers, and bindings remain revision-owned
   desired state where already defined as such.
 - Runtime events, sessions, messages, runs, jobs, usage, interactions, audit,
-  workflow runs, and browser sessions remain Postgres runtime state.
+  workflow runs remain Postgres runtime state.
 - Non-secret UI configuration writes `settings.yaml`, appends
   `settings_revisions`, and reconciles runtime projection in one operation.
 - The browser reads runtime settings through `GET /v1/settings` and reads or
@@ -421,30 +405,28 @@ rules independently.
 Each phase is delivered independently. Its focused checks run before the next
 phase; the full repository gates run at the phase boundary.
 
-### Phase 1: Foundation, Authentication, And Hosting
+### Phase 1: Static Foundation And Hosting
 
-Dependencies: none beyond current Control API and contracts.
+Dependencies: none beyond the existing Control server and static asset packaging.
 
 Deliver:
 
-- `apps/web` workspace, router, shell, tokens, themes, and primitives. UI test
-  harness work is deferred.
-- Browser pairing/session/CSRF contracts, application service, Postgres schema,
-  Control API routes, CLI pairing command, and audit events.
-- Typed browser API client, normalized errors, Query provider, app-scoped
-  `GET /v1/events`, and SSE coordinator with cursor replay.
-- Static SPA packaging at `/ui`, Vite proxying, history fallback limited to UI
-  routes, and fail-closed non-loopback behavior.
+- `apps/web` workspace, router, shell, tokens, themes, primitives, profile
+  preferences, and shared state compositions. UI test harness work is deferred.
+- Static SPA packaging at `/ui`, UI-only history fallback, and no development
+  proxy or browser-to-server transport.
+- No browser pairing/session/CSRF, API client, Query provider, contracts,
+  Postgres schema, Control API route, CLI command, audit event, or SSE work.
 
-Accept when pairing, refresh, logout, CSRF rejection, expired session, REST
-snapshot, SSE replay, reconnect, and direct route refresh pass through manual
-local verification.
-Cleanup: search for browser API-key storage, duplicate auth middleware, and
-tracked build output.
+Accept when direct route refresh, theme/motion persistence, static hosting, and
+desktop/mobile shell checks pass through manual local verification. Cleanup:
+search for browser transport, browser credentials, and tracked build output.
 
 ### Phase 2: Operational Console
 
-Dependencies: Phase 1 app shell, API client, and events.
+Dependencies: Phase 1 app shell plus an approved browser-access design. Phase
+2 introduces the browser API client, TanStack Query, TanStack Table, Zod search
+schemas, query-key factories, and the SSE coordinator.
 
 Deliver overview, waiting interactions, providers, conversations, approval
 policy, and diagnostics using current APIs. Add session-list and
@@ -457,7 +439,8 @@ payloads and route-local status variants.
 
 ### Phase 3: Agent Administration
 
-Dependencies: Phase 2 conversation and interaction components.
+Dependencies: Phase 2 Query/Table/search foundations. Phase 3 introduces React
+Hook Form for complex administration forms.
 
 Deliver agent list/detail, identity/model/profile editing, sources,
 capabilities, skills, MCP servers, access, conversation installs, and pause
@@ -471,7 +454,8 @@ agent flags, and direct settings writes.
 
 ### Phase 4: Chat And Rich Interactions
 
-Dependencies: Phase 1 session auth/events and Phase 2 interaction APIs.
+Dependencies: the approved browser-access design and Phase 2 Query/SSE and
+interaction APIs.
 
 Deliver session list, chat thread, composer, streaming presentation, runs,
 files, questions, approvals, todo/progress, and every supported rich descriptor
@@ -526,8 +510,9 @@ scheduler engines.
 Dependencies: all shipped product phases.
 
 Deliver mobile and tablet refinements, manual keyboard audit, dark-theme visual
-QA, event-load performance, security review, browser-session cleanup,
-production packaging, docs, and rollout controls.
+QA, event-load performance, security review, production packaging, docs, and
+rollout controls. Add browser identity/access work only after it has separately
+been designed and approved.
 
 Accept when desktop and mobile manual checks pass in both themes, no page
 overflows or overlaps, forced reconnect works, no secret appears in browser
@@ -541,48 +526,11 @@ Automated UI testing is deferred by product decision. Do not add a frontend
 test harness, testing dependencies, test scripts, fixtures, mock server,
 browser runner, or accessibility runner in the current UI initiative. Use
 manual acceptance checks, cleanup searches, builds, and applicable repository
-structural gates. The coverage and command table below are future scope only;
-they must not be implemented or run until testing is explicitly approved.
-
-- Unit: reducers/event dispatch, query keys, form schemas, permission-aware
-  actions, token/theme behavior, and rich descriptor rendering.
-- Contract: OpenAPI and `packages/contracts` agreement for every browser route
-  and event payload.
-- Postgres integration: browser session expiry/revocation, interaction races,
-  settings revision sync, event filtering, cursor ordering, and replay after
-  missed notifications using disposable Postgres.
-- Component: route states and mutations with MSW, including unauthorized,
-  partial, stale, reconnecting, and redacted-secret responses.
-- End to end: Playwright at 1440px, 1024px, and 390px in light/dark themes;
-  pairing, provider discovery, agent editing, chat, cross-surface approval,
-  jobs, people merge, and workflow run.
-- Accessibility: axe, keyboard-only operation, focus restoration, screen-reader
-  labels, reduced motion, and contrast.
-- Security: CSRF, origin/host validation, cookie flags, session fixation,
-  replayed pairing codes, scope enforcement, secret redaction, and non-loopback
-  fail-closed behavior.
-- Performance: one app SSE connection plus the active chat session stream,
-  bounded query caches, virtualized large tables only after measured need, and
-  throttled streaming renders.
-
-Phase 1 adds `@gantry/web` scripts named `test:unit`, `test:e2e`, and
-`test:a11y`. Later phases use these stable commands and pass their owned test
-files after `--`. New Postgres suites must also be added to the root
-`test:integration:postgres` script so the required database gate cannot omit
-them.
-
-### Focused Verification By Phase
-
-| Phase                    | Focused commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Foundation            | `npm run test:unit -- apps/core/test/unit/control/ui-auth-routes.test.ts apps/core/test/unit/application/ui-session-service.test.ts apps/core/test/unit/application/runtime-events/runtime-event-exchange.test.ts`; `GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres`; `npm run test:unit --workspace @gantry/web -- src/lib/auth src/lib/events`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/foundation.spec.ts`                                                                                                              |
-| 2. Operations            | `npm run test:unit -- apps/core/test/unit/control/ui-events-routes.test.ts apps/core/test/unit/control/pending-interactions-routes.test.ts apps/core/test/unit/application/pending-interaction-durability.test.ts`; `npm run test:unit --workspace @gantry/web -- src/features/overview src/features/providers src/features/conversations`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/operations.spec.ts`                                                                                                                                                 |
-| 3. Agent administration  | `npm run test:unit -- apps/core/test/unit/control/settings-desired-state-routes.test.ts apps/core/test/unit/config/settings-desired-state-service.test.ts apps/core/test/unit/application/agent-capability-administration-service.test.ts apps/core/test/unit/application/permission-management-service.test.ts`; `npm run test:unit --workspace @gantry/web -- src/features/agents`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/agent-admin.spec.ts`                                                                                                      |
-| 4. Chat                  | `npm run test:unit -- apps/core/test/unit/channels/rich-interaction.test.ts apps/core/test/unit/runtime/pending-interaction-runtime-event.test.ts apps/core/test/unit/application/sessions/session-interaction-module.test.ts`; `npm run test:integration -- apps/core/test/integration/session-control-runs.integration.test.ts apps/core/test/integration/permission-approval-ipc.integration.test.ts`; `npm run test:unit --workspace @gantry/web -- src/features/chat src/ui/rich`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/chat-reconnect.spec.ts` |
-| 5. Jobs/runtime/activity | `npm run test:unit -- apps/core/test/unit/control/usage-routes.test.ts apps/core/test/unit/control/run-event-projection.test.ts apps/core/test/unit/application/job-readiness-service.test.ts`; `GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres`; `npm run test:unit --workspace @gantry/web -- src/features/jobs src/features/runtime src/features/activity`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/jobs-runtime.spec.ts`                                                                                               |
-| 6. People                | `npm run test:unit -- apps/core/test/unit/application/user-administration-service.test.ts apps/core/test/unit/control/users-routes.test.ts`; `GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres`; `npm run test:unit --workspace @gantry/web -- src/features/people`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/people-merge.spec.ts`                                                                                                                                                                                           |
-| 7. Workflows             | `npm run test:unit -- apps/core/test/unit/application/workflow-management-service.test.ts apps/core/test/unit/control/workflows-routes.test.ts`; `GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres`; `npm run test:unit --workspace @gantry/web -- src/features/workflows`; `npm run test:e2e --workspace @gantry/web -- tests/e2e/workflow-run.spec.ts`                                                                                                                                                                                    |
-| 8. Hardening             | `npm run test:unit --workspace @gantry/web`; `npm run test:a11y --workspace @gantry/web`; `npm run test:e2e --workspace @gantry/web`; `npm run build`; `npm test`; `python3 .codex/scripts/verify.py`                                                                                                                                                                                                                                                                                                                                                                  |
+structural gates. The future test scope is intentionally deferred: Query/cache
+behavior, browser contracts, interaction races, route states, accessibility,
+responsive end-to-end flows, browser-access security, and streaming
+performance. Approve and add their tools only when an implementation phase
+requires them.
 
 Run these cleanup searches in their matching phase and review every match. They
 are evidence checks, not delete-by-regex instructions.
@@ -624,21 +572,21 @@ Database-backed checks use a disposable Postgres instance with the required
 
 | Surface                      | Classification      | Implementation effect                                                                                                                                   |
 | ---------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime behavior             | Changed             | Serve `/ui`, authenticate browser sessions, and project app-scoped SSE without making events command authority.                                         |
-| `settings.yaml`              | Changed             | Add non-secret `ui.enabled` and session TTL; all writes use desired-state revision sync.                                                                |
-| Postgres/runtime projection  | Changed             | Add browser security state and later people/workflow state; reuse `runtime_events`.                                                                     |
-| Control API                  | Changed             | Add browser auth, app events, session list, interactions, permissions, activity, people, and workflow routes through application services.              |
-| SDK/contracts                | Changed             | Add browser-safe contracts and OpenAPI shapes. The Node SDK remains server-only.                                                                        |
-| CLI                          | Changed             | Add local pairing and report UI URL/readiness without becoming a second admin implementation.                                                           |
+| Runtime behavior             | Changed             | Serve static `/ui` assets from the existing Control process.                                                                                             |
+| `settings.yaml`              | Unchanged by design | Static hosting introduces no UI runtime setting or browser authority.                                                                                     |
+| Postgres/runtime projection  | Unchanged by design | No browser session, audit, or event persistence is added.                                                                                                |
+| Control API                  | Unchanged by design | Existing routes and bearer authentication remain unchanged.                                                                                               |
+| SDK/contracts                | Unchanged by design | No browser-facing API contract exists in the static-only phase.                                                                                           |
+| CLI                          | Unchanged by design | No pairing or UI CLI command is added.                                                                                                                    |
 | Gantry MCP tools/admin skill | Unchanged by design | The Web UI is an owner/admin adapter; existing MCP tools keep agent-requested reviewed flows and do not gain authority merely for UI parity.            |
 | Channel/provider adapters    | Unchanged by design | Slack and other adapters retain provider transport and rendering ownership; the UI consumes canonical state and events.                                 |
-| Docs/prompts                 | Changed             | Add setup, security, architecture, and operator guidance as phases ship; agent prompts do not describe UI internals.                                    |
-| Audit/events                 | Changed             | Audit browser auth and mutations and add typed events where new people/workflow lifecycle changes require them.                                         |
+| Docs/prompts                 | Changed             | Record the static-only boundary, implementation plan, tracker, and operator guidance.                                                                    |
+| Audit/events                 | Unchanged by design | Browser actions and event streaming are deferred with browser access.                                                                                    |
 | Tests/verification           | Deferred            | User requested no automated UI tests, harness, or testing dependencies for now; use manual checks, cleanup searches, builds, and structural gates only. |
 
-Enterprise SSO is deferred because the first release is explicitly local and
-loopback-only. It requires a separate fleet identity, session, and deployment
-decision before non-loopback exposure can be enabled.
+Browser identity, SSO, REST, SSE, and WebSockets are deferred pending one
+dedicated browser-access design. The static shell never receives an API key or
+runtime credential.
 
 ## Planning-Change Verification
 

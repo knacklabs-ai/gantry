@@ -8,9 +8,10 @@ paginated activity read model.
 
 ## Dependencies And Exclusions
 
-Dependencies: shared tables, timelines, SSE coordinator, job/run/usage/model
-services, and desired-state APIs. Excluded: a browser policy engine, raw
-scheduler internals, a second event store, and secret display.
+Dependencies: Phase 2 Query/Table/search foundations, shared timelines, SSE
+coordinator, job/run/usage/model services, and desired-state APIs. Excluded: a
+browser policy engine, raw scheduler internals, a second event store, and secret
+display.
 
 ## Screens
 
@@ -29,6 +30,10 @@ scheduler internals, a second event store, and secret display.
    not infer policy, readiness, or secret values.
 4. Route settings-owned changes through desired-state revision APIs.
 
+Use controlled Table state and TanStack Query cursor/infinite-query patterns for
+activity and list screens. Do not add TanStack Virtual unless Phase 8 measures a
+real render bottleneck.
+
 ## Acceptance And Checks
 
 - Lifecycle/blockers update live and missing capabilities show one safe action.
@@ -36,18 +41,18 @@ scheduler internals, a second event store, and secret display.
   not expose secrets or become the policy engine.
 
 ```bash
-npm run test:unit -- apps/core/test/unit/control/usage-routes.test.ts apps/core/test/unit/control/run-event-projection.test.ts apps/core/test/unit/application/job-readiness-service.test.ts
-GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres
-npm run test:unit --workspace @gantry/web -- src/features/jobs src/features/runtime src/features/activity
-npm run test:e2e --workspace @gantry/web -- tests/e2e/jobs-runtime.spec.ts
 rg -n -e 'pg-boss' -e 'pgboss' -e 'yolo_mode' -e 'approve.*tool' -e 'policyEngine' apps/web/src
 ```
+
+Automated UI tests remain deferred. Verify the acceptance paths manually and
+run the repository build and structural gates for the implementation change.
 
 ## Surface Impact And Handoff
 
 | Surface                                                                | Status              | Reason                                          |
 | ---------------------------------------------------------------------- | ------------------- | ----------------------------------------------- |
-| Runtime, settings, Postgres, API, contracts, audit/events, tests, docs | Changed             | Add activity projection and safe runtime UI.    |
+| Runtime, settings, Postgres, API, contracts, audit/events, docs        | Changed             | Add activity projection and safe runtime UI.    |
+| Tests                                                                  | Deferred            | No automated UI harness exists until approved.  |
 | CLI, MCP/admin, providers                                              | Unchanged by design | Existing authority and transport remain intact. |
 
 Phase 6 can link people to activity and Conversations without changing alias

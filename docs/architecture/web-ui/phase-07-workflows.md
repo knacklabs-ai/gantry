@@ -8,9 +8,10 @@ or replace durable terminal evidence.
 
 ## Dependencies And Exclusions
 
-Dependencies: agents, capabilities, jobs/runs, interactions, activity, and
-notification services. Excluded: workflow-created permissions, a new scheduler
-engine, or provider-specific workflow execution logic.
+Dependencies: agents, capabilities, jobs/runs, interactions, activity,
+notification services, and the existing Query/Table/form foundations. Excluded:
+workflow-created permissions, a new scheduler engine, or provider-specific
+workflow execution logic.
 
 ## Screens
 
@@ -32,6 +33,10 @@ engine, or provider-specific workflow execution logic.
 4. Persist audit/event evidence for validation, enablement, run states, blocks,
    recovery, and terminal outcomes.
 
+Reuse React Hook Form for draft editing, Query for definition/version/run
+snapshots and mutations, and shared tables/timelines for history. Do not add
+TanStack Form or a workflow-local state store.
+
 ## Acceptance And Checks
 
 - Valid drafts create immutable versions; enabled versions run.
@@ -39,18 +44,18 @@ engine, or provider-specific workflow execution logic.
 - Terminal runs leave durable run, event, audit, and notification evidence.
 
 ```bash
-npm run test:unit -- apps/core/test/unit/application/workflow-management-service.test.ts apps/core/test/unit/control/workflows-routes.test.ts
-GANTRY_TEST_DATABASE_URL=<disposable-url> npm run test:integration:postgres
-npm run test:unit --workspace @gantry/web -- src/features/workflows
-npm run test:e2e --workspace @gantry/web -- tests/e2e/workflow-run.spec.ts
 rg -n -e 'WorkflowPermission' -e 'WorkflowScheduler' -e 'grantCapability' -e 'enableTool' -e 'pg-boss' apps/core/src apps/web/src
 ```
+
+Automated UI tests remain deferred. Verify the acceptance paths manually and
+run the repository build and structural gates for the implementation change.
 
 ## Surface Impact And Handoff
 
 | Surface                                                      | Status               | Reason                                                        |
 | ------------------------------------------------------------ | -------------------- | ------------------------------------------------------------- |
-| Runtime, Postgres, API, contracts, audit/events, tests, docs | Changed              | Add workflow lifecycle through existing authority services.   |
+| Runtime, Postgres, API, contracts, audit/events, docs        | Changed              | Add workflow lifecycle through existing authority services.   |
+| Tests                                                        | Deferred             | No automated UI harness exists until separately approved.     |
 | Settings                                                     | Read-only/observable | Workflow configuration is not agent desired state by default. |
 | CLI, MCP/admin, providers                                    | Unchanged by design  | No duplicate administration or transport implementation.      |
 

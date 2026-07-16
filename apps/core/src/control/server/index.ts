@@ -69,6 +69,7 @@ import { handleSkillRoutes } from './routes/skills.js';
 import { handleSystemRoutes } from './routes/system.js';
 import { handleUsageRoutes } from './routes/usage.js';
 import { handleWebhookRoutes } from './routes/webhooks.js';
+import { handleUiStaticRequest } from './ui-static.js';
 import {
   deliverWebhookDelivery,
   flushWebhookDeliveries,
@@ -157,6 +158,7 @@ function createControlRequestHandler(
         sendControlError(res, 404, 'NOT_FOUND', 'Route not found');
         return;
       }
+      if (await handleUiStaticRequest(req, res, pathname)) return;
       if (await handleOpenApiRoutes(req, res, pathname)) return;
       if (await handleSystemRoutes(req, res, ctx, pathname)) return;
       if (await handleGuidedActionRoutes(req, res, ctx, pathname)) return;

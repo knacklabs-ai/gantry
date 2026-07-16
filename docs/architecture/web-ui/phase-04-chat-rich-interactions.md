@@ -8,9 +8,10 @@ reasoning by text heuristics nor defines a parallel rich-message schema.
 
 ## Dependencies And Exclusions
 
-Dependencies: Phase 1 pairing/events and Phase 2 interaction APIs. Excluded:
-provider WebSockets, browser-held provider credentials, text-based reasoning
-filters, and a separate rich descriptor protocol.
+Dependencies: approved browser-access design, Phase 2 Query/SSE foundations,
+and Phase 2 interaction APIs. Excluded: provider WebSockets, browser-held
+provider credentials, text-based reasoning filters, and a separate rich
+descriptor protocol.
 
 ## Screens
 
@@ -31,6 +32,11 @@ filters, and a separate rich descriptor protocol.
 4. Throttle paint work without dropping events; refetch after reconnect or an
    unknown event type.
 
+Query owns session, message, and run snapshots. Streaming deltas use a bounded,
+throttled local presentation buffer and reconcile into Query only on durable
+message/run events; do not invalidate or write Query state for every token.
+Build the Gantry rich renderer directly and do not add `assistant-ui`.
+
 ## Acceptance And Checks
 
 - A turn is accepted, streamed, interrupted by a question/permission, resolved
@@ -38,18 +44,18 @@ filters, and a separate rich descriptor protocol.
 - Reasoning blocks are omitted at provider boundaries, not by UI prefix filters.
 
 ```bash
-npm run test:unit -- apps/core/test/unit/channels/rich-interaction.test.ts apps/core/test/unit/runtime/pending-interaction-runtime-event.test.ts apps/core/test/unit/application/sessions/session-interaction-module.test.ts
-npm run test:integration -- apps/core/test/integration/session-control-runs.integration.test.ts apps/core/test/integration/permission-approval-ipc.integration.test.ts
-npm run test:unit --workspace @gantry/web -- src/features/chat src/ui/rich
-npm run test:e2e --workspace @gantry/web -- tests/e2e/chat-reconnect.spec.ts
 rg -n -e 'startsWith\(' -e 'includes\(.*thinking' -e 'UISpec' -e 'RichInteractionDescriptor.*interface' -e 'providerPayload' apps/web/src
 ```
+
+Automated UI tests remain deferred. Verify the acceptance paths manually and
+run the repository build and structural gates for the implementation change.
 
 ## Surface Impact And Handoff
 
 | Surface                                            | Status               | Reason                                                             |
 | -------------------------------------------------- | -------------------- | ------------------------------------------------------------------ |
-| Runtime, API, contracts, audit/events, tests, docs | Changed              | Add session listing, rich rendering, event handling, and coverage. |
+| Runtime, API, contracts, audit/events, docs        | Changed              | Add session listing, rich rendering, and event handling.           |
+| Tests                                              | Deferred             | No automated UI harness exists until separately approved.           |
 | Postgres                                           | Read-only/observable | Reuse durable sessions, messages, runs, and interactions.          |
 | Settings, CLI, MCP/admin, providers                | Unchanged by design  | No configuration, authority, or transport widening.                |
 
