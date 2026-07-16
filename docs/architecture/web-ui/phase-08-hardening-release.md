@@ -1,64 +1,52 @@
-# Phase 8: Hardening And Release
+# Phase 8: Hardening And Completion
 
 ## Goal
 
-Harden every delivered route for responsive use, accessibility, reconnect,
-performance, browser security, and packaging. This phase adds no product-domain
-screen; it removes prototype/mocks and closes release evidence.
+Prove that every planned preview screen is responsive, accessible, stable,
+optimized, consistently composed, and ready for later server integration.
 
-## Dependencies And Exclusions
+## Work
 
-Dependencies: every prior phase and its stable contracts. Excluded: new product
-features, identity/SSO implementation, and speculative performance machinery.
+1. Review every route at 1440px, 1024px, and 390px in light and dark themes.
+2. Verify keyboard order, visible focus, overlay focus return, escape behavior,
+   reduced motion, touch target size, long words, empty values, and overflow.
+3. Exercise populated, loading, empty, partial, error, offline, reconnecting,
+   and not-connected states through the component lab and real routes.
+4. Inspect production chunks and remove accidental eager imports, duplicate
+   components, unnecessary dependencies, and unreferenced fixtures.
+5. Confirm server-owned commands share one connection gate, issue no network
+   requests, preserve drafts, and never mutate preview records.
+6. Confirm browser storage contains only `gantry.ui.preferences.v1` and no API,
+   auth, SSE, WebSocket, credential, or provider-payload code exists.
+7. Update the tracker with screenshots/check output, commits, known external
+   core gate debt, and deferred automated-test debt.
 
-## Screens
-
-No new product screen is introduced. The phase verifies all shipped screens,
-dialogs, drawers, table detail views, and route states at the defined
-desktop and mobile breakpoints.
-
-## Steps
-
-1. Verify 1440px, 1024px, and 390px in light/dark themes: no overlap,
-   overflow, inaccessible action, or unstable control dimension.
-2. Complete keyboard flow, focus restoration, semantic labels, contrast,
-   screen-reader output, and reduced-motion behavior.
-3. Force SSE loss/reconnect and prove cursor replay/query invalidation without
-   command duplication. Measure before adding TanStack Virtual or another
-   client-side cache.
-4. Audit storage, responses, logs, and errors for credentials, bearer keys,
-   session secrets, and raw provider payloads.
-5. Package `/ui`, validate direct refresh, document operation, and remove
-   prototype code, mocks, stale routes, and unowned deferred flags.
-
-## Acceptance And Checks
-
-- All target viewports/themes pass documented manual visual and keyboard
-  checks with no overflow or overlap. Automated UI checks remain deferred until
-  their test scope is separately approved.
-- Reconnect converges safely; browser storage and safe responses contain no
-  secret; production packaging serves `/ui` correctly.
+## Completion Checks
 
 ```bash
+npm run typecheck:web
+npm run lint:web
+npm run build:web
+npm run typecheck
 npm run build
-npm test
-python3 .codex/scripts/verify.py
-python3 .codex/scripts/check_task_completion.py
-python3 .codex/scripts/validate_artifacts.py --allow-missing-run
-rg -n -e 'TODO' -e 'FIXME' -e 'mock' -e 'prototype' -e 'legacy' -e 'compat' -e 'featureFlag' apps/web apps/core/src/control packages/contracts/src
+git diff --check
+find apps/web/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) -print0 | xargs -0 wc -l
+rg -n -e 'fetch\(' -e 'EventSource' -e 'WebSocket' -e 'Bearer ' -e 'sessionStorage' -e 'GANTRY_CONTROL_API' apps/web/src
 ```
 
-Every cleanup match needs removal or an explicit owner, reason, and removal
-condition.
+Automated UI tests remain deferred and the completed preview UI must not be
+described as a live or release-complete server integration.
 
-## Surface Impact And Handoff
+## Surface Impact
 
-| Surface                                            | Status               | Reason                                                             |
-| -------------------------------------------------- | -------------------- | ------------------------------------------------------------------ |
-| Runtime, API, contracts, audit/events, docs        | Changed              | Complete packaging, security, and performance hardening.           |
-| Tests                                              | Deferred             | No automated UI harness exists until a separate scope approves it. |
-| Postgres                                           | Read-only/observable | Exercise durable data using disposable test databases.             |
-| Settings, CLI, MCP/admin, providers                | Unchanged by design  | Harden existing behavior without new authority or transport.       |
+| Surface                                         | Status              | Reason                                                                   |
+| ----------------------------------------------- | ------------------- | ------------------------------------------------------------------------ |
+| Runtime behavior                                | Changed             | Final frontend assets and route behavior are hardened.                   |
+| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | No backend integration is introduced.                                    |
+| MCP/admin, providers, audit/events              | Unchanged by design | Authority and transport remain server-side.                              |
+| Docs                                            | Changed             | Record completion and residual risk.                                     |
+| Tests/verification                              | Deferred            | Automated UI tests remain deferred; manual browser evidence is required. |
 
-Release requires the full gates above and a documented decision for any
-remaining deferred identity/SSO capability.
+The phase is complete only when the tracker proves every screen, viewport,
+theme, local interaction, and deferred boundary from current source and browser
+evidence.

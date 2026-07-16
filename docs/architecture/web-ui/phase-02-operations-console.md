@@ -1,69 +1,54 @@
-# Phase 2: Operations Console
+# Phase 2: Component System And Operations Console
 
 ## Goal
 
-Deliver an operator view of canonical runtime state. Reuse provider,
-conversation, health, doctor, usage, job, and run services. Add only
-session-list, interaction-list/resolve, and event projections missing from the
-current API. Provider-native payloads never reach React.
-
-## Dependencies And Exclusions
-
-Dependencies: approved browser-access design, Phase 1 shell, TanStack Query,
-TanStack Table, Zod route-search schemas, browser client, SSE coordinator, and
-shared inspectors. Excluded: agent editing, WebUI chat, workflow authoring, and
-provider transport changes.
+Build the shared UI system first, prove it in a development-only component
+lab, then compose the complete Operations console from typed preview data.
 
 ## Screens
 
-| Screen        | Major sections and actions                                                    |
-| ------------- | ----------------------------------------------------------------------------- |
-| Overview      | Health, usage, active work, waiting interactions, recent activity, drill-in.  |
-| Providers     | Accounts, readiness, discovery, redacted secret readiness, open Conversation. |
-| Conversations | List/filter, message/thread inspector, policy, approvers, agent installs.     |
-| Interactions  | Context and server-offered `Allow once`, durable choice, or `Cancel`.         |
-| Diagnostics   | Health, doctor findings, guided remediation, provider readiness.              |
+| Screen         | Major sections and local actions                                                         |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| Component lab  | Primitives, overlays, forms, tables, states, timelines, rich renderers, workflow parts.  |
+| Overview       | Setup blockers, health, conversations, agents, people, runs, usage, drill-in navigation. |
+| Waiting on you | Pending approvals/questions, filters, context inspector, connection-gated decisions.     |
+| Providers      | Account readiness, discovery status, credential readiness, provider detail.              |
+| Conversations  | Searchable table, messages, threads, policy, approvers, installed agents.                |
+| Diagnostics    | Health checks, findings, redacted details, remediation actions.                          |
 
-List/detail screens use shared tables and inspectors; mobile uses drawers or
-routed detail. Every screen implements shared loading through offline states.
+## Implementation
 
-## Steps
+1. Add Query, Table, Zod, React Hook Form, and only the Radix dependencies
+   exercised by the complete UI. Query data is memory-only.
+2. Expand Tailwind semantic tokens and implement the shared connection gate.
+3. Build `/__components` only in Vite development and cover every shared state.
+4. Add feature-owned Operations view models, fixtures, query keys, and route
+   search schemas. Do not create public contracts or an API client.
+5. Compose `/overview`, `/interactions`, `/providers`, `/conversations/*`, and
+   `/diagnostics`; lazy-load route screens by product area.
 
-1. Introduce domain-owned Query key factories, an in-memory Query client,
-   controlled Table state, and resilient Zod search schemas before composing
-   overview, inspector, timeline, and event invalidation routes.
-2. Add browser-safe interaction list/resolve and session-list routes through
-   application services; resolution is the same durable path as channels.
-3. Project canonical conversation/interaction updates into SSE. Provider socket
-   events only wake server work.
-4. Submit secrets only to dedicated write-only server forms; render redacted
-   readiness and remediation.
+## Acceptance
 
-Query owns REST snapshots and mutation convergence. SSE only invalidates or
-updates known records; provider payloads and SSE events never become a second
-browser state store.
+- Tables filter, sort, paginate, and preserve shareable search state.
+- Desktop list/detail, tablet drawer, and mobile routed detail remain usable.
+- `Preview data` and `Not connected` are always visible.
+- Provider setup and interaction decisions open the shared connection gate,
+  preserve context, send no request, and do not change preview records.
+- Component and route files remain at or below 350 lines.
 
-## Acceptance And Checks
-
-- An operator discovers a Conversation, inspects policy/messages, resolves a
-  pending interaction, and sees all affected views converge via events.
-- Diagnostics are server-derived; secrets and raw provider payloads never enter
-  rendered components or query cache.
-
-```bash
-rg -n -e 'slack_event' -e 'slackPayload' -e 'SocketMode' -e 'xapp-' -e 'providerPayload' -e 'statusColor' apps/web/src
-```
-
-Automated UI tests remain deferred. Verify the acceptance paths manually and
-run the repository build and structural gates for the implementation change.
+Run web typecheck, lint, build, direct-refresh checks, browser QA at 1440px,
+1024px, and 390px in both themes, storage/network cleanup searches, and
+`git diff --check`. Automated UI tests remain deferred.
 
 ## Surface Impact And Handoff
 
-| Surface                                            | Status               | Reason                                                            |
-| -------------------------------------------------- | -------------------- | ----------------------------------------------------------------- |
-| Runtime, API, contracts, audit/events, docs        | Changed              | Add safe projections, routes, event types, and operator guidance. |
-| Tests                                              | Deferred             | No automated UI harness exists until separately approved.         |
-| Postgres                                           | Read-only/observable | Reuse durable interactions and runtime events.                    |
-| Settings, CLI, MCP/admin, providers                | Unchanged by design  | No config, authority, or transport change.                        |
+| Surface                                         | Status              | Reason                                                            |
+| ----------------------------------------------- | ------------------- | ----------------------------------------------------------------- |
+| Runtime behavior                                | Changed             | Preview-backed Operations routes and shared components are added. |
+| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | The UI is disconnected and memory-only.                           |
+| MCP/admin, providers, audit/events              | Unchanged by design | No authority or transport changes.                                |
+| Docs                                            | Changed             | Record UI behavior and evidence.                                  |
+| Tests/verification                              | Deferred            | Automated tests remain deferred; browser QA is required.          |
 
-Phase 3 reuses interaction and Conversation compositions without forking them.
+Phase 3 reuses the component system, tables, forms, inspectors, and connection
+gate without creating feature-local alternatives.

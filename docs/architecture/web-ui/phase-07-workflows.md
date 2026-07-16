@@ -2,62 +2,52 @@
 
 ## Goal
 
-Build workflow UI on existing capability, permission, run, interaction, and
-notification authority. Workflow input cannot grant tools, create a scheduler,
-or replace durable terminal evidence.
-
-## Dependencies And Exclusions
-
-Dependencies: agents, capabilities, jobs/runs, interactions, activity,
-notification services, and the existing Query/Table/form foundations. Excluded:
-workflow-created permissions, a new scheduler engine, or provider-specific
-workflow execution logic.
+Build workflow definition, drafting, validation, version, run, and external
+system screens without introducing a browser workflow engine.
 
 ## Screens
 
-| Screen        | Major sections and actions                                                         |
-| ------------- | ---------------------------------------------------------------------------------- |
-| Workflow list | Definitions, latest immutable version, enabled state, owner, create/open.          |
-| Definition    | Draft, validation, capability requirements, version history, enable/disable.       |
-| Run detail    | External-step state, blocker/interaction, timeline, notifications, receipt, audit. |
-| Limit state   | Honest unavailable/blocked/error message and one safe next action.                 |
+| Screen           | Major sections and local actions                                              |
+| ---------------- | ----------------------------------------------------------------------------- |
+| Definitions      | Search, status/version filters, recent runs, create/open actions.             |
+| New workflow     | Template choice, name/owner, honest limits, local validation.                 |
+| Builder          | Step palette, ordered canvas, connectors, properties, validation summary.     |
+| Draft review     | Changes, capabilities, routes, validation, connection-gated publish.          |
+| Run detail       | Step states, timeline, external waits, receipts, files, retry/cancel actions. |
+| External systems | Provider readiness, pending external steps, remediation actions.              |
 
-## Steps
+## Implementation
 
-1. Add workflow application, storage, contracts, and API only where job/run
-   primitives do not express workflow semantics.
-2. Validate a draft before immutable version creation. Enable a valid version;
-   never mutate historical versions.
-3. Reuse reviewed capabilities, interactions, run leasing, notification routes,
-   and events; use shared timeline and rich renderer.
-4. Persist audit/event evidence for validation, enablement, run states, blocks,
-   recovery, and terminal outcomes.
+1. Add workflow/step/version/run view models, fixtures, Query keys, route search
+   schemas, and React Hook Form/Zod draft schemas.
+2. Build shared workflow components with semantic HTML and CSS layout. Do not
+   add a diagram engine until real editing requirements prove it necessary.
+3. Compose `/workflows`, `/workflows/new`, `/workflows/:id/edit`,
+   `/workflows/:id/runs/:runId`, and `/workflows/external`.
+4. Allow local add, remove, reorder, configure, and validate behavior in memory.
+   Publish, enable, disable, run, retry, cancel, and external remediation use
+   the shared connection gate and never create terminal evidence.
 
-Reuse React Hook Form for draft editing, Query for definition/version/run
-snapshots and mutations, and shared tables/timelines for history. Do not add
-TanStack Form or a workflow-local state store.
+## Acceptance
 
-## Acceptance And Checks
+- Draft validation is deterministic and identifies the exact step and field.
+- Builder controls remain keyboard accessible and usable at tablet/mobile sizes.
+- Preview versions and runs are visibly non-live; commands never fake success.
+- No scheduler, permission, notification, execution, or persistence engine is
+  implemented in the browser.
 
-- Valid drafts create immutable versions; enabled versions run.
-- Missing capability requirements show one clear action and never auto-grant.
-- Terminal runs leave durable run, event, audit, and notification evidence.
-
-```bash
-rg -n -e 'WorkflowPermission' -e 'WorkflowScheduler' -e 'grantCapability' -e 'enableTool' -e 'pg-boss' apps/core/src apps/web/src
-```
-
-Automated UI tests remain deferred. Verify the acceptance paths manually and
-run the repository build and structural gates for the implementation change.
+Run web typecheck, lint, build, builder/browser checks, reduced-motion and
+overflow review, engine/transport cleanup searches, and `git diff --check`.
 
 ## Surface Impact And Handoff
 
-| Surface                                                      | Status               | Reason                                                        |
-| ------------------------------------------------------------ | -------------------- | ------------------------------------------------------------- |
-| Runtime, Postgres, API, contracts, audit/events, docs        | Changed              | Add workflow lifecycle through existing authority services.   |
-| Tests                                                        | Deferred             | No automated UI harness exists until separately approved.     |
-| Settings                                                     | Read-only/observable | Workflow configuration is not agent desired state by default. |
-| CLI, MCP/admin, providers                                    | Unchanged by design  | No duplicate administration or transport implementation.      |
+| Surface                                         | Status              | Reason                                                |
+| ----------------------------------------------- | ------------------- | ----------------------------------------------------- |
+| Runtime behavior                                | Changed             | Preview workflow routes and local drafting are added. |
+| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | Drafts are memory-only and commands are blocked.      |
+| MCP/admin, providers, audit/events              | Unchanged by design | No execution authority exists.                        |
+| Docs                                            | Changed             | Record workflow behavior and evidence.                |
+| Tests/verification                              | Deferred            | Automated UI tests remain deferred.                   |
 
-Phase 8 hardens draft, blocked, running, recovered, failed, and completed
-workflow states.
+Phase 8 receives every planned screen and focuses only on cross-product
+hardening, cleanup, and completion evidence.

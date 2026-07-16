@@ -2,61 +2,52 @@
 
 ## Goal
 
-Deliver WebUI chat through canonical sessions and `InteractionDescriptor`.
-REST submits commands; SSE observes durable runs. The browser neither filters
-reasoning by text heuristics nor defines a parallel rich-message schema.
-
-## Dependencies And Exclusions
-
-Dependencies: approved browser-access design, Phase 2 Query/SSE foundations,
-and Phase 2 interaction APIs. Excluded: provider WebSockets, browser-held
-provider credentials, text-based reasoning filters, and a separate rich
-descriptor protocol.
+Build the complete chat, session, and remembered-information experience from
+preview conversations without simulating agent execution.
 
 ## Screens
 
-| Screen        | Major sections and actions                                                              |
-| ------------- | --------------------------------------------------------------------------------------- |
-| Session list  | Agent/conversation/status filters, title, recent activity, create/open.                 |
-| Chat thread   | Messages, stream, connection state, run timeline, final evidence, files.                |
-| Composer      | Text, supported attachment, send, stop/cancel.                                          |
-| Rich renderer | Questions, approvals, todos, facts, lists, tables, forms, media, dependencies, results. |
+| Screen            | Major sections and local actions                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| Session list      | Search, agent/status filters, recent activity, open/create action.                       |
+| Chat thread       | Messages, run timeline, files, receipts, connection state.                               |
+| Composer          | Text and attachment drafting, retained input, connection-gated send/stop.                |
+| Rich interactions | Questions, approvals, todos, progress, facts, lists, tables, forms, media, dependencies. |
+| What I remember   | Memory categories, confidence/provenance, contradictions, review action.                 |
 
-## Steps
+## Implementation
 
-1. Reuse session ensure/get/messages/events/runs and memory APIs; add only
-   session list and interaction resolve gaps named by the parent plan.
-2. Present `202 Accepted` as durable admission, never completion.
-3. Render all descriptor kinds through shared `ui/rich` components; interaction
-   actions use durable server APIs.
-4. Throttle paint work without dropping events; refetch after reconnect or an
-   unknown event type.
+1. Add chat/message/run/memory view models, fixtures, Query keys, and session
+   route search schemas.
+2. Build Gantry-owned rich renderers from shared primitives. Do not add
+   `assistant-ui` or define a second server descriptor protocol.
+3. Compose `/chat`, `/chat/:sessionId`, and `/memory`; keep session navigation
+   usable as a drawer on small screens.
+4. Keep composer and local interaction choices in memory. Send, stop, approve,
+   answer, upload, and memory-review commands use the connection gate and do
+   not append messages or terminal receipts.
 
-Query owns session, message, and run snapshots. Streaming deltas use a bounded,
-throttled local presentation buffer and reconcile into Query only on durable
-message/run events; do not invalidate or write Query state for every token.
-Build the Gantry rich renderer directly and do not add `assistant-ui`.
+## Acceptance
 
-## Acceptance And Checks
+- Every renderer has populated, missing-content, disabled, and long-content
+  coverage in the component lab and a real route composition.
+- Composer content survives opening and closing the connection gate.
+- Message lists remain readable at 390px without horizontal overflow.
+- No reasoning-text filters, browser stream buffers, network transport, or
+  provider payloads are introduced.
 
-- A turn is accepted, streamed, interrupted by a question/permission, resolved
-  in UI or channel, resumed, and completed after reconnect.
-- Reasoning blocks are omitted at provider boundaries, not by UI prefix filters.
-
-```bash
-rg -n -e 'startsWith\(' -e 'includes\(.*thinking' -e 'UISpec' -e 'RichInteractionDescriptor.*interface' -e 'providerPayload' apps/web/src
-```
-
-Automated UI tests remain deferred. Verify the acceptance paths manually and
-run the repository build and structural gates for the implementation change.
+Run web typecheck, lint, build, direct-refresh and responsive browser checks,
+renderer cleanup searches, line-count checks, and `git diff --check`.
 
 ## Surface Impact And Handoff
 
-| Surface                                            | Status               | Reason                                                             |
-| -------------------------------------------------- | -------------------- | ------------------------------------------------------------------ |
-| Runtime, API, contracts, audit/events, docs        | Changed              | Add session listing, rich rendering, and event handling.           |
-| Tests                                              | Deferred             | No automated UI harness exists until separately approved.           |
-| Postgres                                           | Read-only/observable | Reuse durable sessions, messages, runs, and interactions.          |
-| Settings, CLI, MCP/admin, providers                | Unchanged by design  | No configuration, authority, or transport widening.                |
+| Surface                                         | Status              | Reason                                                    |
+| ----------------------------------------------- | ------------------- | --------------------------------------------------------- |
+| Runtime behavior                                | Changed             | Preview chat, memory, and rich-renderer routes are added. |
+| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | No turn or interaction is submitted.                      |
+| MCP/admin, providers, audit/events              | Unchanged by design | Provider and authority behavior remains server-side.      |
+| Docs                                            | Changed             | Record renderer coverage and evidence.                    |
+| Tests/verification                              | Deferred            | Automated UI tests remain deferred.                       |
 
-Phase 5 reuses shared timelines but owns jobs and runtime controls separately.
+Phase 5 reuses timelines, status, tables, and receipts without coupling runtime
+screens to chat presentation state.

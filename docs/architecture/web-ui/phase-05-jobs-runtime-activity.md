@@ -2,58 +2,51 @@
 
 ## Goal
 
-Expose durable runtime evidence without browser-owned policy or secrets. Reuse
-job, run, usage, model, memory, and desired-state services; add only the
-paginated activity read model.
-
-## Dependencies And Exclusions
-
-Dependencies: Phase 2 Query/Table/search foundations, shared timelines, SSE
-coordinator, job/run/usage/model services, and desired-state APIs. Excluded: a
-browser policy engine, raw scheduler internals, a second event store, and secret
-display.
+Build complete job, run, usage, runtime, and activity surfaces from redacted
+preview records without creating a browser scheduler or policy engine.
 
 ## Screens
 
-| Screen    | Major sections and actions                                                                 |
-| --------- | ------------------------------------------------------------------------------------------ |
-| Jobs/runs | Definitions, status, blockers, notifications, timeline, one clear blocker action.          |
-| Runtime   | Models, memory, usage, capacity, queue, sandbox, egress, guardrails, redacted diagnostics. |
-| Activity  | Cursor timeline with actor, resource, and event-type filters.                              |
+| Screen        | Major sections and local actions                                                 |
+| ------------- | -------------------------------------------------------------------------------- |
+| Jobs          | Definitions, status, blocker action, schedule, notification routes, recent runs. |
+| Run detail    | Outcome, timeline, receipts, files, blocker context, connection-gated controls.  |
+| Models        | Alias catalog, harness compatibility, readiness, usage summary.                  |
+| Memory engine | Pipeline status, stores, review queue, retention summary.                        |
+| Capacity      | Active work, queue, concurrency, usage and budget indicators.                    |
+| Guardrails    | Sandbox, egress, permission and denylist summaries with redacted detail.         |
+| Activity      | Searchable cursor-style timeline, actor/resource/type filters, inspector.        |
 
-## Steps
+## Implementation
 
-1. Compose job/run and runtime routes from server projections; hide raw lease
-   and scheduler internals.
-2. Add `/v1/activity` cursor contract over existing runtime/audit repositories.
-3. Use SSE to invalidate summaries, then fetch detail by ID. Browser code does
-   not infer policy, readiness, or secret values.
-4. Route settings-owned changes through desired-state revision APIs.
+1. Add job/run/runtime/activity view models, redacted fixtures, Query keys,
+   controlled Table state, and route search schemas.
+2. Compose `/jobs`, `/jobs/:id`, `/activity`, and all `/runtime/*` routes from
+   shared tables, metrics, timelines, detail sections, and state compositions.
+3. Keep runtime policy and secret interpretation in fixtures, not component
+   conditionals. Do not expose raw leases, tokens, provider payloads, or rules.
+4. Route trigger, pause, retry, cancel, model-change, memory-review, and policy
+   commands through the shared connection gate.
 
-Use controlled Table state and TanStack Query cursor/infinite-query patterns for
-activity and list screens. Do not add TanStack Virtual unless Phase 8 measures a
-real render bottleneck.
+## Acceptance
 
-## Acceptance And Checks
+- Every blocker presents one clear next action and never implies it succeeded.
+- Filters and pagination remain stable through refresh and narrow layouts.
+- Runtime views are readable and redacted at all target viewports.
+- No scheduler library, policy engine, event store, or persisted cache is added.
 
-- Lifecycle/blockers update live and missing capabilities show one safe action.
-- Cursor/filter activity is stable and redacted; queue/sandbox/egress views do
-  not expose secrets or become the policy engine.
-
-```bash
-rg -n -e 'pg-boss' -e 'pgboss' -e 'yolo_mode' -e 'approve.*tool' -e 'policyEngine' apps/web/src
-```
-
-Automated UI tests remain deferred. Verify the acceptance paths manually and
-run the repository build and structural gates for the implementation change.
+Run web typecheck, lint, build, direct-refresh/browser checks, long-list and
+overflow review, redaction/transport cleanup searches, and `git diff --check`.
 
 ## Surface Impact And Handoff
 
-| Surface                                                                | Status              | Reason                                          |
-| ---------------------------------------------------------------------- | ------------------- | ----------------------------------------------- |
-| Runtime, settings, Postgres, API, contracts, audit/events, docs        | Changed             | Add activity projection and safe runtime UI.    |
-| Tests                                                                  | Deferred            | No automated UI harness exists until approved.  |
-| CLI, MCP/admin, providers                                              | Unchanged by design | Existing authority and transport remain intact. |
+| Surface                                         | Status              | Reason                                               |
+| ----------------------------------------------- | ------------------- | ---------------------------------------------------- |
+| Runtime behavior                                | Changed             | Preview job, runtime, and activity routes are added. |
+| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | Runtime records are display-only.                    |
+| MCP/admin, providers, audit/events              | Unchanged by design | No policy or authority change.                       |
+| Docs                                            | Changed             | Record screens and QA evidence.                      |
+| Tests/verification                              | Deferred            | Automated UI tests remain deferred.                  |
 
-Phase 6 can link people to activity and Conversations without changing alias
-provenance.
+Phase 6 may link people to conversations and activity but cannot reinterpret
+provider aliases or create a second timeline model.

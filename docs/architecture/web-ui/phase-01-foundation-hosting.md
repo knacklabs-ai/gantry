@@ -2,23 +2,23 @@
 
 ## Goal
 
-Create `apps/web` and host it at `/ui`. This is a static operator-shell phase:
-it has no browser authentication, pairing, REST, SSE, WebSocket, or runtime
-data access. It ships shared UI states, not operational data screens.
+Create `apps/web`, host it at `/ui`, and establish the static operator shell.
+This phase is complete at commit `62df6a5a`; later phases extend the shell with
+preview-backed screens without adding browser transport.
 
 ## Dependencies And Exclusions
 
 Dependencies: static asset packaging and the existing Control server. Excluded:
-operator screens, browser access authority, identity accounts, OAuth/OIDC,
-SAML, browser REST/SSE/WebSockets, and runtime data.
+product screens, browser access authority, OAuth/OIDC, SAML, REST, SSE,
+WebSockets, runtime data, and automated UI tests.
 
 ## Screens
 
-| Screen        | Required behavior                                                                     |
-| ------------- | ------------------------------------------------------------------------------------- |
+| Screen        | Required behavior                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------- |
 | App shell     | Sidebar, mobile drawer, header, theme control, truthful not-connected state, stable content area. |
-| Shared states | Loading, empty, error, offline, and reconnecting compositions without simulated data.          |
-| Profile       | Theme and motion preferences only; no identity or session fields.                               |
+| Shared states | Loading, empty, error, offline, and reconnecting compositions without simulated data.             |
+| Profile       | Theme and motion preferences only; no identity or session fields.                                 |
 
 ## Steps
 
@@ -31,8 +31,8 @@ SAML, browser REST/SSE/WebSockets, and runtime data.
 3. Add the static app shell, profile preferences, and shared state compositions.
    Browser storage is limited to versioned appearance and motion preferences.
 4. Defer contracts, browser API clients, pairing, sessions, CSRF, audit,
-   `gantry ui` CLI work, app events, and SSE until a separate browser-access
-   design is approved.
+   `gantry ui` CLI work, app events, and SSE. Later UI phases use preview data
+   and a shared connection gate instead.
 
 ## Acceptance And Checks
 
@@ -54,14 +54,14 @@ credentials, API clients, transport calls, and tracked UI output are not.
 
 ## Surface Impact And Handoff
 
-| Surface | Status | Reason |
-| --- | --- | --- |
-| Runtime behavior | Changed | Serve static `/ui` assets through the existing Control process. |
+| Surface                                                              | Status              | Reason                                                                |
+| -------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------- |
+| Runtime behavior                                                     | Changed             | Serve static `/ui` assets through the existing Control process.       |
 | `settings.yaml`, Postgres, Control API, contracts, CLI, audit/events | Unchanged by design | Static UI introduces no browser authority or persisted runtime state. |
-| MCP/admin, providers | Unchanged by design | UI does not grant authority; adapters retain transport. |
-| Docs | Changed | Record the static-only boundary and delivery evidence. |
-| Tests/verification | Deferred | Automated UI tests remain explicitly deferred. |
+| MCP/admin, providers                                                 | Unchanged by design | UI does not grant authority; adapters retain transport.               |
+| Docs                                                                 | Changed             | Record the static-only boundary and delivery evidence.                |
+| Tests/verification                                                   | Deferred            | Automated UI tests remain explicitly deferred.                        |
 
-Browser data phases start only after a dedicated browser-access design is
-approved. This phase hands off a stable shell, static host, tokens, primitives,
-and shared compositions.
+Phase 2 receives a verified shell, static host, tokens, primitives, and shared
+states. It may add frontend data libraries for preview screens, but it must not
+add browser-to-server transport.

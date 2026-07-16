@@ -8,15 +8,20 @@ control plane, or authority surface.
 
 Read the repository-level `AGENTS.md` first. This file adds web-specific rules.
 
-## Current Phase Boundary
+## Current Delivery Boundary
 
-Phase 1 is static UI only. Do not add browser-to-server communication until a
-dedicated browser identity and access design is approved.
+Build the complete interface with typed, visibly labeled preview data. Do not
+add browser-to-server communication until identity and access are approved.
 
 - Do not add `fetch`, `EventSource`, `WebSocket`, API clients, bearer tokens,
-  cookies/sessions, auth, pairing, CSRF, API proxies, or mock runtime data.
-- Do not add TanStack Query, Table, Zod, forms, a router plugin, generated route
-  tree, or a test dependency in Phase 1.
+  cookies/sessions, auth, pairing, CSRF, or API proxies.
+- Preview records are memory-only. The shell must show `Preview data` and `Not
+connected` whenever they are visible.
+- Local UI interactions may work. Server-owned commands must use the shared
+  connection gate, issue no request, preserve local drafts, and never mutate
+  preview records or show fake success.
+- TanStack Query, Table, Zod, and React Hook Form are frontend infrastructure;
+  they do not grant server authority or define public Gantry contracts.
 - Do not change existing Control API authentication or add UI-specific Control
   API routes from this workspace.
 - Browser storage is limited to the versioned
@@ -34,6 +39,9 @@ src/
   features/<feature>/     # Feature state and composition
   ui/primitives/          # Small reusable controls
   ui/compositions/        # Reusable multi-control states and layouts
+  ui/rich/                # Channel-neutral rich interaction renderers
+  ui/workflow/            # Shared workflow presentation components
+  ui/lab/                 # Development-only component lab sections
   lib/<area>/             # Narrow browser-only helpers
   styles.css              # Tailwind import, semantic tokens, base rules only
 ```
@@ -59,8 +67,8 @@ folders, wrapper-only components, or a local component library for one use.
 - Respect `prefers-reduced-motion` and the local reduce-motion preference.
 - Use desktop, tablet, and mobile layouts intentionally. The desktop sidebar is
   232px; the mobile navigation is the Radix Dialog drawer.
-- Do not use mock runtime states. The Phase 1 status is truthfully `Not
-  connected`.
+- Preview data must be plausible, deterministic, redacted, and visibly
+  non-live. Do not simulate runtime progress or terminal command success.
 
 ## File And Change Discipline
 
@@ -71,9 +79,9 @@ folders, wrapper-only components, or a local component library for one use.
 - Prefer composition and explicit props over boolean-heavy components.
 - Keep browser-only code in `apps/web`; static-host changes belong in
   `apps/core/src/control/server/` and must not import React code.
-- Add dependencies only in the first approved phase that exercises them:
-  Query/Table/Zod in Phase 2 and React Hook Form in Phase 3. Do not adopt
-  TanStack Form, Store, DB, Virtual, Start, or `assistant-ui`.
+- Add dependencies only when an implemented screen exercises them. Do not adopt
+  TanStack Form, Store, DB, Virtual, Start, a global feature store, Storybook,
+  a chart library, or `assistant-ui` without a measured need.
 
 ## Commands
 
@@ -102,8 +110,9 @@ npm run build:web
 git diff --check
 ```
 
-Confirm Phase 1 has no `react-router`, Query, Table, Zod, forms, router plugin,
-generated route tree, API client, SSE, WebSocket, or test dependency.
+Confirm there is no `react-router`, router plugin, generated route tree, API
+client, SSE, WebSocket, browser credential, persisted Query cache, or test
+dependency. Check every handwritten UI file remains at or below 350 lines.
 
 When the static host or workspace integration changes, also run:
 
@@ -114,7 +123,7 @@ python3 .codex/scripts/check_architecture.py
 python3 .codex/scripts/validate_artifacts.py --allow-missing-run
 ```
 
-Manually check `/ui/`, `/ui/profile`, and an unknown extensionless `/ui/*`
-route at 1440px, 1024px, and 390px in both themes. Automated UI tests and test
-dependencies are deferred by user decision; do not add a test harness without
-explicit approval.
+Manually check every changed route at 1440px, 1024px, and 390px in both themes,
+including keyboard focus, long content, drawers, dialogs, local drafts, and the
+connection gate. Automated UI tests and test dependencies are deferred by user
+decision; do not add a test harness without explicit approval.

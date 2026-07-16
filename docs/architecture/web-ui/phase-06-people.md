@@ -2,60 +2,49 @@
 
 ## Goal
 
-Expose canonical people and provider aliases for operators. A person is not a
-browser account; identity and SSO remain deferred. Provider IDs stay aliases
-with provenance and cannot become interchangeable UI identities.
-
-## Dependencies And Exclusions
-
-Dependencies: Phase 2 Query/Table/search foundations, Phase 3 shared forms,
-and Conversation views. Excluded: browser accounts, SSO, email-as-proof
-linking, client-only people records, and changes to provider identity semantics.
+Build canonical person, provider-alias, invitation, and merge-preview screens
+without treating preview people as browser accounts or durable identities.
 
 ## Screens
 
-| Screen        | Major sections and actions                                                 |
-| ------------- | -------------------------------------------------------------------------- |
-| People list   | Search, aliases, relevant Conversations, invitation status, open detail.   |
-| Person detail | Canonical identity, alias provenance, related activity, invitation, merge. |
-| Merge preview | Source/target, affected aliases/Conversations, conflicts, confirm/cancel.  |
-| Merge receipt | Atomic outcome, preserved provenance, audit reference, refreshed records.  |
+| Screen        | Major sections and local actions                                               |
+| ------------- | ------------------------------------------------------------------------------ |
+| People list   | Search, alias/provider filters, conversations, invitation status, open detail. |
+| Person detail | Canonical profile, alias provenance, conversations, activity, invitation.      |
+| Invite        | Provider target, role summary, local validation, connection-gated send.        |
+| Merge preview | Source/target, affected aliases and conversations, conflicts, confirmation.    |
 
-## Steps
+## Implementation
 
-1. Add people application service and browser-safe `/v1/users` contracts over
-   existing user and alias storage.
-2. Add server-side merge preview and atomic merge command with explicit unsafe
-   conflict rejection plus durable audit/provenance.
-3. Compose routes with shared tables, inspectors, dialogs, and SSE invalidation;
-   do not create a client-only people store.
+1. Add person/alias/invitation view models, fixtures, Query keys, Table state,
+   route search schemas, and local invitation/merge schemas.
+2. Compose `/people` and `/people/:id` with shared list/detail, form, dialog,
+   timeline, badge, and state components.
+3. Preserve provider alias provenance in display data and never infer identity
+   from email, display name, or provider ID.
+4. Generate merge preview locally from fixtures for inspection only. Invite
+   and merge confirmation use the shared connection gate and change nothing.
 
-Reuse domain Query keys, controlled Table state, and Phase 3 form primitives.
-Merge preview and receipt state remains server-derived; no feature-local store
-or additional data library is introduced.
+## Acceptance
 
-## Acceptance And Checks
+- Alias provenance is visible and canonical person IDs are not conflated with
+  provider identifiers.
+- Merge conflicts remain explicit; confirmation never produces a fake receipt.
+- Person detail, invitation, and merge preview remain usable at 390px.
+- No auth account, SSO, identity provider, or persisted people store is added.
 
-- A safe merge is atomic and preserves aliases, provenance, audit evidence, and
-  Conversation references; unsafe conflicts reject before mutation.
-- Affected UI state refreshes without reload and never conflates an external
-  provider ID with the canonical person ID.
-
-```bash
-rg -n -e 'slackUserId' -e 'teamsUserId' -e 'telegramUserId' -e 'discordUserId' -e 'peopleStore' apps/web/src apps/core/src/application
-```
-
-Automated UI tests remain deferred. Verify the acceptance paths manually and
-run the repository build and structural gates for the implementation change.
+Run web typecheck, lint, build, route/browser checks, identity-term and storage
+cleanup searches, line-count checks, and `git diff --check`.
 
 ## Surface Impact And Handoff
 
-| Surface                                             | Status               | Reason                                                       |
-| --------------------------------------------------- | -------------------- | ------------------------------------------------------------ |
-| Postgres, API, contracts, audit/events, docs        | Changed              | Add people read/merge services and audit.                     |
-| Tests                                              | Deferred             | No automated UI harness exists until separately approved.     |
-| Runtime                                             | Read-only/observable | Conversations and messages observe canonical people changes. |
-| Settings, CLI, MCP/admin, providers                 | Unchanged by design  | No auth, desired-state, authority, or transport change.      |
+| Surface                                         | Status              | Reason                                       |
+| ----------------------------------------------- | ------------------- | -------------------------------------------- |
+| Runtime behavior                                | Changed             | Preview People routes and dialogs are added. |
+| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | People remain preview-only.                  |
+| MCP/admin, providers, audit/events              | Unchanged by design | Alias authority is not changed.              |
+| Docs                                            | Changed             | Record screens and QA evidence.              |
+| Tests/verification                              | Deferred            | Automated UI tests remain deferred.          |
 
-Phase 7 may attribute workflow activity to people but cannot use people as a
-new permission authority.
+Phase 7 may reference people in workflow notification previews but cannot
+create identity or invitation authority.
