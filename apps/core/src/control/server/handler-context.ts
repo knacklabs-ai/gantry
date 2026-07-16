@@ -8,6 +8,7 @@ import type {
 } from './system-health.js';
 import type { JobManagementServiceDeps } from '../../application/jobs/job-management-types.js';
 import type { ControlPlaneStorageSettings } from '../../application/control-plane/control-plane-storage-model.js';
+import type { RuntimeCredentialBrokerSettings } from '../../config/settings/runtime-settings-types.js';
 import type { AppId } from '../../domain/app/app.js';
 import type {
   ModelCatalogEntry,
@@ -22,6 +23,7 @@ import type { RateLimiter } from './rate-limit.js';
 
 type InternalRuntimeSettings = ControlPlaneStorageSettings & {
   modelFamilies?: Record<string, string[]>;
+  credentialBroker?: RuntimeCredentialBrokerSettings;
 };
 
 export type ControlServerState = {

@@ -508,6 +508,8 @@ export async function startRuntimeServices(
           liveTurnAuthority.registerLocalRunner(queueJid, hooks, routing)
       : null,
   );
+  // Assigned once after the queue callback is wired; the callback closes over it.
+  // eslint-disable-next-line prefer-const
   let handleActiveControlCommand: ActiveControlCommandHandler | undefined;
   app.queue.setProcessMessagesFn(
     buildLiveAdmissionProcessor({
@@ -961,9 +963,7 @@ export async function startRuntimeServices(
               : undefined;
           const messageOptions = {
             ...destinationAccount,
-            ...(destinationThreadId
-              ? { threadId: destinationThreadId }
-              : {}),
+            ...(destinationThreadId ? { threadId: destinationThreadId } : {}),
           };
           const deliveryResult = cardPayload
             ? await channelWiring.sendAdaptiveCard(
@@ -981,7 +981,12 @@ export async function startRuntimeServices(
                 {
                   permit: recoveryPermit,
                   throwOnMissing: true,
-                  messageOptions,
+                  messageOptions: {
+                    ...destinationAccount,
+                    ...(destinationThreadId
+                      ? { threadId: destinationThreadId }
+                      : {}),
+                  },
                 },
               );
           return {

@@ -124,6 +124,8 @@ export async function handleProviderConversationRoutes(
   url: URL,
   pathname: string,
 ): Promise<boolean> {
+  // Compatibility route for Agent.Tender thread replies. Migrate this caller to
+  // the provider-account/conversation-install delivery surface before removal.
   if (
     pathname === '/v1/providers/teams/thread-replies' &&
     req.method === 'POST'

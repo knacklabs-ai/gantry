@@ -247,11 +247,13 @@ export const AGENT_MAX_OUTPUT_SIZE = parseInt(
 export function getCredentialBrokerRuntimeConfig(): {
   mode: RuntimeSettings['credentialBroker']['mode'];
   gatewayBindHost: string;
+  promptCache: RuntimeSettings['credentialBroker']['promptCache'];
 } {
   const settings = getRuntimeSettingsForConfig();
   return {
     mode: settings.credentialBroker.mode,
     gatewayBindHost: settings.credentialBroker.gateway.bindHost,
+    promptCache: settings.credentialBroker.promptCache,
   };
 }
 export const SECRET_ENCRYPTION_KEY = envValue('SECRET_ENCRYPTION_KEY');

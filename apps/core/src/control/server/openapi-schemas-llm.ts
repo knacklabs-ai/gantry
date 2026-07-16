@@ -482,6 +482,12 @@ export const llmOpenApiSchemas: Record<string, JsonSchema> = {
       service_tier: { type: 'string' },
       store: { type: 'boolean' },
       metadata: { type: 'object', additionalProperties: { type: 'string' } },
+      extra_body: {
+        type: 'object',
+        description:
+          'Provider-compatible extension object, including Google thinking_config.',
+        additionalProperties: true,
+      },
     },
   },
   LlmChatResponseMessage: {

@@ -4,23 +4,31 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('Postgres migration journal', () => {
-  it('has a SQL file for every journal entry', () => {
+  it('keeps numbered SQL files and journal entries in one-to-one order', () => {
     const journalPath = path.resolve(
       'apps/core/src/adapters/storage/postgres/schema/migrations/meta/_journal.json',
     );
     const journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')) as {
-      entries: Array<{ tag: string }>;
+      entries: Array<{ idx: number; tag: string }>;
     };
+    const migrationsPath = path.resolve(
+      'apps/core/src/adapters/storage/postgres/schema/migrations',
+    );
+    const sqlFiles = fs
+      .readdirSync(migrationsPath)
+      .filter((file) => /^\d{4}_.+\.sql$/.test(file))
+      .sort();
+    const journalFiles = journal.entries
+      .map((entry) => `${entry.tag}.sql`)
+      .sort();
 
-    for (const entry of journal.entries) {
-      expect(
-        fs.existsSync(
-          path.resolve(
-            `apps/core/src/adapters/storage/postgres/schema/migrations/${entry.tag}.sql`,
-          ),
-        ),
-      ).toBe(true);
-    }
+    expect(sqlFiles).toEqual(journalFiles);
+    expect(new Set(journal.entries.map((entry) => entry.idx)).size).toBe(
+      journal.entries.length,
+    );
+    expect(new Set(sqlFiles.map((file) => file.slice(0, 4))).size).toBe(
+      sqlFiles.length,
+    );
   });
 
   it('registers the semantic memory vectors migration and schema', () => {

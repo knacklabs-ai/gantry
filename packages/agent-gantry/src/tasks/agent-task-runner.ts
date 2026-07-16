@@ -8,6 +8,7 @@ import type {
   GantryAgentTaskResult,
   GantryAgentTaskStep,
   GantryAgentTool,
+  GantryObservabilityContext,
   GantryStructuredModelUsage,
   StructuredModelTaskRunnerConfig,
   StructuredJsonModelProvider,
@@ -35,6 +36,7 @@ import {
   readStructuredModelStopError,
   unwrapStructuredJsonModelProviderResult,
 } from './model-provider.js';
+import { observeGantryWorkflowSpan } from './model-observability.js';
 
 export async function runGenericAgentTask(
   config: Omit<StructuredModelTaskRunnerConfig, 'model'> & {
@@ -54,9 +56,12 @@ export async function runGenericAgentTask(
   let validateAction: ValidateFunction | null = null;
   let schemaCompilationError: string | null = null;
   try {
-    validateAction = new Ajv({ allErrors: true, strict: false }).compile(actionSchema);
+    validateAction = new Ajv({ allErrors: true, strict: false }).compile(
+      actionSchema,
+    );
   } catch (error) {
-    schemaCompilationError = error instanceof Error ? error.message : String(error);
+    schemaCompilationError =
+      error instanceof Error ? error.message : String(error);
   }
   let consecutiveModelOutputFailures = 0;
   const traceDir = resolveAgentModelTraceDir(input);
@@ -340,30 +345,67 @@ export async function runGenericAgentTask(
       let generatedRawText: string | null = null;
       let generatedStopReason: string | null = null;
       try {
-        const generatedResult = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
-          config.model.generateJson({
-            taskType: input.taskType,
-            instructions,
-            input: modelInput,
-            outputSchema: actionSchema,
-            cacheablePrefix: input.cacheablePrefix,
-            promptCache: input.promptCache,
-            correlationId: input.correlationId
-              ? `${input.correlationId}:step:${step}`
-              : undefined,
-            attachments,
-          }),
-          input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
-          'agent_model_step_timeout',
-        ));
+        const generatedResult = unwrapStructuredJsonModelProviderResult(
+          await runWithOptionalTimeout(
+            observeGantryWorkflowSpan(
+              {
+                operationName: 'agent_step.model',
+                costStage: 'agent.step',
+                taskType: input.taskType,
+                correlationId: input.correlationId ?? null,
+                input: { step, attempt: 'primary', promptMetrics },
+                output: (result: unknown) =>
+                  summarizeAgentObservation(asRecord(result) ?? {}),
+                metadata: {
+                  step,
+                  attempt: 'primary',
+                  output_schema_provided: true,
+                },
+                observability: stepObservability(
+                  input.observability,
+                  step,
+                  'model',
+                  'primary',
+                ),
+              },
+              async () =>
+                config.model.generateJson({
+                  taskType: input.taskType,
+                  instructions,
+                  input: modelInput,
+                  outputSchema: actionSchema,
+                  cacheablePrefix: input.cacheablePrefix,
+                  promptCache: input.promptCache,
+                  correlationId: input.correlationId
+                    ? `${input.correlationId}:step:${step}`
+                    : undefined,
+                  attachments,
+                  observability: stepObservability(
+                    input.observability,
+                    step,
+                    'model',
+                    'primary',
+                  ),
+                }),
+            ),
+            input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
+            'agent_model_step_timeout',
+          ),
+        );
         generated = generatedResult.output;
         generatedRawText = generatedResult.rawText;
         generatedStopReason = generatedResult.stopReason;
         recordModelUsage(modelUsages, generatedResult.modelUsage);
-        promptMetrics = attachModelUsagePromptMetrics(promptMetrics, generatedResult.modelUsage);
+        promptMetrics = attachModelUsagePromptMetrics(
+          promptMetrics,
+          generatedResult.modelUsage,
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message !== 'agent_model_step_timeout' || !input.projectStepStateForModel) {
+        if (
+          message !== 'agent_model_step_timeout' ||
+          !input.projectStepStateForModel
+        ) {
           throw error;
         }
         const retryModelInput = await buildAgentModelInput(input, {
@@ -379,7 +421,10 @@ export async function runGenericAgentTask(
           outputSchema: actionSchema,
           attachments,
         });
-        const retryPromptMetricsWithCache = attachPromptCacheRequestMetrics(retryPromptMetrics, input);
+        const retryPromptMetricsWithCache = attachPromptCacheRequestMetrics(
+          retryPromptMetrics,
+          input,
+        );
         await writeAgentModelTrace(traceDir, {
           kind: 'model_input_timeout_retry',
           taskRunId,
@@ -396,27 +441,62 @@ export async function runGenericAgentTask(
         });
         modelInput = retryModelInput;
         promptMetrics = retryPromptMetricsWithCache;
-        const generatedResult = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
-          config.model.generateJson({
-            taskType: input.taskType,
-            instructions,
-            input: modelInput,
-            outputSchema: actionSchema,
-            cacheablePrefix: input.cacheablePrefix,
-            promptCache: input.promptCache,
-            correlationId: input.correlationId
-              ? `${input.correlationId}:step:${step}:timeout_retry`
-              : undefined,
-            attachments,
-          }),
-          input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
-          'agent_model_step_timeout',
-        ));
+        const generatedResult = unwrapStructuredJsonModelProviderResult(
+          await runWithOptionalTimeout(
+            observeGantryWorkflowSpan(
+              {
+                operationName: 'agent_step.model_timeout_retry',
+                costStage: 'agent.step',
+                taskType: input.taskType,
+                correlationId: input.correlationId ?? null,
+                input: { step, attempt: 'timeout_retry', promptMetrics },
+                output: (result: unknown) =>
+                  summarizeAgentObservation(asRecord(result) ?? {}),
+                metadata: {
+                  step,
+                  attempt: 'timeout_retry',
+                  previous_error: message,
+                  output_schema_provided: true,
+                },
+                observability: stepObservability(
+                  input.observability,
+                  step,
+                  'model',
+                  'timeout_retry',
+                ),
+              },
+              async () =>
+                config.model.generateJson({
+                  taskType: input.taskType,
+                  instructions,
+                  input: modelInput,
+                  outputSchema: actionSchema,
+                  cacheablePrefix: input.cacheablePrefix,
+                  promptCache: input.promptCache,
+                  correlationId: input.correlationId
+                    ? `${input.correlationId}:step:${step}:timeout_retry`
+                    : undefined,
+                  attachments,
+                  observability: stepObservability(
+                    input.observability,
+                    step,
+                    'model',
+                    'timeout_retry',
+                  ),
+                }),
+            ),
+            input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
+            'agent_model_step_timeout',
+          ),
+        );
         generated = generatedResult.output;
         generatedRawText = generatedResult.rawText;
         generatedStopReason = generatedResult.stopReason;
         recordModelUsage(modelUsages, generatedResult.modelUsage);
-        promptMetrics = attachModelUsagePromptMetrics(promptMetrics, generatedResult.modelUsage);
+        promptMetrics = attachModelUsagePromptMetrics(
+          promptMetrics,
+          generatedResult.modelUsage,
+        );
       }
       const stopError = readStructuredModelStopError(generatedStopReason);
       if (stopError) {
@@ -431,7 +511,10 @@ export async function runGenericAgentTask(
             : typeof generated === 'string'
               ? parseCompleteJsonRecord(generated)
               : asRecord(generated);
-          if (!action) throw new Error('Structured task model output must be a JSON object.');
+          if (!action)
+            throw new Error(
+              'Structured task model output must be a JSON object.',
+            );
         } catch (error) {
           modelOutputFailure = {
             code: 'model_output_parse_invalid',
@@ -538,12 +621,7 @@ export async function runGenericAgentTask(
         promptMetrics,
       });
       if (!terminal) continue;
-      return await finish(
-        'failed',
-        { status: 'failed', error },
-        null,
-        error,
-      );
+      return await finish('failed', { status: 'failed', error }, null, error);
     }
     if (!action) {
       const error = 'model_output_parse_invalid';
@@ -756,13 +834,45 @@ export async function runGenericAgentTask(
         progressTrace,
       });
       const observation = await runWithOptionalTimeout(
-        Promise.resolve(
-          tool.execute(parsed.input, {
+        observeGantryWorkflowSpan(
+          {
+            operationName: 'agent_step.tool_call',
+            costStage: 'agent.tool_call',
             taskType: input.taskType,
-            correlationId: input.correlationId,
-            step,
-            state,
-          }),
+            correlationId: input.correlationId ?? null,
+            input: {
+              step,
+              toolName: tool.name,
+              actionInput: summarizeAgentObservation(parsed.input),
+            },
+            output: (result: Record<string, unknown>) =>
+              summarizeAgentObservation(result),
+            metadata: {
+              step,
+              tool_name: tool.name,
+            },
+            observability: stepObservability(
+              input.observability,
+              step,
+              'tool',
+              tool.name,
+            ),
+          },
+          async () =>
+            Promise.resolve(
+              tool.execute(parsed.input, {
+                taskType: input.taskType,
+                correlationId: input.correlationId,
+                step,
+                state,
+                observability: stepObservability(
+                  input.observability,
+                  step,
+                  'tool',
+                  tool.name,
+                ),
+              }),
+            ),
         ),
         input.toolStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
         `agent_tool_timeout:${tool.name}`,
@@ -987,7 +1097,10 @@ export async function runGenericAgentTask(
         fallbackIfWrong: parsed.fallbackIfWrong,
         ...progressTrace,
       });
-      if (message.startsWith(`agent_tool_timeout:${tool.name}`) && input.recoverFromToolError) {
+      if (
+        message.startsWith(`agent_tool_timeout:${tool.name}`) &&
+        input.recoverFromToolError
+      ) {
         const recovery = await input.recoverFromToolError({
           taskType: input.taskType,
           correlationId: input.correlationId,
@@ -1021,7 +1134,10 @@ export async function runGenericAgentTask(
             outputSchema: actionSchema,
             attachments: [],
           });
-          let recoveryPromptMetricsWithCache = attachPromptCacheRequestMetrics(recoveryPromptMetrics, input);
+          let recoveryPromptMetricsWithCache = attachPromptCacheRequestMetrics(
+            recoveryPromptMetrics,
+            input,
+          );
           await writeAgentModelTrace(traceDir, {
             kind: 'model_input_tool_error_recovery',
             taskRunId,
@@ -1037,29 +1153,67 @@ export async function runGenericAgentTask(
             previousError: message,
           });
           try {
-            const generatedResult = unwrapStructuredJsonModelProviderResult(await runWithOptionalTimeout(
-              config.model.generateJson({
-                taskType: input.taskType,
-                instructions: recoveryInstructions,
-                input: recoveryModelInput,
-                outputSchema: actionSchema,
-                cacheablePrefix: input.cacheablePrefix,
-                promptCache: input.promptCache,
-                correlationId: input.correlationId
-                  ? `${input.correlationId}:step:${step}:tool_error_recovery`
-                  : undefined,
-                attachments: [],
-              }),
-              input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
-              'agent_model_step_timeout',
-            ));
+            const generatedResult = unwrapStructuredJsonModelProviderResult(
+              await runWithOptionalTimeout(
+                observeGantryWorkflowSpan(
+                  {
+                    operationName: 'agent_step.model_tool_error_recovery',
+                    costStage: 'agent.step',
+                    taskType: input.taskType,
+                    correlationId: input.correlationId ?? null,
+                    input: {
+                      step,
+                      attempt: 'tool_error_recovery',
+                      promptMetrics: recoveryPromptMetricsWithCache,
+                    },
+                    output: (result: unknown) =>
+                      summarizeAgentObservation(asRecord(result) ?? {}),
+                    metadata: {
+                      step,
+                      attempt: 'tool_error_recovery',
+                      previous_error: message,
+                      output_schema_provided: true,
+                    },
+                    observability: stepObservability(
+                      input.observability,
+                      step,
+                      'model',
+                      'tool_error_recovery',
+                    ),
+                  },
+                  async () =>
+                    config.model.generateJson({
+                      taskType: input.taskType,
+                      instructions: recoveryInstructions,
+                      input: recoveryModelInput,
+                      outputSchema: actionSchema,
+                      cacheablePrefix: input.cacheablePrefix,
+                      promptCache: input.promptCache,
+                      correlationId: input.correlationId
+                        ? `${input.correlationId}:step:${step}:tool_error_recovery`
+                        : undefined,
+                      attachments: [],
+                      observability: stepObservability(
+                        input.observability,
+                        step,
+                        'model',
+                        'tool_error_recovery',
+                      ),
+                    }),
+                ),
+                input.modelStepTimeoutMs ?? input.stepTimeoutMs ?? remainingMs,
+                'agent_model_step_timeout',
+              ),
+            );
             const generated = generatedResult.output;
             recordModelUsage(modelUsages, generatedResult.modelUsage);
             recoveryPromptMetricsWithCache = attachModelUsagePromptMetrics(
               recoveryPromptMetricsWithCache,
               generatedResult.modelUsage,
             );
-            const stopError = readStructuredModelStopError(generatedResult.stopReason);
+            const stopError = readStructuredModelStopError(
+              generatedResult.stopReason,
+            );
             if (stopError) throw new Error(stopError, { cause: error });
             const recoveryAction = generatedResult.rawText
               ? parseCompleteJsonRecord(generatedResult.rawText)
@@ -1115,7 +1269,8 @@ export async function runGenericAgentTask(
                   whyThisAction: recoveryParsed.whyThisAction,
                   expectedStateChange: recoveryParsed.expectedStateChange,
                   fallbackIfWrong: recoveryParsed.fallbackIfWrong,
-                  previousGoalEvaluation: recoveryParsed.previousGoalEvaluation ?? null,
+                  previousGoalEvaluation:
+                    recoveryParsed.previousGoalEvaluation ?? null,
                   memoryUpdate: recoveryParsed.memoryUpdate ?? null,
                   nextGoal: recoveryParsed.nextGoal ?? null,
                 });
@@ -1140,13 +1295,15 @@ export async function runGenericAgentTask(
                   validation: recoveryValidation,
                 }),
                 promptMetrics: recoveryPromptMetricsWithCache,
-                auditNote: 'Tool timeout recovery final output rejected by task-specific validator.',
+                auditNote:
+                  'Tool timeout recovery final output rejected by task-specific validator.',
               });
             }
           } catch (recoveryError) {
-            const recoveryMessage = recoveryError instanceof Error
-              ? recoveryError.message
-              : String(recoveryError);
+            const recoveryMessage =
+              recoveryError instanceof Error
+                ? recoveryError.message
+                : String(recoveryError);
             await writeAgentModelTrace(traceDir, {
               kind: 'model_error_tool_error_recovery',
               taskRunId,
@@ -1294,7 +1451,8 @@ function attachModelUsagePromptMetrics(
       cacheReadInputTokens: modelUsage.cacheReadInputTokens ?? null,
       cachedTokens: modelUsage.cachedTokens ?? null,
       promptCacheTtl: modelUsage.promptCacheTtl ?? null,
-      promptCachePrefixHash: modelUsage.promptCachePrefixHash ?? promptCache.prefixHash ?? null,
+      promptCachePrefixHash:
+        modelUsage.promptCachePrefixHash ?? promptCache.prefixHash ?? null,
     },
   };
 }
@@ -1308,6 +1466,24 @@ function recordModelUsage(
   }
 }
 
+function stepObservability(
+  context: GantryObservabilityContext | null | undefined,
+  step: number,
+  kind: 'model' | 'tool',
+  attemptOrTool: string,
+): GantryObservabilityContext | null {
+  if (!context) return null;
+  return {
+    ...context,
+    metadata: {
+      ...(context.metadata ?? {}),
+      agent_step: step,
+      agent_step_kind: kind,
+      agent_step_detail: attemptOrTool,
+    },
+  };
+}
+
 function aggregateModelUsage(input: {
   readonly usages: readonly GantryStructuredModelUsage[];
   readonly taskType: string;
@@ -1317,41 +1493,80 @@ function aggregateModelUsage(input: {
   if (input.usages.length === 0) return null;
   const providers = uniqueDefined(input.usages.map((usage) => usage.provider));
   const models = uniqueDefined(input.usages.map((usage) => usage.model));
-  const usageSources = uniqueDefined(input.usages.map((usage) => usage.usageSource));
-  const promptCacheTtls = uniquePromptCacheTtls(input.usages.map((usage) => usage.promptCacheTtl));
-  const promptCachePrefixHashes = uniqueDefined(input.usages.map((usage) => usage.promptCachePrefixHash));
-  const inputTokens = sumOptionalNumbers(input.usages.map((usage) => usage.inputTokens));
-  const outputTokens = sumOptionalNumbers(input.usages.map((usage) => usage.outputTokens));
-  const totalTokens = sumOptionalNumbers(input.usages.map((usage) => usage.totalTokens))
-    ?? addOptionalNumbers(inputTokens, outputTokens);
-  const durationMs = sumOptionalNumbers(input.usages.map((usage) => usage.durationMs)) ?? input.durationMs;
+  const usageSources = uniqueDefined(
+    input.usages.map((usage) => usage.usageSource),
+  );
+  const promptCacheTtls = uniquePromptCacheTtls(
+    input.usages.map((usage) => usage.promptCacheTtl),
+  );
+  const promptCachePrefixHashes = uniqueDefined(
+    input.usages.map((usage) => usage.promptCachePrefixHash),
+  );
+  const inputTokens = sumOptionalNumbers(
+    input.usages.map((usage) => usage.inputTokens),
+  );
+  const outputTokens = sumOptionalNumbers(
+    input.usages.map((usage) => usage.outputTokens),
+  );
+  const totalTokens =
+    sumOptionalNumbers(input.usages.map((usage) => usage.totalTokens)) ??
+    addOptionalNumbers(inputTokens, outputTokens);
+  const durationMs =
+    sumOptionalNumbers(input.usages.map((usage) => usage.durationMs)) ??
+    input.durationMs;
   return {
-    provider: providers.length === 1 ? providers[0] : providers.length > 1 ? 'mixed' : null,
+    provider:
+      providers.length === 1
+        ? providers[0]
+        : providers.length > 1
+          ? 'mixed'
+          : null,
     model: models.length === 1 ? models[0] : models.length > 1 ? 'mixed' : null,
     taskType: input.taskType,
     correlationId: input.correlationId,
     inputTokens,
     outputTokens,
     totalTokens,
-    cachedTokens: sumOptionalNumbers(input.usages.map((usage) => usage.cachedTokens)),
-    cacheCreationInputTokens: sumOptionalNumbers(input.usages.map((usage) => usage.cacheCreationInputTokens)),
-    cacheReadInputTokens: sumOptionalNumbers(input.usages.map((usage) => usage.cacheReadInputTokens)),
+    cachedTokens: sumOptionalNumbers(
+      input.usages.map((usage) => usage.cachedTokens),
+    ),
+    cacheCreationInputTokens: sumOptionalNumbers(
+      input.usages.map((usage) => usage.cacheCreationInputTokens),
+    ),
+    cacheReadInputTokens: sumOptionalNumbers(
+      input.usages.map((usage) => usage.cacheReadInputTokens),
+    ),
     promptCacheTtl: promptCacheTtls.length === 1 ? promptCacheTtls[0] : null,
-    promptCachePrefixHash: promptCachePrefixHashes.length === 1 ? promptCachePrefixHashes[0] : null,
+    promptCachePrefixHash:
+      promptCachePrefixHashes.length === 1 ? promptCachePrefixHashes[0] : null,
     durationMs,
     usageSource: usageSources.length === 1 ? usageSources[0] : 'mixed',
   };
 }
 
-function uniqueDefined(values: readonly (string | null | undefined)[]): string[] {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+function uniqueDefined(
+  values: readonly (string | null | undefined)[],
+): string[] {
+  return [
+    ...new Set(values.filter((value): value is string => Boolean(value))),
+  ];
 }
 
-function uniquePromptCacheTtls(values: readonly (string | null | undefined)[]): Array<'5m' | '1h'> {
-  return [...new Set(values.filter((value): value is '5m' | '1h' => value === '5m' || value === '1h'))];
+function uniquePromptCacheTtls(
+  values: readonly (string | null | undefined)[],
+): Array<'5m' | '1h'> {
+  return [
+    ...new Set(
+      values.filter(
+        (value): value is '5m' | '1h' => value === '5m' || value === '1h',
+      ),
+    ),
+  ];
 }
 
-function sumOptionalNumbers(values: readonly (number | null | undefined)[]): number | null {
+function sumOptionalNumbers(
+  values: readonly (number | null | undefined)[],
+): number | null {
   let total = 0;
   let seen = false;
   for (const value of values) {
@@ -1363,7 +1578,10 @@ function sumOptionalNumbers(values: readonly (number | null | undefined)[]): num
   return seen ? total : null;
 }
 
-function addOptionalNumbers(left: number | null, right: number | null): number | null {
+function addOptionalNumbers(
+  left: number | null,
+  right: number | null,
+): number | null {
   if (left === null && right === null) return null;
   return (left ?? 0) + (right ?? 0);
 }

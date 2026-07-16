@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import { getAgentCredentialInjection } from '../../../application/credentials/agent-credential-service.js';
+import type { RuntimeCredentialBrokerSettings } from '../../../config/settings/runtime-settings-types.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { AgentCredentialBroker } from '../../../domain/ports/agent-credential-broker.js';
 import {
@@ -23,9 +24,25 @@ import {
   findUnsupportedLlmRequestField,
   type LlmPassthroughEndpoint,
 } from './llm-request-validator.js';
+import {
+  applyDirectLlmPromptCache,
+  type DirectLlmPromptCacheDiagnostics,
+} from './llm-prompt-cache.js';
+import {
+  DirectLlmResponseInspector,
+  observeDirectLlmRequest,
+  readDirectLlmObservationContext,
+  summarizeDirectLlmInput,
+  type DirectLlmResponseInspection,
+} from './llm-observability.js';
 
 const MAX_LLM_BODY_BYTES = 16 * 1024 * 1024;
 const LLM_RATE_LIMIT_PER_KEY = 120;
+const DEFAULT_PROMPT_CACHE_SETTINGS: RuntimeCredentialBrokerSettings['promptCache'] =
+  {
+    enabled: true,
+    anthropic: { defaultTtl: '5m' },
+  };
 const CHAT_RESPONSE_FAMILY = ['op', 'enai'].join('');
 const VERSIONED_CHAT_COMPLETIONS_PROVIDER_IDS = new Set([
   ['op', 'enai'].join(''),
@@ -38,6 +55,7 @@ const BLOCKED_LOOPBACK_REQUEST_HEADERS = new Set([
   'host',
   'transfer-encoding',
   'x-api-key',
+  'x-gantry-observability-context',
 ]);
 const BLOCKED_LOOPBACK_RESPONSE_HEADERS = new Set([
   'authorization',
@@ -52,6 +70,7 @@ type ResolvedLlmRequest = {
   entry: ModelCatalogEntry;
   alias: string;
   provider: ModelProviderDefinition;
+  promptCache: DirectLlmPromptCacheDiagnostics;
   tail: string;
 };
 
@@ -80,7 +99,14 @@ export async function handleLlmRoutes(
   }
 
   const rawBody = await readRawBody(req, MAX_LLM_BODY_BYTES);
-  const resolved = resolveLlmRequest(endpoint, rawBody, res, auth.maxTokens);
+  const resolved = resolveLlmRequest(
+    endpoint,
+    rawBody,
+    res,
+    auth.maxTokens,
+    ctx.getInternalRuntimeSettings().credentialBroker?.promptCache ??
+      DEFAULT_PROMPT_CACHE_SETTINGS,
+  );
   if (!resolved) return true;
 
   const apiRequestId = randomUUID();
@@ -130,21 +156,37 @@ export async function handleLlmRoutes(
     headers.authorization = `Bearer ${token}`;
     headers['content-type'] = 'application/json';
     try {
-      const response = await fetch(`${baseUrl}${resolved.tail}`, {
-        method: 'POST',
-        headers,
-        body: resolved.body,
-        signal: gatewayAbort.signal,
-      });
-      statusCode = response.status;
-      const contentLength = response.headers.get('content-length');
-      if (contentLength) {
-        const parsed = Number(contentLength);
-        if (Number.isFinite(parsed)) responseBodyBytes = parsed;
-      }
-      res.statusCode = response.status;
-      forwardGatewayResponseHeaders(response, res);
-      await pipeFetchResponseBody(response, res);
+      const observationContext = readDirectLlmObservationContext(req.headers);
+      const inspected = await observeDirectLlmRequest(
+        {
+          context: observationContext,
+          provider: resolved.provider.id,
+          model: resolved.entry.modelRoute.providerModelId,
+          modelParameters: {
+            endpoint: resolved.endpoint,
+          },
+          inputSummary: summarizeDirectLlmInput(resolved.body),
+          promptCache: resolved.promptCache,
+        },
+        async () => {
+          const response = await fetch(`${baseUrl}${resolved.tail}`, {
+            method: 'POST',
+            headers,
+            body: resolved.body,
+            signal: gatewayAbort.signal,
+          });
+          statusCode = response.status;
+          const contentLength = response.headers.get('content-length');
+          if (contentLength) {
+            const parsed = Number(contentLength);
+            if (Number.isFinite(parsed)) responseBodyBytes = parsed;
+          }
+          res.statusCode = response.status;
+          forwardGatewayResponseHeaders(response, res);
+          return await pipeFetchResponseBody(response, res);
+        },
+      );
+      statusCode = inspected.statusCode;
     } catch {
       if (clientDisconnected) return true;
       statusCode = 502;
@@ -205,6 +247,7 @@ function resolveLlmRequest(
   rawBody: Buffer,
   res: ServerResponse,
   maxTokens?: number,
+  promptCache = DEFAULT_PROMPT_CACHE_SETTINGS,
 ): ResolvedLlmRequest | null {
   const body = parseBody(rawBody, res);
   if (!body) return null;
@@ -245,6 +288,12 @@ function resolveLlmRequest(
     sendError(res, 400, 'INVALID_MODEL', compatibilityError);
     return null;
   }
+  const promptCacheDiagnostics = applyDirectLlmPromptCache(
+    endpoint,
+    body,
+    promptCache,
+    { providerAutomatic: provider.cacheSupport.prompt.automatic },
+  );
   body.model = resolution.entry.modelRoute.providerModelId;
   return {
     endpoint,
@@ -252,6 +301,7 @@ function resolveLlmRequest(
     entry: resolution.entry,
     alias: resolution.alias,
     provider,
+    promptCache: promptCacheDiagnostics,
     tail:
       endpoint === 'messages'
         ? '/v1/messages'
@@ -336,20 +386,27 @@ function forwardGatewayResponseHeaders(
 async function pipeFetchResponseBody(
   response: Response,
   res: ServerResponse,
-): Promise<void> {
+): Promise<DirectLlmResponseInspection> {
+  const inspector = new DirectLlmResponseInspector(
+    response.headers.get('content-type') ?? '',
+  );
   if (!response.body) {
     res.end();
-    return;
+    return inspector.finish(response.status);
   }
   const body = Readable.fromWeb(
     response.body as Parameters<typeof Readable.fromWeb>[0],
   );
   for await (const chunk of body) {
+    const bytes =
+      chunk instanceof Uint8Array ? chunk : Buffer.from(chunk as ArrayBuffer);
+    inspector.inspect(bytes);
     await new Promise<void>((resolve, reject) => {
       res.write(chunk, (error) => (error ? reject(error) : resolve()));
     });
   }
   res.end();
+  return inspector.finish(response.status);
 }
 
 function readGatewayProjection(

@@ -8,6 +8,7 @@ import type {
   ReadinessRoleRequirements,
 } from './system-health.js';
 import type { JobManagementServiceDeps } from '../../application/jobs/job-management-types.js';
+import { shutdownGantryLangfuseTracing } from '@cawstudios/agent-gantry';
 import {
   DEFAULT_JOB_RUNTIME_APP_ID,
   filterJobsByCanonicalAppSession,
@@ -495,6 +496,7 @@ export function startControlServer(input: {
           resolve();
         });
       });
+      await shutdownGantryLangfuseTracing();
       if (port === 0) {
         if (fs.existsSync(socketPath)) {
           try {

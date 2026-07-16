@@ -436,6 +436,12 @@ function parseModelAccessSettings(
     gateway: {
       bindHost: DEFAULT_MODEL_GATEWAY_BIND_HOST,
     },
+    promptCache: {
+      enabled: true,
+      anthropic: {
+        defaultTtl: '5m',
+      },
+    },
   };
   if (raw === undefined) return defaultSettings;
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -443,9 +449,9 @@ function parseModelAccessSettings(
   }
   const map = raw as Record<string, unknown>;
   for (const key of Object.keys(map)) {
-    if (key !== 'enabled' && key !== 'gateway') {
+    if (key !== 'enabled' && key !== 'gateway' && key !== 'prompt_cache') {
       throw new Error(
-        `model_access.${key} is not supported. Configure model_access.enabled or gateway.*.`,
+        `model_access.${key} is not supported. Configure model_access.enabled, gateway.*, or prompt_cache.*.`,
       );
     }
   }
@@ -470,11 +476,67 @@ function parseModelAccessSettings(
       );
     }
   }
+  const promptCacheRaw = map.prompt_cache;
+  if (
+    promptCacheRaw !== undefined &&
+    (typeof promptCacheRaw !== 'object' ||
+      promptCacheRaw === null ||
+      Array.isArray(promptCacheRaw))
+  ) {
+    throw new Error('model_access.prompt_cache must be a mapping');
+  }
+  const promptCache = (promptCacheRaw || {}) as Record<string, unknown>;
+  for (const key of Object.keys(promptCache)) {
+    if (key !== 'enabled' && key !== 'anthropic') {
+      throw new Error(
+        `model_access.prompt_cache.${key} is not supported. Configure enabled or anthropic.*.`,
+      );
+    }
+  }
+  const anthropicRaw = promptCache.anthropic;
+  if (
+    anthropicRaw !== undefined &&
+    (typeof anthropicRaw !== 'object' ||
+      anthropicRaw === null ||
+      Array.isArray(anthropicRaw))
+  ) {
+    throw new Error('model_access.prompt_cache.anthropic must be a mapping');
+  }
+  const anthropic = (anthropicRaw || {}) as Record<string, unknown>;
+  for (const key of Object.keys(anthropic)) {
+    if (key !== 'default_ttl') {
+      throw new Error(
+        `model_access.prompt_cache.anthropic.${key} is not supported. Configure default_ttl.`,
+      );
+    }
+  }
+  const defaultTtl = parseStringValue(
+    anthropic.default_ttl,
+    'model_access.prompt_cache.anthropic.default_ttl',
+    defaultSettings.promptCache.anthropic.defaultTtl,
+  ).toLowerCase();
+  if (defaultTtl !== '5m' && defaultTtl !== '1h') {
+    throw new Error(
+      'model_access.prompt_cache.anthropic.default_ttl must be 5m or 1h.',
+    );
+  }
 
   return {
     mode: enabled ? 'gantry' : 'none',
     gateway: {
       bindHost: parseGatewayBindHost(gateway.bind_host),
+    },
+    promptCache: {
+      enabled:
+        promptCache.enabled === undefined
+          ? defaultSettings.promptCache.enabled
+          : parseBooleanValue(
+              promptCache.enabled,
+              'model_access.prompt_cache.enabled',
+            ),
+      anthropic: {
+        defaultTtl,
+      },
     },
   };
 }

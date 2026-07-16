@@ -612,6 +612,38 @@ provider_accounts:
     ).toThrow('must be a numeric loopback host: 127.0.0.1 or ::1');
   });
 
+  it('defaults, renders, and parses the direct LLM prompt cache policy', () => {
+    const defaults = createDefaultRuntimeSettings();
+    expect(defaults.credentialBroker.promptCache).toEqual({
+      enabled: true,
+      anthropic: { defaultTtl: '5m' },
+    });
+
+    const parsed = parseRuntimeSettings(`model_access:
+  prompt_cache:
+    enabled: false
+    anthropic:
+      default_ttl: 1h
+`);
+    expect(parsed.credentialBroker.promptCache).toEqual({
+      enabled: false,
+      anthropic: { defaultTtl: '1h' },
+    });
+    const rendered = renderRuntimeSettingsYaml(parsed);
+    expect(rendered).toContain('prompt_cache:');
+    expect(rendered).toContain('default_ttl: 1h');
+  });
+
+  it('rejects unsupported Anthropic prompt cache TTL values', () => {
+    expect(() =>
+      parseRuntimeSettings(`model_access:
+  prompt_cache:
+    anthropic:
+      default_ttl: 30m
+`),
+    ).toThrow(/default_ttl.*5m.*1h/i);
+  });
+
   it('defaults, renders, and parses job model defaults', () => {
     const settings = createDefaultRuntimeSettings();
     settings.agent.defaultModel = 'sonnet';

@@ -501,6 +501,10 @@ function renderModelAccessSettingsYaml(
     `  enabled: ${credentialBroker.mode === 'gantry' ? 'true' : 'false'}`,
     '  gateway:',
     `    bind_host: ${quoteYamlString(credentialBroker.gateway.bindHost)}`,
+    '  prompt_cache:',
+    `    enabled: ${credentialBroker.promptCache.enabled ? 'true' : 'false'}`,
+    '    anthropic:',
+    `      default_ttl: ${quoteYamlString(credentialBroker.promptCache.anthropic.defaultTtl)}`,
     '',
   );
 }
@@ -517,7 +521,9 @@ function isDefaultCredentialBroker(
 ): boolean {
   return (
     credentialBroker.mode === 'gantry' &&
-    credentialBroker.gateway.bindHost === DEFAULT_MODEL_GATEWAY_BIND_HOST
+    credentialBroker.gateway.bindHost === DEFAULT_MODEL_GATEWAY_BIND_HOST &&
+    credentialBroker.promptCache.enabled === true &&
+    credentialBroker.promptCache.anthropic.defaultTtl === '5m'
   );
 }
 

@@ -196,7 +196,23 @@ describe('direct LLM control routes', () => {
       body: {
         model: 'sonnet',
         max_tokens: 32,
-        messages: [{ role: 'user', content: 'hi' }],
+        system: 'Stable instructions',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Unique content' },
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'aGVsbG8=',
+                },
+              },
+            ],
+          },
+        ],
       },
       headers: { 'anthropic-version': '2023-06-01' },
     });
@@ -241,6 +257,21 @@ describe('direct LLM control routes', () => {
       Buffer.from(fetchMock.mock.calls[0]![1]!.body as Buffer).toString('utf8'),
     );
     expect(upstreamBody.model).toBe('claude-sonnet-4-6');
+    expect(upstreamBody.system).toEqual([
+      {
+        type: 'text',
+        text: 'Stable instructions',
+        cache_control: { type: 'ephemeral', ttl: '5m' },
+      },
+    ]);
+    expect(upstreamBody.messages[0].content[1]).toEqual({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: 'image/png',
+        data: 'aGVsbG8=',
+      },
+    });
     const upstreamSignal = fetchMock.mock.calls[0]![1]!.signal as AbortSignal;
     expect(upstreamSignal.aborted).toBe(false);
     req.emit('close');

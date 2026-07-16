@@ -694,6 +694,20 @@
       "when": 1783924932751,
       "tag": "0101_drop_run_permission_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1783928532751,
+      "tag": "0102_teams_conversation_references",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1783932132751,
+      "tag": "0103_external_platform_events",
+      "breakpoints": true
     }
   ]
 }

@@ -29,10 +29,69 @@ import {
   summarizeAgentObservation,
 } from '../src/tasks/agent-task-runner-helpers.js';
 import { buildCompatibleJsonSchema } from '../src/tasks/json-schema-output-format.js';
+import { observeGantryModelCall } from '../src/tasks/model-observability.js';
 
 const TEST_MODEL_PROVIDER = ['anth', 'ropic'].join('') as Parameters<
   typeof createAnthropicStructuredModelProvider
 >[0]['provider'];
+
+const langfuseTracingMock = vi.hoisted(() => {
+  const state = {
+    activeSpanId: null as string | null,
+    throwOnUpdate: false,
+    updates: [] as Record<string, unknown>[],
+    starts: [] as Array<{
+      name: string;
+      options: Record<string, unknown> | undefined;
+    }>,
+    traceAttributes: [] as Record<string, unknown>[],
+  };
+  return {
+    state,
+    propagateAttributes: vi.fn(
+      async (_attributes: unknown, fn: () => Promise<unknown>) => await fn(),
+    ),
+    startActiveObservation: vi.fn(
+      async (
+        name: string,
+        fn: (observation: {
+          update(attributes: Record<string, unknown>): void;
+          otelSpan: {
+            setAttributes(attributes: Record<string, unknown>): void;
+          };
+        }) => Promise<unknown>,
+        options?: Record<string, unknown>,
+      ) => {
+        state.starts.push({ name, options });
+        return await fn({
+          update: (attributes: Record<string, unknown>) => {
+            state.updates.push(attributes);
+            if (state.throwOnUpdate) {
+              throw new Error('Langfuse update failed');
+            }
+          },
+          otelSpan: {
+            setAttributes: (attributes: Record<string, unknown>) => {
+              state.traceAttributes.push(attributes);
+            },
+          },
+        });
+      },
+    ),
+  };
+});
+
+vi.mock('@langfuse/tracing', () => ({
+  LangfuseOtelSpanAttributes: {
+    TRACE_NAME: 'langfuse.trace.name',
+    TRACE_TAGS: 'langfuse.trace.tags',
+    TRACE_SESSION_ID: 'langfuse.trace.sessionId',
+  },
+  getActiveSpanId: () => langfuseTracingMock.state.activeSpanId,
+  propagateAttributes: langfuseTracingMock.propagateAttributes,
+  startActiveObservation: langfuseTracingMock.startActiveObservation,
+  setLangfuseTracerProvider: vi.fn(),
+}));
 
 describe('@cawstudios/agent-gantry', () => {
   it('allows generic agent loops to run up to 100 steps', () => {
@@ -233,6 +292,255 @@ describe('@cawstudios/agent-gantry', () => {
       durationMs: 300,
       usageSource: 'provider',
     });
+  });
+
+  it('passes generic observability context to model providers and tools', async () => {
+    const previousTracing = process.env.LANGFUSE_TRACING_ENABLED;
+    process.env.LANGFUSE_TRACING_ENABLED = 'false';
+    const seen: Record<string, unknown>[] = [];
+    const observability = {
+      flowId: 'flow-1',
+      flowType: 'chat',
+      flowStage: 'turn',
+      sessionId: 'session-1',
+      costCategory: 'agent',
+      costStage: 'agent.chat_turn',
+      metadata: { request_id: 'request-1' },
+    };
+    let callCount = 0;
+    const runner = createStructuredModelTaskRunner({
+      model: {
+        generateJson: async (input) => {
+          seen.push({ kind: 'model', observability: input.observability });
+          callCount += 1;
+          return callCount === 1
+            ? { action: 'call_tool', toolName: 'lookup', input: {} }
+            : { action: 'final', output: { status: 'ok' } };
+        },
+      },
+    });
+
+    const result = await runner.runAgentTask?.({
+      taskType: 'task.observed',
+      instructions: 'Use the tool, then finish.',
+      input: {},
+      observability,
+      tools: [
+        {
+          name: 'lookup',
+          execute: async (_input, context) => {
+            seen.push({ kind: 'tool', observability: context.observability });
+            return { status: 'ok' };
+          },
+        },
+      ],
+      maxSteps: 2,
+    });
+    if (previousTracing === undefined) {
+      delete process.env.LANGFUSE_TRACING_ENABLED;
+    } else {
+      process.env.LANGFUSE_TRACING_ENABLED = previousTracing;
+    }
+
+    expect(result?.status).toBe('completed');
+    expect(seen).toHaveLength(3);
+    expect(seen.every((entry) => Boolean(entry.observability))).toBe(true);
+    expect(seen[0]?.observability).toMatchObject({
+      ...observability,
+      metadata: {
+        request_id: 'request-1',
+        agent_step: 1,
+        agent_step_kind: 'model',
+        agent_step_detail: 'primary',
+      },
+    });
+    expect(seen[1]?.observability).toMatchObject({
+      ...observability,
+      metadata: {
+        request_id: 'request-1',
+        agent_step: 1,
+        agent_step_kind: 'tool',
+        agent_step_detail: 'lookup',
+      },
+    });
+  });
+
+  it('does not rerun model work when Langfuse update fails', async () => {
+    const previousTracing = process.env.LANGFUSE_TRACING_ENABLED;
+    process.env.LANGFUSE_TRACING_ENABLED = 'true';
+    langfuseTracingMock.state.throwOnUpdate = true;
+    langfuseTracingMock.state.updates = [];
+    let callCount = 0;
+    try {
+      const result = await observeGantryModelCall(
+        {
+          operationName: 'anthropic.generateJson',
+          taskType: 'task.no-rerun',
+          modelCallType: 'agent_step',
+          provider: 'anthropic',
+          model: 'claude-test',
+          metadata: { correlation_id: 'corr-raw' },
+          observability: {
+            flowId: 'flow-1',
+            flowType: 'chat',
+            flowStage: 'turn',
+            costCategory: 'agent',
+            costStage: 'agent.chat_turn',
+            metadata: { redact_correlation_id: true },
+          },
+        },
+        async () => {
+          callCount += 1;
+          return { ok: true };
+        },
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect(callCount).toBe(1);
+      expect(langfuseTracingMock.state.updates[0]?.metadata).toMatchObject({
+        session_id: 'flow-1',
+        correlation_id_hash: expect.any(String),
+        correlation_id_redacted: true,
+      });
+      expect(JSON.stringify(langfuseTracingMock.state.updates)).not.toContain(
+        'corr-raw',
+      );
+    } finally {
+      langfuseTracingMock.state.throwOnUpdate = false;
+      if (previousTracing === undefined) {
+        delete process.env.LANGFUSE_TRACING_ENABLED;
+      } else {
+        process.env.LANGFUSE_TRACING_ENABLED = previousTracing;
+      }
+    }
+  });
+
+  it('uses the business stage as the generation name and attaches a remote parent', async () => {
+    const previousTracing = process.env.LANGFUSE_TRACING_ENABLED;
+    process.env.LANGFUSE_TRACING_ENABLED = 'true';
+    langfuseTracingMock.state.starts = [];
+    langfuseTracingMock.state.updates = [];
+    langfuseTracingMock.state.traceAttributes = [];
+    langfuseTracingMock.propagateAttributes.mockClear();
+    try {
+      await observeGantryModelCall(
+        {
+          operationName: 'normalizeFromDetail',
+          modelCallType: 'generation',
+          provider: 'anthropic',
+          model: 'claude-test',
+          parentSpanContext: {
+            traceId: 'a'.repeat(32),
+            spanId: 'b'.repeat(16),
+          },
+          observability: {
+            sessionId: 'scrape_run:run-1',
+            costCategory: 'scrape',
+            costStage: 'scrape.normalization_full',
+          },
+        },
+        async () => ({ ok: true }),
+      );
+
+      expect(langfuseTracingMock.state.starts).toEqual([
+        {
+          name: 'scrape.normalization_full',
+          options: {
+            asType: 'generation',
+            parentSpanContext: {
+              traceId: 'a'.repeat(32),
+              spanId: 'b'.repeat(16),
+              traceFlags: 1,
+              isRemote: true,
+            },
+          },
+        },
+      ]);
+      expect(langfuseTracingMock.state.updates[0]?.metadata).toMatchObject({
+        cost_stage: 'scrape.normalization_full',
+        operation_name: 'normalizeFromDetail',
+      });
+      expect(langfuseTracingMock.state.updates[0]?.metadata).not.toHaveProperty(
+        'status',
+      );
+      expect(langfuseTracingMock.state.updates[1]?.metadata).toMatchObject({
+        status: 'success',
+      });
+      expect(langfuseTracingMock.propagateAttributes).toHaveBeenCalledWith(
+        expect.not.objectContaining({ traceName: expect.anything() }),
+        expect.any(Function),
+      );
+      expect(langfuseTracingMock.state.traceAttributes[0]).not.toHaveProperty(
+        'langfuse.trace.name',
+      );
+    } finally {
+      if (previousTracing === undefined) {
+        delete process.env.LANGFUSE_TRACING_ENABLED;
+      } else {
+        process.env.LANGFUSE_TRACING_ENABLED = previousTracing;
+      }
+    }
+  });
+
+  it('does not rename a trace when an active parent span already exists', async () => {
+    const previousTracing = process.env.LANGFUSE_TRACING_ENABLED;
+    process.env.LANGFUSE_TRACING_ENABLED = 'true';
+    langfuseTracingMock.state.activeSpanId = 'c'.repeat(16);
+    langfuseTracingMock.propagateAttributes.mockClear();
+    try {
+      await observeGantryModelCall(
+        {
+          operationName: 'deepAnalysisSection',
+          modelCallType: 'generation',
+          provider: 'gemini',
+          model: 'gemini-test',
+          observability: {
+            sessionId: 'deep_analysis:request-1',
+            costCategory: 'deep_analysis',
+            costStage: 'deep_analysis.section',
+          },
+        },
+        async () => ({ ok: true }),
+      );
+
+      expect(langfuseTracingMock.propagateAttributes).toHaveBeenCalledWith(
+        expect.not.objectContaining({ traceName: expect.anything() }),
+        expect.any(Function),
+      );
+    } finally {
+      langfuseTracingMock.state.activeSpanId = null;
+      if (previousTracing === undefined) {
+        delete process.env.LANGFUSE_TRACING_ENABLED;
+      } else {
+        process.env.LANGFUSE_TRACING_ENABLED = previousTracing;
+      }
+    }
+  });
+
+  it('uses agent.structured_model only when no business stage exists', async () => {
+    const previousTracing = process.env.LANGFUSE_TRACING_ENABLED;
+    process.env.LANGFUSE_TRACING_ENABLED = 'true';
+    langfuseTracingMock.state.starts = [];
+    try {
+      await observeGantryModelCall(
+        {
+          operationName: 'generic.generate',
+          modelCallType: 'generation',
+          provider: 'anthropic',
+          model: 'claude-test',
+        },
+        async () => ({ ok: true }),
+      );
+      expect(langfuseTracingMock.state.starts[0]?.name).toBe(
+        'agent.structured_model',
+      );
+    } finally {
+      if (previousTracing === undefined) {
+        delete process.env.LANGFUSE_TRACING_ENABLED;
+      } else {
+        process.env.LANGFUSE_TRACING_ENABLED = previousTracing;
+      }
+    }
   });
 
   it('includes tool timeout recovery model usage in generic agent task usage', async () => {
@@ -808,7 +1116,9 @@ describe('@cawstudios/agent-gantry', () => {
         requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return new Response(
           JSON.stringify({
-            content: [{ type: 'text', text: '{"action":"call_tool","input":{}}' }],
+            content: [
+              { type: 'text', text: '{"action":"call_tool","input":{}}' },
+            ],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );

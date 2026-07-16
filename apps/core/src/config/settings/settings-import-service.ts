@@ -490,6 +490,13 @@ export function settingsToRevisionDocument(
       gateway: {
         bind_host: settings.credentialBroker.gateway.bindHost,
       },
+      prompt_cache: {
+        enabled: settings.credentialBroker.promptCache.enabled,
+        anthropic: {
+          default_ttl:
+            settings.credentialBroker.promptCache.anthropic.defaultTtl,
+        },
+      },
     },
     memory: snakeRecord(settings.memory),
     runtime: snakeRecord(settings.runtime),

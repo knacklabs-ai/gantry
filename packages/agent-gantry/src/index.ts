@@ -1,6 +1,7 @@
 export * from './shared/helpers.js';
 export * from './shared/types.js';
 export * from './control-client.js';
+export * from './generation-client.js';
 export * from './tasks/agent-task-runner.js';
 export * from './tasks/model-provider.js';
 export * from './tasks/model-observability.js';

@@ -130,6 +130,12 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
     gateway: {
       bindHost: DEFAULT_MODEL_GATEWAY_BIND_HOST,
     },
+    promptCache: {
+      enabled: true,
+      anthropic: {
+        defaultTtl: '5m',
+      },
+    },
   };
   const memory: RuntimeMemorySettings = {
     enabled: true,

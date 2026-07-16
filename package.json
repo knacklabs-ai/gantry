@@ -80,6 +80,7 @@
     "test:watch": "npm run build:contracts && vitest -c vitest.config.ts"
   },
   "dependencies": {
+    "@cawstudios/agent-gantry": "file:packages/agent-gantry",
     "@anthropic-ai/claude-agent-sdk": "0.3.156",
     "@anthropic-ai/sandbox-runtime": "0.0.52",
     "@anthropic-ai/sdk": "^0.100.1",

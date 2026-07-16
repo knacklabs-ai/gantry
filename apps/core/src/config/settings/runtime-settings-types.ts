@@ -231,6 +231,12 @@ export interface RuntimeCredentialBrokerSettings {
   gateway: {
     bindHost: string;
   };
+  promptCache: {
+    enabled: boolean;
+    anthropic: {
+      defaultTtl: '5m' | '1h';
+    };
+  };
 }
 
 export type { RuntimeMemorySettingsSnapshot, RuntimeStorageSettingsSnapshot };

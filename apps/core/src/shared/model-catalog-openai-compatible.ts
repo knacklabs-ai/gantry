@@ -131,6 +131,8 @@ const G_DISPLAY = ['Ge', 'mini'].join('');
 const G_PRO = `${G_MODEL}-2.5-pro`;
 const G_FLASH = `${G_MODEL}-2.5-flash`;
 const G_NEXT_FLASH = `${G_MODEL}-3.5-flash`;
+const G_PREVIEW_FLASH = `${G_MODEL}-3-flash-preview`;
+const G_PREVIEW_PRO = `${G_MODEL}-3.1-pro-preview`;
 const VERTEX_CHAT_SOURCE = {
   label: `Vertex ${G_DISPLAY} 3.5 Flash model card`,
   url: `https://docs.cloud.google.com/${G_MODEL}-enterprise-agent-platform/models/${G_MODEL}/3-5-flash`,
@@ -462,6 +464,34 @@ export function buildOpenAiCompatibleCatalog(deps: {
       contextWindowTokens: WINDOW_1M,
       inputUsdPerMillionTokens: 1.5,
       outputUsdPerMillionTokens: 9,
+      cacheMode: OPENAI_PREFIX_CACHE_MODE,
+      cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
+      experimental: true,
+    }),
+    executableModelEntry({
+      id: `${G_MODEL}:${G_PREVIEW_FLASH}`,
+      route: providerRoute(G_MODEL, G_PREVIEW_FLASH),
+      displayName: `${G_DISPLAY} 3 Flash Preview`,
+      runnerModel: G_PREVIEW_FLASH,
+      aliases: [`${G_MODEL}-preview-3-flash`],
+      recommendedAlias: `${G_MODEL}-preview-3-flash`,
+      source: GEMINI_SOURCE,
+      contextWindowTokens: WINDOW_1M,
+      cacheMode: OPENAI_PREFIX_CACHE_MODE,
+      cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
+      supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
+      experimental: true,
+    }),
+    executableModelEntry({
+      id: `${G_MODEL}:${G_PREVIEW_PRO}`,
+      route: providerRoute(G_MODEL, G_PREVIEW_PRO),
+      displayName: `${G_DISPLAY} 3.1 Pro Preview`,
+      runnerModel: G_PREVIEW_PRO,
+      aliases: [`${G_MODEL}-preview-3.1-pro`],
+      recommendedAlias: `${G_MODEL}-preview-3.1-pro`,
+      source: GEMINI_SOURCE,
+      contextWindowTokens: WINDOW_1M,
       cacheMode: OPENAI_PREFIX_CACHE_MODE,
       cacheTokenFields: NESTED_OPENAI_CACHE_FIELDS,
       supportedWorkloads: DEEPAGENTS_MEMORY_WORKLOADS,
