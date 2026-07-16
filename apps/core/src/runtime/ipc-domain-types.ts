@@ -7,7 +7,10 @@ import {
   UserQuestionRequest,
   UserQuestionResponse,
 } from '../domain/types.js';
-import type { RuntimeJobRepository } from '../domain/repositories/ops-repo.js';
+import type {
+  RuntimeJobRepository,
+  RuntimeMessageRepository,
+} from '../domain/repositories/ops-repo.js';
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import type {
   CapabilitySecretRepository,
@@ -22,6 +25,7 @@ import type { CredentialBrokerProfile } from '../domain/models/credentials.js';
 import type {
   JobControlPort,
   JobManagementServiceDeps,
+  RuntimeEventPublisherPort,
 } from '../application/jobs/job-management-types.js';
 import type { AsyncTaskRepository } from '../domain/ports/async-tasks.js';
 import type { RunnerSandboxProvider } from '../shared/runner-sandbox-provider.js';
@@ -36,6 +40,9 @@ import type { AgentExecutionAdapter } from '../application/agent-execution/agent
 import type { AgentExecutionAdapterRegistry } from '../application/agent-execution/agent-execution-adapter-registry.js';
 import type { SkillArtifactStore } from '../domain/ports/skill-artifact-store.js';
 import type { RemoteMcpDnsValidationCache } from '../application/mcp/mcp-server-policy.js';
+import type { PermissionClassifierPromptConsultInput } from './permission-classifier.js';
+import type { PermissionMode } from '../shared/permission-mode.js';
+import type { PermissionPromotionRepository } from '../domain/ports/permission-promotion.js';
 
 export interface IpcDeps {
   sendMessage: (
@@ -73,13 +80,25 @@ export interface IpcDeps {
   requestPermissionApproval: (
     request: PermissionApprovalRequest,
   ) => Promise<PermissionApprovalDecision>;
+  isControlApproverAllowed?: (input: {
+    conversationJid: string;
+    providerAccountId?: string;
+    userId: string;
+    sourceAgentFolder: string;
+    decisionPolicy?: 'same_channel';
+  }) => Promise<boolean>;
   requestUserAnswer: (
     request: UserQuestionRequest,
   ) => Promise<UserQuestionResponse>;
-  renderAgentTodo?: (jid: string, render: AgentTodoRender) => Promise<boolean>;
+  renderAgentTodo?: (
+    jid: string,
+    render: AgentTodoRender,
+    options?: { providerAccountId?: string },
+  ) => Promise<boolean>;
   renderRichInteraction?: (
     jid: string,
     request: RichInteractionRequest,
+    options?: { providerAccountId?: string },
   ) => Promise<boolean>;
   mcpHostnameLookup?: HostnameLookup;
   opsRepository: RuntimeJobRepository;
@@ -105,8 +124,25 @@ export interface IpcDeps {
     redactOutput?: (value: string) => string;
   }) => Promise<{ stdout?: string; stderr?: string } | void>;
   getPermissionRepository?: () => PermissionRepository | undefined;
+  getPermissionPromotionRepository?: () =>
+    | PermissionPromotionRepository
+    | undefined;
   getFileArtifactStore?: () => FileArtifactStore | undefined;
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<void>;
+  classifierConsult?: PermissionClassifierPromptConsultInput['classifierConsult'];
+  getPermissionRuntimeSettings?: () => {
+    agents: Record<
+      string,
+      { permissionMode?: PermissionMode } | null | undefined
+    >;
+    permissions: { autoMode: { model?: string } };
+    memory: { llm: { models: { extractor: string } } };
+  };
+  getPermissionMessageRepository?: () => Pick<
+    RuntimeMessageRepository,
+    'getRecentTopLevelMessagesBefore' | 'getLatestThreadMessages'
+  >;
+  subscribeRuntimeEvents?: RuntimeEventPublisherPort['subscribe'];
   getEgressSettings?: () => EgressSettings;
   getJobControl?: () => JobControlPort | undefined;
   mirrorAgentToolRulesToSettings?: (

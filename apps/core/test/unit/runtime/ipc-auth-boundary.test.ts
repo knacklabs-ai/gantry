@@ -30,6 +30,7 @@ import {
 } from '@core/runtime/ipc-parsing.js';
 import { parseTaskIpcData } from '@core/runtime/ipc-task-parsing.js';
 import { clearConsumedIpcRequestIds } from '@core/runtime/ipc-auth-validation.js';
+import { sanitizeIpcToolInput } from '@core/runtime/ipc-tool-input-sanitization.js';
 import {
   appendOwnedFileArtifactDegradeText,
   resolveOwnedFileArtifactMessage,
@@ -240,6 +241,44 @@ describe('validateIpcAuthRequest', () => {
         workspaceKey: 'team',
       },
       modelAlias: null,
+    });
+  });
+
+  it('preserves scheduler notification route provider account scope', () => {
+    const payload = signedPayload(
+      {
+        requestId: 'task-notification-provider-account',
+        nonce: randomUUID(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        type: 'scheduler_upsert_job',
+        context: { threadId: 'thread-1', responseKeyId: TEST_RESPONSE_KEY_ID },
+        name: 'Job',
+        prompt: 'Run it',
+        scheduleType: 'interval',
+        scheduleValue: '60000',
+        notificationRoutes: [
+          {
+            conversationJid: 'tg:team',
+            threadId: 'thread-1',
+            providerAccountId: 'provider-account:telegram:main',
+            label: 'primary',
+          },
+        ],
+      },
+      'team',
+      'thread-1',
+    );
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'scheduler_upsert_job',
+      notificationRoutes: [
+        {
+          conversationJid: 'tg:team',
+          threadId: 'thread-1',
+          providerAccountId: 'provider-account:telegram:main',
+          label: 'primary',
+        },
+      ],
     });
   });
 
@@ -728,6 +767,22 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
+  it('preserves provider account scope from signed task requests', () => {
+    const payload = signedPayload({
+      requestId: 'task-provider-account',
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      type: 'delegate_task',
+      context: { responseKeyId: TEST_RESPONSE_KEY_ID },
+      providerAccountId: 'provider-account:slack:main',
+    });
+
+    expect(parseTaskIpcData(payload, 'team')).toMatchObject({
+      type: 'delegate_task',
+      providerAccountId: 'provider-account:slack:main',
+    });
+  });
+
   it('preserves memory user ids from signed task requests', () => {
     const payload = signedPayload({
       requestId: 'task-memory-user-id',
@@ -843,6 +898,7 @@ describe('validateIpcAuthRequest', () => {
       context: {
         appId: 'app:telegram',
         agentId: 'agent:main',
+        providerAccountId: 'provider-account:telegram:main',
         chatJid: 'tg:team',
         threadId: 'thread:123',
         jobId: 'job:daily',
@@ -866,6 +922,7 @@ describe('validateIpcAuthRequest', () => {
       sourceAgentFolder: 'main_agent',
       appId: 'app:telegram',
       agentId: 'agent:main',
+      providerAccountId: 'provider-account:telegram:main',
       targetJid: 'tg:team',
       threadId: 'thread:123',
       jobId: 'job:daily',
@@ -882,7 +939,7 @@ describe('validateIpcAuthRequest', () => {
     });
   });
 
-  it('revokes response signing keys only for the matching run scope', () => {
+  it('revokes response signing keys only for the matching scope', () => {
     const run = createIpcAuthEnvelope('team', 'thread-1');
 
     expect(
@@ -1005,11 +1062,13 @@ describe('validateIpcAuthRequest', () => {
       runLeaseToken: 'lease-token-1',
       runLeaseFencingVersion: 1,
       toolName: 'Bash',
+      unattended: true,
+      turnIntentSummary: 'Inspect the current repository state.',
+      senderId: 'operator-1',
       decisionOptions: [
         'allow_once',
         'allow_persistent_rule',
         'cancel',
-        'allow_timed_grant',
         'not_real',
         'allow_once',
       ],
@@ -1021,6 +1080,10 @@ describe('validateIpcAuthRequest', () => {
         responseKeyId: TEST_RESPONSE_KEY_ID,
         appId: 'app:one',
         agentId: 'agent:team',
+        providerAccountId: 'provider-account:slack:a',
+        senderId: 'operator-1',
+        unattended: true,
+        turnIntentSummary: 'Inspect the current repository state.',
         chatJid: 'tg:team',
         jobId: 'job-1',
         runId: 'run-1',
@@ -1038,12 +1101,8 @@ describe('validateIpcAuthRequest', () => {
         runLeaseFencingVersion: 1,
         appId: 'app:one',
         agentId: 'agent:team',
-        decisionOptions: [
-          'allow_once',
-          'allow_persistent_rule',
-          'cancel',
-          'allow_timed_grant',
-        ],
+        providerAccountId: 'provider-account:slack:a',
+        decisionOptions: ['allow_once', 'allow_persistent_rule', 'cancel'],
         closestRule: {
           rule: 'RunCommand(npm run build)',
           reason: 'Bash leaf npm test did not match any scoped rule.',
@@ -1054,7 +1113,7 @@ describe('validateIpcAuthRequest', () => {
 
   it('caps wide signed permission tool input during parsing', () => {
     const toolInput: Record<string, unknown> = {
-      command: 'npm test',
+      command: 'x'.repeat(600),
       apiToken: 'secret-token-value',
     };
     for (let index = 0; index < 100; index += 1) {
@@ -1078,11 +1137,66 @@ describe('validateIpcAuthRequest', () => {
     const parsed = parsePermissionIpcRequest(signedPayload(payload), 'team');
 
     expect(parsed.toolInput).toMatchObject({
-      command: 'npm test',
+      command: `${'x'.repeat(500)}...[truncated]`,
       apiToken: '[REDACTED]',
       __omitted_keys: 'more',
     });
     expect(parsed.toolInput).not.toHaveProperty('extra_99');
+    expect(parsed.toolInputSanitized).toBe(true);
+    expect(parsed.toolInputSanitizedPaths).toEqual([
+      'command',
+      'apiToken',
+      ...Array.from({ length: 62 }, (_, index) => `extra_${index + 38}`),
+    ]);
+  });
+
+  it('records every altered tool input dot-path', () => {
+    const wide = Object.fromEntries(
+      Array.from({ length: 42 }, (_, index) => [`item_${index}`, index]),
+    );
+    const unsupported = () => undefined;
+
+    const result = sanitizeIpcToolInput({
+      apiToken: 'secret-token-value',
+      authText: 'Bearer abcdefgh123456',
+      long: 'x'.repeat(501),
+      nested: { child: { tooDeep: { value: 'hidden' } } },
+      wide,
+      entries: Array.from({ length: 22 }, (_, index) => index),
+      unsupported,
+    });
+
+    expect(result.altered).toBe(true);
+    expect(result.alteredPaths).toEqual([
+      'apiToken',
+      'authText',
+      'long',
+      'nested.child.tooDeep',
+      'wide.item_40',
+      'wide.item_41',
+      'entries.20',
+      'entries.21',
+      'unsupported',
+    ]);
+    expect(result.toolInput).toMatchObject({
+      apiToken: '[REDACTED]',
+      authText: '[REDACTED]',
+      nested: { child: { tooDeep: '[TRUNCATED_DEPTH]' } },
+      wide: { __omitted_keys: 'more' },
+      entries: Array.from({ length: 20 }, (_, index) => index),
+      unsupported: String(unsupported),
+    });
+  });
+
+  it('records a root alteration for non-object tool input', () => {
+    expect(sanitizeIpcToolInput('not-an-object')).toEqual({
+      altered: true,
+      alteredPaths: ['$'],
+    });
+    expect(sanitizeIpcToolInput(undefined)).toEqual({
+      altered: false,
+      alteredPaths: [],
+    });
   });
 
   it('rejects permission IPC approval target mismatches', () => {
@@ -1326,7 +1440,11 @@ describe('parseIpcMessage', () => {
       text: 'See attached report.',
       nonce: randomUUID(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      context: { appId: 'app:test', agentId: 'agent:test' },
+      context: {
+        appId: 'app:test',
+        agentId: 'agent:test',
+        providerAccountId: 'provider-account:slack:a',
+      },
       files: [
         { scope: 'reports', path: 'daily.md', version: 2 },
         { path: 'summary.txt' },
@@ -1336,6 +1454,7 @@ describe('parseIpcMessage', () => {
 
     expect(parseIpcMessage(signedPayload(payload), 'team')).toMatchObject({
       appId: 'app:test',
+      providerAccountId: 'provider-account:slack:a',
       chatJid: 'tg:team',
       text: 'See attached report.',
       files: [

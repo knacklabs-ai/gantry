@@ -8,17 +8,23 @@ import type { AgentRelationshipMode } from '../../shared/agent-relationship-mode
 import type { YoloModeSettings } from '../../shared/yolo-mode-policy.js';
 import type { EgressSettings } from '../../shared/egress-policy.js';
 import type { AgentHarness } from '../../shared/agent-engine.js';
+import type { AgentRuntime } from '../../shared/agent-runtime.js';
+import type { PermissionMode } from '../../shared/permission-mode.js';
 import type { ModelWorkload } from '../../shared/model-catalog.js';
+import type { ModelEffortLevel } from '../../shared/model-catalog.js';
 
 export interface RuntimeProviderSettings {
   enabled: boolean;
-  defaultConnection?: string;
 }
 
-export interface RuntimeProviderConnectionSettings {
+export interface RuntimeProviderAccountSettings {
+  agentId: string;
   provider: string;
   label: string;
+  status?: 'active' | 'disabled';
   runtimeSecretRefs: Record<string, string>;
+  externalIdentityRef?: Record<string, string>;
+  config?: Record<string, string>;
 }
 
 export type RuntimeConversationKind =
@@ -31,12 +37,28 @@ export type RuntimeConversationKind =
   | 'web';
 
 export interface RuntimeConfiguredConversation {
-  providerConnection: string;
+  providerConnection?: string;
+  providerAccount: string;
   externalId: string;
   kind: RuntimeConversationKind;
   displayName: string;
+  brainHarvest?: boolean;
   senderPolicy: import('./sender-allowlist.js').ChatAllowlistEntry;
   controlApprovers: string[];
+  installedAgents: Record<string, RuntimeConfiguredConversationInstall>;
+}
+
+export interface RuntimeConfiguredConversationInstall {
+  agentId: string;
+  providerAccountId: string;
+  threadId?: string;
+  status: 'active' | 'disabled';
+  addedAt: string;
+  memoryScope: 'conversation' | 'user' | 'agent' | 'app';
+  trigger?: string;
+  requiresTrigger?: boolean;
+  model?: string;
+  permissionMode?: PermissionMode;
 }
 
 export type EmbeddingProviderName = string;
@@ -71,6 +93,7 @@ export interface RuntimeMemorySettings {
   dreaming: {
     enabled: boolean;
     cron: string;
+    alerts: boolean;
     embeddings: {
       enabled: boolean;
       provider: EmbeddingProviderName;
@@ -108,22 +131,28 @@ export interface RuntimeAgentSettings {
 
 export interface RuntimeConfiguredAgentBinding {
   jid: string;
+  threadId?: string;
   provider?: string;
+  providerAccountId?: string;
   name?: string;
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
   model?: string;
+  permissionMode?: PermissionMode;
 }
 
 export interface RuntimeConfiguredBinding {
   agent: string;
   conversation: string;
+  installKey?: string;
+  threadId?: string;
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
-  memoryScope: 'conversation' | 'user' | 'agent';
+  memoryScope: 'conversation' | 'user' | 'agent' | 'app';
   model?: string;
+  permissionMode?: PermissionMode;
 }
 
 export interface RuntimeConfiguredAgentSourceRef {
@@ -149,16 +178,42 @@ export interface RuntimeConfiguredAgentCapability {
 }
 
 export type AgentAccessPreset = 'full' | 'locked';
+export type AgentEffort = ModelEffortLevel;
+export type RuntimeAgentThinking =
+  | { mode: 'off'; budgetTokens?: never }
+  | { mode: 'on'; budgetTokens?: number };
+export type RuntimeConfiguredToolRule =
+  | {
+      tool: string;
+      when?: { arg: string; matches: string };
+      action: 'block';
+      reason: string;
+    }
+  | {
+      tool: string;
+      action: 'require_prior';
+      prior: string;
+      reason: string;
+    };
+export type { AgentRuntime };
 
 export interface RuntimeConfiguredAgent {
   name: string;
   folder: string;
+  runtime?: AgentRuntime;
+  maxTurns?: number;
+  maxRunTokens?: number;
+  effort?: AgentEffort;
+  thinking?: RuntimeAgentThinking;
+  maxOutputTokens?: number;
   persona?: AgentPersona;
   relationshipMode?: AgentRelationshipMode;
   model?: string;
   agentHarness?: AgentHarness;
+  permissionMode?: PermissionMode;
   oneTimeJobDefaultModel?: string;
   recurringJobDefaultModel?: string;
+  toolRules?: RuntimeConfiguredToolRule[];
   bindings: Record<string, RuntimeConfiguredAgentBinding>;
   sources: RuntimeConfiguredAgentSources;
   capabilities: RuntimeConfiguredAgentCapability[];
@@ -248,6 +303,9 @@ export interface RuntimeBrowserSettings {
 export interface RuntimePermissionSettings {
   yoloMode: YoloModeSettings;
   egress: EgressSettings;
+  autoMode: {
+    model?: string;
+  };
 }
 
 // Optional in-memory per-provider request rate caps enforced at the model
@@ -280,6 +338,8 @@ export interface RuntimeCustomModelAlias {
   maxOutputTokens?: number;
   inputUsdPerMillionTokens?: number;
   outputUsdPerMillionTokens?: number;
+  cachedInputUsdPerMillionTokens?: number;
+  cacheWriteUsdPerMillionTokens?: number;
   supportsThinking?: boolean;
   supportsTools?: boolean;
   source: RuntimeCustomModelAliasSource;
@@ -288,8 +348,14 @@ export interface RuntimeCustomModelAlias {
 export interface RuntimeSettings {
   desiredState: RuntimeDesiredStateSettings;
   providers: Record<string, RuntimeProviderSettings>;
-  providerConnections: Record<string, RuntimeProviderConnectionSettings>;
+  providerAccounts: Record<string, RuntimeProviderAccountSettings>;
   conversations: Record<string, RuntimeConfiguredConversation>;
+  conversationInstalls: Record<
+    string,
+    RuntimeConfiguredConversationInstall & {
+      conversationId: string;
+    }
+  >;
   bindings: Record<string, RuntimeConfiguredBinding>;
   agents: Record<string, RuntimeConfiguredAgent>;
   storage: RuntimeStorageSettings;

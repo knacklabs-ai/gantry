@@ -6,6 +6,7 @@ import {
   resolveDurableQuestionInteractionByRequestId,
 } from '../../application/interactions/pending-interaction-durability.js';
 import { logger } from '../../infrastructure/logging/logger.js';
+import { findConversationRoutesForChat } from '../../shared/thread-queue-key.js';
 import {
   decisionForMode,
   normalizePermissionAction,
@@ -306,6 +307,9 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         await this.opts.onMessageAction?.({
           kind: 'live_turn_stop',
           conversationJid: `tg:${chatId}`,
+          ...(this.opts.providerAccountId
+            ? { providerAccountId: this.opts.providerAccountId }
+            : {}),
           threadId:
             typeof callbackMessage?.message_thread_id === 'number'
               ? String(callbackMessage.message_thread_id)
@@ -352,6 +356,9 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
           await this.opts.onMessageAction?.({
             kind: 'scheduler_run_now',
             conversationJid: `tg:${chatId}`,
+            ...(this.opts.providerAccountId
+              ? { providerAccountId: this.opts.providerAccountId }
+              : {}),
             threadId:
               typeof callbackMessage?.message_thread_id === 'number'
                 ? String(callbackMessage.message_thread_id)
@@ -370,7 +377,15 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
       }
 
       const permissionMatch = TELEGRAM_PERMISSION_CALLBACK_PATTERN.exec(data);
-      if (!permissionMatch) return;
+      if (!permissionMatch) {
+        if (data.startsWith('perm:')) {
+          await ctx.answerCallbackQuery({
+            text: 'Permission request is no longer active.',
+            show_alert: true,
+          });
+        }
+        return;
+      }
       const mode = normalizePermissionAction(permissionMatch[1]);
       if (!mode) return;
       const callbackId = permissionMatch[2];
@@ -411,6 +426,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             userId,
             durable.sourceAgentFolder,
             durable.decisionPolicy as never,
+            durable.threadId ?? undefined,
           ));
         const resolved = authorized
           ? await resolveDurablePermissionInteractionByRequestId({
@@ -475,6 +491,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         userId,
         pending.sourceAgentFolder,
         pending.decisionPolicy,
+        pending.request.threadId,
       );
       if (!authorized) {
         logger.warn(
@@ -514,9 +531,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             ? 'allowed once via Telegram'
             : mode === 'allow_persistent_rule'
               ? 'persistent rule allowed via Telegram'
-              : mode === 'allow_timed_grant'
-                ? `eligible tools/SDK API prompt grant (5 min) via Telegram`
-                : 'canceled via Telegram',
+              : 'canceled via Telegram',
       });
       await ctx.answerCallbackQuery({
         text:
@@ -524,9 +539,7 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             ? 'Allowed once. Details posted in chat.'
             : mode === 'allow_persistent_rule'
               ? 'Allowed for future. Details posted in chat.'
-              : mode === 'allow_timed_grant'
-                ? 'Allowed for 5 min. Details posted in chat.'
-                : 'Canceled.',
+              : 'Canceled.',
       });
     });
 
@@ -613,10 +626,16 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
         chatName,
         'telegram',
         isGroup,
+        { providerAccountId: this.opts.providerAccountId },
       );
 
-      const group = this.opts.conversationRoutes()[chatJid];
-      if (!group && isGroup) {
+      const hasRegisteredRoute =
+        findConversationRoutesForChat(
+          this.opts.conversationRoutes(),
+          chatJid,
+          threadId?.toString(),
+        ).length > 0;
+      if (!hasRegisteredRoute && isGroup) {
         logger.debug(
           { chatJid, chatName },
           'Message from unregistered Telegram chat',

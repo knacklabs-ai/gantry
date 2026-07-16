@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Job, JobSetupState } from '@core/domain/types.js';
 import {
+  notifySchedulerRunRecovered,
   notifySchedulerSetupRequired,
-  notifySchedulerRunStart,
   notifySchedulerTerminalRunState,
 } from '@core/jobs/execution-notifications.js';
 
@@ -50,10 +50,22 @@ function makeJob(overrides: Partial<Job> = {}): Job {
   } as Job;
 }
 
+function makeMemoryDreamingJob(overrides: Partial<Job> = {}): Job {
+  return makeJob({
+    id: 'system:dreaming:main_agent:test',
+    name: 'Memory Dreaming (main_agent tg:5759865942)',
+    prompt: '__system:memory_dream',
+    schedule_type: 'cron',
+    schedule_value: '15 3 * * *',
+    created_by: 'agent',
+    ...overrides,
+  });
+}
+
 describe('jobs/execution-notifications', () => {
-  it('sends start lifecycle notification for non-silent jobs', async () => {
+  it('sends recovery notifications for non-silent jobs', async () => {
     const sendMessage = vi.fn(async () => undefined);
-    const delivered = await notifySchedulerRunStart({
+    const delivered = await notifySchedulerRunRecovered({
       job: makeJob(),
       runId: 'run-123456789',
       sendMessage,
@@ -62,40 +74,9 @@ describe('jobs/execution-notifications', () => {
     expect(delivered).toBe(true);
     expect(sendMessage).toHaveBeenCalledWith(
       'tg:scheduler',
-      expect.stringContaining('**▶️ Running** · Daily summary'),
+      expect.stringContaining('Run recovered: previous worker lost its lease'),
       { threadId: 'thread-1' },
     );
-  });
-
-  it('skips start notifications for silent jobs', async () => {
-    const sendMessage = vi.fn(async () => undefined);
-    const delivered = await notifySchedulerRunStart({
-      job: makeJob({ silent: true }),
-      runId: 'run-1',
-      sendMessage,
-    });
-
-    expect(delivered).toBe(false);
-    expect(sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('does not block a run when start notification delivery hangs', async () => {
-    vi.useFakeTimers();
-    try {
-      const sendMessage = vi.fn(() => new Promise<void>(() => undefined));
-      const delivered = notifySchedulerRunStart({
-        job: makeJob(),
-        runId: 'run-1',
-        sendMessage,
-      });
-
-      await vi.advanceTimersByTimeAsync(5_000);
-
-      await expect(delivered).resolves.toBe(false);
-      expect(sendMessage).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('prefers lifecycle update over summary fallback when update succeeds', async () => {
@@ -119,7 +100,7 @@ describe('jobs/execution-notifications', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('falls back once to summary notification when lifecycle update is unavailable', async () => {
+  it('sends one terminal outcome and no normal start notification', async () => {
     const sendMessage = vi.fn(async () => undefined);
 
     const notified = await notifySchedulerTerminalRunState({
@@ -140,6 +121,7 @@ describe('jobs/execution-notifications', () => {
       expect.stringContaining('**❌ Failed** · Daily summary'),
       expect.objectContaining({ threadId: 'thread-1' }),
     );
+    expect(String(sendMessage.mock.calls[0]?.[1])).not.toContain('Running');
   });
 
   it('cleans markdown job reports into readable terminal outcomes', async () => {
@@ -172,11 +154,11 @@ describe('jobs/execution-notifications', () => {
     });
   });
 
-  it('turns queue bookkeeping JSON into a human memory maintenance outcome', async () => {
+  it('sends compact memory dreaming completion notifications', async () => {
     const sendMessage = vi.fn(async () => undefined);
 
     await notifySchedulerTerminalRunState({
-      job: makeJob({ name: 'Memory Dreaming (main_agent tg:5759865942)' }),
+      job: makeMemoryDreamingJob(),
       runId: 'run-1',
       runShortId: 6,
       runStatus: 'completed',
@@ -189,20 +171,37 @@ describe('jobs/execution-notifications', () => {
     });
 
     const message = String(sendMessage.mock.calls[0]?.[1]);
-    expect(message).toContain('**✅ Completed**');
-    expect(message).toContain(
-      '· Memory Dreaming (main_agent tg:5759865942) · 13s',
-    );
-    expect(message).toContain('Memory maintenance completed.');
+    expect(message).toBe('Memory job done.');
     expect(message).not.toContain('"queued"');
     expect(message).not.toContain('deduped');
+    expect(message).not.toContain('Used:');
+    expect(message).not.toContain('Next:');
+  });
+
+  it('sends compact memory dreaming dedupe notifications', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+
+    await notifySchedulerTerminalRunState({
+      job: makeMemoryDreamingJob(),
+      runId: 'run-1',
+      runShortId: 6,
+      runStatus: 'completed',
+      summary: '{"queued":false,"pending":1,"deduped":true}',
+      nextRun: '2026-05-15T21:45:00.000Z',
+      retryCount: 0,
+      pauseReason: null,
+      sendMessage,
+      durationMs: 13_000,
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toBe('Memory job already running.');
   });
 
   it('sends pending memory review guidance through scheduler notification routes', async () => {
     const sendMessage = vi.fn(async () => undefined);
 
     await notifySchedulerTerminalRunState({
-      job: makeJob({ name: 'Memory Dreaming (main_agent tg:5759865942)' }),
+      job: makeMemoryDreamingJob(),
       runId: 'run-1',
       runShortId: 7,
       runStatus: 'completed',
@@ -217,22 +216,12 @@ describe('jobs/execution-notifications', () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       'tg:scheduler',
-      expect.stringContaining(
-        '**📝 Needs memory review** · Memory Dreaming (main_agent tg:5759865942)',
-      ),
+      'Memory job needs review: 4 memory changes waiting.',
       expect.objectContaining({
         threadId: 'thread-1',
         actionAffordances: [],
       }),
     );
-    const message = String(sendMessage.mock.calls[0]?.[1]);
-    expect(message).toContain(
-      'Memory dreaming needs attention: 4 sent to review.',
-    );
-    expect(message).toContain(
-      'Needs attention: 4 memory changes need your review.',
-    );
-    expect(message).not.toContain('memory_review_pending');
   });
 
   it('keeps pending memory review guidance in lifecycle update summaries', async () => {
@@ -240,7 +229,7 @@ describe('jobs/execution-notifications', () => {
     const updateLifecycleNotification = vi.fn(async () => 'updated' as const);
 
     const notified = await notifySchedulerTerminalRunState({
-      job: makeJob({ name: 'Memory Dreaming (main_agent tg:5759865942)' }),
+      job: makeMemoryDreamingJob(),
       runId: 'run-1',
       runShortId: 8,
       runStatus: 'completed',
@@ -259,21 +248,35 @@ describe('jobs/execution-notifications', () => {
     expect(updateLifecycleNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         runStatus: 'completed',
-        summaryMessage: expect.stringContaining(
-          '**📝 Needs memory review** · Memory Dreaming (main_agent tg:5759865942)',
-        ),
+        summaryMessage: 'Memory job needs review: 7 memory changes waiting.',
       }),
     );
-    const summaryMessage = String(
-      updateLifecycleNotification.mock.calls[0]?.[0].summaryMessage,
+  });
+
+  it('sends compact blocked memory dreaming notifications', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+
+    await notifySchedulerTerminalRunState({
+      job: makeMemoryDreamingJob(),
+      runId: 'run-1',
+      runShortId: 9,
+      runStatus: 'completed',
+      summary: 'Memory dreaming needs attention: 4 blocked.',
+      nextRun: null,
+      retryCount: 0,
+      pauseReason: null,
+      sendMessage,
+      durationMs: 12_000,
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'tg:scheduler',
+      'Memory job needs attention: 4 memory changes blocked while creating reviews.',
+      expect.objectContaining({
+        threadId: 'thread-1',
+        actionAffordances: [],
+      }),
     );
-    expect(summaryMessage).toContain(
-      'Memory dreaming needs attention: 7 pending memory reviews need review.',
-    );
-    expect(summaryMessage).toContain(
-      'Needs attention: 7 memory changes need your review.',
-    );
-    expect(summaryMessage).not.toContain('memory_review_pending');
   });
 
   it('hides runner diagnostics from failed job receipts', async () => {
@@ -338,9 +341,7 @@ describe('jobs/execution-notifications', () => {
     });
 
     const message = String(sendMessage.mock.calls[0]?.[1]);
-    expect(message).toContain(
-      'Next: Runs again after the schedule is repaired.',
-    );
+    expect(message).toContain('Next: Stopped until the job is fixed or rerun.');
     expect(message).not.toContain('not-a-date');
   });
 
@@ -375,12 +376,6 @@ describe('jobs/execution-notifications', () => {
         {
           kind: 'scheduler_pause_job',
           label: 'Pause job',
-          jobId: 'job-1',
-          runId: 'run-1',
-        },
-        {
-          kind: 'scheduler_open',
-          label: 'Open in scheduler',
           jobId: 'job-1',
           runId: 'run-1',
         },
@@ -473,12 +468,6 @@ describe('jobs/execution-notifications', () => {
         {
           kind: 'scheduler_pause_job',
           label: 'Pause job',
-          jobId: 'job-1',
-          runId: 'run-1',
-        },
-        {
-          kind: 'scheduler_open',
-          label: 'Open in scheduler',
           jobId: 'job-1',
           runId: 'run-1',
         },

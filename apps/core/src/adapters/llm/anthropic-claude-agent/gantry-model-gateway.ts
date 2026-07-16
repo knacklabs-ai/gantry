@@ -31,6 +31,7 @@ import {
   type ModelProviderDefinition,
 } from '../../../shared/model-provider-registry.js';
 import { logger } from '../../../infrastructure/logging/logger.js';
+import { normalizeModelUsage } from '../../../shared/model-usage.js';
 import {
   assertProviderPathAllowed,
   injectProviderAuth,
@@ -70,8 +71,11 @@ interface GatewayTokenRecord {
   credentialFingerprint: string;
   createdAtMs: number;
   expiresAtMs: number;
+  tokenScope: string;
   agentId?: RuntimeEventPublishInput['agentId'];
   runId?: RuntimeEventPublishInput['runId'];
+  apiKeyId?: string;
+  apiRequestId?: string;
   jobId?: RuntimeEventPublishInput['jobId'];
   conversationId?: RuntimeEventPublishInput['conversationId'];
   threadId?: RuntimeEventPublishInput['threadId'];
@@ -161,8 +165,13 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
       credentialFingerprint: credential.fingerprint,
       createdAtMs: Date.now(),
       expiresAtMs: Date.now() + this.tokenTtlMs,
+      tokenScope: gatewayTokenScope(input.binding),
       ...(input.binding.agentId ? { agentId: input.binding.agentId } : {}),
       ...(input.binding.runId ? { runId: input.binding.runId } : {}),
+      ...(input.binding.apiKeyId ? { apiKeyId: input.binding.apiKeyId } : {}),
+      ...(input.binding.apiRequestId
+        ? { apiRequestId: input.binding.apiRequestId }
+        : {}),
       ...(input.binding.jobId ? { jobId: input.binding.jobId } : {}),
       ...(input.binding.conversationId
         ? { conversationId: input.binding.conversationId }
@@ -246,14 +255,17 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
     );
     const providerId = provider.id as ModelCredentialProvider;
     const appId = requireBindingAppId(input);
-    if (!input.binding.runId) {
-      throw new Error('Gantry Model Gateway token revocation requires runId.');
+    const tokenScope = gatewayTokenScope(input.binding);
+    if (!isRevocableGatewayTokenScope(tokenScope)) {
+      throw new Error(
+        'Gantry Model Gateway token revocation requires runId or apiKeyId.',
+      );
     }
     for (const [token, record] of this.tokens.entries()) {
       if (
         record.appId === appId &&
         record.providerId === providerId &&
-        record.runId === input.binding.runId
+        record.tokenScope === tokenScope
       ) {
         this.tokens.delete(token);
       }
@@ -469,6 +481,7 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
       req.off('aborted', onClientAbort);
       res.off('close', onClientAbort);
     }
+    const usage = await extractGatewayResponseUsage(response, body);
     await this.publishGatewayUseAudit(tokenRecord, {
       outcome: response.ok ? 'forwarded' : 'upstream_error',
       method: req.method ?? 'GET',
@@ -476,6 +489,7 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
       upstreamHost: upstreamUrl.host,
       upstreamPath: upstreamUrl.pathname,
       credentialFingerprint: credential.fingerprint,
+      usage,
     });
     res.statusCode = response.status;
     response.headers.forEach((value, key) => {
@@ -498,6 +512,7 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
       upstreamHost?: string;
       upstreamPath?: string;
       credentialFingerprint?: string;
+      usage?: ReturnType<typeof normalizeModelUsage>;
     },
   ): Promise<void> {
     if (!this.audit) return;
@@ -517,6 +532,8 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
         actor: 'gantry-model-gateway',
         payload: {
           providerId: tokenRecord.providerId,
+          tokenScope: tokenRecord.tokenScope,
+          ...(tokenRecord.apiKeyId ? { apiKeyId: tokenRecord.apiKeyId } : {}),
           outcome: input.outcome,
           method: input.method,
           status: input.status,
@@ -527,6 +544,8 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
             : {}),
           ...(input.upstreamHost ? { upstreamHost: input.upstreamHost } : {}),
           ...(input.upstreamPath ? { upstreamPath: input.upstreamPath } : {}),
+          usage: input.usage,
+          modelAlias: input.usage?.model,
         },
       });
     } catch (err) {
@@ -555,6 +574,8 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
         actor: 'gantry-model-gateway',
         payload: {
           providerId: tokenRecord.providerId,
+          tokenScope: tokenRecord.tokenScope,
+          ...(tokenRecord.apiKeyId ? { apiKeyId: tokenRecord.apiKeyId } : {}),
           outcome,
           tokenIssuedAtMs: tokenRecord.createdAtMs,
           tokenExpiresAtMs: tokenRecord.expiresAtMs,
@@ -584,6 +605,32 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
   }
 }
 
+export async function extractGatewayResponseUsage(
+  response: Response,
+  requestBody: Buffer,
+) {
+  if (!response.ok) return undefined;
+  if (response.headers.get('content-type')?.includes('text/event-stream'))
+    return undefined;
+  try {
+    const requestJson = requestBody.toString('utf8');
+    const request = JSON.parse(requestJson) as Record<string, unknown>;
+    if (request.stream === true) return undefined;
+    const payload = (await response.clone().json()) as Record<string, unknown>;
+    return normalizeModelUsage({
+      message: payload,
+      fallbackModel:
+        typeof payload.model === 'string'
+          ? payload.model
+          : typeof request.model === 'string'
+            ? request.model
+            : undefined,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function gatewayProviderFor(providerId: string): ModelProviderDefinition {
   const normalized = normalizeModelProviderId(providerId);
   const provider = getModelProviderDefinition(normalized);
@@ -600,6 +647,22 @@ function runtimeEventRunIdFor(
     runId.startsWith('memory-query:')
     ? undefined
     : tokenRecord.runId;
+}
+
+function gatewayTokenScope(
+  binding: AgentCredentialBrokerInput['binding'],
+): string {
+  if (binding.apiKeyId) {
+    return `api_key:${[binding.apiKeyId, binding.apiRequestId]
+      .filter(Boolean)
+      .join(':')}`;
+  }
+  if (binding.runId) return `run:${String(binding.runId)}`;
+  return 'unscoped';
+}
+
+function isRevocableGatewayTokenScope(scope: string): boolean {
+  return scope.startsWith('run:') || scope.startsWith('api_key:');
 }
 
 function defaultGatewayProviderId(): string {

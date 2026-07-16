@@ -835,6 +835,117 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(systemPromptText).not.toContain('prior user preference');
   });
 
+  it('enforces require_prior through SDK Pre/PostToolUse hooks only when rules exist', async () => {
+    const env = prepareRuntimeEnv();
+    const { runQuery } = await importRunQuery();
+
+    await runQuery(
+      'guarded run',
+      env.mcpServerPath,
+      runnerInput({
+        toolRules: [
+          {
+            tool: 'deploy',
+            action: 'require_prior',
+            prior: 'AgentDelegation',
+            reason: 'tests must pass before deploy',
+          },
+          {
+            tool: 'AgentDelegation',
+            action: 'block',
+            reason: 'delegation disabled',
+          },
+          {
+            tool: 'mcp__crm__delete',
+            action: 'block',
+            reason: 'deletion disabled',
+          },
+        ],
+      }),
+      sdkProcessEnv(),
+      'sonnet',
+      undefined,
+      undefined,
+    );
+
+    const guardedCall = sdkState.calls[0];
+    const preToolUseHooks = guardedCall?.options.hooks.PreToolUse[0].hooks;
+    expect(preToolUseHooks).toHaveLength(2);
+    const declarativePreToolUse = preToolUseHooks[1];
+    const denied = await declarativePreToolUse({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'deploy',
+      tool_input: {},
+    });
+    expect(denied).toMatchObject({
+      continue: false,
+      decision: 'block',
+      hookSpecificOutput: {
+        permissionDecision: 'deny',
+        permissionDecisionReason: expect.stringContaining(
+          'tests must pass before deploy',
+        ),
+      },
+    });
+    expect(JSON.parse(denied.reason)).toMatchObject({
+      category: 'permission',
+      isRetryable: false,
+      message: expect.stringContaining('tests must pass before deploy'),
+    });
+    await expect(
+      declarativePreToolUse({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__gantry__delegate_task',
+        tool_input: {},
+      }),
+    ).resolves.toMatchObject({
+      continue: false,
+      hookSpecificOutput: {
+        permissionDecisionReason: expect.stringContaining(
+          'delegation disabled',
+        ),
+      },
+    });
+    await expect(
+      declarativePreToolUse({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'mcp__crm__delete',
+        tool_input: {},
+      }),
+    ).resolves.toMatchObject({
+      continue: false,
+      hookSpecificOutput: {
+        permissionDecisionReason: expect.stringContaining('deletion disabled'),
+      },
+    });
+
+    const postToolUse = guardedCall?.options.hooks.PostToolUse[0].hooks[0];
+    await postToolUse({
+      hook_event_name: 'PostToolUse',
+      tool_name: 'mcp__gantry__delegate_task',
+    });
+    await expect(
+      declarativePreToolUse({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'deploy',
+        tool_input: {},
+      }),
+    ).resolves.toEqual({ continue: true });
+
+    await runQuery(
+      'ordinary run',
+      env.mcpServerPath,
+      runnerInput(),
+      sdkProcessEnv(),
+      'sonnet',
+      undefined,
+      undefined,
+    );
+    const ordinaryCall = sdkState.calls[1];
+    expect(ordinaryCall?.options.hooks.PreToolUse[0].hooks).toHaveLength(1);
+    expect(ordinaryCall?.options.hooks.PostToolUse).toBeUndefined();
+  });
+
   it('passes an explicit empty SDK skills list when Gantry selected no skills', async () => {
     const env = prepareRuntimeEnv();
     vi.stubEnv(GANTRY_CLAUDE_SDK_SKILLS_ENV, JSON.stringify([]));
@@ -899,7 +1010,13 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(
       sdkState.calls[0]?.options.mcpServers.gantry?.env
         ?.GANTRY_MCP_TOOL_NAMES_JSON,
-    ).toBe(JSON.stringify(selectedGantryMcpToolNames([])));
+    ).toBe(
+      JSON.stringify(
+        selectedGantryMcpToolNames([], {
+          memoryReviewerIsControlApprover: true,
+        }),
+      ),
+    );
     expect(
       sdkState.calls[0]?.options.mcpServers.gantry?.env
         ?.GANTRY_MEMORY_IPC_ACTIONS_JSON,
@@ -910,7 +1027,7 @@ describe('Claude Agent SDK boundary integration', () => {
         }),
       ),
     );
-    expect(sdkState.calls[0]?.options.allowedTools).not.toEqual(
+    expect(sdkState.calls[0]?.options.allowedTools).toEqual(
       expect.arrayContaining([
         'mcp__gantry__memory_review_pending',
         'mcp__gantry__memory_review_decision',
@@ -1175,21 +1292,30 @@ describe('Claude Agent SDK boundary integration', () => {
     ).toContain('configured subagent definition');
   });
 
-  it('rejects legacy Task tool fields through the same native subagent guard', async () => {
+  it('rejects legacy Task subagent tool aliases before native subagent validation', async () => {
     const env = prepareRuntimeEnv();
-    env.TEST_SUBAGENT_TOOL_NAME = 'Task';
+    const previousToolName = process.env.TEST_SUBAGENT_TOOL_NAME;
+    process.env.TEST_SUBAGENT_TOOL_NAME = 'Task';
     sdkState.mode = 'agent-input-field-denial';
     const { runQuery } = await importRunQuery();
 
-    await runQuery(
-      'delegate carefully',
-      env.mcpServerPath,
-      runnerInput(),
-      {},
-      'sonnet',
-      undefined,
-      undefined,
-    );
+    try {
+      await runQuery(
+        'delegate carefully',
+        env.mcpServerPath,
+        runnerInput(),
+        {},
+        'sonnet',
+        undefined,
+        undefined,
+      );
+    } finally {
+      if (previousToolName === undefined) {
+        delete process.env.TEST_SUBAGENT_TOOL_NAME;
+      } else {
+        process.env.TEST_SUBAGENT_TOOL_NAME = previousToolName;
+      }
+    }
 
     expect(sdkState.calls[0]?.permissionDecision).toEqual(
       expect.objectContaining({
@@ -1199,7 +1325,7 @@ describe('Claude Agent SDK boundary integration', () => {
     );
     expect(
       String((sdkState.calls[0]?.permissionDecision as any).message),
-    ).toContain('disallowedTools');
+    ).toContain('Use the Agent tool');
   });
 
   it('preserves subagent-attributed assistant messages as runner resume anchors', async () => {

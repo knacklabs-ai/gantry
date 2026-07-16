@@ -1,11 +1,12 @@
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import type { AgentRelationshipMode } from '../../shared/agent-relationship-mode.js';
+import type { PermissionMode } from '../../shared/permission-mode.js';
 import type { AppId } from '../../domain/app/app.js';
 import type {
   AgentRepository,
   ConversationRepository,
   McpServerRepository,
-  ProviderConnectionRepository,
+  ProviderAccountRepository,
   SkillCatalogRepository,
   ToolCatalogRepository,
 } from '../../domain/ports/repositories.js';
@@ -17,22 +18,28 @@ export interface StoredAgentBinding {
   trigger: string;
   added_at: string;
   requiresTrigger?: boolean;
+  providerAccountId?: string;
   conversationKind?: 'dm' | 'channel';
   agentConfig?: {
     model?: string;
     persona?: AgentPersona;
     relationshipMode?: AgentRelationshipMode;
+    permissionMode?: PermissionMode;
   };
 }
 
 export interface ConfiguredRoutingBinding {
   agentFolder: string;
   jid: string;
+  installKey?: string;
+  threadId?: string;
+  providerAccountId?: string;
   name?: string;
   trigger: string;
   addedAt: string;
   requiresTrigger: boolean;
   model?: string;
+  permissionMode?: PermissionMode;
   conversation?: RuntimeConfiguredConversation;
 }
 
@@ -44,7 +51,7 @@ export interface SettingsDesiredStateOps {
 
 export interface SettingsDesiredStateRepositories {
   agents: AgentRepository;
-  providerConnections?: ProviderConnectionRepository;
+  providerAccounts?: ProviderAccountRepository;
   conversations?: ConversationRepository;
   tools: ToolCatalogRepository;
   skills: SkillCatalogRepository;

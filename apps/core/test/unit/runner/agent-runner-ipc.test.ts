@@ -372,6 +372,10 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'permission-timeout.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/permission-mode.ts'),
+    path.join(sharedDir, 'permission-mode.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/shared/stable-hash.ts'),
     path.join(sharedDir, 'stable-hash.ts'),
   );
@@ -470,6 +474,10 @@ export async function* query({ prompt, options }) {
     process.env.TEST_EMPTY_RESUMED_QUERY === '1'
   ) {
     appendRecord(call);
+    if (process.env.TEST_EXIT_AFTER_QUERY === '1') {
+      fs.mkdirSync(process.env.GANTRY_IPC_INPUT_DIR, { recursive: true });
+      fs.writeFileSync(path.join(process.env.GANTRY_IPC_INPUT_DIR, '_close'), '');
+    }
     return;
   }
 

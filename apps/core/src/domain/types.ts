@@ -1,5 +1,5 @@
-import type { ExecutionProviderId } from './sessions/sessions.js';
 import type { SemanticCapabilityDefinition } from '../shared/semantic-capabilities.js';
+import type { PermissionMode } from '../shared/permission-mode.js';
 
 export type {
   Job,
@@ -39,6 +39,17 @@ export interface ThinkingOverride {
   display?: 'summarized' | 'omitted';
 }
 
+export type AgentControlThinking =
+  | { mode: 'off'; budgetTokens?: never }
+  | { mode: 'on'; budgetTokens?: number };
+export type AgentControlEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface AgentControlOverrides {
+  effort?: AgentControlEffort;
+  thinking?: AgentControlThinking;
+  maxOutputTokens?: number;
+}
+
 export interface AllowedRoot {
   // Absolute path or ~ for home (e.g., "~/projects", "/var/repos")
   path: string;
@@ -54,6 +65,7 @@ export interface AgentConfig {
   relationshipMode?: import('../shared/agent-relationship-mode.js').AgentRelationshipMode;
   model?: string; // Optional model alias/full name for this group
   thinking?: ThinkingOverride; // Optional thinking override for this group
+  permissionMode?: PermissionMode;
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
@@ -62,6 +74,8 @@ export interface ConversationRoute {
   folder: string;
   trigger: string;
   added_at: string;
+  agentId?: string;
+  providerAccountId?: string;
   agentConfig?: AgentConfig;
   requiresTrigger?: boolean;
   conversationKind?: 'dm' | 'channel';
@@ -71,6 +85,8 @@ export interface NewMessage {
   id: string;
   chat_jid: string;
   provider?: string;
+  providerAccountId?: string;
+  agentId?: string;
   sender: string;
   sender_name: string;
   content: string;
@@ -89,6 +105,8 @@ export interface NewMessage {
     canonicalText: string;
     providerPayload?: unknown;
   };
+  responseSchema?: Record<string, unknown>;
+  agentControls?: AgentControlOverrides;
   attachments?: NewMessageAttachment[];
 }
 
@@ -106,8 +124,10 @@ export interface PermissionApprovalRequest {
   requestId: string;
   appId?: string;
   agentId?: string;
+  providerAccountId?: string;
   responseNonce?: string;
   sourceAgentFolder: string;
+  requestFamily?: 'tool' | 'admin' | 'review' | 'promotion';
   runHandle?: string;
   jobId?: string;
   jobName?: string;
@@ -119,6 +139,9 @@ export interface PermissionApprovalRequest {
   threadId?: string;
   responseKeyId?: string;
   decisionPolicy?: 'control_allowlist' | 'same_channel';
+  unattended?: boolean;
+  senderId?: string;
+  turnIntentSummary?: string;
   toolName: string;
   toolUseID?: string;
   agentID?: string;
@@ -133,16 +156,18 @@ export interface PermissionApprovalRequest {
   };
   blockedPath?: string;
   toolInput?: Record<string, unknown>;
+  toolInputSanitized?: boolean;
+  toolInputSanitizedPaths?: string[];
   semanticCapabilityDefinitions?: Record<string, SemanticCapabilityDefinition>;
   suggestions?: PermissionApprovalUpdate[];
   decisionOptions?: PermissionApprovalDecisionMode[];
+  promotionHintCount?: number;
   interaction?: InteractionDescriptor;
 }
 
 export type PermissionApprovalDecisionMode =
   | 'allow_once'
   | 'allow_persistent_rule'
-  | 'allow_timed_grant'
   | 'cancel';
 
 export interface PermissionApprovalRuleValue {
@@ -177,7 +202,6 @@ export interface PermissionApprovalDecision {
   reason?: string;
   updatedPermissions?: PermissionApprovalUpdate[];
   decisionClassification?: 'user_temporary' | 'user_permanent' | 'user_reject';
-  timedGrantExpiresAtMs?: number;
 }
 
 export interface UserQuestionOption {
@@ -198,6 +222,7 @@ export interface UserQuestionRequest {
   sourceAgentFolder: string;
   appId?: string;
   agentId?: string;
+  providerAccountId?: string;
   jobId?: string;
   runId?: string;
   runLeaseToken?: string;
@@ -307,6 +332,7 @@ export interface RichInteractionRequest {
   sourceAgentFolder: string;
   appId?: string;
   agentId?: string;
+  providerAccountId?: string;
   jobId?: string;
   runId?: string;
   targetJid?: string;
@@ -343,12 +369,14 @@ export interface InteractionDescriptor {
 
 export interface StreamingChunkOptions {
   threadId?: string;
+  providerAccountId?: string;
   done?: boolean;
   generation?: number;
 }
 
 export interface ProgressUpdateOptions {
   threadId?: string;
+  providerAccountId?: string;
   done?: boolean;
   replaceOnly?: boolean;
   generation?: number;
@@ -359,12 +387,11 @@ export interface ProgressUpdateOptions {
 export type MessageActionAffordanceKind =
   | 'scheduler_run_now'
   | 'scheduler_pause_job'
-  | 'scheduler_open'
   | 'live_turn_stop';
 
 export type MessageActionAffordance =
   | {
-      kind: 'scheduler_run_now' | 'scheduler_pause_job' | 'scheduler_open';
+      kind: 'scheduler_run_now' | 'scheduler_pause_job';
       label: string;
       jobId: string;
       runId?: string | null;
@@ -379,6 +406,7 @@ export type MessageActionCallbackInput =
   | {
       kind: 'live_turn_stop';
       conversationJid: string;
+      providerAccountId?: string;
       threadId?: string;
       userId?: string;
       actionToken?: string;
@@ -386,6 +414,7 @@ export type MessageActionCallbackInput =
   | {
       kind: 'scheduler_run_now';
       conversationJid: string;
+      providerAccountId?: string;
       threadId?: string;
       userId?: string;
       jobId: string;
@@ -398,6 +427,8 @@ export type OnMessageAction = (
 
 export interface MessageSendOptions {
   threadId?: string;
+  providerAccountId?: string;
+  agentId?: string;
   actionAffordances?: MessageActionAffordance[];
   files?: MessageFileAttachment[];
 }
@@ -439,6 +470,7 @@ export type OnChatMetadata = (
   name?: string,
   channel?: string,
   isGroup?: boolean,
+  options?: { providerAccountId?: string },
 ) => Promise<void>;
 
 export interface ChannelLifecyclePort {

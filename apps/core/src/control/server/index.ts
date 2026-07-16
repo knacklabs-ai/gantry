@@ -17,6 +17,7 @@ import {
   configureDesiredSettingsStorageProvider,
   getControlEnvValue,
   getDefaultModelConfig,
+  getConfiguredAgentRuntime,
   getSelectedAgentHarness,
   getRuntimeSettingsForConfig,
   getRuntimeModelDefaults,
@@ -34,7 +35,7 @@ import {
   getRuntimeRepositories,
   getRuntimeStorage,
 } from '../../adapters/storage/postgres/runtime-store.js';
-import { preflightModelPreset } from '../../adapters/llm/model-preset-preflight.js';
+import { preflightModelProvider } from '../../adapters/llm/model-provider-preflight.js';
 import type { AppId } from '../../domain/app/app.js';
 import { canAccessApp, makeAppGroup } from './app-identity.js';
 import {
@@ -49,12 +50,14 @@ import type {
 import { sendError } from './http.js';
 import { createRateLimiter } from './rate-limit.js';
 import { handleAgentRoutes } from './routes/agents.js';
+import { handleBrainRoutes } from './routes/brain.js';
 import { handleCapabilityCatalogRoutes } from './routes/capability-catalog.js';
 import { handleCredentialRoutes } from './routes/credentials.js';
 import { handleProviderConversationRoutes } from './routes/provider-conversation-routes.js';
 import { handleExternalIngressRoutes } from './routes/external-ingress.js';
 import { handleGuidedActionRoutes } from './routes/guided-actions.js';
 import { handleJobRoutes } from './routes/jobs.js';
+import { handleLlmRoutes } from './routes/llm.js';
 import { handleMemoryRoutes } from './routes/memory.js';
 import { handleMcpServerRoutes } from './routes/mcp-servers.js';
 import {
@@ -69,6 +72,7 @@ import { handleSettingsRoutes } from './routes/settings.js';
 import { handleSkillRoutes } from './routes/skills.js';
 import { handleSystemRoutes } from './routes/system.js';
 import { handleTeamsActivityRoutes } from './routes/teams-activities.js';
+import { handleUsageRoutes } from './routes/usage.js';
 import { handleWebhookRoutes } from './routes/webhooks.js';
 import {
   deliverWebhookDelivery,
@@ -77,6 +81,7 @@ import {
 } from './webhook-delivery.js';
 import { isPrivateAddress } from './webhook-target.js';
 import { nowIso } from '../../shared/time/datetime.js';
+import { subscribeWebhookDeliveryReady } from '../../application/runtime-events/webhook-delivery-wakeup.js';
 
 export interface ControlServerHandle {
   close: () => Promise<void>;
@@ -169,11 +174,14 @@ function createControlRequestHandler(
       if (await handleProviderConversationRoutes(req, res, ctx, url, pathname))
         return;
       if (await handleMemoryRoutes(req, res, ctx, url, pathname)) return;
+      if (await handleBrainRoutes(req, res, ctx, url, pathname)) return;
       if (await handleCredentialRoutes(req, res, ctx, pathname)) return;
       if (await handleModelRoutes(req, res, ctx, pathname)) return;
+      if (await handleLlmRoutes(req, res, ctx, pathname)) return;
       if (await handleJobRoutes(req, res, ctx, url, pathname)) return;
       if (await handleExternalIngressRoutes(req, res, ctx, pathname)) return;
       if (await handleRunRoutes(req, res, ctx, url, pathname)) return;
+      if (await handleUsageRoutes(req, res, ctx, url, pathname)) return;
       if (await handleSettingsRoutes(req, res, ctx, pathname)) return;
       if (await handleSkillRoutes(req, res, ctx, url, pathname)) return;
       if (await handleMcpServerRoutes(req, res, ctx, url, pathname)) return;
@@ -338,10 +346,11 @@ export function startControlServer(input: {
     getDefaultModelConfig,
     getModelDefaults: getRuntimeModelDefaults,
     patchModelDefaults: patchRuntimeModelDefaults,
-    preflightModelPreset: (preset, appId) =>
-      preflightModelPreset({
+    preflightModelProvider: (providerId, appId, chatAlias) =>
+      preflightModelProvider({
         runtimeHome: GANTRY_HOME,
-        preset,
+        providerId,
+        chatAlias,
         settings: getRuntimeSettingsForConfig(),
         appId,
       }),
@@ -393,6 +402,8 @@ export function startControlServer(input: {
     },
     getSelectedAgentHarness: (agentFolder?: string) =>
       getSelectedAgentHarness(agentFolder),
+    getConfiguredAgentRuntime: (agentFolder?: string) =>
+      getConfiguredAgentRuntime(agentFolder),
   };
 
   const server = http.createServer(
@@ -426,7 +437,7 @@ export function startControlServer(input: {
     logger.info({ socketPath }, 'Control server listening on unix socket');
   }
 
-  const deliveryInterval = setInterval(() => {
+  const triggerWebhookFlush = () => {
     if (webhookFlushInFlight) return;
     webhookFlushInFlight = true;
     void flushWebhookDeliveries()
@@ -434,7 +445,10 @@ export function startControlServer(input: {
       .finally(() => {
         webhookFlushInFlight = false;
       });
-  }, 1000);
+  };
+  const unsubscribeWebhookDeliveryReady =
+    subscribeWebhookDeliveryReady(triggerWebhookFlush);
+  const deliveryInterval = setInterval(triggerWebhookFlush, 1000);
   let externalDeliveryFlushInFlight = false;
   const externalDeliveryInterval = setInterval(() => {
     if (externalDeliveryFlushInFlight) return;
@@ -444,7 +458,7 @@ export function startControlServer(input: {
         logger.warn({ err: error }, 'Failed flushing External platform events');
       })
       .finally(() => {
-        externalDeliveryFlushInFlight = false;
+          externalDeliveryFlushInFlight = false;
       });
   }, 5000);
   let ingressMaintenanceInFlight = false;
@@ -471,6 +485,7 @@ export function startControlServer(input: {
       clearInterval(deliveryInterval);
       clearInterval(externalDeliveryInterval);
       clearInterval(ingressMaintenanceInterval);
+      unsubscribeWebhookDeliveryReady();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {

@@ -49,6 +49,20 @@ function makeOpts(): ChannelOpts {
     onMessage: vi.fn(async () => {}),
     onChatMetadata: vi.fn(async () => {}),
     conversationRoutes: vi.fn(() => ({})),
+    providerAccountId: 'teams_default',
+    runtimeSettings: () =>
+      ({
+        providerAccounts: {
+          teams_default: {
+            provider: 'teams',
+            runtimeSecretRefs: {
+              client_id: 'env:TEAMS_CLIENT_ID',
+              client_secret: 'env:TEAMS_CLIENT_SECRET',
+              tenant_id: 'env:TEAMS_TENANT_ID',
+            },
+          },
+        },
+      }) as never,
     runtimeSecrets: {
       getSecret(ref) {
         const value = this.getOptionalSecret(ref);
@@ -407,15 +421,6 @@ describe('Teams Adaptive Card payloads', () => {
       }),
       expect.objectContaining({
         type: 'Action.Execute',
-        title: 'Allow 5 min',
-        verb: 'gantry.permission.allow',
-        data: expect.objectContaining({
-          requestId: 'perm-1',
-          decision: 'allow_timed_grant',
-        }),
-      }),
-      expect.objectContaining({
-        type: 'Action.Execute',
         title: 'Cancel',
         verb: 'gantry.permission.cancel',
         data: expect.objectContaining({
@@ -589,6 +594,7 @@ describe('TeamsChannel adapter scaffold', () => {
       'Engineering',
       'teams',
       true,
+      { providerAccountId: 'teams_default' },
     );
     expect(opts.onMessage).toHaveBeenCalledWith(
       'teams:19:abc@thread.v2',
@@ -1202,6 +1208,7 @@ describe('TeamsChannel adapter scaffold', () => {
     expect(onMessageAction).toHaveBeenCalledWith({
       kind: 'live_turn_stop',
       conversationJid: 'teams:19:abc@thread.v2',
+      providerAccountId: 'teams_default',
       threadId: 'root-message',
       userId: 'teams-user-1',
       actionToken: 'token-1',
@@ -1241,11 +1248,6 @@ describe('TeamsChannel adapter scaffold', () => {
         actionAffordances: [
           { kind: 'scheduler_run_now', label: 'Retry now', jobId: 'job-1' },
           { kind: 'scheduler_pause_job', label: 'Pause job', jobId: 'job-1' },
-          {
-            kind: 'scheduler_open',
-            label: 'Open in scheduler',
-            jobId: 'job-1',
-          },
         ],
       },
     );
@@ -1289,6 +1291,7 @@ describe('TeamsChannel adapter scaffold', () => {
     expect(onMessageAction).toHaveBeenCalledWith({
       kind: 'scheduler_run_now',
       conversationJid: 'teams:19:abc@thread.v2',
+      providerAccountId: 'teams_default',
       threadId: 'root-message',
       userId: 'teams-user-1',
       jobId: 'job-1',
@@ -2190,9 +2193,9 @@ describe('TeamsChannel adapter scaffold', () => {
     const opts = makeOpts();
     opts.runtimeSettings = () =>
       ({
-        providers: { teams: { defaultConnection: 'teams_default' } },
-        providerConnections: {
+        providerAccounts: {
           teams_default: {
+            provider: 'teams',
             runtimeSecretRefs: {
               client_id: 'gantry-secret:TEAMS_CLIENT_ID',
               client_secret: 'gantry-secret:TEAMS_CLIENT_SECRET',
