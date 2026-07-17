@@ -13,8 +13,8 @@ Current rollout: AWS-safe local UI linkage
 | P6     | Conversations and administration              | Complete    | Discovery, messages, approvers, installs, canonical statuses  | `ab9a0614` |
 | P7     | Session chat and fetch-based SSE              | Complete    | Ensure/send/reconnect/refetch flow, preview data removed      | `57747fa2` |
 | P8     | Workflow rollout boundary                     | Complete    | Mock editor/run routes removed; definitions unavailable       | `f22b4589` |
-| P9     | Local setup docs and AWS deployment guardrail | In progress | `.env.example`, README, deployment absence test               | Pending    |
-| P10    | Full verification and browser acceptance      | Pending     | Build/test/security/route/responsive evidence                 | Pending    |
+| P9     | Local setup docs and AWS deployment guardrail | Complete    | `.env.example`, README, deployment absence test               | `e2d2ca53` |
+| P10    | Full verification and browser acceptance      | Complete*   | Builds, focused tests, integration, disabled-mode browser QA  | Final patch |
 
 ## Connected Surfaces
 
@@ -51,17 +51,51 @@ Current rollout: AWS-safe local UI linkage
 
 ## Browser Acceptance
 
-| Check                                         | Status  |
-| --------------------------------------------- | ------- |
-| Disabled mode makes no `/ui-api` request      | Pending |
-| Connected Models, Jobs, Memory, Conversations | Pending |
-| Session send and SSE reconnect                | Pending |
-| 1440px, 1024px, and 390px in both themes      | Pending |
-| Keyboard/focus/overflow/reduced motion        | Pending |
-| Direct refresh and unknown `/ui/*` fallback   | Pending |
+| Check                                         | Status                                                        |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| Disabled mode makes no `/ui-api` request      | Passed                                                        |
+| Connected Models, Jobs, Memory, Conversations | Awaiting a configured local-owner key and representative data |
+| Session send and SSE reconnect                | Covered by transport/bridge checks; live-data exercise pending |
+| 1440px, 1024px, and 390px in both themes      | Passed                                                        |
+| Keyboard/focus/overflow/reduced motion        | Passed                                                        |
+| Direct refresh and unknown `/ui/*` fallback   | Passed                                                        |
+
+`P10` is complete for implementation and disabled-mode acceptance. The two
+connected-mode rows remain explicit local-environment acceptance debt; they do
+not permit mock data, a browser credential, or a temporary auth bypass.
+
+## Verification Evidence
+
+- `npm run typecheck`, `npm run format:check`, `npm run lint:web`, and
+  `npm run build` passed. Web lint reports eight existing warnings and no
+  errors.
+- Focused local-owner Control tests passed: 17 tests.
+- `npm run test:integration` passed: 65 tests passed and 213 database-backed
+  tests skipped by the repository configuration.
+- The restarted same-process host returned disabled runtime config, returned
+  `404` for `/ui-api/v1/models`, and preserved `401` for unauthenticated
+  `/v1/models`.
+- `/ui/`, `/ui/profile`, `/ui/workflows`, and an unknown nested `/ui/*` route
+  returned `200` on direct requests.
+- Headless Chromium passed the 1440px, 1024px, and 390px matrix in light and
+  dark themes with no horizontal overflow, page errors, console errors,
+  `/v1` requests, `/ui-api` requests, SSE, or WebSocket connections.
+- The skip link received a visible 2px focus outline. Theme and reduced-motion
+  choices survived refresh, and browser storage contained only
+  `gantry.ui.preferences.v1`.
 
 ## Known External Gate Debt
 
-Root lint and architecture checks retain pre-existing core findings outside
-the Web UI scope. Record their exact output during final verification; do not
-weaken those gates or change unrelated core files to hide them.
+Root gates retain pre-existing findings outside the Web UI scope:
+
+- `npm test` reaches one failing architecture test whose repository-root URL
+  is not decoded. It reads `/caw%20projects/Agent.Gantry/...`, causing eight
+  `ENOENT` failures before those assertions inspect behavior.
+- Root lint reports eight existing core errors in LLM proxy, runtime services,
+  memory, group runner, settings, and permission-gate files. Web lint has no
+  errors.
+- Architecture checks report `permission-classifier.ts` at 747 lines against
+  a 700-line budget and three existing Telegram references in
+  `messaging/text-styles.ts` beyond the approved exception count.
+
+Do not weaken these gates or change unrelated core files to hide them.
