@@ -10,25 +10,35 @@ Read the repository-level `AGENTS.md` first. This file adds web-specific rules.
 
 ## Current Delivery Boundary
 
-Build the complete interface with typed, visibly labeled preview data. Do not
-add browser-to-server communication until identity and access are approved.
+The UI has three explicit connection modes:
 
-- Do not add `fetch`, `EventSource`, `WebSocket`, API clients, bearer tokens,
-  cookies/sessions, auth, pairing, CSRF, or API proxies.
-- Preview records are memory-only. The shell must show `Preview data` and `Not
-connected` whenever they are visible.
-- Local UI interactions may work. Server-owned commands must use the shared
-  connection gate, issue no request, preserve local drafts, and never mutate
-  preview records or show fake success.
+- `disabled`: static assets and local preferences only. This is the production
+  and remote default and must make no runtime API, polling, or stream request.
+- `local-owner`: loopback-only development access through the server-owned
+  `/ui-api/v1` bridge. The bridge keeps its scoped Control API key outside the
+  browser and is unavailable in production, remote, non-loopback, and worker
+  process modes.
+- future authenticated remote: separately hosted HTTPS UI using real user
+  identity. This mode is not implemented yet.
+
+- Browser runtime access must go through the narrow transport interface under
+  `src/lib/api`; feature components must not call `fetch` directly.
+- Never put bearer tokens, provider credentials, cookies/sessions, auth state,
+  or server data in browser storage, HTML, URLs, logs, or generated assets.
+- Use fetch-based SSE only for an actively viewed session. Do not add browser
+  WebSockets, global event streams, or background polling.
+- Screens not backed by an approved API remain visibly unavailable and must
+  not simulate successful server mutations.
 - TanStack Query, Table, Zod, and React Hook Form are frontend infrastructure;
   they do not grant server authority or define public Gantry contracts.
-- Do not change existing Control API authentication or add UI-specific Control
-  API routes from this workspace.
+- Existing `/v1/*` bearer authentication remains authoritative. The local UI
+  bridge is implemented in the Control adapter and must delegate to the same
+  handlers and scoped principal rather than creating parallel authority.
 - Browser storage is limited to the versioned
   `gantry.ui.preferences.v1` record with `theme` and `reduceMotion`.
 - Vite HMR stays disabled so development introduces no browser WebSocket.
-- Keep runtime truth in the future Control API. The browser must never access
-  Postgres, `settings.yaml`, the filesystem, or provider credentials directly.
+- Keep runtime truth in the Control API. The browser must never access
+  Postgres, `settings.yaml`, the filesystem, or provider secrets directly.
 
 ## Structure
 
@@ -110,9 +120,10 @@ npm run build:web
 git diff --check
 ```
 
-Confirm there is no `react-router`, router plugin, generated route tree, API
-client, SSE, WebSocket, browser credential, persisted Query cache, or test
-dependency. Check every handwritten UI file remains at or below 350 lines.
+Confirm there is no `react-router`, router plugin, generated route tree,
+browser WebSocket, browser credential, persisted Query cache, or UI test
+dependency. Verify disabled mode makes no runtime request and check every
+handwritten UI file remains at or below 350 lines.
 
 When the static host or workspace integration changes, also run:
 

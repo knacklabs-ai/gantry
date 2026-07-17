@@ -1,6 +1,6 @@
 # Gantry Web UI Delivery
 
-These documents define the frontend-first delivery of the Gantry operator UI.
+These documents define delivery of the Gantry operator UI.
 The React application is built in `apps/web` and served by the existing Gantry
 process at `/ui`.
 
@@ -19,17 +19,18 @@ Progress is recorded in [the UI implementation tracker](./ui-implementation-trac
 
 ## Current Boundary
 
-- Build every planned screen now with visibly labeled preview data.
-- Local navigation, filtering, sorting, pagination, drawers, tabs, validation,
-  inspectors, and drafts are functional.
-- Server-owned commands open the shared `Connect Gantry to continue` gate and
-  never simulate success or mutate preview records.
-- Browser auth, REST, SSE, WebSockets, credentials, Control API changes,
-  persistence, and audit events remain deferred.
-- Business data is memory-only. Browser storage remains limited to
-  `gantry.ui.preferences.v1`.
-- TanStack Query owns preview read state, Table owns data-grid behavior, Zod
-  owns route search parsing, and React Hook Form owns complex local drafts.
+- Production and remote deployments use disconnected mode and make no runtime
+  request from the browser.
+- An explicitly enabled workstation may use the loopback-only `/ui-api/v1`
+  bridge. Its dedicated scoped Control key remains server-side.
+- Models, jobs/runs, memory, conversations, and session chat use existing APIs.
+- Browser auth, remote REST, browser WebSockets, user identity, and workflow
+  execution remain deferred.
+- Workflow definitions require a separate AWS-reviewed contracts, migration,
+  and API rollout; they are unavailable in the local-linkage change.
+- TanStack Query owns in-memory REST snapshots, Table owns data-grid behavior,
+  Zod owns boundary/search parsing, and React Hook Form owns complex forms.
+- Browser storage remains limited to `gantry.ui.preferences.v1`.
 - Tailwind v4 utilities style components. `styles.css` contains only tokens,
   font declarations, and global accessibility rules.
 - Every handwritten UI file stays at or below 350 lines. Web changes are made
