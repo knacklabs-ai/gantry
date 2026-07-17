@@ -13,8 +13,18 @@ export const chatDetailSearchSchema = z.object({
 });
 
 export const memorySearchSchema = z.object({
-  category: z
-    .enum(['all', 'Preference', 'Identity', 'Project', 'Relationship'])
+  q: z.string().catch(''),
+  kind: z
+    .enum([
+      'all',
+      'preference',
+      'decision',
+      'fact',
+      'correction',
+      'constraint',
+      'reference',
+      'procedure',
+    ])
     .catch('all'),
   confidence: z.enum(['all', 'high', 'medium', 'low']).catch('all'),
 });
