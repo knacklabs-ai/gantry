@@ -25,7 +25,8 @@ export function canonicalGantryToolRuleName(toolName: string): string {
   const canonicalToolName = toolName.startsWith('mcp__gantry__')
     ? toolName.slice('mcp__gantry__'.length)
     : toolName;
-  return GANTRY_DELEGATION_TOOL_NAME_SET.has(canonicalToolName)
+  return GANTRY_DELEGATION_TOOL_NAME_SET.has(canonicalToolName) ||
+    canonicalToolName.startsWith('delegate_to_')
     ? 'AgentDelegation'
     : canonicalToolName;
 }

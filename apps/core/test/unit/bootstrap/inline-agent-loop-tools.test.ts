@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import {
   createInlineCoreTools,
+  createInlineCoreToolsForRun,
   wireInlineAgentLoopTools,
 } from '@core/app/bootstrap/inline-agent-loop-tools.js';
 import {
@@ -305,6 +306,93 @@ describe('inline core tool bootstrap', () => {
       }),
     );
     expect(repository.listTasks).toHaveBeenCalledOnce();
+  });
+
+  it('preloads and projects an eligible callable-agent manifest', async () => {
+    const listAgents = vi.fn(async () => [
+      {
+        id: 'agent:main_agent',
+        appId: 'default',
+        name: 'Main',
+        status: 'active',
+      },
+      {
+        id: 'agent:reviewer',
+        appId: 'default',
+        name: 'Reviewer',
+        status: 'active',
+      },
+    ]);
+    wire({
+      getAgentRepository: () => ({ listAgents }),
+      getPermissionRuntimeSettings: () => ({
+        agents: { main_agent: { delegates: ['reviewer'] } },
+        permissions: {
+          autoMode: {},
+          yoloMode: { enabled: false },
+        },
+        memory: { llm: { models: { extractor: 'sonnet' } } },
+      }),
+    });
+    const input = laneInput();
+    input.input.toolPolicyRules = ['AgentDelegation'];
+
+    const tools = await createInlineCoreToolsForRun(input, support());
+    const projected = tools.tools.find(({ name }) =>
+      name.startsWith('delegate_to_'),
+    );
+
+    expect(projected).toMatchObject({
+      description: 'Delegate to Reviewer.',
+    });
+    expect(projected?.name.length).toBeLessThanOrEqual(64);
+    expect(listAgents).toHaveBeenCalledWith('default');
+  });
+
+  it.each([
+    { label: 'delegated child', parentTaskId: 'task-parent' },
+    { label: 'locked access', locked: true },
+    { label: 'authority-hidden run', hideAuthorityTools: true },
+    { label: 'empty allowlist', emptyAllowlist: true },
+    { label: 'missing AgentDelegation', noDelegation: true },
+    { label: 'missing executor', noExecutor: true },
+    { label: 'tools disabled', toolsDisabled: true },
+  ])('suppresses callable-agent tools for $label', async (scenario) => {
+    const listAgents = vi.fn(async () => {
+      throw new Error('agent inventory unavailable');
+    });
+    wire({
+      getAgentAccessPreset: () => (scenario.locked ? 'locked' : 'full'),
+      getAsyncTaskRepository: () =>
+        scenario.noExecutor ? undefined : { listTasks: vi.fn(async () => []) },
+      getAgentRepository: () => ({ listAgents }),
+      getPermissionRuntimeSettings: () => ({
+        agents: {
+          main_agent: {
+            delegates: scenario.emptyAllowlist ? [] : ['reviewer'],
+          },
+        },
+        permissions: {
+          autoMode: {},
+          yoloMode: { enabled: false },
+        },
+        memory: { llm: { models: { extractor: 'sonnet' } } },
+      }),
+    });
+    const input = laneInput();
+    input.input.toolPolicyRules = scenario.noDelegation
+      ? []
+      : ['AgentDelegation'];
+    input.input.parentTaskId = scenario.parentTaskId;
+    input.input.hideAuthorityTools = scenario.hideAuthorityTools;
+    input.input.disableTools = scenario.toolsDisabled;
+
+    const tools = await createInlineCoreToolsForRun(input, support());
+
+    expect(
+      tools.tools.some(({ name }) => name.startsWith('delegate_to_')),
+    ).toBe(false);
+    expect(listAgents).not.toHaveBeenCalled();
   });
 
   it('resolves send_message attachments from the runtime file store', async () => {

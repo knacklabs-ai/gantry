@@ -1,5 +1,6 @@
 import { RUNTIME_EVENT_TYPES } from '../../domain/events/runtime-event-types.js';
 import type { RunnerOutputFrame } from '../../runner/runner-frame.js';
+import { canonicalGantryToolRuleName } from '../../shared/gantry-tool-facades.js';
 
 const TOOL_ACTIVITY_INTERVAL_MS = 15_000;
 
@@ -37,6 +38,7 @@ export function createInlineToolActivity(
     phase: 'started' | 'running' | 'success' | 'failure',
   ) => {
     if (!input.input.isScheduledJob) return;
+    const canonicalToolName = canonicalGantryToolRuleName(toolName);
     await input
       .emitOutput({
         status: 'success',
@@ -55,7 +57,7 @@ export function createInlineToolActivity(
             responseMode: 'none',
             payload: {
               phase,
-              tool: toolName,
+              tool: canonicalToolName,
               ...(phase === 'success' ? { ok: true } : {}),
               ...(phase === 'failure' ? { ok: false } : {}),
             },

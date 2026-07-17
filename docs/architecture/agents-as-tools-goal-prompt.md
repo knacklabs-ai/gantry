@@ -231,3 +231,41 @@ handler seams and can run first independently.
   files / 304 tests; the architecture gate reported only the accepted
   `text-styles.ts` Telegram findings at lines 13, 64, and 75 after renderer
   extraction reduced the file to 719 lines (budget 721).
+
+## Stage 2 implementation ledger
+
+- Scope: implemented the callable-agent manifest, inline-lane projection,
+  pinned-target async dispatch, and depth suppression only. Hybrid waiting,
+  narration, remaining projection lanes, and trace nesting remain deferred to
+  Stages 3-6.
+- Manifest contract: the caller's settings-owned `delegates` list resolves
+  against the current app's agent inventory and projects active, same-app,
+  non-self targets only when exact `AgentDelegation` authority is held. A
+  delegated child (`parentTaskId`) projects no callable-agent tools.
+- Naming contract: synthetic names use `delegate_to_` plus a length-bounded
+  suffix derived only from immutable agent identity. Display names are used
+  only in one-line descriptions and cannot select or collide targets.
+- Inline contract: agent inventory is loaded in the async inline preload seam
+  and the resulting manifest is passed as plain data into the synchronous core
+  tool registry. Locked/authority-hidden runs, empty allowlists, and runs
+  without the delegated-task executor project no synthetic tools.
+- Dispatch contract: each synthetic schema omits `targetAgentId`; the adapter
+  injects the manifest's fixed target, rejects override attempts, and
+  revalidates current same-app, active, non-self, allowlisted eligibility before
+  calling the unchanged `delegate_task` backend. Stage 2 returns the existing
+  queued task DTO.
+- Authority contract: synthetic prompts, declarative rules, success accounting,
+  and inline tool-activity audit use canonical `AgentDelegation`.
+- Verification: TypeScript completed with exit 0; focused Stage 2 tests passed 3
+  files / 54 tests; the requested runtime/application/runner/bootstrap unit run
+  passed 171 files / 2,325 tests; the architecture gate reported only the
+  accepted `text-styles.ts` Telegram findings at lines 13, 64, and 75.
+- Verification: TypeScript completed with exit 0; the focused Stage 2 tests
+  passed 3 files / 54 tests; the requested broad unit command passed 171 files /
+  2,325 tests; the architecture gate reported only the accepted
+  `text-styles.ts` Telegram findings at lines 13, 64, and 75.
+- Autoreview follow-up: callable-agent manifest preloading now applies every
+  run-level suppression gate (tools disabled, authority hidden, locked access,
+  delegated child, missing `AgentDelegation` authority, and missing task
+  lifecycle executor) before consulting agent inventory. Suppressed runs do not
+  call `listAgents`, so repository failures cannot affect them.

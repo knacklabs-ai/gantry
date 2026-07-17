@@ -216,6 +216,117 @@ describe('core tool registry', () => {
     ).resolves.toEqual({ content: [{ type: 'text', text: 'sent' }] });
   });
 
+  it('projects a pinned callable-agent tool with a strict target-free schema', async () => {
+    const dispatchCallableAgent = vi.fn(async () => ({
+      ok: true,
+      message: 'queued',
+    }));
+    const entry = {
+      toolName: 'reviewer_hash',
+      targetAgentId: 'agent:reviewer',
+      displayName: 'Reviewer',
+    };
+    const registry = createCoreToolRegistry(
+      registryDeps({
+        context: {
+          sourceAgentFolder: 'main_agent',
+          conversationId: 'conversation:test',
+          appId: 'default',
+          agentId: 'agent-1',
+          permissionMode: 'ask',
+          allowedToolRules: ['AgentDelegation'],
+        },
+        callableAgentManifest: [entry],
+        dispatchCallableAgent,
+      }),
+    );
+
+    expect(registry.get('delegate_to_reviewer_hash')).toMatchObject({
+      description: 'Delegate to Reviewer.',
+    });
+    await expect(
+      registry.execute('delegate_to_reviewer_hash', {
+        objective: 'Review this',
+      }),
+    ).resolves.toEqual({ content: [{ type: 'text', text: 'queued' }] });
+    expect(dispatchCallableAgent).toHaveBeenCalledWith(entry, {
+      objective: 'Review this',
+    });
+
+    await expect(
+      registry.execute('delegate_to_reviewer_hash', {
+        objective: 'Review this',
+        targetAgentId: 'agent:attacker',
+      }),
+    ).resolves.toMatchObject({
+      isError: true,
+      error: { category: 'validation', isRetryable: false },
+    });
+    expect(dispatchCallableAgent).toHaveBeenCalledOnce();
+  });
+
+  it('canonicalizes callable-agent rules and success accounting to AgentDelegation', async () => {
+    const successful: string[] = [];
+    const dispatchCallableAgent = vi.fn(async () => ({
+      ok: true,
+      message: 'queued',
+    }));
+    const entry = {
+      toolName: 'reviewer_hash',
+      targetAgentId: 'agent:reviewer',
+      displayName: 'Reviewer',
+    };
+    const blocked = createCoreToolRegistry(
+      registryDeps({
+        context: {
+          sourceAgentFolder: 'main_agent',
+          conversationId: 'conversation:test',
+          permissionMode: 'ask',
+          toolRules: [
+            {
+              tool: 'AgentDelegation',
+              action: 'block',
+              reason: 'delegation disabled',
+            },
+          ],
+        },
+        callableAgentManifest: [entry],
+        dispatchCallableAgent,
+      }),
+    );
+
+    await expect(
+      blocked.execute('delegate_to_reviewer_hash', {
+        objective: 'Review this',
+      }),
+    ).resolves.toMatchObject({
+      isError: true,
+      error: { message: expect.stringContaining('delegation disabled') },
+    });
+    expect(dispatchCallableAgent).not.toHaveBeenCalled();
+
+    const allowed = createCoreToolRegistry(
+      registryDeps({
+        context: {
+          sourceAgentFolder: 'main_agent',
+          conversationId: 'conversation:test',
+          permissionMode: 'ask',
+          allowedToolRules: ['AgentDelegation'],
+          toolSuccessLedger: {
+            recordSuccess: (name) => successful.push(name),
+            hasSuccess: (name) => successful.includes(name),
+          },
+        },
+        callableAgentManifest: [entry],
+        dispatchCallableAgent,
+      }),
+    );
+    await allowed.execute('delegate_to_reviewer_hash', {
+      objective: 'Review this',
+    });
+    expect(successful).toEqual(['AgentDelegation']);
+  });
+
   it('records a durable question before the interaction boundary and resolves it after the answer', async () => {
     const order: string[] = [];
     const record = vi.fn(async () => {

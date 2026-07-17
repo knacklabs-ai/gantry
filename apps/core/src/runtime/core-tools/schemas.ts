@@ -48,11 +48,18 @@ export type CoreToolInputByName = {
   task_message: { taskId: string; message: string };
 };
 
+export type CallableAgentToolInput = {
+  objective: string;
+  context?: string;
+  expectedOutput?: string;
+  timeoutMs?: number;
+};
+
 export type CoreToolSchemas = {
   [Name in keyof CoreToolInputByName]: CoreToolInputSchema<
     CoreToolInputByName[Name]
   >;
-};
+} & { callable_agent: CoreToolInputSchema<CallableAgentToolInput> };
 
 export function createCoreToolSchemas(z: ZodFactory): CoreToolSchemas {
   const taskIdSchema = z.object({ taskId: z.string().min(1).max(160) });
@@ -120,6 +127,19 @@ export function createCoreToolSchemas(z: ZodFactory): CoreToolSchemas {
         .max(30 * 60_000)
         .optional(),
     }),
+    callable_agent: z
+      .object({
+        objective: z.string().min(1).max(10_000),
+        context: z.string().max(20_000).optional(),
+        expectedOutput: z.string().max(2_000).optional(),
+        timeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .max(30 * 60_000)
+          .optional(),
+      })
+      .strict(),
     task_get: taskIdSchema,
     task_list: z.object({}),
     task_cancel: taskIdSchema,

@@ -97,6 +97,7 @@ export interface InlineAgentLoopLaneInput {
   input: AgentInput & {
     compiledSystemPrompt: string;
     permissionMode: PermissionMode;
+    disableTools?: boolean;
   };
   signal: AbortSignal;
   controlPort: InMemoryInlineRunnerControlPort;
