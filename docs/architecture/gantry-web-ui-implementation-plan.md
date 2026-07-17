@@ -52,15 +52,15 @@ visible, dimensions are stable, and reduced motion is respected.
 
 ## Route Map
 
-| Area         | Routes                                                                                                     |
-| ------------ | ---------------------------------------------------------------------------------------------------------- |
-| Foundation   | `/ui`, `/profile`, development-only `/__components`                                                        |
-| Operations   | `/overview`, `/interactions`, `/providers`, `/conversations/*`, `/diagnostics`                             |
-| Agents       | `/agents/*`, `/sources`                                                                                    |
-| Chat         | `/chat/*`, `/memory`                                                                                       |
-| Jobs/runtime | `/jobs/*`, `/activity`, `/runtime/models`, `/runtime/memory`, `/runtime/capacity`, `/runtime/guardrails`   |
-| People       | `/people/*`                                                                                                |
-| Workflows    | `/workflows`, `/workflows/new`, `/workflows/:id/edit`, `/workflows/:id/runs/:runId`, `/workflows/external` |
+| Area         | Routes                                                                                                   |
+| ------------ | -------------------------------------------------------------------------------------------------------- |
+| Foundation   | `/ui`, `/profile`, development-only `/__components`                                                      |
+| Operations   | `/overview`, `/interactions`, `/providers`, `/conversations/*`, `/diagnostics`                           |
+| Agents       | `/agents/*`, `/sources`                                                                                  |
+| Chat         | `/chat/*`, `/memory`                                                                                     |
+| Jobs/runtime | `/jobs/*`, `/activity`, `/runtime/models`, `/runtime/memory`, `/runtime/capacity`, `/runtime/guardrails` |
+| People       | `/people/*`                                                                                              |
+| Workflows    | `/workflows` (unavailable until the separately reviewed workflow rollout)                                |
 
 The desktop shell uses grouped sidebar navigation. Tablet detail opens in an
 inspector drawer. Mobile uses the navigation drawer and routed detail screens.
@@ -100,16 +100,16 @@ changed by this UI plan.
 
 ## Surface Impact Matrix
 
-| Surface                     | Classification      | Reason                                                                  |
-| --------------------------- | ------------------- | ----------------------------------------------------------------------- |
-| Runtime behavior            | Changed             | Explicit local workstations may connect; AWS remains disabled.          |
-| `settings.yaml`             | Unchanged by design | Local-owner authority is a deployment boundary, not desired state.      |
+| Surface                     | Classification       | Reason                                                                 |
+| --------------------------- | -------------------- | ---------------------------------------------------------------------- |
+| Runtime behavior            | Changed              | Explicit local workstations may connect; AWS remains disabled.         |
+| `settings.yaml`             | Unchanged by design  | Local-owner authority is a deployment boundary, not desired state.     |
 | Postgres/runtime projection | Read-only/observable | Connected screens read existing projections; no migration is added.    |
-| Control API                 | Changed             | Adds runtime discovery and a gated local adapter over existing routes.   |
-| SDK/contracts               | Unchanged by design | UI view models remain private.                                          |
-| CLI                         | Unchanged by design | No UI setup command is introduced.                                      |
-| Gantry MCP/admin            | Unchanged by design | Browser actions use existing application services and policy.           |
+| Control API                 | Changed              | Adds runtime discovery and a gated local adapter over existing routes. |
+| SDK/contracts               | Unchanged by design  | UI view models remain private.                                         |
+| CLI                         | Unchanged by design  | No UI setup command is introduced.                                     |
+| Gantry MCP/admin            | Unchanged by design  | Browser actions use existing application services and policy.          |
 | Channel/provider adapters   | Read-only/observable | Conversation screens observe existing provider projections.            |
-| Docs/prompts                | Changed             | Documents distinguish local, disabled, and future remote modes.          |
+| Docs/prompts                | Changed              | Documents distinguish local, disabled, and future remote modes.        |
 | Audit/events                | Read-only/observable | Existing mutations retain their existing audit behavior.               |
-| Tests/verification          | Changed             | Add bridge tests and manual UI QA; no UI harness is introduced.          |
+| Tests/verification          | Changed              | Add bridge tests and manual UI QA; no UI harness is introduced.        |

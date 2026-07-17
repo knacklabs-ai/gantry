@@ -29,8 +29,10 @@ Automated UI tests: Deferred by user decision; this phase is not release-gate co
 
 ## Blockers And Deferred Work
 
-- Browser identity, authentication, pairing, REST, SSE, WebSockets, browser API
-  clients, and runtime data require a separate approved browser-access design.
+- Phase 1 intentionally shipped without browser transport. The later
+  AWS-safe local-linkage rollout adds guarded loopback REST and session SSE;
+  browser identity, authentication, pairing, remote REST, and WebSockets
+  remain deferred.
 - Automated UI tests and the test harness are deferred by user direction.
 - `npm run lint` is blocked by eight existing core errors outside this change.
 - `python3 .codex/scripts/check_architecture.py` is blocked by one pre-existing

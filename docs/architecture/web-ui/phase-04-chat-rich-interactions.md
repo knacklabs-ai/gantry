@@ -2,52 +2,74 @@
 
 ## Goal
 
-Build the complete chat, session, and remembered-information experience from
-preview conversations without simulating agent execution.
+Connect durable local-owner chat and remembered information without inventing a
+session directory, artifact API, interaction resolver, or browser agent loop.
 
-## Screens
+## Current Screen Boundary
 
-| Screen            | Major sections and local actions                                                         |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| Session list      | Search, agent/status filters, recent activity, open/create action.                       |
-| Chat thread       | Messages, run timeline, files, receipts, connection state.                               |
-| Composer          | Text and attachment drafting, retained input, connection-gated send/stop.                |
-| Rich interactions | Questions, approvals, todos, progress, facts, lists, tables, forms, media, dependencies. |
-| What I remember   | Memory categories, confidence/provenance, contradictions, review action.                 |
+| Screen            | Current behavior                                                                       |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| Chat entry points | Live conversation list; selecting one ensures a durable session.                       |
+| Chat thread       | Live session details, durable messages, provider-session state, and runs.              |
+| Composer          | Text-only send as `ui-local-owner` / `Local owner`.                                    |
+| Stream            | Fetch-based session SSE with in-memory cursor, bounded reconnect, and durable refetch. |
+| What I remember   | Live memory list/search with confidence, scope, and provenance.                        |
+| Rich interactions | Renderer coverage remains in the development component lab only.                       |
 
-## Implementation
+## Implemented Flow
 
-1. Add chat/message/run/memory view models, fixtures, Query keys, and session
-   route search schemas.
-2. Build Gantry-owned rich renderers from shared primitives. Do not add
-   `assistant-ui` or define a second server descriptor protocol.
-3. Compose `/chat`, `/chat/:sessionId`, and `/memory`; keep session navigation
-   usable as a drawer on small screens.
-4. Keep composer and local interaction choices in memory. Send, stop, approve,
-   answer, upload, and memory-review commands use the connection gate and do
-   not append messages or terminal receipts.
+1. Load canonical conversations because the server has no global session-list
+   endpoint.
+2. Call `/sessions/ensure` for the selected conversation and navigate with the
+   returned session ID.
+3. Load session details, recent durable messages, and session runs through one
+   domain-owned Query key.
+4. Send text with `responseMode: sse`, the session thread ID, and the local
+   owner sender identity.
+5. Start the stream after the accepted event cursor. Keep the cursor and stream
+   buffer in memory only.
+6. Batch visible streaming text every 80 ms. Only
+   `session.message.streaming` and `session.message.outbound` may supply text;
+   reasoning/thinking-shaped payloads are ignored.
+7. Refetch durable session data after outbound, terminal, unknown, and
+   reconnect events. Stop after four failed stream attempts.
+
+## Explicitly Unsupported
+
+- Global session listing, attachments/uploads, stop/cancel, artifact download,
+  generic files, and browser-side receipts.
+- Question/approval resolution until a canonical interaction list/resolve
+  contract is approved.
+- Browser WebSockets and provider/channel socket handling.
+- Persisted Query data, stream cursors, messages, or drafts outside component
+  lifetime.
 
 ## Acceptance
 
-- Every renderer has populated, missing-content, disabled, and long-content
-  coverage in the component lab and a real route composition.
-- Composer content survives opening and closing the connection gate.
-- Message lists remain readable at 390px without horizontal overflow.
-- No reasoning-text filters, browser stream buffers, network transport, or
-  provider payloads are introduced.
+- Disabled mode creates no chat query or SSE connection.
+- Opening a conversation uses the returned durable session ID.
+- Failed sends preserve the draft; accepted sends clear it.
+- Reconnect uses `afterEventId` and reconciles with durable messages.
+- Reasoning payloads are never rendered or persisted by browser code.
+- Message lists remain usable at 390px without horizontal overflow.
 
 Run web typecheck, lint, build, direct-refresh and responsive browser checks,
-renderer cleanup searches, line-count checks, and `git diff --check`.
+stream cleanup searches, line-count checks, and `git diff --check`.
 
 ## Surface Impact And Handoff
 
-| Surface                                         | Status              | Reason                                                    |
-| ----------------------------------------------- | ------------------- | --------------------------------------------------------- |
-| Runtime behavior                                | Changed             | Preview chat, memory, and rich-renderer routes are added. |
-| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | No turn or interaction is submitted.                      |
-| MCP/admin, providers, audit/events              | Unchanged by design | Provider and authority behavior remains server-side.      |
-| Docs                                            | Changed             | Record renderer coverage and evidence.                    |
-| Tests/verification                              | Deferred            | Automated UI tests remain deferred.                       |
+| Surface                     | Status               | Reason                                                                                        |
+| --------------------------- | -------------------- | --------------------------------------------------------------------------------------------- |
+| Runtime behavior            | Changed              | Active local chat routes may ensure sessions, submit turns, and open one SSE stream.          |
+| `settings.yaml`             | Unchanged by design  | Chat does not mutate desired-state configuration.                                             |
+| Postgres/runtime projection | Read-only/observable | Existing session/message/run repositories remain durable authority.                           |
+| Control API                 | Read-only/observable | Existing session and memory routes are reused through the bridge.                             |
+| SDK/contracts               | Unchanged by design  | Browser schemas are private and no public protocol is added.                                  |
+| CLI and MCP/admin           | Unchanged by design  | No new adapter surface is added.                                                              |
+| Channel/provider adapters   | Read-only/observable | Slack and other sockets remain server-side adapter concerns.                                  |
+| Docs                        | Changed              | Record stream and unsupported-action boundaries.                                              |
+| Audit/events                | Read-only/observable | Existing session runtime events drive observation.                                            |
+| Tests/verification          | Changed              | Server stream/bridge tests and manual UI checks are required; UI automation remains deferred. |
 
-Phase 5 reuses timelines, status, tables, and receipts without coupling runtime
-screens to chat presentation state.
+Phase 5 reuses Query and shared state compositions without coupling runtime
+screens to the ephemeral chat stream buffer.

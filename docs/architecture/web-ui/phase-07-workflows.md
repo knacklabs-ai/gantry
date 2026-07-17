@@ -1,53 +1,60 @@
-# Phase 7: Workflows
+# Phase 7: Workflow Definitions
 
 ## Goal
 
-Build workflow definition, drafting, validation, version, run, and external
-system screens without introducing a browser workflow engine.
+Keep Workflow Definitions visibly unavailable until a separately reviewed
+contracts, persistence, API, and AWS migration rollout is approved.
 
-## Screens
+## Current UI Boundary
 
-| Screen           | Major sections and local actions                                              |
-| ---------------- | ----------------------------------------------------------------------------- |
-| Definitions      | Search, status/version filters, recent runs, create/open actions.             |
-| New workflow     | Template choice, name/owner, honest limits, local validation.                 |
-| Builder          | Step palette, ordered canvas, connectors, properties, validation summary.     |
-| Draft review     | Changes, capabilities, routes, validation, connection-gated publish.          |
-| Run detail       | Step states, timeline, external waits, receipts, files, retry/cancel actions. |
-| External systems | Provider readiness, pending external steps, remediation actions.              |
+- `/ui/workflows` renders one unavailable state.
+- New, editor, run, and external-system routes are not registered or bundled.
+- No workflow fixtures, Query keys, draft schemas, builder, run controls, or
+  browser persistence remain in active source.
+- No run, enable/disable, retry, cancel, file, receipt, scheduler, permission,
+  notification, or external-wait behavior is implied.
 
-## Implementation
+## Separately Reviewed Rollout
 
-1. Add workflow/step/version/run view models, fixtures, Query keys, route search
-   schemas, and React Hook Form/Zod draft schemas.
-2. Build shared workflow components with semantic HTML and CSS layout. Do not
-   add a diagram engine until real editing requirements prove it necessary.
-3. Compose `/workflows`, `/workflows/new`, `/workflows/:id/edit`,
-   `/workflows/:id/runs/:runId`, and `/workflows/external`.
-4. Allow local add, remove, reorder, configure, and validate behavior in memory.
-   Publish, enable, disable, run, retry, cancel, and external remediation use
-   the shared connection gate and never create terminal evidence.
+1. Add additive `workflow_definitions` and immutable `workflow_versions`
+   tables without changing existing runtime tables.
+2. Add shared discriminated contracts for agent, approval, external, and
+   notification steps. Drafts may be incomplete; publish validates references.
+3. Add `workflows:read` and `workflows:write` scopes and definition CRUD,
+   publish, archive, and version endpoints.
+4. Emit create/update/publish/archive audit records. Existing AWS keys receive
+   no workflow scopes automatically.
+5. Build a controlled React Hook Form editor only after the server contract is
+   approved. Expose Save Draft, Publish Version, immutable version inspection,
+   archive, conflict recovery, and unsaved-change protection.
+6. Do not add workflow execution, a scheduler, permission engine,
+   notification engine, external wait engine, or artifact behavior in this
+   definition rollout.
+7. Validate migrations against disposable Postgres and stage backend and UI
+   enablement separately in AWS.
 
 ## Acceptance
 
-- Draft validation is deterministic and identifies the exact step and field.
-- Builder controls remain keyboard accessible and usable at tablet/mobile sizes.
-- Preview versions and runs are visibly non-live; commands never fake success.
-- No scheduler, permission, notification, execution, or persistence engine is
-  implemented in the browser.
-
-Run web typecheck, lint, build, builder/browser checks, reduced-motion and
-overflow review, engine/transport cleanup searches, and `git diff --check`.
+- Current production and local bundles contain only the unavailable route.
+- Cleanup searches find no old workflow editor/run/external route or fixture.
+- The local-owner bridge exposes no workflow endpoint.
+- No Postgres migration, public contract, SDK method, scope, or AWS variable is
+  introduced by the local UI linkage rollout.
 
 ## Surface Impact And Handoff
 
-| Surface                                         | Status              | Reason                                                |
-| ----------------------------------------------- | ------------------- | ----------------------------------------------------- |
-| Runtime behavior                                | Changed             | Preview workflow routes and local drafting are added. |
-| Settings, Postgres, Control API, contracts, CLI | Unchanged by design | Drafts are memory-only and commands are blocked.      |
-| MCP/admin, providers, audit/events              | Unchanged by design | No execution authority exists.                        |
-| Docs                                            | Changed             | Record workflow behavior and evidence.                |
-| Tests/verification                              | Deferred            | Automated UI tests remain deferred.                   |
+| Surface                     | Current rollout                                       | Future workflow rollout                                                       |
+| --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Runtime behavior            | Changed only to remove mock workflow actions          | Adds definition administration only                                           |
+| `settings.yaml`             | Unchanged by design; workflows are not settings-owned | Unchanged unless separately approved                                          |
+| Postgres/runtime projection | Unchanged by design; no migration                     | Additive definition/version tables                                            |
+| Control API                 | Unchanged by design; no workflow routes               | Adds scoped definition/version routes                                         |
+| SDK/contracts               | Unchanged by design                                   | Adds workflow schemas and client methods                                      |
+| CLI and MCP/admin           | Unchanged by design                                   | Deferred unless explicitly designed                                           |
+| Channel/provider adapters   | Unchanged by design                                   | Reused only for validated references                                          |
+| Docs                        | Changed                                               | Updated with deployment and contract design                                   |
+| Audit/events                | Unchanged by design                                   | Adds definition mutation audit records                                        |
+| Tests/verification          | Cleanup/build checks                                  | Migration, isolation, conflict, publish, archive, and immutable-version tests |
 
-Phase 8 receives every planned screen and focuses only on cross-product
-hardening, cleanup, and completion evidence.
+Phase 8 may verify the unavailable state but cannot restore mock workflow
+functionality as a substitute for the reviewed rollout.

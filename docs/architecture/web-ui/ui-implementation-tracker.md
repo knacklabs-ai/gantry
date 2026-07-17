@@ -1,69 +1,67 @@
 # Gantry Web UI Implementation Tracker
 
 Branch: `feature/gantry-web-ui-initiate`
+Current rollout: AWS-safe local UI linkage
 
-| Packet | Deliverable                                           | Status   | Evidence                                             | Commit     |
-| ------ | ----------------------------------------------------- | -------- | ---------------------------------------------------- | ---------- |
-| P1     | Static workspace, shell, preferences, `/ui` hosting   | Complete | Web/root build and Chrome checks at 1440px and 390px | `62df6a5a` |
-| P2     | Frontend-only docs and tracker                        | Complete | Prettier and diff checks pass                        | `31af0ced` |
-| P3     | Dependencies, semantic tokens, shared action boundary | Complete | Typecheck, lint, build, boundary search              | `a1d4728e` |
-| P4     | Primitive and composed component lab                  | Complete | Chromium review at 1440px and 390px                  | `a1d4728e` |
-| P5     | Operations console                                    | Complete | Six-route Chromium matrix, filters, gate, drawer     | `e29bc6c3` |
-| P6     | Agent administration                                  | Complete | Tab matrix, validation, draft retention, pause gate  | `a2cbcb4a` |
-| P7     | Chat and rich interactions                            | Complete | Renderer matrix, draft retention, rich action gates  | `4ac965b3` |
-| P8     | Jobs, runtime, and activity                           | Complete | Route matrix, cursor, blockers, redaction review     | `f07a2c79` |
-| P9     | People                                                | Complete | Identity matrix, invite draft, merge conflict checks | `a99ea954` |
-| P10    | Workflows                                             | Complete | Builder matrix, local validation, command gates      | `d3b38885` |
-| P11    | Hardening and completion audit                        | Complete | Route audit, focus checks, full build, cleanup       | `a2a2ff2f` |
+| Packet | Deliverable                                   | Status      | Evidence                                                      | Commit     |
+| ------ | --------------------------------------------- | ----------- | ------------------------------------------------------------- | ---------- |
+| P1     | Guarded runtime config and local-owner bridge | Complete    | Focused Control tests, production/remote fail-closed checks   | `932add14` |
+| P2     | Browser transport and Query foundation        | Complete    | Zod discovery, REST/SSE transport, no persisted server cache  | `bcaaf3ff` |
+| P3     | Models, defaults, credentials, and usage      | Complete    | Live API composition, secret-field reset, web typecheck       | `ad8c5813` |
+| P4     | Jobs and run activity                         | Complete    | Live CRUD/actions, active-run polling, safe event projection  | `b07be133` |
+| P5     | Memory engine, list, search, and dreaming     | Complete    | Live status/counts/search/actions, unsupported values removed | `f7dcade7` |
+| P6     | Conversations and administration              | Complete    | Discovery, messages, approvers, installs, canonical statuses  | `ab9a0614` |
+| P7     | Session chat and fetch-based SSE              | Complete    | Ensure/send/reconnect/refetch flow, preview data removed      | `57747fa2` |
+| P8     | Workflow rollout boundary                     | Complete    | Mock editor/run routes removed; definitions unavailable       | `f22b4589` |
+| P9     | Local setup docs and AWS deployment guardrail | In progress | `.env.example`, README, deployment absence test               | Pending    |
+| P10    | Full verification and browser acceptance      | Pending     | Build/test/security/route/responsive evidence                 | Pending    |
 
-## Browser Matrix
+## Connected Surfaces
 
-| Area             | 1440 light/dark | 1024 light/dark | 390 light/dark | Keyboard | Status   |
-| ---------------- | --------------- | --------------- | -------------- | -------- | -------- |
-| Foundation       | Complete        | Complete        | Complete       | Complete | Complete |
-| Component lab    | Complete        | Complete        | Complete       | Complete | Complete |
-| Operations       | Complete        | Complete        | Complete       | Complete | Complete |
-| Agents           | Complete        | Complete        | Complete       | Complete | Complete |
-| Chat             | Complete        | Complete        | Complete       | Complete | Complete |
-| Jobs and runtime | Complete        | Complete        | Complete       | Complete | Complete |
-| People           | Complete        | Complete        | Complete       | Complete | Complete |
-| Workflows        | Complete        | Complete        | Complete       | Complete | Complete |
+- Models reads catalog/defaults/readiness/usage and mutates defaults and model
+  credential readiness through existing Control services.
+- Jobs reads jobs/runs/events and supports create, update, delete, pause,
+  resume, and trigger. Polling runs only for a selected active run.
+- Memory composes brain status, memory records/search, and dreaming status and
+  trigger actions.
+- Conversations composes provider accounts, canonical conversations, agents,
+  installations, messages, threads, and approvers. Discovery remains an
+  explicit provider-account action.
+- Chat ensures a session for a selected conversation, sends as `Local owner`,
+  consumes session SSE with an in-memory cursor, and reconciles to durable
+  messages after output, reconnect, terminal, or unknown events.
 
-## Completion Evidence
+## Locked Boundaries
 
-- All 58 registered route/view states, including the unknown-route fallback,
-  render with one page heading, no horizontal overflow, no duplicate IDs, no
-  unnamed controls, no browser exceptions, and no failed requests at the
-  constrained 390px dark-theme viewport.
-- Area matrices pass at 1440px, 1024px, and 390px in light and dark themes.
-- Keyboard checks cover the skip link, route tabs, mobile navigation drawer,
-  chat session drawer, connection gate, focus return, and Escape dismissal.
-- Server-owned actions preserve local drafts and stop at the shared connection
-  gate. Preview record counts do not change after gated commands.
-- Browser source contains no REST request, SSE, WebSocket, bearer credential,
-  API proxy, or query-cache persistence path. Browser storage remains limited
-  to `gantry.ui.preferences.v1`.
-- Every handwritten file under `apps/web/src` is at or below 350 lines. The
-  largest file is 348 lines.
-- Production component-lab routes are excluded from the production bundle.
-  The main production JavaScript bundle is 115.67 kB gzip.
-- `npm run typecheck:web`, `npm run lint:web`, `npm run build:web`,
-  `npm run typecheck`, `npm run build`, `git diff --check`, and production
-  dependency audit checks pass.
-- Provider display vocabulary is recognized as browser presentation while
-  provider SDK imports and credential identifiers remain architecture errors.
+- `GANTRY_UI_LOCAL_OWNER_ENABLED` defaults to false and is forbidden in
+  checked-in AWS/fleet deployment definitions.
+- The bridge requires development/local posture, loopback Control binding,
+  process role `all`, full Control routes, same-origin loopback requests, and a
+  dedicated scoped key that remains server-side.
+- Direct `/v1/*` bearer authentication is unchanged.
+- Disabled mode performs runtime discovery only and starts no feature request,
+  polling loop, or event stream.
+- Browser storage remains limited to `gantry.ui.preferences.v1`; Query and SSE
+  state remain memory-only.
+- Browser WebSockets, remote identity/auth, hosted-domain transport, People
+  identity wiring, Workflow persistence/API/execution, and artifact download
+  remain deferred.
+- Automated UI tests remain deferred by user decision. Backend bridge tests,
+  builds, structural checks, and manual browser acceptance are still required.
 
-## Deferred Work
+## Browser Acceptance
 
-- Browser identity, authentication, pairing, roles, OAuth/OIDC, SAML, and SSO.
-- REST, SSE, WebSocket, Control API, SDK contract, persistence, and audit wiring.
-- Automated component and end-to-end test harnesses.
-
-Deferred work does not permit fake success. Preview reads remain visibly
-non-live and every server-owned command stops at the shared connection gate.
+| Check                                         | Status  |
+| --------------------------------------------- | ------- |
+| Disabled mode makes no `/ui-api` request      | Pending |
+| Connected Models, Jobs, Memory, Conversations | Pending |
+| Session send and SSE reconnect                | Pending |
+| 1440px, 1024px, and 390px in both themes      | Pending |
+| Keyboard/focus/overflow/reduced motion        | Pending |
+| Direct refresh and unknown `/ui/*` fallback   | Pending |
 
 ## Known External Gate Debt
 
-Root architecture checks still report the accepted pre-existing core size
-budget finding and core messaging formatter provider-location findings. Web
-packets introduce no architecture finding.
+Root lint and architecture checks retain pre-existing core findings outside
+the Web UI scope. Record their exact output during final verification; do not
+weaken those gates or change unrelated core files to hide them.
