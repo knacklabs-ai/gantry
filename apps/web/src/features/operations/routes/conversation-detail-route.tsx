@@ -1,57 +1,113 @@
-import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import {
   ArrowLeft,
   Bot,
+  LoaderCircle,
   MessageSquareText,
-  SearchX,
+  RefreshCw,
   ShieldCheck,
+  TriangleAlert,
   UserRoundCheck,
+  WifiOff,
 } from 'lucide-react';
+import { useState } from 'react';
 
-import { useConnectionGate } from '../../../ui/compositions/connection-gate';
+import { useRuntimeConnection } from '../../../lib/api/runtime-connection';
 import { PageHeader } from '../../../ui/compositions/page-header';
 import { PageState } from '../../../ui/compositions/page-state';
 import { Panel } from '../../../ui/compositions/panel';
 import { StatusBadge } from '../../../ui/compositions/status-badge';
+import { Badge } from '../../../ui/primitives/badge';
 import { Button } from '../../../ui/primitives/button';
-import { conversationPreviewQuery } from '../operations-queries';
-
-const threadPreview = [
-  {
-    id: 'thread-1',
-    sender: 'Maya Chen',
-    message: 'Can you summarize the open incidents before standup?',
-    time: '11 min ago',
-    replies: 3,
-  },
-  {
-    id: 'thread-2',
-    sender: 'Gantry',
-    message: 'The weekly summary is ready for owner review.',
-    time: '43 min ago',
-    replies: 1,
-  },
-] as const;
+import { ConversationApproversDialog } from '../components/conversation-approvers-dialog';
+import { ConversationInstallDialog } from '../components/conversation-install-dialog';
+import type {
+  AgentOption,
+  ConversationDetail,
+  ConversationInstall,
+} from '../conversation-api';
+import {
+  useConversationDashboard,
+  useConversationDetail,
+} from '../use-conversations';
 
 export function ConversationDetailRoute() {
   const { conversationId } = useParams({
     from: '/conversations/$conversationId',
   });
-  const { data } = useQuery(conversationPreviewQuery);
-  const { requestConnection } = useConnectionGate();
-  const conversation = data.find((item) => item.id === conversationId);
+  const connection = useRuntimeConnection();
+  const dashboard = useConversationDashboard();
+  const detail = useConversationDetail(conversationId, dashboard.data);
 
-  if (!conversation) {
+  if (!connection.transport) {
     return (
       <PageState
-        kind="empty"
-        icon={<SearchX size={18} aria-hidden="true" />}
-        title="Conversation not found"
-        description="This preview snapshot does not contain that conversation."
+        description="Start Gantry with local-owner UI linkage to load this conversation."
+        icon={<WifiOff size={18} aria-hidden="true" />}
+        kind="offline"
+        title="Runtime not connected"
       />
     );
   }
+  if (dashboard.isPending || detail.isPending) {
+    return (
+      <PageState
+        description="Loading conversation history and administration state."
+        icon={
+          <LoaderCircle className="animate-spin" size={18} aria-hidden="true" />
+        }
+        kind="loading"
+        title="Loading conversation"
+      />
+    );
+  }
+  if (dashboard.isError || detail.isError) {
+    const error = dashboard.error ?? detail.error;
+    return (
+      <PageState
+        action={
+          <Button
+            onClick={() => {
+              void dashboard.refetch();
+              void detail.refetch();
+            }}
+          >
+            <RefreshCw size={16} aria-hidden="true" /> Retry
+          </Button>
+        }
+        description={error?.message ?? 'Conversation could not be loaded.'}
+        icon={<TriangleAlert size={18} aria-hidden="true" />}
+        kind="error"
+        title="Conversation could not be loaded"
+      />
+    );
+  }
+  if (!dashboard.data || !detail.data) return null;
+  return (
+    <ConversationDetailContent
+      agents={dashboard.data.agents}
+      detail={detail.data}
+      installs={dashboard.data.installs}
+    />
+  );
+}
+
+function ConversationDetailContent({
+  agents,
+  detail,
+  installs,
+}: {
+  agents: AgentOption[];
+  detail: ConversationDetail;
+  installs: ConversationInstall[];
+}) {
+  const [installOpen, setInstallOpen] = useState(false);
+  const [approversOpen, setApproversOpen] = useState(false);
+  const conversation = detail.conversation;
+  const install = installs.find(
+    (item) =>
+      item.conversationId === conversation.id && item.status === 'active',
+  );
 
   return (
     <div className="mx-auto grid w-full max-w-[1120px] gap-6">
@@ -61,52 +117,53 @@ export function ConversationDetailRoute() {
           q: '',
           status: 'all',
           page: 1,
-          sort: 'activity',
+          sort: 'updatedAt',
           desc: false,
         }}
         to="/conversations"
       >
-        <ArrowLeft size={15} aria-hidden="true" />
-        Conversations
+        <ArrowLeft size={15} aria-hidden="true" /> Conversations
       </Link>
       <PageHeader
         eyebrow={`${conversation.provider} · ${conversation.kind}`}
         title={conversation.name}
-        description={`${conversation.members} members · Last activity ${conversation.activity}`}
+        description="Member count and provider activity metadata are unavailable from the current API."
         action={<StatusBadge status={conversation.status} />}
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Panel
           title="Recent messages"
-          description="Representative preview threads for this conversation."
+          description={`${detail.messages.length} canonical messages loaded`}
+          action={<MessageSquareText size={16} aria-hidden="true" />}
         >
           <div className="divide-y divide-border">
-            {threadPreview.map((thread) => (
-              <article className="grid gap-2 px-5 py-4" key={thread.id}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[13px] font-semibold text-text">
-                    {thread.sender}
+            {detail.messages.map((message) => (
+              <article className="grid gap-2 px-5 py-4" key={message.id}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="flex items-center gap-2 text-[13px] font-semibold text-text">
+                    {message.author}
+                    <Badge>{message.direction}</Badge>
                   </span>
-                  <span className="text-xs text-text-muted">{thread.time}</span>
+                  <span className="text-xs text-text-muted">
+                    {formatDate(message.createdAt)}
+                  </span>
                 </div>
-                <p className="m-0 text-sm leading-6 text-text-secondary">
-                  {thread.message}
+                <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-text-secondary">
+                  {message.content}
                 </p>
-                <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
-                  <MessageSquareText size={14} aria-hidden="true" />
-                  {thread.replies} {thread.replies === 1 ? 'reply' : 'replies'}
-                </span>
               </article>
             ))}
+            {detail.messages.length === 0 ? (
+              <p className="m-0 p-5 text-sm text-text-secondary">
+                No messages are stored for this conversation.
+              </p>
+            ) : null}
           </div>
         </Panel>
 
         <div className="grid content-start gap-4">
-          <Panel
-            title="Installed agent"
-            action={<Bot size={16} aria-hidden="true" />}
-          >
+          <Panel title="Installed agent" action={<Bot size={16} />}>
             <div className="grid gap-3 p-4">
               <p className="m-0 text-sm font-semibold text-text">
                 {conversation.agent}
@@ -115,74 +172,84 @@ export function ConversationDetailRoute() {
                 Handles eligible messages after conversation policy and trigger
                 checks.
               </p>
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  requestConnection(`Change agent for ${conversation.name}`)
-                }
-              >
+              <Button onClick={() => setInstallOpen(true)}>
                 Change installation
               </Button>
             </div>
           </Panel>
 
-          <Panel
-            title="Conversation policy"
-            action={<ShieldCheck size={16} aria-hidden="true" />}
-          >
+          <Panel title="Conversation policy" action={<ShieldCheck size={16} />}>
             <dl className="m-0 grid gap-3 p-4 text-[13px]">
-              <Detail label="Sender policy" value={conversation.policy} />
               <Detail
                 label="Trigger"
-                value={
-                  conversation.kind === 'Direct message'
-                    ? 'Every message'
-                    : 'Mention required'
-                }
+                value={install?.routeConfig?.trigger ?? 'Unavailable'}
               />
               <Detail
-                label="Thread scope"
-                value="Replies stay in originating thread"
+                label="Requires trigger"
+                value={formatBoolean(install?.routeConfig?.requiresTrigger)}
+              />
+              <Detail
+                label="Memory scope"
+                value={install?.memoryScope ?? 'Unavailable'}
               />
             </dl>
-            <div className="border-t border-border p-4">
-              <Button
-                className="w-full"
-                variant="secondary"
-                onClick={() =>
-                  requestConnection(`Edit policy for ${conversation.name}`)
-                }
-              >
-                Edit policy
-              </Button>
-            </div>
           </Panel>
         </div>
       </div>
+
+      <Panel
+        title="Threads"
+        description={`${detail.threads.length} stored thread records`}
+      >
+        <div className="flex flex-wrap gap-2 p-4">
+          {detail.threads.map((thread) => (
+            <Badge key={thread.id}>
+              {thread.title ?? thread.id} · {thread.status}
+            </Badge>
+          ))}
+          {detail.threads.length === 0 ? (
+            <span className="text-sm text-text-secondary">
+              No thread records are stored.
+            </span>
+          ) : null}
+        </div>
+      </Panel>
 
       <Panel
         title="Control approvers"
         description="Verified conversation members who can answer permission prompts."
         action={<UserRoundCheck size={16} aria-hidden="true" />}
       >
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
-          <Approver
-            name="Maya Chen"
-            identity="maya@acme.example"
-            role="Owner"
-          />
-          <Approver name="Jon Bell" identity="U04JBELL" role="Approver" />
+        <div className="flex flex-wrap gap-2 p-4">
+          {detail.approverIds.map((id) => (
+            <Badge key={id}>{id}</Badge>
+          ))}
+          {detail.approverIds.length === 0 ? (
+            <span className="text-sm text-text-secondary">
+              No control approvers configured.
+            </span>
+          ) : null}
         </div>
         <div className="border-t border-border p-4">
-          <Button
-            onClick={() =>
-              requestConnection(`Manage approvers for ${conversation.name}`)
-            }
-          >
+          <Button onClick={() => setApproversOpen(true)}>
             Manage approvers
           </Button>
         </div>
       </Panel>
+
+      <ConversationInstallDialog
+        agents={agents}
+        conversation={conversation}
+        open={installOpen}
+        onOpenChange={setInstallOpen}
+      />
+      <ConversationApproversDialog
+        approverIds={detail.approverIds}
+        conversationId={conversation.id}
+        conversationName={conversation.name}
+        open={approversOpen}
+        onOpenChange={setApproversOpen}
+      />
     </div>
   );
 }
@@ -196,32 +263,11 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Approver({
-  name,
-  identity,
-  role,
-}: {
-  name: string;
-  identity: string;
-  role: string;
-}) {
-  return (
-    <div className="grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-border p-3">
-      <span className="flex size-9 items-center justify-center rounded-full bg-surface-strong text-xs font-semibold text-text">
-        {name
-          .split(' ')
-          .map((part) => part[0])
-          .join('')}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-[13px] font-semibold text-text">
-          {name}
-        </span>
-        <span className="block truncate font-mono text-[10px] text-text-muted">
-          {identity}
-        </span>
-      </span>
-      <span className="text-xs text-text-secondary">{role}</span>
-    </div>
-  );
+function formatBoolean(value?: boolean): string {
+  return value === undefined ? 'Unavailable' : value ? 'Yes' : 'No';
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }

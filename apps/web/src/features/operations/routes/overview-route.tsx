@@ -139,7 +139,7 @@ export function OverviewRoute() {
               q: '',
               status: 'all',
               page: 1,
-              sort: 'activity',
+              sort: 'updatedAt',
               desc: false,
             }}
             to="/conversations"

@@ -14,9 +14,9 @@ export const providerSearchSchema = z.object({
 
 export const conversationSearchSchema = z.object({
   q: z.string().catch(''),
-  status: z.enum(['all', 'active', 'quiet', 'blocked']).catch('all'),
+  status: z.enum(['all', 'active', 'inactive', 'archived']).catch('all'),
   page,
-  sort: z.enum(['name', 'provider', 'activity', 'status']).catch('activity'),
+  sort: z.enum(['name', 'provider', 'updatedAt', 'status']).catch('updatedAt'),
   desc: descending,
 });
 
