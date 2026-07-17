@@ -43,6 +43,14 @@ Use `python3 .codex/scripts/stage_orchestrator.py` to get current phase commands
 - Do the work, critique the work, and make sure the task is completed properly end-to-end.
 - Do not take shortcuts. Keep work well-structured, neat, and clean.
 - Do not overcomplicate. Make a plan, seal the flaws, and execute that plan through completion.
+- Poll running Codex tasks PERIODICALLY, not only on completion: a Codex task
+  can ask a clarifying question or wait for approval MID-RUN and sit blocked
+  until answered — do not wait for the terminal notification or a timeout.
+  Check `codex-companion.mjs status <task>` (its Progress section) on a cadence
+  while a task runs; if it is waiting on a question/decision, answer it
+  promptly (resume the task) rather than letting the run stall. After a task
+  ends, always scan its result for buried questions/deviations AND read that
+  stage's assumptions ledger, ratifying anything that changes behavior.
 - Prefer git WORKTREES for parallel writer streams: whenever independent work
   can branch off `main` (a separate PR-to-be — different subsystem, own review,
   own commit), run it in its own `git worktree` off `origin/main` so it never

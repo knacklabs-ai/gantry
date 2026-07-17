@@ -38,7 +38,12 @@ note in the assumptions ledger so the decision is recorded.
 
 ## 2. Implementation handoffs
 
-WORKTREE-FIRST parallelism: when a stage or a whole plan is disjoint from the
+POLL RUNNING CODEX TASKS PERIODICALLY: a handoff can block MID-RUN on a
+clarifying question or approval and stall until answered — do not rely only on
+the completion notification. Check `codex-companion.mjs status <task>` on a
+cadence; answer any pending question by resuming that task. After completion,
+scan the result for buried questions/deviations and read the stage's
+assumptions ledger, ratifying behavior-changing assumptions. WORKTREE-FIRST parallelism: when a stage or a whole plan is disjoint from the
 branch currently being edited and belongs on its own PR off main, run it in a
 dedicated `git worktree add -b <branch> <path> origin/main` (symlink
 node_modules from the primary checkout for verify), review and commit it
