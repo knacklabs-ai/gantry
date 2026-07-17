@@ -1,0 +1,233 @@
+# Agents-as-Tools — Goal Prompt (v3, post grilling)
+
+Approved as the PRIMARY orchestration mechanism (platform-roadmap-2026-07.md):
+registered agents projected as callable tools; main agent = orchestrator,
+specialists = configured subagents. Static persona-as-tool, not agent-to-agent
+free chat.
+
+## User decisions (grilling, 2026-07-17) — BINDING
+1. **Result flow = HYBRID.** A synthetic agent-tool call blocks up to a timeout
+   and returns the specialist's result inline; if the run exceeds the timeout it
+   falls back to a queued async task id the orchestrator can check later.
+2. **Callable set = CURATED per-orchestrator allowlist.** Each orchestrator is
+   explicitly configured with which specialists it may call (NOT all app agents).
+3. **Topology = DEPTH-1 STAR.** Only the orchestrator delegates; a called
+   specialist gets no agent-tools.
+4. **Visibility = NARRATED.** The orchestrator posts a short line to the
+   originating conversation when it delegates ("Checking with the <name>…") and
+   when the result returns. Not the full sub-agent transcript.
+
+## What is / isn't plumbed
+Already: `delegate_task` carries `targetAgentId`; the `!sameAgent` path resolves
+the callee's OWN posture (`inline-agent-task-lifecycle.ts:124` `resolveRunAccess`,
+`:187` `buildRunOptions`; IPC `ipc-agent-delegation-target.ts:80`); child prompts
+route to the origin conversation via inherited `chatJid`; a delegated run
+produces a result (`inline-agent-task-lifecycle.ts` streams progress + returns
+`output.result`). The async posture-resolution seam is the inline wiring layer
+`inline-agent-loop-tools.ts` (already awaits `resolveTurn*` from
+`group-run-context.ts`) — compute the manifest there, pass precomputed into the
+sync `createInlineCoreTools` (do NOT make the tool builder async).
+
+NOT plumbed (the real work): (a) a per-orchestrator delegates allowlist +
+its config surface; (b) dynamic per-agent tool registration across lanes; (c) a
+HYBRID sync-with-timeout dispatch over the async backend; (d) handler-driven
+narration; (e) parent trace-context propagation. `approvalContextJid` is NOT
+plumbed through `AgentInput`/permission IPC — DEFER (v1 pins the existing
+`chatJid`/`targetJid` origin-routing invariant).
+
+## Scope (v1)
+
+### 1. Curated allowlist + config surface
+- Each agent config gains a `delegates` list (immutable agent ids/folders this
+  agent may call). Store it settings-owned alongside the agent's skills/MCP
+  bindings — DETERMINE the exact seam (register_agent binding vs agent profile
+  vs settings agent config) and pin it; it must round-trip through the settings
+  desired-state export/revision like other agent config. If setting it needs a
+  new tool/API surface, keep v1 to the config field + a minimal setter
+  (agent_profile_update extension) and note richer UX as later.
+- The manifest builder resolves the CALLER's `delegates` entries → active,
+  same-app, non-self agents only. Empty allowlist ⇒ no synthetic tools.
+
+### 2. Host-authoritative manifest + cross-lane projection
+- Pure `projectCallableAgentTools(caller) -> {toolName, targetAgentId,
+  displayName}[]`: from the caller's `delegates` allowlist, filter active +
+  same-app + non-self; `toolName` from IMMUTABLE identity (collision-safe,
+  length-bounded — NOT display name, which is non-unique); display name only in
+  the one-line description. Returns EMPTY when `parentTaskId` is set (depth
+  suppression) or `AgentDelegation` not held.
+- Project into EVERY tool lane (not one call-site), each gated like
+  `delegate_task` (AgentDelegation + executor availability +
+  `excludeAuthorityTools===false`): inline core-tool registry
+  (`inline-agent-loop-tools.ts` wiring → sync builder), Anthropic allow-list/env
+  (`agent-capabilities.ts`), DeepAgents Gantry MCP (`gantry-mcp-tool-surface.ts`),
+  dynamic stdio MCP registration. Under locked/no-permission projection the
+  synthetic tools disappear. Audit/rules/prompts canonicalize to `AgentDelegation`.
+
+### 3. Hybrid dispatch (sync-with-timeout → async fallback)
+- Each synthetic handler is a thin adapter over the existing delegation backend
+  (`task-lifecycle.ts` `startDelegatedAgent`, UNCHANGED spawn), schema OMITS
+  `targetAgentId`; the adapter injects the manifest's FIXED target and
+  revalidates same-app + active + non-self + IN the caller's allowlist.
+- After starting the delegated run, AWAIT its result up to a timeout (the tool's
+  `timeoutMs`, default e.g. 60s). Completed in time ⇒ return the specialist's
+  result inline. Exceeded ⇒ return the queued task id + a "still running" marker
+  (async fallback) so the orchestrator can retrieve it later via the existing
+  task lifecycle. DETERMINE whether a blocking-await-with-timeout over the
+  delegated run already exists or must be added at the lifecycle seam; keep it to
+  the smallest correct mechanism (no polling loops if an await/notify exists).
+
+### 4. Narration (handler-driven, deterministic)
+- On delegate start, the handler posts a short line to the ORIGINATING
+  conversation ("Checking with the <displayName>…") via the existing
+  send_message/conversation delivery to `owner.conversationId`. On sync result,
+  post a brief completion line (or let the orchestrator incorporate the returned
+  result — post at least a "…done" marker). Do NOT post the sub-agent transcript.
+  Narration is emitted by the handler, not dependent on the LLM choosing to narrate.
+
+### 5. Depth-1 star — enforced in projection + host
+- Projection returns nothing when `parentTaskId` is set (synthetic tools never
+  appear inside a delegated child). Host enforcement (IPC `parentTaskId`
+  rejection + inline `runDelegatedAgent` absence) stays as defense in depth.
+  `maxDepth:1` is metadata. No counted-depth.
+
+### 6. Per-hop trace nesting (ledger C.8)
+- `startTurnSpan` (`tracing.ts:207`) gains an optional parent span-context param;
+  open the child span under it; carry `parentRunId` to the child. Fail-open.
+
+## Out of scope
+Counted-depth chains; role concepts; app-wide/flat callable set; explicit
+`approvalContextJid` propagation; shared-conversation multi-agent; blueprints.
+
+## Surface Impact Matrix
+| Surface | Classification | Reason |
+| --- | --- | --- |
+| Runtime behavior | Changed | Synthetic per-agent tools; hybrid dispatch; narration; depth suppression |
+| settings.yaml | Changed | New per-agent `delegates` allowlist (desired-state + revision round-trip) |
+| Postgres/runtime projection | Read-only | Reads active agent inventory + allowlist |
+| Control API | Possibly changed | Minimal setter for `delegates` (agent profile extension) — confirm |
+| SDK/contracts | Changed (internal) | Manifest + tool schemas + allowlist field |
+| CLI | Possibly changed | If `delegates` is CLI-settable — confirm minimal |
+| Channel/provider adapters | Changed | Narration posts to originating conversation |
+| Gantry MCP tools | Changed | Cross-lane synthetic-tool projection |
+| Docs/prompts | Changed | This goal-prompt + ledger |
+| Audit/events | Changed | Synthetic tools canonicalize to AgentDelegation |
+| Tests/verification | Changed | Allowlist, projection, hybrid dispatch, narration, depth, trace |
+
+## Verification
+- Unit: allowlist round-trips through settings export/revision; manifest = caller's
+  allowlist ∩ active/same-app/non-self; collision-safe naming; projection present
+  in all lanes when eligible, ABSENT for a `parentTaskId` child + locked mode +
+  empty allowlist; synthetic tool injects the fixed target + rejects override;
+  hybrid dispatch returns inline result within timeout and falls back to task id
+  past it; narration posts start + completion to the origin conversation; callee
+  posture isolation (no escalation, own memory scope); child span nests under
+  parent.
+- `tsc --noEmit`, focused suites (runtime/application/runner/channels/config/
+  observability), settings parser/renderer/revision tests, arch gate.
+- Ponytail: one manifest builder; thin dispatch adapters; reuse the delegation
+  backend + existing projection lanes + send_message; smallest hybrid mechanism;
+  no counted-depth.
+
+## Stages (each green; bounded write scope)
+1. **Allowlist config surface** — `delegates` field on agent config +
+   settings parser/renderer/revision round-trip + minimal setter + tests.
+2. **Manifest + inline-lane projection + pinned-target dispatch (async result for
+   now) + depth suppression** — tests.
+3. **Hybrid sync-with-timeout dispatch + async fallback** — tests.
+4. **Narration (start + completion to origin conversation)** — tests.
+5. **Remaining projection lanes (Anthropic, DeepAgents, stdio MCP) + locked-mode
+   suppression + audit canonicalization** — tests.
+6. **Trace nesting (parent-context propagation)** — tests.
+
+---
+
+# v4 corrections (post re-validation) — BINDING seams
+
+## A. Allowlist seam (Stage 1) — pinned
+- Add `delegates: string[]` (immutable agent folders/ids) to the settings agent
+  config `agents.<folder>` — NOT agent_profile_update (that writes profile
+  artifacts, not desired settings). Set via the EXISTING desired-state replace
+  path (`request_settings_update` `runner/mcp/tools/settings.ts:110-145` / control
+  route `control/server/routes/settings.ts:87-118` → canonical import + revision
+  append + projection + YAML sync at `jobs/ipc-runtime-admin-handlers.ts:351-431`).
+  No new narrow setter.
+- Full fan-out (all required): types `runtime-settings-types.ts:158-178,200-220`;
+  public contract `packages/contracts/src/settings/index.ts:117-150`; parser
+  `runtime-settings-agents-parser.ts:171-237,351-402`; renderer
+  `runtime-settings-renderer.ts:206-360`; revision serialize/parse
+  `settings-import-service.ts:343-405,455-541`; BOTH export constructors
+  `desired-state-current-export.ts:251-288,539-582` (+ helpers
+  `desired-state-export-helpers.ts:34-68`); DB projection/reconcile
+  `desired-state-capability-reconcile.ts:43-107,302-339`; defaults
+  `runtime-settings.ts:125-151` + `config/index.ts:128-150`.
+- **BUMP `CURRENT_SETTINGS_READER_VERSION` 13→14** (`settings-import-service.ts:
+  31-37`; update the pin test `settings-import-service.test.ts:655-668`). Revision
+  doc must serialize `delegates` (`settings-import-service.ts:455-492`). Add
+  parser/renderer/revision round-trip tests.
+
+## B. Hybrid dispatch (Stage 3) — the BLOCKER, build carefully
+- **Separate `syncWaitTimeoutMs`** distinct from the delegated run's execution
+  `timeoutMs` (`task-lifecycle.ts:169-175`), which KILLS the child at expiry
+  (`agent-spawn-process.ts:180-201`, `agent-inline.ts:370-389`). The sync wait
+  must NOT kill the run — on wait-budget expiry the durable task keeps running and
+  the handler returns the queued task id (async fallback). Preserve the execution
+  timeout independently.
+- **Build a per-task completion subscription/deferred** on the task-lifecycle
+  service carrying the UNTRUNCATED result (persisted output is capped at 1000
+  chars — `async-command-task-helpers.ts:16,123-125` — so polling the DTO is
+  insufficient). Reuse the terminal-notification path
+  (`async-delegated-agent-task.ts:431-471`) + change-waiter
+  (`async-task-change-waiter.ts:3-47`) but surface the full result to the awaiter.
+- **DETACH the hybrid handler** from the serialized IPC path: add delegation to the
+  detached long-running task types (`runtime/ipc-long-running-task.ts:8-27`) and
+  set its IPC response deadline ABOVE the sync-wait budget (worker task IPC
+  currently times out at 20s — `runner/mcp/tools/task-lifecycle.ts:21`). Otherwise
+  a parent awaiting inline while the callee makes a response-requiring IPC call
+  self-deadlocks on the serialized watcher (`ipc.ts:157-213,359-396`).
+- **Mind group-queue starvation**: the parent holds its run slot until the turn
+  returns (`group-queue.ts:506-549`), global message-run limit default 3
+  (`group-queue-policy.ts:1-4,25-38`). Concurrent sync-delegations can starve;
+  document the ceiling + keep the sync wait bounded. MUST-TEST: callee invokes a
+  response-requiring IPC tool while the parent is in its sync wait — no deadlock.
+
+## C. Narration (Stage 4) — routing + fail-open
+- Use `sendCoreMessage` (`application/core-tools/send-message.ts:24-70`) via the
+  injected `ChannelWiring.sendMessage` (`inline-agent-loop-tools.ts:609-615`), but
+  route with `owner.conversationId` + `owner.providerAccountId` + `owner.threadId`
+  (all in task ownership `task-lifecycle.ts:32-38`) — conversationId alone
+  under-resolves when >1 provider route matches
+  (`channel-wiring-route-provider-account.ts:20-34`).
+- **FAIL-OPEN**: narration must not throw if delivery is unavailable (the inline
+  injection currently throws). Wrap + swallow-with-warn. Define ordering: narration
+  may interleave with buffered/streamed output (`group-output-buffer.ts:48-118`,
+  `agent-output-callbacks.ts:34-52`) — post the "delegating" line before the sync
+  wait and the completion line after; accept best-effort ordering.
+
+## Per-stage file scopes + serialization
+Stages 2–5 SHARE `application/core-tools/task-lifecycle.ts:154-183` + the IPC
+seams, so they SERIALIZE (one at a time, not parallel). Each stage's Codex
+dispatch gets an explicit file allowlist. Stage 1 (settings) is disjoint from the
+handler seams and can run first independently.
+
+## Stage 1 implementation ledger
+
+- Scope: implemented Stage 1 only. Projection, dispatch, hybrid waiting,
+  narration, and trace propagation remain deferred and untouched.
+- Contract: `agents.<folder>.delegates` is a required runtime/public `string[]`.
+  The parser defaults an absent field to `[]`, rejects non-string and empty
+  entries, and preserves unresolved or dangling agent-folder references. The
+  renderer omits the field when it is absent or empty.
+- Mutation path: writes use the existing desired-state replace path. No narrow
+  setter or `agent_profile_update` extension was added.
+- Revision contract: revision documents serialize non-empty `delegates`; empty
+  lists remain omitted. `CURRENT_SETTINGS_READER_VERSION` is `14`.
+- Projection choice: no DB table or column was added, and
+  `desired-state-capability-reconcile.ts` plus
+  `desired-state-export-helpers.ts` needed no changes. The authoritative settings
+  revision/YAML owns `delegates`; both current-export constructors preserve or
+  reconstruct the configured list, while DB reconciliation remains scoped to
+  the existing source/capability projection.
+- Verification: TypeScript completed with exit 0; config unit tests passed 21
+  files / 304 tests; the architecture gate reported only the accepted
+  `text-styles.ts` Telegram findings at lines 13, 64, and 75 after renderer
+  extraction reduced the file to 719 lines (budget 721).

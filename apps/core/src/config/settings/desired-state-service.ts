@@ -327,6 +327,7 @@ export class SettingsDesiredStateService {
           {
             name: agent.name,
             folder,
+            delegates: [],
             bindings: {},
             sources: { skills: [], mcpServers: [], tools: [] },
             capabilities: [],

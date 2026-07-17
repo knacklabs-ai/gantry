@@ -153,6 +153,7 @@ describe('contracts package', () => {
     const agent = {
       name: 'Main',
       folder: 'main_agent',
+      delegates: ['researcher', 'future_agent'],
       bindings: {},
       sources: { skills: [], mcpServers: [], tools: [] },
       capabilities: [],
@@ -188,6 +189,7 @@ describe('contracts package', () => {
       permissionMode: 'auto_strict',
       thinking: { mode: 'on', budgetTokens: 4096 },
       maxOutputTokens: 2048,
+      delegates: ['researcher', 'future_agent'],
       toolRules: expect.arrayContaining([
         expect.objectContaining({ action: 'block' }),
         expect.objectContaining({ action: 'require_prior' }),
@@ -208,6 +210,10 @@ describe('contracts package', () => {
     expectInvalid(RuntimeSettingsConfiguredAgentSchema, {
       ...agent,
       maxOutputTokens: 0,
+    });
+    expectInvalid(RuntimeSettingsConfiguredAgentSchema, {
+      ...agent,
+      delegates: ['researcher', 42],
     });
     expectInvalid(RuntimeSettingsConfiguredAgentSchema, {
       ...agent,
@@ -599,6 +605,7 @@ describe('contracts package', () => {
             permissionMode: 'auto_strict',
             oneTimeJobDefaultModel: 'inherit',
             recurringJobDefaultModel: 'inherit',
+            delegates: ['researcher', 'future_agent'],
             bindings: {
               main_agent_shared_channel: {
                 jid: 'slack:C123',
@@ -727,6 +734,10 @@ describe('contracts package', () => {
     expect(parsed.settings.agents.main_agent?.permissionMode).toBe(
       'auto_strict',
     );
+    expect(parsed.settings.agents.main_agent?.delegates).toEqual([
+      'researcher',
+      'future_agent',
+    ]);
     expect(
       parsed.settings.agents.main_agent?.bindings.main_agent_shared_channel
         ?.permissionMode,
