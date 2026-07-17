@@ -43,6 +43,14 @@ Use `python3 .codex/scripts/stage_orchestrator.py` to get current phase commands
 - Do the work, critique the work, and make sure the task is completed properly end-to-end.
 - Do not take shortcuts. Keep work well-structured, neat, and clean.
 - Do not overcomplicate. Make a plan, seal the flaws, and execute that plan through completion.
+- Prefer git WORKTREES for parallel writer streams: whenever independent work
+  can branch off `main` (a separate PR-to-be — different subsystem, own review,
+  own commit), run it in its own `git worktree` off `origin/main` so it never
+  collides with in-progress uncommitted work. Symlink `node_modules` from the
+  primary checkout into the worktree for verification. Each worktree stream is
+  verified and reviewed independently and merges as its own PR. Use worktrees
+  by default for any stream that is disjoint from the current branch; reserve
+  same-worktree parallel writers for tightly-coupled disjoint edits.
 - Parallelize Codex tasks where possible: read-only tasks (plan validations,
   surveys, audits) always run in parallel with writers and each other. Writer
   tasks may ALSO run in parallel when their bounded write scopes are provably
