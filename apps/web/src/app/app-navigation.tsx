@@ -14,7 +14,6 @@ import {
   PauseCircle,
   PlugZap,
   Gauge,
-  ExternalLink,
   Settings2,
   ShieldCheck,
   Users,
@@ -61,14 +60,7 @@ const navigation = [
   },
   {
     label: 'Workflows',
-    items: [
-      { to: '/workflows', label: 'Definitions', icon: Workflow },
-      {
-        to: '/workflows/external',
-        label: 'External systems',
-        icon: ExternalLink,
-      },
-    ],
+    items: [{ to: '/workflows', label: 'Definitions', icon: Workflow }],
   },
 ] as const;
 
