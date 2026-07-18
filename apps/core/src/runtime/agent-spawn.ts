@@ -216,6 +216,7 @@ async function spawnAgentWithContext(
     isLockedAgent ||
     input.hideAuthorityTools === true ||
     process.env.GANTRY_NO_PERMISSION_TOOLS === '1';
+  const egressSettings = runtimeSettings.permissions.egress;
   const runnerInput: RunnerAgentInput = {
     ...input,
     allowedTools: trustedToolPolicyRules,
@@ -223,6 +224,7 @@ async function spawnAgentWithContext(
     hideAuthorityTools,
     compiledSystemPrompt,
     yoloMode: effectiveYoloModeSettings(runtimeSettings.permissions.yoloMode),
+    egressDenylist: egressSettings.denylist,
   };
   const hostRuntime = host.prepareHostRuntimeContext(group);
   const adapterResolution = resolveSpawnExecutionAdapter(
@@ -413,7 +415,7 @@ async function spawnAgentWithContext(
     egressGateway = await hostStartup.measureAsync('egressGatewayMs', () =>
       ensureEgressGateway({
         key: `${runnerAppId}:${input.agentId || group.folder}:${processName}`,
-        settings: getRuntimeSettingsForConfig().permissions.egress,
+        settings: egressSettings,
         principal: {
           appId: runnerAppId,
           conversationId: input.chatJid,
